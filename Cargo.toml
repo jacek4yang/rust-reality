@@ -7,3 +7,4 @@ description = "A from-scratch Rust implementation of VLESS and REALITY"
 publish = false
 
 [dependencies]
+tokio = { version = "1.52.3", default-features = false, features = ["macros", "net", "rt-multi-thread"] }
