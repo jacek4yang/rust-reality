@@ -1,0 +1,9 @@
+[package]
+name = "rust-reality"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+description = "A from-scratch Rust implementation of VLESS and REALITY"
+publish = false
+
+[dependencies]

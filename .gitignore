@@ -1,0 +1,25 @@
+# Rust build output
+/target
+
+# Local runtime configuration
+/config.toml
+/.env
+
+# Secrets
+/secrets/
+*.key
+*.pem
+
+# Packet captures
+/captures/
+*.pcap
+*.pcapng
+
+# Temporary test output
+/test-output/
+
+# Editor files
+*.swp
+*.swo
+/.idea/
+/.vscode/
