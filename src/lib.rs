@@ -2,4 +2,5 @@
 
 pub mod protocol;
 pub mod runtime;
+pub mod server;
 pub mod transport;
