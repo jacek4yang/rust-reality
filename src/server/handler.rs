@@ -230,7 +230,7 @@ mod tests {
         request.push(VERSION);
         request.extend_from_slice(UNKNOWN_USER.as_bytes());
         request.push(0);
-        request.push(Command::Tcp.as_bytes());
+        request.push(Command::Tcp.as_byte());
         request.extend_from_slice(&443_u16.to_be_bytes());
         request.push(0x01);
         request.extend_from_slice(&Ipv4Addr::LOCALHOST.octets());

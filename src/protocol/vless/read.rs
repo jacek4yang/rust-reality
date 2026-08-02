@@ -237,7 +237,7 @@ mod tests {
         packet.push(VERSION);
         packet.extend_from_slice(&USER_ID);
         packet.push(0);
-        packet.push(Command::Tcp.as_bytes());
+        packet.push(Command::Tcp.as_byte());
         packet.extend_from_slice(&443_u16.to_be_bytes());
         packet.push(0x02);
         packet.push(11);

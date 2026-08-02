@@ -38,7 +38,7 @@ pub enum Command {
 
 impl Command {
     /// Returns the command's wire value.
-    pub const fn as_bytes(self) -> u8 {
+    pub const fn as_byte(self) -> u8 {
         self as u8
     }
 

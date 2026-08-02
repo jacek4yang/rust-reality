@@ -253,7 +253,7 @@ mod tests {
         input.extend_from_slice(&USER_ID);
         input.push(2);
         input.extend_from_slice(&[0xAA, 0xBB]);
-        input.push(Command::Tcp.as_bytes());
+        input.push(Command::Tcp.as_byte());
         input.extend_from_slice(&443_u16.to_be_bytes());
         input.push(0x02);
         input.push(11);
@@ -371,7 +371,7 @@ mod tests {
         input.push(VERSION);
         input.extend_from_slice(&USER_ID);
         input.push(0);
-        input.push(command.as_bytes());
+        input.push(command.as_byte());
 
         input
     }
