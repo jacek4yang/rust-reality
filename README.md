@@ -1,13 +1,15 @@
 # rust-reality
 
-A from-scratch Rust implementation of a VLESS and REALITY server.
+A Linux-focused, single-binary proxy whose public entry is VLESS + REALITY +
+`xtls-rprx-vision` and whose optional NXR hop connects line and landing nodes.
 
 The project is developed incrementally through protocol analysis,
 interoperability testing, packet capture, and reproducible benchmarks.
 
 ## Status
 
-This project is under active development and is not ready for production use.
+The public protocol is interoperable with Xray-core 26.7.28, but the project is
+still pre-release and requires deployment-specific review.
 
 ## Development
 
@@ -34,6 +36,13 @@ cargo bench --bench vless_decode
 
 Criterion writes reports below `target/criterion/`.
 
+An optimized binary also provides bounded machine-readable measurements:
+
+```shell
+./scripts/build-release.sh
+target/release/rust-reality benchmark --duration-ms 5000 --warmup-ms 1000
+```
+
 Benchmark results are intended for comparisons on the same host and under the same system
 conditions. End-to-end comparisons against Xray are recorded separately and are not enforced as CI pass/fail thresholds.
 
@@ -59,6 +68,9 @@ disk cache. Only labels referenced by routing rules are indexed.
 ## Architecture decisions
 
 Architecture decisions are recorded under [`docs/decisions`](docs/decisions).
+Deployment and security boundaries are documented in
+[`docs/deployment.md`](docs/deployment.md) and
+[`docs/threat-model.md`](docs/threat-model.md).
 
 ## Security
 
