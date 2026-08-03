@@ -59,3 +59,46 @@ Any future Xray performance comparison must separate:
 
 No result may claim resistance to upstream volumetric DDoS or generalize one VPS
 measurement to other CPUs and networks.
+
+## Recorded Xray 26.7.28 loopback comparison
+
+`scripts/benchmark-xray.sh` runs the same unmodified Xray SOCKS5 client against
+both servers through VLESS + REALITY + Vision. It randomizes implementation
+order with a recorded seed, verifies every response length, retains every
+sample, and emits machine-readable JSON. The Xray server's new default rule that
+blocks private destinations is explicitly overridden only so both servers can
+reach the same loopback origin.
+
+Recorded on 2026-08-03 using Linux 6.12.94, rustc 1.96.0, Xray 26.7.28, an
+Intel Core i3-8100 with four cores, `dl.google.com:443` as the REALITY target,
+nine samples per implementation, and 64 MiB per request:
+
+| Concurrency | Implementation | Mean MiB/s | p50 MiB/s | Minimum MiB/s | Mean request seconds |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 1 | rust-reality | 266.56 | 259.34 | 231.38 | 0.2339 |
+| 1 | Xray | 252.34 | 245.58 | 220.31 | 0.2481 |
+| 4 | rust-reality | 762.57 | 799.18 | 616.96 | 0.3159 |
+| 4 | Xray | 701.17 | 708.35 | 429.75 | 0.3390 |
+
+The rust-reality/Xray p50 throughput ratios were 1.056 at concurrency one and
+1.128 at concurrency four. On this host that is a modest measured lead, not a
+multi-fold improvement. The shared Xray client and Python origin remain part of
+both measurements, so this comparison isolates neither server CPU time nor
+maximum NIC capacity.
+
+No `tc netem` or equivalent privileged network impairment facility was
+available on this host. Consequently these results make no weak-network claim;
+latency, loss, reordering, and rate-limited testing must be collected separately
+on a controlled interface rather than simulated and mislabeled as network data.
+
+Reproduce either profile with:
+
+```shell
+SAMPLES=9 CONCURRENCY=1 PAYLOAD_MIB=64 \
+  XRAY_BIN=/home/jacek/src/Xray-core/xray \
+  ./scripts/benchmark-xray.sh > xray-c1.json
+
+SAMPLES=9 CONCURRENCY=4 PAYLOAD_MIB=64 \
+  XRAY_BIN=/home/jacek/src/Xray-core/xray \
+  ./scripts/benchmark-xray.sh > xray-c4.json
+```
