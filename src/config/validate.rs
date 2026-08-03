@@ -9,13 +9,19 @@ use std::{
 use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 use zeroize::Zeroizing;
 
-use super::{Config, GlobalRule, LogOutput, Network, OutboundConfig, PortMatcher, SecretString};
+use super::{
+    Config, GlobalRule, InboundConfig, LogOutput, Network, NxrInboundConfig, OutboundConfig,
+    PortMatcher, SecretString, VlessInboundConfig,
+};
 
 const MIN_LOG_FILE_BYTES: u64 = 64 * 1024;
 const MAX_LOG_FILE_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_LOG_FILES: u16 = 64;
 const MAX_BLACKHOLE_DELAY_MS: u64 = 30_000;
 const MAX_TIMEOUT_MS: u64 = 10 * 60 * 1_000;
+const MAX_NXR_TIME_DIFFERENCE_SECONDS: u64 = 300;
+const MAX_NXR_NONCE_ENTRIES: u32 = 1_000_000;
+const MAX_NXR_NONCE_RETENTION_SECONDS: u64 = 86_400;
 const MIN_RELAY_BUFFER_BYTES: usize = 4 * 1024;
 const MAX_RELAY_BUFFER_BYTES: usize = 1024 * 1024;
 
@@ -152,7 +158,7 @@ fn validate_asset_url(path: &str, value: &str) -> Result<(), ConfigError> {
 
 fn validate_inbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
     if config.inbounds.is_empty() {
-        return fail("inbounds", "must contain at least one protected listener");
+        return fail("inbounds", "must contain at least one listener");
     }
 
     let mut tags = HashSet::new();
@@ -160,111 +166,159 @@ fn validate_inbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
     let mut listeners = HashSet::new();
     for (index, inbound) in config.inbounds.iter().enumerate() {
         let path = format!("inbounds[{index}]");
-        validate_tag(&format!("{path}.tag"), &inbound.tag, &mut tags)?;
-        if inbound.port == 0 {
+        validate_tag(&format!("{path}.tag"), inbound.tag(), &mut tags)?;
+        if inbound.port() == 0 {
             return fail(format!("{path}.port"), "must be greater than zero");
         }
-        if !listeners.insert((inbound.listen, inbound.port)) {
+        if !listeners.insert((inbound.listen(), inbound.port())) {
             return fail(
                 format!("{path}.port"),
                 "listen address and port are configured more than once",
             );
         }
-        if inbound.settings.decryption != "none" {
-            return fail(format!("{path}.settings.decryption"), "must be none");
-        }
-        if inbound.settings.clients.is_empty() {
-            return fail(
-                format!("{path}.settings.clients"),
-                "must contain at least one UUID",
-            );
-        }
-        for (client_index, client) in inbound.settings.clients.iter().enumerate() {
-            let client_path = format!("{path}.settings.clients[{client_index}]");
-            validate_uuid(&format!("{client_path}.id"), &client.id)?;
-            let normalized = client.id.to_ascii_lowercase();
-            if !users.insert(normalized) {
-                return fail(
-                    format!("{client_path}.id"),
-                    "UUID is configured more than once",
-                );
-            }
-            if client.flow != "xtls-rprx-vision" {
-                return fail(format!("{client_path}.flow"), "must be xtls-rprx-vision");
-            }
-        }
-        if inbound.stream_settings.network != Network::Tcp {
-            return fail(format!("{path}.streamSettings.network"), "must be tcp");
-        }
-        if inbound.stream_settings.security != "reality" {
-            return fail(format!("{path}.streamSettings.security"), "must be reality");
-        }
-
-        let reality = &inbound.stream_settings.reality_settings;
-        validate_endpoint(
-            &format!("{path}.streamSettings.realitySettings.target"),
-            &reality.target,
-        )?;
-        if reality.server_names.is_empty() {
-            return fail(
-                format!("{path}.streamSettings.realitySettings.serverNames"),
-                "must contain at least one DNS name",
-            );
-        }
-        for (name_index, name) in reality.server_names.iter().enumerate() {
-            validate_hostname(
-                &format!("{path}.streamSettings.realitySettings.serverNames[{name_index}]"),
-                name,
-            )?;
-        }
-        validate_nonempty_secret(
-            &format!("{path}.streamSettings.realitySettings.privateKey"),
-            &reality.private_key,
-        )?;
-        let private_key_bytes = Zeroizing::new(
-            BASE64_URL_SAFE_NO_PAD
-                .decode(reality.private_key.expose())
-                .map_err(|_| {
-                    ConfigError::new(
-                        format!("{path}.streamSettings.realitySettings.privateKey"),
-                        "must be URL-safe unpadded base64",
-                    )
-                })?,
-        );
-        if private_key_bytes.len() != 32 {
-            return fail(
-                format!("{path}.streamSettings.realitySettings.privateKey"),
-                "must decode to exactly 32 bytes",
-            );
-        }
-        if reality.short_ids.is_empty() {
-            return fail(
-                format!("{path}.streamSettings.realitySettings.shortIds"),
-                "must contain at least one short ID",
-            );
-        }
-        let mut short_ids = HashSet::new();
-        for (short_index, short_id) in reality.short_ids.iter().enumerate() {
-            let short_path =
-                format!("{path}.streamSettings.realitySettings.shortIds[{short_index}]");
-            if !(2..=16).contains(&short_id.len())
-                || !short_id.len().is_multiple_of(2)
-                || !short_id.bytes().all(|byte| byte.is_ascii_hexdigit())
-            {
-                return fail(short_path, "must be 2 to 16 even hexadecimal characters");
-            }
-            if !short_ids.insert(short_id.to_ascii_lowercase()) {
-                return fail(short_path, "short ID is configured more than once");
-            }
-        }
-        if reality.max_time_diff_ms > MAX_TIMEOUT_MS {
-            return fail(
-                format!("{path}.streamSettings.realitySettings.maxTimeDiffMs"),
-                format!("must not exceed {MAX_TIMEOUT_MS}"),
-            );
+        match inbound {
+            InboundConfig::Vless(inbound) => validate_vless_inbound(&path, inbound, &mut users)?,
+            InboundConfig::Nxr(inbound) => validate_nxr_inbound(&path, inbound)?,
         }
     }
     Ok(users)
+}
+
+fn validate_vless_inbound(
+    path: &str,
+    inbound: &VlessInboundConfig,
+    users: &mut HashSet<String>,
+) -> Result<(), ConfigError> {
+    if inbound.settings.decryption != "none" {
+        return fail(format!("{path}.settings.decryption"), "must be none");
+    }
+    if inbound.settings.clients.is_empty() {
+        return fail(
+            format!("{path}.settings.clients"),
+            "must contain at least one UUID",
+        );
+    }
+    for (client_index, client) in inbound.settings.clients.iter().enumerate() {
+        let client_path = format!("{path}.settings.clients[{client_index}]");
+        validate_uuid(&format!("{client_path}.id"), &client.id)?;
+        let normalized = client.id.to_ascii_lowercase();
+        if !users.insert(normalized) {
+            return fail(
+                format!("{client_path}.id"),
+                "UUID is configured more than once",
+            );
+        }
+        if client.flow != "xtls-rprx-vision" {
+            return fail(format!("{client_path}.flow"), "must be xtls-rprx-vision");
+        }
+    }
+    if inbound.stream_settings.network != Network::Tcp {
+        return fail(format!("{path}.streamSettings.network"), "must be tcp");
+    }
+    if inbound.stream_settings.security != "reality" {
+        return fail(format!("{path}.streamSettings.security"), "must be reality");
+    }
+
+    let reality = &inbound.stream_settings.reality_settings;
+    validate_endpoint(
+        &format!("{path}.streamSettings.realitySettings.target"),
+        &reality.target,
+    )?;
+    if reality.server_names.is_empty() {
+        return fail(
+            format!("{path}.streamSettings.realitySettings.serverNames"),
+            "must contain at least one DNS name",
+        );
+    }
+    for (name_index, name) in reality.server_names.iter().enumerate() {
+        validate_hostname(
+            &format!("{path}.streamSettings.realitySettings.serverNames[{name_index}]"),
+            name,
+        )?;
+    }
+    validate_base64_key(
+        &format!("{path}.streamSettings.realitySettings.privateKey"),
+        &reality.private_key,
+    )?;
+    if reality.short_ids.is_empty() {
+        return fail(
+            format!("{path}.streamSettings.realitySettings.shortIds"),
+            "must contain at least one short ID",
+        );
+    }
+    let mut short_ids = HashSet::new();
+    for (short_index, short_id) in reality.short_ids.iter().enumerate() {
+        let short_path = format!("{path}.streamSettings.realitySettings.shortIds[{short_index}]");
+        if !(2..=16).contains(&short_id.len())
+            || !short_id.len().is_multiple_of(2)
+            || !short_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return fail(short_path, "must be 2 to 16 even hexadecimal characters");
+        }
+        if !short_ids.insert(short_id.to_ascii_lowercase()) {
+            return fail(short_path, "short ID is configured more than once");
+        }
+    }
+    if reality.max_time_diff_ms > MAX_TIMEOUT_MS {
+        return fail(
+            format!("{path}.streamSettings.realitySettings.maxTimeDiffMs"),
+            format!("must not exceed {MAX_TIMEOUT_MS}"),
+        );
+    }
+    Ok(())
+}
+
+fn validate_nxr_inbound(path: &str, inbound: &NxrInboundConfig) -> Result<(), ConfigError> {
+    let settings = &inbound.settings;
+    validate_base64_key(
+        &format!("{path}.settings.preSharedKey"),
+        &settings.pre_shared_key,
+    )?;
+    if !(1..=MAX_NXR_TIME_DIFFERENCE_SECONDS).contains(&settings.max_time_difference_seconds) {
+        return fail(
+            format!("{path}.settings.maxTimeDifferenceSeconds"),
+            format!("must be between 1 and {MAX_NXR_TIME_DIFFERENCE_SECONDS}"),
+        );
+    }
+    if !(1..=MAX_NXR_NONCE_ENTRIES).contains(&settings.max_nonce_entries) {
+        return fail(
+            format!("{path}.settings.maxNonceEntries"),
+            format!("must be between 1 and {MAX_NXR_NONCE_ENTRIES}"),
+        );
+    }
+    let minimum_retention = settings
+        .max_time_difference_seconds
+        .saturating_mul(2)
+        .saturating_add(1);
+    if !(minimum_retention..=MAX_NXR_NONCE_RETENTION_SECONDS)
+        .contains(&settings.nonce_retention_seconds)
+    {
+        return fail(
+            format!("{path}.settings.nonceRetentionSeconds"),
+            format!("must be between {minimum_retention} and {MAX_NXR_NONCE_RETENTION_SECONDS}"),
+        );
+    }
+    validate_timeout(
+        &format!("{path}.settings.authenticationTimeoutMs"),
+        settings.authentication_timeout_ms,
+    )?;
+    validate_timeout(
+        &format!("{path}.settings.connectTimeoutMs"),
+        settings.connect_timeout_ms,
+    )
+}
+
+fn validate_base64_key(path: &str, key: &SecretString) -> Result<(), ConfigError> {
+    validate_nonempty_secret(path, key)?;
+    let decoded = Zeroizing::new(
+        BASE64_URL_SAFE_NO_PAD
+            .decode(key.expose())
+            .map_err(|_| ConfigError::new(path, "must be URL-safe unpadded base64"))?,
+    );
+    if decoded.len() != 32 {
+        return fail(path, "must decode to exactly 32 bytes");
+    }
+    Ok(())
 }
 
 fn validate_outbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
@@ -361,6 +415,7 @@ fn validate_routing(
     let inbound_tags: HashSet<&str> = config
         .inbounds
         .iter()
+        .filter_map(InboundConfig::as_vless)
         .map(|inbound| inbound.tag.as_str())
         .collect();
     for (index, rule) in config.routing.global_rules.iter().enumerate() {
@@ -372,7 +427,11 @@ fn validate_routing(
         )?;
     }
     if config.routing.users.is_empty() {
-        return fail("routing.users", "must contain at least one user policy");
+        return if users.is_empty() {
+            Ok(())
+        } else {
+            fail("routing.users", "must contain at least one user policy")
+        };
     }
 
     let mut names = HashSet::new();
@@ -750,7 +809,8 @@ fn fail<T>(path: impl Into<String>, message: impl Into<String>) -> Result<T, Con
 #[cfg(test)]
 mod tests {
     use crate::config::{
-        Config, LogOutput, NxrSettings, OutboundConfig, SecretString, validate_config,
+        Config, LogOutput, NxrInboundConfig, NxrInboundSettings, NxrSettings, OutboundConfig,
+        SecretString, validate_config,
     };
 
     use super::ConfigError;
@@ -767,7 +827,11 @@ mod tests {
     #[test]
     fn rejects_plain_vless_inbound() {
         let mut config = valid_config();
-        config.inbounds[0].stream_settings.security = "none".to_owned();
+        config.inbounds[0]
+            .as_vless_mut()
+            .expect("fixture must contain VLESS")
+            .stream_settings
+            .security = "none".to_owned();
 
         assert_eq!(
             validate_config(&config)
@@ -781,8 +845,11 @@ mod tests {
     fn rejects_duplicate_listener_addresses() {
         let mut config = valid_config();
         let mut duplicate = config.inbounds[0].clone();
-        duplicate.tag = "duplicate-inbound".to_owned();
-        duplicate.settings.clients[0].id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee".to_owned();
+        let duplicate_vless = duplicate
+            .as_vless_mut()
+            .expect("fixture must contain VLESS");
+        duplicate_vless.tag = "duplicate-inbound".to_owned();
+        duplicate_vless.settings.clients[0].id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee".to_owned();
         config.inbounds.push(duplicate);
 
         assert_eq!(
@@ -834,6 +901,8 @@ mod tests {
     fn rejects_malformed_reality_private_key() {
         let mut config = valid_config();
         config.inbounds[0]
+            .as_vless_mut()
+            .expect("fixture must contain VLESS")
             .stream_settings
             .reality_settings
             .private_key = SecretString::new("not-base64!");
@@ -850,6 +919,8 @@ mod tests {
     fn bounds_reality_client_clock_difference() {
         let mut config = valid_config();
         config.inbounds[0]
+            .as_vless_mut()
+            .expect("fixture must contain VLESS")
             .stream_settings
             .reality_settings
             .max_time_diff_ms = 600_001;
@@ -859,6 +930,58 @@ mod tests {
                 .expect_err("unbounded client-clock difference must fail")
                 .path(),
             "inbounds[0].streamSettings.realitySettings.maxTimeDiffMs"
+        );
+    }
+
+    #[test]
+    fn accepts_internal_nxr_listener_without_public_routing_identity() {
+        let mut config = valid_config();
+        let key = SecretString::new("WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo");
+        config
+            .inbounds
+            .push(crate::config::InboundConfig::Nxr(NxrInboundConfig {
+                tag: "landing-internal".to_owned(),
+                listen: "127.0.0.1".parse().expect("address must parse"),
+                port: 9443,
+                settings: NxrInboundSettings {
+                    pre_shared_key: key,
+                    max_time_difference_seconds: 30,
+                    max_nonce_entries: 4_096,
+                    nonce_retention_seconds: 120,
+                    authentication_timeout_ms: 3_000,
+                    connect_timeout_ms: 10_000,
+                },
+            }));
+
+        validate_config(&config).expect("NXR listener must validate independently");
+    }
+
+    #[test]
+    fn nxr_replay_retention_covers_the_entire_timestamp_window() {
+        let mut config = valid_config();
+        config
+            .inbounds
+            .push(crate::config::InboundConfig::Nxr(NxrInboundConfig {
+                tag: "landing-internal".to_owned(),
+                listen: "127.0.0.1".parse().expect("address must parse"),
+                port: 9443,
+                settings: NxrInboundSettings {
+                    pre_shared_key: SecretString::new(
+                        "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo",
+                    ),
+                    max_time_difference_seconds: 30,
+                    max_nonce_entries: 4_096,
+                    nonce_retention_seconds: 60,
+                    authentication_timeout_ms: 3_000,
+                    connect_timeout_ms: 10_000,
+                },
+            }));
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("short replay retention must fail")
+                .path(),
+            "inbounds[1].settings.nonceRetentionSeconds"
         );
     }
 

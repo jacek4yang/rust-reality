@@ -234,10 +234,71 @@ pub enum DnsStrategy {
     IpOnDemand,
 }
 
+/// One strictly typed listener.
+///
+/// Public clients may enter only through the VLESS variant, whose validation
+/// requires REALITY and Vision. The NXR variant is an internal landing-node
+/// listener and is intentionally a separate protocol boundary.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(deny_unknown_fields, tag = "protocol", rename_all = "lowercase")]
+pub enum InboundConfig {
+    /// Public VLESS + REALITY + Vision listener.
+    Vless(VlessInboundConfig),
+    /// Firewall-restricted internal NXR landing listener.
+    Nxr(NxrInboundConfig),
+}
+
+impl InboundConfig {
+    /// Returns the unique routing tag.
+    #[must_use]
+    pub fn tag(&self) -> &str {
+        match self {
+            Self::Vless(inbound) => &inbound.tag,
+            Self::Nxr(inbound) => &inbound.tag,
+        }
+    }
+
+    /// Returns the configured bind address.
+    #[must_use]
+    pub const fn listen(&self) -> IpAddr {
+        match self {
+            Self::Vless(inbound) => inbound.listen,
+            Self::Nxr(inbound) => inbound.listen,
+        }
+    }
+
+    /// Returns the configured TCP port.
+    #[must_use]
+    pub const fn port(&self) -> u16 {
+        match self {
+            Self::Vless(inbound) => inbound.port,
+            Self::Nxr(inbound) => inbound.port,
+        }
+    }
+
+    /// Returns public VLESS state only for a public listener.
+    #[must_use]
+    pub const fn as_vless(&self) -> Option<&VlessInboundConfig> {
+        match self {
+            Self::Vless(inbound) => Some(inbound),
+            Self::Nxr(_) => None,
+        }
+    }
+
+    /// Returns mutable public VLESS state only for a public listener.
+    #[must_use]
+    pub const fn as_vless_mut(&mut self) -> Option<&mut VlessInboundConfig> {
+        match self {
+            Self::Vless(inbound) => Some(inbound),
+            Self::Nxr(_) => None,
+        }
+    }
+}
+
 /// One public VLESS + REALITY + Vision listener.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct InboundConfig {
+pub struct VlessInboundConfig {
     /// Unique routing tag.
     pub tag: String,
     /// Address to bind.
@@ -248,6 +309,63 @@ pub struct InboundConfig {
     pub settings: VlessInboundSettings,
     /// Mandatory TCP, REALITY, and Vision settings.
     pub stream_settings: StreamSettings,
+}
+
+/// One internal NXR landing listener.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct NxrInboundConfig {
+    /// Unique routing and operational tag.
+    pub tag: String,
+    /// Firewall-restricted address to bind.
+    pub listen: IpAddr,
+    /// Raw NXR TCP port to bind.
+    pub port: u16,
+    /// Independent per-flow authentication and replay policy.
+    pub settings: NxrInboundSettings,
+}
+
+/// Authentication and bounded replay policy for one NXR landing listener.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct NxrInboundSettings {
+    /// URL-safe unpadded base64 encoding of an independent 32-byte PSK.
+    pub pre_shared_key: SecretString,
+    /// Maximum accepted absolute wall-clock difference in seconds.
+    #[serde(default = "default_nxr_time_difference_seconds")]
+    pub max_time_difference_seconds: u64,
+    /// Maximum retained verified nonces for this listener.
+    #[serde(default = "default_nxr_nonce_entries")]
+    pub max_nonce_entries: u32,
+    /// Monotonic replay retention in seconds.
+    #[serde(default = "default_nxr_nonce_retention_seconds")]
+    pub nonce_retention_seconds: u64,
+    /// Absolute deadline for reading the one authentication request.
+    #[serde(default = "default_nxr_authentication_timeout_ms")]
+    pub authentication_timeout_ms: u64,
+    /// Absolute deadline for connecting to the authenticated destination.
+    #[serde(default = "default_nxr_connect_timeout_ms")]
+    pub connect_timeout_ms: u64,
+}
+
+const fn default_nxr_time_difference_seconds() -> u64 {
+    30
+}
+
+const fn default_nxr_nonce_entries() -> u32 {
+    65_536
+}
+
+const fn default_nxr_nonce_retention_seconds() -> u64 {
+    120
+}
+
+const fn default_nxr_authentication_timeout_ms() -> u64 {
+    3_000
+}
+
+const fn default_nxr_connect_timeout_ms() -> u64 {
+    10_000
 }
 
 /// VLESS users for one inbound.

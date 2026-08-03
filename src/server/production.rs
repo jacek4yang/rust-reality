@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     error::Error,
     fmt,
     future::Future,
@@ -22,7 +22,7 @@ use tokio::{
 
 use crate::{
     assets::{AssetLoadError, AssetSnapshot},
-    config::{Config, ConfigError, ConfigLoadError, load_config, validate_config},
+    config::{Config, ConfigError, ConfigLoadError, InboundConfig, load_config, validate_config},
     logging::{AdmissionResource, LogEvent, LogWriteError, Logger, RejectionReason},
     protocol::reality::ReplayCache,
     runtime::{
@@ -33,6 +33,7 @@ use crate::{
 };
 
 use super::{
+    nxr::{NxrLandingConfigError, NxrLandingError, NxrLandingHandler, NxrReplayCache},
     reality::{
         RealityAcceptError, RealityAcceptOutcome, RealityAcceptor, RealityAcceptorConfigError,
     },
@@ -88,7 +89,8 @@ impl ProductionServer {
     ) -> Result<Self, ProductionServerError> {
         let replay_governor = ResourceGovernor::new(&config.policy.resource_governor);
         let replay = ReplayCache::new(replay_governor, &config.policy.resource_governor);
-        let initial = RuntimeSnapshot::compile(config, 0, replay.clone())?;
+        let nxr_replays = compile_nxr_replays(&config)?;
+        let initial = RuntimeSnapshot::compile(config, 0, replay.clone(), &nxr_replays)?;
         let mut addresses: Vec<_> = initial.connections.keys().copied().collect();
         addresses.sort_unstable();
         emit(&initial.logger, &LogEvent::ServerStarting);
@@ -103,6 +105,7 @@ impl ProductionServer {
             runtime: Arc::new(RuntimeStore {
                 current: ArcSwap::from(Arc::new(initial)),
                 replay,
+                nxr_replays,
                 generation: AtomicU64::new(0),
                 update: Mutex::new(()),
             }),
@@ -273,6 +276,7 @@ impl ProductionServer {
 struct RuntimeStore {
     current: ArcSwap<RuntimeSnapshot>,
     replay: ReplayCache,
+    nxr_replays: HashMap<SocketAddr, NxrReplayCache>,
     generation: AtomicU64,
     update: Mutex<()>,
 }
@@ -309,7 +313,8 @@ impl RuntimeStore {
             .load(Ordering::Acquire)
             .checked_add(1)
             .ok_or(RuntimeUpdateError::GenerationExhausted)?;
-        let candidate = RuntimeSnapshot::compile(config, generation, self.replay.clone())?;
+        let candidate =
+            RuntimeSnapshot::compile(config, generation, self.replay.clone(), &self.nxr_replays)?;
         self.current.store(Arc::new(candidate));
         self.generation.store(generation, Ordering::Release);
         let published = self.load();
@@ -335,6 +340,7 @@ impl RuntimeSnapshot {
         config: Config,
         generation: u64,
         replay: ReplayCache,
+        nxr_replays: &HashMap<SocketAddr, NxrReplayCache>,
     ) -> Result<Self, RuntimeUpdateError> {
         let logger = Logger::new(&config.log)?;
         let assets = Arc::new(AssetSnapshot::load_generation(&config, generation)?);
@@ -345,21 +351,34 @@ impl RuntimeSnapshot {
             .try_reserve(config.inbounds.len())
             .map_err(|_| RuntimeUpdateError::Unavailable)?;
         for inbound in &config.inbounds {
-            let address = SocketAddr::new(inbound.listen, inbound.port);
-            let reality = RealityAcceptor::from_inbound_with_replay(
-                inbound,
-                governor.clone(),
-                &config.policy.resource_governor,
-                replay.clone(),
-            )?;
+            let address = SocketAddr::new(inbound.listen(), inbound.port());
+            let handler = match inbound {
+                InboundConfig::Vless(inbound) => ConnectionHandler::Public {
+                    reality: Box::new(RealityAcceptor::from_inbound_with_replay(
+                        inbound,
+                        governor.clone(),
+                        &config.policy.resource_governor,
+                        replay.clone(),
+                    )?),
+                    vision: vision.clone(),
+                },
+                InboundConfig::Nxr(inbound) => {
+                    let replay = nxr_replays
+                        .get(&address)
+                        .cloned()
+                        .ok_or(RuntimeUpdateError::MissingNxrReplay(address))?;
+                    ConnectionHandler::Nxr(NxrLandingHandler::from_inbound_with_replay(
+                        inbound, replay,
+                    )?)
+                }
+            };
             if connections
                 .insert(
                     address,
                     Arc::new(ConnectionRuntime {
-                        tag: Arc::from(inbound.tag.as_str()),
+                        tag: Arc::from(inbound.tag()),
                         governor: governor.clone(),
-                        reality,
-                        vision: vision.clone(),
+                        handler,
                     }),
                 )
                 .is_some()
@@ -379,31 +398,84 @@ impl RuntimeSnapshot {
 struct ConnectionRuntime {
     tag: Arc<str>,
     governor: ResourceGovernor,
-    reality: RealityAcceptor,
-    vision: VisionHandler,
+    handler: ConnectionHandler,
+}
+
+enum ConnectionHandler {
+    Public {
+        reality: Box<RealityAcceptor>,
+        vision: VisionHandler,
+    },
+    Nxr(NxrLandingHandler),
 }
 
 fn ensure_hot_compatible(
     current: &RuntimeSnapshot,
     candidate: &Config,
 ) -> Result<(), RuntimeUpdateError> {
-    let addresses: HashSet<_> = candidate
-        .inbounds
-        .iter()
-        .map(|inbound| SocketAddr::new(inbound.listen, inbound.port))
-        .collect();
-    if addresses.len() != current.connections.len()
-        || !current
-            .connections
-            .keys()
-            .all(|address| addresses.contains(address))
-    {
+    if listener_topology(candidate) != listener_topology(&current.config) {
         return Err(RuntimeUpdateError::ListenerTopologyChanged);
     }
     if candidate.policy.resource_governor != current.config.policy.resource_governor {
         return Err(RuntimeUpdateError::ReplayPolicyChanged);
     }
+    if nxr_replay_policy(candidate) != nxr_replay_policy(&current.config) {
+        return Err(RuntimeUpdateError::NxrReplayPolicyChanged);
+    }
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ListenerProtocol {
+    Vless,
+    Nxr,
+}
+
+fn listener_topology(config: &Config) -> HashMap<SocketAddr, ListenerProtocol> {
+    config
+        .inbounds
+        .iter()
+        .map(|inbound| {
+            let protocol = match inbound {
+                InboundConfig::Vless(_) => ListenerProtocol::Vless,
+                InboundConfig::Nxr(_) => ListenerProtocol::Nxr,
+            };
+            (SocketAddr::new(inbound.listen(), inbound.port()), protocol)
+        })
+        .collect()
+}
+
+fn nxr_replay_policy(config: &Config) -> HashMap<SocketAddr, (u32, u64)> {
+    config
+        .inbounds
+        .iter()
+        .filter_map(|inbound| match inbound {
+            InboundConfig::Vless(_) => None,
+            InboundConfig::Nxr(inbound) => Some((
+                SocketAddr::new(inbound.listen, inbound.port),
+                (
+                    inbound.settings.max_nonce_entries,
+                    inbound.settings.nonce_retention_seconds,
+                ),
+            )),
+        })
+        .collect()
+}
+
+fn compile_nxr_replays(
+    config: &Config,
+) -> Result<HashMap<SocketAddr, NxrReplayCache>, RuntimeUpdateError> {
+    let mut replays = HashMap::new();
+    for inbound in &config.inbounds {
+        if let InboundConfig::Nxr(inbound) = inbound {
+            let address = SocketAddr::new(inbound.listen, inbound.port);
+            let replay = NxrReplayCache::from_inbound(inbound)?;
+            if replays.insert(address, replay).is_some() {
+                return Err(RuntimeUpdateError::DuplicateListener(address));
+            }
+        }
+    }
+    Ok(replays)
 }
 
 async fn run_listener(
@@ -464,11 +536,18 @@ async fn run_connection(
     logger: &Logger,
 ) -> io::Result<()> {
     let result = async {
-        match state.reality.accept(stream, peer).await? {
-            RealityAcceptOutcome::Established(established) => {
-                state.vision.handle(established).await?;
+        match &state.handler {
+            ConnectionHandler::Public { reality, vision } => {
+                match reality.accept(stream, peer).await? {
+                    RealityAcceptOutcome::Established(established) => {
+                        vision.handle(established).await?;
+                    }
+                    RealityAcceptOutcome::Fallback(_) => {}
+                }
             }
-            RealityAcceptOutcome::Fallback(_) => {}
+            ConnectionHandler::Nxr(handler) => {
+                handler.handle(stream).await?;
+            }
         }
         Ok::<(), ConnectionRunError>(())
     }
@@ -582,6 +661,7 @@ async fn shutdown_signal() -> Result<(), io::Error> {
 enum ConnectionRunError {
     Reality(RealityAcceptError),
     Vision(VisionSessionError),
+    Nxr(NxrLandingError),
 }
 
 impl ConnectionRunError {
@@ -589,12 +669,17 @@ impl ConnectionRunError {
         match self {
             Self::Reality(RealityAcceptError::Admission(_)) => RejectionReason::ResourceLimit,
             Self::Reality(RealityAcceptError::HandshakeWriteTimeout)
-            | Self::Vision(VisionSessionError::Timeout) => RejectionReason::Timeout,
+            | Self::Vision(VisionSessionError::Timeout)
+            | Self::Nxr(NxrLandingError::Timeout) => RejectionReason::Timeout,
             Self::Reality(RealityAcceptError::Fallback(_)) => RejectionReason::Outbound,
             Self::Reality(_) => RejectionReason::Authentication,
             Self::Vision(VisionSessionError::Route(_) | VisionSessionError::Outbound(_)) => {
                 RejectionReason::Outbound
             }
+            Self::Nxr(NxrLandingError::Destination(_) | NxrLandingError::Relay(_)) => {
+                RejectionReason::Outbound
+            }
+            Self::Nxr(_) => RejectionReason::Authentication,
             Self::Vision(_) => RejectionReason::Protocol,
         }
     }
@@ -612,11 +697,18 @@ impl From<VisionSessionError> for ConnectionRunError {
     }
 }
 
+impl From<NxrLandingError> for ConnectionRunError {
+    fn from(source: NxrLandingError) -> Self {
+        Self::Nxr(source)
+    }
+}
+
 impl fmt::Display for ConnectionRunError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Reality(source) => source.fmt(formatter),
             Self::Vision(source) => source.fmt(formatter),
+            Self::Nxr(source) => source.fmt(formatter),
         }
     }
 }
@@ -626,6 +718,7 @@ impl Error for ConnectionRunError {
         match self {
             Self::Reality(source) => Some(source),
             Self::Vision(source) => Some(source),
+            Self::Nxr(source) => Some(source),
         }
     }
 }
@@ -639,9 +732,12 @@ pub enum RuntimeUpdateError {
     Assets(AssetLoadError),
     Routing(RoutingCompileError),
     Reality(RealityAcceptorConfigError),
+    Nxr(NxrLandingConfigError),
     DuplicateListener(SocketAddr),
+    MissingNxrReplay(SocketAddr),
     ListenerTopologyChanged,
     ReplayPolicyChanged,
+    NxrReplayPolicyChanged,
     GenerationExhausted,
     Unavailable,
 }
@@ -655,12 +751,22 @@ impl fmt::Display for RuntimeUpdateError {
             Self::Assets(source) => source.fmt(formatter),
             Self::Routing(source) => source.fmt(formatter),
             Self::Reality(source) => source.fmt(formatter),
+            Self::Nxr(source) => source.fmt(formatter),
             Self::DuplicateListener(address) => write!(formatter, "duplicate listener {address}"),
+            Self::MissingNxrReplay(address) => {
+                write!(
+                    formatter,
+                    "NXR replay cache is missing for listener {address}"
+                )
+            }
             Self::ListenerTopologyChanged => {
                 formatter.write_str("listener addresses require a process restart")
             }
             Self::ReplayPolicyChanged => {
                 formatter.write_str("resource governor policy requires a process restart")
+            }
+            Self::NxrReplayPolicyChanged => {
+                formatter.write_str("NXR replay policy requires a process restart")
             }
             Self::GenerationExhausted => formatter.write_str("runtime generation exhausted"),
             Self::Unavailable => formatter.write_str("runtime update is unavailable"),
@@ -677,9 +783,12 @@ impl Error for RuntimeUpdateError {
             Self::Assets(source) => Some(source),
             Self::Routing(source) => Some(source),
             Self::Reality(source) => Some(source),
+            Self::Nxr(source) => Some(source),
             Self::DuplicateListener(_)
+            | Self::MissingNxrReplay(_)
             | Self::ListenerTopologyChanged
             | Self::ReplayPolicyChanged
+            | Self::NxrReplayPolicyChanged
             | Self::GenerationExhausted
             | Self::Unavailable => None,
         }
@@ -719,6 +828,12 @@ impl From<RoutingCompileError> for RuntimeUpdateError {
 impl From<RealityAcceptorConfigError> for RuntimeUpdateError {
     fn from(source: RealityAcceptorConfigError) -> Self {
         Self::Reality(source)
+    }
+}
+
+impl From<NxrLandingConfigError> for RuntimeUpdateError {
+    fn from(source: NxrLandingConfigError) -> Self {
+        Self::Nxr(source)
     }
 }
 
@@ -773,12 +888,30 @@ impl From<RuntimeUpdateError> for ProductionServerError {
 
 #[cfg(test)]
 mod tests {
-    use std::{io, net::IpAddr, str::FromStr, sync::Arc};
+    use std::{
+        io,
+        net::{IpAddr, Ipv4Addr},
+        str::FromStr,
+        sync::Arc,
+        time::Duration,
+    };
+
+    use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+        sync::oneshot,
+        time,
+    };
 
     use super::{ProductionServer, RuntimeUpdateError};
     use crate::{
-        config::{GenerateConfigInput, generate_minimal_config},
-        protocol::vless::VISION_FLOW,
+        config::{
+            DirectBarrierConfig, GenerateConfigInput, InboundConfig, NxrInboundConfig,
+            NxrInboundSettings, NxrSettings, OutboundConfig, SecretString, generate_minimal_config,
+        },
+        protocol::vless::{Address, Destination, VISION_FLOW},
+        server::outbound::{OutboundConnectOutcome, OutboundRegistry},
     };
 
     #[test]
@@ -787,7 +920,12 @@ mod tests {
 
         ProductionServer::from_config(generated.config()).expect("server must compile");
         assert_eq!(
-            generated.config().inbounds[0].settings.clients[0].flow,
+            generated.config().inbounds[0]
+                .as_vless()
+                .expect("generated listener must be VLESS")
+                .settings
+                .clients[0]
+                .flow,
             VISION_FLOW
         );
     }
@@ -802,6 +940,101 @@ mod tests {
             .run_until(async { Ok(()) })
             .await
             .expect("injected shutdown must stop every listener");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn serves_internal_nxr_alongside_public_reality_vision() {
+        let public_port = unused_loopback_port();
+        let mut landing_port = unused_loopback_port();
+        while landing_port == public_port {
+            landing_port = unused_loopback_port();
+        }
+        let key_bytes = [0x5a; 32];
+        let encoded_key = BASE64_URL_SAFE_NO_PAD.encode(key_bytes);
+        let generated = generated_config(public_port);
+        let mut config = generated.config().clone();
+        config.inbounds.push(InboundConfig::Nxr(NxrInboundConfig {
+            tag: "landing-internal".to_owned(),
+            listen: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: landing_port,
+            settings: NxrInboundSettings {
+                pre_shared_key: SecretString::new(encoded_key.clone()),
+                max_time_difference_seconds: 30,
+                max_nonce_entries: 4_096,
+                nonce_retention_seconds: 120,
+                authentication_timeout_ms: 1_000,
+                connect_timeout_ms: 1_000,
+            },
+        }));
+        let server = ProductionServer::from_config(&config).expect("combined server must compile");
+        let target = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("target must bind");
+        let destination = Destination::new(
+            Address::Ipv4(Ipv4Addr::LOCALHOST),
+            target
+                .local_addr()
+                .expect("target address must exist")
+                .port(),
+        );
+        let registry = OutboundRegistry::new(
+            &[OutboundConfig::Nxr {
+                tag: "landing".to_owned(),
+                settings: NxrSettings {
+                    address: Ipv4Addr::LOCALHOST.to_string(),
+                    port: landing_port,
+                    pre_shared_key: SecretString::new(encoded_key),
+                },
+            }],
+            &DirectBarrierConfig::default(),
+            Duration::from_secs(1),
+        );
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+        let server_task = tokio::spawn(server.run_until(async move {
+            shutdown_receiver
+                .await
+                .map_err(|_| io::Error::other("test shutdown sender dropped"))
+        }));
+        let target_task = tokio::spawn(async move {
+            let (mut stream, _) = target.accept().await?;
+            let mut payload = Vec::new();
+            stream.read_to_end(&mut payload).await?;
+            assert_eq!(payload, b"ping");
+            stream.write_all(b"pong").await?;
+            stream.shutdown().await
+        });
+
+        let connection = time::timeout(Duration::from_secs(2), async {
+            loop {
+                match registry.connect("landing", &destination).await {
+                    Ok(OutboundConnectOutcome::Connected(connection)) => break connection,
+                    Ok(OutboundConnectOutcome::Blackholed) | Err(_) => {
+                        time::sleep(Duration::from_millis(10)).await;
+                    }
+                }
+            }
+        })
+        .await
+        .expect("NXR listener must become ready");
+        let (mut stream, _permit) = connection.into_parts();
+        stream.write_all(b"ping").await.expect("payload must write");
+        stream.shutdown().await.expect("uplink must half-close");
+        let mut response = Vec::new();
+        stream
+            .read_to_end(&mut response)
+            .await
+            .expect("response must read");
+        assert_eq!(response, b"pong");
+
+        shutdown_sender.send(()).expect("shutdown must send");
+        target_task
+            .await
+            .expect("target task must join")
+            .expect("target exchange must succeed");
+        server_task
+            .await
+            .expect("server task must join")
+            .expect("server must stop cleanly");
     }
 
     #[test]
@@ -833,7 +1066,10 @@ mod tests {
             ProductionServer::from_config(generated.config()).expect("server must compile");
         let previous = server.runtime.load();
         let mut replacement = generated.config().clone();
-        replacement.inbounds[0].port = 9443;
+        replacement.inbounds[0]
+            .as_vless_mut()
+            .expect("generated listener must be VLESS")
+            .port = 9443;
 
         assert!(matches!(
             server.runtime.publish(replacement),

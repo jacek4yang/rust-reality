@@ -3,7 +3,7 @@ use std::net::IpAddr;
 use super::{
     AssetsConfig, Config, ConfigError, DnsConfig, InboundConfig, LogConfig, Network,
     OutboundConfig, PolicyConfig, RealityConfig, RoutingConfig, StreamSettings, UserPolicy,
-    VlessClient, VlessInboundSettings, validate_config,
+    VlessClient, VlessInboundConfig, VlessInboundSettings, validate_config,
 };
 use crate::crypto::{
     KeyGenerationError, generate_short_id, generate_uuid, generate_x25519_key_pair,
@@ -105,7 +105,7 @@ pub fn generate_minimal_config(
         log: LogConfig::default(),
         assets: AssetsConfig::default(),
         dns: DnsConfig::default(),
-        inbounds: vec![InboundConfig {
+        inbounds: vec![InboundConfig::Vless(VlessInboundConfig {
             tag: "public-reality".to_owned(),
             listen: input.listen,
             port: input.port,
@@ -128,7 +128,7 @@ pub fn generate_minimal_config(
                     max_time_diff_ms: 60_000,
                 },
             },
-        }],
+        })],
         outbounds: vec![OutboundConfig::Direct {
             tag: "direct".to_owned(),
         }],

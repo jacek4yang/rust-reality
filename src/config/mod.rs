@@ -13,10 +13,11 @@ pub use generate::{
 pub use io::{ConfigLoadError, MAX_CONFIG_BYTES, format_config, load_config};
 pub use model::{
     AssetsConfig, BlackholeSettings, Config, DirectBarrierConfig, DnsConfig, DnsStrategy,
-    FileLogConfig, GlobalRule, InboundConfig, LogConfig, LogLevel, LogOutput, Network, NxrSettings,
-    OutboundConfig, PolicyConfig, PortMatcher, RealityConfig, RelayPolicy, ResourceGovernorConfig,
-    RouteRule, RoutingConfig, SecretString, Socks5Settings, StreamSettings, UserPolicy,
-    VlessClient, VlessInboundSettings,
+    FileLogConfig, GlobalRule, InboundConfig, LogConfig, LogLevel, LogOutput, Network,
+    NxrInboundConfig, NxrInboundSettings, NxrSettings, OutboundConfig, PolicyConfig, PortMatcher,
+    RealityConfig, RelayPolicy, ResourceGovernorConfig, RouteRule, RoutingConfig, SecretString,
+    Socks5Settings, StreamSettings, UserPolicy, VlessClient, VlessInboundConfig,
+    VlessInboundSettings,
 };
 pub use schema::{config_schema, format_config_schema};
 pub use snapshot::{ConfigSnapshot, ConfigStore, ConfigUpdateError};
@@ -38,6 +39,7 @@ pub(crate) fn test_config_json() -> &'static str {
     "timeoutMs": 5000
   },
   "inbounds": [{
+    "protocol": "vless",
     "tag": "public-reality",
     "listen": "0.0.0.0",
     "port": 443,

@@ -14,7 +14,7 @@ use tokio::{
 use uuid::Uuid;
 
 use crate::{
-    config::{InboundConfig, ResourceGovernorConfig},
+    config::{ResourceGovernorConfig, VlessInboundConfig},
     protocol::{
         reality::{
             RealityAuthConfigError, RealityAuthenticator, ReplayCache, ReplayError,
@@ -190,7 +190,7 @@ impl RealityAcceptor {
     ///
     /// Returns an authentication-key, certificate-identity, or UUID error.
     pub fn from_inbound(
-        inbound: &InboundConfig,
+        inbound: &VlessInboundConfig,
         governor: ResourceGovernor,
         policy: &ResourceGovernorConfig,
     ) -> Result<Self, RealityAcceptorConfigError> {
@@ -201,7 +201,7 @@ impl RealityAcceptor {
     /// Compiles an inbound while retaining process-wide replay history across
     /// immutable runtime generations.
     pub(crate) fn from_inbound_with_replay(
-        inbound: &InboundConfig,
+        inbound: &VlessInboundConfig,
         governor: ResourceGovernor,
         policy: &ResourceGovernorConfig,
         replay: ReplayCache,
@@ -474,14 +474,25 @@ mod tests {
             .expect("cover listener must bind");
         let mut config: Config =
             serde_json::from_str(test_config_json()).expect("test config must parse");
-        config.inbounds[0].stream_settings.reality_settings.target = cover_listener
+        config.inbounds[0]
+            .as_vless_mut()
+            .expect("fixture must contain VLESS")
+            .stream_settings
+            .reality_settings
+            .target = cover_listener
             .local_addr()
             .expect("cover address must exist")
             .to_string();
         let policy = config.policy.resource_governor.clone();
         let governor = ResourceGovernor::new(&policy);
-        let acceptor = RealityAcceptor::from_inbound(&config.inbounds[0], governor, &policy)
-            .expect("validated inbound must compile");
+        let acceptor = RealityAcceptor::from_inbound(
+            config.inbounds[0]
+                .as_vless()
+                .expect("fixture must contain VLESS"),
+            governor,
+            &policy,
+        )
+        .expect("validated inbound must compile");
         let (mut client, server, peer_addr) = tcp_pair().await;
         let message = client_hello_fixtures::client_hello(
             [0x44; 32],
