@@ -24,7 +24,7 @@ use rust_reality::{
         generate_node_key, generate_uuid, generate_x25519_key_pair,
     },
     server::{
-        probe::{DestinationProbeError, probe_destination},
+        probe::{DestinationProbeError, probe_destination, probe_destination_pattern},
         production::{ProductionServer, ProductionServerError},
         routing::{RoutingCompileError, RoutingTable},
     },
@@ -380,7 +380,7 @@ fn run_self_test(arguments: ConfigPath) -> Result<(), CliError> {
             };
             for server_name in &inbound.stream_settings.reality_settings.server_names {
                 reports.push(
-                    probe_destination(
+                    probe_destination_pattern(
                         &inbound.stream_settings.reality_settings.target,
                         server_name,
                         probe_timeout,

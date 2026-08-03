@@ -12,7 +12,10 @@ use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use super::ClientHello;
-use crate::config::RealityConfig;
+use crate::{
+    config::RealityConfig,
+    server_name::{is_server_name_pattern, server_name_matches},
+};
 
 const AUTH_KEY_INFO: &[u8] = b"REALITY";
 const SESSION_PLAINTEXT_LEN: usize = 16;
@@ -27,6 +30,8 @@ pub enum RealityAuthConfigError {
     InvalidShortId,
     /// No server name was configured.
     MissingServerName,
+    /// A server name was neither concrete DNS nor a safe leftmost wildcard.
+    InvalidServerName,
     /// No short ID was configured.
     MissingShortId,
 }
@@ -37,6 +42,7 @@ impl fmt::Display for RealityAuthConfigError {
             Self::InvalidPrivateKey => formatter.write_str("invalid REALITY private key"),
             Self::InvalidShortId => formatter.write_str("invalid REALITY short ID"),
             Self::MissingServerName => formatter.write_str("REALITY server name set is empty"),
+            Self::InvalidServerName => formatter.write_str("invalid REALITY server name pattern"),
             Self::MissingShortId => formatter.write_str("REALITY short ID set is empty"),
         }
     }
@@ -172,10 +178,17 @@ impl RealityAuthenticator {
     ///
     /// # Errors
     ///
-    /// Returns an error for malformed key material, short IDs, or empty identity sets.
+    /// Returns an error for malformed key material, server names, short IDs, or empty identity sets.
     pub fn from_config(config: &RealityConfig) -> Result<Self, RealityAuthConfigError> {
         if config.server_names.is_empty() {
             return Err(RealityAuthConfigError::MissingServerName);
+        }
+        if !config
+            .server_names
+            .iter()
+            .all(|name| is_server_name_pattern(name))
+        {
+            return Err(RealityAuthConfigError::InvalidServerName);
         }
         if config.short_ids.is_empty() {
             return Err(RealityAuthConfigError::MissingShortId);
@@ -222,7 +235,7 @@ impl RealityAuthenticator {
         if !self
             .server_names
             .iter()
-            .any(|configured| configured.eq_ignore_ascii_case(server_name))
+            .any(|configured| server_name_matches(configured, server_name))
         {
             return Err(RealityAuthError::ServerName);
         }
@@ -354,7 +367,10 @@ mod tests {
     use sha2::Sha256;
     use x25519_dalek::{PublicKey, StaticSecret};
 
-    use super::{RealityAuthError, RealityAuthenticator, derive_auth_key, open_session_id};
+    use super::{
+        RealityAuthConfigError, RealityAuthError, RealityAuthenticator, derive_auth_key,
+        open_session_id,
+    };
     use crate::{
         config::{RealityConfig, SecretString},
         protocol::reality::{
@@ -400,6 +416,30 @@ mod tests {
         assert!(matches!(
             wrong_key.authenticate(&hello, u64::from(NOW)),
             Err(RealityAuthError::OpenFailed)
+        ));
+    }
+
+    #[test]
+    fn authenticates_one_label_server_name_wildcard() {
+        let (_, hello) = valid_handshake(SHORT_ID, NOW, &["aabb"]);
+        let mut config = auth_config([0x11; 32], &["aabb"]);
+        config.server_names = vec!["*.example.com".to_owned()];
+        let authenticator =
+            RealityAuthenticator::from_config(&config).expect("configuration must compile");
+
+        authenticator
+            .authenticate(&hello, u64::from(NOW))
+            .expect("wildcard must accept one concrete leftmost label");
+    }
+
+    #[test]
+    fn rejects_invalid_server_name_when_config_validation_is_bypassed() {
+        let mut config = auth_config([0x11; 32], &["aabb"]);
+        config.server_names = vec!["www.*.edu".to_owned()];
+
+        assert!(matches!(
+            RealityAuthenticator::from_config(&config),
+            Err(RealityAuthConfigError::InvalidServerName)
         ));
     }
 

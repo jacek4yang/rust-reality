@@ -421,7 +421,7 @@ pub enum Network {
 pub struct RealityConfig {
     /// Cover target in `host:port` form.
     pub target: String,
-    /// Allowed client SNI values.
+    /// Allowed concrete client SNI values or leftmost single-label wildcard patterns.
     pub server_names: Vec<String>,
     /// X25519 private key encoded as URL-safe base64 without padding.
     pub private_key: SecretString,

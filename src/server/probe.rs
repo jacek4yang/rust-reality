@@ -9,9 +9,12 @@ use tokio::{
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
-use crate::protocol::reality::{
-    ClientHello, ClientHelloError, SESSION_ID_LEN, X25519_GROUP,
-    tls13::{CipherSuite, TargetServerHelloReadError, read_target_server_hello},
+use crate::{
+    protocol::reality::{
+        ClientHello, ClientHelloError, SESSION_ID_LEN, X25519_GROUP,
+        tls13::{CipherSuite, TargetServerHelloReadError, read_target_server_hello},
+    },
+    server_name::concrete_probe_name,
 };
 
 const TLS_RECORD_HANDSHAKE: u8 = 22;
@@ -65,6 +68,8 @@ impl DestinationProbeReport {
 pub enum DestinationProbeError {
     /// SNI was not a bounded ASCII DNS name.
     InvalidServerName,
+    /// A wildcard pattern had no matching concrete hostname in the target.
+    WildcardServerNameTargetMismatch,
     /// Operating-system entropy was unavailable.
     Random,
     /// The internally generated ClientHello failed strict self-validation.
@@ -87,6 +92,9 @@ impl fmt::Display for DestinationProbeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidServerName => formatter.write_str("probe SNI is not a valid DNS name"),
+            Self::WildcardServerNameTargetMismatch => formatter.write_str(
+                "wildcard REALITY server name requires a matching concrete DNS hostname in target",
+            ),
             Self::Random => formatter.write_str("operating-system random generation failed"),
             Self::ClientHello(_) => formatter.write_str("failed to build probe ClientHello"),
             Self::Encoding => formatter.write_str("probe ClientHello vector is too large"),
@@ -106,12 +114,33 @@ impl Error for DestinationProbeError {
             Self::Connect(source) | Self::Write(source) => Some(source),
             Self::ServerHello(source) => Some(source),
             Self::InvalidServerName
+            | Self::WildcardServerNameTargetMismatch
             | Self::Random
             | Self::Encoding
             | Self::ConnectTimeout
             | Self::WriteTimeout => None,
         }
     }
+}
+
+/// Probes one configured exact name or wildcard pattern against its target.
+///
+/// A TLS ClientHello cannot carry a wildcard SNI. For a wildcard configuration,
+/// the target hostname is used only when it is a matching concrete one-label
+/// expansion of the pattern.
+///
+/// # Errors
+///
+/// Returns [`DestinationProbeError::WildcardServerNameTargetMismatch`] when a
+/// wildcard cannot be converted to a concrete SNI from the target.
+pub async fn probe_destination_pattern(
+    target: &str,
+    server_name_pattern: &str,
+    timeout: Duration,
+) -> Result<DestinationProbeReport, DestinationProbeError> {
+    let server_name = concrete_probe_name(target, server_name_pattern)
+        .ok_or(DestinationProbeError::WildcardServerNameTargetMismatch)?;
+    probe_destination(target, server_name, timeout).await
 }
 
 /// Connects to a real target and verifies its first TLS 1.3 negotiation response.
@@ -313,7 +342,9 @@ mod tests {
 
     use tokio::{io::AsyncWriteExt, net::TcpListener};
 
-    use super::{DestinationProbeError, ProbeClientHello, probe_destination};
+    use super::{
+        DestinationProbeError, ProbeClientHello, probe_destination, probe_destination_pattern,
+    };
     use crate::protocol::reality::{SESSION_ID_LEN, X25519_GROUP, read_client_hello};
 
     #[test]
@@ -338,6 +369,15 @@ mod tests {
         assert!(matches!(
             ProbeClientHello::build(""),
             Err(DestinationProbeError::InvalidServerName)
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn wildcard_probe_requires_matching_concrete_target_hostname() {
+        assert!(matches!(
+            probe_destination_pattern("other.example:443", "*.lmu.edu", Duration::from_millis(1))
+                .await,
+            Err(DestinationProbeError::WildcardServerNameTargetMismatch)
         ));
     }
 
