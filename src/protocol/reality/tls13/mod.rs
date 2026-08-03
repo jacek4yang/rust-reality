@@ -4,6 +4,7 @@ mod handshake;
 mod keys;
 mod messages;
 mod record;
+mod record_read;
 mod server_hello;
 mod target_read;
 
@@ -19,6 +20,7 @@ pub use messages::{
 pub use record::{
     ContentType, MAX_PLAINTEXT_LEN, OpenedRecord, Tls13RecordError, Tls13RecordLayer,
 };
+pub use record_read::{TlsRecordRead, TlsRecordReadError, TlsRecordReadErrorKind, read_tls_record};
 pub use server_hello::{
     ServerHelloError, ServerHelloTemplate, change_cipher_spec_record, plaintext_handshake_record,
 };
