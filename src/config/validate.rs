@@ -24,6 +24,7 @@ const MAX_NXR_NONCE_ENTRIES: u32 = 1_000_000;
 const MAX_NXR_NONCE_RETENTION_SECONDS: u64 = 86_400;
 const MIN_RELAY_BUFFER_BYTES: usize = 4 * 1024;
 const MAX_RELAY_BUFFER_BYTES: usize = 1024 * 1024;
+const MAX_RELAY_BUFFERS: usize = 65_536;
 
 /// One validation failure identified by a stable JSON path.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -697,8 +698,25 @@ fn validate_policy(config: &Config) -> Result<(), ConfigError> {
             format!("must be between {MIN_RELAY_BUFFER_BYTES} and {MAX_RELAY_BUFFER_BYTES}"),
         );
     }
-    if relay.max_pooled_buffers == 0 {
-        return fail("policy.relay.maxPooledBuffers", "must be greater than zero");
+    if !(2..=MAX_RELAY_BUFFERS).contains(&relay.max_pooled_buffers) {
+        return fail(
+            "policy.relay.maxPooledBuffers",
+            format!("must be between 2 and {MAX_RELAY_BUFFERS}"),
+        );
+    }
+    if relay.splice {
+        if relay.max_splice_relays == 0 {
+            return fail(
+                "policy.relay.maxSpliceRelays",
+                "must be greater than zero when splice is enabled",
+            );
+        }
+        if relay.max_splice_relays > governor.max_connections {
+            return fail(
+                "policy.relay.maxSpliceRelays",
+                "must not exceed maxConnections",
+            );
+        }
     }
     Ok(())
 }

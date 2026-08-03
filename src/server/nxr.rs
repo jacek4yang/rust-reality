@@ -18,7 +18,7 @@ use tokio::{
 use zeroize::Zeroizing;
 
 use crate::{
-    config::NxrInboundConfig,
+    config::{NxrInboundConfig, RelayPolicy},
     protocol::{
         nxr::{
             NxrKey, NxrProtocolError, REQUEST_HEADER_LEN, decode_authenticated_request,
@@ -26,7 +26,10 @@ use crate::{
         },
         vless::Destination,
     },
-    transport::relay::{RelayStats, relay_bidirectional},
+    transport::{
+        relay::RelayStats,
+        tcp_relay::{TcpRelay, TcpRelayConfigError},
+    },
 };
 
 use super::connector::{DestinationConnectError, DestinationConnector};
@@ -218,6 +221,7 @@ pub struct NxrLandingHandler {
     authenticator: NxrAuthenticator,
     connector: DestinationConnector,
     authentication_timeout: Duration,
+    relay: TcpRelay,
 }
 
 impl NxrLandingHandler {
@@ -226,9 +230,13 @@ impl NxrLandingHandler {
     /// # Errors
     ///
     /// Rejects invalid key material or replay-cache policy.
-    pub fn from_inbound(inbound: &NxrInboundConfig) -> Result<Self, NxrLandingConfigError> {
+    pub fn from_inbound(
+        inbound: &NxrInboundConfig,
+        relay_policy: &RelayPolicy,
+    ) -> Result<Self, NxrLandingConfigError> {
         let replay = NxrReplayCache::from_inbound(inbound)?;
-        Self::from_inbound_with_replay(inbound, replay)
+        let relay = TcpRelay::new(relay_policy).map_err(NxrLandingConfigError::Relay)?;
+        Self::from_inbound_with_replay(inbound, replay, relay)
     }
 
     /// Compiles one validated listener while retaining its process-lifetime
@@ -240,6 +248,7 @@ impl NxrLandingHandler {
     pub fn from_inbound_with_replay(
         inbound: &NxrInboundConfig,
         replay: NxrReplayCache,
+        relay: TcpRelay,
     ) -> Result<Self, NxrLandingConfigError> {
         let decoded = Zeroizing::new(
             BASE64_URL_SAFE_NO_PAD
@@ -258,6 +267,7 @@ impl NxrLandingHandler {
             ),
             Duration::from_millis(inbound.settings.connect_timeout_ms),
             Duration::from_millis(inbound.settings.authentication_timeout_ms),
+            relay,
         ))
     }
 
@@ -267,11 +277,13 @@ impl NxrLandingHandler {
         authenticator: NxrAuthenticator,
         connect_timeout: Duration,
         authentication_timeout: Duration,
+        relay: TcpRelay,
     ) -> Self {
         Self {
             authenticator,
             connector: DestinationConnector::new(connect_timeout),
             authentication_timeout,
+            relay,
         }
     }
 
@@ -287,7 +299,8 @@ impl NxrLandingHandler {
         let now = unix_seconds()?;
         let destination = self.authenticator.authenticate(&request, now)?;
         let mut outbound = self.connector.connect(&destination).await?;
-        relay_bidirectional(&mut inbound, &mut outbound)
+        self.relay
+            .relay(&mut inbound, &mut outbound)
             .await
             .map_err(NxrLandingError::Relay)
     }
@@ -302,6 +315,8 @@ pub enum NxrLandingConfigError {
     Capacity,
     /// Replay cache initialization failed.
     Replay(NxrReplayError),
+    /// Bounded plaintext relay state could not be compiled.
+    Relay(TcpRelayConfigError),
 }
 
 impl fmt::Display for NxrLandingConfigError {
@@ -314,6 +329,7 @@ impl Error for NxrLandingConfigError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Replay(source) => Some(source),
+            Self::Relay(source) => Some(source),
             Self::Key | Self::Capacity => None,
         }
     }
@@ -462,9 +478,13 @@ mod tests {
     };
 
     use super::{NxrAuthenticator, NxrLandingHandler, NxrReplayCache, NxrReplayError};
-    use crate::protocol::{
-        nxr::{NxrKey, encode_request},
-        vless::{Address, Destination},
+    use crate::{
+        config::RelayPolicy,
+        protocol::{
+            nxr::{NxrKey, encode_request},
+            vless::{Address, Destination},
+        },
+        transport::tcp_relay::TcpRelay,
     };
 
     #[test]
@@ -529,6 +549,7 @@ mod tests {
             NxrAuthenticator::new(key.clone(), cache, 5),
             Duration::from_secs(1),
             Duration::from_secs(1),
+            TcpRelay::new(&RelayPolicy::default()).expect("relay policy must compile"),
         );
         let destination =
             Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), target_address.port());

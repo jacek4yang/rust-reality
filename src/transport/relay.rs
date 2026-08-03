@@ -10,6 +10,13 @@ pub struct RelayStats {
 }
 
 impl RelayStats {
+    pub(crate) const fn new(inbound_to_outbound: u64, outbound_to_inbound: u64) -> Self {
+        Self {
+            inbound_to_outbound,
+            outbound_to_inbound,
+        }
+    }
+
     /// Returns the bytes copied from the inbound stream to the outbound stream.
     pub fn inbound_to_outbound_bytes(&self) -> u64 {
         self.inbound_to_outbound
@@ -32,10 +39,7 @@ where
 {
     let (inbound_to_outbound, outbound_to_inbound) = copy_bidirectional(inbound, outbound).await?;
 
-    Ok(RelayStats {
-        inbound_to_outbound,
-        outbound_to_inbound,
-    })
+    Ok(RelayStats::new(inbound_to_outbound, outbound_to_inbound))
 }
 
 #[cfg(test)]
