@@ -1,5 +1,6 @@
 //! Minimal TLS 1.3 cryptographic state with explicit secret ownership.
 
+mod application_io;
 mod handshake;
 mod handshake_read;
 mod keys;
@@ -9,6 +10,9 @@ mod record_read;
 mod server_hello;
 mod target_read;
 
+pub use application_io::{
+    ApplicationRecord, ApplicationWriteStats, TlsApplicationIo, TlsApplicationIoError,
+};
 pub use handshake::{EstablishedTls, RealityHandshakeError, ServerFlight, build_server_flight};
 pub use handshake_read::{ClientFinishedReadError, read_client_finished};
 pub use keys::{
