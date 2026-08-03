@@ -1,5 +1,7 @@
 # Threat model
 
+English | [简体中文](threat-model.zh-CN.md)
+
 ## Protected data path
 
 ```text
@@ -14,6 +16,8 @@ Xray-compatible client
 The public listener always requires TCP, REALITY, VLESS decryption `none`, and
 the Vision flow. A configuration that attempts plain VLESS is rejected before
 listeners are bound.
+Configured server names may be concrete DNS names or a leftmost one-label
+pattern such as `*.lmu.edu`; the ClientHello SNI must remain concrete.
 
 ## Security objectives
 
