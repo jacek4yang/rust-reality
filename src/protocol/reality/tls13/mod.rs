@@ -12,6 +12,7 @@ mod target_read;
 
 pub use application_io::{
     ApplicationRecord, ApplicationWriteStats, TlsApplicationIo, TlsApplicationIoError,
+    TlsApplicationReader, TlsApplicationWriter, bind_application_halves,
 };
 pub use handshake::{EstablishedTls, RealityHandshakeError, ServerFlight, build_server_flight};
 pub use handshake_read::{ClientFinishedReadError, read_client_finished};

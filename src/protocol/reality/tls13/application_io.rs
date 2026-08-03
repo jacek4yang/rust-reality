@@ -1,7 +1,7 @@
 use std::{error::Error, fmt, io, ops::Range, time::Duration};
 
 use tokio::{
-    io::{AsyncRead, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf, split},
     time::{self, Instant},
 };
 
@@ -126,6 +126,40 @@ pub struct TlsApplicationIo<S> {
     write_record: Vec<u8>,
 }
 
+/// Authenticated client-to-server TLS application records.
+pub struct TlsApplicationReader<R> {
+    io: R,
+    records: super::Tls13RecordLayer,
+}
+
+/// Server-to-client TLS application records with one reusable ciphertext buffer.
+pub struct TlsApplicationWriter<W> {
+    io: W,
+    records: super::Tls13RecordLayer,
+    write_record: Vec<u8>,
+}
+
+/// Binds independently owned transport halves to the correct TLS directions.
+#[must_use]
+pub fn bind_application_halves<R, W>(
+    reader: R,
+    writer: W,
+    tls: EstablishedTls,
+) -> (TlsApplicationReader<R>, TlsApplicationWriter<W>) {
+    let (client_records, server_records) = tls.into_record_layers();
+    (
+        TlsApplicationReader {
+            io: reader,
+            records: client_records,
+        },
+        TlsApplicationWriter {
+            io: writer,
+            records: server_records,
+            write_record: Vec::new(),
+        },
+    )
+}
+
 impl<S> TlsApplicationIo<S> {
     /// Binds an authenticated transport to the traffic state unlocked by ClientFinished.
     #[must_use]
@@ -146,6 +180,34 @@ impl<S> TlsApplicationIo<S> {
 
 impl<S> TlsApplicationIo<S>
 where
+    S: AsyncRead + AsyncWrite,
+{
+    /// Splits a generic transport and transfers each non-clonable record direction.
+    #[must_use]
+    pub fn into_split(
+        self,
+    ) -> (
+        TlsApplicationReader<ReadHalf<S>>,
+        TlsApplicationWriter<WriteHalf<S>>,
+    ) {
+        let (reader, writer) = split(self.io);
+        let (client_records, server_records) = self.tls.into_record_layers();
+        (
+            TlsApplicationReader {
+                io: reader,
+                records: client_records,
+            },
+            TlsApplicationWriter {
+                io: writer,
+                records: server_records,
+                write_record: self.write_record,
+            },
+        )
+    }
+}
+
+impl<S> TlsApplicationIo<S>
+where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     /// Reads and authenticates one application record under an absolute deadline.
@@ -160,41 +222,7 @@ where
         &mut self,
         timeout: Duration,
     ) -> Result<ApplicationRecord, TlsApplicationIoError> {
-        let record = read_tls_record(&mut self.io, timeout)
-            .await
-            .map_err(TlsApplicationIoError::Read)?;
-        let mut wire = record.into_wire();
-        let (content_type, plaintext_len, alert) = {
-            let opened = self
-                .tls
-                .client_records_mut()
-                .open_in_place(&mut wire)
-                .map_err(TlsApplicationIoError::Record)?;
-            let alert = if opened.content_type() == ContentType::Alert {
-                opened.plaintext().try_into().ok()
-            } else {
-                None
-            };
-            (opened.content_type(), opened.plaintext().len(), alert)
-        };
-        match content_type {
-            ContentType::ApplicationData => {
-                let end = TLS_RECORD_HEADER_LEN.checked_add(plaintext_len).ok_or(
-                    TlsApplicationIoError::Record(Tls13RecordError::InvalidLength),
-                )?;
-                Ok(ApplicationRecord {
-                    wire,
-                    plaintext: TLS_RECORD_HEADER_LEN..end,
-                })
-            }
-            ContentType::Alert => {
-                let [level, description] = alert.ok_or(TlsApplicationIoError::InvalidAlert)?;
-                Err(TlsApplicationIoError::PeerAlert { level, description })
-            }
-            ContentType::ChangeCipherSpec | ContentType::Handshake => {
-                Err(TlsApplicationIoError::UnexpectedContentType(content_type))
-            }
-        }
+        read_application_record(&mut self.io, self.tls.client_records_mut(), timeout).await
     }
 
     /// Encrypts application bytes into bounded records and writes every ciphertext byte.
@@ -210,17 +238,14 @@ where
         plaintext: &[u8],
         timeout: Duration,
     ) -> Result<ApplicationWriteStats, TlsApplicationIoError> {
-        let deadline = operation_deadline(timeout)?;
-        let mut records = 0_u64;
-        for chunk in plaintext.chunks(MAX_PLAINTEXT_LEN) {
-            self.write_content(ContentType::ApplicationData, chunk, deadline)
-                .await?;
-            records = records.saturating_add(1);
-        }
-        Ok(ApplicationWriteStats {
-            plaintext_bytes: u64::try_from(plaintext.len()).unwrap_or(u64::MAX),
-            records,
-        })
+        write_application_data(
+            &mut self.io,
+            self.tls.server_records_mut(),
+            &mut self.write_record,
+            plaintext,
+            timeout,
+        )
+        .await
     }
 
     /// Sends an encrypted `close_notify` and shuts down the transport writer.
@@ -229,34 +254,189 @@ where
     ///
     /// Returns a record-protection, socket, or absolute deadline error.
     pub async fn shutdown(&mut self, timeout: Duration) -> Result<(), TlsApplicationIoError> {
-        let deadline = operation_deadline(timeout)?;
-        self.write_content(
-            ContentType::Alert,
-            &[ALERT_LEVEL_WARNING, ALERT_CLOSE_NOTIFY],
+        shutdown_tls_writer(
+            &mut self.io,
+            self.tls.server_records_mut(),
+            &mut self.write_record,
+            timeout,
+        )
+        .await
+    }
+}
+
+impl<R> TlsApplicationReader<R>
+where
+    R: AsyncRead + Unpin,
+{
+    /// Reads and authenticates one client application record.
+    ///
+    /// # Errors
+    ///
+    /// Returns a bounded record, AEAD, alert, content-type, or deadline error.
+    pub async fn read_application(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<ApplicationRecord, TlsApplicationIoError> {
+        read_application_record(&mut self.io, &mut self.records, timeout).await
+    }
+}
+
+impl<W> TlsApplicationWriter<W>
+where
+    W: AsyncWrite + Unpin,
+{
+    /// Encrypts and writes bounded server application records.
+    ///
+    /// # Errors
+    ///
+    /// Returns a record-protection, allocation, socket, or deadline error.
+    pub async fn write_application(
+        &mut self,
+        plaintext: &[u8],
+        timeout: Duration,
+    ) -> Result<ApplicationWriteStats, TlsApplicationIoError> {
+        write_application_data(
+            &mut self.io,
+            &mut self.records,
+            &mut self.write_record,
+            plaintext,
+            timeout,
+        )
+        .await
+    }
+
+    /// Sends an authenticated `close_notify` and shuts down the transport writer.
+    ///
+    /// # Errors
+    ///
+    /// Returns a record-protection, socket, or absolute deadline error.
+    pub async fn shutdown(&mut self, timeout: Duration) -> Result<(), TlsApplicationIoError> {
+        shutdown_tls_writer(
+            &mut self.io,
+            &mut self.records,
+            &mut self.write_record,
+            timeout,
+        )
+        .await
+    }
+}
+
+async fn read_application_record<R>(
+    io: &mut R,
+    records: &mut super::Tls13RecordLayer,
+    timeout: Duration,
+) -> Result<ApplicationRecord, TlsApplicationIoError>
+where
+    R: AsyncRead + Unpin,
+{
+    let record = read_tls_record(io, timeout)
+        .await
+        .map_err(TlsApplicationIoError::Read)?;
+    let mut wire = record.into_wire();
+    let (content_type, plaintext_len, alert) = {
+        let opened = records
+            .open_in_place(&mut wire)
+            .map_err(TlsApplicationIoError::Record)?;
+        let alert = if opened.content_type() == ContentType::Alert {
+            opened.plaintext().try_into().ok()
+        } else {
+            None
+        };
+        (opened.content_type(), opened.plaintext().len(), alert)
+    };
+    match content_type {
+        ContentType::ApplicationData => {
+            let end = TLS_RECORD_HEADER_LEN.checked_add(plaintext_len).ok_or(
+                TlsApplicationIoError::Record(Tls13RecordError::InvalidLength),
+            )?;
+            Ok(ApplicationRecord {
+                wire,
+                plaintext: TLS_RECORD_HEADER_LEN..end,
+            })
+        }
+        ContentType::Alert => {
+            let [level, description] = alert.ok_or(TlsApplicationIoError::InvalidAlert)?;
+            Err(TlsApplicationIoError::PeerAlert { level, description })
+        }
+        ContentType::ChangeCipherSpec | ContentType::Handshake => {
+            Err(TlsApplicationIoError::UnexpectedContentType(content_type))
+        }
+    }
+}
+
+async fn write_application_data<W>(
+    io: &mut W,
+    records: &mut super::Tls13RecordLayer,
+    write_record: &mut Vec<u8>,
+    plaintext: &[u8],
+    timeout: Duration,
+) -> Result<ApplicationWriteStats, TlsApplicationIoError>
+where
+    W: AsyncWrite + Unpin,
+{
+    let deadline = operation_deadline(timeout)?;
+    let mut record_count = 0_u64;
+    for chunk in plaintext.chunks(MAX_PLAINTEXT_LEN) {
+        write_content(
+            io,
+            records,
+            write_record,
+            ContentType::ApplicationData,
+            chunk,
             deadline,
         )
         .await?;
-        time::timeout_at(deadline, self.io.shutdown())
-            .await
-            .map_err(|_| TlsApplicationIoError::Timeout)?
-            .map_err(TlsApplicationIoError::Io)
+        record_count = record_count.saturating_add(1);
     }
+    Ok(ApplicationWriteStats {
+        plaintext_bytes: u64::try_from(plaintext.len()).unwrap_or(u64::MAX),
+        records: record_count,
+    })
+}
 
-    async fn write_content(
-        &mut self,
-        content_type: ContentType,
-        plaintext: &[u8],
-        deadline: Instant,
-    ) -> Result<(), TlsApplicationIoError> {
-        self.tls
-            .server_records_mut()
-            .seal_into(content_type, plaintext, 0, &mut self.write_record)
-            .map_err(TlsApplicationIoError::Record)?;
-        time::timeout_at(deadline, self.io.write_all(&self.write_record))
-            .await
-            .map_err(|_| TlsApplicationIoError::Timeout)?
-            .map_err(TlsApplicationIoError::Io)
-    }
+async fn shutdown_tls_writer<W>(
+    io: &mut W,
+    records: &mut super::Tls13RecordLayer,
+    write_record: &mut Vec<u8>,
+    timeout: Duration,
+) -> Result<(), TlsApplicationIoError>
+where
+    W: AsyncWrite + Unpin,
+{
+    let deadline = operation_deadline(timeout)?;
+    write_content(
+        io,
+        records,
+        write_record,
+        ContentType::Alert,
+        &[ALERT_LEVEL_WARNING, ALERT_CLOSE_NOTIFY],
+        deadline,
+    )
+    .await?;
+    time::timeout_at(deadline, io.shutdown())
+        .await
+        .map_err(|_| TlsApplicationIoError::Timeout)?
+        .map_err(TlsApplicationIoError::Io)
+}
+
+async fn write_content<W>(
+    io: &mut W,
+    records: &mut super::Tls13RecordLayer,
+    write_record: &mut Vec<u8>,
+    content_type: ContentType,
+    plaintext: &[u8],
+    deadline: Instant,
+) -> Result<(), TlsApplicationIoError>
+where
+    W: AsyncWrite + Unpin,
+{
+    records
+        .seal_into(content_type, plaintext, 0, write_record)
+        .map_err(TlsApplicationIoError::Record)?;
+    time::timeout_at(deadline, io.write_all(write_record))
+        .await
+        .map_err(|_| TlsApplicationIoError::Timeout)?
+        .map_err(TlsApplicationIoError::Io)
 }
 
 impl<S> fmt::Debug for TlsApplicationIo<S> {
@@ -264,6 +444,27 @@ impl<S> fmt::Debug for TlsApplicationIo<S> {
         formatter
             .debug_struct("TlsApplicationIo")
             .field("tls", &self.tls)
+            .field("write_buffer_capacity", &self.write_record.capacity())
+            .field("transport", &"[BOUND]")
+            .finish_non_exhaustive()
+    }
+}
+
+impl<R> fmt::Debug for TlsApplicationReader<R> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TlsApplicationReader")
+            .field("records", &self.records)
+            .field("transport", &"[BOUND]")
+            .finish_non_exhaustive()
+    }
+}
+
+impl<W> fmt::Debug for TlsApplicationWriter<W> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TlsApplicationWriter")
+            .field("records", &self.records)
             .field("write_buffer_capacity", &self.write_record.capacity())
             .field("transport", &"[BOUND]")
             .finish_non_exhaustive()
@@ -328,7 +529,8 @@ mod tests {
         let established =
             EstablishedTls::from_test_records(suite, server_client_records, server_server_records);
         let (mut client, server) = duplex(64 * 1024);
-        let mut application = TlsApplicationIo::new(server, established);
+        let application = TlsApplicationIo::new(server, established);
+        let (mut application_reader, mut application_writer) = application.into_split();
 
         let mut request_record = Vec::new();
         client_write_records
@@ -343,14 +545,14 @@ mod tests {
             .write_all(&request_record)
             .await
             .expect("request record must be written");
-        let request = application
+        let request = application_reader
             .read_application(TIMEOUT)
             .await
             .expect("request record must authenticate");
         assert_eq!(request.plaintext(), b"VLESS request");
         assert_eq!(request.len(), b"VLESS request".len());
 
-        let stats = application
+        let stats = application_writer
             .write_application(b"VLESS response", TIMEOUT)
             .await
             .expect("response must encrypt");
@@ -366,7 +568,7 @@ mod tests {
         assert_eq!(response.content_type(), ContentType::ApplicationData);
         assert_eq!(response.plaintext(), b"VLESS response");
 
-        application
+        application_writer
             .shutdown(TIMEOUT)
             .await
             .expect("close notify must be sent");
