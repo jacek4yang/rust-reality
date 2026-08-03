@@ -125,6 +125,7 @@ pub fn generate_minimal_config(
                     server_names: vec![input.server_name],
                     private_key,
                     short_ids: vec![short_id],
+                    max_time_diff_ms: 60_000,
                 },
             },
         }],
