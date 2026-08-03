@@ -5,6 +5,9 @@ use std::{
     net::IpAddr,
 };
 
+use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
+use zeroize::Zeroizing;
+
 use super::{Config, GlobalRule, LogOutput, Network, OutboundConfig, PortMatcher, SecretString};
 
 const MIN_LOG_FILE_BYTES: u64 = 64 * 1024;
@@ -189,6 +192,22 @@ fn validate_inbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
             &format!("{path}.streamSettings.realitySettings.privateKey"),
             &reality.private_key,
         )?;
+        let private_key_bytes = Zeroizing::new(
+            BASE64_URL_SAFE_NO_PAD
+                .decode(reality.private_key.expose())
+                .map_err(|_| {
+                    ConfigError::new(
+                        format!("{path}.streamSettings.realitySettings.privateKey"),
+                        "must be URL-safe unpadded base64",
+                    )
+                })?,
+        );
+        if private_key_bytes.len() != 32 {
+            return fail(
+                format!("{path}.streamSettings.realitySettings.privateKey"),
+                "must decode to exactly 32 bytes",
+            );
+        }
         if reality.short_ids.is_empty() {
             return fail(
                 format!("{path}.streamSettings.realitySettings.shortIds"),
@@ -200,7 +219,7 @@ fn validate_inbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
             let short_path =
                 format!("{path}.streamSettings.realitySettings.shortIds[{short_index}]");
             if !(2..=16).contains(&short_id.len())
-                || short_id.len() % 2 != 0
+                || !short_id.len().is_multiple_of(2)
                 || !short_id.bytes().all(|byte| byte.is_ascii_hexdigit())
             {
                 return fail(short_path, "must be 2 to 16 even hexadecimal characters");
@@ -208,6 +227,12 @@ fn validate_inbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
             if !short_ids.insert(short_id.to_ascii_lowercase()) {
                 return fail(short_path, "short ID is configured more than once");
             }
+        }
+        if reality.max_time_diff_ms > MAX_TIMEOUT_MS {
+            return fail(
+                format!("{path}.streamSettings.realitySettings.maxTimeDiffMs"),
+                format!("must not exceed {MAX_TIMEOUT_MS}"),
+            );
         }
     }
     Ok(users)
@@ -688,7 +713,7 @@ fn fail<T>(path: impl Into<String>, message: impl Into<String>) -> Result<T, Con
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{Config, LogOutput, validate_config};
+    use crate::config::{Config, LogOutput, SecretString, validate_config};
 
     use super::ConfigError;
 
@@ -752,11 +777,43 @@ mod tests {
     }
 
     #[test]
+    fn rejects_malformed_reality_private_key() {
+        let mut config = valid_config();
+        config.inbounds[0]
+            .stream_settings
+            .reality_settings
+            .private_key = SecretString::new("not-base64!");
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("malformed private key must fail")
+                .path(),
+            "inbounds[0].streamSettings.realitySettings.privateKey"
+        );
+    }
+
+    #[test]
+    fn bounds_reality_client_clock_difference() {
+        let mut config = valid_config();
+        config.inbounds[0]
+            .stream_settings
+            .reality_settings
+            .max_time_diff_ms = 600_001;
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("unbounded client-clock difference must fail")
+                .path(),
+            "inbounds[0].streamSettings.realitySettings.maxTimeDiffMs"
+        );
+    }
+
+    #[test]
     fn secret_debug_output_is_redacted() {
         let config = valid_config();
         let debug = format!("{config:?}");
 
         assert!(debug.contains("[REDACTED]"));
-        assert!(!debug.contains("test-private-key"));
+        assert!(!debug.contains("ERERERERERERERERERERERERERERERERERERERERERE"));
     }
 }

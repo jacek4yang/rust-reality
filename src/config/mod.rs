@@ -54,7 +54,7 @@ pub(crate) fn test_config_json() -> &'static str {
       "realitySettings": {
         "target": "www.example.com:443",
         "serverNames": ["www.example.com"],
-        "privateKey": "test-private-key",
+        "privateKey": "ERERERERERERERERERERERERERERERERERERERERERE",
         "shortIds": ["0123456789abcdef"]
       }
     }

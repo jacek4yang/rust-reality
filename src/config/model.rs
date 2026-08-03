@@ -273,6 +273,13 @@ pub struct RealityConfig {
     pub private_key: SecretString,
     /// Accepted hexadecimal REALITY short IDs.
     pub short_ids: Vec<String>,
+    /// Maximum accepted client-clock difference; zero disables the check.
+    #[serde(default = "default_reality_time_diff_ms")]
+    pub max_time_diff_ms: u64,
+}
+
+const fn default_reality_time_diff_ms() -> u64 {
+    60_000
 }
 
 /// One configured outbound transport.
