@@ -59,6 +59,11 @@ impl ConnectionTasks {
     pub async fn join_next(&mut self) -> Option<Result<ConnectionTaskResult, JoinError>> {
         self.tasks.join_next().await
     }
+
+    /// Requests cancellation of every tracked task.
+    pub fn abort_all(&mut self) {
+        self.tasks.abort_all();
+    }
 }
 
 #[cfg(test)]

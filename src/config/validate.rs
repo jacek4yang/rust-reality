@@ -157,11 +157,18 @@ fn validate_inbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
 
     let mut tags = HashSet::new();
     let mut users = HashSet::new();
+    let mut listeners = HashSet::new();
     for (index, inbound) in config.inbounds.iter().enumerate() {
         let path = format!("inbounds[{index}]");
         validate_tag(&format!("{path}.tag"), &inbound.tag, &mut tags)?;
         if inbound.port == 0 {
             return fail(format!("{path}.port"), "must be greater than zero");
+        }
+        if !listeners.insert((inbound.listen, inbound.port)) {
+            return fail(
+                format!("{path}.port"),
+                "listen address and port are configured more than once",
+            );
         }
         if inbound.settings.decryption != "none" {
             return fail(format!("{path}.settings.decryption"), "must be none");
@@ -790,6 +797,22 @@ mod tests {
                 .expect_err("plain VLESS must be rejected")
                 .path(),
             "inbounds[0].streamSettings.security"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_listener_addresses() {
+        let mut config = valid_config();
+        let mut duplicate = config.inbounds[0].clone();
+        duplicate.tag = "duplicate-inbound".to_owned();
+        duplicate.settings.clients[0].id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee".to_owned();
+        config.inbounds.push(duplicate);
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("duplicate socket binding must fail")
+                .path(),
+            "inbounds[1].port"
         );
     }
 
