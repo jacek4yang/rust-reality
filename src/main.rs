@@ -368,10 +368,34 @@ fn run_self_test(arguments: ConfigPath) -> Result<(), CliError> {
     let assets = Arc::new(AssetSnapshot::load(&config)?);
     let summary = assets.summary();
     RoutingTable::compile(&config.routing, assets)?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let probe_timeout = Duration::from_millis(config.policy.resource_governor.connect_timeout_ms);
+    let reality_destinations = runtime.block_on(async {
+        let mut reports = Vec::new();
+        for inbound in &config.inbounds {
+            let Some(inbound) = inbound.as_vless() else {
+                continue;
+            };
+            for server_name in &inbound.stream_settings.reality_settings.server_names {
+                reports.push(
+                    probe_destination(
+                        &inbound.stream_settings.reality_settings.target,
+                        server_name,
+                        probe_timeout,
+                    )
+                    .await?,
+                );
+            }
+        }
+        Ok::<_, DestinationProbeError>(reports)
+    })?;
     let output = serde_json::to_string_pretty(&json!({
         "configuration": "ok",
         "assets": summary,
-        "routing": "ok"
+        "routing": "ok",
+        "realityDestinations": reality_destinations,
     }))?;
     write_stdout(format_args!("{output}\n"))
 }

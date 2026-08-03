@@ -67,6 +67,7 @@ socks_port=$(free_port)
 http_port=$(free_port)
 
 target/release/rust-reality config generate \
+    standalone \
     --listen 127.0.0.1 \
     --port "$server_port" \
     --target "$cover_target" \
@@ -174,7 +175,17 @@ if [[ ${SKIP_INTERNET:-0} != 1 ]]; then
         "$internet_url")
 fi
 
+mldsa_seed=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+rust_verify=$(target/release/rust-reality mldsa65 --seed "$mldsa_seed" | jq -r .verify)
+xray_verify=$("$xray" mldsa65 -i "$mldsa_seed" | sed -n 's/^Verify: //p')
+if [[ -z "$xray_verify" || "$rust_verify" != "$xray_verify" ]]; then
+    echo "ML-DSA-65 differential verification-key mismatch" >&2
+    exit 1
+fi
+mldsa_sha=$(printf %s "$rust_verify" | sha256sum | awk '{print $1}')
+
 echo "xray_version=$($xray version | head -1)"
 echo "local_bytes=$(stat -c %s "$work/download.bin")"
 echo "local_sha256=$download_sha"
+echo "mldsa65_verify_sha256=$mldsa_sha"
 echo "internet=$internet_result"

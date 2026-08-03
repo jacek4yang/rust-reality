@@ -106,5 +106,6 @@ Before enabling the service, run:
 rust-reality self-test --config /etc/rust-reality/config.json
 ```
 
-This performs real asset retrieval and routing compilation without binding the
-listeners.
+This performs real asset retrieval, routing compilation, and a fresh TLS 1.3
+compatibility probe for every configured REALITY target/SNI pair without
+binding the listeners.

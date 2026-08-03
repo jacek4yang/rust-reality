@@ -718,6 +718,18 @@ fn validate_policy(config: &Config) -> Result<(), ConfigError> {
             );
         }
     }
+    if relay.io_uring {
+        return fail(
+            "policy.relay.ioUring",
+            "is reserved until the bounded runtime capability probe is implemented",
+        );
+    }
+    if relay.sockhash {
+        return fail(
+            "policy.relay.sockhash",
+            "is reserved until the optional eBPF capability probe is implemented",
+        );
+    }
     Ok(())
 }
 
@@ -1063,5 +1075,26 @@ mod tests {
 
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains("ERERERERERERERERERERERERERERERERERERERERERE"));
+    }
+
+    #[test]
+    fn rejects_unimplemented_kernel_acceleration_switches() {
+        let mut config = valid_config();
+        config.policy.relay.io_uring = true;
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("unimplemented io_uring must fail closed")
+                .path(),
+            "policy.relay.ioUring"
+        );
+
+        config.policy.relay.io_uring = false;
+        config.policy.relay.sockhash = true;
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("unimplemented sockhash must fail closed")
+                .path(),
+            "policy.relay.sockhash"
+        );
     }
 }
