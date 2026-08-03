@@ -6,6 +6,7 @@ readonly REPO_ROOT="$(
     pwd
 )"
 readonly NEXTEST_PROFILE="${NEXTEST_PROFILE:-default}"
+readonly AUDIT_FETCH_TIMEOUT="${AUDIT_FETCH_TIMEOUT:-120s}"
 
 cd "$REPO_ROOT"
 
@@ -16,7 +17,7 @@ run() {
 
 run_audit() {
     printf '\n==> cargo audit --deny warnings\n'
-    if cargo audit --deny warnings; then
+    if timeout --signal=TERM "$AUDIT_FETCH_TIMEOUT" cargo audit --deny warnings; then
         return
     fi
 
