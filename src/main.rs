@@ -5,6 +5,7 @@ use std::{
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
     process::ExitCode,
+    time::Duration,
 };
 
 use clap::{Args, Parser, Subcommand};
@@ -14,6 +15,7 @@ use rust_reality::{
         format_config_schema, generate_minimal_config, load_config,
     },
     crypto::{KeyGenerationError, generate_uuid, generate_x25519_key_pair},
+    server::probe::{DestinationProbeError, probe_destination},
 };
 use serde_json::json;
 
@@ -45,6 +47,8 @@ enum Command {
     },
     /// Generate one REALITY-compatible X25519 key pair.
     X25519,
+    /// Test a real cover target for strict REALITY TLS 1.3 compatibility.
+    ProbeDest(ProbeDestinationArgs),
     /// Print the complete JSON Schema to standard output.
     Schema,
 }
@@ -80,11 +84,25 @@ struct GenerateArgs {
     server_name: String,
 }
 
+#[derive(Debug, Args)]
+struct ProbeDestinationArgs {
+    /// Cover endpoint, including its port.
+    #[arg(long, value_name = "HOST:PORT")]
+    target: String,
+    /// DNS name sent in the ephemeral TLS ClientHello.
+    #[arg(long, value_name = "DNS_NAME")]
+    server_name: String,
+    /// Absolute DNS, connect, write, and ServerHello deadline.
+    #[arg(long, default_value_t = 5_000, value_parser = clap::value_parser!(u64).range(1..=60_000))]
+    timeout_ms: u64,
+}
+
 #[derive(Debug)]
 enum CliError {
     Config(ConfigLoadError),
     Generate(GenerateConfigError),
     Key(KeyGenerationError),
+    Probe(DestinationProbeError),
     Json(serde_json::Error),
     Io(io::Error),
 }
@@ -95,6 +113,7 @@ impl fmt::Display for CliError {
             Self::Config(source) => source.fmt(formatter),
             Self::Generate(source) => source.fmt(formatter),
             Self::Key(source) => source.fmt(formatter),
+            Self::Probe(source) => source.fmt(formatter),
             Self::Json(_) => formatter.write_str("failed to encode JSON output"),
             Self::Io(_) => formatter.write_str("failed to write command output"),
         }
@@ -107,6 +126,7 @@ impl Error for CliError {
             Self::Config(source) => Some(source),
             Self::Generate(source) => Some(source),
             Self::Key(source) => Some(source),
+            Self::Probe(source) => Some(source),
             Self::Json(source) => Some(source),
             Self::Io(source) => Some(source),
         }
@@ -128,6 +148,12 @@ impl From<GenerateConfigError> for CliError {
 impl From<KeyGenerationError> for CliError {
     fn from(source: KeyGenerationError) -> Self {
         Self::Key(source)
+    }
+}
+
+impl From<DestinationProbeError> for CliError {
+    fn from(source: DestinationProbeError) -> Self {
+        Self::Probe(source)
     }
 }
 
@@ -179,8 +205,22 @@ fn run(cli: Cli) -> Result<(), CliError> {
             }))?;
             write_stdout(format_args!("{output}\n"))
         }
+        Command::ProbeDest(arguments) => run_probe_destination(arguments),
         Command::Schema => write_stdout(format_config_schema()?),
     }
+}
+
+fn run_probe_destination(arguments: ProbeDestinationArgs) -> Result<(), CliError> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let report = runtime.block_on(probe_destination(
+        &arguments.target,
+        &arguments.server_name,
+        Duration::from_millis(arguments.timeout_ms),
+    ))?;
+    let output = serde_json::to_string_pretty(&report)?;
+    write_stdout(format_args!("{output}\n"))
 }
 
 fn run_config(command: ConfigCommand) -> Result<(), CliError> {
@@ -242,5 +282,35 @@ mod tests {
     #[test]
     fn rejects_zero_uuid_count() {
         assert!(Cli::try_parse_from(["rust-reality", "uuid", "0"]).is_err());
+    }
+
+    #[test]
+    fn parses_bounded_destination_probe() {
+        let cli = Cli::try_parse_from([
+            "rust-reality",
+            "probe-dest",
+            "--target",
+            "www.example.com:443",
+            "--server-name",
+            "www.example.com",
+            "--timeout-ms",
+            "2500",
+        ])
+        .expect("destination probe must parse");
+
+        assert!(matches!(cli.command, Command::ProbeDest(_)));
+        assert!(
+            Cli::try_parse_from([
+                "rust-reality",
+                "probe-dest",
+                "--target",
+                "www.example.com:443",
+                "--server-name",
+                "www.example.com",
+                "--timeout-ms",
+                "0",
+            ])
+            .is_err()
+        );
     }
 }
