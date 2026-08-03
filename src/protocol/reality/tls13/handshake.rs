@@ -102,6 +102,10 @@ impl EstablishedTls {
         &mut self.server_records
     }
 
+    pub(crate) fn into_record_layers(self) -> (Tls13RecordLayer, Tls13RecordLayer) {
+        (self.client_records, self.server_records)
+    }
+
     #[cfg(test)]
     pub(crate) const fn from_test_records(
         suite: CipherSuite,
