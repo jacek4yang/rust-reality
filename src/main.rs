@@ -13,6 +13,7 @@ use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 use clap::{Args, Parser, Subcommand};
 use rust_reality::{
     assets::{AssetLoadError, AssetSnapshot},
+    benchmark::{BenchmarkError, BenchmarkOptions, run_benchmarks},
     config::{
         ConfigLoadError, GenerateConfigError, GenerateConfigInput, GenerateLandingConfigInput,
         GenerateLineConfigInput, SecretString, format_config, format_config_schema,
@@ -73,6 +74,8 @@ enum Command {
     Run(ConfigPath),
     /// Validate configuration, download/revalidate assets, and compile routing.
     SelfTest(ConfigPath),
+    /// Quantify bounded protocol hot paths and print a machine-readable report.
+    Benchmark(BenchmarkArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -155,6 +158,16 @@ struct MlDsa65Args {
 }
 
 #[derive(Debug, Args)]
+struct BenchmarkArgs {
+    /// Measured milliseconds for each benchmark case.
+    #[arg(long, default_value_t = 1_000, value_parser = clap::value_parser!(u64).range(90..=30_000))]
+    duration_ms: u64,
+    /// Warm-up milliseconds before each case.
+    #[arg(long, default_value_t = 250, value_parser = clap::value_parser!(u64).range(1..=10_000))]
+    warmup_ms: u64,
+}
+
+#[derive(Debug, Args)]
 struct ProbeDestinationArgs {
     /// Cover endpoint, including its port.
     #[arg(long, value_name = "HOST:PORT")]
@@ -179,6 +192,7 @@ enum CliError {
     Json(serde_json::Error),
     Io(io::Error),
     InvalidArgument(&'static str),
+    Benchmark(BenchmarkError),
 }
 
 impl fmt::Display for CliError {
@@ -194,6 +208,7 @@ impl fmt::Display for CliError {
             Self::Json(_) => formatter.write_str("failed to encode JSON output"),
             Self::Io(_) => formatter.write_str("failed to write command output"),
             Self::InvalidArgument(message) => formatter.write_str(message),
+            Self::Benchmark(source) => source.fmt(formatter),
         }
     }
 }
@@ -211,6 +226,7 @@ impl Error for CliError {
             Self::Json(source) => Some(source),
             Self::Io(source) => Some(source),
             Self::InvalidArgument(_) => None,
+            Self::Benchmark(source) => Some(source),
         }
     }
 }
@@ -269,6 +285,12 @@ impl From<io::Error> for CliError {
     }
 }
 
+impl From<BenchmarkError> for CliError {
+    fn from(source: BenchmarkError) -> Self {
+        Self::Benchmark(source)
+    }
+}
+
 fn main() -> ExitCode {
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -317,7 +339,17 @@ fn run(cli: Cli) -> Result<(), CliError> {
         Command::Schema => write_stdout(format_config_schema()?),
         Command::Serve(arguments) | Command::Run(arguments) => run_server(arguments),
         Command::SelfTest(arguments) => run_self_test(arguments),
+        Command::Benchmark(arguments) => run_benchmark(arguments),
     }
+}
+
+fn run_benchmark(arguments: BenchmarkArgs) -> Result<(), CliError> {
+    let report = run_benchmarks(BenchmarkOptions {
+        duration: Duration::from_millis(arguments.duration_ms),
+        warmup: Duration::from_millis(arguments.warmup_ms),
+    })?;
+    let output = serde_json::to_string_pretty(&report)?;
+    write_stdout(format_args!("{output}\n"))
 }
 
 fn run_server(arguments: ConfigPath) -> Result<(), CliError> {
@@ -572,5 +604,21 @@ mod tests {
             .expect("server command must parse");
             assert!(matches!(cli.command, Command::Serve(_) | Command::Run(_)));
         }
+    }
+
+    #[test]
+    fn bounds_builtin_benchmark_duration() {
+        assert!(
+            Cli::try_parse_from([
+                "rust-reality",
+                "benchmark",
+                "--duration-ms",
+                "90",
+                "--warmup-ms",
+                "1",
+            ])
+            .is_ok()
+        );
+        assert!(Cli::try_parse_from(["rust-reality", "benchmark", "--duration-ms", "89"]).is_err());
     }
 }
