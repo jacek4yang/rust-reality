@@ -4,6 +4,7 @@ mod auth;
 mod client_hello;
 mod read;
 mod replay;
+pub mod tls13;
 
 pub use auth::{
     AuthKey, RealityAuthConfigError, RealityAuthError, RealityAuthResult, RealityAuthenticator,
