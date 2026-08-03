@@ -32,5 +32,9 @@ mod tests {
         assert!(!schema.contains("metrics"));
         assert!(!schema.contains("health"));
         assert!(!schema.contains("observability"));
+        assert!(schema.contains("preSharedKey"));
+        assert!(!schema.contains("minConnections"));
+        assert!(!schema.contains("maxStreamsPerConnection"));
+        assert!(!schema.contains("dedicatedAfterBytes"));
     }
 }

@@ -331,45 +331,20 @@ fn validate_outbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
                 if settings.port == 0 {
                     return fail(format!("{path}.settings.port"), "must be greater than zero");
                 }
-                if settings.node_public_key.trim().is_empty() {
+                let key = Zeroizing::new(
+                    BASE64_URL_SAFE_NO_PAD
+                        .decode(settings.pre_shared_key.expose())
+                        .map_err(|_| {
+                            ConfigError::new(
+                                format!("{path}.settings.preSharedKey"),
+                                "must be URL-safe unpadded base64",
+                            )
+                        })?,
+                );
+                if key.len() != 32 {
                     return fail(
-                        format!("{path}.settings.nodePublicKey"),
-                        "must not be empty",
-                    );
-                }
-                validate_hostname(
-                    &format!("{path}.settings.serverName"),
-                    &settings.server_name,
-                )?;
-                let pool = &settings.pool;
-                if pool.min_connections == 0 || pool.min_connections > pool.max_connections {
-                    return fail(
-                        format!("{path}.settings.pool.minConnections"),
-                        "must be non-zero and no greater than maxConnections",
-                    );
-                }
-                if pool.max_connections > 256 {
-                    return fail(
-                        format!("{path}.settings.pool.maxConnections"),
-                        "must not exceed 256",
-                    );
-                }
-                if !(1..=1_024).contains(&pool.max_streams_per_connection) {
-                    return fail(
-                        format!("{path}.settings.pool.maxStreamsPerConnection"),
-                        "must be between 1 and 1024",
-                    );
-                }
-                if pool.dedicated_after_bytes < 64 * 1024 {
-                    return fail(
-                        format!("{path}.settings.pool.dedicatedAfterBytes"),
-                        "must be at least 65536",
-                    );
-                }
-                if !(1..=3_600).contains(&pool.idle_timeout_seconds) {
-                    return fail(
-                        format!("{path}.settings.pool.idleTimeoutSeconds"),
-                        "must be between 1 and 3600",
+                        format!("{path}.settings.preSharedKey"),
+                        "must decode to exactly 32 bytes",
                     );
                 }
             }
@@ -774,7 +749,9 @@ fn fail<T>(path: impl Into<String>, message: impl Into<String>) -> Result<T, Con
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{Config, LogOutput, SecretString, validate_config};
+    use crate::config::{
+        Config, LogOutput, NxrSettings, OutboundConfig, SecretString, validate_config,
+    };
 
     use super::ConfigError;
 
@@ -915,6 +892,26 @@ mod tests {
                 .expect_err("asset traversal must fail")
                 .path(),
             "routing.globalRules[0].domain[0]"
+        );
+    }
+
+    #[test]
+    fn nxr_uses_one_independent_fixed_size_psk_without_pool_settings() {
+        let mut config = valid_config();
+        config.outbounds.push(OutboundConfig::Nxr {
+            tag: "landing".to_owned(),
+            settings: NxrSettings {
+                address: "127.0.0.1".to_owned(),
+                port: 9443,
+                pre_shared_key: SecretString::new("too-short"),
+            },
+        });
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("malformed NXR PSK must fail")
+                .path(),
+            "outbounds[2].settings.preSharedKey"
         );
     }
 

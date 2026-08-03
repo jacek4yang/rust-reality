@@ -102,7 +102,7 @@ target architecture in which protocol crates deny unsafe code.
 
 Only a small Linux I/O crate may contain unsafe code. Every unsafe block must
 state its safety invariants and have a safe API. Protocol, configuration,
-routing, TLS state, REALITY, Vision, and NXR framing crates deny unsafe code.
+routing, TLS state, REALITY, Vision, and NXR authentication crates deny unsafe code.
 
 ### High: resource controls are coupled to observability
 
@@ -122,7 +122,7 @@ sites across source and tests. Many are test-only, but the archive does not make
 the production boundary easy to prove.
 
 Migrated data-path code must contain no `unwrap`, `expect`, or panic path. Queue,
-buffer, task, replay, fallback, probe, DNS, route, and NXR pool bounds are
+buffer, task, replay, fallback, probe, DNS, route, and NXR authentication bounds are
 explicit configuration values with validated ceilings.
 
 ### Medium: source text contains encoding damage
@@ -167,9 +167,11 @@ ported, but documentation and error text must be rewritten rather than copied.
 - Performance claims require measurements on the same host with recorded kernel,
   CPU, toolchain, commit, configuration, and test order. Microbenchmarks are not
   Internet throughput claims.
-- The same-city NXR design should optimize connection establishment and queueing
-  delay first; multiplexing is retained for short flows, while sustained large
-  flows switch to dedicated connections to avoid head-of-line blocking.
+- NXR is an independent internal outbound protocol, never a replacement for the
+  public VLESS + REALITY + Vision ingress. Each user flow opens one TCP connection,
+  sends one bounded nonce/timestamp/destination/PSK-HMAC request, then switches to
+  raw half-close-aware relay. It deliberately has no REALITY, TLS, AEAD, pooling,
+  multiplexing, or persistent framing; firewall source restrictions are expected.
 
 ## Acceptance gate for a migrated module
 
