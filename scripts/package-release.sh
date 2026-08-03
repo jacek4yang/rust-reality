@@ -54,14 +54,13 @@ trap cleanup EXIT
 
 install -m 0755 "$BINARY" "$STAGING_DIRECTORY/rust-reality"
 install -m 0644 "$REPO_ROOT/README.md" "$STAGING_DIRECTORY/README.md"
+install -m 0644 "$REPO_ROOT/README.zh-CN.md" "$STAGING_DIRECTORY/README.zh-CN.md"
 install -m 0644 "$REPO_ROOT/SECURITY.md" "$STAGING_DIRECTORY/SECURITY.md"
+install -m 0644 "$REPO_ROOT/SECURITY.zh-CN.md" "$STAGING_DIRECTORY/SECURITY.zh-CN.md"
 install -d -m 0755 "$STAGING_DIRECTORY/deploy" "$STAGING_DIRECTORY/docs"
 install -m 0644 "$REPO_ROOT/deploy/rust-reality.service" \
     "$STAGING_DIRECTORY/deploy/rust-reality.service"
-install -m 0644 "$REPO_ROOT/docs/deployment.md" \
-    "$STAGING_DIRECTORY/docs/deployment.md"
-install -m 0644 "$REPO_ROOT/docs/threat-model.md" \
-    "$STAGING_DIRECTORY/docs/threat-model.md"
+install -m 0644 "$REPO_ROOT"/docs/*.md "$STAGING_DIRECTORY/docs/"
 
 tar \
     --sort=name \

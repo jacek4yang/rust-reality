@@ -1,36 +1,79 @@
 # Linux deployment
 
-## Build one release binary
+English | [简体中文](deployment.zh-CN.md)
 
-Use the pinned stable toolchain and locked dependency graph:
+This guide deploys an official Linux x86_64 release as either a standalone
+public node, a public line node, or a firewall-restricted NXR landing node.
+
+## Requirements
+
+- 64-bit Linux with a modern kernel and systemd for the provided unit.
+- Root access for installation, service account, firewall, and privileged port.
+- Correct system time on every public, line, landing, and client host.
+- One REALITY cover endpoint that passes `probe-dest` from the public node.
+- For NXR, a fixed/private line-to-landing path or a firewall that allows only
+  the line node's fixed source IP.
+
+The binary needs outbound DNS/TCP access, write access to its asset cache, and
+optional write access to its file-log directory. It does not require a runtime
+language or companion daemon.
+
+## Install an official release
+
+Download these three assets from the same
+[GitHub Release](https://github.com/jacek4yang/rust-reality/releases):
+
+- `rust-reality-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz`
+- `release-manifest.json`
+- `SHA256SUMS`
+
+Verify both listed files before extraction:
+
+```shell
+sha256sum --check SHA256SUMS
+tar -xzf rust-reality-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
+sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
+rust-reality --version
+```
+
+`release-manifest.json` records the version, tag, exact source commit, target
+triple, source timestamp, archive name, and archive SHA-256. Do not combine an
+archive, manifest, or checksum from different releases.
+
+To build instead, use the pinned toolchain and locked dependency graph:
 
 ```shell
 ./scripts/check.sh
 ./scripts/build-release.sh
 ```
 
-The build script embeds the exact Git commit in `benchmark` reports and prints
-the SHA-256 of the stripped release binary. Install only
-`target/release/rust-reality`; no runtime language or companion process is
-required.
-
-Official GitHub Release archives are produced automatically from matching
-`vMAJOR.MINOR.PATCH` tags on `main`. Download the archive,
-`release-manifest.json`, and `SHA256SUMS`; verify both checksums before
-extracting the binary and deployment files:
+## Create the service account and directories
 
 ```shell
-sha256sum --check SHA256SUMS
-tar -xzf rust-reality-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
-install -m 0755 rust-reality /usr/local/bin/rust-reality
+sudo useradd --system --home /var/lib/rust-reality \
+  --shell /usr/sbin/nologin rust-reality
+sudo install -d -o root -g rust-reality -m 0750 /etc/rust-reality
+sudo install -d -o rust-reality -g rust-reality -m 0750 \
+  /var/lib/rust-reality/assets
+sudo install -d -o rust-reality -g rust-reality -m 0750 \
+  /var/log/rust-reality
 ```
 
-The accompanying `release-manifest.json` records the exact source commit,
-target triple, source timestamp, artifact name, and artifact SHA-256.
+Recommended layout:
 
-## Generate a standalone public node
+```text
+/usr/local/bin/rust-reality              root:root          0755
+/etc/rust-reality/config.json            root:rust-reality  0640
+/var/lib/rust-reality/assets/            rust-reality       0750
+/var/log/rust-reality/                   rust-reality       0750 (file sink only)
+```
 
-First verify a proposed REALITY cover endpoint:
+## Standalone public node
+
+### 1. Select and probe the cover target
+
+The SNI must be a DNS name served by the target and the target must negotiate a
+compatible TLS 1.3 ServerHello. Test from the real VPS:
 
 ```shell
 rust-reality probe-dest \
@@ -38,40 +81,113 @@ rust-reality probe-dest \
   --server-name www.microsoft.com
 ```
 
-Then generate the server config. The JSON goes to standard output and the
-client-facing REALITY public key goes to standard error, so they can be captured
-separately without placing private material in logs:
+Target availability and behavior are external dependencies. Re-run the probe
+after persistent handshake failures or target changes.
+
+`serverNames` may later contain a certificate-style pattern such as
+`*.lmu.edu`. Clients must still send a concrete one-label name such as
+`www.lmu.edu`. For `self-test` to verify the pattern, the configured target
+hostname must itself be a matching concrete name.
+
+### 2. Generate configuration and client values
 
 ```shell
+umask 077
 rust-reality config generate standalone \
+  --listen 0.0.0.0 \
+  --port 443 \
   --target www.microsoft.com:443 \
   --server-name www.microsoft.com \
   > config.json 2> client-values.txt
-rust-reality check --config config.json
 ```
 
-The generated public inbound is always VLESS + REALITY + Vision. Add UUIDs and
-`routing.users` groups in the JSON, then run `check` again.
+The server JSON contains the generated UUID, REALITY private key, short ID, and
+policy. `client-values.txt` contains the REALITY public key. Neither file is a
+log; protect and transfer it as secret deployment material.
 
-## Generate a line node and NXR landing node
+### 3. Configure an Xray client
 
-Generate one independent NXR PSK on a trusted host:
+Insert the server address, port, UUID from `settings.clients[0].id`, public key
+from `client-values.txt`, server name, and short ID into an Xray 26.7.28 client:
+
+```json
+{
+  "protocol": "vless",
+  "settings": {
+    "vnext": [{
+      "address": "SERVER_ADDRESS",
+      "port": 443,
+      "users": [{
+        "id": "SERVER_UUID",
+        "encryption": "none",
+        "flow": "xtls-rprx-vision"
+      }]
+    }]
+  },
+  "streamSettings": {
+    "network": "tcp",
+    "security": "reality",
+    "realitySettings": {
+      "fingerprint": "chrome",
+      "serverName": "www.microsoft.com",
+      "publicKey": "REALITY_PUBLIC_KEY",
+      "shortId": "SERVER_SHORT_ID",
+      "spiderX": "/"
+    }
+  }
+}
+```
+
+This is an outbound fragment, not a complete Xray configuration.
+
+### 4. Validate and install
 
 ```shell
-rust-reality node-keygen
+rust-reality check --config config.json
+rust-reality self-test --config config.json
+sudo install -o root -g rust-reality -m 0640 \
+  config.json /etc/rust-reality/config.json
 ```
 
-Pass the `preSharedKey` value to both commands:
+`self-test` performs real asset retrieval, routing compilation, and cover probes
+without binding listeners.
+
+## Line node and NXR landing node
+
+NXR is an internal, per-flow authenticated raw TCP hop. It is not REALITY, TLS,
+or encrypted after authentication.
+
+### 1. Generate one independent PSK
+
+On a trusted host:
+
+```shell
+umask 077
+rust-reality node-keygen > nxr-key.json
+```
+
+Use the `preSharedKey` value only for this line/landing trust relationship.
+
+### 2. Generate the line configuration
 
 ```shell
 rust-reality config generate line \
+  --listen 0.0.0.0 \
+  --port 443 \
   --target www.microsoft.com:443 \
   --server-name www.microsoft.com \
   --nxr-address LANDING_PRIVATE_ADDRESS \
   --nxr-port 7443 \
   --nxr-key NXR_PSK \
   > line.json 2> line-client-values.txt
+```
 
+The generated UUID defaults to outbound tag `landing`; `direct` and `block`
+remain available for explicit user rules.
+
+### 3. Generate the landing configuration
+
+```shell
 rust-reality config generate landing \
   --listen 0.0.0.0 \
   --port 7443 \
@@ -79,60 +195,117 @@ rust-reality config generate landing \
   > landing.json
 ```
 
-The line config exposes only the public VLESS + REALITY + Vision listener and
-routes its generated UUID to the NXR outbound by default. The landing config
-exposes only NXR and has no VLESS, REALITY, Vision, TLS, or public client state.
+The landing configuration exposes only NXR and has no public client identity.
 
-At the landing firewall, allow TCP port 7443 only from the line node's fixed
-source IP and reject every other source before the process. Treat this firewall
-rule as part of NXR deployment, not an optional optimization.
+### 4. Enforce the NXR firewall boundary
 
-## DNS-assisted GeoIP routing
+Before starting the landing service, allow TCP 7443 only from the line node's
+fixed source IP and reject every other source. Prefer both provider security
+groups and host firewall rules. Do not rely on the PSK as permission to expose
+NXR publicly.
 
-Set `routing.domainStrategy` to `AsIs`, `IPIfNonMatch`, or `IPOnDemand`.
-`IPIfNonMatch` evaluates domain rules first and resolves only before the user
-default; `IPOnDemand` resolves before evaluation when any applicable IP rule
-exists. Each query has the configured `dns.timeoutMs` deadline and is limited to
-64 unique addresses. A direct outbound reuses that exact address snapshot, so a
-GeoIP decision is not followed by a second, potentially different lookup.
+Keep clocks synchronized. The default NXR request accepts 30 seconds of skew
+and retains nonces for 120 seconds. Authentication failure closes before DNS or
+destination connect.
 
-The current minimal resolver deliberately accepts only `dns.servers: ["system"]`.
-Custom resolver values fail configuration validation instead of being silently
-ignored; adding dedicated UDP, TCP, or DoH transports is a separate feature.
+## GeoIP and GeoSite
 
-## Files and service account
+Only HTTPS source URLs are required. Defaults point to community-compatible
+files, so most deployments can omit `assets` entirely or override only:
 
-Create a dedicated `rust-reality` user and group. Recommended paths are:
-
-```text
-/usr/local/bin/rust-reality
-/etc/rust-reality/config.json       root:rust-reality 0640
-/var/lib/rust-reality/assets/       rust-reality:rust-reality
-/var/log/rust-reality/              rust-reality:rust-reality (file sink only)
+```json
+{
+  "assets": {
+    "geoip": "https://example.invalid/releases/geoip.dat",
+    "geosite": "https://example.invalid/releases/geosite.dat"
+  }
+}
 ```
 
-Install `deploy/rust-reality.service`, review its paths and capability policy,
-then enable it with systemd. Sending SIGHUP loads and validates a complete new
-configuration and asset generation before atomic publication. Listener
-addresses and replay/resource policies are cold settings and require restart.
+Replace the example domain with real trusted sources. Downloads are bounded,
+conditionally revalidated, parsed before publication, and retained as a
+last-known-good snapshot on failure. `ext:filename:tag` files are read only from
+the configured cache directory.
 
-For normal deployments prefer stderr/journald. If the file sink is selected,
-configure `maxBytes`, `maxFiles`, and `maxTotalBytes`; all three are enforced.
+See the [configuration reference](configuration.md#routing) for matcher and DNS
+strategy details.
 
-## Geo assets
+## Install and start systemd
 
-Only HTTPS source URLs are required. Defaults point at the community
-`geoip.dat` and `geosite.dat` release. Files are downloaded into the bounded
-cache, conditionally revalidated, parsed before publication, and retained as a
-last-known-good snapshot when an update fails. `ext:filename:tag` assets are
-resolved within the configured cache directory and cannot escape it.
-
-Before enabling the service, run:
+Copy the unit shipped in the release archive:
 
 ```shell
-rust-reality self-test --config /etc/rust-reality/config.json
+sudo install -o root -g root -m 0644 \
+  deploy/rust-reality.service /etc/systemd/system/rust-reality.service
+sudo systemd-analyze verify /etc/systemd/system/rust-reality.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now rust-reality
+sudo systemctl status rust-reality
+journalctl -u rust-reality -f
 ```
 
-This performs real asset retrieval, routing compilation, and a fresh TLS 1.3
-compatibility probe for every configured REALITY target/SNI pair without
-binding the listeners.
+The unit runs as the dedicated account, retains only `CAP_NET_BIND_SERVICE`,
+protects the host filesystem/kernel surfaces, and allows writes only to the
+asset and log directories. Review it against distribution paths and local
+hardening policy instead of blindly removing a restriction.
+
+For normal installations use `log.output: "stderr"` or `"journald"`. If file
+logging is required, configure `path`, `maxBytes`, `maxFiles`, and
+`maxTotalBytes`; all are enforced.
+
+## Reload, restart, and graceful shutdown
+
+Validate first, then request atomic reload:
+
+```shell
+rust-reality check --config /etc/rust-reality/config.json
+rust-reality self-test --config /etc/rust-reality/config.json
+sudo systemctl reload rust-reality
+```
+
+A failed candidate leaves the current generation active. Existing connections
+retain their previous generation. Listener topology, resource-governor policy,
+relay policy, and NXR replay-cache capacity/retention are cold settings; use a
+controlled restart for them. The exact list is in
+[Reload boundaries](configuration.md#reload-boundaries).
+
+SIGTERM stops new accepts and permits a bounded graceful shutdown. The unit's
+40-second stop timeout covers the program's 30-second graceful limit.
+
+## Upgrade and rollback
+
+1. Download and verify all three assets for the new tag.
+2. Keep the current binary and configuration as root-only rollback files.
+3. Run the new binary's `check` and `self-test` against a copy of production
+   configuration.
+4. Atomically install the new binary and restart the service.
+5. Verify logs, listener, Xray client handshake, routing, and real traffic.
+
+Example binary swap:
+
+```shell
+sudo install -m 0755 rust-reality /usr/local/bin/rust-reality.new
+sudo mv /usr/local/bin/rust-reality /usr/local/bin/rust-reality.previous
+sudo mv /usr/local/bin/rust-reality.new /usr/local/bin/rust-reality
+sudo systemctl restart rust-reality
+```
+
+Rollback by restoring the previous binary and its compatible configuration,
+then restarting. Do not downgrade while retaining configuration fields unknown
+to the older version.
+
+## Troubleshooting checklist
+
+- `check`: JSON syntax, unknown field, reference, or limit failure.
+- `self-test`: asset URL/cache, DNS, routing label, or cover-target failure.
+- Bind failure: another process, missing port capability, wrong address, or
+  duplicate listener.
+- Xray handshake failure: UUID, flow, SNI, public key, short ID, client clock,
+  or changed cover behavior.
+- NXR failure: firewall/source IP, PSK mismatch, clock skew, replay capacity, or
+  landing reachability.
+- Route surprise: first-match order, user assignment, domain strategy, missing
+  asset label, or a global rule preceding the user rule.
+
+Do not enable debug logs and publish them without review. Never paste production
+configuration, keys, UUIDs, credentials, or packet captures into public issues.

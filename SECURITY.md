@@ -2,8 +2,9 @@
 
 ## Supported code
 
-The project has not made a stable release. Security fixes are applied only to
-the current `main` branch. Do not deploy an arbitrary development commit.
+The project is pre-1.0. Security fixes are applied to the latest GitHub Release
+and the current `main` branch; older pre-1.0 releases are not maintained unless
+a release notice says otherwise. Do not deploy an arbitrary development commit.
 
 ## Reporting
 

@@ -1,5 +1,7 @@
 # Benchmark policy and baseline
 
+English | [简体中文](benchmarks.zh-CN.md)
+
 ## Built-in protocol measurements
 
 Run an optimized binary on an otherwise idle host:
