@@ -3,12 +3,19 @@ use std::{error::Error, fmt, io, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
-    time,
+    time::{self, Instant},
 };
 
 use crate::{
     config::ResourceGovernorConfig,
-    runtime::{AdmissionDenied, AdmissionKind, ResourceGovernor},
+    protocol::reality::{
+        ClientHello,
+        tls13::{
+            TargetServerHelloRead, TargetServerHelloReadError,
+            read_target_server_hello as read_server_hello,
+        },
+    },
+    runtime::{AdmissionDenied, AdmissionKind, AdmissionPermit, ResourceGovernor},
     transport::relay::{RelayStats, relay_bidirectional},
 };
 
@@ -16,6 +23,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FallbackStats {
     forwarded_prefix: u64,
+    returned_prefix: u64,
     relay: RelayStats,
 }
 
@@ -24,6 +32,12 @@ impl FallbackStats {
     #[must_use]
     pub const fn forwarded_prefix_bytes(self) -> u64 {
         self.forwarded_prefix
+    }
+
+    /// Returns target bytes replayed before live target-to-client relay.
+    #[must_use]
+    pub const fn returned_prefix_bytes(self) -> u64 {
+        self.returned_prefix
     }
 
     /// Returns the subsequent bidirectional relay counts.
@@ -76,6 +90,14 @@ pub struct RealityFallback {
     session_timeout: Duration,
 }
 
+/// One admitted cover connection whose byte ownership can transition to fallback.
+pub struct CoverConnection {
+    stream: TcpStream,
+    _permit: AdmissionPermit,
+    deadline: Instant,
+    forwarded_prefix: u64,
+}
+
 impl RealityFallback {
     /// Creates immutable fallback state from a validated listener snapshot.
     #[must_use]
@@ -110,35 +132,117 @@ impl RealityFallback {
     where
         I: AsyncRead + AsyncWrite + Unpin + ?Sized,
     {
-        let _permit = self
+        self.connect(consumed_prefix)
+            .await?
+            .relay(inbound, &[])
+            .await
+    }
+
+    /// Opens one admitted target connection and writes the exact client prefix.
+    ///
+    /// The returned connection may first inspect the target ServerHello. Any bytes
+    /// consumed during that inspection remain caller-owned and can be supplied to
+    /// [`CoverConnection::relay`] if authentication or compatibility later fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns an admission, connection deadline, prefix write, or session error.
+    pub async fn connect(&self, consumed_prefix: &[u8]) -> Result<CoverConnection, FallbackError> {
+        let permit = self
             .governor
             .try_acquire(AdmissionKind::Fallback)
             .map_err(FallbackError::Admission)?;
+        let now = Instant::now();
+        let deadline = now
+            .checked_add(self.session_timeout)
+            .ok_or(FallbackError::SessionTimeout)?;
+        let connect_deadline = now
+            .checked_add(self.connect_timeout)
+            .map_or(deadline, |candidate| candidate.min(deadline));
+        let connect = TcpStream::connect(self.target.as_ref());
+        let mut stream = time::timeout_at(connect_deadline, connect)
+            .await
+            .map_err(|_| FallbackError::ConnectTimeout)?
+            .map_err(FallbackError::Io)?;
+        stream.set_nodelay(true).map_err(FallbackError::Io)?;
+        time::timeout_at(deadline, stream.write_all(consumed_prefix))
+            .await
+            .map_err(|_| FallbackError::SessionTimeout)?
+            .map_err(FallbackError::Io)?;
+        let forwarded_prefix =
+            u64::try_from(consumed_prefix.len()).map_or(u64::MAX, |length| length);
+        Ok(CoverConnection {
+            stream,
+            _permit: permit,
+            deadline,
+            forwarded_prefix,
+        })
+    }
+}
+
+impl CoverConnection {
+    /// Reads the compatible target ServerHello without consuming its next record.
+    ///
+    /// The shorter of `timeout` and the remaining fallback lifetime is used.
+    ///
+    /// # Errors
+    ///
+    /// Returns a byte-owning target read error suitable for exact fallback.
+    pub async fn read_server_hello(
+        &mut self,
+        client: &ClientHello,
+        timeout: Duration,
+    ) -> Result<TargetServerHelloRead, TargetServerHelloReadError> {
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        read_server_hello(&mut self.stream, client, timeout.min(remaining)).await
+    }
+
+    /// Replays a previously consumed target prefix, then relays the same connection.
+    ///
+    /// This consumes the transaction so the fallback permit and socket cannot be
+    /// accidentally reused after ownership passes to bidirectional relay.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O or absolute session-lifetime error.
+    pub async fn relay<I>(
+        mut self,
+        inbound: &mut I,
+        consumed_target_prefix: &[u8],
+    ) -> Result<FallbackStats, FallbackError>
+    where
+        I: AsyncRead + AsyncWrite + Unpin + ?Sized,
+    {
         let operation = async {
-            let connect = TcpStream::connect(self.target.as_ref());
-            let mut cover = time::timeout(self.connect_timeout, connect)
-                .await
-                .map_err(|_| FallbackError::ConnectTimeout)?
-                .map_err(FallbackError::Io)?;
-            cover.set_nodelay(true).map_err(FallbackError::Io)?;
-            cover
-                .write_all(consumed_prefix)
+            inbound
+                .write_all(consumed_target_prefix)
                 .await
                 .map_err(FallbackError::Io)?;
-            let relay = relay_bidirectional(inbound, &mut cover)
+            let relay = relay_bidirectional(inbound, &mut self.stream)
                 .await
                 .map_err(FallbackError::Io)?;
-            let forwarded_prefix =
-                u64::try_from(consumed_prefix.len()).map_or(u64::MAX, |length| length);
+            let returned_prefix =
+                u64::try_from(consumed_target_prefix.len()).map_or(u64::MAX, |length| length);
             Ok(FallbackStats {
-                forwarded_prefix,
+                forwarded_prefix: self.forwarded_prefix,
+                returned_prefix,
                 relay,
             })
         };
 
-        time::timeout(self.session_timeout, operation)
+        time::timeout_at(self.deadline, operation)
             .await
             .map_err(|_| FallbackError::SessionTimeout)?
+    }
+}
+
+impl fmt::Debug for CoverConnection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CoverConnection")
+            .field("deadline", &self.deadline)
+            .field("forwarded_prefix", &self.forwarded_prefix)
+            .finish_non_exhaustive()
     }
 }
 
@@ -164,7 +268,11 @@ mod tests {
     };
 
     use super::{FallbackError, RealityFallback};
-    use crate::{config::ResourceGovernorConfig, runtime::ResourceGovernor};
+    use crate::{
+        config::ResourceGovernorConfig,
+        protocol::reality::{ClientHello, SESSION_ID_LEN, X25519_GROUP, client_hello_fixtures},
+        runtime::ResourceGovernor,
+    };
 
     const PREFIX: &[u8] = b"exact-fragmented-client-hello-prefix";
     const SUFFIX: &[u8] = b"bytes-read-after-fallback-connect";
@@ -215,6 +323,81 @@ mod tests {
         assert_eq!(request, expected);
         assert_eq!(response, RESPONSE);
         assert_eq!(stats.forwarded_prefix_bytes(), PREFIX.len() as u64);
+        assert_eq!(stats.returned_prefix_bytes(), 0);
+        assert_eq!(
+            stats.relay().inbound_to_outbound_bytes(),
+            SUFFIX.len() as u64
+        );
+        assert_eq!(
+            stats.relay().outbound_to_inbound_bytes(),
+            RESPONSE.len() as u64
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn inspected_target_response_can_rejoin_same_fallback_connection() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("cover listener must bind");
+        let target = listener
+            .local_addr()
+            .expect("cover listener address must exist")
+            .to_string();
+        let config = ResourceGovernorConfig::default();
+        let fallback = RealityFallback::new(target, ResourceGovernor::new(&config), &config);
+        let client_hello = client_hello();
+        let target_record = target_server_hello_record();
+        let (mut client, mut inbound) = duplex(512);
+
+        let exchange = async {
+            let fallback_io = async {
+                let mut connection = fallback
+                    .connect(PREFIX)
+                    .await
+                    .expect("cover connection must open");
+                let target_hello = connection
+                    .read_server_hello(&client_hello, Duration::from_secs(1))
+                    .await
+                    .expect("target ServerHello must be compatible");
+                connection
+                    .relay(&mut inbound, target_hello.wire_record())
+                    .await
+            };
+            let client_io = async {
+                client.write_all(SUFFIX).await?;
+                client.shutdown().await?;
+                let mut response = Vec::new();
+                client.read_to_end(&mut response).await?;
+                Ok::<_, io::Error>(response)
+            };
+            let cover_io = async {
+                let (mut cover, _) = listener.accept().await?;
+                let mut prefix = vec![0_u8; PREFIX.len()];
+                cover.read_exact(&mut prefix).await?;
+                cover.write_all(&target_record).await?;
+                let mut suffix = Vec::new();
+                cover.read_to_end(&mut suffix).await?;
+                cover.write_all(RESPONSE).await?;
+                cover.shutdown().await?;
+                Ok::<_, io::Error>((prefix, suffix))
+            };
+            tokio::join!(fallback_io, client_io, cover_io)
+        };
+        let (fallback_result, client_result, cover_result) =
+            timeout(Duration::from_secs(2), exchange)
+                .await
+                .expect("inspected fallback exchange must finish");
+
+        let stats = fallback_result.expect("same cover connection must relay");
+        let response = client_result.expect("client I/O must succeed");
+        let (prefix, suffix) = cover_result.expect("cover I/O must succeed");
+        let mut expected_response = target_record.clone();
+        expected_response.extend_from_slice(RESPONSE);
+        assert_eq!(prefix, PREFIX);
+        assert_eq!(suffix, SUFFIX);
+        assert_eq!(response, expected_response);
+        assert_eq!(stats.forwarded_prefix_bytes(), PREFIX.len() as u64);
+        assert_eq!(stats.returned_prefix_bytes(), target_record.len() as u64);
         assert_eq!(
             stats.relay().inbound_to_outbound_bytes(),
             SUFFIX.len() as u64
@@ -252,5 +435,65 @@ mod tests {
                 Err(FallbackError::SessionTimeout)
             ));
         }
+    }
+
+    fn client_hello() -> ClientHello {
+        ClientHello::parse_message(&client_hello_fixtures::client_hello_with_key_share(
+            [0x44; 32],
+            &[0x11; SESSION_ID_LEN],
+            "www.example.com",
+            &[b"h2"],
+            X25519_GROUP,
+            &[0x22; 32],
+        ))
+        .expect("test ClientHello must parse")
+    }
+
+    fn target_server_hello_record() -> Vec<u8> {
+        let mut extensions = Vec::new();
+        push_extension(&mut extensions, 0x002b, &0x0304_u16.to_be_bytes());
+        let mut key_share = Vec::new();
+        key_share.extend_from_slice(&X25519_GROUP.to_be_bytes());
+        key_share.extend_from_slice(&32_u16.to_be_bytes());
+        key_share.extend_from_slice(&[0x55; 32]);
+        push_extension(&mut extensions, 0x0033, &key_share);
+
+        let mut body = Vec::new();
+        body.extend_from_slice(&0x0303_u16.to_be_bytes());
+        body.extend_from_slice(&[0x33; 32]);
+        body.push(u8::try_from(SESSION_ID_LEN).expect("test session ID must fit"));
+        body.extend_from_slice(&[0x11; SESSION_ID_LEN]);
+        body.extend_from_slice(&0x1301_u16.to_be_bytes());
+        body.push(0);
+        body.extend_from_slice(
+            &u16::try_from(extensions.len())
+                .expect("test extensions must fit")
+                .to_be_bytes(),
+        );
+        body.extend_from_slice(&extensions);
+
+        let mut message = vec![2];
+        let message_len = u32::try_from(body.len()).expect("test ServerHello body must fit");
+        message.extend_from_slice(&message_len.to_be_bytes()[1..]);
+        message.extend_from_slice(&body);
+
+        let mut record = vec![22, 3, 3];
+        record.extend_from_slice(
+            &u16::try_from(message.len())
+                .expect("test record must fit")
+                .to_be_bytes(),
+        );
+        record.extend_from_slice(&message);
+        record
+    }
+
+    fn push_extension(output: &mut Vec<u8>, extension_type: u16, value: &[u8]) {
+        output.extend_from_slice(&extension_type.to_be_bytes());
+        output.extend_from_slice(
+            &u16::try_from(value.len())
+                .expect("test extension must fit")
+                .to_be_bytes(),
+        );
+        output.extend_from_slice(value);
     }
 }
