@@ -173,7 +173,7 @@ fn decode_domain(cursor: &mut Cursor<'_>) -> Result<Address, DecodeError> {
     }
 
     let domain = str::from_utf8(bytes)
-        .expect("validated ASCII bytes must be UTF-8")
+        .map_err(|_| DecodeError::InvalidDomainName)?
         .to_owned();
 
     Ok(Address::Domain(domain))

@@ -6,3 +6,4 @@ pub mod fallback;
 pub mod handler;
 pub mod probe;
 pub mod reality;
+pub mod vision;

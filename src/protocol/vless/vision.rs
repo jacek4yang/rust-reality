@@ -239,6 +239,7 @@ impl VisionDecoder {
 pub struct VisionEncoder {
     user_id: UserId,
     first_frame: bool,
+    finished: bool,
 }
 
 impl VisionEncoder {
@@ -247,6 +248,7 @@ impl VisionEncoder {
         Self {
             user_id,
             first_frame: true,
+            finished: false,
         }
     }
 
@@ -258,6 +260,9 @@ impl VisionEncoder {
         long_padding: bool,
         output: &mut Vec<u8>,
     ) -> Result<(), VisionEncodeError> {
+        if self.finished {
+            return Err(VisionEncodeError::EncoderFinished);
+        }
         let prefix_length = HEADER_SIZE + usize::from(self.first_frame) * UUID_SIZE;
         let maximum_content = VISION_FRAME_SIZE - prefix_length;
         if content.len() > maximum_content || content.len() > usize::from(u16::MAX) {
@@ -295,6 +300,7 @@ impl VisionEncoder {
         output.extend_from_slice(content);
         output.resize(frame_length, 0);
         self.first_frame = false;
+        self.finished = command != VisionCommand::Continue;
         Ok(())
     }
 }
@@ -359,6 +365,9 @@ pub enum VisionEncodeError {
 
     /// The output buffer could not reserve its bounded capacity.
     AllocationFailed,
+
+    /// A caller attempted to frame bytes after End or Direct.
+    EncoderFinished,
 }
 
 impl fmt::Display for VisionEncodeError {
@@ -380,6 +389,7 @@ impl fmt::Display for VisionEncodeError {
             Self::AllocationFailed => {
                 formatter.write_str("failed to reserve bounded Vision encode buffer")
             }
+            Self::EncoderFinished => formatter.write_str("Vision encoder already finished"),
         }
     }
 }
@@ -524,5 +534,9 @@ mod tests {
             .expect("second frame should decode");
         assert_eq!(decoded, b"world");
         assert_eq!(decoder.mode(), VisionMode::Raw);
+        assert_eq!(
+            encoder.encode(b"late", VisionCommand::Continue, false, &mut second),
+            Err(super::VisionEncodeError::EncoderFinished)
+        );
     }
 }

@@ -139,6 +139,28 @@ pub struct TlsApplicationWriter<W> {
     write_record: Vec<u8>,
 }
 
+impl<R> TlsApplicationReader<R> {
+    /// Consumes record state and returns the transport reader at a record boundary.
+    ///
+    /// This is only appropriate after an authenticated higher-level protocol has
+    /// explicitly negotiated a transition away from the outer TLS record layer.
+    #[must_use]
+    pub fn into_inner(self) -> R {
+        self.io
+    }
+}
+
+impl<W> TlsApplicationWriter<W> {
+    /// Consumes record state and returns the transport writer at a record boundary.
+    ///
+    /// Callers must finish writing the authenticated transition record before
+    /// invoking this method.
+    #[must_use]
+    pub fn into_inner(self) -> W {
+        self.io
+    }
+}
+
 /// Binds independently owned transport halves to the correct TLS directions.
 #[must_use]
 pub fn bind_application_halves<R, W>(
