@@ -1,0 +1,29 @@
+[package]
+name = "rust-reality-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rust-reality = { path = ".." }
+
+[[bin]]
+name = "wire_parsers"
+path = "fuzz_targets/wire_parsers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vision_decoder"
+path = "fuzz_targets/vision_decoder.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

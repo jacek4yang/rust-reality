@@ -1,0 +1,6 @@
+[advisories]
+# libcrux-ml-dsa 0.0.10 uses hax-lib-macros while generating formally
+# verified crypto code. Its proc-macro-error2 dependency is build-time-only;
+# RUSTSEC-2026-0173 reports that the crate is unmaintained, not vulnerable.
+# Remove this exception when libcrux publishes a dependency update.
+ignore = ["RUSTSEC-2026-0173"]
