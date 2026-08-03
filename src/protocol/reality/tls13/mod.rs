@@ -3,6 +3,7 @@
 mod keys;
 mod messages;
 mod record;
+mod server_hello;
 
 pub use keys::{
     ApplicationTrafficSecrets, CipherSuite, FinishedVerifyData, HashAlgorithm, Tls13KeySchedule,
@@ -14,4 +15,7 @@ pub use messages::{
 };
 pub use record::{
     ContentType, MAX_PLAINTEXT_LEN, OpenedRecord, Tls13RecordError, Tls13RecordLayer,
+};
+pub use server_hello::{
+    ServerHelloError, ServerHelloTemplate, change_cipher_spec_record, plaintext_handshake_record,
 };
