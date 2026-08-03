@@ -48,9 +48,7 @@ jobs:
       - name: Install nightly Rust
         run: rustup toolchain install nightly
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2.77.5
-        with:
-          tool: cargo-fuzz@0.13.2
+        run: cargo +nightly install cargo-fuzz --version 0.13.2 --locked
       - name: Fuzz bounded wire parsers
         run: cargo +nightly fuzz run wire_parsers -- -runs=20000 -max_len=65536
       - name: Fuzz Vision framing
