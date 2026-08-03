@@ -18,3 +18,6 @@ pub use read::{
     ClientHelloRead, ClientHelloReadError, ClientHelloReadErrorKind, read_client_hello,
 };
 pub use replay::{ReplayCache, ReplayError, ReplayReservation};
+
+#[cfg(test)]
+pub(crate) use client_hello::fixtures as client_hello_fixtures;
