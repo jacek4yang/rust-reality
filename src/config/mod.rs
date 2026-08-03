@@ -27,8 +27,9 @@ pub(crate) fn test_config_json() -> &'static str {
     r#"{
   "log": { "level": "info", "output": "stderr" },
   "assets": {
-    "geoip": "geoip.dat",
-    "geosite": "geosite.dat",
+    "geoip": "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geoip.dat",
+    "geosite": "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat",
+    "cacheDirectory": "/var/lib/rust-reality/assets",
     "reloadIntervalSeconds": 300
   },
   "dns": {

@@ -37,6 +37,25 @@ Criterion writes reports below `target/criterion/`.
 Benchmark results are intended for comparisons on the same host and under the same system
 conditions. End-to-end comparisons against Xray are recorded separately and are not enforced as CI pass/fail thresholds.
 
+## Geo assets
+
+GeoIP and GeoSite files are downloaded from configured HTTPS URLs. A minimal override only needs
+the two sources; cache location, request deadline, size limit, and refresh interval have bounded
+defaults:
+
+```json
+{
+  "assets": {
+    "geoip": "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geoip.dat",
+    "geosite": "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat"
+  }
+}
+```
+
+Downloads are conditionally revalidated with HTTP validators. Only a fully parsed generation is
+published; an unavailable or invalid update keeps the previous in-memory snapshot and validated
+disk cache. Only labels referenced by routing rules are indexed.
+
 ## Architecture decisions
 
 Architecture decisions are recorded under [`docs/decisions`](docs/decisions).

@@ -3,6 +3,7 @@ use std::{
     error::Error,
     fmt,
     net::IpAddr,
+    path::Path,
 };
 
 use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
@@ -110,14 +111,19 @@ fn validate_log(config: &Config) -> Result<(), ConfigError> {
 }
 
 fn validate_assets_and_dns(config: &Config) -> Result<(), ConfigError> {
-    if config.assets.geoip.as_os_str().is_empty() {
-        return fail("assets.geoip", "must not be empty");
-    }
-    if config.assets.geosite.as_os_str().is_empty() {
-        return fail("assets.geosite", "must not be empty");
+    validate_asset_url("assets.geoip", &config.assets.geoip)?;
+    validate_asset_url("assets.geosite", &config.assets.geosite)?;
+    if config.assets.cache_directory.as_os_str().is_empty() {
+        return fail("assets.cacheDirectory", "must not be empty");
     }
     if config.assets.reload_interval_seconds == 0 {
         return fail("assets.reloadIntervalSeconds", "must be greater than zero");
+    }
+    if !(1..=300).contains(&config.assets.request_timeout_seconds) {
+        return fail("assets.requestTimeoutSeconds", "must be between 1 and 300");
+    }
+    if !(1024..=512 * 1024 * 1024).contains(&config.assets.max_bytes) {
+        return fail("assets.maxBytes", "must be between 1024 and 536870912");
     }
     if config.dns.servers.is_empty() || config.dns.servers.iter().any(String::is_empty) {
         return fail(
@@ -126,6 +132,22 @@ fn validate_assets_and_dns(config: &Config) -> Result<(), ConfigError> {
         );
     }
     validate_timeout("dns.timeoutMs", config.dns.timeout_ms)
+}
+
+fn validate_asset_url(path: &str, value: &str) -> Result<(), ConfigError> {
+    let uri = value
+        .parse::<ureq::http::Uri>()
+        .map_err(|_| ConfigError::new(path, "must be a valid HTTPS URL"))?;
+    if uri.scheme_str() != Some("https") || uri.authority().is_none() {
+        return fail(path, "must be an HTTPS URL with a host");
+    }
+    if uri
+        .authority()
+        .is_some_and(|authority| authority.as_str().contains('@'))
+    {
+        return fail(path, "must not contain embedded credentials");
+    }
+    Ok(())
 }
 
 fn validate_inbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
@@ -468,6 +490,14 @@ fn validate_domain_matcher(path: &str, matcher: &str) -> Result<(), ConfigError>
         };
         if file.is_empty() || tag.is_empty() || tag.contains(':') {
             return fail(path, "ext matcher must contain one file and one tag");
+        }
+        let file_path = Path::new(file);
+        if file_path.is_absolute()
+            || file_path
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return fail(path, "ext file must be a relative path without traversal");
         }
         return Ok(());
     }
@@ -829,6 +859,39 @@ mod tests {
                 .expect_err("unbounded client-clock difference must fail")
                 .path(),
             "inbounds[0].streamSettings.realitySettings.maxTimeDiffMs"
+        );
+    }
+
+    #[test]
+    fn assets_require_https_without_embedded_credentials() {
+        let mut config = valid_config();
+        config.assets.geoip = "http://example.com/geoip.dat".to_owned();
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("plaintext asset URL must fail")
+                .path(),
+            "assets.geoip"
+        );
+
+        config.assets.geoip = "https://token@example.com/geoip.dat".to_owned();
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("asset URL credentials must fail")
+                .path(),
+            "assets.geoip"
+        );
+    }
+
+    #[test]
+    fn external_assets_cannot_escape_cache_directory() {
+        let mut config = valid_config();
+        config.routing.global_rules[0].domain = vec!["ext:../private.dat:test".to_owned()];
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("asset traversal must fail")
+                .path(),
+            "routing.globalRules[0].domain[0]"
         );
     }
 
