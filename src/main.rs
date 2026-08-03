@@ -252,12 +252,13 @@ fn run(cli: Cli) -> Result<(), CliError> {
 }
 
 fn run_server(arguments: ConfigPath) -> Result<(), CliError> {
-    let config = load_config(&arguments.config)?;
-    let server = ProductionServer::from_config(&config)?;
+    let server = ProductionServer::from_path(&arguments.config)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    runtime.block_on(server.run())?;
+    let result = runtime.block_on(server.run());
+    runtime.shutdown_timeout(Duration::from_secs(5));
+    result?;
     Ok(())
 }
 
