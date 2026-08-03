@@ -282,6 +282,20 @@ fn validate_outbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
                         "SOCKS5 credentials must not be empty",
                     );
                 }
+                if settings
+                    .username
+                    .as_ref()
+                    .is_some_and(|value| value.expose().len() > usize::from(u8::MAX))
+                    || settings
+                        .password
+                        .as_ref()
+                        .is_some_and(|value| value.expose().len() > usize::from(u8::MAX))
+                {
+                    return fail(
+                        format!("{path}.settings"),
+                        "SOCKS5 credentials must not exceed 255 bytes",
+                    );
+                }
             }
             OutboundConfig::Nxr { settings, .. } => {
                 validate_hostname_or_ip(&format!("{path}.settings.address"), &settings.address)?;

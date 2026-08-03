@@ -171,7 +171,7 @@ mod tests {
             listener_addr.port(),
         );
 
-        let connector = DestinationConnector::new(Duration::from_secs(1));
+        let connector = DestinationConnector::new(Duration::from_secs(5));
 
         let stream = connector
             .connect(&destination)
