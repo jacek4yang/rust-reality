@@ -4,6 +4,7 @@ pub mod config;
 pub mod connector;
 pub mod fallback;
 pub mod handler;
+pub mod nxr;
 pub mod outbound;
 pub mod probe;
 pub mod production;

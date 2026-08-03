@@ -1,5 +1,12 @@
-use std::{collections::HashMap, error::Error, fmt, io, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    error::Error,
+    fmt, io,
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
+use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -8,8 +15,11 @@ use tokio::{
 use zeroize::Zeroizing;
 
 use crate::{
-    config::{DirectBarrierConfig, OutboundConfig, Socks5Settings},
-    protocol::vless::{Address, Destination},
+    config::{DirectBarrierConfig, NxrSettings, OutboundConfig, Socks5Settings},
+    protocol::{
+        nxr::{NxrKey, NxrProtocolError, encode_request},
+        vless::{Address, Destination},
+    },
     runtime::{AdmissionDenied, DirectBarrier, DirectPermit},
 };
 
@@ -53,7 +63,7 @@ impl OutboundRegistry {
     ///
     /// # Errors
     ///
-    /// Returns an unknown-tag, admission, connection, SOCKS5, or unsupported-NXR error.
+    /// Returns an unknown-tag, admission, connection, SOCKS5, or NXR authentication error.
     pub async fn connect(
         &self,
         tag: &str,
@@ -91,7 +101,14 @@ impl OutboundRegistry {
                     _direct_permit: None,
                 }))
             }
-            CompiledOutbound::Nxr => Err(OutboundConnectError::NxrUnavailable),
+            CompiledOutbound::Nxr(Some(settings)) => {
+                let stream = connect_nxr(settings, destination, self.connect_timeout).await?;
+                Ok(OutboundConnectOutcome::Connected(OutboundConnection {
+                    stream,
+                    _direct_permit: None,
+                }))
+            }
+            CompiledOutbound::Nxr(None) => Err(OutboundConnectError::NxrSettings),
         }
     }
 
@@ -118,7 +135,7 @@ enum CompiledOutbound {
     Direct,
     Blackhole { delay: Duration },
     Socks5(CompiledSocks5),
-    Nxr,
+    Nxr(Option<CompiledNxr>),
 }
 
 impl From<&OutboundConfig> for CompiledOutbound {
@@ -129,7 +146,7 @@ impl From<&OutboundConfig> for CompiledOutbound {
                 delay: Duration::from_millis(settings.response_delay_ms),
             },
             OutboundConfig::Socks5 { settings, .. } => Self::Socks5(settings.into()),
-            OutboundConfig::Nxr { .. } => Self::Nxr,
+            OutboundConfig::Nxr { settings, .. } => Self::Nxr(CompiledNxr::new(settings)),
         }
     }
 }
@@ -161,6 +178,28 @@ impl From<&Socks5Settings> for CompiledSocks5 {
 struct Socks5Credentials {
     username: Zeroizing<String>,
     password: Zeroizing<String>,
+}
+
+struct CompiledNxr {
+    address: Arc<str>,
+    port: u16,
+    key: NxrKey,
+}
+
+impl CompiledNxr {
+    fn new(settings: &NxrSettings) -> Option<Self> {
+        let decoded = Zeroizing::new(
+            BASE64_URL_SAFE_NO_PAD
+                .decode(settings.pre_shared_key.expose())
+                .ok()?,
+        );
+        let key: [u8; 32] = decoded.as_slice().try_into().ok()?;
+        Some(Self {
+            address: Arc::from(settings.address.as_str()),
+            port: settings.port,
+            key: NxrKey::new(key),
+        })
+    }
 }
 
 /// A connected outbound stream retaining any lifetime admission permit.
@@ -213,7 +252,12 @@ pub enum OutboundConnectError {
     SocksConnect(io::Error),
     SocksTimeout,
     SocksProtocol(Socks5ProtocolError),
-    NxrUnavailable,
+    NxrSettings,
+    NxrConnect(io::Error),
+    NxrTimeout,
+    NxrClock,
+    NxrRandom,
+    NxrProtocol(NxrProtocolError),
 }
 
 impl fmt::Display for OutboundConnectError {
@@ -225,9 +269,12 @@ impl fmt::Display for OutboundConnectError {
             Self::SocksConnect(_) => formatter.write_str("failed to connect to SOCKS5 outbound"),
             Self::SocksTimeout => formatter.write_str("SOCKS5 outbound handshake timed out"),
             Self::SocksProtocol(source) => source.fmt(formatter),
-            Self::NxrUnavailable => {
-                formatter.write_str("NXR outbound is not available in this runtime stage")
-            }
+            Self::NxrSettings => formatter.write_str("NXR outbound settings are invalid"),
+            Self::NxrConnect(_) => formatter.write_str("failed to connect to NXR landing node"),
+            Self::NxrTimeout => formatter.write_str("NXR outbound authentication timed out"),
+            Self::NxrClock => formatter.write_str("system clock is before the Unix epoch"),
+            Self::NxrRandom => formatter.write_str("NXR nonce generation failed"),
+            Self::NxrProtocol(source) => source.fmt(formatter),
         }
     }
 }
@@ -239,7 +286,14 @@ impl Error for OutboundConnectError {
             Self::Direct(source) => Some(source),
             Self::SocksConnect(source) => Some(source),
             Self::SocksProtocol(source) => Some(source),
-            Self::UnknownTag(_) | Self::SocksTimeout | Self::NxrUnavailable => None,
+            Self::NxrConnect(source) => Some(source),
+            Self::NxrProtocol(source) => Some(source),
+            Self::UnknownTag(_)
+            | Self::SocksTimeout
+            | Self::NxrSettings
+            | Self::NxrTimeout
+            | Self::NxrClock
+            | Self::NxrRandom => None,
         }
     }
 }
@@ -273,6 +327,40 @@ impl fmt::Display for Socks5ProtocolError {
 }
 
 impl Error for Socks5ProtocolError {}
+
+async fn connect_nxr(
+    settings: &CompiledNxr,
+    destination: &Destination,
+    timeout: Duration,
+) -> Result<TcpStream, OutboundConnectError> {
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or(OutboundConnectError::NxrTimeout)?;
+    let mut stream = time::timeout_at(
+        deadline,
+        TcpStream::connect((settings.address.as_ref(), settings.port)),
+    )
+    .await
+    .map_err(|_| OutboundConnectError::NxrTimeout)?
+    .map_err(OutboundConnectError::NxrConnect)?;
+    stream
+        .set_nodelay(true)
+        .map_err(OutboundConnectError::NxrConnect)?;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| OutboundConnectError::NxrClock)?
+        .as_secs();
+    let mut nonce = [0_u8; 16];
+    getrandom::fill(&mut nonce).map_err(|_| OutboundConnectError::NxrRandom)?;
+    let mut request = Vec::new();
+    encode_request(destination, timestamp, nonce, &settings.key, &mut request)
+        .map_err(OutboundConnectError::NxrProtocol)?;
+    time::timeout_at(deadline, stream.write_all(&request))
+        .await
+        .map_err(|_| OutboundConnectError::NxrTimeout)?
+        .map_err(OutboundConnectError::NxrConnect)?;
+    Ok(stream)
+}
 
 async fn connect_socks5(
     settings: &CompiledSocks5,
@@ -468,6 +556,7 @@ async fn read_before(
 mod tests {
     use std::{net::Ipv4Addr, time::Duration};
 
+    use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -475,8 +564,13 @@ mod tests {
 
     use super::{OutboundConnectOutcome, OutboundRegistry};
     use crate::{
-        config::{DirectBarrierConfig, OutboundConfig, SecretString, Socks5Settings},
-        protocol::vless::{Address, Destination},
+        config::{DirectBarrierConfig, NxrSettings, OutboundConfig, SecretString, Socks5Settings},
+        protocol::{
+            nxr::{
+                NxrKey, REQUEST_HEADER_LEN, decode_authenticated_request, request_len_from_header,
+            },
+            vless::{Address, Destination},
+        },
     };
 
     #[tokio::test(flavor = "current_thread")]
@@ -554,5 +648,68 @@ mod tests {
                 .expect("blackhole route must complete"),
             OutboundConnectOutcome::Blackholed
         ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn nxr_writes_one_authentication_request_then_raw_payload() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("NXR listener must bind");
+        let address = listener.local_addr().expect("NXR address must exist");
+        let key_bytes = [0x5a; 32];
+        let registry = OutboundRegistry::new(
+            &[OutboundConfig::Nxr {
+                tag: "landing".to_owned(),
+                settings: NxrSettings {
+                    address: address.ip().to_string(),
+                    port: address.port(),
+                    pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(key_bytes)),
+                },
+            }],
+            &DirectBarrierConfig::default(),
+            Duration::from_secs(1),
+        );
+        let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
+
+        let landing = async {
+            let (mut stream, _) = listener.accept().await?;
+            let mut header = [0_u8; REQUEST_HEADER_LEN];
+            stream.read_exact(&mut header).await?;
+            let total = request_len_from_header(&header).expect("header must be bounded");
+            let mut request = Vec::with_capacity(total);
+            request.extend_from_slice(&header);
+            request.resize(total, 0);
+            stream
+                .read_exact(&mut request[REQUEST_HEADER_LEN..])
+                .await?;
+            let timestamp = u64::from_be_bytes(
+                header[10..18]
+                    .try_into()
+                    .expect("timestamp field must be fixed"),
+            );
+            let authenticated =
+                decode_authenticated_request(&request, &NxrKey::new(key_bytes), timestamp, 0)
+                    .expect("NXR request must authenticate");
+            assert_eq!(authenticated.destination(), &destination);
+            let mut payload = [0_u8; 4];
+            stream.read_exact(&mut payload).await?;
+            assert_eq!(&payload, b"ping");
+            Ok::<_, std::io::Error>(())
+        };
+        let line = async {
+            let outcome = registry
+                .connect("landing", &destination)
+                .await
+                .expect("NXR outbound must connect");
+            let OutboundConnectOutcome::Connected(connection) = outcome else {
+                panic!("NXR route must connect");
+            };
+            let (mut stream, _permit) = connection.into_parts();
+            stream.write_all(b"ping").await
+        };
+        let (landing_result, line_result) = tokio::join!(landing, line);
+
+        landing_result.expect("landing exchange must succeed");
+        line_result.expect("raw payload write must succeed");
     }
 }
