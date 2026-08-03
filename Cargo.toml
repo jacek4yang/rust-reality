@@ -48,3 +48,7 @@ criterion = "0.8.2"
 [[bench]]
 name = "vless_decode"
 harness = false
+
+[[bench]]
+name = "vision"
+harness = false
