@@ -34,6 +34,25 @@ The local check prefers a fresh RustSec advisory database and falls back to an
 existing cache only when the network fetch fails. The dedicated Security
 workflow always requires a fresh database before accepting a pull request.
 
+## Releases
+
+Pushing a stable SemVer tag such as `v0.1.0` starts the release workflow. The
+tag must exactly match the package version in `Cargo.toml`, point at the checked
+out commit, and be reachable from `main`. The workflow reruns every repository
+quality gate before publishing anything.
+
+Each GitHub Release contains a deterministic Linux x86_64 archive, a JSON build
+manifest, and `SHA256SUMS`. Verify downloaded assets before installation:
+
+```shell
+sha256sum --check SHA256SUMS
+tar -xzf rust-reality-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
+```
+
+To publish a new version, update `Cargo.toml` and `Cargo.lock` on `main`, merge
+that change, then create and push the matching tag. Tags on non-`main` commits
+and mismatched versions fail before a release can be created.
+
 ## Benchmarks
 
 Run the protocol microbenchmarks with:

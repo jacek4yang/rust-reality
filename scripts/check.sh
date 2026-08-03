@@ -26,6 +26,10 @@ run_audit() {
     cargo audit --no-fetch --deny warnings
 }
 
+for script in scripts/*.sh; do
+    run bash -n "$script"
+done
+
 run cargo fmt --all --check
 run cargo clippy --all-targets --all-features --locked -- -D warnings
 run cargo deny --all-features check bans licenses sources
