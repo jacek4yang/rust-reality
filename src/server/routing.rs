@@ -3,41 +3,11 @@ use std::{collections::HashMap, error::Error, fmt, net::IpAddr, sync::Arc};
 use regex::{Regex, RegexBuilder};
 use uuid::Uuid;
 
+pub use crate::assets::{AssetMatcher, AssetSource, EmptyAssetMatcher};
 use crate::{
     config::{GlobalRule, Network, RoutingConfig, UserPolicy},
     protocol::vless::{Address, Destination, UserId},
 };
-
-/// Immutable GeoIP/GeoSite lookup used by one routing snapshot.
-pub trait AssetMatcher: Send + Sync {
-    /// Returns whether a domain belongs to one compiled asset label.
-    fn matches_domain(&self, source: &AssetSource, label: &str, domain: &str) -> bool;
-
-    /// Returns whether an address belongs to one compiled asset label.
-    fn matches_ip(&self, source: &AssetSource, label: &str, address: IpAddr) -> bool;
-}
-
-/// Asset origin for community default files or `ext:file:tag` matchers.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum AssetSource {
-    GeoSite,
-    GeoIp,
-    External(Arc<str>),
-}
-
-/// Empty initial snapshot: static rules work while missing asset labels never match.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct EmptyAssetMatcher;
-
-impl AssetMatcher for EmptyAssetMatcher {
-    fn matches_domain(&self, _source: &AssetSource, _label: &str, _domain: &str) -> bool {
-        false
-    }
-
-    fn matches_ip(&self, _source: &AssetSource, _label: &str, _address: IpAddr) -> bool {
-        false
-    }
-}
 
 /// Inputs evaluated by ordered routing rules.
 pub struct RouteContext<'a> {
@@ -329,10 +299,10 @@ impl DomainMatcher {
                 label: Arc::from(label),
             });
         }
-        if let Some((file, label)) = external_matcher(&lower) {
+        if let Some((file, label)) = external_matcher(input) {
             return Ok(Self::Asset {
                 source: AssetSource::External(Arc::from(file)),
-                label: Arc::from(label),
+                label: Arc::from(label.to_ascii_lowercase()),
             });
         }
         Ok(Self::Suffix(Arc::from(lower.trim_start_matches('.'))))
@@ -389,10 +359,10 @@ impl IpMatcher {
                 label: Arc::from(label),
             });
         }
-        if let Some((file, label)) = external_matcher(&lower) {
+        if let Some((file, label)) = external_matcher(input) {
             return Ok(Self::Asset {
                 source: AssetSource::External(Arc::from(file)),
-                label: Arc::from(label),
+                label: Arc::from(label.to_ascii_lowercase()),
             });
         }
         IpNetwork::compile(&lower).map(Self::Network)
@@ -407,7 +377,10 @@ impl IpMatcher {
 }
 
 fn external_matcher(input: &str) -> Option<(&str, &str)> {
-    input.strip_prefix("ext:")?.split_once(':')
+    if !input.get(..4)?.eq_ignore_ascii_case("ext:") {
+        return None;
+    }
+    input.get(4..)?.split_once(':')
 }
 
 #[derive(Clone, Copy)]

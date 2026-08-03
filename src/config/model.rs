@@ -129,22 +129,61 @@ pub struct FileLogConfig {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AssetsConfig {
-    /// Community-compatible `geoip.dat` path.
-    pub geoip: PathBuf,
-    /// Community-compatible `geosite.dat` path.
-    pub geosite: PathBuf,
+    /// HTTPS URL of an Xray-compatible `geoip.dat` file.
+    #[serde(default = "default_geoip_url")]
+    pub geoip: String,
+    /// HTTPS URL of an Xray-compatible `geosite.dat` file.
+    #[serde(default = "default_geosite_url")]
+    pub geosite: String,
+    /// Persistent directory containing validated asset downloads and validators.
+    #[serde(default = "default_asset_cache_directory")]
+    pub cache_directory: PathBuf,
     /// Poll interval for immutable last-good asset snapshots.
+    #[serde(default = "default_asset_reload_interval_seconds")]
     pub reload_interval_seconds: u64,
+    /// Absolute timeout for one asset HTTP request including its response body.
+    #[serde(default = "default_asset_request_timeout_seconds")]
+    pub request_timeout_seconds: u64,
+    /// Maximum bytes accepted from any one GeoIP, GeoSite, or external file.
+    #[serde(default = "default_asset_max_bytes")]
+    pub max_bytes: u64,
 }
 
 impl Default for AssetsConfig {
     fn default() -> Self {
         Self {
-            geoip: PathBuf::from("geoip.dat"),
-            geosite: PathBuf::from("geosite.dat"),
-            reload_interval_seconds: 300,
+            geoip: default_geoip_url(),
+            geosite: default_geosite_url(),
+            cache_directory: default_asset_cache_directory(),
+            reload_interval_seconds: default_asset_reload_interval_seconds(),
+            request_timeout_seconds: default_asset_request_timeout_seconds(),
+            max_bytes: default_asset_max_bytes(),
         }
     }
+}
+
+fn default_geoip_url() -> String {
+    "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geoip.dat".to_owned()
+}
+
+fn default_geosite_url() -> String {
+    "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat".to_owned()
+}
+
+fn default_asset_cache_directory() -> PathBuf {
+    PathBuf::from("/var/lib/rust-reality/assets")
+}
+
+const fn default_asset_reload_interval_seconds() -> u64 {
+    86_400
+}
+
+const fn default_asset_request_timeout_seconds() -> u64 {
+    120
+}
+
+const fn default_asset_max_bytes() -> u64 {
+    128 * 1024 * 1024
 }
 
 /// DNS routing strategy and resolvers.

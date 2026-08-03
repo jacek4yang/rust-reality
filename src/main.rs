@@ -5,17 +5,22 @@ use std::{
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
     process::ExitCode,
+    sync::Arc,
     time::Duration,
 };
 
 use clap::{Args, Parser, Subcommand};
 use rust_reality::{
+    assets::{AssetLoadError, AssetSnapshot},
     config::{
         ConfigLoadError, GenerateConfigError, GenerateConfigInput, format_config,
         format_config_schema, generate_minimal_config, load_config,
     },
     crypto::{KeyGenerationError, generate_uuid, generate_x25519_key_pair},
-    server::probe::{DestinationProbeError, probe_destination},
+    server::{
+        probe::{DestinationProbeError, probe_destination},
+        routing::{RoutingCompileError, RoutingTable},
+    },
 };
 use serde_json::json;
 
@@ -51,6 +56,8 @@ enum Command {
     ProbeDest(ProbeDestinationArgs),
     /// Print the complete JSON Schema to standard output.
     Schema,
+    /// Validate configuration, download/revalidate assets, and compile routing.
+    SelfTest(ConfigPath),
 }
 
 #[derive(Debug, Subcommand)]
@@ -103,6 +110,8 @@ enum CliError {
     Generate(GenerateConfigError),
     Key(KeyGenerationError),
     Probe(DestinationProbeError),
+    Assets(AssetLoadError),
+    Routing(RoutingCompileError),
     Json(serde_json::Error),
     Io(io::Error),
 }
@@ -114,6 +123,8 @@ impl fmt::Display for CliError {
             Self::Generate(source) => source.fmt(formatter),
             Self::Key(source) => source.fmt(formatter),
             Self::Probe(source) => source.fmt(formatter),
+            Self::Assets(source) => source.fmt(formatter),
+            Self::Routing(source) => source.fmt(formatter),
             Self::Json(_) => formatter.write_str("failed to encode JSON output"),
             Self::Io(_) => formatter.write_str("failed to write command output"),
         }
@@ -127,6 +138,8 @@ impl Error for CliError {
             Self::Generate(source) => Some(source),
             Self::Key(source) => Some(source),
             Self::Probe(source) => Some(source),
+            Self::Assets(source) => Some(source),
+            Self::Routing(source) => Some(source),
             Self::Json(source) => Some(source),
             Self::Io(source) => Some(source),
         }
@@ -154,6 +167,18 @@ impl From<KeyGenerationError> for CliError {
 impl From<DestinationProbeError> for CliError {
     fn from(source: DestinationProbeError) -> Self {
         Self::Probe(source)
+    }
+}
+
+impl From<AssetLoadError> for CliError {
+    fn from(source: AssetLoadError) -> Self {
+        Self::Assets(source)
+    }
+}
+
+impl From<RoutingCompileError> for CliError {
+    fn from(source: RoutingCompileError) -> Self {
+        Self::Routing(source)
     }
 }
 
@@ -207,7 +232,21 @@ fn run(cli: Cli) -> Result<(), CliError> {
         }
         Command::ProbeDest(arguments) => run_probe_destination(arguments),
         Command::Schema => write_stdout(format_config_schema()?),
+        Command::SelfTest(arguments) => run_self_test(arguments),
     }
+}
+
+fn run_self_test(arguments: ConfigPath) -> Result<(), CliError> {
+    let config = load_config(&arguments.config)?;
+    let assets = Arc::new(AssetSnapshot::load(&config)?);
+    let summary = assets.summary();
+    RoutingTable::compile(&config.routing, assets)?;
+    let output = serde_json::to_string_pretty(&json!({
+        "configuration": "ok",
+        "assets": summary,
+        "routing": "ok"
+    }))?;
+    write_stdout(format_args!("{output}\n"))
 }
 
 fn run_probe_destination(arguments: ProbeDestinationArgs) -> Result<(), CliError> {
@@ -312,5 +351,18 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn parses_self_test_config_path() {
+        let cli = Cli::try_parse_from([
+            "rust-reality",
+            "self-test",
+            "--config",
+            "/etc/rust-reality/config.json",
+        ])
+        .expect("self-test command must parse");
+
+        assert!(matches!(cli.command, Command::SelfTest(_)));
     }
 }
