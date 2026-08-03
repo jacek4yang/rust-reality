@@ -19,6 +19,7 @@ use rust_reality::{
     crypto::{KeyGenerationError, generate_uuid, generate_x25519_key_pair},
     server::{
         probe::{DestinationProbeError, probe_destination},
+        production::{ProductionServer, ProductionServerError},
         routing::{RoutingCompileError, RoutingTable},
     },
 };
@@ -56,6 +57,10 @@ enum Command {
     ProbeDest(ProbeDestinationArgs),
     /// Print the complete JSON Schema to standard output.
     Schema,
+    /// Run the foreground production server until SIGINT or SIGTERM.
+    Serve(ConfigPath),
+    /// Alias for `serve`, suitable for service-manager command lines.
+    Run(ConfigPath),
     /// Validate configuration, download/revalidate assets, and compile routing.
     SelfTest(ConfigPath),
 }
@@ -112,6 +117,7 @@ enum CliError {
     Probe(DestinationProbeError),
     Assets(AssetLoadError),
     Routing(RoutingCompileError),
+    Server(ProductionServerError),
     Json(serde_json::Error),
     Io(io::Error),
 }
@@ -125,6 +131,7 @@ impl fmt::Display for CliError {
             Self::Probe(source) => source.fmt(formatter),
             Self::Assets(source) => source.fmt(formatter),
             Self::Routing(source) => source.fmt(formatter),
+            Self::Server(source) => source.fmt(formatter),
             Self::Json(_) => formatter.write_str("failed to encode JSON output"),
             Self::Io(_) => formatter.write_str("failed to write command output"),
         }
@@ -140,6 +147,7 @@ impl Error for CliError {
             Self::Probe(source) => Some(source),
             Self::Assets(source) => Some(source),
             Self::Routing(source) => Some(source),
+            Self::Server(source) => Some(source),
             Self::Json(source) => Some(source),
             Self::Io(source) => Some(source),
         }
@@ -179,6 +187,12 @@ impl From<AssetLoadError> for CliError {
 impl From<RoutingCompileError> for CliError {
     fn from(source: RoutingCompileError) -> Self {
         Self::Routing(source)
+    }
+}
+
+impl From<ProductionServerError> for CliError {
+    fn from(source: ProductionServerError) -> Self {
+        Self::Server(source)
     }
 }
 
@@ -232,8 +246,19 @@ fn run(cli: Cli) -> Result<(), CliError> {
         }
         Command::ProbeDest(arguments) => run_probe_destination(arguments),
         Command::Schema => write_stdout(format_config_schema()?),
+        Command::Serve(arguments) | Command::Run(arguments) => run_server(arguments),
         Command::SelfTest(arguments) => run_self_test(arguments),
     }
+}
+
+fn run_server(arguments: ConfigPath) -> Result<(), CliError> {
+    let config = load_config(&arguments.config)?;
+    let server = ProductionServer::from_config(&config)?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(server.run())?;
+    Ok(())
 }
 
 fn run_self_test(arguments: ConfigPath) -> Result<(), CliError> {
@@ -364,5 +389,19 @@ mod tests {
         .expect("self-test command must parse");
 
         assert!(matches!(cli.command, Command::SelfTest(_)));
+    }
+
+    #[test]
+    fn parses_serve_and_run_config_paths() {
+        for command in ["serve", "run"] {
+            let cli = Cli::try_parse_from([
+                "rust-reality",
+                command,
+                "--config",
+                "/etc/rust-reality/config.json",
+            ])
+            .expect("server command must parse");
+            assert!(matches!(cli.command, Command::Serve(_) | Command::Run(_)));
+        }
     }
 }
