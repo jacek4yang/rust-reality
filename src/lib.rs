@@ -1,6 +1,7 @@
 //! Core library for the rust-reality server.
 
 pub mod config;
+pub mod crypto;
 pub mod protocol;
 pub mod runtime;
 pub mod server;

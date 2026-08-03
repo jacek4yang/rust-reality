@@ -1,10 +1,15 @@
 //! Strict JSON configuration loading, validation, and atomic publication.
 
+mod generate;
 mod io;
 mod model;
+mod schema;
 mod snapshot;
 mod validate;
 
+pub use generate::{
+    GenerateConfigError, GenerateConfigInput, GeneratedConfig, generate_minimal_config,
+};
 pub use io::{ConfigLoadError, MAX_CONFIG_BYTES, format_config, load_config};
 pub use model::{
     AssetsConfig, BlackholeSettings, Config, DirectBarrierConfig, DnsConfig, DnsStrategy,
@@ -13,6 +18,7 @@ pub use model::{
     RelayPolicy, ResourceGovernorConfig, RouteRule, RoutingConfig, SecretString, Socks5Settings,
     StreamSettings, UserPolicy, VlessClient, VlessInboundSettings,
 };
+pub use schema::{config_schema, format_config_schema};
 pub use snapshot::{ConfigSnapshot, ConfigStore, ConfigUpdateError};
 pub use validate::{ConfigError, validate_config};
 
