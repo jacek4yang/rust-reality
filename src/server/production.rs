@@ -29,7 +29,10 @@ use crate::{
         AdmissionDenied, AdmissionKind, AdmissionPermit, ResourceGovernor,
         connection::ConnectionTasks,
     },
-    transport::tcp::TcpAcceptor,
+    transport::{
+        tcp::TcpAcceptor,
+        tcp_relay::{TcpRelay, TcpRelayConfigError},
+    },
 };
 
 use super::{
@@ -90,7 +93,9 @@ impl ProductionServer {
         let replay_governor = ResourceGovernor::new(&config.policy.resource_governor);
         let replay = ReplayCache::new(replay_governor, &config.policy.resource_governor);
         let nxr_replays = compile_nxr_replays(&config)?;
-        let initial = RuntimeSnapshot::compile(config, 0, replay.clone(), &nxr_replays)?;
+        let tcp_relay = TcpRelay::new(&config.policy.relay).map_err(RuntimeUpdateError::Relay)?;
+        let initial =
+            RuntimeSnapshot::compile(config, 0, replay.clone(), &nxr_replays, tcp_relay.clone())?;
         let mut addresses: Vec<_> = initial.connections.keys().copied().collect();
         addresses.sort_unstable();
         emit(&initial.logger, &LogEvent::ServerStarting);
@@ -106,6 +111,7 @@ impl ProductionServer {
                 current: ArcSwap::from(Arc::new(initial)),
                 replay,
                 nxr_replays,
+                tcp_relay,
                 generation: AtomicU64::new(0),
                 update: Mutex::new(()),
             }),
@@ -277,6 +283,7 @@ struct RuntimeStore {
     current: ArcSwap<RuntimeSnapshot>,
     replay: ReplayCache,
     nxr_replays: HashMap<SocketAddr, NxrReplayCache>,
+    tcp_relay: TcpRelay,
     generation: AtomicU64,
     update: Mutex<()>,
 }
@@ -313,8 +320,13 @@ impl RuntimeStore {
             .load(Ordering::Acquire)
             .checked_add(1)
             .ok_or(RuntimeUpdateError::GenerationExhausted)?;
-        let candidate =
-            RuntimeSnapshot::compile(config, generation, self.replay.clone(), &self.nxr_replays)?;
+        let candidate = RuntimeSnapshot::compile(
+            config,
+            generation,
+            self.replay.clone(),
+            &self.nxr_replays,
+            self.tcp_relay.clone(),
+        )?;
         self.current.store(Arc::new(candidate));
         self.generation.store(generation, Ordering::Release);
         let published = self.load();
@@ -341,6 +353,7 @@ impl RuntimeSnapshot {
         generation: u64,
         replay: ReplayCache,
         nxr_replays: &HashMap<SocketAddr, NxrReplayCache>,
+        tcp_relay: TcpRelay,
     ) -> Result<Self, RuntimeUpdateError> {
         let logger = Logger::new(&config.log)?;
         let assets = Arc::new(AssetSnapshot::load_generation(&config, generation)?);
@@ -368,7 +381,9 @@ impl RuntimeSnapshot {
                         .cloned()
                         .ok_or(RuntimeUpdateError::MissingNxrReplay(address))?;
                     ConnectionHandler::Nxr(NxrLandingHandler::from_inbound_with_replay(
-                        inbound, replay,
+                        inbound,
+                        replay,
+                        tcp_relay.clone(),
                     )?)
                 }
             };
@@ -421,6 +436,9 @@ fn ensure_hot_compatible(
     }
     if nxr_replay_policy(candidate) != nxr_replay_policy(&current.config) {
         return Err(RuntimeUpdateError::NxrReplayPolicyChanged);
+    }
+    if candidate.policy.relay != current.config.policy.relay {
+        return Err(RuntimeUpdateError::RelayPolicyChanged);
     }
     Ok(())
 }
@@ -738,6 +756,8 @@ pub enum RuntimeUpdateError {
     ListenerTopologyChanged,
     ReplayPolicyChanged,
     NxrReplayPolicyChanged,
+    Relay(TcpRelayConfigError),
+    RelayPolicyChanged,
     GenerationExhausted,
     Unavailable,
 }
@@ -768,6 +788,10 @@ impl fmt::Display for RuntimeUpdateError {
             Self::NxrReplayPolicyChanged => {
                 formatter.write_str("NXR replay policy requires a process restart")
             }
+            Self::Relay(source) => source.fmt(formatter),
+            Self::RelayPolicyChanged => {
+                formatter.write_str("TCP relay policy requires a process restart")
+            }
             Self::GenerationExhausted => formatter.write_str("runtime generation exhausted"),
             Self::Unavailable => formatter.write_str("runtime update is unavailable"),
         }
@@ -784,11 +808,13 @@ impl Error for RuntimeUpdateError {
             Self::Routing(source) => Some(source),
             Self::Reality(source) => Some(source),
             Self::Nxr(source) => Some(source),
+            Self::Relay(source) => Some(source),
             Self::DuplicateListener(_)
             | Self::MissingNxrReplay(_)
             | Self::ListenerTopologyChanged
             | Self::ReplayPolicyChanged
             | Self::NxrReplayPolicyChanged
+            | Self::RelayPolicyChanged
             | Self::GenerationExhausted
             | Self::Unavailable => None,
         }
@@ -834,6 +860,12 @@ impl From<RealityAcceptorConfigError> for RuntimeUpdateError {
 impl From<NxrLandingConfigError> for RuntimeUpdateError {
     fn from(source: NxrLandingConfigError) -> Self {
         Self::Nxr(source)
+    }
+}
+
+impl From<TcpRelayConfigError> for RuntimeUpdateError {
+    fn from(source: TcpRelayConfigError) -> Self {
+        Self::Relay(source)
     }
 }
 

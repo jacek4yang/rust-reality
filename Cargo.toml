@@ -31,6 +31,9 @@ uuid = { version = "1.24.0", default-features = false, features = ["std"] }
 x25519-dalek = { version = "3.0.0", default-features = false, features = ["precomputed-tables", "static_secrets", "zeroize"] }
 zeroize = { version = "1.9.0", features = ["derive"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1.1.4", default-features = false, features = ["net", "pipe", "std"] }
+
 [lints.rust]
 unsafe_code = "deny"
 unreachable_pub = "warn"

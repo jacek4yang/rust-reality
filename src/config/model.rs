@@ -674,6 +674,9 @@ pub struct RelayPolicy {
     pub buffer_bytes: usize,
     /// Maximum pooled buffers.
     pub max_pooled_buffers: usize,
+    /// Maximum concurrent Linux splice relays and their two pipe pairs.
+    #[serde(default = "default_max_splice_relays")]
+    pub max_splice_relays: u32,
     /// Permit nonblocking splice on plaintext TCP boundaries.
     pub splice: bool,
     /// Permit io_uring when the runtime probe accepts the kernel.
@@ -687,9 +690,14 @@ impl Default for RelayPolicy {
         Self {
             buffer_bytes: 32 * 1024,
             max_pooled_buffers: 4_096,
+            max_splice_relays: default_max_splice_relays(),
             splice: true,
             io_uring: false,
             sockhash: false,
         }
     }
+}
+
+const fn default_max_splice_relays() -> u32 {
+    1_024
 }
