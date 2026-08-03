@@ -21,14 +21,15 @@ XRAY_BIN=/home/jacek/src/Xray-core/xray ./scripts/test-xray-interop.sh
 
 The script builds a release binary, creates fresh ephemeral UUID, X25519 and
 short-ID material, starts both processes on loopback, transfers a deterministic
-1 MiB object through Xray, verifies its SHA-256 digest, and optionally requests
-one real HTTPS URL. All generated configuration and keys remain in a bounded
-temporary directory that is removed on exit.
+1 MiB object through Xray, verifies its SHA-256 digest, checks ML-DSA-65
+verification-key generation against Xray for a fixed seed, and optionally
+requests one real HTTPS URL. All generated configuration and keys remain in a
+bounded temporary directory that is removed on exit.
 
 ## Recorded environment
 
 - Date: 2026-08-03 (Asia/Shanghai)
-- rust-reality commit: `fac7175d8f213adc85fef6543bf9509056b037b3`
+- rust-reality runtime commit: `04a7a3c05910f1e7775ce3369a292feef3456309`
 - Xray: `26.7.28`, commit `5ca6f4b`, Go `1.26.0`, Linux/amd64
 - Rust: `rustc 1.96.0 (ac68faa20 2026-05-25)`
 - Kernel: Linux `6.12.94+deb13-amd64`, x86_64
@@ -43,9 +44,11 @@ temporary directory that is removed on exit.
 - Local payload: 1,048,576 bytes
 - Local SHA-256:
   `fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83`
+- ML-DSA-65 verification-key SHA-256 (identical rust-reality/Xray output):
+  `1b79221726f2b876c87049ee20015ab0a55bf5abfa3cc5b1f9cbc5751be23a8a`
 - Real HTTPS request: `https://www.bing.com/`, HTTP 302
-- Real HTTPS sample: connect `0.000092 s`, first byte `0.691823 s`, total
-  `0.692049 s`
+- Real HTTPS sample: connect `0.000087 s`, first byte `0.623010 s`, total
+  `0.623222 s`
 
 Xray debug output recorded successful Vision padding/unpadding and authenticated
 Direct-boundary detection for both the local HTTP transfer and the real TLS
