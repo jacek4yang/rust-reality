@@ -22,13 +22,18 @@ impl TcpAcceptor {
 
     /// Waits for and accepts one inbound TCP connection.
     pub async fn accept(&self) -> io::Result<(TcpStream, SocketAddr)> {
-        self.listener.accept().await
+        let (stream, peer_addr) = self.listener.accept().await?;
+        stream.set_nodelay(true)?;
+
+        Ok((stream, peer_addr))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
+
+    use tokio::net::TcpStream;
 
     use super::TcpAcceptor;
 
@@ -46,5 +51,25 @@ mod tests {
 
         assert_eq!(actual_addr.ip(), requested_addr.ip());
         assert_ne!(actual_addr.port(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn accept_enables_tcp_nodelay() {
+        let acceptor = TcpAcceptor::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+            .await
+            .expect("bind loopback listener");
+        let listen_addr = acceptor.local_addr().expect("read listener address");
+
+        let connect = TcpStream::connect(listen_addr);
+        let accept = acceptor.accept();
+        let (client_result, accepted_result) = tokio::join!(connect, accept);
+
+        let _client = client_result.expect("connect to listener");
+        let (accepted, _) = accepted_result.expect("accept client");
+
+        assert!(
+            accepted.nodelay().expect("read TCP_NODELAY"),
+            "accepted proxy streams must disable Nagle"
+        );
     }
 }

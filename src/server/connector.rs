@@ -48,12 +48,20 @@ impl DestinationConnector {
             }
         };
 
-        match time::timeout(self.connect_timeout, connect).await {
-            Ok(result) => result.map_err(DestinationConnectError::Io),
-            Err(_) => Err(DestinationConnectError::TimedOut {
-                timeout: self.connect_timeout,
-            }),
-        }
+        let stream = match time::timeout(self.connect_timeout, connect).await {
+            Ok(result) => result.map_err(DestinationConnectError::Io)?,
+            Err(_) => {
+                return Err(DestinationConnectError::TimedOut {
+                    timeout: self.connect_timeout,
+                });
+            }
+        };
+
+        stream
+            .set_nodelay(true)
+            .map_err(DestinationConnectError::Io)?;
+
+        Ok(stream)
     }
 }
 
@@ -141,6 +149,11 @@ mod tests {
                 .expect("client stream should have a local address"),
             peer_addr
         );
+
+        assert!(
+            stream.nodelay().expect("read TCP_NODELAY"),
+            "outbound proxy streams must disable Nagle"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -175,6 +188,11 @@ mod tests {
                 .local_addr()
                 .expect("client stream should have a local address"),
             peer_addr
+        );
+
+        assert!(
+            stream.nodelay().expect("read TCP_NODELAY"),
+            "outbound proxy streams must disable Nagle"
         );
     }
 }
