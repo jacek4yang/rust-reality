@@ -8,7 +8,8 @@ mod snapshot;
 mod validate;
 
 pub use generate::{
-    GenerateConfigError, GenerateConfigInput, GeneratedConfig, generate_minimal_config,
+    GenerateConfigError, GenerateConfigInput, GenerateLandingConfigInput, GenerateLineConfigInput,
+    GeneratedConfig, generate_landing_config, generate_line_config, generate_minimal_config,
 };
 pub use io::{ConfigLoadError, MAX_CONFIG_BYTES, format_config, load_config};
 pub use model::{
