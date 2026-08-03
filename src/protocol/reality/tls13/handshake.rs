@@ -386,12 +386,15 @@ fn agree_key_share(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use ml_kem::{
         DecapsulationKey768, Seed,
         array::Array as MlKemArray,
         kem::{Decapsulate, KeyExport},
         ml_kem_768::Ciphertext,
     };
+    use tokio::io::{AsyncWriteExt, duplex};
     use x25519_dalek::{PublicKey, StaticSecret};
 
     use super::{RealityHandshakeError, build_server_flight};
@@ -400,12 +403,12 @@ mod tests {
         client_hello::fixtures,
         tls13::{
             CertificateIdentity, CipherSuite, ContentType, ServerHelloTemplate, Tls13KeySchedule,
-            Tls13RecordLayer, finished_message,
+            Tls13RecordLayer, change_cipher_spec_record, finished_message, read_client_finished,
         },
     };
 
-    #[test]
-    fn full_x25519_flight_establishes_only_after_valid_client_finished() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn full_x25519_flight_establishes_only_after_valid_client_finished() {
         let client_secret = StaticSecret::from([0x31; 32]);
         let client_public = PublicKey::from(&client_secret).to_bytes();
         let client = client_hello(X25519_GROUP, &client_public);
@@ -459,8 +462,15 @@ mod tests {
         client_records
             .seal_into(ContentType::Handshake, &finished, 0, &mut record)
             .expect("client Finished must seal");
-        let mut established = flight
-            .verify_client_finished(&mut record)
+        let mut client_wire = change_cipher_spec_record().to_vec();
+        client_wire.extend_from_slice(&record);
+        let (mut client_io, mut server_io) = duplex(client_wire.len());
+        client_io
+            .write_all(&client_wire)
+            .await
+            .expect("client Finished flight must be written");
+        let mut established = read_client_finished(&mut server_io, flight, Duration::from_secs(1))
+            .await
             .expect("valid ClientFinished must establish TLS");
         assert_eq!(established.suite(), suite);
 
