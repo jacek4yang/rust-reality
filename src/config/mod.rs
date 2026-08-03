@@ -35,7 +35,6 @@ pub(crate) fn test_config_json() -> &'static str {
     "reloadIntervalSeconds": 300
   },
   "dns": {
-    "strategy": "IPIfNonMatch",
     "servers": ["system"],
     "timeoutMs": 5000
   },

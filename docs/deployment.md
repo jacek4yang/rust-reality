@@ -73,6 +73,19 @@ At the landing firewall, allow TCP port 7443 only from the line node's fixed
 source IP and reject every other source before the process. Treat this firewall
 rule as part of NXR deployment, not an optional optimization.
 
+## DNS-assisted GeoIP routing
+
+Set `routing.domainStrategy` to `AsIs`, `IPIfNonMatch`, or `IPOnDemand`.
+`IPIfNonMatch` evaluates domain rules first and resolves only before the user
+default; `IPOnDemand` resolves before evaluation when any applicable IP rule
+exists. Each query has the configured `dns.timeoutMs` deadline and is limited to
+64 unique addresses. A direct outbound reuses that exact address snapshot, so a
+GeoIP decision is not followed by a second, potentially different lookup.
+
+The current minimal resolver deliberately accepts only `dns.servers: ["system"]`.
+Custom resolver values fail configuration validation instead of being silently
+ignored; adding dedicated UDP, TCP, or DoH transports is a separate feature.
+
 ## Files and service account
 
 Create a dedicated `rust-reality` user and group. Recommended paths are:

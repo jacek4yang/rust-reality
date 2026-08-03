@@ -191,9 +191,6 @@ const fn default_asset_max_bytes() -> u64 {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DnsConfig {
-    /// Xray-compatible domain resolution strategy.
-    #[serde(default)]
-    pub strategy: DnsStrategy,
     /// Resolver addresses or URLs in priority order.
     #[serde(default = "default_dns_servers")]
     pub servers: Vec<String>,
@@ -205,7 +202,6 @@ pub struct DnsConfig {
 impl Default for DnsConfig {
     fn default() -> Self {
         Self {
-            strategy: DnsStrategy::IpIfNonMatch,
             servers: default_dns_servers(),
             timeout_ms: default_dns_timeout_ms(),
         }

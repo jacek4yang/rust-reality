@@ -1,13 +1,16 @@
-use std::{collections::HashMap, error::Error, fmt, net::IpAddr, sync::Arc};
+use std::{collections::HashMap, error::Error, fmt, io, net::IpAddr, sync::Arc, time::Duration};
 
 use regex::{Regex, RegexBuilder};
+use tokio::{net::lookup_host, time};
 use uuid::Uuid;
 
 pub use crate::assets::{AssetMatcher, AssetSource, EmptyAssetMatcher};
 use crate::{
-    config::{GlobalRule, Network, RoutingConfig, UserPolicy},
+    config::{DnsStrategy, GlobalRule, Network, RoutingConfig, UserPolicy},
     protocol::vless::{Address, Destination, UserId},
 };
+
+const MAX_RESOLVED_IPS: usize = 64;
 
 /// Inputs evaluated by ordered routing rules.
 pub struct RouteContext<'a> {
@@ -68,6 +71,7 @@ pub struct RoutingTable {
     global_rules: Arc<[CompiledRule]>,
     users: Arc<HashMap<UserId, CompiledUserPolicy>>,
     assets: Arc<dyn AssetMatcher>,
+    global_has_ip_rules: bool,
 }
 
 impl RoutingTable {
@@ -80,7 +84,7 @@ impl RoutingTable {
         config: &RoutingConfig,
         assets: Arc<dyn AssetMatcher>,
     ) -> Result<Self, RoutingCompileError> {
-        let global_rules = config
+        let global_rules: Arc<[CompiledRule]> = config
             .global_rules
             .iter()
             .map(CompiledRule::compile)
@@ -95,10 +99,14 @@ impl RoutingTable {
                 users.insert(UserId::new(*uuid.as_bytes()), compiled.clone());
             }
         }
+        let global_has_ip_rules = global_rules
+            .iter()
+            .any(|rule: &CompiledRule| !rule.ips.is_empty());
         Ok(Self {
             global_rules,
             users: Arc::new(users),
             assets,
+            global_has_ip_rules,
         })
     }
 
@@ -132,6 +140,62 @@ impl RoutingTable {
             scope: RouteScope::UserDefault,
         })
     }
+
+    /// Resolves a domain only when required by the configured routing strategy,
+    /// then evaluates the same immutable rules against a bounded IP snapshot.
+    ///
+    /// `IPIfNonMatch` first gives domain, port, network, and inbound-tag rules a
+    /// chance to match. `IPOnDemand` resolves before rule evaluation whenever an
+    /// IP rule exists. `AsIs` never resolves inside the router.
+    ///
+    /// # Errors
+    ///
+    /// Returns an unknown-user error before DNS work, or a bounded DNS error when
+    /// resolution is required and cannot complete safely.
+    pub async fn select_with_dns(
+        &self,
+        user_id: UserId,
+        inbound_tag: &str,
+        destination: &Destination,
+        strategy: DnsStrategy,
+        timeout: Duration,
+    ) -> Result<ResolvedRoute, RouteResolutionError> {
+        let user_has_ip_rules = self
+            .users
+            .get(&user_id)
+            .ok_or(RouteError::UnknownUser)?
+            .has_ip_rules;
+        let needs_ip = self.global_has_ip_rules || user_has_ip_rules;
+        let unresolved = RouteContext {
+            user_id,
+            inbound_tag,
+            destination,
+            resolved_ips: &[],
+        };
+
+        if !matches!(destination.address(), Address::Domain(_))
+            || strategy == DnsStrategy::AsIs
+            || !needs_ip
+        {
+            return Ok(ResolvedRoute::new(self.select(&unresolved)?, Vec::new()));
+        }
+
+        if strategy == DnsStrategy::IpIfNonMatch {
+            let decision = self.select(&unresolved)?;
+            if decision.scope() != RouteScope::UserDefault {
+                return Ok(ResolvedRoute::new(decision, Vec::new()));
+            }
+        }
+
+        let resolved_ips = resolve_domain(destination, timeout).await?;
+        let resolved = RouteContext {
+            user_id,
+            inbound_tag,
+            destination,
+            resolved_ips: &resolved_ips,
+        };
+        Ok(ResolvedRoute::new(self.select(&resolved)?, resolved_ips))
+    }
 }
 
 impl fmt::Debug for RoutingTable {
@@ -141,6 +205,7 @@ impl fmt::Debug for RoutingTable {
             .field("global_rule_count", &self.global_rules.len())
             .field("user_count", &self.users.len())
             .field("assets", &"[IMMUTABLE SNAPSHOT]")
+            .field("global_has_ip_rules", &self.global_has_ip_rules)
             .finish()
     }
 }
@@ -150,21 +215,84 @@ struct CompiledUserPolicy {
     name: Arc<str>,
     default_outbound: Arc<str>,
     rules: Arc<[CompiledRule]>,
+    has_ip_rules: bool,
 }
 
 impl CompiledUserPolicy {
     fn compile(policy: &UserPolicy) -> Result<Self, RoutingCompileError> {
+        let rules: Arc<[CompiledRule]> = policy
+            .rules
+            .iter()
+            .map(CompiledRule::compile)
+            .collect::<Result<Vec<_>, _>>()?
+            .into();
+        let has_ip_rules = rules.iter().any(|rule| !rule.ips.is_empty());
         Ok(Self {
             name: Arc::from(policy.name.as_str()),
             default_outbound: Arc::from(policy.default_outbound.as_str()),
-            rules: policy
-                .rules
-                .iter()
-                .map(CompiledRule::compile)
-                .collect::<Result<Vec<_>, _>>()?
-                .into(),
+            rules,
+            has_ip_rules,
         })
     }
+}
+
+/// One route decision and the exact bounded DNS snapshot used to reach it.
+#[derive(Clone, Debug)]
+pub struct ResolvedRoute {
+    decision: RouteDecision,
+    resolved_ips: Arc<[IpAddr]>,
+}
+
+impl ResolvedRoute {
+    fn new(decision: RouteDecision, resolved_ips: Vec<IpAddr>) -> Self {
+        Self {
+            decision,
+            resolved_ips: resolved_ips.into(),
+        }
+    }
+
+    /// Returns the first-match routing decision.
+    #[must_use]
+    pub const fn decision(&self) -> &RouteDecision {
+        &self.decision
+    }
+
+    /// Returns the exact addresses considered by IP and GeoIP rules.
+    #[must_use]
+    pub fn resolved_ips(&self) -> &[IpAddr] {
+        &self.resolved_ips
+    }
+}
+
+async fn resolve_domain(
+    destination: &Destination,
+    timeout: Duration,
+) -> Result<Vec<IpAddr>, RouteResolutionError> {
+    let Address::Domain(domain) = destination.address() else {
+        return Ok(Vec::new());
+    };
+    let addresses = time::timeout(timeout, lookup_host((domain.as_str(), destination.port())))
+        .await
+        .map_err(|_| RouteResolutionError::DnsTimeout)?
+        .map_err(RouteResolutionError::Dns)?;
+    let mut resolved = Vec::new();
+    resolved
+        .try_reserve_exact(MAX_RESOLVED_IPS)
+        .map_err(|_| RouteResolutionError::Allocation)?;
+    for address in addresses {
+        let ip = address.ip();
+        if resolved.contains(&ip) {
+            continue;
+        }
+        if resolved.len() == MAX_RESOLVED_IPS {
+            return Err(RouteResolutionError::TooManyAddresses);
+        }
+        resolved.push(ip);
+    }
+    if resolved.is_empty() {
+        return Err(RouteResolutionError::NoAddresses);
+    }
+    Ok(resolved)
 }
 
 #[derive(Clone)]
@@ -522,9 +650,53 @@ impl fmt::Display for RouteError {
 
 impl Error for RouteError {}
 
+/// DNS-assisted route evaluation failed before any outbound was selected.
+#[derive(Debug)]
+pub enum RouteResolutionError {
+    Route(RouteError),
+    DnsTimeout,
+    Dns(io::Error),
+    NoAddresses,
+    TooManyAddresses,
+    Allocation,
+}
+
+impl fmt::Display for RouteResolutionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Route(source) => source.fmt(formatter),
+            Self::DnsTimeout => formatter.write_str("routing DNS resolution timed out"),
+            Self::Dns(_) => formatter.write_str("routing DNS resolution failed"),
+            Self::NoAddresses => formatter.write_str("routing DNS returned no addresses"),
+            Self::TooManyAddresses => {
+                formatter.write_str("routing DNS exceeded the bounded address count")
+            }
+            Self::Allocation => formatter.write_str("routing DNS allocation failed"),
+        }
+    }
+}
+
+impl Error for RouteResolutionError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Route(source) => Some(source),
+            Self::Dns(source) => Some(source),
+            Self::DnsTimeout | Self::NoAddresses | Self::TooManyAddresses | Self::Allocation => {
+                None
+            }
+        }
+    }
+}
+
+impl From<RouteError> for RouteResolutionError {
+    fn from(source: RouteError) -> Self {
+        Self::Route(source)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::{net::Ipv4Addr, sync::Arc};
+    use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 
     use super::{EmptyAssetMatcher, RouteContext, RouteScope, RoutingTable};
     use crate::{
@@ -575,7 +747,56 @@ mod tests {
         assert_eq!(decision.scope(), RouteScope::UserDefault);
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn ip_if_non_match_resolves_domain_for_ip_rules() {
+        let table = table_with_global_ip("127.0.0.0/8");
+        let destination = Destination::new(Address::Domain("localhost".to_owned()), 443);
+        let route = table
+            .select_with_dns(
+                USER_ID,
+                "public-reality",
+                &destination,
+                DnsStrategy::IpIfNonMatch,
+                Duration::from_secs(2),
+            )
+            .await
+            .expect("system localhost resolution must complete");
+
+        assert_eq!(route.decision().outbound(), "blocked");
+        assert_eq!(route.decision().scope(), RouteScope::Global);
+        assert!(
+            route
+                .resolved_ips()
+                .iter()
+                .any(|address| address.is_loopback())
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn as_is_does_not_resolve_domain_for_ip_rules() {
+        let table = table_with_global_ip("127.0.0.0/8");
+        let destination = Destination::new(Address::Domain("localhost".to_owned()), 443);
+        let route = table
+            .select_with_dns(
+                USER_ID,
+                "public-reality",
+                &destination,
+                DnsStrategy::AsIs,
+                Duration::from_secs(2),
+            )
+            .await
+            .expect("configured user must route without DNS");
+
+        assert_eq!(route.decision().outbound(), "direct");
+        assert_eq!(route.decision().scope(), RouteScope::UserDefault);
+        assert!(route.resolved_ips().is_empty());
+    }
+
     fn table() -> RoutingTable {
+        table_with_global_ip("10.0.0.0/8")
+    }
+
+    fn table_with_global_ip(ip_matcher: &str) -> RoutingTable {
         RoutingTable::compile(
             &RoutingConfig {
                 domain_strategy: DnsStrategy::AsIs,
@@ -583,7 +804,7 @@ mod tests {
                     name: "private".to_owned(),
                     outbound: "blocked".to_owned(),
                     domain: Vec::new(),
-                    ip: vec!["10.0.0.0/8".to_owned()],
+                    ip: vec![ip_matcher.to_owned()],
                     port: Vec::new(),
                     network: Vec::new(),
                     inbound_tag: Vec::new(),
