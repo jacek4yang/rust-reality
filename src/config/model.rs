@@ -1,9 +1,10 @@
 use std::{fmt, net::IpAddr, path::PathBuf};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Complete runtime configuration.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// Logging destination and retention.
@@ -27,7 +28,7 @@ pub struct Config {
 }
 
 /// A string whose debug representation never reveals its contents.
-#[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(transparent)]
 pub struct SecretString(String);
 
@@ -58,7 +59,7 @@ impl fmt::Debug for SecretString {
 }
 
 /// Logging configuration.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct LogConfig {
     /// Minimum emitted severity.
@@ -83,7 +84,7 @@ impl Default for LogConfig {
 }
 
 /// Supported log severities.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
     /// Only startup and fatal errors.
@@ -98,7 +99,7 @@ pub enum LogLevel {
 }
 
 /// Supported log destinations.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LogOutput {
     /// Process standard error.
@@ -111,7 +112,7 @@ pub enum LogOutput {
 }
 
 /// File-log rotation and retention limits.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct FileLogConfig {
     /// Active log path.
@@ -125,7 +126,7 @@ pub struct FileLogConfig {
 }
 
 /// Geo asset configuration.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AssetsConfig {
     /// Community-compatible `geoip.dat` path.
@@ -147,7 +148,7 @@ impl Default for AssetsConfig {
 }
 
 /// DNS routing strategy and resolvers.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DnsConfig {
     /// Xray-compatible domain resolution strategy.
@@ -180,7 +181,7 @@ const fn default_dns_timeout_ms() -> u64 {
 }
 
 /// Xray-compatible DNS resolution modes.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 pub enum DnsStrategy {
     /// Preserve domains and resolve only in the selected outbound.
     #[serde(rename = "AsIs")]
@@ -195,7 +196,7 @@ pub enum DnsStrategy {
 }
 
 /// One public VLESS + REALITY + Vision listener.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct InboundConfig {
     /// Unique routing tag.
@@ -211,7 +212,7 @@ pub struct InboundConfig {
 }
 
 /// VLESS users for one inbound.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct VlessInboundSettings {
     /// Authorized clients.
@@ -226,7 +227,7 @@ fn default_decryption() -> String {
 }
 
 /// One VLESS identity.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct VlessClient {
     /// Canonical UUID string.
@@ -239,7 +240,7 @@ pub struct VlessClient {
 }
 
 /// Mandatory protected stream configuration.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct StreamSettings {
     /// Must be `tcp`.
@@ -251,7 +252,7 @@ pub struct StreamSettings {
 }
 
 /// Supported proxy networks.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Network {
     /// TCP byte streams.
@@ -261,7 +262,7 @@ pub enum Network {
 }
 
 /// REALITY server settings.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RealityConfig {
     /// Cover target in `host:port` form.
@@ -275,7 +276,7 @@ pub struct RealityConfig {
 }
 
 /// One configured outbound transport.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, tag = "protocol", rename_all = "lowercase")]
 pub enum OutboundConfig {
     /// Connect directly to the requested destination.
@@ -321,7 +322,7 @@ impl OutboundConfig {
 }
 
 /// Blackhole close behavior.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct BlackholeSettings {
     /// Optional delay before closing, capped during validation.
@@ -330,7 +331,7 @@ pub struct BlackholeSettings {
 }
 
 /// SOCKS5 outbound configuration.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Socks5Settings {
     /// SOCKS5 server address.
@@ -346,7 +347,7 @@ pub struct Socks5Settings {
 }
 
 /// NXR landing-node outbound configuration.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct NxrSettings {
     /// Landing node address.
@@ -363,7 +364,7 @@ pub struct NxrSettings {
 }
 
 /// NXR pool policy optimized for same-city nodes.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct NxrPoolConfig {
     /// Warm multiplexed connections.
@@ -391,7 +392,7 @@ impl Default for NxrPoolConfig {
 }
 
 /// User-group routing with a small global prelude.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RoutingConfig {
     /// DNS behavior while evaluating IP conditions.
@@ -405,7 +406,7 @@ pub struct RoutingConfig {
 }
 
 /// A global first-match route rule.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct GlobalRule {
     /// Operator-facing rule name.
@@ -430,7 +431,7 @@ pub struct GlobalRule {
 }
 
 /// One readable policy group for a set of UUIDs.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct UserPolicy {
     /// Operator-facing group name.
@@ -448,12 +449,12 @@ pub struct UserPolicy {
 pub type RouteRule = GlobalRule;
 
 /// One destination port or inclusive range.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(transparent)]
 pub struct PortMatcher(pub String);
 
 /// Resource and data-path policy.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PolicyConfig {
     /// Global resource admission limits.
@@ -468,7 +469,7 @@ pub struct PolicyConfig {
 }
 
 /// Bounded connection and pre-authentication resource limits.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ResourceGovernorConfig {
     /// Total accepted connections.
@@ -508,7 +509,7 @@ impl Default for ResourceGovernorConfig {
 }
 
 /// Direct outbound admission isolation.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DirectBarrierConfig {
     /// Concurrent direct dials.
@@ -527,7 +528,7 @@ impl Default for DirectBarrierConfig {
 }
 
 /// Bounded relay buffer and Linux acceleration policy.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RelayPolicy {
     /// Bytes per pooled userspace buffer.
