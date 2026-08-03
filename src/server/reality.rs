@@ -194,6 +194,18 @@ impl RealityAcceptor {
         governor: ResourceGovernor,
         policy: &ResourceGovernorConfig,
     ) -> Result<Self, RealityAcceptorConfigError> {
+        let replay = ReplayCache::new(governor.clone(), policy);
+        Self::from_inbound_with_replay(inbound, governor, policy, replay)
+    }
+
+    /// Compiles an inbound while retaining process-wide replay history across
+    /// immutable runtime generations.
+    pub(crate) fn from_inbound_with_replay(
+        inbound: &InboundConfig,
+        governor: ResourceGovernor,
+        policy: &ResourceGovernorConfig,
+        replay: ReplayCache,
+    ) -> Result<Self, RealityAcceptorConfigError> {
         let reality = &inbound.stream_settings.reality_settings;
         let authenticator = RealityAuthenticator::from_config(reality)
             .map_err(RealityAcceptorConfigError::Authentication)?;
@@ -212,7 +224,7 @@ impl RealityAcceptor {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             authenticator,
-            replay: ReplayCache::new(governor.clone(), policy),
+            replay,
             identity,
             fallback: RealityFallback::new(reality.target.as_str(), governor.clone(), policy),
             governor,

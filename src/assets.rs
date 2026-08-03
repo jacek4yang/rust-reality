@@ -100,7 +100,10 @@ impl AssetSnapshot {
         }
     }
 
-    fn load_generation(config: &Config, generation: u64) -> Result<Self, AssetLoadError> {
+    pub(crate) fn load_generation(
+        config: &Config,
+        generation: u64,
+    ) -> Result<Self, AssetLoadError> {
         let requirements = AssetRequirements::from_config(config);
         let maximum = usize::try_from(config.assets.max_bytes)
             .map_err(|_| AssetLoadError::SizeLimitUnsupported)?;
