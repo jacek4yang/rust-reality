@@ -345,11 +345,11 @@ pub enum OutboundConfig {
         /// SOCKS5 endpoint and optional credentials.
         settings: Socks5Settings,
     },
-    /// Connect through a REALITY-protected NXR landing node.
+    /// Connect one user flow through one authenticated NXR TCP connection.
     Nxr {
         /// Unique routing tag.
         tag: String,
-        /// NXR endpoint, identity, and pool policy.
+        /// NXR endpoint and independent pre-shared authentication key.
         settings: NxrSettings,
     },
 }
@@ -398,43 +398,10 @@ pub struct Socks5Settings {
 pub struct NxrSettings {
     /// Landing node address.
     pub address: String,
-    /// Landing node REALITY port.
+    /// Firewall-restricted raw NXR TCP port.
     pub port: u16,
-    /// Expected landing-node public identity.
-    pub node_public_key: String,
-    /// REALITY server name used on the inter-node link.
-    pub server_name: String,
-    /// Short-flow pool and large-flow switching policy.
-    #[serde(default)]
-    pub pool: NxrPoolConfig,
-}
-
-/// NXR pool policy optimized for same-city nodes.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct NxrPoolConfig {
-    /// Warm multiplexed connections.
-    pub min_connections: u16,
-    /// Maximum pooled multiplexed connections.
-    pub max_connections: u16,
-    /// Maximum concurrent short streams per pooled connection.
-    pub max_streams_per_connection: u16,
-    /// Bytes after which a stream switches to a dedicated connection.
-    pub dedicated_after_bytes: u64,
-    /// Idle lifetime of an unused pooled connection.
-    pub idle_timeout_seconds: u64,
-}
-
-impl Default for NxrPoolConfig {
-    fn default() -> Self {
-        Self {
-            min_connections: 1,
-            max_connections: 4,
-            max_streams_per_connection: 64,
-            dedicated_after_bytes: 4 * 1024 * 1024,
-            idle_timeout_seconds: 30,
-        }
-    }
+    /// URL-safe unpadded base64 encoding of an independent 32-byte PSK.
+    pub pre_shared_key: SecretString,
 }
 
 /// User-group routing with a small global prelude.
