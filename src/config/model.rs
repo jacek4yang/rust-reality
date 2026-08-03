@@ -2,6 +2,7 @@ use std::{fmt, net::IpAddr, path::PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Complete runtime configuration.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
@@ -28,7 +29,7 @@ pub struct Config {
 }
 
 /// A string whose debug representation never reveals its contents.
-#[derive(Clone, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[derive(Clone, Eq, PartialEq, Deserialize, JsonSchema, Serialize, Zeroize, ZeroizeOnDrop)]
 #[serde(transparent)]
 pub struct SecretString(String);
 

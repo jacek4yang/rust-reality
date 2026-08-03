@@ -9,14 +9,19 @@ use std::{
     time::Duration,
 };
 
+use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 use clap::{Args, Parser, Subcommand};
 use rust_reality::{
     assets::{AssetLoadError, AssetSnapshot},
     config::{
-        ConfigLoadError, GenerateConfigError, GenerateConfigInput, format_config,
-        format_config_schema, generate_minimal_config, load_config,
+        ConfigLoadError, GenerateConfigError, GenerateConfigInput, GenerateLandingConfigInput,
+        GenerateLineConfigInput, SecretString, format_config, format_config_schema,
+        generate_landing_config, generate_line_config, generate_minimal_config, load_config,
     },
-    crypto::{KeyGenerationError, generate_uuid, generate_x25519_key_pair},
+    crypto::{
+        KeyGenerationError, generate_mldsa65_key_pair, generate_mldsa65_key_pair_from_seed,
+        generate_node_key, generate_uuid, generate_x25519_key_pair,
+    },
     server::{
         probe::{DestinationProbeError, probe_destination},
         production::{ProductionServer, ProductionServerError},
@@ -24,6 +29,7 @@ use rust_reality::{
     },
 };
 use serde_json::json;
+use zeroize::Zeroizing;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -53,6 +59,10 @@ enum Command {
     },
     /// Generate one REALITY-compatible X25519 key pair.
     X25519,
+    /// Generate an Xray-compatible ML-DSA-65 seed and verification key.
+    Mldsa65(MlDsa65Args),
+    /// Generate one independent 32-byte NXR pre-shared key.
+    NodeKeygen,
     /// Test a real cover target for strict REALITY TLS 1.3 compatibility.
     ProbeDest(ProbeDestinationArgs),
     /// Print the complete JSON Schema to standard output.
@@ -67,8 +77,11 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum ConfigCommand {
-    /// Generate a minimal direct-routing server configuration.
-    Generate(GenerateArgs),
+    /// Generate a directly usable standalone, line-node, or landing-node configuration.
+    Generate {
+        #[command(subcommand)]
+        role: GenerateRole,
+    },
     /// Validate and print a canonical pretty JSON configuration.
     Format(ConfigPath),
 }
@@ -81,7 +94,7 @@ struct ConfigPath {
 }
 
 #[derive(Debug, Args)]
-struct GenerateArgs {
+struct PublicGenerateArgs {
     /// Public listener address.
     #[arg(long, default_value_t = IpAddr::V4(Ipv4Addr::UNSPECIFIED))]
     listen: IpAddr,
@@ -94,6 +107,51 @@ struct GenerateArgs {
     /// Client-facing REALITY SNI.
     #[arg(long, value_name = "DNS_NAME")]
     server_name: String,
+}
+
+#[derive(Debug, Subcommand)]
+enum GenerateRole {
+    /// Public VLESS + REALITY + Vision server with direct routing.
+    Standalone(PublicGenerateArgs),
+    /// Public VLESS + REALITY + Vision line node routed to an NXR landing node.
+    Line(LineGenerateArgs),
+    /// Firewall-restricted internal NXR landing node.
+    Landing(LandingGenerateArgs),
+}
+
+#[derive(Debug, Args)]
+struct LineGenerateArgs {
+    #[command(flatten)]
+    public: PublicGenerateArgs,
+    /// Internal NXR landing-node address.
+    #[arg(long, value_name = "HOST")]
+    nxr_address: String,
+    /// Firewall-restricted NXR landing-node port.
+    #[arg(long, default_value_t = 7_443, value_parser = clap::value_parser!(u16).range(1..))]
+    nxr_port: u16,
+    /// URL-safe unpadded base64 PSK produced by `node-keygen`.
+    #[arg(long, value_name = "BASE64")]
+    nxr_key: String,
+}
+
+#[derive(Debug, Args)]
+struct LandingGenerateArgs {
+    /// Internal listener address; restrict this port at the firewall.
+    #[arg(long, default_value_t = IpAddr::V4(Ipv4Addr::UNSPECIFIED))]
+    listen: IpAddr,
+    /// Firewall-restricted internal NXR listener port.
+    #[arg(long, default_value_t = 7_443, value_parser = clap::value_parser!(u16).range(1..))]
+    port: u16,
+    /// URL-safe unpadded base64 PSK produced by `node-keygen`.
+    #[arg(long, value_name = "BASE64")]
+    nxr_key: String,
+}
+
+#[derive(Debug, Args)]
+struct MlDsa65Args {
+    /// Optional Xray-compatible 32-byte URL-safe unpadded base64 seed.
+    #[arg(long, value_name = "BASE64")]
+    seed: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -120,6 +178,7 @@ enum CliError {
     Server(ProductionServerError),
     Json(serde_json::Error),
     Io(io::Error),
+    InvalidArgument(&'static str),
 }
 
 impl fmt::Display for CliError {
@@ -134,6 +193,7 @@ impl fmt::Display for CliError {
             Self::Server(source) => source.fmt(formatter),
             Self::Json(_) => formatter.write_str("failed to encode JSON output"),
             Self::Io(_) => formatter.write_str("failed to write command output"),
+            Self::InvalidArgument(message) => formatter.write_str(message),
         }
     }
 }
@@ -150,6 +210,7 @@ impl Error for CliError {
             Self::Server(source) => Some(source),
             Self::Json(source) => Some(source),
             Self::Io(source) => Some(source),
+            Self::InvalidArgument(_) => None,
         }
     }
 }
@@ -244,6 +305,14 @@ fn run(cli: Cli) -> Result<(), CliError> {
             }))?;
             write_stdout(format_args!("{output}\n"))
         }
+        Command::Mldsa65(arguments) => run_mldsa65(arguments),
+        Command::NodeKeygen => {
+            let key = generate_node_key()?;
+            let output = serde_json::to_string_pretty(&json!({
+                "preSharedKey": key,
+            }))?;
+            write_stdout(format_args!("{output}\n"))
+        }
         Command::ProbeDest(arguments) => run_probe_destination(arguments),
         Command::Schema => write_stdout(format_config_schema()?),
         Command::Serve(arguments) | Command::Run(arguments) => run_server(arguments),
@@ -290,27 +359,78 @@ fn run_probe_destination(arguments: ProbeDestinationArgs) -> Result<(), CliError
 
 fn run_config(command: ConfigCommand) -> Result<(), CliError> {
     match command {
-        ConfigCommand::Generate(arguments) => {
-            let generated = generate_minimal_config(GenerateConfigInput {
-                listen: arguments.listen,
-                port: arguments.port,
-                target: arguments.target,
-                server_name: arguments.server_name,
-            })?;
-            let public_key = generated.reality_public_key().to_owned();
-            let output = format_config(generated.config())?;
-            write_stdout(output)?;
-            writeln!(
-                io::stderr().lock(),
-                "REALITY public key for the client: {public_key}"
-            )?;
-            Ok(())
-        }
+        ConfigCommand::Generate { role } => run_config_generate(role),
         ConfigCommand::Format(arguments) => {
             let config = load_config(arguments.config)?;
             write_stdout(format_config(&config)?)
         }
     }
+}
+
+fn run_config_generate(role: GenerateRole) -> Result<(), CliError> {
+    match role {
+        GenerateRole::Standalone(arguments) => {
+            let generated = generate_minimal_config(public_generation_input(arguments))?;
+            write_public_config(&generated)
+        }
+        GenerateRole::Line(arguments) => {
+            let generated = generate_line_config(GenerateLineConfigInput {
+                public: public_generation_input(arguments.public),
+                nxr_address: arguments.nxr_address,
+                nxr_port: arguments.nxr_port,
+                pre_shared_key: SecretString::new(arguments.nxr_key),
+            })?;
+            write_public_config(&generated)
+        }
+        GenerateRole::Landing(arguments) => {
+            let config = generate_landing_config(GenerateLandingConfigInput {
+                listen: arguments.listen,
+                port: arguments.port,
+                pre_shared_key: SecretString::new(arguments.nxr_key),
+            })?;
+            write_stdout(format_config(&config)?)
+        }
+    }
+}
+
+fn public_generation_input(arguments: PublicGenerateArgs) -> GenerateConfigInput {
+    GenerateConfigInput {
+        listen: arguments.listen,
+        port: arguments.port,
+        target: arguments.target,
+        server_name: arguments.server_name,
+    }
+}
+
+fn write_public_config(generated: &rust_reality::config::GeneratedConfig) -> Result<(), CliError> {
+    let public_key = generated.reality_public_key();
+    write_stdout(format_config(generated.config())?)?;
+    writeln!(
+        io::stderr().lock(),
+        "REALITY public key for the client: {public_key}"
+    )?;
+    Ok(())
+}
+
+fn run_mldsa65(arguments: MlDsa65Args) -> Result<(), CliError> {
+    let pair = if let Some(seed) = arguments.seed {
+        let decoded = Zeroizing::new(
+            BASE64_URL_SAFE_NO_PAD
+                .decode(seed)
+                .map_err(|_| CliError::InvalidArgument("ML-DSA-65 seed must be valid base64"))?,
+        );
+        let seed: [u8; 32] = decoded.as_slice().try_into().map_err(|_| {
+            CliError::InvalidArgument("ML-DSA-65 seed must contain exactly 32 bytes")
+        })?;
+        generate_mldsa65_key_pair_from_seed(seed)
+    } else {
+        generate_mldsa65_key_pair()?
+    };
+    let output = serde_json::to_string_pretty(&json!({
+        "seed": pair.seed(),
+        "verify": pair.verification_key(),
+    }))?;
+    write_stdout(format_args!("{output}\n"))
 }
 
 fn write_stdout(output: impl fmt::Display) -> Result<(), CliError> {
@@ -321,7 +441,7 @@ fn write_stdout(output: impl fmt::Display) -> Result<(), CliError> {
 mod tests {
     use clap::Parser;
 
-    use super::{Cli, Command, ConfigCommand};
+    use super::{Cli, Command, ConfigCommand, GenerateRole};
 
     #[test]
     fn parses_nested_generate_command() {
@@ -329,6 +449,7 @@ mod tests {
             "rust-reality",
             "config",
             "generate",
+            "standalone",
             "--target",
             "www.example.com:443",
             "--server-name",
@@ -339,7 +460,54 @@ mod tests {
         assert!(matches!(
             cli.command,
             Command::Config {
-                command: ConfigCommand::Generate(_)
+                command: ConfigCommand::Generate {
+                    role: GenerateRole::Standalone(_)
+                }
+            }
+        ));
+    }
+
+    #[test]
+    fn parses_explicit_line_and_landing_generators() {
+        let line = Cli::try_parse_from([
+            "rust-reality",
+            "config",
+            "generate",
+            "line",
+            "--target",
+            "www.example.com:443",
+            "--server-name",
+            "www.example.com",
+            "--nxr-address",
+            "10.0.0.2",
+            "--nxr-key",
+            "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI",
+        ])
+        .expect("line generator must parse");
+        let landing = Cli::try_parse_from([
+            "rust-reality",
+            "config",
+            "generate",
+            "landing",
+            "--nxr-key",
+            "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI",
+        ])
+        .expect("landing generator must parse");
+
+        assert!(matches!(
+            line.command,
+            Command::Config {
+                command: ConfigCommand::Generate {
+                    role: GenerateRole::Line(_)
+                }
+            }
+        ));
+        assert!(matches!(
+            landing.command,
+            Command::Config {
+                command: ConfigCommand::Generate {
+                    role: GenerateRole::Landing(_)
+                }
             }
         ));
     }
