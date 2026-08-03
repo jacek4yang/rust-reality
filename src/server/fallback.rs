@@ -93,7 +93,8 @@ pub struct RealityFallback {
 /// One admitted cover connection whose byte ownership can transition to fallback.
 pub struct CoverConnection {
     stream: TcpStream,
-    _permit: AdmissionPermit,
+    governor: ResourceGovernor,
+    permit: Option<AdmissionPermit>,
     deadline: Instant,
     forwarded_prefix: u64,
 }
@@ -152,6 +153,28 @@ impl RealityFallback {
             .governor
             .try_acquire(AdmissionKind::Fallback)
             .map_err(FallbackError::Admission)?;
+        self.connect_with_permit(consumed_prefix, Some(permit))
+            .await
+    }
+
+    /// Opens a short-lived target mirror without consuming fallback capacity.
+    ///
+    /// The caller must already hold handshake admission. If the connection later
+    /// transitions to byte relay, [`CoverConnection::relay`] acquires fallback
+    /// admission immediately before that longer-lived phase.
+    ///
+    /// # Errors
+    ///
+    /// Returns a connection deadline, prefix write, or session error.
+    pub async fn mirror(&self, consumed_prefix: &[u8]) -> Result<CoverConnection, FallbackError> {
+        self.connect_with_permit(consumed_prefix, None).await
+    }
+
+    async fn connect_with_permit(
+        &self,
+        consumed_prefix: &[u8],
+        permit: Option<AdmissionPermit>,
+    ) -> Result<CoverConnection, FallbackError> {
         let now = Instant::now();
         let deadline = now
             .checked_add(self.session_timeout)
@@ -173,7 +196,8 @@ impl RealityFallback {
             u64::try_from(consumed_prefix.len()).map_or(u64::MAX, |length| length);
         Ok(CoverConnection {
             stream,
-            _permit: permit,
+            governor: self.governor.clone(),
+            permit,
             deadline,
             forwarded_prefix,
         })
@@ -213,6 +237,13 @@ impl CoverConnection {
     where
         I: AsyncRead + AsyncWrite + Unpin + ?Sized,
     {
+        let _permit = match self.permit.take() {
+            Some(permit) => permit,
+            None => self
+                .governor
+                .try_acquire(AdmissionKind::Fallback)
+                .map_err(FallbackError::Admission)?,
+        };
         let operation = async {
             inbound
                 .write_all(consumed_target_prefix)
@@ -435,6 +466,43 @@ mod tests {
                 Err(FallbackError::SessionTimeout)
             ));
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn target_mirror_acquires_fallback_capacity_only_when_relaying() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("cover listener must bind");
+        let config = ResourceGovernorConfig {
+            max_fallbacks: 0,
+            ..ResourceGovernorConfig::default()
+        };
+        let fallback = RealityFallback::new(
+            listener
+                .local_addr()
+                .expect("cover listener address must exist")
+                .to_string(),
+            ResourceGovernor::new(&config),
+            &config,
+        );
+
+        let connection = fallback
+            .mirror(PREFIX)
+            .await
+            .expect("short target mirror must not consume fallback capacity");
+        let (mut cover, _) = listener.accept().await.expect("mirror must connect");
+        let mut received = vec![0_u8; PREFIX.len()];
+        cover
+            .read_exact(&mut received)
+            .await
+            .expect("mirror prefix must arrive");
+        assert_eq!(received, PREFIX);
+
+        let (_client, mut inbound) = duplex(1);
+        assert!(matches!(
+            connection.relay(&mut inbound, &[]).await,
+            Err(FallbackError::Admission(_))
+        ));
     }
 
     fn client_hello() -> ClientHello {
