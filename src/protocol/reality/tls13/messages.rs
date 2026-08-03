@@ -150,7 +150,7 @@ impl CertificateIdentity {
     }
 
     #[cfg(test)]
-    fn from_seed(seed: [u8; 32]) -> Self {
+    pub(crate) fn from_seed(seed: [u8; 32]) -> Self {
         Self {
             signing_key: SigningKey::from_bytes(&seed),
         }
