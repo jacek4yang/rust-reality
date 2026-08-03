@@ -9,13 +9,16 @@ use std::{
     time::{Duration, Instant as MonotonicInstant, SystemTime, UNIX_EPOCH},
 };
 
+use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 use tokio::{
     io::AsyncReadExt,
     net::TcpStream,
     time::{self, Instant},
 };
+use zeroize::Zeroizing;
 
 use crate::{
+    config::NxrInboundConfig,
     protocol::{
         nxr::{
             NxrKey, NxrProtocolError, REQUEST_HEADER_LEN, decode_authenticated_request,
@@ -47,6 +50,21 @@ struct NxrReplayCacheInner {
 }
 
 impl NxrReplayCache {
+    /// Compiles the bounded replay policy for one validated NXR listener.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an unrepresentable capacity or unavailable replay policy.
+    pub fn from_inbound(inbound: &NxrInboundConfig) -> Result<Self, NxrLandingConfigError> {
+        let capacity = usize::try_from(inbound.settings.max_nonce_entries)
+            .map_err(|_| NxrLandingConfigError::Capacity)?;
+        Self::new(
+            capacity,
+            Duration::from_secs(inbound.settings.nonce_retention_seconds),
+        )
+        .map_err(NxrLandingConfigError::Replay)
+    }
+
     /// Creates an independently bounded nonce cache.
     ///
     /// # Errors
@@ -203,6 +221,46 @@ pub struct NxrLandingHandler {
 }
 
 impl NxrLandingHandler {
+    /// Compiles one validated internal listener with a new replay cache.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid key material or replay-cache policy.
+    pub fn from_inbound(inbound: &NxrInboundConfig) -> Result<Self, NxrLandingConfigError> {
+        let replay = NxrReplayCache::from_inbound(inbound)?;
+        Self::from_inbound_with_replay(inbound, replay)
+    }
+
+    /// Compiles one validated listener while retaining its process-lifetime
+    /// replay history across immutable runtime generations.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed or incorrectly sized PSK material.
+    pub fn from_inbound_with_replay(
+        inbound: &NxrInboundConfig,
+        replay: NxrReplayCache,
+    ) -> Result<Self, NxrLandingConfigError> {
+        let decoded = Zeroizing::new(
+            BASE64_URL_SAFE_NO_PAD
+                .decode(inbound.settings.pre_shared_key.expose())
+                .map_err(|_| NxrLandingConfigError::Key)?,
+        );
+        let key: [u8; 32] = decoded
+            .as_slice()
+            .try_into()
+            .map_err(|_| NxrLandingConfigError::Key)?;
+        Ok(Self::new(
+            NxrAuthenticator::new(
+                NxrKey::new(key),
+                replay,
+                inbound.settings.max_time_difference_seconds,
+            ),
+            Duration::from_millis(inbound.settings.connect_timeout_ms),
+            Duration::from_millis(inbound.settings.authentication_timeout_ms),
+        ))
+    }
+
     /// Creates a landing handler from already compiled policy.
     #[must_use]
     pub const fn new(
@@ -232,6 +290,32 @@ impl NxrLandingHandler {
         relay_bidirectional(&mut inbound, &mut outbound)
             .await
             .map_err(NxrLandingError::Relay)
+    }
+}
+
+/// Validated NXR listener state could not be compiled.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NxrLandingConfigError {
+    /// PSK decoding or length did not match the protocol contract.
+    Key,
+    /// Replay capacity could not be represented on this target.
+    Capacity,
+    /// Replay cache initialization failed.
+    Replay(NxrReplayError),
+}
+
+impl fmt::Display for NxrLandingConfigError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("invalid NXR landing listener configuration")
+    }
+}
+
+impl Error for NxrLandingConfigError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Replay(source) => Some(source),
+            Self::Key | Self::Capacity => None,
+        }
     }
 }
 

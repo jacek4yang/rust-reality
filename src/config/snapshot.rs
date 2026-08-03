@@ -182,7 +182,11 @@ mod tests {
         let store = ConfigStore::new(valid_config()).expect("fixture must validate");
         let before = store.load();
         let mut invalid = valid_config();
-        invalid.inbounds[0].stream_settings.security = "none".to_owned();
+        invalid.inbounds[0]
+            .as_vless_mut()
+            .expect("fixture must contain VLESS")
+            .stream_settings
+            .security = "none".to_owned();
 
         store
             .publish(invalid)
