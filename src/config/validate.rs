@@ -132,10 +132,10 @@ fn validate_assets_and_dns(config: &Config) -> Result<(), ConfigError> {
     if !(1024..=512 * 1024 * 1024).contains(&config.assets.max_bytes) {
         return fail("assets.maxBytes", "must be between 1024 and 536870912");
     }
-    if config.dns.servers.is_empty() || config.dns.servers.iter().any(String::is_empty) {
+    if config.dns.servers != ["system"] {
         return fail(
             "dns.servers",
-            "must contain at least one non-empty resolver",
+            "currently supports exactly one system resolver; custom resolvers must not be ignored",
         );
     }
     validate_timeout("dns.timeoutMs", config.dns.timeout_ms)
@@ -1095,6 +1095,19 @@ mod tests {
                 .expect_err("unimplemented sockhash must fail closed")
                 .path(),
             "policy.relay.sockhash"
+        );
+    }
+
+    #[test]
+    fn rejects_unimplemented_custom_dns_resolvers() {
+        let mut config = valid_config();
+        config.dns.servers = vec!["1.1.1.1".to_owned()];
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("custom DNS must not be silently ignored")
+                .path(),
+            "dns.servers"
         );
     }
 }

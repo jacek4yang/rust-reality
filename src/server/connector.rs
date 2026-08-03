@@ -9,6 +9,8 @@ use tokio::{net::TcpStream, time};
 
 use crate::protocol::vless::{Address, Destination};
 
+const MAX_PRE_RESOLVED_IPS: usize = 64;
+
 /// Establishes outbound TCP connections for authorized VLESS requests.
 #[derive(Clone, Copy, Debug)]
 pub struct DestinationConnector {
@@ -28,12 +30,38 @@ impl DestinationConnector {
         &self,
         destination: &Destination,
     ) -> Result<TcpStream, DestinationConnectError> {
+        self.connect_resolved(destination, &[]).await
+    }
+
+    /// Connects a domain to the exact bounded address snapshot already used by
+    /// routing. Empty snapshots retain normal system resolution behavior.
+    pub async fn connect_resolved(
+        &self,
+        destination: &Destination,
+        resolved_ips: &[IpAddr],
+    ) -> Result<TcpStream, DestinationConnectError> {
+        if resolved_ips.len() > MAX_PRE_RESOLVED_IPS {
+            return Err(DestinationConnectError::TooManyResolvedAddresses);
+        }
         let connect = async {
             match destination.address() {
                 Address::Ipv4(address) => {
                     let socket_addr = SocketAddr::new(IpAddr::V4(*address), destination.port());
 
                     TcpStream::connect(socket_addr).await
+                }
+
+                Address::Domain(_) if !resolved_ips.is_empty() => {
+                    let mut addresses = Vec::new();
+                    addresses
+                        .try_reserve_exact(resolved_ips.len())
+                        .map_err(|_| io::Error::other("resolved address allocation failed"))?;
+                    addresses.extend(
+                        resolved_ips
+                            .iter()
+                            .map(|address| SocketAddr::new(*address, destination.port())),
+                    );
+                    TcpStream::connect(addresses.as_slice()).await
                 }
 
                 Address::Domain(domain) => {
@@ -73,6 +101,9 @@ pub enum DestinationConnectError {
 
     /// Address resolution or TCP connection establishment failed.
     Io(io::Error),
+
+    /// A caller supplied more addresses than the bounded connector accepts.
+    TooManyResolvedAddresses,
 }
 
 impl fmt::Display for DestinationConnectError {
@@ -83,6 +114,9 @@ impl fmt::Display for DestinationConnectError {
                 "destination connection timed out after {timeout:?}"
             ),
             Self::Io(error) => write!(formatter, "failed to connect to destination: {error}"),
+            Self::TooManyResolvedAddresses => {
+                formatter.write_str("pre-resolved destination address count exceeds 64")
+            }
         }
     }
 }
@@ -92,6 +126,7 @@ impl Error for DestinationConnectError {
         match self {
             Self::TimedOut { .. } => None,
             Self::Io(error) => Some(error),
+            Self::TooManyResolvedAddresses => None,
         }
     }
 }
@@ -193,6 +228,37 @@ mod tests {
         assert!(
             stream.nodelay().expect("read TCP_NODELAY"),
             "outbound proxy streams must disable Nagle"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn reuses_pre_resolved_address_without_second_dns_lookup() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("loopback listener should bind");
+        let listener_addr = listener
+            .local_addr()
+            .expect("listener should have a local address");
+        let destination = Destination::new(
+            Address::Domain("must-not-resolve.invalid".to_owned()),
+            listener_addr.port(),
+        );
+        let connector = DestinationConnector::new(Duration::from_secs(1));
+
+        let stream = connector
+            .connect_resolved(&destination, &[Ipv4Addr::LOCALHOST.into()])
+            .await
+            .expect("pre-resolved loopback must connect");
+        let (_server_stream, peer_addr) = listener
+            .accept()
+            .await
+            .expect("listener should accept connection");
+
+        assert_eq!(
+            stream
+                .local_addr()
+                .expect("client stream should have a local address"),
+            peer_addr
         );
     }
 }

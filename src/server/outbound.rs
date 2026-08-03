@@ -69,6 +69,18 @@ impl OutboundRegistry {
         tag: &str,
         destination: &Destination,
     ) -> Result<OutboundConnectOutcome, OutboundConnectError> {
+        self.connect_resolved(tag, destination, &[]).await
+    }
+
+    /// Connects a selected outbound while allowing direct TCP to reuse the exact
+    /// bounded DNS snapshot considered by GeoIP routing. Proxy and NXR outbounds
+    /// continue forwarding the authenticated domain to the remote hop.
+    pub async fn connect_resolved(
+        &self,
+        tag: &str,
+        destination: &Destination,
+        resolved_ips: &[std::net::IpAddr],
+    ) -> Result<OutboundConnectOutcome, OutboundConnectError> {
         let outbound = self
             .outbounds
             .get(tag)
@@ -80,7 +92,7 @@ impl OutboundRegistry {
                     .try_acquire()
                     .map_err(OutboundConnectError::Admission)?;
                 let stream = DestinationConnector::new(self.connect_timeout)
-                    .connect(destination)
+                    .connect_resolved(destination, resolved_ips)
                     .await
                     .map_err(OutboundConnectError::Direct)?;
                 Ok(OutboundConnectOutcome::Connected(OutboundConnection {

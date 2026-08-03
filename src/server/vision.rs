@@ -6,7 +6,7 @@ use tokio::{
 };
 
 use crate::{
-    config::{Config, ResourceGovernorConfig},
+    config::{Config, DnsStrategy, ResourceGovernorConfig},
     protocol::{
         reality::tls13::{
             MAX_PLAINTEXT_LEN, TlsApplicationIoError, TlsApplicationReader, TlsApplicationWriter,
@@ -22,7 +22,7 @@ use crate::{
 use super::{
     outbound::{OutboundConnectError, OutboundConnectOutcome, OutboundRegistry},
     reality::RealityEstablished,
-    routing::{AssetMatcher, RouteContext, RouteError, RoutingCompileError, RoutingTable},
+    routing::{AssetMatcher, RouteResolutionError, RoutingCompileError, RoutingTable},
 };
 
 const MAX_REQUEST_HEADER_SIZE: usize = 533;
@@ -81,6 +81,8 @@ pub struct VisionHandler {
     routing: RoutingTable,
     request_timeout: Duration,
     io_timeout: Duration,
+    dns_strategy: DnsStrategy,
+    dns_timeout: Duration,
 }
 
 impl VisionHandler {
@@ -94,7 +96,7 @@ impl VisionHandler {
         assets: Arc<dyn AssetMatcher>,
     ) -> Result<Self, RoutingCompileError> {
         let governor = &config.policy.resource_governor;
-        Ok(Self::new(
+        Ok(Self::new_with_dns(
             OutboundRegistry::new(
                 &config.outbounds,
                 &config.policy.direct_barrier,
@@ -102,6 +104,8 @@ impl VisionHandler {
             ),
             RoutingTable::compile(&config.routing, assets)?,
             governor,
+            config.routing.domain_strategy,
+            Duration::from_millis(config.dns.timeout_ms),
         ))
     }
 
@@ -112,11 +116,31 @@ impl VisionHandler {
         routing: RoutingTable,
         governor: &ResourceGovernorConfig,
     ) -> Self {
+        Self::new_with_dns(
+            outbounds,
+            routing,
+            governor,
+            DnsStrategy::AsIs,
+            Duration::from_secs(5),
+        )
+    }
+
+    /// Binds routing to an explicit bounded DNS strategy.
+    #[must_use]
+    pub fn new_with_dns(
+        outbounds: OutboundRegistry,
+        routing: RoutingTable,
+        governor: &ResourceGovernorConfig,
+        dns_strategy: DnsStrategy,
+        dns_timeout: Duration,
+    ) -> Self {
         Self {
             outbounds,
             routing,
             request_timeout: Duration::from_millis(governor.handshake_timeout_ms),
             io_timeout: Duration::from_millis(governor.fallback_timeout_ms),
+            dns_strategy,
+            dns_timeout,
         }
     }
 
@@ -138,16 +162,22 @@ impl VisionHandler {
         let request = read_vision_request(&mut client_reader, &users, self.request_timeout).await?;
         let route = self
             .routing
-            .select(&RouteContext {
-                user_id: request.user_id,
-                inbound_tag: &inbound_tag,
-                destination: &request.destination,
-                resolved_ips: &[],
-            })
+            .select_with_dns(
+                request.user_id,
+                &inbound_tag,
+                &request.destination,
+                self.dns_strategy,
+                self.dns_timeout,
+            )
+            .await
             .map_err(VisionSessionError::Route)?;
         let outcome = self
             .outbounds
-            .connect(route.outbound(), &request.destination)
+            .connect_resolved(
+                route.decision().outbound(),
+                &request.destination,
+                route.resolved_ips(),
+            )
             .await
             .map_err(VisionSessionError::Outbound)?;
         let OutboundConnectOutcome::Connected(connection) = outcome else {
@@ -702,7 +732,7 @@ pub enum VisionSessionError {
     RequestTooLarge { limit: usize },
     Decode(DecodeError),
     Validate(RequestValidationError),
-    Route(RouteError),
+    Route(RouteResolutionError),
     Outbound(OutboundConnectError),
     ResponseHeader(crate::protocol::vless::ResponseEncodeError),
     Tls(TlsApplicationIoError),
