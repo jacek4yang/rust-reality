@@ -13,6 +13,7 @@ use super::{
     Config, GlobalRule, InboundConfig, LogOutput, Network, NxrInboundConfig, OutboundConfig,
     PortMatcher, SecretString, VlessInboundConfig,
 };
+use crate::server_name::is_server_name_pattern;
 
 const MIN_LOG_FILE_BYTES: u64 = 64 * 1024;
 const MAX_LOG_FILE_BYTES: u64 = 1024 * 1024 * 1024;
@@ -231,11 +232,21 @@ fn validate_vless_inbound(
             "must contain at least one DNS name",
         );
     }
+    let mut server_names = HashSet::new();
     for (name_index, name) in reality.server_names.iter().enumerate() {
-        validate_hostname(
-            &format!("{path}.streamSettings.realitySettings.serverNames[{name_index}]"),
-            name,
-        )?;
+        let name_path = format!("{path}.streamSettings.realitySettings.serverNames[{name_index}]");
+        if !is_server_name_pattern(name) {
+            return fail(
+                name_path,
+                "must be a concrete ASCII DNS name or a leftmost single-label wildcard such as *.lmu.edu",
+            );
+        }
+        if !server_names.insert(name.to_ascii_lowercase()) {
+            return fail(
+                name_path,
+                "server name pattern is configured more than once",
+            );
+        }
     }
     validate_base64_key(
         &format!("{path}.streamSettings.realitySettings.privateKey"),
@@ -960,6 +971,49 @@ mod tests {
                 .expect_err("unbounded client-clock difference must fail")
                 .path(),
             "inbounds[0].streamSettings.realitySettings.maxTimeDiffMs"
+        );
+    }
+
+    #[test]
+    fn accepts_leftmost_reality_server_name_wildcard() {
+        let mut config = valid_config();
+        config.inbounds[0]
+            .as_vless_mut()
+            .expect("fixture must contain VLESS")
+            .stream_settings
+            .reality_settings
+            .server_names = vec!["*.lmu.edu".to_owned()];
+
+        validate_config(&config).expect("one-label wildcard must validate");
+    }
+
+    #[test]
+    fn rejects_unsafe_or_duplicate_reality_server_name_patterns() {
+        let mut config = valid_config();
+        config.inbounds[0]
+            .as_vless_mut()
+            .expect("fixture must contain VLESS")
+            .stream_settings
+            .reality_settings
+            .server_names = vec!["www.*.edu".to_owned()];
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("non-leftmost wildcard must fail")
+                .path(),
+            "inbounds[0].streamSettings.realitySettings.serverNames[0]"
+        );
+
+        config.inbounds[0]
+            .as_vless_mut()
+            .expect("fixture must contain VLESS")
+            .stream_settings
+            .reality_settings
+            .server_names = vec!["*.lmu.edu".to_owned(), "*.LMU.EDU".to_owned()];
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("case-insensitive duplicate must fail")
+                .path(),
+            "inbounds[0].streamSettings.realitySettings.serverNames[1]"
         );
     }
 
