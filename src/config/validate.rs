@@ -587,6 +587,12 @@ fn validate_policy(config: &Config) -> Result<(), ConfigError> {
             "must not exceed handshakeTimeoutMs",
         );
     }
+    if governor.connect_timeout_ms > governor.fallback_timeout_ms {
+        return fail(
+            "policy.resourceGovernor.connectTimeoutMs",
+            "must not exceed fallbackTimeoutMs",
+        );
+    }
 
     let barrier = &config.policy.direct_barrier;
     if barrier.max_concurrent == 0 || barrier.max_per_second == 0 {
