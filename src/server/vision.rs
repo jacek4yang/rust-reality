@@ -1,4 +1,4 @@
-use std::{error::Error, fmt, io, time::Duration};
+use std::{error::Error, fmt, io, sync::Arc, time::Duration};
 
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -6,7 +6,7 @@ use tokio::{
 };
 
 use crate::{
-    config::{DirectBarrierConfig, ResourceGovernorConfig},
+    config::{Config, ResourceGovernorConfig},
     protocol::{
         reality::tls13::{
             MAX_PLAINTEXT_LEN, TlsApplicationIoError, TlsApplicationReader, TlsApplicationWriter,
@@ -17,12 +17,12 @@ use crate::{
             VisionEncoder, VisionMode, decode_request, encode_response_header,
         },
     },
-    runtime::{AdmissionDenied, DirectBarrier},
 };
 
 use super::{
-    connector::{DestinationConnectError, DestinationConnector},
+    outbound::{OutboundConnectError, OutboundConnectOutcome, OutboundRegistry},
     reality::RealityEstablished,
+    routing::{AssetMatcher, RouteContext, RouteError, RoutingCompileError, RoutingTable},
 };
 
 const MAX_REQUEST_HEADER_SIZE: usize = 533;
@@ -74,24 +74,47 @@ impl VisionRelayStats {
     }
 }
 
-/// Direct-only Vision runtime used before routing outbounds are connected.
+/// Immutable Vision data path with UUID-grouped routing and outbound selection.
 #[derive(Clone)]
-pub struct DirectVisionHandler {
-    connector: DestinationConnector,
-    direct_barrier: DirectBarrier,
+pub struct VisionHandler {
+    outbounds: OutboundRegistry,
+    routing: RoutingTable,
     request_timeout: Duration,
     io_timeout: Duration,
 }
 
-impl DirectVisionHandler {
-    /// Compiles bounded direct-session state shared by all accepted connections.
+impl VisionHandler {
+    /// Compiles validated config and one immutable asset snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns a routing matcher or UUID compilation error.
+    pub fn from_config(
+        config: &Config,
+        assets: Arc<dyn AssetMatcher>,
+    ) -> Result<Self, RoutingCompileError> {
+        let governor = &config.policy.resource_governor;
+        Ok(Self::new(
+            OutboundRegistry::new(
+                &config.outbounds,
+                &config.policy.direct_barrier,
+                Duration::from_millis(governor.connect_timeout_ms),
+            ),
+            RoutingTable::compile(&config.routing, assets)?,
+            governor,
+        ))
+    }
+
+    /// Binds compiled routing and outbound snapshots to bounded session timeouts.
     #[must_use]
-    pub fn new(governor: &ResourceGovernorConfig, direct_barrier: &DirectBarrierConfig) -> Self {
+    pub fn new(
+        outbounds: OutboundRegistry,
+        routing: RoutingTable,
+        governor: &ResourceGovernorConfig,
+    ) -> Self {
         Self {
-            connector: DestinationConnector::new(Duration::from_millis(
-                governor.connect_timeout_ms,
-            )),
-            direct_barrier: DirectBarrier::new(direct_barrier),
+            outbounds,
+            routing,
             request_timeout: Duration::from_millis(governor.handshake_timeout_ms),
             io_timeout: Duration::from_millis(governor.fallback_timeout_ms),
         }
@@ -110,18 +133,36 @@ impl DirectVisionHandler {
         &self,
         established: RealityEstablished,
     ) -> Result<VisionRelayStats, VisionSessionError> {
-        let (application, users, _) = established.into_parts();
-        let (mut client_reader, client_writer) = application.into_split();
+        let (application, users, inbound_tag) = established.into_parts();
+        let (mut client_reader, mut client_writer) = application.into_split();
         let request = read_vision_request(&mut client_reader, &users, self.request_timeout).await?;
-        let direct_permit = self
-            .direct_barrier
-            .try_acquire()
-            .map_err(VisionSessionError::Admission)?;
-        let destination = self
-            .connector
-            .connect(&request.destination)
+        let route = self
+            .routing
+            .select(&RouteContext {
+                user_id: request.user_id,
+                inbound_tag: &inbound_tag,
+                destination: &request.destination,
+                resolved_ips: &[],
+            })
+            .map_err(VisionSessionError::Route)?;
+        let outcome = self
+            .outbounds
+            .connect(route.outbound(), &request.destination)
             .await
-            .map_err(VisionSessionError::Connect)?;
+            .map_err(VisionSessionError::Outbound)?;
+        let OutboundConnectOutcome::Connected(connection) = outcome else {
+            client_writer
+                .shutdown(self.io_timeout)
+                .await
+                .map_err(VisionSessionError::Tls)?;
+            return Ok(VisionRelayStats {
+                uplink_bytes: 0,
+                downlink_bytes: 0,
+                uplink_direct: false,
+                downlink_direct: false,
+            });
+        };
+        let (destination, outbound_permit) = connection.into_parts();
         let (destination_reader, destination_writer) = tokio::io::split(destination);
         let user_id = request.user_id;
         let response_header = encode_response_header(&request.header, &[])
@@ -142,7 +183,7 @@ impl DirectVisionHandler {
             self.io_timeout,
         );
         let (uplink, downlink) = tokio::try_join!(uplink, downlink)?;
-        drop(direct_permit);
+        drop(outbound_permit);
 
         Ok(VisionRelayStats {
             uplink_bytes: uplink.bytes,
@@ -661,8 +702,8 @@ pub enum VisionSessionError {
     RequestTooLarge { limit: usize },
     Decode(DecodeError),
     Validate(RequestValidationError),
-    Admission(AdmissionDenied),
-    Connect(DestinationConnectError),
+    Route(RouteError),
+    Outbound(OutboundConnectError),
     ResponseHeader(crate::protocol::vless::ResponseEncodeError),
     Tls(TlsApplicationIoError),
     VisionDecode(VisionDecodeError),
@@ -681,8 +722,8 @@ impl fmt::Display for VisionSessionError {
             }
             Self::Decode(source) => source.fmt(formatter),
             Self::Validate(source) => source.fmt(formatter),
-            Self::Admission(source) => source.fmt(formatter),
-            Self::Connect(source) => source.fmt(formatter),
+            Self::Route(source) => source.fmt(formatter),
+            Self::Outbound(source) => source.fmt(formatter),
             Self::ResponseHeader(source) => source.fmt(formatter),
             Self::Tls(source) => source.fmt(formatter),
             Self::VisionDecode(source) => source.fmt(formatter),
@@ -700,8 +741,8 @@ impl Error for VisionSessionError {
         match self {
             Self::Decode(source) => Some(source),
             Self::Validate(source) => Some(source),
-            Self::Admission(source) => Some(source),
-            Self::Connect(source) => Some(source),
+            Self::Route(source) => Some(source),
+            Self::Outbound(source) => Some(source),
             Self::ResponseHeader(source) => Some(source),
             Self::Tls(source) => Some(source),
             Self::VisionDecode(source) => Some(source),
@@ -808,7 +849,7 @@ fn length_u64(length: usize) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::{io, net::Ipv4Addr, time::Duration};
+    use std::{io, net::Ipv4Addr, sync::Arc, time::Duration};
 
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -817,10 +858,13 @@ mod tests {
     };
 
     use super::{
-        DirectVisionHandler, NestedTlsDetector, PaddingDecision, is_tls13_server_hello, length_u64,
+        NestedTlsDetector, PaddingDecision, VisionHandler, is_tls13_server_hello, length_u64,
     };
     use crate::{
-        config::{DirectBarrierConfig, ResourceGovernorConfig},
+        config::{
+            DirectBarrierConfig, DnsStrategy, OutboundConfig, ResourceGovernorConfig,
+            RoutingConfig, UserPolicy,
+        },
         protocol::{
             reality::tls13::{
                 CipherSuite, ContentType, EstablishedTls, Tls13KeySchedule, Tls13RecordLayer,
@@ -831,7 +875,11 @@ mod tests {
                 VisionEncoder, VisionMode,
             },
         },
-        server::reality::RealityEstablished,
+        server::{
+            outbound::OutboundRegistry,
+            reality::RealityEstablished,
+            routing::{EmptyAssetMatcher, RoutingTable},
+        },
     };
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -857,13 +905,7 @@ mod tests {
             fallback_timeout_ms: 1_000,
             ..ResourceGovernorConfig::default()
         };
-        let handler = DirectVisionHandler::new(
-            &governor,
-            &DirectBarrierConfig {
-                max_concurrent: 8,
-                max_per_second: 8,
-            },
-        );
+        let handler = direct_handler(&governor);
         let request = vision_request(destination_address.port(), b"ping");
 
         let exchange = async {
@@ -968,13 +1010,7 @@ mod tests {
             fallback_timeout_ms: 1_000,
             ..ResourceGovernorConfig::default()
         };
-        let handler = DirectVisionHandler::new(
-            &governor,
-            &DirectBarrierConfig {
-                max_concurrent: 8,
-                max_per_second: 8,
-            },
-        );
+        let handler = direct_handler(&governor);
         let request = vision_request_with_command(
             destination_address.port(),
             b"up-framed",
@@ -1252,5 +1288,34 @@ mod tests {
             client_write_records,
             client_read_records,
         )
+    }
+
+    fn direct_handler(governor: &ResourceGovernorConfig) -> VisionHandler {
+        let barrier = DirectBarrierConfig {
+            max_concurrent: 8,
+            max_per_second: 8,
+        };
+        let outbounds = OutboundRegistry::new(
+            &[OutboundConfig::Direct {
+                tag: "direct".to_owned(),
+            }],
+            &barrier,
+            Duration::from_millis(governor.connect_timeout_ms),
+        );
+        let routing = RoutingTable::compile(
+            &RoutingConfig {
+                domain_strategy: DnsStrategy::AsIs,
+                global_rules: Vec::new(),
+                users: vec![UserPolicy {
+                    name: "test-user".to_owned(),
+                    user_ids: vec!["33333333-3333-3333-3333-333333333333".to_owned()],
+                    default_outbound: "direct".to_owned(),
+                    rules: Vec::new(),
+                }],
+            },
+            Arc::new(EmptyAssetMatcher),
+        )
+        .expect("test routing must compile");
+        VisionHandler::new(outbounds, routing, governor)
     }
 }
