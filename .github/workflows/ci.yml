@@ -31,6 +31,16 @@ jobs:
         with:
           tool: cargo-nextest@0.9.140
 
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2.77.5
+        with:
+          tool: cargo-deny@0.19.4
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2.77.5
+        with:
+          tool: cargo-audit@0.22.2
+
       - name: Show tool versions
         run: |
           rustc --version
@@ -38,6 +48,8 @@ jobs:
           cargo fmt --version
           cargo clippy --version
           cargo nextest --version
+          cargo deny --version
+          cargo audit --version
 
       - name: Run repository quality checks
         run: ./scripts/check.sh

@@ -13,12 +13,15 @@ still pre-release and requires deployment-specific review.
 
 ## Development
 
-The repository uses stable Rust and cargo-nextest 0.9.140.
+The repository uses stable Rust, cargo-nextest 0.9.140, cargo-deny 0.19.4,
+and cargo-audit 0.22.2.
 
 Install the test runner:
 
 ```bash
 cargo install cargo-nextest --version 0.9.140 --locked
+cargo install cargo-deny --version 0.19.4 --locked
+cargo install cargo-audit --version 0.22.2 --locked
 ```
 
 Run the complete repository validation:
@@ -26,6 +29,11 @@ Run the complete repository validation:
 ```shell
 ./scripts/check.sh
 ```
+
+The local check prefers a fresh RustSec advisory database and falls back to an
+existing cache only when the network fetch fails. The dedicated Security
+workflow always requires a fresh database before accepting a pull request.
+
 ## Benchmarks
 
 Run the protocol microbenchmarks with:
