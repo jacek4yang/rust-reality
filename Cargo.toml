@@ -21,3 +21,10 @@ dbg_macro = "deny"
 todo = "deny"
 undocumented_unsafe_blocks = "deny"
 unimplemented = "deny"
+
+[dev-dependencies]
+criterion = "0.8.2"
+
+[[bench]]
+name = "vless_decode"
+harness = false
