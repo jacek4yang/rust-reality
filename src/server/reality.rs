@@ -144,6 +144,18 @@ impl RealityEstablished {
     pub fn into_parts(self) -> (TlsApplicationIo<TcpStream>, Arc<UserRegistry>, Arc<str>) {
         (self.stream, self.users, self.inbound_tag)
     }
+
+    #[cfg(test)]
+    pub(crate) fn from_test_parts(
+        stream: TlsApplicationIo<TcpStream>,
+        users: UserRegistry,
+    ) -> Self {
+        Self {
+            stream,
+            users: Arc::new(users),
+            inbound_tag: Arc::from("test-reality"),
+        }
+    }
 }
 
 impl fmt::Debug for RealityEstablished {
