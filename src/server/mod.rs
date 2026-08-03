@@ -5,3 +5,4 @@ pub mod connector;
 pub mod fallback;
 pub mod handler;
 pub mod probe;
+pub mod reality;
