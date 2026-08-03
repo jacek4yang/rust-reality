@@ -574,6 +574,10 @@ fn validate_policy(config: &Config) -> Result<(), ConfigError> {
             "policy.resourceGovernor.fallbackTimeoutMs",
             governor.fallback_timeout_ms,
         ),
+        (
+            "policy.resourceGovernor.replayRetentionMs",
+            governor.replay_retention_ms,
+        ),
     ] {
         validate_timeout(path, timeout)?;
     }

@@ -489,6 +489,9 @@ pub struct ResourceGovernorConfig {
     pub max_crypto_operations: u32,
     /// Replay entries across pending and committed states.
     pub max_replay_entries: u32,
+    /// Retention after a verified TLS ClientFinished.
+    #[serde(default = "default_replay_retention_ms")]
+    pub replay_retention_ms: u64,
     /// Absolute ClientHello read deadline.
     pub client_hello_timeout_ms: u64,
     /// Absolute authenticated handshake deadline.
@@ -507,12 +510,17 @@ impl Default for ResourceGovernorConfig {
             max_fallbacks: 512,
             max_crypto_operations: 128,
             max_replay_entries: 65_536,
+            replay_retention_ms: default_replay_retention_ms(),
             client_hello_timeout_ms: 3_000,
             handshake_timeout_ms: 10_000,
             connect_timeout_ms: 10_000,
             fallback_timeout_ms: 120_000,
         }
     }
+}
+
+const fn default_replay_retention_ms() -> u64 {
+    120_000
 }
 
 /// Direct outbound admission isolation.
