@@ -5,6 +5,7 @@ mod keys;
 mod messages;
 mod record;
 mod server_hello;
+mod target_read;
 
 pub use handshake::{EstablishedTls, RealityHandshakeError, ServerFlight, build_server_flight};
 pub use keys::{
@@ -20,4 +21,8 @@ pub use record::{
 };
 pub use server_hello::{
     ServerHelloError, ServerHelloTemplate, change_cipher_spec_record, plaintext_handshake_record,
+};
+pub use target_read::{
+    TargetServerHelloRead, TargetServerHelloReadError, TargetServerHelloReadErrorKind,
+    read_target_server_hello,
 };
