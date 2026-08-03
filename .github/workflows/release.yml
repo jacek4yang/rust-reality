@@ -1,0 +1,129 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  NEXTEST_PROFILE: ci
+  RELEASE_TARGET: x86_64-unknown-linux-gnu
+
+jobs:
+  build:
+    name: Verify, build, and package
+    if: github.repository == 'jacek4yang/rust-reality'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2.77.5
+        with:
+          tool: cargo-nextest@0.9.140
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2.77.5
+        with:
+          tool: cargo-deny@0.19.4
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2.77.5
+        with:
+          tool: cargo-audit@0.22.2
+
+      - name: Verify release identity
+        run: |
+          git fetch --force --no-tags origin main:refs/remotes/origin/main
+          test "$(rustc -vV | sed -n 's/^host: //p')" = "$RELEASE_TARGET"
+          ./scripts/verify-release-tag.sh "$GITHUB_REF_NAME"
+
+      - name: Run repository quality gates
+        run: ./scripts/check.sh
+
+      - name: Build release binary
+        run: ./scripts/build-release.sh
+
+      - name: Package deterministic release assets
+        run: ./scripts/package-release.sh "$GITHUB_REF_NAME" "$RELEASE_TARGET"
+
+      - name: Preserve verified release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-assets-${{ github.ref_name }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish immutable GitHub Release
+    needs: build
+    if: github.repository == 'jacek4yang/rust-reality'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Restore verified release assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-assets-${{ github.ref_name }}
+          path: dist/
+
+      - name: Publish GitHub Release
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+
+          readonly asset_directory=dist
+          verification_directory="$(mktemp -d)"
+          readonly verification_directory
+          trap 'rm -rf -- "$verification_directory"' EXIT
+
+          if release_is_draft="$(
+              gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft \
+                  2>/dev/null
+          )"; then
+            if [[ "$release_is_draft" == false ]]; then
+              gh release download "$GITHUB_REF_NAME" \
+                  --dir "$verification_directory"
+              diff --brief --recursive \
+                  "$asset_directory" "$verification_directory"
+              printf 'published assets already match %s\n' "$GITHUB_REF_NAME"
+              exit 0
+            fi
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --draft \
+              --generate-notes \
+              --title "rust-reality $GITHUB_REF_NAME" \
+              --verify-tag
+          fi
+
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          gh release download "$GITHUB_REF_NAME" \
+              --dir "$verification_directory"
+          diff --brief --recursive \
+              "$asset_directory" "$verification_directory"
+          gh release edit "$GITHUB_REF_NAME" --draft=false

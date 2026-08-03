@@ -14,6 +14,20 @@ the SHA-256 of the stripped release binary. Install only
 `target/release/rust-reality`; no runtime language or companion process is
 required.
 
+Official GitHub Release archives are produced automatically from matching
+`vMAJOR.MINOR.PATCH` tags on `main`. Download the archive,
+`release-manifest.json`, and `SHA256SUMS`; verify both checksums before
+extracting the binary and deployment files:
+
+```shell
+sha256sum --check SHA256SUMS
+tar -xzf rust-reality-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
+install -m 0755 rust-reality /usr/local/bin/rust-reality
+```
+
+The accompanying `release-manifest.json` records the exact source commit,
+target triple, source timestamp, artifact name, and artifact SHA-256.
+
 ## Generate a standalone public node
 
 First verify a proposed REALITY cover endpoint:
