@@ -101,6 +101,19 @@ impl EstablishedTls {
     pub const fn server_records_mut(&mut self) -> &mut Tls13RecordLayer {
         &mut self.server_records
     }
+
+    #[cfg(test)]
+    pub(crate) const fn from_test_records(
+        suite: CipherSuite,
+        client_records: Tls13RecordLayer,
+        server_records: Tls13RecordLayer,
+    ) -> Self {
+        Self {
+            suite,
+            client_records,
+            server_records,
+        }
+    }
 }
 
 impl fmt::Debug for EstablishedTls {
