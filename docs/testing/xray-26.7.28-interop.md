@@ -29,7 +29,7 @@ bounded temporary directory that is removed on exit.
 ## Recorded environment
 
 - Date: 2026-08-03 (Asia/Shanghai)
-- rust-reality runtime commit: `04a7a3c05910f1e7775ce3369a292feef3456309`
+- rust-reality runtime commit: `4aa8d0af5a65b1b7d44f094131b6677efa346f95`
 - Xray: `26.7.28`, commit `5ca6f4b`, Go `1.26.0`, Linux/amd64
 - Rust: `rustc 1.96.0 (ac68faa20 2026-05-25)`
 - Kernel: Linux `6.12.94+deb13-amd64`, x86_64
@@ -47,8 +47,8 @@ bounded temporary directory that is removed on exit.
 - ML-DSA-65 verification-key SHA-256 (identical rust-reality/Xray output):
   `1b79221726f2b876c87049ee20015ab0a55bf5abfa3cc5b1f9cbc5751be23a8a`
 - Real HTTPS request: `https://www.bing.com/`, HTTP 302
-- Real HTTPS sample: connect `0.000087 s`, first byte `0.623010 s`, total
-  `0.623222 s`
+- Real HTTPS sample: connect `0.000087 s`, first byte `0.642051 s`, total
+  `0.642117 s`
 
 Xray debug output recorded successful Vision padding/unpadding and authenticated
 Direct-boundary detection for both the local HTTP transfer and the real TLS
