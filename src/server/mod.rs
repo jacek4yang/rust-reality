@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod connector;
+pub mod direct;
 pub mod fallback;
 pub mod handler;
 pub mod nxr;
