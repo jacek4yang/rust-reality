@@ -53,3 +53,39 @@ jobs:
 
       - name: Run repository quality checks
         run: ./scripts/check.sh
+
+      - name: Report measured kernel relay capability
+        run: cargo test -p rr-linux --test capability_report -- --nocapture
+
+      - name: Report privileged gates that this runner cannot execute
+        run: |
+          echo "The following gates require a controlled privileged host and are"
+          echo "NOT executed here. A skipped gate is never a pass."
+          cargo test -p rr-linux --test sockhash_privileged -- --ignored --list
+
+  privileged:
+    name: Privileged kernel gate
+    # A GitHub-hosted runner cannot load an eBPF stream-verdict program. Point
+    # this job at a controlled self-hosted Linux host with the sockhash
+    # capability, then remove the guard below.
+    if: ${{ vars.RR_PRIVILEGED_RUNNER != '' }}
+    runs-on: ${{ vars.RR_PRIVILEGED_RUNNER }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - name: Report measured capability before asserting anything
+        run: cargo test -p rr-linux --test capability_report -- --nocapture
+
+      - name: Run privileged sockhash gates
+        run: |
+          cargo test -p rr-linux --test sockhash_privileged -- \
+            --ignored --test-threads=1
+
+      - name: Run the shared backend conformance suite
+        run: cargo test --test relay_backends -- --test-threads=1

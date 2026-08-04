@@ -430,9 +430,52 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 | `bufferBytes` | 是 | `32768` | 每个池化用户态缓冲区字节数，`4096..=1048576`。 |
 | `maxPooledBuffers` | 是 | `4096` | 全局池化缓冲区上限，`2..=65536`。 |
 | `maxSpliceRelays` | 否 | `1024` | splice 开启时大于零且不超过 `maxConnections`；每条 relay 使用两对 pipe。 |
+| `maxIoUringRelays` | 否 | `256` | ioUring 开启时大于零且不超过 `maxConnections`。 |
+| `maxSockhashRelays` | 否 | `4096` | sockhash 开启时大于零且不超过 `maxConnections`；每条 relay 占用两个 map 条目。 |
+| `maxRelayMemoryBytes` | 否 | `268435456` | 池化加注册中继缓冲内存上限。 |
+| `maxPinnedMemoryBytes` | 否 | `134217728` | 内核固定内存上限（io_uring 注册缓冲加 sockhash map 容量）。 |
 | `splice` | 是 | `true` | 只允许在明文 TCP 边界使用有界非阻塞 Linux splice。 |
-| `ioUring` | 是 | `false` | 预留；实现有界运行时能力探测前，`true` 会被拒绝。 |
-| `sockhash` | 是 | `false` | 预留；实现 eBPF 能力探测前，`true` 会被拒绝。 |
+| `ioUring` | 是 | `false` | 运行时能力探测通过后，允许使用有界 io_uring 后端。 |
+| `sockhash` | 是 | `false` | 运行时能力探测通过后，允许使用有界 eBPF `SOCKHASH` 后端。 |
+
+### 后端选择
+
+自动优选顺序为 `sockhash`、`splice`、`buffered`。io_uring 已实现、已探测、已上报
+并可显式选择，但在本分支中**不参与自动选择**：没有任何目标主机上的留存测量证明
+它对该工作负载类别不会明显更慢，而仅仅为了宣称“自适应”而加入的推测式分类器比
+不加更糟。
+
+后端**只有在尚未传输任何字节时**才能把连接交给下一个后端。一旦有字节流动，后端
+错误将终止该中继，连接绝不会在另一个后端上重放。这一点由结构保证：构造 decline
+的唯一途径是共享传输账本，而账本在任一计数器非零时拒绝生成 decline。
+
+内核后端永远不会看到仍然承载 TLS 记录或 Vision 帧的套接字。单向 Vision Direct
+（一个方向为裸流、另一个方向仍在成帧）在有界用户态中继，绝不会作为一对交给内核
+后端。
+
+### 资源核算
+
+校验在任何监听器绑定之前拒绝不可能的预算，全部使用检查过的算术：
+
+```text
+buffered_memory     = maxPooledBuffers * bufferBytes
+io_uring_registered = maxIoUringRelays * 2 * bufferBytes
+sockhash_capacity   = maxSockhashRelays * 2 * (flowKey + socketEntry + statsEntry + overhead)
+
+buffered_memory + io_uring_registered <= maxRelayMemoryBytes
+io_uring_registered + sockhash_capacity <= maxPinnedMemoryBytes
+```
+
+`maxPooledBuffers` 是**缓冲区数量**，绝不是字节预算。
+
+### 能力上报
+
+启动时发出一条 `relay_backend_report` 事件，每个后端一行。不可用的后端会给出
+封闭词表中的固定原因——`disabled`、`unsupportedOperatingSystem`、
+`unsupportedKernel`、`missingOperation`、`missingCapability`、`blockedBySeccomp`、
+`blockedByLsm`、`resourceLimit`、`queueUnavailable`、`mapUnavailable`、
+`unsafeToArm`、`existingQueuedBytes`、`initializationFailure`——并且该拒绝原因
+不会按连接重复输出。
 
 splice 永远不会跨越 REALITY/TLS 安全边界。传输开始前无法获得 splice 资源时，
 回退到有界用户态缓冲。

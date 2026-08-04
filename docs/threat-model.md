@@ -78,3 +78,40 @@ their implementations and capability probes are independently accepted.
   authentication request.
 - Microbenchmark results are not Internet throughput or latency guarantees.
 - GeoIP and GeoSite lists are policy inputs, not security authorities.
+
+## Kernel relay backends
+
+Adding a kernel data path changes what an attacker can reach, so the boundary is
+stated explicitly.
+
+**A kernel backend never sees pre-authentication or framed traffic.** It is
+offered a socket pair only when both directions are semantically raw plaintext
+TCP: after REALITY authentication has failed and the connection has become a
+cover relay, after NXR authentication has completed, or after *both* Vision
+directions have reached exact authenticated Direct boundaries. One-way Direct is
+relayed in bounded userspace precisely because one direction is still framed.
+
+**A backend cannot silently swallow bytes.** Fallback to another backend is only
+possible while the shared transfer ledger reads zero in both directions; the
+decline type cannot be constructed otherwise. After any transfer, an error ends
+the connection.
+
+**Unsafe code is contained and probed.** All Linux ABI `unsafe` lives in
+`crates/rr-linux`, which denies `unsafe_op_in_unsafe_fn`; the protocol crate
+keeps `unsafe_code = "deny"`. Every unsafe block has a `SAFETY:` comment, and
+ABI layouts and descriptor lifetimes have direct tests.
+
+**Descriptor reuse is defended against.** An io_uring session duplicates both
+descriptors and owns the duplicates until every completion is reaped, so a
+numeric descriptor recycled elsewhere in the process cannot be acted on by an
+old operation. Completions are generation-tagged, so a stale or duplicated
+completion is discarded rather than applied to a new operation.
+
+**eBPF increases privilege, so it is opt-in.** Enabling `sockhash` loads a
+program into the kernel. The packaged systemd unit does not grant the capability
+automatically, the requirement is probed rather than assumed, and an environment
+that refuses declines cleanly instead of degrading silently.
+
+**Logs stay secret-free.** Decline reasons, phases and backend names come from
+closed vocabularies. No UUID, key, PSK, SNI value, target address, configuration
+body or payload byte reaches a log line from any of this work.

@@ -92,3 +92,43 @@ SAMPLES=9 CONCURRENCY=4 PAYLOAD_MIB=64 \
   XRAY_BIN=/home/jacek/src/Xray-core/xray \
   ./scripts/benchmark-xray.sh > xray-c4.json
 ```
+
+## 自适应中继后端测量
+
+`benches/relay_backends.rs` 在回环上测量中继引擎本身，每个样本向标准输出发出一个
+JSON 对象，并保留全部样本：
+
+```shell
+RR_BENCH_COMMIT="$(git rev-parse HEAD)" RR_BENCH_HOST="$(hostname)" \
+  cargo bench --bench relay_backends -- --samples 5 --seed 20260804 \
+  > benchmarks/relay-after.jsonl
+```
+
+每个样本记录 commit、时间戳、主机、CPU、内核、配置、随机种子、样本序号、方向、
+负载大小、并发度、请求的后端、实际选中的后端、耗时、吞吐、移动字节数、峰值 RSS、
+后端命中率和校验哈希。
+
+### 方法
+
+- 每一轮按记录的种子打乱实现顺序，使顺序无法偏袒某个后端。
+- 保留全部样本；不挑选最快的一次，写出原始文件前不做任何平均。
+- 方向覆盖仅上行、仅下行和双向同时进行。
+- 后端覆盖 `buffered`、`splice` 与 `automatic`。
+
+### 引用任何数字时必须同时说明的限制
+
+- 这些是单主机**回环**测量，衡量的是中继引擎开销，不是互联网吞吐，绝不能作为
+  普遍速度承诺呈现。
+- 本分支的实现主机是 2 vCPU 虚拟机。规范完整矩阵中的 512 MiB 负载与 32 路并发
+  行未在该主机上执行；保留矩阵覆盖 1 MiB 与 32 MiB 负载、并发度 1 与 4。
+- `cpuUserNs`、`cpuSystemNs`、`contextSwitches`、`syscallCounts` 和
+  `allocations` 记录为 `null` 而非估算值。稳态分配行为由分配门禁单独精确证明。
+- io_uring 与 sockhash 行缺失，因为这些后端在实现主机上被拒绝。被记录的是拒绝
+  原因，而不是编造的数字。
+
+### 基线
+
+`benchmarks/relay-baseline.jsonl` 在独立 worktree 中由未修改的基线提交
+`14ed098505b5cd9c3f5cc0d00c393c45428b0e42` 产生，使用相同的场景矩阵、相同的种子
+和相同的打乱方式，仅在基线 API 不同之处作了适配（基线没有后端枚举，也没有拥有式
+中继入口）。请按场景元组比较两个文件，不要按行序比较。
