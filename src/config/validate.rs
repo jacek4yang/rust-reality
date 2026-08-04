@@ -11,7 +11,7 @@ use zeroize::Zeroizing;
 
 use super::{
     Config, GlobalRule, InboundConfig, LogOutput, Network, NxrInboundConfig, OutboundConfig,
-    PortMatcher, SecretString, VlessInboundConfig,
+    PortMatcher, RelayPolicy, SecretString, VlessInboundConfig,
 };
 use crate::server_name::is_server_name_pattern;
 
@@ -26,6 +26,9 @@ const MAX_NXR_NONCE_RETENTION_SECONDS: u64 = 86_400;
 const MIN_RELAY_BUFFER_BYTES: usize = 4 * 1024;
 const MAX_RELAY_BUFFER_BYTES: usize = 1024 * 1024;
 const MAX_RELAY_BUFFERS: usize = 65_536;
+/// Bounded per-direction sockhash cost: flow key, socket entry, statistics entry
+/// and a conservative kernel overhead estimate.
+const SOCKHASH_ENTRY_BYTES: u64 = 40 + 8 + 16 + 192;
 
 /// One validation failure identified by a stable JSON path.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -730,15 +733,84 @@ fn validate_policy(config: &Config) -> Result<(), ConfigError> {
         }
     }
     if relay.io_uring {
-        return fail(
-            "policy.relay.ioUring",
-            "is reserved until the bounded runtime capability probe is implemented",
-        );
+        if relay.max_io_uring_relays == 0 {
+            return fail(
+                "policy.relay.maxIoUringRelays",
+                "must be greater than zero when ioUring is enabled",
+            );
+        }
+        if relay.max_io_uring_relays > governor.max_connections {
+            return fail(
+                "policy.relay.maxIoUringRelays",
+                "must not exceed maxConnections",
+            );
+        }
     }
     if relay.sockhash {
+        if relay.max_sockhash_relays == 0 {
+            return fail(
+                "policy.relay.maxSockhashRelays",
+                "must be greater than zero when sockhash is enabled",
+            );
+        }
+        if relay.max_sockhash_relays > governor.max_connections {
+            return fail(
+                "policy.relay.maxSockhashRelays",
+                "must not exceed maxConnections",
+            );
+        }
+    }
+    validate_relay_memory(relay)?;
+    Ok(())
+}
+
+/// Rejects an impossible relay memory budget before any listener binds.
+///
+/// Every product is checked. `maxPooledBuffers` is a buffer count, never a byte
+/// budget, so the buffered term multiplies the count by the buffer size rather
+/// than treating the count as bytes.
+fn validate_relay_memory(relay: &RelayPolicy) -> Result<(), ConfigError> {
+    let buffer_bytes = u64::try_from(relay.buffer_bytes).unwrap_or(u64::MAX);
+    let buffered = u64::try_from(relay.max_pooled_buffers)
+        .ok()
+        .and_then(|buffers| buffers.checked_mul(buffer_bytes))
+        .ok_or_else(|| ConfigError::new("policy.relay.maxPooledBuffers", "budget overflows"))?;
+
+    let io_uring_registered = if relay.io_uring {
+        u64::from(relay.max_io_uring_relays)
+            .checked_mul(2)
+            .and_then(|directions| directions.checked_mul(buffer_bytes))
+            .ok_or_else(|| ConfigError::new("policy.relay.maxIoUringRelays", "budget overflows"))?
+    } else {
+        0
+    };
+
+    let sockhash_capacity = if relay.sockhash {
+        u64::from(relay.max_sockhash_relays)
+            .checked_mul(2)
+            .and_then(|entries| entries.checked_mul(SOCKHASH_ENTRY_BYTES))
+            .ok_or_else(|| ConfigError::new("policy.relay.maxSockhashRelays", "budget overflows"))?
+    } else {
+        0
+    };
+
+    let relay_total = buffered
+        .checked_add(io_uring_registered)
+        .ok_or_else(|| ConfigError::new("policy.relay.maxRelayMemoryBytes", "budget overflows"))?;
+    if relay_total > relay.max_relay_memory_bytes {
         return fail(
-            "policy.relay.sockhash",
-            "is reserved until the optional eBPF capability probe is implemented",
+            "policy.relay.maxRelayMemoryBytes",
+            format!("configured backends require {relay_total} bytes"),
+        );
+    }
+
+    let pinned_total = io_uring_registered
+        .checked_add(sockhash_capacity)
+        .ok_or_else(|| ConfigError::new("policy.relay.maxPinnedMemoryBytes", "budget overflows"))?;
+    if pinned_total > relay.max_pinned_memory_bytes {
+        return fail(
+            "policy.relay.maxPinnedMemoryBytes",
+            format!("configured backends pin {pinned_total} bytes"),
         );
     }
     Ok(())
@@ -1132,24 +1204,85 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unimplemented_kernel_acceleration_switches() {
+    fn an_enabled_kernel_backend_needs_a_nonzero_relay_limit() {
         let mut config = valid_config();
         config.policy.relay.io_uring = true;
+        config.policy.relay.max_io_uring_relays = 0;
         assert_eq!(
             validate_config(&config)
-                .expect_err("unimplemented io_uring must fail closed")
+                .expect_err("an enabled backend with a zero bound must fail closed")
                 .path(),
-            "policy.relay.ioUring"
+            "policy.relay.maxIoUringRelays"
         );
 
         config.policy.relay.io_uring = false;
         config.policy.relay.sockhash = true;
+        config.policy.relay.max_sockhash_relays = 0;
         assert_eq!(
             validate_config(&config)
-                .expect_err("unimplemented sockhash must fail closed")
+                .expect_err("an enabled backend with a zero bound must fail closed")
                 .path(),
-            "policy.relay.sockhash"
+            "policy.relay.maxSockhashRelays"
         );
+    }
+
+    #[test]
+    fn a_kernel_relay_limit_may_not_exceed_max_connections() {
+        let mut config = valid_config();
+        config.policy.relay.io_uring = true;
+        config.policy.relay.max_io_uring_relays =
+            config.policy.resource_governor.max_connections + 1;
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("a relay bound above maxConnections must fail closed")
+                .path(),
+            "policy.relay.maxIoUringRelays"
+        );
+    }
+
+    #[test]
+    fn an_impossible_relay_memory_budget_is_rejected_before_binding() {
+        let mut config = valid_config();
+        config.policy.relay.buffer_bytes = 1024 * 1024;
+        config.policy.relay.max_pooled_buffers = 65_536;
+        config.policy.relay.max_relay_memory_bytes = 1;
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("an oversized buffered budget must fail closed")
+                .path(),
+            "policy.relay.maxRelayMemoryBytes"
+        );
+    }
+
+    #[test]
+    fn an_impossible_pinned_memory_budget_is_rejected_before_binding() {
+        let mut config = valid_config();
+        config.policy.relay.sockhash = true;
+        config.policy.relay.max_sockhash_relays = 4_096;
+        config.policy.relay.max_pinned_memory_bytes = 1;
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("an oversized pinned budget must fail closed")
+                .path(),
+            "policy.relay.maxPinnedMemoryBytes"
+        );
+    }
+
+    #[test]
+    fn pooled_buffers_are_counted_as_buffers_rather_than_bytes() {
+        let mut config = valid_config();
+        config.policy.relay.buffer_bytes = 32 * 1024;
+        config.policy.relay.max_pooled_buffers = 4_096;
+        // 4096 buffers x 32 KiB is exactly 128 MiB; a byte budget one below must
+        // be rejected and the exact budget accepted.
+        config.policy.relay.max_relay_memory_bytes = 4_096 * 32 * 1024 - 1;
+        assert!(validate_config(&config).is_err());
+
+        config.policy.relay.max_relay_memory_bytes = 4_096 * 32 * 1024;
+        assert!(validate_config(&config).is_ok());
     }
 
     #[test]

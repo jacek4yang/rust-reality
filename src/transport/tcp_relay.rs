@@ -50,8 +50,8 @@ impl TcpRelay {
         let report = BackendReport {
             buffered: BackendCapability::available(),
             splice: splice_capability(policy),
-            io_uring: unavailable_capability(policy.io_uring),
-            sockhash: unavailable_capability(policy.sockhash),
+            io_uring: probe_io_uring(policy),
+            sockhash: probe_sockhash(policy),
         };
         Ok(Self {
             buffers,
@@ -245,9 +245,87 @@ fn splice_capability(policy: &RelayPolicy) -> BackendCapability {
     }
 }
 
-/// Returns the capability of a backend that this build has not yet enabled.
-fn unavailable_capability(enabled_by_config: bool) -> BackendCapability {
-    BackendCapability::declined(enabled_by_config, BackendDeclineReason::Disabled)
+/// Probes io_uring on the running kernel rather than assuming availability.
+#[cfg(target_os = "linux")]
+fn probe_io_uring(policy: &RelayPolicy) -> BackendCapability {
+    if !policy.io_uring {
+        return BackendCapability::declined(false, BackendDeclineReason::Disabled);
+    }
+    capability_from(true, rr_linux::uring::probe())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn probe_io_uring(policy: &RelayPolicy) -> BackendCapability {
+    BackendCapability::declined(
+        policy.io_uring,
+        BackendDeclineReason::UnsupportedOperatingSystem,
+    )
+}
+
+/// Probes sockhash on the running kernel, LSM and capability set.
+#[cfg(target_os = "linux")]
+fn probe_sockhash(policy: &RelayPolicy) -> BackendCapability {
+    if !policy.sockhash {
+        return BackendCapability::declined(false, BackendDeclineReason::Disabled);
+    }
+    let Ok(budget) = kernel_budget(policy, policy.max_sockhash_relays) else {
+        return BackendCapability::declined(true, BackendDeclineReason::ResourceLimit);
+    };
+    capability_from(true, rr_linux::sockhash::probe(budget))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn probe_sockhash(policy: &RelayPolicy) -> BackendCapability {
+    BackendCapability::declined(
+        policy.sockhash,
+        BackendDeclineReason::UnsupportedOperatingSystem,
+    )
+}
+
+/// Builds the kernel budget from validated relay policy.
+#[cfg(target_os = "linux")]
+fn kernel_budget(policy: &RelayPolicy, max_relays: u32) -> Result<rr_linux::Budget, ()> {
+    let buffer_bytes = u32::try_from(policy.buffer_bytes).map_err(|_| ())?;
+    let budget = rr_linux::Budget {
+        max_relays,
+        buffer_bytes,
+        max_shards: 4,
+        queue_depth: 256,
+    };
+    budget.validate().map_err(|_| ())?;
+    Ok(budget)
+}
+
+/// Maps a probed kernel report into the protocol crate's fixed vocabulary.
+///
+/// The mapping is total: every `rr-linux` reason has exactly one counterpart, so
+/// no probe result can ever be reported as an unexplained failure.
+#[cfg(target_os = "linux")]
+fn capability_from(enabled: bool, report: rr_linux::ProbeReport) -> BackendCapability {
+    match report.overall().reason() {
+        None => BackendCapability::available(),
+        Some(reason) => BackendCapability::declined(enabled, map_reason(reason)),
+    }
+}
+
+#[cfg(target_os = "linux")]
+const fn map_reason(reason: rr_linux::DeclineReason) -> BackendDeclineReason {
+    use rr_linux::DeclineReason as Kernel;
+    match reason {
+        Kernel::Disabled => BackendDeclineReason::Disabled,
+        Kernel::UnsupportedOperatingSystem => BackendDeclineReason::UnsupportedOperatingSystem,
+        Kernel::UnsupportedKernel => BackendDeclineReason::UnsupportedKernel,
+        Kernel::MissingOperation => BackendDeclineReason::MissingOperation,
+        Kernel::MissingCapability => BackendDeclineReason::MissingCapability,
+        Kernel::BlockedBySeccomp => BackendDeclineReason::BlockedBySeccomp,
+        Kernel::BlockedByLsm => BackendDeclineReason::BlockedByLsm,
+        Kernel::ResourceLimit => BackendDeclineReason::ResourceLimit,
+        Kernel::QueueUnavailable => BackendDeclineReason::QueueUnavailable,
+        Kernel::MapUnavailable => BackendDeclineReason::MapUnavailable,
+        Kernel::UnsafeToArm => BackendDeclineReason::UnsafeToArm,
+        Kernel::ExistingQueuedBytes => BackendDeclineReason::ExistingQueuedBytes,
+        Kernel::InitializationFailure => BackendDeclineReason::InitializationFailure,
+    }
 }
 
 impl fmt::Debug for TcpRelay {
@@ -622,6 +700,10 @@ mod tests {
             buffer_bytes: 4 * 1024,
             max_pooled_buffers: 2,
             max_splice_relays: 0,
+            max_io_uring_relays: 0,
+            max_sockhash_relays: 0,
+            max_relay_memory_bytes: u64::MAX,
+            max_pinned_memory_bytes: u64::MAX,
             splice: false,
             io_uring: false,
             sockhash: false,
@@ -637,6 +719,10 @@ mod tests {
             buffer_bytes: 32 * 1024,
             max_pooled_buffers: 2,
             max_splice_relays: 1,
+            max_io_uring_relays: 0,
+            max_sockhash_relays: 0,
+            max_relay_memory_bytes: u64::MAX,
+            max_pinned_memory_bytes: u64::MAX,
             splice: true,
             io_uring: false,
             sockhash: false,

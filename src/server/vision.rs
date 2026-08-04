@@ -26,7 +26,7 @@ use super::{
     reality::RealityEstablished,
     routing::{AssetMatcher, RouteResolutionError, RoutingCompileError, RoutingTable},
 };
-use crate::transport::{RelayContext, RelayOutcome, TcpRelay};
+use crate::transport::{RelayBackend, RelayContext, RelayOutcome, TcpRelay};
 
 const MAX_REQUEST_HEADER_SIZE: usize = 533;
 const MAX_REQUEST_BUFFER_SIZE: usize = MAX_REQUEST_HEADER_SIZE + MAX_PLAINTEXT_LEN;
@@ -49,6 +49,7 @@ pub struct VisionRelayStats {
     downlink_bytes: u64,
     uplink_direct: bool,
     downlink_direct: bool,
+    relay_backend: Option<RelayBackend>,
 }
 
 impl VisionRelayStats {
@@ -74,6 +75,12 @@ impl VisionRelayStats {
     #[must_use]
     pub const fn downlink_direct(self) -> bool {
         self.downlink_direct
+    }
+
+    /// Returns the backend that ran the raw relay after a bilateral handoff.
+    #[must_use]
+    pub const fn relay_backend(self) -> Option<RelayBackend> {
+        self.relay_backend
     }
 }
 
@@ -200,6 +207,7 @@ impl VisionHandler {
                 downlink_bytes: 0,
                 uplink_direct: false,
                 downlink_direct: false,
+                relay_backend: None,
             });
         };
         let (destination, outbound_permit) = connection.into_parts();
@@ -243,6 +251,7 @@ impl VisionHandler {
             downlink_bytes: downlink.bytes.saturating_add(handed_down),
             uplink_direct: uplink.direct,
             downlink_direct: downlink.direct,
+            relay_backend: handed_off.map(RelayOutcome::backend),
         })
     }
 }
@@ -1926,6 +1935,10 @@ mod tests {
             buffer_bytes: 32 * 1024,
             max_pooled_buffers: 8,
             max_splice_relays: 0,
+            max_io_uring_relays: 0,
+            max_sockhash_relays: 0,
+            max_relay_memory_bytes: u64::MAX,
+            max_pinned_memory_bytes: u64::MAX,
             splice: false,
             io_uring: false,
             sockhash: false,
