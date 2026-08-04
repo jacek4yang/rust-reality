@@ -104,3 +104,51 @@ SAMPLES=9 CONCURRENCY=4 PAYLOAD_MIB=64 \
   XRAY_BIN=/home/jacek/src/Xray-core/xray \
   ./scripts/benchmark-xray.sh > xray-c4.json
 ```
+
+## Adaptive relay backend measurements
+
+`benches/relay_backends.rs` measures the relay engine itself over loopback. It
+emits one JSON object per sample to standard output and retains every sample:
+
+```shell
+RR_BENCH_COMMIT="$(git rev-parse HEAD)" RR_BENCH_HOST="$(hostname)" \
+  cargo bench --bench relay_backends -- --samples 5 --seed 20260804 \
+  > benchmarks/relay-after.jsonl
+```
+
+Each sample records commit, timestamp, host, CPU, kernel, configuration, seed,
+sample index, direction, payload size, concurrency, requested backend, selected
+backend, duration, throughput, bytes moved, peak RSS, backend hit rate, and a
+verification hash.
+
+### Method
+
+- Implementation order is shuffled per repetition from the recorded seed, so
+  ordering cannot favour one backend.
+- Every sample is kept. No fastest run is selected and nothing is averaged away
+  before the raw file is written.
+- Directions cover uplink-only, downlink-only and simultaneous bidirectional.
+- Backends cover `buffered`, `splice` and `automatic`.
+
+### Limitations that must be stated with any number
+
+- These are **loopback** measurements on a single host. They measure relay
+  engine cost, not Internet throughput, and must never be presented as a general
+  speed promise.
+- The implementation host for this branch was a 2-vCPU virtual machine. The
+  512 MiB payload and 32-way concurrency rows of the full specification matrix
+  were not executed there; the retained matrix covers 1 MiB and 32 MiB payloads
+  at concurrency 1 and 4.
+- `cpuUserNs`, `cpuSystemNs`, `contextSwitches`, `syscallCounts` and
+  `allocations` are recorded as `null` rather than estimated. Steady-state
+  allocation behaviour is proven separately and exactly by the allocation gate.
+- io_uring and sockhash rows are absent because those backends declined on the
+  implementation host. A decline is recorded, never a fabricated number.
+
+### Baseline
+
+`benchmarks/relay-baseline.jsonl` is produced from the unmodified baseline
+commit `14ed098505b5cd9c3f5cc0d00c393c45428b0e42` in a separate worktree, using
+the same scenario matrix, the same seed and the same shuffling, adapted only
+where the baseline API differs (the baseline has no backend enum and no owned
+relay entry point). Compare the two files by scenario tuple, never by row order.

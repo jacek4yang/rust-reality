@@ -448,9 +448,57 @@ This isolates direct destination pressure from authenticated connection count.
 | `bufferBytes` | yes | `32768` | Bytes per pooled userspace buffer, `4096..=1048576`. |
 | `maxPooledBuffers` | yes | `4096` | Global pooled-buffer ceiling, `2..=65536`. |
 | `maxSpliceRelays` | no | `1024` | With splice enabled, greater than zero and no more than `maxConnections`. Each relay consumes two pipe pairs. |
+| `maxIoUringRelays` | no | `256` | With ioUring enabled, greater than zero and no more than `maxConnections`. |
+| `maxSockhashRelays` | no | `4096` | With sockhash enabled, greater than zero and no more than `maxConnections`. Each relay occupies two map entries. |
+| `maxRelayMemoryBytes` | no | `268435456` | Ceiling on pooled plus registered relay buffer memory. |
+| `maxPinnedMemoryBytes` | no | `134217728` | Ceiling on kernel-pinned memory (io_uring registered buffers plus sockhash map capacity). |
 | `splice` | yes | `true` | Permit bounded nonblocking Linux splice only across plaintext TCP boundaries. |
-| `ioUring` | yes | `false` | Reserved; `true` is rejected until a bounded runtime capability probe is implemented. |
-| `sockhash` | yes | `false` | Reserved; `true` is rejected until the eBPF capability probe is implemented. |
+| `ioUring` | yes | `false` | Permit the bounded io_uring backend after a successful runtime capability probe. |
+| `sockhash` | yes | `false` | Permit the bounded eBPF `SOCKHASH` backend after a successful runtime capability probe. |
+
+### Backend selection
+
+The automatic preference order is `sockhash`, then `splice`, then `buffered`.
+io_uring is implemented, probed, reported and explicitly selectable, but is
+**excluded from automatic selection** on this branch: no retained target-host
+measurement has shown it is not materially slower for this workload class, and a
+speculative classifier added only to claim adaptivity would be worse than none.
+
+A backend may hand the connection to the next one **only before it has
+transferred a byte**. After any byte moves, a backend error terminates the relay;
+the connection is never replayed through another backend. This is enforced
+structurally: the only way to construct a decline is through the shared transfer
+ledger, which refuses once either counter is nonzero.
+
+No kernel backend ever sees a socket that still carries TLS records or Vision
+frames. One-way Vision Direct — where one direction is raw and the other is still
+framed — is relayed in bounded userspace and is never handed to a kernel backend
+as a pair.
+
+### Resource accounting
+
+Validation rejects an impossible budget before any listener binds, using checked
+arithmetic:
+
+```text
+buffered_memory     = maxPooledBuffers * bufferBytes
+io_uring_registered = maxIoUringRelays * 2 * bufferBytes
+sockhash_capacity   = maxSockhashRelays * 2 * (flowKey + socketEntry + statsEntry + overhead)
+
+buffered_memory + io_uring_registered <= maxRelayMemoryBytes
+io_uring_registered + sockhash_capacity <= maxPinnedMemoryBytes
+```
+
+`maxPooledBuffers` is a **buffer count**, never a byte budget.
+
+### Capability reporting
+
+One `relay_backend_report` event is emitted at startup with one line per
+backend. An unavailable backend names a fixed reason from a closed vocabulary —
+`disabled`, `unsupportedOperatingSystem`, `unsupportedKernel`, `missingOperation`,
+`missingCapability`, `blockedBySeccomp`, `blockedByLsm`, `resourceLimit`,
+`queueUnavailable`, `mapUnavailable`, `unsafeToArm`, `existingQueuedBytes`,
+`initializationFailure` — and the decline is never repeated per connection.
 
 Splice never crosses the REALITY/TLS security boundary. If splice resources are
 unavailable before transfer starts, relay falls back to bounded userspace

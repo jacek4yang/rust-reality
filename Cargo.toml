@@ -38,7 +38,7 @@ x25519-dalek = { version = "3.0.0", default-features = false, features = ["preco
 zeroize = { version = "1.9.0", features = ["derive"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-rr-linux = { path = "crates/rr-linux" }
+rr-linux = { path = "crates/rr-linux", version = "0.1.0" }
 rustix = { version = "1.1.4", default-features = false, features = ["net", "pipe", "std"] }
 
 [lints.rust]
@@ -64,6 +64,10 @@ harness = false
 
 [[bench]]
 name = "vision"
+harness = false
+
+[[bench]]
+name = "relay_backends"
 harness = false
 
 [profile.release]
