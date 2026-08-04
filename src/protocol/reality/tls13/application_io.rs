@@ -210,6 +210,38 @@ impl<S> TlsApplicationIo<S> {
     }
 }
 
+impl TlsApplicationIo<tokio::net::TcpStream> {
+    /// Splits the socket into owned halves that can later be reunited.
+    ///
+    /// `tokio::io::split` produces halves that can never reconstruct the
+    /// original socket, which permanently prevents handing a complete
+    /// descriptor to a kernel relay backend. `TcpStream::into_split` keeps that
+    /// option open: `OwnedReadHalf::reunite` restores the exact socket and fails
+    /// closed if the halves do not belong together.
+    #[must_use]
+    pub fn into_owned_split(
+        self,
+    ) -> (
+        TlsApplicationReader<tokio::net::tcp::OwnedReadHalf>,
+        TlsApplicationWriter<tokio::net::tcp::OwnedWriteHalf>,
+    ) {
+        let (reader, writer) = self.io.into_split();
+        let (client_records, server_records) = self.tls.into_record_layers();
+        (
+            TlsApplicationReader {
+                io: reader,
+                records: client_records,
+                read_record: self.read_record,
+            },
+            TlsApplicationWriter {
+                io: writer,
+                records: server_records,
+                write_record: self.write_record,
+            },
+        )
+    }
+}
+
 impl<S> TlsApplicationIo<S>
 where
     S: AsyncRead + AsyncWrite,

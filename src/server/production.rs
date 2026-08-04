@@ -357,7 +357,7 @@ impl RuntimeSnapshot {
     ) -> Result<Self, RuntimeUpdateError> {
         let logger = Logger::new(&config.log)?;
         let assets = Arc::new(AssetSnapshot::load_generation(&config, generation)?);
-        let vision = VisionHandler::from_config(&config, assets)?;
+        let vision = VisionHandler::from_config(&config, assets, tcp_relay.clone())?;
         let governor = ResourceGovernor::new(&config.policy.resource_governor);
         let mut connections = HashMap::new();
         connections
