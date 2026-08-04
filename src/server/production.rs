@@ -558,7 +558,7 @@ async fn run_connection(
             ConnectionHandler::Public { reality, vision } => {
                 match reality.accept(stream, peer).await? {
                     RealityAcceptOutcome::Established(established) => {
-                        vision.handle(established).await?;
+                        vision.handle(*established).await?;
                     }
                     RealityAcceptOutcome::Fallback(_) => {}
                 }

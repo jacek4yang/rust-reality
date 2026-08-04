@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use super::UserId;
+use super::{UserId, padding::PaddingRng};
 
 /// Maximum wire size of one Xray Vision padding block.
 pub const VISION_FRAME_SIZE: usize = 8 * 1024;
@@ -234,25 +234,178 @@ impl VisionDecoder {
     }
 }
 
+/// A complete description of one Vision frame before any byte is written.
+///
+/// The plan carries only the lengths and flags that decide the wire image. It
+/// exists so the encoder can compute a frame without owning a buffer, letting
+/// the caller assemble the frame directly inside final TLS AEAD plaintext
+/// storage instead of building and copying a complete intermediate frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VisionFramePlan {
+    include_user_id: bool,
+    command: VisionCommand,
+    content_length: u16,
+    padding_length: u16,
+}
+
+impl VisionFramePlan {
+    /// Returns the exact number of wire bytes this frame occupies.
+    #[must_use]
+    pub const fn wire_len(&self) -> usize {
+        let prefix = HEADER_SIZE + if self.include_user_id { UUID_SIZE } else { 0 };
+        prefix + self.content_length as usize + self.padding_length as usize
+    }
+
+    /// Returns the command this frame carries.
+    #[must_use]
+    pub const fn command(&self) -> VisionCommand {
+        self.command
+    }
+
+    /// Returns the padding byte count chosen for this frame.
+    #[must_use]
+    pub const fn padding_len(&self) -> usize {
+        self.padding_length as usize
+    }
+}
+
 /// Stateful Xray-compatible Vision padding encoder.
 #[derive(Debug)]
 pub struct VisionEncoder {
     user_id: UserId,
     first_frame: bool,
     finished: bool,
+    padding: PaddingRng,
 }
 
 impl VisionEncoder {
     /// Creates an encoder for one authenticated VLESS user.
-    pub const fn new(user_id: UserId) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VisionEncodeError::EntropyUnavailable`] when the per-connection
+    /// padding generator cannot be seeded from the operating system.
+    pub fn new(user_id: UserId) -> Result<Self, VisionEncodeError> {
+        Ok(Self {
+            user_id,
+            first_frame: true,
+            finished: false,
+            padding: PaddingRng::from_os().map_err(|_| VisionEncodeError::EntropyUnavailable)?,
+        })
+    }
+
+    /// Creates an encoder whose padding lengths are reproducible from `seed`.
+    ///
+    /// Only tests and differential oracles use this constructor; production
+    /// always seeds from the operating system.
+    #[must_use]
+    pub fn with_padding_seed(user_id: UserId, seed: &[u8; 44]) -> Self {
         Self {
             user_id,
             first_frame: true,
             finished: false,
+            padding: PaddingRng::from_seed(seed),
         }
     }
 
+    /// Computes the complete frame description for `content_length` bytes.
+    ///
+    /// The encoder state is not advanced; call [`VisionEncoder::commit`] after a
+    /// frame has actually been written.
+    ///
+    /// # Errors
+    ///
+    /// Rejects oversized content, unrepresentable padding, a finished encoder,
+    /// and entropy failure.
+    pub fn plan(
+        &mut self,
+        content_length: usize,
+        command: VisionCommand,
+        long_padding: bool,
+    ) -> Result<VisionFramePlan, VisionEncodeError> {
+        if self.finished {
+            return Err(VisionEncodeError::EncoderFinished);
+        }
+        let prefix_length = HEADER_SIZE + usize::from(self.first_frame) * UUID_SIZE;
+        let maximum_content = VISION_FRAME_SIZE - prefix_length;
+        if content_length > maximum_content || content_length > usize::from(u16::MAX) {
+            return Err(VisionEncodeError::ContentTooLarge {
+                length: content_length,
+                maximum: maximum_content,
+            });
+        }
+
+        let maximum_padding = VISION_FRAME_SIZE - prefix_length - content_length;
+        let padding_length =
+            self.choose_padding_length(content_length, long_padding, maximum_padding)?;
+        Ok(VisionFramePlan {
+            include_user_id: self.first_frame,
+            command,
+            content_length: u16::try_from(content_length).map_err(|_| {
+                VisionEncodeError::ContentTooLarge {
+                    length: content_length,
+                    maximum: maximum_content,
+                }
+            })?,
+            padding_length: u16::try_from(padding_length)
+                .map_err(|_| VisionEncodeError::PaddingTooLarge(padding_length))?,
+        })
+    }
+
+    /// Writes one planned frame directly into `output`.
+    ///
+    /// `output` must be exactly [`VisionFramePlan::wire_len`] bytes long and
+    /// `content` exactly the planned content length. Assembly is infallible: all
+    /// fallible decisions were made by [`VisionEncoder::plan`].
+    ///
+    /// # Panics
+    ///
+    /// Never panics; mismatched lengths return without writing.
+    pub fn assemble(&self, plan: &VisionFramePlan, content: &[u8], output: &mut [u8]) {
+        if output.len() != plan.wire_len() || content.len() != usize::from(plan.content_length) {
+            return;
+        }
+        let mut cursor = 0;
+        if plan.include_user_id {
+            let Some(region) = output.get_mut(cursor..cursor + UUID_SIZE) else {
+                return;
+            };
+            region.copy_from_slice(self.user_id.as_bytes());
+            cursor += UUID_SIZE;
+        }
+        let Some(header) = output.get_mut(cursor..cursor + HEADER_SIZE) else {
+            return;
+        };
+        header[0] = plan.command as u8;
+        header[1..3].copy_from_slice(&plan.content_length.to_be_bytes());
+        header[3..5].copy_from_slice(&plan.padding_length.to_be_bytes());
+        cursor += HEADER_SIZE;
+        let Some(body) = output.get_mut(cursor..cursor + content.len()) else {
+            return;
+        };
+        body.copy_from_slice(content);
+        cursor += content.len();
+        if let Some(padding) = output.get_mut(cursor..) {
+            padding.fill(0);
+        }
+    }
+
+    /// Advances encoder state after a planned frame has been written.
+    pub const fn commit(&mut self, plan: &VisionFramePlan) {
+        self.first_frame = false;
+        self.finished = !matches!(plan.command, VisionCommand::Continue);
+    }
+
     /// Encodes one bounded Vision frame into reusable caller-owned storage.
+    ///
+    /// This remains the reference encoder. The hot path uses
+    /// [`VisionEncoder::plan`] plus [`VisionEncoder::assemble`]; differential
+    /// tests compare the two against each other.
+    ///
+    /// # Errors
+    ///
+    /// Rejects oversized content, unrepresentable padding, a finished encoder,
+    /// allocation failure, and entropy failure.
     pub fn encode(
         &mut self,
         content: &[u8],
@@ -260,48 +413,41 @@ impl VisionEncoder {
         long_padding: bool,
         output: &mut Vec<u8>,
     ) -> Result<(), VisionEncodeError> {
-        if self.finished {
-            return Err(VisionEncodeError::EncoderFinished);
-        }
-        let prefix_length = HEADER_SIZE + usize::from(self.first_frame) * UUID_SIZE;
-        let maximum_content = VISION_FRAME_SIZE - prefix_length;
-        if content.len() > maximum_content || content.len() > usize::from(u16::MAX) {
-            return Err(VisionEncodeError::ContentTooLarge {
-                length: content.len(),
-                maximum: maximum_content,
-            });
-        }
-
-        let maximum_padding = VISION_FRAME_SIZE - prefix_length - content.len();
-        let padding_length = choose_padding_length(content.len(), long_padding, maximum_padding)?;
-        let frame_length = prefix_length + content.len() + padding_length;
-
+        let plan = self.plan(content.len(), command, long_padding)?;
+        let frame_length = plan.wire_len();
         output.clear();
         output
             .try_reserve(frame_length)
             .map_err(|_| VisionEncodeError::AllocationFailed)?;
-        if self.first_frame {
-            output.extend_from_slice(self.user_id.as_bytes());
-        }
-        output.push(command as u8);
-        output.extend_from_slice(
-            &u16::try_from(content.len())
-                .map_err(|_| VisionEncodeError::ContentTooLarge {
-                    length: content.len(),
-                    maximum: maximum_content,
-                })?
-                .to_be_bytes(),
-        );
-        output.extend_from_slice(
-            &u16::try_from(padding_length)
-                .map_err(|_| VisionEncodeError::PaddingTooLarge(padding_length))?
-                .to_be_bytes(),
-        );
-        output.extend_from_slice(content);
         output.resize(frame_length, 0);
-        self.first_frame = false;
-        self.finished = command != VisionCommand::Continue;
+        self.assemble(&plan, content, output);
+        self.commit(&plan);
         Ok(())
+    }
+
+    fn choose_padding_length(
+        &mut self,
+        content_length: usize,
+        long_padding: bool,
+        maximum: usize,
+    ) -> Result<usize, VisionEncodeError> {
+        let candidate = if content_length < DEFAULT_LONG_PADDING_THRESHOLD && long_padding {
+            usize::try_from(self.random_below(DEFAULT_LONG_PADDING_RANGE)?)
+                .map_err(|_| VisionEncodeError::EntropyUnavailable)?
+                + DEFAULT_LONG_PADDING_TARGET
+                - content_length
+        } else {
+            usize::try_from(self.random_below(DEFAULT_SHORT_PADDING_RANGE)?)
+                .map_err(|_| VisionEncodeError::EntropyUnavailable)?
+        };
+
+        Ok(candidate.min(maximum))
+    }
+
+    fn random_below(&mut self, upper: u32) -> Result<u32, VisionEncodeError> {
+        self.padding
+            .below(upper)
+            .map_err(|_| VisionEncodeError::EntropyUnavailable)
     }
 }
 
@@ -396,36 +542,6 @@ impl fmt::Display for VisionEncodeError {
 
 impl Error for VisionEncodeError {}
 
-fn choose_padding_length(
-    content_length: usize,
-    long_padding: bool,
-    maximum: usize,
-) -> Result<usize, VisionEncodeError> {
-    let candidate = if content_length < DEFAULT_LONG_PADDING_THRESHOLD && long_padding {
-        usize::try_from(random_below(DEFAULT_LONG_PADDING_RANGE)?)
-            .map_err(|_| VisionEncodeError::EntropyUnavailable)?
-            + DEFAULT_LONG_PADDING_TARGET
-            - content_length
-    } else {
-        usize::try_from(random_below(DEFAULT_SHORT_PADDING_RANGE)?)
-            .map_err(|_| VisionEncodeError::EntropyUnavailable)?
-    };
-
-    Ok(candidate.min(maximum))
-}
-
-fn random_below(upper: u32) -> Result<u32, VisionEncodeError> {
-    let acceptance_limit = u32::MAX - (u32::MAX % upper);
-    loop {
-        let mut bytes = [0_u8; 4];
-        getrandom::fill(&mut bytes).map_err(|_| VisionEncodeError::EntropyUnavailable)?;
-        let value = u32::from_ne_bytes(bytes);
-        if value < acceptance_limit {
-            return Ok(value % upper);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -509,7 +625,7 @@ mod tests {
 
     #[test]
     fn encoder_roundtrips_and_emits_uuid_only_once() {
-        let mut encoder = VisionEncoder::new(USER);
+        let mut encoder = VisionEncoder::with_padding_seed(USER, &[0x5a; 44]);
         let mut first = Vec::new();
         let mut second = Vec::new();
         encoder
