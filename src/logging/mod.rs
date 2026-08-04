@@ -2,4 +2,6 @@
 
 mod sink;
 
-pub use sink::{AdmissionResource, LogEvent, LogWriteError, Logger, RejectionReason};
+pub use sink::{
+    AdmissionResource, BackendStatus, LogEvent, LogWriteError, Logger, RejectionReason,
+};

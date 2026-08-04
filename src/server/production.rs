@@ -23,13 +23,14 @@ use tokio::{
 use crate::{
     assets::{AssetLoadError, AssetSnapshot},
     config::{Config, ConfigError, ConfigLoadError, InboundConfig, load_config, validate_config},
-    logging::{AdmissionResource, LogEvent, LogWriteError, Logger, RejectionReason},
+    logging::{AdmissionResource, BackendStatus, LogEvent, LogWriteError, Logger, RejectionReason},
     protocol::reality::ReplayCache,
     runtime::{
         AdmissionDenied, AdmissionKind, AdmissionPermit, ResourceGovernor,
         connection::ConnectionTasks,
     },
     transport::{
+        BackendDeclineReason, BackendReport, RelayBackend,
         tcp::TcpAcceptor,
         tcp_relay::{TcpRelay, TcpRelayConfigError},
     },
@@ -99,6 +100,12 @@ impl ProductionServer {
         let mut addresses: Vec<_> = initial.connections.keys().copied().collect();
         addresses.sort_unstable();
         emit(&initial.logger, &LogEvent::ServerStarting);
+        emit(
+            &initial.logger,
+            &LogEvent::RelayBackendReport {
+                backends: backend_statuses(tcp_relay.report()),
+            },
+        );
         emit(
             &initial.logger,
             &LogEvent::ConfigurationPublished {
@@ -553,12 +560,15 @@ async fn run_connection(
     connection_permit: AdmissionPermit,
     logger: &Logger,
 ) -> io::Result<()> {
+    let started = std::time::Instant::now();
+    let mut completion = None;
     let result = async {
         match &state.handler {
             ConnectionHandler::Public { reality, vision } => {
                 match reality.accept(stream, peer).await? {
                     RealityAcceptOutcome::Established(established) => {
-                        vision.handle(*established).await?;
+                        let stats = vision.handle(*established).await?;
+                        completion = Some(stats);
                     }
                     RealityAcceptOutcome::Fallback(_) => {}
                 }
@@ -573,6 +583,20 @@ async fn run_connection(
     drop(connection_permit);
     match result {
         Ok(()) => {
+            if let Some(stats) = completion {
+                emit(
+                    logger,
+                    &LogEvent::ConnectionCompleted {
+                        duration_ms: u64::try_from(started.elapsed().as_millis())
+                            .unwrap_or(u64::MAX),
+                        uplink_bytes: stats.uplink_bytes(),
+                        downlink_bytes: stats.downlink_bytes(),
+                        uplink_direct: stats.uplink_direct(),
+                        downlink_direct: stats.downlink_direct(),
+                        relay_backend: stats.relay_backend().map(RelayBackend::as_str),
+                    },
+                );
+            }
             emit(logger, &LogEvent::ConnectionClosed { peer });
             Ok(())
         }
@@ -916,6 +940,22 @@ impl From<RuntimeUpdateError> for ProductionServerError {
     fn from(source: RuntimeUpdateError) -> Self {
         Self::Runtime(source)
     }
+}
+
+/// Renders one stable capability line per backend for the startup report.
+///
+/// Static declines are emitted here exactly once. Nothing in this function can
+/// produce a high-cardinality or connection-specific value.
+fn backend_statuses(report: &BackendReport) -> Vec<BackendStatus> {
+    report
+        .entries()
+        .into_iter()
+        .map(|(backend, capability)| BackendStatus {
+            backend: backend.as_str(),
+            available: capability.available,
+            decline_reason: capability.decline_reason.map(BackendDeclineReason::as_str),
+        })
+        .collect()
 }
 
 #[cfg(test)]

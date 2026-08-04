@@ -51,6 +51,22 @@ pub enum RejectionReason {
 }
 
 /// Structured operational events whose fields deliberately exclude secrets.
+/// One backend's startup capability, with a fixed decline category.
+///
+/// Neither field can carry a target, an SNI value, or a payload: both are fixed
+/// identifiers chosen from closed vocabularies.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendStatus {
+    /// The backend identifier.
+    pub backend: &'static str,
+    /// Whether the backend is usable.
+    pub available: bool,
+    /// The fixed decline category when the backend is unusable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decline_reason: Option<&'static str>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum LogEvent {
@@ -95,15 +111,42 @@ pub enum LogEvent {
         /// Stable JSON path; never a value from the configuration.
         field: String,
     },
+    /// One stable capability line per relay backend, emitted once at startup.
+    ///
+    /// Static capability declines are reported here and never repeated per
+    /// connection, so an unavailable backend is loud once rather than silent.
+    RelayBackendReport {
+        /// Every backend with its fixed availability and decline category.
+        backends: Vec<BackendStatus>,
+    },
+    /// Bounded per-connection completion counters. Emitted only at debug level.
+    ConnectionCompleted {
+        /// Session wall-clock duration.
+        duration_ms: u64,
+        /// Client bytes delivered to the destination.
+        uplink_bytes: u64,
+        /// Destination bytes delivered to the client.
+        downlink_bytes: u64,
+        /// Whether the uplink reached an authenticated Direct boundary.
+        uplink_direct: bool,
+        /// Whether the downlink reached an authenticated Direct boundary.
+        downlink_direct: bool,
+        /// The backend that ran the raw relay, when one did.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        relay_backend: Option<&'static str>,
+    },
 }
 
 impl LogEvent {
-    const fn level(&self) -> LogLevel {
+    fn level(&self) -> LogLevel {
         match self {
             Self::ServerStarting
             | Self::ConfigurationPublished { .. }
-            | Self::ListenerStarted { .. } => LogLevel::Info,
-            Self::ConnectionAccepted { .. } | Self::ConnectionClosed { .. } => LogLevel::Debug,
+            | Self::ListenerStarted { .. }
+            | Self::RelayBackendReport { .. } => LogLevel::Info,
+            Self::ConnectionAccepted { .. }
+            | Self::ConnectionClosed { .. }
+            | Self::ConnectionCompleted { .. } => LogLevel::Debug,
             Self::ConnectionRejected { .. }
             | Self::AdmissionLimited { .. }
             | Self::ConfigurationRejected { .. } => LogLevel::Warn,
