@@ -1,4 +1,4 @@
-use std::{error::Error, fmt, io, time::Duration};
+use std::{collections::TryReserveError, error::Error, fmt, io, time::Duration};
 
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
@@ -12,7 +12,28 @@ const TLS13_INNER_CONTENT_TYPE_LEN: usize = 1;
 const AEAD_TAG_LEN: usize = 16;
 const MAX_TLS13_CIPHERTEXT_LEN: usize =
     MAX_PLAINTEXT_LEN + TLS13_INNER_CONTENT_TYPE_LEN + AEAD_TAG_LEN;
-const READ_SCRATCH_BYTES: usize = 4 * 1024;
+
+/// Bytes required to hold the largest accepted TLS 1.3 record header plus body.
+///
+/// One buffer of this size per connection direction removes every steady-state
+/// record allocation: the header and body are read directly into final storage
+/// and the AEAD is opened in place.
+pub const MAX_TLS_RECORD_WIRE_LEN: usize = TLS_RECORD_HEADER_LEN + MAX_TLS13_CIPHERTEXT_LEN;
+
+/// Allocates one reusable maximum-sized record buffer for a connection direction.
+///
+/// The returned buffer never reallocates while it is used by
+/// [`read_tls_record_into`], which lets the successful record loop run without
+/// touching the allocator.
+///
+/// # Errors
+///
+/// Returns the allocator's reservation failure without panicking.
+pub fn record_storage() -> Result<Vec<u8>, TryReserveError> {
+    let mut wire = Vec::new();
+    wire.try_reserve_exact(MAX_TLS_RECORD_WIRE_LEN)?;
+    Ok(wire)
+}
 
 /// One exact, bounded TLS record read from an asynchronous stream.
 #[derive(Debug, Eq, PartialEq)]
@@ -137,30 +158,75 @@ pub async fn read_tls_record<R>(
 where
     R: AsyncRead + Unpin,
 {
-    let Some(deadline) = Instant::now().checked_add(timeout) else {
-        return Err(failure(TlsRecordReadErrorKind::Timeout, Vec::new()));
+    let mut wire = match record_storage() {
+        Ok(storage) => storage,
+        Err(_) => return Err(failure(TlsRecordReadErrorKind::RecordTooLarge, Vec::new())),
     };
-    let mut wire = Vec::with_capacity(512);
-    if let Err(kind) = read_exact_to(reader, &mut wire, TLS_RECORD_HEADER_LEN, deadline).await {
-        return Err(failure(kind, wire));
-    }
-    let Some(header) = wire.get(..TLS_RECORD_HEADER_LEN) else {
-        return Err(failure(TlsRecordReadErrorKind::UnexpectedEof, wire));
-    };
-    let body_len = usize::from(u16::from_be_bytes([header[3], header[4]]));
-    if body_len == 0 || body_len > MAX_TLS13_CIPHERTEXT_LEN {
-        return Err(failure(TlsRecordReadErrorKind::RecordTooLarge, wire));
-    }
-    let Some(record_end) = TLS_RECORD_HEADER_LEN.checked_add(body_len) else {
-        return Err(failure(TlsRecordReadErrorKind::RecordTooLarge, wire));
-    };
-    if let Err(kind) = read_exact_to(reader, &mut wire, record_end, deadline).await {
-        return Err(failure(kind, wire));
-    }
+    read_tls_record_into(reader, &mut wire, timeout).await?;
     Ok(TlsRecordRead { wire })
 }
 
-async fn read_exact_to<R>(
+/// Reads exactly one TLS record into reusable connection-owned storage.
+///
+/// `wire` must have been produced by [`record_storage`] or otherwise reserve
+/// [`MAX_TLS_RECORD_WIRE_LEN`] bytes. The header is read directly into final
+/// storage, the declared body length is validated before any body input, and the
+/// body is read directly into the same allocation. No scratch array and no
+/// intermediate copy are used, so a successful read performs no allocation.
+///
+/// On success `wire` contains exactly the record. On failure `wire` contains
+/// exactly the bytes consumed from the peer, and the same prefix is copied into
+/// the bounded error value for fallback reconstruction.
+///
+/// # Errors
+///
+/// Returns a byte-owning error on timeout, EOF, socket failure, or invalid length.
+pub async fn read_tls_record_into<R>(
+    reader: &mut R,
+    wire: &mut Vec<u8>,
+    timeout: Duration,
+) -> Result<usize, TlsRecordReadError>
+where
+    R: AsyncRead + Unpin,
+{
+    wire.clear();
+    let Some(deadline) = Instant::now().checked_add(timeout) else {
+        return Err(failure(TlsRecordReadErrorKind::Timeout, Vec::new()));
+    };
+    if let Err(kind) = read_exact_into(reader, wire, TLS_RECORD_HEADER_LEN, deadline).await {
+        return Err(consumed_failure(kind, wire));
+    }
+    let Some(header) = wire.get(..TLS_RECORD_HEADER_LEN) else {
+        return Err(consumed_failure(
+            TlsRecordReadErrorKind::UnexpectedEof,
+            wire,
+        ));
+    };
+    let body_len = usize::from(u16::from_be_bytes([header[3], header[4]]));
+    if body_len == 0 || body_len > MAX_TLS13_CIPHERTEXT_LEN {
+        return Err(consumed_failure(
+            TlsRecordReadErrorKind::RecordTooLarge,
+            wire,
+        ));
+    }
+    let Some(record_end) = TLS_RECORD_HEADER_LEN.checked_add(body_len) else {
+        return Err(consumed_failure(
+            TlsRecordReadErrorKind::RecordTooLarge,
+            wire,
+        ));
+    };
+    if let Err(kind) = read_exact_into(reader, wire, record_end, deadline).await {
+        return Err(consumed_failure(kind, wire));
+    }
+    Ok(record_end)
+}
+
+/// Reads until `output` holds exactly `target_len` bytes of peer input.
+///
+/// The zero-filled tail beyond the fill cursor is only ever handed to the socket
+/// as a destination slice, so no uninitialized memory is exposed and no scratch
+/// buffer is required.
+async fn read_exact_into<R>(
     reader: &mut R,
     output: &mut Vec<u8>,
     target_len: usize,
@@ -169,25 +235,49 @@ async fn read_exact_to<R>(
 where
     R: AsyncRead + Unpin,
 {
-    let mut scratch = [0_u8; READ_SCRATCH_BYTES];
-    while output.len() < target_len {
-        let remaining = target_len.saturating_sub(output.len());
-        let read_len = remaining.min(scratch.len());
-        let buffer = scratch
-            .get_mut(..read_len)
-            .ok_or(TlsRecordReadErrorKind::UnexpectedEof)?;
-        let read = match time::timeout_at(deadline, reader.read(buffer)).await {
-            Ok(Ok(0)) => return Err(TlsRecordReadErrorKind::UnexpectedEof),
-            Ok(Ok(read)) => read,
-            Ok(Err(source)) => return Err(TlsRecordReadErrorKind::Io(source)),
-            Err(_) => return Err(TlsRecordReadErrorKind::Timeout),
-        };
-        let bytes = buffer
-            .get(..read)
-            .ok_or(TlsRecordReadErrorKind::UnexpectedEof)?;
-        output.extend_from_slice(bytes);
+    let mut filled = output.len();
+    if output.len() < target_len {
+        if target_len > output.capacity() {
+            output
+                .try_reserve_exact(target_len - output.len())
+                .map_err(|_| TlsRecordReadErrorKind::RecordTooLarge)?;
+        }
+        output.resize(target_len, 0);
     }
+    while filled < target_len {
+        let destination = output
+            .get_mut(filled..target_len)
+            .ok_or(TlsRecordReadErrorKind::UnexpectedEof)?;
+        let read = match time::timeout_at(deadline, reader.read(destination)).await {
+            Ok(Ok(0)) => {
+                output.truncate(filled);
+                return Err(TlsRecordReadErrorKind::UnexpectedEof);
+            }
+            Ok(Ok(read)) => read,
+            Ok(Err(source)) => {
+                output.truncate(filled);
+                return Err(TlsRecordReadErrorKind::Io(source));
+            }
+            Err(_) => {
+                output.truncate(filled);
+                return Err(TlsRecordReadErrorKind::Timeout);
+            }
+        };
+        filled = filled.saturating_add(read.min(target_len.saturating_sub(filled)));
+    }
+    output.truncate(target_len);
     Ok(())
+}
+
+/// Copies the exact consumed prefix into a bounded error value.
+///
+/// Only the failure path allocates; the successful record loop never reaches it.
+fn consumed_failure(kind: TlsRecordReadErrorKind, wire: &[u8]) -> TlsRecordReadError {
+    let mut wire_prefix = Vec::new();
+    if wire_prefix.try_reserve_exact(wire.len()).is_ok() {
+        wire_prefix.extend_from_slice(wire);
+    }
+    TlsRecordReadError { kind, wire_prefix }
 }
 
 const fn failure(kind: TlsRecordReadErrorKind, wire_prefix: Vec<u8>) -> TlsRecordReadError {
@@ -200,7 +290,10 @@ mod tests {
 
     use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
 
-    use super::{MAX_TLS13_CIPHERTEXT_LEN, TlsRecordReadErrorKind, read_tls_record};
+    use super::{
+        MAX_TLS_RECORD_WIRE_LEN, MAX_TLS13_CIPHERTEXT_LEN, TlsRecordReadErrorKind, read_tls_record,
+        read_tls_record_into, record_storage,
+    };
 
     struct OneByteReader {
         bytes: Vec<u8>,
@@ -299,6 +392,104 @@ mod tests {
             TlsRecordReadErrorKind::RecordTooLarge
         ));
         assert_eq!(error.wire_prefix(), header);
+        assert_eq!(reader.position, header.len());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn reused_storage_address_is_stable_across_successful_records() {
+        let mut input = Vec::new();
+        for value in 0..4_u8 {
+            input.extend_from_slice(&[23, 3, 3, 0, 4, value, value, value, value]);
+        }
+        let mut reader = OneByteReader {
+            bytes: input,
+            position: 0,
+        };
+        let mut wire = record_storage().expect("record storage must reserve");
+        let capacity = wire.capacity();
+        let address = wire.as_ptr() as usize;
+
+        for value in 0..4_u8 {
+            let length = read_tls_record_into(&mut reader, &mut wire, Duration::from_secs(1))
+                .await
+                .expect("record must be read into reused storage");
+            assert_eq!(length, 9);
+            assert_eq!(
+                wire.as_slice(),
+                [23, 3, 3, 0, 4, value, value, value, value]
+            );
+            assert_eq!(
+                wire.as_ptr() as usize,
+                address,
+                "reused record storage must not be reallocated"
+            );
+            assert_eq!(wire.capacity(), capacity);
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn reads_maximum_record_into_reserved_storage() {
+        let body_len = MAX_TLS13_CIPHERTEXT_LEN;
+        let length = u16::try_from(body_len).expect("maximum body length must fit u16");
+        let mut input = vec![23, 3, 3, length.to_be_bytes()[0], length.to_be_bytes()[1]];
+        input.resize(5 + body_len, 0x5a);
+        let (mut local, mut remote) = tokio::io::duplex(4096);
+        let writer = tokio::spawn(async move {
+            remote
+                .write_all(&input)
+                .await
+                .expect("maximum record must be written");
+        });
+        let mut wire = record_storage().expect("record storage must reserve");
+        assert_eq!(wire.capacity(), MAX_TLS_RECORD_WIRE_LEN);
+        let address = wire.as_ptr() as usize;
+
+        let read = read_tls_record_into(&mut local, &mut wire, Duration::from_secs(5))
+            .await
+            .expect("maximum record must be read");
+
+        writer.await.expect("writer task must finish");
+        assert_eq!(read, MAX_TLS_RECORD_WIRE_LEN);
+        assert_eq!(wire.len(), MAX_TLS_RECORD_WIRE_LEN);
+        assert_eq!(wire.as_ptr() as usize, address);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn reused_storage_retains_exact_prefix_after_timeout() {
+        let (mut local, mut remote) = tokio::io::duplex(16);
+        let prefix = [23, 3, 3, 0, 32, 0xaa, 0xbb];
+        remote
+            .write_all(&prefix)
+            .await
+            .expect("partial record must be written");
+        let mut wire = record_storage().expect("record storage must reserve");
+
+        let error = read_tls_record_into(&mut local, &mut wire, Duration::from_millis(20))
+            .await
+            .expect_err("partial record must time out");
+
+        assert!(matches!(error.kind(), TlsRecordReadErrorKind::Timeout));
+        assert_eq!(error.wire_prefix(), prefix);
+        assert_eq!(wire.as_slice(), prefix);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rejects_zero_length_body_before_reading_more() {
+        let header = [23, 3, 3, 0, 0];
+        let mut reader = OneByteReader {
+            bytes: header.to_vec(),
+            position: 0,
+        };
+        let mut wire = record_storage().expect("record storage must reserve");
+
+        let error = read_tls_record_into(&mut reader, &mut wire, Duration::from_secs(1))
+            .await
+            .expect_err("empty record body must be rejected");
+
+        assert!(matches!(
+            error.kind(),
+            TlsRecordReadErrorKind::RecordTooLarge
+        ));
         assert_eq!(reader.position, header.len());
     }
 }

@@ -55,7 +55,7 @@ fn encode_benchmarks(criterion: &mut Criterion) {
     group.bench_function("8k_csprng_padding", |bencher| {
         let mut output = Vec::with_capacity(8 * 1024);
         bencher.iter(|| {
-            let mut encoder = VisionEncoder::new(USER);
+            let mut encoder = VisionEncoder::with_padding_seed(USER, &[0x5a; 44]);
             encoder
                 .encode(
                     std::hint::black_box(&payload),

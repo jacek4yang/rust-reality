@@ -114,7 +114,11 @@ impl Error for RealityAcceptError {
 #[derive(Debug)]
 pub enum RealityAcceptOutcome {
     /// A valid ClientFinished unlocked application traffic and committed replay state.
-    Established(RealityEstablished),
+    ///
+    /// The established session is boxed so that the common fallback outcome does
+    /// not pay for the much larger established-session state, which now retains
+    /// reusable per-direction record storage.
+    Established(Box<RealityEstablished>),
     /// The same inbound bytes were relayed to the configured cover target.
     Fallback(FallbackStats),
 }
@@ -362,11 +366,13 @@ impl RealityAcceptor {
             .map_err(RealityAcceptError::Replay)?;
         drop(handshake_permit);
 
-        Ok(RealityAcceptOutcome::Established(RealityEstablished {
-            stream: TlsApplicationIo::new(stream, established),
-            users: Arc::clone(&self.users),
-            inbound_tag: Arc::clone(&self.inbound_tag),
-        }))
+        Ok(RealityAcceptOutcome::Established(Box::new(
+            RealityEstablished {
+                stream: TlsApplicationIo::new(stream, established),
+                users: Arc::clone(&self.users),
+                inbound_tag: Arc::clone(&self.inbound_tag),
+            },
+        )))
     }
 
     async fn fallback_prefix(

@@ -1,5 +1,7 @@
 //! Minimal TLS 1.3 cryptographic state with explicit secret ownership.
 
+#[cfg(test)]
+mod allocation_gate;
 mod application_io;
 mod handshake;
 mod handshake_read;
@@ -27,7 +29,10 @@ pub use messages::{
 pub use record::{
     ContentType, MAX_PLAINTEXT_LEN, OpenedRecord, Tls13RecordError, Tls13RecordLayer,
 };
-pub use record_read::{TlsRecordRead, TlsRecordReadError, TlsRecordReadErrorKind, read_tls_record};
+pub use record_read::{
+    MAX_TLS_RECORD_WIRE_LEN, TlsRecordRead, TlsRecordReadError, TlsRecordReadErrorKind,
+    read_tls_record, read_tls_record_into, record_storage,
+};
 pub use server_hello::{
     ServerHelloError, ServerHelloTemplate, change_cipher_spec_record, plaintext_handshake_record,
 };

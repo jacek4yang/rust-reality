@@ -291,6 +291,79 @@ impl Tls13RecordLayer {
         Ok(())
     }
 
+    /// Seals one record whose plaintext is assembled directly in final storage.
+    ///
+    /// The caller declares the exact plaintext length; `assemble` then receives
+    /// the plaintext region of the output record and writes it in place. This
+    /// removes the intermediate frame buffer that a higher-level framing layer
+    /// would otherwise build and copy, leaving only the unavoidable single write
+    /// into AEAD plaintext storage.
+    ///
+    /// # Errors
+    ///
+    /// Rejects oversized content/padding, exhausted traffic keys, allocation
+    /// failure, and AEAD primitive failure.
+    pub fn seal_assembled<Assemble>(
+        &mut self,
+        content_type: ContentType,
+        plaintext_len: usize,
+        padding_len: usize,
+        output: &mut Vec<u8>,
+        assemble: Assemble,
+    ) -> Result<(), Tls13RecordError>
+    where
+        Assemble: FnOnce(&mut [u8]),
+    {
+        self.ensure_key_available()?;
+        if plaintext_len > MAX_PLAINTEXT_LEN {
+            return Err(Tls13RecordError::InvalidLength);
+        }
+        let inner_len = plaintext_len
+            .checked_add(1)
+            .and_then(|length| length.checked_add(padding_len))
+            .filter(|length| *length <= MAX_INNER_PLAINTEXT_LEN)
+            .ok_or(Tls13RecordError::InvalidLength)?;
+        let ciphertext_len = inner_len
+            .checked_add(TAG_LEN)
+            .ok_or(Tls13RecordError::InvalidLength)?;
+        let ciphertext_len =
+            u16::try_from(ciphertext_len).map_err(|_| Tls13RecordError::InvalidLength)?;
+        let header = [
+            OUTER_APPLICATION_DATA,
+            LEGACY_RECORD_VERSION[0],
+            LEGACY_RECORD_VERSION[1],
+            ciphertext_len.to_be_bytes()[0],
+            ciphertext_len.to_be_bytes()[1],
+        ];
+
+        output.clear();
+        output
+            .try_reserve(HEADER_LEN + usize::from(ciphertext_len))
+            .map_err(|_| Tls13RecordError::BufferAllocation)?;
+        output.extend_from_slice(&header);
+        output.resize(HEADER_LEN + inner_len, 0);
+        let plaintext_end = HEADER_LEN
+            .checked_add(plaintext_len)
+            .ok_or(Tls13RecordError::InvalidLength)?;
+        assemble(
+            output
+                .get_mut(HEADER_LEN..plaintext_end)
+                .ok_or(Tls13RecordError::InvalidLength)?,
+        );
+        *output
+            .get_mut(plaintext_end)
+            .ok_or(Tls13RecordError::InvalidLength)? = content_type.wire_value();
+
+        let nonce = self.nonce();
+        let encrypted = output
+            .get_mut(HEADER_LEN..)
+            .ok_or(Tls13RecordError::InvalidLength)?;
+        let tag = self.cipher.seal(&nonce, &header, encrypted)?;
+        output.extend_from_slice(&tag);
+        self.advance()?;
+        Ok(())
+    }
+
     /// Authenticates and decrypts exactly one complete TLS 1.3 record in place.
     ///
     /// # Errors

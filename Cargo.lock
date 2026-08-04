@@ -57,6 +57,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "allocation-counter"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "beb9e990c0a33699f1984d85a6abead615ccc72dd8130bf3e15dcabe2ca149c9"
+
+[[package]]
 name = "anes"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1185,8 +1191,10 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "aho-corasick",
+ "allocation-counter",
  "arc-swap",
  "base64 0.23.0",
+ "chacha20",
  "chacha20poly1305",
  "clap",
  "criterion",

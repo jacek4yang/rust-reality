@@ -1,4 +1,4 @@
-use std::{error::Error, fmt, io, sync::Arc, time::Duration};
+use std::{error::Error, fmt, io, ops::Range, sync::Arc, time::Duration};
 
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -202,6 +202,7 @@ impl VisionHandler {
             client_reader,
             destination_writer,
             user_id,
+            request.buffer,
             request.prefetched,
             self.io_timeout,
         );
@@ -228,7 +229,11 @@ struct AcceptedVisionRequest {
     header: RequestHeader,
     user_id: UserId,
     destination: Destination,
-    prefetched: Vec<u8>,
+    /// The retained request buffer. The prefetched payload is a range inside it,
+    /// so no copy is made when the VLESS header and its payload prefix arrive in
+    /// the same record.
+    buffer: Vec<u8>,
+    prefetched: Range<usize>,
 }
 
 async fn read_vision_request<R>(
@@ -246,15 +251,18 @@ where
         match decode_request(&buffer) {
             Ok(decoded) => {
                 let (header, payload) = decoded.into_parts();
+                let payload_len = payload.len();
                 let destination = users
                     .authorize_vision_tcp(&header)
                     .map_err(VisionSessionError::Validate)?
                     .clone();
+                let prefetched_start = buffer.len().saturating_sub(payload_len);
                 return Ok(AcceptedVisionRequest {
                     user_id: header.user_id(),
                     header,
                     destination,
-                    prefetched: payload.to_vec(),
+                    prefetched: prefetched_start..buffer.len(),
+                    buffer,
                 });
             }
             Err(DecodeError::UnexpectedEnd { .. }) if buffer.len() < MAX_REQUEST_HEADER_SIZE => {}
@@ -302,7 +310,8 @@ async fn relay_uplink<R, W>(
     mut client: TlsApplicationReader<R>,
     mut destination: W,
     user_id: UserId,
-    prefetched: Vec<u8>,
+    request_buffer: Vec<u8>,
+    prefetched: Range<usize>,
     timeout: Duration,
 ) -> Result<DirectionStats, VisionSessionError>
 where
@@ -310,16 +319,39 @@ where
     W: AsyncWrite + Unpin,
 {
     let mut decoder = VisionDecoder::new(user_id);
-    let mut plaintext = Vec::with_capacity(VISION_FRAME_SIZE);
+    let mut plaintext = Vec::new();
+    plaintext
+        .try_reserve_exact(VISION_FRAME_SIZE)
+        .map_err(|_| VisionSessionError::AllocationFailed)?;
     let mut bytes = 0_u64;
-    let mut pending = Some(prefetched);
+
+    // The prefetched payload is a borrowed range inside the retained request
+    // buffer. It is decoded before the record loop starts so that the loop below
+    // never has to reconcile two different input lifetimes, and so that no copy
+    // of the payload is ever made.
+    if let Some(initial) = request_buffer.get(prefetched.clone())
+        && !initial.is_empty()
+    {
+        let mode = decoder
+            .decode(initial, &mut plaintext)
+            .map_err(VisionSessionError::VisionDecode)?;
+        if !plaintext.is_empty() {
+            write_all_before(&mut destination, &plaintext, timeout).await?;
+            bytes = bytes.saturating_add(length_u64(plaintext.len()));
+        }
+        if mode == VisionMode::Direct {
+            return finish_uplink_direct(client, destination, bytes, timeout).await;
+        }
+    }
+    drop(request_buffer);
 
     loop {
-        let input = if let Some(initial) = pending.take() {
-            initial
-        } else {
-            match client.read_application(timeout).await {
-                Ok(record) => record.plaintext().to_vec(),
+        // The borrow of the reader's reusable record storage lives only for this
+        // block: the decoder copies decoded content into `plaintext`, and the
+        // borrow ends before the next read or the socket handoff.
+        let mode = {
+            let record = match client.read_application(timeout).await {
+                Ok(record) => record,
                 Err(TlsApplicationIoError::PeerAlert {
                     level: _,
                     description: 0,
@@ -331,29 +363,42 @@ where
                     });
                 }
                 Err(error) => return Err(VisionSessionError::Tls(error)),
+            };
+            if record.is_empty() {
+                continue;
             }
+            decoder
+                .decode(record.plaintext(), &mut plaintext)
+                .map_err(VisionSessionError::VisionDecode)?
         };
-        if input.is_empty() {
-            continue;
-        }
-
-        let mode = decoder
-            .decode(&input, &mut plaintext)
-            .map_err(VisionSessionError::VisionDecode)?;
         if !plaintext.is_empty() {
             write_all_before(&mut destination, &plaintext, timeout).await?;
             bytes = bytes.saturating_add(length_u64(plaintext.len()));
         }
         if mode == VisionMode::Direct {
-            let mut raw_client = client.into_inner();
-            let copied = copy_before(&mut raw_client, &mut destination, timeout).await?;
-            shutdown_before(&mut destination, timeout).await?;
-            return Ok(DirectionStats {
-                bytes: bytes.saturating_add(copied),
-                direct: true,
-            });
+            return finish_uplink_direct(client, destination, bytes, timeout).await;
         }
     }
+}
+
+/// Copies the remaining raw uplink after an authenticated Direct boundary.
+async fn finish_uplink_direct<R, W>(
+    client: TlsApplicationReader<R>,
+    mut destination: W,
+    bytes: u64,
+    timeout: Duration,
+) -> Result<DirectionStats, VisionSessionError>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut raw_client = client.into_inner();
+    let copied = copy_before(&mut raw_client, &mut destination, timeout).await?;
+    shutdown_before(&mut destination, timeout).await?;
+    Ok(DirectionStats {
+        bytes: bytes.saturating_add(copied),
+        direct: true,
+    })
 }
 
 async fn relay_downlink<R, W>(
@@ -367,26 +412,41 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let mut encoder = VisionEncoder::new(user_id);
-    let mut frame = Vec::with_capacity(VISION_FRAME_SIZE);
-    encoder
-        .encode(&[], VisionCommand::Continue, true, &mut frame)
+    let mut encoder = VisionEncoder::new(user_id).map_err(VisionSessionError::VisionEncode)?;
+    // The VLESS response header and the opening Vision frame are assembled once,
+    // directly inside the final AEAD plaintext region.
+    let preamble = encoder
+        .plan(0, VisionCommand::Continue, true)
         .map_err(VisionSessionError::VisionEncode)?;
-    let mut response = Vec::new();
-    response
-        .try_reserve(response_header.len() + frame.len())
-        .map_err(|_| VisionSessionError::AllocationFailed)?;
-    response.extend_from_slice(response_header);
-    response.extend_from_slice(&frame);
+    let preamble_len = response_header
+        .len()
+        .checked_add(preamble.wire_len())
+        .ok_or(VisionSessionError::AllocationFailed)?;
     client
-        .write_application(&response, timeout)
+        .write_assembled(
+            preamble_len,
+            |destination| {
+                let Some((header, frame)) = destination.split_at_mut_checked(response_header.len())
+                else {
+                    return;
+                };
+                header.copy_from_slice(response_header);
+                encoder.assemble(&preamble, &[], frame);
+            },
+            timeout,
+        )
         .await
         .map_err(VisionSessionError::Tls)?;
+    encoder.commit(&preamble);
 
+    let mut nested = Vec::new();
+    nested
+        .try_reserve_exact(NESTED_TLS_HEADER_SIZE + MAX_NESTED_TLS_RECORD_SIZE)
+        .map_err(|_| VisionSessionError::AllocationFailed)?;
     let mut detector = NestedTlsDetector::new();
     let mut bytes = 0_u64;
     loop {
-        match read_nested_record(&mut destination, timeout).await? {
+        match read_nested_record(&mut destination, &mut nested, timeout).await? {
             NestedRead::Eof => {
                 client
                     .shutdown(timeout)
@@ -397,12 +457,12 @@ where
                     direct: false,
                 });
             }
-            NestedRead::Unframed(prefix) => {
-                bytes = bytes.saturating_add(length_u64(prefix.len()));
+            NestedRead::Unframed(length) => {
+                bytes = bytes.saturating_add(length_u64(length));
                 write_vision_content(
                     &mut client,
                     &mut encoder,
-                    &prefix,
+                    &nested[..length],
                     VisionCommand::End,
                     false,
                     timeout,
@@ -416,16 +476,23 @@ where
                     direct: false,
                 });
             }
-            NestedRead::Record(record) => {
-                bytes = bytes.saturating_add(length_u64(record.len()));
-                let decision = detector.observe(&record);
+            NestedRead::Record(length) => {
+                bytes = bytes.saturating_add(length_u64(length));
+                let decision = detector.observe(&nested[..length]);
                 let command = match decision {
                     PaddingDecision::Continue => VisionCommand::Continue,
                     PaddingDecision::End => VisionCommand::End,
                     PaddingDecision::Direct => VisionCommand::Direct,
                 };
-                write_vision_content(&mut client, &mut encoder, &record, command, true, timeout)
-                    .await?;
+                write_vision_content(
+                    &mut client,
+                    &mut encoder,
+                    &nested[..length],
+                    command,
+                    true,
+                    timeout,
+                )
+                .await?;
 
                 match decision {
                     PaddingDecision::Continue => {}
@@ -466,19 +533,11 @@ where
     W: AsyncWrite + Unpin,
 {
     if content.is_empty() {
-        let mut frame = Vec::with_capacity(VISION_FRAME_SIZE);
-        encoder
-            .encode(&[], final_command, long_padding, &mut frame)
-            .map_err(VisionSessionError::VisionEncode)?;
-        writer
-            .write_application(&frame, timeout)
-            .await
-            .map_err(VisionSessionError::Tls)?;
-        return Ok(());
+        return write_vision_frame(writer, encoder, &[], final_command, long_padding, timeout)
+            .await;
     }
 
     let chunk_count = content.len().div_ceil(MAX_VISION_CONTENT_AFTER_FIRST_FRAME);
-    let mut frame = Vec::with_capacity(VISION_FRAME_SIZE);
     for (index, chunk) in content
         .chunks(MAX_VISION_CONTENT_AFTER_FIRST_FRAME)
         .enumerate()
@@ -488,14 +547,39 @@ where
         } else {
             VisionCommand::Continue
         };
-        encoder
-            .encode(chunk, command, long_padding, &mut frame)
-            .map_err(VisionSessionError::VisionEncode)?;
-        writer
-            .write_application(&frame, timeout)
-            .await
-            .map_err(VisionSessionError::Tls)?;
+        write_vision_frame(writer, encoder, chunk, command, long_padding, timeout).await?;
     }
+    Ok(())
+}
+
+/// Writes exactly one Vision frame straight into the final TLS AEAD plaintext.
+///
+/// No intermediate frame buffer exists: the frame is planned, the record layer
+/// reserves the plaintext region inside the writer's retained ciphertext buffer,
+/// and the encoder assembles UUID, header, content and padding in place.
+async fn write_vision_frame<W>(
+    writer: &mut TlsApplicationWriter<W>,
+    encoder: &mut VisionEncoder,
+    content: &[u8],
+    command: VisionCommand,
+    long_padding: bool,
+    timeout: Duration,
+) -> Result<(), VisionSessionError>
+where
+    W: AsyncWrite + Unpin,
+{
+    let plan = encoder
+        .plan(content.len(), command, long_padding)
+        .map_err(VisionSessionError::VisionEncode)?;
+    writer
+        .write_assembled(
+            plan.wire_len(),
+            |frame| encoder.assemble(&plan, content, frame),
+            timeout,
+        )
+        .await
+        .map_err(VisionSessionError::Tls)?;
+    encoder.commit(&plan);
     Ok(())
 }
 
@@ -527,50 +611,63 @@ where
     }
 }
 
+/// The outcome of one nested-record read into reusable connection storage.
+///
+/// Both non-EOF variants carry a length into the caller's retained buffer rather
+/// than an owned `Vec`, which removes the per-record downlink allocation.
 enum NestedRead {
     Eof,
-    Record(Vec<u8>),
-    Unframed(Vec<u8>),
+    Record(usize),
+    Unframed(usize),
 }
 
 async fn read_nested_record<R>(
     reader: &mut R,
+    storage: &mut Vec<u8>,
     timeout: Duration,
 ) -> Result<NestedRead, VisionSessionError>
 where
     R: AsyncRead + Unpin,
 {
     let deadline = operation_deadline(timeout)?;
-    let mut header = [0_u8; NESTED_TLS_HEADER_SIZE];
-    let header_read = read_exact_or_eof(reader, &mut header, deadline).await?;
+    let capacity = NESTED_TLS_HEADER_SIZE + MAX_NESTED_TLS_RECORD_SIZE;
+    if storage.capacity() < capacity {
+        storage
+            .try_reserve_exact(capacity - storage.len())
+            .map_err(|_| VisionSessionError::AllocationFailed)?;
+    }
+    storage.clear();
+    storage.resize(NESTED_TLS_HEADER_SIZE, 0);
+    let header_read = read_exact_or_eof(reader, storage, deadline).await?;
     if header_read == 0 {
         return Ok(NestedRead::Eof);
     }
-    if header_read < header.len() || !looks_like_tls_record_header(&header) {
-        return Ok(NestedRead::Unframed(header[..header_read].to_vec()));
+    storage.truncate(header_read);
+    if header_read < NESTED_TLS_HEADER_SIZE {
+        return Ok(NestedRead::Unframed(header_read));
+    }
+    let header: [u8; NESTED_TLS_HEADER_SIZE] = storage
+        .get(..NESTED_TLS_HEADER_SIZE)
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or(VisionSessionError::DestinationTruncatedTlsRecord)?;
+    if !looks_like_tls_record_header(&header) {
+        return Ok(NestedRead::Unframed(NESTED_TLS_HEADER_SIZE));
     }
     let body_length = usize::from(u16::from_be_bytes([header[3], header[4]]));
     if body_length > MAX_NESTED_TLS_RECORD_SIZE {
-        return Ok(NestedRead::Unframed(header.to_vec()));
+        return Ok(NestedRead::Unframed(NESTED_TLS_HEADER_SIZE));
     }
 
     let record_length = NESTED_TLS_HEADER_SIZE + body_length;
-    let mut record = Vec::new();
-    record
-        .try_reserve_exact(record_length)
-        .map_err(|_| VisionSessionError::AllocationFailed)?;
-    record.extend_from_slice(&header);
-    record.resize(record_length, 0);
-    read_exact_or_eof(reader, &mut record[NESTED_TLS_HEADER_SIZE..], deadline)
-        .await
-        .and_then(|read| {
-            if read == body_length {
-                Ok(())
-            } else {
-                Err(VisionSessionError::DestinationTruncatedTlsRecord)
-            }
-        })?;
-    Ok(NestedRead::Record(record))
+    storage.resize(record_length, 0);
+    let body = storage
+        .get_mut(NESTED_TLS_HEADER_SIZE..)
+        .ok_or(VisionSessionError::DestinationTruncatedTlsRecord)?;
+    let read = read_exact_or_eof(reader, body, deadline).await?;
+    if read != body_length {
+        return Err(VisionSessionError::DestinationTruncatedTlsRecord);
+    }
+    Ok(NestedRead::Record(record_length))
 }
 
 const fn looks_like_tls_record_header(header: &[u8; NESTED_TLS_HEADER_SIZE]) -> bool {
@@ -1265,7 +1362,7 @@ mod tests {
         request.extend_from_slice(&destination_port.to_be_bytes());
         request.push(1);
         request.extend_from_slice(&Ipv4Addr::LOCALHOST.octets());
-        let mut encoder = VisionEncoder::new(USER);
+        let mut encoder = VisionEncoder::with_padding_seed(USER, &[0x5a; 44]);
         let mut frame = Vec::new();
         encoder
             .encode(payload, command, false, &mut frame)

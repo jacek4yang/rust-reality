@@ -1,4 +1,4 @@
-use std::{error::Error, fmt, io, ops::Range, time::Duration};
+use std::{error::Error, fmt, io, time::Duration};
 
 use tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf, split},
@@ -7,40 +7,42 @@ use tokio::{
 
 use super::{
     ContentType, EstablishedTls, MAX_PLAINTEXT_LEN, Tls13RecordError, TlsRecordReadError,
-    read_tls_record,
+    read_tls_record_into, record_storage,
 };
 
-const TLS_RECORD_HEADER_LEN: usize = 5;
 const ALERT_LEVEL_WARNING: u8 = 1;
 const ALERT_CLOSE_NOTIFY: u8 = 0;
 
-/// One authenticated application record retaining its in-place decrypted storage.
-pub struct ApplicationRecord {
-    wire: Vec<u8>,
-    plaintext: Range<usize>,
+/// One authenticated application record borrowed from reusable record storage.
+///
+/// The borrow keeps the connection's single record buffer immutable until the
+/// caller finishes with the plaintext, which is what makes the successful record
+/// loop allocation-free: no owned `Vec` is produced per record.
+pub struct ApplicationRecord<'record> {
+    plaintext: &'record [u8],
 }
 
-impl ApplicationRecord {
+impl<'record> ApplicationRecord<'record> {
     /// Returns authenticated application bytes without copying them from the record.
     #[must_use]
-    pub fn plaintext(&self) -> &[u8] {
-        self.wire.get(self.plaintext.clone()).unwrap_or_default()
+    pub const fn plaintext(&self) -> &'record [u8] {
+        self.plaintext
     }
 
     /// Returns the plaintext length available to the application.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.plaintext.len()
     }
 
     /// Returns whether this authenticated application fragment is empty.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.plaintext.is_empty()
     }
 }
 
-impl fmt::Debug for ApplicationRecord {
+impl fmt::Debug for ApplicationRecord<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ApplicationRecord")
@@ -123,13 +125,19 @@ impl Error for TlsApplicationIoError {
 pub struct TlsApplicationIo<S> {
     io: S,
     tls: EstablishedTls,
+    read_record: Vec<u8>,
     write_record: Vec<u8>,
 }
 
 /// Authenticated client-to-server TLS application records.
+///
+/// The reader owns one maximum-sized record buffer for the whole connection.
+/// Every record is read into it, opened in place, and exposed as a borrowed
+/// slice, so the steady-state path performs no allocation.
 pub struct TlsApplicationReader<R> {
     io: R,
     records: super::Tls13RecordLayer,
+    read_record: Vec<u8>,
 }
 
 /// Server-to-client TLS application records with one reusable ciphertext buffer.
@@ -173,6 +181,7 @@ pub fn bind_application_halves<R, W>(
         TlsApplicationReader {
             io: reader,
             records: client_records,
+            read_record: Vec::new(),
         },
         TlsApplicationWriter {
             io: writer,
@@ -189,6 +198,7 @@ impl<S> TlsApplicationIo<S> {
         Self {
             io,
             tls,
+            read_record: Vec::new(),
             write_record: Vec::new(),
         }
     }
@@ -218,6 +228,7 @@ where
             TlsApplicationReader {
                 io: reader,
                 records: client_records,
+                read_record: self.read_record,
             },
             TlsApplicationWriter {
                 io: writer,
@@ -243,8 +254,14 @@ where
     pub async fn read_application(
         &mut self,
         timeout: Duration,
-    ) -> Result<ApplicationRecord, TlsApplicationIoError> {
-        read_application_record(&mut self.io, self.tls.client_records_mut(), timeout).await
+    ) -> Result<ApplicationRecord<'_>, TlsApplicationIoError> {
+        read_application_record(
+            &mut self.io,
+            self.tls.client_records_mut(),
+            &mut self.read_record,
+            timeout,
+        )
+        .await
     }
 
     /// Encrypts application bytes into bounded records and writes every ciphertext byte.
@@ -298,8 +315,20 @@ where
     pub async fn read_application(
         &mut self,
         timeout: Duration,
-    ) -> Result<ApplicationRecord, TlsApplicationIoError> {
-        read_application_record(&mut self.io, &mut self.records, timeout).await
+    ) -> Result<ApplicationRecord<'_>, TlsApplicationIoError> {
+        read_application_record(
+            &mut self.io,
+            &mut self.records,
+            &mut self.read_record,
+            timeout,
+        )
+        .await
+    }
+
+    /// Returns the address of the reusable record storage for allocation tests.
+    #[must_use]
+    pub fn record_storage_address(&self) -> usize {
+        self.read_record.as_ptr() as usize
     }
 }
 
@@ -327,6 +356,40 @@ where
         .await
     }
 
+    /// Encrypts one record whose plaintext is assembled in final AEAD storage.
+    ///
+    /// `assemble` receives exactly `plaintext_len` bytes inside the connection's
+    /// reusable ciphertext buffer. Callers that build a framed payload therefore
+    /// never allocate or copy a complete intermediate frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns a record-protection, allocation, socket, or deadline error.
+    pub async fn write_assembled<Assemble>(
+        &mut self,
+        plaintext_len: usize,
+        assemble: Assemble,
+        timeout: Duration,
+    ) -> Result<(), TlsApplicationIoError>
+    where
+        Assemble: FnOnce(&mut [u8]),
+    {
+        let deadline = operation_deadline(timeout)?;
+        self.records
+            .seal_assembled(
+                ContentType::ApplicationData,
+                plaintext_len,
+                0,
+                &mut self.write_record,
+                assemble,
+            )
+            .map_err(TlsApplicationIoError::Record)?;
+        time::timeout_at(deadline, self.io.write_all(&self.write_record))
+            .await
+            .map_err(|_| TlsApplicationIoError::Timeout)?
+            .map_err(TlsApplicationIoError::Io)
+    }
+
     /// Sends an authenticated `close_notify` and shuts down the transport writer.
     ///
     /// # Errors
@@ -341,49 +404,53 @@ where
         )
         .await
     }
+
+    /// Returns the address of the reusable ciphertext storage for allocation tests.
+    #[must_use]
+    pub fn record_storage_address(&self) -> usize {
+        self.write_record.as_ptr() as usize
+    }
 }
 
-async fn read_application_record<R>(
+async fn read_application_record<'record, R>(
     io: &mut R,
     records: &mut super::Tls13RecordLayer,
+    wire: &'record mut Vec<u8>,
     timeout: Duration,
-) -> Result<ApplicationRecord, TlsApplicationIoError>
+) -> Result<ApplicationRecord<'record>, TlsApplicationIoError>
 where
     R: AsyncRead + Unpin,
 {
-    let record = read_tls_record(io, timeout)
+    ensure_record_storage(wire)?;
+    read_tls_record_into(io, wire, timeout)
         .await
         .map_err(TlsApplicationIoError::Read)?;
-    let mut wire = record.into_wire();
-    let (content_type, plaintext_len, alert) = {
-        let opened = records
-            .open_in_place(&mut wire)
-            .map_err(TlsApplicationIoError::Record)?;
-        let alert = if opened.content_type() == ContentType::Alert {
-            opened.plaintext().try_into().ok()
-        } else {
-            None
-        };
-        (opened.content_type(), opened.plaintext().len(), alert)
-    };
+    let opened = records
+        .open_in_place(wire)
+        .map_err(TlsApplicationIoError::Record)?;
+    let content_type = opened.content_type();
     match content_type {
-        ContentType::ApplicationData => {
-            let end = TLS_RECORD_HEADER_LEN.checked_add(plaintext_len).ok_or(
-                TlsApplicationIoError::Record(Tls13RecordError::InvalidLength),
-            )?;
-            Ok(ApplicationRecord {
-                wire,
-                plaintext: TLS_RECORD_HEADER_LEN..end,
-            })
-        }
+        ContentType::ApplicationData => Ok(ApplicationRecord {
+            plaintext: opened.plaintext(),
+        }),
         ContentType::Alert => {
-            let [level, description] = alert.ok_or(TlsApplicationIoError::InvalidAlert)?;
+            let [level, description] = <[u8; 2]>::try_from(opened.plaintext())
+                .map_err(|_| TlsApplicationIoError::InvalidAlert)?;
             Err(TlsApplicationIoError::PeerAlert { level, description })
         }
         ContentType::ChangeCipherSpec | ContentType::Handshake => {
             Err(TlsApplicationIoError::UnexpectedContentType(content_type))
         }
     }
+}
+
+/// Reserves the connection's single record buffer exactly once.
+fn ensure_record_storage(wire: &mut Vec<u8>) -> Result<(), TlsApplicationIoError> {
+    if wire.capacity() == 0 {
+        *wire = record_storage()
+            .map_err(|_| TlsApplicationIoError::Record(Tls13RecordError::BufferAllocation))?;
+    }
+    Ok(())
 }
 
 async fn write_application_data<W>(
