@@ -697,6 +697,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "io-uring"
+version = "0.7.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9080b15e63775b9a2ac7dca720f7050a8b955e092ea0f6020a4a80f69998cdc0"
+dependencies = [
+ "bitflags",
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
 name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1186,6 +1197,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rr-linux"
+version = "0.1.0"
+dependencies = [
+ "io-uring",
+ "libc",
+]
+
+[[package]]
 name = "rust-reality"
 version = "0.1.0"
 dependencies = [
@@ -1206,6 +1225,7 @@ dependencies = [
  "libcrux-ml-dsa",
  "ml-kem",
  "regex",
+ "rr-linux",
  "rustix",
  "schemars",
  "serde",

@@ -1,0 +1,24 @@
+[package]
+name = "rr-linux"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+description = "Bounded Linux kernel relay backends isolated from the rust-reality protocol crate"
+publish = false
+
+[dependencies]
+io-uring = "=0.7.13"
+libc = { version = "0.2.180", default-features = false, features = ["std"] }
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unreachable_pub = "warn"
+unused_must_use = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+allow_attributes_without_reason = "warn"
+dbg_macro = "deny"
+todo = "deny"
+undocumented_unsafe_blocks = "deny"
+unimplemented = "deny"
