@@ -2,6 +2,7 @@ use std::{
     error::Error,
     fmt, io,
     sync::{Arc, Mutex, MutexGuard},
+    time::Instant,
 };
 
 use tokio::{
@@ -12,7 +13,13 @@ use tokio::{
 
 use crate::config::RelayPolicy;
 
-use super::relay::RelayStats;
+use super::{
+    backend::{
+        BackendCapability, BackendDeclineReason, BackendReport, BackendRequest, BackendRun,
+        RelayBackend, RelayContext, RelayOutcome, TransferLedger,
+    },
+    relay::RelayStats,
+};
 
 /// Process-wide bounded relay state for plaintext TCP-to-TCP boundaries.
 ///
@@ -25,6 +32,7 @@ pub struct TcpRelay {
     buffers: BufferPool,
     #[cfg(target_os = "linux")]
     splice: Option<SplicePool>,
+    report: BackendReport,
 }
 
 impl TcpRelay {
@@ -39,11 +47,145 @@ impl TcpRelay {
         let splice = policy
             .splice
             .then(|| SplicePool::new(policy.max_splice_relays, policy.buffer_bytes));
+        let report = BackendReport {
+            buffered: BackendCapability::available(),
+            splice: splice_capability(policy),
+            io_uring: unavailable_capability(policy.io_uring),
+            sockhash: unavailable_capability(policy.sockhash),
+        };
         Ok(Self {
             buffers,
             #[cfg(target_os = "linux")]
             splice,
+            report,
         })
+    }
+
+    /// Returns the one stable capability line per backend for startup reporting.
+    #[must_use]
+    pub const fn report(&self) -> &BackendReport {
+        &self.report
+    }
+
+    /// Relays one plaintext TCP pair that this relay owns completely.
+    ///
+    /// Complete ownership is the precondition for any backend that has to
+    /// duplicate or register a descriptor, and it makes "this backend
+    /// transferred zero bytes" a provable state rather than an assumption.
+    ///
+    /// # Errors
+    ///
+    /// Returns allocation, socket, pipe, or shutdown errors. A backend error
+    /// after transfer starts terminates the relay and is never replayed through
+    /// another backend.
+    pub async fn relay_owned(
+        &self,
+        mut inbound: TcpStream,
+        mut outbound: TcpStream,
+        context: RelayContext,
+    ) -> io::Result<RelayOutcome> {
+        self.run(&mut inbound, &mut outbound, context).await
+    }
+
+    /// Relays one plaintext TCP pair through borrowed sockets.
+    ///
+    /// This compatibility entry point exists for call sites that cannot yield
+    /// complete ownership yet. Backends that require a complete descriptor
+    /// decline here rather than weakening any invariant.
+    ///
+    /// # Errors
+    ///
+    /// Returns allocation, socket, pipe, or shutdown errors.
+    pub async fn relay_borrowed(
+        &self,
+        inbound: &mut TcpStream,
+        outbound: &mut TcpStream,
+        context: RelayContext,
+    ) -> io::Result<RelayOutcome> {
+        let context = RelayContext {
+            owns_complete_sockets: false,
+            ..context
+        };
+        self.run(inbound, outbound, context).await
+    }
+
+    async fn run(
+        &self,
+        inbound: &mut TcpStream,
+        outbound: &mut TcpStream,
+        context: RelayContext,
+    ) -> io::Result<RelayOutcome> {
+        let order = selection_order(context.request);
+        let mut last_decline = BackendDeclineReason::Disabled;
+        for backend in order {
+            let ledger = TransferLedger::new();
+            let started = Instant::now();
+            let run = self
+                .run_backend(*backend, inbound, outbound, context, &ledger, started)
+                .await?;
+            match run {
+                BackendRun::Completed(outcome) => return Ok(outcome),
+                BackendRun::Declined(decline) => last_decline = decline.reason(),
+            }
+        }
+        Err(io::Error::other(format!(
+            "no relay backend accepted the connection: {last_decline}"
+        )))
+    }
+
+    async fn run_backend(
+        &self,
+        backend: RelayBackend,
+        inbound: &mut TcpStream,
+        outbound: &mut TcpStream,
+        context: RelayContext,
+        ledger: &TransferLedger,
+        started: Instant,
+    ) -> io::Result<BackendRun> {
+        match backend {
+            RelayBackend::Buffered => {
+                self.buffers.relay(inbound, outbound, ledger).await?;
+                Ok(ledger.complete(RelayBackend::Buffered, started.elapsed()))
+            }
+            RelayBackend::Splice => self.run_splice(inbound, outbound, ledger, started).await,
+            RelayBackend::IoUring | RelayBackend::Sockhash => {
+                let reason = self
+                    .report
+                    .capability(backend)
+                    .decline_reason
+                    .unwrap_or(BackendDeclineReason::Disabled);
+                let _unused = context;
+                ledger.decline(reason)
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn run_splice(
+        &self,
+        inbound: &mut TcpStream,
+        outbound: &mut TcpStream,
+        ledger: &TransferLedger,
+        started: Instant,
+    ) -> io::Result<BackendRun> {
+        let Some(splice) = &self.splice else {
+            return ledger.decline(BackendDeclineReason::Disabled);
+        };
+        match splice.try_relay(inbound, outbound, ledger).await? {
+            Some(()) => Ok(ledger.complete(RelayBackend::Splice, started.elapsed())),
+            None => ledger.decline(BackendDeclineReason::ResourceLimit),
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    async fn run_splice(
+        &self,
+        _inbound: &mut TcpStream,
+        _outbound: &mut TcpStream,
+        ledger: &TransferLedger,
+        _started: Instant,
+    ) -> io::Result<BackendRun> {
+        ledger.decline(BackendDeclineReason::UnsupportedOperatingSystem)
     }
 
     /// Relays one plaintext TCP pair while preserving both half-close directions.
@@ -58,15 +200,54 @@ impl TcpRelay {
         inbound: &mut TcpStream,
         outbound: &mut TcpStream,
     ) -> io::Result<RelayStats> {
-        #[cfg(target_os = "linux")]
-        if let Some(splice) = &self.splice
-            && let Some(stats) = splice.try_relay(inbound, outbound).await?
-        {
-            return Ok(stats);
-        }
-
-        self.buffers.relay(inbound, outbound).await
+        let outcome = self
+            .relay_borrowed(inbound, outbound, RelayContext::borrowed())
+            .await?;
+        Ok(RelayStats::new(
+            outcome.inbound_to_outbound(),
+            outcome.outbound_to_inbound(),
+        ))
     }
+}
+
+/// Returns the backend order for one request.
+fn selection_order(request: BackendRequest) -> &'static [RelayBackend] {
+    match request {
+        BackendRequest::Automatic => RelayBackend::automatic_preference(),
+        BackendRequest::Explicit(RelayBackend::Buffered) => &[RelayBackend::Buffered],
+        BackendRequest::Explicit(RelayBackend::Splice) => {
+            &[RelayBackend::Splice, RelayBackend::Buffered]
+        }
+        BackendRequest::Explicit(RelayBackend::IoUring) => &[
+            RelayBackend::IoUring,
+            RelayBackend::Splice,
+            RelayBackend::Buffered,
+        ],
+        BackendRequest::Explicit(RelayBackend::Sockhash) => &[
+            RelayBackend::Sockhash,
+            RelayBackend::Splice,
+            RelayBackend::Buffered,
+        ],
+    }
+}
+
+fn splice_capability(policy: &RelayPolicy) -> BackendCapability {
+    if !cfg!(target_os = "linux") {
+        return BackendCapability::declined(
+            policy.splice,
+            BackendDeclineReason::UnsupportedOperatingSystem,
+        );
+    }
+    if policy.splice {
+        BackendCapability::available()
+    } else {
+        BackendCapability::declined(false, BackendDeclineReason::Disabled)
+    }
+}
+
+/// Returns the capability of a backend that this build has not yet enabled.
+fn unavailable_capability(enabled_by_config: bool) -> BackendCapability {
+    BackendCapability::declined(enabled_by_config, BackendDeclineReason::Disabled)
 }
 
 impl fmt::Debug for TcpRelay {
@@ -136,15 +317,28 @@ impl BufferPool {
         &self,
         inbound: &mut TcpStream,
         outbound: &mut TcpStream,
-    ) -> io::Result<RelayStats> {
+        ledger: &TransferLedger,
+    ) -> io::Result<()> {
         let mut pair = self.acquire_pair().await?;
         let (inbound_reader, inbound_writer) = tokio::io::split(inbound);
         let (outbound_reader, outbound_writer) = tokio::io::split(outbound);
         let (inbound_buffer, outbound_buffer) = pair.buffers_mut()?;
-        let uplink = copy_direction(inbound_reader, outbound_writer, inbound_buffer);
-        let downlink = copy_direction(outbound_reader, inbound_writer, outbound_buffer);
-        let (inbound_to_outbound, outbound_to_inbound) = tokio::try_join!(uplink, downlink)?;
-        Ok(RelayStats::new(inbound_to_outbound, outbound_to_inbound))
+        let uplink = copy_direction(
+            inbound_reader,
+            outbound_writer,
+            inbound_buffer,
+            ledger,
+            true,
+        );
+        let downlink = copy_direction(
+            outbound_reader,
+            inbound_writer,
+            outbound_buffer,
+            ledger,
+            false,
+        );
+        tokio::try_join!(uplink, downlink)?;
+        Ok(())
     }
 
     async fn acquire_pair(&self) -> io::Result<BufferPair> {
@@ -215,22 +409,41 @@ impl Drop for BufferPair {
     }
 }
 
-async fn copy_direction<R, W>(mut reader: R, mut writer: W, buffer: &mut [u8]) -> io::Result<u64>
+/// Copies one direction, recording every transferred byte in the shared ledger.
+///
+/// The count is recorded only after the write completes, so a byte is never
+/// claimed as transferred before it actually reached the peer socket.
+async fn copy_direction<R, W>(
+    mut reader: R,
+    mut writer: W,
+    buffer: &mut [u8],
+    ledger: &TransferLedger,
+    inbound_to_outbound: bool,
+) -> io::Result<()>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let mut total = 0_u64;
     loop {
         let read = reader.read(buffer).await?;
         if read == 0 {
             writer.shutdown().await?;
-            return Ok(total);
+            return Ok(());
         }
-        writer.write_all(&buffer[..read]).await?;
-        total = total
-            .checked_add(u64::try_from(read).map_or(u64::MAX, |value| value))
-            .ok_or_else(|| io::Error::other("TCP relay byte count overflow"))?;
+        let payload = buffer
+            .get(..read)
+            .ok_or_else(|| io::Error::other("TCP relay read exceeded its buffer"))?;
+        writer.write_all(payload).await?;
+        record(ledger, inbound_to_outbound, read)?;
+    }
+}
+
+fn record(ledger: &TransferLedger, inbound_to_outbound: bool, bytes: usize) -> io::Result<()> {
+    let bytes = u64::try_from(bytes).map_err(|_| io::Error::other("relay byte count overflow"))?;
+    if inbound_to_outbound {
+        ledger.add_inbound_to_outbound(bytes)
+    } else {
+        ledger.add_outbound_to_inbound(bytes)
     }
 }
 
@@ -263,7 +476,8 @@ impl SplicePool {
         &self,
         inbound: &TcpStream,
         outbound: &TcpStream,
-    ) -> io::Result<Option<RelayStats>> {
+        ledger: &TransferLedger,
+    ) -> io::Result<Option<()>> {
         let Ok(permit) = Arc::clone(&self.permits).try_acquire_owned() else {
             return Ok(None);
         };
@@ -272,13 +486,24 @@ impl SplicePool {
             Err(_) => return Ok(None),
         };
         let _permit = permit;
-        let uplink = splice_direction(inbound, outbound, &pipes.uplink, self.chunk_bytes);
-        let downlink = splice_direction(outbound, inbound, &pipes.downlink, self.chunk_bytes);
-        let (inbound_to_outbound, outbound_to_inbound) = tokio::try_join!(uplink, downlink)?;
-        Ok(Some(RelayStats::new(
-            inbound_to_outbound,
-            outbound_to_inbound,
-        )))
+        let uplink = splice_direction(
+            inbound,
+            outbound,
+            &pipes.uplink,
+            self.chunk_bytes,
+            ledger,
+            true,
+        );
+        let downlink = splice_direction(
+            outbound,
+            inbound,
+            &pipes.downlink,
+            self.chunk_bytes,
+            ledger,
+            false,
+        );
+        tokio::try_join!(uplink, downlink)?;
+        Ok(Some(()))
     }
 }
 
@@ -321,11 +546,12 @@ async fn splice_direction(
     destination: &TcpStream,
     pipe: &PipePair,
     chunk_bytes: usize,
-) -> io::Result<u64> {
+    ledger: &TransferLedger,
+    inbound_to_outbound: bool,
+) -> io::Result<()> {
     use tokio::io::Interest;
 
     let flags = rustix::pipe::SpliceFlags::MOVE | rustix::pipe::SpliceFlags::NONBLOCK;
-    let mut total = 0_u64;
     loop {
         let read = source
             .async_io(Interest::READABLE, || {
@@ -335,7 +561,7 @@ async fn splice_direction(
         if read == 0 {
             rustix::net::shutdown(destination, rustix::net::Shutdown::Write)
                 .map_err(io::Error::from)?;
-            return Ok(total);
+            return Ok(());
         }
 
         let mut pending = read;
@@ -352,9 +578,7 @@ async fn splice_direction(
                 ));
             }
             pending = pending.saturating_sub(written);
-            total = total
-                .checked_add(u64::try_from(written).map_or(u64::MAX, |value| value))
-                .ok_or_else(|| io::Error::other("TCP relay byte count overflow"))?;
+            record(ledger, inbound_to_outbound, written)?;
         }
     }
 }

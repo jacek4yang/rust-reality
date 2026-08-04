@@ -27,6 +27,7 @@ use crate::{
         vless::Destination,
     },
     transport::{
+        RelayContext,
         relay::RelayStats,
         tcp_relay::{TcpRelay, TcpRelayConfigError},
     },
@@ -298,11 +299,19 @@ impl NxrLandingHandler {
         let request = read_request(&mut inbound, self.authentication_timeout).await?;
         let now = unix_seconds()?;
         let destination = self.authenticator.authenticate(&request, now)?;
-        let mut outbound = self.connector.connect(&destination).await?;
-        self.relay
-            .relay(&mut inbound, &mut outbound)
+        let outbound = self.connector.connect(&destination).await?;
+        // The landing handler owns both complete sockets, so every backend,
+        // including those that must duplicate or register a descriptor, is
+        // eligible for this path.
+        let outcome = self
+            .relay
+            .relay_owned(inbound, outbound, RelayContext::owned())
             .await
-            .map_err(NxrLandingError::Relay)
+            .map_err(NxrLandingError::Relay)?;
+        Ok(RelayStats::new(
+            outcome.inbound_to_outbound(),
+            outcome.outbound_to_inbound(),
+        ))
     }
 }
 

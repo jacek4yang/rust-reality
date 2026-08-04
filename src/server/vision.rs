@@ -26,7 +26,7 @@ use super::{
     reality::RealityEstablished,
     routing::{AssetMatcher, RouteResolutionError, RoutingCompileError, RoutingTable},
 };
-use crate::transport::{RelayStats, TcpRelay};
+use crate::transport::{RelayContext, RelayOutcome, TcpRelay};
 
 const MAX_REQUEST_HEADER_SIZE: usize = 533;
 const MAX_REQUEST_BUFFER_SIZE: usize = MAX_REQUEST_HEADER_SIZE + MAX_PLAINTEXT_LEN;
@@ -235,11 +235,8 @@ impl VisionHandler {
         drop(outbound_permit);
 
         let handed_off = uplink.handoff.or(downlink.handoff);
-        let (handed_up, handed_down) = handed_off.map_or((0, 0), |stats| {
-            (
-                stats.inbound_to_outbound_bytes(),
-                stats.outbound_to_inbound_bytes(),
-            )
+        let (handed_up, handed_down) = handed_off.map_or((0, 0), |outcome| {
+            (outcome.inbound_to_outbound(), outcome.outbound_to_inbound())
         });
         Ok(VisionRelayStats {
             uplink_bytes: uplink.bytes.saturating_add(handed_up),
@@ -331,7 +328,7 @@ struct DirectionStats {
     direct: bool,
     /// Byte counts produced by the unified raw relay, present only on the
     /// direction that deposited its sockets last and therefore ran the relay.
-    handoff: Option<RelayStats>,
+    handoff: Option<RelayOutcome>,
 }
 
 impl DirectionStats {
@@ -343,7 +340,7 @@ impl DirectionStats {
         }
     }
 
-    const fn direct(bytes: u64, handoff: Option<RelayStats>) -> Self {
+    const fn direct(bytes: u64, handoff: Option<RelayOutcome>) -> Self {
         Self {
             bytes,
             direct: true,
@@ -739,14 +736,14 @@ async fn run_handoff(
     recovered: Option<super::direct::RecoveredSockets>,
     bytes: u64,
 ) -> Result<DirectionStats, VisionSessionError> {
-    let Some(mut sockets) = recovered else {
+    let Some(sockets) = recovered else {
         return Ok(DirectionStats::direct(bytes, None));
     };
-    let stats = relay
-        .relay(&mut sockets.client, &mut sockets.destination)
+    let outcome = relay
+        .relay_owned(sockets.client, sockets.destination, RelayContext::owned())
         .await
         .map_err(VisionSessionError::Relay)?;
-    Ok(DirectionStats::direct(bytes, Some(stats)))
+    Ok(DirectionStats::direct(bytes, Some(outcome)))
 }
 
 /// Records a terminal direction state without masking the original failure.
