@@ -270,6 +270,16 @@ rust_log = sys.argv[10]
 expected = payload_mib * 1024 * 1024
 url = f"https://127.0.0.1:{https_port}/payload.bin"
 
+# The workspace proxy environment (ALL_PROXY/HTTP_PROXY/...) sets NO_PROXY with
+# 127.0.0.1, which makes curl bypass EVEN an explicit --socks5-hostname for
+# loopback URLs — the transfer then measures a direct connection and the server
+# never sees a session. Strip every proxy variable from the curl environment.
+curl_env = {
+    key: value
+    for key, value in os.environ.items()
+    if key.lower() not in ("all_proxy", "http_proxy", "https_proxy", "no_proxy")
+}
+
 def transfer(port):
     completed = subprocess.run(
         [
@@ -281,6 +291,7 @@ def transfer(port):
         check=True,
         capture_output=True,
         text=True,
+        env=curl_env,
     )
     size, elapsed = completed.stdout.split()
     if int(size) != expected:
@@ -333,6 +344,7 @@ for name in ports:
 
 # Give the server a moment to flush per-connection completion events.
 time.sleep(1.0)
+accepted_connections = 0
 direct_events = []
 try:
     with open(rust_log, encoding="utf-8") as handle:
@@ -344,12 +356,17 @@ try:
                 record = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if record.get("event") == "connection_completed":
+            if record.get("event") == "connection_accepted":
+                accepted_connections += 1
+            elif record.get("event") == "connection_completed":
                 direct_events.append({
                     key: record.get(key)
                     for key in (
-                        "uplinkBytes", "downlinkBytes",
-                        "uplinkDirect", "downlinkDirect", "relayBackend",
+                        "uplink_bytes", "downlink_bytes",
+                        "uplink_direct", "downlink_direct",
+                        "relay_backend", "uplink_backend", "downlink_backend",
+                        "uplink_direct_at_bytes", "downlink_direct_at_bytes",
+                        "uplink_handoff_delay_us", "downlink_handoff_delay_us",
                     )
                 })
 except FileNotFoundError:
@@ -357,13 +374,22 @@ except FileNotFoundError:
 
 direct_summary = {
     "connections": len(direct_events),
-    "uplinkDirect": sum(1 for event in direct_events if event["uplinkDirect"]),
-    "downlinkDirect": sum(1 for event in direct_events if event["downlinkDirect"]),
+    "acceptedConnections": accepted_connections,
+    # The wait_port readiness probe accounts for one accepted connection; more
+    # must be tunneled sessions. One or zero means curl bypassed the tunnel
+    # (see curl_env above) and the measurements are invalid.
+    "tunnelBypassDetected": accepted_connections <= 1,
+    "uplinkDirect": sum(1 for event in direct_events if event["uplink_direct"]),
+    "downlinkDirect": sum(1 for event in direct_events if event["downlink_direct"]),
     "backends": {},
 }
 for event in direct_events:
-    backend = event["relayBackend"] or "none"
-    direct_summary["backends"][backend] = direct_summary["backends"].get(backend, 0) + 1
+    for direction in ("uplink_backend", "downlink_backend", "relay_backend"):
+        backend = event[direction]
+        if backend:
+            direct_summary["backends"][backend] = (
+                direct_summary["backends"].get(backend, 0) + 1
+            )
 
 ratio = (
     summaries["rust-reality"]["throughputMiBPerSecond"]["p50"]
