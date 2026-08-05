@@ -343,6 +343,7 @@ const fn map_reason(reason: rr_linux::DeclineReason) -> BackendDeclineReason {
         Kernel::MissingCapability => BackendDeclineReason::MissingCapability,
         Kernel::BlockedBySeccomp => BackendDeclineReason::BlockedBySeccomp,
         Kernel::BlockedByLsm => BackendDeclineReason::BlockedByLsm,
+        Kernel::VerifierRejected => BackendDeclineReason::VerifierRejected,
         Kernel::ResourceLimit => BackendDeclineReason::ResourceLimit,
         Kernel::QueueUnavailable => BackendDeclineReason::QueueUnavailable,
         Kernel::MapUnavailable => BackendDeclineReason::MapUnavailable,

@@ -37,17 +37,63 @@ pub const BACKEND: &str = "sockhash";
 
 /// `BPF_MAP_TYPE_SOCKHASH`.
 const BPF_MAP_TYPE_SOCKHASH: u32 = 18;
-/// `BPF_PROG_TYPE_SK_MSG`.
-const BPF_PROG_TYPE_SK_MSG: u32 = 16;
+/// `BPF_PROG_TYPE_SK_SKB`.
+///
+/// Not `SK_MSG`. `SK_MSG` hooks `sendmsg`, i.e. what the local application is
+/// sending; a proxy needs the receive path, so that data arriving on one socket
+/// reaches another without entering userspace. Measured on a privileged host:
+/// an `SK_MSG` program loads and attaches cleanly and still redirects nothing.
+const BPF_PROG_TYPE_SK_SKB: u32 = 14;
 /// `BPF_MAP_CREATE`.
 const BPF_MAP_CREATE: i32 = 0;
+/// `BPF_MAP_UPDATE_ELEM`.
+const BPF_MAP_UPDATE_ELEM: i32 = 2;
+/// `BPF_MAP_DELETE_ELEM`.
+const BPF_MAP_DELETE_ELEM: i32 = 3;
 /// `BPF_PROG_LOAD`.
 const BPF_PROG_LOAD: i32 = 5;
+/// `BPF_PROG_ATTACH`.
+const BPF_PROG_ATTACH: i32 = 8;
+/// `BPF_SK_SKB_STREAM_VERDICT`.
+///
+/// The merged implementation left `expected_attach_type` zeroed, which is
+/// `BPF_CGROUP_INET_INGRESS`; strace decoded that absence as a deliberate
+/// choice. It is set explicitly now, and it is the attach type the redirect
+/// actually needs.
+const BPF_SK_SKB_STREAM_VERDICT: u32 = 5;
+
+/// Maximum verifier log this crate will ask the kernel to produce.
+///
+/// The log is the single most useful diagnostic for a rejected program and the
+/// merged implementation requested none, which is why an `EACCES` had to be
+/// guessed at rather than read. It is bounded so a pathological program cannot
+/// turn a load failure into a memory problem, and it is surfaced only through
+/// explicit diagnostic output.
+pub const MAX_VERIFIER_LOG_BYTES: u32 = 64 * 1024;
 
 /// A complete bidirectional flow identity captured at arm time.
 ///
-/// Both endpoints and both ports are present, and the key is stored in a fixed
-/// byte layout so the eBPF program and userspace agree exactly.
+/// # Layout
+///
+/// The serialized layout is a contract between three parties — the map's
+/// `key_size`, the eBPF program's stack writes, and this function — and the
+/// merged implementation had all three disagree. It is now:
+///
+/// ```text
+/// [ 0..16]  local address, IPv4-mapped for v4 flows
+/// [16..32]  remote address, IPv4-mapped for v4 flows
+/// [32..36]  local port, as a native-order u32
+/// [36..40]  (address family << 16) | remote port, as a native-order u32
+/// ```
+///
+/// Ports are 16-bit, so the address family rides in the high half of the last
+/// word rather than needing a byte of its own plus three bytes of padding. The
+/// family value is the `AF_INET`/`AF_INET6` constant that appears in
+/// `sk_msg_md.family`, so the program can copy it through unmodified.
+///
+/// Native byte order is used for the two port words because the eBPF program
+/// stores registers into stack memory in native order and userspace reads the
+/// same memory on the same machine. Nothing here crosses a host boundary.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct FlowKey {
     /// Local address bytes, IPv4-mapped for v4 flows.
@@ -58,13 +104,16 @@ pub struct FlowKey {
     pub local_port: u16,
     /// Remote port in host order.
     pub remote_port: u16,
-    /// Address family discriminator: 4 or 6.
-    pub family: u8,
+    /// Address family as it appears in `sk_msg_md.family`: `AF_INET` or `AF_INET6`.
+    pub family: u32,
 }
 
 impl FlowKey {
     /// The exact serialized key size shared with the map definition.
-    pub const SIZE: usize = 16 + 16 + 2 + 2 + 1 + 3;
+    ///
+    /// This is the same constant the program builder uses, so the two can no
+    /// longer drift apart.
+    pub const SIZE: usize = bpf::FLOW_KEY_SIZE as usize;
 
     /// Captures a flow identity from both connected endpoints.
     #[must_use]
@@ -82,8 +131,9 @@ impl FlowKey {
 
     /// Returns the same flow seen from the peer's side.
     ///
-    /// The verdict program looks up the reversed key, so a redirect resolves the
-    /// *other* socket of the pair rather than the one that produced the message.
+    /// The verdict program builds exactly this key from its own context, so a
+    /// redirect resolves the *other* socket of the pair rather than the one
+    /// that produced the message.
     #[must_use]
     pub const fn reversed(self) -> Self {
         Self {
@@ -96,28 +146,36 @@ impl FlowKey {
     }
 
     /// Serializes the key into its exact wire layout.
+    ///
+    /// Every one of the forty bytes is written, so no uninitialised padding
+    /// ever reaches the kernel.
     #[must_use]
     pub fn to_bytes(self) -> [u8; Self::SIZE] {
         let mut bytes = [0_u8; Self::SIZE];
         bytes[..16].copy_from_slice(&self.local_address);
         bytes[16..32].copy_from_slice(&self.remote_address);
-        bytes[32..34].copy_from_slice(&self.local_port.to_be_bytes());
-        bytes[34..36].copy_from_slice(&self.remote_port.to_be_bytes());
-        bytes[36] = self.family;
+        bytes[32..36].copy_from_slice(&u32::from(self.local_port).to_ne_bytes());
+        let family_and_port = (self.family << 16) | u32::from(self.remote_port);
+        bytes[36..40].copy_from_slice(&family_and_port.to_ne_bytes());
         bytes
     }
 }
 
-fn address_bytes(address: SocketAddr) -> ([u8; 16], u8) {
+/// Renders one endpoint as the address bytes and family the program produces.
+///
+/// An IPv4 flow is written as an IPv4-mapped IPv6 address, which is exactly
+/// what the program's IPv4 branch builds: ten zero bytes, `0xffff`, then the
+/// four octets.
+fn address_bytes(address: SocketAddr) -> ([u8; 16], u32) {
     match address {
         SocketAddr::V4(v4) => {
             let mut bytes = [0_u8; 16];
             bytes[10] = 0xff;
             bytes[11] = 0xff;
             bytes[12..16].copy_from_slice(&v4.ip().octets());
-            (bytes, 4)
+            (bytes, crate::bpf::family::INET.unsigned_abs())
         }
-        SocketAddr::V6(v6) => (v6.ip().octets(), 6),
+        SocketAddr::V6(v6) => (v6.ip().octets(), crate::bpf::family::INET6.unsigned_abs()),
     }
 }
 
@@ -314,15 +372,90 @@ pub fn probe(budget: Budget) -> ProbeReport {
     let Ok(map_fd) = map else {
         return report;
     };
-    let program = bpf::stream_verdict_program(map_fd, 16);
-    let loaded = load_sk_msg_program(&program);
-    let report = report.with("prog_load", Probe::from_result(&loaded));
-    if let Ok(fd) = loaded {
-        close(fd);
-    }
+    let program = bpf::stream_verdict_program(map_fd);
+    let loaded = load_verdict_program(&program);
+    let report = match &loaded {
+        Ok(_) => report.with("prog_load", Probe::Available),
+        Err(error) => report.with("prog_load", Probe::Declined(classify_prog_load(error))),
+    };
+    let Ok(prog_fd) = loaded else {
+        close(map_fd);
+        return report;
+    };
+    let attached = attach_verdict_program(map_fd, prog_fd);
+    let report = report.with("prog_attach", Probe::from_result(&attached));
+    close(prog_fd);
     close(map_fd);
     report
 }
+
+/// Classifies a `BPF_PROG_LOAD` failure.
+///
+/// # Why this is not the generic errno mapping
+///
+/// The generic mapping treats `EACCES` as an LSM denial. For `BPF_PROG_LOAD`
+/// that is wrong, and it cost the incident investigation its first lead:
+/// `EACCES` is the *standard* errno for a verifier rejection. The merged
+/// implementation reported `blockedByLsm`, which pointed operators at SELinux
+/// and AppArmor when the actual causes were a wrong helper identifier and wrong
+/// context offsets.
+///
+/// An LSM or capability denial on `bpf(2)` surfaces as `EPERM`.
+fn classify_prog_load(error: &io::Error) -> DeclineReason {
+    match error.raw_os_error() {
+        Some(libc::EACCES) => DeclineReason::VerifierRejected,
+        Some(libc::EPERM) => DeclineReason::MissingCapability,
+        _ => DeclineReason::from_errno(error),
+    }
+}
+
+/// Loads the verdict program and returns the bounded verifier log on failure.
+///
+/// # Errors
+///
+/// Returns the classified decline reason together with the log the kernel
+/// produced. The log is bounded by [`MAX_VERIFIER_LOG_BYTES`] and is intended
+/// for diagnostic output only; it is never emitted on a production log path.
+pub fn load_with_verifier_log(map_fd: RawFd) -> Result<RawFd, VerifierRejection> {
+    let program = bpf::stream_verdict_program(map_fd);
+    let mut log = vec![0_u8; MAX_VERIFIER_LOG_BYTES as usize];
+    match load_verdict_program_with_log(&program, Some(&mut log)) {
+        Ok(fd) => Ok(fd),
+        Err(error) => {
+            let end = log.iter().position(|byte| *byte == 0).unwrap_or(log.len());
+            log.truncate(end);
+            Err(VerifierRejection {
+                reason: classify_prog_load(&error),
+                errno: error.raw_os_error(),
+                log: String::from_utf8_lossy(&log).into_owned(),
+            })
+        }
+    }
+}
+
+/// A rejected program load together with the kernel's own explanation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerifierRejection {
+    /// The classified decline category.
+    pub reason: DeclineReason,
+    /// The raw operating-system error number, when the failure carried one.
+    pub errno: Option<i32>,
+    /// The bounded verifier log, empty when the kernel produced none.
+    pub log: String,
+}
+
+impl std::fmt::Display for VerifierRejection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "sk_msg program rejected: {} (errno {:?})",
+            self.reason.as_str(),
+            self.errno
+        )
+    }
+}
+
+impl std::error::Error for VerifierRejection {}
 
 /// Creates one bounded `SOCKHASH`.
 ///
@@ -348,19 +481,110 @@ pub fn create_sockhash(max_entries: u32) -> io::Result<RawFd> {
 /// # Errors
 ///
 /// Returns the kernel error, which the caller classifies into a fixed reason.
-pub fn load_sk_msg_program(program: &[Insn]) -> io::Result<RawFd> {
+pub fn load_verdict_program(program: &[Insn]) -> io::Result<RawFd> {
+    load_verdict_program_with_log(program, None)
+}
+
+/// Loads the stream-verdict program, optionally capturing the verifier log.
+///
+/// # Errors
+///
+/// Returns the kernel error. When `log` is supplied it is filled with the
+/// kernel's verifier output, which is the only way to diagnose a rejection.
+pub fn load_verdict_program_with_log(
+    program: &[Insn],
+    log: Option<&mut [u8]>,
+) -> io::Result<RawFd> {
     let license = c"GPL";
+    let name = c"rr_sk_skb";
     let mut attr: bpf_attr_prog_load = unsafe_zeroed();
-    attr.prog_type = BPF_PROG_TYPE_SK_MSG;
+    attr.prog_type = BPF_PROG_TYPE_SK_SKB;
     attr.insn_cnt =
         u32::try_from(program.len()).map_err(|_| io::Error::other("program is too large"))?;
     attr.insns = program.as_ptr() as u64;
     attr.license = license.as_ptr() as u64;
+    // Setting the attach type explicitly is required for correctness reporting
+    // and makes the intended hook visible in a trace, rather than leaving a
+    // zeroed field that decodes as `BPF_CGROUP_INET_INGRESS`.
+    attr.expected_attach_type = BPF_SK_SKB_STREAM_VERDICT;
+    let name_bytes = name.to_bytes();
+    let copied = name_bytes.len().min(attr.prog_name.len() - 1);
+    attr.prog_name[..copied].copy_from_slice(&name_bytes[..copied]);
+    if let Some(log) = log {
+        attr.log_level = 1;
+        attr.log_size = u32::try_from(log.len()).unwrap_or(MAX_VERIFIER_LOG_BYTES);
+        attr.log_buf = log.as_mut_ptr() as u64;
+    }
     bpf_syscall(
         BPF_PROG_LOAD,
         (&raw const attr).cast::<libc::c_void>(),
         PROG_LOAD_ABI_SIZE,
     )
+}
+
+/// Attaches a loaded stream-verdict program to its `SOCKHASH`.
+///
+/// Without this the program is inert: it is loaded but never runs, so no byte
+/// is ever redirected. The merged implementation never issued `BPF_PROG_ATTACH`
+/// at all.
+///
+/// # Errors
+///
+/// Returns the kernel error, which the caller classifies into a fixed reason.
+pub fn attach_verdict_program(map_fd: RawFd, prog_fd: RawFd) -> io::Result<()> {
+    let mut attr: bpf_attr_prog_attach = unsafe_zeroed();
+    attr.target_fd = map_fd;
+    attr.attach_bpf_fd = prog_fd;
+    attr.attach_type = BPF_SK_SKB_STREAM_VERDICT;
+    bpf_syscall(
+        BPF_PROG_ATTACH,
+        (&raw const attr).cast::<libc::c_void>(),
+        PROG_ATTACH_ABI_SIZE,
+    )
+    .map(|_| ())
+}
+
+/// Installs one socket into the `SOCKHASH` under `key`.
+///
+/// # Errors
+///
+/// Returns the kernel error. `E2BIG` indicates map exhaustion, which the caller
+/// must treat as a decline rather than a failure.
+pub fn map_update(map_fd: RawFd, key: FlowKey, socket_fd: RawFd) -> io::Result<()> {
+    let bytes = key.to_bytes();
+    let value = socket_fd;
+    let mut attr: bpf_attr_map_elem = unsafe_zeroed();
+    attr.map_fd = u32::try_from(map_fd).map_err(|_| io::Error::other("invalid map descriptor"))?;
+    attr.key = bytes.as_ptr() as u64;
+    attr.value = (&raw const value) as u64;
+    bpf_syscall(
+        BPF_MAP_UPDATE_ELEM,
+        (&raw const attr).cast::<libc::c_void>(),
+        MAP_ELEM_ABI_SIZE,
+    )
+    .map(|_| ())
+}
+
+/// Removes one socket from the `SOCKHASH`.
+///
+/// # Errors
+///
+/// Returns the kernel error. `ENOENT` means the entry was already removed,
+/// which rollback treats as success.
+pub fn map_delete(map_fd: RawFd, key: FlowKey) -> io::Result<()> {
+    let bytes = key.to_bytes();
+    let mut attr: bpf_attr_map_elem = unsafe_zeroed();
+    attr.map_fd = u32::try_from(map_fd).map_err(|_| io::Error::other("invalid map descriptor"))?;
+    attr.key = bytes.as_ptr() as u64;
+    match bpf_syscall(
+        BPF_MAP_DELETE_ELEM,
+        (&raw const attr).cast::<libc::c_void>(),
+        MAP_ELEM_ABI_SIZE,
+    ) {
+        Ok(_) => Ok(()),
+        Err(error) if error.raw_os_error() == Some(libc::ENOENT) => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 fn close(fd: RawFd) {
@@ -401,6 +625,31 @@ const MAP_CREATE_ABI_SIZE: usize = 72;
 
 /// Byte size of the `BPF_PROG_LOAD` attribute prefix this crate declares.
 const PROG_LOAD_ABI_SIZE: usize = 120;
+
+/// Byte size of the `BPF_PROG_ATTACH` attribute prefix this crate declares.
+const PROG_ATTACH_ABI_SIZE: usize = 16;
+
+/// Byte size of the map element attribute prefix this crate declares.
+const MAP_ELEM_ABI_SIZE: usize = 32;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct bpf_attr_prog_attach {
+    target_fd: i32,
+    attach_bpf_fd: i32,
+    attach_type: u32,
+    attach_flags: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct bpf_attr_map_elem {
+    map_fd: u32,
+    _pad: u32,
+    key: u64,
+    value: u64,
+    flags: u64,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -516,8 +765,10 @@ mod tests {
         let four = FlowKey::capture(v4(443, 1), v4(50_000, 2));
         let six = FlowKey::capture(v6(443, 1), v6(50_000, 2));
 
-        assert_eq!(four.family, 4);
-        assert_eq!(six.family, 6);
+        // The family is the value `sk_msg_md.family` carries, so the program
+        // can copy it straight through without a translation table.
+        assert_eq!(four.family, crate::bpf::family::INET.unsigned_abs());
+        assert_eq!(six.family, crate::bpf::family::INET6.unsigned_abs());
         assert_ne!(four.to_bytes(), six.to_bytes());
     }
 
