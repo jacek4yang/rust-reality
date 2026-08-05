@@ -35,10 +35,12 @@ use std::fmt;
 
 pub mod bpf;
 pub mod capability;
+pub mod rlimit;
 pub mod sockhash;
 pub mod uring;
 
 pub use capability::{DeclineReason, Probe, ProbeReport};
+pub use rlimit::{DescriptorLimit, descriptor_limit, open_reserve_descriptor};
 
 /// A bounded resource budget shared by both kernel backends.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

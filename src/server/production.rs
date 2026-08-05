@@ -26,12 +26,13 @@ use crate::{
     logging::{AdmissionResource, BackendStatus, LogEvent, LogWriteError, Logger, RejectionReason},
     protocol::reality::ReplayCache,
     runtime::{
-        AdmissionDenied, AdmissionKind, AdmissionPermit, ResourceGovernor,
+        AdmissionDenied, AdmissionKind, AdmissionPermit, FdBudget, FdBudgetError, FdBudgetPlan,
+        FdPermit, FixedFdReserve, ResourceGovernor, UNITS_INBOUND_SOCKET,
         connection::ConnectionTasks,
     },
     transport::{
         BackendDeclineReason, BackendReport, RelayBackend,
-        tcp::TcpAcceptor,
+        tcp::{AcceptBackoff, AcceptErrorClass, EmergencyDescriptor, TcpAcceptor},
         tcp_relay::{TcpRelay, TcpRelayConfigError},
     },
 };
@@ -59,6 +60,59 @@ pub struct ProductionServer {
     addresses: Vec<SocketAddr>,
     runtime: Arc<RuntimeStore>,
     config_path: Option<PathBuf>,
+}
+
+/// Computes the configured worst-case simultaneous descriptor demand.
+///
+/// Every term is a configured bound, and the sum is deliberately pessimistic:
+/// it assumes every connection simultaneously holds an inbound socket, an
+/// outbound socket, and that every splice and io_uring relay is armed at once.
+/// The number is used only to decide whether to warn about clamping; it never
+/// raises the admission budget.
+fn theoretical_fd_peak(config: &Config) -> u64 {
+    let connections = u64::from(config.policy.resource_governor.max_connections);
+    let splice = u64::from(config.policy.relay.max_splice_relays)
+        .saturating_mul(u64::from(crate::runtime::UNITS_SPLICE_RELAY));
+    let uring = u64::from(config.policy.relay.max_io_uring_relays)
+        .saturating_mul(u64::from(crate::runtime::UNITS_URING_SESSION));
+    connections
+        .saturating_mul(2)
+        .saturating_add(splice)
+        .saturating_add(uring)
+}
+
+/// Derives the process descriptor budget before any listener is bound.
+fn derive_fd_budget(config: &Config) -> Result<(FdBudgetPlan, FdBudget), FdBudgetError> {
+    let listeners = u64::try_from(config.inbounds.len()).unwrap_or(u64::MAX);
+    let uring_rings = if config.policy.relay.io_uring {
+        u64::from(crate::transport::tcp_relay::MAX_URING_SHARDS)
+    } else {
+        0
+    };
+    let reserve = FixedFdReserve::new(listeners, uring_rings, config.policy.relay.sockhash);
+    let limit = read_descriptor_limit();
+    let plan = FdBudgetPlan::derive(limit.0, limit.1, reserve, theoretical_fd_peak(config))?;
+    let budget = FdBudget::new(plan.effective_budget());
+    Ok((plan, budget))
+}
+
+/// Reads the process descriptor limit, falling back to a conservative default.
+///
+/// A platform that cannot report a limit is treated as if it had the
+/// conservative POSIX minimum rather than as if it had no limit, because
+/// assuming abundance is exactly how the incident happened.
+fn read_descriptor_limit() -> (u64, u64) {
+    #[cfg(target_os = "linux")]
+    {
+        match rr_linux::descriptor_limit() {
+            Ok(limit) => (limit.soft, limit.hard),
+            Err(_) => (1_024, 1_024),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        (1_024, 1_024)
+    }
 }
 
 impl ProductionServer {
@@ -94,12 +148,27 @@ impl ProductionServer {
         let replay_governor = ResourceGovernor::new(&config.policy.resource_governor);
         let replay = ReplayCache::new(replay_governor, &config.policy.resource_governor);
         let nxr_replays = compile_nxr_replays(&config)?;
-        let tcp_relay = TcpRelay::new(&config.policy.relay).map_err(RuntimeUpdateError::Relay)?;
+        let (fd_plan, fd_budget) =
+            derive_fd_budget(&config).map_err(ProductionServerError::DescriptorBudget)?;
+        let tcp_relay = TcpRelay::new(&config.policy.relay, fd_budget.clone())
+            .map_err(RuntimeUpdateError::Relay)?;
         let initial =
             RuntimeSnapshot::compile(config, 0, replay.clone(), &nxr_replays, tcp_relay.clone())?;
         let mut addresses: Vec<_> = initial.connections.keys().copied().collect();
         addresses.sort_unstable();
         emit(&initial.logger, &LogEvent::ServerStarting);
+        emit(
+            &initial.logger,
+            &LogEvent::DescriptorBudgetReport {
+                fd_soft_limit: fd_plan.soft_limit(),
+                fd_hard_limit: fd_plan.hard_limit(),
+                fd_fixed_reserve: fd_plan.fixed_reserve().total(),
+                fd_safety_headroom: fd_plan.safety_headroom(),
+                fd_effective_budget: fd_plan.effective_budget(),
+                fd_clamped: fd_plan.is_clamped(),
+                fd_recommended_soft_limit: fd_plan.recommended_soft_limit(),
+            },
+        );
         emit(
             &initial.logger,
             &LogEvent::RelayBackendReport {
@@ -119,6 +188,7 @@ impl ProductionServer {
                 replay,
                 nxr_replays,
                 tcp_relay,
+                fd_budget,
                 generation: AtomicU64::new(0),
                 update: Mutex::new(()),
             }),
@@ -291,6 +361,7 @@ struct RuntimeStore {
     replay: ReplayCache,
     nxr_replays: HashMap<SocketAddr, NxrReplayCache>,
     tcp_relay: TcpRelay,
+    fd_budget: FdBudget,
     generation: AtomicU64,
     update: Mutex<()>,
 }
@@ -503,6 +574,22 @@ fn compile_nxr_replays(
     Ok(replays)
 }
 
+/// Runs one listener until shutdown, surviving every recoverable accept error.
+///
+/// # The invariant this function exists to hold
+///
+/// The listener task must not return `Err` for any condition the process can
+/// recover from. The previous implementation propagated every accept error with
+/// `?`, so `accept4(...) = -1 EMFILE` terminated the server. Here only
+/// [`AcceptErrorClass::Fatal`] leaves the loop, and it does so with the raw
+/// errno attached so the operator can identify it.
+///
+/// # Ordering
+///
+/// The descriptor permit is acquired *before* `accept`, never after. Acquiring
+/// after would mean the kernel had already created a descriptor the process had
+/// not reserved, which is precisely the accounting gap that produced the
+/// incident.
 async fn run_listener(
     acceptor: TcpAcceptor,
     address: SocketAddr,
@@ -510,47 +597,215 @@ async fn run_listener(
     mut shutdown: watch::Receiver<bool>,
 ) -> io::Result<()> {
     let mut connections = ConnectionTasks::new();
+    let fd_budget = runtime.fd_budget.clone();
+    let mut backoff = AcceptBackoff::new();
+    // Starting without the reserve is a degraded but serviceable state:
+    // admission still bounds descriptors, and the reserve only covers pressure
+    // that originates outside this process's accounting.
+    let mut reserve = EmergencyDescriptor::open().ok();
+    let mut last_pressure = fd_budget.pressure();
     loop {
-        tokio::select! {
+        // Acquire the inbound descriptor permit before touching the listener.
+        // When capacity is exhausted this waits on a `Notify` rather than
+        // spinning, and it remains cancellable so shutdown is still prompt.
+        let fd_permit = tokio::select! {
+            biased;
             changed = shutdown.changed() => {
                 if changed.is_err() || *shutdown.borrow() {
                     break;
                 }
+                continue;
             }
-            accepted = acceptor.accept() => {
-                let (stream, peer) = accepted?;
-                let snapshot = runtime.load();
-                let Some(state) = snapshot.connections.get(&address).cloned() else {
-                    return Err(io::Error::other("active runtime is missing listener state"));
-                };
-                let logger = snapshot.logger.clone();
-                drop(snapshot);
-                let permit = match state.governor.try_acquire(AdmissionKind::Connection) {
-                    Ok(permit) => permit,
-                    Err(error) => {
-                        emit_admission(&logger, error);
-                        emit(
-                            &logger,
-                            &LogEvent::ConnectionRejected {
-                                peer,
-                                reason: RejectionReason::ResourceLimit,
-                            },
+            permit = fd_budget.acquire(UNITS_INBOUND_SOCKET) => permit,
+            completed = connections.join_next(), if !connections.is_empty() => {
+                consume_connection_result(completed);
+                continue;
+            }
+        };
+
+        let pressure = fd_budget.pressure();
+        if pressure != last_pressure {
+            last_pressure = pressure;
+            let snapshot = runtime.load();
+            emit(
+                &snapshot.logger,
+                &LogEvent::DescriptorPressureChanged {
+                    fd_pressure_state: pressure.as_str(),
+                    fd_units_in_use: fd_budget.in_use(),
+                    fd_effective_budget: fd_budget.capacity(),
+                },
+            );
+        }
+
+        tokio::select! {
+            changed = shutdown.changed() => {
+                drop(fd_permit);
+                if changed.is_err() || *shutdown.borrow() {
+                    break;
+                }
+            }
+            accepted = acceptor.accept_only() => {
+                match accepted {
+                    Ok((stream, peer)) => {
+                        backoff.reset();
+                        admit_accepted_connection(
+                            &runtime,
+                            &mut connections,
+                            address,
+                            stream,
+                            peer,
+                            fd_permit,
                         );
-                        continue;
                     }
-                };
-                emit(&logger, &LogEvent::ConnectionAccepted { peer });
-                connections.spawn(peer, async move {
-                    run_connection(state, stream, peer, permit, &logger).await
-                });
+                    Err(error) => {
+                        // Release the reservation immediately: no descriptor was
+                        // created, so holding it would shrink capacity on every
+                        // failed accept until the listener starved itself.
+                        drop(fd_permit);
+                        let class = AcceptErrorClass::classify(&error);
+                        if class.is_fatal() {
+                            return Err(io::Error::new(
+                                error.kind(),
+                                format!(
+                                    "listener {address} cannot accept: {class} \
+                                     (errno {errno:?}): {error}",
+                                    class = class.as_str(),
+                                    errno = error.raw_os_error(),
+                                ),
+                            ));
+                        }
+                        if class == AcceptErrorClass::DescriptorPressure
+                            && let Some(reserve) = reserve.as_mut()
+                        {
+                            recover_from_descriptor_pressure(&acceptor, reserve).await;
+                        }
+                        let delay = if class.needs_backoff() {
+                            backoff.next_delay()
+                        } else {
+                            Duration::ZERO
+                        };
+                        if class != AcceptErrorClass::WouldBlock {
+                            let snapshot = runtime.load();
+                            emit(
+                                &snapshot.logger,
+                                &LogEvent::AcceptErrorRecovered {
+                                    address,
+                                    accept_error_class: class.as_str(),
+                                    errno: error.raw_os_error(),
+                                    accept_backoff_ms: backoff.current_ms(),
+                                },
+                            );
+                        }
+                        if !delay.is_zero() {
+                            tokio::select! {
+                                changed = shutdown.changed() => {
+                                    if changed.is_err() || *shutdown.borrow() {
+                                        break;
+                                    }
+                                }
+                                () = time::sleep(delay) => {}
+                            }
+                        }
+                    }
+                }
             }
             completed = connections.join_next(), if !connections.is_empty() => {
+                drop(fd_permit);
                 consume_connection_result(completed);
             }
         }
     }
     drain_connections(&mut connections).await;
     Ok(())
+}
+
+/// Configures and admits one accepted stream.
+///
+/// A socket-configuration failure closes exactly that stream and releases
+/// exactly its permit. It never reaches the listener loop as an error.
+fn admit_accepted_connection(
+    runtime: &Arc<RuntimeStore>,
+    connections: &mut ConnectionTasks,
+    address: SocketAddr,
+    stream: tokio::net::TcpStream,
+    peer: SocketAddr,
+    fd_permit: FdPermit,
+) {
+    let snapshot = runtime.load();
+    let Some(state) = snapshot.connections.get(&address).cloned() else {
+        // A reload cannot remove a listener, so this is unreachable in practice;
+        // dropping the stream is still the correct conservative response.
+        drop(stream);
+        drop(fd_permit);
+        return;
+    };
+    let logger = snapshot.logger.clone();
+    drop(snapshot);
+
+    if let Err(error) = TcpAcceptor::configure_accepted(&stream) {
+        let _unused = error;
+        drop(stream);
+        drop(fd_permit);
+        emit(
+            &logger,
+            &LogEvent::ConnectionRejected {
+                peer,
+                reason: RejectionReason::SocketConfiguration,
+            },
+        );
+        return;
+    }
+
+    let permit = match state.governor.try_acquire(AdmissionKind::Connection) {
+        Ok(permit) => permit,
+        Err(error) => {
+            drop(stream);
+            drop(fd_permit);
+            emit_admission(&logger, error);
+            emit(
+                &logger,
+                &LogEvent::ConnectionRejected {
+                    peer,
+                    reason: RejectionReason::ResourceLimit,
+                },
+            );
+            return;
+        }
+    };
+    emit(&logger, &LogEvent::ConnectionAccepted { peer });
+    connections.spawn(peer, async move {
+        // Both permits move into the task and are released when it ends, on
+        // every path including cancellation and abort.
+        let _fd_permit = fd_permit;
+        run_connection(state, stream, peer, permit, &logger).await
+    });
+}
+
+/// Drains one backlog entry using the emergency reserve descriptor.
+///
+/// This runs only when `accept` reported `EMFILE`/`ENFILE` despite strict
+/// admission, which means descriptors were consumed outside this process's
+/// accounting. Releasing the reserve makes exactly one accept possible; the
+/// accepted socket is closed immediately, so the peer observes a reset rather
+/// than an indefinite hang and the backlog advances by one.
+async fn recover_from_descriptor_pressure(
+    acceptor: &TcpAcceptor,
+    reserve: &mut EmergencyDescriptor,
+) {
+    if !reserve.release() {
+        return;
+    }
+    // A single non-blocking attempt. Waiting here would stall the listener for
+    // an arbitrary time while holding no reservation.
+    if let Ok(Ok((stream, _peer))) =
+        time::timeout(Duration::from_millis(1), acceptor.accept_only()).await
+    {
+        drop(stream);
+    }
+    // Reacquiring can fail while the process is still at its limit. That is a
+    // recoverable state: the next pressure event simply finds no reserve, and
+    // admission continues to bound everything this process does account for.
+    let _unused = reserve.reacquire();
 }
 
 async fn run_connection(
@@ -896,6 +1151,12 @@ impl From<TcpRelayConfigError> for RuntimeUpdateError {
 /// Production server construction or lifecycle failed.
 #[derive(Debug)]
 pub enum ProductionServerError {
+    /// The process descriptor limit cannot support a usable admission budget.
+    ///
+    /// This is returned before any listener is bound, so an impossible limit is
+    /// a startup failure with a concrete recommendation rather than an
+    /// `accept4` failure under load.
+    DescriptorBudget(FdBudgetError),
     Runtime(RuntimeUpdateError),
     Bind {
         address: SocketAddr,
@@ -912,6 +1173,7 @@ impl fmt::Display for ProductionServerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Runtime(source) => source.fmt(formatter),
+            Self::DescriptorBudget(source) => source.fmt(formatter),
             Self::Bind { address, .. } => write!(formatter, "failed to bind listener {address}"),
             Self::ListenerAddress(_) => formatter.write_str("failed to read listener address"),
             Self::Accept(_) => formatter.write_str("listener accept failed"),
@@ -931,6 +1193,7 @@ impl Error for ProductionServerError {
             | Self::Accept(source)
             | Self::Signal(source) => Some(source),
             Self::Task(source) => Some(source),
+            Self::DescriptorBudget(source) => Some(source),
             Self::ListenerStopped => None,
         }
     }

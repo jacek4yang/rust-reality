@@ -49,7 +49,11 @@ fn exercisable() -> Vec<RelayBackend> {
 }
 
 fn relay_for(backend: RelayBackend) -> TcpRelay {
-    TcpRelay::new(&policy(backend)).expect("relay policy must compile")
+    TcpRelay::new(
+        &policy(backend),
+        rust_reality::runtime::FdBudget::new(65_536),
+    )
+    .expect("relay policy must compile")
 }
 
 fn context(backend: RelayBackend) -> RelayContext {

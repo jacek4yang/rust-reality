@@ -229,7 +229,11 @@ fn main() {
             let scenario = scenarios[position];
             let payload: &'static [u8] =
                 Box::leak(vec![0x5a_u8; scenario.payload_bytes].into_boxed_slice());
-            let relay = TcpRelay::new(&policy(scenario.backend)).expect("relay must compile");
+            let relay = TcpRelay::new(
+                &policy(scenario.backend),
+                rust_reality::runtime::FdBudget::new(65_536),
+            )
+            .expect("relay must compile");
 
             let started = Instant::now();
             let selected = runtime.block_on(async {

@@ -234,9 +234,10 @@ impl NxrLandingHandler {
     pub fn from_inbound(
         inbound: &NxrInboundConfig,
         relay_policy: &RelayPolicy,
+        fd_budget: crate::runtime::FdBudget,
     ) -> Result<Self, NxrLandingConfigError> {
         let replay = NxrReplayCache::from_inbound(inbound)?;
-        let relay = TcpRelay::new(relay_policy).map_err(NxrLandingConfigError::Relay)?;
+        let relay = TcpRelay::new(relay_policy, fd_budget).map_err(NxrLandingConfigError::Relay)?;
         Self::from_inbound_with_replay(inbound, replay, relay)
     }
 
@@ -558,7 +559,11 @@ mod tests {
             NxrAuthenticator::new(key.clone(), cache, 5),
             Duration::from_secs(1),
             Duration::from_secs(1),
-            TcpRelay::new(&RelayPolicy::default()).expect("relay policy must compile"),
+            TcpRelay::new(
+                &RelayPolicy::default(),
+                crate::runtime::FdBudget::new(4_096),
+            )
+            .expect("relay policy must compile"),
         );
         let destination =
             Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), target_address.port());
