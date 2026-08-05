@@ -190,6 +190,20 @@ pub enum LogEvent {
         /// The backend that ran the raw relay, when one did.
         #[serde(skip_serializing_if = "Option::is_none")]
         relay_backend: Option<&'static str>,
+        /// Uplink bytes delivered before the uplink Direct boundary.
+        uplink_direct_at_bytes: u64,
+        /// Downlink bytes delivered before the downlink Direct boundary.
+        downlink_direct_at_bytes: u64,
+        /// The backend that moved the uplink's raw bytes, when direct.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        uplink_backend: Option<&'static str>,
+        /// The backend that moved the downlink's raw bytes, when direct.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        downlink_backend: Option<&'static str>,
+        /// Microseconds from the uplink boundary to its raw relay start.
+        uplink_handoff_delay_us: u64,
+        /// Microseconds from the downlink boundary to its raw relay start.
+        downlink_handoff_delay_us: u64,
     },
 }
 

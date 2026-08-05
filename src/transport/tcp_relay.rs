@@ -7,14 +7,17 @@ use std::{
 
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    net::TcpStream,
+    net::{
+        TcpStream,
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+    },
     sync::{OwnedSemaphorePermit, Semaphore},
 };
 
 use crate::{config::RelayPolicy, runtime::FdBudget};
 
 #[cfg(target_os = "linux")]
-use crate::runtime::{FdPermit, UNITS_SPLICE_RELAY};
+use crate::runtime::{FdPermit, UNITS_SPLICE_DIRECTION, UNITS_SPLICE_RELAY};
 
 /// Maximum io_uring driver shards, and therefore ring descriptors, per process.
 ///
@@ -28,7 +31,8 @@ pub const URING_QUEUE_DEPTH: u16 = 256;
 use super::{
     backend::{
         BackendCapability, BackendDeclineReason, BackendReport, BackendRequest, BackendRun,
-        RelayBackend, RelayContext, RelayOutcome, TransferLedger,
+        DirectionalRelayOutcome, RelayBackend, RelayContext, RelayDirection, RelayOutcome,
+        TransferLedger,
     },
     relay::RelayStats,
 };
@@ -131,6 +135,125 @@ impl TcpRelay {
             ..context
         };
         self.run(inbound, outbound, context).await
+    }
+
+    /// Relays a single direction between two owned socket halves.
+    ///
+    /// A Vision direction at its raw boundary holds exactly the two halves this
+    /// entry point needs, so the raw phase never waits for the peer direction.
+    /// Source EOF gracefully shuts down the destination write side and leaves
+    /// the peer direction untouched. Linux splice capacity is admitted without
+    /// waiting; an exhausted pool or descriptor budget declines *before* the
+    /// first byte and falls through to one pooled userspace buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns allocation, socket, pipe, or shutdown errors. A backend error
+    /// after transfer starts terminates the relay and is never replayed through
+    /// another backend.
+    pub async fn relay_direction(
+        &self,
+        mut source: OwnedReadHalf,
+        mut destination: OwnedWriteHalf,
+        direction: RelayDirection,
+        request: BackendRequest,
+    ) -> io::Result<DirectionalRelayOutcome> {
+        let order = directional_selection_order(request);
+        let mut last_decline = BackendDeclineReason::Disabled;
+        for backend in order {
+            let ledger = TransferLedger::new();
+            let started = Instant::now();
+            let run = self
+                .run_direction_backend(
+                    *backend,
+                    &mut source,
+                    &mut destination,
+                    direction,
+                    &ledger,
+                    started,
+                )
+                .await?;
+            match run {
+                BackendRun::Completed(outcome) => {
+                    let bytes = if direction.is_inbound_to_outbound() {
+                        outcome.inbound_to_outbound()
+                    } else {
+                        outcome.outbound_to_inbound()
+                    };
+                    return Ok(DirectionalRelayOutcome::new(
+                        bytes,
+                        outcome.backend(),
+                        outcome.duration(),
+                    ));
+                }
+                BackendRun::Declined(decline) => last_decline = decline.reason(),
+            }
+        }
+        Err(io::Error::other(format!(
+            "no relay backend accepted the {direction} direction: {last_decline}"
+        )))
+    }
+
+    async fn run_direction_backend(
+        &self,
+        backend: RelayBackend,
+        source: &mut OwnedReadHalf,
+        destination: &mut OwnedWriteHalf,
+        direction: RelayDirection,
+        ledger: &TransferLedger,
+        started: Instant,
+    ) -> io::Result<BackendRun> {
+        match backend {
+            RelayBackend::Buffered => {
+                self.buffers
+                    .relay_direction(source, destination, direction, ledger)
+                    .await?;
+                Ok(ledger.complete(RelayBackend::Buffered, started.elapsed()))
+            }
+            RelayBackend::Splice => {
+                self.run_splice_direction(source, destination, direction, ledger, started)
+                    .await
+            }
+            // The io_uring and sockhash backends are pair-only. They never
+            // appear in the directional selection order, so this arm only
+            // exists to keep the match exhaustive; nothing is recorded.
+            RelayBackend::IoUring | RelayBackend::Sockhash => {
+                ledger.decline(BackendDeclineReason::Disabled)
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn run_splice_direction(
+        &self,
+        source: &mut OwnedReadHalf,
+        destination: &mut OwnedWriteHalf,
+        direction: RelayDirection,
+        ledger: &TransferLedger,
+        started: Instant,
+    ) -> io::Result<BackendRun> {
+        let Some(splice) = &self.splice else {
+            return ledger.decline(BackendDeclineReason::Disabled);
+        };
+        match splice
+            .try_relay_direction(source, destination, direction, ledger)
+            .await?
+        {
+            Some(()) => Ok(ledger.complete(RelayBackend::Splice, started.elapsed())),
+            None => ledger.decline(BackendDeclineReason::ResourceLimit),
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    async fn run_splice_direction(
+        &self,
+        _source: &mut OwnedReadHalf,
+        _destination: &mut OwnedWriteHalf,
+        _direction: RelayDirection,
+        ledger: &TransferLedger,
+        _started: Instant,
+    ) -> io::Result<BackendRun> {
+        ledger.decline(BackendDeclineReason::UnsupportedOperatingSystem)
     }
 
     async fn run(
@@ -252,6 +375,24 @@ fn selection_order(request: BackendRequest) -> &'static [RelayBackend] {
             RelayBackend::Splice,
             RelayBackend::Buffered,
         ],
+    }
+}
+
+/// Returns the backend order for one single-direction request.
+///
+/// The io_uring and sockhash backends are pair-only — they must duplicate or
+/// register both complete sockets — so an explicit request for either of them
+/// on a single direction means splice-then-buffered, and no decline is
+/// recorded for the pair-only backend itself.
+fn directional_selection_order(request: BackendRequest) -> &'static [RelayBackend] {
+    match request {
+        BackendRequest::Automatic
+        | BackendRequest::Explicit(RelayBackend::Splice)
+        | BackendRequest::Explicit(RelayBackend::IoUring)
+        | BackendRequest::Explicit(RelayBackend::Sockhash) => {
+            &[RelayBackend::Splice, RelayBackend::Buffered]
+        }
+        BackendRequest::Explicit(RelayBackend::Buffered) => &[RelayBackend::Buffered],
     }
 }
 
@@ -444,6 +585,26 @@ impl BufferPool {
         Ok(())
     }
 
+    /// Relays one direction through a single pooled buffer.
+    async fn relay_direction(
+        &self,
+        source: &mut OwnedReadHalf,
+        destination: &mut OwnedWriteHalf,
+        direction: RelayDirection,
+        ledger: &TransferLedger,
+    ) -> io::Result<()> {
+        let mut lease = self.acquire_single().await?;
+        let buffer = lease.buffer_mut()?;
+        copy_direction(
+            source,
+            destination,
+            buffer,
+            ledger,
+            direction.is_inbound_to_outbound(),
+        )
+        .await
+    }
+
     async fn acquire_pair(&self) -> io::Result<BufferPair> {
         let permit = Arc::clone(&self.inner.permits)
             .acquire_many_owned(2)
@@ -461,6 +622,19 @@ impl BufferPool {
             pool: self.clone(),
             first: Some(first),
             second: Some(second),
+            _permit: permit,
+        })
+    }
+
+    async fn acquire_single(&self) -> io::Result<PooledBuffer> {
+        let permit = Arc::clone(&self.inner.permits)
+            .acquire_owned()
+            .await
+            .map_err(|_| io::Error::other("TCP relay buffer pool is unavailable"))?;
+        let buffer = self.take_buffer()?;
+        Ok(PooledBuffer {
+            pool: self.clone(),
+            buffer: Some(buffer),
             _permit: permit,
         })
     }
@@ -508,6 +682,29 @@ impl Drop for BufferPair {
         }
         if let Some(second) = self.second.take() {
             self.pool.return_buffer(second);
+        }
+    }
+}
+
+/// One pooled buffer and its permit, returned to the pool on every exit path.
+struct PooledBuffer {
+    pool: BufferPool,
+    buffer: Option<Vec<u8>>,
+    _permit: OwnedSemaphorePermit,
+}
+
+impl PooledBuffer {
+    fn buffer_mut(&mut self) -> io::Result<&mut [u8]> {
+        self.buffer
+            .as_deref_mut()
+            .ok_or_else(|| io::Error::other("TCP relay buffer lease is unavailable"))
+    }
+}
+
+impl Drop for PooledBuffer {
+    fn drop(&mut self) {
+        if let Some(buffer) = self.buffer.take() {
+            self.pool.return_buffer(buffer);
         }
     }
 }
@@ -628,6 +825,44 @@ impl SplicePool {
         tokio::try_join!(uplink, downlink)?;
         Ok(Some(()))
     }
+
+    /// Attempts one single-direction splice relay: one permit, two descriptor
+    /// units, one pipe pair.
+    ///
+    /// Every decline happens before any byte moves — pool exhausted, descriptor
+    /// budget denied, or `pipe2` failed — so the caller falls through to the
+    /// buffered backend without replaying anything.
+    async fn try_relay_direction(
+        &self,
+        source: &mut OwnedReadHalf,
+        destination: &mut OwnedWriteHalf,
+        direction: RelayDirection,
+        ledger: &TransferLedger,
+    ) -> io::Result<Option<()>> {
+        let Ok(_permit) = Arc::clone(&self.permits).try_acquire_owned() else {
+            return Ok(None);
+        };
+        let Some(fd_permit) = self.fd_budget.try_acquire(UNITS_SPLICE_DIRECTION) else {
+            return Ok(None);
+        };
+        // The permit is dropped — and its two units released — on every exit
+        // path, together with the pipe pair it accounts for.
+        let pipe = match PipePair::new() {
+            Ok(pipe) => pipe,
+            Err(_) => return Ok(None),
+        };
+        let _fd_permit = fd_permit;
+        splice_owned_direction(
+            source,
+            destination,
+            &pipe,
+            self.chunk_bytes,
+            ledger,
+            direction.is_inbound_to_outbound(),
+        )
+        .await?;
+        Ok(Some(()))
+    }
 }
 
 /// Two pipe pairs and the four descriptor units that account for them.
@@ -682,6 +917,60 @@ async fn splice_direction(
     ledger: &TransferLedger,
     inbound_to_outbound: bool,
 ) -> io::Result<()> {
+    splice_pump(
+        source,
+        destination,
+        pipe,
+        chunk_bytes,
+        ledger,
+        inbound_to_outbound,
+    )
+    .await?;
+    rustix::net::shutdown(destination, rustix::net::Shutdown::Write).map_err(io::Error::from)?;
+    Ok(())
+}
+
+/// Splices one direction between owned socket halves until source EOF.
+///
+/// The halves share their sockets' existing reactor registrations, so
+/// readiness comes from the streams behind them (`AsRef<TcpStream>`) rather
+/// than from new `AsyncFd` registrations, which would fail with a duplicate
+/// epoll entry. Source EOF gracefully shuts down the destination write side
+/// through the owned half; the peer direction is unaffected.
+#[cfg(target_os = "linux")]
+async fn splice_owned_direction(
+    source: &mut OwnedReadHalf,
+    destination: &mut OwnedWriteHalf,
+    pipe: &PipePair,
+    chunk_bytes: usize,
+    ledger: &TransferLedger,
+    inbound_to_outbound: bool,
+) -> io::Result<()> {
+    splice_pump(
+        source.as_ref(),
+        destination.as_ref(),
+        pipe,
+        chunk_bytes,
+        ledger,
+        inbound_to_outbound,
+    )
+    .await?;
+    destination.shutdown().await
+}
+
+/// Moves bytes source -> pipe -> destination until source EOF.
+///
+/// Every transferred byte is recorded in the shared ledger only after the
+/// destination accepted it, so a byte is never claimed before it moved.
+#[cfg(target_os = "linux")]
+async fn splice_pump(
+    source: &TcpStream,
+    destination: &TcpStream,
+    pipe: &PipePair,
+    chunk_bytes: usize,
+    ledger: &TransferLedger,
+    inbound_to_outbound: bool,
+) -> io::Result<()> {
     use tokio::io::Interest;
 
     let flags = rustix::pipe::SpliceFlags::MOVE | rustix::pipe::SpliceFlags::NONBLOCK;
@@ -692,8 +981,6 @@ async fn splice_direction(
             })
             .await?;
         if read == 0 {
-            rustix::net::shutdown(destination, rustix::net::Shutdown::Write)
-                .map_err(io::Error::from)?;
             return Ok(());
         }
 
@@ -747,7 +1034,11 @@ mod tests {
     };
 
     use super::TcpRelay;
-    use crate::{config::RelayPolicy, runtime::FdBudget};
+    use crate::{
+        config::RelayPolicy,
+        runtime::FdBudget,
+        transport::{BackendRequest, DirectionalRelayOutcome, RelayBackend, RelayDirection},
+    };
 
     #[tokio::test(flavor = "current_thread")]
     async fn bounded_buffered_relay_preserves_half_close() {
@@ -1011,5 +1302,207 @@ mod tests {
             client.expect("client must connect"),
             accepted.expect("server must accept").0,
         )
+    }
+
+    /// Drives one owned-half directional relay over loopback.
+    ///
+    /// The receiver's `read_to_end` only terminates when the relay propagates
+    /// the source EOF as a destination write-side shutdown, so every test
+    /// through this helper also proves the half-close semantics.
+    async fn run_one_direction(
+        relay: &TcpRelay,
+        direction: RelayDirection,
+        request: BackendRequest,
+        payload: &[u8],
+    ) -> (io::Result<DirectionalRelayOutcome>, Vec<u8>) {
+        let (mut sender, relay_source) = tcp_pair().await;
+        let (relay_sink, mut receiver) = tcp_pair().await;
+        let (source_reader, _source_writer) = relay_source.into_split();
+        let (_sink_reader, sink_writer) = relay_sink.into_split();
+        let exchange = async {
+            let relay_io = relay.relay_direction(source_reader, sink_writer, direction, request);
+            let sender_io = async {
+                sender.write_all(payload).await?;
+                sender.shutdown().await?;
+                Ok::<_, io::Error>(())
+            };
+            let receiver_io = async {
+                let mut received = Vec::new();
+                receiver.read_to_end(&mut received).await?;
+                Ok::<_, io::Error>(received)
+            };
+            tokio::join!(relay_io, sender_io, receiver_io)
+        };
+        let (outcome, sent, received) = time::timeout(Duration::from_secs(5), exchange)
+            .await
+            .expect("directional relay must complete");
+        sent.expect("sender I/O must succeed");
+        (outcome, received.expect("receiver I/O must succeed"))
+    }
+
+    fn directional_payload() -> Vec<u8> {
+        (0..300_000_u32).map(|value| value as u8).collect()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn directional_buffered_relay_is_byte_exact_in_both_directions() {
+        let relay = TcpRelay::new(
+            &RelayPolicy {
+                buffer_bytes: 4 * 1024,
+                max_pooled_buffers: 2,
+                max_splice_relays: 0,
+                max_io_uring_relays: 0,
+                max_sockhash_relays: 0,
+                max_relay_memory_bytes: u64::MAX,
+                max_pinned_memory_bytes: u64::MAX,
+                splice: false,
+                io_uring: false,
+                sockhash: false,
+            },
+            FdBudget::new(4_096),
+        )
+        .expect("relay policy must compile");
+        let payload = directional_payload();
+
+        for direction in [RelayDirection::Uplink, RelayDirection::Downlink] {
+            let (outcome, received) =
+                run_one_direction(&relay, direction, BackendRequest::Automatic, &payload).await;
+            let outcome = outcome.expect("directional relay must succeed");
+            assert_eq!(received, payload, "{direction} bytes must arrive in order");
+            assert_eq!(
+                outcome.bytes(),
+                u64::try_from(payload.len()).unwrap_or(u64::MAX)
+            );
+            assert_eq!(outcome.backend(), RelayBackend::Buffered);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn directional_splice_relay_is_byte_exact_in_both_directions() {
+        let relay = TcpRelay::new(&splice_policy(), FdBudget::new(4_096))
+            .expect("relay policy must compile");
+        let payload = directional_payload();
+
+        for direction in [RelayDirection::Uplink, RelayDirection::Downlink] {
+            let (outcome, received) =
+                run_one_direction(&relay, direction, BackendRequest::Automatic, &payload).await;
+            let outcome = outcome.expect("directional splice relay must succeed");
+            assert_eq!(received, payload, "{direction} bytes must arrive in order");
+            assert_eq!(
+                outcome.bytes(),
+                u64::try_from(payload.len()).unwrap_or(u64::MAX)
+            );
+            assert_eq!(outcome.backend(), RelayBackend::Splice);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_directional_splice_relay_reserves_two_descriptor_units() {
+        let budget = FdBudget::new(64);
+        let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
+        assert_eq!(budget.in_use(), 0);
+
+        let payload = directional_payload();
+        let (outcome, received) = run_one_direction(
+            &relay,
+            RelayDirection::Uplink,
+            BackendRequest::Automatic,
+            &payload,
+        )
+        .await;
+        let outcome = outcome.expect("directional splice relay must succeed");
+        assert_eq!(outcome.backend(), RelayBackend::Splice);
+        assert_eq!(received.len(), payload.len());
+        assert_eq!(
+            budget.peak_in_use(),
+            u64::from(crate::runtime::UNITS_SPLICE_DIRECTION),
+            "one pipe pair is exactly two descriptor units"
+        );
+        assert_eq!(
+            budget.in_use(),
+            0,
+            "the pipe descriptors and their permit must be released on completion"
+        );
+        assert_eq!(budget.underflows(), 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn repeated_directional_splice_relays_return_descriptor_units_to_baseline() {
+        let budget = FdBudget::new(64);
+        let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
+        for _ in 0..8 {
+            let (outcome, _) = run_one_direction(
+                &relay,
+                RelayDirection::Downlink,
+                BackendRequest::Automatic,
+                b"x",
+            )
+            .await;
+            outcome.expect("directional relay must succeed");
+            assert_eq!(
+                budget.in_use(),
+                0,
+                "every cycle must return the counter to baseline"
+            );
+        }
+        assert_eq!(budget.underflows(), 0);
+        assert!(budget.peak_in_use() <= u64::from(crate::runtime::UNITS_SPLICE_DIRECTION));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn directional_splice_declines_to_buffered_with_bytes_intact() {
+        // One unit cannot satisfy the two a directional splice relay requires,
+        // so the backend must decline *before* `pipe2` and fall through.
+        let budget = FdBudget::new(1);
+        let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
+        let payload = directional_payload();
+
+        let (outcome, received) = run_one_direction(
+            &relay,
+            RelayDirection::Uplink,
+            BackendRequest::Automatic,
+            &payload,
+        )
+        .await;
+        let outcome = outcome.expect("the buffered backend must carry the direction");
+        assert_eq!(received, payload);
+        assert_eq!(outcome.backend(), RelayBackend::Buffered);
+        assert_eq!(
+            outcome.bytes(),
+            u64::try_from(payload.len()).unwrap_or(u64::MAX)
+        );
+        assert_eq!(budget.in_use(), 0);
+        assert!(
+            budget.denials() >= 1,
+            "the decline must be recorded as a descriptor denial, not hidden"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_explicit_buffered_directional_request_bypasses_splice() {
+        let budget = FdBudget::new(64);
+        let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
+        let payload = directional_payload();
+
+        let (outcome, received) = run_one_direction(
+            &relay,
+            RelayDirection::Uplink,
+            BackendRequest::Explicit(RelayBackend::Buffered),
+            &payload,
+        )
+        .await;
+        let outcome = outcome.expect("explicit buffered direction must succeed");
+        assert_eq!(received, payload);
+        assert_eq!(outcome.backend(), RelayBackend::Buffered);
+        assert_eq!(
+            budget.peak_in_use(),
+            0,
+            "a buffered direction never reserves splice descriptors"
+        );
     }
 }

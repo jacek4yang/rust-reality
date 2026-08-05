@@ -26,7 +26,9 @@ use super::{
     reality::RealityEstablished,
     routing::{AssetMatcher, RouteResolutionError, RoutingCompileError, RoutingTable},
 };
-use crate::transport::{RelayBackend, RelayContext, RelayOutcome, TcpRelay};
+use crate::transport::{
+    BackendRequest, RelayBackend, RelayContext, RelayDirection, RelayOutcome, TcpRelay,
+};
 
 const MAX_REQUEST_HEADER_SIZE: usize = 533;
 const MAX_REQUEST_BUFFER_SIZE: usize = MAX_REQUEST_HEADER_SIZE + MAX_PLAINTEXT_LEN;
@@ -50,6 +52,12 @@ pub struct VisionRelayStats {
     uplink_direct: bool,
     downlink_direct: bool,
     relay_backend: Option<RelayBackend>,
+    uplink_direct_at_bytes: u64,
+    downlink_direct_at_bytes: u64,
+    uplink_backend: Option<RelayBackend>,
+    downlink_backend: Option<RelayBackend>,
+    uplink_handoff_delay_us: u64,
+    downlink_handoff_delay_us: u64,
 }
 
 impl VisionRelayStats {
@@ -81,6 +89,42 @@ impl VisionRelayStats {
     #[must_use]
     pub const fn relay_backend(self) -> Option<RelayBackend> {
         self.relay_backend
+    }
+
+    /// Returns uplink bytes delivered before the uplink Direct boundary.
+    #[must_use]
+    pub const fn uplink_direct_at_bytes(self) -> u64 {
+        self.uplink_direct_at_bytes
+    }
+
+    /// Returns downlink bytes delivered before the downlink Direct boundary.
+    #[must_use]
+    pub const fn downlink_direct_at_bytes(self) -> u64 {
+        self.downlink_direct_at_bytes
+    }
+
+    /// Returns the backend that moved the uplink's raw bytes, when direct.
+    #[must_use]
+    pub const fn uplink_backend(self) -> Option<RelayBackend> {
+        self.uplink_backend
+    }
+
+    /// Returns the backend that moved the downlink's raw bytes, when direct.
+    #[must_use]
+    pub const fn downlink_backend(self) -> Option<RelayBackend> {
+        self.downlink_backend
+    }
+
+    /// Returns microseconds from the uplink boundary to its raw relay start.
+    #[must_use]
+    pub const fn uplink_handoff_delay_us(self) -> u64 {
+        self.uplink_handoff_delay_us
+    }
+
+    /// Returns microseconds from the downlink boundary to its raw relay start.
+    #[must_use]
+    pub const fn downlink_handoff_delay_us(self) -> u64 {
+        self.downlink_handoff_delay_us
     }
 }
 
@@ -208,6 +252,12 @@ impl VisionHandler {
                 uplink_direct: false,
                 downlink_direct: false,
                 relay_backend: None,
+                uplink_direct_at_bytes: 0,
+                downlink_direct_at_bytes: 0,
+                uplink_backend: None,
+                downlink_backend: None,
+                uplink_handoff_delay_us: 0,
+                downlink_handoff_delay_us: 0,
             });
         };
         let (destination, outbound_permit) = connection.into_parts();
@@ -246,12 +296,22 @@ impl VisionHandler {
         let (handed_up, handed_down) = handed_off.map_or((0, 0), |outcome| {
             (outcome.inbound_to_outbound(), outcome.outbound_to_inbound())
         });
+        let pair_backend = handed_off.map(RelayOutcome::backend);
         Ok(VisionRelayStats {
             uplink_bytes: uplink.bytes.saturating_add(handed_up),
             downlink_bytes: downlink.bytes.saturating_add(handed_down),
             uplink_direct: uplink.direct,
             downlink_direct: downlink.direct,
-            relay_backend: handed_off.map(RelayOutcome::backend),
+            relay_backend: pair_backend,
+            uplink_direct_at_bytes: uplink.direct_at_bytes,
+            downlink_direct_at_bytes: downlink.direct_at_bytes,
+            // A pair outcome exists only when both directions committed to the
+            // bilateral handoff, so a directional backend and the pair backend
+            // can never both be present for one direction.
+            uplink_backend: uplink.backend.or(pair_backend),
+            downlink_backend: downlink.backend.or(pair_backend),
+            uplink_handoff_delay_us: uplink.handoff_delay_us,
+            downlink_handoff_delay_us: downlink.handoff_delay_us,
         })
     }
 }
@@ -338,6 +398,14 @@ struct DirectionStats {
     /// Byte counts produced by the unified raw relay, present only on the
     /// direction that deposited its sockets last and therefore ran the relay.
     handoff: Option<RelayOutcome>,
+    /// The backend that moved this direction's raw bytes: the directional
+    /// backend for an independent relay, or the pair backend for the direction
+    /// that ran the bilateral relay.
+    backend: Option<RelayBackend>,
+    /// Bytes this direction had delivered when it reached its Direct boundary.
+    direct_at_bytes: u64,
+    /// Microseconds from the boundary to the deposit or directional relay start.
+    handoff_delay_us: u64,
 }
 
 impl DirectionStats {
@@ -346,14 +414,26 @@ impl DirectionStats {
             bytes,
             direct: false,
             handoff: None,
+            backend: None,
+            direct_at_bytes: 0,
+            handoff_delay_us: 0,
         }
     }
 
-    const fn direct(bytes: u64, handoff: Option<RelayOutcome>) -> Self {
+    const fn direct(
+        bytes: u64,
+        handoff: Option<RelayOutcome>,
+        backend: Option<RelayBackend>,
+        direct_at_bytes: u64,
+        handoff_delay_us: u64,
+    ) -> Self {
         Self {
             bytes,
             direct: true,
             handoff,
+            backend,
+            direct_at_bytes,
+            handoff_delay_us,
         }
     }
 }
@@ -447,22 +527,24 @@ async fn relay_uplink(
 /// Relays the raw uplink after an authenticated Direct boundary.
 ///
 /// Every decoded plaintext byte was already written to the destination in order
-/// by the caller, so this direction is at the exact raw boundary. It advances
-/// through `DirectPending` to `RawReady` and then either hands both complete
-/// sockets to the unified relay — only once the peer direction has also reached
-/// `RawReady` — or, when the peer can never become raw, relays this single
-/// direction with one bounded userspace buffer.
+/// by the caller, so this direction is at the exact raw boundary. The reader
+/// behind `client` consumes exactly one TLS record per socket read and the
+/// decoder emitted every trailing plaintext byte of the boundary record, so no
+/// post-boundary raw byte sits in any userspace buffer.
+///
+/// The direction then decides exactly once, after the bounded pair window
+/// [`peer_pair_window`]: when the peer is at its own raw boundary or already
+/// committed to the pair, this direction deposits its halves for the bilateral
+/// relay; otherwise it relays the direction independently. Neither branch ever
+/// waits for the peer.
 async fn finish_uplink_direct(
     client: TlsApplicationReader<OwnedReadHalf>,
-    mut destination: OwnedWriteHalf,
+    destination: OwnedWriteHalf,
     bytes: u64,
     context: &SessionContext<'_>,
 ) -> Result<DirectionStats, VisionSessionError> {
-    let SessionContext {
-        timeout,
-        handoff,
-        relay,
-    } = *context;
+    let SessionContext { handoff, relay, .. } = *context;
+    let handoff_started = Instant::now();
     handoff
         .advance(Direction::Uplink, DirectionState::DirectPending)
         .map_err(VisionSessionError::DirectTransition)?;
@@ -470,57 +552,38 @@ async fn finish_uplink_direct(
         .advance(Direction::Uplink, DirectionState::RawReady)
         .map_err(VisionSessionError::DirectTransition)?;
 
-    let mut raw_client = client.into_inner();
-    let mut copied = 0_u64;
-    let mut buffer = raw_buffer()?;
-    let mut versions = handoff.subscribe();
-
-    loop {
-        if handoff.both_raw_ready() {
-            let recovered = handoff
-                .deposit_uplink(raw_client, destination)
-                .map_err(VisionSessionError::Handoff)?;
-            return run_handoff(relay, recovered, bytes.saturating_add(copied)).await;
-        }
-        if handoff.peer_is_settled(Direction::Uplink) {
-            let extra = copy_before(&mut raw_client, &mut destination, timeout).await?;
-            shutdown_before(&mut destination, timeout).await?;
-            settle(handoff, Direction::Uplink, DirectionState::Closed);
-            return Ok(DirectionStats::direct(
-                bytes.saturating_add(copied).saturating_add(extra),
-                None,
-            ));
-        }
-
-        tokio::select! {
-            // `AsyncReadExt::read` is cancellation-safe on a TCP half, so losing
-            // this branch to a peer state change cannot consume a raw byte.
-            read = read_before(&mut raw_client, &mut buffer, timeout) => {
-                let read = read?;
-                if read == 0 {
-                    if handoff.both_raw_ready() {
-                        let recovered = handoff
-                            .deposit_uplink(raw_client, destination)
-                            .map_err(VisionSessionError::Handoff)?;
-                        return run_handoff(relay, recovered, bytes.saturating_add(copied)).await;
-                    }
-                    shutdown_before(&mut destination, timeout).await?;
-                    settle(handoff, Direction::Uplink, DirectionState::Closed);
-                    return Ok(DirectionStats::direct(bytes.saturating_add(copied), None));
-                }
-                let payload = buffer
-                    .get(..read)
-                    .ok_or(VisionSessionError::DestinationTruncatedTlsRecord)?;
-                write_all_before(&mut destination, payload, timeout).await?;
-                copied = copied.saturating_add(length_u64(read));
-            }
-            changed = versions.changed() => {
-                changed.map_err(|_| VisionSessionError::Handoff(io::Error::other(
-                    "Vision direction coordinator closed",
-                )))?;
-            }
-        }
+    let raw_client = client.into_inner();
+    if peer_pair_window(handoff, Direction::Uplink).await {
+        handoff
+            .advance(Direction::Uplink, DirectionState::PairPending)
+            .map_err(VisionSessionError::DirectTransition)?;
+        let recovered = handoff
+            .deposit_uplink(raw_client, destination)
+            .map_err(VisionSessionError::Handoff)?;
+        return run_handoff(
+            relay,
+            handoff,
+            Direction::Uplink,
+            recovered,
+            bytes,
+            handoff_started,
+        )
+        .await;
     }
+
+    handoff
+        .advance(Direction::Uplink, DirectionState::Relaying)
+        .map_err(VisionSessionError::DirectTransition)?;
+    run_directional(
+        relay,
+        handoff,
+        Direction::Uplink,
+        raw_client,
+        destination,
+        bytes,
+        handoff_started,
+    )
+    .await
 }
 
 async fn relay_downlink(
@@ -666,17 +729,25 @@ where
 ///
 /// The Direct-carrying Vision frame has already been sealed and written to the
 /// client, so this direction is at its exact raw boundary with nothing pending.
+/// Starting the raw relay only after that final framed write has fully
+/// completed is the ordering Xray commit f926ee4a protects: a splice that
+/// raced the frame would interleave raw bytes with framed ciphertext. The
+/// nested reader behind `destination` consumes exactly one TLS record per
+/// read, so no post-boundary raw byte sits in any userspace buffer.
+///
+/// The direction then decides exactly once, after the bounded pair window
+/// [`peer_pair_window`]: when the peer is at its own raw boundary or already
+/// committed to the pair, this direction deposits its halves for the bilateral
+/// relay; otherwise it relays the direction independently. Neither branch ever
+/// waits for the peer.
 async fn finish_downlink_direct(
-    mut destination: OwnedReadHalf,
+    destination: OwnedReadHalf,
     client: TlsApplicationWriter<OwnedWriteHalf>,
     bytes: u64,
     context: &SessionContext<'_>,
 ) -> Result<DirectionStats, VisionSessionError> {
-    let SessionContext {
-        timeout,
-        handoff,
-        relay,
-    } = *context;
+    let SessionContext { handoff, relay, .. } = *context;
+    let handoff_started = Instant::now();
     handoff
         .advance(Direction::Downlink, DirectionState::DirectPending)
         .map_err(VisionSessionError::DirectTransition)?;
@@ -684,53 +755,85 @@ async fn finish_downlink_direct(
         .advance(Direction::Downlink, DirectionState::RawReady)
         .map_err(VisionSessionError::DirectTransition)?;
 
-    let mut raw_client = client.into_inner();
-    let mut copied = 0_u64;
-    let mut buffer = raw_buffer()?;
-    let mut versions = handoff.subscribe();
+    let raw_client = client.into_inner();
+    if peer_pair_window(handoff, Direction::Downlink).await {
+        handoff
+            .advance(Direction::Downlink, DirectionState::PairPending)
+            .map_err(VisionSessionError::DirectTransition)?;
+        let recovered = handoff
+            .deposit_downlink(destination, raw_client)
+            .map_err(VisionSessionError::Handoff)?;
+        return run_handoff(
+            relay,
+            handoff,
+            Direction::Downlink,
+            recovered,
+            bytes,
+            handoff_started,
+        )
+        .await;
+    }
 
-    loop {
-        if handoff.both_raw_ready() {
-            let recovered = handoff
-                .deposit_downlink(destination, raw_client)
-                .map_err(VisionSessionError::Handoff)?;
-            return run_handoff(relay, recovered, bytes.saturating_add(copied)).await;
-        }
-        if handoff.peer_is_settled(Direction::Downlink) {
-            let extra = copy_before(&mut destination, &mut raw_client, timeout).await?;
-            shutdown_before(&mut raw_client, timeout).await?;
-            settle(handoff, Direction::Downlink, DirectionState::Closed);
-            return Ok(DirectionStats::direct(
-                bytes.saturating_add(copied).saturating_add(extra),
+    handoff
+        .advance(Direction::Downlink, DirectionState::Relaying)
+        .map_err(VisionSessionError::DirectTransition)?;
+    run_directional(
+        relay,
+        handoff,
+        Direction::Downlink,
+        destination,
+        raw_client,
+        bytes,
+        handoff_started,
+    )
+    .await
+}
+
+/// Runs one independent directional raw relay at a Direct boundary.
+///
+/// A benign peer-teardown race (`BrokenPipe` or `ConnectionReset`) closes the
+/// direction cleanly with its accumulated stats instead of failing the whole
+/// session; errors from the framed and authentication phases never reach here.
+async fn run_directional(
+    relay: &TcpRelay,
+    handoff: &DirectHandoff,
+    direction: Direction,
+    source: OwnedReadHalf,
+    destination: OwnedWriteHalf,
+    bytes: u64,
+    handoff_started: Instant,
+) -> Result<DirectionStats, VisionSessionError> {
+    let delay_us = micros(handoff_started.elapsed());
+    let relay_direction = match direction {
+        Direction::Uplink => RelayDirection::Uplink,
+        Direction::Downlink => RelayDirection::Downlink,
+    };
+    match relay
+        .relay_direction(
+            source,
+            destination,
+            relay_direction,
+            BackendRequest::Automatic,
+        )
+        .await
+    {
+        Ok(outcome) => {
+            settle(handoff, direction, DirectionState::Closed);
+            Ok(DirectionStats::direct(
+                bytes.saturating_add(outcome.bytes()),
                 None,
-            ));
+                Some(outcome.backend()),
+                bytes,
+                delay_us,
+            ))
         }
-
-        tokio::select! {
-            read = read_before(&mut destination, &mut buffer, timeout) => {
-                let read = read?;
-                if read == 0 {
-                    if handoff.both_raw_ready() {
-                        let recovered = handoff
-                            .deposit_downlink(destination, raw_client)
-                            .map_err(VisionSessionError::Handoff)?;
-                        return run_handoff(relay, recovered, bytes.saturating_add(copied)).await;
-                    }
-                    shutdown_before(&mut raw_client, timeout).await?;
-                    settle(handoff, Direction::Downlink, DirectionState::Closed);
-                    return Ok(DirectionStats::direct(bytes.saturating_add(copied), None));
-                }
-                let payload = buffer
-                    .get(..read)
-                    .ok_or(VisionSessionError::DestinationTruncatedTlsRecord)?;
-                write_all_before(&mut raw_client, payload, timeout).await?;
-                copied = copied.saturating_add(length_u64(read));
-            }
-            changed = versions.changed() => {
-                changed.map_err(|_| VisionSessionError::Handoff(io::Error::other(
-                    "Vision direction coordinator closed",
-                )))?;
-            }
+        Err(error) if is_benign_teardown(&error) => {
+            settle(handoff, direction, DirectionState::Closed);
+            Ok(DirectionStats::direct(bytes, None, None, bytes, delay_us))
+        }
+        Err(error) => {
+            settle(handoff, direction, DirectionState::Failed);
+            Err(VisionSessionError::Relay(error))
         }
     }
 }
@@ -739,20 +842,64 @@ async fn finish_downlink_direct(
 ///
 /// A `None` deposit means the peer direction still holds one half pair; that
 /// peer becomes the last depositor and runs the relay instead. Exactly one of
-/// the two directions therefore ever drives the raw relay.
+/// the two directions therefore ever drives the raw relay. The first depositor
+/// deliberately remains in `PairPending` rather than transitioning `Closed`:
+/// a peer still inside its pair window must keep observing a pairable state
+/// until it deposits — transitioning `Closed` here would strand the deposited
+/// halves with no runner. The coordinator is per-session, so the lingering
+/// state is dropped with it.
 async fn run_handoff(
     relay: &TcpRelay,
+    handoff: &DirectHandoff,
+    direction: Direction,
     recovered: Option<super::direct::RecoveredSockets>,
     bytes: u64,
+    handoff_started: Instant,
 ) -> Result<DirectionStats, VisionSessionError> {
+    let delay_us = micros(handoff_started.elapsed());
     let Some(sockets) = recovered else {
-        return Ok(DirectionStats::direct(bytes, None));
+        return Ok(DirectionStats::direct(bytes, None, None, bytes, delay_us));
     };
-    let outcome = relay
+    match relay
         .relay_owned(sockets.client, sockets.destination, RelayContext::owned())
         .await
-        .map_err(VisionSessionError::Relay)?;
-    Ok(DirectionStats::direct(bytes, Some(outcome)))
+    {
+        Ok(outcome) => {
+            settle(handoff, direction, DirectionState::Closed);
+            Ok(DirectionStats::direct(
+                bytes,
+                Some(outcome),
+                Some(outcome.backend()),
+                bytes,
+                delay_us,
+            ))
+        }
+        Err(error) if is_benign_teardown(&error) => {
+            settle(handoff, direction, DirectionState::Closed);
+            Ok(DirectionStats::direct(bytes, None, None, bytes, delay_us))
+        }
+        Err(error) => {
+            settle(handoff, direction, DirectionState::Failed);
+            Err(VisionSessionError::Relay(error))
+        }
+    }
+}
+
+/// Returns whether a raw-stage I/O error is a benign peer-teardown race.
+///
+/// A reset or broken pipe once the raw relay owns the sockets means the peer
+/// tore the connection down mid-transfer. The session's accumulated counts
+/// stay valid and must not be suppressed by a session-level relay error.
+fn is_benign_teardown(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
+    )
+}
+
+/// Converts a duration to microseconds, saturating at the representable bound.
+fn micros(duration: Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
 
 /// Records a terminal direction state without masking the original failure.
@@ -763,14 +910,26 @@ fn settle(handoff: &DirectHandoff, direction: Direction, state: DirectionState) 
     let _ignored = handoff.advance(direction, state);
 }
 
-/// Allocates one bounded raw-relay buffer for a mixed one-way Direct session.
-fn raw_buffer() -> Result<Vec<u8>, VisionSessionError> {
-    let mut buffer = Vec::new();
-    buffer
-        .try_reserve_exact(MAX_PLAINTEXT_LEN)
-        .map_err(|_| VisionSessionError::AllocationFailed)?;
-    buffer.resize(MAX_PLAINTEXT_LEN, 0);
-    Ok(buffer)
+/// Gives the peer a bounded chance to commit to the bilateral pair.
+///
+/// Two scheduling points — never a sleep, a timer, or a wait on the peer — let
+/// a peer whose own boundary flight is already queued observe `RawReady` and
+/// commit before this direction decides. Both relay futures share one task
+/// that is polled before the client and destination futures, so one yield
+/// cannot span even a single peer reaction; after the second yield a peer
+/// that is still framed will never reach a pairable state in time, and this
+/// direction relays independently.
+async fn peer_pair_window(handoff: &DirectHandoff, direction: Direction) -> bool {
+    for attempt in 0..3 {
+        if handoff.peer_can_pair(direction) {
+            return true;
+        }
+        if attempt == 2 {
+            return false;
+        }
+        tokio::task::yield_now().await;
+    }
+    false
 }
 
 /// Writes exactly one Vision frame straight into the final TLS AEAD plaintext.
@@ -1177,27 +1336,6 @@ where
         .map_err(VisionSessionError::Io)
 }
 
-async fn copy_before<R, W>(
-    reader: &mut R,
-    writer: &mut W,
-    timeout: Duration,
-) -> Result<u64, VisionSessionError>
-where
-    R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin,
-{
-    let mut buffer = vec![0_u8; MAX_PLAINTEXT_LEN];
-    let mut copied = 0_u64;
-    loop {
-        let read = read_before(reader, &mut buffer, timeout).await?;
-        if read == 0 {
-            return Ok(copied);
-        }
-        write_all_before(writer, &buffer[..read], timeout).await?;
-        copied = copied.saturating_add(length_u64(read));
-    }
-}
-
 fn length_u64(length: usize) -> u64 {
     u64::try_from(length).unwrap_or(u64::MAX)
 }
@@ -1235,6 +1373,7 @@ mod tests {
             reality::RealityEstablished,
             routing::{EmptyAssetMatcher, RoutingTable},
         },
+        transport::RelayBackend,
     };
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -1462,10 +1601,24 @@ mod tests {
         );
         assert!(stats.uplink_direct());
         assert!(stats.downlink_direct());
+        // The uplink reaches its Direct boundary while the downlink is still
+        // framed, so each direction relays independently rather than waiting
+        // to form a pair.
+        assert_eq!(stats.relay_backend(), None);
+        assert_eq!(stats.uplink_backend(), Some(RelayBackend::Buffered));
+        assert_eq!(stats.downlink_backend(), Some(RelayBackend::Buffered));
+        assert_eq!(
+            stats.uplink_direct_at_bytes(),
+            length_u64(b"up-framed".len())
+        );
+        assert_eq!(
+            stats.downlink_direct_at_bytes(),
+            length_u64(expected_framed.len())
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn one_way_direct_keeps_the_pair_in_mixed_userspace_relay() {
+    async fn one_way_direct_relays_the_direction_independently() {
         let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("destination must bind");
@@ -1491,10 +1644,12 @@ mod tests {
             VisionCommand::Direct,
         );
         // The destination never speaks TLS, so the downlink can never reach a
-        // Direct boundary. The uplink is raw and the downlink stays framed:
-        // exactly the one-way case that must not hand the pair to a backend.
+        // Direct boundary. The uplink must therefore relay its raw direction
+        // independently — reporting a backend — while the downlink continues
+        // framed outer TLS undisturbed.
         let uplink_raw = vec![0x5a_u8; 96 * 1024];
-        let downlink_plain = b"plain-http-response";
+        let downlink_part_one = b"plain-http-part-one";
+        let downlink_part_two = b"plain-http-part-two";
 
         let expected_uplink = uplink_raw.clone();
         let exchange = async {
@@ -1548,9 +1703,14 @@ mod tests {
             };
             let destination_io = async move {
                 let (mut destination, _) = destination_listener.accept().await?;
-                destination.write_all(downlink_plain).await?;
+                destination.write_all(downlink_part_one).await?;
+                // `read_to_end` only completes once the directional uplink
+                // relay propagated the client EOF as a write-side shutdown of
+                // the destination socket. Writing *after* that EOF proves the
+                // half-close left the peer direction fully operational.
                 let mut request = Vec::new();
                 destination.read_to_end(&mut request).await?;
+                destination.write_all(downlink_part_two).await?;
                 destination.shutdown().await?;
                 Ok::<_, io::Error>(request)
             };
@@ -1563,13 +1723,18 @@ mod tests {
         let response = client_result.expect("client I/O must succeed");
         let mut expected = b"up-framed".to_vec();
         expected.extend_from_slice(&expected_uplink);
+        let mut expected_downlink = downlink_part_one.to_vec();
+        expected_downlink.extend_from_slice(downlink_part_two);
 
         assert_eq!(
             destination_result.expect("destination I/O must succeed"),
             expected,
             "every raw uplink byte must reach the destination in order"
         );
-        assert_eq!(response, downlink_plain);
+        assert_eq!(
+            response, expected_downlink,
+            "the framed downlink must survive the directional uplink's half-close"
+        );
         assert!(
             stats.uplink_direct(),
             "the uplink authenticated a Direct command"
@@ -1579,7 +1744,24 @@ mod tests {
             "a non-TLS destination must never reach a Direct boundary"
         );
         assert_eq!(stats.uplink_bytes(), length_u64(expected.len()));
-        assert_eq!(stats.downlink_bytes(), length_u64(downlink_plain.len()));
+        assert_eq!(stats.downlink_bytes(), length_u64(expected_downlink.len()));
+        assert_eq!(
+            stats.uplink_backend(),
+            Some(RelayBackend::Buffered),
+            "the directional uplink relay must report the backend that moved its bytes"
+        );
+        assert_eq!(stats.downlink_backend(), None);
+        assert_eq!(
+            stats.relay_backend(),
+            None,
+            "no bilateral handoff happened for a one-way Direct session"
+        );
+        assert_eq!(
+            stats.uplink_direct_at_bytes(),
+            length_u64(b"up-framed".len()),
+            "the boundary byte count excludes the raw phase"
+        );
+        assert_eq!(stats.downlink_direct_at_bytes(), 0);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1603,8 +1785,34 @@ mod tests {
             ..ResourceGovernorConfig::default()
         };
         let handler = direct_handler(&governor);
-        let request =
-            vision_request_with_command(destination_address.port(), b"", VisionCommand::Direct);
+        // The client's first frame continues; the client follows with its own
+        // Direct frame only after the server sent its Direct frame, which is
+        // the real Vision flow. The downlink therefore reaches its boundary
+        // first and is still at `RawReady` when the uplink arrives, so the
+        // uplink commits to the pair and the downlink — resuming while the
+        // peer is `PairPending` — deposits last and runs the bilateral relay.
+        let mut addons = vec![0x0a, 0x10];
+        addons.extend_from_slice(VISION_FLOW.as_bytes());
+        let mut request = Vec::new();
+        request.push(VERSION);
+        request.extend_from_slice(USER.as_bytes());
+        request.push(u8::try_from(addons.len()).unwrap_or(u8::MAX));
+        request.extend_from_slice(&addons);
+        request.push(Command::Tcp.as_byte());
+        request.extend_from_slice(&destination_address.port().to_be_bytes());
+        request.push(1);
+        request.extend_from_slice(&Ipv4Addr::LOCALHOST.octets());
+        let mut uplink_encoder = VisionEncoder::with_padding_seed(USER, &[0x5a; 44]);
+        let mut first_frame = Vec::new();
+        uplink_encoder
+            .encode(
+                b"up-framed",
+                VisionCommand::Continue,
+                false,
+                &mut first_frame,
+            )
+            .expect("Vision payload must encode");
+        request.extend_from_slice(&first_frame);
         let nested_server_hello = record(22, &server_hello(0x1301, true));
         let nested_application = record(23, b"encrypted-handshake");
         let uplink_raw: Vec<u8> = (0..512_u32 * 1024).map(|value| value as u8).collect();
@@ -1612,7 +1820,6 @@ mod tests {
             .map(|value| (value >> 3) as u8)
             .collect();
 
-        let expected_up = uplink_raw.clone();
         let expected_down = downlink_raw.clone();
         let exchange = async {
             let handle = handler.handle(established);
@@ -1653,6 +1860,21 @@ mod tests {
                         .map_err(io::Error::other)?;
                     framed.extend_from_slice(&decoded);
                 }
+
+                let mut direct_frame = Vec::new();
+                uplink_encoder
+                    .encode(b"", VisionCommand::Direct, false, &mut direct_frame)
+                    .map_err(io::Error::other)?;
+                let mut direct_record = Vec::new();
+                client_write_records
+                    .seal_into(
+                        ContentType::ApplicationData,
+                        &direct_frame,
+                        0,
+                        &mut direct_record,
+                    )
+                    .map_err(io::Error::other)?;
+                client.write_all(&direct_record).await?;
 
                 let (mut reader, mut writer) = client.into_split();
                 let send = async move {
@@ -1701,7 +1923,8 @@ mod tests {
         let received_up = destination_result.expect("destination I/O must succeed");
         let mut expected_framed = nested_server_hello;
         expected_framed.extend_from_slice(&nested_application);
-
+        let mut expected_up = b"up-framed".to_vec();
+        expected_up.extend_from_slice(&uplink_raw);
         assert_eq!(framed, expected_framed);
         assert_eq!(
             received_up.len(),
@@ -1721,6 +1944,164 @@ mod tests {
         assert_eq!(
             stats.downlink_bytes(),
             length_u64(expected_framed.len() + expected_down.len())
+        );
+        assert_eq!(
+            stats.relay_backend(),
+            Some(RelayBackend::Buffered),
+            "both directions paired, so the pair relay moved the raw bytes"
+        );
+        assert_eq!(stats.uplink_backend(), Some(RelayBackend::Buffered));
+        assert_eq!(stats.downlink_backend(), Some(RelayBackend::Buffered));
+        assert_eq!(
+            stats.uplink_direct_at_bytes(),
+            length_u64(b"up-framed".len())
+        );
+        assert_eq!(
+            stats.downlink_direct_at_bytes(),
+            length_u64(expected_framed.len())
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn one_way_direct_downlink_relays_independently() {
+        let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("destination must bind");
+        let destination_address = destination_listener
+            .local_addr()
+            .expect("destination address must exist");
+        let (mut client, server) = tcp_pair().await;
+        let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
+        let established = RealityEstablished::from_test_parts(
+            TlsApplicationIo::new(server, established_tls),
+            UserRegistry::new([USER]),
+        );
+        let governor = ResourceGovernorConfig {
+            connect_timeout_ms: 1_000,
+            handshake_timeout_ms: 1_000,
+            fallback_timeout_ms: 1_000,
+            ..ResourceGovernorConfig::default()
+        };
+        let handler = direct_handler(&governor);
+        // The client ends its Vision flow (`End`), so the uplink stays in
+        // framed pass-through and never reaches a Direct boundary. The
+        // destination speaks TLS 1.3, so the downlink goes Direct alone and
+        // must relay its direction independently.
+        let request =
+            vision_request_with_command(destination_address.port(), b"up-ping", VisionCommand::End);
+        let nested_server_hello = record(22, &server_hello(0x1301, true));
+        let nested_application = record(23, b"encrypted-handshake");
+
+        let exchange = async {
+            let handle = handler.handle(established);
+            let client_io = async {
+                let mut request_record = Vec::new();
+                client_write_records
+                    .seal_into(
+                        ContentType::ApplicationData,
+                        &request,
+                        0,
+                        &mut request_record,
+                    )
+                    .map_err(io::Error::other)?;
+                client.write_all(&request_record).await?;
+                let mut more_record = Vec::new();
+                client_write_records
+                    .seal_into(
+                        ContentType::ApplicationData,
+                        b"up-more",
+                        0,
+                        &mut more_record,
+                    )
+                    .map_err(io::Error::other)?;
+                client.write_all(&more_record).await?;
+                let mut close_record = Vec::new();
+                client_write_records
+                    .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                    .map_err(io::Error::other)?;
+                client.write_all(&close_record).await?;
+
+                let mut decoder = VisionDecoder::new(USER);
+                let mut decoded = Vec::new();
+                let mut framed = Vec::new();
+                let mut response_header = true;
+                while decoder.mode() != VisionMode::Direct {
+                    let mut record = read_tls_record(&mut client, TEST_TIMEOUT)
+                        .await
+                        .map_err(io::Error::other)?
+                        .into_wire();
+                    let opened = client_read_records
+                        .open_in_place(&mut record)
+                        .map_err(io::Error::other)?;
+                    let plaintext = opened.plaintext();
+                    let vision = if response_header {
+                        response_header = false;
+                        &plaintext[2..]
+                    } else {
+                        plaintext
+                    };
+                    let _ = decoder
+                        .decode(vision, &mut decoded)
+                        .map_err(io::Error::other)?;
+                    framed.extend_from_slice(&decoded);
+                }
+                let mut raw_response = Vec::new();
+                client.read_to_end(&mut raw_response).await?;
+                Ok::<_, io::Error>((framed, raw_response))
+            };
+            let server_hello_record = nested_server_hello.clone();
+            let application_record = nested_application.clone();
+            let destination_io = async move {
+                let (mut destination, _) = destination_listener.accept().await?;
+                destination.write_all(&server_hello_record).await?;
+                destination.write_all(&application_record).await?;
+                destination.write_all(b"down-raw").await?;
+                destination.shutdown().await?;
+                let mut received = Vec::new();
+                destination.read_to_end(&mut received).await?;
+                Ok::<_, io::Error>(received)
+            };
+            tokio::join!(handle, client_io, destination_io)
+        };
+        let (stats, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+            .await
+            .expect("downlink direct exchange must not time out");
+        let stats = stats.expect("downlink direct handler must succeed");
+        let (framed, raw_response) = client_result.expect("client I/O must succeed");
+        let mut expected_framed = nested_server_hello;
+        expected_framed.extend_from_slice(&nested_application);
+
+        assert_eq!(
+            destination_result.expect("destination I/O must succeed"),
+            b"up-pingup-more",
+            "the framed uplink pass-through must stay undisturbed"
+        );
+        assert_eq!(framed, expected_framed);
+        assert_eq!(raw_response, b"down-raw");
+        assert!(
+            !stats.uplink_direct(),
+            "an End flow never reaches an uplink Direct boundary"
+        );
+        assert!(stats.downlink_direct());
+        assert_eq!(
+            stats.uplink_bytes(),
+            length_u64(b"up-ping".len() + b"up-more".len())
+        );
+        assert_eq!(
+            stats.downlink_bytes(),
+            length_u64(expected_framed.len() + b"down-raw".len())
+        );
+        assert_eq!(stats.relay_backend(), None);
+        assert_eq!(stats.uplink_backend(), None);
+        assert_eq!(
+            stats.downlink_backend(),
+            Some(RelayBackend::Buffered),
+            "the directional downlink relay must report its backend"
+        );
+        assert_eq!(stats.uplink_direct_at_bytes(), 0);
+        assert_eq!(
+            stats.downlink_direct_at_bytes(),
+            length_u64(expected_framed.len())
         );
     }
 

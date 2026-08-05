@@ -181,6 +181,69 @@ impl RelayOutcome {
     }
 }
 
+/// One direction of a raw TCP relay.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RelayDirection {
+    /// Inbound socket to outbound socket.
+    Uplink,
+    /// Outbound socket to inbound socket.
+    Downlink,
+}
+
+impl RelayDirection {
+    /// Returns whether this direction records into the inbound-to-outbound
+    /// ledger counter.
+    #[must_use]
+    pub const fn is_inbound_to_outbound(self) -> bool {
+        matches!(self, Self::Uplink)
+    }
+}
+
+impl fmt::Display for RelayDirection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Uplink => "uplink",
+            Self::Downlink => "downlink",
+        })
+    }
+}
+
+/// Byte count and backend produced by one completed single-direction relay.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DirectionalRelayOutcome {
+    bytes: u64,
+    backend: RelayBackend,
+    duration: Duration,
+}
+
+impl DirectionalRelayOutcome {
+    pub(crate) const fn new(bytes: u64, backend: RelayBackend, duration: Duration) -> Self {
+        Self {
+            bytes,
+            backend,
+            duration,
+        }
+    }
+
+    /// Returns the bytes transferred in the relayed direction.
+    #[must_use]
+    pub const fn bytes(self) -> u64 {
+        self.bytes
+    }
+
+    /// Returns the backend that actually transferred the bytes.
+    #[must_use]
+    pub const fn backend(self) -> RelayBackend {
+        self.backend
+    }
+
+    /// Returns the wall-clock duration of the relay.
+    #[must_use]
+    pub const fn duration(self) -> Duration {
+        self.duration
+    }
+}
+
 /// Whether a backend is usable, and if not, exactly why.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BackendCapability {

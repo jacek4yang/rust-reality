@@ -849,6 +849,12 @@ async fn run_connection(
                         uplink_direct: stats.uplink_direct(),
                         downlink_direct: stats.downlink_direct(),
                         relay_backend: stats.relay_backend().map(RelayBackend::as_str),
+                        uplink_direct_at_bytes: stats.uplink_direct_at_bytes(),
+                        downlink_direct_at_bytes: stats.downlink_direct_at_bytes(),
+                        uplink_backend: stats.uplink_backend().map(RelayBackend::as_str),
+                        downlink_backend: stats.downlink_backend().map(RelayBackend::as_str),
+                        uplink_handoff_delay_us: stats.uplink_handoff_delay_us(),
+                        downlink_handoff_delay_us: stats.downlink_handoff_delay_us(),
                     },
                 );
             }

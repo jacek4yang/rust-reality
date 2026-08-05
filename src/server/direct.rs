@@ -1,10 +1,20 @@
 //! Vision Direct direction states and recoverable full-socket handoff.
 //!
 //! A Vision session runs two independent directions. Each one may reach an
-//! authenticated raw boundary at a different time, and only when *both* have
-//! reached that boundary — with every already-decoded byte flushed in order and
-//! no read or write future still in flight — may the two complete sockets be
-//! handed to a raw relay backend.
+//! authenticated raw boundary at a different time. At that boundary a direction
+//! decides exactly once, reading the peer state atomically:
+//!
+//! * when the peer is at its own raw boundary (`RawReady`) or has already
+//!   committed to the pair (`PairPending`), this direction advances to
+//!   `PairPending` and deposits its halves; the last depositor reunites both
+//!   complete sockets and runs the bilateral raw relay;
+//! * otherwise this direction advances to `Relaying` and relays its own two
+//!   halves independently, without ever waiting for the peer.
+//!
+//! States only move forward, so the two directions can never disagree about
+//! which form the raw relay takes: a peer that observed `RawReady` or
+//! `PairPending` can no longer choose a directional relay, and a peer that
+//! observed `Relaying` can no longer join the pair.
 //!
 //! The coordinator below stores nothing but state and the recovered socket
 //! halves. It contains no channel, no per-record message, and no payload copy.
@@ -17,12 +27,9 @@ use std::{
     },
 };
 
-use tokio::{
-    net::{
-        TcpStream,
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-    },
-    sync::watch,
+use tokio::net::{
+    TcpStream,
+    tcp::{OwnedReadHalf, OwnedWriteHalf},
 };
 
 /// One Vision relay direction.
@@ -61,6 +68,11 @@ pub enum DirectionState {
     Closed = 4,
     /// Protocol, I/O, timeout, cancellation, or invariant failure.
     Failed = 5,
+    /// This direction committed to the bilateral pair handoff and deposited —
+    /// or is about to deposit — its socket halves for the peer to reunite.
+    PairPending = 6,
+    /// This direction claimed its halves for an independent directional relay.
+    Relaying = 7,
 }
 
 impl DirectionState {
@@ -71,6 +83,8 @@ impl DirectionState {
             3 => Self::Outer,
             4 => Self::Closed,
             5 => Self::Failed,
+            6 => Self::PairPending,
+            7 => Self::Relaying,
             _ => Self::Framed,
         }
     }
@@ -91,8 +105,14 @@ impl DirectionState {
                 | (Self::DirectPending, Self::RawReady)
                 | (Self::DirectPending, Self::Closed)
                 | (Self::DirectPending, Self::Failed)
+                | (Self::RawReady, Self::PairPending)
+                | (Self::RawReady, Self::Relaying)
                 | (Self::RawReady, Self::Closed)
                 | (Self::RawReady, Self::Failed)
+                | (Self::PairPending, Self::Closed)
+                | (Self::PairPending, Self::Failed)
+                | (Self::Relaying, Self::Closed)
+                | (Self::Relaying, Self::Failed)
                 | (Self::Outer, Self::Closed)
                 | (Self::Outer, Self::Failed)
         )
@@ -108,6 +128,8 @@ impl fmt::Display for DirectionState {
             Self::Outer => "outer",
             Self::Closed => "closed",
             Self::Failed => "failed",
+            Self::PairPending => "pairPending",
+            Self::Relaying => "relaying",
         })
     }
 }
@@ -162,14 +184,13 @@ impl HandoffSlots {
 
 /// Shared, allocation-stable coordination state for one Vision session.
 ///
-/// Only two atomics, one mutex guarding four socket-half slots, and one
-/// version watch exist per session. No queue and no payload ever passes
-/// through this type, so no unbounded growth is possible.
+/// Only two atomics and one mutex guarding four socket-half slots exist per
+/// session. No queue and no payload ever passes through this type, so no
+/// unbounded growth is possible.
 pub struct DirectHandoff {
     uplink: AtomicU8,
     downlink: AtomicU8,
     slots: Mutex<HandoffSlots>,
-    version: watch::Sender<u32>,
 }
 
 impl Default for DirectHandoff {
@@ -186,20 +207,7 @@ impl DirectHandoff {
             uplink: AtomicU8::new(DirectionState::Framed as u8),
             downlink: AtomicU8::new(DirectionState::Framed as u8),
             slots: Mutex::new(HandoffSlots::default()),
-            version: watch::channel(0).0,
         }
-    }
-
-    /// Returns a level-triggered subscription to direction state changes.
-    ///
-    /// A `watch` receiver is used rather than a notification primitive because
-    /// it records the version a direction has already observed. A state change
-    /// that happens between two loop iterations therefore cannot be lost, which
-    /// would otherwise leave a direction blocked in a socket read after its peer
-    /// became ready for handoff.
-    #[must_use]
-    pub fn subscribe(&self) -> watch::Receiver<u32> {
-        self.version.subscribe()
     }
 
     const fn cell(&self, direction: Direction) -> &AtomicU8 {
@@ -215,7 +223,7 @@ impl DirectHandoff {
         DirectionState::from_repr(self.cell(direction).load(Ordering::Acquire))
     }
 
-    /// Applies one permitted transition and wakes the peer direction.
+    /// Applies one permitted transition.
     ///
     /// `Acquire`/`Release` ordering is used so that a peer observing `RawReady`
     /// also observes every write the transitioning direction performed before
@@ -252,32 +260,31 @@ impl DirectHandoff {
                 Err(observed) => current = observed,
             }
         }
-        self.version
-            .send_modify(|version| *version = version.wrapping_add(1));
         Ok(())
     }
 
-    /// Returns whether both directions sit at the exact raw boundary.
+    /// Returns the peer direction of `direction`.
     #[must_use]
-    pub fn both_raw_ready(&self) -> bool {
-        self.state(Direction::Uplink) == DirectionState::RawReady
-            && self.state(Direction::Downlink) == DirectionState::RawReady
-    }
-
-    /// Returns whether the peer direction can no longer reach a raw boundary.
-    ///
-    /// A peer that is closed, failed, or committed to continued outer TLS will
-    /// never become `RawReady`, so the caller must stop waiting and relay its
-    /// own direction in userspace.
-    #[must_use]
-    pub fn peer_is_settled(&self, direction: Direction) -> bool {
-        let peer = match direction {
+    const fn peer(direction: Direction) -> Direction {
+        match direction {
             Direction::Uplink => Direction::Downlink,
             Direction::Downlink => Direction::Uplink,
-        };
+        }
+    }
+
+    /// Returns whether the peer direction can still join the bilateral pair.
+    ///
+    /// A peer at its raw boundary will read this direction's state before
+    /// deciding, and a peer already in `PairPending` is committed to depositing
+    /// its halves. Because states only move forward, a `true` answer here
+    /// guarantees the peer will deposit: it can no longer choose a directional
+    /// relay, so the first depositor never waits for a peer that changed its
+    /// mind.
+    #[must_use]
+    pub fn peer_can_pair(&self, direction: Direction) -> bool {
         matches!(
-            self.state(peer),
-            DirectionState::Outer | DirectionState::Closed | DirectionState::Failed
+            self.state(Self::peer(direction)),
+            DirectionState::RawReady | DirectionState::PairPending
         )
     }
 
@@ -374,7 +381,9 @@ mod tests {
 
     #[test]
     fn permitted_transitions_match_the_specified_lifecycle() {
-        use DirectionState::{Closed, DirectPending, Failed, Framed, Outer, RawReady};
+        use DirectionState::{
+            Closed, DirectPending, Failed, Framed, Outer, PairPending, RawReady, Relaying,
+        };
 
         for (from, to) in [
             (Framed, DirectPending),
@@ -384,8 +393,14 @@ mod tests {
             (DirectPending, RawReady),
             (DirectPending, Closed),
             (DirectPending, Failed),
+            (RawReady, PairPending),
+            (RawReady, Relaying),
             (RawReady, Closed),
             (RawReady, Failed),
+            (PairPending, Closed),
+            (PairPending, Failed),
+            (Relaying, Closed),
+            (Relaying, Failed),
             (Outer, Closed),
             (Outer, Failed),
         ] {
@@ -395,16 +410,32 @@ mod tests {
 
     #[test]
     fn forbidden_transitions_are_rejected() {
-        use DirectionState::{Closed, DirectPending, Failed, Framed, Outer, RawReady};
+        use DirectionState::{
+            Closed, DirectPending, Failed, Framed, Outer, PairPending, RawReady, Relaying,
+        };
 
         for (from, to) in [
             (Outer, RawReady),
+            (Outer, PairPending),
+            (Outer, Relaying),
             (RawReady, Framed),
             (RawReady, DirectPending),
             (Framed, RawReady),
+            (Framed, PairPending),
+            (Framed, Relaying),
+            (DirectPending, PairPending),
+            (DirectPending, Relaying),
+            (PairPending, Framed),
+            (PairPending, RawReady),
+            (PairPending, Relaying),
+            (Relaying, Framed),
+            (Relaying, RawReady),
+            (Relaying, PairPending),
             (Closed, Framed),
             (Closed, RawReady),
             (Closed, DirectPending),
+            (Closed, PairPending),
+            (Closed, Relaying),
             (Failed, Framed),
             (Failed, RawReady),
             (Failed, Closed),
@@ -428,38 +459,59 @@ mod tests {
     }
 
     #[test]
-    fn both_raw_ready_requires_both_directions() {
+    fn the_pair_decision_reads_raw_ready_and_pair_pending_peers() {
         let handoff = DirectHandoff::new();
-        handoff
-            .advance(Direction::Uplink, DirectionState::DirectPending)
-            .expect("uplink may pend");
-        handoff
-            .advance(Direction::Uplink, DirectionState::RawReady)
-            .expect("uplink may become raw");
+        assert!(!handoff.peer_can_pair(Direction::Uplink));
 
-        assert!(!handoff.both_raw_ready());
+        handoff
+            .advance(Direction::Downlink, DirectionState::DirectPending)
+            .expect("downlink may pend");
+        assert!(
+            !handoff.peer_can_pair(Direction::Uplink),
+            "a pending peer has not reached its raw boundary"
+        );
 
+        handoff
+            .advance(Direction::Downlink, DirectionState::RawReady)
+            .expect("downlink may become raw");
+        assert!(handoff.peer_can_pair(Direction::Uplink));
+
+        handoff
+            .advance(Direction::Downlink, DirectionState::PairPending)
+            .expect("downlink may commit to the pair");
+        assert!(
+            handoff.peer_can_pair(Direction::Uplink),
+            "a committed peer is guaranteed to deposit its halves"
+        );
+        assert!(
+            !handoff.peer_can_pair(Direction::Downlink),
+            "a framed uplink cannot join a pair"
+        );
+    }
+
+    #[test]
+    fn a_relaying_peer_can_no_longer_join_the_pair() {
+        let handoff = DirectHandoff::new();
         handoff
             .advance(Direction::Downlink, DirectionState::DirectPending)
             .expect("downlink may pend");
         handoff
             .advance(Direction::Downlink, DirectionState::RawReady)
             .expect("downlink may become raw");
-
-        assert!(handoff.both_raw_ready());
-    }
-
-    #[test]
-    fn peer_settlement_stops_a_waiting_direction() {
-        let handoff = DirectHandoff::new();
-        assert!(!handoff.peer_is_settled(Direction::Uplink));
-
         handoff
-            .advance(Direction::Downlink, DirectionState::Outer)
-            .expect("downlink may select outer TLS");
+            .advance(Direction::Downlink, DirectionState::Relaying)
+            .expect("downlink may claim its halves");
 
-        assert!(handoff.peer_is_settled(Direction::Uplink));
-        assert!(!handoff.peer_is_settled(Direction::Downlink));
+        assert!(
+            !handoff.peer_can_pair(Direction::Uplink),
+            "a peer that claimed its halves must not be awaited"
+        );
+        assert!(
+            handoff
+                .advance(Direction::Uplink, DirectionState::PairPending)
+                .is_err(),
+            "a framed direction cannot skip its raw boundary"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -512,25 +564,6 @@ mod tests {
             .map(|recovered| recovered.is_some());
 
         assert!(error.is_ok(), "matching halves must still reunite");
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn a_state_change_before_the_wait_starts_is_not_lost() {
-        let handoff = DirectHandoff::new();
-        let mut versions = handoff.subscribe();
-
-        // The change happens strictly before the subscriber waits. A
-        // level-triggered watch must still report it, otherwise a direction can
-        // block in a socket read after its peer is already ready to hand off.
-        handoff
-            .advance(Direction::Downlink, DirectionState::Closed)
-            .expect("downlink may close");
-
-        tokio::time::timeout(std::time::Duration::from_secs(1), versions.changed())
-            .await
-            .expect("a missed state change would hang here")
-            .expect("watch sender must stay alive");
-        assert_eq!(handoff.state(Direction::Downlink), DirectionState::Closed);
     }
 
     async fn pair() -> (TcpStream, TcpStream) {

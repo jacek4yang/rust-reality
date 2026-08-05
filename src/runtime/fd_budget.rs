@@ -58,6 +58,11 @@ pub const UNITS_CONNECTOR_CANDIDATE: u32 = 1;
 /// descriptors. The incident trace reached `pipe2(...) = -1 EMFILE` precisely
 /// because this cost was never reserved.
 pub const UNITS_SPLICE_RELAY: u32 = 4;
+/// Conservative descriptor cost of one single-direction splice relay.
+///
+/// A directional splice relay creates one pipe pair, and a pipe pair is two
+/// descriptors — exactly half of a bilateral splice relay.
+pub const UNITS_SPLICE_DIRECTION: u32 = 2;
 /// Conservative descriptor cost of one io_uring relay session.
 ///
 /// A session duplicates both sockets so a completion can never act on a
