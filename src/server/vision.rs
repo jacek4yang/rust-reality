@@ -152,13 +152,46 @@ impl VisionHandler {
         assets: Arc<dyn AssetMatcher>,
         relay: TcpRelay,
     ) -> Result<Self, RoutingCompileError> {
+        Self::build(config, assets, relay, None)
+    }
+
+    /// Compiles the data path with a pressure-aware outbound registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns a routing matcher or UUID compilation error.
+    pub fn from_config_with_pressure(
+        config: &Config,
+        assets: Arc<dyn AssetMatcher>,
+        relay: TcpRelay,
+        pressure: &crate::runtime::PressureGauge,
+    ) -> Result<Self, RoutingCompileError> {
+        Self::build(config, assets, relay, Some(pressure.clone()))
+    }
+
+    fn build(
+        config: &Config,
+        assets: Arc<dyn AssetMatcher>,
+        relay: TcpRelay,
+        pressure: Option<crate::runtime::PressureGauge>,
+    ) -> Result<Self, RoutingCompileError> {
         let governor = &config.policy.resource_governor;
-        Ok(Self::new_with_dns(
-            OutboundRegistry::new(
+        let connect_timeout = Duration::from_millis(governor.connect_timeout_ms);
+        let outbounds = match pressure {
+            Some(pressure) => OutboundRegistry::new_with_pressure(
                 &config.outbounds,
                 &config.policy.direct_barrier,
-                Duration::from_millis(governor.connect_timeout_ms),
+                connect_timeout,
+                pressure,
             ),
+            None => OutboundRegistry::new(
+                &config.outbounds,
+                &config.policy.direct_barrier,
+                connect_timeout,
+            ),
+        };
+        Ok(Self::new_with_dns(
+            outbounds,
             RoutingTable::compile(&config.routing, assets)?,
             relay,
             governor,

@@ -3,6 +3,7 @@
 mod admission;
 mod fd_budget;
 mod fd_plan;
+mod pressure;
 
 pub use admission::{
     AdmissionDenied, AdmissionKind, AdmissionPermit, DirectBarrier, DirectPermit, ResourceGovernor,
@@ -11,5 +12,9 @@ pub use fd_budget::{
     FdBudget, FdPermit, FdPressure, UNITS_CONNECTOR_CANDIDATE, UNITS_INBOUND_SOCKET,
     UNITS_OUTBOUND_SOCKET, UNITS_SPLICE_DIRECTION, UNITS_SPLICE_RELAY,
 };
-pub use fd_plan::{FdBudgetError, FdBudgetPlan, FixedFdReserve, MINIMUM_DYNAMIC_UNITS};
+pub use fd_plan::{
+    FdBudgetError, FdBudgetPlan, FdHeadroomPolicy, FixedFdReserve, MINIMUM_DYNAMIC_UNITS,
+};
+pub use pressure::{PressureGauge, ResourcePressure};
 pub mod connection;
+pub mod machine;

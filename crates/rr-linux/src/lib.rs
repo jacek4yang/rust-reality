@@ -32,12 +32,17 @@ use std::fmt;
 
 pub mod bpf;
 pub mod capability;
+pub mod memory;
 pub mod rlimit;
 pub mod socket;
 pub mod sockhash;
 
 pub use capability::{DeclineReason, Probe, ProbeReport};
-pub use rlimit::{DescriptorLimit, descriptor_limit, open_reserve_descriptor};
+pub use memory::resident_set_bytes;
+pub use rlimit::{
+    DescriptorLimit, descriptor_limit, memlock_limit, open_reserve_descriptor,
+    raise_descriptor_soft_limit,
+};
 
 /// A bounded resource budget shared by the kernel relay backends.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

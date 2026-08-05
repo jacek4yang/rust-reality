@@ -33,7 +33,8 @@ Top-level shape:
   "inbounds": [],
   "outbounds": [],
   "routing": {},
-  "policy": {}
+  "policy": {},
+  "runtime": {}
 }
 ```
 
@@ -46,6 +47,7 @@ Top-level shape:
 | `outbounds` | yes | — | At least one `direct`, `blackhole`, `socks5`, or `nxr` transport. |
 | `routing` | yes | — | Global rules and explicit per-UUID policy groups. |
 | `policy` | no | bounded production defaults | Admission, direct-dial, buffer, and Linux relay policy. |
+| `runtime` | no | `standard` | Process resource posture. |
 
 ## `log`
 
@@ -497,6 +499,14 @@ Splice never crosses the REALITY/TLS security boundary. If splice resources are
 unavailable before transfer starts, relay falls back to bounded userspace
 buffers.
 
+## `runtime`
+
+Process-level resource posture. The whole object is optional.
+
+| Field | Required when object present | Default / allowed | Constraints / meaning |
+| --- | --- | --- | --- |
+| `runtime.resourceMode` | no | `standard`; `standard`, `dedicated` | `dedicated` declares single-tenant use of the machine or cgroup: raise the soft `RLIMIT_NOFILE` to the hard limit, derive the descriptor budget with the dedicated headroom, and run the bounded memory-pressure monitor. See [Dedicated-machine resource mode](dedicated-resource-mode.md). Cold setting; changing it requires a restart. |
+
 ## Reload boundaries
 
 `serve`/`run` receives SIGHUP and builds one complete candidate. Publication is
@@ -518,6 +528,8 @@ Restart required:
 
 - adding/removing a listener, changing bind address/port, or changing protocol
   at an address;
+- any `runtime` change, because the resource mode shapes the process-lifetime
+  descriptor budget and memory monitor;
 - any `policy.resourceGovernor` change, because REALITY replay admission/state
   is process-lifetime;
 - any `policy.relay` change, because buffer/splice pools are process-lifetime;

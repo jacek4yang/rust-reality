@@ -1289,4 +1289,51 @@ mod tests {
             "dns.servers"
         );
     }
+
+    #[test]
+    fn accepts_dedicated_resource_mode() {
+        let mut config: serde_json::Value =
+            serde_json::from_str(crate::config::test_config_json()).expect("fixture must decode");
+        config["runtime"] = serde_json::json!({ "resourceMode": "dedicated" });
+        let config: Config = serde_json::from_value(config).expect("dedicated mode must decode");
+
+        assert_eq!(
+            config.runtime.resource_mode,
+            crate::config::ResourceMode::Dedicated
+        );
+        validate_config(&config).expect("dedicated mode must validate");
+    }
+
+    #[test]
+    fn defaults_to_standard_resource_mode() {
+        let config = valid_config();
+        assert_eq!(
+            config.runtime.resource_mode,
+            crate::config::ResourceMode::Standard
+        );
+        assert_eq!(config.runtime.resource_mode.as_str(), "standard");
+        validate_config(&config).expect("the default mode must validate");
+    }
+
+    #[test]
+    fn rejects_unknown_resource_mode_values() {
+        let mut config: serde_json::Value =
+            serde_json::from_str(crate::config::test_config_json()).expect("fixture must decode");
+        config["runtime"] = serde_json::json!({ "resourceMode": "exclusive" });
+        assert!(
+            serde_json::from_value::<Config>(config).is_err(),
+            "an unknown resourceMode must fail closed at decode time"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_runtime_fields() {
+        let mut config: serde_json::Value =
+            serde_json::from_str(crate::config::test_config_json()).expect("fixture must decode");
+        config["runtime"] = serde_json::json!({ "resourceMode": "dedicated", "tuning": {} });
+        assert!(
+            serde_json::from_value::<Config>(config).is_err(),
+            "deny_unknown_fields applies to the runtime section"
+        );
+    }
 }

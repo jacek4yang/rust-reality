@@ -26,6 +26,56 @@ pub struct Config {
     /// Resource and relay limits.
     #[serde(default)]
     pub policy: PolicyConfig,
+    /// Process resource mode.
+    #[serde(default)]
+    pub runtime: RuntimeConfig,
+}
+
+/// Process-level resource posture.
+///
+/// The resource mode is a cold setting: it shapes the process-lifetime
+/// descriptor budget and the memory monitor, so changing it requires a
+/// process restart and is rejected on hot reload.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RuntimeConfig {
+    /// How conservatively the process treats machine resources.
+    ///
+    /// `standard` (default) derives every budget from the inherited limits
+    /// exactly as documented in the descriptor-budget reference and assumes
+    /// nothing about what else runs on the machine.
+    ///
+    /// `dedicated` declares that this process owns the machine (or its
+    /// cgroup): at startup it raises the soft `RLIMIT_NOFILE` to the hard
+    /// limit when possible, relaxes the descriptor safety headroom from
+    /// `limit/16` to `limit/10`, and runs a bounded memory-pressure monitor
+    /// that pauses new setup work before the kernel or the cgroup OOM killer
+    /// is reached. See `docs/dedicated-resource-mode.md`.
+    #[serde(default)]
+    pub resource_mode: ResourceMode,
+}
+
+/// Supported process resource modes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResourceMode {
+    /// Shared-machine posture; every budget derives from inherited limits.
+    #[default]
+    Standard,
+    /// Single-tenant posture; the process budgets against the whole machine
+    /// or cgroup and supervises its own memory pressure.
+    Dedicated,
+}
+
+impl ResourceMode {
+    /// Returns the stable identifier used in logs and reports.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Dedicated => "dedicated",
+        }
+    }
 }
 
 /// A string whose debug representation never reveals its contents.

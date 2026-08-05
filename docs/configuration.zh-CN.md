@@ -29,7 +29,8 @@ rust-reality config format --config config.json > config.formatted.json
   "inbounds": [],
   "outbounds": [],
   "routing": {},
-  "policy": {}
+  "policy": {},
+  "runtime": {}
 }
 ```
 
@@ -42,6 +43,7 @@ rust-reality config format --config config.json > config.formatted.json
 | `outbounds` | 是 | — | 至少一个 `direct`、`blackhole`、`socks5` 或 `nxr` 传输。 |
 | `routing` | 是 | — | 全局规则和显式 UUID 分组策略。 |
 | `policy` | 否 | 有界生产默认值 | admission、direct 拨号、缓冲和 Linux relay 策略。 |
+| `runtime` | 否 | `standard` | 进程资源姿态。 |
 
 ## `log`
 
@@ -474,6 +476,14 @@ sockhash_capacity <= maxPinnedMemoryBytes
 splice 永远不会跨越 REALITY/TLS 安全边界。传输开始前无法获得 splice 资源时，
 回退到有界用户态缓冲。
 
+## `runtime`
+
+进程级资源姿态。整个对象可选。
+
+| 字段 | 对象存在时必填 | 默认值/允许值 | 含义与约束 |
+| --- | --- | --- | --- |
+| `runtime.resourceMode` | 否 | `standard`；`standard`、`dedicated` | `dedicated` 声明独占机器或 cgroup：把 `RLIMIT_NOFILE` 软限制提升到硬限制、按专用余量推导描述符预算，并运行有界内存压力监控器。见[专用机器资源模式](dedicated-resource-mode.zh-CN.md)。冷设置，修改必须重启。 |
+
 ## 热更新边界
 
 `serve`/`run` 收到 SIGHUP 后构建完整候选配置。发布是原子的；失败时保留旧
@@ -492,6 +502,7 @@ generation，已有连接继续使用其获取的 generation。
 必须重启：
 
 - 添加/删除监听、修改绑定地址/端口，或改变某地址的协议；
+- 任意 `runtime` 修改，因为资源模式影响进程生命周期的描述符预算和内存监控器；
 - 任意 `policy.resourceGovernor` 修改，因为 REALITY 重放 admission/状态属于进程生命周期；
 - 任意 `policy.relay` 修改，因为缓冲/splice 池属于进程生命周期；
 - NXR `maxNonceEntries` 或 `nonceRetentionSeconds` 修改。

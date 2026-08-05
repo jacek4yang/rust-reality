@@ -159,6 +159,71 @@ pub enum LogEvent {
         /// Total admissible units.
         fd_effective_budget: u64,
     },
+    /// The detected machine view and resource-mode decisions, emitted exactly
+    /// once at startup when `runtime.resourceMode` is `dedicated`.
+    ///
+    /// Every field is a machine- or process-wide quantity from a closed
+    /// shape. None can carry a target, a peer or a configuration value.
+    MachineReport {
+        /// The configured resource mode.
+        resource_mode: &'static str,
+        /// Measured soft `RLIMIT_NOFILE` before any raise.
+        fd_soft_limit: u64,
+        /// Measured hard `RLIMIT_NOFILE`.
+        fd_hard_limit: u64,
+        /// The effective soft limit after a dedicated-mode raise attempt.
+        fd_effective_soft_limit: u64,
+        /// Whether a soft-limit raise was attempted.
+        fd_soft_raise_attempted: bool,
+        /// Whether the raise took effect.
+        fd_soft_limit_raised: bool,
+        /// Measured soft `RLIMIT_MEMLOCK`.
+        memlock_soft_limit: u64,
+        /// Measured hard `RLIMIT_MEMLOCK`.
+        memlock_hard_limit: u64,
+        /// Logical CPUs visible to the process.
+        available_cpus: usize,
+        /// Cgroup v2 `cpu.max` quota in microseconds, when set.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cpu_quota_us: Option<u64>,
+        /// Cgroup v2 `cpu.max` period in microseconds, when detected.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cpu_period_us: Option<u64>,
+        /// Cgroup v2 `cpuset.cpus.effective`, when detected.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cpuset_effective: Option<String>,
+        /// Memory quantity source: `cgroup_v2`, `proc_meminfo` or `unavailable`.
+        memory_source: &'static str,
+        /// Cgroup v2 `memory.current` at detection, when readable.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        memory_current: Option<u64>,
+        /// Cgroup v2 `memory.high`, when set to a finite value.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        memory_high: Option<u64>,
+        /// Cgroup v2 `memory.max`, when set to a finite value.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        memory_max: Option<u64>,
+        /// The effective memory total used for budget derivation.
+        memory_total: u64,
+    },
+    /// A combined resource-pressure state transition.
+    ///
+    /// Emitted only when the effective state changes, never per sample, so a
+    /// sustained condition costs two log lines rather than one per second.
+    ResourcePressureChanged {
+        /// The effective state: the worst of the descriptor and memory
+        /// dimensions.
+        pressure_state: &'static str,
+        /// The descriptor dimension at the transition.
+        fd_pressure_state: &'static str,
+        /// Sampled memory usage at the transition, when readable.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        memory_bytes_in_use: Option<u64>,
+        /// The memory pressure-enter watermark in effect.
+        memory_pressure_enter: u64,
+        /// The memory critical-enter watermark in effect.
+        memory_critical_enter: u64,
+    },
     /// A recoverable listener accept error.
     ///
     /// The raw errno is included because diagnosing the incident this event
@@ -214,7 +279,8 @@ impl LogEvent {
             | Self::ConfigurationPublished { .. }
             | Self::ListenerStarted { .. }
             | Self::RelayBackendReport { .. }
-            | Self::DescriptorBudgetReport { .. } => LogLevel::Info,
+            | Self::DescriptorBudgetReport { .. }
+            | Self::MachineReport { .. } => LogLevel::Info,
             Self::ConnectionAccepted { .. }
             | Self::ConnectionClosed { .. }
             | Self::ConnectionCompleted { .. } => LogLevel::Debug,
@@ -222,6 +288,7 @@ impl LogEvent {
             | Self::AdmissionLimited { .. }
             | Self::ConfigurationRejected { .. }
             | Self::DescriptorPressureChanged { .. }
+            | Self::ResourcePressureChanged { .. }
             | Self::AcceptErrorRecovered { .. } => LogLevel::Warn,
         }
     }

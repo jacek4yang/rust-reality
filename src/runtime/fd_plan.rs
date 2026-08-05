@@ -104,6 +104,43 @@ pub const MINIMUM_DYNAMIC_UNITS: u64 = 64;
 /// memory for admission bookkeeping.
 pub(crate) const MAXIMUM_PLANNED_SOFT_LIMIT: u64 = 1_048_576;
 
+/// How much of the measured limit is held back as safety headroom.
+///
+/// The headroom absorbs descriptor consumers this process cannot account for:
+/// libraries, resolver threads and anything else sharing the limit. The two
+/// policies differ only in how much of the machine the process assumes it
+/// owns; both keep the strict invariant that budget plus reserve plus
+/// headroom never exceeds the effective soft limit.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum FdHeadroomPolicy {
+    /// One sixteenth of the limit (6.25%), floored at 64.
+    ///
+    /// The shared-machine default: the process assumes as little as possible
+    /// about what else consumes the same limit.
+    #[default]
+    Standard,
+    /// One tenth of the limit (10%), floored at 64.
+    ///
+    /// The dedicated-machine policy: the process has already raised its soft
+    /// limit to the hard limit and owns the machine or cgroup, so the larger
+    /// fraction buys margin against kernel-side descriptor consumers while
+    /// still admitting roughly 90% of the effective capacity as dynamic work.
+    Dedicated,
+}
+
+impl FdHeadroomPolicy {
+    /// Returns the headroom to hold back from `planned_soft`.
+    #[must_use]
+    pub const fn headroom(self, planned_soft: u64) -> u64 {
+        let divisor = match self {
+            Self::Standard => 16,
+            Self::Dedicated => 10,
+        };
+        let fraction = planned_soft / divisor;
+        if fraction > 64 { fraction } else { 64 }
+    }
+}
+
 /// A derived, validated dynamic descriptor budget.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FdBudgetPlan {
@@ -132,6 +169,7 @@ impl FdBudgetPlan {
         hard_limit: u64,
         fixed_reserve: FixedFdReserve,
         theoretical_peak: u64,
+        headroom_policy: FdHeadroomPolicy,
     ) -> Result<Self, FdBudgetError> {
         let planned_soft = if soft_limit == 0 || soft_limit > MAXIMUM_PLANNED_SOFT_LIMIT {
             MAXIMUM_PLANNED_SOFT_LIMIT
@@ -139,9 +177,7 @@ impl FdBudgetPlan {
             soft_limit
         };
         let reserve = fixed_reserve.total();
-        // One sixteenth of the limit, floored at 64, so a small limit still
-        // keeps a usable margin and a large one does not waste thousands.
-        let safety_headroom = (planned_soft / 16).max(64);
+        let safety_headroom = headroom_policy.headroom(planned_soft);
         let required = reserve
             .saturating_add(safety_headroom)
             .saturating_add(MINIMUM_DYNAMIC_UNITS);
@@ -254,17 +290,22 @@ impl std::error::Error for FdBudgetError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{FdBudgetError, FdBudgetPlan, FixedFdReserve, MINIMUM_DYNAMIC_UNITS};
+    use super::{
+        FdBudgetError, FdBudgetPlan, FdHeadroomPolicy, FixedFdReserve, MINIMUM_DYNAMIC_UNITS,
+    };
 
     fn reserve() -> FixedFdReserve {
         FixedFdReserve::new(1, false)
     }
 
+    fn derive(soft: u64, hard: u64, peak: u64) -> Result<FdBudgetPlan, FdBudgetError> {
+        FdBudgetPlan::derive(soft, hard, reserve(), peak, FdHeadroomPolicy::Standard)
+    }
+
     #[test]
     fn the_incident_limit_produces_a_clamped_but_serviceable_budget() {
         // The exact limits from the incident capture.
-        let plan = FdBudgetPlan::derive(1_024, 1_048_576, reserve(), 24_000)
-            .expect("a 1024 soft limit must still start");
+        let plan = derive(1_024, 1_048_576, 24_000).expect("a 1024 soft limit must still start");
         assert!(plan.is_clamped(), "24000 requested against a 1024 limit");
         assert!(plan.effective_budget() >= MINIMUM_DYNAMIC_UNITS);
         assert!(
@@ -277,16 +318,15 @@ mod tests {
 
     #[test]
     fn a_generous_limit_is_not_clamped() {
-        let plan = FdBudgetPlan::derive(1_048_576, 1_048_576, reserve(), 24_000)
-            .expect("a large soft limit must start");
+        let plan = derive(1_048_576, 1_048_576, 24_000).expect("a large soft limit must start");
         assert!(!plan.is_clamped());
         assert!(plan.effective_budget() > 24_000);
     }
 
     #[test]
     fn an_impossible_limit_is_rejected_before_binding() {
-        let error = FdBudgetPlan::derive(64, 1_048_576, reserve(), 128)
-            .expect_err("a 64 descriptor limit cannot serve traffic");
+        let error =
+            derive(64, 1_048_576, 128).expect_err("a 64 descriptor limit cannot serve traffic");
         let FdBudgetError::LimitTooLow {
             soft_limit,
             required,
@@ -302,8 +342,7 @@ mod tests {
 
     #[test]
     fn an_unlimited_soft_limit_is_planned_against_a_finite_ceiling() {
-        let plan = FdBudgetPlan::derive(u64::MAX, u64::MAX, reserve(), 1_000)
-            .expect("an unlimited soft limit must start");
+        let plan = derive(u64::MAX, u64::MAX, 1_000).expect("an unlimited soft limit must start");
         assert!(
             plan.effective_budget() <= super::MAXIMUM_PLANNED_SOFT_LIMIT,
             "an unlimited limit must not produce an unbounded admission pool"
@@ -316,8 +355,8 @@ mod tests {
         // 182 is the exact minimum this reserve permits; 128 is correctly
         // refused and is covered by `an_impossible_limit_is_rejected_before_binding`.
         for soft in [182_u64, 256, 1_024, 4_096, 65_536, 1_048_576] {
-            let plan = FdBudgetPlan::derive(soft, soft, reserve(), 10)
-                .expect("every limit at or above the minimum must start");
+            let plan =
+                derive(soft, soft, 10).expect("every limit at or above the minimum must start");
             let total =
                 plan.effective_budget() + plan.fixed_reserve().total() + plan.safety_headroom();
             assert!(
@@ -332,5 +371,49 @@ mod tests {
         let without = FixedFdReserve::new(2, false).total();
         let with = FixedFdReserve::new(2, true).total();
         assert_eq!(with - without, 3, "a map, a program and a link");
+    }
+
+    #[test]
+    fn the_dedicated_policy_holds_back_one_tenth_of_the_limit() {
+        assert_eq!(FdHeadroomPolicy::Standard.headroom(1_600), 100);
+        assert_eq!(FdHeadroomPolicy::Dedicated.headroom(1_600), 160);
+        assert_eq!(
+            FdHeadroomPolicy::Dedicated.headroom(100),
+            64,
+            "the floor holds"
+        );
+    }
+
+    #[test]
+    fn the_dedicated_policy_admits_more_but_never_overshoots() {
+        for soft in [182_u64, 256, 1_024, 4_096, 65_536, 1_048_576] {
+            let standard = derive(soft, soft, 10).expect("standard must start");
+            let dedicated =
+                FdBudgetPlan::derive(soft, soft, reserve(), 10, FdHeadroomPolicy::Dedicated)
+                    .expect("dedicated must start");
+            assert!(
+                dedicated.effective_budget() <= standard.effective_budget(),
+                "a larger headroom must yield a smaller dynamic budget"
+            );
+            let total = dedicated.effective_budget()
+                + dedicated.fixed_reserve().total()
+                + dedicated.safety_headroom();
+            assert!(
+                total <= soft,
+                "dedicated soft limit {soft} produced a total reservation of {total}"
+            );
+            assert!(
+                dedicated.effective_budget() * 10 <= soft * 9,
+                "the dedicated dynamic budget must stay under 90% of the limit"
+            );
+        }
+    }
+
+    #[test]
+    fn the_dedicated_policy_still_refuses_an_impossible_limit() {
+        let error =
+            FdBudgetPlan::derive(128, 1_048_576, reserve(), 10, FdHeadroomPolicy::Dedicated)
+                .expect_err("a 128 descriptor limit cannot serve traffic under any policy");
+        assert!(matches!(error, FdBudgetError::LimitTooLow { .. }));
     }
 }
