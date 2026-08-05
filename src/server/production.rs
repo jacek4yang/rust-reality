@@ -67,8 +67,11 @@ pub struct ProductionServer {
 /// Every term is a configured bound, and the sum is deliberately pessimistic:
 /// it assumes every connection simultaneously holds an inbound socket, an
 /// outbound socket, and that every splice and io_uring relay is armed at once.
-/// The number is used only to decide whether to warn about clamping; it never
-/// raises the admission budget.
+/// An armed sockhash relay adds no per-relay process descriptor — its sockets
+/// are the connection pair itself — so the backend appears only in the fixed
+/// reserve (map, program and link descriptors), not here. The number is used
+/// only to decide whether to warn about clamping; it never raises the
+/// admission budget.
 fn theoretical_fd_peak(config: &Config) -> u64 {
     let connections = u64::from(config.policy.resource_governor.max_connections);
     let splice = u64::from(config.policy.relay.max_splice_relays)

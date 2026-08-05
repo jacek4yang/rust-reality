@@ -50,7 +50,11 @@ impl FixedFdReserve {
     const LOGGER_SINK: u64 = 1;
     /// Tokio's reactor descriptors, over-estimated for a multi-thread runtime.
     const RUNTIME_DESCRIPTORS: u64 = 16;
-    /// eBPF map, program and attach-link descriptors.
+    /// eBPF map and program descriptors, plus one for a possible attach link.
+    ///
+    /// The sockhash controller holds exactly two — the `SOCKHASH` and the
+    /// loaded verdict program; `BPF_PROG_ATTACH` for a stream verdict creates
+    /// no link descriptor — so three stays a conservative over-estimate.
     const BPF_DESCRIPTORS: u64 = 3;
     /// Concurrent uncancellable `getaddrinfo` descriptors.
     ///

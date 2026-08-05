@@ -36,6 +36,7 @@ use std::fmt;
 pub mod bpf;
 pub mod capability;
 pub mod rlimit;
+pub mod socket;
 pub mod sockhash;
 pub mod uring;
 

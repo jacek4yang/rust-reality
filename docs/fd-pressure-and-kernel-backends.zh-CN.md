@@ -149,8 +149,16 @@ accept 错误依据原始 `errno` 分类，而非 `ErrorKind`：
 |---|---|---|---|
 | buffered | 不适用 | 是 | 是 |
 | splice | 是 | 是 | 是 |
-| sockhash | 是 | 程序与 arm/disarm 已验证；**尚未接入 `TcpRelay`** | 否 |
+| sockhash | 是 | 是——当策略启用且探测与控制器构建均成功时，由 `TcpRelay` 按中继 arm | 是 |
 | io_uring | 仅探测 | **否**——驱动存在但中继路径无法到达 | 否 |
+
+### SOCKHASH 运行时
+
+启用 `policy.relay.sockHash` 后，`TcpRelay::new` 先执行内核探测，探测通过才构建进程级控制器：一个容量为 `maxSockhashRelays` 两倍条目的 `SOCKHASH`、一份携带的有界校验器日志加载的流裁决程序，以及 attach。启动时的 `RelayBackendReport` 只有在该控制器确实存在时才报告 sockhash 可用，否则给出精确的固定拒绝原因（探测失败、`missingCapability`、`verifierRejected` 等）。失败不会阻止中继服务——该后端只是在任何字节传输之前拒绝，自动选择顺序（`sockhash`、`splice`、`buffered`）随之回退。
+
+arm 所需权限以探测在运行中的主机上实测为准（`CAP_BPF`/`CAP_NET_ADMIN` 或 root，外加 `RLIMIT_MEMLOCK` 余量），而非凭空假设。arm 本身是事务性的（两个方向要么都安装要么都不安装，失败回滚），并会拒绝借用套接字、已发生传输的中继账本以及仍有排队输入的连接；每条中继按两个方向计入准入。由于重定向会消耗 FIN 而不传播，已 arm 的会话自行检测每个半关闭，等待以 `TCP_INFO` 度量的排空屏障确认没有重定向字节被滞留，然后才用 `shutdown(2)` 传播该半关闭。字节计数采用内核报告的 `TCP_INFO` 差值，在拆除时快照。特权一致性门禁位于 `tests/sockhash_runtime.rs`。
+
+以下为历史故障分析。
 
 ### SOCKHASH
 

@@ -197,8 +197,34 @@ honest state of each:
 |---|---|---|---|
 | buffered | n/a | yes | yes |
 | splice | yes | yes | yes |
-| sockhash | yes | program + arm/disarm verified; **not yet wired into `TcpRelay`** | no |
+| sockhash | yes | yes — armed per relay from `TcpRelay` when the policy enables it and the probe plus controller construction succeed | yes |
 | io_uring | probed only | **no** — driver exists but is unreachable from the relay path | no |
+
+### SOCKHASH runtime
+
+With `policy.relay.sockHash` enabled, `TcpRelay::new` runs the kernel probe
+and, only when it passes, constructs the process-lifetime controller: one
+`SOCKHASH` sized at two entries per `maxSockhashRelays`, the stream-verdict
+program loaded with the bounded verifier log, and the attach. The startup
+`RelayBackendReport` reports sockhash available *only* when that controller
+exists; otherwise it names the exact fixed decline reason (probe failure,
+`missingCapability`, `verifierRejected`, …). A failure never stops the relay
+from serving — the backend simply declines, before any byte, and the
+automatic order (`sockhash`, `splice`, `buffered`) falls through.
+
+Arming requires the privileges the probe measures on the running host
+(`CAP_BPF`/`CAP_NET_ADMIN` or root, plus `RLIMIT_MEMLOCK` headroom); the
+unprivileged path is not guessed, it is probed. Arming itself is
+transactional (both directions installed or neither, with rollback), guarded
+against borrowed sockets, a touched transfer ledger and queued input, and
+admitted two directions per relay. Because the redirect consumes FINs without
+propagating them, the armed session detects each half-close itself, waits for
+a `TCP_INFO`-measured drain barrier so no redirected byte is stranded, and
+then propagates the half-close with `shutdown(2)`. Byte counts are
+kernel-reported `TCP_INFO` deltas snapshotted at teardown. Privileged
+conformance gates live in `tests/sockhash_runtime.rs`.
+
+The historical failure analysis follows.
 
 ### SOCKHASH
 

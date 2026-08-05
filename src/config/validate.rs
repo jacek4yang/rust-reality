@@ -26,9 +26,13 @@ const MAX_NXR_NONCE_RETENTION_SECONDS: u64 = 86_400;
 const MIN_RELAY_BUFFER_BYTES: usize = 4 * 1024;
 const MAX_RELAY_BUFFER_BYTES: usize = 1024 * 1024;
 const MAX_RELAY_BUFFERS: usize = 65_536;
-/// Bounded per-direction sockhash cost: flow key, socket entry, statistics entry
-/// and a conservative kernel overhead estimate.
-const SOCKHASH_ENTRY_BYTES: u64 = 40 + 8 + 16 + 192;
+/// Bounded per-direction sockhash map cost: the 40-byte flow key, the socket
+/// pointer the map stores, and a conservative kernel overhead estimate. The
+/// map holds exactly two entries per armed relay, one per direction.
+const SOCKHASH_ENTRY_BYTES: u64 = 40 + 8 + 192;
+/// Conservative pinned cost of the loaded stream-verdict program itself:
+/// instructions, verifier bookkeeping and the JIT image.
+const SOCKHASH_PROGRAM_BYTES: u64 = 4 * 1024;
 
 /// One validation failure identified by a stable JSON path.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -785,10 +789,11 @@ fn validate_relay_memory(relay: &RelayPolicy) -> Result<(), ConfigError> {
         0
     };
 
-    let sockhash_capacity = if relay.sockhash {
+    let sockhash_pinned = if relay.sockhash {
         u64::from(relay.max_sockhash_relays)
             .checked_mul(2)
             .and_then(|entries| entries.checked_mul(SOCKHASH_ENTRY_BYTES))
+            .and_then(|map| map.checked_add(SOCKHASH_PROGRAM_BYTES))
             .ok_or_else(|| ConfigError::new("policy.relay.maxSockhashRelays", "budget overflows"))?
     } else {
         0
@@ -805,7 +810,7 @@ fn validate_relay_memory(relay: &RelayPolicy) -> Result<(), ConfigError> {
     }
 
     let pinned_total = io_uring_registered
-        .checked_add(sockhash_capacity)
+        .checked_add(sockhash_pinned)
         .ok_or_else(|| ConfigError::new("policy.relay.maxPinnedMemoryBytes", "budget overflows"))?;
     if pinned_total > relay.max_pinned_memory_bytes {
         return fail(
@@ -926,7 +931,7 @@ mod tests {
         SecretString, validate_config,
     };
 
-    use super::ConfigError;
+    use super::{ConfigError, SOCKHASH_ENTRY_BYTES, SOCKHASH_PROGRAM_BYTES};
 
     fn valid_config() -> Config {
         serde_json::from_str(crate::config::test_config_json()).expect("fixture must decode")
@@ -1266,6 +1271,30 @@ mod tests {
         assert_eq!(
             validate_config(&config)
                 .expect_err("an oversized pinned budget must fail closed")
+                .path(),
+            "policy.relay.maxPinnedMemoryBytes"
+        );
+    }
+
+    #[test]
+    fn sockhash_pinned_memory_accounts_two_map_entries_and_the_program() {
+        // One armed relay occupies two map entries (one per direction) at
+        // SOCKHASH_ENTRY_BYTES each, plus the loaded verdict program itself.
+        let mut config = valid_config();
+        config.policy.relay.sockhash = true;
+        config.policy.relay.max_sockhash_relays = 1;
+        let exact = 2 * SOCKHASH_ENTRY_BYTES + SOCKHASH_PROGRAM_BYTES;
+
+        config.policy.relay.max_pinned_memory_bytes = exact;
+        assert!(
+            validate_config(&config).is_ok(),
+            "the exact pinned requirement must be accepted"
+        );
+
+        config.policy.relay.max_pinned_memory_bytes = exact - 1;
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("one byte below the pinned requirement must fail closed")
                 .path(),
             "policy.relay.maxPinnedMemoryBytes"
         );
