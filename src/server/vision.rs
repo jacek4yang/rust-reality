@@ -1,7 +1,7 @@
 use std::{error::Error, fmt, io, ops::Range, sync::Arc, time::Duration};
 
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite},
     net::tcp::{OwnedReadHalf, OwnedWriteHalf},
     time::{self, Instant},
 };
@@ -10,12 +10,13 @@ use crate::{
     config::{Config, DnsStrategy, ResourceGovernorConfig},
     protocol::{
         reality::tls13::{
-            MAX_PLAINTEXT_LEN, TlsApplicationIoError, TlsApplicationReader, TlsApplicationWriter,
+            IdleDeadline, IdleError, MAX_PLAINTEXT_LEN, TlsApplicationIoError,
+            TlsApplicationReader, TlsApplicationWriter,
         },
         vless::{
             DecodeError, Destination, RequestHeader, RequestValidationError, UserId, UserRegistry,
             VISION_FRAME_SIZE, VisionCommand, VisionDecodeError, VisionDecoder, VisionEncodeError,
-            VisionEncoder, VisionMode, decode_request, encode_response_header,
+            VisionEncoder, VisionMode, VisionPayload, decode_request, encode_response_header,
         },
     },
 };
@@ -462,9 +463,12 @@ async fn relay_uplink(
     } = *context;
     let mut decoder = VisionDecoder::new(user_id);
     let mut plaintext = Vec::new();
+    // A raw-mode record can carry a full maximum-sized TLS plaintext; the
+    // staged output is reserved for that worst case exactly once.
     plaintext
-        .try_reserve_exact(VISION_FRAME_SIZE)
+        .try_reserve_exact(MAX_PLAINTEXT_LEN)
         .map_err(|_| VisionSessionError::AllocationFailed)?;
+    let mut idle = IdleDeadline::new();
     let mut bytes = 0_u64;
 
     // The prefetched payload is a borrowed range inside the retained request
@@ -478,7 +482,10 @@ async fn relay_uplink(
             .decode(initial, &mut plaintext)
             .map_err(VisionSessionError::VisionDecode)?;
         if !plaintext.is_empty() {
-            write_all_before(&mut destination, &plaintext, timeout).await?;
+            idle.reset(timeout).map_err(idle_failure)?;
+            idle.write_all(&mut destination, &plaintext)
+                .await
+                .map_err(idle_failure)?;
             bytes = bytes.saturating_add(length_u64(plaintext.len()));
         }
         if mode == VisionMode::Direct {
@@ -488,35 +495,45 @@ async fn relay_uplink(
     drop(request_buffer);
 
     loop {
-        // The borrow of the reader's reusable record storage lives only for this
-        // block: the decoder copies decoded content into `plaintext`, and the
-        // borrow ends before the next read or the socket handoff.
-        let mode = {
-            let record = match client.read_application(timeout).await {
-                Ok(record) => record,
-                Err(TlsApplicationIoError::PeerAlert {
-                    level: _,
-                    description: 0,
-                }) => {
-                    shutdown_before(&mut destination, timeout).await?;
-                    settle(handoff, Direction::Uplink, DirectionState::Closed);
-                    return Ok(DirectionStats::framed(bytes));
-                }
-                Err(error) => {
-                    settle(handoff, Direction::Uplink, DirectionState::Failed);
-                    return Err(VisionSessionError::Tls(error));
-                }
-            };
-            if record.is_empty() {
-                continue;
+        // Raw-mode records are relayed straight out of the reader's reusable
+        // record storage: the decoder borrows the payload from the record, so
+        // the steady-state uplink performs no per-record copy at all. The
+        // borrow of the record storage ends before the next read or the
+        // socket handoff.
+        let record = match client.read_application(timeout).await {
+            Ok(record) => record,
+            Err(TlsApplicationIoError::PeerAlert {
+                level: _,
+                description: 0,
+            }) => {
+                idle.reset(timeout).map_err(idle_failure)?;
+                idle.shutdown(&mut destination)
+                    .await
+                    .map_err(idle_failure)?;
+                settle(handoff, Direction::Uplink, DirectionState::Closed);
+                return Ok(DirectionStats::framed(bytes));
             }
-            decoder
-                .decode(record.plaintext(), &mut plaintext)
-                .map_err(VisionSessionError::VisionDecode)?
+            Err(error) => {
+                settle(handoff, Direction::Uplink, DirectionState::Failed);
+                return Err(VisionSessionError::Tls(error));
+            }
         };
-        if !plaintext.is_empty() {
-            write_all_before(&mut destination, &plaintext, timeout).await?;
-            bytes = bytes.saturating_add(length_u64(plaintext.len()));
+        if record.is_empty() {
+            continue;
+        }
+        let (mode, payload) = decoder
+            .decode_borrowed(record.plaintext(), &mut plaintext)
+            .map_err(VisionSessionError::VisionDecode)?;
+        let content = match payload {
+            VisionPayload::Borrowed(bytes) => bytes,
+            VisionPayload::Staged => plaintext.as_slice(),
+        };
+        if !content.is_empty() {
+            idle.reset(timeout).map_err(idle_failure)?;
+            idle.write_all(&mut destination, content)
+                .await
+                .map_err(idle_failure)?;
+            bytes = bytes.saturating_add(length_u64(content.len()));
         }
         if mode == VisionMode::Direct {
             return finish_uplink_direct(client, destination, bytes, context).await;
@@ -694,6 +711,13 @@ async fn relay_downlink(
     }
 }
 
+/// Upper bound of Vision frames packed into one outer TLS record.
+///
+/// Full content chunks are `MAX_VISION_CONTENT_AFTER_FIRST_FRAME` bytes, so at
+/// most two full frames ever fit one maximum-sized record; the constant only
+/// bounds the on-stack plan storage, never the wire image.
+const MAX_FRAMES_PER_OUTER_RECORD: usize = 4;
+
 async fn write_vision_content<W>(
     writer: &mut TlsApplicationWriter<W>,
     encoder: &mut VisionEncoder,
@@ -711,16 +735,71 @@ where
     }
 
     let chunk_count = content.len().div_ceil(MAX_VISION_CONTENT_AFTER_FIRST_FRAME);
-    for (index, chunk) in content
-        .chunks(MAX_VISION_CONTENT_AFTER_FIRST_FRAME)
-        .enumerate()
-    {
-        let command = if index + 1 == chunk_count {
-            final_command
-        } else {
-            VisionCommand::Continue
-        };
-        write_vision_frame(writer, encoder, chunk, command, long_padding, timeout).await?;
+    let mut index = 0;
+    while index < chunk_count {
+        // Pack as many complete frames as fit one maximum-sized outer record.
+        // Every frame stays a complete Xray padding block, so the plaintext
+        // byte stream a client decoder sees is identical; only the outer
+        // record boundaries move, which TLS explicitly does not preserve.
+        let mut plans = [None; MAX_FRAMES_PER_OUTER_RECORD];
+        let mut ranges = [(0_usize, 0_usize); MAX_FRAMES_PER_OUTER_RECORD];
+        let mut wire_len = 0_usize;
+        let mut packed = 0_usize;
+        while packed < MAX_FRAMES_PER_OUTER_RECORD && index + packed < chunk_count {
+            let start = (index + packed) * MAX_VISION_CONTENT_AFTER_FIRST_FRAME;
+            let end = content
+                .len()
+                .min(start + MAX_VISION_CONTENT_AFTER_FIRST_FRAME);
+            let command = if index + packed + 1 == chunk_count {
+                final_command
+            } else {
+                VisionCommand::Continue
+            };
+            let Some(plan) = encoder
+                .plan_within(
+                    end - start,
+                    command,
+                    long_padding,
+                    MAX_PLAINTEXT_LEN - wire_len,
+                )
+                .map_err(VisionSessionError::VisionEncode)?
+            else {
+                break;
+            };
+            wire_len = wire_len.saturating_add(plan.wire_len());
+            plans[packed] = Some(plan);
+            ranges[packed] = (start, end);
+            packed += 1;
+        }
+        writer
+            .write_assembled(
+                wire_len,
+                |destination| {
+                    let mut cursor = 0;
+                    for slot in 0..packed {
+                        let Some(plan) = plans[slot] else {
+                            continue;
+                        };
+                        let (start, end) = ranges[slot];
+                        let Some(frame) = destination.get_mut(cursor..cursor + plan.wire_len())
+                        else {
+                            return;
+                        };
+                        let Some(chunk) = content.get(start..end) else {
+                            return;
+                        };
+                        encoder.assemble(&plan, chunk, frame);
+                        cursor += plan.wire_len();
+                    }
+                },
+                timeout,
+            )
+            .await
+            .map_err(VisionSessionError::Tls)?;
+        for plan in plans.iter().take(packed).flatten() {
+            encoder.commit(plan);
+        }
+        index += packed;
     }
     Ok(())
 }
@@ -972,10 +1051,15 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let mut buffer = vec![0_u8; MAX_PLAINTEXT_LEN];
     let mut copied = 0_u64;
     loop {
-        let read = read_before(reader, &mut buffer, timeout).await?;
+        // The destination read lands directly in the final AEAD plaintext
+        // region of the connection's reusable record buffer and is sealed in
+        // place: no scratch buffer and no per-chunk copy exist on this path.
+        let read = writer
+            .write_application_read_from(reader, timeout)
+            .await
+            .map_err(VisionSessionError::Tls)?;
         if read == 0 {
             writer
                 .shutdown(timeout)
@@ -983,10 +1067,6 @@ where
                 .map_err(VisionSessionError::Tls)?;
             return Ok(copied);
         }
-        writer
-            .write_application(&buffer[..read], timeout)
-            .await
-            .map_err(VisionSessionError::Tls)?;
         copied = copied.saturating_add(length_u64(read));
     }
 }
@@ -1298,42 +1378,12 @@ where
     Ok(read)
 }
 
-async fn read_before<R>(
-    reader: &mut R,
-    output: &mut [u8],
-    timeout: Duration,
-) -> Result<usize, VisionSessionError>
-where
-    R: AsyncRead + Unpin,
-{
-    time::timeout(timeout, reader.read(output))
-        .await
-        .map_err(|_| VisionSessionError::Timeout)?
-        .map_err(VisionSessionError::Io)
-}
-
-async fn write_all_before<W>(
-    writer: &mut W,
-    input: &[u8],
-    timeout: Duration,
-) -> Result<(), VisionSessionError>
-where
-    W: AsyncWrite + Unpin,
-{
-    time::timeout(timeout, writer.write_all(input))
-        .await
-        .map_err(|_| VisionSessionError::Timeout)?
-        .map_err(VisionSessionError::Io)
-}
-
-async fn shutdown_before<W>(writer: &mut W, timeout: Duration) -> Result<(), VisionSessionError>
-where
-    W: AsyncWrite + Unpin,
-{
-    time::timeout(timeout, writer.shutdown())
-        .await
-        .map_err(|_| VisionSessionError::Timeout)?
-        .map_err(VisionSessionError::Io)
+/// Maps an idle-guarded operation failure to the session error.
+fn idle_failure(error: IdleError) -> VisionSessionError {
+    match error {
+        IdleError::Timeout => VisionSessionError::Timeout,
+        IdleError::Io(source) => VisionSessionError::Io(source),
+    }
 }
 
 fn length_u64(length: usize) -> u64 {
@@ -1364,8 +1414,8 @@ mod tests {
                 TlsApplicationIo, read_tls_record,
             },
             vless::{
-                Command, UserId, UserRegistry, VERSION, VISION_FLOW, VisionCommand, VisionDecoder,
-                VisionEncoder, VisionMode,
+                Command, UserId, UserRegistry, VERSION, VISION_FLOW, VISION_FRAME_SIZE,
+                VisionCommand, VisionDecoder, VisionEncoder, VisionMode,
             },
         },
         server::{
@@ -2102,6 +2152,139 @@ mod tests {
         assert_eq!(
             stats.downlink_direct_at_bytes(),
             length_u64(expected_framed.len())
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn packs_multiple_vision_frames_into_one_outer_record() {
+        let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("destination must bind");
+        let destination_address = destination_listener
+            .local_addr()
+            .expect("destination address must exist");
+        let (mut client, server) = tcp_pair().await;
+        let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
+        let established = RealityEstablished::from_test_parts(
+            TlsApplicationIo::new(server, established_tls),
+            UserRegistry::new([USER]),
+        );
+        let governor = ResourceGovernorConfig {
+            connect_timeout_ms: 1_000,
+            handshake_timeout_ms: 1_000,
+            fallback_timeout_ms: 1_000,
+            ..ResourceGovernorConfig::default()
+        };
+        let handler = direct_handler(&governor);
+        let request = vision_request(destination_address.port(), b"up-ping");
+        let nested_server_hello = record(22, &server_hello(0x1301, true));
+        // A maximum-sized nested handshake record is framed as three Vision
+        // frames; the two full frames carry no padding and must share one
+        // maximum-sized outer record.
+        let nested_certificate = record(22, &[0x5a_u8; 16_384]);
+        let nested_application = record(23, b"encrypted-handshake");
+
+        let exchange = async {
+            let handle = handler.handle(established);
+            let client_io = async {
+                let mut request_record = Vec::new();
+                client_write_records
+                    .seal_into(
+                        ContentType::ApplicationData,
+                        &request,
+                        0,
+                        &mut request_record,
+                    )
+                    .map_err(io::Error::other)?;
+                client.write_all(&request_record).await?;
+                let mut close_record = Vec::new();
+                client_write_records
+                    .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                    .map_err(io::Error::other)?;
+                client.write_all(&close_record).await?;
+
+                let mut decoder = VisionDecoder::new(USER);
+                let mut decoded = Vec::new();
+                let mut framed = Vec::new();
+                let mut outer_records = 0_usize;
+                let mut saw_packed_record = false;
+                let mut response_header = true;
+                while decoder.mode() != VisionMode::Direct {
+                    let mut record = read_tls_record(&mut client, TEST_TIMEOUT)
+                        .await
+                        .map_err(io::Error::other)?
+                        .into_wire();
+                    let opened = client_read_records
+                        .open_in_place(&mut record)
+                        .map_err(io::Error::other)?;
+                    if opened.content_type() != ContentType::ApplicationData {
+                        return Err(io::Error::other("expected outer application record"));
+                    }
+                    let plaintext = opened.plaintext();
+                    outer_records += 1;
+                    saw_packed_record |= plaintext.len() > VISION_FRAME_SIZE;
+                    let vision = if response_header {
+                        response_header = false;
+                        &plaintext[2..]
+                    } else {
+                        plaintext
+                    };
+                    let _ = decoder
+                        .decode(vision, &mut decoded)
+                        .map_err(io::Error::other)?;
+                    framed.extend_from_slice(&decoded);
+                }
+                let mut raw_response = Vec::new();
+                client.read_to_end(&mut raw_response).await?;
+                Ok::<_, io::Error>((framed, raw_response, outer_records, saw_packed_record))
+            };
+            let server_hello_record = nested_server_hello.clone();
+            let certificate_record = nested_certificate.clone();
+            let application_record = nested_application.clone();
+            let destination_io = async move {
+                let (mut destination, _) = destination_listener.accept().await?;
+                destination.write_all(&server_hello_record).await?;
+                destination.write_all(&certificate_record).await?;
+                destination.write_all(&application_record).await?;
+                destination.write_all(b"down-raw").await?;
+                destination.shutdown().await?;
+                let mut received = Vec::new();
+                destination.read_to_end(&mut received).await?;
+                Ok::<_, io::Error>(received)
+            };
+            tokio::join!(handle, client_io, destination_io)
+        };
+        let (stats, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+            .await
+            .expect("packed Vision exchange must not time out");
+        let stats = stats.expect("packed Vision handler must succeed");
+        let (framed, raw_response, outer_records, saw_packed_record) =
+            client_result.expect("client I/O must succeed");
+        let mut expected_framed = nested_server_hello;
+        expected_framed.extend_from_slice(&nested_certificate);
+        expected_framed.extend_from_slice(&nested_application);
+
+        assert_eq!(
+            destination_result.expect("destination I/O must succeed"),
+            b"up-ping"
+        );
+        assert_eq!(
+            framed, expected_framed,
+            "frames packed into shared outer records must decode byte-exactly"
+        );
+        assert_eq!(raw_response, b"down-raw");
+        // Preamble, ServerHello frame, two records for the three certificate
+        // frames, and the Direct frame: five records where unpacked framing
+        // needed six.
+        assert_eq!(outer_records, 5, "full frames must share outer records");
+        assert!(
+            saw_packed_record,
+            "one outer record must carry more than one Vision frame"
+        );
+        assert!(stats.downlink_direct());
+        assert_eq!(
+            stats.downlink_bytes(),
+            length_u64(expected_framed.len() + b"down-raw".len())
         );
     }
 

@@ -5,6 +5,7 @@ mod allocation_gate;
 mod application_io;
 mod handshake;
 mod handshake_read;
+mod idle;
 mod keys;
 mod messages;
 mod record;
@@ -18,6 +19,7 @@ pub use application_io::{
 };
 pub use handshake::{EstablishedTls, RealityHandshakeError, ServerFlight, build_server_flight};
 pub use handshake_read::{ClientFinishedReadError, read_client_finished};
+pub use idle::{IdleDeadline, IdleError};
 pub use keys::{
     ApplicationTrafficSecrets, CipherSuite, FinishedVerifyData, HashAlgorithm, Tls13KeySchedule,
     Tls13KeyScheduleError, TrafficKeys, TrafficSecret, TranscriptHash,

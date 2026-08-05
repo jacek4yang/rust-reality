@@ -52,6 +52,20 @@ pub enum VisionMode {
     Direct,
 }
 
+/// One decoded Vision payload, borrowed from the input fragment when possible.
+///
+/// The borrowed variant is what makes the raw-mode relay copy-free: the
+/// payload is written to the destination straight from the input record
+/// instead of being staged in intermediate storage first.
+#[derive(Debug, Eq, PartialEq)]
+pub enum VisionPayload<'input> {
+    /// The whole input fragment is payload; decoding made no copy.
+    Borrowed(&'input [u8]),
+
+    /// Payload bytes were staged in the caller's output storage.
+    Staged,
+}
+
 /// Stateful, allocation-free decoding of Xray-compatible Vision blocks.
 #[derive(Debug)]
 pub struct VisionDecoder {
@@ -106,6 +120,28 @@ impl VisionDecoder {
             self.failed = true;
         }
         result
+    }
+
+    /// Decodes one input fragment, borrowing the payload from the input when possible.
+    ///
+    /// Once padding has ended — Raw or Direct mode — the fragment is payload
+    /// verbatim, so it is returned as [`VisionPayload::Borrowed`] with no copy
+    /// and `output` is left untouched. Framed fragments behave exactly like
+    /// [`VisionDecoder::decode`] and report [`VisionPayload::Staged`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same protocol errors as [`VisionDecoder::decode`].
+    pub fn decode_borrowed<'input>(
+        &mut self,
+        input: &'input [u8],
+        output: &mut Vec<u8>,
+    ) -> Result<(VisionMode, VisionPayload<'input>), VisionDecodeError> {
+        if !self.failed && self.mode != VisionMode::Framed {
+            return Ok((self.mode, VisionPayload::Borrowed(input)));
+        }
+        let mode = self.decode(input, output)?;
+        Ok((mode, VisionPayload::Staged))
     }
 
     /// Returns the decoder's current framing mode.
@@ -323,6 +359,49 @@ impl VisionEncoder {
         command: VisionCommand,
         long_padding: bool,
     ) -> Result<VisionFramePlan, VisionEncodeError> {
+        let maximum_padding = self.maximum_frame_padding(content_length)?;
+        self.plan_capped(content_length, command, long_padding, maximum_padding)
+    }
+
+    /// Computes a frame that additionally fits within `record_budget` wire bytes.
+    ///
+    /// This is [`VisionEncoder::plan`] with the padding length capped so the
+    /// whole frame fits the remaining budget of one outer TLS record, letting
+    /// the writer pack several complete frames per record. Packing never
+    /// changes the framing itself — every frame stays a complete Xray padding
+    /// block — so a stream decoder observes the identical byte sequence.
+    /// Returns `Ok(None)` when even a zero-padding frame cannot fit the
+    /// budget; the caller then flushes the record and plans again against a
+    /// fresh budget.
+    ///
+    /// # Errors
+    ///
+    /// Rejects oversized content, unrepresentable padding, a finished encoder,
+    /// and entropy failure.
+    pub fn plan_within(
+        &mut self,
+        content_length: usize,
+        command: VisionCommand,
+        long_padding: bool,
+        record_budget: usize,
+    ) -> Result<Option<VisionFramePlan>, VisionEncodeError> {
+        let maximum_padding = self.maximum_frame_padding(content_length)?;
+        let prefix_length = HEADER_SIZE + usize::from(self.first_frame) * UUID_SIZE;
+        let Some(budget_padding) = record_budget
+            .checked_sub(prefix_length)
+            .and_then(|budget| budget.checked_sub(content_length))
+        else {
+            return Ok(None);
+        };
+        Ok(Some(self.plan_capped(
+            content_length,
+            command,
+            long_padding,
+            maximum_padding.min(budget_padding),
+        )?))
+    }
+
+    fn maximum_frame_padding(&self, content_length: usize) -> Result<usize, VisionEncodeError> {
         if self.finished {
             return Err(VisionEncodeError::EncoderFinished);
         }
@@ -334,8 +413,16 @@ impl VisionEncoder {
                 maximum: maximum_content,
             });
         }
+        Ok(VISION_FRAME_SIZE - prefix_length - content_length)
+    }
 
-        let maximum_padding = VISION_FRAME_SIZE - prefix_length - content_length;
+    fn plan_capped(
+        &mut self,
+        content_length: usize,
+        command: VisionCommand,
+        long_padding: bool,
+        maximum_padding: usize,
+    ) -> Result<VisionFramePlan, VisionEncodeError> {
         let padding_length =
             self.choose_padding_length(content_length, long_padding, maximum_padding)?;
         Ok(VisionFramePlan {
@@ -344,7 +431,7 @@ impl VisionEncoder {
             content_length: u16::try_from(content_length).map_err(|_| {
                 VisionEncodeError::ContentTooLarge {
                     length: content_length,
-                    maximum: maximum_content,
+                    maximum: content_length,
                 }
             })?,
             padding_length: u16::try_from(padding_length)
@@ -545,8 +632,8 @@ impl Error for VisionEncodeError {}
 #[cfg(test)]
 mod tests {
     use super::{
-        VISION_FRAME_SIZE, VisionCommand, VisionDecodeError, VisionDecoder, VisionEncoder,
-        VisionMode,
+        HEADER_SIZE, UUID_SIZE, VISION_FRAME_SIZE, VisionCommand, VisionDecodeError, VisionDecoder,
+        VisionEncoder, VisionMode,
     };
     use crate::protocol::vless::UserId;
 
@@ -621,6 +708,126 @@ mod tests {
                 padding_length: 0,
             })
         );
+    }
+
+    #[test]
+    fn borrowed_decode_returns_input_verbatim_once_raw() {
+        let mut wire = USER.as_bytes().to_vec();
+        wire.extend_from_slice(&[1, 0, 3, 0, 0, b'a', b'b', b'c']);
+        let mut decoder = VisionDecoder::new(USER);
+        let mut staged = Vec::new();
+
+        let (mode, payload) = decoder
+            .decode_borrowed(&wire, &mut staged)
+            .expect("end frame must decode");
+        assert_eq!(mode, VisionMode::Raw);
+        assert_eq!(payload, super::VisionPayload::Staged);
+        assert_eq!(staged, b"abc");
+
+        let record = [0x5a_u8; 64];
+        let (mode, payload) = decoder
+            .decode_borrowed(&record, &mut staged)
+            .expect("raw record must decode");
+        assert_eq!(mode, VisionMode::Raw);
+        assert_eq!(
+            payload,
+            super::VisionPayload::Borrowed(record.as_slice()),
+            "raw-mode payload must be borrowed from the input record"
+        );
+        assert_eq!(
+            staged, b"abc",
+            "the borrowed path must not touch staged storage"
+        );
+    }
+
+    #[test]
+    fn borrowed_decode_stages_the_framed_to_raw_transition() {
+        let mut wire = USER.as_bytes().to_vec();
+        wire.extend_from_slice(&[1, 0, 2, 0, 0, b'd', b'e']);
+        wire.extend_from_slice(b"raw-tail");
+        let mut decoder = VisionDecoder::new(USER);
+        let mut staged = Vec::new();
+
+        let (mode, payload) = decoder
+            .decode_borrowed(&wire, &mut staged)
+            .expect("transition fragment must decode");
+        assert_eq!(mode, VisionMode::Raw);
+        assert_eq!(payload, super::VisionPayload::Staged);
+        assert_eq!(staged, b"deraw-tail");
+
+        let (mode, payload) = decoder
+            .decode_borrowed(b"next", &mut staged)
+            .expect("following raw record must decode");
+        assert_eq!(mode, VisionMode::Raw);
+        assert_eq!(payload, super::VisionPayload::Borrowed(b"next".as_slice()));
+    }
+
+    #[test]
+    fn plan_within_caps_padding_to_the_record_budget() {
+        let mut encoder = VisionEncoder::with_padding_seed(USER, &[0x5a; 44]);
+        let content = VISION_FRAME_SIZE - HEADER_SIZE - UUID_SIZE;
+
+        let first = encoder
+            .plan_within(content, VisionCommand::Continue, false, VISION_FRAME_SIZE)
+            .expect("first frame must plan")
+            .expect("a full frame fits a frame-sized budget");
+        assert_eq!(first.wire_len(), VISION_FRAME_SIZE);
+        encoder.commit(&first);
+
+        let full_chunk = VISION_FRAME_SIZE - HEADER_SIZE;
+        let too_small = encoder
+            .plan_within(full_chunk, VisionCommand::Continue, false, full_chunk)
+            .expect("budget check must not fail");
+        assert_eq!(
+            too_small, None,
+            "a frame must report when it cannot fit the budget"
+        );
+
+        let budget = 2 * VISION_FRAME_SIZE;
+        let first = encoder
+            .plan_within(full_chunk, VisionCommand::Continue, false, budget)
+            .expect("frame must plan")
+            .expect("first packed frame must fit");
+        let second = encoder
+            .plan_within(
+                full_chunk,
+                VisionCommand::End,
+                false,
+                budget - first.wire_len(),
+            )
+            .expect("frame must plan")
+            .expect("second packed frame must fit the remaining budget");
+        assert_eq!(first.padding_len(), 0, "a full chunk has no frame padding");
+        assert!(first.wire_len() + second.wire_len() <= budget);
+    }
+
+    #[test]
+    fn decodes_multiple_frames_packed_into_one_fragment() {
+        let mut encoder = VisionEncoder::with_padding_seed(USER, &[0x5a; 44]);
+        let mut packed = Vec::new();
+        let mut first = Vec::new();
+        encoder
+            .encode(b"first", VisionCommand::Continue, false, &mut first)
+            .expect("first frame must encode");
+        let mut second = Vec::new();
+        encoder
+            .encode(b"second", VisionCommand::End, false, &mut second)
+            .expect("second frame must encode");
+        packed.extend_from_slice(&first);
+        packed.extend_from_slice(&second);
+
+        // One fragment carrying two complete frames is exactly what packing
+        // several frames into one outer TLS record produces on the wire; the
+        // decoder is a stream state machine and must consume both in order.
+        let mut decoder = VisionDecoder::new(USER);
+        let mut decoded = Vec::new();
+        let mut all = Vec::new();
+        let mode = decoder
+            .decode(&packed, &mut decoded)
+            .expect("packed frames must decode");
+        all.extend_from_slice(&decoded);
+        assert_eq!(mode, VisionMode::Raw);
+        assert_eq!(all, b"firstsecond");
     }
 
     #[test]

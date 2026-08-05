@@ -1,13 +1,10 @@
 use std::{error::Error, fmt, io, time::Duration};
 
-use tokio::{
-    io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf, split},
-    time::{self, Instant},
-};
+use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf, split};
 
 use super::{
-    ContentType, EstablishedTls, MAX_PLAINTEXT_LEN, Tls13RecordError, TlsRecordReadError,
-    read_tls_record_into, record_storage,
+    ContentType, EstablishedTls, IdleDeadline, IdleError, MAX_PLAINTEXT_LEN, Tls13RecordError,
+    TlsRecordReadError, read_tls_record_into, record_storage,
 };
 
 const ALERT_LEVEL_WARNING: u8 = 1;
@@ -75,7 +72,7 @@ impl ApplicationWriteStats {
 /// Established TLS application I/O failed or received unsupported control traffic.
 #[derive(Debug)]
 pub enum TlsApplicationIoError {
-    /// The requested absolute operation deadline could not be represented or elapsed.
+    /// The requested idle window could not be represented or elapsed.
     Timeout,
     /// Reading one exact encrypted record failed.
     Read(TlsRecordReadError),
@@ -127,17 +124,20 @@ pub struct TlsApplicationIo<S> {
     tls: EstablishedTls,
     read_record: Vec<u8>,
     write_record: Vec<u8>,
+    idle: IdleDeadline,
 }
 
 /// Authenticated client-to-server TLS application records.
 ///
-/// The reader owns one maximum-sized record buffer for the whole connection.
-/// Every record is read into it, opened in place, and exposed as a borrowed
-/// slice, so the steady-state path performs no allocation.
+/// The reader owns one maximum-sized record buffer and one idle deadline for
+/// the whole connection. Every record is read into the buffer, opened in
+/// place, and exposed as a borrowed slice, so the steady-state path performs
+/// no allocation and registers one timer per record.
 pub struct TlsApplicationReader<R> {
     io: R,
     records: super::Tls13RecordLayer,
     read_record: Vec<u8>,
+    idle: IdleDeadline,
 }
 
 /// Server-to-client TLS application records with one reusable ciphertext buffer.
@@ -145,6 +145,7 @@ pub struct TlsApplicationWriter<W> {
     io: W,
     records: super::Tls13RecordLayer,
     write_record: Vec<u8>,
+    idle: IdleDeadline,
 }
 
 impl<R> TlsApplicationReader<R> {
@@ -182,11 +183,13 @@ pub fn bind_application_halves<R, W>(
             io: reader,
             records: client_records,
             read_record: Vec::new(),
+            idle: IdleDeadline::new(),
         },
         TlsApplicationWriter {
             io: writer,
             records: server_records,
             write_record: Vec::new(),
+            idle: IdleDeadline::new(),
         },
     )
 }
@@ -200,6 +203,7 @@ impl<S> TlsApplicationIo<S> {
             tls,
             read_record: Vec::new(),
             write_record: Vec::new(),
+            idle: IdleDeadline::new(),
         }
     }
 
@@ -232,11 +236,13 @@ impl TlsApplicationIo<tokio::net::TcpStream> {
                 io: reader,
                 records: client_records,
                 read_record: self.read_record,
+                idle: IdleDeadline::new(),
             },
             TlsApplicationWriter {
                 io: writer,
                 records: server_records,
                 write_record: self.write_record,
+                idle: IdleDeadline::new(),
             },
         )
     }
@@ -261,11 +267,13 @@ where
                 io: reader,
                 records: client_records,
                 read_record: self.read_record,
+                idle: IdleDeadline::new(),
             },
             TlsApplicationWriter {
                 io: writer,
                 records: server_records,
                 write_record: self.write_record,
+                idle: IdleDeadline::new(),
             },
         )
     }
@@ -275,7 +283,7 @@ impl<S> TlsApplicationIo<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    /// Reads and authenticates one application record under an absolute deadline.
+    /// Reads and authenticates one application record under one idle window.
     ///
     /// Decryption occurs in place. The returned value owns the record buffer and
     /// exposes the plaintext as a range, avoiding a second plaintext allocation.
@@ -287,11 +295,14 @@ where
         &mut self,
         timeout: Duration,
     ) -> Result<ApplicationRecord<'_>, TlsApplicationIoError> {
+        self.idle
+            .reset(timeout)
+            .map_err(|_| TlsApplicationIoError::Timeout)?;
         read_application_record(
             &mut self.io,
             self.tls.client_records_mut(),
             &mut self.read_record,
-            timeout,
+            &mut self.idle,
         )
         .await
     }
@@ -299,7 +310,7 @@ where
     /// Encrypts application bytes into bounded records and writes every ciphertext byte.
     ///
     /// The reusable ciphertext buffer is retained by the connection. Empty writes
-    /// produce no record, and all chunks share one absolute deadline.
+    /// produce no record, and each record gets its own idle window.
     ///
     /// # Errors
     ///
@@ -313,6 +324,7 @@ where
             &mut self.io,
             self.tls.server_records_mut(),
             &mut self.write_record,
+            &mut self.idle,
             plaintext,
             timeout,
         )
@@ -329,6 +341,7 @@ where
             &mut self.io,
             self.tls.server_records_mut(),
             &mut self.write_record,
+            &mut self.idle,
             timeout,
         )
         .await
@@ -348,11 +361,14 @@ where
         &mut self,
         timeout: Duration,
     ) -> Result<ApplicationRecord<'_>, TlsApplicationIoError> {
+        self.idle
+            .reset(timeout)
+            .map_err(|_| TlsApplicationIoError::Timeout)?;
         read_application_record(
             &mut self.io,
             &mut self.records,
             &mut self.read_record,
-            timeout,
+            &mut self.idle,
         )
         .await
     }
@@ -382,10 +398,63 @@ where
             &mut self.io,
             &mut self.records,
             &mut self.write_record,
+            &mut self.idle,
             plaintext,
             timeout,
         )
         .await
+    }
+
+    /// Reads transport bytes straight into AEAD plaintext storage and seals in place.
+    ///
+    /// This is the relay shape of [`TlsApplicationWriter::write_assembled`]:
+    /// instead of assembling a framed payload, the plaintext region of the
+    /// connection's reusable record buffer is the destination of one socket
+    /// read, and exactly the bytes read are sealed. The scratch buffer and its
+    /// per-chunk copy are gone; the only copy left is the socket read itself.
+    /// One idle window covers the read and the write, so a relay chunk costs
+    /// one timer registration.
+    ///
+    /// Returns the number of plaintext bytes sealed; `0` means the peer
+    /// reached EOF and no record was written.
+    ///
+    /// # Errors
+    ///
+    /// Returns a record-protection, allocation, socket, or deadline error.
+    pub async fn write_application_read_from<R>(
+        &mut self,
+        reader: &mut R,
+        timeout: Duration,
+    ) -> Result<usize, TlsApplicationIoError>
+    where
+        R: AsyncRead + Unpin,
+    {
+        self.idle
+            .reset(timeout)
+            .map_err(|_| TlsApplicationIoError::Timeout)?;
+        let read = {
+            let region = super::record::application_plaintext_region(&mut self.write_record)
+                .map_err(TlsApplicationIoError::Record)?;
+            self.idle.read(reader, region).await.map_err(idle_failure)?
+        };
+        if read == 0 {
+            return Ok(0);
+        }
+        let record_len = self
+            .records
+            .seal_filled(ContentType::ApplicationData, read, &mut self.write_record)
+            .map_err(TlsApplicationIoError::Record)?;
+        let record = self
+            .write_record
+            .get(..record_len)
+            .ok_or(TlsApplicationIoError::Record(
+                Tls13RecordError::InvalidLength,
+            ))?;
+        self.idle
+            .write_all(&mut self.io, record)
+            .await
+            .map_err(idle_failure)?;
+        Ok(read)
     }
 
     /// Encrypts one record whose plaintext is assembled in final AEAD storage.
@@ -406,7 +475,9 @@ where
     where
         Assemble: FnOnce(&mut [u8]),
     {
-        let deadline = operation_deadline(timeout)?;
+        self.idle
+            .reset(timeout)
+            .map_err(|_| TlsApplicationIoError::Timeout)?;
         self.records
             .seal_assembled(
                 ContentType::ApplicationData,
@@ -416,10 +487,11 @@ where
                 assemble,
             )
             .map_err(TlsApplicationIoError::Record)?;
-        time::timeout_at(deadline, self.io.write_all(&self.write_record))
+        let record = self.write_record.as_slice();
+        self.idle
+            .write_all(&mut self.io, record)
             .await
-            .map_err(|_| TlsApplicationIoError::Timeout)?
-            .map_err(TlsApplicationIoError::Io)
+            .map_err(idle_failure)
     }
 
     /// Sends an authenticated `close_notify` and shuts down the transport writer.
@@ -432,6 +504,7 @@ where
             &mut self.io,
             &mut self.records,
             &mut self.write_record,
+            &mut self.idle,
             timeout,
         )
         .await
@@ -448,17 +521,20 @@ async fn read_application_record<'record, R>(
     io: &mut R,
     records: &mut super::Tls13RecordLayer,
     wire: &'record mut Vec<u8>,
-    timeout: Duration,
+    idle: &mut IdleDeadline,
 ) -> Result<ApplicationRecord<'record>, TlsApplicationIoError>
 where
     R: AsyncRead + Unpin,
 {
     ensure_record_storage(wire)?;
-    read_tls_record_into(io, wire, timeout)
+    let length = read_tls_record_into(io, wire, idle)
         .await
         .map_err(TlsApplicationIoError::Read)?;
+    let record = wire.get_mut(..length).ok_or(TlsApplicationIoError::Record(
+        Tls13RecordError::InvalidLength,
+    ))?;
     let opened = records
-        .open_in_place(wire)
+        .open_in_place(record)
         .map_err(TlsApplicationIoError::Record)?;
     let content_type = opened.content_type();
     match content_type {
@@ -489,22 +565,26 @@ async fn write_application_data<W>(
     io: &mut W,
     records: &mut super::Tls13RecordLayer,
     write_record: &mut Vec<u8>,
+    idle: &mut IdleDeadline,
     plaintext: &[u8],
     timeout: Duration,
 ) -> Result<ApplicationWriteStats, TlsApplicationIoError>
 where
     W: AsyncWrite + Unpin,
 {
-    let deadline = operation_deadline(timeout)?;
     let mut record_count = 0_u64;
     for chunk in plaintext.chunks(MAX_PLAINTEXT_LEN) {
+        // One idle window per record: steady progress can never time out,
+        // while a stalled peer is still bounded per record.
+        idle.reset(timeout)
+            .map_err(|_| TlsApplicationIoError::Timeout)?;
         write_content(
             io,
             records,
             write_record,
+            idle,
             ContentType::ApplicationData,
             chunk,
-            deadline,
         )
         .await?;
         record_count = record_count.saturating_add(1);
@@ -519,34 +599,33 @@ async fn shutdown_tls_writer<W>(
     io: &mut W,
     records: &mut super::Tls13RecordLayer,
     write_record: &mut Vec<u8>,
+    idle: &mut IdleDeadline,
     timeout: Duration,
 ) -> Result<(), TlsApplicationIoError>
 where
     W: AsyncWrite + Unpin,
 {
-    let deadline = operation_deadline(timeout)?;
+    idle.reset(timeout)
+        .map_err(|_| TlsApplicationIoError::Timeout)?;
     write_content(
         io,
         records,
         write_record,
+        idle,
         ContentType::Alert,
         &[ALERT_LEVEL_WARNING, ALERT_CLOSE_NOTIFY],
-        deadline,
     )
     .await?;
-    time::timeout_at(deadline, io.shutdown())
-        .await
-        .map_err(|_| TlsApplicationIoError::Timeout)?
-        .map_err(TlsApplicationIoError::Io)
+    idle.shutdown(io).await.map_err(idle_failure)
 }
 
 async fn write_content<W>(
     io: &mut W,
     records: &mut super::Tls13RecordLayer,
     write_record: &mut Vec<u8>,
+    idle: &mut IdleDeadline,
     content_type: ContentType,
     plaintext: &[u8],
-    deadline: Instant,
 ) -> Result<(), TlsApplicationIoError>
 where
     W: AsyncWrite + Unpin,
@@ -554,10 +633,15 @@ where
     records
         .seal_into(content_type, plaintext, 0, write_record)
         .map_err(TlsApplicationIoError::Record)?;
-    time::timeout_at(deadline, io.write_all(write_record))
-        .await
-        .map_err(|_| TlsApplicationIoError::Timeout)?
-        .map_err(TlsApplicationIoError::Io)
+    idle.write_all(io, write_record).await.map_err(idle_failure)
+}
+
+/// Maps an idle-guarded operation failure to the application I/O error.
+fn idle_failure(error: IdleError) -> TlsApplicationIoError {
+    match error {
+        IdleError::Timeout => TlsApplicationIoError::Timeout,
+        IdleError::Io(source) => TlsApplicationIoError::Io(source),
+    }
 }
 
 impl<S> fmt::Debug for TlsApplicationIo<S> {
@@ -590,12 +674,6 @@ impl<W> fmt::Debug for TlsApplicationWriter<W> {
             .field("transport", &"[BOUND]")
             .finish_non_exhaustive()
     }
-}
-
-fn operation_deadline(timeout: Duration) -> Result<Instant, TlsApplicationIoError> {
-    Instant::now()
-        .checked_add(timeout)
-        .ok_or(TlsApplicationIoError::Timeout)
 }
 
 #[cfg(test)]

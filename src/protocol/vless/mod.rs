@@ -18,5 +18,5 @@ pub use types::{Address, Command, Destination, RequestHeader, UserId, VERSION};
 pub use validate::{RequestValidationError, UserRegistry};
 pub use vision::{
     VISION_FRAME_SIZE, VisionCommand, VisionDecodeError, VisionDecoder, VisionEncodeError,
-    VisionEncoder, VisionFramePlan, VisionMode,
+    VisionEncoder, VisionFramePlan, VisionMode, VisionPayload,
 };

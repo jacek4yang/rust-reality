@@ -424,12 +424,24 @@ async fn write_server_flight(
     flight: &ServerFlight,
     deadline: Instant,
 ) -> Result<(), RealityAcceptError> {
-    write_before(stream, flight.server_hello_record(), deadline).await?;
-    write_before(stream, flight.change_cipher_spec(), deadline).await?;
+    // ServerHello, the compatibility CCS, and the encrypted records form one
+    // contiguous flight; assembling them once turns 2+N writes into a single
+    // write_all under the same handshake deadline.
+    let mut assembled = Vec::with_capacity(
+        flight.server_hello_record().len()
+            + flight.change_cipher_spec().len()
+            + flight
+                .encrypted_handshake_records()
+                .iter()
+                .map(Vec::len)
+                .sum::<usize>(),
+    );
+    assembled.extend_from_slice(flight.server_hello_record());
+    assembled.extend_from_slice(flight.change_cipher_spec());
     for record in flight.encrypted_handshake_records() {
-        write_before(stream, record, deadline).await?;
+        assembled.extend_from_slice(record);
     }
-    Ok(())
+    write_before(stream, &assembled, deadline).await
 }
 
 async fn write_before(

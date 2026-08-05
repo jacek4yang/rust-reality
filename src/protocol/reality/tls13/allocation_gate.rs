@@ -355,3 +355,100 @@ fn vision_decode_of_borrowed_plaintext_allocates_nothing_per_record() {
         "steady-state Vision decode must not allocate, saw {measured:?}"
     );
 }
+
+/// Proves the raw-mode borrowed decode keeps the relay copy- and allocation-free.
+#[test]
+fn raw_mode_borrowed_decode_allocates_nothing_per_record() {
+    let mut encoder = VisionEncoder::with_padding_seed(USER, &[0x22; 44]);
+    let mut end_frame = Vec::new();
+    encoder
+        .encode(b"last", VisionCommand::End, false, &mut end_frame)
+        .expect("end frame must encode");
+
+    let mut decoder = VisionDecoder::new(USER);
+    let mut staged = Vec::new();
+    decoder
+        .decode(&end_frame, &mut staged)
+        .expect("end frame must decode");
+    assert_eq!(decoder.mode(), VisionMode::Raw);
+
+    let record = [0xa5_u8; 4096];
+    for _ in 0..WARM_UP_RECORDS {
+        let (_, payload) = decoder
+            .decode_borrowed(&record, &mut staged)
+            .expect("warm-up raw decode must succeed");
+        assert_eq!(
+            payload,
+            crate::protocol::vless::VisionPayload::Borrowed(record.as_slice())
+        );
+    }
+
+    let measured = allocation_counter::measure(|| {
+        for _ in 0..MEASURED_RECORDS {
+            let (_, payload) = decoder
+                .decode_borrowed(&record, &mut staged)
+                .expect("measured raw decode must succeed");
+            assert_eq!(
+                payload,
+                crate::protocol::vless::VisionPayload::Borrowed(record.as_slice())
+            );
+        }
+    });
+
+    assert_eq!(
+        measured.count_total, 0,
+        "steady-state raw-mode borrowed decode must not allocate, saw {measured:?}"
+    );
+    assert_eq!(staged, b"last", "the borrowed path never touches staging");
+}
+
+/// Proves the outer downlink seals destination reads in place without allocating.
+///
+/// This is the framed End-path relay loop: one socket read lands directly in
+/// the reusable record buffer's plaintext region and is sealed in place, so
+/// after warm-up a chunk must perform zero heap allocations.
+#[test]
+fn outer_downlink_read_into_record_allocates_nothing_per_chunk_after_warm_up() {
+    const CHUNK: usize = 4096;
+
+    let runtime = runtime();
+    let peers = peers();
+    let input = vec![0x5a_u8; (WARM_UP_RECORDS + MEASURED_RECORDS) * CHUNK];
+    let mut source = ReplayTransport::new(input, CHUNK, 0);
+    let sink = ReplayTransport::new(Vec::new(), 512, 64 * 1024);
+    let application = TlsApplicationIo::new(sink, peers.server);
+    let (_reader, mut writer) = application.into_split();
+
+    runtime.block_on(async {
+        for _ in 0..WARM_UP_RECORDS {
+            let read = writer
+                .write_application_read_from(&mut source, TIMEOUT)
+                .await
+                .expect("warm-up chunk must be relayed");
+            assert_eq!(read, CHUNK);
+        }
+    });
+    let storage = writer.record_storage_address();
+
+    let measured = allocation_counter::measure(|| {
+        runtime.block_on(async {
+            for _ in 0..MEASURED_RECORDS {
+                let read = writer
+                    .write_application_read_from(&mut source, TIMEOUT)
+                    .await
+                    .expect("measured chunk must be relayed");
+                assert_eq!(read, CHUNK);
+            }
+        });
+    });
+
+    assert_eq!(
+        measured.count_total, 0,
+        "steady-state outer downlink chunks must not allocate, saw {measured:?} over {MEASURED_RECORDS} chunks"
+    );
+    assert_eq!(
+        writer.record_storage_address(),
+        storage,
+        "ciphertext storage must not move between chunks"
+    );
+}
