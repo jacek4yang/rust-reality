@@ -83,6 +83,12 @@ pub enum BackendDeclineReason {
     BlockedBySeccomp,
     /// A Linux security module rejected a required operation.
     BlockedByLsm,
+    /// The eBPF verifier refused to accept the program.
+    ///
+    /// Distinct from [`Self::BlockedByLsm`] because `BPF_PROG_LOAD` reports a
+    /// verifier rejection as `EACCES`, and conflating the two sends operators
+    /// looking for a security policy that does not exist.
+    VerifierRejected,
     /// A configured bound is currently exhausted.
     ResourceLimit,
     /// A submission queue or driver shard was unavailable.
@@ -109,6 +115,7 @@ impl BackendDeclineReason {
             Self::MissingCapability => "missingCapability",
             Self::BlockedBySeccomp => "blockedBySeccomp",
             Self::BlockedByLsm => "blockedByLsm",
+            Self::VerifierRejected => "verifierRejected",
             Self::ResourceLimit => "resourceLimit",
             Self::QueueUnavailable => "queueUnavailable",
             Self::MapUnavailable => "mapUnavailable",

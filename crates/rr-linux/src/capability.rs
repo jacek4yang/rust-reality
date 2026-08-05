@@ -27,6 +27,14 @@ pub enum DeclineReason {
     BlockedBySeccomp,
     /// A Linux security module rejected a required operation.
     BlockedByLsm,
+    /// The eBPF verifier refused to accept the program.
+    ///
+    /// `BPF_PROG_LOAD` reports a verifier rejection as `EACCES`, which the
+    /// generic errno mapping reads as an LSM denial. Keeping this category
+    /// separate is what turns "something denied us" into "the program is
+    /// wrong", and the incident this crate was audited against was misdiagnosed
+    /// for exactly that reason.
+    VerifierRejected,
     /// A configured bound is currently exhausted.
     ResourceLimit,
     /// A submission queue or driver shard was unavailable.
@@ -53,6 +61,7 @@ impl DeclineReason {
             Self::MissingCapability => "missingCapability",
             Self::BlockedBySeccomp => "blockedBySeccomp",
             Self::BlockedByLsm => "blockedByLsm",
+            Self::VerifierRejected => "verifierRejected",
             Self::ResourceLimit => "resourceLimit",
             Self::QueueUnavailable => "queueUnavailable",
             Self::MapUnavailable => "mapUnavailable",
