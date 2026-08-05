@@ -32,6 +32,8 @@ pub enum AdmissionResource {
     ReplayEntries,
     /// Direct outbound connection attempts.
     DirectConnections,
+    /// Process file descriptors admitted against the derived budget.
+    FileDescriptors,
 }
 
 /// A fixed rejection category that cannot carry credentials or packet contents.
@@ -48,6 +50,12 @@ pub enum RejectionReason {
     Protocol,
     /// Selected route could not be completed.
     Outbound,
+    /// The accepted socket could not be configured for proxy use.
+    ///
+    /// This is deliberately distinct from every listener-level category: a
+    /// `TCP_NODELAY` failure affects one connection and must never be reported,
+    /// or handled, as a listener failure.
+    SocketConfiguration,
 }
 
 /// Structured operational events whose fields deliberately exclude secrets.
@@ -119,6 +127,54 @@ pub enum LogEvent {
         /// Every backend with its fixed availability and decline category.
         backends: Vec<BackendStatus>,
     },
+    /// The derived descriptor budget, emitted exactly once at startup.
+    ///
+    /// Every field is a process-wide integer. None can carry a target, a peer,
+    /// or any configuration value.
+    DescriptorBudgetReport {
+        /// Measured soft `RLIMIT_NOFILE`.
+        fd_soft_limit: u64,
+        /// Measured hard `RLIMIT_NOFILE`.
+        fd_hard_limit: u64,
+        /// Descriptors reserved for the process lifetime.
+        fd_fixed_reserve: u64,
+        /// Descriptors held back as safety headroom.
+        fd_safety_headroom: u64,
+        /// Units admissible for dynamic work.
+        fd_effective_budget: u64,
+        /// Whether the configured peak exceeds the derived budget.
+        fd_clamped: bool,
+        /// The soft limit that would avoid clamping.
+        fd_recommended_soft_limit: u64,
+    },
+    /// A descriptor-pressure state transition.
+    ///
+    /// Emitted only when the state changes, never per accept, so a sustained
+    /// pressure condition costs two log lines rather than one per connection.
+    DescriptorPressureChanged {
+        /// Fixed state identifier.
+        fd_pressure_state: &'static str,
+        /// Units reserved at the transition.
+        fd_units_in_use: u64,
+        /// Total admissible units.
+        fd_effective_budget: u64,
+    },
+    /// A recoverable listener accept error.
+    ///
+    /// The raw errno is included because diagnosing the incident this event
+    /// exists for required exactly that number, and a errno carries no
+    /// connection-specific information.
+    AcceptErrorRecovered {
+        /// Bound listener address.
+        address: SocketAddr,
+        /// Fixed error class.
+        accept_error_class: &'static str,
+        /// Raw operating-system error number, when the error carried one.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        errno: Option<i32>,
+        /// Backoff applied before the next accept attempt.
+        accept_backoff_ms: u64,
+    },
     /// Bounded per-connection completion counters. Emitted only at debug level.
     ConnectionCompleted {
         /// Session wall-clock duration.
@@ -143,13 +199,16 @@ impl LogEvent {
             Self::ServerStarting
             | Self::ConfigurationPublished { .. }
             | Self::ListenerStarted { .. }
-            | Self::RelayBackendReport { .. } => LogLevel::Info,
+            | Self::RelayBackendReport { .. }
+            | Self::DescriptorBudgetReport { .. } => LogLevel::Info,
             Self::ConnectionAccepted { .. }
             | Self::ConnectionClosed { .. }
             | Self::ConnectionCompleted { .. } => LogLevel::Debug,
             Self::ConnectionRejected { .. }
             | Self::AdmissionLimited { .. }
-            | Self::ConfigurationRejected { .. } => LogLevel::Warn,
+            | Self::ConfigurationRejected { .. }
+            | Self::DescriptorPressureChanged { .. }
+            | Self::AcceptErrorRecovered { .. } => LogLevel::Warn,
         }
     }
 }

@@ -11,7 +11,16 @@ use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore},
 };
 
-use crate::config::RelayPolicy;
+use crate::{config::RelayPolicy, runtime::FdBudget};
+
+/// Maximum io_uring driver shards, and therefore ring descriptors, per process.
+///
+/// Exposed so the startup descriptor plan can reserve the ring descriptors
+/// before deriving the dynamic budget rather than discovering them later.
+pub const MAX_URING_SHARDS: u16 = 4;
+
+/// Submission-queue depth per io_uring driver shard.
+pub const URING_QUEUE_DEPTH: u16 = 256;
 
 use super::{
     backend::{
@@ -33,6 +42,7 @@ pub struct TcpRelay {
     #[cfg(target_os = "linux")]
     splice: Option<SplicePool>,
     report: BackendReport,
+    fd_budget: FdBudget,
 }
 
 impl TcpRelay {
@@ -41,7 +51,7 @@ impl TcpRelay {
     /// # Errors
     ///
     /// Returns an allocation error before any listener is bound.
-    pub fn new(policy: &RelayPolicy) -> Result<Self, TcpRelayConfigError> {
+    pub fn new(policy: &RelayPolicy, fd_budget: FdBudget) -> Result<Self, TcpRelayConfigError> {
         let buffers = BufferPool::new(policy.buffer_bytes, policy.max_pooled_buffers)?;
         #[cfg(target_os = "linux")]
         let splice = policy
@@ -58,7 +68,14 @@ impl TcpRelay {
             #[cfg(target_os = "linux")]
             splice,
             report,
+            fd_budget,
         })
+    }
+
+    /// Returns the process descriptor budget this relay admits against.
+    #[must_use]
+    pub fn fd_budget(&self) -> &FdBudget {
+        &self.fd_budget
     }
 
     /// Returns the one stable capability line per backend for startup reporting.
@@ -692,22 +709,25 @@ mod tests {
     };
 
     use super::TcpRelay;
-    use crate::config::RelayPolicy;
+    use crate::{config::RelayPolicy, runtime::FdBudget};
 
     #[tokio::test(flavor = "current_thread")]
     async fn bounded_buffered_relay_preserves_half_close() {
-        let relay = TcpRelay::new(&RelayPolicy {
-            buffer_bytes: 4 * 1024,
-            max_pooled_buffers: 2,
-            max_splice_relays: 0,
-            max_io_uring_relays: 0,
-            max_sockhash_relays: 0,
-            max_relay_memory_bytes: u64::MAX,
-            max_pinned_memory_bytes: u64::MAX,
-            splice: false,
-            io_uring: false,
-            sockhash: false,
-        })
+        let relay = TcpRelay::new(
+            &RelayPolicy {
+                buffer_bytes: 4 * 1024,
+                max_pooled_buffers: 2,
+                max_splice_relays: 0,
+                max_io_uring_relays: 0,
+                max_sockhash_relays: 0,
+                max_relay_memory_bytes: u64::MAX,
+                max_pinned_memory_bytes: u64::MAX,
+                splice: false,
+                io_uring: false,
+                sockhash: false,
+            },
+            FdBudget::new(4_096),
+        )
         .expect("relay policy must compile");
         exercise_tcp_relay(relay).await;
     }
@@ -715,18 +735,21 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[tokio::test(flavor = "current_thread")]
     async fn nonblocking_splice_relay_preserves_half_close() {
-        let relay = TcpRelay::new(&RelayPolicy {
-            buffer_bytes: 32 * 1024,
-            max_pooled_buffers: 2,
-            max_splice_relays: 1,
-            max_io_uring_relays: 0,
-            max_sockhash_relays: 0,
-            max_relay_memory_bytes: u64::MAX,
-            max_pinned_memory_bytes: u64::MAX,
-            splice: true,
-            io_uring: false,
-            sockhash: false,
-        })
+        let relay = TcpRelay::new(
+            &RelayPolicy {
+                buffer_bytes: 32 * 1024,
+                max_pooled_buffers: 2,
+                max_splice_relays: 1,
+                max_io_uring_relays: 0,
+                max_sockhash_relays: 0,
+                max_relay_memory_bytes: u64::MAX,
+                max_pinned_memory_bytes: u64::MAX,
+                splice: true,
+                io_uring: false,
+                sockhash: false,
+            },
+            FdBudget::new(4_096),
+        )
         .expect("relay policy must compile");
         exercise_tcp_relay(relay).await;
     }

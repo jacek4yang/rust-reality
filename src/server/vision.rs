@@ -1931,18 +1931,21 @@ mod tests {
             Arc::new(EmptyAssetMatcher),
         )
         .expect("test routing must compile");
-        let relay = crate::transport::TcpRelay::new(&crate::config::RelayPolicy {
-            buffer_bytes: 32 * 1024,
-            max_pooled_buffers: 8,
-            max_splice_relays: 0,
-            max_io_uring_relays: 0,
-            max_sockhash_relays: 0,
-            max_relay_memory_bytes: u64::MAX,
-            max_pinned_memory_bytes: u64::MAX,
-            splice: false,
-            io_uring: false,
-            sockhash: false,
-        })
+        let relay = crate::transport::TcpRelay::new(
+            &crate::config::RelayPolicy {
+                buffer_bytes: 32 * 1024,
+                max_pooled_buffers: 8,
+                max_splice_relays: 0,
+                max_io_uring_relays: 0,
+                max_sockhash_relays: 0,
+                max_relay_memory_bytes: u64::MAX,
+                max_pinned_memory_bytes: u64::MAX,
+                splice: false,
+                io_uring: false,
+                sockhash: false,
+            },
+            crate::runtime::FdBudget::new(4_096),
+        )
         .expect("test relay policy must compile");
         VisionHandler::new(outbounds, routing, relay, governor)
     }
