@@ -54,13 +54,9 @@ impl TcpRelay {
     pub fn new(policy: &RelayPolicy, fd_budget: FdBudget) -> Result<Self, TcpRelayConfigError> {
         let buffers = BufferPool::new(policy.buffer_bytes, policy.max_pooled_buffers)?;
         #[cfg(target_os = "linux")]
-        let splice = policy.splice.then(|| {
-            SplicePool::new(
-                policy.max_splice_relays,
-                policy.buffer_bytes,
-                fd_budget.clone(),
-            )
-        });
+        let splice = policy
+            .splice
+            .then(|| SplicePool::new(policy.max_splice_relays, fd_budget.clone()));
         #[cfg(target_os = "linux")]
         let (sockhash, sockhash_capability) = build_sockhash(policy);
         #[cfg(not(target_os = "linux"))]
@@ -797,18 +793,16 @@ fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[derive(Clone)]
 struct SplicePool {
     permits: Arc<Semaphore>,
-    chunk_bytes: usize,
     fd_budget: FdBudget,
 }
 
 #[cfg(target_os = "linux")]
 impl SplicePool {
-    fn new(max_relays: u32, chunk_bytes: usize, fd_budget: FdBudget) -> Self {
+    fn new(max_relays: u32, fd_budget: FdBudget) -> Self {
         Self {
             permits: Arc::new(Semaphore::new(
                 usize::try_from(max_relays).map_or(usize::MAX, |value| value),
             )),
-            chunk_bytes,
             fd_budget,
         }
     }
@@ -849,7 +843,7 @@ impl SplicePool {
             inbound,
             outbound,
             &pipes.uplink,
-            self.chunk_bytes,
+            pipes.uplink.capacity,
             ledger,
             true,
         );
@@ -857,7 +851,7 @@ impl SplicePool {
             outbound,
             inbound,
             &pipes.downlink,
-            self.chunk_bytes,
+            pipes.downlink.capacity,
             ledger,
             false,
         );
@@ -895,7 +889,7 @@ impl SplicePool {
             source,
             destination,
             &pipe,
-            self.chunk_bytes,
+            pipe.capacity,
             ledger,
             direction.is_inbound_to_outbound(),
         )
@@ -934,7 +928,17 @@ impl SplicePipes {
 struct PipePair {
     read: rustix::fd::OwnedFd,
     write: rustix::fd::OwnedFd,
+    capacity: usize,
 }
+
+/// Target pipe capacity for splice relays.
+///
+/// A splice call is availability-limited, not chunk-limited, so a larger pipe
+/// only helps when the kernel has more than the default 64 KiB ready — exactly
+/// the sustained-stream case where splice call rate dominates. 256 KiB stays
+/// below the default 1 MiB unprivileged `pipe-max-size`.
+#[cfg(target_os = "linux")]
+const SPLICE_PIPE_CAPACITY: usize = 256 * 1024;
 
 #[cfg(target_os = "linux")]
 impl PipePair {
@@ -943,7 +947,16 @@ impl PipePair {
             rustix::pipe::PipeFlags::CLOEXEC | rustix::pipe::PipeFlags::NONBLOCK,
         )
         .map_err(io::Error::from)?;
-        Ok(Self { read, write })
+        // Best effort: a host that refuses the raise keeps the default
+        // capacity, and the relay remains correct with the smaller chunk.
+        let capacity = rustix::pipe::fcntl_setpipe_size(&write, SPLICE_PIPE_CAPACITY)
+            .or_else(|_| rustix::pipe::fcntl_getpipe_size(&write))
+            .unwrap_or(SPLICE_PIPE_CAPACITY / 4);
+        Ok(Self {
+            read,
+            write,
+            capacity,
+        })
     }
 }
 

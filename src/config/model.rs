@@ -755,7 +755,7 @@ impl Default for RelayPolicy {
 }
 
 const fn default_max_splice_relays() -> u32 {
-    1_024
+    256
 }
 
 const fn default_max_sockhash_relays() -> u32 {
@@ -763,7 +763,7 @@ const fn default_max_sockhash_relays() -> u32 {
 }
 
 const fn default_max_relay_memory_bytes() -> u64 {
-    268_435_456
+    536_870_912
 }
 
 const fn default_max_pinned_memory_bytes() -> u64 {

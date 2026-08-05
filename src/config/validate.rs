@@ -33,6 +33,10 @@ const SOCKHASH_ENTRY_BYTES: u64 = 40 + 8 + 192;
 /// Conservative pinned cost of the loaded stream-verdict program itself:
 /// instructions, verifier bookkeeping and the JIT image.
 const SOCKHASH_PROGRAM_BYTES: u64 = 4 * 1024;
+/// Kernel pipe capacity reserved worst-case per splice pipe. The kernel
+/// allocates pipe pages lazily, but capacity is the hard bound a full pipe
+/// can pin; a splice relay holds two pipe pairs (four pipes) at this size.
+const SPLICE_PIPE_CAPACITY_BYTES: u64 = 256 * 1024;
 
 /// One validation failure identified by a stable JSON path.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -776,7 +780,21 @@ fn validate_relay_memory(relay: &RelayPolicy) -> Result<(), ConfigError> {
         0
     };
 
-    let relay_total = buffered;
+    // Every splice relay holds two pipe pairs whose kernel capacity is
+    // reserved worst-case, even though the kernel allocates pipe pages
+    // lazily: conservative accounting matches the rest of this validator.
+    let splice_pipes = if relay.splice {
+        u64::from(relay.max_splice_relays)
+            .checked_mul(4)
+            .and_then(|pipes| pipes.checked_mul(SPLICE_PIPE_CAPACITY_BYTES))
+            .ok_or_else(|| ConfigError::new("policy.relay.maxSpliceRelays", "budget overflows"))?
+    } else {
+        0
+    };
+
+    let relay_total = buffered
+        .checked_add(splice_pipes)
+        .ok_or_else(|| ConfigError::new("policy.relay", "budget overflows"))?;
     if relay_total > relay.max_relay_memory_bytes {
         return fail(
             "policy.relay.maxRelayMemoryBytes",
@@ -1268,12 +1286,14 @@ mod tests {
         let mut config = valid_config();
         config.policy.relay.buffer_bytes = 32 * 1024;
         config.policy.relay.max_pooled_buffers = 4_096;
-        // 4096 buffers x 32 KiB is exactly 128 MiB; a byte budget one below must
-        // be rejected and the exact budget accepted.
+        // 4096 buffers x 32 KiB is exactly 128 MiB; a byte budget one below
+        // must be rejected. With splice enabled, the budget must additionally
+        // cover the relays' pipe pairs (4 pipes x 256 KiB per relay).
+        let splice_pipes = u64::from(config.policy.relay.max_splice_relays) * 4 * 256 * 1024;
         config.policy.relay.max_relay_memory_bytes = 4_096 * 32 * 1024 - 1;
         assert!(validate_config(&config).is_err());
 
-        config.policy.relay.max_relay_memory_bytes = 4_096 * 32 * 1024;
+        config.policy.relay.max_relay_memory_bytes = 4_096 * 32 * 1024 + splice_pipes;
         assert!(validate_config(&config).is_ok());
     }
 
