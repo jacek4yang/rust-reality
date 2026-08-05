@@ -7,7 +7,7 @@ use super::{IdleDeadline, IdleError, MAX_PLAINTEXT_LEN};
 pub(crate) const TLS_RECORD_HEADER_LEN: usize = 5;
 const TLS13_INNER_CONTENT_TYPE_LEN: usize = 1;
 const AEAD_TAG_LEN: usize = 16;
-const MAX_TLS13_CIPHERTEXT_LEN: usize =
+pub(crate) const MAX_TLS13_CIPHERTEXT_LEN: usize =
     MAX_PLAINTEXT_LEN + TLS13_INNER_CONTENT_TYPE_LEN + AEAD_TAG_LEN;
 
 /// Bytes required to hold the largest accepted TLS 1.3 record header plus body.
@@ -290,6 +290,19 @@ fn consumed_failure(kind: TlsRecordReadErrorKind, wire: &[u8]) -> TlsRecordReadE
         wire_prefix.extend_from_slice(wire);
     }
     TlsRecordReadError { kind, wire_prefix }
+}
+
+/// Builds a byte-owning error for the buffered record reader.
+///
+/// The buffered reader in `application_io` keeps unconsumed socket bytes in its
+/// connection-owned buffer rather than a per-record prefix; on a failed refill
+/// those buffered bytes are exactly the partial record a record-exact read
+/// would have consumed, so the error shape is identical.
+pub(crate) fn buffered_failure(
+    kind: TlsRecordReadErrorKind,
+    buffered: &[u8],
+) -> TlsRecordReadError {
+    consumed_failure(kind, buffered)
 }
 
 const fn failure(kind: TlsRecordReadErrorKind, wire_prefix: Vec<u8>) -> TlsRecordReadError {
