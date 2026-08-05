@@ -512,6 +512,22 @@ fn vital(stream: &TcpStream) -> io::Result<SocketVital> {
             "an armed socket yielded userspace-visible bytes",
         )),
         Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(SocketVital::Alive),
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {
+            // The redirect latches a spurious EPIPE as the socket's pending
+            // error, and the first read returns it once and clears it —
+            // `SO_ERROR` was measured unusable for exactly this reason. The
+            // re-probe sees the truth: EOF, WouldBlock, or a genuine error.
+            match stream.try_read(&mut byte) {
+                Ok(0) => Ok(SocketVital::Eof),
+                Ok(_read) => Err(io::Error::other(
+                    "an armed socket yielded userspace-visible bytes",
+                )),
+                Err(reprobe) if reprobe.kind() == io::ErrorKind::WouldBlock => {
+                    Ok(SocketVital::Alive)
+                }
+                Err(reprobe) => Err(reprobe),
+            }
+        }
         Err(error) => Err(error),
     }
 }
