@@ -69,7 +69,7 @@ http_port=$(free_port)
 python3 -c "
 chunk = bytes(range(256)) * 4096
 with open('$work/payload-$payload_mib.bin', 'wb') as f:
-    for _ in range($payload_mib * 4):
+    for _ in range($payload_mib):
         f.write(chunk)"
 (cd scripts/bench-origin && go build -o "$work/bench-origin" .)
 "$work/bench-origin" --port "$http_port" --payload-dir "$work" \
@@ -83,10 +83,10 @@ make_config() {
         --listen 127.0.0.1 --port "$port" \
         --target "127.0.0.1:$http_port" --server-name "localhost" \
         >"$work/base.json" 2>"$work/gen.$sockhash.log"
-    jq --arg cache "$work/assets.$sockhash" --argjson sh "$sockhash" '
-        .log.level = "warn" |
+    jq --arg cache "$work/assets.$sockhash" --argjson sh "$([ "$sockhash" = 1 ] && echo true || echo false)" '
+        .log.level = "info" |
         .assets.cacheDirectory = $cache |
-        .policy.relay.sockHash = $sh |
+        .policy.relay.sockhash = $sh |
         .policy.relay.maxSockhashRelays = 256
     ' "$work/base.json" >"$out"
 }
@@ -115,9 +115,14 @@ run_leg() {
         grep relay_backend_report "$work/server.$label.log" >&2
         exit 4
     fi
-    sudo -n perf stat -e task-clock,instructions,context-switches -p "${pids[-1]}" \
+    local stat_pid=${pids[-1]}
+    if (( sh == 1 )); then
+        # perf must count the server child, not the waiting sudo parent.
+        stat_pid=$(pgrep -n -x rust-reality)
+    fi
+    sudo -n perf stat -e task-clock,instructions,context-switches -p "$stat_pid" \
         -o "$stats_file" -- \
-        python3 - "$samples" "$payload_mib" "$port" "$http_port" "$label" "$concurrencies" <<'PY'
+        python3 - "$samples" "$payload_mib" "$port" "$http_port" "$label" "$concurrencies" "$SAMPLES_OUT" <<'PY'
 import concurrent.futures
 import json
 import os
@@ -129,6 +134,7 @@ import sys
 samples, mib, server_port, http_port, label = (
     int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), sys.argv[5])
 concurrencies = [int(c) for c in sys.argv[6].split()]
+samples_out = sys.argv[7]
 expected = mib * 1024 * 1024
 url = f"http://127.0.0.1:{server_port}/payload-{mib}.bin"
 curl_env = {k: v for k, v in os.environ.items()
@@ -160,11 +166,11 @@ for conc in concurrencies:
                     "wallSeconds": wall,
                     "throughputMiBPerSecond": mib * conc / wall,
                     "perRequestSeconds": lats})
-with open(os.environ["SAMPLES_OUT"], "w") as fh:
+with open(samples_out, "w") as fh:
     json.dump(out, fh)
 print(f"{label}: " + "; ".join(
-    f"c{c['concurrency']} p50={statistics.median(x['throughputMiBPerSecond'] for x in out if x['concurrency']==c['concurrency']):.0f} MiB/s"
-    for c in out[:len(concurrencies)]))
+    f"c{conc} p50={statistics.median(x['throughputMiBPerSecond'] for x in out if x['concurrency']==conc):.0f} MiB/s"
+    for conc in concurrencies))
 PY
     echo "$backend_line" > "$out_dir/backend-$label.txt"
 }
