@@ -1,7 +1,7 @@
 use std::{error::Error, fmt, io, sync::Arc, time::Duration};
 
 use tokio::{
-    io::{AsyncRead, AsyncWrite, AsyncWriteExt},
+    io::AsyncWriteExt,
     net::TcpStream,
     time::{self, Instant},
 };
@@ -16,7 +16,7 @@ use crate::{
         },
     },
     runtime::{AdmissionDenied, AdmissionKind, AdmissionPermit, ResourceGovernor},
-    transport::relay::{RelayStats, relay_bidirectional},
+    transport::{RelayContext, TcpRelay, relay::RelayStats},
 };
 
 /// Completed fallback byte counts, including the already-consumed wire prefix.
@@ -86,6 +86,7 @@ impl Error for FallbackError {
 pub struct RealityFallback {
     target: Arc<str>,
     governor: ResourceGovernor,
+    relay: TcpRelay,
     connect_timeout: Duration,
     session_timeout: Duration,
 }
@@ -94,6 +95,7 @@ pub struct RealityFallback {
 pub struct CoverConnection {
     stream: TcpStream,
     governor: ResourceGovernor,
+    relay: TcpRelay,
     permit: Option<AdmissionPermit>,
     deadline: Instant,
     forwarded_prefix: u64,
@@ -106,10 +108,12 @@ impl RealityFallback {
         target: impl Into<Arc<str>>,
         governor: ResourceGovernor,
         config: &ResourceGovernorConfig,
+        relay: TcpRelay,
     ) -> Self {
         Self {
             target: target.into(),
             governor,
+            relay,
             connect_timeout: Duration::from_millis(config.connect_timeout_ms),
             session_timeout: Duration::from_millis(config.fallback_timeout_ms),
         }
@@ -122,17 +126,18 @@ impl RealityFallback {
     /// Admission is non-waiting and both connection setup and total lifetime are
     /// bounded. The permit is released on timeout, cancellation, and every error.
     ///
+    /// After the exact prefixes are written, the remaining raw pair is relayed by
+    /// the unified owned relay, so a fallback session can use kernel backends
+    /// under the same descriptor accounting as every other raw boundary.
+    ///
     /// # Errors
     ///
     /// Returns an admission, deadline, connection, prefix-write, or relay error.
-    pub async fn relay<I>(
+    pub async fn relay(
         &self,
-        inbound: &mut I,
+        inbound: TcpStream,
         consumed_prefix: &[u8],
-    ) -> Result<FallbackStats, FallbackError>
-    where
-        I: AsyncRead + AsyncWrite + Unpin + ?Sized,
-    {
+    ) -> Result<FallbackStats, FallbackError> {
         self.connect(consumed_prefix)
             .await?
             .relay(inbound, &[])
@@ -197,6 +202,7 @@ impl RealityFallback {
         Ok(CoverConnection {
             stream,
             governor: self.governor.clone(),
+            relay: self.relay.clone(),
             permit,
             deadline,
             forwarded_prefix,
@@ -224,19 +230,19 @@ impl CoverConnection {
     /// Replays a previously consumed target prefix, then relays the same connection.
     ///
     /// This consumes the transaction so the fallback permit and socket cannot be
-    /// accidentally reused after ownership passes to bidirectional relay.
+    /// accidentally reused after ownership passes to the unified raw relay. The
+    /// owned client and cover sockets are handed to [`TcpRelay::relay_owned`], so
+    /// the remaining raw pair can run on the best available backend instead of a
+    /// borrowed userspace copy.
     ///
     /// # Errors
     ///
     /// Returns an I/O or absolute session-lifetime error.
-    pub async fn relay<I>(
+    pub async fn relay(
         mut self,
-        inbound: &mut I,
+        inbound: TcpStream,
         consumed_target_prefix: &[u8],
-    ) -> Result<FallbackStats, FallbackError>
-    where
-        I: AsyncRead + AsyncWrite + Unpin + ?Sized,
-    {
+    ) -> Result<FallbackStats, FallbackError> {
         let _permit = match self.permit.take() {
             Some(permit) => permit,
             None => self
@@ -245,11 +251,14 @@ impl CoverConnection {
                 .map_err(FallbackError::Admission)?,
         };
         let operation = async {
+            let mut inbound = inbound;
             inbound
                 .write_all(consumed_target_prefix)
                 .await
                 .map_err(FallbackError::Io)?;
-            let relay = relay_bidirectional(inbound, &mut self.stream)
+            let outcome = self
+                .relay
+                .relay_owned(inbound, self.stream, RelayContext::owned())
                 .await
                 .map_err(FallbackError::Io)?;
             let returned_prefix =
@@ -257,7 +266,10 @@ impl CoverConnection {
             Ok(FallbackStats {
                 forwarded_prefix: self.forwarded_prefix,
                 returned_prefix,
-                relay,
+                relay: RelayStats::new(
+                    outcome.inbound_to_outbound(),
+                    outcome.outbound_to_inbound(),
+                ),
             })
         };
 
@@ -293,21 +305,39 @@ mod tests {
     use std::{io, net::Ipv4Addr, time::Duration};
 
     use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt, duplex},
-        net::TcpListener,
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::{TcpListener, TcpStream},
         time::timeout,
     };
 
     use super::{FallbackError, RealityFallback};
     use crate::{
-        config::ResourceGovernorConfig,
+        config::{RelayPolicy, ResourceGovernorConfig},
         protocol::reality::{ClientHello, SESSION_ID_LEN, X25519_GROUP, client_hello_fixtures},
-        runtime::ResourceGovernor,
+        runtime::{FdBudget, ResourceGovernor},
+        transport::TcpRelay,
     };
 
     const PREFIX: &[u8] = b"exact-fragmented-client-hello-prefix";
     const SUFFIX: &[u8] = b"bytes-read-after-fallback-connect";
     const RESPONSE: &[u8] = b"cover-response";
+
+    fn test_fallback(target: String, config: &ResourceGovernorConfig) -> RealityFallback {
+        let relay = TcpRelay::new(&RelayPolicy::default(), FdBudget::new(4_096))
+            .expect("test relay must build");
+        RealityFallback::new(target, ResourceGovernor::new(config), config, relay)
+    }
+
+    async fn tcp_pair() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("pair listener must bind");
+        let client = TcpStream::connect(listener.local_addr().expect("pair address must exist"))
+            .await
+            .expect("pair client must connect");
+        let (server, _) = listener.accept().await.expect("pair must accept");
+        (client, server)
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn forwards_consumed_prefix_byte_exactly_before_live_bytes() {
@@ -319,11 +349,11 @@ mod tests {
             .expect("cover listener address must exist")
             .to_string();
         let config = ResourceGovernorConfig::default();
-        let fallback = RealityFallback::new(target, ResourceGovernor::new(&config), &config);
-        let (mut client, mut inbound) = duplex(256);
+        let fallback = test_fallback(target, &config);
+        let (mut client, inbound) = tcp_pair().await;
 
         let exchange = async {
-            let fallback_io = fallback.relay(&mut inbound, PREFIX);
+            let fallback_io = fallback.relay(inbound, PREFIX);
             let client_io = async {
                 client.write_all(SUFFIX).await?;
                 client.shutdown().await?;
@@ -375,10 +405,10 @@ mod tests {
             .expect("cover listener address must exist")
             .to_string();
         let config = ResourceGovernorConfig::default();
-        let fallback = RealityFallback::new(target, ResourceGovernor::new(&config), &config);
+        let fallback = test_fallback(target, &config);
         let client_hello = client_hello();
         let target_record = target_server_hello_record();
-        let (mut client, mut inbound) = duplex(512);
+        let (mut client, inbound) = tcp_pair().await;
 
         let exchange = async {
             let fallback_io = async {
@@ -390,9 +420,7 @@ mod tests {
                     .read_server_hello(&client_hello, Duration::from_secs(1))
                     .await
                     .expect("target ServerHello must be compatible");
-                connection
-                    .relay(&mut inbound, target_hello.wire_record())
-                    .await
+                connection.relay(inbound, target_hello.wire_record()).await
             };
             let client_io = async {
                 client.write_all(SUFFIX).await?;
@@ -450,19 +478,18 @@ mod tests {
             ..ResourceGovernorConfig::default()
         };
         config.connect_timeout_ms = 100;
-        let fallback = RealityFallback::new(
+        let fallback = test_fallback(
             listener
                 .local_addr()
                 .expect("cover listener address must exist")
                 .to_string(),
-            ResourceGovernor::new(&config),
             &config,
         );
 
         for _ in 0..2 {
-            let (_client, mut inbound) = duplex(1);
+            let (_client, inbound) = tcp_pair().await;
             assert!(matches!(
-                fallback.relay(&mut inbound, &[]).await,
+                fallback.relay(inbound, &[]).await,
                 Err(FallbackError::SessionTimeout)
             ));
         }
@@ -477,12 +504,11 @@ mod tests {
             max_fallbacks: 0,
             ..ResourceGovernorConfig::default()
         };
-        let fallback = RealityFallback::new(
+        let fallback = test_fallback(
             listener
                 .local_addr()
                 .expect("cover listener address must exist")
                 .to_string(),
-            ResourceGovernor::new(&config),
             &config,
         );
 
@@ -498,9 +524,9 @@ mod tests {
             .expect("mirror prefix must arrive");
         assert_eq!(received, PREFIX);
 
-        let (_client, mut inbound) = duplex(1);
+        let (_client, inbound) = tcp_pair().await;
         assert!(matches!(
-            connection.relay(&mut inbound, &[]).await,
+            connection.relay(inbound, &[]).await,
             Err(FallbackError::Admission(_))
         ));
     }

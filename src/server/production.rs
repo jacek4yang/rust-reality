@@ -450,6 +450,7 @@ impl RuntimeSnapshot {
                         governor.clone(),
                         &config.policy.resource_governor,
                         replay.clone(),
+                        tcp_relay.clone(),
                     )?),
                     vision: vision.clone(),
                 },
