@@ -368,7 +368,7 @@ impl Tls13RecordLayer {
     ///
     /// This is the asynchronous sibling of [`Tls13RecordLayer::seal_assembled`]:
     /// the caller filled the plaintext region obtained from
-    /// [`application_plaintext_region`] — typically by reading a socket
+    /// `application_plaintext_region` — typically by reading a socket
     /// directly into it — and only the byte count is decided afterwards. The
     /// destination read therefore lands in final AEAD storage and is sealed in
     /// place, with no scratch buffer and no intermediate copy.
@@ -376,7 +376,7 @@ impl Tls13RecordLayer {
     /// `output` must hold `plaintext_len` plaintext bytes starting at the
     /// record header length and must already have length covering the header,
     /// the plaintext, the inner content type, and the tag, which
-    /// [`application_plaintext_region`] guarantees. The buffer length is left
+    /// `application_plaintext_region` guarantees. The buffer length is left
     /// unchanged so the storage stays grow-only; the returned length is the
     /// exact sealed record prefix to write.
     ///
