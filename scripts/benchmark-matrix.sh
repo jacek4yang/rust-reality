@@ -28,8 +28,23 @@
 # = 6*(2*3) + 6*(1*2) = 48 cells, 36*15 + 12*9 = 648 samples, plus one
 # INTEGRITY_MIB=2048 direct-download per implementation with sha256
 # verification. On a 4-core i3-8100 the small cells finish in minutes; the
-# 512 MiB direct cells dominate (the Python TLS origin is the bottleneck) and
-# the full default plan targets ~45 minutes. Use CELLS/SKIP to trim.
+# 512 MiB cells dominate and the full default plan targets ~45 minutes.
+# Use CELLS/SKIP to trim.
+#
+# Origins: by default both listeners (plain HTTP + TLS 1.3) are served by the
+# compiled Go origin in scripts/bench-origin (built once into the work dir),
+# because the previous embedded-Python TLS origin collapsed under
+# concurrency-32 workloads and invalidated cells for all implementations.
+# ORIGIN_IMPL=python keeps the embedded Python origin as a fallback; if the
+# go toolchain is missing the script warns and falls back to it. The Go
+# origin also serves GET /__stats; after every cell the driver snapshots both
+# origins' stats and marks the cell's samples invalid with reason
+# "origin error" if an origin's error counter grew during the cell.
+#
+# Work dir: payload files (up to multi-GiB) live in a mktemp directory under
+# $TMPDIR when TMPDIR is set, otherwise under the repository's benchmarks/
+# directory (disk-backed — a small tmpfs /tmp exhausted mid-run before). The
+# directory is removed on exit unless KEEP_WORK=1.
 #
 # Cell selection: CELLS and SKIP are comma/space separated fnmatch patterns
 # matched against "<scenario>:<payloadMiB>:<concurrency>", e.g.
@@ -40,6 +55,7 @@
 # COVER_TARGET/COVER_SNI (dl.google.com[:443]), RUST_LOG_LEVEL (debug),
 # KEEP_WORK (0), SAMPLES, SAMPLES_LARGE, PAYLOADS, CONCURRENCIES,
 # LARGE_PAYLOAD_MIB (512), LARGE_CONCURRENCIES ("1 32"), INTEGRITY_MIB (2048),
+# ORIGIN_IMPL (go|python; go falls back to python when go is unavailable),
 # RUST_REALITY_BASELINE_COMMIT (override baseline SHA detection).
 #
 # Output in OUT_DIR: samples.jsonl (one record per individual sample),
@@ -73,7 +89,10 @@ cells_filter=${CELLS:-}
 skip_filter=${SKIP:-}
 rust_log_level=${RUST_LOG_LEVEL:-debug}
 out_dir=${OUT_DIR:-benchmarks/final/matrix-$(date -u +%Y%m%dT%H%M%SZ)}
-temporary_root=${TMPDIR:-/tmp}
+# Disk-backed default: /tmp may be a small tmpfs that cannot hold multi-GiB
+# payload files. TMPDIR is still honored when set.
+temporary_root=${TMPDIR:-$repository/benchmarks}
+mkdir -p "$temporary_root"
 work=$(mktemp -d "$temporary_root/rust-reality-matrix.XXXXXX")
 pids=()
 
@@ -105,6 +124,22 @@ done
 if [[ ! -x $rust_bin ]]; then
     cargo build --release --locked
 fi
+origin_impl=${ORIGIN_IMPL:-go}
+case $origin_impl in
+    go)
+        if command -v go >/dev/null 2>&1; then
+            (cd scripts/bench-origin && go build -o "$work/bench-origin" .)
+        else
+            echo "warning: go toolchain unavailable; falling back to the embedded Python origin" >&2
+            origin_impl=python
+        fi
+        ;;
+    python) ;;
+    *)
+        echo "ORIGIN_IMPL must be 'go' or 'python', got: $origin_impl" >&2
+        exit 1
+        ;;
+esac
 if ! [[ $samples =~ ^[1-9][0-9]*$ && $samples_large =~ ^[1-9][0-9]*$ \
     && $large_payload_mib =~ ^[1-9][0-9]*$ && $integrity_mib =~ ^[0-9]+$ ]]; then
     echo "SAMPLES, SAMPLES_LARGE, LARGE_PAYLOAD_MIB, INTEGRITY_MIB must be integers (only INTEGRITY_MIB may be 0)" >&2
@@ -356,6 +391,7 @@ with path.open("wb") as output:
 PY
 done
 
+if [[ $origin_impl == python ]]; then
 cat >"$work/origin.py" <<'PY'
 import argparse
 import json
@@ -432,6 +468,7 @@ if args.tls_cert:
     server.socket = context.wrap_socket(server.socket, server_side=True)
 server.serve_forever()
 PY
+fi
 
 # TLS 1.3 origin certificate: inner traffic is TLS, so Vision can reach Direct.
 openssl req -x509 -newkey rsa:2048 -nodes \
@@ -440,13 +477,27 @@ openssl req -x509 -newkey rsa:2048 -nodes \
 
 : >"$work/http-put.jsonl"
 : >"$work/https-put.jsonl"
-start_process python3 "$work/origin.py" --port "$http_port" \
-    --payload-dir "$work" --put-log "$work/http-put.jsonl" \
-    >"$work/http-origin.log" 2>&1
-start_process python3 "$work/origin.py" --port "$https_port" \
-    --payload-dir "$work" --put-log "$work/https-put.jsonl" \
-    --tls-cert "$work/origin.crt" --tls-key "$work/origin.key" \
-    >"$work/https-origin.log" 2>&1
+origin_stats_http=""
+origin_stats_https=""
+if [[ $origin_impl == go ]]; then
+    start_process "$work/bench-origin" --port "$http_port" \
+        --payload-dir "$work" --put-log "$work/http-put.jsonl" \
+        >"$work/http-origin.log" 2>&1
+    start_process "$work/bench-origin" --port "$https_port" \
+        --payload-dir "$work" --put-log "$work/https-put.jsonl" \
+        --tls-cert "$work/origin.crt" --tls-key "$work/origin.key" \
+        >"$work/https-origin.log" 2>&1
+    origin_stats_http="http://127.0.0.1:$http_port/__stats"
+    origin_stats_https="https://127.0.0.1:$https_port/__stats"
+else
+    start_process python3 "$work/origin.py" --port "$http_port" \
+        --payload-dir "$work" --put-log "$work/http-put.jsonl" \
+        >"$work/http-origin.log" 2>&1
+    start_process python3 "$work/origin.py" --port "$https_port" \
+        --payload-dir "$work" --put-log "$work/https-put.jsonl" \
+        --tls-cert "$work/origin.crt" --tls-key "$work/origin.key" \
+        >"$work/https-origin.log" 2>&1
+fi
 wait_port "$http_port"
 wait_port "$https_port"
 
@@ -505,6 +556,9 @@ jq -n \
     --argjson xray_socks "$xray_socks" \
     --argjson http_port "$http_port" \
     --argjson https_port "$https_port" \
+    --arg origin_impl "$origin_impl" \
+    --arg origin_stats_http "$origin_stats_http" \
+    --arg origin_stats_https "$origin_stats_https" \
     '{
       work: $work,
       out_dir: $out_dir,
@@ -537,7 +591,10 @@ jq -n \
       final_socks: $final_socks,
       xray_socks: $xray_socks,
       http_port: $http_port,
-      https_port: $https_port
+      https_port: $https_port,
+      origin_impl: $origin_impl,
+      origin_stats_http: $origin_stats_http,
+      origin_stats_https: $origin_stats_https
     }' >"$work/driver-config.json"
 
 cat >"$work/driver.py" <<'PY'
@@ -553,10 +610,12 @@ import os
 import platform
 import random
 import resource
+import ssl
 import statistics
 import subprocess
 import sys
 import time
+import urllib.request
 from datetime import datetime, timezone
 
 with open(sys.argv[1], encoding="utf-8") as handle:
@@ -622,6 +681,52 @@ HTTP_PORT = cfg["http_port"]
 HTTPS_PORT = cfg["https_port"]
 PUT_LOGS = {"http": os.path.join(work, "http-put.jsonl"),
             "https": os.path.join(work, "https-put.jsonl")}
+
+# Origin saturation detection: the compiled Go origin serves GET /__stats;
+# the Python fallback origin does not, in which case these URLs are empty and
+# the checks below become no-ops.
+ORIGIN_STATS_URLS = {
+    scheme: url or None
+    for scheme, url in (
+        ("http", cfg.get("origin_stats_http", "")),
+        ("https", cfg.get("origin_stats_https", "")),
+    )
+}
+# Which origin each scenario actually exercises (fallback curls are relayed to
+# the plain-HTTP origin by the fallback servers).
+ORIGIN_SCHEMES = {
+    "framed-download": ["http"],
+    "direct-download": ["https"],
+    "framed-upload": ["http"],
+    "direct-upload": ["https"],
+    "bidi": ["https"],
+    "fallback": ["http"],
+}
+
+_stats_tls = ssl.create_default_context()
+_stats_tls.check_hostname = False
+_stats_tls.verify_mode = ssl.CERT_NONE
+# Never route stats queries through the workspace proxy environment.
+_stats_opener = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}),
+    urllib.request.HTTPSHandler(context=_stats_tls),
+)
+
+
+def fetch_origin_stats(url):
+    """Returns the origin's /__stats JSON, or None when unavailable."""
+    if not url:
+        return None
+    try:
+        with _stats_opener.open(url, timeout=5) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def snapshot_origin_stats():
+    return {scheme: fetch_origin_stats(url)
+            for scheme, url in ORIGIN_STATS_URLS.items()}
 
 MIB = 1024 * 1024
 
@@ -884,6 +989,7 @@ def record_sample(impl_name, scenario, mib, concurrency, sample_index):
         "bytesVerified": False,
         "sha256": None,
         "backendStats": None,
+        "originStats": None,
         "invalid": False,
         "invalidReason": None,
     }
@@ -926,15 +1032,23 @@ def record_sample(impl_name, scenario, mib, concurrency, sample_index):
     if problems:
         record["invalid"] = True
         record["invalidReason"] = "; ".join(problems)
+    return record
+
+
+def finalize_record(record, key):
+    """Counts and persists a sample once all cell-level checks have run."""
+    global total_samples, invalid_samples
+    if record["invalid"]:
         invalid_samples += 1
         failures.append({
-            "cell": f"{scenario}:{mib}:{concurrency}",
-            "implementation": impl_name,
-            "sampleIndex": sample_index,
+            "cell": key,
+            "implementation": record["implementation"],
+            "sampleIndex": record["sampleIndex"],
             "reason": record["invalidReason"],
         })
         print(
-            f"INVALID SAMPLE {scenario}:{mib}:{concurrency} {impl_name}#{sample_index}: "
+            f"INVALID SAMPLE {key} "
+            f"{record['implementation']}#{record['sampleIndex']}: "
             f"{record['invalidReason']}",
             file=sys.stderr,
             flush=True,
@@ -942,7 +1056,6 @@ def record_sample(impl_name, scenario, mib, concurrency, sample_index):
     total_samples += 1
     samples_file.write(json.dumps(record, sort_keys=True) + "\n")
     samples_file.flush()
-    return record
 
 
 def cell_key(scenario, mib, concurrency):
@@ -1008,10 +1121,37 @@ for scenario, mib, concurrency in cells:
     random.Random(f"{seed}:{key}").shuffle(order)
     counters = {impl: 0 for impl in IMPL_ORDER}
     records = []
+    stats_before = snapshot_origin_stats()
     for impl in order:
         sample_index = counters[impl]
         counters[impl] += 1
         records.append(record_sample(impl, scenario, mib, concurrency, sample_index))
+    stats_after = snapshot_origin_stats()
+    # Origin saturation guard: if an origin's own error counter grew during
+    # the cell, the origin — not the proxy — choked; the samples must not be
+    # interpreted as proxy results.
+    origin_problems = []
+    for scheme in ORIGIN_SCHEMES[scenario]:
+        before = stats_before.get(scheme)
+        after = stats_after.get(scheme)
+        if before is None or after is None:
+            continue
+        delta = after.get("errors", 0) - before.get("errors", 0)
+        if delta > 0:
+            origin_problems.append(
+                f"origin error: {scheme} origin reported {delta} "
+                "new error(s) during the cell"
+            )
+    for record in records:
+        record["originStats"] = stats_after
+        if origin_problems:
+            record["invalid"] = True
+            extra = "; ".join(origin_problems)
+            if record["invalidReason"]:
+                record["invalidReason"] += "; " + extra
+            else:
+                record["invalidReason"] = extra
+        finalize_record(record, key)
     cell_results[key] = {
         "scenario": scenario,
         "direction": DIRECTIONS[scenario],
@@ -1019,6 +1159,7 @@ for scenario, mib, concurrency in cells:
         "concurrency": concurrency,
         "samplesPerImplementation": samples_for(mib),
         "interleaveOrder": order,
+        "originStats": {"before": stats_before, "after": stats_after},
         "records": records,
     }
     print(f"cell {key} done ({len(records)} samples)", file=sys.stderr, flush=True)
@@ -1052,6 +1193,7 @@ if integrity_mib > 0:
             "bytesVerified": False,
             "sha256": None,
             "backendStats": None,
+            "originStats": None,
             "invalid": False,
             "invalidReason": None,
         }
@@ -1174,6 +1316,7 @@ for key, cell in cell_results.items():
         "concurrency": cell["concurrency"],
         "samplesPerImplementation": cell["samplesPerImplementation"],
         "interleaveOrder": cell["interleaveOrder"],
+        "originStats": cell["originStats"]["after"],
         "implementations": per_impl,
         "p50ThroughputRatios": {
             "baselineVsXray": ratio("baseline", "xray"),
@@ -1210,7 +1353,7 @@ summary = {
     "integrity": integrity,
     "failures": failures,
     "limitations": [
-        "single-host loopback includes the same Xray client and Python origins in every path",
+        "single-host loopback includes the same Xray client and loopback origins in every path",
         "the tunnel-bypass guard only covers the rust implementations (their debug logs); "
         "xray cells rely on byte-count verification",
         "Xray's default private-target block is explicitly allowed only for the loopback origin",
@@ -1261,6 +1404,7 @@ environment = {
     "nic": {"interface": cfg["nic_interface"], "speed": cfg["nic_speed"]},
     "rlimitNofile": {"soft": soft_limit, "hard": hard_limit},
     "realityCover": {"target": cfg["cover_target"], "serverName": cfg["cover_sni"]},
+    "originImplementation": cfg["origin_impl"],
     "seed": seed_text,
 }
 with open(os.path.join(out_dir, "environment.json"), "w", encoding="utf-8") as handle:
