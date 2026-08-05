@@ -1,0 +1,16 @@
+==> fmt
+PASS fmt
+==> clippy
+   Compiling ring v0.17.14
+   Compiling rustls v0.23.43
+    Checking rustls-webpki v0.103.13
+    Checking ureq v3.3.0
+    Checking rust-reality v0.1.0 (/home/jacek/work/kimi-rust-reality-performance/rust-reality)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.52s
+PASS clippy
+==> test-workspace
+   Compiling ring v0.17.14
+   Compiling rustls-webpki v0.103.13
+   Compiling rustls v0.23.43
+   Compiling ureq v3.3.0
+   Compiling rust-reality v0.1.0 (/home/jacek/work/kimi-rust-reality-performance/rust-reality)

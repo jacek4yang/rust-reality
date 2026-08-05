@@ -1,0 +1,30 @@
+=== fmt ===
+PASS
+=== clippy ===
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.22s
+=== test ===
+passed: 401 failed: 0
+=== test release ===
+passed: 401 failed: 0
+=== doc tests ===
+
+all doctests ran in 0.12s; merged doctests compilation took 0.12s
+=== nextest ci ===
+        PASS [   0.691s] (401/401) rust-reality::relay_backends applies_backpressure_when_the_reader_is_slow
+────────────
+     Summary [   1.526s] 401 tests run: 401 passed, 17 skipped
+=== deny ===
+
+bans ok, licenses ok, sources ok
+=== audit ===
+      Loaded 1189 security advisories (from ../artifacts/advisory-db)
+    Scanning Cargo.lock for vulnerabilities (200 crate dependencies)
+=== rustdoc ===
+   Generated /home/jacek/work/kimi-rust-reality-performance/rust-reality/target/doc/rust_reality/index.html
+=== benches check ===
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.88s
+=== fuzz check ===
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.93s
+=== check.sh ===
+Success
+

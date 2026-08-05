@@ -73,7 +73,7 @@ record "docs-links" python3 scripts/check-docs.py || failures=$((failures + 1))
 if (( skip_privileged == 0 )); then
     if sudo -n true 2>/dev/null; then
         record "build-privileged-tests" \
-            cargo test -p rr-linux --test sockhash_privileged --test-threads=1 --no-run || failures=$((failures + 1))
+            cargo test -p rr-linux --test sockhash_privileged --no-run || failures=$((failures + 1))
         record "build-runtime-tests" \
             cargo test --test sockhash_runtime --no-run || failures=$((failures + 1))
         sockhash_bin=$(ls -t target/debug/deps/sockhash_privileged-* 2>/dev/null | grep -v '\.' | head -1 || true)

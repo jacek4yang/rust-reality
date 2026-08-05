@@ -340,3 +340,21 @@ proven with the origin idle (zero errors, ~3 goroutines).
   and are not reported as proxy performance; the meaningful single-stream
   evidence is the vision-direct harness (64 MiB) and the multi-connection
   cells where the origin scales.
+
+### Final confirmation matrix (this head) and CPU A/B
+
+`benchmarks/final/matrix-final/`: 393 samples, 0 invalid, 2 GiB integrity
+sha256 matched for all three implementations. Direct download 1.51-1.65x
+Xray at c32/64 (0.97-1.06 at c1/c4), direct upload 0.96-1.03x, framed upload
+0.95-0.99x, framed download ~0.97-1.00x, bidirectional 1.03-1.21x, fallback
+c32 unresolved (0.78x; final 1.16x baseline). One disclosed note: at c32/c64
+direct download, both PR builds run ~5-10% below the original baseline while
+remaining 1.3-1.65x Xray — the directional pairing design trades a little
+peak for per-direction independence; not a gate failure (the acceptance
+thresholds are vs Xray and vs PR head), recorded for reviewers.
+
+CPU per GiB, same-workload A/B on the raw Direct path (2.5 GiB, both
+directions splice): pre-follow-up vs final head identical within ~3%
+(3801 vs 3931 ms task-clock, 4.78 vs 4.70 G instructions) — the follow-up
+changes did not move Direct-path CPU per byte; the earlier rust 0.56 s/GiB
+vs Xray 0.64 s/GiB result stands.
