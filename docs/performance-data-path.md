@@ -87,10 +87,8 @@ evidence.
      first byte.
    - **buffered**: bounded pool, one buffer per direction, zero-fill at
      allocation only.
-   - **io_uring**: **removed, not implemented.** The former driver was
-     recv/send-only (not zero-copy), had no cancellation (shard `Drop` could
-     block forever), and no session layer. Stale `ioUring` config keys now
-     fail decoding (`deny_unknown_fields`).
+   - **io_uring**: **removed, not implemented**; stale `ioUring` config keys
+     fail decoding. Rationale: `decisions/adaptive-relay-implementation-plan.md`.
 
    Every backend declines only before transferring its first byte and falls
    through the order above. A backend error after transfer starts terminates

@@ -287,9 +287,8 @@ sudo systemctl restart rust-reality
 sockhash 内核后端**默认关闭**，并且是探测得出而非假定。保持关闭是受支持的生产配置；
 可移植的缓冲中继和 Linux `splice` 不需要额外权限。
 
-io_uring 后端已被移除：其驱动从未进入生产中继路径，相较于可用的 splice 与
-sockhash 后端，补全它并没有正当理由。仍然设置 `policy.relay.ioUring` 或
-`policy.relay.maxIoUringRelays` 的配置会作为未知字段被拒绝。
+io_uring 后端已被移除（见 `decisions/adaptive-relay-implementation-plan.md`）；仍然设置
+`policy.relay.ioUring` 或 `policy.relay.maxIoUringRelays` 的配置会作为未知字段被拒绝。
 
 ### sockhash
 

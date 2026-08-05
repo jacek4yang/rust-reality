@@ -148,7 +148,7 @@ accept 错误依据原始 `errno` 分类，而非 `ErrorKind`：
 | buffered | 不适用 | 是 | 是 |
 | splice | 是 | 是 | 是 |
 | sockhash | 是 | 是——当策略启用且探测与控制器构建均成功时，由 `TcpRelay` 按中继 arm | 是 |
-| io_uring | — | **已移除**——审计发现驱动不可达、仅 recv/send 且无法取消后被删除 | — |
+| io_uring | — | **已移除**——见决策记录附录 | — |
 
 ### SOCKHASH 运行时
 
@@ -202,7 +202,7 @@ IPv6 使用独立分支，以 4 字节为单位读取 `local_ip6`/`remote_ip6`�
 
 ### io_uring
 
-io_uring 后端**已移除，未实现**。对原 `crates/rr-linux/src/uring.rs` 驱动的生命周期审计发现：它只有 recv/send（并非零拷贝）、没有操作取消、没有会话层，且生产中继路径从未到达它——`TcpRelay::run_backend` 无条件拒绝它，`automatic_preference()` 也未包含它。相较于可用的 splice 与 sockhash 后端，补全它相当于重写却收益存疑，因此该模块、其配置键和描述符核算均已删除。仍然设置 `ioUring` 或 `maxIoUringRelays` 的配置会作为未知字段校验失败。
+已移除，未实现。审计与理由记录于 `decisions/adaptive-relay-implementation-plan.md` 的附录；仍然设置 `ioUring` 或 `maxIoUringRelays` 的配置会作为未知字段校验失败。
 
 ## 6. 部署建议
 

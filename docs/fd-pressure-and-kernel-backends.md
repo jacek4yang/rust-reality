@@ -196,7 +196,7 @@ honest state of each:
 | buffered | n/a | yes | yes |
 | splice | yes | yes | yes |
 | sockhash | yes | yes — armed per relay from `TcpRelay` when the policy enables it and the probe plus controller construction succeed | yes |
-| io_uring | — | **removed** — the driver was deleted after an audit found it unreachable, recv/send-only and uncancellable | — |
+| io_uring | — | **removed** — see the decision-record amendment | — |
 
 ### SOCKHASH runtime
 
@@ -292,15 +292,9 @@ time; the context refuses 8-byte access with `invalid bpf_context access`.
 
 ### io_uring
 
-The io_uring backend is **removed, not implemented**. A lifecycle audit of the
-former `crates/rr-linux/src/uring.rs` driver found it was recv/send only (not
-zero-copy), had no operation cancellation, no session layer, and was never
-reached from the production relay path — `TcpRelay::run_backend` declined it
-unconditionally and `automatic_preference()` omitted it. Completing it would
-have been a rewrite for dubious gain over the working splice and sockhash
-backends, so the module, its configuration keys and its descriptor accounting
-were deleted. Configurations that still set `ioUring` or `maxIoUringRelays`
-fail validation as unknown fields.
+Removed, not implemented. The audit and rationale are recorded in
+`decisions/adaptive-relay-implementation-plan.md`; stale `ioUring` or
+`maxIoUringRelays` configuration keys fail validation as unknown fields.
 
 ## 6. Deployment guidance
 

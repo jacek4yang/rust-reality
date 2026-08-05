@@ -316,10 +316,9 @@ The sockhash kernel backend is **off by default** and is probed rather than
 assumed. Leaving it off is a supported production configuration; the portable
 buffered relay and Linux `splice` require no additional privilege.
 
-The io_uring backend was removed: its driver never reached the production relay
-path, and completing it was not justified over the working splice and sockhash
-backends. Configurations that still set `policy.relay.ioUring` or
-`policy.relay.maxIoUringRelays` are rejected as unknown fields.
+The io_uring backend was removed (see `decisions/adaptive-relay-implementation-plan.md`);
+stale `policy.relay.ioUring` or `policy.relay.maxIoUringRelays` keys are
+rejected as unknown fields.
 
 ### sockhash
 
