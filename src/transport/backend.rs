@@ -21,8 +21,6 @@ pub enum RelayBackend {
     Buffered,
     /// Linux nonblocking `splice` through bounded pipe pairs.
     Splice,
-    /// Linux bounded io_uring driver shards.
-    IoUring,
     /// Linux bounded eBPF `SOCKHASH` stream-verdict redirect.
     Sockhash,
 }
@@ -34,17 +32,11 @@ impl RelayBackend {
         match self {
             Self::Buffered => "buffered",
             Self::Splice => "splice",
-            Self::IoUring => "ioUring",
             Self::Sockhash => "sockhash",
         }
     }
 
     /// Returns every backend in the order the automatic policy considers them.
-    ///
-    /// io_uring is deliberately absent: it is implemented, probed and explicitly
-    /// selectable, but no retained target-host measurement has shown it is not
-    /// materially slower for this workload class, and the specification forbids
-    /// adding a speculative classifier merely to claim adaptivity.
     #[must_use]
     pub const fn automatic_preference() -> &'static [Self] {
         &[Self::Sockhash, Self::Splice, Self::Buffered]
@@ -53,7 +45,7 @@ impl RelayBackend {
     /// Returns every backend, including those excluded from automatic selection.
     #[must_use]
     pub const fn all() -> &'static [Self] {
-        &[Self::Buffered, Self::Splice, Self::IoUring, Self::Sockhash]
+        &[Self::Buffered, Self::Splice, Self::Sockhash]
     }
 }
 
@@ -284,8 +276,6 @@ pub struct BackendReport {
     pub buffered: BackendCapability,
     /// The Linux `splice` backend.
     pub splice: BackendCapability,
-    /// The Linux io_uring backend.
-    pub io_uring: BackendCapability,
     /// The Linux `SOCKHASH` backend.
     pub sockhash: BackendCapability,
 }
@@ -297,18 +287,16 @@ impl BackendReport {
         match backend {
             RelayBackend::Buffered => self.buffered,
             RelayBackend::Splice => self.splice,
-            RelayBackend::IoUring => self.io_uring,
             RelayBackend::Sockhash => self.sockhash,
         }
     }
 
     /// Returns each backend paired with its capability, in reporting order.
     #[must_use]
-    pub fn entries(&self) -> [(RelayBackend, BackendCapability); 4] {
+    pub fn entries(&self) -> [(RelayBackend, BackendCapability); 3] {
         [
             (RelayBackend::Buffered, self.buffered),
             (RelayBackend::Splice, self.splice),
-            (RelayBackend::IoUring, self.io_uring),
             (RelayBackend::Sockhash, self.sockhash),
         ]
     }
@@ -566,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    fn automatic_preference_excludes_io_uring() {
+    fn automatic_preference_lists_every_backend() {
         assert_eq!(
             RelayBackend::automatic_preference(),
             [
@@ -575,7 +563,10 @@ mod tests {
                 RelayBackend::Buffered
             ]
         );
-        assert!(RelayBackend::all().contains(&RelayBackend::IoUring));
+        assert_eq!(RelayBackend::all().len(), 3);
+        for backend in RelayBackend::automatic_preference() {
+            assert!(RelayBackend::all().contains(backend));
+        }
     }
 
     #[test]

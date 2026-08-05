@@ -736,20 +736,6 @@ fn validate_policy(config: &Config) -> Result<(), ConfigError> {
             );
         }
     }
-    if relay.io_uring {
-        if relay.max_io_uring_relays == 0 {
-            return fail(
-                "policy.relay.maxIoUringRelays",
-                "must be greater than zero when ioUring is enabled",
-            );
-        }
-        if relay.max_io_uring_relays > governor.max_connections {
-            return fail(
-                "policy.relay.maxIoUringRelays",
-                "must not exceed maxConnections",
-            );
-        }
-    }
     if relay.sockhash {
         if relay.max_sockhash_relays == 0 {
             return fail(
@@ -780,15 +766,6 @@ fn validate_relay_memory(relay: &RelayPolicy) -> Result<(), ConfigError> {
         .and_then(|buffers| buffers.checked_mul(buffer_bytes))
         .ok_or_else(|| ConfigError::new("policy.relay.maxPooledBuffers", "budget overflows"))?;
 
-    let io_uring_registered = if relay.io_uring {
-        u64::from(relay.max_io_uring_relays)
-            .checked_mul(2)
-            .and_then(|directions| directions.checked_mul(buffer_bytes))
-            .ok_or_else(|| ConfigError::new("policy.relay.maxIoUringRelays", "budget overflows"))?
-    } else {
-        0
-    };
-
     let sockhash_pinned = if relay.sockhash {
         u64::from(relay.max_sockhash_relays)
             .checked_mul(2)
@@ -799,9 +776,7 @@ fn validate_relay_memory(relay: &RelayPolicy) -> Result<(), ConfigError> {
         0
     };
 
-    let relay_total = buffered
-        .checked_add(io_uring_registered)
-        .ok_or_else(|| ConfigError::new("policy.relay.maxRelayMemoryBytes", "budget overflows"))?;
+    let relay_total = buffered;
     if relay_total > relay.max_relay_memory_bytes {
         return fail(
             "policy.relay.maxRelayMemoryBytes",
@@ -809,9 +784,7 @@ fn validate_relay_memory(relay: &RelayPolicy) -> Result<(), ConfigError> {
         );
     }
 
-    let pinned_total = io_uring_registered
-        .checked_add(sockhash_pinned)
-        .ok_or_else(|| ConfigError::new("policy.relay.maxPinnedMemoryBytes", "budget overflows"))?;
+    let pinned_total = sockhash_pinned;
     if pinned_total > relay.max_pinned_memory_bytes {
         return fail(
             "policy.relay.maxPinnedMemoryBytes",
@@ -1211,16 +1184,6 @@ mod tests {
     #[test]
     fn an_enabled_kernel_backend_needs_a_nonzero_relay_limit() {
         let mut config = valid_config();
-        config.policy.relay.io_uring = true;
-        config.policy.relay.max_io_uring_relays = 0;
-        assert_eq!(
-            validate_config(&config)
-                .expect_err("an enabled backend with a zero bound must fail closed")
-                .path(),
-            "policy.relay.maxIoUringRelays"
-        );
-
-        config.policy.relay.io_uring = false;
         config.policy.relay.sockhash = true;
         config.policy.relay.max_sockhash_relays = 0;
         assert_eq!(
@@ -1234,15 +1197,15 @@ mod tests {
     #[test]
     fn a_kernel_relay_limit_may_not_exceed_max_connections() {
         let mut config = valid_config();
-        config.policy.relay.io_uring = true;
-        config.policy.relay.max_io_uring_relays =
+        config.policy.relay.sockhash = true;
+        config.policy.relay.max_sockhash_relays =
             config.policy.resource_governor.max_connections + 1;
 
         assert_eq!(
             validate_config(&config)
                 .expect_err("a relay bound above maxConnections must fail closed")
                 .path(),
-            "policy.relay.maxIoUringRelays"
+            "policy.relay.maxSockhashRelays"
         );
     }
 

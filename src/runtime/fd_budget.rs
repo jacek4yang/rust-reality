@@ -63,11 +63,6 @@ pub const UNITS_SPLICE_RELAY: u32 = 4;
 /// A directional splice relay creates one pipe pair, and a pipe pair is two
 /// descriptors — exactly half of a bilateral splice relay.
 pub const UNITS_SPLICE_DIRECTION: u32 = 2;
-/// Conservative descriptor cost of one io_uring relay session.
-///
-/// A session duplicates both sockets so a completion can never act on a
-/// descriptor the protocol layer has already closed.
-pub const UNITS_URING_SESSION: u32 = 2;
 
 /// Whether the process is currently operating under descriptor pressure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

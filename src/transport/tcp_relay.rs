@@ -19,15 +19,6 @@ use crate::{config::RelayPolicy, runtime::FdBudget};
 #[cfg(target_os = "linux")]
 use crate::runtime::{FdPermit, UNITS_SPLICE_DIRECTION, UNITS_SPLICE_RELAY};
 
-/// Maximum io_uring driver shards, and therefore ring descriptors, per process.
-///
-/// Exposed so the startup descriptor plan can reserve the ring descriptors
-/// before deriving the dynamic budget rather than discovering them later.
-pub const MAX_URING_SHARDS: u16 = 4;
-
-/// Submission-queue depth per io_uring driver shard.
-pub const URING_QUEUE_DEPTH: u16 = 256;
-
 use super::{
     backend::{
         BackendCapability, BackendDeclineReason, BackendReport, BackendRequest, BackendRun,
@@ -77,7 +68,6 @@ impl TcpRelay {
         let report = BackendReport {
             buffered: BackendCapability::available(),
             splice: splice_capability(policy),
-            io_uring: probe_io_uring(policy),
             sockhash: sockhash_capability,
         };
         Ok(Self {
@@ -222,12 +212,10 @@ impl TcpRelay {
                 self.run_splice_direction(source, destination, direction, ledger, started)
                     .await
             }
-            // The io_uring and sockhash backends are pair-only. They never
-            // appear in the directional selection order, so this arm only
-            // exists to keep the match exhaustive; nothing is recorded.
-            RelayBackend::IoUring | RelayBackend::Sockhash => {
-                ledger.decline(BackendDeclineReason::Disabled)
-            }
+            // The sockhash backend is pair-only. It never appears in the
+            // directional selection order, so this arm only exists to keep the
+            // match exhaustive; nothing is recorded.
+            RelayBackend::Sockhash => ledger.decline(BackendDeclineReason::Disabled),
         }
     }
 
@@ -306,15 +294,6 @@ impl TcpRelay {
             RelayBackend::Sockhash => {
                 self.run_sockhash(inbound, outbound, context, ledger, started)
                     .await
-            }
-            RelayBackend::IoUring => {
-                let reason = self
-                    .report
-                    .capability(backend)
-                    .decline_reason
-                    .unwrap_or(BackendDeclineReason::Disabled);
-                let _unused = context;
-                ledger.decline(reason)
             }
         }
     }
@@ -422,11 +401,6 @@ fn selection_order(request: BackendRequest) -> &'static [RelayBackend] {
         BackendRequest::Explicit(RelayBackend::Splice) => {
             &[RelayBackend::Splice, RelayBackend::Buffered]
         }
-        BackendRequest::Explicit(RelayBackend::IoUring) => &[
-            RelayBackend::IoUring,
-            RelayBackend::Splice,
-            RelayBackend::Buffered,
-        ],
         BackendRequest::Explicit(RelayBackend::Sockhash) => &[
             RelayBackend::Sockhash,
             RelayBackend::Splice,
@@ -437,15 +411,14 @@ fn selection_order(request: BackendRequest) -> &'static [RelayBackend] {
 
 /// Returns the backend order for one single-direction request.
 ///
-/// The io_uring and sockhash backends are pair-only — they must duplicate or
-/// register both complete sockets — so an explicit request for either of them
-/// on a single direction means splice-then-buffered, and no decline is
-/// recorded for the pair-only backend itself.
+/// The sockhash backend is pair-only — it must duplicate or register both
+/// complete sockets — so an explicit request for it on a single direction
+/// means splice-then-buffered, and no decline is recorded for the pair-only
+/// backend itself.
 fn directional_selection_order(request: BackendRequest) -> &'static [RelayBackend] {
     match request {
         BackendRequest::Automatic
         | BackendRequest::Explicit(RelayBackend::Splice)
-        | BackendRequest::Explicit(RelayBackend::IoUring)
         | BackendRequest::Explicit(RelayBackend::Sockhash) => {
             &[RelayBackend::Splice, RelayBackend::Buffered]
         }
@@ -465,23 +438,6 @@ fn splice_capability(policy: &RelayPolicy) -> BackendCapability {
     } else {
         BackendCapability::declined(false, BackendDeclineReason::Disabled)
     }
-}
-
-/// Probes io_uring on the running kernel rather than assuming availability.
-#[cfg(target_os = "linux")]
-fn probe_io_uring(policy: &RelayPolicy) -> BackendCapability {
-    if !policy.io_uring {
-        return BackendCapability::declined(false, BackendDeclineReason::Disabled);
-    }
-    capability_from(true, rr_linux::uring::probe())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn probe_io_uring(policy: &RelayPolicy) -> BackendCapability {
-    BackendCapability::declined(
-        policy.io_uring,
-        BackendDeclineReason::UnsupportedOperatingSystem,
-    )
 }
 
 /// Builds the process-lifetime `SOCKHASH` pool, or records why it cannot run.
@@ -554,18 +510,6 @@ fn kernel_budget(policy: &RelayPolicy, max_relays: u32) -> Result<rr_linux::Budg
     };
     budget.validate().map_err(|_| ())?;
     Ok(budget)
-}
-
-/// Maps a probed kernel report into the protocol crate's fixed vocabulary.
-///
-/// The mapping is total: every `rr-linux` reason has exactly one counterpart, so
-/// no probe result can ever be reported as an unexplained failure.
-#[cfg(target_os = "linux")]
-fn capability_from(enabled: bool, report: rr_linux::ProbeReport) -> BackendCapability {
-    match report.overall().reason() {
-        None => BackendCapability::available(),
-        Some(reason) => BackendCapability::declined(enabled, map_reason(reason)),
-    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1142,12 +1086,10 @@ mod tests {
                 buffer_bytes: 4 * 1024,
                 max_pooled_buffers: 2,
                 max_splice_relays: 0,
-                max_io_uring_relays: 0,
                 max_sockhash_relays: 0,
                 max_relay_memory_bytes: u64::MAX,
                 max_pinned_memory_bytes: u64::MAX,
                 splice: false,
-                io_uring: false,
                 sockhash: false,
             },
             FdBudget::new(4_096),
@@ -1164,12 +1106,10 @@ mod tests {
                 buffer_bytes: 32 * 1024,
                 max_pooled_buffers: 2,
                 max_splice_relays: 1,
-                max_io_uring_relays: 0,
                 max_sockhash_relays: 0,
                 max_relay_memory_bytes: u64::MAX,
                 max_pinned_memory_bytes: u64::MAX,
                 splice: true,
-                io_uring: false,
                 sockhash: false,
             },
             FdBudget::new(4_096),
@@ -1540,12 +1480,10 @@ mod tests {
             buffer_bytes: 32 * 1024,
             max_pooled_buffers: 4,
             max_splice_relays: 8,
-            max_io_uring_relays: 0,
             max_sockhash_relays: 0,
             max_relay_memory_bytes: u64::MAX,
             max_pinned_memory_bytes: u64::MAX,
             splice: true,
-            io_uring: false,
             sockhash: false,
         }
     }
@@ -1610,12 +1548,10 @@ mod tests {
                 buffer_bytes: 4 * 1024,
                 max_pooled_buffers: 2,
                 max_splice_relays: 0,
-                max_io_uring_relays: 0,
                 max_sockhash_relays: 0,
                 max_relay_memory_bytes: u64::MAX,
                 max_pinned_memory_bytes: u64::MAX,
                 splice: false,
-                io_uring: false,
                 sockhash: false,
             },
             FdBudget::new(4_096),

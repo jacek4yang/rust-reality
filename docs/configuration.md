@@ -448,21 +448,15 @@ This isolates direct destination pressure from authenticated connection count.
 | `bufferBytes` | yes | `32768` | Bytes per pooled userspace buffer, `4096..=1048576`. |
 | `maxPooledBuffers` | yes | `4096` | Global pooled-buffer ceiling, `2..=65536`. |
 | `maxSpliceRelays` | no | `1024` | With splice enabled, greater than zero and no more than `maxConnections`. Each relay consumes two pipe pairs. |
-| `maxIoUringRelays` | no | `256` | With ioUring enabled, greater than zero and no more than `maxConnections`. |
 | `maxSockhashRelays` | no | `4096` | With sockhash enabled, greater than zero and no more than `maxConnections`. Each relay occupies two map entries. |
 | `maxRelayMemoryBytes` | no | `268435456` | Ceiling on pooled plus registered relay buffer memory. |
-| `maxPinnedMemoryBytes` | no | `134217728` | Ceiling on kernel-pinned memory (io_uring registered buffers plus sockhash map capacity). |
+| `maxPinnedMemoryBytes` | no | `134217728` | Ceiling on kernel-pinned memory (sockhash map capacity). |
 | `splice` | yes | `true` | Permit bounded nonblocking Linux splice only across plaintext TCP boundaries. |
-| `ioUring` | yes | `false` | Permit the bounded io_uring backend after a successful runtime capability probe. |
 | `sockhash` | yes | `false` | Permit the bounded eBPF `SOCKHASH` backend after a successful runtime capability probe. |
 
 ### Backend selection
 
 The automatic preference order is `sockhash`, then `splice`, then `buffered`.
-io_uring is implemented, probed, reported and explicitly selectable, but is
-**excluded from automatic selection** on this branch: no retained target-host
-measurement has shown it is not materially slower for this workload class, and a
-speculative classifier added only to claim adaptivity would be worse than none.
 
 A backend may hand the connection to the next one **only before it has
 transferred a byte**. After any byte moves, a backend error terminates the relay;
@@ -482,11 +476,10 @@ arithmetic:
 
 ```text
 buffered_memory     = maxPooledBuffers * bufferBytes
-io_uring_registered = maxIoUringRelays * 2 * bufferBytes
 sockhash_capacity   = maxSockhashRelays * 2 * (flowKey + socketEntry + statsEntry + overhead)
 
-buffered_memory + io_uring_registered <= maxRelayMemoryBytes
-io_uring_registered + sockhash_capacity <= maxPinnedMemoryBytes
+buffered_memory   <= maxRelayMemoryBytes
+sockhash_capacity <= maxPinnedMemoryBytes
 ```
 
 `maxPooledBuffers` is a **buffer count**, never a byte budget.

@@ -9,7 +9,7 @@ pub use admission::{
 };
 pub use fd_budget::{
     FdBudget, FdPermit, FdPressure, UNITS_CONNECTOR_CANDIDATE, UNITS_INBOUND_SOCKET,
-    UNITS_OUTBOUND_SOCKET, UNITS_SPLICE_DIRECTION, UNITS_SPLICE_RELAY, UNITS_URING_SESSION,
+    UNITS_OUTBOUND_SOCKET, UNITS_SPLICE_DIRECTION, UNITS_SPLICE_RELAY,
 };
 pub use fd_plan::{FdBudgetError, FdBudgetPlan, FixedFdReserve, MINIMUM_DYNAMIC_UNITS};
 pub mod connection;

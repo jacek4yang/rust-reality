@@ -49,12 +49,10 @@ fn policy(max_sockhash_relays: u32) -> RelayPolicy {
         buffer_bytes: 32 * 1024,
         max_pooled_buffers: 8,
         max_splice_relays: 8,
-        max_io_uring_relays: 0,
         max_sockhash_relays,
         max_relay_memory_bytes: u64::MAX,
         max_pinned_memory_bytes: u64::MAX,
         splice: true,
-        io_uring: false,
         sockhash: true,
     }
 }

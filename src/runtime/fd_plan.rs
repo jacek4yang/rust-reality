@@ -35,7 +35,7 @@ pub struct FixedFdReserve {
     pub logger: u64,
     /// Async runtime descriptors: epoll, eventfd and wakers.
     pub runtime: u64,
-    /// io_uring ring descriptors and eBPF map, program and link descriptors.
+    /// eBPF map, program and link descriptors.
     pub kernel_backends: u64,
     /// Resolver descriptors held by uncancellable blocking lookups.
     pub resolver: u64,
@@ -65,17 +65,16 @@ impl FixedFdReserve {
 
     /// Builds the fixed reserve for a concrete process shape.
     #[must_use]
-    pub const fn new(listeners: u64, uring_rings: u64, bpf_enabled: bool) -> Self {
+    pub const fn new(listeners: u64, bpf_enabled: bool) -> Self {
         Self {
             listeners,
             logger: Self::STANDARD_STREAMS + Self::LOGGER_SINK,
             runtime: Self::RUNTIME_DESCRIPTORS,
-            kernel_backends: uring_rings
-                + if bpf_enabled {
-                    Self::BPF_DESCRIPTORS
-                } else {
-                    0
-                },
+            kernel_backends: if bpf_enabled {
+                Self::BPF_DESCRIPTORS
+            } else {
+                0
+            },
             resolver: Self::RESOLVER_DESCRIPTORS,
             emergency: 1,
         }
@@ -258,7 +257,7 @@ mod tests {
     use super::{FdBudgetError, FdBudgetPlan, FixedFdReserve, MINIMUM_DYNAMIC_UNITS};
 
     fn reserve() -> FixedFdReserve {
-        FixedFdReserve::new(1, 0, false)
+        FixedFdReserve::new(1, false)
     }
 
     #[test]
@@ -330,12 +329,8 @@ mod tests {
 
     #[test]
     fn kernel_backend_descriptors_are_reserved_when_enabled() {
-        let without = FixedFdReserve::new(2, 0, false).total();
-        let with = FixedFdReserve::new(2, 4, true).total();
-        assert_eq!(
-            with - without,
-            7,
-            "four ring descriptors plus a map, a program and a link"
-        );
+        let without = FixedFdReserve::new(2, false).total();
+        let with = FixedFdReserve::new(2, true).total();
+        assert_eq!(with - without, 3, "a map, a program and a link");
     }
 }

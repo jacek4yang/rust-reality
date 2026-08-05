@@ -3,6 +3,11 @@
 Status: accepted for `perf/adaptive-relay-backends`
 Baseline: `main@14ed098505b5cd9c3f5cc0d00c393c45428b0e42`
 
+> Amendment: the io_uring backend planned and partially built here was later
+> removed after a lifecycle audit (recv/send only, no cancellation, no session
+> layer, never driven by production). The io_uring statements below are
+> historical.
+
 This record captures the audit performed before any hot-path edit, the ownership
 model the branch adopts, the resource formulas that bound every new structure,
 and the mapping from requirement to test. It is deliberately written so that a

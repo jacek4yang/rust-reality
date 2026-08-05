@@ -123,8 +123,8 @@ RR_BENCH_COMMIT="$(git rev-parse HEAD)" RR_BENCH_HOST="$(hostname)" \
   行未在该主机上执行；保留矩阵覆盖 1 MiB 与 32 MiB 负载、并发度 1 与 4。
 - `cpuUserNs`、`cpuSystemNs`、`contextSwitches`、`syscallCounts` 和
   `allocations` 记录为 `null` 而非估算值。稳态分配行为由分配门禁单独精确证明。
-- io_uring 与 sockhash 行缺失，因为这些后端在实现主机上被拒绝。被记录的是拒绝
-  原因，而不是编造的数字。
+- sockhash 行缺失，因为该后端在实现主机上被拒绝；io_uring 行缺失，因为该后端此后
+  已被移除。被记录的是拒绝原因，而不是编造的数字。
 
 ### 基线
 

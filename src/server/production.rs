@@ -66,7 +66,7 @@ pub struct ProductionServer {
 ///
 /// Every term is a configured bound, and the sum is deliberately pessimistic:
 /// it assumes every connection simultaneously holds an inbound socket, an
-/// outbound socket, and that every splice and io_uring relay is armed at once.
+/// outbound socket, and that every splice relay is armed at once.
 /// An armed sockhash relay adds no per-relay process descriptor — its sockets
 /// are the connection pair itself — so the backend appears only in the fixed
 /// reserve (map, program and link descriptors), not here. The number is used
@@ -76,23 +76,13 @@ fn theoretical_fd_peak(config: &Config) -> u64 {
     let connections = u64::from(config.policy.resource_governor.max_connections);
     let splice = u64::from(config.policy.relay.max_splice_relays)
         .saturating_mul(u64::from(crate::runtime::UNITS_SPLICE_RELAY));
-    let uring = u64::from(config.policy.relay.max_io_uring_relays)
-        .saturating_mul(u64::from(crate::runtime::UNITS_URING_SESSION));
-    connections
-        .saturating_mul(2)
-        .saturating_add(splice)
-        .saturating_add(uring)
+    connections.saturating_mul(2).saturating_add(splice)
 }
 
 /// Derives the process descriptor budget before any listener is bound.
 fn derive_fd_budget(config: &Config) -> Result<(FdBudgetPlan, FdBudget), FdBudgetError> {
     let listeners = u64::try_from(config.inbounds.len()).unwrap_or(u64::MAX);
-    let uring_rings = if config.policy.relay.io_uring {
-        u64::from(crate::transport::tcp_relay::MAX_URING_SHARDS)
-    } else {
-        0
-    };
-    let reserve = FixedFdReserve::new(listeners, uring_rings, config.policy.relay.sockhash);
+    let reserve = FixedFdReserve::new(listeners, config.policy.relay.sockhash);
     let limit = read_descriptor_limit();
     let plan = FdBudgetPlan::derive(limit.0, limit.1, reserve, theoretical_fd_peak(config))?;
     let budget = FdBudget::new(plan.effective_budget());

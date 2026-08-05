@@ -1,11 +1,11 @@
 //! Prints exactly what this host permits, so a captured test log records the
 //! measured capability rather than an assumption.
 //!
-//! The test never asserts availability: an environment without io_uring or
-//! without eBPF privileges is a valid environment, and reporting a skipped gate
-//! as a pass is explicitly forbidden.
+//! The test never asserts availability: an environment without eBPF privileges
+//! is a valid environment, and reporting a skipped gate as a pass is explicitly
+//! forbidden.
 
-use rr_linux::{Budget, sockhash, uring};
+use rr_linux::{Budget, sockhash};
 
 const BUDGET: Budget = Budget {
     max_relays: 64,
@@ -16,14 +16,9 @@ const BUDGET: Budget = Budget {
 
 #[test]
 fn reports_measured_kernel_capability() {
-    let uring = uring::probe();
     let sockhash = sockhash::probe(BUDGET);
 
     println!("kernel: {}", kernel_release());
-    println!("{uring}");
-    for (operation, probe) in uring.operations() {
-        println!("  io_uring.{operation}: {probe}");
-    }
     println!("{sockhash}");
     for (operation, probe) in sockhash.operations() {
         println!("  sockhash.{operation}: {probe}");
@@ -31,9 +26,6 @@ fn reports_measured_kernel_capability() {
 
     // The only assertion is that an unavailable backend always names a fixed,
     // low-cardinality reason instead of failing silently.
-    if !uring.is_available() {
-        assert!(uring.overall().reason().is_some());
-    }
     if !sockhash.is_available() {
         assert!(sockhash.overall().reason().is_some());
     }

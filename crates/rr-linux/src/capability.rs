@@ -258,8 +258,8 @@ mod tests {
 
     #[test]
     fn a_single_declined_operation_downgrades_the_backend() {
-        let report = ProbeReport::new("io_uring")
-            .with("ring", Probe::Available)
+        let report = ProbeReport::new("splice")
+            .with("pipe", Probe::Available)
             .with("recv", Probe::Declined(DeclineReason::MissingOperation))
             .with("send", Probe::Available);
 
@@ -285,14 +285,14 @@ mod tests {
 
     #[test]
     fn rendering_never_includes_anything_connection_specific() {
-        let rendered = ProbeReport::new("io_uring")
-            .with("ring", Probe::Available)
-            .with("cancel", Probe::Declined(DeclineReason::MissingOperation))
+        let rendered = ProbeReport::new("splice")
+            .with("pipe", Probe::Available)
+            .with("tee", Probe::Declined(DeclineReason::MissingOperation))
             .to_string();
 
         assert_eq!(
             rendered,
-            "io_uring: declined(missingOperation) [cancel=missingOperation]"
+            "splice: declined(missingOperation) [tee=missingOperation]"
         );
     }
 

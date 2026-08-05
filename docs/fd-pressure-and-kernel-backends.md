@@ -50,7 +50,6 @@ The fixed reserve is deliberately pessimistic:
 | Listening sockets | one per configured inbound |
 | Standard streams and logger sink | 4 |
 | Runtime epoll, eventfd and wakers | 16 |
-| io_uring ring descriptors | one per shard, when enabled |
 | eBPF map, program and link | 3, when enabled |
 | Uncancellable resolver descriptors | 32 |
 | Emergency reserve | 1 |
@@ -110,7 +109,6 @@ Conservative unit costs:
 | Connected outbound socket | 1 |
 | Live connector candidate | 1 |
 | Bidirectional splice relay | 4 |
-| io_uring session | 2 |
 
 The count over-reserves rather than modelling kernel-internal objects. It is a
 reservation, not a measurement.
@@ -198,7 +196,7 @@ honest state of each:
 | buffered | n/a | yes | yes |
 | splice | yes | yes | yes |
 | sockhash | yes | yes — armed per relay from `TcpRelay` when the policy enables it and the probe plus controller construction succeed | yes |
-| io_uring | probed only | **no** — driver exists but is unreachable from the relay path | no |
+| io_uring | — | **removed** — the driver was deleted after an audit found it unreachable, recv/send-only and uncancellable | — |
 
 ### SOCKHASH runtime
 
@@ -294,14 +292,15 @@ time; the context refuses 8-byte access with `invalid bpf_context access`.
 
 ### io_uring
 
-The driver in `crates/rr-linux/src/uring.rs` compiles but is constructed only
-from its own tests. `TcpRelay::run_backend` declines io_uring, and
-`automatic_preference()` omits it. The startup report must not be read as a
-claim that production traffic uses it.
-
-It is excluded from automatic selection because no retained measurement on a
-target host justifies it, and the specification forbids a speculative
-classifier.
+The io_uring backend is **removed, not implemented**. A lifecycle audit of the
+former `crates/rr-linux/src/uring.rs` driver found it was recv/send only (not
+zero-copy), had no operation cancellation, no session layer, and was never
+reached from the production relay path — `TcpRelay::run_backend` declined it
+unconditionally and `automatic_preference()` omitted it. Completing it would
+have been a rewrite for dubious gain over the working splice and sockhash
+backends, so the module, its configuration keys and its descriptor accounting
+were deleted. Configurations that still set `ioUring` or `maxIoUringRelays`
+fail validation as unknown fields.
 
 ## 6. Deployment guidance
 

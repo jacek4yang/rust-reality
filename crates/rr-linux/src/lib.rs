@@ -1,10 +1,10 @@
 //! Bounded Linux kernel relay backends for rust-reality.
 //!
 //! This crate exists for exactly one reason: the protocol crate denies
-//! `unsafe_code`, but a bounded io_uring driver and an eBPF `SOCKHASH` verdict
-//! program cannot be written without touching raw Linux ABI. Every unavoidable
-//! `unsafe` block therefore lives here, behind narrow safe APIs, with a precise
-//! `SAFETY:` comment and a direct ABI or lifecycle test.
+//! `unsafe_code`, but an eBPF `SOCKHASH` verdict program cannot be written
+//! without touching raw Linux ABI. Every unavoidable `unsafe` block therefore
+//! lives here, behind narrow safe APIs, with a precise `SAFETY:` comment and a
+//! direct ABI or lifecycle test.
 //!
 //! The crate deliberately knows nothing about VLESS, REALITY or Vision. It
 //! moves already-authenticated plaintext bytes between two sockets it has been
@@ -14,10 +14,7 @@
 //!
 //! Every structure here is bounded at construction:
 //!
-//! * driver shards are `min(visible CPUs, configured maximum)`;
-//! * each shard owns one ring with a fixed submission and completion depth;
-//! * request slots, buffer slots and duplicated descriptors are pre-reserved;
-//! * the submission channel is a bounded `sync_channel`, never an unbounded one;
+//! * relay admission is capped by a fixed maximum number of armed directions;
 //! * every eBPF map has a fixed `max_entries`.
 //!
 //! # Capability reporting
@@ -38,12 +35,11 @@ pub mod capability;
 pub mod rlimit;
 pub mod socket;
 pub mod sockhash;
-pub mod uring;
 
 pub use capability::{DeclineReason, Probe, ProbeReport};
 pub use rlimit::{DescriptorLimit, descriptor_limit, open_reserve_descriptor};
 
-/// A bounded resource budget shared by both kernel backends.
+/// A bounded resource budget shared by the kernel relay backends.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Budget {
     /// Maximum concurrently armed relays.

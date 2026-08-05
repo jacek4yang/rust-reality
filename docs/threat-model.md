@@ -66,8 +66,8 @@ unsafe Rust.
 Linux `splice` is permitted only after both sides are plaintext TCP sockets. It
 cannot cross the REALITY/TLS application boundary. If bounded splice resources
 are unavailable before transfer starts, relay falls back to bounded userspace
-buffers. `io_uring` and sockhash configuration switches remain disabled until
-their implementations and capability probes are independently accepted.
+buffers. The sockhash configuration switch remains disabled until its
+implementation and capability probe are independently accepted.
 
 ## Non-goals
 
@@ -100,12 +100,6 @@ the connection.
 `crates/rr-linux`, which denies `unsafe_op_in_unsafe_fn`; the protocol crate
 keeps `unsafe_code = "deny"`. Every unsafe block has a `SAFETY:` comment, and
 ABI layouts and descriptor lifetimes have direct tests.
-
-**Descriptor reuse is defended against.** An io_uring session duplicates both
-descriptors and owns the duplicates until every completion is reaped, so a
-numeric descriptor recycled elsewhere in the process cannot be acted on by an
-old operation. Completions are generation-tagged, so a stale or duplicated
-completion is discarded rather than applied to a new operation.
 
 **eBPF increases privilege, so it is opt-in.** Enabling `sockhash` loads a
 program into the kernel. The packaged systemd unit does not grant the capability

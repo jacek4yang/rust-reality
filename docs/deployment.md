@@ -312,21 +312,14 @@ configuration, keys, UUIDs, credentials, or packet captures into public issues.
 
 ## Optional kernel relay backends
 
-Both kernel backends are **off by default** and both are probed rather than
-assumed. Leaving them off is a supported production configuration; the portable
+The sockhash kernel backend is **off by default** and is probed rather than
+assumed. Leaving it off is a supported production configuration; the portable
 buffered relay and Linux `splice` require no additional privilege.
 
-### io_uring
-
-`policy.relay.ioUring: true` enables the bounded io_uring backend. Requirements
-are probed at startup: ring creation plus the `recv`, `send`, `shutdown` and
-async-cancel operations. A kernel or seccomp policy that refuses any of them
-produces one startup decline line and the server keeps running on the remaining
-backends.
-
-Note that io_uring is **not** part of automatic selection on this branch. Enable
-it to measure it, or to select it explicitly, but do not expect it to be chosen
-for you.
+The io_uring backend was removed: its driver never reached the production relay
+path, and completing it was not justified over the working splice and sockhash
+backends. Configurations that still set `policy.relay.ioUring` or
+`policy.relay.maxIoUringRelays` are rejected as unknown fields.
 
 ### sockhash
 

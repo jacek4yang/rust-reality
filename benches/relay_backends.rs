@@ -77,12 +77,10 @@ fn policy(backend: Option<RelayBackend>) -> RelayPolicy {
         buffer_bytes: 32 * 1024,
         max_pooled_buffers: 512,
         max_splice_relays: 256,
-        max_io_uring_relays: 0,
         max_sockhash_relays: 0,
         max_relay_memory_bytes: u64::MAX,
         max_pinned_memory_bytes: u64::MAX,
         splice: !matches!(backend, Some(RelayBackend::Buffered)),
-        io_uring: false,
         sockhash: false,
     }
 }

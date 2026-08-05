@@ -43,7 +43,6 @@ effective_dynamic_fd_budget = soft_rlimit - fixed_fd_reserve - safety_headroom
 | 监听套接字 | 每个已配置 inbound 一个 |
 | 标准流与日志写入端 | 4 |
 | 运行时 epoll、eventfd 与 waker | 16 |
-| io_uring ring 描述符 | 启用时每分片一个 |
 | eBPF map、program 与 link | 启用时 3 个 |
 | 不可取消的解析器描述符 | 32 |
 | 应急预留 | 1 |
@@ -88,7 +87,6 @@ effective_dynamic_fd_budget = soft_rlimit - fixed_fd_reserve - safety_headroom
 | 已连接的 outbound 套接字 | 1 |
 | 存活的连接候选 | 1 |
 | 双向 splice 中继 | 4 |
-| io_uring 会话 | 2 |
 
 该计数宁可多预留，也不去建模内核内部对象。它是预留，不是测量。
 
@@ -150,7 +148,7 @@ accept 错误依据原始 `errno` 分类，而非 `ErrorKind`：
 | buffered | 不适用 | 是 | 是 |
 | splice | 是 | 是 | 是 |
 | sockhash | 是 | 是——当策略启用且探测与控制器构建均成功时，由 `TcpRelay` 按中继 arm | 是 |
-| io_uring | 仅探测 | **否**——驱动存在但中继路径无法到达 | 否 |
+| io_uring | — | **已移除**——审计发现驱动不可达、仅 recv/send 且无法取消后被删除 | — |
 
 ### SOCKHASH 运行时
 
@@ -204,9 +202,7 @@ IPv6 使用独立分支，以 4 字节为单位读取 `local_ip6`/`remote_ip6`�
 
 ### io_uring
 
-`crates/rr-linux/src/uring.rs` 中的驱动可以编译，但只在其自身的测试中被构造。`TcpRelay::run_backend` 会拒绝 io_uring，`automatic_preference()` 也未包含它。启动报告不应被理解为生产流量正在使用它。
-
-之所以将其排除在自动选择之外，是因为目标主机上没有保留下来的实测数据支持这一选择，而规范禁止引入推测性的分类器。
+io_uring 后端**已移除，未实现**。对原 `crates/rr-linux/src/uring.rs` 驱动的生命周期审计发现：它只有 recv/send（并非零拷贝）、没有操作取消、没有会话层，且生产中继路径从未到达它——`TcpRelay::run_backend` 无条件拒绝它，`automatic_preference()` 也未包含它。相较于可用的 splice 与 sockhash 后端，补全它相当于重写却收益存疑，因此该模块、其配置键和描述符核算均已删除。仍然设置 `ioUring` 或 `maxIoUringRelays` 的配置会作为未知字段校验失败。
 
 ## 6. 部署建议
 
