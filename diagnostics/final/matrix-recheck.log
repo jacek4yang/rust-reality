@@ -1,0 +1,45 @@
+cell direct-download:32:1 done (27 samples)
+INVALID SAMPLE framed-upload:32:32 final#4: curl rc=55: curl: (55) Send failure: Connection reset by peer
+INVALID SAMPLE framed-upload:32:32 baseline#2: http origin logged 63 PUTs, expected 32
+INVALID SAMPLE framed-upload:32:32 xray#4: curl rc=56: curl: (56) Recv failure: Connection reset by peer
+INVALID SAMPLE framed-upload:32:32 final#5: curl rc=56: curl: (56) Recv failure: Connection reset by peer
+INVALID SAMPLE framed-upload:32:32 baseline#3: curl rc=56: curl: (56) Recv failure: Connection reset by peer
+INVALID SAMPLE framed-upload:32:32 baseline#4: http origin logged 124 PUTs, expected 32
+cell framed-upload:32:32 done (27 samples)
+cell framed-upload:512:32 done (9 samples)
+INVALID SAMPLE direct-upload:32:32 baseline#0: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 baseline#1: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 final#0: https origin logged 83 PUTs, expected 32
+INVALID SAMPLE direct-upload:32:32 final#1: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 xray#0: https origin logged 57 PUTs, expected 32
+INVALID SAMPLE direct-upload:32:32 baseline#2: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 final#2: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 final#3: https origin logged 89 PUTs, expected 32
+INVALID SAMPLE direct-upload:32:32 xray#1: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 final#4: https origin logged 62 PUTs, expected 32
+INVALID SAMPLE direct-upload:32:32 xray#2: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 xray#3: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 xray#4: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 xray#5: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 final#5: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 xray#6: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 baseline#3: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 final#6: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 final#7: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 baseline#4: https origin logged 283 PUTs, expected 32
+INVALID SAMPLE direct-upload:32:32 xray#7: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 baseline#5: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 baseline#6: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 final#8: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 xray#8: https origin logged 142 PUTs, expected 32
+INVALID SAMPLE direct-upload:32:32 baseline#7: curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+INVALID SAMPLE direct-upload:32:32 baseline#8: https origin logged 57 PUTs, expected 32
+cell direct-upload:32:32 done (27 samples)
+INVALID SAMPLE fallback:512:32 final#1: curl rc=52: curl: (52) Empty reply from server
+cell fallback:512:32 done (9 samples)
+integrity baseline done
+INVALID SAMPLE integrity final: curl rc=23: curl: (23) Failure writing output to destination, passed 16384 returned 4096
+integrity final done
+INVALID SAMPLE integrity xray: curl rc=23: curl: (23) Failure writing output to destination, passed 16384 returned 0
+integrity xray done
+matrix complete: 102 samples, 36 invalid -> benchmarks/final/matrix-recheck

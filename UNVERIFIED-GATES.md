@@ -21,9 +21,11 @@ Last updated: see git log for the branch head.
    discriminate above ~94 Mbps.
 
 2. **"20 repeated real-path runs produce no crash or protocol error."** —
-   see the real-path results in `benchmarks/final/` and `diagnostics/final/`.
-   Status recorded there; if the destination network was unreachable at
-   validation time this gate is marked NOT RUN with the reason.
+   RUN AND PASSED: 20 alternating real-Internet runs (5 MiB each,
+   Cloudflare speed endpoint, `diagnostics/final/real-path.json`), 0
+   failures, no crash or protocol error. Direct egress from this host was
+   slow (0.2–1.3 MiB/s per run) and symmetric across implementations, so the
+   runs carry no bandwidth signal — only correctness.
 
 3. **Speedtest screenshots.** — NOT TAKEN. Loopback + scripted real-path
    runs are retained as machine-readable logs instead; no interactive
@@ -53,9 +55,10 @@ Last updated: see git log for the branch head.
    Instead: offset/layout ABI tests in rr-linux, the full privileged suites
    under sudo, and the instrumented-allocator gates.
 
-8. **cargo audit.** — depends on advisory DB access at validation time.
-   Status recorded in `diagnostics/final/` (ran via the workspace proxy if
-   reachable; otherwise NOT RUN with the reason).
+8. **cargo audit.** — RUN AND PASSED: libgit2 could not use the SOCKS
+   proxy, so the advisory DB was cloned with system git (proxy-honoring)
+   and audit ran with `--db --no-fetch`: 1189 advisories loaded, 200 crate
+   dependencies scanned, zero vulnerabilities (`diagnostics/final/gates/audit.log`).
 
 ## Coverage notes (verified, but read the scope)
 

@@ -16,7 +16,7 @@ repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 xray=${XRAY_BIN:-xray}
 rust_bin=${RUST_REALITY_BIN:-target/release/rust-reality}
 runs=${RUNS:-20}
-bytes=${BYTES:-25000000}
+bytes=${BYTES:-5000000}
 url=${URL:-https://speed.cloudflare.com/__down?bytes=$bytes}
 cover_target=${COVER_TARGET:-dl.google.com:443}
 cover_sni=${COVER_SNI:-dl.google.com}
@@ -50,9 +50,10 @@ if ! [[ $runs =~ ^[1-9][0-9]*$ && $bytes =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 # Direct egress is required: the servers dial the destination themselves.
+# The speed endpoint ignores Range requests, so probe with a tiny download.
 if ! env -u ALL_PROXY -u all_proxy -u HTTP_PROXY -u http_proxy -u HTTPS_PROXY -u https_proxy -u NO_PROXY -u no_proxy \
-        curl --fail --silent --max-time 10 -o /dev/null -r 0-1023 "$url"; then
-    echo "direct Internet egress to $url is unavailable; real-path gate NOT RUN" >&2
+        curl --fail --silent --max-time 30 -o /dev/null "https://speed.cloudflare.com/__down?bytes=100000"; then
+    echo "direct Internet egress to speed.cloudflare.com is unavailable; real-path gate NOT RUN" >&2
     exit 3
 fi
 

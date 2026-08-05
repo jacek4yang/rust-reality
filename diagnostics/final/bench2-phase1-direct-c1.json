@@ -1,0 +1,202 @@
+{
+  "environment": {
+    "cpuCount": 4,
+    "cpuModel": "Intel(R) Core(TM) i3-8100 CPU @ 3.60GHz",
+    "kernel": "6.12.94+deb13-amd64",
+    "machine": "x86_64",
+    "rustRealityCommit": "56f697be5622c287dbc134f30fb8757276bf4da5",
+    "rustVersion": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "xrayVersion": "Xray 26.7.28 (Xray, Penetrates Everything.) 5ca6f4b (go1.26.0 linux/amd64)"
+  },
+  "harness": "benchmark-vision-direct",
+  "limitations": [
+    "single-host loopback includes the same Xray client and Python TLS origin in both paths",
+    "Xray's default private-target block is explicitly allowed only for this loopback origin",
+    "this does not model Internet RTT, packet loss, bandwidth shaping, or multi-core saturation",
+    "results are measurements of this host and are not a universal performance claim"
+  ],
+  "measurements": [
+    {
+      "implementation": "xray",
+      "meanRequestSeconds": 0.161574,
+      "throughputMiBPerSecond": 374.7649618913022,
+      "wallSeconds": 0.17077370220795274
+    },
+    {
+      "implementation": "xray",
+      "meanRequestSeconds": 0.16352,
+      "throughputMiBPerSecond": 373.61349768849624,
+      "wallSeconds": 0.17130002100020647
+    },
+    {
+      "implementation": "xray",
+      "meanRequestSeconds": 0.207235,
+      "throughputMiBPerSecond": 296.9543721746812,
+      "wallSeconds": 0.2155213258229196
+    },
+    {
+      "implementation": "rust-reality",
+      "meanRequestSeconds": 0.257298,
+      "throughputMiBPerSecond": 238.32823406679867,
+      "wallSeconds": 0.26853721402585506
+    },
+    {
+      "implementation": "xray",
+      "meanRequestSeconds": 0.229028,
+      "throughputMiBPerSecond": 265.24770084228675,
+      "wallSeconds": 0.24128390103578568
+    },
+    {
+      "implementation": "xray",
+      "meanRequestSeconds": 0.236687,
+      "throughputMiBPerSecond": 259.79015957699926,
+      "wallSeconds": 0.246352672111243
+    },
+    {
+      "implementation": "rust-reality",
+      "meanRequestSeconds": 0.218367,
+      "throughputMiBPerSecond": 280.8887819388806,
+      "wallSeconds": 0.22784818802028894
+    },
+    {
+      "implementation": "xray",
+      "meanRequestSeconds": 0.216901,
+      "throughputMiBPerSecond": 282.60990132151073,
+      "wallSeconds": 0.22646057233214378
+    },
+    {
+      "implementation": "xray",
+      "meanRequestSeconds": 0.230453,
+      "throughputMiBPerSecond": 266.8203771442728,
+      "wallSeconds": 0.2398617402650416
+    },
+    {
+      "implementation": "rust-reality",
+      "meanRequestSeconds": 0.229805,
+      "throughputMiBPerSecond": 268.0475775435035,
+      "wallSeconds": 0.23876358289271593
+    },
+    {
+      "implementation": "rust-reality",
+      "meanRequestSeconds": 0.213433,
+      "throughputMiBPerSecond": 287.05344292002206,
+      "wallSeconds": 0.22295499872416258
+    },
+    {
+      "implementation": "rust-reality",
+      "meanRequestSeconds": 0.218315,
+      "throughputMiBPerSecond": 280.68513244849873,
+      "wallSeconds": 0.22801350196823478
+    },
+    {
+      "implementation": "rust-reality",
+      "meanRequestSeconds": 0.232325,
+      "throughputMiBPerSecond": 263.8541527386184,
+      "wallSeconds": 0.24255824415013194
+    },
+    {
+      "implementation": "rust-reality",
+      "meanRequestSeconds": 0.232686,
+      "throughputMiBPerSecond": 264.3750385452085,
+      "wallSeconds": 0.24208034295588732
+    },
+    {
+      "implementation": "xray",
+      "meanRequestSeconds": 0.222909,
+      "throughputMiBPerSecond": 275.3707848506807,
+      "wallSeconds": 0.23241390706971288
+    },
+    {
+      "implementation": "rust-reality",
+      "meanRequestSeconds": 0.222162,
+      "throughputMiBPerSecond": 276.1028987491441,
+      "wallSeconds": 0.23179763881489635
+    },
+    {
+      "implementation": "xray",
+      "meanRequestSeconds": 0.226982,
+      "throughputMiBPerSecond": 270.2255025631961,
+      "wallSeconds": 0.2368392301723361
+    },
+    {
+      "implementation": "rust-reality",
+      "meanRequestSeconds": 0.231774,
+      "throughputMiBPerSecond": 265.15050074962016,
+      "wallSeconds": 0.24137235200032592
+    }
+  ],
+  "method": {
+    "client": "Xray SOCKS5 -> VLESS + REALITY + xtls-rprx-vision",
+    "concurrency": 1,
+    "destination": "loopback TLS 1.3 HTTPS origin (Vision Direct eligible)",
+    "payloadMiBPerRequest": 64,
+    "randomSeed": "0x4e5852",
+    "randomizedOrder": [
+      "xray",
+      "xray",
+      "xray",
+      "rust-reality",
+      "xray",
+      "xray",
+      "rust-reality",
+      "xray",
+      "xray",
+      "rust-reality",
+      "rust-reality",
+      "rust-reality",
+      "rust-reality",
+      "rust-reality",
+      "xray",
+      "rust-reality",
+      "xray",
+      "rust-reality"
+    ],
+    "realityServerName": "dl.google.com",
+    "realityTarget": "dl.google.com:443",
+    "samplesPerImplementation": 9
+  },
+  "rustRealityDirect": {
+    "acceptedConnections": 11,
+    "backends": {
+      "splice": 10
+    },
+    "connections": 10,
+    "downlinkDirect": 10,
+    "tunnelBypassDetected": false,
+    "uplinkDirect": 10
+  },
+  "rustRealityToXrayP50ThroughputRatio": 0.9734060121477731,
+  "schemaVersion": 1,
+  "summary": {
+    "rust-reality": {
+      "meanRequestSeconds": {
+        "maximum": 0.257298,
+        "mean": 0.2284627777777778,
+        "p50": 0.229805,
+        "p95": 0.257298
+      },
+      "samples": 9,
+      "throughputMiBPerSecond": {
+        "mean": 269.38730663336605,
+        "minimum": 238.32823406679867,
+        "p50": 268.0475775435035,
+        "p95": 287.05344292002206
+      }
+    },
+    "xray": {
+      "meanRequestSeconds": {
+        "maximum": 0.236687,
+        "mean": 0.21058766666666667,
+        "p50": 0.222909,
+        "p95": 0.236687
+      },
+      "samples": 9,
+      "throughputMiBPerSecond": {
+        "mean": 296.1552508948251,
+        "minimum": 259.79015957699926,
+        "p50": 275.3707848506807,
+        "p95": 374.7649618913022
+      }
+    }
+  }
+}

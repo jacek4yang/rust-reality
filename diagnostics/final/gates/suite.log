@@ -1,0 +1,52 @@
+=== cargo test --workspace --release ===
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 3 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test runtime::connection::tests::connection_error_does_not_remove_other_tasks ... ok
+test transport::tcp::tests::an_error_without_an_errno_is_not_assumed_retryable_forever ... ok
+test transport::tcp::tests::readiness_errors_are_not_logged_as_failures ... ok
+test transport::tcp::tests::transient_network_errors_do_not_stop_the_listener ... ok
+test result: ok. 308 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.13s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.59s
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.00s
+error: test failed, to rerun pass `-p rust-reality --test resource_pressure`
+=== cargo test --doc --workspace ===
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.20s; merged doctests compilation took 0.19s
+=== cargo nextest run --workspace ===
+        PASS [   0.005s] (386/389) rust-reality::bin/rust-reality tests::rejects_zero_uuid_count
+        PASS [   0.215s] (387/389) rust-reality::relay_backends transfers_more_than_every_internal_buffer
+        PASS [   0.166s] (388/389) rust-reality::vision_encoder_oracle agrees_on_randomized_sequences
+        PASS [   0.637s] (389/389) rust-reality::relay_backends applies_backpressure_when_the_reader_is_slow
+────────────
+     Summary [   1.449s] 389 tests run: 389 passed, 17 skipped
+=== cargo bench --no-run ===
+  Executable benches/vision.rs (target/release/deps/vision-29a45d355cb8683f)
+  Executable benches/vless_decode.rs (target/release/deps/vless_decode-3f8b11a5b973c60e)
+=== fuzz check ===
+    Checking rust-reality-fuzz v0.0.0 (/home/jacek/work/kimi-rust-reality-performance/rust-reality/fuzz)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.01s
+=== cargo deny check ===
+          └── schemars_derive v1.2.2 (*)
+
+advisories ok, bans ok, licenses ok, sources ok
+
+=== RERUN (idle host, after concurrent-load flake) ===
+NOTE: the first release-suite run in this file executed concurrently with
+benchmark traffic and showed one load-induced timeout failure (5.00s).
+On an idle host the full release suite passes:
+      1 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+      1 test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+      1 test result: ok. 0 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 0.00s
+      5 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+      1 test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.62s
+      1 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+      1 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+      1 test result: ok. 3 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 0.00s
+      1 test result: ok. 308 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.12s
+      1 test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+      1 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+      1 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
