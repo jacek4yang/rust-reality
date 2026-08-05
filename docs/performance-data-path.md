@@ -23,8 +23,11 @@ evidence.
    padding. Hot-path properties (measured, regression-gated):
    - zero steady-state heap allocations per record (instrumented-allocator
      gates in `tls13/allocation_gate.rs`);
-   - record storage is grow-only and zero-initialized at most once per size
-     class — no per-record 16 KiB zero fill;
+   - socket reads refill a connection-owned grow-only buffer once per <=64
+     KiB and complete records are parsed and decrypted in place out of it
+     (one syscall per refill, not two per record); every byte buffered past a
+     raw boundary is drained to the peer in order before any raw relay
+     starts;
    - one timer registration per progress step (`IdleDeadline`), never a fresh
      `time::timeout` per chunk; idle semantics — progress resets the window,
      so long transfers never hit a session cap;
@@ -81,8 +84,11 @@ evidence.
      on the peer after a drain barrier proves the redirect backlog converged.
      Accounting is kernel-reported (TCP_INFO deltas against arm baselines).
    - **splice**: one pipe pair per direction (bilateral = two pairs), exactly
-     2 FD units per direction, reserved before `pipe2`. Source EOF → graceful
-     write-side shutdown of the destination (half-close preserved
+     2 FD units per direction, reserved before `pipe2`. Pipes request a 256
+     KiB capacity (best effort, below the unprivileged 1 MiB cap) and the
+     relay chunk is the pipe's actual capacity; kernel pipe memory is
+     accounted at 4 pipes x 256 KiB per configured splice relay. Source EOF →
+     graceful write-side shutdown of the destination (half-close preserved
      per direction). Decline (pool/FD budget/pipe2 failure) only before the
      first byte.
    - **buffered**: bounded pool, one buffer per direction, zero-fill at

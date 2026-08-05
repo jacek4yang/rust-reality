@@ -2,7 +2,7 @@
 
 Branch: `perf/complete-proxy-datapath-and-dedicated-runtime`
 Base SHA: `717e69bfd1e83dd114ff652b74167ad3046e7692` (`origin/main`)
-Head SHA: filled at PR time (see git log)
+Head SHA: recorded in the archive MANIFEST and the PR body; obtain it with `git rev-parse perf/complete-proxy-datapath-and-dedicated-runtime`
 Xray reference: `5ca6f4b7d4dc20a881d4330e498892697627ec0c` (v26.7.28), built from the adjacent read-only clone
 Host: Debian 13, kernel 6.12.94+deb13-amd64, Intel i3-8100 (4C/4T @ 3.60 GHz), 16 GiB, NIC `enp2s0` negotiated **100 Mb/s**, RLIMIT_NOFILE 524288/524288, no cgroup limits, rustc 1.96.0
 
@@ -262,3 +262,81 @@ Full = matrix-full (5 samples/cell), Gates = matrix-gates (9 samples/cell, 0 inv
 | framed-upload:512:1 | gates | 573 | 633 | 663 | 0.95 | 1.10 |
 | framed-upload:512:32 | full | 1111 | 1120 | 1366 | 0.82 | 1.01 |
 | framed-upload:512:32 | recheck | 1118 | 1138 | 1358 | 0.84 | 1.02 |
+
+## 11. Follow-up pass (PR #17 completion)
+
+### CI failure and repair
+
+GitHub check "Repository quality" failed on `RUSTDOCFLAGS="-D warnings" cargo
+doc`: the public docs of `Tls13RecordLayer::seal_filled` linked the private
+`application_plaintext_region` (two intra-doc links). Fixed by referencing the
+helper as plain code text — no lint suppression, no visibility change
+(commit `b6b2eee`). Full local quality path re-verified: fmt, clippy
+`--all-targets --all-features --locked -D warnings`, rustdoc, `scripts/check.sh`.
+
+### io_uring removal audit — PASSED
+
+Case-insensitive tree-wide search plus `cargo tree --all-features`: no io_uring
+dependency, module, ring/shard runtime, `RelayBackend::IoUring`, capability
+probe, `ioUring`/`maxIoUringRelays` field, ring FD reserve, session FD unit,
+pinned-memory formula, benchmark selector, or automatic-selection branch
+remains. Historical explanation is confined to the decision record
+(`docs/decisions/adaptive-relay-implementation-plan.md` amendment) and this
+report; other docs carry a one-line removal notice; stale keys fail strict
+decoding (regression-pinned). No roadmap, no aliases, no migration layer.
+
+### Compiled benchmark origin
+
+The Python TLS origin collapsed at concurrency 32 on every implementation
+(curl rc=35, PUT mismatches; 60-100% invalid cells — origin noise, not proxy
+results). `scripts/bench-origin` (stdlib-only Go) serves streamed GETs,
+counted PUTs, TLS 1.3, and a `/__stats` endpoint; the matrix harness builds it
+by default, defaults its work dir to disk-backed storage (the tmpfs
+exhaustion trap), and marks cells invalid when an origin reports errors.
+Previously dead cells (direct/bidi 32 MiB x c32) are now 100% valid; c=64 is
+proven with the origin idle (zero errors, ~3 goroutines).
+
+### Measured follow-up changes
+
+1. **Buffered TLS record reads with pending drain (kept).** Profile: ~31%
+   AEAD + ~24-31% kernel on framed upload c32; strace: exactly 2 recvfrom per
+   outer record (header + body) + 1 sendto per record. The framed read path
+   now refills a connection-owned buffer once per <=64 KiB and parses complete
+   records out of it (in-place AEAD), and the raw boundaries drain buffered
+   post-boundary bytes in order before any relay starts (the re-derived
+   equivalent of Xray's input/rawInput handling). Keep/revert matrix (390
+   samples, 0 invalid): framed upload vs Xray 0.93 -> 0.98 (32M c32),
+   0.91 -> 0.98 (c64), 0.89 -> 0.94 (512M c32), ~1.00 (c4); framed download
+   0.95 -> 0.97 (32M c32); Direct path held (1.26-1.65x Xray at c4/32/64);
+   no valid cell regressed > 3%.
+2. **256 KiB splice pipes + pipe memory accounting (kept).** Fallback was
+   splice-syscall-bound (98.8% of syscall time, 539k calls / 8 GiB, ~15.5 KiB
+   per call against a 32 KiB chunk). Pipes now request 256 KiB (below the 1
+   MiB unprivileged cap, best effort); splice calls dropped ~8x on the same
+   workload. Throughput effect modest (fallback c32 0.76 -> 0.81 vs Xray —
+   calls there are availability-limited). Accounting: 4 pipes x 256 KiB per
+   configured splice relay; defaults adjusted (maxSpliceRelays 1024 -> 256,
+   maxRelayMemoryBytes 256 -> 512 MiB).
+3. **SOCKHASH vs splice production A/B (measured, default unchanged).**
+   REALITY fallback path, 32 MiB, c1/4/32: parity throughput (c32 3245 vs
+   3281 MiB/s), task-clock +2.7%, context switches +15%, per-request p50/p99
+   within noise. Short sessions do not amortize arm/drain cost; sockhash
+   remains opt-in.
+4. **Standard vs dedicated under saturation (verified equal).** 12 GiB
+   fallback workload: 3087/3049 ms (standard) vs 3060/3082 ms (dedicated) —
+   noise; zero pressure transitions, no overshoot. The pressure check is one
+   atomic load; the monitor samples cgroup once per second outside data loops.
+
+### Remaining unresolved cells (honest record)
+
+- **fallback at c32/c64 (32 MiB):** final 0.76-0.81x Xray. The gap is not the
+  read path and not pipe capacity; remaining suspects are per-session setup
+  and Xray's 64 KiB userspace copy simply being cheaper than splice at
+  availability-limited chunk sizes. Not a regression (final >= 1.14x baseline
+  on these cells); explicitly unresolved.
+- **single-stream TLS cells (512:1):** the Go origin's per-connection TLS
+  throughput caps ~400-500 MiB/s, so all three implementations land in the
+  same band and ratios swing 0.8-1.1 run to run. These cells are origin-bound
+  and are not reported as proxy performance; the meaningful single-stream
+  evidence is the vision-direct harness (64 MiB) and the multi-connection
+  cells where the origin scales.

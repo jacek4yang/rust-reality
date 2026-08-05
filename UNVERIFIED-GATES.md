@@ -74,3 +74,22 @@ Last updated: see git log for the branch head.
     unified relay conformance suite (NXR landing calls `relay_owned`
     directly). Not separately benchmarked end-to-end: Xray has no NXR
     equivalent, so there is no A/B baseline.
+
+## Follow-up additions (PR #17 completion pass)
+
+11. **Fallback at concurrency 32+ (32 MiB):** final measures 0.76-0.81x Xray
+    with a trustworthy compiled origin. Profiled: splice-syscall-bound;
+    256 KiB pipes cut splice calls ~8x but did not close the throughput gap
+    (calls are availability-limited at c32). Not a regression vs baseline
+    (final >= 1.14x baseline); explicitly UNRESOLVED — future work only with a
+    new measured hypothesis.
+
+12. **Single-stream TLS origin cells (payload 512 MiB x c1):** origin-bound
+    (~400-500 MiB/s per Go TLS connection); ratios across implementations
+    swing 0.8-1.1 between runs. Not reported as proxy performance.
+
+13. **SOCKHASH throughput benefit:** measured on the production fallback path
+    (parity with splice, slightly higher CPU on short sessions). A long-lived
+    bilateral-flow benefit remains plausible but is UNVERIFIED — no
+    long-lived eligible workload was measurable on this host. Default remains
+    off.
