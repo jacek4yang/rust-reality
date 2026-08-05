@@ -13,6 +13,9 @@ use tokio::{
 
 use crate::{config::RelayPolicy, runtime::FdBudget};
 
+#[cfg(target_os = "linux")]
+use crate::runtime::{FdPermit, UNITS_SPLICE_RELAY};
+
 /// Maximum io_uring driver shards, and therefore ring descriptors, per process.
 ///
 /// Exposed so the startup descriptor plan can reserve the ring descriptors
@@ -54,9 +57,13 @@ impl TcpRelay {
     pub fn new(policy: &RelayPolicy, fd_budget: FdBudget) -> Result<Self, TcpRelayConfigError> {
         let buffers = BufferPool::new(policy.buffer_bytes, policy.max_pooled_buffers)?;
         #[cfg(target_os = "linux")]
-        let splice = policy
-            .splice
-            .then(|| SplicePool::new(policy.max_splice_relays, policy.buffer_bytes));
+        let splice = policy.splice.then(|| {
+            SplicePool::new(
+                policy.max_splice_relays,
+                policy.buffer_bytes,
+                fd_budget.clone(),
+            )
+        });
         let report = BackendReport {
             buffered: BackendCapability::available(),
             splice: splice_capability(policy),
@@ -554,17 +561,34 @@ fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 struct SplicePool {
     permits: Arc<Semaphore>,
     chunk_bytes: usize,
+    fd_budget: FdBudget,
 }
 
 #[cfg(target_os = "linux")]
 impl SplicePool {
-    fn new(max_relays: u32, chunk_bytes: usize) -> Self {
+    fn new(max_relays: u32, chunk_bytes: usize, fd_budget: FdBudget) -> Self {
         Self {
             permits: Arc::new(Semaphore::new(
                 usize::try_from(max_relays).map_or(usize::MAX, |value| value),
             )),
             chunk_bytes,
+            fd_budget,
         }
+    }
+
+    /// Attempts one splice relay, reserving descriptors before creating them.
+    ///
+    /// The production trace reached `pipe2(...) = -1 EMFILE` because two pipe
+    /// pairs — four descriptors — were created with no reservation at all. The
+    /// four units are acquired *before* `pipe2`, and the permit is owned by the
+    /// same object as the pipes, so every completion, error and cancellation
+    /// path releases it.
+    ///
+    /// Declining is safe here because it happens before any byte is
+    /// transferred: the caller falls through to the buffered backend without
+    /// replaying anything.
+    fn reserve_descriptors(&self) -> Option<FdPermit> {
+        self.fd_budget.try_acquire(UNITS_SPLICE_RELAY)
     }
 
     async fn try_relay(
@@ -576,7 +600,10 @@ impl SplicePool {
         let Ok(permit) = Arc::clone(&self.permits).try_acquire_owned() else {
             return Ok(None);
         };
-        let pipes = match SplicePipes::new() {
+        let Some(fd_permit) = self.reserve_descriptors() else {
+            return Ok(None);
+        };
+        let pipes = match SplicePipes::new(fd_permit) {
             Ok(pipes) => pipes,
             Err(_) => return Ok(None),
         };
@@ -602,18 +629,28 @@ impl SplicePool {
     }
 }
 
+/// Two pipe pairs and the four descriptor units that account for them.
+///
+/// The permit lives in the same object as the descriptors, so it cannot outlive
+/// them and cannot be forgotten on an error path.
 #[cfg(target_os = "linux")]
 struct SplicePipes {
     uplink: PipePair,
     downlink: PipePair,
+    _fd_permit: FdPermit,
 }
 
 #[cfg(target_os = "linux")]
 impl SplicePipes {
-    fn new() -> io::Result<Self> {
+    fn new(fd_permit: FdPermit) -> io::Result<Self> {
+        // If the second pair fails, the first is dropped by `?` — closing its
+        // two descriptors — and `fd_permit` is dropped with it, releasing all
+        // four units. Releasing two units that were never spent is the
+        // conservative direction: the reservation outlived nothing.
         Ok(Self {
             uplink: PipePair::new()?,
             downlink: PipePair::new()?,
+            _fd_permit: fd_permit,
         })
     }
 }
@@ -783,6 +820,183 @@ mod tests {
         assert_eq!(response.expect("client I/O must succeed"), b"response");
         assert_eq!(stats.inbound_to_outbound_bytes(), 7);
         assert_eq!(stats.outbound_to_inbound_bytes(), 8);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_splice_relay_reserves_four_descriptor_units_before_creating_pipes() {
+        let budget = FdBudget::new(64);
+        let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
+        assert_eq!(budget.in_use(), 0);
+
+        let (mut client, mut relay_inbound) = tcp_pair().await;
+        let (mut relay_outbound, mut target) = tcp_pair().await;
+        let observed = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let sampler = {
+            let budget = budget.clone();
+            let observed = std::sync::Arc::clone(&observed);
+            async move {
+                for _ in 0..512 {
+                    observed.fetch_max(budget.in_use(), std::sync::atomic::Ordering::Relaxed);
+                    tokio::task::yield_now().await;
+                }
+            }
+        };
+        let exchange = async {
+            let relay_io = relay.relay(&mut relay_inbound, &mut relay_outbound);
+            let client_io = async {
+                client.write_all(b"request").await?;
+                client.shutdown().await?;
+                let mut response = Vec::new();
+                client.read_to_end(&mut response).await?;
+                Ok::<_, io::Error>(response)
+            };
+            let target_io = async {
+                let mut request = Vec::new();
+                target.read_to_end(&mut request).await?;
+                target.write_all(b"response").await?;
+                target.shutdown().await?;
+                Ok::<_, io::Error>(request)
+            };
+            tokio::join!(relay_io, client_io, target_io)
+        };
+        let (result, _sampled) = time::timeout(Duration::from_secs(5), async {
+            tokio::join!(exchange, sampler)
+        })
+        .await
+        .expect("relay must complete");
+        result.0.expect("splice relay must succeed");
+
+        assert_eq!(
+            observed.load(std::sync::atomic::Ordering::Relaxed),
+            u64::from(crate::runtime::UNITS_SPLICE_RELAY),
+            "a bidirectional splice relay creates two pipe pairs and must reserve all four"
+        );
+        assert_eq!(
+            budget.in_use(),
+            0,
+            "pipe descriptors and their permit must be released on completion"
+        );
+        assert_eq!(budget.underflows(), 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn splice_declines_to_buffered_when_descriptors_are_exhausted() {
+        // Three units cannot satisfy the four a splice relay requires, so the
+        // backend must decline *before* `pipe2` and fall through.
+        let budget = FdBudget::new(3);
+        let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
+        let (mut client, mut relay_inbound) = tcp_pair().await;
+        let (mut relay_outbound, mut target) = tcp_pair().await;
+        let exchange = async {
+            let relay_io = relay.relay(&mut relay_inbound, &mut relay_outbound);
+            let client_io = async {
+                client.write_all(b"request").await?;
+                client.shutdown().await?;
+                let mut response = Vec::new();
+                client.read_to_end(&mut response).await?;
+                Ok::<_, io::Error>(response)
+            };
+            let target_io = async {
+                let mut request = Vec::new();
+                target.read_to_end(&mut request).await?;
+                target.write_all(b"response").await?;
+                target.shutdown().await?;
+                Ok::<_, io::Error>(request)
+            };
+            tokio::join!(relay_io, client_io, target_io)
+        };
+        let (stats, response, request) = time::timeout(Duration::from_secs(5), exchange)
+            .await
+            .expect("relay must complete");
+        let stats = stats.expect("the buffered backend must carry the connection");
+        assert_eq!(request.expect("target I/O must succeed"), b"request");
+        assert_eq!(response.expect("client I/O must succeed"), b"response");
+        assert_eq!(stats.inbound_to_outbound_bytes(), 7);
+        assert_eq!(budget.in_use(), 0);
+        assert!(
+            budget.denials() >= 1,
+            "the decline must be recorded as a descriptor denial, not hidden"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn repeated_splice_relays_return_descriptor_units_to_baseline() {
+        let budget = FdBudget::new(64);
+        let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
+        for _ in 0..16 {
+            let (mut client, mut relay_inbound) = tcp_pair().await;
+            let (mut relay_outbound, mut target) = tcp_pair().await;
+            let exchange = async {
+                let relay_io = relay.relay(&mut relay_inbound, &mut relay_outbound);
+                let client_io = async {
+                    client.write_all(b"request").await?;
+                    client.shutdown().await?;
+                    let mut response = Vec::new();
+                    client.read_to_end(&mut response).await?;
+                    Ok::<_, io::Error>(response)
+                };
+                let target_io = async {
+                    let mut request = Vec::new();
+                    target.read_to_end(&mut request).await?;
+                    target.write_all(b"response").await?;
+                    target.shutdown().await?;
+                    Ok::<_, io::Error>(request)
+                };
+                tokio::join!(relay_io, client_io, target_io)
+            };
+            let (stats, _, _) = time::timeout(Duration::from_secs(5), exchange)
+                .await
+                .expect("relay must complete");
+            stats.expect("relay must succeed");
+            assert_eq!(
+                budget.in_use(),
+                0,
+                "every cycle must return the counter to baseline"
+            );
+        }
+        assert_eq!(budget.underflows(), 0);
+        assert!(budget.peak_in_use() <= u64::from(crate::runtime::UNITS_SPLICE_RELAY));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_cancelled_splice_relay_releases_its_descriptor_units() {
+        let budget = FdBudget::new(64);
+        let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
+        let (_client, mut relay_inbound) = tcp_pair().await;
+        let (mut relay_outbound, _target) = tcp_pair().await;
+        // Neither peer sends or closes, so the relay parks with its pipes open.
+        let cancelled = time::timeout(
+            Duration::from_millis(50),
+            relay.relay(&mut relay_inbound, &mut relay_outbound),
+        )
+        .await;
+        assert!(cancelled.is_err(), "the relay must still be running");
+        assert_eq!(
+            budget.in_use(),
+            0,
+            "cancellation must release pipe descriptors and their permit"
+        );
+        assert_eq!(budget.underflows(), 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    fn splice_policy() -> RelayPolicy {
+        RelayPolicy {
+            buffer_bytes: 32 * 1024,
+            max_pooled_buffers: 4,
+            max_splice_relays: 8,
+            max_io_uring_relays: 0,
+            max_sockhash_relays: 0,
+            max_relay_memory_bytes: u64::MAX,
+            max_pinned_memory_bytes: u64::MAX,
+            splice: true,
+            io_uring: false,
+            sockhash: false,
+        }
     }
 
     async fn tcp_pair() -> (TcpStream, TcpStream) {
