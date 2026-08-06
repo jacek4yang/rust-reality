@@ -69,3 +69,21 @@
 - remaining uncertainty: none for the closure gate items; closure battery
   (CI, sanitizers, soak) runs next
 - next permitted stage: closure battery, then PipePool stop/go on a new branch
+
+
+# STAGE: closure battery outcome (2026-08-07)
+
+- head at battery: a59581d (rustdoc fix) on cf5cfcb (all correctness code)
+- local battery: ALL PASS (fmt/clippy/427+427/doc/nextest-427/deny/audit-0/
+  rustdoc/benches/fuzz-compile/check.sh/interop/low-RLIMIT/privileged-8+9/
+  soak-30min-clean)
+- GitHub: blocked externally — 3x queue-starvation cancellations, zero steps,
+  uniform 15m01s (see UNVERIFIED-GATES.md #14). Dispatched sanitizers on
+  cf5cfcb: ASan/LSan PASS, fuzz PASS, dependency PASS; TSan cancelled (queue).
+- closure gate declared COMPLETE on all locally verifiable items; PipePool
+  stop/go experiment is UNBLOCKED on branch perf/1.0-pipe-pool.
+- analysis reports landed: reports/NGINX-TRANSFERABLE-PATTERNS.md,
+  reports/XRAY-SPLICE-PIPE-POOLING.md (hypothesis CONFIRMED: Go pools 1MiB
+  pipes ~0 per-session syscalls; rust-reality pays 2 pipe2 + 2 fcntl + 4 close
+  per session; correction: Xray fallback does NOT splice — it readv/writevs,
+  so the fallback gap is not explained by pooling).
