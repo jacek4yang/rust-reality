@@ -96,6 +96,7 @@ struct FdBudgetInner {
     low_watermark: u64,
     under_pressure: AtomicBool,
     released: Notify,
+    waiters: AtomicU64,
     peak_used: AtomicU64,
     denials: AtomicU64,
     underflows: AtomicU64,
@@ -125,6 +126,7 @@ impl FdBudget {
                 low_watermark,
                 under_pressure: AtomicBool::new(false),
                 released: Notify::new(),
+                waiters: AtomicU64::new(0),
                 peak_used: AtomicU64::new(0),
                 denials: AtomicU64::new(0),
                 underflows: AtomicU64::new(0),
@@ -238,11 +240,17 @@ impl FdBudget {
             if let Some(permit) = self.try_acquire(units) {
                 return permit;
             }
+            // Registered as a waiter only after a failed attempt and before the
+            // recheck, so a release between them still lands on the recheck and
+            // the release path pays the Notify cost only when someone listens.
+            self.inner.waiters.fetch_add(1, Ordering::Relaxed);
             let notified = self.inner.released.notified();
             if let Some(permit) = self.try_acquire(units) {
+                self.inner.waiters.fetch_sub(1, Ordering::Relaxed);
                 return permit;
             }
             notified.await;
+            self.inner.waiters.fetch_sub(1, Ordering::Relaxed);
         }
     }
 
@@ -286,7 +294,13 @@ impl FdBudget {
                 .pressure_transitions
                 .fetch_add(1, Ordering::Relaxed);
         }
-        self.inner.released.notify_waiters();
+        // Every release reaches here, but almost none of them have a listener:
+        // skip the Notify (and its global wait-list lock) unless a waiter is
+        // registered. A waiter that registered after this check is still inside
+        // its capacity recheck and sees the freed units without a wake.
+        if self.inner.waiters.load(Ordering::Relaxed) > 0 {
+            self.inner.released.notify_waiters();
+        }
     }
 }
 
