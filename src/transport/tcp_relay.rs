@@ -878,13 +878,16 @@ impl SplicePool {
         let Some(fd_permit) = self.fd_budget.try_acquire(UNITS_SPLICE_DIRECTION) else {
             return Ok(None);
         };
-        // The permit is dropped — and its two units released — on every exit
-        // path, together with the pipe pair it accounts for.
+        // The permit binds before the pipe exists: locals drop in reverse
+        // declaration order, so the pipe closes first and its two units are
+        // released only afterwards — the budget never shows capacity for a
+        // descriptor that is still open. A pipe2 failure drops the permit
+        // with nothing created.
+        let _fd_permit = fd_permit;
         let pipe = match PipePair::new() {
             Ok(pipe) => pipe,
             Err(_) => return Ok(None),
         };
-        let _fd_permit = fd_permit;
         splice_owned_direction(
             source,
             destination,
