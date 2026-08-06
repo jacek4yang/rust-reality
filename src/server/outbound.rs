@@ -20,7 +20,7 @@ use crate::{
         nxr::{NxrKey, NxrProtocolError, encode_request},
         vless::{Address, Destination},
     },
-    runtime::{AdmissionDenied, DirectBarrier, DirectPermit},
+    runtime::{AdmissionDenied, DirectBarrier, DirectPermit, FdBudget, FdPermit},
 };
 
 use super::connector::{DestinationConnectError, DestinationConnector};
@@ -38,6 +38,7 @@ pub struct OutboundRegistry {
     outbounds: Arc<HashMap<String, CompiledOutbound>>,
     direct_barrier: DirectBarrier,
     connect_timeout: Duration,
+    fd_budget: FdBudget,
 }
 
 impl OutboundRegistry {
@@ -47,11 +48,13 @@ impl OutboundRegistry {
         outbounds: &[OutboundConfig],
         direct_barrier: &DirectBarrierConfig,
         connect_timeout: Duration,
+        fd_budget: FdBudget,
     ) -> Self {
         Self::build(
             outbounds,
             DirectBarrier::new(direct_barrier),
             connect_timeout,
+            fd_budget,
         )
     }
 
@@ -66,11 +69,13 @@ impl OutboundRegistry {
         direct_barrier: &DirectBarrierConfig,
         connect_timeout: Duration,
         pressure: crate::runtime::PressureGauge,
+        fd_budget: FdBudget,
     ) -> Self {
         Self::build(
             outbounds,
             DirectBarrier::with_pressure(direct_barrier, pressure),
             connect_timeout,
+            fd_budget,
         )
     }
 
@@ -78,6 +83,7 @@ impl OutboundRegistry {
         outbounds: &[OutboundConfig],
         direct_barrier: DirectBarrier,
         connect_timeout: Duration,
+        fd_budget: FdBudget,
     ) -> Self {
         let outbounds = outbounds
             .iter()
@@ -87,7 +93,20 @@ impl OutboundRegistry {
             outbounds: Arc::new(outbounds),
             direct_barrier,
             connect_timeout,
+            fd_budget,
         }
+    }
+
+    /// Reserves the one descriptor an outbound connection will hold.
+    ///
+    /// The permit is acquired before `connect(2)` and rides the returned
+    /// connection, so the descriptor is closed before its unit is released
+    /// and a denied budget fails the new session fast instead of discovering
+    /// EMFILE inside the relay.
+    fn acquire_descriptor(&self) -> Result<FdPermit, OutboundConnectError> {
+        self.fd_budget
+            .try_acquire(crate::runtime::UNITS_OUTBOUND_SOCKET)
+            .ok_or(OutboundConnectError::DescriptorBudget)
     }
 
     /// Connects the selected transport without ever logging credentials or keys.
@@ -118,6 +137,7 @@ impl OutboundRegistry {
             .ok_or_else(|| OutboundConnectError::UnknownTag(tag.to_owned()))?;
         match outbound {
             CompiledOutbound::Direct => {
+                let fd_permit = self.acquire_descriptor()?;
                 let permit = self
                     .direct_barrier
                     .try_acquire()
@@ -129,6 +149,7 @@ impl OutboundRegistry {
                 Ok(OutboundConnectOutcome::Connected(OutboundConnection {
                     stream,
                     _direct_permit: Some(permit),
+                    fd_permit,
                 }))
             }
             CompiledOutbound::Blackhole { delay } => {
@@ -138,17 +159,21 @@ impl OutboundRegistry {
                 Ok(OutboundConnectOutcome::Blackholed)
             }
             CompiledOutbound::Socks5(settings) => {
+                let fd_permit = self.acquire_descriptor()?;
                 let stream = connect_socks5(settings, destination, self.connect_timeout).await?;
                 Ok(OutboundConnectOutcome::Connected(OutboundConnection {
                     stream,
                     _direct_permit: None,
+                    fd_permit,
                 }))
             }
             CompiledOutbound::Nxr(Some(settings)) => {
+                let fd_permit = self.acquire_descriptor()?;
                 let stream = connect_nxr(settings, destination, self.connect_timeout).await?;
                 Ok(OutboundConnectOutcome::Connected(OutboundConnection {
                     stream,
                     _direct_permit: None,
+                    fd_permit,
                 }))
             }
             CompiledOutbound::Nxr(None) => Err(OutboundConnectError::NxrSettings),
@@ -249,6 +274,7 @@ impl CompiledNxr {
 pub struct OutboundConnection {
     stream: TcpStream,
     _direct_permit: Option<DirectPermit>,
+    fd_permit: FdPermit,
 }
 
 impl OutboundConnection {
@@ -259,6 +285,7 @@ impl OutboundConnection {
             self.stream,
             OutboundPermit {
                 _direct: self._direct_permit,
+                _fd: self.fd_permit,
             },
         )
     }
@@ -277,6 +304,7 @@ impl fmt::Debug for OutboundConnection {
 /// Permit retained until a connected outbound session ends.
 pub struct OutboundPermit {
     _direct: Option<DirectPermit>,
+    _fd: FdPermit,
 }
 
 /// The selected route either connected or intentionally discarded the session.
@@ -291,6 +319,7 @@ pub enum OutboundConnectOutcome {
 pub enum OutboundConnectError {
     UnknownTag(String),
     Admission(AdmissionDenied),
+    DescriptorBudget,
     Direct(DestinationConnectError),
     SocksConnect(io::Error),
     SocksTimeout,
@@ -308,6 +337,9 @@ impl fmt::Display for OutboundConnectError {
         match self {
             Self::UnknownTag(_) => formatter.write_str("routing selected an unknown outbound tag"),
             Self::Admission(source) => source.fmt(formatter),
+            Self::DescriptorBudget => {
+                formatter.write_str("descriptor budget denied the outbound connection")
+            }
             Self::Direct(source) => source.fmt(formatter),
             Self::SocksConnect(_) => formatter.write_str("failed to connect to SOCKS5 outbound"),
             Self::SocksTimeout => formatter.write_str("SOCKS5 outbound handshake timed out"),
@@ -332,6 +364,7 @@ impl Error for OutboundConnectError {
             Self::NxrConnect(source) => Some(source),
             Self::NxrProtocol(source) => Some(source),
             Self::UnknownTag(_)
+            | Self::DescriptorBudget
             | Self::SocksTimeout
             | Self::NxrSettings
             | Self::NxrTimeout
@@ -617,6 +650,71 @@ mod tests {
     };
 
     #[tokio::test(flavor = "current_thread")]
+    async fn outbound_descriptor_unit_is_exact_and_released_with_the_connection() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("target listener must bind");
+        let address = listener.local_addr().expect("target address must exist");
+        let budget = crate::runtime::FdBudget::new(4_096);
+        let registry = OutboundRegistry::new(
+            &[OutboundConfig::Direct {
+                tag: "direct".to_owned(),
+            }],
+            &DirectBarrierConfig::default(),
+            Duration::from_secs(1),
+            budget.clone(),
+        );
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), address.port());
+        let baseline = budget.in_use();
+
+        let outcome = registry
+            .connect("direct", &destination)
+            .await
+            .expect("connect must succeed");
+        let OutboundConnectOutcome::Connected(connection) = outcome else {
+            panic!("a direct route must connect");
+        };
+        let in_flight = budget.in_use() - baseline;
+        assert_eq!(
+            in_flight,
+            u64::from(crate::runtime::UNITS_OUTBOUND_SOCKET),
+            "one outbound connection accounts exactly one descriptor"
+        );
+        let (_stream, permit) = connection.into_parts();
+        drop(permit);
+        assert_eq!(
+            budget.in_use(),
+            baseline,
+            "dropping the connection permit returns the unit"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn outbound_connect_declines_when_the_descriptor_budget_is_exhausted() {
+        let budget = crate::runtime::FdBudget::new(4_096);
+        let _reservation = budget
+            .try_acquire(4_096)
+            .expect("the whole budget must be acquirable for the test");
+        let registry = OutboundRegistry::new(
+            &[OutboundConfig::Direct {
+                tag: "direct".to_owned(),
+            }],
+            &DirectBarrierConfig::default(),
+            Duration::from_secs(1),
+            budget,
+        );
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 9);
+        let error = registry
+            .connect("direct", &destination)
+            .await
+            .expect_err("an exhausted budget must deny the outbound connect");
+        assert!(
+            matches!(error, super::OutboundConnectError::DescriptorBudget),
+            "expected DescriptorBudget, got {error}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn negotiates_authenticated_socks5_domain_connect() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
@@ -634,6 +732,7 @@ mod tests {
             }],
             &DirectBarrierConfig::default(),
             Duration::from_secs(1),
+            crate::runtime::FdBudget::new(4_096),
         );
         let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
 
@@ -681,6 +780,7 @@ mod tests {
             }],
             &DirectBarrierConfig::default(),
             Duration::from_secs(1),
+            crate::runtime::FdBudget::new(4_096),
         );
         let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 9);
 
@@ -711,6 +811,7 @@ mod tests {
             }],
             &DirectBarrierConfig::default(),
             Duration::from_secs(1),
+            crate::runtime::FdBudget::new(4_096),
         );
         let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
 

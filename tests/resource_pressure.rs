@@ -96,6 +96,7 @@ async fn a_critical_pause_keeps_established_traffic_and_resumes() {
         }],
         &DirectBarrierConfig::default(),
         Duration::from_secs(1),
+        rust_reality::runtime::FdBudget::new(4_096),
     ));
 
     // One established session before any pressure. The warmup exchange

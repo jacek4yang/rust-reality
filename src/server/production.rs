@@ -1220,6 +1220,10 @@ impl ConnectionRunError {
             | Self::Nxr(NxrLandingError::Timeout) => RejectionReason::Timeout,
             Self::Reality(RealityAcceptError::Fallback(_)) => RejectionReason::Outbound,
             Self::Reality(_) => RejectionReason::Authentication,
+            Self::Vision(VisionSessionError::Outbound(
+                crate::server::outbound::OutboundConnectError::DescriptorBudget,
+            ))
+            | Self::Nxr(NxrLandingError::DescriptorBudget) => RejectionReason::ResourceLimit,
             Self::Vision(VisionSessionError::Route(_) | VisionSessionError::Outbound(_)) => {
                 RejectionReason::Outbound
             }
@@ -1578,6 +1582,7 @@ mod tests {
             }],
             &DirectBarrierConfig::default(),
             Duration::from_secs(1),
+            crate::runtime::FdBudget::new(4_096),
         );
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
         let server_task = tokio::spawn(server.run_until(async move {

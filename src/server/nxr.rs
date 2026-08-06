@@ -300,6 +300,13 @@ impl NxrLandingHandler {
         let request = read_request(&mut inbound, self.authentication_timeout).await?;
         let now = unix_seconds()?;
         let destination = self.authenticator.authenticate(&request, now)?;
+        // The descriptor unit is reserved before connect(2) and outlives the
+        // relay: the outbound socket closes before its unit is released.
+        let _fd_permit = self
+            .relay
+            .fd_budget()
+            .try_acquire(crate::runtime::UNITS_OUTBOUND_SOCKET)
+            .ok_or(NxrLandingError::DescriptorBudget)?;
         let outbound = self.connector.connect(&destination).await?;
         // The landing handler owns both complete sockets, so every backend,
         // including those that must duplicate or register a descriptor, is
@@ -445,6 +452,7 @@ pub enum NxrLandingError {
     Authentication(NxrAuthenticationError),
     Destination(DestinationConnectError),
     Relay(io::Error),
+    DescriptorBudget,
 }
 
 impl fmt::Display for NxrLandingError {
@@ -456,6 +464,7 @@ impl fmt::Display for NxrLandingError {
 impl Error for NxrLandingError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::DescriptorBudget => None,
             Self::Read(source) | Self::Relay(source) => Some(source),
             Self::Protocol(source) => Some(source),
             Self::Authentication(source) => Some(source),
