@@ -182,6 +182,15 @@ impl HandoffSlots {
     }
 }
 
+/// The raw-relay form one direction committed to at its boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RawDecision {
+    /// Both directions will deposit their halves for the bilateral pair relay.
+    Pair,
+    /// This direction relays its own halves independently.
+    Directional,
+}
+
 /// Shared, allocation-stable coordination state for one Vision session.
 ///
 /// Only two atomics and one mutex guarding four socket-half slots exist per
@@ -288,6 +297,32 @@ impl DirectHandoff {
         )
     }
 
+    /// Atomically commits this direction's raw-relay form.
+    ///
+    /// The peer-state read and the own-state transition happen under the slots
+    /// mutex, so decisions are totally ordered: the second decider always
+    /// observes the first decider's committed state. Without this, a
+    /// check-then-act pair of separate atomics could split — one direction
+    /// deposits its halves for a pair the peer never joins (observed as a
+    /// rare theoretical race, closed here by construction). The mutex is held
+    /// for two atomic operations only, once per direction per session, never
+    /// in a read or write loop.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidTransition`] when this direction's state cannot move
+    /// to the chosen form, which means the direction already terminated.
+    pub fn decide(&self, direction: Direction) -> Result<RawDecision, InvalidTransition> {
+        let _guard = lock_recover(&self.slots);
+        if self.peer_can_pair(direction) {
+            self.advance(direction, DirectionState::PairPending)?;
+            Ok(RawDecision::Pair)
+        } else {
+            self.advance(direction, DirectionState::Relaying)?;
+            Ok(RawDecision::Directional)
+        }
+    }
+
     /// Deposits the uplink's halves once the uplink is at the raw boundary.
     ///
     /// Returns the reunited sockets to whichever direction deposits last.
@@ -377,7 +412,7 @@ mod tests {
 
     use tokio::net::{TcpListener, TcpStream};
 
-    use super::{DirectHandoff, Direction, DirectionState};
+    use super::{DirectHandoff, Direction, DirectionState, RawDecision};
 
     #[test]
     fn permitted_transitions_match_the_specified_lifecycle() {
@@ -512,6 +547,78 @@ mod tests {
                 .is_err(),
             "a framed direction cannot skip its raw boundary"
         );
+    }
+
+    #[test]
+    fn decide_commits_pair_when_the_peer_is_pairable_and_directional_otherwise() {
+        let handoff = DirectHandoff::new();
+        for direction in [Direction::Uplink, Direction::Downlink] {
+            handoff
+                .advance(direction, DirectionState::DirectPending)
+                .expect("direction may pend");
+            handoff
+                .advance(direction, DirectionState::RawReady)
+                .expect("direction may become raw");
+        }
+
+        let first = handoff
+            .decide(Direction::Uplink)
+            .expect("uplink may commit");
+        assert_eq!(first, RawDecision::Pair);
+        assert_eq!(handoff.state(Direction::Uplink), DirectionState::PairPending);
+
+        let second = handoff
+            .decide(Direction::Downlink)
+            .expect("downlink may commit");
+        assert_eq!(
+            second,
+            RawDecision::Pair,
+            "the second decider must observe the committed PairPending"
+        );
+
+        let solo = DirectHandoff::new();
+        solo.advance(Direction::Uplink, DirectionState::DirectPending)
+            .expect("uplink may pend");
+        solo.advance(Direction::Uplink, DirectionState::RawReady)
+            .expect("uplink may become raw");
+        let decision = solo.decide(Direction::Uplink).expect("uplink may commit");
+        assert_eq!(decision, RawDecision::Directional);
+        assert_eq!(solo.state(Direction::Uplink), DirectionState::Relaying);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn racing_decisions_never_split_the_pair() {
+        use std::sync::Arc;
+
+        // Both directions reach RawReady and decide concurrently. The mutex
+        // serialization must make the outcomes agree in every interleaving:
+        // either both pair or both relay directionally — never one of each.
+        for round in 0..256 {
+            let handoff = Arc::new(DirectHandoff::new());
+            for direction in [Direction::Uplink, Direction::Downlink] {
+                handoff
+                    .advance(direction, DirectionState::DirectPending)
+                    .expect("direction may pend");
+                handoff
+                    .advance(direction, DirectionState::RawReady)
+                    .expect("direction may become raw");
+            }
+            let up = {
+                let handoff = Arc::clone(&handoff);
+                tokio::spawn(async move { handoff.decide(Direction::Uplink) })
+            };
+            let down = {
+                let handoff = Arc::clone(&handoff);
+                tokio::spawn(async move { handoff.decide(Direction::Downlink) })
+            };
+            let (up, down) = tokio::join!(up, down);
+            let up = up.expect("uplink task").expect("uplink may commit");
+            let down = down.expect("downlink task").expect("downlink may commit");
+            assert_eq!(
+                up, down,
+                "round {round}: decisions split the pair ({up:?} vs {down:?})"
+            );
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]

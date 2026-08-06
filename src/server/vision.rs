@@ -30,7 +30,7 @@ use crate::{
 };
 
 use super::{
-    direct::{DirectHandoff, Direction, DirectionState, InvalidTransition},
+    direct::{DirectHandoff, Direction, DirectionState, InvalidTransition, RawDecision},
     outbound::{OutboundConnectError, OutboundConnectOutcome, OutboundRegistry},
     reality::RealityEstablished,
     routing::{AssetMatcher, RouteResolutionError, RoutingCompileError, RoutingTable},
@@ -191,11 +191,13 @@ impl VisionHandler {
                 &config.policy.direct_barrier,
                 connect_timeout,
                 pressure,
+                relay.fd_budget().clone(),
             ),
             None => OutboundRegistry::new(
                 &config.outbounds,
                 &config.policy.direct_barrier,
                 connect_timeout,
+                relay.fd_budget().clone(),
             ),
         };
         Ok(Self::new_with_dns(
@@ -592,7 +594,7 @@ async fn relay_uplink(
 /// destination first, so they arrive ahead of every byte any raw relay moves.
 ///
 /// The direction then decides exactly once, after the bounded pair window
-/// [`peer_pair_window`]: when the peer is at its own raw boundary or already
+/// [`decide_raw_relay`]: when the peer is at its own raw boundary or already
 /// committed to the pair, this direction deposits its halves for the bilateral
 /// relay; otherwise it relays the direction independently. Neither branch ever
 /// waits for the peer.
@@ -627,43 +629,43 @@ async fn finish_uplink_direct(
         .advance(Direction::Uplink, DirectionState::RawReady)
         .map_err(VisionSessionError::DirectTransition)?;
 
-    if peer_pair_window(handoff, Direction::Uplink).await {
-        handoff
-            .advance(Direction::Uplink, DirectionState::PairPending)
-            .map_err(VisionSessionError::DirectTransition)?;
-        let recovered = handoff
-            .deposit_uplink(raw_client, destination)
-            .map_err(VisionSessionError::Handoff)?;
-        return run_handoff(
-            relay,
-            handoff,
-            Direction::Uplink,
-            recovered,
-            BoundaryBytes {
-                total,
-                direct_at: bytes,
-            },
-            handoff_started,
-        )
-        .await;
+    match decide_raw_relay(handoff, Direction::Uplink)
+        .await
+        .map_err(VisionSessionError::DirectTransition)?
+    {
+        RawDecision::Pair => {
+            let recovered = handoff
+                .deposit_uplink(raw_client, destination)
+                .map_err(VisionSessionError::Handoff)?;
+            run_handoff(
+                relay,
+                handoff,
+                Direction::Uplink,
+                recovered,
+                BoundaryBytes {
+                    total,
+                    direct_at: bytes,
+                },
+                handoff_started,
+            )
+            .await
+        }
+        RawDecision::Directional => {
+            run_directional(
+                relay,
+                handoff,
+                Direction::Uplink,
+                raw_client,
+                destination,
+                BoundaryBytes {
+                    total,
+                    direct_at: bytes,
+                },
+                handoff_started,
+            )
+            .await
+        }
     }
-
-    handoff
-        .advance(Direction::Uplink, DirectionState::Relaying)
-        .map_err(VisionSessionError::DirectTransition)?;
-    run_directional(
-        relay,
-        handoff,
-        Direction::Uplink,
-        raw_client,
-        destination,
-        BoundaryBytes {
-            total,
-            direct_at: bytes,
-        },
-        handoff_started,
-    )
-    .await
 }
 
 async fn relay_downlink(
@@ -870,7 +872,7 @@ where
 /// first, ahead of every byte any raw relay moves.
 ///
 /// The direction then decides exactly once, after the bounded pair window
-/// [`peer_pair_window`]: when the peer is at its own raw boundary or already
+/// [`decide_raw_relay`]: when the peer is at its own raw boundary or already
 /// committed to the pair, this direction deposits its halves for the bilateral
 /// relay; otherwise it relays the direction independently. Neither branch ever
 /// waits for the peer.
@@ -906,43 +908,43 @@ async fn finish_downlink_direct(
         .advance(Direction::Downlink, DirectionState::RawReady)
         .map_err(VisionSessionError::DirectTransition)?;
 
-    if peer_pair_window(handoff, Direction::Downlink).await {
-        handoff
-            .advance(Direction::Downlink, DirectionState::PairPending)
-            .map_err(VisionSessionError::DirectTransition)?;
-        let recovered = handoff
-            .deposit_downlink(raw_destination, raw_client)
-            .map_err(VisionSessionError::Handoff)?;
-        return run_handoff(
-            relay,
-            handoff,
-            Direction::Downlink,
-            recovered,
-            BoundaryBytes {
-                total,
-                direct_at: bytes,
-            },
-            handoff_started,
-        )
-        .await;
+    match decide_raw_relay(handoff, Direction::Downlink)
+        .await
+        .map_err(VisionSessionError::DirectTransition)?
+    {
+        RawDecision::Pair => {
+            let recovered = handoff
+                .deposit_downlink(raw_destination, raw_client)
+                .map_err(VisionSessionError::Handoff)?;
+            run_handoff(
+                relay,
+                handoff,
+                Direction::Downlink,
+                recovered,
+                BoundaryBytes {
+                    total,
+                    direct_at: bytes,
+                },
+                handoff_started,
+            )
+            .await
+        }
+        RawDecision::Directional => {
+            run_directional(
+                relay,
+                handoff,
+                Direction::Downlink,
+                raw_destination,
+                raw_client,
+                BoundaryBytes {
+                    total,
+                    direct_at: bytes,
+                },
+                handoff_started,
+            )
+            .await
+        }
     }
-
-    handoff
-        .advance(Direction::Downlink, DirectionState::Relaying)
-        .map_err(VisionSessionError::DirectTransition)?;
-    run_directional(
-        relay,
-        handoff,
-        Direction::Downlink,
-        raw_destination,
-        raw_client,
-        BoundaryBytes {
-            total,
-            direct_at: bytes,
-        },
-        handoff_started,
-    )
-    .await
 }
 
 /// Byte counters at a raw boundary.
@@ -1096,26 +1098,27 @@ fn settle(handoff: &DirectHandoff, direction: Direction, state: DirectionState) 
     let _ignored = handoff.advance(direction, state);
 }
 
-/// Gives the peer a bounded chance to commit to the bilateral pair.
+/// Gives the peer a bounded chance to reach a pairable state, then commits.
 ///
 /// Two scheduling points — never a sleep, a timer, or a wait on the peer — let
 /// a peer whose own boundary flight is already queued observe `RawReady` and
-/// commit before this direction decides. Both relay futures share one task
-/// that is polled before the client and destination futures, so one yield
-/// cannot span even a single peer reaction; after the second yield a peer
-/// that is still framed will never reach a pairable state in time, and this
-/// direction relays independently.
-async fn peer_pair_window(handoff: &DirectHandoff, direction: Direction) -> bool {
+/// become pairable before this direction commits. The commit itself is the
+/// mutex-serialized [`DirectHandoff::decide`]: the peer read and the state
+/// transition are one critical section, so the two directions can never
+/// disagree about the relay form — a peer that observed `RawReady` or
+/// `PairPending` pairs, and a peer that observed `Relaying` relays
+/// directionally, with no interleaving in between.
+async fn decide_raw_relay(
+    handoff: &DirectHandoff,
+    direction: Direction,
+) -> Result<RawDecision, InvalidTransition> {
     for attempt in 0..3 {
-        if handoff.peer_can_pair(direction) {
-            return true;
-        }
-        if attempt == 2 {
-            return false;
+        if handoff.peer_can_pair(direction) || attempt == 2 {
+            break;
         }
         tokio::task::yield_now().await;
     }
-    false
+    handoff.decide(direction)
 }
 
 /// Writes exactly one Vision frame straight into the final TLS AEAD plaintext.
@@ -3105,6 +3108,7 @@ mod tests {
             }],
             &barrier,
             Duration::from_millis(governor.connect_timeout_ms),
+            crate::runtime::FdBudget::new(4_096),
         );
         let routing = RoutingTable::compile(
             &RoutingConfig {
