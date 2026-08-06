@@ -1,0 +1,104 @@
+{
+  "log": {
+    "level": "warn",
+    "output": "stderr"
+  },
+  "assets": {
+    "geoip": "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geoip.dat",
+    "geosite": "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat",
+    "cacheDirectory": "/home/jacek/work/kimi-rust-reality-performance/rust-reality/benchmarks/soak.ikf29d/assets",
+    "reloadIntervalSeconds": 86400,
+    "requestTimeoutSeconds": 120,
+    "maxBytes": 134217728
+  },
+  "dns": {
+    "servers": [
+      "system"
+    ],
+    "timeoutMs": 5000
+  },
+  "inbounds": [
+    {
+      "protocol": "vless",
+      "tag": "public-reality",
+      "listen": "127.0.0.1",
+      "port": 28101,
+      "settings": {
+        "clients": [
+          {
+            "id": "b262de29-306a-48d3-b2e5-0e4bcecde875",
+            "email": "default-user",
+            "flow": "xtls-rprx-vision"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "target": "127.0.0.1:28105",
+          "serverNames": [
+            "localhost"
+          ],
+          "privateKey": "LTqx8QFPOikfG9qQXkY4eXqzBtkua1T-UBBX1GuYCEI",
+          "shortIds": [
+            "86d667ae60b008f8"
+          ],
+          "maxTimeDiffMs": 60000
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "direct",
+      "tag": "direct"
+    }
+  ],
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "globalRules": [],
+    "users": [
+      {
+        "name": "direct-users",
+        "userIds": [
+          "b262de29-306a-48d3-b2e5-0e4bcecde875"
+        ],
+        "defaultOutbound": "direct",
+        "rules": []
+      }
+    ]
+  },
+  "policy": {
+    "resourceGovernor": {
+      "maxConnections": 16384,
+      "maxHandshakes": 1024,
+      "maxFallbacks": 512,
+      "maxCryptoOperations": 128,
+      "maxReplayEntries": 65536,
+      "replayRetentionMs": 120000,
+      "clientHelloTimeoutMs": 3000,
+      "handshakeTimeoutMs": 10000,
+      "connectTimeoutMs": 10000,
+      "fallbackTimeoutMs": 120000
+    },
+    "directBarrier": {
+      "maxConcurrent": 2048,
+      "maxPerSecond": 4096
+    },
+    "relay": {
+      "bufferBytes": 32768,
+      "maxPooledBuffers": 4096,
+      "maxSpliceRelays": 256,
+      "maxSockhashRelays": 4096,
+      "maxRelayMemoryBytes": 536870912,
+      "maxPinnedMemoryBytes": 134217728,
+      "splice": true,
+      "sockhash": false
+    }
+  },
+  "runtime": {
+    "resourceMode": "standard"
+  }
+}

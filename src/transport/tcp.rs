@@ -7,12 +7,12 @@
 //! ```ignore
 //! let (stream, peer_addr) = self.listener.accept().await?;
 //! stream.set_nodelay(true)?;
+//! ```
 //!
 //! Kernel liveness policy: [`KEEPALIVE_IDLE`], [`KEEPALIVE_INTERVAL`], and
 //! [`KEEPALIVE_COUNT`] arm `SO_KEEPALIVE` on every data socket so a peer that
 //! dies silently is detected inside about a minute instead of pinning the
 //! connection until the application idle window ends.
-//! ```
 //!
 //! Two defects are visible in those two lines, and a production trace shows
 //! both mattering:

@@ -1,0 +1,20 @@
+=== release ===
+passed: 427 failed: 0
+=== doc ===
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+=== nextest ===
+     Summary [   2.856s] 427 tests run: 427 passed, 18 skipped
+=== deny ===
+bans ok, licenses ok, sources ok
+=== audit ===
+      Loaded 1189 security advisories (from ../artifacts/advisory-db)
+    Scanning Cargo.lock for vulnerabilities (200 crate dependencies)
+=== rustdoc ===
+error: could not document `rust-reality`
+=== benches/fuzz compile ===
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.29s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.54s
+=== check.sh ===
+
+error: could not document `rust-reality`
