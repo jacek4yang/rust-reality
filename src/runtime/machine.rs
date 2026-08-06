@@ -292,14 +292,20 @@ pub enum MemorySampler {
 impl MemorySampler {
     /// Returns the current usage in bytes, or `None` when unreadable.
     ///
-    /// An unreadable sample keeps the previous pressure state; a monitoring
-    /// gap must never itself trigger or clear an alarm.
+    /// A cgroup sampler that cannot read its file falls back to the resident
+    /// set size rather than freezing the pressure state at a stale value:
+    /// process RSS measures a different quantity than cgroup `memory.current`
+    /// (no page cache or kernel memory), but a live degraded signal beats a
+    /// silently frozen one. Only when both reads fail does `None` keep the
+    /// previous pressure state — a monitoring gap must never itself trigger
+    /// or clear an alarm.
     #[must_use]
     pub fn sample(&self) -> Option<u64> {
         match self {
             Self::CgroupV2(path) => std::fs::read_to_string(path)
                 .ok()
-                .and_then(|value| value.trim().parse().ok()),
+                .and_then(|value| value.trim().parse().ok())
+                .or_else(resident_set_size),
             Self::ResidentSet => resident_set_size(),
         }
     }
@@ -426,6 +432,19 @@ mod tests {
         MachineReport, MemoryPlan, ResourcePressure, effective_memory_total, parse_cgroup_limit,
         parse_cpu_max, parse_meminfo_total, soft_limit_raise_target,
     };
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_unreadable_cgroup_sample_falls_back_to_resident_set_size() {
+        let sampler = super::MemorySampler::CgroupV2(std::path::PathBuf::from(
+            "/nonexistent/rust-reality/memory.current",
+        ));
+        let sample = sampler.sample();
+        assert!(
+            sample.is_some_and(|bytes| bytes > 0),
+            "a missing cgroup file must fall back to a live RSS sample, got {sample:?}"
+        );
+    }
 
     #[test]
     fn the_raise_target_is_the_hard_limit_only_when_it_is_higher() {

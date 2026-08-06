@@ -565,7 +565,10 @@ mod tests {
             .decide(Direction::Uplink)
             .expect("uplink may commit");
         assert_eq!(first, RawDecision::Pair);
-        assert_eq!(handoff.state(Direction::Uplink), DirectionState::PairPending);
+        assert_eq!(
+            handoff.state(Direction::Uplink),
+            DirectionState::PairPending
+        );
 
         let second = handoff
             .decide(Direction::Downlink)
