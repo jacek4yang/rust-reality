@@ -52,3 +52,20 @@
 - Branch perf/1.0-pipe-pool (new, stacked on the closure branch): src/transport/tcp_relay.rs, crates/rr-linux (pipe sizing/accounting), src/config/model.rs + validate.rs, docs
 - Root: IMPLEMENTATION-STATE.md, PERFORMANCE-DECISION-LOG.md, UNVERIFIED-GATES.md
 - diagnostics/master/**, artifacts/**, reports/**, machine-readable/**
+
+
+# STAGE: correctness closure (2026-08-07)
+
+- head: see `git rev-parse HEAD` on fix/pr17-correctness-closure (this section written at 24068cc)
+- hypotheses tested: MB1 (accepted), MB2 (accepted), DNS ownership (accepted),
+  kernel liveness (accepted, netns-validated), diagnostic truthfulness (accepted)
+- accepted commits: f8cd340, 5b3f778 (MB1), 9bbd534 (MB2), 510cd61 (DNS),
+  1cac77e (keepalive), 24068cc (diagnostics)
+- reverted: none in this stage
+- gates so far: fmt, clippy -D warnings, cargo test --workspace/--all-features (427)
+- tool failures/workarounds: netns-deletion gracefully closes peer sockets
+  (invalid death model) -> silent death model uses `ip link set down` instead;
+  host fully restored (notes/HOST-CHANGES.md)
+- remaining uncertainty: none for the closure gate items; closure battery
+  (CI, sanitizers, soak) runs next
+- next permitted stage: closure battery, then PipePool stop/go on a new branch
