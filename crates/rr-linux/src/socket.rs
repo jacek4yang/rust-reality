@@ -17,6 +17,97 @@
 
 use std::{io, mem, os::fd::RawFd};
 
+/// Returns whether `SO_KEEPALIVE` is enabled on `fd` (test/diagnostic use).
+///
+/// # Errors
+///
+/// Returns the kernel error from `getsockopt(SO_KEEPALIVE)`.
+pub fn keepalive_enabled(fd: RawFd) -> io::Result<bool> {
+    let mut value: libc::c_int = 0;
+    let mut length = u32::try_from(mem::size_of::<libc::c_int>()).unwrap_or(4);
+    // SAFETY: `getsockopt` writes at most `sizeof(c_int)` bytes through the
+    // third argument; `value` is a live `c_int` of exactly that size, and
+    // `length` starts at the writable capacity.
+    let result = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_KEEPALIVE,
+            &raw mut value as *mut libc::c_void,
+            &raw mut length,
+        )
+    };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(value != 0)
+}
+
+/// Enables the kernel keepalive backstop on `fd`.
+///
+/// The kernel probes a silent peer after `idle`, repeats every `interval`,
+/// and declares it dead after `count` unanswered probes. The proxy's
+/// application idle liveness bounds no-progress transfers; keepalive bounds
+/// the failure the application cannot see — a peer that dies without a FIN
+/// (lost NAT state, dead middlebox, lost link). Healthy connections pay three
+/// probe packets per detection window and are otherwise unaffected; healthy
+/// active transfers have no maximum duration from this mechanism.
+///
+/// # Errors
+///
+/// Returns the kernel error from any of the four `setsockopt` calls.
+pub fn set_keepalive(
+    fd: RawFd,
+    idle: std::time::Duration,
+    interval: std::time::Duration,
+    count: u32,
+) -> io::Result<()> {
+    fn seconds(duration: std::time::Duration) -> libc::c_int {
+        libc::c_int::try_from(duration.as_secs().max(1)).unwrap_or(libc::c_int::MAX)
+    }
+    set_int_option(fd, libc::SOL_SOCKET, libc::SO_KEEPALIVE, 1)?;
+    set_int_option(fd, libc::IPPROTO_TCP, libc::TCP_KEEPIDLE, seconds(idle))?;
+    set_int_option(
+        fd,
+        libc::IPPROTO_TCP,
+        libc::TCP_KEEPINTVL,
+        seconds(interval),
+    )?;
+    set_int_option(
+        fd,
+        libc::IPPROTO_TCP,
+        libc::TCP_KEEPCNT,
+        count as libc::c_int,
+    )?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn set_int_option(
+    fd: RawFd,
+    level: libc::c_int,
+    name: libc::c_int,
+    value: libc::c_int,
+) -> io::Result<()> {
+    // SAFETY: `setsockopt` reads exactly `sizeof(c_int)` bytes from the third
+    // argument, which points at the live `value` of exactly that size for the
+    // duration of the call. An invalid `fd` is reported by the kernel as
+    // `EBADF`.
+    let result = unsafe {
+        libc::setsockopt(
+            fd,
+            level,
+            name,
+            &raw const value as *const libc::c_void,
+            u32::try_from(mem::size_of::<libc::c_int>()).unwrap_or(4),
+        )
+    };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 /// Arms `SO_LINGER { on, 0 }` so closing `fd` sends a reset instead of a FIN.
 ///
 /// An aborted transfer must be distinguishable from graceful completion: the

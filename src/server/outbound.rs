@@ -412,8 +412,7 @@ async fn connect_nxr(
     .await
     .map_err(|_| OutboundConnectError::NxrTimeout)?
     .map_err(OutboundConnectError::NxrConnect)?;
-    stream
-        .set_nodelay(true)
+    crate::transport::TcpAcceptor::configure_stream(&stream)
         .map_err(OutboundConnectError::NxrConnect)?;
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -446,8 +445,7 @@ async fn connect_socks5(
     .await
     .map_err(|_| OutboundConnectError::SocksTimeout)?
     .map_err(OutboundConnectError::SocksConnect)?;
-    stream
-        .set_nodelay(true)
+    crate::transport::TcpAcceptor::configure_stream(&stream)
         .map_err(OutboundConnectError::SocksConnect)?;
 
     negotiate_socks5(&mut stream, settings, destination, deadline).await?;

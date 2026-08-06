@@ -203,7 +203,7 @@ impl RealityFallback {
             .await
             .map_err(|_| FallbackError::ConnectTimeout)?
             .map_err(FallbackError::Io)?;
-        stream.set_nodelay(true).map_err(FallbackError::Io)?;
+        crate::transport::TcpAcceptor::configure_stream(&stream).map_err(FallbackError::Io)?;
         time::timeout_at(deadline, stream.write_all(consumed_prefix))
             .await
             .map_err(|_| FallbackError::SessionTimeout)?

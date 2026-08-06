@@ -7,6 +7,11 @@
 //! ```ignore
 //! let (stream, peer_addr) = self.listener.accept().await?;
 //! stream.set_nodelay(true)?;
+//!
+//! Kernel liveness policy: [`KEEPALIVE_IDLE`], [`KEEPALIVE_INTERVAL`], and
+//! [`KEEPALIVE_COUNT`] arm `SO_KEEPALIVE` on every data socket so a peer that
+//! dies silently is detected inside about a minute instead of pinning the
+//! connection until the application idle window ends.
 //! ```
 //!
 //! Two defects are visible in those two lines, and a production trace shows
@@ -245,6 +250,13 @@ pub struct TcpAcceptor {
     listener: TcpListener,
 }
 
+/// Keepalive probes start after this much connection silence.
+pub const KEEPALIVE_IDLE: std::time::Duration = std::time::Duration::from_secs(30);
+/// Interval between unanswered keepalive probes.
+pub const KEEPALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+/// Unanswered probes before the kernel declares the peer dead.
+pub const KEEPALIVE_COUNT: u32 = 3;
+
 impl TcpAcceptor {
     /// Creates a TCP listener bound to `address`.
     ///
@@ -288,7 +300,31 @@ impl TcpAcceptor {
     /// Returns the raw OS error. The failure affects only this connection: the
     /// caller closes the stream, releases its permit, and keeps accepting.
     pub fn configure_accepted(stream: &TcpStream) -> io::Result<()> {
-        stream.set_nodelay(true)
+        Self::configure_stream(stream)
+    }
+
+    /// Applies the shared data-socket options: `TCP_NODELAY` plus the kernel
+    /// keepalive backstop.
+    ///
+    /// The proxy bounds no-progress transfers at the application layer;
+    /// keepalive bounds the failure the application cannot see — a peer that
+    /// dies without a FIN. Detection (30 s idle + 3 probes x 10 s, about 60 s)
+    /// precedes the 120 s application idle window, costs three probe packets
+    /// per window on idle connections, and never caps a healthy active
+    /// transfer.
+    ///
+    /// # Errors
+    ///
+    /// Returns the raw OS error from either `setsockopt`.
+    pub fn configure_stream(stream: &TcpStream) -> io::Result<()> {
+        use std::os::fd::AsRawFd as _;
+        stream.set_nodelay(true)?;
+        rr_linux::socket::set_keepalive(
+            stream.as_raw_fd(),
+            KEEPALIVE_IDLE,
+            KEEPALIVE_INTERVAL,
+            KEEPALIVE_COUNT,
+        )
     }
 
     /// Accepts and configures one inbound TCP connection.
@@ -414,6 +450,31 @@ mod tests {
         assert!(
             accepted.nodelay().expect("read TCP_NODELAY"),
             "accepted proxy streams must disable Nagle"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn data_sockets_arm_the_kernel_keepalive_backstop() {
+        let acceptor = TcpAcceptor::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+            .await
+            .expect("bind loopback listener");
+        let listen_addr = acceptor.local_addr().expect("read listener address");
+
+        let connect = TcpStream::connect(listen_addr);
+        let accept = acceptor.accept();
+        let (client_result, accepted_result) = tokio::join!(connect, accept);
+        let client = client_result.expect("connect to listener");
+        let (accepted, _) = accepted_result.expect("accept client");
+
+        use std::os::fd::AsRawFd as _;
+        assert!(
+            rr_linux::socket::keepalive_enabled(accepted.as_raw_fd()).expect("read SO_KEEPALIVE"),
+            "accepted streams must arm keepalive"
+        );
+        crate::transport::TcpAcceptor::configure_stream(&client).expect("configure outbound");
+        assert!(
+            rr_linux::socket::keepalive_enabled(client.as_raw_fd()).expect("read SO_KEEPALIVE"),
+            "outbound streams must arm keepalive"
         );
     }
 
