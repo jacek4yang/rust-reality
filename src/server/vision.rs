@@ -2,6 +2,7 @@ use std::{
     error::Error,
     fmt, io,
     ops::Range,
+    os::fd::AsRawFd as _,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -498,7 +499,65 @@ struct SessionContext<'session> {
     relay: &'session TcpRelay,
 }
 
+/// Resets both sockets with `SO_LINGER {on,0}` if the direction ends without
+/// being disarmed — cancellation via `try_join`, shutdown abort, or any error
+/// path. An aborted transfer must be distinguishable from graceful
+/// completion: the peer observes a reset, never a clean short EOF. Graceful
+/// exits disarm the guard, preserving FIN and independent half-close.
+struct DirectionAbortGuard {
+    fds: [std::os::fd::RawFd; 2],
+    disarmed: bool,
+}
+
+impl DirectionAbortGuard {
+    const fn new(client_fd: std::os::fd::RawFd, destination_fd: std::os::fd::RawFd) -> Self {
+        Self {
+            fds: [client_fd, destination_fd],
+            disarmed: false,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.disarmed = true;
+    }
+}
+
+impl Drop for DirectionAbortGuard {
+    fn drop(&mut self) {
+        if self.disarmed {
+            return;
+        }
+        for fd in self.fds {
+            let _ignored = rr_linux::socket::abort_linger(fd);
+        }
+    }
+}
+
 async fn relay_uplink(
+    client: TlsApplicationReader<OwnedReadHalf>,
+    destination: OwnedWriteHalf,
+    user_id: UserId,
+    request_buffer: Vec<u8>,
+    prefetched: Range<usize>,
+    context: &SessionContext<'_>,
+) -> Result<DirectionStats, VisionSessionError> {
+    let mut guard = DirectionAbortGuard::new(client.fd(), destination.as_ref().as_raw_fd());
+    let result = relay_uplink_inner(
+        client,
+        destination,
+        user_id,
+        request_buffer,
+        prefetched,
+        context,
+    )
+    .await;
+    if result.is_ok() {
+        guard.disarm();
+    }
+    result
+}
+
+async fn relay_uplink_inner(
     mut client: TlsApplicationReader<OwnedReadHalf>,
     mut destination: OwnedWriteHalf,
     user_id: UserId,
@@ -671,6 +730,22 @@ async fn finish_uplink_direct(
 
 async fn relay_downlink(
     destination: OwnedReadHalf,
+    client: TlsApplicationWriter<OwnedWriteHalf>,
+    user_id: UserId,
+    response_header: &[u8],
+    context: &SessionContext<'_>,
+) -> Result<DirectionStats, VisionSessionError> {
+    let nested = NestedRecordReader::new(destination);
+    let mut guard = DirectionAbortGuard::new(client.fd(), nested.fd());
+    let result = relay_downlink_inner(nested, client, user_id, response_header, context).await;
+    if result.is_ok() {
+        guard.disarm();
+    }
+    result
+}
+
+async fn relay_downlink_inner(
+    mut destination: NestedRecordReader,
     mut client: TlsApplicationWriter<OwnedWriteHalf>,
     user_id: UserId,
     response_header: &[u8],
@@ -706,7 +781,6 @@ async fn relay_downlink(
         .map_err(VisionSessionError::Tls)?;
     encoder.commit(&preamble);
 
-    let mut destination = NestedRecordReader::new(destination);
     let mut detector = NestedTlsDetector::new();
     let mut bytes = 0_u64;
     loop {
@@ -1232,6 +1306,12 @@ struct NestedRecordReader {
 }
 
 impl NestedRecordReader {
+    /// Returns the raw destination descriptor for abort-path socket options.
+    fn fd(&self) -> std::os::fd::RawFd {
+        use std::os::fd::AsRawFd as _;
+        self.io.as_ref().as_raw_fd()
+    }
+
     fn new(io: OwnedReadHalf) -> Self {
         Self {
             io,

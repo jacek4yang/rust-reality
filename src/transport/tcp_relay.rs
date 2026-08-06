@@ -1,6 +1,7 @@
 use std::{
     error::Error,
     fmt, io,
+    os::fd::AsRawFd as _,
     sync::{Arc, Mutex, MutexGuard},
     time::{Duration, Instant},
 };
@@ -170,7 +171,17 @@ impl TcpRelay {
             };
             let run = self
                 .run_direction_backend(*backend, &mut source, &mut destination, &attempt)
-                .await?;
+                .await;
+            let run = match run {
+                Err(error) if !ledger.is_untouched() => {
+                    // True abort: the peer must observe a reset, not a clean
+                    // short EOF. Pre-first-byte declines never reach here.
+                    let _ignored = rr_linux::socket::abort_linger(source.as_ref().as_raw_fd());
+                    let _ignored = rr_linux::socket::abort_linger(destination.as_ref().as_raw_fd());
+                    return Err(error);
+                }
+                run => run?,
+            };
             match run {
                 BackendRun::Completed(outcome) => {
                     let bytes = if direction.is_inbound_to_outbound() {
@@ -273,7 +284,17 @@ impl TcpRelay {
             let started = Instant::now();
             let run = self
                 .run_backend(*backend, inbound, outbound, context, &ledger, started)
-                .await?;
+                .await;
+            let run = match run {
+                Err(error) if !ledger.is_untouched() => {
+                    // True abort: the peer must observe a reset, not a clean
+                    // short EOF. Pre-first-byte declines never reach here.
+                    let _ignored = rr_linux::socket::abort_linger(inbound.as_raw_fd());
+                    let _ignored = rr_linux::socket::abort_linger(outbound.as_raw_fd());
+                    return Err(error);
+                }
+                run => run?,
+            };
             match run {
                 BackendRun::Completed(outcome) => return Ok(outcome),
                 BackendRun::Declined(decline) => last_decline = decline.reason(),
@@ -1206,7 +1227,9 @@ mod tests {
     use crate::{
         config::RelayPolicy,
         runtime::FdBudget,
-        transport::{BackendRequest, DirectionalRelayOutcome, RelayBackend, RelayDirection},
+        transport::{
+            BackendRequest, DirectionalRelayOutcome, RelayBackend, RelayContext, RelayDirection,
+        },
     };
 
     #[tokio::test(flavor = "current_thread")]
@@ -1616,6 +1639,137 @@ mod tests {
             splice: true,
             sockhash: false,
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_aborted_relay_resets_the_surviving_peer() {
+        let relay = TcpRelay::new(
+            &RelayPolicy {
+                splice: false,
+                ..RelayPolicy::default()
+            },
+            FdBudget::new(4_096),
+        )
+        .expect("relay must build");
+        let payload = vec![0x5a_u8; 256 * 1024];
+        let (mut source_peer, relay_inbound) = tcp_pair().await;
+        let (relay_outbound, mut sink_peer) = tcp_pair().await;
+        let relaying = relay.relay_owned(relay_inbound, relay_outbound, RelayContext::owned());
+        let drive = async {
+            time::timeout(Duration::from_secs(5), source_peer.write_all(&payload))
+                .await
+                .expect("source write must not stall")
+                .expect("source write must succeed");
+            // The sink receives part of the payload, then resets mid-transfer.
+            let mut received = vec![0_u8; payload.len() / 2];
+            time::timeout(Duration::from_secs(5), sink_peer.read_exact(&mut received))
+                .await
+                .expect("the first half must not stall")
+                .expect("the first half must arrive");
+            rr_linux::socket::abort_linger(std::os::fd::AsRawFd::as_raw_fd(&sink_peer))
+                .expect("abort linger must apply");
+            drop(sink_peer);
+        };
+        let (relay_result, ()) = tokio::join!(relaying, drive);
+        let _ignored = relay_result;
+
+        let mut byte = [0_u8; 1];
+        let mut attempts = 0_usize;
+        let error = loop {
+            match source_peer.try_read(&mut byte) {
+                Ok(read) => panic!("the surviving peer must not read cleanly ({read})"),
+                Err(error) if error.kind() == io::ErrorKind::ConnectionReset => break error,
+                Err(_) if attempts < 200 => {
+                    attempts += 1;
+                    time::sleep(Duration::from_millis(5)).await;
+                }
+                Err(error) => panic!("expected ConnectionReset, got {error}"),
+            }
+        };
+        assert_eq!(error.kind(), io::ErrorKind::ConnectionReset);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_aborted_splice_relay_resets_the_surviving_peer() {
+        let relay =
+            TcpRelay::new(&RelayPolicy::default(), FdBudget::new(4_096)).expect("relay must build");
+        let payload = vec![0x5a_u8; 256 * 1024];
+        let (mut source_peer, relay_inbound) = tcp_pair().await;
+        let (relay_outbound, mut sink_peer) = tcp_pair().await;
+        let relaying = relay.relay_owned(relay_inbound, relay_outbound, RelayContext::owned());
+        let drive = async {
+            time::timeout(Duration::from_secs(5), source_peer.write_all(&payload))
+                .await
+                .expect("source write must not stall")
+                .expect("source write must succeed");
+            let mut received = vec![0_u8; payload.len() / 2];
+            time::timeout(Duration::from_secs(5), sink_peer.read_exact(&mut received))
+                .await
+                .expect("the first half must not stall")
+                .expect("the first half must arrive");
+            rr_linux::socket::abort_linger(std::os::fd::AsRawFd::as_raw_fd(&sink_peer))
+                .expect("abort linger must apply");
+            drop(sink_peer);
+        };
+        let (relay_result, ()) = tokio::join!(relaying, drive);
+        let _ignored = relay_result;
+
+        let mut byte = [0_u8; 1];
+        let mut attempts = 0_usize;
+        let error = loop {
+            match source_peer.try_read(&mut byte) {
+                Ok(read) => panic!("the surviving peer must not read cleanly ({read})"),
+                Err(error) if error.kind() == io::ErrorKind::ConnectionReset => break error,
+                Err(_) if attempts < 200 => {
+                    attempts += 1;
+                    time::sleep(Duration::from_millis(5)).await;
+                }
+                Err(error) => panic!("expected ConnectionReset, got {error}"),
+            }
+        };
+        assert_eq!(error.kind(), io::ErrorKind::ConnectionReset);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_graceful_relay_close_is_a_clean_eof_without_abort_marks() {
+        let relay = TcpRelay::new(
+            &RelayPolicy {
+                splice: false,
+                ..RelayPolicy::default()
+            },
+            FdBudget::new(4_096),
+        )
+        .expect("relay must build");
+        let payload = vec![0x5a_u8; 64 * 1024];
+        let (mut source_peer, relay_inbound) = tcp_pair().await;
+        let (relay_outbound, mut sink_peer) = tcp_pair().await;
+        let relaying = relay.relay_owned(relay_inbound, relay_outbound, RelayContext::owned());
+        let source_io = async {
+            source_peer.write_all(&payload).await?;
+            source_peer.shutdown().await?;
+            Ok::<_, io::Error>(())
+        };
+        let sink_io = async {
+            let mut received = Vec::new();
+            sink_peer.read_to_end(&mut received).await?;
+            sink_peer.shutdown().await?;
+            Ok::<_, io::Error>(received)
+        };
+        let (outcome, source_result, received) = tokio::join!(relaying, source_io, sink_io);
+        outcome.expect("a graceful relay must succeed");
+        source_result.expect("source I/O must succeed");
+        assert_eq!(
+            received.expect("sink I/O must succeed"),
+            payload,
+            "a graceful relay must deliver every byte"
+        );
+        let mut byte = [0_u8; 1];
+        let read = source_peer
+            .read(&mut byte)
+            .await
+            .expect("the post-close read must succeed");
+        assert_eq!(read, 0, "a graceful close must read as a clean EOF");
     }
 
     async fn tcp_pair() -> (TcpStream, TcpStream) {

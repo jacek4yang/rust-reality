@@ -17,6 +17,40 @@
 
 use std::{io, mem, os::fd::RawFd};
 
+/// Arms `SO_LINGER { on, 0 }` so closing `fd` sends a reset instead of a FIN.
+///
+/// An aborted transfer must be distinguishable from graceful completion: the
+/// abort path marks the socket before close, and the peer observes `ECONNRESET`
+/// rather than a clean short EOF. A descriptor that is already closed or reset
+/// simply reports the kernel error, which callers are expected to ignore.
+///
+/// # Errors
+///
+/// Returns the kernel error from `setsockopt(SO_LINGER)`.
+pub fn abort_linger(fd: RawFd) -> io::Result<()> {
+    let value = libc::linger {
+        l_onoff: 1,
+        l_linger: 0,
+    };
+    // SAFETY: `setsockopt(SO_LINGER)` reads exactly `sizeof(linger)` bytes from
+    // the third argument; `value` is a live `linger` of exactly that size, so
+    // the pointer is valid for that read. An invalid `fd` is reported by the
+    // kernel as `EBADF`.
+    let result = unsafe {
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_LINGER,
+            &raw const value as *const libc::c_void,
+            u32::try_from(mem::size_of::<libc::linger>()).unwrap_or(8),
+        )
+    };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 /// Returns the number of userspace-visible queued input bytes on `fd`.
 ///
 /// # Errors
