@@ -173,24 +173,29 @@ impl VisionHandler {
         assets: Arc<dyn AssetMatcher>,
         relay: TcpRelay,
         pressure: &crate::runtime::PressureGauge,
+        direct_barrier: crate::runtime::DirectBarrier,
     ) -> Result<Self, RoutingCompileError> {
-        Self::build(config, assets, relay, Some(pressure.clone()))
+        Self::build(
+            config,
+            assets,
+            relay,
+            Some((pressure.clone(), direct_barrier)),
+        )
     }
 
     fn build(
         config: &Config,
         assets: Arc<dyn AssetMatcher>,
         relay: TcpRelay,
-        pressure: Option<crate::runtime::PressureGauge>,
+        pressure: Option<(crate::runtime::PressureGauge, crate::runtime::DirectBarrier)>,
     ) -> Result<Self, RoutingCompileError> {
         let governor = &config.policy.resource_governor;
         let connect_timeout = Duration::from_millis(governor.connect_timeout_ms);
         let outbounds = match pressure {
-            Some(pressure) => OutboundRegistry::new_with_pressure(
+            Some((pressure, direct_barrier)) => OutboundRegistry::with_barrier(
                 &config.outbounds,
-                &config.policy.direct_barrier,
+                direct_barrier,
                 connect_timeout,
-                pressure,
                 relay.fd_budget().clone(),
             ),
             None => OutboundRegistry::new(

@@ -58,25 +58,18 @@ impl OutboundRegistry {
         )
     }
 
-    /// Compiles outbound configuration with a pressure-aware direct barrier.
+    /// Compiles outbound configuration onto one shared direct-dial authority.
     ///
-    /// At `Critical` pressure new direct dials fail fast through the existing
-    /// admission path; established relays hold no barrier permit and are
-    /// never interrupted.
+    /// The barrier is process-lifetime: reload generations reuse the same
+    /// concurrency and rate permits instead of silently multiplying them.
     #[must_use]
-    pub fn new_with_pressure(
+    pub fn with_barrier(
         outbounds: &[OutboundConfig],
-        direct_barrier: &DirectBarrierConfig,
+        direct_barrier: DirectBarrier,
         connect_timeout: Duration,
-        pressure: crate::runtime::PressureGauge,
         fd_budget: FdBudget,
     ) -> Self {
-        Self::build(
-            outbounds,
-            DirectBarrier::with_pressure(direct_barrier, pressure),
-            connect_timeout,
-            fd_budget,
-        )
+        Self::build(outbounds, direct_barrier, connect_timeout, fd_budget)
     }
 
     fn build(
