@@ -3267,6 +3267,8 @@ mod tests {
                 max_relay_memory_bytes: u64::MAX,
                 max_pinned_memory_bytes: u64::MAX,
                 splice: false,
+                pipe_pool: true,
+                max_pooled_pipes: 8,
                 sockhash: false,
             },
             crate::runtime::FdBudget::new(4_096),

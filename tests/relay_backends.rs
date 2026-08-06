@@ -29,6 +29,8 @@ fn policy(backend: RelayBackend) -> RelayPolicy {
         max_relay_memory_bytes: u64::MAX,
         max_pinned_memory_bytes: u64::MAX,
         splice: matches!(backend, RelayBackend::Splice),
+        pipe_pool: true,
+        max_pooled_pipes: 8,
         sockhash: false,
     }
 }

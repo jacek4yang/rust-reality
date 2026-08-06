@@ -53,6 +53,8 @@ fn policy(max_sockhash_relays: u32) -> RelayPolicy {
         max_relay_memory_bytes: u64::MAX,
         max_pinned_memory_bytes: u64::MAX,
         splice: true,
+        pipe_pool: true,
+        max_pooled_pipes: 8,
         sockhash: true,
     }
 }

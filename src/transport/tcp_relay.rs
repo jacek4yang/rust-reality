@@ -2,7 +2,10 @@ use std::{
     error::Error,
     fmt, io,
     os::fd::AsRawFd as _,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        Arc, Mutex, MutexGuard,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -59,9 +62,13 @@ impl TcpRelay {
     pub fn new(policy: &RelayPolicy, fd_budget: FdBudget) -> Result<Self, TcpRelayConfigError> {
         let buffers = BufferPool::new(policy.buffer_bytes, policy.max_pooled_buffers)?;
         #[cfg(target_os = "linux")]
-        let splice = policy
-            .splice
-            .then(|| SplicePool::new(policy.max_splice_relays, fd_budget.clone()));
+        let splice = policy.splice.then(|| {
+            SplicePool::new(
+                policy.max_splice_relays,
+                fd_budget.clone(),
+                Some((policy.pipe_pool, policy.max_pooled_pipes)),
+            )
+        });
         #[cfg(target_os = "linux")]
         let (sockhash, sockhash_capability) = build_sockhash(policy);
         #[cfg(not(target_os = "linux"))]
@@ -86,6 +93,16 @@ impl TcpRelay {
     #[must_use]
     pub fn fd_budget(&self) -> &FdBudget {
         &self.fd_budget
+    }
+
+    /// Returns pipe-pool counters when the process pool is enabled.
+    #[cfg(target_os = "linux")]
+    #[must_use]
+    pub fn pipe_pool_stats(&self) -> Option<PipePoolSnapshot> {
+        self.splice
+            .as_ref()
+            .and_then(|splice| splice.pipes.as_ref())
+            .map(PipePool::snapshot)
     }
 
     /// Returns the one stable capability line per backend for startup reporting.
@@ -885,20 +902,139 @@ fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     }
 }
 
+/// Process-lifetime splice pipe pool, after the Go/Xray model: pipes are
+/// sized once at creation and reused without a single pipe syscall on a hit.
+///
+/// A pipe is returned only when it is fully drained; a pipe that still holds
+/// unread bytes at relay end is discarded, never recycled across sessions.
+/// Descriptor units travel with the pipe itself (`PooledPipe` drops the pipe
+/// before releasing its units), so pool retention, in-flight use, and idle
+/// shrink are all exactly accounted.
+#[cfg(target_os = "linux")]
+#[derive(Clone)]
+struct PipePool {
+    free: Arc<Mutex<Vec<PooledPipe>>>,
+    keep: usize,
+    fd_budget: FdBudget,
+    stats: Arc<PipePoolStats>,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct PipePoolStats {
+    hits: AtomicU64,
+    misses: AtomicU64,
+    discards: AtomicU64,
+    downgrades: AtomicU64,
+    shrinks: AtomicU64,
+}
+
+/// Snapshot of pool counters for tests and future metrics surfaces.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PipePoolSnapshot {
+    /// Retrievals answered without any pipe syscall.
+    pub hits: u64,
+    /// Retrievals that created a pipe.
+    pub misses: u64,
+    /// Pipes discarded for holding unread bytes.
+    pub discards: u64,
+    /// Pipes created below the requested capacity (pipe-page cliff).
+    pub downgrades: u64,
+    /// Pipes closed because the pool was full on return.
+    pub shrinks: u64,
+}
+
+#[cfg(target_os = "linux")]
+struct PooledPipe {
+    pair: PipePair,
+    // Declared after the pipe: struct fields drop in declaration order, so
+    // the pipe closes before its units are released.
+    _units: FdPermit,
+}
+
+#[cfg(target_os = "linux")]
+impl PipePool {
+    fn new(keep: u32, fd_budget: FdBudget) -> Self {
+        Self {
+            free: Arc::new(Mutex::new(Vec::new())),
+            keep: usize::try_from(keep).unwrap_or(usize::MAX),
+            fd_budget,
+            stats: Arc::new(PipePoolStats::default()),
+        }
+    }
+
+    /// Returns a pipe with no syscall on a pool hit; creates one on a miss.
+    ///
+    /// A miss reserves two descriptor units before `pipe2`; a denied budget or
+    /// a failed creation declines before any byte moves.
+    fn take(&self) -> Option<PooledPipe> {
+        if let Some(pipe) = lock_recover(&self.free).pop() {
+            self.stats.hits.fetch_add(1, Ordering::Relaxed);
+            return Some(pipe);
+        }
+        self.stats.misses.fetch_add(1, Ordering::Relaxed);
+        let units = self.fd_budget.try_acquire(UNITS_SPLICE_DIRECTION)?;
+        let pair = match PipePair::new() {
+            Ok(pair) => pair,
+            Err(_) => return None,
+        };
+        Some(PooledPipe {
+            pair,
+            _units: units,
+        })
+    }
+
+    /// Returns a drained pipe to the pool, or discards it.
+    ///
+    /// A pipe that still holds unread bytes is never recycled: Go applies the
+    /// same rule in `putPipe`. A returned pipe beyond the keep count is closed
+    /// (its units release with it), which bounds idle retention.
+    fn give_back(&self, pipe: PooledPipe) {
+        let dirty = rr_linux::socket::pending_input(pipe.pair.read.as_raw_fd())
+            .map(|queued| queued > 0)
+            .unwrap_or(true);
+        if dirty {
+            self.stats.discards.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        let mut free = lock_recover(&self.free);
+        if free.len() < self.keep {
+            free.push(pipe);
+        } else {
+            self.stats.shrinks.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn snapshot(&self) -> PipePoolSnapshot {
+        PipePoolSnapshot {
+            hits: self.stats.hits.load(Ordering::Relaxed),
+            misses: self.stats.misses.load(Ordering::Relaxed),
+            discards: self.stats.discards.load(Ordering::Relaxed),
+            downgrades: self.stats.downgrades.load(Ordering::Relaxed),
+            shrinks: self.stats.shrinks.load(Ordering::Relaxed),
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[derive(Clone)]
 struct SplicePool {
     permits: Arc<Semaphore>,
     fd_budget: FdBudget,
+    pipes: Option<PipePool>,
 }
 
 #[cfg(target_os = "linux")]
 impl SplicePool {
-    fn new(max_relays: u32, fd_budget: FdBudget) -> Self {
+    fn new(max_relays: u32, fd_budget: FdBudget, pipe_pool: Option<(bool, u32)>) -> Self {
         Self {
             permits: Arc::new(Semaphore::new(
                 usize::try_from(max_relays).map_or(usize::MAX, |value| value),
             )),
+            pipes: pipe_pool.and_then(|(enabled, keep)| {
+                enabled.then(|| PipePool::new(keep, fd_budget.clone()))
+            }),
             fd_budget,
         }
     }
@@ -928,6 +1064,13 @@ impl SplicePool {
         let Ok(permit) = Arc::clone(&self.permits).try_acquire_owned() else {
             return Ok(None);
         };
+        if let Some(pool) = &self.pipes {
+            let result = self
+                .try_relay_pooled(pool, inbound, outbound, ledger, liveness)
+                .await;
+            drop(permit);
+            return result;
+        }
         let Some(fd_permit) = self.reserve_descriptors() else {
             return Ok(None);
         };
@@ -963,6 +1106,56 @@ impl SplicePool {
         Ok(Some(()))
     }
 
+    /// Runs one bilateral relay on pooled pipes and returns both afterwards.
+    #[cfg(target_os = "linux")]
+    async fn try_relay_pooled(
+        &self,
+        pool: &PipePool,
+        inbound: &TcpStream,
+        outbound: &TcpStream,
+        ledger: &TransferLedger,
+        liveness: Option<Duration>,
+    ) -> io::Result<Option<()>> {
+        let Some(uplink_pipe) = pool.take() else {
+            return Ok(None);
+        };
+        let Some(downlink_pipe) = pool.take() else {
+            pool.give_back(uplink_pipe);
+            return Ok(None);
+        };
+        for pipe in [&uplink_pipe.pair, &downlink_pipe.pair] {
+            if pipe.capacity < SPLICE_PIPE_CAPACITY {
+                ledger.note_pipe_downgrade(SPLICE_PIPE_CAPACITY, pipe.capacity);
+                pool.stats.downgrades.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        let result = {
+            let uplink = splice_direction(
+                inbound,
+                outbound,
+                &uplink_pipe.pair,
+                uplink_pipe.pair.capacity,
+                ledger,
+                true,
+                liveness,
+            );
+            let downlink = splice_direction(
+                outbound,
+                inbound,
+                &downlink_pipe.pair,
+                downlink_pipe.pair.capacity,
+                ledger,
+                false,
+                liveness,
+            );
+            tokio::try_join!(uplink, downlink)
+        };
+        pool.give_back(uplink_pipe);
+        pool.give_back(downlink_pipe);
+        result?;
+        Ok(Some(()))
+    }
+
     /// Attempts one single-direction splice relay: one permit, two descriptor
     /// units, one pipe pair.
     ///
@@ -980,6 +1173,29 @@ impl SplicePool {
         let Ok(_permit) = Arc::clone(&self.permits).try_acquire_owned() else {
             return Ok(None);
         };
+        if let Some(pool) = &self.pipes {
+            let Some(pooled) = pool.take() else {
+                return Ok(None);
+            };
+            let pipe = &pooled.pair;
+            if pipe.capacity < SPLICE_PIPE_CAPACITY {
+                ledger.note_pipe_downgrade(SPLICE_PIPE_CAPACITY, pipe.capacity);
+                pool.stats.downgrades.fetch_add(1, Ordering::Relaxed);
+            }
+            let result = splice_owned_direction(
+                source,
+                destination,
+                pipe,
+                pipe.capacity,
+                ledger,
+                direction.is_inbound_to_outbound(),
+                liveness,
+            )
+            .await;
+            pool.give_back(pooled);
+            result?;
+            return Ok(Some(()));
+        }
         let Some(fd_permit) = self.fd_budget.try_acquire(UNITS_SPLICE_DIRECTION) else {
             return Ok(None);
         };
@@ -1224,7 +1440,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{io, net::Ipv4Addr, time::Duration};
+    use std::{io, net::Ipv4Addr, os::fd::AsRawFd as _, time::Duration};
 
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -1252,6 +1468,8 @@ mod tests {
                 max_relay_memory_bytes: u64::MAX,
                 max_pinned_memory_bytes: u64::MAX,
                 splice: false,
+                pipe_pool: true,
+                max_pooled_pipes: 8,
                 sockhash: false,
             },
             FdBudget::new(4_096),
@@ -1272,6 +1490,8 @@ mod tests {
                 max_relay_memory_bytes: u64::MAX,
                 max_pinned_memory_bytes: u64::MAX,
                 splice: true,
+                pipe_pool: true,
+                max_pooled_pipes: 8,
                 sockhash: false,
             },
             FdBudget::new(4_096),
@@ -1359,12 +1579,17 @@ mod tests {
         assert_eq!(
             observed.load(std::sync::atomic::Ordering::Relaxed),
             u64::from(crate::runtime::UNITS_SPLICE_RELAY),
-            "a bidirectional splice relay creates two pipe pairs and must reserve all four"
+            "a bidirectional splice relay uses two pipe pairs, all four accounted"
         );
+        assert!(
+            budget.in_use() <= u64::from(crate::runtime::UNITS_SPLICE_RELAY),
+            "after completion the pool may retain drained pipes within its keep count"
+        );
+        drop(relay);
         assert_eq!(
             budget.in_use(),
             0,
-            "pipe descriptors and their permit must be released on completion"
+            "dropping the relay (and its pool) releases every pipe descriptor unit"
         );
         assert_eq!(budget.underflows(), 0);
     }
@@ -1403,7 +1628,16 @@ mod tests {
         assert_eq!(request.expect("target I/O must succeed"), b"request");
         assert_eq!(response.expect("client I/O must succeed"), b"response");
         assert_eq!(stats.inbound_to_outbound_bytes(), 7);
-        assert_eq!(budget.in_use(), 0);
+        assert!(
+            budget.in_use() <= u64::from(crate::runtime::UNITS_SPLICE_DIRECTION),
+            "a declined attempt may retain one drained pipe in the pool"
+        );
+        drop(relay);
+        assert_eq!(
+            budget.in_use(),
+            0,
+            "dropping the relay (and its pool) releases everything"
+        );
         assert!(
             budget.denials() >= 1,
             "the decline must be recorded as a descriptor denial, not hidden"
@@ -1440,12 +1674,17 @@ mod tests {
                 .await
                 .expect("relay must complete");
             stats.expect("relay must succeed");
-            assert_eq!(
-                budget.in_use(),
-                0,
-                "every cycle must return the counter to baseline"
+            assert!(
+                budget.in_use() <= u64::from(crate::runtime::UNITS_SPLICE_RELAY),
+                "each cycle's pool retention stays within two pipe pairs"
             );
         }
+        drop(relay);
+        assert_eq!(
+            budget.in_use(),
+            0,
+            "dropping the relay (and its pool) returns the counter to baseline"
+        );
         assert_eq!(budget.underflows(), 0);
         assert!(budget.peak_in_use() <= u64::from(crate::runtime::UNITS_SPLICE_RELAY));
     }
@@ -1646,6 +1885,8 @@ mod tests {
             max_relay_memory_bytes: u64::MAX,
             max_pinned_memory_bytes: u64::MAX,
             splice: true,
+            pipe_pool: true,
+            max_pooled_pipes: 8,
             sockhash: false,
         }
     }
@@ -1794,6 +2035,112 @@ mod tests {
         )
     }
 
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_pool_hit_reuses_the_same_pipe_without_syscalls() {
+        let budget = FdBudget::new(4_096);
+        let pool = super::PipePool::new(8, budget.clone());
+
+        let first = pool.take().expect("first take must create a pipe");
+        let first_read_fd = first.pair.read.as_raw_fd();
+        let baseline = budget.in_use();
+        pool.give_back(first);
+        let snapshot = pool.snapshot();
+        assert_eq!(snapshot.misses, 1);
+        assert_eq!(snapshot.hits, 0);
+
+        let second = pool.take().expect("second take must be a pool hit");
+        assert_eq!(
+            second.pair.read.as_raw_fd(),
+            first_read_fd,
+            "a pool hit must return the exact same pipe without pipe2"
+        );
+        assert_eq!(pool.snapshot().hits, 1);
+        assert_eq!(budget.in_use(), baseline, "a hit acquires nothing new");
+        drop(second);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_dirty_pipe_is_discarded_never_recycled() {
+        let budget = FdBudget::new(4_096);
+        let pool = super::PipePool::new(8, budget);
+        let pipe = pool.take().expect("take must create a pipe");
+        // Poison the pipe with an unread byte: it must never come back.
+        rustix::io::write(&pipe.pair.write, b"x").expect("poison write");
+        pool.give_back(pipe);
+
+        let snapshot = pool.snapshot();
+        assert_eq!(snapshot.discards, 1);
+        assert_eq!(snapshot.hits, 0, "nothing returned to the free list");
+        let fresh = pool.take().expect("the discard forces a fresh pipe");
+        assert_eq!(
+            pool.snapshot().misses,
+            2,
+            "a dirty pipe must never be recycled into a session"
+        );
+        drop(fresh);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_pool_shrinks_past_its_keep_count_and_releases_units() {
+        let budget = FdBudget::new(4_096);
+        let pool = super::PipePool::new(1, budget.clone());
+        let baseline = budget.in_use();
+
+        let one = pool.take().expect("first pipe");
+        let two = pool.take().expect("second pipe");
+        let in_flight = budget.in_use();
+        assert!(
+            in_flight > baseline,
+            "both pipes are accounted while in flight"
+        );
+        pool.give_back(one);
+        assert_eq!(pool.snapshot().shrinks, 0, "the first return fits the keep");
+        pool.give_back(two);
+        assert_eq!(pool.snapshot().shrinks, 1, "the second return shrinks");
+        assert_eq!(
+            budget.in_use(),
+            in_flight - u64::from(crate::runtime::UNITS_SPLICE_DIRECTION),
+            "the shrunk pipe releases its units"
+        );
+        drop(pool);
+        assert_eq!(
+            budget.in_use(),
+            baseline,
+            "draining the pool returns every descriptor unit"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn pooled_splice_relays_are_byte_exact_and_reuse_pipes() {
+        let relay =
+            TcpRelay::new(&splice_policy(), FdBudget::new(4_096)).expect("relay must compile");
+        let payload = vec![0x5a_u8; 64 * 1024];
+        for round in 0..3 {
+            let (outcome, received) = run_one_direction(
+                &relay,
+                RelayDirection::Downlink,
+                BackendRequest::Explicit(RelayBackend::Splice),
+                &payload,
+            )
+            .await;
+            let outcome = outcome.expect("directional relay must succeed");
+            assert_eq!(received, payload, "round {round} must be byte exact");
+            assert_eq!(outcome.backend(), RelayBackend::Splice);
+        }
+        let stats = relay
+            .pipe_pool_stats()
+            .expect("the default policy enables the pool");
+        assert!(
+            stats.hits >= 2,
+            "repeated relays must hit the pool, stats: {stats:?}"
+        );
+        assert_eq!(stats.discards, 0, "clean relays never discard pipes");
+    }
+
     /// Drives one owned-half directional relay over loopback.
     ///
     /// The receiver's `read_to_end` only terminates when the relay propagates
@@ -1846,6 +2193,8 @@ mod tests {
                 max_relay_memory_bytes: u64::MAX,
                 max_pinned_memory_bytes: u64::MAX,
                 splice: false,
+                pipe_pool: true,
+                max_pooled_pipes: 8,
                 sockhash: false,
             },
             FdBudget::new(4_096),
@@ -1909,10 +2258,15 @@ mod tests {
             u64::from(crate::runtime::UNITS_SPLICE_DIRECTION),
             "one pipe pair is exactly two descriptor units"
         );
+        assert!(
+            budget.in_use() <= u64::from(crate::runtime::UNITS_SPLICE_DIRECTION),
+            "after completion the pool may retain the drained pipe within its keep count"
+        );
+        drop(relay);
         assert_eq!(
             budget.in_use(),
             0,
-            "the pipe descriptors and their permit must be released on completion"
+            "dropping the relay (and its pool) releases the pipe descriptors and permit"
         );
         assert_eq!(budget.underflows(), 0);
     }
@@ -1922,7 +2276,7 @@ mod tests {
     async fn repeated_directional_splice_relays_return_descriptor_units_to_baseline() {
         let budget = FdBudget::new(64);
         let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
-        for _ in 0..8 {
+        for cycle in 0..8 {
             let (outcome, _) = run_one_direction(
                 &relay,
                 RelayDirection::Downlink,
@@ -1931,12 +2285,17 @@ mod tests {
             )
             .await;
             outcome.expect("directional relay must succeed");
-            assert_eq!(
-                budget.in_use(),
-                0,
-                "every cycle must return the counter to baseline"
+            assert!(
+                budget.in_use() <= u64::from(crate::runtime::UNITS_SPLICE_DIRECTION),
+                "cycle {cycle}: pool retention stays within one pipe pair"
             );
         }
+        drop(relay);
+        assert_eq!(
+            budget.in_use(),
+            0,
+            "dropping the relay (and its pool) returns the counter to baseline"
+        );
         assert_eq!(budget.underflows(), 0);
         assert!(budget.peak_in_use() <= u64::from(crate::runtime::UNITS_SPLICE_DIRECTION));
     }
@@ -2037,6 +2396,8 @@ mod tests {
                 max_relay_memory_bytes: u64::MAX,
                 max_pinned_memory_bytes: u64::MAX,
                 splice: false,
+                pipe_pool: true,
+                max_pooled_pipes: 8,
                 sockhash: false,
             },
             FdBudget::new(4_096),
@@ -2070,10 +2431,15 @@ mod tests {
         )
         .await;
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(
+            budget.in_use() <= u64::from(crate::runtime::UNITS_SPLICE_DIRECTION),
+            "on the timeout path the drained pipe may be retained within the keep count"
+        );
+        drop(relay);
         assert_eq!(
             budget.in_use(),
             0,
-            "the pipe descriptors and their permit must be released on the timeout path"
+            "dropping the relay (and its pool) releases everything on the timeout path"
         );
         assert_eq!(budget.underflows(), 0);
     }
