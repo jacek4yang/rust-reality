@@ -192,7 +192,7 @@ impl VisionHandler {
         let governor = &config.policy.resource_governor;
         let connect_timeout = Duration::from_millis(governor.connect_timeout_ms);
         let outbounds = match pressure {
-            Some((pressure, direct_barrier)) => OutboundRegistry::with_barrier(
+            Some((_pressure, direct_barrier)) => OutboundRegistry::with_barrier(
                 &config.outbounds,
                 direct_barrier,
                 connect_timeout,
