@@ -957,7 +957,8 @@ async fn run_resource_monitor(
     mut shutdown: watch::Receiver<bool>,
 ) {
     let mut memory_state = ResourcePressure::Normal;
-    let mut last_usage = None;
+    let mut last_usage: Option<u64> = None;
+    let mut last_source = watch.sampler.configured_source();
     loop {
         tokio::select! {
             changed = shutdown.changed() => {
@@ -971,11 +972,24 @@ async fn run_resource_monitor(
             break;
         }
         let fd_state = ResourcePressure::from(runtime.fd_budget.pressure());
-        if let Some(usage) = watch.sampler.sample() {
+        if let Some(reading) = watch.sampler.sample() {
             // An unreadable sample keeps the previous state: a monitoring gap
-            // must never itself raise or clear an alarm.
-            last_usage = Some(usage);
-            memory_state = watch.plan.classify(memory_state, usage);
+            // must never itself raise or clear an alarm. A sampler that falls
+            // back to a different source reports the source actually used,
+            // so a fallback can never masquerade as the configured source.
+            if reading.source != last_source {
+                let snapshot = runtime.load();
+                emit(
+                    &snapshot.logger,
+                    &LogEvent::MemorySamplerChanged {
+                        from: last_source.as_str(),
+                        to: reading.source.as_str(),
+                    },
+                );
+                last_source = reading.source;
+            }
+            last_usage = Some(reading.bytes);
+            memory_state = watch.plan.classify(memory_state, reading.bytes);
         }
         let effective = fd_state.max(memory_state);
         if runtime.pressure.set(effective) {
@@ -1130,6 +1144,7 @@ async fn run_connection(
                         downlink_backend: stats.downlink_backend().map(RelayBackend::as_str),
                         uplink_handoff_delay_us: stats.uplink_handoff_delay_us(),
                         downlink_handoff_delay_us: stats.downlink_handoff_delay_us(),
+                        pipe_capacity_downgraded: stats.pipe_capacity_downgraded(),
                     },
                 );
             }

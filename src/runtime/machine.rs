@@ -289,8 +289,41 @@ pub enum MemorySampler {
     ResidentSet,
 }
 
+/// The measurement source a sample actually came from.
+///
+/// Reported alongside every reading so a fallback can never masquerade as the
+/// configured source: a process RSS reading is never labelled `cgroup_v2`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MemorySampleSource {
+    /// Read from cgroup v2 `memory.current`.
+    CgroupV2,
+    /// Read from `/proc/self/statm` resident set size.
+    ResidentSet,
+}
+
+impl MemorySampleSource {
+    /// Returns the stable identifier for structured logs.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CgroupV2 => "cgroup_v2",
+            Self::ResidentSet => "resident_set",
+        }
+    }
+}
+
+/// One memory reading and the source it actually came from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MemorySample {
+    /// Usage in bytes.
+    pub bytes: u64,
+    /// The source that produced the reading.
+    pub source: MemorySampleSource,
+}
+
 impl MemorySampler {
-    /// Returns the current usage in bytes, or `None` when unreadable.
+    /// Returns the current usage and its actual source, or `None` when
+    /// unreadable.
     ///
     /// A cgroup sampler that cannot read its file falls back to the resident
     /// set size rather than freezing the pressure state at a stale value:
@@ -300,13 +333,34 @@ impl MemorySampler {
     /// previous pressure state — a monitoring gap must never itself trigger
     /// or clear an alarm.
     #[must_use]
-    pub fn sample(&self) -> Option<u64> {
+    pub fn sample(&self) -> Option<MemorySample> {
         match self {
             Self::CgroupV2(path) => std::fs::read_to_string(path)
                 .ok()
                 .and_then(|value| value.trim().parse().ok())
-                .or_else(resident_set_size),
-            Self::ResidentSet => resident_set_size(),
+                .map(|bytes| MemorySample {
+                    bytes,
+                    source: MemorySampleSource::CgroupV2,
+                })
+                .or_else(|| {
+                    resident_set_size().map(|bytes| MemorySample {
+                        bytes,
+                        source: MemorySampleSource::ResidentSet,
+                    })
+                }),
+            Self::ResidentSet => resident_set_size().map(|bytes| MemorySample {
+                bytes,
+                source: MemorySampleSource::ResidentSet,
+            }),
+        }
+    }
+
+    /// Returns the configured (pre-fallback) source of this sampler.
+    #[must_use]
+    pub const fn configured_source(&self) -> MemorySampleSource {
+        match self {
+            Self::CgroupV2(_) => MemorySampleSource::CgroupV2,
+            Self::ResidentSet => MemorySampleSource::ResidentSet,
         }
     }
 }
@@ -441,7 +495,9 @@ mod tests {
         ));
         let sample = sampler.sample();
         assert!(
-            sample.is_some_and(|bytes| bytes > 0),
+            sample.is_some_and(|reading| {
+                reading.bytes > 0 && reading.source == super::MemorySampleSource::ResidentSet
+            }),
             "a missing cgroup file must fall back to a live RSS sample, got {sample:?}"
         );
     }

@@ -193,6 +193,7 @@ impl TcpRelay {
                         bytes,
                         outcome.backend(),
                         outcome.duration(),
+                        outcome.pipe_downgrade(),
                     ));
                 }
                 BackendRun::Declined(decline) => last_decline = decline.reason(),
@@ -934,6 +935,11 @@ impl SplicePool {
             Ok(pipes) => pipes,
             Err(_) => return Ok(None),
         };
+        for pipe in [&pipes.uplink, &pipes.downlink] {
+            if pipe.capacity < SPLICE_PIPE_CAPACITY {
+                ledger.note_pipe_downgrade(SPLICE_PIPE_CAPACITY, pipe.capacity);
+            }
+        }
         let _permit = permit;
         let uplink = splice_direction(
             inbound,
@@ -987,6 +993,9 @@ impl SplicePool {
             Ok(pipe) => pipe,
             Err(_) => return Ok(None),
         };
+        if pipe.capacity < SPLICE_PIPE_CAPACITY {
+            ledger.note_pipe_downgrade(SPLICE_PIPE_CAPACITY, pipe.capacity);
+        }
         splice_owned_direction(
             source,
             destination,

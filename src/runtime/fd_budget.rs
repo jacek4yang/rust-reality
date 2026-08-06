@@ -51,7 +51,6 @@ pub const UNITS_INBOUND_SOCKET: u32 = 1;
 /// Conservative descriptor cost of one connected outbound socket.
 pub const UNITS_OUTBOUND_SOCKET: u32 = 1;
 /// Conservative descriptor cost of one live connector candidate socket.
-pub const UNITS_CONNECTOR_CANDIDATE: u32 = 1;
 /// Conservative descriptor cost of one bidirectional splice relay.
 ///
 /// A bidirectional splice relay creates two pipe pairs, and a pipe pair is two

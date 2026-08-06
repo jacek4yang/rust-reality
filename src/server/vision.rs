@@ -68,6 +68,7 @@ pub struct VisionRelayStats {
     downlink_backend: Option<RelayBackend>,
     uplink_handoff_delay_us: u64,
     downlink_handoff_delay_us: u64,
+    pipe_capacity_downgraded: bool,
 }
 
 impl VisionRelayStats {
@@ -135,6 +136,13 @@ impl VisionRelayStats {
     #[must_use]
     pub const fn downlink_handoff_delay_us(self) -> u64 {
         self.downlink_handoff_delay_us
+    }
+
+    /// Returns whether a raw-relay backend was granted less pipe capacity
+    /// than requested because kernel pipe-page limits downgraded it.
+    #[must_use]
+    pub const fn pipe_capacity_downgraded(self) -> bool {
+        self.pipe_capacity_downgraded
     }
 }
 
@@ -319,6 +327,7 @@ impl VisionHandler {
                 downlink_backend: None,
                 uplink_handoff_delay_us: 0,
                 downlink_handoff_delay_us: 0,
+                pipe_capacity_downgraded: false,
             });
         };
         let (destination, outbound_permit) = connection.into_parts();
@@ -373,6 +382,9 @@ impl VisionHandler {
             downlink_backend: downlink.backend.or(pair_backend),
             uplink_handoff_delay_us: uplink.handoff_delay_us,
             downlink_handoff_delay_us: downlink.handoff_delay_us,
+            pipe_capacity_downgraded: handed_off.and_then(RelayOutcome::pipe_downgrade).is_some()
+                || uplink.pipe_downgrade
+                || downlink.pipe_downgrade,
         })
     }
 }
@@ -467,6 +479,8 @@ struct DirectionStats {
     direct_at_bytes: u64,
     /// Microseconds from the boundary to the deposit or directional relay start.
     handoff_delay_us: u64,
+    /// The backend's pipe capacity was downgraded by kernel pipe-page limits.
+    pipe_downgrade: bool,
 }
 
 impl DirectionStats {
@@ -478,6 +492,7 @@ impl DirectionStats {
             backend: None,
             direct_at_bytes: 0,
             handoff_delay_us: 0,
+            pipe_downgrade: false,
         }
     }
 
@@ -487,6 +502,7 @@ impl DirectionStats {
         backend: Option<RelayBackend>,
         direct_at_bytes: u64,
         handoff_delay_us: u64,
+        pipe_downgrade: bool,
     ) -> Self {
         Self {
             bytes,
@@ -495,6 +511,7 @@ impl DirectionStats {
             backend,
             direct_at_bytes,
             handoff_delay_us,
+            pipe_downgrade,
         }
     }
 }
@@ -1083,6 +1100,7 @@ async fn run_directional(
                 Some(outcome.backend()),
                 bytes.direct_at,
                 delay_us,
+                outcome.pipe_downgrade().is_some(),
             ))
         }
         Err(error) if is_benign_teardown(&error) => {
@@ -1093,6 +1111,7 @@ async fn run_directional(
                 None,
                 bytes.direct_at,
                 delay_us,
+                false,
             ))
         }
         Err(error) => {
@@ -1132,6 +1151,7 @@ async fn run_handoff(
             None,
             bytes.direct_at,
             delay_us,
+            false,
         ));
     };
     match relay
@@ -1150,6 +1170,7 @@ async fn run_handoff(
                 Some(outcome.backend()),
                 bytes.direct_at,
                 delay_us,
+                outcome.pipe_downgrade().is_some(),
             ))
         }
         Err(error) if is_benign_teardown(&error) => {
@@ -1160,6 +1181,7 @@ async fn run_handoff(
                 None,
                 bytes.direct_at,
                 delay_us,
+                false,
             ))
         }
         Err(error) => {

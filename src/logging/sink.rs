@@ -210,6 +210,15 @@ pub enum LogEvent {
     ///
     /// Emitted only when the effective state changes, never per sample, so a
     /// sustained condition costs two log lines rather than one per second.
+    /// The memory sampler switched measurement sources (e.g. cgroup file
+    /// became unreadable and the monitor fell back to RSS).
+    MemorySamplerChanged {
+        /// The previous measurement source.
+        from: &'static str,
+        /// The source now in use.
+        to: &'static str,
+    },
+    /// The effective resource-pressure state changed.
     ResourcePressureChanged {
         /// The effective state: the worst of the descriptor and memory
         /// dimensions.
@@ -269,6 +278,10 @@ pub enum LogEvent {
         uplink_handoff_delay_us: u64,
         /// Microseconds from the downlink boundary to its raw relay start.
         downlink_handoff_delay_us: u64,
+        /// The raw-relay pipe capacity was downgraded by kernel pipe-page
+        /// limits (skipped when false, so normal connections stay quiet).
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        pipe_capacity_downgraded: bool,
     },
 }
 
@@ -289,6 +302,7 @@ impl LogEvent {
             | Self::ConfigurationRejected { .. }
             | Self::DescriptorPressureChanged { .. }
             | Self::ResourcePressureChanged { .. }
+            | Self::MemorySamplerChanged { .. }
             | Self::AcceptErrorRecovered { .. } => LogLevel::Warn,
         }
     }
