@@ -223,6 +223,9 @@ pub struct NxrLandingHandler {
     connector: DestinationConnector,
     authentication_timeout: Duration,
     relay: TcpRelay,
+    /// Idle liveness bound handed to the raw relay, so a stalled peer cannot
+    /// park a landing session on its descriptors and permits forever.
+    liveness: Duration,
 }
 
 impl NxrLandingHandler {
@@ -235,10 +238,11 @@ impl NxrLandingHandler {
         inbound: &NxrInboundConfig,
         relay_policy: &RelayPolicy,
         fd_budget: crate::runtime::FdBudget,
+        liveness: Duration,
     ) -> Result<Self, NxrLandingConfigError> {
         let replay = NxrReplayCache::from_inbound(inbound)?;
         let relay = TcpRelay::new(relay_policy, fd_budget).map_err(NxrLandingConfigError::Relay)?;
-        Self::from_inbound_with_replay(inbound, replay, relay)
+        Self::from_inbound_with_replay(inbound, replay, relay, liveness)
     }
 
     /// Compiles one validated listener while retaining its process-lifetime
@@ -251,6 +255,7 @@ impl NxrLandingHandler {
         inbound: &NxrInboundConfig,
         replay: NxrReplayCache,
         relay: TcpRelay,
+        liveness: Duration,
     ) -> Result<Self, NxrLandingConfigError> {
         let decoded = Zeroizing::new(
             BASE64_URL_SAFE_NO_PAD
@@ -270,6 +275,7 @@ impl NxrLandingHandler {
             Duration::from_millis(inbound.settings.connect_timeout_ms),
             Duration::from_millis(inbound.settings.authentication_timeout_ms),
             relay,
+            liveness,
         ))
     }
 
@@ -280,12 +286,14 @@ impl NxrLandingHandler {
         connect_timeout: Duration,
         authentication_timeout: Duration,
         relay: TcpRelay,
+        liveness: Duration,
     ) -> Self {
         Self {
             authenticator,
             connector: DestinationConnector::new(connect_timeout),
             authentication_timeout,
             relay,
+            liveness,
         }
     }
 
@@ -310,10 +318,15 @@ impl NxrLandingHandler {
         let outbound = self.connector.connect(&destination).await?;
         // The landing handler owns both complete sockets, so every backend,
         // including those that must duplicate or register a descriptor, is
-        // eligible for this path.
+        // eligible for this path. The liveness bound keeps a stalled peer from
+        // parking the relay forever.
         let outcome = self
             .relay
-            .relay_owned(inbound, outbound, RelayContext::owned())
+            .relay_owned(
+                inbound,
+                outbound,
+                RelayContext::owned().with_liveness(self.liveness),
+            )
             .await
             .map_err(NxrLandingError::Relay)?;
         Ok(RelayStats::new(
@@ -573,6 +586,7 @@ mod tests {
                 crate::runtime::FdBudget::new(4_096),
             )
             .expect("relay policy must compile"),
+            Duration::from_secs(1),
         );
         let destination =
             Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), target_address.port());

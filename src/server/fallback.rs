@@ -273,6 +273,8 @@ impl CoverConnection {
                 .map_err(FallbackError::Io)?;
             let outcome = self
                 .relay
+                // No idle liveness here: the absolute session deadline below
+                // already bounds the whole relay, subsuming an idle window.
                 .relay_owned(inbound, self.stream, RelayContext::owned())
                 .await
                 .map_err(FallbackError::Io)?;

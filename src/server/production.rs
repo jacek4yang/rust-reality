@@ -615,6 +615,7 @@ impl RuntimeSnapshot {
                         inbound,
                         replay,
                         tcp_relay.clone(),
+                        Duration::from_millis(config.policy.resource_governor.fallback_timeout_ms),
                     )?)
                 }
             };

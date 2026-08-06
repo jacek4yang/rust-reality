@@ -605,9 +605,7 @@ async fn finish_uplink_direct(
     context: &SessionContext<'_>,
 ) -> Result<DirectionStats, VisionSessionError> {
     let SessionContext {
-        timeout,
-        handoff,
-        relay,
+        timeout, handoff, ..
     } = *context;
     let handoff_started = Instant::now();
     handoff
@@ -638,8 +636,7 @@ async fn finish_uplink_direct(
                 .deposit_uplink(raw_client, destination)
                 .map_err(VisionSessionError::Handoff)?;
             run_handoff(
-                relay,
-                handoff,
+                context,
                 Direction::Uplink,
                 recovered,
                 BoundaryBytes {
@@ -652,8 +649,7 @@ async fn finish_uplink_direct(
         }
         RawDecision::Directional => {
             run_directional(
-                relay,
-                handoff,
+                context,
                 Direction::Uplink,
                 raw_client,
                 destination,
@@ -883,9 +879,7 @@ async fn finish_downlink_direct(
     context: &SessionContext<'_>,
 ) -> Result<DirectionStats, VisionSessionError> {
     let SessionContext {
-        timeout,
-        handoff,
-        relay,
+        timeout, handoff, ..
     } = *context;
     let handoff_started = Instant::now();
     handoff
@@ -917,8 +911,7 @@ async fn finish_downlink_direct(
                 .deposit_downlink(raw_destination, raw_client)
                 .map_err(VisionSessionError::Handoff)?;
             run_handoff(
-                relay,
-                handoff,
+                context,
                 Direction::Downlink,
                 recovered,
                 BoundaryBytes {
@@ -931,8 +924,7 @@ async fn finish_downlink_direct(
         }
         RawDecision::Directional => {
             run_directional(
-                relay,
-                handoff,
+                context,
                 Direction::Downlink,
                 raw_destination,
                 raw_client,
@@ -961,18 +953,23 @@ struct BoundaryBytes {
 
 /// Runs one independent directional raw relay at a Direct boundary.
 ///
-/// A benign peer-teardown race (`BrokenPipe` or `ConnectionReset`) closes the
-/// direction cleanly with its accumulated stats instead of failing the whole
-/// session; errors from the framed and authentication phases never reach here.
+/// A benign peer-teardown race (`BrokenPipe`, `ConnectionReset`, or the raw
+/// stage's idle-policy `TimedOut`) closes the direction cleanly with its
+/// accumulated stats instead of failing the whole session; errors from the
+/// framed and authentication phases never reach here.
 async fn run_directional(
-    relay: &TcpRelay,
-    handoff: &DirectHandoff,
+    context: &SessionContext<'_>,
     direction: Direction,
     source: OwnedReadHalf,
     destination: OwnedWriteHalf,
     bytes: BoundaryBytes,
     handoff_started: Instant,
 ) -> Result<DirectionStats, VisionSessionError> {
+    let SessionContext {
+        timeout,
+        handoff,
+        relay,
+    } = *context;
     let delay_us = micros(handoff_started.elapsed());
     let relay_direction = match direction {
         Direction::Uplink => RelayDirection::Uplink,
@@ -984,6 +981,7 @@ async fn run_directional(
             destination,
             relay_direction,
             BackendRequest::Automatic,
+            Some(timeout),
         )
         .await
     {
@@ -1025,13 +1023,17 @@ async fn run_directional(
 /// halves with no runner. The coordinator is per-session, so the lingering
 /// state is dropped with it.
 async fn run_handoff(
-    relay: &TcpRelay,
-    handoff: &DirectHandoff,
+    context: &SessionContext<'_>,
     direction: Direction,
     recovered: Option<super::direct::RecoveredSockets>,
     bytes: BoundaryBytes,
     handoff_started: Instant,
 ) -> Result<DirectionStats, VisionSessionError> {
+    let SessionContext {
+        timeout,
+        handoff,
+        relay,
+    } = *context;
     let delay_us = micros(handoff_started.elapsed());
     let Some(sockets) = recovered else {
         return Ok(DirectionStats::direct(
@@ -1043,7 +1045,11 @@ async fn run_handoff(
         ));
     };
     match relay
-        .relay_owned(sockets.client, sockets.destination, RelayContext::owned())
+        .relay_owned(
+            sockets.client,
+            sockets.destination,
+            RelayContext::owned().with_liveness(timeout),
+        )
         .await
     {
         Ok(outcome) => {
@@ -1076,12 +1082,15 @@ async fn run_handoff(
 /// Returns whether a raw-stage I/O error is a benign peer-teardown race.
 ///
 /// A reset or broken pipe once the raw relay owns the sockets means the peer
-/// tore the connection down mid-transfer. The session's accumulated counts
-/// stay valid and must not be suppressed by a session-level relay error.
+/// tore the connection down mid-transfer. An idle `TimedOut` is the relay's
+/// own liveness policy ending a stalled direction — the same clean teardown
+/// from the session's perspective, never a transport failure. In all three
+/// cases the session's accumulated counts stay valid and must not be
+/// suppressed by a session-level relay error.
 fn is_benign_teardown(error: &io::Error) -> bool {
     matches!(
         error.kind(),
-        io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
+        io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset | io::ErrorKind::TimedOut
     )
 }
 
@@ -1627,15 +1636,16 @@ mod tests {
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::{TcpListener, TcpStream},
-        time::timeout,
+        time::{Instant, timeout},
     };
 
     use super::{
-        NestedTlsDetector, PaddingDecision, VisionHandler, is_tls13_server_hello, length_u64,
+        BoundaryBytes, NestedTlsDetector, PaddingDecision, SessionContext, VisionHandler,
+        is_benign_teardown, is_tls13_server_hello, length_u64, run_directional,
     };
     use crate::{
         config::{
-            DirectBarrierConfig, DnsStrategy, OutboundConfig, ResourceGovernorConfig,
+            DirectBarrierConfig, DnsStrategy, OutboundConfig, RelayPolicy, ResourceGovernorConfig,
             RoutingConfig, UserPolicy,
         },
         protocol::{
@@ -1648,12 +1658,14 @@ mod tests {
                 VisionCommand, VisionDecoder, VisionEncoder, VisionMode,
             },
         },
+        runtime::FdBudget,
         server::{
+            direct::{DirectHandoff, Direction},
             outbound::OutboundRegistry,
             reality::RealityEstablished,
             routing::{EmptyAssetMatcher, RoutingTable},
         },
-        transport::RelayBackend,
+        transport::{RelayBackend, TcpRelay},
     };
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -3139,5 +3151,61 @@ mod tests {
         )
         .expect("test relay policy must compile");
         VisionHandler::new(outbounds, routing, relay, governor)
+    }
+
+    #[test]
+    fn an_idle_timeout_is_a_benign_teardown() {
+        assert!(is_benign_teardown(&io::Error::new(
+            io::ErrorKind::TimedOut,
+            "raw relay idle timeout"
+        )));
+        assert!(is_benign_teardown(&io::Error::new(
+            io::ErrorKind::ConnectionReset,
+            "reset"
+        )));
+        assert!(!is_benign_teardown(&io::Error::other("boom")));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_idle_raw_direction_closes_cleanly_with_its_stats() {
+        // The raw stage's idle policy ends a stalled direction with TimedOut;
+        // the session must treat that like any other benign teardown — clean
+        // DirectionStats, never a session error.
+        let relay = TcpRelay::new(&RelayPolicy::default(), FdBudget::new(4_096))
+            .expect("relay policy must compile");
+        let handoff = DirectHandoff::new();
+        let (mut sender, source) = tcp_pair().await;
+        let (sink, _receiver) = tcp_pair().await;
+        let (source_reader, _source_writer) = source.into_split();
+        let (_sink_reader, sink_writer) = sink.into_split();
+        sender
+            .write_all(b"stall")
+            .await
+            .expect("the prefix must land");
+
+        let stats = timeout(
+            TEST_TIMEOUT,
+            run_directional(
+                &SessionContext {
+                    timeout: Duration::from_millis(200),
+                    handoff: &handoff,
+                    relay: &relay,
+                },
+                Direction::Uplink,
+                source_reader,
+                sink_writer,
+                BoundaryBytes {
+                    total: 3,
+                    direct_at: 3,
+                },
+                Instant::now(),
+            ),
+        )
+        .await
+        .expect("the idle direction must end within the test timeout")
+        .expect("an idle timeout must close the direction cleanly");
+        drop(sender);
+        assert!(stats.direct);
+        assert_eq!(stats.bytes, 3);
     }
 }

@@ -126,8 +126,10 @@ impl IdleDeadline {
     ///
     /// The operation is polled first, mirroring `tokio::time::timeout`: an
     /// operation that is immediately ready wins over an already elapsed
-    /// window.
-    async fn guard<T, F>(&mut self, operation: F) -> Result<T, IdleError>
+    /// window. `pub(crate)` so the raw relay backends can guard operations
+    /// that are not plain `AsyncRead`/`AsyncWrite` calls (readiness-driven
+    /// splice steps) through the same semantics.
+    pub(crate) async fn guard<T, F>(&mut self, operation: F) -> Result<T, IdleError>
     where
         F: std::future::Future<Output = io::Result<T>>,
     {

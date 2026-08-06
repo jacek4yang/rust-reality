@@ -323,6 +323,13 @@ pub struct RelayContext {
     /// borrowed sockets are available, which keeps the borrowed compatibility
     /// entry point from silently weakening any invariant.
     pub owns_complete_sockets: bool,
+    /// Idle liveness bound for the raw relay.
+    ///
+    /// When set, a direction that moves no byte for this long terminates the
+    /// relay instead of parking on a stalled peer forever, pinning its
+    /// descriptors, pipes, map entries and permits. `None` preserves the
+    /// historical unbounded behavior for compatibility entry points and tests.
+    pub liveness: Option<std::time::Duration>,
 }
 
 impl RelayContext {
@@ -332,6 +339,7 @@ impl RelayContext {
         Self {
             request: BackendRequest::Automatic,
             owns_complete_sockets: true,
+            liveness: None,
         }
     }
 
@@ -341,6 +349,7 @@ impl RelayContext {
         Self {
             request: BackendRequest::Automatic,
             owns_complete_sockets: false,
+            liveness: None,
         }
     }
 
@@ -348,6 +357,13 @@ impl RelayContext {
     #[must_use]
     pub const fn with_request(mut self, request: BackendRequest) -> Self {
         self.request = request;
+        self
+    }
+
+    /// Returns the same context with an idle liveness bound for the raw relay.
+    #[must_use]
+    pub const fn with_liveness(mut self, liveness: std::time::Duration) -> Self {
+        self.liveness = Some(liveness);
         self
     }
 }

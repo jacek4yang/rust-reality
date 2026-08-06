@@ -354,6 +354,56 @@ async fn a_reset_mid_session_aborts_and_releases_everything() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires privilege to construct the SOCKHASH controller"]
+async fn a_stalled_session_times_out_and_releases_everything() {
+    // One armed relay, admission bound exactly one. Both peers exchange a few
+    // bytes and then stall without ever closing: the progress-based liveness
+    // must end the session with TimedOut, and a following connection must arm
+    // again — proving the map entries and the admission were released.
+    let relay = armed_relay(1);
+    let context = explicit_sockhash().with_liveness(Duration::from_secs(1));
+    let (mut client, mut target, relaying) = relay_pair(&relay, context).await;
+    time::sleep(ARM_SETTLE).await;
+    client
+        .write_all(b"stalled")
+        .await
+        .expect("client write must land");
+    let mut received = [0_u8; 7];
+    target
+        .read_exact(&mut received)
+        .await
+        .expect("the redirect must deliver the prefix");
+    assert_eq!(&received, b"stalled");
+
+    let outcome = time::timeout(Duration::from_secs(5), relaying)
+        .await
+        .expect("the idle liveness must end the session")
+        .expect("the relay task must not panic");
+    let error = outcome.expect_err("a stalled session must fail, not complete");
+    assert_eq!(
+        error.kind(),
+        io::ErrorKind::TimedOut,
+        "the liveness policy must surface as TimedOut"
+    );
+    drop(client);
+    drop(target);
+
+    // Admission and both map entries must be back at baseline.
+    let (outcome, _, _) = full_exchange(
+        &relay,
+        explicit_sockhash(),
+        pattern(64 * 1024, 0xBB),
+        pattern(64 * 1024, 0xCC),
+    )
+    .await;
+    assert_eq!(
+        outcome.backend(),
+        RelayBackend::Sockhash,
+        "a relay after the idle timeout must arm again; admission and entries leaked otherwise"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires privilege to construct the SOCKHASH controller"]
 async fn map_exhaustion_falls_through_to_splice_before_any_byte() {
     // Admission bound one: the first connection parks armed and idle, the
     // second explicitly requests sockhash, must be declined with the bound

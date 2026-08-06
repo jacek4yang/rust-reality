@@ -135,6 +135,7 @@ impl SockhashPool {
         owns_complete_sockets: bool,
         ledger: &TransferLedger,
         started: Instant,
+        liveness: Option<Duration>,
     ) -> io::Result<BackendRun> {
         let keys = match arm_precheck(owns_complete_sockets, ledger, inbound, outbound)? {
             ArmPrecheck::Ready(keys) => keys,
@@ -174,7 +175,7 @@ impl SockhashPool {
             keys,
             _admission: admission,
         };
-        let totals = await_teardown(inbound, outbound, &baselines).await?;
+        let totals = await_teardown(inbound, outbound, &baselines, liveness).await?;
         drop(armed);
 
         ledger.add_inbound_to_outbound(totals.inbound_to_outbound)?;
@@ -425,10 +426,18 @@ impl DirectionState {
 /// this future exactly the way a stuck destination parks a buffered relay's
 /// `write_all`. Cancellation of the future stays fully effective — the
 /// [`ArmedPair`] drop deletes the map entries.
+///
+/// With `liveness` set, the existing state-poll tick additionally samples both
+/// sockets' `TCP_INFO` counters: any advance records progress, and a session
+/// whose counters have not moved for the whole window ends with
+/// [`io::ErrorKind::TimedOut`] instead of pinning its map entries and
+/// admission forever. The drain and FIN semantics above are untouched; `None`
+/// keeps the historical unbounded wait.
 async fn await_teardown(
     inbound: &TcpStream,
     outbound: &TcpStream,
     baselines: &CounterSnapshot,
+    liveness: Option<Duration>,
 ) -> io::Result<SessionTotals> {
     let mut uplink = DirectionState::pending();
     let mut downlink = DirectionState::pending();
@@ -437,6 +446,8 @@ async fn await_teardown(
     // socket, which sends everything the client redirected to it.
     let mut uplink_barrier = DrainBarrier::armed(baselines.outbound.acked);
     let mut downlink_barrier = DrainBarrier::armed(baselines.inbound.acked);
+    let mut last_progress = Instant::now();
+    let mut sampled = *baselines;
     let mut state_poll = tokio::time::interval(STATE_POLL_INTERVAL);
     state_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut drain_poll = tokio::time::interval(DRAIN_POLL_INTERVAL);
@@ -466,6 +477,22 @@ async fn await_teardown(
                 if !downlink.peer_fin && fallback_says_peer_finished(outbound)? {
                     observe_peer_fin(outbound, baselines.outbound, &mut downlink, &mut downlink_barrier)?;
                 }
+                if let Some(window) = liveness {
+                    let current = CounterSnapshot {
+                        inbound: read_counters(inbound).unwrap_or(sampled.inbound),
+                        outbound: read_counters(outbound).unwrap_or(sampled.outbound),
+                    };
+                    if counters_advanced(&sampled, &current) {
+                        last_progress = Instant::now();
+                    }
+                    sampled = current;
+                    if last_progress.elapsed() > window {
+                        return Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "raw relay idle timeout",
+                        ));
+                    }
+                }
             }
             _tick = drain_poll.tick(), if draining => {
                 advance_drain(inbound, outbound, baselines.inbound, &mut uplink, &mut uplink_barrier)?;
@@ -473,6 +500,14 @@ async fn await_teardown(
             }
         }
     }
+}
+
+/// Returns whether any `TCP_INFO` counter moved since the previous sample.
+fn counters_advanced(previous: &CounterSnapshot, current: &CounterSnapshot) -> bool {
+    previous.inbound.received != current.inbound.received
+        || previous.inbound.acked != current.inbound.acked
+        || previous.outbound.received != current.outbound.received
+        || previous.outbound.acked != current.outbound.acked
 }
 
 /// The liveness classification of one armed socket.
