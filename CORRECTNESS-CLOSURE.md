@@ -98,12 +98,28 @@ RLIMIT_NOFILE 524288/524288, passwordless sudo (verified at task start).
 
 ## Results
 
-- Local gates: fmt, clippy -D warnings, cargo test --workspace (411 passed),
-  release suite, doc tests, nextest — see diagnostics/final/gates/.
-- Privileged: rr-linux sockhash 8/8 + production sockhash_runtime 9/9 (sudo).
-- Soak (30 min): see diagnostics/final/soak/soak-summary.json.
-- Parent-vs-candidate loopback performance: see benchmarks/final/matrix-closure/.
-- GitHub checks on PR #18 and the dispatched sanitizer run: see the report's
-  final table (links retained in notes).
-- Real-server/WAN gates: UNVERIFIED-WITHOUT-TARGET-HOST (no target host
-  exists); reproducible commands preserved in scripts/ for later execution.
+- LOCALLY-MEASURED gates: fmt, clippy `-D warnings`, cargo test --workspace
+  (411 passed), release suite, doc tests, nextest — see diagnostics/final/gates/.
+- PRIVILEGED-LOCAL: rr-linux sockhash 8/8 + production sockhash_runtime 9/9
+  (sudo), including the new stall-liveness test.
+- LOCALLY-MEASURED soak (30 min, 173 rounds, mixed direct/framed/fallback +
+  churn): 0 transfer failures, FD growth 0, thread growth 0, RSS +0.8 MiB —
+  diagnostics/final/soak/soak-summary.json.
+- LOCALLY-MEASURED parent-vs-candidate (matrix-closure, 309 samples, 0
+  invalid): every discriminating cell within ±3.5% of parent (most ~1.0x);
+  candidate vs Xray unchanged from the parent's profile (direct download
+  1.8x Xray at c32, framed within 0.92-1.13x, fallback c32 0.80x Xray —
+  the pre-existing documented gap). fallback:32:1 read C/P=0.59-0.62 in two
+  runs and was investigated: the raw samples show ALL THREE implementations
+  bouncing bimodally between ~700 and ~1300-1670 MiB/s within a single run —
+  the cell is latency-dominated noise on this host and cannot discriminate;
+  it is reported as non-discriminating, not as a regression or a win.
+  Integrity: 2 GiB sha256 matched for parent, candidate, and Xray.
+- GITHUB-VALIDATED: PR #18 required checks pass (Repository quality,
+  Dependency policy, Parser fuzz smoke). Manually dispatched Security
+  workflow on this branch (run 31080903908): ASan/LSan PASS, TSan
+  (replay-cache race) PASS, fuzz smoke PASS, dependency policy PASS.
+- UNVERIFIED-WITHOUT-TARGET-HOST: real-server/WAN bandwidth gates (no target
+  host exists); reproducible commands preserved: scripts/benchmark-matrix.sh,
+  benchmark-real-path.sh, benchmark-sockhash-ab.sh, soak-test.sh,
+  run-target-host-validation.sh.
