@@ -175,12 +175,13 @@ impl VisionHandler {
         relay: TcpRelay,
         pressure: &crate::runtime::PressureGauge,
         direct_barrier: crate::runtime::DirectBarrier,
+        governor: crate::runtime::ResourceGovernor,
     ) -> Result<Self, RoutingCompileError> {
         Self::build(
             config,
             assets,
             relay,
-            Some((pressure.clone(), direct_barrier)),
+            Some((pressure.clone(), direct_barrier, governor)),
         )
     }
 
@@ -188,27 +189,37 @@ impl VisionHandler {
         config: &Config,
         assets: Arc<dyn AssetMatcher>,
         relay: TcpRelay,
-        pressure: Option<(crate::runtime::PressureGauge, crate::runtime::DirectBarrier)>,
+        authorities: Option<(
+            crate::runtime::PressureGauge,
+            crate::runtime::DirectBarrier,
+            crate::runtime::ResourceGovernor,
+        )>,
     ) -> Result<Self, RoutingCompileError> {
         let governor = &config.policy.resource_governor;
         let connect_timeout = Duration::from_millis(governor.connect_timeout_ms);
-        let outbounds = match pressure {
-            Some((_pressure, direct_barrier)) => OutboundRegistry::with_barrier(
-                &config.outbounds,
-                direct_barrier,
-                connect_timeout,
-                relay.fd_budget().clone(),
+        let (outbounds, dns_governor) = match authorities {
+            Some((_pressure, direct_barrier, dns_governor)) => (
+                OutboundRegistry::with_barrier(
+                    &config.outbounds,
+                    direct_barrier,
+                    connect_timeout,
+                    relay.fd_budget().clone(),
+                ),
+                dns_governor,
             ),
-            None => OutboundRegistry::new(
-                &config.outbounds,
-                &config.policy.direct_barrier,
-                connect_timeout,
-                relay.fd_budget().clone(),
+            None => (
+                OutboundRegistry::new(
+                    &config.outbounds,
+                    &config.policy.direct_barrier,
+                    connect_timeout,
+                    relay.fd_budget().clone(),
+                ),
+                crate::runtime::ResourceGovernor::new(governor),
             ),
         };
         Ok(Self::new_with_dns(
             outbounds,
-            RoutingTable::compile(&config.routing, assets)?,
+            RoutingTable::compile(&config.routing, assets, dns_governor)?,
             relay,
             governor,
             config.routing.domain_strategy,
@@ -3207,20 +3218,24 @@ mod tests {
             Duration::from_millis(governor.connect_timeout_ms),
             crate::runtime::FdBudget::new(4_096),
         );
-        let routing = RoutingTable::compile(
-            &RoutingConfig {
-                domain_strategy: DnsStrategy::AsIs,
-                global_rules: Vec::new(),
-                users: vec![UserPolicy {
-                    name: "test-user".to_owned(),
-                    user_ids: vec!["33333333-3333-3333-3333-333333333333".to_owned()],
-                    default_outbound: "direct".to_owned(),
-                    rules: Vec::new(),
-                }],
-            },
-            Arc::new(EmptyAssetMatcher),
-        )
-        .expect("test routing must compile");
+        let routing =
+            RoutingTable::compile(
+                &RoutingConfig {
+                    domain_strategy: DnsStrategy::AsIs,
+                    global_rules: Vec::new(),
+                    users: vec![UserPolicy {
+                        name: "test-user".to_owned(),
+                        user_ids: vec!["33333333-3333-3333-3333-333333333333".to_owned()],
+                        default_outbound: "direct".to_owned(),
+                        rules: Vec::new(),
+                    }],
+                },
+                Arc::new(EmptyAssetMatcher),
+                crate::runtime::ResourceGovernor::new(
+                    &crate::config::ResourceGovernorConfig::default(),
+                ),
+            )
+            .expect("test routing must compile");
         let relay = crate::transport::TcpRelay::new(
             &crate::config::RelayPolicy {
                 buffer_bytes: 32 * 1024,

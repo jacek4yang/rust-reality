@@ -660,6 +660,10 @@ pub struct ResourceGovernorConfig {
     pub max_crypto_operations: u32,
     /// Replay entries across pending and committed states.
     pub max_replay_entries: u32,
+    /// Concurrent DNS resolutions, bounded until the underlying lookup
+    /// finishes rather than until the async wait ends.
+    #[serde(default = "default_max_dns_lookups")]
+    pub max_dns_lookups: u32,
     /// Retention after a verified TLS ClientFinished.
     #[serde(default = "default_replay_retention_ms")]
     pub replay_retention_ms: u64,
@@ -681,6 +685,7 @@ impl Default for ResourceGovernorConfig {
             max_fallbacks: 512,
             max_crypto_operations: 128,
             max_replay_entries: 65_536,
+            max_dns_lookups: default_max_dns_lookups(),
             replay_retention_ms: default_replay_retention_ms(),
             client_hello_timeout_ms: 3_000,
             handshake_timeout_ms: 10_000,
@@ -692,6 +697,10 @@ impl Default for ResourceGovernorConfig {
 
 const fn default_replay_retention_ms() -> u64 {
     120_000
+}
+
+const fn default_max_dns_lookups() -> u32 {
+    64
 }
 
 /// Direct outbound admission isolation.

@@ -168,6 +168,26 @@ mod tests {
     }
 
     #[test]
+    fn existing_configuration_without_max_dns_lookups_uses_the_default() {
+        // The fixture predates maxDnsLookups: decoding must succeed and apply
+        // the default rather than failing or silently disabling the bound.
+        let config = decode_config(Path::new("test.json"), test_config_json().as_bytes())
+            .expect("existing configuration must remain valid");
+        assert_eq!(config.policy.resource_governor.max_dns_lookups, 64);
+
+        let mut value: serde_json::Value =
+            serde_json::from_str(test_config_json()).expect("fixture must parse");
+        let mut governor =
+            serde_json::to_value(&config.policy.resource_governor).expect("governor must encode");
+        governor["maxDnsLookups"] = 17.into();
+        value["policy"]["resourceGovernor"] = governor;
+        let json = serde_json::to_string(&value).expect("config must encode");
+        let config = decode_config(Path::new("test.json"), json.as_bytes())
+            .expect("an explicit maxDnsLookups must decode");
+        assert_eq!(config.policy.resource_governor.max_dns_lookups, 17);
+    }
+
+    #[test]
     fn formatted_configuration_round_trips() {
         let config = decode_config(Path::new("test.json"), test_config_json().as_bytes())
             .expect("fixture must be valid");

@@ -619,6 +619,7 @@ impl RuntimeSnapshot {
             tcp_relay.clone(),
             pressure,
             authorities.direct_barrier.clone(),
+            authorities.governor.clone(),
         )?;
         let mut connections = HashMap::new();
         connections
@@ -1205,6 +1206,8 @@ fn emit_admission(logger: &Logger, error: AdmissionDenied) {
         }
         AdmissionDenied::Limit(AdmissionKind::ReplayEntry)
         | AdmissionDenied::Pressure(AdmissionKind::ReplayEntry) => AdmissionResource::ReplayEntries,
+        AdmissionDenied::Limit(AdmissionKind::DnsLookup)
+        | AdmissionDenied::Pressure(AdmissionKind::DnsLookup) => AdmissionResource::Handshakes,
         AdmissionDenied::DirectConcurrency
         | AdmissionDenied::DirectRate
         | AdmissionDenied::DirectPressure => AdmissionResource::DirectConnections,
@@ -1769,6 +1772,7 @@ mod tests {
         config.policy.resource_governor.max_handshakes = 2;
         config.policy.resource_governor.max_fallbacks = 2;
         config.policy.resource_governor.max_crypto_operations = 2;
+        config.policy.resource_governor.max_dns_lookups = 2;
         config.policy.relay.max_splice_relays = 2;
         config.policy.relay.max_sockhash_relays = 2;
         config.policy.direct_barrier = DirectBarrierConfig {
