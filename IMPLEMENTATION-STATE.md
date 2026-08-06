@@ -87,3 +87,24 @@
   pipes ~0 per-session syscalls; rust-reality pays 2 pipe2 + 2 fcntl + 4 close
   per session; correction: Xray fallback does NOT splice — it readv/writevs,
   so the fallback gap is not explained by pooling).
+
+
+# STAGE: PipePool stop/go experiment (2026-08-07, branch perf/1.0-pipe-pool)
+
+- head: 90eb08c
+- hypothesis: per-session pipe churn explains the fallback gap (Opus, CREDIBLE)
+- mechanism audit first (reports/XRAY-SPLICE-PIPE-POOLING.md): Go pools 1MiB
+  pipes ~0/session; rust-reality created+resized+destroyed pipes per relay.
+- implemented: PipePool (lazy growth + idle shrink, units travel with pipe,
+  dirty pipes discarded, counters exposed, default pipePool=true).
+- stop/go gate (matrix-pipepool, 258 samples, 0 invalid, integrity matched):
+  fallback c32 0.767x, c64 0.76x, 512:32 0.675x Xray — TARGET >=1.00 FAILED.
+  regression cells: all C/P within volatile bands, no >3% regression.
+- mechanism evidence (strace A/B, 96 sessions): pipe2 192→64, close/fcntl
+  ~eliminated; splice(2) is 97% of syscall time (~101k calls both builds).
+- verdict: falsified as the fallback cause; KEPT with documented tradeoff
+  (zero-cost syscall/FD-churn reduction; NO fallback claim). Fallback gap
+  re-diagnosed as D8: splice call cost vs readv/writev at c32.
+- tool failures: none. CI still blocked by GitHub queue starvation (retried 3x).
+- next permitted stage: B1 hygiene (fd-budget release waiter guard), then
+  reports/archive/stacked PR.
