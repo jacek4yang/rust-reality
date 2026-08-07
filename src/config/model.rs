@@ -744,6 +744,14 @@ pub struct RelayPolicy {
     pub max_pinned_memory_bytes: u64,
     /// Permit nonblocking splice on plaintext TCP boundaries.
     pub splice: bool,
+    /// Reuse splice pipes process-wide instead of creating and destroying
+    /// them per relay (the Go/Xray model: size once at creation, zero pipe
+    /// syscalls on a pool hit).
+    #[serde(default = "default_pipe_pool")]
+    pub pipe_pool: bool,
+    /// Maximum retained pipe pairs in the process pool.
+    #[serde(default = "default_max_pooled_pipes")]
+    pub max_pooled_pipes: u32,
     /// Permit optional sockhash acceleration after capability probing.
     pub sockhash: bool,
 }
@@ -758,6 +766,8 @@ impl Default for RelayPolicy {
             max_relay_memory_bytes: default_max_relay_memory_bytes(),
             max_pinned_memory_bytes: default_max_pinned_memory_bytes(),
             splice: true,
+            pipe_pool: default_pipe_pool(),
+            max_pooled_pipes: default_max_pooled_pipes(),
             sockhash: false,
         }
     }
@@ -773,6 +783,14 @@ const fn default_max_sockhash_relays() -> u32 {
 
 const fn default_max_relay_memory_bytes() -> u64 {
     536_870_912
+}
+
+const fn default_pipe_pool() -> bool {
+    true
+}
+
+const fn default_max_pooled_pipes() -> u32 {
+    512
 }
 
 const fn default_max_pinned_memory_bytes() -> u64 {

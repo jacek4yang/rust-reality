@@ -73,14 +73,20 @@ impl Scenario {
 }
 
 fn policy(backend: Option<RelayBackend>) -> RelayPolicy {
+    let buffer_kib = env::var("RR_BENCH_BUFFER_KIB")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(32);
     RelayPolicy {
-        buffer_bytes: 32 * 1024,
+        buffer_bytes: buffer_kib * 1024,
         max_pooled_buffers: 512,
         max_splice_relays: 256,
         max_sockhash_relays: 0,
         max_relay_memory_bytes: u64::MAX,
         max_pinned_memory_bytes: u64::MAX,
         splice: !matches!(backend, Some(RelayBackend::Buffered)),
+        pipe_pool: true,
+        max_pooled_pipes: 512,
         sockhash: false,
     }
 }
@@ -169,6 +175,11 @@ async fn one_flow(
 }
 
 fn main() {
+    let buffer_kib = env::var("RR_BENCH_BUFFER_KIB")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(32);
+    eprintln!("buffer_bytes={} KiB", buffer_kib);
     let mut samples = 5_usize;
     let mut seed = 1_u64;
     let mut arguments = env::args().skip(1);
@@ -182,7 +193,7 @@ fn main() {
     }
 
     let payload_sizes = [1_usize << 20, 32 << 20];
-    let concurrencies = [1_usize, 4];
+    let concurrencies = [1_usize, 4, 32, 64];
     let backends: [Option<RelayBackend>; 3] = [
         Some(RelayBackend::Buffered),
         Some(RelayBackend::Splice),
@@ -202,6 +213,18 @@ fn main() {
                 }
             }
         }
+        // 512 MiB only at low/medium and high concurrency: the decision-surface
+        // edge cases, without multiplying the runtime beyond reason.
+        for concurrency in [1_usize, 32] {
+            for backend in backends {
+                scenarios.push(Scenario {
+                    direction,
+                    payload_bytes: 512 << 20,
+                    concurrency,
+                    backend,
+                });
+            }
+        }
     }
 
     let commit = env::var("RR_BENCH_COMMIT").unwrap_or_else(|_| "unknown".to_owned());
@@ -213,26 +236,38 @@ fn main() {
         .unwrap_or_else(|_| "unknown".to_owned());
     let rustc = option_env!("RUSTC_VERSION").unwrap_or("unknown");
 
+    let workers = env::var("RR_BENCH_WORKERS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(2);
+    eprintln!("workers={workers}");
     let runtime = Builder::new_multi_thread()
-        .worker_threads(2)
+        .worker_threads(workers)
         .enable_all()
         .build()
         .expect("benchmark runtime must build");
     let mut shuffler = Lcg::new(seed);
 
+    let payloads: Vec<&'static [u8]> = scenarios
+        .iter()
+        .map(|scenario| {
+            Box::leak(vec![0x5a_u8; scenario.payload_bytes].into_boxed_slice()) as &'static [u8]
+        })
+        .collect();
     for sample_index in 0..samples {
         let mut order: Vec<usize> = (0..scenarios.len()).collect();
         shuffler.shuffle(&mut order);
         for position in order {
             let scenario = scenarios[position];
-            let payload: &'static [u8] =
-                Box::leak(vec![0x5a_u8; scenario.payload_bytes].into_boxed_slice());
+            let payload: &'static [u8] = payloads[position];
             let relay = TcpRelay::new(
                 &policy(scenario.backend),
                 rust_reality::runtime::FdBudget::new(65_536),
             )
             .expect("relay must compile");
 
+            let cpu_before = cpu_times();
+            let cs_before = context_switches();
             let started = Instant::now();
             let selected = runtime.block_on(async {
                 let mut flows = Vec::with_capacity(scenario.concurrency);
@@ -250,6 +285,9 @@ fn main() {
             });
             let elapsed = started.elapsed();
             let (moved, backend_selected) = selected;
+            let (cpu_user_ns, cpu_system_ns) = cpu_before.elapsed(cpu_times());
+            let context_switches =
+                cs_before.map(|before| context_switches().unwrap_or(before).saturating_sub(before));
 
             println!(
                 "{{\"commit\":\"{commit}\",\"timestamp\":{},\"host\":\"{host}\",\
@@ -258,8 +296,8 @@ fn main() {
                  \"sampleIndex\":{sample_index},\"direction\":\"{}\",\"payloadBytes\":{},\
                  \"concurrency\":{},\"backendRequested\":\"{}\",\"backendSelected\":\"{}\",\
                  \"durationNs\":{},\"throughputMiBps\":{:.3},\"bytesMoved\":{moved},\
-                 \"cpuUserNs\":null,\"cpuSystemNs\":null,\"contextSwitches\":null,\
-                 \"syscallCounts\":null,\"allocations\":null,\"peakRssBytes\":{},\
+                 \"cpuUserNs\":{cpu_user_ns},\"cpuSystemNs\":{cpu_system_ns},\
+                 \"contextSwitches\":{},\"syscallCounts\":null,\"allocations\":null,\"peakRssBytes\":{},\
                  \"backendHitRate\":{:.3},\"verificationHash\":\"{}\"}}",
                 unix_millis(),
                 escape(&cpu),
@@ -270,6 +308,7 @@ fn main() {
                 backend_selected,
                 elapsed.as_nanos(),
                 throughput_mib(moved, elapsed),
+                context_switches.map_or_else(|| "null".to_owned(), |value| value.to_string()),
                 peak_rss_bytes(),
                 f64::from(u8::from(
                     scenario.backend.is_none() || scenario.requested() == backend_selected
@@ -279,6 +318,57 @@ fn main() {
         }
     }
     process::exit(0);
+}
+
+#[derive(Clone, Copy)]
+struct CpuSample {
+    user_ns: u64,
+    system_ns: u64,
+}
+
+impl CpuSample {
+    fn elapsed(self, after: Self) -> (u64, u64) {
+        (
+            after.user_ns.saturating_sub(self.user_ns),
+            after.system_ns.saturating_sub(self.system_ns),
+        )
+    }
+}
+
+/// Reads utime/stime from /proc/self/stat in 10 ms clock ticks (USER_HZ=100).
+fn cpu_times() -> CpuSample {
+    let stat = std::fs::read_to_string("/proc/self/stat").unwrap_or_default();
+    let ticks: Vec<u64> = stat
+        .rsplit(')')
+        .next()
+        .unwrap_or_default()
+        .split_whitespace()
+        .skip(11)
+        .take(2)
+        .filter_map(|field| field.parse().ok())
+        .collect();
+    let (user, system) = (
+        ticks.first().copied().unwrap_or(0),
+        ticks.get(1).copied().unwrap_or(0),
+    );
+    CpuSample {
+        user_ns: user.saturating_mul(10_000_000),
+        system_ns: system.saturating_mul(10_000_000),
+    }
+}
+
+/// Reads voluntary + involuntary context switches from /proc/self/status.
+fn context_switches() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let mut total = 0_u64;
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("voluntary_ctxt_switches:") {
+            total += rest.trim().parse::<u64>().ok()?;
+        } else if let Some(rest) = line.strip_prefix("nonvoluntary_ctxt_switches:") {
+            total += rest.trim().parse::<u64>().ok()?;
+        }
+    }
+    Some(total)
 }
 
 fn throughput_mib(bytes: u64, elapsed: Duration) -> f64 {
@@ -300,7 +390,7 @@ fn peak_rss_bytes() -> u64 {
     read_first_line("/proc/self/status", "VmHWM")
         .and_then(|line| {
             line.split_whitespace()
-                .nth(1)
+                .next()
                 .and_then(|value| value.parse::<u64>().ok())
         })
         .map_or(0, |kilobytes| kilobytes.saturating_mul(1024))

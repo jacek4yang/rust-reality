@@ -102,9 +102,12 @@ Headline (throughput-meaningful cells, 32/512 MiB, p50):
 - **Framed download/upload:** final ≈ Xray at c=1..4 (0.9–1.14); Xray faster at
   512 MiB × c=32 (framed-upload 0.82–0.84, framed-download 0.91) — not a
   regression (final ≥ baseline in those cells), recorded as a limitation.
-- **Fallback:** final 1.2–2.6× baseline (splice wired into fallback);
-  Xray faster at 512 MiB × c=32 (0.68–0.73) — pre-existing gap, not a
-  regression; recorded as a limitation.
+- **Fallback:** final 1.2–2.6× baseline (splice wired into fallback).
+  The apparent Xray-faster cells were later traced to the matrix harness's
+  debug-level per-connection logging; the clean A/B
+  (scripts/benchmark-fallback-ab.sh) shows fallback splice at 1.04-1.05x
+  Xray with 26-35% lower CPU. See the follow-up section and
+  PERFORMANCE-DECISION-LOG.md D8.
 - **Bidirectional:** parity (0.96–1.06).
 
 `direct-upload:32:32`, `direct-download:32:32`, `bidi:*:32` (TLS origin):

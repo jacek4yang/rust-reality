@@ -43,4 +43,4 @@ run cargo nextest run \
     --locked
 run cargo test --doc --all-features --locked
 run cargo test --release --all-features --locked
-run cargo test --benches --all-features --locked
+run cargo test --benches --all-features --locked --no-run

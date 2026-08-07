@@ -77,12 +77,13 @@ Last updated: see git log for the branch head.
 
 ## Follow-up additions (PR #17 completion pass)
 
-11. **Fallback at concurrency 32+ (32 MiB):** final measures 0.76-0.81x Xray
-    with a trustworthy compiled origin. Profiled: splice-syscall-bound;
-    256 KiB pipes cut splice calls ~8x but did not close the throughput gap
-    (calls are availability-limited at c32). Not a regression vs baseline
-    (final >= 1.14x baseline); explicitly UNRESOLVED — future work only with a
-    new measured hypothesis.
+11. **Fallback at concurrency 32+ (32 MiB):** RESOLVED 2026-08-07 as a
+    measurement artifact. The 0.76-0.81x readings came from the matrix
+    harness's debug-level per-connection logging (stderr-locked JSON events
+    per connection; Xray logged at warning). The clean fallback A/B
+    (scripts/benchmark-fallback-ab.sh, same origin, warn level, retained in
+    benchmarks/final/fallback-ab*): splice fallback 1.04-1.05x Xray at c32
+    (32 MiB and 512 MiB) with 26-35% lower task-clock. No residual deficit.
 
 12. **Single-stream TLS origin cells (payload 512 MiB x c1):** origin-bound
     (~400-500 MiB/s per Go TLS connection); ratios across implementations

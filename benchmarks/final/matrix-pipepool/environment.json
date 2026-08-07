@@ -1,0 +1,31 @@
+{
+  "baselineCommit": "274cca9",
+  "binaries": {
+    "baseline": "../artifacts/rust-reality-parent-274cca9",
+    "final": "target/release/rust-reality",
+    "xray": "../artifacts/xray-reference"
+  },
+  "cpuCount": 4,
+  "cpuModel": "Intel(R) Core(TM) i3-8100 CPU @ 3.60GHz",
+  "dateUtc": "2026-08-06T17:33:01.441182+00:00",
+  "finalCommit": "90eb08c8ebf516d790145406f5453a254e6afa05",
+  "kernel": "6.12.94+deb13-amd64",
+  "machine": "x86_64",
+  "nic": {
+    "interface": "enp2s0",
+    "speed": "unknown"
+  },
+  "originImplementation": "go",
+  "realityCover": {
+    "serverName": "dl.google.com",
+    "target": "dl.google.com:443"
+  },
+  "rlimitNofile": {
+    "hard": 524288,
+    "soft": 524288
+  },
+  "rustcVersion": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "schemaVersion": 1,
+  "seed": "0x5252",
+  "xrayVersion": "Xray 26.7.28 (Xray, Penetrates Everything.) 5ca6f4b (go1.26.0 linux/amd64)"
+}

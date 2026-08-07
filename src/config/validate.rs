@@ -785,16 +785,22 @@ fn validate_relay_memory(relay: &RelayPolicy) -> Result<(), ConfigError> {
         0
     };
 
-    // Every splice relay holds two pipe pairs whose kernel capacity is
-    // reserved worst-case, even though the kernel allocates pipe pages
-    // lazily: conservative accounting matches the rest of this validator.
-    let splice_pipes = if relay.splice {
+    // Kernel pipe capacity is reserved worst-case, even though the kernel
+    // allocates pipe pages lazily. With the process pool enabled the retained
+    // pool is the binding term (it subsumes per-session creation); without it
+    // every splice relay holds two pipe pairs.
+    let splice_pipes = if !relay.splice {
+        0
+    } else if relay.pipe_pool {
+        u64::from(relay.max_pooled_pipes)
+            .checked_mul(2)
+            .and_then(|pipes| pipes.checked_mul(SPLICE_PIPE_CAPACITY_BYTES))
+            .ok_or_else(|| ConfigError::new("policy.relay.maxPooledPipes", "budget overflows"))?
+    } else {
         u64::from(relay.max_splice_relays)
             .checked_mul(4)
             .and_then(|pipes| pipes.checked_mul(SPLICE_PIPE_CAPACITY_BYTES))
             .ok_or_else(|| ConfigError::new("policy.relay.maxSpliceRelays", "budget overflows"))?
-    } else {
-        0
     };
 
     let relay_total = buffered

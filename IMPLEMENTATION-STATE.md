@@ -87,3 +87,68 @@
   pipes ~0 per-session syscalls; rust-reality pays 2 pipe2 + 2 fcntl + 4 close
   per session; correction: Xray fallback does NOT splice — it readv/writevs,
   so the fallback gap is not explained by pooling).
+
+
+# STAGE: PipePool stop/go experiment (2026-08-07, branch perf/1.0-pipe-pool)
+
+- head: 90eb08c
+- hypothesis: per-session pipe churn explains the fallback gap (Opus, CREDIBLE)
+- mechanism audit first (reports/XRAY-SPLICE-PIPE-POOLING.md): Go pools 1MiB
+  pipes ~0/session; rust-reality created+resized+destroyed pipes per relay.
+- implemented: PipePool (lazy growth + idle shrink, units travel with pipe,
+  dirty pipes discarded, counters exposed, default pipePool=true).
+- stop/go gate (matrix-pipepool, 258 samples, 0 invalid, integrity matched):
+  fallback c32 0.767x, c64 0.76x, 512:32 0.675x Xray — TARGET >=1.00 FAILED.
+  regression cells: all C/P within volatile bands, no >3% regression.
+- mechanism evidence (strace A/B, 96 sessions): pipe2 192→64, close/fcntl
+  ~eliminated; splice(2) is 97% of syscall time (~101k calls both builds).
+- verdict: falsified as the fallback cause; KEPT with documented tradeoff
+  (zero-cost syscall/FD-churn reduction; NO fallback claim). Fallback gap
+  re-diagnosed as D8: splice call cost vs readv/writev at c32.
+- tool failures: none. CI still blocked by GitHub queue starvation (retried 3x).
+- next permitted stage: B1 hygiene (fd-budget release waiter guard), then
+  reports/archive/stacked PR.
+
+
+# STAGE: D8 falsification (2026-08-07, branch perf/1.0-pipe-pool)
+
+- surface bench extended (2b6fca0): sizes {1,32,512}MiB x c{1,4,32,64} x
+  {buffered,splice,auto} with cpuUser/System + ctx switches per sample;
+  workers/buffer-size parameterized.
+- D8 verdict: FALSIFIED. splice wins the raw surface outright; buffered-64K
+  does not beat splice; the fallback gap was a debug-logging artifact of the
+  matrix harness — clean-harness fallback splice = 1.04-1.05x Xray with
+  26-35% lower task-clock (benchmarks/final/fallback-ab*, relay-surface*).
+- PipePool: neutral end-to-end (+0.5% throughput, -3.8% CPU at c32 fallback);
+  retention remains provisional-but-justified (zero-cost, proven mechanism).
+- artifacts: benchmarks/final/relay-surface.jsonl, relay-surface-64k.jsonl,
+  fallback-ab/, fallback-ab512/, fallback-pool-ab/.
+- next: R1+ (framed AEAD decomposition, setup-rate harness) or close out with
+  reports/archive/PR updates.
+
+# STAGE: R1/R5-R6 Amdahl investigation (2026-08-07, branch perf/1.0-pipe-pool)
+
+- symmetry audit: diagnostics/master/symmetry-audit.md — all future A/B cells
+  must record log level/affinity/build/origin; the historical fallback gap was
+  a debug-logging artifact and no asymmetric harness result is reused.
+- setup-rate model (scripts/benchmark-setup-rate.sh,
+  benchmarks/final/setup-rate3/): c1 269 vs 198 conn/s (1.36x), c8 775 vs 782,
+  c32 874 vs 857; server cost at c32: 0.64 vs 1.16 ms CPU/conn (-45%),
+  3.97M vs 5.70M instr/conn, 5.5 vs 22 ctx/conn. Report:
+  CONNECTION-SETUP-PERFORMANCE.md.
+- steady-state framed decomposition (perf on diagnostic binary b95f0844…,
+  git d28c5f0; text in benchmarks/final/framed-prof/, raw perf.data in
+  ../artifacts/framed-prof-d28c5f0/): download AEAD ~51% / kernel ~47%;
+  upload AEAD ~39% / kernel ~57%; Vision+record-parse+scheduler+memcpy <2%
+  combined. Reports: FRAMED-AMDAHL-REPORT.md, FRAMED-HOT-PATH-MAP.md,
+  COPY-MAP.md (zero avoidable userspace copies on the framed path).
+- isolated crypto bench (../artifacts/crypto-bench/, AES-128-GCM):
+  ring 5.16 / OpenSSL EVP 4.08 / RustCrypto 2.03 GiB/s at 16KiB records
+  (ring 2.54x, in-place; OpenSSL conservative). D9 registered as
+  SUPPORTED-not-integrated; Amdahl ceiling 1.45x download / 1.31x upload
+  via ring. Production integration is a crypto supply-chain product
+  decision (ring embeds BoringSSL C/asm; SECURITY.md documents pure
+  RustCrypto) — flagged to user, not started.
+- next: user decision on the OpenSSL dependency; otherwise framed work
+  concludes at parity-is-target and the branch moves to remaining R-phases
+  (D7 sockhash reachability, memory density, final evidence).
