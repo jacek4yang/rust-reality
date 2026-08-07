@@ -10,8 +10,10 @@
 
 - 保留全部样本；不挑选最快的一次，写出原始文件前不做任何平均。
 - 每一轮按记录的种子打乱实现顺序，使顺序无法偏袒任何一方。
-- 两侧使用相同的日志级别、相同的源站、相同的并发和相同的载荷；已知的不对称
-  随数字一并披露。
+- 两侧使用相同的源站、并发和载荷；对比结论在可行时必须条件对称。当观测手段
+  不得不引入不对称时（矩阵 harness 需要 rust-reality 的 debug 级逐连接事件
+  作为防绕过护栏，而 Xray 用 warning 级），不对称随数字一并披露，且敏感的
+  头条单元（fallback、建连速率）会在 warn 级对称测试架下复测。
 - loopback 数字描述实现成本，不是互联网吞吐。任何结果都不能声称抵御上游
   流量型 DDoS，也不能把一台主机的结果外推到其他 CPU、内核和网络。
 - 后端拒绝和失败 cell 按拒绝/失败记录，绝不编造数字。
@@ -31,7 +33,11 @@
 
 ## v1.0.0 规范样本
 
-仓库中保留两组小型证据作为规范样本；更大的历史矩阵已在仓库外归档。
+仓库保留最终 v1.0.0 证据集：`benchmarks/final/v1-matrix/` 与 `v1-matrix-512/`
+（36 单元发布矩阵）、`v1-fallback-ab/`、`v1-setup-rate/` 为发布规范样本；
+`d9-framed-ab/`（ring 提供者 A/B）与 `d11-ab/`（记录批处理 A/B）是两项已发布
+设计决策的机制证据。更大的历史矩阵已在仓库之外的发布证据档案中保存。
+
 
 ### framed AEAD 提供者 A/B —— `benchmarks/final/d9-framed-ab/`
 
@@ -54,14 +60,16 @@ Core i3-8100（4C/4T）、Linux 6.12.94+deb13-amd64、rustc 1.96.0、Xray 26.7.2
 服务端成本（perf stat，各 3 次）：task-clock 631 vs 940 ms/GiB（−33%），指令数
 −30%，上下文切换 −39%；RSS +3%（噪声）。
 
-### fallback A/B —— `benchmarks/final/fallback-ab/`
+### fallback A/B —— `benchmarks/final/v1-fallback-ab/`
 
-干净的同源 fallback 对比（splice 后端 vs Xray，两侧 warn 级日志，并发 32）：
+最终 v1.0.0 干净同源 fallback 对比（splice 后端 vs Xray，两侧 warn 级日志），
+7 次取样取中位数：
 
-| 载荷 | rust-reality（splice） | Xray | 比值 | task-clock 差 |
-|---|---:|---:|---:|---:|
-| 32 MiB | 3278 MiB/s | 3134 MiB/s | 1.05× | 865 ms vs 1173 ms（−26%） |
-| 512 MiB | 4197 MiB/s | 4036 MiB/s | 1.04× | 10.0 s vs 15.3 s（−35%） |
+| 并发 | rust-reality（splice） | Xray | 比值 |
+|---|---:|---:|---:|
+| c1 | 1631 MiB/s | 1631 MiB/s | 1.00× |
+| c4 | 3075 MiB/s | 2999 MiB/s | 1.03× |
+| c32 | 3279 MiB/s | 3194 MiB/s | 1.03× |
 
 ## 方法规则（以及让早期数字作废的陷阱）
 
@@ -117,8 +125,11 @@ HTTPS URL。全部生成的配置和密钥保留在有界临时目录中，退�
 - **loopback p99** 主要由客户端/源站进程启动主导，谨慎解读。
 - **Miri 无法覆盖 `crates/rr-linux`**（不支持其中的裸系统调用）；该 crate 由
   ABI/布局测试和特权测试套件覆盖。
-- **NXR 没有 A/B 基线**：Xray 没有等价协议，因此 NXR 由一致性测试覆盖，不做
-  对比基准。
+- **NXR 没有协议级 Xray 基线**（Xray 没有实现 NXR），但 NXR 有受控协议对比：
+  部署特征化（`scripts/benchmark-deployment.sh`）在相同的线路/落地/源站拓扑
+  上对比 NXR 与 SOCKS5——建连速率、吞吐、每连接 CPU 以及 netem RTT 扫描——
+  并附带明确标注为系统级的 rust+NXR 对 Xray+SOCKS5 对比。最终数字见
+  [performance.zh-CN.md](performance.zh-CN.md#部署特性v100)。
 
 更早的开发机样本（2026-08-03 的 Xray loopback 表格，以及自身结论为"与噪声
 无法区分"的 2 vCPU relay 基线）已被上述规范样本取代并从仓库移除。

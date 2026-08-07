@@ -26,6 +26,37 @@ REQUIRED_PAIRS = (
     ("docs/threat-model.md", "docs/threat-model.zh-CN.md"),
 )
 
+# Stable drift invariants learned from release documentation defects. Each is
+# a phrase that was once published and later found wrong; keep the list small
+# and only for statements that must never read as current behavior again.
+FORBIDDEN_PHRASES = (
+    # Inverted abort semantics: abort must read as RST/reset, never as a
+    # graceful finish. (Both languages.)
+    "indistinguishable from clean FIN",
+    "不可区分",
+    # Stale decision-register range; the register runs through D11.
+    "D1–D9",
+    # Pre-release positioning.
+    "pre-1.0",
+    "0.1.x",
+)
+
+# Files where historical wording is legitimate (version history and ADRs).
+FORBIDDEN_EXEMPT = ("CHANGELOG.md", "docs/decisions/")
+
+
+def forbidden_phrase_failures() -> list[str]:
+    failures: list[str] = []
+    for source in markdown_files():
+        relative = str(source.relative_to(ROOT))
+        if relative.startswith(FORBIDDEN_EXEMPT):
+            continue
+        text = source.read_text(encoding="utf-8")
+        for phrase in FORBIDDEN_PHRASES:
+            if phrase in text:
+                failures.append(f"{relative}: forbidden stale phrase: {phrase!r}")
+    return failures
+
 
 def markdown_files() -> list[Path]:
     roots = [*ROOT.glob("*.md"), *ROOT.joinpath("docs").rglob("*.md")]
@@ -51,6 +82,7 @@ def main() -> int:
             if not ROOT.joinpath(relative).is_file():
                 failures.append(f"missing required document: {relative}")
 
+    failures.extend(forbidden_phrase_failures())
     for source in markdown_files():
         text = source.read_text(encoding="utf-8")
         for match in LINK.finditer(text):

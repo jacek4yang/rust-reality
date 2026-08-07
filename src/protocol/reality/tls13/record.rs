@@ -121,10 +121,12 @@ impl Error for Tls13RecordError {}
 
 /// AES-128-GCM record primitive.
 ///
-/// The default backend is RustCrypto `aes-gcm`. The experimental
-/// `ring-aead` feature (decision D9) swaps in ring's BoringSSL-derived
-/// implementation, which measured ≈2.5× faster at production record sizes
-/// (FRAMED-AMDAHL-REPORT.md). Only the AEAD primitive differs: nonce
+/// The default backend (feature `ring-aead`, on by default) is ring's
+/// BoringSSL-derived implementation, which measured ≈2.5× faster than
+/// RustCrypto at production record sizes (decision D9; see
+/// docs/performance.md). A `--no-default-features` build selects the
+/// pure-Rust RustCrypto backend with identical wire behavior. Only the AEAD
+/// primitive differs: nonce
 /// derivation, sequence ownership, AAD construction, framing, limits, and
 /// error semantics stay in `Tls13RecordLayer`.
 ///
@@ -895,7 +897,7 @@ mod tests {
     /// key/nonce/AAD/plaintext, using the record layer's exact nonce
     /// derivation (`iv XOR sequence`). Together with the RFC 8448 byte-exact
     /// tests above — which pass under both feature configurations — this
-    /// proves the experimental `ring-aead` backend is wire-identical.
+    /// proves the ring backend is wire-identical to the RustCrypto one.
     #[test]
     fn aes128_gcm_rustcrypto_and_ring_are_byte_identical() {
         use aes_gcm::{

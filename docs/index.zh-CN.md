@@ -19,7 +19,7 @@
 | --- | --- |
 | [协议概览](protocol.zh-CN.md) | VLESS + REALITY + Vision 公网栈与内部 NXR 跳转。 |
 | [架构](architecture.zh-CN.md) | 连接生命周期、relay 后端、描述符预算和可观测性。 |
-| [性能](performance.zh-CN.md) | 实测数据平面属性、ring AEAD 提供者和 D1–D9 决策登记。 |
+| [性能](performance.zh-CN.md) | 实测数据平面属性、ring AEAD 提供者和 D1–D11 决策登记。 |
 | [基准测试](benchmarks.zh-CN.md) | 测量策略、harness、规范样本、兼容性门禁和限制。 |
 | [架构决策记录](decisions/) | ADR，包括 io_uring 被移除的原因。 |
 

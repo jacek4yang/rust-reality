@@ -11,6 +11,9 @@ admission 架构和运行时可观测性。设计背后的实测证据见
 
 1. **Accept。** listener 在 `accept(2)` *之前*获取 FD 预算许可，并对 accept
    错误分类；描述符压力下使用应急保留描述符释放容量。每个连接一个任务。
+   所有数据套接字（accept 与出站）都带内核活性兜底：`SO_KEEPALIVE`，30 秒
+   空闲 / 10 秒间隔 / 3 次探测，用于限制对端静默死亡，而不限制健康传输的
+   时长。
 2. **REALITY。** ClientHello 在有界时限内读取，要么认证成功，要么进入
    fallback。fallback 逐字节精确：已从客户端读取的前缀原样转发到伪装目标，
    已检查的目标前缀回写给客户端，剩余 raw 连接对交给统一 relay
@@ -65,8 +68,9 @@ admission 架构和运行时可观测性。设计背后的实测证据见
 
    - **splice**：每个方向一对管道（双向 = 两对），每方向恰好 2 个 FD 单元，
      在 `pipe2` 之前预留。管道请求 256 KiB 容量（尽力而为，低于无特权 1 MiB
-     上限），relay 块大小取管道实际容量；内核管道内存按每个配置的 splice
-     relay 4 条管道 × 256 KiB 记账。管道由 `PipePool` 池化，稳态会话不再有
+     上限），relay 块大小取管道实际容量；内核管道内存按最坏情况记账：启用管道池
+     （默认，池涵盖逐会话创建）时为 `maxPooledPipes × 2 × 256 KiB`，未启用时
+     为 `maxSpliceRelays × 4 × 256 KiB`。管道由 `PipePool` 池化，稳态会话不再有
      pipe2/fcntl/close 抖动，池化管道绝不会带着未读数据复用。源端 EOF →
      对目标写端优雅 shutdown（每方向保留 half-close）。拒绝（池/FD 预算/
      pipe2 失败）只发生在第一个字节之前。
@@ -85,7 +89,7 @@ admission 架构和运行时可观测性。设计背后的实测证据见
 
 | 阶段 | 所有者 | 分配 | 原子操作/锁 | 系统调用 | 拷贝 |
 |---|---|---|---|---|---|
-| accept | 1 任务/listener | 稳态无 | FD 许可 CAS + governor CAS | accept4、setsockopt×4 | 0 |
+| accept | 1 任务/listener | 稳态无 | FD 许可 CAS + governor CAS | accept4、setsockopt×5 | 0 |
 | REALITY 认证 | 连接任务 | ClientHello 缓冲区（≤16 KiB，一次） | 握手/密码学 CAS 许可、重放缓存分片锁 | 1–3 次读，flight 写 | hello 解析基于借用 |
 | fallback | 连接任务 | 前缀 vec（有界） | fallback CAS、FD CAS ×2、connect | connect、前缀写，然后 relay | 仅前缀写 |
 | VLESS 请求 | 连接任务 | 请求缓冲区 ≤533+16 KiB，一次 | 0 | TLS 记录 | 0（借用预取） |

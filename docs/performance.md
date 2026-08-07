@@ -87,39 +87,45 @@ Measured evidence (validation host above):
   Go runtime's `sync.Pool` of 1 MiB pipes (≈0 pipe syscalls per session
   once warm). rust-reality's `PipePool` removes the equivalent per-session
   pipe2/fcntl/close churn for its 256 KiB pipes.
-- Clean same-origin fallback A/B (warn-level logging both sides):
-  splice fallback 1.04–1.05× Xray at concurrency 32 with 26–35% lower
-  task-clock. An earlier apparent fallback deficit was traced to the matrix
-  harness's debug-level per-connection logging, not to the relay path (see
-  the methodology section of [benchmarks.md](benchmarks.md)).
+- Final v1.0.0 clean same-origin fallback A/B (warn-level logging both
+  sides; `benchmarks/final/v1-fallback-ab/`): splice fallback 1.00–1.03×
+  Xray at c1–c32 with equal-or-lower task-clock. An earlier apparent
+  fallback deficit was traced to the matrix harness's debug-level
+  per-connection logging, not to the relay path (see the methodology
+  section of [benchmarks.md](benchmarks.md)). Historical D8-era mechanism
+  runs measured 1.04–1.05× on the same host; they are superseded as
+  headline values by the final release comparison.
 
 ## Connection setup
 
-Setup-rate model (accept → REALITY handshake → VLESS parse → routing →
+Final v1.0.0 figures (accept → REALITY handshake → VLESS parse → routing →
 outbound connect → first Vision transition; steady state excluded;
-validation host above, local TLS origin, raw-socket client):
+validation host above, local TLS origin, raw-socket client; evidence:
+`benchmarks/final/v1-setup-rate/`):
 
 | cell | rust-reality | Xray | ratio |
 |---|---:|---:|---:|
-| c1 conn/s | 269 | 198 | 1.36× |
-| c8 conn/s | 775 | 782 | 0.99× |
-| c32 conn/s | 874 | 857 | 1.02× |
-| c32 p99 setup latency | 70.8 ms | 84.1 ms | −16% |
+| c1 conn/s | 270 | 123 | 2.20× |
+| c8 conn/s | 806 | 688 | 1.17× |
+| c32 conn/s | 895 | 812 | 1.10× |
+| c32 p99 setup latency | 59.3 ms | 59.3 ms | parity |
 
-Per-connection server cost at c32: CPU 0.64 vs 1.16 ms (**−45%**),
-instructions −30%, context switches −75%. Throughput is at parity at
-concurrency because the 4-CPU host bounds both servers; the per-connection
-cost columns are the cleaner signal. Whether the CPU advantage converts into
-a rate advantage on a larger host is unverified.
+Per-connection server cost across the measured window (864 connections):
+CPU 0.65 vs 1.53 ms (**−58%**), instructions −29%, context switches −77%.
+Throughput converges at c32 because the 4-CPU host bounds both servers; the
+per-connection cost columns are the cleaner signal. Whether the CPU
+advantage converts into a rate advantage on a larger host is unverified.
 
-## Decision register (D1–D9)
+## Decision register (D1–D11)
 
 One-line verdicts for the performance decisions that shaped v1.0.0:
 
 - **D1 — kept.** Reload/asset-refresh multiplied process ceilings; shared
   authorities hoisted to process-lifetime ownership.
-- **D2 — kept.** Abort made indistinguishable from clean FIN
-  (`SO_LINGER{on,0}` on abort paths plus an abort guard).
+- **D2 — kept.** Aborted transfers made distinguishable from graceful
+  completion: the abort path arms `SO_LINGER{on,0}` so the peer observes a
+  reset (RST/`ECONNRESET`), never a clean short EOF, while graceful
+  teardown keeps FIN semantics (`DirectionAbortGuard`).
 - **D3 — kept.** DNS work bounded: lookup pool, permit held for the blocking
   operation, fail-fast, no queue.
 - **D4 — kept.** Kernel liveness backstop: `SO_KEEPALIVE` 30/10/3 on all
@@ -134,8 +140,9 @@ One-line verdicts for the performance decisions that shaped v1.0.0:
   production matrices, showed privileged parity with splice, and required
   privilege the deployment model never has; removed (~5,400 lines).
 - **D8 — falsified.** The apparent fallback c32 gap was harness debug
-  logging, not splice call cost; clean A/B shows fallback splice at
-  1.04–1.05× Xray with materially lower CPU.
+  logging, not splice call cost; clean A/B at the time measured fallback splice at
+  1.04–1.05× Xray with materially lower CPU; the final v1.0.0 comparison
+  (1.00–1.03×) supersedes it as the headline.
 - **D9 — proven, shipped as default.** The framed path is AEAD-bound and
   ring is ≈2.5× RustCrypto at production record sizes; shipped as the
   default record AEAD provider with the RustCrypto fallback retained and
@@ -152,7 +159,11 @@ One-line verdicts for the performance decisions that shaped v1.0.0:
 
 ## Final release matrix (v1.0.0)
 
-Frozen from the exact release-candidate production binary (git `d2fbb0c`,
+Frozen from the exact release-candidate production binary (built from git
+`d2fbb0c`; the sample files' `commit` field records the harness checkout
+SHA, and the post-matrix documentation commits changed no executable byte —
+the rebuilt binary differs only in the embedded commit string and build-id,
+both SHA-256s preserved in the release evidence archive),
 binary SHA-256 `a77fe34a…`, ring default), comparator Xray-core 26.7.28
 (`5ca6f4b`, go1.26.0, binary SHA-256 `23d228d7…`). 543 valid samples, 0
 invalid, SHA-256 integrity matched for every implementation. Matrix cells

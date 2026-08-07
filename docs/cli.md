@@ -242,6 +242,7 @@ throughput test; see the [benchmark policy](benchmarks.md).
 | SIGHUP | Load the same path, validate and compile a full candidate, then atomically publish it. |
 
 A failed SIGHUP keeps the current generation. Existing connections retain the
-generation they started with. Listener topology, resource-governor policy,
-relay policy, and NXR replay-cache capacity/retention require a restart; see the
+generation they started with. Listener topology, `runtime` settings,
+resource-governor policy, direct-barrier policy, relay policy, and NXR
+replay-cache capacity/retention require a restart; see the
 [configuration reference](configuration.md#reload-boundaries).

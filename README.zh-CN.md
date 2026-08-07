@@ -34,8 +34,9 @@
   的 GeoIP/GeoSite 资产（原子 last-known-good 更新）。
 - 严格 JSON 配置、SIGHUP 原子热更新、不含秘密的有界日志、密钥生成、目标探测、
   self-test 和 Schema，全部由同一个二进制提供。
-- 稳定 Rust，crate 内禁止 `unsafe`，生产数据路径不使用 panic/unwrap，标签
-  发布包可复现。
+- 稳定 Rust：主协议 crate 禁止 `unsafe`（Linux ABI 的 unsafe 隔离在
+  `crates/rr-linux` 并有显式 SAFETY 不变量），生产数据路径不使用
+  panic/unwrap，标签发布包可复现。
 
 ## 与 Xray-core 的性能对比
 
@@ -56,7 +57,8 @@ Xray 使用 warning——这对 rust-reality 不利；fallback 与建连速率�
 | Fallback，32 MiB ×32（干净测试架） | 3279 MiB/s | 3194 MiB/s | 1.03× |
 | 建连速率，c32 | 895 conn/s | 812 conn/s | 1.10× |
 
-每连接建连成本约为 Xray 的一半（c32 时服务端 CPU 0.64 ms 对 1.16 ms）。单流
+每连接建连成本远低于 Xray 的一半（在 864 个连接的测量窗口内服务端 CPU 为
+0.65 ms 对 1.53 ms）。单流
 loopback 单元受时延约束，基本持平（0.94–1.04×）。完整 36 单元矩阵、部署特性
 （路由、NXR 对 SOCKS5、RTT 敏感度）、热路径取证报告及复现方法见
 [docs/performance.zh-CN.md](docs/performance.zh-CN.md) 和

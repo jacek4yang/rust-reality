@@ -19,7 +19,7 @@ English | [简体中文](index.zh-CN.md)
 | --- | --- |
 | [Protocol overview](protocol.md) | The VLESS + REALITY + Vision public stack and the internal NXR hop. |
 | [Architecture](architecture.md) | Connection lifecycle, relay backends, descriptor budget, and observability. |
-| [Performance](performance.md) | Measured data-plane properties, the ring AEAD provider, and the D1–D9 decision register. |
+| [Performance](performance.md) | Measured data-plane properties, the ring AEAD provider, and the D1–D11 decision register. |
 | [Benchmarks](benchmarks.md) | Measurement policy, harnesses, canonical samples, compatibility gate, and limitations. |
 | [Architecture decisions](decisions/) | ADRs, including why io_uring was removed. |
 

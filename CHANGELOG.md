@@ -49,8 +49,8 @@ First stable release.
   (FD + memory) pressure model with priority shedding that never revokes
   established relays.
 - DNS work runs in a bounded, fail-fast pool; all data sockets carry a
-  `SO_KEEPALIVE` liveness backstop; abort paths are indistinguishable from
-  clean FIN.
+  `SO_KEEPALIVE` liveness backstop; aborted transfers reset the peer
+  (`SO_LINGER{on,0}`) instead of resembling a clean FIN.
 - The io_uring and sockhash kernel backends were removed before release;
   stale configuration keys for them are rejected as unknown fields.
 
@@ -79,7 +79,7 @@ First stable release.
 - Final release matrix against Xray-core 26.7.28 (same-host loopback,
   i3-8100): Direct download 2.69× at 512 MiB c32, framed download 1.14×,
   framed upload 1.04×, bidirectional 1.61×, fallback 1.03× (clean
-  harness), setup rate 1.10× at roughly half the per-connection CPU.
+  harness), setup rate 1.10× with 0.65 ms vs 1.53 ms server CPU per connection.
   Representative rows in README.md; full methodology and the
   deployment/forensic gates in `docs/performance.md`.
 

@@ -83,12 +83,15 @@ buffers.
 Adding a kernel data path changes what an attacker can reach, so the boundary is
 stated explicitly.
 
-**A kernel backend never sees pre-authentication or framed traffic.** It is
-offered a socket pair only when both directions are semantically raw plaintext
-TCP: after REALITY authentication has failed and the connection has become a
-cover relay, after NXR authentication has completed, or after *both* Vision
-directions have reached exact authenticated Direct boundaries. One-way Direct is
-relayed in bounded userspace precisely because one direction is still framed.
+**A kernel backend never sees pre-authentication or framed traffic.** Each
+direction has its own exact authenticated raw boundary, and a backend receives a
+direction only after that direction has crossed it: after REALITY authentication
+has failed and the connection has become a cover relay, after NXR authentication
+has completed, or after a Vision direction has reached its exact authenticated
+Direct boundary. A one-way Vision Direct direction is relayed on its own
+(directional splice) while the opposite direction remains framed in userspace;
+the bilateral, socket-reuniting splice is used only when both directions have
+independently crossed their boundaries and pairing is safe.
 
 **A backend cannot silently swallow bytes.** Fallback to another backend is only
 possible while the shared transfer ledger reads zero in both directions; the

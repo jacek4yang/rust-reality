@@ -12,7 +12,10 @@ canonical samples live in [benchmarks.md](benchmarks.md).
 
 1. **Accept.** The listener acquires an FD-budget permit *before* `accept(2)`
    and classifies accept errors; on descriptor pressure an emergency reserve
-   descriptor is used to free capacity. One task per connection.
+   descriptor is used to free capacity. One task per connection. Every data
+   socket (accepted and outbound) carries a kernel liveness backstop:
+   `SO_KEEPALIVE` with 30 s idle / 10 s interval / 3 probes, bounding silent
+   peer death without capping healthy transfers.
 2. **REALITY.** The ClientHello is read under a bounded deadline and either
    authenticates or falls back. Fallback is byte-exact: the consumed client
    prefix is replayed to the cover target, any inspected target prefix is
@@ -79,7 +82,9 @@ canonical samples live in [benchmarks.md](benchmarks.md).
      2 FD units per direction, reserved before `pipe2`. Pipes request a 256
      KiB capacity (best effort, below the unprivileged 1 MiB cap) and the
      relay chunk is the pipe's actual capacity; kernel pipe memory is
-     accounted at 4 pipes × 256 KiB per configured splice relay. Pipes are
+     accounted worst-case as `maxPooledPipes × 2 × 256 KiB` when the pipe
+     pool is enabled (the default; the pool subsumes per-session creation)
+     or `maxSpliceRelays × 4 × 256 KiB` without it. Pipes are
      pooled (`PipePool`), so steady-state sessions pay no
      pipe2/fcntl/close churn, and pooled pipes are never reused with unread
      data. Source EOF → graceful write-side shutdown of the destination
@@ -104,7 +109,7 @@ registration per progress step, no hot-path logging.
 
 | stage | owner | allocations | atomics/locks | syscalls | copies |
 |---|---|---|---|---|---|
-| accept | 1 task/listener | none steady | FD permit CAS + governor CAS | accept4, setsockopt×4 | 0 |
+| accept | 1 task/listener | none steady | FD permit CAS + governor CAS | accept4, setsockopt×5 | 0 |
 | REALITY auth | conn task | ClientHello buffer (≤16 KiB, once) | handshake/crypto CAS permits, replay cache shard locks | 1–3 reads, flight write | hello parse borrow-based |
 | fallback | conn task | prefix vecs (bounded) | fallback CAS, FD CAS ×2, connect | connect, prefix write, then relay | prefix writes only |
 | VLESS request | conn task | request buffer ≤533+16 KiB once | 0 | TLS records | 0 (borrowed prefetch) |
