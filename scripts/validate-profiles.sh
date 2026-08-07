@@ -19,14 +19,22 @@
 # Env: CLASSES, ONLY, LADDER_LEVELS_<CLASS> / LADDER_LEVELS, CONNS (96),
 #      SAMPLES_CHURN (3), SAMPLES_DOWNLOAD (2), HOLD (8), SETTLE (3),
 #      STANDARD_COMPARISON (1 adds a 1c1g run with resourceMode=standard),
-#      RUST_REALITY_BIN, XRAY_BIN, OUT_ROOT, KEEP_WORK (0), FORCE (0).
+#      RUST_REALITY_BIN (default: this repository's target/release/rust-reality;
+#      the script never builds it — run `cargo build --release` yourself first,
+#      ideally via scripts/build-release.sh so the binary embeds the git commit),
+#      XRAY_BIN (REQUIRED, no default: path to an xray-core client binary),
+#      OUT_ROOT, KEEP_WORK (0), FORCE (0), IDENTITY_STRICT (1: a positively
+#      detected binary/HEAD commit mismatch aborts the run; 0 only warns).
+# The one-time geo-asset fetch needs outbound network access; if your
+# environment requires a proxy, export the standard *_PROXY variables for
+# curl before running, or pre-populate the asset cache by hand (see below).
 set -Eeuo pipefail
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repository"
 
-rust_bin=${RUST_REALITY_BIN:-/home/jacek/work/kimi-rust-reality-performance/rust-reality/target/release/rust-reality}
-xray=${XRAY_BIN:-/home/jacek/work/kimi-rust-reality-performance/artifacts/xray-reference}
+rust_bin=${RUST_REALITY_BIN:-$repository/target/release/rust-reality}
+xray=${XRAY_BIN:-}
 out_root=${OUT_ROOT:-benchmarks/profile-validation}
 asset_cache="$repository/$out_root/.asset-cache"
 classes=${CLASSES:-"1c1g:100:1G 1c2g:100:2G 2c2g:200:2G 2c4g:200:4G 4c4g:400:4G 4c8g:400:8G"}
@@ -73,10 +81,20 @@ for program in curl jq python3 go setpriv systemctl; do
     command -v "$program" >/dev/null || { echo "missing: $program" >&2; exit 1; }
 done
 sudo -n true || { echo "passwordless sudo required for systemd-run scopes" >&2; exit 1; }
-[[ -x $rust_bin ]] || { echo "server binary missing: $rust_bin" >&2; exit 1; }
-[[ -x $xray ]] || { echo "xray client binary missing: $xray" >&2; exit 1; }
+[[ -x $rust_bin ]] || {
+    echo "server binary missing or not executable: $rust_bin" >&2
+    echo "build it first with \`cargo build --release\` (scripts/build-release.sh also" >&2
+    echo "embeds the git commit for the identity check), or set RUST_REALITY_BIN." >&2
+    exit 1
+}
+[[ -n $xray ]] || {
+    echo "XRAY_BIN is required (no default): path to an xray-core client binary," >&2
+    echo "e.g. from https://github.com/XTLS/Xray-core/releases." >&2
+    exit 1
+}
+[[ -x $xray ]] || { echo "xray client binary missing or not executable: $xray" >&2; exit 1; }
 
-stray=$(pgrep -af 'release/rust-reality serve|xray-reference run|bench-origin --port' || true)
+stray=$(pgrep -af 'release/rust-reality serve|xray.* run|bench-origin --port' || true)
 if [[ -n $stray && ${FORCE:-0} != 1 ]]; then
     echo "stray benchmark processes found (refusing to run in a polluted window):" >&2
     echo "$stray" >&2
@@ -86,33 +104,62 @@ fi
 mkdir -p "$out_root" "$asset_cache"
 
 # --- one-time asset cache population (proxy env used only here) -------------
+# The geo assets are fetched once and then reused from the cache on every run.
+# The fetch needs outbound network access; curl honors the standard *_PROXY
+# environment variables, so export them before running if your network
+# requires a proxy. To avoid any fetch, place geoip.dat and geosite.dat into
+# $asset_cache yourself beforehand.
 if [[ ! -s $asset_cache/geoip.dat || ! -s $asset_cache/geosite.dat ]]; then
-    echo "populating asset cache in $asset_cache (via workspace proxy)" >&2
-    proxy_env=/home/jacek/work/kimi-rust-reality-performance/proxy-env.sh
-    [[ -f $proxy_env ]] || { echo "missing $proxy_env for the one-time asset fetch" >&2; exit 1; }
-    # shellcheck disable=SC1090
-    source "$proxy_env"
+    echo "populating asset cache in $asset_cache (one-time fetch; needs network," >&2
+    echo "honors your *_PROXY environment if one is required)" >&2
     curl -fLsS --retry 3 -o "$asset_cache/geoip.dat" \
         "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geoip.dat"
     curl -fLsS --retry 3 -o "$asset_cache/geosite.dat" \
         "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat"
-    # shellcheck disable=SC2034
-    ALL_PROXY= HTTP_PROXY= HTTPS_PROXY= ALL_PROXY= all_proxy= http_proxy= https_proxy=
-    unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy NO_PROXY no_proxy
 fi
 
 # --- environment metadata ----------------------------------------------------
 commit=$(git rev-parse HEAD)
 binary_sha256=$(sha256sum "$rust_bin" | awk '{print $1}')
+
+# Binary identity: binaries built via scripts/build-release.sh embed the git
+# commit (RUST_REALITY_GIT_COMMIT, surfaced as git_commit in the benchmark
+# report). Confirm the measured binary matches the recorded HEAD so the
+# evidence cannot silently mix a stale binary with a newer tree.
+embedded_commit=""
+if grep -qF -- "$commit" "$rust_bin" 2>/dev/null; then
+    embedded_commit=$commit
+fi
+# No fallback extraction: a binary built with plain `cargo build --release`
+# does not embed the commit (only scripts/build-release.sh sets
+# RUST_REALITY_GIT_COMMIT), and harvesting any standalone 40-hex string can
+# match unrelated rodata constants, which would false-fail a correct binary.
+# Note: after docs-only commits the embedded commit lags HEAD by design;
+# rebuild (or set IDENTITY_STRICT=0) in that case.
+identity_note=""
+if [[ -z $embedded_commit ]]; then
+    identity_note="no git commit embedded in the binary; identity not verified (build with scripts/build-release.sh to embed RUST_REALITY_GIT_COMMIT)"
+    echo "warning: $identity_note" >&2
+elif [[ $embedded_commit != "$commit" ]]; then
+    identity_note="embedded commit $embedded_commit does not match recorded HEAD $commit"
+    echo "warning: binary/HEAD identity mismatch: $identity_note" >&2
+    if [[ ${IDENTITY_STRICT:-1} == 1 ]]; then
+        echo "refusing to measure a stale binary; rebuild from this tree, or set IDENTITY_STRICT=0 to only warn" >&2
+        exit 1
+    fi
+fi
 jq -n \
     --arg commit "$commit" \
     --arg binary "$rust_bin" \
     --arg binary_sha256 "$binary_sha256" \
+    --arg binary_embedded_commit "$embedded_commit" \
+    --arg identity_note "$identity_note" \
     --arg xray "$("$xray" version 2>/dev/null | head -1)" \
     --arg kernel "$(uname -r)" \
     --arg host "$(nproc) CPUs, $(awk '/MemTotal/{print int($2/1024)" MiB"}' /proc/meminfo)" \
     --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '{commit: $commit, binary: $binary, binarySha256: $binary_sha256,
+      binaryEmbeddedCommit: $binary_embedded_commit, identityNote: $identity_note,
       xray: $xray, kernel: $kernel, host: $host, dateUtc: $date,
       note: "server CPU via /proc/pid/stat utime+stime (perf stat unusable on this host)"}' \
     > "$out_root/environment.json"
