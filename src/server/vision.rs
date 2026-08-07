@@ -276,7 +276,8 @@ impl VisionHandler {
 
     /// Reads, authorizes, connects, and relays one established REALITY session.
     ///
-    /// The direct outbound permit is retained for the entire session. Vision
+    /// The outbound descriptor permit is retained for the entire session; the
+    /// direct-dial barrier permit ended when the dial resolved. Vision
     /// Direct unwraps outer TLS only after the authenticated command record has
     /// completed, and destination TLS is switched only on an exact record boundary.
     ///

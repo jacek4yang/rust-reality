@@ -1149,16 +1149,26 @@ async fn run_connection(
             Ok(())
         }
         Err(error) => {
-            emit(
-                logger,
-                &LogEvent::ConnectionRejected {
-                    peer,
-                    reason: error.rejection_reason(),
-                },
-            );
+            emit_connection_failure(logger, peer, &error);
             Err(io::Error::other(error))
         }
     }
+}
+
+fn emit_connection_failure(logger: &Logger, peer: SocketAddr, error: &ConnectionRunError) {
+    // A direct-barrier denial is a resource-limit event, not an ordinary
+    // outbound failure: report the bounded resource next to the rejection so
+    // operators can tell the two apart.
+    if let Some(denied) = error.admission_denial() {
+        emit_admission(logger, denied);
+    }
+    emit(
+        logger,
+        &LogEvent::ConnectionRejected {
+            peer,
+            reason: error.rejection_reason(),
+        },
+    );
 }
 
 async fn drain_connections(connections: &mut ConnectionTasks) {
@@ -1271,7 +1281,8 @@ impl ConnectionRunError {
             Self::Reality(RealityAcceptError::Fallback(_)) => RejectionReason::Outbound,
             Self::Reality(_) => RejectionReason::Authentication,
             Self::Vision(VisionSessionError::Outbound(
-                crate::server::outbound::OutboundConnectError::DescriptorBudget,
+                crate::server::outbound::OutboundConnectError::Admission(_)
+                | crate::server::outbound::OutboundConnectError::DescriptorBudget,
             ))
             | Self::Nxr(NxrLandingError::DescriptorBudget) => RejectionReason::ResourceLimit,
             Self::Vision(VisionSessionError::Route(_) | VisionSessionError::Outbound(_)) => {
@@ -1282,6 +1293,16 @@ impl ConnectionRunError {
             }
             Self::Nxr(_) => RejectionReason::Authentication,
             Self::Vision(_) => RejectionReason::Protocol,
+        }
+    }
+
+    /// Returns the admission denial carried by an outbound barrier rejection.
+    const fn admission_denial(&self) -> Option<AdmissionDenied> {
+        match self {
+            Self::Vision(VisionSessionError::Outbound(
+                crate::server::outbound::OutboundConnectError::Admission(denied),
+            )) => Some(*denied),
+            _ => None,
         }
     }
 }
@@ -1897,5 +1918,78 @@ mod tests {
             matches!(error, RuntimeUpdateError::DirectBarrierPolicyChanged),
             "expected DirectBarrierPolicyChanged, got {error}"
         );
+    }
+
+    #[test]
+    fn a_denied_direct_dial_is_reported_as_a_resource_limit() {
+        use std::{fs, net::SocketAddr, sync::atomic::AtomicU64};
+
+        use crate::{
+            config::{FileLogConfig, LogConfig, LogLevel, LogOutput},
+            logging::{Logger, RejectionReason},
+            runtime::AdmissionDenied,
+            server::{
+                outbound::OutboundConnectError, production::ConnectionRunError,
+                vision::VisionSessionError,
+            },
+        };
+
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let directory = std::env::temp_dir().join(format!(
+            "rust-reality-barrier-log-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory).expect("unique log directory must be created");
+        let path = directory.join("events.log");
+        let logger = Logger::new(&LogConfig {
+            level: LogLevel::Debug,
+            output: LogOutput::File,
+            file: Some(FileLogConfig {
+                path: path.clone(),
+                max_bytes: 64 * 1024,
+                max_files: 1,
+                max_total_bytes: 64 * 1024,
+            }),
+        })
+        .expect("file logger must initialize");
+
+        let error = ConnectionRunError::Vision(VisionSessionError::Outbound(
+            OutboundConnectError::Admission(AdmissionDenied::DirectConcurrency),
+        ));
+        assert_eq!(
+            error.rejection_reason(),
+            RejectionReason::ResourceLimit,
+            "a barrier denial must not look like an ordinary outbound failure"
+        );
+        assert_eq!(
+            error.admission_denial(),
+            Some(AdmissionDenied::DirectConcurrency),
+            "the denial category must flow to the admission event"
+        );
+
+        super::emit_connection_failure(
+            &logger,
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 40_000)),
+            &error,
+        );
+        let contents = fs::read_to_string(&path).expect("the log file must be readable");
+        assert!(
+            contents.contains("\"event\":\"admission_limited\""),
+            "expected an admission_limited event, got {contents}"
+        );
+        assert!(
+            contents.contains("\"resource\":\"direct_connections\""),
+            "expected the direct_connections resource, got {contents}"
+        );
+        assert!(
+            contents.contains("\"event\":\"connection_rejected\""),
+            "expected a connection_rejected event, got {contents}"
+        );
+        assert!(
+            contents.contains("\"reason\":\"resource_limit\""),
+            "expected the resource_limit reason, got {contents}"
+        );
+        fs::remove_dir_all(&directory).expect("log directory must be removed");
     }
 }
