@@ -73,8 +73,12 @@ impl Scenario {
 }
 
 fn policy(backend: Option<RelayBackend>) -> RelayPolicy {
+    let buffer_kib = env::var("RR_BENCH_BUFFER_KIB")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(32);
     RelayPolicy {
-        buffer_bytes: 32 * 1024,
+        buffer_bytes: buffer_kib * 1024,
         max_pooled_buffers: 512,
         max_splice_relays: 256,
         max_sockhash_relays: 0,
@@ -171,6 +175,11 @@ async fn one_flow(
 }
 
 fn main() {
+    let buffer_kib = env::var("RR_BENCH_BUFFER_KIB")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(32);
+    eprintln!("buffer_bytes={} KiB", buffer_kib);
     let mut samples = 5_usize;
     let mut seed = 1_u64;
     let mut arguments = env::args().skip(1);

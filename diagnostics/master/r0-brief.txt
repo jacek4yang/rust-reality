@@ -1,0 +1,59 @@
+CURRENT HEAD / BRANCH / STACKED PR STATE
+- HEAD 2b6fca0 (local), branch perf/1.0-pipe-pool; stacked PRs: #17 (data plane,
+  274cca9), #18 (correctness closure, a59581d+), #19 (pipe pool + B1, eaff7b3).
+  All Draft, none merged. Work continues on perf/1.0-pipe-pool for now;
+  refactor phases get fresh stacked branches per phase.
+
+CORRECTNESS BASELINE THAT MUST NOT REGRESS
+- 427 tests (dev+release), nextest, fmt/clippy -D warnings, rustdoc -D warnings,
+  deny/audit, interop, low-RLIMIT, privileged sockhash 8/8+9/9, 30-min soak,
+  reload ceilings invariant, abort=RST observable, exact FD accounting,
+  DNS bounded, keepalive policy, per-direction half-close, zero steady-state
+  allocations, no backend replay after first byte, no raw byte before auth.
+
+CURRENT PERFORMANCE EVIDENCE (loopback, compiled Go origin, i3-8100)
+- Direct download c32/64: 1.3-1.65x Xray (held through pipepool head).
+- Direct upload: ~1.0x Xray. Framed upload c32/64: 0.94-0.98x (was 0.89-0.93
+  before buffered reads). Framed download: 0.95-1.00x.
+- Fallback: 0.76-0.81x Xray at c32/64 — the only real deficit (D8).
+- CPU/GiB raw Direct: 0.56s vs Xray 0.64s/GiB (earlier python-origin run).
+- PipePool: mechanism proven (pipe2 192→64/96 sessions), end-to-end neutral.
+
+ARCHITECTURAL DEBT / BOTTLENECK MAP (see ARCHITECTURE-REFRACTOR-PLAN.md §A)
+1. Fallback c32 splice-call cost vs Xray's 64KiB readv/writev (D8, surface
+   measurement running).
+2. Framed path ~46% AEAD (crypto-bound); remaining userspace costs already
+   minimized (copies/timers/zero-fills removed).
+3. Single hot-path generic relay abstraction is thin; specialization exists
+   per direction; no evidence yet of scheduler/lock contention.
+4. PipePool: PROVISIONAL (zero-cost, mechanism-proven, no e2e effect).
+
+TARGET ARCHITECTURE HYPOTHESIS
+- Keep one Tokio multi-thread runtime (no evidence for a custom topology).
+- Keep the direction-specialized raw relay; evaluate splice-vs-readv for
+  fallback-class workloads from the D8 surface.
+- Framed: Amdahl decomposition before any crypto change.
+
+FIRST REFACTOR EXPERIMENT
+- D8 decision surface (benches/relay_backends.rs extended: {1,32,512}MiB x
+  c{1,4,32,64} x {buffered,splice,automatic}, throughput + CPU/GiB + ctx
+  switches + RSS), running now; then fallback end-to-end A/B (splice on/off)
+  and perf attribution.
+
+FALSIFICATION CONDITION
+- If splice CPU/GiB <= buffered at c32/c64 on the raw surface, D8's
+  "splice-call cost explains the fallback gap" is FALSIFIED and fallback
+  investigation moves to scheduling/origin mechanics, not backends.
+- If splice loses BOTH throughput and CPU/GiB at c32/c64, the fallback path
+  stops preferring splice for such sessions with a measured criterion.
+
+FILES EXPECTED TO CHANGE
+- benches/relay_backends.rs (done, 2b6fca0), scripts/ (A/B harnesses),
+  reports/, machine-readable/, ARCHITECTURE-REFRACTOR-PLAN.md,
+  PERFORMANCE-DECISION-LOG.md, IMPLEMENTATION-STATE.md; later: src/transport/*
+  only if the surface demands a backend change.
+
+MEASUREMENTS THAT WILL DECIDE KEEP/REVERT
+- Per-cell throughput + cpuUser/System ns + context switches, 3+ samples,
+  randomized order; fallback end-to-end c32/c64 vs Xray with splice on/off;
+  perf attribution on any crossover cell.
