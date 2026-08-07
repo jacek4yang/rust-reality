@@ -170,5 +170,9 @@ RustCrypto 提供者，没有其他行为差异。
 
 ## 许可证
 
-v1.0.0 未附带 `LICENSE` 文件；补充许可证已列为发布后续工作。依赖许可证由
-`deny.toml` 约束。
+本仓库采用双重许可，可任选其一：
+
+- Apache License 2.0 版（[LICENSE-APACHE](LICENSE-APACHE)）
+- MIT 许可证（[LICENSE-MIT](LICENSE-MIT)）
+
+第三方依赖保留其各自许可证；`deny.toml` 将其约束在宽松许可证白名单内。

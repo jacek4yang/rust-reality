@@ -195,5 +195,10 @@ other behavioral change.
 
 ## License
 
-No `LICENSE` file ships with v1.0.0; adding one is tracked as release
-follow-up. Dependency licenses are constrained by `deny.toml`.
+Licensed under either of:
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT License ([LICENSE-MIT](LICENSE-MIT))
+
+at your option. Third-party dependencies retain their own licenses;
+`deny.toml` constrains them to a permissive allow-list.

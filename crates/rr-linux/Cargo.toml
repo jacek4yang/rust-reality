@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.96"
 description = "Bounded Linux kernel relay backends isolated from the rust-reality protocol crate"
+license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
