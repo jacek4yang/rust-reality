@@ -50,7 +50,7 @@ pub struct RuntimeConfig {
     /// limit when possible, relaxes the descriptor safety headroom from
     /// `limit/16` to `limit/10`, and runs a bounded memory-pressure monitor
     /// that pauses new setup work before the kernel or the cgroup OOM killer
-    /// is reached. See `docs/dedicated-resource-mode.md`.
+    /// is reached. See `docs/configuration.md#dedicated-resource-mode`.
     #[serde(default)]
     pub resource_mode: ResourceMode,
 }
