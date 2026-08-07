@@ -110,7 +110,20 @@ impl ReplayCache {
     /// Rejects duplicates, exhausted global capacity, allocation failure, and
     /// unrepresentable monotonic deadlines.
     pub fn reserve(&self, hello: &ClientHello) -> Result<ReplayReservation, ReplayError> {
-        self.reserve_key_at(ReplayKey::from_client_hello(hello), Instant::now())
+        self.reserve_at(hello, Instant::now())
+    }
+
+    /// Reserves with the TTL anchored at `now`.
+    ///
+    /// The acceptor passes the instant its handshake deadline is computed
+    /// from, so the pending reservation cannot expire before that deadline:
+    /// both are the same duration measured from one instant.
+    pub(crate) fn reserve_at(
+        &self,
+        hello: &ClientHello,
+        now: Instant,
+    ) -> Result<ReplayReservation, ReplayError> {
+        self.reserve_key_at(ReplayKey::from_client_hello(hello), now)
     }
 
     /// Removes expired pending and committed entries and returns the removal count.
@@ -380,6 +393,26 @@ mod tests {
         ));
         assert_eq!(cache.entry_count(), 0);
         assert!(cache.reserve_key_at(replay_key(7), now).is_ok());
+    }
+
+    #[test]
+    fn a_client_finished_just_before_the_deadline_commits() {
+        // The acceptor anchors the pending reservation TTL and the handshake
+        // deadline at one shared instant with the same duration, so any
+        // ClientFinished the deadline admits must still find its reservation
+        // alive. A reservation expiring earlier than the deadline killed
+        // authenticated sessions with ReservationLost.
+        let cache = test_cache(1);
+        let started = Instant::now();
+        let mut reservation = cache
+            .reserve_key_at(replay_key(9), started)
+            .expect("first handshake must reserve");
+        let handshake_deadline = started + Duration::from_millis(100);
+        reservation
+            .commit_at(handshake_deadline - Duration::from_millis(1))
+            .expect("a ClientFinished accepted before the handshake deadline must commit");
+        drop(reservation);
+        assert_eq!(cache.entry_count(), 1);
     }
 
     #[test]

@@ -37,7 +37,10 @@ pub struct FixedFdReserve {
     pub runtime: u64,
     /// Resolver descriptors held by uncancellable blocking lookups.
     pub resolver: u64,
-    /// The emergency reserve descriptor held open on `/dev/null`.
+    /// The emergency reserve descriptors held open on `/dev/null`.
+    ///
+    /// Every listener task holds one for its lifetime, so the reserve scales
+    /// with the listener count rather than assuming a single accept loop.
     pub emergency: u64,
 }
 
@@ -63,7 +66,7 @@ impl FixedFdReserve {
             logger: Self::STANDARD_STREAMS + Self::LOGGER_SINK,
             runtime: Self::RUNTIME_DESCRIPTORS,
             resolver: Self::RESOLVER_DESCRIPTORS,
-            emergency: 1,
+            emergency: listeners,
         }
     }
 
@@ -157,7 +160,10 @@ impl FdBudgetPlan {
         theoretical_peak: u64,
         headroom_policy: FdHeadroomPolicy,
     ) -> Result<Self, FdBudgetError> {
-        let planned_soft = if soft_limit == 0 || soft_limit > MAXIMUM_PLANNED_SOFT_LIMIT {
+        // A measured soft limit of zero admits no descriptors at all; planning
+        // it against the finite ceiling would invent capacity the process does
+        // not have. Only an unlimited or absurd limit is capped.
+        let planned_soft = if soft_limit > MAXIMUM_PLANNED_SOFT_LIMIT {
             MAXIMUM_PLANNED_SOFT_LIMIT
         } else {
             soft_limit
@@ -334,6 +340,38 @@ mod tests {
             "an unlimited limit must not produce an unbounded admission pool"
         );
         assert!(!plan.is_clamped());
+    }
+
+    #[test]
+    fn a_zero_soft_limit_is_refused_rather_than_planned_as_unlimited() {
+        let error = derive(0, 1_048_576, 128)
+            .expect_err("a zero soft limit admits no descriptors and must not start");
+        assert!(
+            matches!(
+                error,
+                FdBudgetError::LimitTooLow {
+                    soft_limit: 0,
+                    required,
+                    ..
+                } if required > 0
+            ),
+            "a zero limit is the impossible case, not the unlimited one: {error}"
+        );
+    }
+
+    #[test]
+    fn the_emergency_reserve_scales_with_the_listener_count() {
+        // Every listener task holds one emergency reserve descriptor for its
+        // lifetime, so the reserve is one per listener, not one per process.
+        let one = FixedFdReserve::new(1);
+        let four = FixedFdReserve::new(4);
+        assert_eq!(one.emergency, 1);
+        assert_eq!(four.emergency, 4);
+        assert_eq!(
+            four.total() - one.total(),
+            6,
+            "three more listeners add three sockets and three reserve descriptors"
+        );
     }
 
     #[test]

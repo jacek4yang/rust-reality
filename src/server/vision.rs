@@ -1062,8 +1062,10 @@ struct BoundaryBytes {
 /// Runs one independent directional raw relay at a Direct boundary.
 ///
 /// A benign peer-teardown race (`BrokenPipe`, `ConnectionReset`, or the raw
-/// stage's idle-policy `TimedOut`) closes the direction cleanly with its
-/// accumulated stats instead of failing the whole session; errors from the
+/// stage's idle-policy `TimedOut` on an untouched ledger) closes the
+/// direction cleanly with its accumulated stats instead of failing the whole
+/// session; a liveness timeout after bytes moved aborts both sockets and
+/// arrives as `ConnectionAborted`, failing the session. Errors from the
 /// framed and authentication phases never reach here.
 async fn run_directional(
     context: &SessionContext<'_>,
@@ -1195,11 +1197,14 @@ async fn run_handoff(
 /// Returns whether a raw-stage I/O error is a benign peer-teardown race.
 ///
 /// A reset or broken pipe once the raw relay owns the sockets means the peer
-/// tore the connection down mid-transfer. An idle `TimedOut` is the relay's
-/// own liveness policy ending a stalled direction — the same clean teardown
-/// from the session's perspective, never a transport failure. In all three
-/// cases the session's accumulated counts stay valid and must not be
-/// suppressed by a session-level relay error.
+/// tore the connection down mid-transfer. An idle `TimedOut` reaching here
+/// never moved a byte: the relay reclassifies a liveness timeout that
+/// truncated a live transfer as `ConnectionAborted` after resetting both
+/// sockets, so a `TimedOut` is always the relay's own liveness policy ending
+/// a stalled, untouched direction — a clean teardown from the session's
+/// perspective, never a transport failure. In all three cases the session's
+/// accumulated counts stay valid and must not be suppressed by a
+/// session-level relay error.
 fn is_benign_teardown(error: &io::Error) -> bool {
     matches!(
         error.kind(),
@@ -1801,7 +1806,7 @@ mod tests {
 
     use super::{
         BoundaryBytes, NestedTlsDetector, PaddingDecision, SessionContext, VisionHandler,
-        is_benign_teardown, is_tls13_server_hello, length_u64, run_directional,
+        VisionSessionError, is_benign_teardown, is_tls13_server_hello, length_u64, run_directional,
     };
     use crate::{
         config::{
@@ -3331,20 +3336,16 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn an_idle_raw_direction_closes_cleanly_with_its_stats() {
-        // The raw stage's idle policy ends a stalled direction with TimedOut;
-        // the session must treat that like any other benign teardown — clean
-        // DirectionStats, never a session error.
+        // The raw stage's idle policy ends a stalled direction that never
+        // moved a byte with TimedOut; the session must treat that like any
+        // other benign teardown — clean DirectionStats, never a session error.
         let relay = TcpRelay::new(&RelayPolicy::default(), FdBudget::new(4_096))
             .expect("relay policy must compile");
         let handoff = DirectHandoff::new();
-        let (mut sender, source) = tcp_pair().await;
+        let (_sender, source) = tcp_pair().await;
         let (sink, _receiver) = tcp_pair().await;
         let (source_reader, _source_writer) = source.into_split();
         let (_sink_reader, sink_writer) = sink.into_split();
-        sender
-            .write_all(b"stall")
-            .await
-            .expect("the prefix must land");
 
         let stats = timeout(
             TEST_TIMEOUT,
@@ -3366,9 +3367,56 @@ mod tests {
         )
         .await
         .expect("the idle direction must end within the test timeout")
-        .expect("an idle timeout must close the direction cleanly");
-        drop(sender);
+        .expect("an idle timeout on an untouched ledger must close cleanly");
         assert!(stats.direct);
         assert_eq!(stats.bytes, 3);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_liveness_timeout_after_moved_bytes_fails_the_session() {
+        // Once the raw relay moved bytes, a liveness timeout truncates the
+        // peer direction's tail: the relay resets both sockets and reports
+        // the abort as ConnectionAborted, so the session must fail rather
+        // than record a clean teardown.
+        let relay = TcpRelay::new(&RelayPolicy::default(), FdBudget::new(4_096))
+            .expect("relay policy must compile");
+        let handoff = DirectHandoff::new();
+        let (mut sender, source) = tcp_pair().await;
+        let (sink, _receiver) = tcp_pair().await;
+        let (source_reader, _source_writer) = source.into_split();
+        let (_sink_reader, sink_writer) = sink.into_split();
+        sender
+            .write_all(b"stall")
+            .await
+            .expect("the prefix must land");
+
+        let result = timeout(
+            TEST_TIMEOUT,
+            run_directional(
+                &SessionContext {
+                    timeout: Duration::from_millis(200),
+                    handoff: &handoff,
+                    relay: &relay,
+                },
+                Direction::Uplink,
+                source_reader,
+                sink_writer,
+                BoundaryBytes {
+                    total: 3,
+                    direct_at: 3,
+                },
+                Instant::now(),
+            ),
+        )
+        .await
+        .expect("the stalled direction must end within the test timeout");
+        drop(sender);
+        let error = result
+            .err()
+            .expect("a timeout that truncated a live transfer must fail the session");
+        let VisionSessionError::Relay(source) = &error else {
+            panic!("the abort must surface as a relay error: {error}");
+        };
+        assert_eq!(source.kind(), io::ErrorKind::ConnectionAborted);
     }
 }

@@ -78,14 +78,26 @@ pub struct ProductionServer {
 ///
 /// Every term is a configured bound, and the sum is deliberately pessimistic:
 /// it assumes every connection simultaneously holds an inbound socket, an
-/// outbound socket, and that every splice relay is armed at once. The number
-/// is used only to decide whether to warn about clamping; it never raises the
-/// admission budget.
+/// outbound socket, that every splice relay is armed at once, and that the
+/// pipe pool retains its full keep count of drained pipes afterwards. The
+/// number is used only to decide whether to warn about clamping; it never
+/// raises the admission budget.
 fn theoretical_fd_peak(config: &Config) -> u64 {
     let connections = u64::from(config.policy.resource_governor.max_connections);
     let splice = u64::from(config.policy.relay.max_splice_relays)
         .saturating_mul(u64::from(crate::runtime::UNITS_SPLICE_RELAY));
-    connections.saturating_mul(2).saturating_add(splice)
+    // A pooled pipe holds its two descriptors past the relay that created it,
+    // so the pool's retention is steady-state demand the peak must include.
+    let pool_retention = if config.policy.relay.splice && config.policy.relay.pipe_pool {
+        u64::from(config.policy.relay.max_pooled_pipes)
+            .saturating_mul(u64::from(crate::runtime::UNITS_SPLICE_DIRECTION))
+    } else {
+        0
+    };
+    connections
+        .saturating_mul(2)
+        .saturating_add(splice)
+        .saturating_add(pool_retention)
 }
 
 /// Everything the startup resource derivation decided, before any listener
@@ -1574,7 +1586,7 @@ mod tests {
         time,
     };
 
-    use super::{ProductionServer, RuntimeUpdateError};
+    use super::{ProductionServer, RuntimeUpdateError, theoretical_fd_peak};
     use crate::{
         config::{
             DirectBarrierConfig, GenerateConfigInput, InboundConfig, NxrInboundConfig,
@@ -1597,6 +1609,38 @@ mod tests {
                 .clients[0]
                 .flow,
             VISION_FLOW
+        );
+    }
+
+    #[test]
+    fn the_theoretical_peak_includes_pipe_pool_retention() {
+        let generated = generated_config(8443);
+        let mut config = generated.config().clone();
+        config.policy.relay.splice = true;
+        config.policy.relay.pipe_pool = true;
+        config.policy.relay.max_splice_relays = 4;
+        config.policy.relay.max_pooled_pipes = 8;
+        let connections = u64::from(config.policy.resource_governor.max_connections) * 2;
+
+        assert_eq!(
+            theoretical_fd_peak(&config),
+            connections + 4 * 4 + 8 * 2,
+            "armed splice relays and the pipes the pool retains are both demand"
+        );
+
+        config.policy.relay.pipe_pool = false;
+        assert_eq!(
+            theoretical_fd_peak(&config),
+            connections + 4 * 4,
+            "a disabled pool retains nothing"
+        );
+
+        config.policy.relay.pipe_pool = true;
+        config.policy.relay.splice = false;
+        assert_eq!(
+            theoretical_fd_peak(&config),
+            connections + 4 * 4,
+            "without splice there is no pool to retain pipes"
         );
     }
 

@@ -301,7 +301,12 @@ impl RealityAcceptor {
             }
         };
         drop(crypto_permit);
-        let replay = match self.replay.reserve(&hello) {
+        // One instant anchors both the replay reservation TTL and the
+        // handshake deadline: they are the same duration, so a ClientFinished
+        // accepted anywhere up to the deadline still finds its reservation
+        // alive and can commit.
+        let handshake_started = Instant::now();
+        let replay = match self.replay.reserve_at(&hello, handshake_started.into_std()) {
             Ok(replay) => replay,
             Err(_) => {
                 return self
@@ -309,7 +314,7 @@ impl RealityAcceptor {
                     .await;
             }
         };
-        let handshake_deadline = Instant::now()
+        let handshake_deadline = handshake_started
             .checked_add(self.handshake_timeout)
             .ok_or(RealityAcceptError::HandshakeWriteTimeout)?;
         let mut cover = self

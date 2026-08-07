@@ -186,7 +186,7 @@ impl TcpRelay {
                     // short EOF. Pre-first-byte declines never reach here.
                     let _ignored = rr_linux::socket::abort_linger(source.as_ref().as_raw_fd());
                     let _ignored = rr_linux::socket::abort_linger(destination.as_ref().as_raw_fd());
-                    return Err(error);
+                    return Err(classify_abort(error));
                 }
                 run => run?,
             };
@@ -296,7 +296,7 @@ impl TcpRelay {
                     // short EOF. Pre-first-byte declines never reach here.
                     let _ignored = rr_linux::socket::abort_linger(inbound.as_raw_fd());
                     let _ignored = rr_linux::socket::abort_linger(outbound.as_raw_fd());
-                    return Err(error);
+                    return Err(classify_abort(error));
                 }
                 run => run?,
             };
@@ -419,6 +419,21 @@ fn directional_selection_order(request: BackendRequest) -> &'static [RelayBacken
             &[RelayBackend::Splice, RelayBackend::Buffered]
         }
         BackendRequest::Explicit(RelayBackend::Buffered) => &[RelayBackend::Buffered],
+    }
+}
+
+/// Reclassifies a liveness timeout that truncated a live transfer.
+///
+/// An idle timeout before the first byte is a clean teardown, and callers may
+/// treat it as one. Once the ledger has moved bytes, the timeout aborts both
+/// sockets with RST; surfacing it as `TimedOut` would let the session layer
+/// mistake a truncated transfer for a clean idle close, so the abort is
+/// reported as `ConnectionAborted` with the original error as its payload.
+fn classify_abort(error: io::Error) -> io::Error {
+    if error.kind() == io::ErrorKind::TimedOut {
+        io::Error::new(io::ErrorKind::ConnectionAborted, error)
+    } else {
+        error
     }
 }
 
@@ -2012,6 +2027,10 @@ mod tests {
 
     /// Drives one directional relay against a peer that sends a prefix and
     /// then stalls without ever closing, returning the relay's error.
+    ///
+    /// The prefix touches the transfer ledger, so the liveness timeout is a
+    /// true abort: RST on both sockets and `ConnectionAborted`, never the
+    /// clean `TimedOut` an untouched direction produces.
     async fn run_stalled_direction(
         relay: &TcpRelay,
         request: BackendRequest,
@@ -2041,6 +2060,61 @@ mod tests {
         outcome.expect_err("a stalled peer must fail the relay")
     }
 
+    /// Asserts that a mid-transfer liveness abort reports `ConnectionAborted`
+    /// while preserving the original `TimedOut` as its payload.
+    fn assert_timeout_abort(error: &io::Error) {
+        assert_eq!(
+            error.kind(),
+            io::ErrorKind::ConnectionAborted,
+            "a timeout that truncated a live transfer is an abort, not a clean close"
+        );
+        let payload = error
+            .get_ref()
+            .and_then(|payload| payload.downcast_ref::<io::Error>())
+            .expect("the abort must preserve the original error as its payload");
+        assert_eq!(payload.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_idle_direction_without_any_byte_stays_a_clean_timeout() {
+        let relay = TcpRelay::new(
+            &RelayPolicy {
+                buffer_bytes: 4 * 1024,
+                max_pooled_buffers: 2,
+                max_splice_relays: 0,
+                max_relay_memory_bytes: u64::MAX,
+                splice: false,
+                pipe_pool: true,
+                max_pooled_pipes: 8,
+            },
+            FdBudget::new(4_096),
+        )
+        .expect("relay policy must compile");
+        let (_sender, relay_source) = tcp_pair().await;
+        let (relay_sink, _receiver) = tcp_pair().await;
+        let (source_reader, _source_writer) = relay_source.into_split();
+        let (_sink_reader, sink_writer) = relay_sink.into_split();
+
+        let outcome = time::timeout(
+            Duration::from_secs(2),
+            relay.relay_direction(
+                source_reader,
+                sink_writer,
+                RelayDirection::Uplink,
+                BackendRequest::Explicit(RelayBackend::Buffered),
+                Some(Duration::from_millis(200)),
+            ),
+        )
+        .await
+        .expect("an idle direction must end well within two seconds");
+        let error = outcome.expect_err("an idle direction must fail the relay");
+        assert_eq!(
+            error.kind(),
+            io::ErrorKind::TimedOut,
+            "an untouched ledger means nothing was truncated: the timeout stays clean"
+        );
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn a_stalled_directional_buffered_relay_times_out_and_returns_its_permit() {
         let relay = TcpRelay::new(
@@ -2063,7 +2137,7 @@ mod tests {
             Duration::from_millis(200),
         )
         .await;
-        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_timeout_abort(&error);
         assert_eq!(
             relay.buffers.inner.permits.available_permits(),
             2,
@@ -2083,7 +2157,7 @@ mod tests {
             Duration::from_millis(200),
         )
         .await;
-        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_timeout_abort(&error);
         assert!(
             budget.in_use() <= u64::from(crate::runtime::UNITS_SPLICE_DIRECTION),
             "on the timeout path the drained pipe may be retained within the keep count"

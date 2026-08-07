@@ -232,19 +232,24 @@ impl FdBudget {
 
     /// Reserves `units`, waiting for capacity when the budget is exhausted.
     ///
-    /// The wait is a bounded `Notify` wakeup, never a poll loop. The waiter is
-    /// registered *before* the final capacity re-check, so a release that lands
-    /// between the failed attempt and the wait cannot be missed.
+    /// The wait is a bounded `Notify` wakeup, never a poll loop. `Notify`
+    /// registers a `Notified` lazily at its first poll and `notify_waiters`
+    /// stores no permit, so the waiter is registered eagerly with `enable`
+    /// *before* the final capacity re-check: a release landing between the
+    /// failed attempt and the wait then still wakes it.
     pub async fn acquire(&self, units: u32) -> FdPermit {
         loop {
             if let Some(permit) = self.try_acquire(units) {
                 return permit;
             }
-            // Registered as a waiter only after a failed attempt and before the
-            // recheck, so a release between them still lands on the recheck and
-            // the release path pays the Notify cost only when someone listens.
+            // Counted as a waiter only after a failed attempt, and registered
+            // with the Notify before the recheck, so a release between them
+            // either lands on the recheck or on the registered waiter. The
+            // release path pays the Notify cost only when someone listens.
             self.inner.waiters.fetch_add(1, Ordering::Relaxed);
             let notified = self.inner.released.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             if let Some(permit) = self.try_acquire(units) {
                 self.inner.waiters.fetch_sub(1, Ordering::Relaxed);
                 return permit;
@@ -571,6 +576,32 @@ mod tests {
         drop(held);
         assert_eq!(budget.in_use(), 0);
         assert_eq!(budget.underflows(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rapid_acquire_release_cycles_never_strand_a_waiter() {
+        // Regression test for the lost-wakeup race: `Notify` registers a
+        // `Notified` lazily at first poll and `notify_waiters` stores no
+        // permit, so without eager registration a release landing between the
+        // capacity re-check and the first poll could be missed. Thousands of
+        // rapid cycles with an active waiter must always terminate.
+        for _ in 0..4_000 {
+            let budget = FdBudget::new(1);
+            let held = budget.try_acquire(1).expect("capacity must admit");
+            let waiter = {
+                let budget = budget.clone();
+                tokio::spawn(async move { budget.acquire(1).await })
+            };
+            tokio::task::yield_now().await;
+            drop(held);
+            let permit = tokio::time::timeout(std::time::Duration::from_secs(5), waiter)
+                .await
+                .expect("a waiter must never be stranded by a missed release")
+                .expect("the waiting task must not panic");
+            assert_eq!(budget.in_use(), 1);
+            drop(permit);
+            assert_eq!(budget.in_use(), 0);
+        }
     }
 
     #[test]
