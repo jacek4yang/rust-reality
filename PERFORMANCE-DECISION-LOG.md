@@ -23,12 +23,27 @@ result, security review, keep/revert, confidence.
 ## New hypotheses registered
 
 - D8: fallback c32 gap = splice(2) call cost at availability-limited chunk sizes
-  (2 syscalls per <=32KiB vs readv+writev 2 per 64KiB, plus pipe middleman
-  copies) vs Xray's plain readv/writev fallback. NOT to be patched with a
-  short-flow classifier without new evidence. Candidates: bigger effective
-  splice chunks when availability is high (measure first), buffered-backend
-  buffer sizing research, or accepting splice only for long sessions based on
-  a measured (not guessed) criterion.
+  vs Xray's readv/writev fallback. VERDICT: FALSIFIED (2026-08-07).
+  Evidence chain (all retained in benchmarks/final/):
+  1. relay-surface.jsonl (270 samples): splice beats buffered on throughput
+     AND CPU/GiB at EVERY concurrency (2.2-2.8 vs 1.7-2.1 GiB/s; 420-480 vs
+     560-640 ms/GiB at c32/c64) — splice is not the per-byte problem.
+  2. relay-surface-64k.jsonl: buffered-64KiB is +2-12% over 32KiB but still
+     below splice everywhere — D8a falsified on the raw surface.
+  3. fallback-ab (clean harness, warn-level logging, direct-to-listener):
+     splice 3278 vs Xray 3134 MiB/s at c32/32MiB (1.05x), 4197 vs 4036 at
+     c32/512MiB (1.04x), task-clock 865ms vs 1173ms (-26%) and 10.0s vs 15.3s
+     (-35%) — fallback is AT PARITY OR AHEAD of Xray with materially lower
+     CPU. The earlier 'gap' was dominated by the matrix harness's debug-level
+     per-connection logging (JSON events serialize on the stderr lock per
+     connection; Xray logged at warning).
+  4. PipePool A/B at the same workload: pool 3290 vs no-pool 3273 MiB/s
+     (+0.5%, noise; CPU -3.8%) — pool is end-to-end neutral at these rates,
+     mechanism proven; retention stays PROVISIONAL per its cheap price.
+  Residual note: per-connection debug logging is a real cost at high churn
+  (stderr lock) — acceptable because it is debug-only and off in production.
+  No backend change made; splice remains preferred everywhere; buffered stays
+  the decline fallback at 32 KiB (64 KiB showed no e2e benefit).
 
   FALSIFICATION PLAN (per override, 2026-08-07):
   - Causal model: at high concurrency, per-call availability limits splice

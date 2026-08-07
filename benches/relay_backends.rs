@@ -236,8 +236,13 @@ fn main() {
         .unwrap_or_else(|_| "unknown".to_owned());
     let rustc = option_env!("RUSTC_VERSION").unwrap_or("unknown");
 
+    let workers = env::var("RR_BENCH_WORKERS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(2);
+    eprintln!("workers={workers}");
     let runtime = Builder::new_multi_thread()
-        .worker_threads(2)
+        .worker_threads(workers)
         .enable_all()
         .build()
         .expect("benchmark runtime must build");

@@ -108,3 +108,20 @@
 - tool failures: none. CI still blocked by GitHub queue starvation (retried 3x).
 - next permitted stage: B1 hygiene (fd-budget release waiter guard), then
   reports/archive/stacked PR.
+
+
+# STAGE: D8 falsification (2026-08-07, branch perf/1.0-pipe-pool)
+
+- surface bench extended (2b6fca0): sizes {1,32,512}MiB x c{1,4,32,64} x
+  {buffered,splice,auto} with cpuUser/System + ctx switches per sample;
+  workers/buffer-size parameterized.
+- D8 verdict: FALSIFIED. splice wins the raw surface outright; buffered-64K
+  does not beat splice; the fallback gap was a debug-logging artifact of the
+  matrix harness — clean-harness fallback splice = 1.04-1.05x Xray with
+  26-35% lower task-clock (benchmarks/final/fallback-ab*, relay-surface*).
+- PipePool: neutral end-to-end (+0.5% throughput, -3.8% CPU at c32 fallback);
+  retention remains provisional-but-justified (zero-cost, proven mechanism).
+- artifacts: benchmarks/final/relay-surface.jsonl, relay-surface-64k.jsonl,
+  fallback-ab/, fallback-ab512/, fallback-pool-ab/.
+- next: R1+ (framed AEAD decomposition, setup-rate harness) or close out with
+  reports/archive/PR updates.
