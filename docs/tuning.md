@@ -29,7 +29,7 @@ Every load-bearing statement carries a confidence label:
 If you just rented a VPS and want a defensible starting point, use the
 tuned profile for your machine class:
 
-| Your VPS | `runtime.resourceMode` | Set `policy.resourceGovernor.maxConnections` **and** `policy.directBarrier.maxConcurrent` both to | Basis (MEASURED-LOCAL) |
+| Your VPS | `runtime.resourceMode` | Set `policy.resourceGovernor.maxConnections` to | Basis (MEASURED-LOCAL) |
 | --- | --- | --- | --- |
 | 1 vCPU / 1 GiB ("1C1G") | `dedicated` | `8000` | 12000 sessions verified clean at ~694 MiB cgroup peak; shedding began ≈14000; 8000 ≈ 57% of the shed point |
 | 1–2 vCPU / 2 GiB | `dedicated` | `16000` | 24000 verified clean at 1.12 GiB cgroup peak; recommendation = 2/3 of verified |
@@ -41,12 +41,15 @@ MEASURED-LOCAL with `oom_kill=0` in every run.
 
 Two rules before anything else:
 
-1. **The defaults are safe on every machine above, but they cap you at 2048
-   live sessions.** `policy.directBarrier.maxConcurrent` defaults to 2048,
-   and a barrier permit is held for the whole session lifetime — session
-   2049 is fast-rejected even though `maxConnections` defaults to 16384
-   (VERIFIED, measured). Raising real session capacity means raising both
-   values together, then restarting: both are restart-required (see §10).
+1. **The defaults are safe on every machine above, and the session ceiling
+   is `maxConnections`.** `policy.resourceGovernor.maxConnections` defaults
+   to 16384. `policy.directBarrier.maxConcurrent` (default 2048) bounds
+   concurrent Direct dial attempts only: the barrier permit is released as
+   soon as the dial completes. (v1.0.0 held the permit for the whole session
+   lifetime, so session 2049 was fast-rejected even though `maxConnections`
+   defaulted to 16384 — issue #26, fixed after v1.0.0.) Raising real session
+   capacity means raising `maxConnections`, then restarting: it is a
+   restart-required setting (see §10).
 2. **A policy block, when present, must be complete.** The validator
    rejects a `policy.resourceGovernor` object that contains only the keys
    you changed (VERIFIED with `check`). Edit values inside the full block
@@ -93,13 +96,15 @@ min( admission ceiling,  FD budget,  memory budget,  CPU-for-your-SLO,  network 
 Whichever term is smallest wins, and raising any other term changes
 nothing. Concretely:
 
-- **Admission ceiling** — the smaller of
-  `policy.resourceGovernor.maxConnections` (default 16384) and
-  `policy.directBarrier.maxConcurrent` (default 2048). The barrier permit is
-  held for the entire session lifetime, not just during connect, so with
-  default policy the *effective* ceiling is 2048 sessions regardless of
-  `maxConnections` (VERIFIED, measured: session 2049 is fast-rejected with
-  `maxConnections` left at 16384).
+- **Admission ceiling** —
+  `policy.resourceGovernor.maxConnections` (default 16384).
+  `policy.directBarrier.maxConcurrent` (default 2048) bounds concurrent
+  Direct dial attempts, not sessions: the barrier permit is released when
+  the dial completes, so an established session consumes no barrier
+  capacity. (v1.0.0 held the permit for the whole session, which made 2048
+  the effective session ceiling regardless of `maxConnections` — issue #26,
+  fixed after v1.0.0; the measured "session 2049 fast-rejected" plateau was
+  recorded against that behavior.)
 - **FD budget** — the server derives a descriptor budget at startup from
   `RLIMIT_NOFILE`, minus fixed reserves and safety headroom, and reports it
   once as `descriptor_budget_report` (§6). Steady state costs ≈2 FDs per
@@ -133,17 +138,25 @@ constraint in those tests — so do not read them as per-class ceilings.
 Validated profiles, all in `dedicated` mode inside cgroup v2 scopes, with
 `oom_kill=0` in every run (MEASURED-LOCAL):
 
-| Class | Default policy | Tuned profile (`maxConnections` = `directBarrier.maxConcurrent`) | Verified clean | First shedding/pressure | Peak cgroup memory at verified level |
+| Class | Default policy | Tuned profile (`maxConnections`) | Verified clean | First shedding/pressure | Peak cgroup memory at verified level |
 | --- | --- | --- | --- | --- | --- |
-| 1C1G | safe, ≤2048 sessions | **8000** | 12000 | ≈14000 | 694 MiB @ 12000 |
-| 1C2G | safe, ≤2048 sessions | **16000** | 24000 | none observed | 1.12 GiB @ 24000 |
-| 2C2G | safe, ≤2048 sessions | **16000** | 24000 | none observed | 1.12 GiB @ 24000 |
-| 2C4G | safe, ≤2048 sessions | **24000** | 24000 | none observed | 1.12 GiB @ 24000 |
-| 4C4G | safe, ≤2048 sessions | **24000** | 24000 | none observed | 1.13 GiB @ 24000 |
-| 4C8G | safe, ≤2048 sessions | **24000** | 24000 | none observed | 1.12 GiB @ 24000 |
+| 1C1G | safe, ≤16384 sessions | **8000** | 12000 | ≈14000 | 694 MiB @ 12000 |
+| 1C2G | safe, ≤16384 sessions | **16000** | 24000 | none observed | 1.12 GiB @ 24000 |
+| 2C2G | safe, ≤16384 sessions | **16000** | 24000 | none observed | 1.12 GiB @ 24000 |
+| 2C4G | safe, ≤16384 sessions | **24000** | 24000 | none observed | 1.12 GiB @ 24000 |
+| 4C4G | safe, ≤16384 sessions | **24000** | 24000 | none observed | 1.13 GiB @ 24000 |
+| 4C8G | safe, ≤16384 sessions | **24000** | 24000 | none observed | 1.12 GiB @ 24000 |
 
 Notes on reading this table:
 
+- **The profiles were validated against v1.0.0,** where
+  `directBarrier.maxConcurrent` had to be raised alongside `maxConnections`
+  because the barrier permit was held for the whole session (issue #26,
+  fixed after v1.0.0). The permit is now dial-phase only, so the tuned
+  profile changes `maxConnections` alone; the default `maxConcurrent` of
+  2048 concurrent dial attempts is far above the measured ≈800 conn/s setup
+  churn and needs no change. The verified session counts themselves are
+  unaffected by the fix.
 - **"Verified clean"** means the full load level completed with no
   admission shedding, no pressure events, and no OOM. **Recommendations are
   deliberately below the breaking point**: 8000 ≈ 57% of the 1C1G shed
@@ -278,7 +291,7 @@ memory ≈ 33 MiB (server + geo assets)
 **When memory is tight, do not lower `bufferBytes` first.** A smaller
 buffer buys almost nothing (the pool ceiling, not the buffer size,
 dominates: 4096 × 32 KiB = 128 MiB) and costs throughput on high-BDP paths.
-Reduce concurrency (`maxConnections`/`directBarrier.maxConcurrent`) or the
+Reduce concurrency (`maxConnections`) or the
 pool ceilings (`maxPooledBuffers`, `maxPooledPipes`) instead, and keep the
 validator formula ≤ `maxRelayMemoryBytes`.
 
@@ -384,8 +397,8 @@ events). After every reload, confirm which of the two you got.
 **Worked example — complete tuned policy for 1C1G.** This block, embedded
 in a generated standalone config with `"runtime": {"resourceMode":
 "dedicated"}`, passes `check --config` (VERIFIED against the v1.0.0
-validator). Only `maxConnections` and `maxConcurrent` differ from the
-defaults; the rest is shown because a partial policy object is rejected.
+validator). Only `maxConnections` differs from the defaults; the rest is
+shown because a partial policy object is rejected.
 
 ```json
 "policy": {
@@ -403,7 +416,7 @@ defaults; the rest is shown because a partial policy object is rejected.
     "fallbackTimeoutMs": 120000
   },
   "directBarrier": {
-    "maxConcurrent": 8000,
+    "maxConcurrent": 2048,
     "maxPerSecond": 4096
   },
   "relay": {
@@ -761,7 +774,7 @@ and file). The operational set (VERIFIED names):
 | `connection_completed` | Session finished normally (debug only) | high volume at debug | `log.level` | — |
 | `connection_closed` | Connection closed (debug only) | high volume at debug | `log.level` | — |
 | `connection_rejected` | Rejected, with fixed `reason` category | background noise on a public port | — | rate spikes → probe/attack or misconfig |
-| `admission_limited` | The listener-level admission governor refused a new connection (`resource`: `connections`) | **can be the limits working correctly** | `maxConnections` | see below |
+| `admission_limited` | A bounded admission resource refused new work (`resource`: `connections`, `direct_connections`, …) | **can be the limits working correctly** | `maxConnections`, `directBarrier` | see below |
 | `descriptor_pressure_changed` | FD usage crossed a watermark | only under load | FD budget | `ls /proc/PID/fd \| wc -l` vs `fd_effective_budget` |
 | `resource_pressure_changed` | Combined FD/memory pressure state changed | only under load | profile vs class | `memory.current` vs `memory.max` (§17) |
 
@@ -770,15 +783,22 @@ connection flood are the governor protecting already-established sessions.
 Note where each limit actually surfaces (VERIFIED against v1.0 source):
 
 - `admission_limited` with `resource: "connections"` — the listener-level
-  connection governor. Other limit categories currently surface as
-  `connection_rejected` with a fixed `reason`, not as `admission_limited`:
-- `reason: "outbound"` at ~2048 sessions with default policy → the
-  session-lifetime barrier permit (`directBarrier.maxConcurrent`); raise it
-  together with `maxConnections` if the machine profile allows (§3, §4).
+  connection governor. With `resource: "direct_connections"` — the
+  direct-dial barrier: too many concurrent Direct dial attempts or dials
+  per second, or critical pressure pausing new dials. The barrier never
+  interrupts established sessions. Other limit categories surface as
+  `connection_rejected` with a fixed `reason`:
 - `reason: "resource_limit"` → an admission pool (handshakes, fallbacks,
-  crypto work) or the FD budget is exhausted; correlate with
+  crypto work), the FD budget, or a direct-dial barrier denial; the
+  barrier denial always logs the adjacent `admission_limited` event with
+  `resource: "direct_connections"`. Correlate with
   `descriptor_pressure_changed` to tell FD pressure (§6) from governor
   pressure.
+- `reason: "outbound"` → the selected route could not be completed
+  (unreachable destination, SOCKS5/NXR failure). In v1.0.0 this reason
+  also fired at ~2048 sessions with default policy, because the barrier
+  permit was then held for the whole session (issue #26, fixed after
+  v1.0.0); a barrier denial now reports `resource_limit` instead.
 - `reason: "authentication"` → bad credentials, replayed nonce, or clock
   skew — a traffic/attack signal, not a capacity signal (§8, §20).
 - `descriptor_pressure_changed` / `resource_pressure_changed` → FD or
@@ -946,22 +966,24 @@ A 1C1G in `standard` mode ran 20000+ sessions, sat pinned at
 transitions while clients saw random fast-rejects. In validation, standard
 mode on 1 GiB survived 23000 sessions but with zero headroom — alive, not
 healthy. Fix applied: `dedicated` mode plus the 1C1G profile
-(`maxConnections`/`maxConcurrent` 8000). Shedding stopped; peak cgroup
+(`maxConnections` 8000). Shedding stopped; peak cgroup
 memory at 12000 sessions measured 694 MiB, leaving real margin. Lesson:
 "it didn't crash" is not "it fits" — check `memory.current` headroom,
 not just survival.
 
-**Case 5 — the invisible 2048-session ceiling.**
+**Case 5 — the invisible 2048-session ceiling (v1.0.0, historical).**
 An operator raised `maxConnections` to 16384 for a growing 2C2G node and
 still watched clients rejected at ~2000 concurrent sessions:
 `connection_rejected` with `reason: "outbound"` (measured in validation:
 rejection #2049 onward, FD count flat at exactly 2×2048+15). The default
-`directBarrier.maxConcurrent` of 2048 — whose permit is held for the whole
-session — was the effective ceiling (§3). Fix: set both knobs to 16000 and
-restart (both are restart-required, §10). Verified clean to 24000 sessions
-at 1.12 GiB on 2 GiB. Lesson: after any capacity change, watch
-`connection_rejected`'s `reason` field and the FD plateau — the binding
-limit is not always the knob you edited.
+`directBarrier.maxConcurrent` of 2048 was the effective ceiling because
+v1.0.0 held the barrier permit for the whole session (issue #26). The
+permit is now released when the dial completes, so that plateau cannot
+recur: a barrier denial surfaces as `admission_limited` with
+`resource: "direct_connections"` plus `connection_rejected` with
+`reason: "resource_limit"` during a dial burst instead. The lesson stands:
+after any capacity change, watch `connection_rejected`'s `reason` field and
+the FD plateau — the binding limit is not always the knob you edited.
 
 **Case 6 — the comparison that wasn't.**
 During the project's own benchmark program, a fallback A/B appeared to
