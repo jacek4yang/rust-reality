@@ -72,27 +72,33 @@ treat it as a floor.
 
 Scratch bench: `../artifacts/crypto-bench/` (not a production change).
 AES-128-GCM seal (production cipher suite), reused cipher state,
-256 MiB per cell, i3-8100. OpenSSL leg additionally pays per-call EVP
+256 MiB per cell, i3-8100. The OpenSSL leg additionally pays per-call EVP
 context creation + key schedule, so its numbers are **conservative**.
+The production build provably uses the AES-NI/PCLMULQDQ backends of the
+`aes`/`polyval` crates (profile symbols `aes::backends::x86_aes`,
+`polyval::backend::intrinsics`), so the RustCrypto leg is representative.
 
-| record size | RustCrypto aes-gcm 0.11 (in-place) | OpenSSL 3.5.6 EVP (out-of-place) | ratio |
-|---|---|---|---|
-| 1 KiB | 1.81 GiB/s (1.85 c/B) | 1.03 GiB/s (3.26 c/B) | 0.57× |
-| 4 KiB | 1.88 GiB/s (1.79 c/B) | 2.54 GiB/s (1.32 c/B) | 1.35× |
-| 8 KiB | 2.01 GiB/s (1.67 c/B) | 3.40 GiB/s (0.99 c/B) | 1.69× |
-| 16 KiB | 2.02 GiB/s (1.66 c/B) | 4.12 GiB/s (0.81 c/B) | **2.04×** |
-| 32 KiB | 2.03 GiB/s (1.65 c/B) | 4.58 GiB/s (0.73 c/B) | 2.26× |
+| record size | RustCrypto aes-gcm 0.11 (in-place) | OpenSSL 3.5.6 EVP (out-of-place) | ring 0.17 (in-place) | best ratio |
+|---|---|---|---|---|
+| 1 KiB | 1.81 GiB/s (1.85 c/B) | 1.03 GiB/s (3.25 c/B) | 3.56 GiB/s (0.94 c/B) | ring 1.97× |
+| 4 KiB | 1.98 GiB/s (1.69 c/B) | 2.60 GiB/s (1.29 c/B) | 4.73 GiB/s (0.71 c/B) | ring 2.39× |
+| 8 KiB | 2.01 GiB/s (1.67 c/B) | 3.37 GiB/s (1.00 c/B) | 4.99 GiB/s (0.67 c/B) | ring 2.48× |
+| 16 KiB | 2.03 GiB/s (1.65 c/B) | 4.08 GiB/s (0.82 c/B) | 5.16 GiB/s (0.65 c/B) | **ring 2.54×** |
+| 32 KiB | 2.03 GiB/s (1.65 c/B) | 4.57 GiB/s (0.73 c/B) | 5.22 GiB/s (0.64 c/B) | ring 2.57× |
 
-Both legs run on AES-NI + PCLMULQDQ hardware; the delta is OpenSSL's
-stitched/interleaved AES-GCM code, not a feature-detection miss.
+All three legs run on AES-NI + PCLMULQDQ hardware; the delta is
+implementation quality (BoringSSL-derived stitched assembly in ring,
+OpenSSL's interleaved AVX code), not a feature-detection miss.
 Production records are large (Vision packs frames up to 16 KiB), so the
-8–32 KiB rows are the relevant ones. First AES-256-GCM run showed the
-same shape (2.9× at 16 KiB), so the gap is not cipher-specific.
+8–32 KiB rows are the relevant ones. ring wins at every record size,
+does in-place sealing (the exact shape the record layer needs), and is
+a crates.io dependency with no system library link — unlike OpenSSL.
 
 VERDICT: **SUPPORTED** — a provider change has a real ceiling:
-AEAD ≈2.0× at 16 KiB → end-to-end framed ceiling ≈1.35× download /
-1.25× upload (MODELED). The micro delta must still be proven to
-transfer end-to-end; FFI/record-boundary overheads can shrink it.
+AEAD ≈2.5× at 16 KiB via ring → end-to-end framed ceiling ≈1.45×
+download / 1.31× upload (MODELED: 1/(0.49+0.51/2.54), 1/(0.611+0.387/2.54)).
+The micro delta must still be proven to transfer end-to-end; record
+boundaries and nonce handling can shrink it.
 
 ## 4. What this rules out
 
@@ -103,13 +109,13 @@ transfer end-to-end; FFI/record-boundary overheads can shrink it.
   topology stays untouched per directive.
 - AEAD micro-tuning of the current RustCrypto path (unrolling, block
   batching within the crate's API): the crate already dispatches to
-  AES-NI intrinsics; the 2× delta is implementation-level, not a flag.
+  AES-NI intrinsics; the 2×+ delta is implementation-level, not a flag.
 
 ## 5. Decision inputs
 
 MEASURED BOTTLENECK #1: AEAD — ≈51% download / ≈39% upload of framed CPU.
-Theoretical max gain: 1.35×/1.25× end-to-end via a ≈2× provider (OpenSSL
-EVP); 2.04×/1.63× at infinite AEAD speed.
+Theoretical max gain: 1.45×/1.31× end-to-end via ring (≈2.5× AEAD);
+2.04×/1.63× at infinite AEAD speed.
 
 MEASURED BOTTLENECK #2: kernel boundary — ≈47% download / ≈57% upload.
 Not attackable for framed traffic without changing the security
@@ -118,17 +124,20 @@ architecture; it is the floor that caps any AEAD win.
 MEASURED BOTTLENECK #3: none — every remaining category is <2%.
 
 FIRST REFACTOR (proposed, needs product-level go-ahead): an integration
-experiment wiring OpenSSL EVP AES-128-GCM behind an internal switch into
-the hand-written TLS 1.3 record layer, keeping RustCrypto as the default.
+experiment swapping the record layer's AES-128-GCM from RustCrypto
+aes-gcm to ring behind an internal switch, keeping RustCrypto as the
+default. ring also covers ChaCha20-Poly1305 if the same swap proves out.
 
 FALSIFICATION CONDITION: end-to-end framed loopback (clean symmetric
 harness) shows <1.10× download or <1.05× upload, or any
 correctness/constant-time/interoperability gate fails.
 
-EXPECTED END-TO-END GAIN: 1.15–1.35× framed throughput depending on
+EXPECTED END-TO-END GAIN: 1.15–1.45× framed throughput depending on
 direction, bounded by the ceilings above.
 
-OPEN PRODUCT QUESTION: adding an OpenSSL link dependency changes the
-supply chain (currently pure RustCrypto; SECURITY.md documents this).
-That decision is flagged for the user before any production integration;
-the isolated evidence stands regardless.
+OPEN PRODUCT QUESTION: swapping RustCrypto for ring changes the crypto
+supply chain (ring embeds BoringSSL-derived C/asm; SECURITY.md currently
+documents a pure-RustCrypto stack; deny/audit policy and the hand-written
+TLS boundary must be reviewed). That decision is flagged for the user
+before any production integration; the isolated evidence stands
+regardless.

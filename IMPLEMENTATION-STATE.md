@@ -143,10 +143,12 @@
   combined. Reports: FRAMED-AMDAHL-REPORT.md, FRAMED-HOT-PATH-MAP.md,
   COPY-MAP.md (zero avoidable userspace copies on the framed path).
 - isolated crypto bench (../artifacts/crypto-bench/, AES-128-GCM):
-  OpenSSL EVP 4.12 vs RustCrypto 2.02 GiB/s at 16KiB records (2.04x,
-  conservative). D9 registered as SUPPORTED-not-integrated; Amdahl ceiling
-  1.35x download / 1.25x upload. Production integration requires a product
-  decision on the OpenSSL link dependency — flagged to user, not started.
+  ring 5.16 / OpenSSL EVP 4.08 / RustCrypto 2.03 GiB/s at 16KiB records
+  (ring 2.54x, in-place; OpenSSL conservative). D9 registered as
+  SUPPORTED-not-integrated; Amdahl ceiling 1.45x download / 1.31x upload
+  via ring. Production integration is a crypto supply-chain product
+  decision (ring embeds BoringSSL C/asm; SECURITY.md documents pure
+  RustCrypto) — flagged to user, not started.
 - next: user decision on the OpenSSL dependency; otherwise framed work
   concludes at parity-is-target and the branch moves to remaining R-phases
   (D7 sockhash reachability, memory density, final evidence).
