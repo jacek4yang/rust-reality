@@ -11,6 +11,33 @@ use crate::protocol::vless::{Address, Destination};
 
 const MAX_PRE_RESOLVED_IPS: usize = 64;
 
+/// Returns a socket address when `host` is a numeric IP literal, so callers
+/// can dial it directly without entering the blocking system resolver.
+/// Real hostnames return `None` and keep asynchronous resolution.
+pub(crate) fn literal_socket_addr(host: &str, port: u16) -> Option<SocketAddr> {
+    host.parse::<IpAddr>()
+        .ok()
+        .map(|ip| SocketAddr::new(ip, port))
+}
+
+/// Connects to `host:port`, skipping the blocking resolver when `host` is a
+/// numeric IP literal. Real hostnames keep asynchronous system resolution.
+pub(crate) async fn connect_host(host: &str, port: u16) -> io::Result<TcpStream> {
+    match literal_socket_addr(host, port) {
+        Some(address) => TcpStream::connect(address).await,
+        None => TcpStream::connect((host, port)).await,
+    }
+}
+
+/// Connects to a combined `host:port` target, skipping the blocking resolver
+/// when the target is a numeric socket address literal.
+pub(crate) async fn connect_target(target: &str) -> io::Result<TcpStream> {
+    match target.parse::<SocketAddr>() {
+        Ok(address) => TcpStream::connect(address).await,
+        Err(_) => TcpStream::connect(target).await,
+    }
+}
+
 /// Establishes outbound TCP connections for authorized VLESS requests.
 #[derive(Clone, Copy, Debug)]
 pub struct DestinationConnector {
@@ -64,9 +91,7 @@ impl DestinationConnector {
                     TcpStream::connect(addresses.as_slice()).await
                 }
 
-                Address::Domain(domain) => {
-                    TcpStream::connect((domain.as_str(), destination.port())).await
-                }
+                Address::Domain(domain) => connect_host(domain.as_str(), destination.port()).await,
 
                 Address::Ipv6(address) => {
                     let socket_addr = SocketAddr::new(IpAddr::V6(*address), destination.port());
@@ -138,12 +163,95 @@ impl From<io::Error> for DestinationConnectError {
 
 #[cfg(test)]
 mod tests {
-    use std::{net::Ipv4Addr, time::Duration};
+    use std::{
+        net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+        time::Duration,
+    };
 
     use tokio::net::TcpListener;
 
-    use super::DestinationConnector;
+    use super::{DestinationConnector, connect_target, literal_socket_addr};
     use crate::protocol::vless::{Address, Destination};
+
+    #[test]
+    fn classifies_numeric_literals_without_resolver() {
+        assert_eq!(
+            literal_socket_addr("127.0.0.1", 443),
+            Some(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 443))
+        );
+        assert_eq!(
+            literal_socket_addr("::1", 8443),
+            Some(SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 8443))
+        );
+        // Real hostnames (and near-miss strings) must keep resolver behavior.
+        assert_eq!(literal_socket_addr("localhost", 443), None);
+        assert_eq!(literal_socket_addr("example.com", 443), None);
+        assert_eq!(literal_socket_addr("127.0.0.1.", 443), None);
+        assert_eq!(literal_socket_addr("256.0.0.1", 443), None);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn connects_to_domain_holding_ipv4_literal_without_resolver() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("loopback listener should bind");
+
+        let listener_addr = listener
+            .local_addr()
+            .expect("listener should have a local address");
+
+        // A numeric string carried as a VLESS domain must connect directly.
+        let destination = Destination::new(
+            Address::Domain("127.0.0.1".to_owned()),
+            listener_addr.port(),
+        );
+
+        let connector = DestinationConnector::new(Duration::from_secs(1));
+
+        let stream = connector
+            .connect(&destination)
+            .await
+            .expect("numeric literal domain should connect without resolution");
+
+        let (_server_stream, peer_addr) = listener
+            .accept()
+            .await
+            .expect("listener should accept connection");
+
+        assert_eq!(
+            stream
+                .local_addr()
+                .expect("client stream should have a local address"),
+            peer_addr
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn connects_combined_numeric_target_without_resolver() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("loopback listener should bind");
+
+        let listener_addr = listener
+            .local_addr()
+            .expect("listener should have a local address");
+
+        let stream = connect_target(&listener_addr.to_string())
+            .await
+            .expect("numeric host:port target should connect without resolution");
+
+        let (_server_stream, peer_addr) = listener
+            .accept()
+            .await
+            .expect("listener should accept connection");
+
+        assert_eq!(
+            stream
+                .local_addr()
+                .expect("client stream should have a local address"),
+            peer_addr
+        );
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn connects_to_ipv4_destination() {

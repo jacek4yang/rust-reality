@@ -406,7 +406,7 @@ async fn connect_nxr(
         .ok_or(OutboundConnectError::NxrTimeout)?;
     let mut stream = time::timeout_at(
         deadline,
-        TcpStream::connect((settings.address.as_ref(), settings.port)),
+        super::connector::connect_host(settings.address.as_ref(), settings.port),
     )
     .await
     .map_err(|_| OutboundConnectError::NxrTimeout)?
@@ -439,7 +439,7 @@ async fn connect_socks5(
         .ok_or(OutboundConnectError::SocksTimeout)?;
     let mut stream = time::timeout_at(
         deadline,
-        TcpStream::connect((settings.address.as_ref(), settings.port)),
+        super::connector::connect_host(settings.address.as_ref(), settings.port),
     )
     .await
     .map_err(|_| OutboundConnectError::SocksTimeout)?

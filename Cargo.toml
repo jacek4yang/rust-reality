@@ -30,6 +30,13 @@ ring = { version = "0.17.14", default-features = false, optional = true }
 schemars = "1.2.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+# sha2 0.11 removed the `asm`/`asm-aarch64` crate features together with the
+# sha2-asm backend (RustCrypto/hashes #542); backend selection moved to
+# RUSTFLAGS cfgs (`sha2_256_backend`, `sha2_512_backend`). The default build
+# already embeds runtime dispatch on x86_64: SHA-NI for SHA-256 and AVX2 for
+# SHA-512/384. There is no accelerated SHA-256 path in 0.11 for x86_64 CPUs
+# without SHA-NI, so no feature change can speed that host up; do not re-add
+# an `asm` feature here (unknown features are a hard error).
 sha2 = { version = "0.11.0", default-features = false, features = ["zeroize"] }
 subtle = { version = "2.6.1", default-features = false }
 tokio = { version = "1.52.3", default-features = false, features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
