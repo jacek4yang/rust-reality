@@ -20,36 +20,69 @@ Xray-compatible client
   -> destination
 ```
 
-## Why rust-reality
+## Highlights
 
-- Xray 26.7.28-compatible public VLESS + REALITY + Vision data path.
-- Exact and certificate-style one-label REALITY server-name patterns such as
-  `*.lmu.edu`; clients still send a concrete SNI.
-- Authentication is committed only after a valid TLS 1.3 ClientFinished.
-- Authentication failures are forwarded byte-for-byte to the configured cover
-  target; no synthetic proxy response identifies the service.
-- Explicit per-UUID routing groups with ordered, first-match rules.
-- Xray-compatible GeoIP, GeoSite, and `ext:file:tag` assets with bounded HTTPS
-  download, validation, caching, and atomic last-known-good updates.
-- Direct, authenticated SOCKS5, blackhole, and low-overhead NXR outbounds.
-- Bounded connections, handshakes, fallbacks, crypto work, replay state,
-  buffers, DNS results, and Linux splice resources.
-- Strict JSON configuration, atomic SIGHUP reload, bounded logging, built-in
-  key generation, destination probing, self-test, schema, and benchmarks.
-- Stable Rust, no `unsafe` in the crate, no panic/unwrap in the production data
-  path, and reproducible tagged release archives.
+- Xray-core 26.7.28-compatible public VLESS + REALITY + Vision data path,
+  gated end to end with an unmodified Xray client.
+- Directional Vision Direct: each direction switches to a raw kernel relay
+  (`splice` preferred) the moment it is authenticated, with split-brain made
+  structurally impossible.
+- Framed record batching, zero steady-state per-record allocations, and zero
+  avoidable userspace copies on every data path.
+- ring (BoringSSL-derived) AES-128-GCM record AEAD by default; a pure-Rust
+  RustCrypto fallback build is one flag away and continuously tested.
+- Bounded everything: connections, handshakes, fallbacks, crypto work, replay
+  state, buffers, DNS results, descriptors, and splice resources — with
+  pressure hysteresis instead of collapse.
+- Exact and one-label wildcard REALITY server names, per-UUID routing groups,
+  Xray-compatible GeoIP/GeoSite assets with atomic last-known-good updates.
+- Strict JSON configuration, atomic SIGHUP reload, secret-free bounded
+  logging, key generation, destination probing, self-test, and schema from
+  one binary.
+- Stable Rust, no `unsafe` in the crate, no panic/unwrap in the production
+  data path, reproducible tagged release archives.
 
-## Release status and scope
+## Performance vs Xray-core
 
-The `0.1.x` series is a pre-1.0 production preview. The public protocol has an
-end-to-end interoperability gate using an unmodified Xray-core 26.7.28 client,
-but operators must review the threat model, firewall policy, cover target, and
-resource limits for their own VPS.
+The v1.0.0 comparison against Xray-core 26.7.28 is frozen from the
+release-candidate matrix. **TBD-final-matrix** — numbers frozen from the
+v1.0.0 release-candidate matrix; do not quote this section until the
+coordinator publishes the final table.
 
-Supported release target: Linux x86_64 with a modern kernel. The public inbound
-does not support plain VLESS, TLS-only VLESS, WebSocket, QUIC, UDP proxying, or
-non-Vision flow. NXR is not a public protocol and does not encrypt payload after
-its one-time authenticated request.
+| cell | rust-reality | Xray-core | ratio |
+|---|---:|---:|---:|
+| TBD-final-matrix | TBD | TBD | TBD |
+
+Until then, the canonical development samples and the measured evidence
+behind the design (framed AEAD decomposition, ring provider A/B, setup-rate
+model, fallback A/B) are documented in [docs/performance.md](docs/performance.md)
+and [docs/benchmarks.md](docs/benchmarks.md). All numbers are same-host
+loopback measurements on a disclosed host; none of them is an
+Internet-throughput promise.
+
+## Architecture
+
+One Tokio multi-thread runtime; one task per connection, splitting into two
+independent direction tasks after authentication. The framed phase runs
+outer-TLS record I/O with Vision padding; at an authenticated Direct boundary
+each direction independently transitions to a raw relay — bilateral
+socket-reuniting `splice` when both directions arrive, directional `splice`
+otherwise, bounded buffered userspace as the decline fallback. Fallback
+(camouflage) traffic to the cover target uses the same unified,
+FD-accounted relay. See [docs/architecture.md](docs/architecture.md) for the
+lifecycle, the hot-path topology, the descriptor-budget model, and the
+observability events, and [docs/protocol.md](docs/protocol.md) for the
+protocol stack itself.
+
+## Supported scope
+
+Supported release target: Linux x86_64 with a modern kernel. The public
+inbound does not support plain VLESS, TLS-only VLESS, WebSocket, QUIC, UDP
+proxying, or non-Vision flow. NXR is not a public protocol and does not
+encrypt payload after its one-time authenticated request. The public protocol
+carries an end-to-end interoperability gate using an unmodified Xray-core
+26.7.28 client; operators must still review the threat model, firewall
+policy, cover target, and resource limits for their own VPS.
 
 ## Quick start
 
@@ -59,7 +92,7 @@ then verify all assets before installation:
 
 ```shell
 sha256sum --check SHA256SUMS
-tar -xzf rust-reality-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf rust-reality-v1.0.0-x86_64-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 ```
 
@@ -84,93 +117,63 @@ The generated JSON contains a UUID, private REALITY key, short ID, and a
 direct-routing policy. The client-facing REALITY public key is written to
 standard error so the private server configuration can be captured separately.
 Protect both outputs and replace the example target with a destination that
-passes `probe-dest` from the deployment host.
+passes `probe-dest` from the deployment host. The full walkthrough, including
+the line/landing NXR topology, is in
+[docs/getting-started.md](docs/getting-started.md).
 
-For a line/landing deployment, generate one independent NXR key and use it on
-both nodes:
-
-```shell
-rust-reality node-keygen
-rust-reality config generate line --help
-rust-reality config generate landing --help
-```
-
-The NXR port must be allowed only from the line node's fixed source IP at the
-landing firewall.
-
-## Configuration and routing
+## Configuration
 
 Configuration is strict camelCase JSON. Unknown fields, missing required
 references, duplicate UUIDs/tags, unsafe URLs, unbounded limits, plain VLESS,
-and unsupported acceleration switches are rejected before listeners are bound.
+and removed acceleration switches are rejected before listeners are bound.
 
-Routing evaluates:
+Routing evaluates `routing.globalRules` in order, then the authenticated
+UUID's `routing.users[].rules` in order, then that user group's
+`defaultOutbound`. Conditions inside one rule are conjunctive across
+categories and alternative values inside a category are ORed. See the
+complete [configuration reference](docs/configuration.md) for every field,
+default, constraint, matcher syntax, reload behavior, and the dedicated
+resource mode.
 
-1. `routing.globalRules` in order;
-2. the authenticated UUID's `routing.users[].rules` in order;
-3. that user group's `defaultOutbound`.
+## Deployment
 
-Conditions inside one rule are conjunctive across categories and alternative
-values inside a category are ORed. Domain, GeoSite, IP, GeoIP, port, network,
-and public inbound-tag conditions are supported. See the complete
-[configuration reference](docs/configuration.md) for every field, default,
-constraint, matcher syntax, and reload behavior.
+`serve`/`run` stay in the foreground for systemd; SIGINT/SIGTERM shut down
+gracefully; SIGHUP validates and atomically publishes a compatible
+configuration while established connections keep their generation. Install
+and review [`deploy/rust-reality.service`](deploy/rust-reality.service) for a
+hardened systemd baseline, and follow
+[docs/deployment.md](docs/deployment.md) for verification, service accounts,
+firewall rules, upgrades, and rollback.
 
-## Operations
+## Security
 
-- `serve` and `run` stay in the foreground for systemd or another supervisor.
-- SIGINT/SIGTERM performs graceful shutdown.
-- SIGHUP validates and atomically publishes a compatible configuration; active
-  connections retain their prior immutable generation.
-- Geo assets are conditionally revalidated on their configured interval. A
-  failed download or parse keeps the last good snapshot.
-- Logs can go to stderr, journald, or a size/count/total-byte-bounded file set.
-  Secrets and full configuration values are excluded from structured logs.
-
-Install and review [`deploy/rust-reality.service`](deploy/rust-reality.service)
-for a hardened systemd baseline.
-
-## Command line
-
-The single binary provides:
-
-```text
-serve, run, check, self-test, probe-dest
-config generate, config format, schema
-uuid, x25519, mldsa65, node-keygen
-benchmark
-```
-
-See the [CLI reference](docs/cli.md) for all arguments, ranges, defaults,
-outputs, signals, and examples.
+Read the [threat model](docs/threat-model.md) before exposing a listener, and
+the [security policy](SECURITY.md) for supported versions, private
+vulnerability reporting, and the cryptographic boundary — including the ring
+AEAD provider's documented zeroization tradeoff and the
+`--no-default-features` RustCrypto fallback build. The program cannot stop
+upstream volumetric DDoS from saturating a VPS link. NXR must be
+firewall-restricted, and its post-authentication bytes are plaintext. Never
+publish real private keys, UUIDs, NXR PSKs, credentials, packet captures,
+access tokens, or deployment configuration in an issue or log.
 
 ## Documentation
 
 | Guide | English | 简体中文 |
 | --- | --- | --- |
 | Documentation index | [English](docs/index.md) | [简体中文](docs/index.zh-CN.md) |
+| Getting started | [English](docs/getting-started.md) | [简体中文](docs/getting-started.zh-CN.md) |
 | CLI reference | [English](docs/cli.md) | [简体中文](docs/cli.zh-CN.md) |
 | Configuration reference | [English](docs/configuration.md) | [简体中文](docs/configuration.zh-CN.md) |
 | Deployment | [English](docs/deployment.md) | [简体中文](docs/deployment.zh-CN.md) |
-| Threat model | [English](docs/threat-model.md) | [简体中文](docs/threat-model.zh-CN.md) |
+| Protocol overview | [English](docs/protocol.md) | [简体中文](docs/protocol.zh-CN.md) |
+| Architecture | [English](docs/architecture.md) | [简体中文](docs/architecture.zh-CN.md) |
+| Performance | [English](docs/performance.md) | [简体中文](docs/performance.zh-CN.md) |
 | Benchmarks | [English](docs/benchmarks.md) | [简体中文](docs/benchmarks.zh-CN.md) |
+| Threat model | [English](docs/threat-model.md) | [简体中文](docs/threat-model.zh-CN.md) |
 | Security policy | [English](SECURITY.md) | [简体中文](SECURITY.zh-CN.md) |
 
-Protocol audit, architecture decisions, and Xray interoperability evidence are
-also linked from the documentation index.
-
-## Performance
-
-The built-in `benchmark` command emits machine-readable, bounded protocol
-measurements. Criterion suites cover VLESS decoding, Vision framing, and
-routing. A controlled same-host Xray comparison is recorded in
-[`docs/benchmarks.md`](docs/benchmarks.md).
-
-These measurements are not Internet-speed promises. Latency, loss, congestion,
-CPU, kernel, NIC, destination, and client behavior must be controlled before
-drawing deployment conclusions.
-
-## Build and test
+## Build and development
 
 The pinned toolchain is declared in `rust-toolchain.toml`:
 
@@ -185,15 +188,12 @@ cargo install cargo-audit --version 0.22.2 --locked
 The quality gate includes formatting, strict Clippy, dependency policy,
 RustSec audit, documentation, nextest, release-mode tests, doc tests, and
 benchmark harness execution. Security CI additionally runs parser fuzz smoke
-tests and scheduled sanitizer jobs.
+tests and scheduled sanitizer jobs. The default build uses ring for the
+TLS 1.3 AES-128-GCM record AEAD; `cargo build --release
+--no-default-features` selects the pure-Rust RustCrypto provider with no
+other behavioral change.
 
-## Security
+## License
 
-Read the [threat model](docs/threat-model.md) before exposing a listener. The
-program cannot stop upstream volumetric DDoS from saturating a VPS link. NXR
-must be firewall-restricted, and its post-authentication bytes are plaintext.
-
-Report sensitive findings through GitHub private vulnerability reporting as
-described in [`SECURITY.md`](SECURITY.md). Never publish real private keys,
-UUIDs, NXR PSKs, credentials, packet captures, access tokens, or deployment
-configuration in an issue or log.
+No `LICENSE` file ships with v1.0.0; adding one is tracked as release
+follow-up. Dependency licenses are constrained by `deny.toml`.
