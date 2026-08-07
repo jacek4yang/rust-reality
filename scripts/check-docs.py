@@ -24,6 +24,7 @@ REQUIRED_PAIRS = (
     ("docs/performance.md", "docs/performance.zh-CN.md"),
     ("docs/benchmarks.md", "docs/benchmarks.zh-CN.md"),
     ("docs/threat-model.md", "docs/threat-model.zh-CN.md"),
+    ("docs/tuning.md", "docs/tuning.zh-CN.md"),
 )
 
 # Stable drift invariants learned from release documentation defects. Each is
