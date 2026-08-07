@@ -81,6 +81,25 @@ impl ApplicationWriteStats {
     }
 }
 
+/// A transport whose read side can fill several buffers in one operation.
+///
+/// The generic [`AsyncRead`] surface exposes only a single-buffer poll, while
+/// the batched downlink relay (experiment D11) needs one vectored read that
+/// lands in the disjoint plaintext regions of several record slots at once.
+/// Implementations perform one socket `readv` when possible; an
+/// implementation with buffered bytes may fill only the first non-empty
+/// buffer, which is correct but simply batches less for that one call.
+pub(crate) trait VectoredRead: AsyncRead + Unpin {
+    /// Reads into the given buffers in order, returning the total byte count.
+    ///
+    /// A return of `0` means end of stream, exactly like [`AsyncRead`]: every
+    /// buffer the batched relay passes is non-empty.
+    fn read_vectored<'buf>(
+        &'buf mut self,
+        buffers: &'buf mut [io::IoSliceMut<'buf>],
+    ) -> impl std::future::Future<Output = io::Result<usize>> + Send + 'buf;
+}
+
 /// Established TLS application I/O failed or received unsupported control traffic.
 #[derive(Debug)]
 pub enum TlsApplicationIoError {
@@ -638,6 +657,112 @@ where
         Ok(read)
     }
 
+    /// Batched variant of [`TlsApplicationWriter::write_application_read_from`]
+    /// (experiment D11): one vectored destination read fills up to
+    /// [`super::record::BATCHED_SLOT_COUNT`] record slots, each filled slot is
+    /// sealed in place with the shared [`Tls13RecordLayer::seal_filled`] logic
+    /// — one sequence increment per record, unchanged nonce/AAD semantics —
+    /// and the contiguous sealed prefix goes out in a single write. A full
+    /// batch therefore costs one read plus one write syscall for four records
+    /// instead of one of each per record. Wire format is unchanged: maximal
+    /// 16 KiB records except possibly the last, exactly today's
+    /// variable-length behavior, so record boundaries on the wire stay legal
+    /// TLS either way.
+    ///
+    /// Lazy growth bounds idle-connection memory: the connection starts on the
+    /// single-record buffer and only a completely-full record read — evidence
+    /// of a bulk flow — grows the buffer to the batched layout (once, via the
+    /// reserve-then-zero-fill discipline of the single-record path). The
+    /// buffer never shrinks back, and idle or small-flow connections never pay
+    /// the extra slots.
+    ///
+    /// Returns the number of plaintext bytes sealed; `0` means the peer
+    /// reached EOF and nothing was written. A short read mid-batch seals and
+    /// writes whatever was already filled, so an EOF that follows behaves
+    /// exactly like today's EOF path. One idle window covers the read and the
+    /// write, as in the single-record variant.
+    ///
+    /// # Errors
+    ///
+    /// Returns a record-protection, allocation, socket, or deadline error.
+    pub(crate) async fn write_application_read_from_batched<R>(
+        &mut self,
+        reader: &mut R,
+        timeout: Duration,
+    ) -> Result<usize, TlsApplicationIoError>
+    where
+        R: VectoredRead,
+    {
+        // Mode selection keys on capacity, not length: `seal_into` and
+        // `seal_assembled` clear the shared buffer, so a reduced length does
+        // not mean the batched layout was never allocated.
+        if self.write_record.capacity() < super::record::BATCHED_WIRE_CAPACITY {
+            let read = self.write_application_read_from(reader, timeout).await?;
+            if read == MAX_PLAINTEXT_LEN {
+                super::record::grow_batched_record_storage(&mut self.write_record)
+                    .map_err(TlsApplicationIoError::Record)?;
+            }
+            return Ok(read);
+        }
+        // A no-op in the steady state; restores the full batched length if an
+        // interleaved framed write cleared the buffer.
+        super::record::grow_batched_record_storage(&mut self.write_record)
+            .map_err(TlsApplicationIoError::Record)?;
+        self.idle
+            .reset(timeout)
+            .map_err(|_| TlsApplicationIoError::Timeout)?;
+        let read = {
+            let [first, second, third, fourth] =
+                super::record::batched_plaintext_regions(&mut self.write_record)
+                    .map_err(TlsApplicationIoError::Record)?;
+            let mut buffers = [
+                io::IoSliceMut::new(first),
+                io::IoSliceMut::new(second),
+                io::IoSliceMut::new(third),
+                io::IoSliceMut::new(fourth),
+            ];
+            self.idle
+                .guard(reader.read_vectored(&mut buffers))
+                .await
+                .map_err(idle_failure)?
+        };
+        if read == 0 {
+            return Ok(0);
+        }
+        let mut sealed_len = 0_usize;
+        let mut remaining = read;
+        for slot in 0..super::record::BATCHED_SLOT_COUNT {
+            if remaining == 0 {
+                break;
+            }
+            let filled = remaining.min(MAX_PLAINTEXT_LEN);
+            let start = slot * super::record::RECORD_SLOT_WIRE_CAPACITY;
+            let slot_slice = self
+                .write_record
+                .get_mut(start..start + super::record::RECORD_SLOT_WIRE_CAPACITY)
+                .ok_or(TlsApplicationIoError::Record(
+                    Tls13RecordError::InvalidLength,
+                ))?;
+            let record_len = self
+                .records
+                .seal_filled(ContentType::ApplicationData, filled, slot_slice)
+                .map_err(TlsApplicationIoError::Record)?;
+            sealed_len += record_len;
+            remaining -= filled;
+        }
+        let wire = self
+            .write_record
+            .get(..sealed_len)
+            .ok_or(TlsApplicationIoError::Record(
+                Tls13RecordError::InvalidLength,
+            ))?;
+        self.idle
+            .write_all(&mut self.io, wire)
+            .await
+            .map_err(idle_failure)?;
+        Ok(read)
+    }
+
     /// Encrypts one record whose plaintext is assembled in final AEAD storage.
     ///
     /// `assemble` receives exactly `plaintext_len` bytes inside the connection's
@@ -863,7 +988,7 @@ mod tests {
         io,
         pin::Pin,
         sync::{
-            Arc,
+            Arc, Mutex,
             atomic::{AtomicUsize, Ordering},
         },
         task::{Context, Poll},
@@ -872,10 +997,13 @@ mod tests {
 
     use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf, duplex};
 
-    use super::{TlsApplicationIo, TlsApplicationIoError};
+    use super::{TlsApplicationIo, TlsApplicationIoError, VectoredRead};
+    use crate::protocol::reality::tls13::record::{
+        BATCHED_SLOT_COUNT, BATCHED_WIRE_CAPACITY, RECORD_SLOT_WIRE_CAPACITY,
+    };
     use crate::protocol::reality::tls13::{
-        CipherSuite, ContentType, EstablishedTls, Tls13KeySchedule, Tls13RecordLayer,
-        TlsRecordReadErrorKind, read_tls_record,
+        CipherSuite, ContentType, EstablishedTls, MAX_PLAINTEXT_LEN, Tls13KeySchedule,
+        Tls13RecordLayer, TlsRecordReadErrorKind, read_tls_record,
     };
 
     const TIMEOUT: Duration = Duration::from_secs(1);
@@ -1312,5 +1440,395 @@ mod tests {
             TlsRecordReadErrorKind::RecordTooLarge
         ));
         assert_eq!(read.wire_prefix(), header);
+    }
+
+    /// Server-side TLS state plus the client layer that opens server records.
+    fn batched_writer_states() -> (EstablishedTls, Tls13RecordLayer) {
+        let suite = CipherSuite::Aes128GcmSha256;
+        let schedule = schedule(suite);
+        let secrets = schedule
+            .application_traffic_secrets(&suite.hash().digest(b"server finished transcript"))
+            .expect("application secrets must derive");
+        let layer = |secret| {
+            Tls13RecordLayer::new(
+                suite,
+                schedule
+                    .traffic_keys(secret)
+                    .expect("traffic keys must derive"),
+            )
+            .expect("record layer must initialize")
+        };
+        (
+            EstablishedTls::from_test_records(
+                suite,
+                layer(secrets.client()),
+                layer(secrets.server()),
+            ),
+            layer(secrets.server()),
+        )
+    }
+
+    /// Opens every record on the wire and returns the plaintexts in order.
+    fn open_wire_records(records: &mut Tls13RecordLayer, wire: &[u8]) -> Vec<Vec<u8>> {
+        let mut plaintexts = Vec::new();
+        let mut rest = wire;
+        while !rest.is_empty() {
+            let body_len = usize::from(u16::from_be_bytes([rest[3], rest[4]]));
+            let record_len = 5 + body_len;
+            let mut record = rest
+                .get(..record_len)
+                .expect("wire bytes must hold a whole record")
+                .to_vec();
+            let opened = records
+                .open_in_place(&mut record)
+                .expect("record must authenticate");
+            assert_eq!(opened.content_type(), ContentType::ApplicationData);
+            plaintexts.push(opened.plaintext().to_vec());
+            rest = &rest[record_len..];
+        }
+        plaintexts
+    }
+
+    /// A deterministic byte pattern that differs between test inputs.
+    fn patterned(seed: u8, len: usize) -> Vec<u8> {
+        (0..len)
+            .map(|index| seed.wrapping_add((index % 251) as u8))
+            .collect()
+    }
+
+    /// A destination replaying input through bounded reads, counting read calls.
+    struct ReplaySource {
+        input: Vec<u8>,
+        position: usize,
+        chunk: usize,
+        reads: usize,
+    }
+
+    impl ReplaySource {
+        fn new(input: Vec<u8>, chunk: usize) -> Self {
+            Self {
+                input,
+                position: 0,
+                chunk,
+                reads: 0,
+            }
+        }
+    }
+
+    impl AsyncRead for ReplaySource {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+            output: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            self.reads += 1;
+            let available = self.input.len().saturating_sub(self.position);
+            let length = available.min(output.remaining()).min(self.chunk);
+            output.put_slice(
+                self.input
+                    .get(self.position..self.position + length)
+                    .expect("replay window must exist"),
+            );
+            self.position += length;
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    impl VectoredRead for ReplaySource {
+        /// Fills the buffers in order, bounded by one chunk like a socket read.
+        async fn read_vectored<'buf>(
+            &'buf mut self,
+            buffers: &'buf mut [io::IoSliceMut<'buf>],
+        ) -> io::Result<usize> {
+            self.reads += 1;
+            let mut budget = self.chunk;
+            let mut total = 0;
+            for buffer in buffers.iter_mut() {
+                let available = self.input.len().saturating_sub(self.position);
+                let length = available.min(buffer.len()).min(budget);
+                if length > 0 {
+                    buffer[..length].copy_from_slice(
+                        self.input
+                            .get(self.position..self.position + length)
+                            .expect("replay window must exist"),
+                    );
+                    self.position += length;
+                    budget -= length;
+                    total += length;
+                }
+                if length < buffer.len() {
+                    break;
+                }
+            }
+            Ok(total)
+        }
+    }
+
+    /// A client-side sink capturing wire bytes and counting write calls.
+    #[derive(Clone, Default)]
+    struct RecordingSink {
+        output: Arc<Mutex<Vec<u8>>>,
+        writes: Arc<AtomicUsize>,
+    }
+
+    impl RecordingSink {
+        fn wire(&self) -> std::sync::MutexGuard<'_, Vec<u8>> {
+            self.output
+                .lock()
+                .expect("sink output must not be poisoned")
+        }
+
+        fn writes(&self) -> usize {
+            self.writes.load(Ordering::Relaxed)
+        }
+    }
+
+    impl AsyncRead for RecordingSink {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+            _output: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    impl AsyncWrite for RecordingSink {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+            buffer: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            self.writes.fetch_add(1, Ordering::Relaxed);
+            self.output
+                .lock()
+                .expect("sink output must not be poisoned")
+                .extend_from_slice(buffer);
+            Poll::Ready(Ok(buffer.len()))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn batched_downlink_seals_four_full_records_with_one_read_and_one_write() {
+        let (established, mut client_read) = batched_writer_states();
+        let sink = RecordingSink::default();
+        let application = TlsApplicationIo::new(sink.clone(), established);
+        let (_reader, mut writer) = application.into_split();
+
+        // Warm-up: one completely-full record read is the bulk-flow evidence
+        // that grows the batched buffer.
+        let warm = patterned(0x11, MAX_PLAINTEXT_LEN);
+        let mut source = ReplaySource::new(warm.clone(), usize::MAX);
+        let read = writer
+            .write_application_read_from_batched(&mut source, TIMEOUT)
+            .await
+            .expect("warm-up record must be relayed");
+        assert_eq!(read, MAX_PLAINTEXT_LEN);
+        assert_eq!(source.reads, 1);
+        assert_eq!(sink.writes(), 1);
+        assert!(writer.write_record.capacity() >= BATCHED_WIRE_CAPACITY);
+
+        // The next call must move four maximal records with one readv + one write.
+        let batch = patterned(0x77, BATCHED_SLOT_COUNT * MAX_PLAINTEXT_LEN);
+        let mut source = ReplaySource::new(batch.clone(), usize::MAX);
+        let read = writer
+            .write_application_read_from_batched(&mut source, TIMEOUT)
+            .await
+            .expect("batch must be relayed");
+        assert_eq!(read, BATCHED_SLOT_COUNT * MAX_PLAINTEXT_LEN);
+        assert_eq!(source.reads, 1, "one readv must fill the whole batch");
+        assert_eq!(sink.writes(), 2, "the batch must add exactly one write");
+        assert_eq!(
+            writer.records.records_used(),
+            1 + BATCHED_SLOT_COUNT as u64,
+            "the sequence must advance once per sealed record"
+        );
+
+        let plaintexts = {
+            let wire = sink.wire();
+            open_wire_records(&mut client_read, &wire)
+        };
+        assert_eq!(plaintexts.len(), 1 + BATCHED_SLOT_COUNT);
+        assert_eq!(plaintexts[0], warm);
+        for record in &plaintexts[1..] {
+            assert_eq!(record.len(), MAX_PLAINTEXT_LEN);
+        }
+        assert_eq!(plaintexts[1..].concat(), batch);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn batched_downlink_seals_a_partial_last_record() {
+        let (established, mut client_read) = batched_writer_states();
+        let sink = RecordingSink::default();
+        let application = TlsApplicationIo::new(sink.clone(), established);
+        let (_reader, mut writer) = application.into_split();
+
+        let warm = patterned(0x22, MAX_PLAINTEXT_LEN);
+        let mut source = ReplaySource::new(warm, usize::MAX);
+        writer
+            .write_application_read_from_batched(&mut source, TIMEOUT)
+            .await
+            .expect("warm-up record must be relayed");
+
+        let batch = patterned(0x55, 2 * MAX_PLAINTEXT_LEN + 100);
+        let mut source = ReplaySource::new(batch.clone(), usize::MAX);
+        let read = writer
+            .write_application_read_from_batched(&mut source, TIMEOUT)
+            .await
+            .expect("batch must be relayed");
+        assert_eq!(read, 2 * MAX_PLAINTEXT_LEN + 100);
+        assert_eq!(source.reads, 1);
+        assert_eq!(sink.writes(), 2);
+
+        let plaintexts = {
+            let wire = sink.wire();
+            open_wire_records(&mut client_read, &wire)
+        };
+        assert_eq!(plaintexts.len(), 4);
+        assert_eq!(plaintexts[1].len(), MAX_PLAINTEXT_LEN);
+        assert_eq!(plaintexts[2].len(), MAX_PLAINTEXT_LEN);
+        assert_eq!(plaintexts[3].len(), 100);
+        assert_eq!(plaintexts[1..].concat(), batch);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn short_read_seals_a_one_byte_record_without_growing() {
+        let (established, mut client_read) = batched_writer_states();
+        let sink = RecordingSink::default();
+        let application = TlsApplicationIo::new(sink.clone(), established);
+        let (_reader, mut writer) = application.into_split();
+
+        let mut source = ReplaySource::new(vec![0x7e], usize::MAX);
+        let read = writer
+            .write_application_read_from_batched(&mut source, TIMEOUT)
+            .await
+            .expect("short read must be relayed");
+        assert_eq!(read, 1);
+        assert_eq!(sink.writes(), 1);
+        assert_eq!(
+            writer.write_record.capacity(),
+            RECORD_SLOT_WIRE_CAPACITY,
+            "a short read must not grow the batched buffer"
+        );
+
+        let plaintexts = {
+            let wire = sink.wire();
+            open_wire_records(&mut client_read, &wire)
+        };
+        assert_eq!(plaintexts, [vec![0x7e]]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn eof_before_any_byte_writes_nothing() {
+        let (established, _client_read) = batched_writer_states();
+        let sink = RecordingSink::default();
+        let application = TlsApplicationIo::new(sink.clone(), established);
+        let (_reader, mut writer) = application.into_split();
+
+        let mut source = ReplaySource::new(Vec::new(), usize::MAX);
+        let read = writer
+            .write_application_read_from_batched(&mut source, TIMEOUT)
+            .await
+            .expect("EOF must be a clean zero");
+        assert_eq!(read, 0);
+        assert_eq!(sink.writes(), 0, "EOF must not write a record");
+        assert!(sink.wire().is_empty());
+        assert_eq!(writer.records.records_used(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn eof_after_a_full_record_flushes_then_reports_eof() {
+        let (established, mut client_read) = batched_writer_states();
+        let sink = RecordingSink::default();
+        let application = TlsApplicationIo::new(sink.clone(), established);
+        let (_reader, mut writer) = application.into_split();
+
+        let input = patterned(0x99, MAX_PLAINTEXT_LEN + 500);
+        let mut source = ReplaySource::new(input.clone(), usize::MAX);
+
+        let read = writer
+            .write_application_read_from_batched(&mut source, TIMEOUT)
+            .await
+            .expect("full record must be relayed");
+        assert_eq!(read, MAX_PLAINTEXT_LEN);
+
+        // The batched read now sees the 500-byte tail ahead of the EOF and
+        // must seal and write it like today's variable-length path.
+        let read = writer
+            .write_application_read_from_batched(&mut source, TIMEOUT)
+            .await
+            .expect("the partial tail must be relayed");
+        assert_eq!(read, 500);
+        assert_eq!(sink.writes(), 2);
+
+        // Only the following call observes EOF: zero bytes, nothing written.
+        let read = writer
+            .write_application_read_from_batched(&mut source, TIMEOUT)
+            .await
+            .expect("EOF must be a clean zero");
+        assert_eq!(read, 0);
+        assert_eq!(sink.writes(), 2, "EOF must not write a record");
+        assert_eq!(writer.records.records_used(), 2);
+
+        let plaintexts = {
+            let wire = sink.wire();
+            open_wire_records(&mut client_read, &wire)
+        };
+        assert_eq!(plaintexts.concat(), input);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn batched_buffer_grows_only_after_a_completely_full_read() {
+        let (established, _client_read) = batched_writer_states();
+        let sink = RecordingSink::default();
+        let application = TlsApplicationIo::new(sink.clone(), established);
+        let (_reader, mut writer) = application.into_split();
+
+        // Small flows stay on the single-record buffer forever.
+        for _ in 0..3 {
+            let mut source = ReplaySource::new(patterned(0x33, 100), usize::MAX);
+            let read = writer
+                .write_application_read_from_batched(&mut source, TIMEOUT)
+                .await
+                .expect("small read must be relayed");
+            assert_eq!(read, 100);
+            assert_eq!(
+                writer.write_record.capacity(),
+                RECORD_SLOT_WIRE_CAPACITY,
+                "small flows must not grow the batched buffer"
+            );
+        }
+
+        // One completely-full record read is the bulk-flow evidence.
+        let mut source = ReplaySource::new(patterned(0x44, MAX_PLAINTEXT_LEN), usize::MAX);
+        let read = writer
+            .write_application_read_from_batched(&mut source, TIMEOUT)
+            .await
+            .expect("full record must be relayed");
+        assert_eq!(read, MAX_PLAINTEXT_LEN);
+        assert!(writer.write_record.capacity() >= BATCHED_WIRE_CAPACITY);
+        let grown = writer.record_storage_address();
+
+        // The buffer never shrinks back, even for small reads afterwards.
+        let mut source = ReplaySource::new(patterned(0x66, 100), usize::MAX);
+        let read = writer
+            .write_application_read_from_batched(&mut source, TIMEOUT)
+            .await
+            .expect("small read must be relayed");
+        assert_eq!(read, 100);
+        assert!(writer.write_record.capacity() >= BATCHED_WIRE_CAPACITY);
+        assert_eq!(
+            writer.record_storage_address(),
+            grown,
+            "the grown buffer must not move or shrink"
+        );
     }
 }

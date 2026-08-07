@@ -19,6 +19,21 @@ const MAX_INNER_PLAINTEXT_LEN: usize = MAX_PLAINTEXT_LEN + 1;
 const MAX_CIPHERTEXT_LEN: usize = MAX_INNER_PLAINTEXT_LEN + TAG_LEN;
 const AES_GCM_RECORD_LIMIT: u64 = 1 << 24;
 
+/// Wire capacity of one record slot: header + maximum inner plaintext + tag.
+pub(crate) const RECORD_SLOT_WIRE_CAPACITY: usize = HEADER_LEN + MAX_INNER_PLAINTEXT_LEN + TAG_LEN;
+
+/// Number of consecutive record slots in the batched downlink write buffer.
+///
+/// Experiment D11 (downlink multi-record batching): one vectored destination
+/// read fills up to this many plaintext regions, each filled slot is sealed in
+/// place, and the contiguous sealed prefix is written with one write call, so
+/// a full batch costs one read syscall plus one write syscall for
+/// [`BATCHED_SLOT_COUNT`] records instead of one of each per record.
+pub(crate) const BATCHED_SLOT_COUNT: usize = 4;
+
+/// Total wire capacity of the batched downlink write buffer.
+pub(crate) const BATCHED_WIRE_CAPACITY: usize = BATCHED_SLOT_COUNT * RECORD_SLOT_WIRE_CAPACITY;
+
 /// Maximum unpadded TLS 1.3 record content accepted by this implementation.
 pub const MAX_PLAINTEXT_LEN: usize = 1 << 14;
 
@@ -670,17 +685,73 @@ impl fmt::Debug for Tls13RecordLayer {
 pub(crate) fn application_plaintext_region(
     output: &mut Vec<u8>,
 ) -> Result<&mut [u8], Tls13RecordError> {
-    const WIRE_CAPACITY: usize = HEADER_LEN + MAX_INNER_PLAINTEXT_LEN + TAG_LEN;
-    if output.len() < WIRE_CAPACITY {
-        if WIRE_CAPACITY > output.capacity() {
+    if output.len() < RECORD_SLOT_WIRE_CAPACITY {
+        if RECORD_SLOT_WIRE_CAPACITY > output.capacity() {
             output
-                .try_reserve_exact(WIRE_CAPACITY - output.len())
+                .try_reserve_exact(RECORD_SLOT_WIRE_CAPACITY - output.len())
                 .map_err(|_| Tls13RecordError::BufferAllocation)?;
         }
-        output.resize(WIRE_CAPACITY, 0);
+        output.resize(RECORD_SLOT_WIRE_CAPACITY, 0);
     }
-    output
-        .get_mut(HEADER_LEN..HEADER_LEN + MAX_PLAINTEXT_LEN)
+    slot_plaintext_region(output)
+}
+
+/// Grows a record buffer to the batched downlink layout exactly once.
+///
+/// This is the growth step of the lazy batching policy (experiment D11): the
+/// caller invokes it only after a completely-full record read, so connections
+/// that never see a bulk flow keep the single-record buffer and never pay the
+/// extra slots. The extension is reserved and zero-filled in this one step;
+/// afterwards the buffer is grow-only and never shrinks back, and
+/// [`Tls13RecordLayer::seal_filled`] overwrites slot headers, content types,
+/// and tags without any zeroing.
+///
+/// # Errors
+///
+/// Returns the allocator's reservation failure without panicking.
+pub(crate) fn grow_batched_record_storage(output: &mut Vec<u8>) -> Result<(), Tls13RecordError> {
+    if output.len() < BATCHED_WIRE_CAPACITY {
+        if BATCHED_WIRE_CAPACITY > output.capacity() {
+            output
+                .try_reserve_exact(BATCHED_WIRE_CAPACITY - output.len())
+                .map_err(|_| Tls13RecordError::BufferAllocation)?;
+        }
+        output.resize(BATCHED_WIRE_CAPACITY, 0);
+    }
+    Ok(())
+}
+
+/// Returns the maximum plaintext region of every batched record slot.
+///
+/// The regions are disjoint windows into the one grow-only allocation: slot
+/// `i` starts at `i * RECORD_SLOT_WIRE_CAPACITY`, so once each filled slot is
+/// sealed in place the records form one contiguous wire prefix that a single
+/// write covers. The buffer must already cover [`BATCHED_WIRE_CAPACITY`] via
+/// [`grow_batched_record_storage`]; this function never grows.
+///
+/// # Errors
+///
+/// Rejects a buffer shorter than the batched wire capacity.
+pub(crate) fn batched_plaintext_regions(
+    output: &mut [u8],
+) -> Result<[&mut [u8]; BATCHED_SLOT_COUNT], Tls13RecordError> {
+    if output.len() < BATCHED_WIRE_CAPACITY {
+        return Err(Tls13RecordError::InvalidLength);
+    }
+    let (slot0, rest) = output.split_at_mut(RECORD_SLOT_WIRE_CAPACITY);
+    let (slot1, rest) = rest.split_at_mut(RECORD_SLOT_WIRE_CAPACITY);
+    let (slot2, slot3) = rest.split_at_mut(RECORD_SLOT_WIRE_CAPACITY);
+    Ok([
+        slot_plaintext_region(slot0)?,
+        slot_plaintext_region(slot1)?,
+        slot_plaintext_region(slot2)?,
+        slot_plaintext_region(slot3)?,
+    ])
+}
+
+/// Returns the maximum plaintext region of one record slot.
+fn slot_plaintext_region(slot: &mut [u8]) -> Result<&mut [u8], Tls13RecordError> {
+    slot.get_mut(HEADER_LEN..HEADER_LEN + MAX_PLAINTEXT_LEN)
         .ok_or(Tls13RecordError::InvalidLength)
 }
 
