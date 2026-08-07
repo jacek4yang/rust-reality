@@ -85,6 +85,7 @@ pub fn validate_config(config: &Config) -> Result<(), ConfigError> {
     let users = validate_inbounds(config)?;
     let outbounds = validate_outbounds(config)?;
     validate_routing(config, &users, &outbounds)?;
+    validate_handoff_key_independence(config)?;
     validate_policy(config)
 }
 
@@ -385,6 +386,88 @@ fn validate_handoff_inbound(path: &str, inbound: &HandoffInboundConfig) -> Resul
         &format!("{path}.settings.connectTimeoutMs"),
         settings.connect_timeout_ms,
     )
+}
+
+/// Enforces Handoff key independence within one configuration file.
+///
+/// A Handoff pre-shared key or static private key MUST be generated
+/// independently of the NXR pre-shared keys and the REALITY private keys;
+/// same-file reuse is exactly the copy-paste error an operator makes, and it
+/// is cheap to reject here. Cross-node reuse remains an operator obligation.
+fn validate_handoff_key_independence(config: &Config) -> Result<(), ConfigError> {
+    let mut nxr_psks: Vec<Zeroizing<Vec<u8>>> = Vec::new();
+    let mut reality_keys: Vec<Zeroizing<Vec<u8>>> = Vec::new();
+    for inbound in &config.inbounds {
+        match inbound {
+            InboundConfig::Vless(inbound) => {
+                if let Some(key) =
+                    decode_key_material(&inbound.stream_settings.reality_settings.private_key)
+                {
+                    reality_keys.push(key);
+                }
+            }
+            InboundConfig::Nxr(inbound) => {
+                if let Some(key) = decode_key_material(&inbound.settings.pre_shared_key) {
+                    nxr_psks.push(key);
+                }
+            }
+            InboundConfig::Handoff(_) => {}
+        }
+    }
+    for outbound in &config.outbounds {
+        if let OutboundConfig::Nxr { settings, .. } = outbound
+            && let Some(key) = decode_key_material(&settings.pre_shared_key)
+        {
+            nxr_psks.push(key);
+        }
+    }
+    for (index, inbound) in config.inbounds.iter().enumerate() {
+        let InboundConfig::Handoff(inbound) = inbound else {
+            continue;
+        };
+        let path = format!("inbounds[{index}].settings");
+        if shares_key_material(&inbound.settings.pre_shared_key, &nxr_psks) {
+            return fail(
+                format!("{path}.preSharedKey"),
+                "must be generated independently of every NXR preSharedKey in this configuration",
+            );
+        }
+        if shares_key_material(&inbound.settings.private_key, &reality_keys) {
+            return fail(
+                format!("{path}.privateKey"),
+                "must be generated independently of every REALITY privateKey in this configuration",
+            );
+        }
+    }
+    for (index, outbound) in config.outbounds.iter().enumerate() {
+        let OutboundConfig::Handoff { settings, .. } = outbound else {
+            continue;
+        };
+        if shares_key_material(&settings.pre_shared_key, &nxr_psks) {
+            return fail(
+                format!("outbounds[{index}].settings.preSharedKey"),
+                "must be generated independently of every NXR preSharedKey in this configuration",
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Decodes one already shape-validated base64 key for cross-field comparison;
+/// undecodable keys are reported by the field-level validators.
+fn decode_key_material(key: &SecretString) -> Option<Zeroizing<Vec<u8>>> {
+    BASE64_URL_SAFE_NO_PAD
+        .decode(key.expose())
+        .ok()
+        .map(Zeroizing::new)
+}
+
+fn shares_key_material(key: &SecretString, others: &[Zeroizing<Vec<u8>>]) -> bool {
+    decode_key_material(key).is_some_and(|key| {
+        others
+            .iter()
+            .any(|other| other.as_slice() == key.as_slice())
+    })
 }
 
 fn validate_outbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
@@ -1269,6 +1352,109 @@ mod tests {
                 .expect_err("short replay retention must fail")
                 .path(),
             "inbounds[1].settings.nonceRetentionSeconds"
+        );
+    }
+
+    #[test]
+    fn rejects_handoff_psk_shared_with_nxr() {
+        let shared = SecretString::new("WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo");
+        // Handoff inbound reusing an NXR inbound's PSK.
+        let mut config = valid_config();
+        config
+            .inbounds
+            .push(crate::config::InboundConfig::Nxr(NxrInboundConfig {
+                tag: "landing-internal".to_owned(),
+                listen: "127.0.0.1".parse().expect("address must parse"),
+                port: 9443,
+                settings: NxrInboundSettings {
+                    pre_shared_key: shared.clone(),
+                    max_time_difference_seconds: 30,
+                    max_nonce_entries: 4_096,
+                    nonce_retention_seconds: 120,
+                    authentication_timeout_ms: 3_000,
+                    connect_timeout_ms: 10_000,
+                },
+            }));
+        config.inbounds.push(crate::config::InboundConfig::Handoff(
+            crate::config::HandoffInboundConfig {
+                tag: "handoff-landing".to_owned(),
+                listen: "127.0.0.1".parse().expect("address must parse"),
+                port: 9444,
+                settings: crate::config::HandoffInboundSettings {
+                    pre_shared_key: shared.clone(),
+                    private_key: SecretString::new("WVpZWVpZWVpZWVpZWVpZWVpZWVpZWVpZWVpZWVpZWVo"),
+                    max_time_difference_seconds: 30,
+                    max_nonce_entries: 4_096,
+                    nonce_retention_seconds: 120,
+                    authentication_timeout_ms: 3_000,
+                    connect_timeout_ms: 10_000,
+                },
+            },
+        ));
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("a shared Handoff/NXR PSK must fail")
+                .path(),
+            "inbounds[2].settings.preSharedKey"
+        );
+
+        // Handoff outbound reusing an NXR outbound's PSK.
+        let mut config = valid_config();
+        config.outbounds.push(OutboundConfig::Nxr {
+            tag: "landing".to_owned(),
+            settings: NxrSettings {
+                address: "127.0.0.1".to_owned(),
+                port: 9443,
+                pre_shared_key: shared.clone(),
+            },
+        });
+        config.outbounds.push(OutboundConfig::Handoff {
+            tag: "handoff-line".to_owned(),
+            settings: crate::config::HandoffSettings {
+                address: "10.0.0.3".to_owned(),
+                port: 9444,
+                pre_shared_key: shared,
+                landing_public_key: "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo".to_owned(),
+                connect_timeout_ms: 10_000,
+            },
+        });
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("a shared Handoff/NXR PSK must fail")
+                .path(),
+            "outbounds[3].settings.preSharedKey"
+        );
+    }
+
+    #[test]
+    fn rejects_handoff_private_key_shared_with_reality() {
+        let mut config = valid_config();
+        // The fixture REALITY private key, reused as the Handoff static key.
+        let shared = SecretString::new("ERERERERERERERERERERERERERERERERERERERERERE");
+        config.inbounds.push(crate::config::InboundConfig::Handoff(
+            crate::config::HandoffInboundConfig {
+                tag: "handoff-landing".to_owned(),
+                listen: "127.0.0.1".parse().expect("address must parse"),
+                port: 9444,
+                settings: crate::config::HandoffInboundSettings {
+                    pre_shared_key: SecretString::new(
+                        "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo",
+                    ),
+                    private_key: shared,
+                    max_time_difference_seconds: 30,
+                    max_nonce_entries: 4_096,
+                    nonce_retention_seconds: 120,
+                    authentication_timeout_ms: 3_000,
+                    connect_timeout_ms: 10_000,
+                },
+            },
+        ));
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("a shared Handoff/REALITY private key must fail")
+                .path(),
+            "inbounds[1].settings.privateKey"
         );
     }
 

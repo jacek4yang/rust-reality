@@ -383,10 +383,20 @@ impl HandoffLandingHandler {
             self.maximum_time_difference,
         )
         .map_err(HandoffLandingError::Protocol)?;
+        // The wire message's only consumer is `open_transfer`.
+        drop(message);
         let state = opened.state();
-        if !state.response_header_pending() {
-            return Err(HandoffLandingError::Protocol(HandoffError::State));
-        }
+        // Reconstruct and validate the TLS state before touching the network:
+        // a blob that cannot resume must not cost a destination connection.
+        let tls = resume_tls(state)?;
+        let user_id = UserId::new(*state.user_id());
+        let destination = state.destination().clone();
+        let pending = state.pending_ciphertext().to_vec();
+        let prefetched = state.prefetched_plaintext().to_vec();
+        // The transferred key material lives on inside the resumed record
+        // layers only; the continuation copies are zeroized here, before the
+        // whole-session relay below.
+        drop(opened);
         // The descriptor unit is reserved before connect(2) and outlives the
         // relay: the outbound socket closes before its unit is released.
         let _fd_permit = self
@@ -394,21 +404,16 @@ impl HandoffLandingHandler {
             .fd_budget()
             .try_acquire(UNITS_OUTBOUND_SOCKET)
             .ok_or(HandoffLandingError::DescriptorBudget)?;
-        let destination = self.connector.connect(state.destination()).await?;
-        let tls = resume_tls(state)?;
+        let destination = self.connector.connect(&destination).await?;
         let (reader_half, writer_half) = inbound.into_split();
-        let (client_reader, client_writer) = resume_application_halves(
-            reader_half,
-            state.pending_ciphertext().to_vec(),
-            writer_half,
-            tls,
-        );
+        let (client_reader, client_writer) =
+            resume_application_halves(reader_half, pending, writer_half, tls);
         let stats = run_resumed_session(
             client_reader,
             client_writer,
             destination,
-            UserId::new(*state.user_id()),
-            state.prefetched_plaintext().to_vec(),
+            user_id,
+            prefetched,
             &self.relay,
             self.io_timeout,
         )
@@ -633,7 +638,6 @@ mod tests {
             0,
             [0x33; 16],
             destination,
-            true,
             Vec::new(),
             Vec::new(),
         )

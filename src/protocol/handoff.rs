@@ -151,8 +151,6 @@ pub struct ContinuationState {
     user_id: [u8; USER_ID_LEN],
     #[zeroize(skip)]
     destination: Destination,
-    #[zeroize(skip)]
-    response_header_pending: bool,
     pending_ciphertext: Vec<u8>,
     prefetched_plaintext: Vec<u8>,
 }
@@ -173,7 +171,6 @@ impl ContinuationState {
         server_sequence: u64,
         user_id: [u8; USER_ID_LEN],
         destination: Destination,
-        response_header_pending: bool,
         pending_ciphertext: Vec<u8>,
         prefetched_plaintext: Vec<u8>,
     ) -> Result<Self, HandoffError> {
@@ -195,7 +192,6 @@ impl ContinuationState {
             server_sequence,
             user_id,
             destination,
-            response_header_pending,
             pending_ciphertext,
             prefetched_plaintext,
         })
@@ -243,12 +239,6 @@ impl ContinuationState {
         &self.destination
     }
 
-    /// Returns whether the VLESS response header is still owed to the client.
-    #[must_use]
-    pub const fn response_header_pending(&self) -> bool {
-        self.response_header_pending
-    }
-
     /// Returns undecrypted client ciphertext read ahead of the boundary.
     #[must_use]
     pub fn pending_ciphertext(&self) -> &[u8] {
@@ -269,7 +259,6 @@ impl fmt::Debug for ContinuationState {
             .field("suite", &self.suite)
             .field("client_sequence", &self.client_sequence)
             .field("server_sequence", &self.server_sequence)
-            .field("response_header_pending", &self.response_header_pending)
             .field("pending_ciphertext_len", &self.pending_ciphertext.len())
             .field("prefetched_plaintext_len", &self.prefetched_plaintext.len())
             .finish_non_exhaustive()
@@ -331,7 +320,13 @@ impl fmt::Debug for OpenedTransfer {
 /// Same construction as the NXR replay cache: sixteen mutex-sharded nonce
 /// maps, one atomic capacity counter, monotonic retention deadlines, and
 /// reserve-before-use so a nonce is burned even when the transfer it arrived
-/// on later fails authentication.
+/// on later fails authentication. Reserve-before-use is deliberate — it keeps
+/// the replay check ahead of all DH work — but it also means an
+/// unauthenticated peer burns one slot per structurally valid, in-window
+/// message, so cache capacity alone does not bound that burn. This is the
+/// exact exposure the NXR listener already accepts on the same
+/// firewall-restricted internal-port posture; per-source rate limiting
+/// belongs to that outer layer, not to this process.
 #[derive(Clone)]
 pub struct HandoffReplayCache {
     inner: Arc<HandoffReplayCacheInner>,
@@ -476,6 +471,8 @@ pub fn message_len_from_header(header: &[u8]) -> Result<usize, HandoffError> {
 ///
 /// A fresh X25519 ephemeral and a fresh 128-bit transfer nonce are drawn for
 /// every call; the ephemeral secret is consumed by the single DH and zeroized.
+/// `output` is written only after a successful seal, so no error path ever
+/// leaves plaintext in the caller's non-zeroizing buffer.
 ///
 /// # Errors
 ///
@@ -514,18 +511,20 @@ pub fn seal_transfer(
         derive_aead(&header, shared.as_bytes(), psk, landing_public.as_bytes())?;
     let cipher =
         ChaCha20Poly1305::new_from_slice(key.as_slice()).map_err(|_| HandoffError::Crypto)?;
-    let nonce_bytes: Nonce<ChaCha20Poly1305> = Array(aead_nonce);
+    let nonce_bytes: Nonce<ChaCha20Poly1305> = Array(*aead_nonce);
 
+    // Seal inside the zeroizing blob buffer: on an AEAD failure the plaintext
+    // is scrubbed when `blob` drops, and the caller's non-zeroizing `output`
+    // only ever receives header, ciphertext, and tag.
+    let tag = cipher
+        .encrypt_inout_detached(&nonce_bytes, &header[..], blob.as_mut_slice().into())
+        .map_err(|_| HandoffError::Crypto)?;
     output.clear();
     output
         .try_reserve_exact(HEADER_LEN + blob.len() + TAG_LEN)
         .map_err(|_| HandoffError::Allocation)?;
     output.extend_from_slice(&header);
     output.extend_from_slice(&blob);
-    let body = output.get_mut(HEADER_LEN..).ok_or(HandoffError::Length)?;
-    let tag = cipher
-        .encrypt_inout_detached(&nonce_bytes, &header[..], body.into())
-        .map_err(|_| HandoffError::Crypto)?;
     output.extend_from_slice(&tag);
     Ok(())
 }
@@ -576,7 +575,7 @@ pub fn open_transfer(
     )?;
     let cipher =
         ChaCha20Poly1305::new_from_slice(key.as_slice()).map_err(|_| HandoffError::Crypto)?;
-    let nonce_bytes: Nonce<ChaCha20Poly1305> = Array(aead_nonce);
+    let nonce_bytes: Nonce<ChaCha20Poly1305> = Array(*aead_nonce);
 
     let ciphertext_end = HEADER_LEN
         .checked_add(header.blob_len)
@@ -677,6 +676,9 @@ fn encode_header(
     header
 }
 
+/// The derived per-transfer AEAD key and nonce, both zeroized on drop.
+type DerivedAead = (Zeroizing<[u8; 32]>, Zeroizing<[u8; AEAD_NONCE_LEN]>);
+
 /// HKDF-Extract(salt = label || E_pub || S_pub, ikm = shared || PSK), then
 /// HKDF-Expand over the transcript (fixed header through `user_id`, with
 /// S_pub spliced in after E_pub; `blob_len` is covered by the AEAD AD).
@@ -685,7 +687,7 @@ fn derive_aead(
     shared: &[u8; 32],
     psk: &HandoffPsk,
     landing_public: &[u8; X25519_PUBLIC_LEN],
-) -> Result<(Zeroizing<[u8; 32]>, [u8; AEAD_NONCE_LEN]), HandoffError> {
+) -> Result<DerivedAead, HandoffError> {
     let mut salt = [0_u8; SALT_LEN];
     salt[..HKDF_SALT_LABEL.len()].copy_from_slice(HKDF_SALT_LABEL);
     salt[HKDF_SALT_LABEL.len()..HKDF_SALT_LABEL.len() + X25519_PUBLIC_LEN]
@@ -712,7 +714,7 @@ fn derive_aead(
     }
     let mut key = Zeroizing::new([0_u8; 32]);
     key.copy_from_slice(&okm[..32]);
-    let mut nonce = [0_u8; AEAD_NONCE_LEN];
+    let mut nonce = Zeroizing::new([0_u8; AEAD_NONCE_LEN]);
     nonce.copy_from_slice(&okm[32..]);
     Ok((key, nonce))
 }
@@ -725,7 +727,6 @@ fn encode_blob(state: &ContinuationState, output: &mut Vec<u8>) -> Result<(), Ha
         .and_then(|length| length.checked_add(2 * 8))
         .and_then(|length| length.checked_add(USER_ID_LEN))
         .and_then(|length| length.checked_add(1 + 2 + address_length + 2))
-        .and_then(|length| length.checked_add(1))
         .and_then(|length| length.checked_add(4 + state.pending_ciphertext().len()))
         .and_then(|length| length.checked_add(4 + state.prefetched_plaintext().len()))
         .filter(|length| *length <= MAX_BLOB_LEN)
@@ -743,7 +744,6 @@ fn encode_blob(state: &ContinuationState, output: &mut Vec<u8>) -> Result<(), Ha
     output.extend_from_slice(state.user_id());
     encode_address(state.destination(), output);
     output.extend_from_slice(&state.destination().port().to_be_bytes());
-    output.push(u8::from(state.response_header_pending()));
     encode_bounded_bytes(state.pending_ciphertext(), output);
     encode_bounded_bytes(state.prefetched_plaintext(), output);
     Ok(())
@@ -797,11 +797,6 @@ fn decode_blob(blob: &[u8]) -> Result<ContinuationState, HandoffError> {
         .try_into()
         .map_err(|_| HandoffError::State)?;
     let destination = decode_destination(&mut cursor)?;
-    let response_header_pending = match cursor.u8()? {
-        0 => false,
-        1 => true,
-        _ => return Err(HandoffError::State),
-    };
     let pending_ciphertext = decode_bounded_bytes(&mut cursor, MAX_PENDING_CIPHERTEXT_LEN)?;
     let prefetched_plaintext = decode_bounded_bytes(&mut cursor, MAX_PREFETCHED_PLAINTEXT_LEN)?;
     if cursor.remaining() != 0 {
@@ -815,7 +810,6 @@ fn decode_blob(blob: &[u8]) -> Result<ContinuationState, HandoffError> {
         server_sequence,
         user_id,
         destination,
-        response_header_pending,
         pending_ciphertext,
         prefetched_plaintext,
     )
@@ -1018,7 +1012,6 @@ mod tests {
             0,
             [0x33; 16],
             Destination::new(Address::Domain("example.com".to_owned()), 443),
-            true,
             pending,
             prefetched,
         )
@@ -1056,10 +1049,6 @@ mod tests {
         assert_eq!(opened.server_sequence(), expected.server_sequence());
         assert_eq!(opened.user_id(), expected.user_id());
         assert_eq!(opened.destination(), expected.destination());
-        assert_eq!(
-            opened.response_header_pending(),
-            expected.response_header_pending()
-        );
         assert_eq!(opened.pending_ciphertext(), expected.pending_ciphertext());
         assert_eq!(
             opened.prefetched_plaintext(),
@@ -1270,7 +1259,6 @@ mod tests {
             1,
             *state.user_id(),
             state.destination().clone(),
-            state.response_header_pending(),
             Vec::new(),
             Vec::new(),
         )
@@ -1293,7 +1281,6 @@ mod tests {
             0,
             [0x33; 16],
             Destination::new(Address::Ipv4(std::net::Ipv4Addr::LOCALHOST), 443),
-            false,
             pending,
             Vec::new(),
         );
@@ -1311,7 +1298,6 @@ mod tests {
             0,
             [0x33; 16],
             Destination::new(Address::Ipv4(std::net::Ipv4Addr::LOCALHOST), 443),
-            false,
             Vec::new(),
             Vec::new(),
         );

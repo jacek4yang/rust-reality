@@ -428,7 +428,6 @@ impl VisionHandler {
             server_sequence,
             *request.user_id.as_bytes(),
             request.destination.clone(),
-            true,
             pending,
             prefetched,
         )
@@ -438,6 +437,9 @@ impl VisionHandler {
             .transfer(self.relay.fd_budget(), &state, client_random)
             .await
             .map_err(VisionSessionError::HandoffLine)?;
+        // The sealed continuation is on the wire; its key material must not
+        // live across the first-byte probe and the session relay below.
+        drop(state);
         guard.fds[1] = handoff_stream.as_raw_fd();
         let client_stream = client_read_half
             .reunite(client_write_half)
