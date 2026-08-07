@@ -18,6 +18,9 @@ Every load-bearing statement carries a confidence label:
   CPU and memory limits, so they describe budgets, not any specific
   provider's product. Your hardware and network differ; treat these numbers
   as calibrated examples, not guarantees.
+- **VERIFIED-CGROUP** — a MEASURED-LOCAL result from a cgroup-constrained
+  machine-class emulation; the constraint held, but no real VPS of that
+  class was involved.
 - **DERIVED** — arithmetic or direct reasoning from verified and measured
   inputs.
 - **UNVERIFIED-EXTERNAL** — depends on real WAN paths, other providers, or
@@ -29,7 +32,7 @@ Every load-bearing statement carries a confidence label:
 If you just rented a VPS and want a defensible starting point, use the
 tuned profile for your machine class:
 
-| Your VPS | `runtime.resourceMode` | Set `policy.resourceGovernor.maxConnections` to | Basis (MEASURED-LOCAL) |
+| Your VPS | `runtime.resourceMode` | Set `policy.resourceGovernor.maxConnections` **and** `policy.directBarrier.maxConcurrent` both to | Basis (MEASURED-LOCAL) |
 | --- | --- | --- | --- |
 | 1 vCPU / 1 GiB ("1C1G") | `dedicated` | `8000` | 12000 sessions verified clean at ~694 MiB cgroup peak; shedding began ≈14000; 8000 ≈ 57% of the shed point |
 | 1–2 vCPU / 2 GiB | `dedicated` | `16000` | 24000 verified clean at 1.12 GiB cgroup peak; recommendation = 2/3 of verified |
@@ -39,17 +42,26 @@ tuned profile for your machine class:
 The recommendation arithmetic is DERIVED; the clean/shed points are
 MEASURED-LOCAL with `oom_kill=0` in every run.
 
+These are **starting profiles validated on the tested standalone/Direct
+workload** (setup churn + 512 MiB bulk transfer + idle-connection ladder),
+on a topology where every session routes to the direct outbound — which is
+why the table sets `maxConcurrent` equal to `maxConnections`. They are not
+universal production capacities: a mixed-workload validation phase is needed
+before stronger claims. On nodes whose sessions leave via NXR or SOCKS5
+outbounds, `directBarrier.maxConcurrent` caps only the Direct-routed share
+(§3), and §28 shows how to derive every value for one specific host.
+
 Two rules before anything else:
 
-1. **The defaults are safe on every machine above, and the session ceiling
-   is `maxConnections`.** `policy.resourceGovernor.maxConnections` defaults
-   to 16384. `policy.directBarrier.maxConcurrent` (default 2048) bounds
-   concurrent Direct dial attempts only: the barrier permit is released as
-   soon as the dial completes. (v1.0.0 held the permit for the whole session
-   lifetime, so session 2049 was fast-rejected even though `maxConnections`
-   defaulted to 16384 — issue #26, fixed after v1.0.0.) Raising real session
-   capacity means raising `maxConnections`, then restarting: it is a
-   restart-required setting (see §10).
+1. **The defaults are safe on every machine above, but they cap
+   Direct-routed sessions at 2048.** `policy.directBarrier.maxConcurrent`
+   defaults to 2048, and the barrier permit — acquired only by sessions
+   whose routing decision is the direct outbound — is held for the whole
+   session lifetime. On a standalone/Direct node that is every session, so
+   session 2049 is fast-rejected even though `maxConnections` defaults to
+   16384 (VERIFIED, measured). Raising real session capacity on such a node
+   means raising both values together, then restarting: both are
+   restart-required (see §10).
 2. **A policy block, when present, must be complete.** The validator
    rejects a `policy.resourceGovernor` object that contains only the keys
    you changed (VERIFIED with `check`). Edit values inside the full block
@@ -96,15 +108,22 @@ min( admission ceiling,  FD budget,  memory budget,  CPU-for-your-SLO,  network 
 Whichever term is smallest wins, and raising any other term changes
 nothing. Concretely:
 
-- **Admission ceiling** —
-  `policy.resourceGovernor.maxConnections` (default 16384).
-  `policy.directBarrier.maxConcurrent` (default 2048) bounds concurrent
-  Direct dial attempts, not sessions: the barrier permit is released when
-  the dial completes, so an established session consumes no barrier
-  capacity. (v1.0.0 held the permit for the whole session, which made 2048
-  the effective session ceiling regardless of `maxConnections` — issue #26,
-  fixed after v1.0.0; the measured "session 2049 fast-rejected" plateau was
-  recorded against that behavior.)
+- **Admission ceiling** — `policy.resourceGovernor.maxConnections` (default
+  16384) is the global accepted-session ceiling. On top of it,
+  `policy.directBarrier.maxConcurrent` (default 2048) adds a second ceiling
+  on Direct-routed sessions only: the barrier permit is acquired on the
+  direct-outbound path and held for the entire session lifetime, and
+  sessions routed to SOCKS5 or NXR outbounds never acquire it (VERIFIED,
+  `src/server/outbound.rs`). Note the lifetime is a *tracked runtime
+  mismatch* (issue #26): the documented intent is a cap on concurrent
+  Direct *dial attempts* plus a dial rate, not on established sessions;
+  v1.0.0's implementation holds the permit for the whole Direct session.
+  This guide describes the measured v1.0.0 behavior; do not treat the
+  permit lifetime as the intended long-term semantics. So with default policy a standalone/Direct
+  node — where every session routes direct — has an *effective* ceiling of
+  2048 sessions regardless of `maxConnections` (VERIFIED, measured: session
+  2049 is fast-rejected with `maxConnections` left at 16384), while a mixed
+  node has a Direct-specific sub-cap sized by its Direct-routed share.
 - **FD budget** — the server derives a descriptor budget at startup from
   `RLIMIT_NOFILE`, minus fixed reserves and safety headroom, and reports it
   once as `descriptor_budget_report` (§6). Steady state costs ≈2 FDs per
@@ -124,9 +143,9 @@ The scaling consequence: **CPU and RAM buy different things.** CPU scales
 handshake, crypto, and framed-relay work; RAM and FDs scale live-connection
 count. A 1C4G machine is not better than 2C2G for setup rate — both have
 the memory for far more sessions than one vCPU can set up, and 2C2G has
-twice the CPU. Conversely, 8C1G is still memory- and FD-bound: 1 GiB holds
-≈12000–16000 sessions (DERIVED from 47 KiB/session plus pools and assets)
-no matter how many cores sit idle.
+twice the CPU. Conversely, 8C1G is still memory- and FD-bound: on 1 GiB the measured
+evidence is 12000 sessions clean with shedding beginning ≈14000
+(MEASURED-LOCAL, 1C1G) — no matter how many cores sit idle.
 
 Measured anchors (MEASURED-LOCAL, identical across all classes 1C1G→4C8G):
 ≈800 conn/s setup churn, ≈1.6 GB/s framed with 32 connections, ≈1 GB/s
@@ -135,28 +154,31 @@ constraint in those tests — so do not read them as per-class ceilings.
 
 ## 4. Machine profiles
 
-Validated profiles, all in `dedicated` mode inside cgroup v2 scopes, with
-`oom_kill=0` in every run (MEASURED-LOCAL):
+VERIFIED-CGROUP **starting profiles for the tested standalone/Direct
+workload** (setup churn + 512 MiB bulk transfer + idle-connection ladder on
+a node where every session routes to the direct outbound), all in
+`dedicated` mode inside cgroup v2 scopes, with `oom_kill=0` in every run
+(MEASURED-LOCAL):
 
-| Class | Default policy | Tuned profile (`maxConnections`) | Verified clean | First shedding/pressure | Peak cgroup memory at verified level |
+| Class | Default policy | Tuned profile (`maxConnections` = `directBarrier.maxConcurrent`) | Verified clean | First shedding/pressure | Peak cgroup memory at verified level |
 | --- | --- | --- | --- | --- | --- |
-| 1C1G | safe, ≤16384 sessions | **8000** | 12000 | ≈14000 | 694 MiB @ 12000 |
-| 1C2G | safe, ≤16384 sessions | **16000** | 24000 | none observed | 1.12 GiB @ 24000 |
-| 2C2G | safe, ≤16384 sessions | **16000** | 24000 | none observed | 1.12 GiB @ 24000 |
-| 2C4G | safe, ≤16384 sessions | **24000** | 24000 | none observed | 1.12 GiB @ 24000 |
-| 4C4G | safe, ≤16384 sessions | **24000** | 24000 | none observed | 1.13 GiB @ 24000 |
-| 4C8G | safe, ≤16384 sessions | **24000** | 24000 | none observed | 1.12 GiB @ 24000 |
+| 1C1G | safe, ≤2048 sessions | **8000** | 12000 | ≈14000 | 694 MiB @ 12000 |
+| 1C2G | safe, ≤2048 sessions | **16000** | 24000 | none observed | 1.12 GiB @ 24000 |
+| 2C2G | safe, ≤2048 sessions | **16000** | 24000 | none observed | 1.12 GiB @ 24000 |
+| 2C4G | safe, ≤2048 sessions | **24000** | 24000 | none observed | 1.12 GiB @ 24000 |
+| 4C4G | safe, ≤2048 sessions | **24000** | 24000 | none observed | 1.13 GiB @ 24000 |
+| 4C8G | safe, ≤2048 sessions | **24000** | 24000 | none observed | 1.12 GiB @ 24000 |
 
 Notes on reading this table:
 
-- **The profiles were validated against v1.0.0,** where
-  `directBarrier.maxConcurrent` had to be raised alongside `maxConnections`
-  because the barrier permit was held for the whole session (issue #26,
-  fixed after v1.0.0). The permit is now dial-phase only, so the tuned
-  profile changes `maxConnections` alone; the default `maxConcurrent` of
-  2048 concurrent dial attempts is far above the measured ≈800 conn/s setup
-  churn and needs no change. The verified session counts themselves are
-  unaffected by the fix.
+- **Scope of the evidence.** These are starting profiles, not universal
+  production capacities. On the tested topology every session took the
+  Direct path, which is why the table sets `directBarrier.maxConcurrent`
+  equal to `maxConnections`. Do not copy that equality onto a node whose
+  sessions leave via NXR or SOCKS5: a pure NXR-out line node may not need
+  `maxConcurrent` raised at all, and a mixed node sizes it by its
+  Direct-routed share (§3, §28). A mixed-workload validation phase is needed
+  before claims stronger than these.
 - **"Verified clean"** means the full load level completed with no
   admission shedding, no pressure events, and no OOM. **Recommendations are
   deliberately below the breaking point**: 8000 ≈ 57% of the 1C1G shed
@@ -197,7 +219,8 @@ it (VERIFIED):
 - attempts to raise the soft `RLIMIT_NOFILE` toward the hard limit
   (`fd_soft_raise_attempted`, `fd_soft_limit_raised`,
   `fd_effective_soft_limit` in `machine_report`);
-- relaxes descriptor safety headroom from `limit/16` to `limit/10`;
+- reserves a larger descriptor safety headroom, `limit/10` instead of
+  `limit/16` (a bigger safety margin, not a relaxation);
 - runs the memory-pressure monitor against the cgroup limit.
 
 **`dedicated` does not disable any limit.** Every admission limit, relay
@@ -291,7 +314,7 @@ memory ≈ 33 MiB (server + geo assets)
 **When memory is tight, do not lower `bufferBytes` first.** A smaller
 buffer buys almost nothing (the pool ceiling, not the buffer size,
 dominates: 4096 × 32 KiB = 128 MiB) and costs throughput on high-BDP paths.
-Reduce concurrency (`maxConnections`) or the
+Reduce concurrency (`maxConnections`/`directBarrier.maxConcurrent`) or the
 pool ceilings (`maxPooledBuffers`, `maxPooledPipes`) instead, and keep the
 validator formula ≤ `maxRelayMemoryBytes`.
 
@@ -397,8 +420,8 @@ events). After every reload, confirm which of the two you got.
 **Worked example — complete tuned policy for 1C1G.** This block, embedded
 in a generated standalone config with `"runtime": {"resourceMode":
 "dedicated"}`, passes `check --config` (VERIFIED against the v1.0.0
-validator). Only `maxConnections` differs from the defaults; the rest is
-shown because a partial policy object is rejected.
+validator). Only `maxConnections` and `maxConcurrent` differ from the
+defaults; the rest is shown because a partial policy object is rejected.
 
 ```json
 "policy": {
@@ -416,7 +439,7 @@ shown because a partial policy object is rejected.
     "fallbackTimeoutMs": 120000
   },
   "directBarrier": {
-    "maxConcurrent": 2048,
+    "maxConcurrent": 8000,
     "maxPerSecond": 4096
   },
   "relay": {
@@ -464,8 +487,10 @@ yourself:
 
 - Speaks TLS 1.3 with a compatible key exchange, on port 443.
 - Serves a valid certificate chain for the SNI your clients will present.
-- Highly available and low-loss *from your VPS*: fallback borrows it live,
-  so a flaky target degrades your cover.
+- Highly available and low-loss *from your VPS*, and close to it: fallback
+  borrows the target live, and every authenticated setup borrows its
+  ServerHello — a flaky or distant target degrades your cover and adds to
+  every connection's setup latency.
 - Plausible: a domain whose traffic profile does not make your server stand
   out.
 
@@ -498,12 +523,20 @@ rust-reality probe-dest --target HOST:443 --server-name NAME [--timeout-ms 5000]
 `self-test --config` runs the same probe for the configured target and
 reports `compatible: true/false` per destination.
 
-**Cover latency is not payload throughput.** The target is only dialed for
-fallback (non-client) connections. Authenticated payload travels
-client → rust-reality → your real destination; the cover's bandwidth and
-distance never carry it (VERIFIED architecture). A cover 200 ms away costs
-nothing on proxied flows; pick covers for plausibility and reliability, and
-diagnose payload slowness on the real data path (§13).
+**The cover sits inside every setup, not in the steady-state payload
+path.** Every connection — authenticated ones included — dials the cover
+target during REALITY setup and reads its ServerHello, which the server
+uses to build the REALITY server flight before ClientFinished (VERIFIED,
+`src/server/reality.rs`). The cover target therefore affects three things:
+setup latency (a cover 200 ms away adds on the order of one cover round
+trip to *every* connection setup), handshake compatibility (a target that
+fails the probe degrades authenticated setups into fallback), and fallback
+traffic. What the cover does *not* do is carry authenticated steady-state
+payload: once the session is established, bytes flow
+client → rust-reality → your real destination, and the cover's bandwidth
+and distance no longer matter (VERIFIED architecture). Pick covers for
+plausibility, reliability, and closeness to your VPS, and diagnose
+steady-state slowness on the real data path (§13).
 
 ## 12. Routing performance and structure
 
@@ -511,21 +544,33 @@ Route evaluation order (VERIFIED): `routing.globalRules` first, then the
 matched user group's `rules` in order — **first match wins** — then the
 group's `defaultOutbound`.
 
-`domainStrategy` (VERIFIED semantics):
+`domainStrategy` (VERIFIED semantics, `src/server/routing.rs`
+`select_with_dns`). DNS runs at all only when the applicable routing
+snapshot — the global rules *or* the selected user's rules — actually
+contains IP rules (`needs_ip = global_has_ip_rules || user_has_ip_rules`).
+Given that:
 
 - **`AsIs`** — never resolve in the router. IP rules can only match targets
   that were already IP literals.
-- **`IPIfNonMatch`** (default) — resolve only when no rule matched, to test
-  IP rules against the result. Domain-rule hits never pay for DNS.
-- **`IPOnDemand`** — resolve every domain target before rule evaluation, so
-  IP rules always apply — and every connection pays for a lookup.
+- **`IPIfNonMatch`** (default) — match in memory first; resolve only when
+  the decision falls through to the user default, to test IP rules against
+  the result. Domain-rule hits never pay for DNS.
+- **`IPOnDemand`** — when IP rules exist, resolve before rule evaluation so
+  IP rules always apply, and each resolved connection pays for a lookup.
+
+If **no** IP rules exist anywhere, all three strategies behave identically
+and no DNS happens at all.
 
 The measured cost of having DNS in the decision path is ≈0.12 ms per
-connection (MEASURED-LOCAL); the measured cost of a large routing table is
-nothing — 1000 UUIDs and 72 rules set up at 896 conn/s, the same as a
-minimal config (MEASURED-LOCAL). Complexity is free; DNS round trips to a
-slow resolver are not. If you use `IPOnDemand`, point `dns.servers` at a
-fast resolver and keep `dns.timeoutMs` honest.
+connection (MEASURED-LOCAL); the measured cost of a large routing table was
+below measurement sensitivity in the tested configuration — 1000 UUIDs and
+72 rules set up at 896 conn/s, the same as a minimal config
+(MEASURED-LOCAL). The expensive part is DNS round trips to a slow resolver.
+Note that v1.0 accepts exactly `dns.servers = ["system"]` — custom
+resolvers are rejected by the validator (VERIFIED,
+`src/config/validate.rs`) — so make DNS fast at the OS layer instead: run a
+local caching stub (`systemd-resolved` or similar), point
+`/etc/resolv.conf` at it, and keep `dns.timeoutMs` honest.
 
 Validated example — three user groups: A direct, B China-direct with an NXR
 landing default, C filtered through an upstream SOCKS5. The full config
@@ -584,6 +629,11 @@ Where the time goes, end to end:
 client ──RTT A──▶│ REALITY setup │ routing/DNS │ outbound │─RTT B─▶│ NXR auth  │──▶ destination connect ──▶ origin response
                  └───────────────────────────────────────┘  (NXR)  └───────────┘
 ```
+
+"REALITY setup" above includes a dial to the cover target and reading its
+ServerHello, which builds the server flight (§11): the cover's RTT and
+availability sit inside the setup segment of *every* connection,
+authenticated or not (VERIFIED, `src/server/reality.rs`).
 
 For a standalone deployment there is no RTT B leg; the outbound connect
 goes straight to the destination. Every segment is measurable, and the fix
@@ -774,7 +824,7 @@ and file). The operational set (VERIFIED names):
 | `connection_completed` | Session finished normally (debug only) | high volume at debug | `log.level` | — |
 | `connection_closed` | Connection closed (debug only) | high volume at debug | `log.level` | — |
 | `connection_rejected` | Rejected, with fixed `reason` category | background noise on a public port | — | rate spikes → probe/attack or misconfig |
-| `admission_limited` | A bounded admission resource refused new work (`resource`: `connections`, `direct_connections`, …) | **can be the limits working correctly** | `maxConnections`, `directBarrier` | see below |
+| `admission_limited` | The listener-level admission governor refused a new connection (`resource`: `connections`) | **can be the limits working correctly** | `maxConnections` | see below |
 | `descriptor_pressure_changed` | FD usage crossed a watermark | only under load | FD budget | `ls /proc/PID/fd \| wc -l` vs `fd_effective_budget` |
 | `resource_pressure_changed` | Combined FD/memory pressure state changed | only under load | profile vs class | `memory.current` vs `memory.max` (§17) |
 
@@ -783,24 +833,25 @@ connection flood are the governor protecting already-established sessions.
 Note where each limit actually surfaces (VERIFIED against v1.0 source):
 
 - `admission_limited` with `resource: "connections"` — the listener-level
-  connection governor. With `resource: "direct_connections"` — the
-  direct-dial barrier: too many concurrent Direct dial attempts or dials
-  per second, or critical pressure pausing new dials. The barrier never
-  interrupts established sessions. Other limit categories surface as
-  `connection_rejected` with a fixed `reason`:
+  connection governor. Other limit categories currently surface as
+  `connection_rejected` with a fixed `reason`, not as `admission_limited`:
+- `reason: "outbound"` at ~2048 sessions with default policy → the
+  session-lifetime barrier permit (`directBarrier.maxConcurrent`), acquired
+  only by Direct-routed sessions; raise it together with `maxConnections`
+  if the machine profile allows and the node's sessions route direct
+  (§3, §4).
 - `reason: "resource_limit"` → an admission pool (handshakes, fallbacks,
-  crypto work), the FD budget, or a direct-dial barrier denial; the
-  barrier denial always logs the adjacent `admission_limited` event with
-  `resource: "direct_connections"`. Correlate with
+  crypto work) or the FD budget is exhausted; correlate with
   `descriptor_pressure_changed` to tell FD pressure (§6) from governor
   pressure.
-- `reason: "outbound"` → the selected route could not be completed
-  (unreachable destination, SOCKS5/NXR failure). In v1.0.0 this reason
-  also fired at ~2048 sessions with default policy, because the barrier
-  permit was then held for the whole session (issue #26, fixed after
-  v1.0.0); a barrier denial now reports `resource_limit` instead.
-- `reason: "authentication"` → bad credentials, replayed nonce, or clock
-  skew — a traffic/attack signal, not a capacity signal (§8, §20).
+- `reason: "authentication"` → on **NXR** inbounds: a bad key, replayed
+  nonce, or clock skew — a traffic/attack signal, not a capacity signal
+  (§8, §20). On **REALITY** client-facing inbounds you will usually *not*
+  see this event for bad credentials: pre-flight authentication, replay,
+  and time failures intentionally become cover fallback — the client is
+  relayed to the cover target and consumes `maxFallbacks` slots instead
+  (VERIFIED, `src/server/reality.rs`). Watch fallback pressure there, not
+  rejection logs.
 - `descriptor_pressure_changed` / `resource_pressure_changed` → FD or
   memory watermarks crossed; the server sheds new admissions before it
   breaks. Measure first (`ls /proc/PID/fd | wc -l`, `memory.current`),
@@ -829,9 +880,14 @@ Both authentication schemes compare timestamps against the local clock:
 - REALITY: `maxTimeDiffMs` default 60000 (±60 s).
 - NXR: `maxTimeDifferenceSeconds` default 30 (±30 s).
 
-**Clock skew looks exactly like an authentication failure** — valid
-clients rejected, `connection_rejected` with an authentication reason. It
-is also the classic "worked yesterday, broken today" after a VPS suspend,
+**Clock skew looks exactly like an authentication failure**, and the
+symptom is protocol-specific: on NXR node links, skewed peers are rejected
+with `connection_rejected reason: "authentication"`; on REALITY
+client-facing ports, a skewed-but-otherwise-valid client fails pre-flight
+authentication and is silently relayed to the cover target — users report
+"I get the cover website instead of the proxy," and the only server-side
+trace is fallback traffic, not a rejection event (VERIFIED, §18). Skew is
+also the classic "worked yesterday, broken today" after a VPS suspend,
 migration, or a dead NTP source. Check first:
 
 ```
@@ -858,7 +914,7 @@ and round-trip arithmetic):
 | 20 ms | instant | setup round trips cost tens of ms |
 | 50 ms | snappy | still well under a second |
 | 100 ms | noticeable | measured: NXR p50 setup 218 ms, SOCKS5 p50 413 ms |
-| 200 ms | sluggish setup, fine transfer | each setup round trip costs 200 ms; bulk transfer is RTT-insensitive once the window opens |
+| 200 ms | sluggish setup, fine transfer | each setup round trip costs 200 ms; established transfers stop paying setup round trips, but single-flow throughput stays BDP/congestion/loss-sensitive (window ÷ RTT) |
 
 Single-stream throughput on long paths is window-limited:
 `throughput ≈ window / RTT`. At 100 ms RTT, a 1 Gbps path needs ≈12.5 MB
@@ -898,7 +954,10 @@ node's tuned numbers onto the other.
   one box. This is what the §4 profiles were measured on.
 - **Line node** — everything standalone does, plus the NXR outbound: full
   TLS/REALITY crypto, geo assets, routing evaluation. The heaviest role;
-  size it from §4.
+  size it from §4 as a starting point — but size
+  `directBarrier.maxConcurrent` by the share of sessions whose routing
+  decision is the direct outbound, which may be zero on a pure NXR-out
+  line node (§3, §28).
 - **Landing node** — NXR authentication, destination connect, raw relay.
   No REALITY handshake, no geo assets, no routing table: lighter per
   session, but it carries every byte of every flow it terminates, so its
@@ -921,7 +980,7 @@ measurements (UNVERIFIED-EXTERNAL as a general rule).
 | Descriptor pressure with free RAM | FD budget binds before memory | `descriptor_budget_report`, `fd_clamped` | §6: raise `LimitNOFILE`, check `dedicated` mode, then concurrency |
 | Setup slow, transfer fast | Per-connection cost: RTT, DNS-in-path, or pre-auth limits | `curl -w`: `connect`/`tls` vs `ttfb` | §13; check `domainStrategy`, `connection_rejected` |
 | NXR setup slow but established flows fast | Setup round trips × line↔landing RTT; or clock skew | RTT between nodes; `timedatectl` both ends | Expected at high RTT (§14); fix skew; don't widen windows |
-| Only IP-rule routing is slow | DNS in the decision path | `domainStrategy`, resolver latency | §12: `IPIfNonMatch`, faster `dns.servers` |
+| Only IP-rule routing is slow | DNS in the decision path | `domainStrategy`, resolver latency | §12: `IPIfNonMatch`, faster OS resolver (local caching stub) |
 | Benchmark slow only at `debug` level | Logging overhead | `log.level` in both configs | §19: match levels, re-measure |
 | One site slow, all tests fast | That origin or its path, not the proxy | `curl -w` direct to that site (§13) | Origin-side fix; the proxy inherits origin ceilings (§14) |
 
@@ -966,24 +1025,26 @@ A 1C1G in `standard` mode ran 20000+ sessions, sat pinned at
 transitions while clients saw random fast-rejects. In validation, standard
 mode on 1 GiB survived 23000 sessions but with zero headroom — alive, not
 healthy. Fix applied: `dedicated` mode plus the 1C1G profile
-(`maxConnections` 8000). Shedding stopped; peak cgroup
+(`maxConnections`/`maxConcurrent` 8000). Shedding stopped; peak cgroup
 memory at 12000 sessions measured 694 MiB, leaving real margin. Lesson:
 "it didn't crash" is not "it fits" — check `memory.current` headroom,
 not just survival.
 
-**Case 5 — the invisible 2048-session ceiling (v1.0.0, historical).**
+**Case 5 — the invisible 2048-session ceiling.**
 An operator raised `maxConnections` to 16384 for a growing 2C2G node and
 still watched clients rejected at ~2000 concurrent sessions:
 `connection_rejected` with `reason: "outbound"` (measured in validation:
 rejection #2049 onward, FD count flat at exactly 2×2048+15). The default
-`directBarrier.maxConcurrent` of 2048 was the effective ceiling because
-v1.0.0 held the barrier permit for the whole session (issue #26). The
-permit is now released when the dial completes, so that plateau cannot
-recur: a barrier denial surfaces as `admission_limited` with
-`resource: "direct_connections"` plus `connection_rejected` with
-`reason: "resource_limit"` during a dial burst instead. The lesson stands:
-after any capacity change, watch `connection_rejected`'s `reason` field and
-the FD plateau — the binding limit is not always the knob you edited.
+`directBarrier.maxConcurrent` of 2048 — whose permit is held for the whole
+session and is acquired only by Direct-routed sessions — was the effective
+ceiling on this standalone node, where every session routes direct (§3).
+Fix: set both knobs to 16000 and restart (both are restart-required, §10) —
+the right move on a standalone/Direct node; a node routing its sessions to
+NXR or SOCKS5 would instead size `maxConcurrent` to its Direct-routed
+share, possibly leaving it at the default (§22, §28). Verified clean to
+24000 sessions at 1.12 GiB on 2 GiB. Lesson: after any capacity change,
+watch `connection_rejected`'s `reason` field and the FD plateau — the
+binding limit is not always the knob you edited.
 
 **Case 6 — the comparison that wasn't.**
 During the project's own benchmark program, a fallback A/B appeared to
@@ -1067,3 +1128,191 @@ flowchart TD
 When the tree points at a limit, re-read the matching section before
 changing it. When it points at the network, believe end-to-end counters
 over traceroute aesthetics.
+
+## 28. Fitting a config to one unknown host
+
+The §4 profiles are starting points validated on one specific
+standalone/Direct workload. This section is the method for deriving a
+config for *your* host when it does not match that picture. Every number
+below either cites a measurement from this guide or tells you which command
+produces it — there are no CPU×constant formulas, because no such constant
+is honest.
+
+### 28.1 Fingerprint the host
+
+```
+lscpu; nproc                                  # sockets/cores/threads, model
+cat /sys/fs/cgroup/cpu.max                    # "MAX 100000" = uncapped; "50000 100000" = half a core
+cat /sys/fs/cgroup/cpuset.cpus.effective      # which cores you may run on (cgroup v2)
+cat /proc/pressure/cpu                        # PSI: "some" = tasks stalled, "full" = all stalled
+vmstat 1 5                                    # us/sy split, st (steal), si/so (swap)
+grep MemAvailable /proc/meminfo               # what new work can actually claim
+cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.high \
+    /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory.events
+grep -E '^(anon|file|kernel|sock)' /sys/fs/cgroup/memory.stat
+grep 'open files' /proc/self/limits           # RLIMIT_NOFILE your service will inherit
+ip -s link                                    # interface drops/errors
+ss -s                                         # socket-state summary
+ss -ti                                        # per-flow rtt/cwnd/retrans/delivery_rate
+```
+
+Read the cgroup files from *inside* the scope the service will run in (for a
+systemd service, the service's own cgroup under
+`/sys/fs/cgroup/system.slice/...`): `dedicated` mode derives its budgets
+from exactly these numbers (§5), so they — not the provider's product page —
+are the truth.
+
+### 28.2 Inventory the co-tenants
+
+```
+systemctl list-units --state=running --type=service
+ps -eo pid,comm,%cpu,rss --sort=-rss | head -20
+systemd-cgtop -b -n 1                          # per-cgroup CPU/memory, one snapshot
+```
+
+You are looking for who else holds CPU and RSS *right now*, and whether
+their load is steady (a database with a stable working set) or bursty (a
+CI runner, a cron-heavy neighbor).
+
+### 28.3 Classify the host
+
+- **Whole-host dedicated** — no meaningful co-tenants, uncapped cgroup:
+  `dedicated` mode, start from the §4 profile for your class.
+- **Dedicated cgroup on a shared host** — you own a slice with hard limits
+  (typical for container VPS): `dedicated` mode works *inside* the cgroup;
+  it reads the cgroup's CPU quota and memory limit (VERIFIED,
+  `machine_report`). Size from the cgroup limits, not the host.
+- **Shared, predictable** — co-tenants exist but their usage is measured
+  and steady: `standard` mode, or better, give rust-reality its own cgroup
+  (28.4) sized from the leftover you measured.
+- **Shared, unpredictable** — steal time varies, neighbors unknown:
+  smallest defensible envelope, `standard` mode or a tight cgroup, and the
+  knee calibration (28.5) is mandatory before you trust any number.
+
+### 28.4 Isolate on shared machines (no universal numbers)
+
+On anything shared, put the service in a cgroup with limits you *derived
+from the fingerprint*, then run `dedicated` mode inside it. Example drop-in
+(`/etc/systemd/system/rust-reality.service.d/limits.conf`) — the values are
+an illustration for one 4C8G host with a database, not a recipe:
+
+```ini
+[Service]
+CPUQuota=300%        # 3 of 4 cores: co-tenant inventory showed the DB using ≈1
+MemoryHigh=3500M     # throttling tripwire below the hard cap
+MemoryMax=4G         # 8G total − measured DB working set ≈3G − OS margin
+LimitNOFILE=1048576  # covers 2 FDs × planned sessions plus reserves (§6)
+```
+
+`CPUQuota` comes from cores you can actually spare (28.1 + 28.2);
+`MemoryMax` from `MemAvailable` minus the co-tenants' measured working
+sets; `MemoryHigh` sits below it so the kernel throttles before it kills;
+`LimitNOFILE` covers ≈2 descriptors per planned session plus the fixed
+reserves. `CPUWeight` (default 100) only matters under contention — raise
+it if the proxy must win CPU fights with the co-tenants.
+
+### 28.5 Calibrate the saturation knee
+
+The profiles in §4 were found exactly this way; repeat it on your host:
+
+1. Raise a representative load stepwise (connection churn, then concurrent
+   bulk flows, then an idle-session ladder — your own clients, or the
+   project's harness `scripts/validate-profiles.sh`).
+2. At each step record: throughput, new connections/s, setup p50/p95/p99
+   (`curl -w`, §13), CPU (`pidstat`), steal (`vmstat` `st`), RSS and
+   `memory.current`, FD count (`ls /proc/PID/fd | wc -l`), retransmits
+   (`nstat`, §15), and the pressure events (`resource_pressure_changed`,
+   §18).
+3. Find the **knee**: the step where more offered load stops producing
+   useful throughput while latency and pressure climb sharply — shedding,
+   `memory.current` pinned at `memory.max`, p99 diverging from p50.
+4. Set production capacity **below** the knee. The project used ≈57–67% of
+   the observed clean/shed points for its starting profiles (§4); that
+   ratio is a reasonable starting convention, not a law.
+
+### 28.6 Derive each parameter
+
+Little's-law reasoning, `in-flight ≈ arrival rate × service time`, with
+each input measured on your host:
+
+- **`maxConnections`** — from the knee (28.5), bounded by memory
+  (33 MiB base with geo assets + ≈47 KiB per live session + up to a few
+  hundred MiB of transient pool growth under bulk, MEASURED-LOCAL) and by
+  FDs (≈2 per session, §6).
+- **`maxHandshakes`** — ≥ target CPS × handshake service time. Measure the
+  service time (setup p95 from §13): 500 CPS × 0.5 s ≈ 250 in flight, so
+  the default 1024 has 4× margin; a 3 s high-RTT path at the same CPS wants
+  ≈1500.
+- **`maxCryptoOperations`** — a handshake holds at most one crypto slot at
+  a time, so this never needs to exceed `maxHandshakes`; the default 128 is
+  ample when the CPU can only set up ≈800 conn/s anyway (MEASURED-LOCAL
+  churn anchor, harness-bound).
+- **`maxDnsLookups`** — only matters when IP rules put DNS in the decision
+  path (§12): DNS-triggering share × CPS × resolver latency. 20% of
+  500 CPS against a 50 ms resolver ≈ 5 in flight; the default 64 covers it.
+- **`maxReplayEntries`** — ≥ new authenticated CPS × `replayRetentionMs`:
+  500 CPS × 120 s = 60 000, just under the 65 536 default; at the measured
+  ≈800 conn/s churn the default is *not* enough (§8) — size from your CPS.
+- **`directBarrier.maxConcurrent`** — the Direct-routed *share* of your
+  expected concurrent sessions (§3): standalone/Direct = 100%, a pure
+  NXR-out line node = 0 (the default 2048 can simply stay). SOCKS5 and NXR
+  outbounds never acquire permits (VERIFIED).
+- **`directBarrier.maxPerSecond`** — expected Direct dial rate: Direct
+  share × CPS × burst margin.
+- **Relay pools** — `maxPooledBuffers` ≥ the number of *concurrently
+  transferring* (not idle) sessions; keep the §7 validator formula ≤
+  `maxRelayMemoryBytes` (default 536 870 912).
+- **NXR `maxNonceEntries`** — NXR CPS × `nonceRetentionSeconds`, plus
+  margin; restart-required (§10).
+
+### 28.7 Five worked derivations
+
+**(A) 1C1G, whole-host dedicated, standalone/Direct.** Use the measured §4
+profile directly: `maxConnections` = `maxConcurrent` = **8000** — 12000
+verified clean at a 694 MiB cgroup peak, shedding ≈14000, and 8000 ≈ 57%
+of the shed point. Why it fits: 33 MiB base + 47 KiB × 8000 ≈ 366 MiB of
+sessions + up to ~300 MiB transient pools ≈ 700 MiB < 1 GiB; 2 × 8000 FDs
+is far inside the budget the shipped unit allows (§6). `maxReplayEntries`
+65536 sustains ≈550 new conn/s (§8) — above this host's measured churn
+anchor, so the default stands.
+
+**(B) The same 1C1G, shared with other services.** The co-tenant inventory
+shows, say, a steady 300 MiB and half a core spoken for. Two honest
+options: `standard` mode (conservative derivation, §5), or a cgroup with
+`MemoryMax=768M`, `CPUQuota=75%` and `dedicated` inside. Inside 768 MiB:
+768 − 33 − ~300 transient ≈ 435 MiB for sessions ≈ 9000 by memory — but
+0.75 of a vCPU will knee far earlier, so start `maxConnections` =
+`maxConcurrent` at **4000** (half of (A), an untested point chosen
+conservatively) and only raise it after your own knee run (28.5). Every
+other parameter follows 28.6 from your measured CPS.
+
+**(C) 4C8G shared with a database.** Isolate per 28.4 (`CPUQuota=300%`,
+`MemoryMax=4G`, `LimitNOFILE=1048576`), `dedicated` inside the cgroup, and
+take the §4 profile of the 4 GiB classes: `maxConnections` = `maxConcurrent` =
+**24000** — verified clean at a 1.12 GiB cgroup peak, and deliberately
+capped at the verified level rather than extrapolated. Memory check:
+33 MiB + 47 KiB × 24000 ≈ 1.1 GiB + ~300 MiB transient ≈ 1.4 GiB ≪ 4 GiB,
+so the cgroup has real margin; claims above 24000 need your own validation
+(the project's harness hit its port ceiling there, §4).
+
+**(D) 2C2G line node, NXR-out emphasis.** Routing sends ~90% of sessions
+to the NXR landing and ~10% direct. `maxConnections` = **16000**, the
+verified 2C2G standalone starting point, accepted as a starting hypothesis
+for the heavier line role (the NXR leg adds ≈3–5% throughput tax and
+≈+0.15 ms CPU per connection, MEASURED-LOCAL). `maxConcurrent`: only the
+Direct share acquires permits — 10% × 16000 = 1600, so the **default 2048
+already covers it** and nothing needs raising; a pure NXR-out line node
+needs no raise at all. `maxPerSecond`: 10% × your CPS (500 → 50/s) ≪ the
+4096 default. If the line also *terminates* NXR from other nodes,
+`maxNonceEntries` ≥ NXR CPS × 120 s.
+
+**(E) 2C2G landing node.** No REALITY handshake, no geo assets (≈27 MiB
+never loaded), no routing, and the direct barrier is never consulted on the
+NXR landing path — `maxConcurrent` is irrelevant here. Size by relay FDs
+and memory: the same ≈47 KiB + 2 FDs per session anchors apply, so 16000
+sessions cost ≈750 MiB + pools (≤512 MiB ceiling, transient) — fits 2 GiB
+with margin, matching the §22 observation that a landing can run one class
+below its line. The parameter that actually binds is anti-replay:
+`maxNonceEntries` ≥ NXR CPS × `nonceRetentionSeconds` — at the measured
+≈800 conn/s churn and the 120 s default that is ≈96 000, *above* the 65536
+default, so raise it (restart) or cap the accepted NXR churn (§8).
