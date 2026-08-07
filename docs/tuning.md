@@ -32,7 +32,7 @@ Every load-bearing statement carries a confidence label:
 If you just rented a VPS and want a defensible starting point, use the
 tuned profile for your machine class:
 
-| Your VPS | `runtime.resourceMode` | Set `policy.resourceGovernor.maxConnections` **and** `policy.directBarrier.maxConcurrent` both to | Basis (MEASURED-LOCAL) |
+| Your VPS | `runtime.resourceMode` | Set `policy.resourceGovernor.maxConnections` to | Basis (MEASURED-LOCAL) |
 | --- | --- | --- | --- |
 | 1 vCPU / 1 GiB ("1C1G") | `dedicated` | `8000` | 12000 sessions verified clean at ~694 MiB cgroup peak; shedding began ≈14000; 8000 ≈ 57% of the shed point |
 | 1–2 vCPU / 2 GiB | `dedicated` | `16000` | 24000 verified clean at 1.12 GiB cgroup peak; recommendation = 2/3 of verified |
@@ -44,24 +44,25 @@ MEASURED-LOCAL with `oom_kill=0` in every run.
 
 These are **starting profiles validated on the tested standalone/Direct
 workload** (setup churn + 512 MiB bulk transfer + idle-connection ladder),
-on a topology where every session routes to the direct outbound — which is
-why the table sets `maxConcurrent` equal to `maxConnections`. They are not
-universal production capacities: a mixed-workload validation phase is needed
-before stronger claims. On nodes whose sessions leave via NXR or SOCKS5
-outbounds, `directBarrier.maxConcurrent` caps only the Direct-routed share
-(§3), and §28 shows how to derive every value for one specific host.
+on a topology where every session routes to the direct outbound. They are
+not universal production capacities: a mixed-workload validation phase is
+needed before stronger claims. `directBarrier.maxConcurrent` needs no
+change on these profiles: it bounds concurrent Direct dial attempts, and
+an established session holds no barrier permit (§3). §28 shows how to
+derive every value for one specific host.
 
 Two rules before anything else:
 
-1. **The defaults are safe on every machine above, but they cap
-   Direct-routed sessions at 2048.** `policy.directBarrier.maxConcurrent`
-   defaults to 2048, and the barrier permit — acquired only by sessions
-   whose routing decision is the direct outbound — is held for the whole
-   session lifetime. On a standalone/Direct node that is every session, so
-   session 2049 is fast-rejected even though `maxConnections` defaults to
-   16384 (VERIFIED, measured). Raising real session capacity on such a node
-   means raising both values together, then restarting: both are
-   restart-required (see §10).
+1. **The defaults are safe on every machine above, and the session ceiling
+   is `maxConnections`.** `policy.resourceGovernor.maxConnections` defaults
+   to 16384. `policy.directBarrier.maxConcurrent` (default 2048) bounds
+   concurrent Direct dial attempts only: the barrier permit is released as
+   soon as the dial completes, so an established session consumes no barrier
+   capacity. (v1.0.0 held the permit for the whole Direct session, so on a
+   standalone/Direct node session 2049 was fast-rejected even with
+   `maxConnections` at 16384 — issue #26, fixed after v1.0.0.) Raising real
+   session capacity means raising `maxConnections`, then restarting: it is
+   a restart-required setting (see §10).
 2. **A policy block, when present, must be complete.** The validator
    rejects a `policy.resourceGovernor` object that contains only the keys
    you changed (VERIFIED with `check`). Edit values inside the full block
@@ -109,21 +110,16 @@ Whichever term is smallest wins, and raising any other term changes
 nothing. Concretely:
 
 - **Admission ceiling** — `policy.resourceGovernor.maxConnections` (default
-  16384) is the global accepted-session ceiling. On top of it,
-  `policy.directBarrier.maxConcurrent` (default 2048) adds a second ceiling
-  on Direct-routed sessions only: the barrier permit is acquired on the
-  direct-outbound path and held for the entire session lifetime, and
-  sessions routed to SOCKS5 or NXR outbounds never acquire it (VERIFIED,
-  `src/server/outbound.rs`). Note the lifetime is a *tracked runtime
-  mismatch* (issue #26): the documented intent is a cap on concurrent
-  Direct *dial attempts* plus a dial rate, not on established sessions;
-  v1.0.0's implementation holds the permit for the whole Direct session.
-  This guide describes the measured v1.0.0 behavior; do not treat the
-  permit lifetime as the intended long-term semantics. So with default policy a standalone/Direct
-  node — where every session routes direct — has an *effective* ceiling of
-  2048 sessions regardless of `maxConnections` (VERIFIED, measured: session
-  2049 is fast-rejected with `maxConnections` left at 16384), while a mixed
-  node has a Direct-specific sub-cap sized by its Direct-routed share.
+  16384) is the global accepted-session ceiling.
+  `policy.directBarrier.maxConcurrent` (default 2048) bounds only
+  *in-flight* Direct dial attempts: the permit is acquired on the
+  direct-outbound path and released the moment the dial completes, so an
+  established session consumes no barrier capacity, and sessions routed to
+  SOCKS5 or NXR outbounds never acquire one (VERIFIED,
+  `src/server/outbound.rs`). (v1.0.0 held the permit for the whole Direct
+  session, making 2048 the effective session ceiling on standalone/Direct
+  nodes — issue #26, fixed after v1.0.0; the measured "session 2049
+  fast-rejected" plateau was recorded against that behavior.)
 - **FD budget** — the server derives a descriptor budget at startup from
   `RLIMIT_NOFILE`, minus fixed reserves and safety headroom, and reports it
   once as `descriptor_budget_report` (§6). Steady state costs ≈2 FDs per
@@ -160,25 +156,25 @@ a node where every session routes to the direct outbound), all in
 `dedicated` mode inside cgroup v2 scopes, with `oom_kill=0` in every run
 (MEASURED-LOCAL):
 
-| Class | Default policy | Tuned profile (`maxConnections` = `directBarrier.maxConcurrent`) | Verified clean | First shedding/pressure | Peak cgroup memory at verified level |
+| Class | Default policy | Tuned profile (`maxConnections`) | Verified clean | First shedding/pressure | Peak cgroup memory at verified level |
 | --- | --- | --- | --- | --- | --- |
-| 1C1G | safe, ≤2048 sessions | **8000** | 12000 | ≈14000 | 694 MiB @ 12000 |
-| 1C2G | safe, ≤2048 sessions | **16000** | 24000 | none observed | 1.12 GiB @ 24000 |
-| 2C2G | safe, ≤2048 sessions | **16000** | 24000 | none observed | 1.12 GiB @ 24000 |
-| 2C4G | safe, ≤2048 sessions | **24000** | 24000 | none observed | 1.12 GiB @ 24000 |
-| 4C4G | safe, ≤2048 sessions | **24000** | 24000 | none observed | 1.13 GiB @ 24000 |
-| 4C8G | safe, ≤2048 sessions | **24000** | 24000 | none observed | 1.12 GiB @ 24000 |
+| 1C1G | safe | **8000** | 12000 | ≈14000 | 694 MiB @ 12000 |
+| 1C2G | safe | **16000** | 24000 | none observed | 1.12 GiB @ 24000 |
+| 2C2G | safe | **16000** | 24000 | none observed | 1.12 GiB @ 24000 |
+| 2C4G | safe | **24000** | 24000 | none observed | 1.12 GiB @ 24000 |
+| 4C4G | safe | **24000** | 24000 | none observed | 1.13 GiB @ 24000 |
+| 4C8G | safe | **24000** | 24000 | none observed | 1.12 GiB @ 24000 |
 
 Notes on reading this table:
 
 - **Scope of the evidence.** These are starting profiles, not universal
-  production capacities. On the tested topology every session took the
-  Direct path, which is why the table sets `directBarrier.maxConcurrent`
-  equal to `maxConnections`. Do not copy that equality onto a node whose
-  sessions leave via NXR or SOCKS5: a pure NXR-out line node may not need
-  `maxConcurrent` raised at all, and a mixed node sizes it by its
-  Direct-routed share (§3, §28). A mixed-workload validation phase is needed
-  before claims stronger than these.
+  production capacities, validated on a topology where every session took
+  the Direct path — and recorded against the v1.0.0 session-lifetime
+  barrier behavior (issue #26). After the dial-phase fix the barrier no
+  longer caps established sessions, so the tuned profiles only raise
+  `maxConnections`; `directBarrier.maxConcurrent` keeps its default unless
+  your dial *rate* demands otherwise (§3, §28). A mixed-workload validation
+  phase is needed before claims stronger than these.
 - **"Verified clean"** means the full load level completed with no
   admission shedding, no pressure events, and no OOM. **Recommendations are
   deliberately below the breaking point**: 8000 ≈ 57% of the 1C1G shed
@@ -314,7 +310,7 @@ memory ≈ 33 MiB (server + geo assets)
 **When memory is tight, do not lower `bufferBytes` first.** A smaller
 buffer buys almost nothing (the pool ceiling, not the buffer size,
 dominates: 4096 × 32 KiB = 128 MiB) and costs throughput on high-BDP paths.
-Reduce concurrency (`maxConnections`/`directBarrier.maxConcurrent`) or the
+Reduce concurrency (`maxConnections`) or the
 pool ceilings (`maxPooledBuffers`, `maxPooledPipes`) instead, and keep the
 validator formula ≤ `maxRelayMemoryBytes`.
 
@@ -439,7 +435,7 @@ defaults; the rest is shown because a partial policy object is rejected.
     "fallbackTimeoutMs": 120000
   },
   "directBarrier": {
-    "maxConcurrent": 8000,
+    "maxConcurrent": 2048,
     "maxPerSecond": 4096
   },
   "relay": {
@@ -833,17 +829,17 @@ connection flood are the governor protecting already-established sessions.
 Note where each limit actually surfaces (VERIFIED against v1.0 source):
 
 - `admission_limited` with `resource: "connections"` — the listener-level
-  connection governor. Other limit categories currently surface as
-  `connection_rejected` with a fixed `reason`, not as `admission_limited`:
-- `reason: "outbound"` at ~2048 sessions with default policy → the
-  session-lifetime barrier permit (`directBarrier.maxConcurrent`), acquired
-  only by Direct-routed sessions; raise it together with `maxConnections`
-  if the machine profile allows and the node's sessions route direct
-  (§3, §4).
-- `reason: "resource_limit"` → an admission pool (handshakes, fallbacks,
-  crypto work) or the FD budget is exhausted; correlate with
-  `descriptor_pressure_changed` to tell FD pressure (§6) from governor
-  pressure.
+  connection governor. Other limits surface in two ways:
+- `admission_limited` with `resource: "direct_connections"` plus
+  `connection_rejected reason: "resource_limit"` → the Direct dial barrier
+  (concurrency, rate, or critical pressure) refused a dial. Raise
+  `directBarrier.maxConcurrent`/`maxPerSecond` only if your Direct dial
+  rate really demands it (§3, §28); the barrier never limits established
+  sessions.
+- `reason: "resource_limit"` without the admission event → an admission
+  pool (handshakes, fallbacks, crypto work) or the FD budget is exhausted;
+  correlate with `descriptor_pressure_changed` to tell FD pressure (§6)
+  from governor pressure.
 - `reason: "authentication"` → on **NXR** inbounds: a bad key, replayed
   nonce, or clock skew — a traffic/attack signal, not a capacity signal
   (§8, §20). On **REALITY** client-facing inbounds you will usually *not*
@@ -1025,26 +1021,21 @@ A 1C1G in `standard` mode ran 20000+ sessions, sat pinned at
 transitions while clients saw random fast-rejects. In validation, standard
 mode on 1 GiB survived 23000 sessions but with zero headroom — alive, not
 healthy. Fix applied: `dedicated` mode plus the 1C1G profile
-(`maxConnections`/`maxConcurrent` 8000). Shedding stopped; peak cgroup
+(`maxConnections` 8000). Shedding stopped; peak cgroup
 memory at 12000 sessions measured 694 MiB, leaving real margin. Lesson:
 "it didn't crash" is not "it fits" — check `memory.current` headroom,
 not just survival.
 
-**Case 5 — the invisible 2048-session ceiling.**
-An operator raised `maxConnections` to 16384 for a growing 2C2G node and
-still watched clients rejected at ~2000 concurrent sessions:
-`connection_rejected` with `reason: "outbound"` (measured in validation:
-rejection #2049 onward, FD count flat at exactly 2×2048+15). The default
-`directBarrier.maxConcurrent` of 2048 — whose permit is held for the whole
-session and is acquired only by Direct-routed sessions — was the effective
-ceiling on this standalone node, where every session routes direct (§3).
-Fix: set both knobs to 16000 and restart (both are restart-required, §10) —
-the right move on a standalone/Direct node; a node routing its sessions to
-NXR or SOCKS5 would instead size `maxConcurrent` to its Direct-routed
-share, possibly leaving it at the default (§22, §28). Verified clean to
-24000 sessions at 1.12 GiB on 2 GiB. Lesson: after any capacity change,
-watch `connection_rejected`'s `reason` field and the FD plateau — the
-binding limit is not always the knob you edited.
+**Case 5 — the 2048-session plateau (v1.0.0, historical).** On v1.0.0, an
+operator who raised `maxConnections` to 16384 still saw rejections at ~2048
+concurrent sessions, FD count flat at exactly 2×2048+15: the barrier permit
+was held for the whole Direct session, so `directBarrier.maxConcurrent`
+capped established sessions (issue #26). After the dial-phase fix the
+permit is released when the dial completes, and the plateau is gone —
+the ceiling is now `maxConnections`, the FD budget, and memory pressure.
+Lesson retained: after any capacity change, watch `connection_rejected`'s
+`reason` field and the FD plateau — the binding limit is not always the
+knob you edited.
 
 **Case 6 — the comparison that wasn't.**
 During the project's own benchmark program, a fallback A/B appeared to
@@ -1253,10 +1244,10 @@ each input measured on your host:
 - **`maxReplayEntries`** — ≥ new authenticated CPS × `replayRetentionMs`:
   500 CPS × 120 s = 60 000, just under the 65 536 default; at the measured
   ≈800 conn/s churn the default is *not* enough (§8) — size from your CPS.
-- **`directBarrier.maxConcurrent`** — the Direct-routed *share* of your
-  expected concurrent sessions (§3): standalone/Direct = 100%, a pure
-  NXR-out line node = 0 (the default 2048 can simply stay). SOCKS5 and NXR
-  outbounds never acquire permits (VERIFIED).
+- **`directBarrier.maxConcurrent`** — in-flight Direct dial concurrency:
+  dial CPS × dial service time (milliseconds), so the default 2048 is
+  almost always ample; a pure NXR-out line node never uses it. SOCKS5 and
+  NXR outbounds never acquire permits (VERIFIED).
 - **`directBarrier.maxPerSecond`** — expected Direct dial rate: Direct
   share × CPS × burst margin.
 - **Relay pools** — `maxPooledBuffers` ≥ the number of *concurrently
@@ -1268,7 +1259,9 @@ each input measured on your host:
 ### 28.7 Five worked derivations
 
 **(A) 1C1G, whole-host dedicated, standalone/Direct.** Use the measured §4
-profile directly: `maxConnections` = `maxConcurrent` = **8000** — 12000
+profile directly: `maxConnections` = **8000** (the dial-phase barrier needs
+no raise — the default 2048 covers in-flight dials; issue #26's
+session-lifetime hold was fixed after v1.0.0) — 12000
 verified clean at a 694 MiB cgroup peak, shedding ≈14000, and 8000 ≈ 57%
 of the shed point. Why it fits: 33 MiB base + 47 KiB × 8000 ≈ 366 MiB of
 sessions + up to ~300 MiB transient pools ≈ 700 MiB < 1 GiB; 2 × 8000 FDs
@@ -1281,14 +1274,14 @@ shows, say, a steady 300 MiB and half a core spoken for. Two honest
 options: `standard` mode (conservative derivation, §5), or a cgroup with
 `MemoryMax=768M`, `CPUQuota=75%` and `dedicated` inside. Inside 768 MiB:
 768 − 33 − ~300 transient ≈ 435 MiB for sessions ≈ 9000 by memory — but
-0.75 of a vCPU will knee far earlier, so start `maxConnections` =
-`maxConcurrent` at **4000** (half of (A), an untested point chosen
-conservatively) and only raise it after your own knee run (28.5). Every
+0.75 of a vCPU will knee far earlier, so start `maxConnections` at
+**4000** (half of (A), an untested point chosen conservatively) and only
+raise it after your own knee run (28.5). Every
 other parameter follows 28.6 from your measured CPS.
 
 **(C) 4C8G shared with a database.** Isolate per 28.4 (`CPUQuota=300%`,
 `MemoryMax=4G`, `LimitNOFILE=1048576`), `dedicated` inside the cgroup, and
-take the §4 profile of the 4 GiB classes: `maxConnections` = `maxConcurrent` =
+take the §4 profile of the 4 GiB classes: `maxConnections` =
 **24000** — verified clean at a 1.12 GiB cgroup peak, and deliberately
 capped at the verified level rather than extrapolated. Memory check:
 33 MiB + 47 KiB × 24000 ≈ 1.1 GiB + ~300 MiB transient ≈ 1.4 GiB ≪ 4 GiB,
@@ -1299,10 +1292,10 @@ so the cgroup has real margin; claims above 24000 need your own validation
 to the NXR landing and ~10% direct. `maxConnections` = **16000**, the
 verified 2C2G standalone starting point, accepted as a starting hypothesis
 for the heavier line role (the NXR leg adds ≈3–5% throughput tax and
-≈+0.15 ms CPU per connection, MEASURED-LOCAL). `maxConcurrent`: only the
-Direct share acquires permits — 10% × 16000 = 1600, so the **default 2048
-already covers it** and nothing needs raising; a pure NXR-out line node
-needs no raise at all. `maxPerSecond`: 10% × your CPS (500 → 50/s) ≪ the
+≈+0.15 ms CPU per connection, MEASURED-LOCAL). `maxConcurrent`: only Direct
+dials acquire permits, and only for the dial itself — even 100% Direct
+routing at hundreds of CPS fits in the **default 2048**, and a pure
+NXR-out line node never uses the barrier at all. `maxPerSecond`: 10% × your CPS (500 → 50/s) ≪ the
 4096 default. If the line also *terminates* NXR from other nodes,
 `maxNonceEntries` ≥ NXR CPS × 120 s.
 
