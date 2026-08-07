@@ -293,6 +293,8 @@ pub enum InboundConfig {
     Vless(VlessInboundConfig),
     /// Firewall-restricted internal NXR landing listener.
     Nxr(NxrInboundConfig),
+    /// Firewall-restricted internal Handoff landing listener.
+    Handoff(HandoffInboundConfig),
 }
 
 impl InboundConfig {
@@ -302,6 +304,7 @@ impl InboundConfig {
         match self {
             Self::Vless(inbound) => &inbound.tag,
             Self::Nxr(inbound) => &inbound.tag,
+            Self::Handoff(inbound) => &inbound.tag,
         }
     }
 
@@ -311,6 +314,7 @@ impl InboundConfig {
         match self {
             Self::Vless(inbound) => inbound.listen,
             Self::Nxr(inbound) => inbound.listen,
+            Self::Handoff(inbound) => inbound.listen,
         }
     }
 
@@ -320,6 +324,7 @@ impl InboundConfig {
         match self {
             Self::Vless(inbound) => inbound.port,
             Self::Nxr(inbound) => inbound.port,
+            Self::Handoff(inbound) => inbound.port,
         }
     }
 
@@ -328,7 +333,7 @@ impl InboundConfig {
     pub const fn as_vless(&self) -> Option<&VlessInboundConfig> {
         match self {
             Self::Vless(inbound) => Some(inbound),
-            Self::Nxr(_) => None,
+            Self::Nxr(_) | Self::Handoff(_) => None,
         }
     }
 
@@ -337,7 +342,7 @@ impl InboundConfig {
     pub const fn as_vless_mut(&mut self) -> Option<&mut VlessInboundConfig> {
         match self {
             Self::Vless(inbound) => Some(inbound),
-            Self::Nxr(_) => None,
+            Self::Nxr(_) | Self::Handoff(_) => None,
         }
     }
 }
@@ -412,6 +417,70 @@ const fn default_nxr_authentication_timeout_ms() -> u64 {
 }
 
 const fn default_nxr_connect_timeout_ms() -> u64 {
+    10_000
+}
+
+/// One internal Handoff landing listener.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HandoffInboundConfig {
+    /// Unique routing and operational tag.
+    pub tag: String,
+    /// Firewall-restricted address to bind.
+    pub listen: IpAddr,
+    /// Raw Handoff TCP port to bind.
+    pub port: u16,
+    /// Independent per-transfer authentication and replay policy.
+    pub settings: HandoffInboundSettings,
+}
+
+/// Authentication and bounded replay policy for one Handoff landing listener.
+///
+/// The pre-shared key and the static X25519 key are independent of the NXR
+/// pre-shared key and of any REALITY private key; reusing key material across
+/// those boundaries is a configuration error the operator must avoid.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HandoffInboundSettings {
+    /// URL-safe unpadded base64 encoding of an independent 32-byte PSK.
+    pub pre_shared_key: SecretString,
+    /// URL-safe unpadded base64 encoding of the listener's independent static
+    /// X25519 private key.
+    pub private_key: SecretString,
+    /// Maximum accepted absolute wall-clock difference in seconds.
+    #[serde(default = "default_handoff_time_difference_seconds")]
+    pub max_time_difference_seconds: u64,
+    /// Maximum retained verified nonces for this listener.
+    #[serde(default = "default_handoff_nonce_entries")]
+    pub max_nonce_entries: u32,
+    /// Monotonic replay retention in seconds.
+    #[serde(default = "default_handoff_nonce_retention_seconds")]
+    pub nonce_retention_seconds: u64,
+    /// Absolute deadline for reading the one sealed transfer message.
+    #[serde(default = "default_handoff_authentication_timeout_ms")]
+    pub authentication_timeout_ms: u64,
+    /// Absolute deadline for connecting to the transferred destination.
+    #[serde(default = "default_handoff_connect_timeout_ms")]
+    pub connect_timeout_ms: u64,
+}
+
+const fn default_handoff_time_difference_seconds() -> u64 {
+    30
+}
+
+const fn default_handoff_nonce_entries() -> u32 {
+    65_536
+}
+
+const fn default_handoff_nonce_retention_seconds() -> u64 {
+    120
+}
+
+const fn default_handoff_authentication_timeout_ms() -> u64 {
+    3_000
+}
+
+const fn default_handoff_connect_timeout_ms() -> u64 {
     10_000
 }
 
@@ -517,6 +586,13 @@ pub enum OutboundConfig {
         /// NXR endpoint and independent pre-shared authentication key.
         settings: NxrSettings,
     },
+    /// Transfer one authenticated session to a Handoff landing node.
+    Handoff {
+        /// Unique routing tag.
+        tag: String,
+        /// Handoff landing endpoint, independent PSK, and landing public key.
+        settings: HandoffSettings,
+    },
 }
 
 impl OutboundConfig {
@@ -527,7 +603,8 @@ impl OutboundConfig {
             Self::Direct { tag }
             | Self::Blackhole { tag, .. }
             | Self::Socks5 { tag, .. }
-            | Self::Nxr { tag, .. } => tag,
+            | Self::Nxr { tag, .. }
+            | Self::Handoff { tag, .. } => tag,
         }
     }
 }
@@ -567,6 +644,25 @@ pub struct NxrSettings {
     pub port: u16,
     /// URL-safe unpadded base64 encoding of an independent 32-byte PSK.
     pub pre_shared_key: SecretString,
+}
+
+/// Handoff landing-node outbound configuration.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HandoffSettings {
+    /// Landing node address.
+    pub address: String,
+    /// Firewall-restricted raw Handoff TCP port.
+    pub port: u16,
+    /// URL-safe unpadded base64 encoding of an independent 32-byte PSK.
+    pub pre_shared_key: SecretString,
+    /// URL-safe unpadded base64 encoding of the landing node's static X25519
+    /// public key. This is public material, not a secret.
+    pub landing_public_key: String,
+    /// Absolute deadline for dialing the landing node and writing the one
+    /// sealed transfer message.
+    #[serde(default = "default_handoff_connect_timeout_ms")]
+    pub connect_timeout_ms: u64,
 }
 
 /// User-group routing with a small global prelude.

@@ -13,11 +13,12 @@ pub use generate::{
 pub use io::{ConfigLoadError, MAX_CONFIG_BYTES, format_config, load_config};
 pub use model::{
     AssetsConfig, BlackholeSettings, Config, DirectBarrierConfig, DnsConfig, DnsStrategy,
-    FileLogConfig, GlobalRule, InboundConfig, LogConfig, LogLevel, LogOutput, Network,
-    NxrInboundConfig, NxrInboundSettings, NxrSettings, OutboundConfig, PolicyConfig, PortMatcher,
-    RealityConfig, RelayPolicy, ResourceGovernorConfig, ResourceMode, RouteRule, RoutingConfig,
-    RuntimeConfig, SecretString, Socks5Settings, StreamSettings, UserPolicy, VlessClient,
-    VlessInboundConfig, VlessInboundSettings,
+    FileLogConfig, GlobalRule, HandoffInboundConfig, HandoffInboundSettings, HandoffSettings,
+    InboundConfig, LogConfig, LogLevel, LogOutput, Network, NxrInboundConfig, NxrInboundSettings,
+    NxrSettings, OutboundConfig, PolicyConfig, PortMatcher, RealityConfig, RelayPolicy,
+    ResourceGovernorConfig, ResourceMode, RouteRule, RoutingConfig, RuntimeConfig, SecretString,
+    Socks5Settings, StreamSettings, UserPolicy, VlessClient, VlessInboundConfig,
+    VlessInboundSettings,
 };
 pub use schema::{config_schema, format_config_schema};
 pub use validate::{ConfigError, validate_config};

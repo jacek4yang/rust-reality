@@ -10,8 +10,8 @@ use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 use zeroize::Zeroizing;
 
 use super::{
-    Config, GlobalRule, InboundConfig, LogOutput, Network, NxrInboundConfig, OutboundConfig,
-    PortMatcher, RelayPolicy, SecretString, VlessInboundConfig,
+    Config, GlobalRule, HandoffInboundConfig, InboundConfig, LogOutput, Network, NxrInboundConfig,
+    OutboundConfig, PortMatcher, RelayPolicy, SecretString, VlessInboundConfig,
 };
 use crate::server_name::is_server_name_pattern;
 
@@ -23,6 +23,9 @@ const MAX_TIMEOUT_MS: u64 = 10 * 60 * 1_000;
 const MAX_NXR_TIME_DIFFERENCE_SECONDS: u64 = 300;
 const MAX_NXR_NONCE_ENTRIES: u32 = 1_000_000;
 const MAX_NXR_NONCE_RETENTION_SECONDS: u64 = 86_400;
+const MAX_HANDOFF_TIME_DIFFERENCE_SECONDS: u64 = 300;
+const MAX_HANDOFF_NONCE_ENTRIES: u32 = 1_000_000;
+const MAX_HANDOFF_NONCE_RETENTION_SECONDS: u64 = 86_400;
 const MIN_RELAY_BUFFER_BYTES: usize = 4 * 1024;
 const MAX_RELAY_BUFFER_BYTES: usize = 1024 * 1024;
 const MAX_RELAY_BUFFERS: usize = 65_536;
@@ -185,6 +188,7 @@ fn validate_inbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
         match inbound {
             InboundConfig::Vless(inbound) => validate_vless_inbound(&path, inbound, &mut users)?,
             InboundConfig::Nxr(inbound) => validate_nxr_inbound(&path, inbound)?,
+            InboundConfig::Handoff(inbound) => validate_handoff_inbound(&path, inbound)?,
         }
     }
     Ok(users)
@@ -337,6 +341,52 @@ fn validate_base64_key(path: &str, key: &SecretString) -> Result<(), ConfigError
     Ok(())
 }
 
+fn validate_handoff_inbound(path: &str, inbound: &HandoffInboundConfig) -> Result<(), ConfigError> {
+    let settings = &inbound.settings;
+    validate_base64_key(
+        &format!("{path}.settings.preSharedKey"),
+        &settings.pre_shared_key,
+    )?;
+    validate_base64_key(
+        &format!("{path}.settings.privateKey"),
+        &settings.private_key,
+    )?;
+    if !(1..=MAX_HANDOFF_TIME_DIFFERENCE_SECONDS).contains(&settings.max_time_difference_seconds) {
+        return fail(
+            format!("{path}.settings.maxTimeDifferenceSeconds"),
+            format!("must be between 1 and {MAX_HANDOFF_TIME_DIFFERENCE_SECONDS}"),
+        );
+    }
+    if !(1..=MAX_HANDOFF_NONCE_ENTRIES).contains(&settings.max_nonce_entries) {
+        return fail(
+            format!("{path}.settings.maxNonceEntries"),
+            format!("must be between 1 and {MAX_HANDOFF_NONCE_ENTRIES}"),
+        );
+    }
+    let minimum_retention = settings
+        .max_time_difference_seconds
+        .saturating_mul(2)
+        .saturating_add(1);
+    if !(minimum_retention..=MAX_HANDOFF_NONCE_RETENTION_SECONDS)
+        .contains(&settings.nonce_retention_seconds)
+    {
+        return fail(
+            format!("{path}.settings.nonceRetentionSeconds"),
+            format!(
+                "must be between {minimum_retention} and {MAX_HANDOFF_NONCE_RETENTION_SECONDS}"
+            ),
+        );
+    }
+    validate_timeout(
+        &format!("{path}.settings.authenticationTimeoutMs"),
+        settings.authentication_timeout_ms,
+    )?;
+    validate_timeout(
+        &format!("{path}.settings.connectTimeoutMs"),
+        settings.connect_timeout_ms,
+    )
+}
+
 fn validate_outbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
     if config.outbounds.is_empty() {
         return fail("outbounds", "must contain at least one transport");
@@ -417,6 +467,34 @@ fn validate_outbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
                         "must decode to exactly 32 bytes",
                     );
                 }
+            }
+            OutboundConfig::Handoff { settings, .. } => {
+                validate_hostname_or_ip(&format!("{path}.settings.address"), &settings.address)?;
+                if settings.port == 0 {
+                    return fail(format!("{path}.settings.port"), "must be greater than zero");
+                }
+                validate_base64_key(
+                    &format!("{path}.settings.preSharedKey"),
+                    &settings.pre_shared_key,
+                )?;
+                let public = BASE64_URL_SAFE_NO_PAD
+                    .decode(&settings.landing_public_key)
+                    .map_err(|_| {
+                        ConfigError::new(
+                            format!("{path}.settings.landingPublicKey"),
+                            "must be URL-safe unpadded base64",
+                        )
+                    })?;
+                if public.len() != 32 {
+                    return fail(
+                        format!("{path}.settings.landingPublicKey"),
+                        "must decode to exactly 32 bytes",
+                    );
+                }
+                validate_timeout(
+                    &format!("{path}.settings.connectTimeoutMs"),
+                    settings.connect_timeout_ms,
+                )?;
             }
         }
     }
@@ -1100,6 +1178,91 @@ mod tests {
                     connect_timeout_ms: 10_000,
                 },
             }));
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("short replay retention must fail")
+                .path(),
+            "inbounds[1].settings.nonceRetentionSeconds"
+        );
+    }
+
+    #[test]
+    fn accepts_internal_handoff_listener_and_outbound_independently() {
+        let mut config = valid_config();
+        let key = SecretString::new("WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo");
+        config.inbounds.push(crate::config::InboundConfig::Handoff(
+            crate::config::HandoffInboundConfig {
+                tag: "handoff-landing".to_owned(),
+                listen: "127.0.0.1".parse().expect("address must parse"),
+                port: 9444,
+                settings: crate::config::HandoffInboundSettings {
+                    pre_shared_key: key.clone(),
+                    private_key: key,
+                    max_time_difference_seconds: 30,
+                    max_nonce_entries: 4_096,
+                    nonce_retention_seconds: 120,
+                    authentication_timeout_ms: 3_000,
+                    connect_timeout_ms: 10_000,
+                },
+            },
+        ));
+        config.outbounds.push(OutboundConfig::Handoff {
+            tag: "handoff-line".to_owned(),
+            settings: crate::config::HandoffSettings {
+                address: "10.0.0.3".to_owned(),
+                port: 9444,
+                pre_shared_key: SecretString::new("WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo"),
+                landing_public_key: "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo".to_owned(),
+                connect_timeout_ms: 10_000,
+            },
+        });
+
+        validate_config(&config).expect("handoff listener and outbound must validate");
+    }
+
+    #[test]
+    fn rejects_handoff_key_material_that_is_not_32_byte_base64() {
+        let mut config = valid_config();
+        config.outbounds.push(OutboundConfig::Handoff {
+            tag: "handoff-line".to_owned(),
+            settings: crate::config::HandoffSettings {
+                address: "10.0.0.3".to_owned(),
+                port: 9444,
+                pre_shared_key: SecretString::new("WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo"),
+                landing_public_key: "not-base64!".to_owned(),
+                connect_timeout_ms: 10_000,
+            },
+        });
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("a malformed landing public key must fail")
+                .path(),
+            "outbounds[2].settings.landingPublicKey"
+        );
+    }
+
+    #[test]
+    fn handoff_replay_retention_covers_the_entire_timestamp_window() {
+        let mut config = valid_config();
+        let key = SecretString::new("WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo");
+        config.inbounds.push(crate::config::InboundConfig::Handoff(
+            crate::config::HandoffInboundConfig {
+                tag: "handoff-landing".to_owned(),
+                listen: "127.0.0.1".parse().expect("address must parse"),
+                port: 9444,
+                settings: crate::config::HandoffInboundSettings {
+                    pre_shared_key: key.clone(),
+                    private_key: key,
+                    max_time_difference_seconds: 30,
+                    max_nonce_entries: 4_096,
+                    nonce_retention_seconds: 60,
+                    authentication_timeout_ms: 3_000,
+                    connect_timeout_ms: 10_000,
+                },
+            },
+        ));
 
         assert_eq!(
             validate_config(&config)
