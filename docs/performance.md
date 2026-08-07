@@ -140,6 +140,63 @@ One-line verdicts for the performance decisions that shaped v1.0.0:
   ring is ≈2.5× RustCrypto at production record sizes; shipped as the
   default record AEAD provider with the RustCrypto fallback retained and
   continuously tested.
+- **D10 — classified, no action.** The framed steady-state `clear_page`
+  share is kernel TCP send-path page zeroing (`init_on_alloc` on the
+  validated kernel), scaling per byte transferred — not per-connection
+  userspace buffer cost (churn measured 28 minor faults/connection ≈ 2%
+  of churn CPU). No buffer pool or lazy-growth was built.
+- **D11 — proven, shipped.** Framed downlink record batching (one
+  `readv` into four record slots + one write per ≤64 KiB) cut send
+  syscalls 4×, server CPU/GiB −18.5%, and lifted framed download +7.6%
+  at 512 MiB c32 in the gated A/B.
+
+## Final release matrix (v1.0.0)
+
+Frozen from the exact release-candidate production binary (git `d2fbb0c`,
+binary SHA-256 `a77fe34a…`, ring default), comparator Xray-core 26.7.28
+(`5ca6f4b`, go1.26.0, binary SHA-256 `23d228d7…`). 543 valid samples, 0
+invalid, SHA-256 integrity matched for every implementation. Matrix cells
+run rust-reality at debug log level (tunnel-bypass guard) against Xray at
+warning — a handicap for rust-reality; fallback and setup rows use
+symmetric warn-level harnesses. Full table: the README performance
+section carries the representative rows; raw samples are in the release
+evidence archive. Notes: `direct-upload:32MiB:c1` was bimodal for both
+implementations (78–237 MiB/s spread) and is excluded as
+non-discriminating; matrix fallback cells under-report rust-reality due
+to the log-level asymmetry — the clean fallback A/B (1.00–1.03×) is the
+honest figure.
+
+## Deployment characterization (v1.0.0)
+
+- **Routing correctness: PASS** — 26/26 (uuid, destination) cases across
+  2 user groups, direct/blackhole/SOCKS5 outbounds, and
+  domain/GeoSite/IP/GeoIP/port/late-match/default rules; every UUID
+  reached only its intended outbound, byte-verified.
+- **Routing decision tax: none measurable** — simple (1 user),
+  medium (100 UUIDs/16 rules), and complex (1000 UUIDs/72 rules)
+  configurations all measured 896 conn/s at 0.60 ms CPU/connection;
+  DNS-in-path variants cost +0.12 ms/connection through the local
+  resolver.
+- **NXR two-hop tax vs direct:** ≈3–5% throughput, +0.15 ms CPU/conn.
+- **NXR vs SOCKS5 (same endpoints):** +18% setup rate (880 vs 748
+  conn/s), +11–13% throughput at 32/512 MiB c32; at 100 ms netem RTT,
+  36 vs 19 conn/s (p50 218 ms vs 413 ms) — one fewer round trip per
+  connection.
+- **rust+NXR vs Xray+SOCKS5** (system-level, not protocol-isolated):
+  880 vs 696 conn/s, 0.77 vs 1.02 ms CPU/connection.
+- **Integrity:** every cell byte-verified; no transfer errors.
+
+## Hot-path forensic audit (v1.0.0)
+
+Profiles of six workloads on an attribution build (same source, DWARF,
+frame pointers) with IDA/disassembly spot checks: every material
+userspace region is a third-party crypto primitive (ring's stitched
+AES-GCM in steady state; sha2/X25519/ML-KEM in handshakes) or none
+exists — the raw-relay userspace path peaks at 1.5% (`splice_pump`),
+and no routing symbol reaches 1% under the complex-churn profile. No
+finding crossed the keep gate (≥2% userspace with ≥5% realistic
+end-to-end headroom); no production change was made. Known kernel costs
+(copy_user, page zeroing) are classified per D10.
 
 ## Rejected directions (evidence-based)
 

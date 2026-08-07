@@ -44,21 +44,33 @@ Xray-compatible client
 
 ## Performance vs Xray-core
 
-The v1.0.0 comparison against Xray-core 26.7.28 is frozen from the
-release-candidate matrix. **TBD-final-matrix** — numbers frozen from the
-v1.0.0 release-candidate matrix; do not quote this section until the
-coordinator publishes the final table.
+Comparator: Xray-core 26.7.28 (commit `5ca6f4b`, go1.26.0), the same
+binary that gates interoperability. Host: Intel i3-8100 (4C/4T), Linux
+6.12.94, loopback, Go origin, 5 samples per cell; every cell
+byte-verified, plus 2 GiB SHA-256 integrity runs per implementation.
+Matrix cells run rust-reality at debug log level (required by the
+harness's tunnel-bypass guard) against Xray at warning — a handicap for
+rust-reality; the fallback and setup rows come from symmetric warn-level
+harnesses. These are controlled same-host results, not Internet speed
+guarantees.
 
-| cell | rust-reality | Xray-core | ratio |
+| Workload | rust-reality 1.0.0 | Xray-core | Ratio |
 |---|---:|---:|---:|
-| TBD-final-matrix | TBD | TBD | TBD |
+| Direct download, 512 MiB ×32 | 1386 MiB/s | 516 MiB/s | **2.69×** |
+| Direct upload, 512 MiB ×32 | 1155 MiB/s | 1031 MiB/s | 1.12× |
+| Framed download, 512 MiB ×32 | 1580 MiB/s | 1388 MiB/s | 1.14× |
+| Framed upload, 512 MiB ×32 | 1442 MiB/s | 1383 MiB/s | 1.04× |
+| Bidirectional, 512 MiB ×32 | 1017 MiB/s | 633 MiB/s | 1.61× |
+| Fallback, 32 MiB ×32 (clean harness) | 3279 MiB/s | 3194 MiB/s | 1.03× |
+| Connection setup, c32 | 895 conn/s | 812 conn/s | 1.10× |
 
-Until then, the canonical development samples and the measured evidence
-behind the design (framed AEAD decomposition, ring provider A/B, setup-rate
-model, fallback A/B) are documented in [docs/performance.md](docs/performance.md)
-and [docs/benchmarks.md](docs/benchmarks.md). All numbers are same-host
-loopback measurements on a disclosed host; none of them is an
-Internet-throughput promise.
+Setup cost per connection is roughly half of Xray's (0.64 ms vs 1.16 ms
+server CPU at c32). Single-stream loopback cells are latency-bound and
+sit at parity (0.94–1.04×). The full 36-cell matrix, the deployment
+characterization (routing, NXR vs SOCKS5, RTT sensitivity), the hot-path
+forensic report, and everything needed to reproduce them are in
+[docs/performance.md](docs/performance.md) and
+[docs/benchmarks.md](docs/benchmarks.md).
 
 ## Architecture
 

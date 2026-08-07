@@ -76,10 +76,11 @@ First stable release.
 
 ### Performance
 
-- The comparator summary against Xray-core 26.7.28 is **TBD**: numbers are
-  frozen from the v1.0.0 release-candidate matrix at release time. The
-  canonical development samples (framed AEAD provider A/B, fallback A/B,
-  setup-rate model) are documented in `docs/performance.md` and
-  `docs/benchmarks.md`.
+- Final release matrix against Xray-core 26.7.28 (same-host loopback,
+  i3-8100): Direct download 2.69× at 512 MiB c32, framed download 1.14×,
+  framed upload 1.04×, bidirectional 1.61×, fallback 1.03× (clean
+  harness), setup rate 1.10× at roughly half the per-connection CPU.
+  Representative rows in README.md; full methodology and the
+  deployment/forensic gates in `docs/performance.md`.
 
 [1.0.0]: https://github.com/jacek4yang/rust-reality/releases/tag/v1.0.0

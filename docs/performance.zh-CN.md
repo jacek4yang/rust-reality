@@ -119,6 +119,50 @@ c32 下每连接服务端成本：CPU 0.64 vs 1.16 ms（**−45%**），指令�
 - **D9——证实，作为默认发布。** framed 路径受 AEAD 限制，ring 在生产记录尺寸
   下约为 RustCrypto 的 2.5×；作为默认记录 AEAD 提供者发布，RustCrypto 回退
   保留并持续测试。
+- **D10——已分类，无需行动。** framed 稳态的 `clear_page` 份额是内核 TCP 发送
+  路径的页清零（受验内核启用 `init_on_alloc`），按传输字节数伸缩，而非
+  按连接的用户态缓冲成本（churn 实测每连接 28 次 minor fault，约占 churn
+  CPU 的 2%）。未构建任何缓冲池或惰性增长。
+- **D11——证实，已发布。** framed 下行记录批处理（一次 `readv` 读入 4 个记录
+  槽 + 每 ≤64 KiB 一次写）使发送系统调用减少 4×、服务端 CPU/GiB 降低
+  18.5%，并在 512 MiB c32 的 gated A/B 中使 framed 下载提升 7.6%。
+
+## 最终发布矩阵（v1.0.0）
+
+数字冻结自精确的发布候选生产二进制（git `d2fbb0c`，二进制 SHA-256
+`a77fe34a…`，ring 默认），对比对象 Xray-core 26.7.28（`5ca6f4b`，go1.26.0，
+二进制 SHA-256 `23d228d7…`）。543 个有效样本，0 个无效，每个实现的 SHA-256
+完整性均匹配。矩阵单元中 rust-reality 使用 debug 日志（防绕过护栏要求），
+Xray 使用 warning——对 rust-reality 不利；fallback 与建连速率行使用 warn
+级别对称测试架。代表性行见 README 性能小节；原始样本在发布证据档案中。
+说明：`direct-upload:32MiB:c1` 对两个实现都呈双峰（78–237 MiB/s），作为
+不可判别单元剔除；矩阵 fallback 单元因日志级别不对称而低估
+rust-reality——以干净 fallback A/B（1.00–1.03×）为准。
+
+## 部署特性（v1.0.0）
+
+- **路由正确性：通过**——26/26 个 (uuid, destination) 用例，覆盖 2 个用户组、
+  direct/blackhole/SOCKS5 出站及 domain/GeoSite/IP/GeoIP/port/迟到/默认规则；
+  每个 UUID 只到达其指定出站，均经字节校验。
+- **路由决策开销：不可测**——simple（1 用户）、medium（100 UUID/16 规则）、
+  complex（1000 UUID/72 规则）配置均为 896 conn/s、每连接 0.60 ms CPU；
+  含 DNS 的变体经本地解析器增加 0.12 ms/连接。
+- **NXR 两跳开销（对直连）：** 吞吐约 3–5%，每连接 CPU +0.15 ms。
+- **NXR 对 SOCKS5（相同端点）：** 建连速率 +18%（880 对 748 conn/s），
+  32/512 MiB c32 吞吐 +11–13%；在 100 ms netem RTT 下为 36 对 19 conn/s
+  （p50 218 ms 对 413 ms）——每连接少一个往返。
+- **rust+NXR 对 Xray+SOCKS5**（系统级，非协议隔离）：880 对 696 conn/s，
+  每连接 CPU 0.77 对 1.02 ms。
+- **完整性：** 所有单元经字节校验；无传输错误。
+
+## 热路径取证审计（v1.0.0）
+
+在归因构建（同一源码树、DWARF、帧指针）上对六类工作负载采样并抽查反汇编：
+所有重要用户态区域都是第三方加密原语（稳态为 ring 拼接 AES-GCM 汇编；握手
+为 sha2/X25519/ML-KEM），或根本不存在——raw relay 用户态峰值仅 1.5%
+（`splice_pump`），复杂 churn 配置下没有任何路由符号达到 1%。没有任何发现
+达到保留门槛（≥2% 用户态且 ≥5% 现实端到端余量）；未做任何生产代码修改。
+已知内核成本（copy_user、页清零）按 D10 分类。
 
 ## 已否决的方向（基于证据）
 

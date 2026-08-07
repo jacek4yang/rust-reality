@@ -39,19 +39,28 @@
 
 ## 与 Xray-core 的性能对比
 
-v1.0.0 与 Xray-core 26.7.28 的对比将取自发布候选矩阵并冻结。
-**TBD-final-matrix**——数字以 v1.0.0 发布候选矩阵为准冻结；在协调者发布最终
-表格之前，不要引用本节。
+对比对象：Xray-core 26.7.28（提交 `5ca6f4b`，go1.26.0），即互操作测试所用的
+同一二进制。主机：Intel i3-8100（4C/4T），Linux 6.12.94，loopback，Go origin，
+每单元 5 次采样；所有单元均经字节校验，并对每个实现做 2 GiB SHA-256 完整性
+运行。矩阵单元中 rust-reality 使用 debug 日志（测试架的防绕过护栏要求），
+Xray 使用 warning——这对 rust-reality 不利；fallback 与建连速率两行来自
+日志级别对称（warn）的测试架。这些是受控同机结果，不是互联网速率保证。
 
-| cell | rust-reality | Xray-core | 比值 |
+| 工作负载 | rust-reality 1.0.0 | Xray-core | 比值 |
 |---|---:|---:|---:|
-| TBD-final-matrix | TBD | TBD | TBD |
+| Direct 下载，512 MiB ×32 | 1386 MiB/s | 516 MiB/s | **2.69×** |
+| Direct 上传，512 MiB ×32 | 1155 MiB/s | 1031 MiB/s | 1.12× |
+| Framed 下载，512 MiB ×32 | 1580 MiB/s | 1388 MiB/s | 1.14× |
+| Framed 上传，512 MiB ×32 | 1442 MiB/s | 1383 MiB/s | 1.04× |
+| 双向，512 MiB ×32 | 1017 MiB/s | 633 MiB/s | 1.61× |
+| Fallback，32 MiB ×32（干净测试架） | 3279 MiB/s | 3194 MiB/s | 1.03× |
+| 建连速率，c32 | 895 conn/s | 812 conn/s | 1.10× |
 
-在此之前，规范开发样本和设计背后的实测证据（framed AEAD 分解、ring 提供者
-A/B、setup 速率模型、fallback A/B）记录于
+每连接建连成本约为 Xray 的一半（c32 时服务端 CPU 0.64 ms 对 1.16 ms）。单流
+loopback 单元受时延约束，基本持平（0.94–1.04×）。完整 36 单元矩阵、部署特性
+（路由、NXR 对 SOCKS5、RTT 敏感度）、热路径取证报告及复现方法见
 [docs/performance.zh-CN.md](docs/performance.zh-CN.md) 和
-[docs/benchmarks.zh-CN.md](docs/benchmarks.zh-CN.md)。所有数字都是已披露主机
-上的同机 loopback 测量，不构成任何互联网吞吐承诺。
+[docs/benchmarks.zh-CN.md](docs/benchmarks.zh-CN.md)。
 
 ## 架构
 
