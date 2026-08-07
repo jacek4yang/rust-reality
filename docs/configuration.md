@@ -429,6 +429,7 @@ defaults visible.
 | `maxCryptoOperations` | yes | `128` | Greater than zero and no more than `maxHandshakes`; expensive crypto admission. |
 | `maxReplayEntries` | yes | `65536` | Greater than zero; pending plus committed REALITY replay entries. |
 | `replayRetentionMs` | no | `120000` | Retention after verified ClientFinished, `1..=600000`. |
+| `maxDnsLookups` | no | `64` | Concurrent blocking DNS lookups in the bounded resolver pool. |
 | `clientHelloTimeoutMs` | yes | `3000` | ClientHello read deadline, `1..=600000`, no more than handshake timeout. |
 | `handshakeTimeoutMs` | yes | `10000` | Authenticated handshake deadline, `1..=600000`. |
 | `connectTimeoutMs` | yes | `10000` | Cover/outbound connect deadline, `1..=600000`, no more than fallback timeout. |
@@ -449,8 +450,10 @@ This isolates direct destination pressure from authenticated connection count.
 | --- | --- | --- | --- |
 | `bufferBytes` | yes | `32768` | Bytes per pooled userspace buffer, `4096..=1048576`. |
 | `maxPooledBuffers` | yes | `4096` | Global pooled-buffer ceiling, `2..=65536`. |
-| `maxSpliceRelays` | no | `1024` | With splice enabled, greater than zero and no more than `maxConnections`. Each relay consumes two pipe pairs. |
-| `maxRelayMemoryBytes` | no | `268435456` | Ceiling on pooled plus registered relay buffer memory. |
+| `maxSpliceRelays` | no | `256` | With splice enabled, greater than zero and no more than `maxConnections`. Each relay consumes two pipe pairs. |
+| `maxRelayMemoryBytes` | no | `536870912` | Ceiling on pooled plus registered relay buffer memory. |
+| `pipePool` | no | `true` | Reuse splice pipes process-wide instead of creating/resizing/destroying them per session. |
+| `maxPooledPipes` | no | `512` | Pooled-pipe ceiling; the pool accounts `maxPooledPipes × 2` pipe pages of memory. |
 | `splice` | yes | `true` | Permit bounded nonblocking Linux splice only across plaintext TCP boundaries. |
 
 ### Backend selection
@@ -463,10 +466,11 @@ the connection is never replayed through another backend. This is enforced
 structurally: the only way to construct a decline is through the shared transfer
 ledger, which refuses once either counter is nonzero.
 
-No kernel backend ever sees a socket that still carries TLS records or Vision
-frames. One-way Vision Direct — where one direction is raw and the other is still
-framed — is relayed in bounded userspace and is never handed to a kernel backend
-as a pair.
+No kernel backend ever sees a byte that still carries TLS records or Vision
+frames. Each Vision direction has its own exact authenticated Direct boundary:
+a direction that has crossed it may be relayed by directional splice while the
+opposite direction is still framed; the bilateral whole-socket splice is used
+only when both directions have independently become raw and pairing is safe.
 
 ### Resource accounting
 
@@ -475,8 +479,11 @@ arithmetic:
 
 ```text
 buffered_memory = maxPooledBuffers * bufferBytes
+pipe_memory     = 0 when splice is disabled
+                | maxPooledPipes * 2 * 256 KiB when pipePool is on
+                | maxSpliceRelays * 4 * 256 KiB when pipePool is off
 
-buffered_memory <= maxRelayMemoryBytes
+buffered_memory + pipe_memory <= maxRelayMemoryBytes
 ```
 
 `maxPooledBuffers` is a **buffer count**, never a byte budget.
@@ -589,7 +596,6 @@ Hot-updateable with compatible topology:
 - DNS timeout;
 - VLESS users and REALITY authentication/cover state;
 - outbound definitions, routing groups, and rules;
-- direct-barrier settings;
 - NXR key, clock window, and I/O timeouts when replay capacity/retention stay
   unchanged.
 
@@ -601,6 +607,8 @@ Restart required:
   descriptor budget and memory monitor;
 - any `policy.resourceGovernor` change, because REALITY replay admission/state
   is process-lifetime;
+- any `policy.directBarrier` change, because the direct-dial authority is
+  process-lifetime;
 - any `policy.relay` change, because buffer/splice pools are process-lifetime;
 - NXR `maxNonceEntries` or `nonceRetentionSeconds` changes.
 

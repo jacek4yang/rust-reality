@@ -246,7 +246,7 @@ sudo systemctl reload rust-reality
 ```
 
 候选失败时当前 generation 继续工作，已有连接保留旧 generation。监听拓扑、
-resource governor、relay 策略和 NXR 重放缓存容量/保留时间是冷设置，必须受控重启。
+`runtime` 设置、resource governor、direct barrier、relay 策略和 NXR 重放缓存容量/保留时间是冷设置，必须受控重启。
 完整列表见[热更新边界](configuration.zh-CN.md#热更新边界)。
 
 SIGTERM 停止新 accept 并执行有界优雅退出；unit 的 40 秒停止超时覆盖程序 30 秒限制。

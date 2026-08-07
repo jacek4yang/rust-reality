@@ -1,0 +1,31 @@
+{
+  "baselineCommit": "a513990",
+  "binaries": {
+    "baseline": "/home/jacek/work/kimi-rust-reality-performance/artifacts/d11/rust-reality-main-a513990",
+    "final": "/home/jacek/work/kimi-rust-reality-performance/artifacts/d11/rust-reality-d11-8ce51ba",
+    "xray": "../artifacts/xray-reference"
+  },
+  "cpuCount": 4,
+  "cpuModel": "Intel(R) Core(TM) i3-8100 CPU @ 3.60GHz",
+  "dateUtc": "2026-08-07T06:10:41.770620+00:00",
+  "finalCommit": "a513990929642e36132215a696c7cf9d4fe69902",
+  "kernel": "6.12.94+deb13-amd64",
+  "machine": "x86_64",
+  "nic": {
+    "interface": "enp2s0",
+    "speed": "unknown"
+  },
+  "originImplementation": "go",
+  "realityCover": {
+    "serverName": "dl.google.com",
+    "target": "dl.google.com:443"
+  },
+  "rlimitNofile": {
+    "hard": 524288,
+    "soft": 524288
+  },
+  "rustcVersion": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "schemaVersion": 1,
+  "seed": "0x5252",
+  "xrayVersion": "Xray 26.7.28 (Xray, Penetrates Everything.) 5ca6f4b (go1.26.0 linux/amd64)"
+}

@@ -72,36 +72,40 @@ BoringSSL 的 C/汇编，静态链接）提供。使用 `--no-default-features` 
   下行通过 Go 运行时的 `sync.Pool`（1 MiB 管道池）做 splice（池热后每会话
   约 0 次管道系统调用）。rust-reality 的 `PipePool` 为其 256 KiB 管道消除了
   等价的每会话 pipe2/fcntl/close 抖动。
-- 干净的同源 fallback A/B（两侧 warn 级日志）：并发 32 时 splice fallback 为
-  Xray 的 1.04–1.05×，task-clock 低 26–35%。更早的 fallback 劣势读数被追溯
+- 最终 v1.0.0 干净同源 fallback A/B（两侧 warn 级日志；
+  `benchmarks/final/v1-fallback-ab/`）：c1–c32 时 splice fallback 为 Xray 的
+  1.00–1.03×，task-clock 持平或更低。更早的 fallback 劣势读数被追溯
   到矩阵 harness 的 debug 级逐连接日志，而不是 relay 路径（见
-  [benchmarks.zh-CN.md](benchmarks.zh-CN.md) 的方法一节）。
+  [benchmarks.zh-CN.md](benchmarks.zh-CN.md) 的方法一节）。D8 时期的历史
+  机制测量在同主机上曾录得 1.04–1.05×；作为头条数值已被最终发布对比取代。
 
 ## 连接 setup
 
-setup 速率模型（accept → REALITY 握手 → VLESS 解析 → 路由 → 出站连接 →
+最终 v1.0.0 数字（accept → REALITY 握手 → VLESS 解析 → 路由 → 出站连接 →
 第一次 Vision 转换；不含稳态；上述验证主机，本地 TLS 源站，裸 socket 客户
-端）：
+端；证据：`benchmarks/final/v1-setup-rate/`）：
 
 | cell | rust-reality | Xray | 比值 |
 |---|---:|---:|---:|
-| c1 conn/s | 269 | 198 | 1.36× |
-| c8 conn/s | 775 | 782 | 0.99× |
-| c32 conn/s | 874 | 857 | 1.02× |
-| c32 p99 setup 延迟 | 70.8 ms | 84.1 ms | −16% |
+| c1 conn/s | 270 | 123 | 2.20× |
+| c8 conn/s | 806 | 688 | 1.17× |
+| c32 conn/s | 895 | 812 | 1.10× |
+| c32 p99 setup 延迟 | 59.3 ms | 59.3 ms | 持平 |
 
-c32 下每连接服务端成本：CPU 0.64 vs 1.16 ms（**−45%**），指令数 −30%，上下文
-切换 −75%。并发下吞吐持平是因为 4 CPU 主机同时限制了两端；每连接成本列才是
-更干净的信号。CPU 优势能否在更大主机上转化为速率优势尚未验证。
+测量窗口内（864 个连接）每连接服务端成本：CPU 0.65 vs 1.53 ms（**−58%**），
+指令数 −29%，上下文切换 −77%。并发下吞吐持平是因为 4 CPU 主机同时限制了两端；
+每连接成本列才是更干净的信号。CPU 优势能否在更大主机上转化为速率优势尚未
+验证。
 
-## 决策登记（D1–D9）
+## 决策登记（D1–D11）
 
 塑造 v1.0.0 的各项性能决策的一行结论：
 
 - **D1——保留。** reload/资产刷新曾经放大进程级上限；共享 authority 提升为进程
   生命周期所有权。
-- **D2——保留。** 让 abort 与干净 FIN 不可区分（abort 路径上的
-  `SO_LINGER{on,0}` 加 abort guard）。
+- **D2——保留。** 让中止的传输可与正常完成区分：abort 路径设置
+  `SO_LINGER{on,0}`，使对端观察到复位（RST/`ECONNRESET`）而非干净的短
+  EOF；正常关闭保持 FIN 语义（`DirectionAbortGuard`）。
 - **D3——保留。** DNS 工作有界化：查找池、许可持有覆盖阻塞操作、快速失败、无
   队列。
 - **D4——保留。** 内核活性兜底：所有数据 socket 设置 `SO_KEEPALIVE` 30/10/3；

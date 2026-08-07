@@ -49,8 +49,8 @@ First stable release.
   (FD + memory) pressure model with priority shedding that never revokes
   established relays.
 - DNS work runs in a bounded, fail-fast pool; all data sockets carry a
-  `SO_KEEPALIVE` liveness backstop; abort paths are indistinguishable from
-  clean FIN.
+  `SO_KEEPALIVE` liveness backstop; aborted transfers reset the peer
+  (`SO_LINGER{on,0}`) instead of resembling a clean FIN.
 - The io_uring and sockhash kernel backends were removed before release;
   stale configuration keys for them are rejected as unknown fields.
 

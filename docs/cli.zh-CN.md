@@ -224,5 +224,5 @@ rust-reality benchmark \
 | SIGHUP | 从原路径加载、验证并编译完整候选配置，然后原子发布。 |
 
 SIGHUP 失败时继续使用当前 generation；已有连接保留启动时的 generation。监听拓扑、
-resource governor、relay 策略和 NXR 重放缓存容量/保留时间必须重启；详见
+`runtime` 设置、resource governor、direct barrier、relay 策略和 NXR 重放缓存容量/保留时间必须重启；详见
 [配置参考](configuration.zh-CN.md#热更新边界)。

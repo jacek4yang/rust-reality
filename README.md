@@ -39,8 +39,10 @@ Xray-compatible client
 - Strict JSON configuration, atomic SIGHUP reload, secret-free bounded
   logging, key generation, destination probing, self-test, and schema from
   one binary.
-- Stable Rust, no `unsafe` in the crate, no panic/unwrap in the production
-  data path, reproducible tagged release archives.
+- Stable Rust: the main protocol crate denies `unsafe` (Linux ABI unsafe is
+  isolated in `crates/rr-linux` under explicit SAFETY invariants), no
+  panic/unwrap in the production data path, reproducible tagged release
+  archives.
 
 ## Performance vs Xray-core
 
@@ -64,8 +66,8 @@ guarantees.
 | Fallback, 32 MiB ×32 (clean harness) | 3279 MiB/s | 3194 MiB/s | 1.03× |
 | Connection setup, c32 | 895 conn/s | 812 conn/s | 1.10× |
 
-Setup cost per connection is roughly half of Xray's (0.64 ms vs 1.16 ms
-server CPU at c32). Single-stream loopback cells are latency-bound and
+Setup cost per connection is well under half of Xray's (0.65 ms vs 1.53 ms
+server CPU over the measured 864-connection window). Single-stream loopback cells are latency-bound and
 sit at parity (0.94–1.04×). The full 36-cell matrix, the deployment
 characterization (routing, NXR vs SOCKS5, RTT sensitivity), the hot-path
 forensic report, and everything needed to reproduce them are in

@@ -264,9 +264,10 @@ sudo systemctl reload rust-reality
 ```
 
 A failed candidate leaves the current generation active. Existing connections
-retain their previous generation. Listener topology, resource-governor policy,
-relay policy, and NXR replay-cache capacity/retention are cold settings; use a
-controlled restart for them. The exact list is in
+retain their previous generation. Listener topology, `runtime` settings,
+resource-governor policy, direct-barrier policy, relay policy, and NXR
+replay-cache capacity/retention are cold settings; use a controlled restart
+for them. The exact list is in
 [Reload boundaries](configuration.md#reload-boundaries).
 
 SIGTERM stops new accepts and permits a bounded graceful shutdown. The unit's

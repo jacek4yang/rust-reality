@@ -411,6 +411,7 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 | `maxCryptoOperations` | 是 | `128` | 大于零且不超过 `maxHandshakes`；昂贵密码学工作 admission。 |
 | `maxReplayEntries` | 是 | `65536` | 大于零；pending 加 committed REALITY 重放条目。 |
 | `replayRetentionMs` | 否 | `120000` | 验证 ClientFinished 后的保留时间，`1..=600000`。 |
+| `maxDnsLookups` | 否 | `64` | 有界解析池中并发阻塞 DNS 查找数。 |
 | `clientHelloTimeoutMs` | 是 | `3000` | ClientHello 读取截止时间，`1..=600000`，不超过握手超时。 |
 | `handshakeTimeoutMs` | 是 | `10000` | 认证握手截止时间，`1..=600000`。 |
 | `connectTimeoutMs` | 是 | `10000` | 伪装/出站连接截止时间，`1..=600000`，不超过 fallback 超时。 |
@@ -431,8 +432,10 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 | --- | --- | --- | --- |
 | `bufferBytes` | 是 | `32768` | 每个池化用户态缓冲区字节数，`4096..=1048576`。 |
 | `maxPooledBuffers` | 是 | `4096` | 全局池化缓冲区上限，`2..=65536`。 |
-| `maxSpliceRelays` | 否 | `1024` | splice 开启时大于零且不超过 `maxConnections`；每条 relay 使用两对 pipe。 |
-| `maxRelayMemoryBytes` | 否 | `268435456` | 池化加注册中继缓冲内存上限。 |
+| `maxSpliceRelays` | 否 | `256` | splice 开启时大于零且不超过 `maxConnections`；每条 relay 使用两对 pipe。 |
+| `maxRelayMemoryBytes` | 否 | `536870912` | 池化加注册中继缓冲内存上限。 |
+| `pipePool` | 否 | `true` | 进程级复用 splice 管道，而不是每个会话创建/扩容/销毁。 |
+| `maxPooledPipes` | 否 | `512` | 池化管道上限；管道池按 `maxPooledPipes × 2` 页核算内存。 |
 | `splice` | 是 | `true` | 只允许在明文 TCP 边界使用有界非阻塞 Linux splice。 |
 
 ### 后端选择
@@ -443,9 +446,10 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 错误将终止该中继，连接绝不会在另一个后端上重放。这一点由结构保证：构造 decline
 的唯一途径是共享传输账本，而账本在任一计数器非零时拒绝生成 decline。
 
-内核后端永远不会看到仍然承载 TLS 记录或 Vision 帧的套接字。单向 Vision Direct
-（一个方向为裸流、另一个方向仍在成帧）在有界用户态中继，绝不会作为一对交给内核
-后端。
+内核后端永远不会看到仍携带 TLS 记录或 Vision 帧的字节。Vision 的每个方向都有
+自己精确的已认证 Direct 边界：越过边界的方向可以由方向性 splice 中继，此时
+对方向仍可保持成帧；只有当两个方向独立变为裸流且配对安全时，才使用合并整个
+套接字的双向 splice。
 
 ### 资源核算
 
@@ -453,8 +457,11 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 
 ```text
 buffered_memory = maxPooledBuffers * bufferBytes
+pipe_memory     = splice 关闭时 0
+                | pipePool 开启时 maxPooledPipes * 2 * 256 KiB
+                | pipePool 关闭时 maxSpliceRelays * 4 * 256 KiB
 
-buffered_memory <= maxRelayMemoryBytes
+buffered_memory + pipe_memory <= maxRelayMemoryBytes
 ```
 
 `maxPooledBuffers` 是**缓冲区数量**，绝不是字节预算。
@@ -550,7 +557,6 @@ generation，已有连接继续使用其获取的 generation。
 - DNS 超时；
 - VLESS 用户及 REALITY 认证/伪装状态；
 - 出站定义、路由组和规则；
-- direct barrier；
 - 在重放容量/保留时间不变时，NXR 密钥、时钟窗口和 I/O 超时。
 
 必须重启：
@@ -558,6 +564,7 @@ generation，已有连接继续使用其获取的 generation。
 - 添加/删除监听、修改绑定地址/端口，或改变某地址的协议；
 - 任意 `runtime` 修改，因为资源模式影响进程生命周期的描述符预算和内存监控器；
 - 任意 `policy.resourceGovernor` 修改，因为 REALITY 重放 admission/状态属于进程生命周期；
+- 任意 `policy.directBarrier` 修改，因为直连拨号 authority 属于进程生命周期；
 - 任意 `policy.relay` 修改，因为缓冲/splice 池属于进程生命周期；
 - NXR `maxNonceEntries` 或 `nonceRetentionSeconds` 修改。
 

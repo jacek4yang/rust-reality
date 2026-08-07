@@ -1,11 +1,15 @@
 # ADR 0001: Start with a single Cargo package
 
-- Status: Accepted
+- Status: Accepted (2026-07-19); partially superseded — the Linux ABI
+  boundary was later extracted into the internal `crates/rr-linux`
+  package under this ADR's own condition 2 (the main crate's
+  `unsafe_code = "deny"` requires isolating raw-syscall unsafe). The
+  single-package structure otherwise remains as decided.
 - Date: 2026-07-19
 
 ## Context
 
-The project will eventually contain several substantail protocol and runtime
+The project will eventually contain several substantial protocol and runtime
 components, including VLESS, VLESS Encryption, TLS 1.3, REALITY, Vision,
 routing, outbound transports, configuration, and observability.
 
@@ -38,7 +42,7 @@ these conditions is demonstrated:
 1. it has a stable and independently testable API boundary;
 2. it requires dependencies that should not be inherited by the rest of the
    project;
-3. it has a mterially different release, fuzzing, or compilation lifecycle;
+3. it has a materially different release, fuzzing, or compilation lifecycle;
 4. it is reusable outside the server binary;
 5. extraction measurably improves build isolation or maintenance.
 
@@ -47,7 +51,7 @@ these conditions is demonstrated:
 ### Positive
 
 - Refactoring remains inexpensive while protocol boundaries are evolving.
-- The complete implementtation is easier to navigate and debug.
+- The complete implementation is easier to navigate and debug.
 - Tests can access internal implementation details without premature public
   APIs.
 - Cargo configuration and feature management remain simple.

@@ -14,8 +14,13 @@ harnesses; the design-level evidence behind the numbers lives in
   away before the raw file is written.
 - Implementation order is shuffled per repetition from a recorded seed, so
   ordering cannot favour one side.
-- Both sides run the same log level, the same origin, the same concurrency,
-  and the same payload; known asymmetries are disclosed with the numbers.
+- Both sides run the same origin, concurrency, and payload, and comparative
+  claims require symmetric conditions wherever possible. Where instrumentation
+  forces an asymmetry — the matrix harness needs rust-reality's debug-level
+  per-connection events for its tunnel-bypass guard while Xray logs at
+  warning — the asymmetry is disclosed with the numbers and sensitive
+  headline cells (fallback, setup rate) are re-measured in symmetric
+  warn-level harnesses.
 - Loopback numbers describe implementation cost, not Internet throughput. No
   result may claim resistance to upstream volumetric DDoS or generalize one
   host's measurement to other CPUs, kernels, and networks.
@@ -37,8 +42,13 @@ harnesses; the design-level evidence behind the numbers lives in
 
 ## Canonical v1.0.0 samples
 
-Two small evidence sets are retained in the repository as the canonical
-samples; larger historical matrices were archived outside the repo.
+The final v1.0.0 evidence sets are retained in the repository:
+`benchmarks/final/v1-matrix/` + `v1-matrix-512/` (the 36-cell release
+matrix), `v1-fallback-ab/`, and `v1-setup-rate/` are the canonical release
+samples; `d9-framed-ab/` (ring provider A/B) and `d11-ab/` (record-batching
+A/B) are the mechanism evidence behind two shipped design decisions. Larger
+historical matrices were archived outside the repo in the release evidence
+archive.
 
 ### Framed AEAD provider A/B — `benchmarks/final/d9-framed-ab/`
 
@@ -62,15 +72,16 @@ All 16 framed cells are ≥1.00 ring-vs-RustCrypto. Server cost per GiB of
 framed download (perf stat, 3 reps each): task-clock 631 vs 940 ms/GiB
 (−33%), instructions −30%, context switches −39%; RSS +3% (noise).
 
-### Fallback A/B — `benchmarks/final/fallback-ab/`
+### Fallback A/B — `benchmarks/final/v1-fallback-ab/`
 
-Clean same-origin fallback comparison (splice backend vs Xray, warn-level
-logging both sides, concurrency 32):
+Final v1.0.0 clean same-origin fallback comparison (splice backend vs Xray,
+warn-level logging both sides), medians of 7:
 
-| payload | rust-reality (splice) | Xray | ratio | task-clock delta |
-|---|---:|---:|---:|---:|
-| 32 MiB | 3278 MiB/s | 3134 MiB/s | 1.05× | 865 ms vs 1173 ms (−26%) |
-| 512 MiB | 4197 MiB/s | 4036 MiB/s | 1.04× | 10.0 s vs 15.3 s (−35%) |
+| concurrency | rust-reality (splice) | Xray | ratio |
+|---|---:|---:|---:|
+| c1 | 1631 MiB/s | 1631 MiB/s | 1.00× |
+| c4 | 3076 MiB/s | 2999 MiB/s | 1.03× |
+| c32 | 3279 MiB/s | 3194 MiB/s | 1.03× |
 
 ## Methodology rules (and the traps that invalidated earlier numbers)
 
@@ -139,8 +150,13 @@ carries no throughput signal.
   with care.
 - **Miri cannot exercise `crates/rr-linux`** (raw syscalls unsupported); that
   crate is covered by ABI/layout tests and privileged suites instead.
-- **NXR has no A/B baseline**: Xray has no equivalent protocol, so NXR is
-  covered by conformance tests, not comparative benchmarks.
+- **NXR has no protocol-identical Xray baseline** (Xray implements no NXR),
+  but NXR *does* have a controlled protocol comparison: the deployment
+  characterization (`scripts/benchmark-deployment.sh`) measures the same
+  line/landing/origin topology over NXR vs SOCKS5 — setup rate, throughput,
+  CPU/connection, and a netem RTT sweep — plus a clearly-labeled system-level
+  rust+NXR vs Xray+SOCKS5 comparison. Final numbers are in
+  [performance.md](performance.md#deployment-characterization-v100).
 
 Earlier development-host samples (a 2026-08-03 Xray loopback table and a
 2-vCPU relay baseline whose own conclusion was "indistinguishable from
