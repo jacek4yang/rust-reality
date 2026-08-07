@@ -1,10 +1,9 @@
-//! Strict JSON configuration loading, validation, and atomic publication.
+//! Strict JSON configuration loading and validation.
 
 mod generate;
 mod io;
 mod model;
 mod schema;
-mod snapshot;
 mod validate;
 
 pub use generate::{
@@ -21,7 +20,6 @@ pub use model::{
     VlessInboundConfig, VlessInboundSettings,
 };
 pub use schema::{config_schema, format_config_schema};
-pub use snapshot::{ConfigSnapshot, ConfigStore, ConfigUpdateError};
 pub use validate::{ConfigError, validate_config};
 
 #[cfg(test)]
