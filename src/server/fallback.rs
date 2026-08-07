@@ -198,7 +198,7 @@ impl RealityFallback {
             .fd_budget()
             .try_acquire(crate::runtime::UNITS_OUTBOUND_SOCKET)
             .ok_or(FallbackError::DescriptorBudget)?;
-        let connect = TcpStream::connect(self.target.as_ref());
+        let connect = super::connector::connect_target(self.target.as_ref());
         let mut stream = time::timeout_at(connect_deadline, connect)
             .await
             .map_err(|_| FallbackError::ConnectTimeout)?

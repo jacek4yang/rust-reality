@@ -275,6 +275,11 @@ async fn resolve_domain(
     let Address::Domain(domain) = destination.address() else {
         return Ok(Vec::new());
     };
+    // A numeric literal carried as a domain "resolves" to itself; skip the
+    // blocking resolver pool entirely.
+    if let Ok(ip) = domain.parse::<IpAddr>() {
+        return Ok(vec![ip]);
+    }
     let lookup = (domain.to_owned(), destination.port());
     resolve_domain_with(
         governor,
@@ -902,6 +907,30 @@ mod tests {
             .await
             .expect("resolution must succeed");
         assert_eq!(resolved, [IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn numeric_domain_resolves_without_the_blocking_pool() {
+        use super::resolve_domain;
+        use crate::protocol::vless::{Address, Destination};
+
+        // Zero DNS permits: any blocking-pool resolution would be denied.
+        let governor = tiny_dns_governor(0);
+
+        let literal = Destination::new(Address::Domain("192.0.2.1".to_owned()), 443);
+        let resolved = resolve_domain(&governor, &literal, Duration::from_secs(1))
+            .await
+            .expect("numeric literal must resolve without the DNS pool");
+        assert_eq!(resolved, [IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))]);
+
+        let hostname = Destination::new(Address::Domain("example.com".to_owned()), 443);
+        let error = resolve_domain(&governor, &hostname, Duration::from_secs(1))
+            .await
+            .expect_err("hostname must still require the bounded DNS pool");
+        assert!(
+            matches!(error, RouteResolutionError::DnsLimit),
+            "expected DnsLimit, got {error}"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
