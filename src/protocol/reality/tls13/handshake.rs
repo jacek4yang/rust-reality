@@ -191,6 +191,17 @@ impl ExportedTlsState {
     pub fn into_directions(self) -> (ExportedRecordState, ExportedRecordState) {
         (self.client, self.server)
     }
+
+    /// Reassembles both directions' exported state as received from a session
+    /// handoff.
+    ///
+    /// Direction-suite agreement and per-key record ceilings are enforced when
+    /// the state becomes a working session again through
+    /// [`EstablishedTls::from_exported_state`].
+    #[must_use]
+    pub const fn from_directions(client: ExportedRecordState, server: ExportedRecordState) -> Self {
+        Self { client, server }
+    }
 }
 
 impl fmt::Debug for ExportedTlsState {

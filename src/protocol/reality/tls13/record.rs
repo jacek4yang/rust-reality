@@ -737,6 +737,43 @@ impl ExportedRecordState {
     pub const fn sequence(&self) -> u64 {
         self.sequence
     }
+
+    /// Separates the exported state into suite, key material, and sequence.
+    ///
+    /// Ownership of the key material moves to the caller exactly once; the
+    /// exported state is consumed, so the key/sequence pair still never has
+    /// two owners.
+    #[must_use]
+    pub fn into_parts(self) -> (CipherSuite, TrafficKeys, u64) {
+        (self.suite, self.keys, self.sequence)
+    }
+
+    /// Reassembles one direction's exported state from received parts.
+    ///
+    /// This is the receiving side of a session handoff: the parts arrive from
+    /// an authenticated transfer channel, and this constructor enforces the
+    /// one structural invariant that can be checked without building the
+    /// cipher — the key length must match the suite. The sequence ceiling is
+    /// enforced when the state becomes a working layer again through
+    /// [`Tls13RecordLayer::from_exported_state`].
+    ///
+    /// # Errors
+    ///
+    /// Rejects key material whose length does not match the suite.
+    pub fn from_parts(
+        suite: CipherSuite,
+        keys: TrafficKeys,
+        sequence: u64,
+    ) -> Result<Self, Tls13RecordError> {
+        if keys.key().len() != suite.key_len() {
+            return Err(Tls13RecordError::InvalidKey);
+        }
+        Ok(Self {
+            suite,
+            keys,
+            sequence,
+        })
+    }
 }
 
 impl fmt::Debug for ExportedRecordState {

@@ -201,6 +201,36 @@ impl<R> TlsApplicationReader<R> {
             .to_vec();
         (pending, self.io)
     }
+
+    /// Consumes the reader at a session-handoff boundary.
+    ///
+    /// Returns the undecrypted ciphertext already read ahead from the
+    /// transport, the transport itself, and the client-direction record layer.
+    /// The pending bytes precede every byte the transport still holds, so the
+    /// receiver of the handoff must feed them to the resumed record layer
+    /// first; the record layer carries the exact sequence the peer's next
+    /// record must authenticate against.
+    #[must_use]
+    pub fn into_handoff_parts(self) -> (Vec<u8>, R, super::Tls13RecordLayer) {
+        let pending = self
+            .socket_buffer
+            .get(self.buffered_start..self.buffered_end)
+            .unwrap_or_default()
+            .to_vec();
+        (pending, self.io, self.records)
+    }
+}
+
+impl<W> TlsApplicationWriter<W> {
+    /// Consumes the writer at a session-handoff boundary.
+    ///
+    /// Writes are record-synchronous, so the writer is always at a record
+    /// boundary between awaited calls; the returned record layer carries the
+    /// exact server-direction sequence.
+    #[must_use]
+    pub fn into_handoff_parts(self) -> (W, super::Tls13RecordLayer) {
+        (self.io, self.records)
+    }
 }
 
 impl<W> TlsApplicationWriter<W> {
@@ -229,6 +259,45 @@ pub fn bind_application_halves<R, W>(
             socket_buffer: Vec::new(),
             buffered_start: 0,
             buffered_end: 0,
+            idle: IdleDeadline::new(),
+        },
+        TlsApplicationWriter {
+            io: writer,
+            records: server_records,
+            write_record: Vec::new(),
+            idle: IdleDeadline::new(),
+        },
+    )
+}
+
+/// Binds transport halves to resumed TLS directions after a session handoff.
+///
+/// This is the receiving counterpart of the `into_handoff_parts` extraction:
+/// `pending_ciphertext` is the read-ahead the previous owner had already
+/// pulled out of its kernel buffer, so it is preloaded into the reader's
+/// socket buffer and is therefore opened ahead of every byte the new
+/// transport delivers. The record layers inside `tls` carry the exact
+/// sequences at the boundary.
+#[must_use]
+pub fn resume_application_halves<R, W>(
+    reader: R,
+    pending_ciphertext: Vec<u8>,
+    writer: W,
+    tls: EstablishedTls,
+) -> (TlsApplicationReader<R>, TlsApplicationWriter<W>) {
+    let (client_records, server_records) = tls.into_record_layers();
+    let buffered_end = pending_ciphertext.len();
+    let mut socket_buffer = pending_ciphertext;
+    // Best-effort headroom for the first refill; the grow-on-demand refill
+    // policy stays correct even when this reservation fails.
+    let _ignored = socket_buffer.try_reserve(SOCKET_BUFFER_CAPACITY);
+    (
+        TlsApplicationReader {
+            io: reader,
+            records: client_records,
+            socket_buffer,
+            buffered_start: 0,
+            buffered_end,
             idle: IdleDeadline::new(),
         },
         TlsApplicationWriter {

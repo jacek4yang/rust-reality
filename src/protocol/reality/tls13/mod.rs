@@ -16,7 +16,7 @@ mod target_read;
 pub(crate) use application_io::VectoredRead;
 pub use application_io::{
     ApplicationRecord, ApplicationWriteStats, TlsApplicationIo, TlsApplicationIoError,
-    TlsApplicationReader, TlsApplicationWriter, bind_application_halves,
+    TlsApplicationReader, TlsApplicationWriter, bind_application_halves, resume_application_halves,
 };
 pub use handshake::{
     EstablishedTls, ExportedTlsState, RealityHandshakeError, ServerFlight, build_server_flight,
