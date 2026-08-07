@@ -1,0 +1,64 @@
+# 协议概览
+
+[English](protocol.md) | 简体中文
+
+`rust-reality` 只暴露一个公网协议栈和一个内部跳转协议。本页概括各自的含义；
+安全属性和信任边界以 [threat-model.zh-CN.md](threat-model.zh-CN.md) 为准。
+
+## 公网栈：VLESS + REALITY + Vision
+
+```text
+兼容 Xray 的客户端
+  -> VLESS + REALITY + xtls-rprx-vision 公网 listener
+  -> 服务端上的 UUID 策略与路由
+  -> direct | SOCKS5 | blackhole | NXR 出站
+  -> 目标地址
+```
+
+- **REALITY** 提供伪装与认证外层。服务端伪装成配置的 TLS 1.3 目标；客户端在
+  看似普通 TLS 1.3 握手的过程中证明持有每用户密钥材料。配置的 server name
+  可以是具体 DNS 名称，也可以是 `*.lmu.edu` 这样的最左单标签模式；
+  ClientHello 的 SNI 必须保持具体。只有验证通过预期的 TLS 1.3
+  ClientFinished 之后才提交认证状态。
+- **Fallback** 是失败模式：未认证连接会按序、逐字节地转发到伪装目标。没有
+  任何合成响应会把服务标识为代理，且 fallback 并发独立于已认证流量计数。
+- **VLESS** 是 TLS 流内的已认证请求协议：UUID、命令和目标。解密为 `none`——
+  机密性与完整性由外层 REALITY TLS 1.3 记录层提供。
+- **`xtls-rprx-vision`** 是唯一接受的 flow。它在 framed 阶段提供 padding 与
+  长度混淆，并支持 **Direct** 转换：当某方向完成认证并识别出内层 TLS 1.3
+  应用数据后，该方向切换为 raw relay（优先 Linux `splice`），边界不变量见
+  [architecture.zh-CN.md](architecture.zh-CN.md)。公网入站不支持纯 VLESS、
+  仅 TLS 的 VLESS、WebSocket、QUIC、UDP 代理或非 Vision flow。
+
+公网栈与 Xray-core 客户端线兼容；兼容性门禁见
+[benchmarks.zh-CN.md](benchmarks.zh-CN.md)。
+
+## 出站
+
+- **direct**：有界连接，可选域名策略（在有界、快速失败的池中做 DNS 解析）和
+  限制未认证拨号速率的 direct barrier。
+- **SOCKS5**：指向上游 SOCKS5 服务器的出站，可选用户名/密码认证。
+- **blackhole**：有界丢弃，可选响应延迟。
+- **NXR**：把流量转发到落地机（见下）。
+
+## NXR：内部线路机到落地机跳转
+
+NXR 是未认证 SOCKS 式线路机到落地机访问的内部替代品，不是公网协议。线路机
+上每条已认证的用户 TCP 流量创建一条到落地机的 NXR TCP 连接，并恰好发送一个
+有界请求：版本、目标、时间戳、随机 nonce，以及在独立 32 字节预共享密钥下的
+HMAC。落地机在任何 DNS 解析或目标连接之前检查结构、时间窗、HMAC 和有界
+nonce 重放缓存；失败即静默关闭。
+
+这一次性认证请求之后，NXR 永久切换为带 half-close 的裸双向字节流：没有
+TLS、REALITY、AEAD、证书、多路复用、连接池、持久 framing，也没有认证后的
+加密。NXR listener 必须用防火墙限制为只允许线路机固定源 IP，并且整个跳转
+必须按明文对待：任何能观测该链路的人都能观测没有端到端保护（例如 HTTPS）
+的载荷。
+
+## 一段话信任边界
+
+公网 listener 抵御未认证的协议识别、主动探测、ClientHello 重放、畸形记录输入
+和本地资源耗尽。认证前的一切都有界且日志不含秘密。部署者仍然要负责伪装目标
+的选择、防火墙策略（尤其是 NXR）、VPS 链路（应用无法吸收上游流量型 DDoS）和
+端点被控（REALITY 不会让被控端点变得可信）。完整模型与非目标见
+[threat-model.zh-CN.md](threat-model.zh-CN.md)。

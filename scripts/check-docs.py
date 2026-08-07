@@ -15,11 +15,15 @@ REQUIRED_PAIRS = (
     ("README.md", "README.zh-CN.md"),
     ("SECURITY.md", "SECURITY.zh-CN.md"),
     ("docs/index.md", "docs/index.zh-CN.md"),
+    ("docs/getting-started.md", "docs/getting-started.zh-CN.md"),
     ("docs/cli.md", "docs/cli.zh-CN.md"),
     ("docs/configuration.md", "docs/configuration.zh-CN.md"),
     ("docs/deployment.md", "docs/deployment.zh-CN.md"),
-    ("docs/threat-model.md", "docs/threat-model.zh-CN.md"),
+    ("docs/architecture.md", "docs/architecture.zh-CN.md"),
+    ("docs/protocol.md", "docs/protocol.zh-CN.md"),
+    ("docs/performance.md", "docs/performance.zh-CN.md"),
     ("docs/benchmarks.md", "docs/benchmarks.zh-CN.md"),
+    ("docs/threat-model.md", "docs/threat-model.zh-CN.md"),
 )
 
 
