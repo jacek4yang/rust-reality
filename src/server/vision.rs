@@ -445,16 +445,13 @@ impl VisionHandler {
             .reunite(client_write_half)
             .map_err(|_| VisionSessionError::HandoffLine(HandoffLineError::Reunite))?;
         // Classify the silent protocol's only failure signal before any socket
-        // moves into the relay: no TLS downlink byte within the deadline means
-        // rejection. The guard's descriptors are still open here, so dropping
-        // it armed aborts both sockets (SO_LINGER {on,0}); they close as whole
-        // streams right after, delivering RST — never FIN — and the session's
-        // descriptors, permits, and pipes are not held until the idle timeout.
-        if !super::handoff::first_downlink_landed(
-            &handoff_stream,
-            super::handoff::LANDING_FIRST_BYTE_TIMEOUT,
-        )
-        .await
+        // moves into the relay: no TLS downlink byte within the configured
+        // first-byte deadline means rejection. The guard's descriptors are
+        // still open here, so dropping it armed aborts both sockets
+        // (SO_LINGER {on,0}); they close as whole streams right after,
+        // delivering RST — never FIN — and the session's descriptors,
+        // permits, and pipes are not held until the idle timeout.
+        if !super::handoff::first_downlink_landed(&handoff_stream, line.first_byte_timeout()).await
         {
             drop(guard);
             return Err(VisionSessionError::HandoffLine(

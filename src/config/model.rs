@@ -484,6 +484,10 @@ const fn default_handoff_connect_timeout_ms() -> u64 {
     10_000
 }
 
+const fn default_handoff_first_byte_timeout_ms() -> u64 {
+    15_000
+}
+
 /// VLESS users for one inbound.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -663,6 +667,18 @@ pub struct HandoffSettings {
     /// sealed transfer message.
     #[serde(default = "default_handoff_connect_timeout_ms")]
     pub connect_timeout_ms: u64,
+    /// Deadline for the landing node's first downlink byte after the
+    /// transfer write — LINE's rejection-detection window for the silent
+    /// protocol. A successful transfer produces immediate downlink (the
+    /// resumed response header and opening Vision frame are LANDING's first
+    /// sealed record), while every rejection closes the connection silently.
+    /// This must exceed the landing node's `authenticationTimeoutMs` +
+    /// `connectTimeoutMs` headroom: the first sealed record is produced only
+    /// after the transfer is read, authenticated, and the destination
+    /// dialed, so a shorter deadline resets viable sessions whose landing
+    /// node is slow or congested.
+    #[serde(default = "default_handoff_first_byte_timeout_ms")]
+    pub first_byte_timeout_ms: u64,
 }
 
 /// User-group routing with a small global prelude.

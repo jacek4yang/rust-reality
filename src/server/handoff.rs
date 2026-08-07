@@ -61,6 +61,7 @@ pub struct HandoffLine {
     psk: HandoffPsk,
     landing_public: PublicKey,
     connect_timeout: Duration,
+    first_byte_timeout: Duration,
 }
 
 impl HandoffLine {
@@ -86,7 +87,21 @@ impl HandoffLine {
             psk: HandoffPsk::new(psk),
             landing_public: PublicKey::from(public),
             connect_timeout: Duration::from_millis(settings.connect_timeout_ms),
+            first_byte_timeout: Duration::from_millis(settings.first_byte_timeout_ms),
         })
+    }
+
+    /// Returns the deadline for LANDING's first downlink byte after the
+    /// transfer write — the rejection-detection window for the silent
+    /// protocol. A successful transfer produces immediate downlink (the
+    /// resumed response header and opening Vision frame are LANDING's first
+    /// sealed record), while every rejection closes the connection silently.
+    /// The validated configuration bounds this above zero; it must exceed
+    /// the landing node's authentication and destination-dial budgets, or
+    /// viable but slow sessions are reset.
+    #[must_use]
+    pub(crate) const fn first_byte_timeout(&self) -> Duration {
+        self.first_byte_timeout
     }
 
     /// Dials LANDING and writes the one sealed transfer message.
@@ -156,18 +171,6 @@ impl fmt::Debug for HandoffLine {
             .finish_non_exhaustive()
     }
 }
-
-/// Deadline for LANDING's first downlink byte after the transfer write.
-///
-/// A successful transfer produces immediate downlink — the resumed response
-/// header and opening Vision frame are LANDING's first sealed record — while
-/// every rejection closes the connection silently, so this bound is the
-/// rejection-detection window. It must exceed the landing side's worst-case
-/// pre-relay work (the bounded transfer read, authentication, and the
-/// destination dial, whose default budgets sum to 13 s), and it replaces the
-/// session idle timeout as the detection bound so a rejected session's
-/// descriptors, permits, and pipes are released within seconds.
-pub(crate) const LANDING_FIRST_BYTE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// TLS record content type for application data: the resumed session's first
 /// record is always sealed application data.
@@ -625,6 +628,7 @@ mod tests {
             pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
             landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public.as_bytes()),
             connect_timeout_ms: 1_000,
+            first_byte_timeout_ms: 1_000,
         })
         .expect("test handoff settings must compile")
     }
@@ -727,6 +731,7 @@ mod tests {
                     pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
                     landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public.as_bytes()),
                     connect_timeout_ms: 1_000,
+                    first_byte_timeout_ms: 1_000,
                 },
             }],
             &barrier,
@@ -1245,6 +1250,7 @@ mod tests {
                 pre_shared_key: SecretString::new("not-base64!"),
                 landing_public_key: BASE64_URL_SAFE_NO_PAD.encode([0x77; 32]),
                 connect_timeout_ms: 1_000,
+                first_byte_timeout_ms: 1_000,
             })
             .is_none()
         );
@@ -1255,6 +1261,7 @@ mod tests {
                 pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
                 landing_public_key: BASE64_URL_SAFE_NO_PAD.encode([0x77; 16]),
                 connect_timeout_ms: 1_000,
+                first_byte_timeout_ms: 1_000,
             })
             .is_none()
         );

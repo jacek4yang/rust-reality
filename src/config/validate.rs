@@ -26,6 +26,7 @@ const MAX_NXR_NONCE_RETENTION_SECONDS: u64 = 86_400;
 const MAX_HANDOFF_TIME_DIFFERENCE_SECONDS: u64 = 300;
 const MAX_HANDOFF_NONCE_ENTRIES: u32 = 1_000_000;
 const MAX_HANDOFF_NONCE_RETENTION_SECONDS: u64 = 86_400;
+const MIN_HANDOFF_FIRST_BYTE_TIMEOUT_MS: u64 = 1_000;
 const MIN_RELAY_BUFFER_BYTES: usize = 4 * 1024;
 const MAX_RELAY_BUFFER_BYTES: usize = 1024 * 1024;
 const MAX_RELAY_BUFFERS: usize = 65_536;
@@ -578,6 +579,16 @@ fn validate_outbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
                     &format!("{path}.settings.connectTimeoutMs"),
                     settings.connect_timeout_ms,
                 )?;
+                if !(MIN_HANDOFF_FIRST_BYTE_TIMEOUT_MS..=MAX_TIMEOUT_MS)
+                    .contains(&settings.first_byte_timeout_ms)
+                {
+                    return fail(
+                        format!("{path}.settings.firstByteTimeoutMs"),
+                        format!(
+                            "must be between {MIN_HANDOFF_FIRST_BYTE_TIMEOUT_MS} and {MAX_TIMEOUT_MS}"
+                        ),
+                    );
+                }
             }
         }
     }
@@ -1298,6 +1309,7 @@ mod tests {
                 pre_shared_key: SecretString::new("WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo"),
                 landing_public_key: "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo".to_owned(),
                 connect_timeout_ms: 10_000,
+                first_byte_timeout_ms: 15_000,
             },
         });
 
@@ -1315,6 +1327,7 @@ mod tests {
                 pre_shared_key: SecretString::new("WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo"),
                 landing_public_key: "not-base64!".to_owned(),
                 connect_timeout_ms: 10_000,
+                first_byte_timeout_ms: 15_000,
             },
         });
 
@@ -1323,6 +1336,58 @@ mod tests {
                 .expect_err("a malformed landing public key must fail")
                 .path(),
             "outbounds[2].settings.landingPublicKey"
+        );
+    }
+
+    #[test]
+    fn handoff_first_byte_timeout_is_bounded_and_defaults() {
+        for (value, expect_valid) in [
+            (0_u64, false),
+            (999, false),
+            (1_000, true),
+            (600_000, true),
+            (600_001, false),
+        ] {
+            let mut config = valid_config();
+            config.outbounds.push(OutboundConfig::Handoff {
+                tag: "handoff-line".to_owned(),
+                settings: crate::config::HandoffSettings {
+                    address: "10.0.0.3".to_owned(),
+                    port: 9444,
+                    pre_shared_key: SecretString::new(
+                        "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo",
+                    ),
+                    landing_public_key: "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo".to_owned(),
+                    connect_timeout_ms: 10_000,
+                    first_byte_timeout_ms: value,
+                },
+            });
+            let result = validate_config(&config);
+            if expect_valid {
+                result.expect("an in-bounds first-byte timeout must validate");
+            } else {
+                assert_eq!(
+                    result
+                        .expect_err("an out-of-bounds first-byte timeout must fail")
+                        .path(),
+                    "outbounds[2].settings.firstByteTimeoutMs"
+                );
+            }
+        }
+
+        let settings: crate::config::HandoffSettings = serde_json::from_str(
+            r#"{
+                "address": "10.0.0.3",
+                "port": 9444,
+                "preSharedKey": "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo",
+                "landingPublicKey": "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo",
+                "connectTimeoutMs": 10000
+            }"#,
+        )
+        .expect("handoff settings must decode");
+        assert_eq!(
+            settings.first_byte_timeout_ms, 15_000,
+            "a missing field must default to 15 s"
         );
     }
 
@@ -1416,6 +1481,7 @@ mod tests {
                 pre_shared_key: shared,
                 landing_public_key: "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo".to_owned(),
                 connect_timeout_ms: 10_000,
+                first_byte_timeout_ms: 15_000,
             },
         });
         assert_eq!(
