@@ -26,7 +26,7 @@ use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
 use crate::{
-    config::{HandoffInboundConfig, HandoffSettings, RelayPolicy},
+    config::{HandoffInboundConfig, HandoffSettings},
     protocol::{
         handoff::{
             ContinuationState, HEADER_LEN, HandoffError, HandoffPsk, HandoffReplayCache,
@@ -269,28 +269,6 @@ pub struct HandoffLandingHandler {
 }
 
 impl HandoffLandingHandler {
-    /// Compiles one validated internal listener with a new replay cache.
-    ///
-    /// # Errors
-    ///
-    /// Rejects invalid key material or replay-cache policy.
-    pub fn from_inbound(
-        inbound: &HandoffInboundConfig,
-        relay_policy: &RelayPolicy,
-        fd_budget: FdBudget,
-        io_timeout: Duration,
-    ) -> Result<Self, HandoffLandingConfigError> {
-        let replay = HandoffReplayCache::new(
-            usize::try_from(inbound.settings.max_nonce_entries)
-                .map_err(|_| HandoffLandingConfigError::Capacity)?,
-            Duration::from_secs(inbound.settings.nonce_retention_seconds),
-        )
-        .map_err(HandoffLandingConfigError::Replay)?;
-        let relay =
-            TcpRelay::new(relay_policy, fd_budget).map_err(HandoffLandingConfigError::Relay)?;
-        Self::from_inbound_with_replay(inbound, replay, relay, io_timeout)
-    }
-
     /// Compiles one validated listener while retaining its process-lifetime
     /// replay history across immutable runtime generations.
     ///

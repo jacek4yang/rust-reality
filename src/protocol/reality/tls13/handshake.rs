@@ -106,20 +106,6 @@ impl EstablishedTls {
         (self.client_records, self.server_records)
     }
 
-    /// Consumes the session and exports both directions' application-traffic
-    /// state for a session handoff.
-    ///
-    /// After this call no live owner of the session's key material remains:
-    /// the record layers are consumed, and the returned state is the single
-    /// owner of both directions' keys and sequences.
-    #[must_use]
-    pub fn into_exported_state(self) -> ExportedTlsState {
-        ExportedTlsState {
-            client: self.client_records.into_exported_state(),
-            server: self.server_records.into_exported_state(),
-        }
-    }
-
     /// Rebuilds a working session from previously exported state.
     ///
     /// # Errors
@@ -165,8 +151,9 @@ impl fmt::Debug for EstablishedTls {
 /// Both directions' exported application-traffic state of one session.
 ///
 /// The single owner of a session's key material between export on one node
-/// and reconstruction on another; see
-/// [`EstablishedTls::into_exported_state`]. Key material is zeroized on drop
+/// and reconstruction on another; each direction is exported from its record
+/// layer via [`Tls13RecordLayer::into_exported_state`] and paired through
+/// [`ExportedTlsState::from_directions`]. Key material is zeroized on drop
 /// and never appears in `Debug` output.
 pub struct ExportedTlsState {
     client: ExportedRecordState,
@@ -174,24 +161,6 @@ pub struct ExportedTlsState {
 }
 
 impl ExportedTlsState {
-    /// Returns the client-to-server direction's exported state.
-    #[must_use]
-    pub const fn client(&self) -> &ExportedRecordState {
-        &self.client
-    }
-
-    /// Returns the server-to-client direction's exported state.
-    #[must_use]
-    pub const fn server(&self) -> &ExportedRecordState {
-        &self.server
-    }
-
-    /// Separates the two directions without copying key material.
-    #[must_use]
-    pub fn into_directions(self) -> (ExportedRecordState, ExportedRecordState) {
-        (self.client, self.server)
-    }
-
     /// Reassembles both directions' exported state as received from a session
     /// handoff.
     ///
@@ -498,7 +467,7 @@ mod tests {
     use tokio::io::{AsyncWriteExt, duplex};
     use x25519_dalek::{PublicKey, StaticSecret};
 
-    use super::{EstablishedTls, RealityHandshakeError, build_server_flight};
+    use super::{EstablishedTls, ExportedTlsState, RealityHandshakeError, build_server_flight};
     use crate::protocol::reality::{
         AuthKey, ClientHello, SESSION_ID_LEN, X25519_GROUP, X25519_MLKEM768_GROUP,
         client_hello::fixtures,
@@ -709,9 +678,12 @@ mod tests {
                 .expect("server must open the client record");
         }
 
-        let exported = established.into_exported_state();
-        assert_eq!(exported.client().sequence(), 2);
-        assert_eq!(exported.server().sequence(), 0);
+        let (client_records, server_records) = established.into_record_layers();
+        let client_exported = client_records.into_exported_state();
+        let server_exported = server_records.into_exported_state();
+        assert_eq!(client_exported.sequence(), 2);
+        assert_eq!(server_exported.sequence(), 0);
+        let exported = ExportedTlsState::from_directions(client_exported, server_exported);
         let rendered = format!("{exported:?}");
         assert!(rendered.contains("[REDACTED]"));
 

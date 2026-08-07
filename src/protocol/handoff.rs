@@ -268,7 +268,6 @@ impl fmt::Debug for ContinuationState {
 /// One verified and decrypted transfer, ready to be installed on LANDING.
 pub struct OpenedTransfer {
     timestamp: u64,
-    nonce: [u8; NONCE_LEN],
     client_random: [u8; 32],
     state: ContinuationState,
 }
@@ -278,12 +277,6 @@ impl OpenedTransfer {
     #[must_use]
     pub const fn timestamp(&self) -> u64 {
         self.timestamp
-    }
-
-    /// Returns the one-time random replay token.
-    #[must_use]
-    pub const fn nonce(&self) -> &[u8; NONCE_LEN] {
-        &self.nonce
     }
 
     /// Returns the client random of the transferred TLS session.
@@ -296,12 +289,6 @@ impl OpenedTransfer {
     #[must_use]
     pub const fn state(&self) -> &ContinuationState {
         &self.state
-    }
-
-    /// Separates the continuation state without copying key material.
-    #[must_use]
-    pub fn into_state(self) -> ContinuationState {
-        self.state
     }
 }
 
@@ -603,7 +590,6 @@ pub fn open_transfer(
     }
     Ok(OpenedTransfer {
         timestamp: header.timestamp,
-        nonce: header.nonce,
         client_random: header.client_random,
         state,
     })

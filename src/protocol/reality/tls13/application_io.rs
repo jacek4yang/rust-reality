@@ -244,32 +244,6 @@ impl<W> TlsApplicationWriter<W> {
     }
 }
 
-/// Binds independently owned transport halves to the correct TLS directions.
-#[must_use]
-pub fn bind_application_halves<R, W>(
-    reader: R,
-    writer: W,
-    tls: EstablishedTls,
-) -> (TlsApplicationReader<R>, TlsApplicationWriter<W>) {
-    let (client_records, server_records) = tls.into_record_layers();
-    (
-        TlsApplicationReader {
-            io: reader,
-            records: client_records,
-            socket_buffer: Vec::new(),
-            buffered_start: 0,
-            buffered_end: 0,
-            idle: IdleDeadline::new(),
-        },
-        TlsApplicationWriter {
-            io: writer,
-            records: server_records,
-            write_record: Vec::new(),
-            idle: IdleDeadline::new(),
-        },
-    )
-}
-
 /// Binds transport halves to resumed TLS directions after a session handoff.
 ///
 /// This is the receiving counterpart of the `into_handoff_parts` extraction:
