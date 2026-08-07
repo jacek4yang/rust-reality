@@ -16,7 +16,8 @@ use std::{
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use super::{
-    CipherSuite, ContentType, EstablishedTls, Tls13KeySchedule, Tls13RecordLayer, TlsApplicationIo,
+    CipherSuite, ContentType, EstablishedTls, MAX_PLAINTEXT_LEN, Tls13KeySchedule,
+    Tls13RecordLayer, TlsApplicationIo, VectoredRead,
 };
 use crate::protocol::vless::{UserId, VisionCommand, VisionDecoder, VisionEncoder, VisionMode};
 
@@ -109,6 +110,35 @@ impl AsyncWrite for ReplayTransport {
 
     fn poll_shutdown(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<io::Result<()>> {
         Poll::Ready(Ok(()))
+    }
+}
+
+impl VectoredRead for ReplayTransport {
+    /// Fills the buffers in order from the replay, bounded by one chunk.
+    async fn read_vectored<'buf>(
+        &'buf mut self,
+        buffers: &'buf mut [io::IoSliceMut<'buf>],
+    ) -> io::Result<usize> {
+        let mut budget = self.chunk;
+        let mut total = 0;
+        for buffer in buffers.iter_mut() {
+            let available = self.input.len().saturating_sub(self.position);
+            let length = available.min(buffer.len()).min(budget);
+            if length > 0 {
+                buffer[..length].copy_from_slice(
+                    self.input
+                        .get(self.position..self.position + length)
+                        .expect("replay window must exist"),
+                );
+                self.position += length;
+                budget -= length;
+                total += length;
+            }
+            if length < buffer.len() {
+                break;
+            }
+        }
+        Ok(total)
     }
 }
 
@@ -450,5 +480,63 @@ fn outer_downlink_read_into_record_allocates_nothing_per_chunk_after_warm_up() {
         writer.record_storage_address(),
         storage,
         "ciphertext storage must not move between chunks"
+    );
+}
+
+/// Proves the batched outer downlink (D11) stays allocation-free per batch.
+///
+/// Warm-up covers the single-record buffer allocation, the one-time lazy
+/// growth to the batched layout after the first completely-full record read,
+/// and the timer wheel levels; afterwards a full four-record batch — one
+/// vectored read, four in-place seals, one write — must not allocate.
+#[test]
+fn outer_downlink_batched_allocates_nothing_per_batch_after_warm_up() {
+    const BATCH: usize = 4 * MAX_PLAINTEXT_LEN;
+
+    let runtime = runtime();
+    let peers = peers();
+    let input = vec![0x5a_u8; (WARM_UP_RECORDS + MEASURED_RECORDS) * BATCH];
+    let mut source = ReplayTransport::new(input, BATCH, 0);
+    let sink = ReplayTransport::new(Vec::new(), 512, 1 << 20);
+    let application = TlsApplicationIo::new(sink, peers.server);
+    let (_reader, mut writer) = application.into_split();
+
+    runtime.block_on(async {
+        // The first call runs in single-record mode and grows the buffer.
+        let read = writer
+            .write_application_read_from_batched(&mut source, TIMEOUT)
+            .await
+            .expect("first chunk must be relayed");
+        assert_eq!(read, MAX_PLAINTEXT_LEN);
+        for _ in 1..WARM_UP_RECORDS {
+            let read = writer
+                .write_application_read_from_batched(&mut source, TIMEOUT)
+                .await
+                .expect("warm-up batch must be relayed");
+            assert_eq!(read, BATCH);
+        }
+    });
+    let storage = writer.record_storage_address();
+
+    let measured = allocation_counter::measure(|| {
+        runtime.block_on(async {
+            for _ in 0..MEASURED_RECORDS {
+                let read = writer
+                    .write_application_read_from_batched(&mut source, TIMEOUT)
+                    .await
+                    .expect("measured batch must be relayed");
+                assert_eq!(read, BATCH);
+            }
+        });
+    });
+
+    assert_eq!(
+        measured.count_total, 0,
+        "steady-state batched downlink must not allocate, saw {measured:?} over {MEASURED_RECORDS} batches"
+    );
+    assert_eq!(
+        writer.record_storage_address(),
+        storage,
+        "ciphertext storage must not move between batches"
     );
 }

@@ -20,7 +20,7 @@ use crate::{
     protocol::{
         reality::tls13::{
             IdleDeadline, IdleError, MAX_PLAINTEXT_LEN, TlsApplicationIoError,
-            TlsApplicationReader, TlsApplicationWriter,
+            TlsApplicationReader, TlsApplicationWriter, VectoredRead,
         },
         vless::{
             DecodeError, Destination, RequestHeader, RequestValidationError, UserId, UserRegistry,
@@ -1279,16 +1279,19 @@ async fn relay_outer_downlink<R, W>(
     timeout: Duration,
 ) -> Result<u64, VisionSessionError>
 where
-    R: AsyncRead + Unpin,
+    R: VectoredRead,
     W: AsyncWrite + Unpin,
 {
     let mut copied = 0_u64;
     loop {
-        // The destination read lands directly in the final AEAD plaintext
-        // region of the connection's reusable record buffer and is sealed in
-        // place: no scratch buffer and no per-chunk copy exist on this path.
+        // The batched variant (experiment D11) lands one vectored destination
+        // read in the plaintext regions of up to four record slots of the
+        // connection's grow-only buffer, seals each filled slot in place, and
+        // writes the contiguous sealed prefix with one write: no scratch
+        // buffer and no per-chunk copy exist on this path, and a full batch
+        // costs one read plus one write syscall instead of one per record.
         let read = writer
-            .write_application_read_from(reader, timeout)
+            .write_application_read_from_batched(reader, timeout)
             .await
             .map_err(VisionSessionError::Tls)?;
         if read == 0 {
@@ -1506,6 +1509,44 @@ impl AsyncRead for NestedRecordReader {
             return Poll::Ready(Ok(()));
         }
         Pin::new(&mut self.io).poll_read(context, buffer)
+    }
+}
+
+impl VectoredRead for NestedRecordReader {
+    /// Drains buffered bytes into the first buffer, otherwise one `readv`.
+    ///
+    /// Buffered bytes are the rare post-classification leftovers; they fill
+    /// only the first non-empty buffer, exactly like the scalar
+    /// [`AsyncRead`] impl. Once the buffer is empty the call forwards to one
+    /// vectored socket read, which is what lets the batched downlink relay
+    /// (experiment D11) fill several record slots per syscall.
+    async fn read_vectored<'buf>(
+        &'buf mut self,
+        buffers: &'buf mut [io::IoSliceMut<'buf>],
+    ) -> io::Result<usize> {
+        let buffered = self.buffered_end - self.buffered_start;
+        if buffered > 0 {
+            let Some(first) = buffers.iter_mut().find(|buffer| !buffer.is_empty()) else {
+                return Ok(0);
+            };
+            let count = buffered.min(first.len());
+            let start = self.buffered_start;
+            first[..count].copy_from_slice(
+                self.socket_buffer
+                    .get(start..start + count)
+                    .unwrap_or_default(),
+            );
+            self.buffered_start += count;
+            return Ok(count);
+        }
+        loop {
+            self.io.readable().await?;
+            match self.io.try_read_vectored(buffers) {
+                Ok(read) => return Ok(read),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(error) => return Err(error),
+            }
+        }
     }
 }
 
