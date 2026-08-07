@@ -245,6 +245,10 @@ impl DirectBarrier {
 
     /// Attempts a direct dial without queuing. Capacity is released on every drop path.
     ///
+    /// Callers hold the returned permit only for the dial itself and drop it as
+    /// soon as the connect resolves, so an established relay consumes no
+    /// barrier capacity.
+    ///
     /// # Errors
     ///
     /// Returns a category-specific denial when concurrency, rate, pressure, or

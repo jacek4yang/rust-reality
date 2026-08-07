@@ -20,7 +20,7 @@ use crate::{
         nxr::{NxrKey, NxrProtocolError, encode_request},
         vless::{Address, Destination},
     },
-    runtime::{AdmissionDenied, DirectBarrier, DirectPermit, FdBudget, FdPermit},
+    runtime::{AdmissionDenied, DirectBarrier, FdBudget, FdPermit},
 };
 
 use super::connector::{DestinationConnectError, DestinationConnector};
@@ -139,9 +139,14 @@ impl OutboundRegistry {
                     .connect_resolved(destination, resolved_ips)
                     .await
                     .map_err(OutboundConnectError::Direct)?;
+                // The barrier permit bounds the dial phase only: every error
+                // return above drops it implicitly, and a resolved connect
+                // releases it here before the session starts. The descriptor
+                // permit is different — it rides the socket for its entire
+                // lifetime so the unit is never freed before the close.
+                drop(permit);
                 Ok(OutboundConnectOutcome::Connected(OutboundConnection {
                     stream,
-                    _direct_permit: Some(permit),
                     fd_permit,
                 }))
             }
@@ -156,7 +161,6 @@ impl OutboundRegistry {
                 let stream = connect_socks5(settings, destination, self.connect_timeout).await?;
                 Ok(OutboundConnectOutcome::Connected(OutboundConnection {
                     stream,
-                    _direct_permit: None,
                     fd_permit,
                 }))
             }
@@ -165,7 +169,6 @@ impl OutboundRegistry {
                 let stream = connect_nxr(settings, destination, self.connect_timeout).await?;
                 Ok(OutboundConnectOutcome::Connected(OutboundConnection {
                     stream,
-                    _direct_permit: None,
                     fd_permit,
                 }))
             }
@@ -263,10 +266,9 @@ impl CompiledNxr {
     }
 }
 
-/// A connected outbound stream retaining any lifetime admission permit.
+/// A connected outbound stream retaining its lifetime descriptor permit.
 pub struct OutboundConnection {
     stream: TcpStream,
-    _direct_permit: Option<DirectPermit>,
     fd_permit: FdPermit,
 }
 
@@ -277,7 +279,6 @@ impl OutboundConnection {
         (
             self.stream,
             OutboundPermit {
-                _direct: self._direct_permit,
                 _fd: self.fd_permit,
             },
         )
@@ -289,14 +290,12 @@ impl fmt::Debug for OutboundConnection {
         formatter
             .debug_struct("OutboundConnection")
             .field("stream", &"[CONNECTED]")
-            .field("direct_permit", &self._direct_permit.is_some())
             .finish()
     }
 }
 
 /// Permit retained until a connected outbound session ends.
 pub struct OutboundPermit {
-    _direct: Option<DirectPermit>,
     _fd: FdPermit,
 }
 
@@ -629,7 +628,7 @@ mod tests {
         net::TcpListener,
     };
 
-    use super::{OutboundConnectOutcome, OutboundRegistry};
+    use super::{OutboundConnectError, OutboundConnectOutcome, OutboundRegistry};
     use crate::{
         config::{DirectBarrierConfig, NxrSettings, OutboundConfig, SecretString, Socks5Settings},
         protocol::{
@@ -638,7 +637,19 @@ mod tests {
             },
             vless::{Address, Destination},
         },
+        runtime::{AdmissionDenied, DirectBarrier, ResourcePressure},
     };
+
+    fn direct_registry(barrier: &DirectBarrier, connect_timeout: Duration) -> OutboundRegistry {
+        OutboundRegistry::with_barrier(
+            &[OutboundConfig::Direct {
+                tag: "direct".to_owned(),
+            }],
+            barrier.clone(),
+            connect_timeout,
+            crate::runtime::FdBudget::new(4_096),
+        )
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn outbound_descriptor_unit_is_exact_and_released_with_the_connection() {
@@ -846,5 +857,404 @@ mod tests {
 
         landing_result.expect("landing exchange must succeed");
         line_result.expect("raw payload write must succeed");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn concurrent_dial_limit_denies_a_second_in_flight_dial() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("target listener must bind");
+        let address = listener.local_addr().expect("target address must exist");
+        let barrier = DirectBarrier::new(&DirectBarrierConfig {
+            max_concurrent: 1,
+            max_per_second: 1_000,
+        });
+        // A permit held by another task is exactly the state of one dial in
+        // flight; the second dial must be refused until it resolves.
+        let in_flight = barrier
+            .try_acquire()
+            .expect("the first dial permit must be available");
+        let registry = direct_registry(&barrier, Duration::from_secs(1));
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), address.port());
+
+        let error = registry
+            .connect("direct", &destination)
+            .await
+            .expect_err("a dial at the concurrency ceiling must be denied");
+        assert!(
+            matches!(
+                error,
+                OutboundConnectError::Admission(AdmissionDenied::DirectConcurrency)
+            ),
+            "expected DirectConcurrency, got {error}"
+        );
+
+        drop(in_flight);
+        assert!(
+            matches!(
+                registry
+                    .connect("direct", &destination)
+                    .await
+                    .expect("the dial must proceed once the in-flight dial resolves"),
+                OutboundConnectOutcome::Connected(_)
+            ),
+            "a direct route must connect once capacity is free"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_completed_dial_releases_its_permit_while_the_session_stays_open() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("target listener must bind");
+        let address = listener.local_addr().expect("target address must exist");
+        let barrier = DirectBarrier::new(&DirectBarrierConfig {
+            max_concurrent: 1,
+            max_per_second: 1_000,
+        });
+        let registry = direct_registry(&barrier, Duration::from_secs(1));
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), address.port());
+
+        let first = registry
+            .connect("direct", &destination)
+            .await
+            .expect("the first dial must connect");
+        let OutboundConnectOutcome::Connected(first) = first else {
+            panic!("a direct route must connect");
+        };
+
+        // The dial resolved, so the concurrency permit is already free even
+        // though the established session above is still open.
+        let probe = barrier
+            .try_acquire()
+            .expect("a completed dial must not hold its barrier permit");
+        drop(probe);
+        assert!(
+            matches!(
+                registry
+                    .connect("direct", &destination)
+                    .await
+                    .expect("a second dial must fit under the barrier"),
+                OutboundConnectOutcome::Connected(_)
+            ),
+            "an open session must not consume the dial concurrency limit"
+        );
+
+        // Drain the backlog so both sessions are fully accepted before close.
+        let _accepted = listener.accept().await.expect("first peer must accept");
+        let _accepted = listener.accept().await.expect("second peer must accept");
+        drop(first);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_established_session_relays_while_the_concurrency_limit_is_exhausted() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("target listener must bind");
+        let address = listener.local_addr().expect("target address must exist");
+        let barrier = DirectBarrier::new(&DirectBarrierConfig {
+            max_concurrent: 1,
+            max_per_second: 1_000,
+        });
+        let registry = direct_registry(&barrier, Duration::from_secs(1));
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), address.port());
+
+        let outcome = registry
+            .connect("direct", &destination)
+            .await
+            .expect("the session dial must connect");
+        let OutboundConnectOutcome::Connected(connection) = outcome else {
+            panic!("a direct route must connect");
+        };
+        let (mut stream, session_permit) = connection.into_parts();
+        // Exhaust the concurrency limit again, standing in for another dial in
+        // flight: the established session must be unaffected either way.
+        let _in_flight = barrier
+            .try_acquire()
+            .expect("the established session must not hold the concurrency permit");
+
+        let echo = async {
+            let (mut peer, _) = listener.accept().await?;
+            let mut payload = [0_u8; 4];
+            peer.read_exact(&mut payload).await?;
+            peer.write_all(&payload).await
+        };
+        let exchange = async {
+            stream.write_all(b"ping").await?;
+            let mut echoed = [0_u8; 4];
+            stream.read_exact(&mut echoed).await?;
+            assert_eq!(&echoed, b"ping");
+            Ok::<_, std::io::Error>(())
+        };
+        let (echo_result, exchange_result) = tokio::join!(echo, exchange);
+        echo_result.expect("echo peer must succeed");
+        exchange_result.expect("the established session must still relay bytes");
+        drop(session_permit);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_failed_dial_releases_its_permit() {
+        // Reserve a port and drop the listener so connects are refused fast.
+        let refused_port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("probe listener must bind")
+            .local_addr()
+            .expect("probe address must exist")
+            .port();
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("target listener must bind");
+        let good_port = listener
+            .local_addr()
+            .expect("target address must exist")
+            .port();
+        let barrier = DirectBarrier::new(&DirectBarrierConfig {
+            max_concurrent: 1,
+            max_per_second: 1_000,
+        });
+        let registry = direct_registry(&barrier, Duration::from_secs(1));
+
+        let refused = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), refused_port);
+        let error = registry
+            .connect("direct", &refused)
+            .await
+            .expect_err("a refused destination must fail the dial");
+        assert!(
+            matches!(error, OutboundConnectError::Direct(_)),
+            "expected a direct connect error, got {error}"
+        );
+
+        let good = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), good_port);
+        assert!(
+            matches!(
+                registry
+                    .connect("direct", &good)
+                    .await
+                    .expect("the failed dial must have released its permit"),
+                OutboundConnectOutcome::Connected(_)
+            ),
+            "a good dial must succeed after a failure under a barrier of one"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_rate_limit_applies_to_new_dials_after_a_permit_is_released() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("target listener must bind");
+        let address = listener.local_addr().expect("target address must exist");
+        let barrier = DirectBarrier::new(&DirectBarrierConfig {
+            max_concurrent: 8,
+            max_per_second: 1,
+        });
+        let registry = direct_registry(&barrier, Duration::from_secs(1));
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), address.port());
+
+        assert!(
+            matches!(
+                registry
+                    .connect("direct", &destination)
+                    .await
+                    .expect("the first dial must connect"),
+                OutboundConnectOutcome::Connected(_)
+            ),
+            "a direct route must connect"
+        );
+        // The first dial's concurrency permit is already released, so only the
+        // token bucket can refuse an immediate second dial.
+        let error = registry
+            .connect("direct", &destination)
+            .await
+            .expect_err("the rate limit must deny an immediate second dial");
+        assert!(
+            matches!(
+                error,
+                OutboundConnectError::Admission(AdmissionDenied::DirectRate)
+            ),
+            "expected DirectRate, got {error}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn critical_pressure_blocks_new_dials_but_not_established_relays() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("target listener must bind");
+        let address = listener.local_addr().expect("target address must exist");
+        let gauge = crate::runtime::PressureGauge::new();
+        let barrier = DirectBarrier::with_pressure(
+            &DirectBarrierConfig {
+                max_concurrent: 4,
+                max_per_second: 1_000,
+            },
+            gauge.clone(),
+        );
+        let registry = direct_registry(&barrier, Duration::from_secs(1));
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), address.port());
+
+        let outcome = registry
+            .connect("direct", &destination)
+            .await
+            .expect("the session dial must connect under normal pressure");
+        let OutboundConnectOutcome::Connected(connection) = outcome else {
+            panic!("a direct route must connect");
+        };
+        let (mut stream, session_permit) = connection.into_parts();
+
+        gauge.set(ResourcePressure::Critical);
+        let error = registry
+            .connect("direct", &destination)
+            .await
+            .expect_err("critical pressure must pause new dials");
+        assert!(
+            matches!(
+                error,
+                OutboundConnectError::Admission(AdmissionDenied::DirectPressure)
+            ),
+            "expected DirectPressure, got {error}"
+        );
+
+        let echo = async {
+            let (mut peer, _) = listener.accept().await?;
+            let mut payload = [0_u8; 4];
+            peer.read_exact(&mut payload).await?;
+            peer.write_all(&payload).await
+        };
+        let exchange = async {
+            stream.write_all(b"ping").await?;
+            let mut echoed = [0_u8; 4];
+            stream.read_exact(&mut echoed).await?;
+            assert_eq!(&echoed, b"ping");
+            Ok::<_, std::io::Error>(())
+        };
+        let (echo_result, exchange_result) = tokio::join!(echo, exchange);
+        echo_result.expect("echo peer must succeed");
+        exchange_result.expect("critical pressure must not interrupt an established relay");
+        drop(session_permit);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn socks5_dials_never_consume_direct_barrier_permits() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("SOCKS listener must bind");
+        let address = listener.local_addr().expect("SOCKS address must exist");
+        let barrier = DirectBarrier::new(&DirectBarrierConfig {
+            max_concurrent: 1,
+            max_per_second: 1,
+        });
+        // Fill the barrier completely: the one concurrency permit and the one
+        // rate token. A SOCKS5 dial must not touch either.
+        let _in_flight = barrier
+            .try_acquire()
+            .expect("the barrier must be fillable for the test");
+        let registry = OutboundRegistry::with_barrier(
+            &[OutboundConfig::Socks5 {
+                tag: "socks".to_owned(),
+                settings: Socks5Settings {
+                    address: address.ip().to_string(),
+                    port: address.port(),
+                    username: None,
+                    password: None,
+                },
+            }],
+            barrier,
+            Duration::from_secs(1),
+            crate::runtime::FdBudget::new(4_096),
+        );
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 443);
+
+        let proxy = async {
+            let (mut stream, _) = listener.accept().await?;
+            let mut greeting = [0_u8; 3];
+            stream.read_exact(&mut greeting).await?;
+            assert_eq!(greeting, [5, 1, 0]);
+            stream.write_all(&[5, 0]).await?;
+            let mut connect = [0_u8; 10];
+            stream.read_exact(&mut connect).await?;
+            assert_eq!(&connect[..8], &[5, 1, 0, 1, 127, 0, 0, 1]);
+            assert_eq!(&connect[8..], &443_u16.to_be_bytes());
+            stream
+                .write_all(&[5, 0, 0, 1, 127, 0, 0, 1, 0x12, 0x34])
+                .await?;
+            Ok::<_, std::io::Error>(())
+        };
+        let connect = registry.connect("socks", &destination);
+        let (proxy_result, connect_result) = tokio::join!(proxy, connect);
+
+        proxy_result.expect("SOCKS exchange must succeed");
+        assert!(
+            matches!(
+                connect_result.expect("a full barrier must not block a SOCKS5 dial"),
+                OutboundConnectOutcome::Connected(_)
+            ),
+            "a SOCKS5 route must connect"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn nxr_dials_never_consume_direct_barrier_permits() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("NXR listener must bind");
+        let address = listener.local_addr().expect("NXR address must exist");
+        let key_bytes = [0x5a; 32];
+        let barrier = DirectBarrier::new(&DirectBarrierConfig {
+            max_concurrent: 1,
+            max_per_second: 1,
+        });
+        // Fill the barrier completely: the one concurrency permit and the one
+        // rate token. An NXR dial must not touch either.
+        let _in_flight = barrier
+            .try_acquire()
+            .expect("the barrier must be fillable for the test");
+        let registry = OutboundRegistry::with_barrier(
+            &[OutboundConfig::Nxr {
+                tag: "landing".to_owned(),
+                settings: NxrSettings {
+                    address: address.ip().to_string(),
+                    port: address.port(),
+                    pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(key_bytes)),
+                },
+            }],
+            barrier,
+            Duration::from_secs(1),
+            crate::runtime::FdBudget::new(4_096),
+        );
+        let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
+
+        let landing = async {
+            let (mut stream, _) = listener.accept().await?;
+            let mut header = [0_u8; REQUEST_HEADER_LEN];
+            stream.read_exact(&mut header).await?;
+            let total = request_len_from_header(&header).expect("header must be bounded");
+            let mut request = Vec::with_capacity(total);
+            request.extend_from_slice(&header);
+            request.resize(total, 0);
+            stream
+                .read_exact(&mut request[REQUEST_HEADER_LEN..])
+                .await?;
+            let timestamp = u64::from_be_bytes(
+                header[10..18]
+                    .try_into()
+                    .expect("timestamp field must be fixed"),
+            );
+            let authenticated =
+                decode_authenticated_request(&request, &NxrKey::new(key_bytes), timestamp, 0)
+                    .expect("NXR request must authenticate");
+            assert_eq!(authenticated.destination(), &destination);
+            Ok::<_, std::io::Error>(())
+        };
+        let connect = registry.connect("landing", &destination);
+        let (landing_result, connect_result) = tokio::join!(landing, connect);
+
+        landing_result.expect("landing exchange must succeed");
+        assert!(
+            matches!(
+                connect_result.expect("a full barrier must not block an NXR dial"),
+                OutboundConnectOutcome::Connected(_)
+            ),
+            "an NXR route must connect"
+        );
     }
 }

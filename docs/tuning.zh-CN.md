@@ -27,7 +27,7 @@
 如果你刚租好 VPS、想要一个站得住脚的起点，直接采用你机型档位对应的
 调优档位：
 
-| 你的 VPS | `runtime.resourceMode` | 把 `policy.resourceGovernor.maxConnections` 和 `policy.directBarrier.maxConcurrent` **同时**设为 | 依据（MEASURED-LOCAL） |
+| 你的 VPS | `runtime.resourceMode` | 把 `policy.resourceGovernor.maxConnections` 设为 | 依据（MEASURED-LOCAL） |
 | --- | --- | --- | --- |
 | 1 vCPU / 1 GiB（"1C1G"） | `dedicated` | `8000` | 12000 会话验证干净，cgroup 峰值约 694 MiB；≈14000 开始弃载；8000 ≈ 弃载点的 57% |
 | 1–2 vCPU / 2 GiB | `dedicated` | `16000` | 24000 验证干净，cgroup 峰值 1.12 GiB；推荐值 = 验证值的 2/3 |
@@ -39,21 +39,21 @@
 
 这些是**在被测 standalone/Direct 工作负载上验证过的起始档位**（建连
 churn + 512 MiB 批量传输 + 空闲连接阶梯），对应拓扑中每条会话都路由到
-direct 出站——这就是表中 `maxConcurrent` 与 `maxConnections` 相等的
-原因。它们不是普适的生产容量：更强的论断需要先做一个混合工作负载的
-验证阶段。对于会话经 NXR 或 SOCKS5 出站离开的节点，
-`directBarrier.maxConcurrent` 只限制 Direct 路由的那部分份额（§3）；
-§28 讲解如何为一台具体主机推导每个值。
+direct 出站。它们不是普适的生产容量：更强的论断需要先做一个混合工作
+负载的验证阶段。`directBarrier.maxConcurrent` 无需随档位调整：它限制
+的是并发 Direct 拨号尝试，已建立的会话不持有 barrier 许可（§3）。§28
+讲解如何为一台具体主机推导每个值。
 
 动手之前先记住两条规则：
 
-1. **默认值在上述所有机器上都是安全的，但它把 Direct 路由的会话限制在
-   2048 个。** `policy.directBarrier.maxConcurrent` 默认 2048，而 barrier
-   许可只由路由决策为 direct 出站的会话获取，并在整个会话生命周期内持有
-   ——在 standalone/Direct 节点上这就是每条会话，所以即使
-   `maxConnections` 默认是 16384，第 2049 个会话也会被快速拒绝
-   （VERIFIED，实测）。在这类节点上提高真实会话容量意味着两个值一起调大，
-   然后重启：两者都需要重启才能生效（见 §10）。
+1. **默认值在上述所有机器上都是安全的，会话上限就是
+   `maxConnections`。** `policy.resourceGovernor.maxConnections` 默认
+   16384。`policy.directBarrier.maxConcurrent`（默认 2048）只限制并发
+   Direct 拨号尝试：许可在拨号完成时立即释放，已建立的会话不占用
+   barrier 容量。（v1.0.0 会在整个 Direct 会话期间持有许可，所以在
+   standalone/Direct 节点上，即使 `maxConnections` 为 16384，第 2049 个
+   会话也会被快速拒绝——issue #26，已在 v1.0.0 之后修复。）提高真实
+   会话容量只需调大 `maxConnections` 并重启（它是冷设置，见 §10）。
 2. **policy 块一旦写就必须写全。** 校验器会拒绝只包含你改过的几个键的
    `policy.resourceGovernor` 对象（已用 `check` 确认，VERIFIED）。请在
    `config generate` 生成的完整块内改值；不要粘贴只有两个键的片段。
@@ -99,19 +99,14 @@ min( admission ceiling,  FD budget,  memory budget,  CPU-for-your-SLO,  network 
 哪一项最小，哪一项说了算；调大其他任何项都不会改变结果。具体说：
 
 - **admission 上限** —— `policy.resourceGovernor.maxConnections`
-  （默认 16384）是全局已接纳会话上限。在此之上，
-  `policy.directBarrier.maxConcurrent`（默认 2048）是仅针对 Direct 路由
-  会话的第二层上限：barrier 许可只在 direct 出站路径上获取，并在整个
-  会话生命周期内持有；路由到 SOCKS5 或 NXR 出站的会话从不获取它
-  （VERIFIED，`src/server/outbound.rs`）。注意：该许可的生命周期是一个
-  *已跟踪的运行时不一致*（issue #26）：文档语义是限制并发 Direct
-  *拨号尝试*和拨号速率，而不是已建立会话数；v1.0.0 的实现会在整个
-  Direct 会话期间持有许可。本指南描述实测的 v1.0.0 行为；不要把这种
-  许可生命周期当作长期设计语义。因此在默认 policy 下，
-  standalone/Direct 节点——每条会话都走 direct——无论
-  `maxConnections` 是多少，*有效*上限都是 2048 个会话（VERIFIED，实测：
-  `maxConnections` 保持 16384 时，第 2049 个会话被快速拒绝）；而混合
-  路由节点有一个按其 Direct 路由份额定规格的 Direct 专属子上限。
+  （默认 16384）是全局已接纳会话上限。
+  `policy.directBarrier.maxConcurrent`（默认 2048）只限制*正在进行中的*
+  Direct 拨号尝试：许可只在 direct 出站路径上获取，拨号完成即释放，
+  已建立的会话不占用 barrier 容量；路由到 SOCKS5 或 NXR 出站的会话
+  从不获取它（VERIFIED，`src/server/outbound.rs`）。（v1.0.0 会在整个
+  Direct 会话期间持有许可，使 2048 成为 standalone/Direct 节点的有效
+  会话上限——issue #26，已在 v1.0.0 之后修复；"第 2049 个会话被快速
+  拒绝"的实测平台期就是在该行为下录得的。）
 - **FD 预算** —— 服务端在启动时从 `RLIMIT_NOFILE` 推导出一个描述符
   预算，减去固定预留和安全余量，并通过 `descriptor_budget_report`
   报告一次（§6）。稳态下每个活跃会话约占 2 个 FD（MEASURED-LOCAL：
@@ -145,23 +140,24 @@ VERIFIED-CGROUP **起始档位，针对被测的 standalone/Direct 工作负载*
 传输 + 空闲连接阶梯），全部在 cgroup v2 scope 内以 `dedicated` 模式
 运行，每次运行 `oom_kill=0`（MEASURED-LOCAL）：
 
-| 机型 | 默认 policy | 调优档位（`maxConnections` = `directBarrier.maxConcurrent`） | 验证干净 | 首次弃载/压力 | 验证档位下的 cgroup 内存峰值 |
+| 机型 | 默认 policy | 调优档位（`maxConnections`） | 验证干净 | 首次弃载/压力 | 验证档位下的 cgroup 内存峰值 |
 | --- | --- | --- | --- | --- | --- |
-| 1C1G | 安全，≤2048 会话 | **8000** | 12000 | ≈14000 | 694 MiB @ 12000 |
-| 1C2G | 安全，≤2048 会话 | **16000** | 24000 | 未观察到 | 1.12 GiB @ 24000 |
-| 2C2G | 安全，≤2048 会话 | **16000** | 24000 | 未观察到 | 1.12 GiB @ 24000 |
-| 2C4G | 安全，≤2048 会话 | **24000** | 24000 | 未观察到 | 1.12 GiB @ 24000 |
-| 4C4G | 安全，≤2048 会话 | **24000** | 24000 | 未观察到 | 1.13 GiB @ 24000 |
-| 4C8G | 安全，≤2048 会话 | **24000** | 24000 | 未观察到 | 1.12 GiB @ 24000 |
+| 1C1G | 安全 | **8000** | 12000 | ≈14000 | 694 MiB @ 12000 |
+| 1C2G | 安全 | **16000** | 24000 | 未观察到 | 1.12 GiB @ 24000 |
+| 2C2G | 安全 | **16000** | 24000 | 未观察到 | 1.12 GiB @ 24000 |
+| 2C4G | 安全 | **24000** | 24000 | 未观察到 | 1.12 GiB @ 24000 |
+| 4C4G | 安全 | **24000** | 24000 | 未观察到 | 1.13 GiB @ 24000 |
+| 4C8G | 安全 | **24000** | 24000 | 未观察到 | 1.12 GiB @ 24000 |
 
 读表须知：
 
 - **证据的适用范围。** 这些是起始档位，不是普适的生产容量。被测拓扑中
-  每条会话都走 Direct 路径，所以表中把 `directBarrier.maxConcurrent`
-  设为与 `maxConnections` 相等。不要把这个等式照抄到会话经 NXR 或
-  SOCKS5 离开的节点上：纯 NXR 出站的线路节点可能完全不需要调大
-  `maxConcurrent`，混合节点则按其 Direct 路由份额定规格（§3、§28）。
-  比这更强的论断需要先做一个混合工作负载的验证阶段。
+  每条会话都走 Direct 路径，且测量是在 v1.0.0 的"许可在整个会话期间
+  持有"行为下录得的（issue #26）。拨号阶段修复后，barrier 不再限制
+  已建立的会话，所以调优档位只需调大 `maxConnections`；
+  `directBarrier.maxConcurrent` 保持默认即可，除非你的拨号*速率*确实
+  需要更大（§3、§28）。比这更强的论断需要先做一个混合工作负载的
+  验证阶段。
 - **"验证干净"** 指完整负载水平跑完，且没有 admission 弃载、没有压力
   事件、没有 OOM。**推荐值刻意低于崩坏点**：8000 ≈ 1C1G 弃载点的
   57%；16000 = 2 GiB 验证值的 2/3；24000 停在验证值上、绝不做外推
@@ -283,8 +279,7 @@ memory ≈ 33 MiB (server + geo assets)
 
 **内存紧张时，不要先降 `bufferBytes`。** 更小的缓冲区几乎省不下什么
 （主导项是池上限而不是缓冲区大小：4096 × 32 KiB = 128 MiB），还会
-牺牲高 BDP 路径上的吞吐。改降并发（`maxConnections`/
-`directBarrier.maxConcurrent`）或池上限（`maxPooledBuffers`、
+牺牲高 BDP 路径上的吞吐。改降并发（`maxConnections`）或池上限（`maxPooledBuffers`、
 `maxPooledPipes`），并保持校验器公式 ≤ `maxRelayMemoryBytes`。
 
 ## 8. 重放与 nonce 容量
@@ -378,7 +373,7 @@ rust-reality self-test --config config.json
 **完整示例——1C1G 的完整调优 policy。** 这个块嵌入生成的 standalone
 配置（含 `"runtime": {"resourceMode": "dedicated"}`）后能通过
 `check --config`（已对照 v1.0.0 校验器 VERIFIED）。与默认值不同的
-只有 `maxConnections` 和 `maxConcurrent`；其余照列是因为部分 policy
+只有 `maxConnections`；其余照列是因为部分 policy
 对象会被拒绝。
 
 ```json
@@ -397,7 +392,7 @@ rust-reality self-test --config config.json
     "fallbackTimeoutMs": 120000
   },
   "directBarrier": {
-    "maxConcurrent": 8000,
+    "maxConcurrent": 2048,
     "maxPerSecond": 4096
   },
   "relay": {
@@ -756,15 +751,15 @@ rust-reality 在所有输出位置（stderr、journald、文件）都发出结�
 源码）：
 
 - `admission_limited` 带 `resource: "connections"` —— 监听器级连接调节器。
-  其他限制类别目前以带固定 `reason` 的 `connection_rejected` 出现，
-  而不是 `admission_limited`：
-- `reason: "outbound"` 且默认 policy 下约 2048 会话 → 会话生命周期
-  barrier 许可（`directBarrier.maxConcurrent`），只由 Direct 路由的
-  会话获取；机型档位允许且该节点的会话走 direct 的话，把它和
-  `maxConnections` 一起调大（§3、§4）。
-- `reason: "resource_limit"` → 某个 admission 池（握手、伪装转发、密码学
-  工作）或 FD 预算耗尽；结合 `descriptor_pressure_changed` 区分 FD 压力
-  （§6）与调节器压力。
+  其他限制以两种方式出现：
+- `admission_limited` 带 `resource: "direct_connections"` 并伴随
+  `connection_rejected reason: "resource_limit"` → Direct 拨号 barrier
+  （并发、速率或危急压力）拒绝了一次拨号。只有当你的 Direct 拨号速率
+  确实需要时才调大 `directBarrier.maxConcurrent`/`maxPerSecond`（§3、
+  §28）；barrier 从不限制已建立的会话。
+- 不带 admission 事件的 `reason: "resource_limit"` → 某个 admission 池
+  （握手、伪装转发、密码学工作）或 FD 预算耗尽；结合
+  `descriptor_pressure_changed` 区分 FD 压力（§6）与调节器压力。
 - `reason: "authentication"` → 在 **NXR** 入站上：密钥错误、nonce 重放
   或时钟偏移——这是流量/攻击信号，不是容量信号（§8、§20）。在面向客户
   端的 **REALITY** 入站上，凭据错误通常*不会*产生这个事件：预检的认证、
@@ -919,23 +914,18 @@ NXR 层看起来一模一样（§20）。
 一台 `standard` 模式的 1C1G 跑着 20000+ 会话，钉在 `memory.max` 上，
 反复记录 `resource_pressure_changed` 跃迁，客户端看到随机快速拒绝。
 验证中 standard 模式在 1 GiB 上扛过 23000 会话但余量为零——活着，
-不健康。修复：`dedicated` 模式加 1C1G 档位（`maxConnections`/
-`maxConcurrent` 8000）。弃载停止；12000 会话时 cgroup 峰值实测 694
+不健康。修复：`dedicated` 模式加 1C1G 档位（`maxConnections`
+8000）。弃载停止；12000 会话时 cgroup 峰值实测 694
 MiB，留下真实余量。教训："没崩"不等于"放得下"——看
 `memory.current` 余量，不只看存活。
 
-**案例 5 ——隐形的 2048 会话天花板。**
-一位运维给增长的 2C2G 节点把 `maxConnections` 调到 16384，仍看着
-客户端在约 2000 并发会话时被拒：`connection_rejected` 带
-`reason: "outbound"`（验证中实测：第 2049 个会话起被拒绝，FD 数恰好
-停在 2×2048+15）。默认的 `directBarrier.maxConcurrent` 2048——其许可
-在整个会话期间持有，且只由 Direct 路由的会话获取——在这台每条会话
-都走 direct 的 standalone 节点上才是有效上限（§3）。修法：两个旋钮
-都设为 16000 并重启（两者都需要重启，§10）——这是 standalone/Direct
-节点上的正确做法；会话经 NXR 或 SOCKS5 离开的节点应按其 Direct 路由
-份额来定 `maxConcurrent`，甚至可以留在默认值（§22、§28）。2 GiB 上
-验证干净到 24000 会话、峰值 1.12 GiB。教训：任何容量变更后，看
-`connection_rejected` 的 `reason` 字段和 FD 平台期——实际绑定的限制
+**案例 5 ——2048 会话平台期（v1.0.0，历史）。** 在 v1.0.0 上，一位运维把
+`maxConnections` 调到 16384，仍在约 2048 并发会话处看到拒绝，FD 数恰好
+停在 2×2048+15：barrier 许可在整个 Direct 会话期间被持有，于是
+`directBarrier.maxConcurrent` 成了已建立会话的上限（issue #26）。拨号
+阶段修复后，许可在拨号完成时即释放，平台期随之消失——现在的上限由
+`maxConnections`、FD 预算和内存压力决定。保留的教训：任何容量变更后，
+看 `connection_rejected` 的 `reason` 字段和 FD 平台期——实际绑定的限制
 不一定是你改的那个。
 
 **案例 6 ——不算数的对比。**
@@ -1129,10 +1119,9 @@ Little 定律式推理：`在途量 ≈ 到达率 × 服务时间`，每个输�
 - **`maxReplayEntries`** —— ≥ 新认证 CPS × `replayRetentionMs`：
   500 CPS × 120 s = 60 000，刚好低于 65 536 的默认值；在实测
   ≈800 conn/s churn 下默认值*不够*（§8）——按你的 CPS 定。
-- **`directBarrier.maxConcurrent`** —— 预期并发会话中 Direct 路由的
-  *份额*（§3）：standalone/Direct = 100%，纯 NXR 出站的线路节点 = 0
-  （默认 2048 可以原样不动）。SOCKS5 和 NXR 出站从不获取许可
-  （VERIFIED）。
+- **`directBarrier.maxConcurrent`** —— 进行中 Direct 拨号的并发数：
+  拨号 CPS × 拨号耗时（毫秒级），默认 2048 几乎总是足够；纯 NXR 出站的
+  线路节点从不使用它。SOCKS5 和 NXR 出站从不获取许可（VERIFIED）。
 - **`directBarrier.maxPerSecond`** —— 预期 Direct 拨号速率：Direct
   份额 × CPS × 突发余量。
 - **中继池** —— `maxPooledBuffers` ≥ *并发传输中*（不是空闲）的会话
@@ -1143,7 +1132,9 @@ Little 定律式推理：`在途量 ≈ 到达率 × 服务时间`，每个输�
 ### 28.7 五个完整推导示例
 
 **(A) 1C1G，整机独占，standalone/Direct。** 直接采用实测的 §4 档位：
-`maxConnections` = `maxConcurrent` = **8000** —— 12000 验证干净、
+`maxConnections` = **8000**（拨号阶段 barrier 无需调大——默认 2048
+足以覆盖进行中的拨号；issue #26 的会话期持有问题已在 v1.0.0 之后修复）
+—— 12000 验证干净、
 cgroup 峰值 694 MiB、≈14000 开始弃载，8000 ≈ 弃载点的 57%。为什么
 放得下：33 MiB 基础 + 47 KiB × 8000 ≈ 366 MiB 会话内存 + 最多
 ~300 MiB 瞬时池 ≈ 700 MiB < 1 GiB；2 × 8000 个 FD 远在自带单元允许
@@ -1155,13 +1146,13 @@ cgroup 峰值 694 MiB、≈14000 开始弃载，8000 ≈ 弃载点的 57%。为�
 推导，§5），或者设 `MemoryMax=768M`、`CPUQuota=75%` 的 cgroup 并在
 里面跑 `dedicated`。768 MiB 之内：768 − 33 − ~300 瞬时 ≈ 435 MiB 给
 会话 ≈ 按内存 9000——但 0.75 个 vCPU 会更早触及拐点，所以
-`maxConnections` = `maxConcurrent` 先从 **4000** 起步（(A) 的一半，
+`maxConnections` 先从 **4000** 起步（(A) 的一半，
 一个刻意保守选取的未测点），只有在你自己跑过拐点标定（28.5）之后才
 上调。其余参数按 28.6 由你实测的 CPS 推导。
 
 **(C) 与数据库共享的 4C8G。** 按 28.4 隔离（`CPUQuota=300%`、
 `MemoryMax=4G`、`LimitNOFILE=1048576`），cgroup 内跑 `dedicated`，
-采用 §4 中 4 GiB 档位的档位：`maxConnections` = `maxConcurrent` =
+采用 §4 中 4 GiB 档位的档位：`maxConnections` =
 **24000** —— 在 1.12 GiB cgroup 峰值下验证干净，且刻意停在验证值上
 不外推。内存核对：33 MiB + 47 KiB × 24000 ≈ 1.1 GiB + ~300 MiB 瞬时
 ≈ 1.4 GiB ≪ 4 GiB，cgroup 有真实余量；高于 24000 的论断需要你自己的
@@ -1171,9 +1162,9 @@ cgroup 峰值 694 MiB、≈14000 开始弃载，8000 ≈ 弃载点的 57%。为�
 NXR 落地、约 10% 走 direct。`maxConnections` = **16000**，即 2C2G
 standalone 的已验证起点，作为更重的线路角色的初始假设接受（NXR 段
 增加 ≈3–5% 吞吐税和每连接 ≈+0.15 ms CPU，MEASURED-LOCAL）。
-`maxConcurrent`：只有 Direct 份额获取许可——10% × 16000 = 1600，
-所以**默认 2048 已经够用**，什么都不用调；纯 NXR 出站的线路节点则
-完全不需要调。`maxPerSecond`：10% × 你的 CPS（500 → 50/s）≪ 默认
+`maxConcurrent`：只有 Direct 拨号获取许可，且只在拨号期间持有——
+即使全部走 Direct、每秒数百次建连，**默认 2048 也绰绰有余**；纯 NXR
+出站的线路节点根本不会用到这个 barrier。`maxPerSecond`：10% × 你的 CPS（500 → 50/s）≪ 默认
 4096。如果该线路还*终结*来自其他节点的 NXR，则 `maxNonceEntries`
 ≥ NXR CPS × 120 s。
 
