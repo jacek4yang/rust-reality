@@ -131,6 +131,7 @@ pub struct RelayOutcome {
     inbound_to_outbound: u64,
     outbound_to_inbound: u64,
     duration: Duration,
+    pipe_downgrade: Option<(usize, usize)>,
 }
 
 impl RelayOutcome {
@@ -139,13 +140,22 @@ impl RelayOutcome {
         inbound_to_outbound: u64,
         outbound_to_inbound: u64,
         duration: Duration,
+        pipe_downgrade: Option<(usize, usize)>,
     ) -> Self {
         Self {
             backend,
             inbound_to_outbound,
             outbound_to_inbound,
             duration,
+            pipe_downgrade,
         }
+    }
+
+    /// Returns the `(requested, granted)` pipe capacity when the backend was
+    /// downgraded below the requested size by kernel pipe-page limits.
+    #[must_use]
+    pub const fn pipe_downgrade(self) -> Option<(usize, usize)> {
+        self.pipe_downgrade
     }
 
     /// Returns the backend that actually transferred the bytes.
@@ -206,14 +216,21 @@ pub struct DirectionalRelayOutcome {
     bytes: u64,
     backend: RelayBackend,
     duration: Duration,
+    pipe_downgrade: Option<(usize, usize)>,
 }
 
 impl DirectionalRelayOutcome {
-    pub(crate) const fn new(bytes: u64, backend: RelayBackend, duration: Duration) -> Self {
+    pub(crate) const fn new(
+        bytes: u64,
+        backend: RelayBackend,
+        duration: Duration,
+        pipe_downgrade: Option<(usize, usize)>,
+    ) -> Self {
         Self {
             bytes,
             backend,
             duration,
+            pipe_downgrade,
         }
     }
 
@@ -233,6 +250,13 @@ impl DirectionalRelayOutcome {
     #[must_use]
     pub const fn duration(self) -> Duration {
         self.duration
+    }
+
+    /// Returns the `(requested, granted)` pipe capacity when the backend was
+    /// downgraded below the requested size by kernel pipe-page limits.
+    #[must_use]
+    pub const fn pipe_downgrade(self) -> Option<(usize, usize)> {
+        self.pipe_downgrade
     }
 }
 
@@ -323,6 +347,13 @@ pub struct RelayContext {
     /// borrowed sockets are available, which keeps the borrowed compatibility
     /// entry point from silently weakening any invariant.
     pub owns_complete_sockets: bool,
+    /// Idle liveness bound for the raw relay.
+    ///
+    /// When set, a direction that moves no byte for this long terminates the
+    /// relay instead of parking on a stalled peer forever, pinning its
+    /// descriptors, pipes, map entries and permits. `None` preserves the
+    /// historical unbounded behavior for compatibility entry points and tests.
+    pub liveness: Option<std::time::Duration>,
 }
 
 impl RelayContext {
@@ -332,6 +363,7 @@ impl RelayContext {
         Self {
             request: BackendRequest::Automatic,
             owns_complete_sockets: true,
+            liveness: None,
         }
     }
 
@@ -341,6 +373,7 @@ impl RelayContext {
         Self {
             request: BackendRequest::Automatic,
             owns_complete_sockets: false,
+            liveness: None,
         }
     }
 
@@ -348,6 +381,13 @@ impl RelayContext {
     #[must_use]
     pub const fn with_request(mut self, request: BackendRequest) -> Self {
         self.request = request;
+        self
+    }
+
+    /// Returns the same context with an idle liveness bound for the raw relay.
+    #[must_use]
+    pub const fn with_liveness(mut self, liveness: std::time::Duration) -> Self {
+        self.liveness = Some(liveness);
         self
     }
 }
@@ -361,6 +401,7 @@ impl RelayContext {
 pub struct TransferLedger {
     inbound_to_outbound: AtomicU64,
     outbound_to_inbound: AtomicU64,
+    pipe_downgrade: std::sync::atomic::AtomicU64,
 }
 
 impl TransferLedger {
@@ -370,6 +411,7 @@ impl TransferLedger {
         Self {
             inbound_to_outbound: AtomicU64::new(0),
             outbound_to_inbound: AtomicU64::new(0),
+            pipe_downgrade: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -443,6 +485,34 @@ impl TransferLedger {
         }
     }
 
+    /// Records that a splice relay was granted less pipe capacity than
+    /// requested, packed as `(requested << 32) | granted` — zero means none.
+    pub fn note_pipe_downgrade(&self, requested: usize, granted: usize) {
+        let packed = (u64::try_from(requested).unwrap_or(u64::MAX) << 32)
+            | u64::try_from(granted).unwrap_or(u64::MAX);
+        let _ = self.pipe_downgrade.compare_exchange(
+            0,
+            packed,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        );
+    }
+
+    /// Returns the recorded `(requested, granted)` downgrade, when any.
+    #[must_use]
+    pub fn pipe_downgrade(&self) -> Option<(usize, usize)> {
+        let packed = self
+            .pipe_downgrade
+            .load(std::sync::atomic::Ordering::Acquire);
+        if packed == 0 {
+            return None;
+        }
+        Some((
+            usize::try_from(packed >> 32).unwrap_or(usize::MAX),
+            usize::try_from(packed & 0xffff_ffff).unwrap_or(usize::MAX),
+        ))
+    }
+
     /// Builds the completed outcome for a backend that ran to the end.
     #[must_use]
     pub fn complete(&self, backend: RelayBackend, duration: Duration) -> BackendRun {
@@ -451,6 +521,7 @@ impl TransferLedger {
             self.inbound_to_outbound(),
             self.outbound_to_inbound(),
             duration,
+            self.pipe_downgrade(),
         ))
     }
 }
@@ -500,6 +571,31 @@ mod tests {
             }
             BackendRun::Completed(_) => panic!("expected a decline"),
         }
+    }
+
+    #[test]
+    fn a_pipe_downgrade_is_recorded_once_and_carried_into_the_outcome() {
+        let ledger = TransferLedger::new();
+        assert_eq!(ledger.pipe_downgrade(), None);
+
+        ledger.note_pipe_downgrade(256 * 1024, 8 * 1024);
+        assert_eq!(
+            ledger.pipe_downgrade(),
+            Some((256 * 1024, 8 * 1024)),
+            "the first downgrade must be recorded"
+        );
+        ledger.note_pipe_downgrade(256 * 1024, 64 * 1024);
+        assert_eq!(
+            ledger.pipe_downgrade(),
+            Some((256 * 1024, 8 * 1024)),
+            "the worst (first) downgrade must win"
+        );
+
+        let BackendRun::Completed(outcome) = ledger.complete(RelayBackend::Splice, Duration::ZERO)
+        else {
+            panic!("completion must produce an outcome");
+        };
+        assert_eq!(outcome.pipe_downgrade(), Some((256 * 1024, 8 * 1024)));
     }
 
     #[test]

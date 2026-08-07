@@ -651,6 +651,10 @@ fn validate_policy(config: &Config) -> Result<(), ConfigError> {
             "policy.resourceGovernor.maxReplayEntries",
             governor.max_replay_entries,
         ),
+        (
+            "policy.resourceGovernor.maxDnsLookups",
+            governor.max_dns_lookups,
+        ),
     ] {
         if value == 0 {
             return fail(path, "must be greater than zero");
@@ -659,6 +663,7 @@ fn validate_policy(config: &Config) -> Result<(), ConfigError> {
     if governor.max_handshakes > governor.max_connections
         || governor.max_fallbacks > governor.max_connections
         || governor.max_crypto_operations > governor.max_handshakes
+        || governor.max_dns_lookups > governor.max_connections
     {
         return fail(
             "policy.resourceGovernor",

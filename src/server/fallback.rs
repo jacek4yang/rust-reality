@@ -58,6 +58,8 @@ pub enum FallbackError {
     SessionTimeout,
     /// Target connection, exact prefix forwarding, or relay failed.
     Io(io::Error),
+    /// The descriptor budget denied the cover connection before `connect(2)`.
+    DescriptorBudget,
 }
 
 impl fmt::Display for FallbackError {
@@ -67,6 +69,9 @@ impl fmt::Display for FallbackError {
             Self::ConnectTimeout => formatter.write_str("REALITY cover connection timed out"),
             Self::SessionTimeout => formatter.write_str("REALITY fallback session timed out"),
             Self::Io(_) => formatter.write_str("REALITY fallback I/O failed"),
+            Self::DescriptorBudget => {
+                formatter.write_str("descriptor budget denied the fallback connection")
+            }
         }
     }
 }
@@ -76,7 +81,7 @@ impl Error for FallbackError {
         match self {
             Self::Admission(source) => Some(source),
             Self::Io(source) => Some(source),
-            Self::ConnectTimeout | Self::SessionTimeout => None,
+            Self::ConnectTimeout | Self::SessionTimeout | Self::DescriptorBudget => None,
         }
     }
 }
@@ -97,6 +102,7 @@ pub struct CoverConnection {
     governor: ResourceGovernor,
     relay: TcpRelay,
     permit: Option<AdmissionPermit>,
+    fd_permit: Option<crate::runtime::FdPermit>,
     deadline: Instant,
     forwarded_prefix: u64,
 }
@@ -187,12 +193,17 @@ impl RealityFallback {
         let connect_deadline = now
             .checked_add(self.connect_timeout)
             .map_or(deadline, |candidate| candidate.min(deadline));
+        let fd_permit = self
+            .relay
+            .fd_budget()
+            .try_acquire(crate::runtime::UNITS_OUTBOUND_SOCKET)
+            .ok_or(FallbackError::DescriptorBudget)?;
         let connect = TcpStream::connect(self.target.as_ref());
         let mut stream = time::timeout_at(connect_deadline, connect)
             .await
             .map_err(|_| FallbackError::ConnectTimeout)?
             .map_err(FallbackError::Io)?;
-        stream.set_nodelay(true).map_err(FallbackError::Io)?;
+        crate::transport::TcpAcceptor::configure_stream(&stream).map_err(FallbackError::Io)?;
         time::timeout_at(deadline, stream.write_all(consumed_prefix))
             .await
             .map_err(|_| FallbackError::SessionTimeout)?
@@ -204,6 +215,7 @@ impl RealityFallback {
             governor: self.governor.clone(),
             relay: self.relay.clone(),
             permit,
+            fd_permit: Some(fd_permit),
             deadline,
             forwarded_prefix,
         })
@@ -250,6 +262,9 @@ impl CoverConnection {
                 .try_acquire(AdmissionKind::Fallback)
                 .map_err(FallbackError::Admission)?,
         };
+        // Declared before the relay future so it drops last: the cover
+        // descriptor is closed before its budget unit is released.
+        let _fd_permit = self.fd_permit.take();
         let operation = async {
             let mut inbound = inbound;
             inbound
@@ -258,6 +273,8 @@ impl CoverConnection {
                 .map_err(FallbackError::Io)?;
             let outcome = self
                 .relay
+                // No idle liveness here: the absolute session deadline below
+                // already bounds the whole relay, subsuming an idle window.
                 .relay_owned(inbound, self.stream, RelayContext::owned())
                 .await
                 .map_err(FallbackError::Io)?;

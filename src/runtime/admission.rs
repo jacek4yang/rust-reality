@@ -23,6 +23,8 @@ pub enum AdmissionKind {
     CryptoOperation,
     /// Pending and committed replay entries.
     ReplayEntry,
+    /// In-flight DNS resolutions, held until the underlying lookup ends.
+    DnsLookup,
 }
 
 /// A bounded resource or rate rejected additional work.
@@ -81,6 +83,7 @@ struct GovernorInner {
     connections: Arc<Semaphore>,
     handshakes: Arc<Semaphore>,
     fallbacks: Arc<Semaphore>,
+    dns_lookups: Arc<Semaphore>,
     crypto_operations: Arc<Semaphore>,
     replay_entries: Arc<Semaphore>,
     pressure: Option<PressureGauge>,
@@ -117,6 +120,7 @@ impl ResourceGovernor {
                 connections: semaphore(config.max_connections),
                 handshakes: semaphore(config.max_handshakes),
                 fallbacks: semaphore(config.max_fallbacks),
+                dns_lookups: semaphore(config.max_dns_lookups),
                 crypto_operations: semaphore(config.max_crypto_operations),
                 replay_entries: semaphore(config.max_replay_entries),
                 pressure,
@@ -142,6 +146,7 @@ impl ResourceGovernor {
             AdmissionKind::Fallback => &self.inner.fallbacks,
             AdmissionKind::CryptoOperation => &self.inner.crypto_operations,
             AdmissionKind::ReplayEntry => &self.inner.replay_entries,
+            AdmissionKind::DnsLookup => &self.inner.dns_lookups,
         };
         let permit = Arc::clone(semaphore)
             .try_acquire_owned()

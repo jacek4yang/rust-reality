@@ -367,7 +367,11 @@ fn run_self_test(arguments: ConfigPath) -> Result<(), CliError> {
     let config = load_config(&arguments.config)?;
     let assets = Arc::new(AssetSnapshot::load(&config)?);
     let summary = assets.summary();
-    RoutingTable::compile(&config.routing, assets)?;
+    RoutingTable::compile(
+        &config.routing,
+        assets,
+        rust_reality::runtime::ResourceGovernor::new(&config.policy.resource_governor),
+    )?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;

@@ -1,0 +1,188 @@
+{
+  "cells": {
+    "fallback:32:1": {
+      "concurrency": 1,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.013278466666666666,
+            "p50": 0.011785,
+            "p95": 0.016771,
+            "p99": 0.016771
+          },
+          "samples": 15,
+          "throughputMiBPerSecond": {
+            "mean": 1149.6934641650291,
+            "p50": 1307.760895641865,
+            "p95": 1671.4608853527202,
+            "p99": 1671.4608853527202
+          },
+          "validSamples": 15
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.0174248,
+            "p50": 0.016414,
+            "p95": 0.043503,
+            "p99": 0.043503
+          },
+          "samples": 15,
+          "throughputMiBPerSecond": {
+            "mean": 977.5633817181654,
+            "p50": 776.4219460588045,
+            "p95": 1664.897418715828,
+            "p99": 1664.897418715828
+          },
+          "validSamples": 15
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.016469266666666666,
+            "p50": 0.016305,
+            "p95": 0.027816,
+            "p99": 0.027816
+          },
+          "samples": 15,
+          "throughputMiBPerSecond": {
+            "mean": 940.8716707740391,
+            "p50": 761.4232471267937,
+            "p95": 1554.5513045085386,
+            "p99": 1554.5513045085386
+          },
+          "validSamples": 15
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "final",
+        "final",
+        "xray",
+        "xray",
+        "xray",
+        "xray",
+        "xray",
+        "baseline",
+        "baseline",
+        "final",
+        "baseline",
+        "baseline",
+        "xray",
+        "final",
+        "baseline",
+        "final",
+        "baseline",
+        "final",
+        "xray",
+        "baseline",
+        "baseline",
+        "xray",
+        "final",
+        "final",
+        "baseline",
+        "xray",
+        "xray",
+        "baseline",
+        "xray",
+        "baseline",
+        "xray",
+        "xray",
+        "final",
+        "baseline",
+        "final",
+        "final",
+        "baseline",
+        "final",
+        "final",
+        "final",
+        "xray",
+        "final",
+        "baseline",
+        "baseline"
+      ],
+      "originStats": {
+        "http": {
+          "allocBytes": 3088648,
+          "cpuSysNs": 840000000,
+          "cpuUserNs": 160000000,
+          "errors": 0,
+          "getBytes": 1711276032,
+          "gets": 51,
+          "goroutines": 3,
+          "putBytes": 100663296,
+          "puts": 3
+        },
+        "https": {
+          "allocBytes": 2460104,
+          "cpuSysNs": 500000000,
+          "cpuUserNs": 540000000,
+          "errors": 0,
+          "getBytes": 100663296,
+          "gets": 3,
+          "goroutines": 3,
+          "putBytes": 100663296,
+          "puts": 3
+        }
+      },
+      "p50ThroughputRatios": {
+        "baselineVsXray": 1.7175216288400164,
+        "finalVsBaseline": 0.5937032898339777,
+        "finalVsXray": 1.0196982414033295
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 15,
+      "scenario": "fallback"
+    }
+  },
+  "commit": "ca4aea955a0e5514abbe80078d4e855650afe475",
+  "failures": [],
+  "harness": "benchmark-matrix",
+  "integrity": {},
+  "limitations": [
+    "single-host loopback includes the same Xray client and loopback origins in every path",
+    "the tunnel-bypass guard only covers the rust implementations (their debug logs); xray cells rely on byte-count verification",
+    "Xray's default private-target block is explicitly allowed only for the loopback origin",
+    "this does not model Internet RTT, packet loss, bandwidth shaping, or multi-core saturation",
+    "results are measurements of this host and are not a universal performance claim"
+  ],
+  "plan": {
+    "cellsFilter": [
+      "fallback:32:1"
+    ],
+    "concurrencies": [
+      1
+    ],
+    "integrityMiB": 0,
+    "largeCellConcurrencies": [
+      1,
+      32
+    ],
+    "largePayloadMiB": 512,
+    "payloadsMiB": [
+      32
+    ],
+    "samplesPerCell": 15,
+    "samplesPerLargeCell": 3,
+    "scenarios": [
+      "framed-download",
+      "direct-download",
+      "framed-upload",
+      "direct-upload",
+      "bidi",
+      "fallback"
+    ],
+    "skipFilter": []
+  },
+  "schemaVersion": 1,
+  "seed": "0x5252",
+  "startedUtc": "2026-08-06T08:13:37.839913+00:00",
+  "totals": {
+    "cells": 1,
+    "invalidSamples": 0,
+    "samples": 45
+  },
+  "wallSeconds": 12.840887979138643
+}

@@ -85,8 +85,7 @@ impl DestinationConnector {
             }
         };
 
-        stream
-            .set_nodelay(true)
+        crate::transport::TcpAcceptor::configure_stream(&stream)
             .map_err(DestinationConnectError::Io)?;
 
         Ok(stream)

@@ -29,8 +29,8 @@ use crate::{
     logging::{AdmissionResource, BackendStatus, LogEvent, LogWriteError, Logger, RejectionReason},
     protocol::reality::ReplayCache,
     runtime::{
-        AdmissionDenied, AdmissionKind, AdmissionPermit, FdBudget, FdBudgetError, FdBudgetPlan,
-        FdHeadroomPolicy, FdPermit, FixedFdReserve, PressureGauge, ResourceGovernor,
+        AdmissionDenied, AdmissionKind, AdmissionPermit, DirectBarrier, FdBudget, FdBudgetError,
+        FdBudgetPlan, FdHeadroomPolicy, FdPermit, FixedFdReserve, PressureGauge, ResourceGovernor,
         ResourcePressure, UNITS_INBOUND_SOCKET,
         connection::ConnectionTasks,
         machine::{self, MachineReport, MemoryPlan, MemorySampler},
@@ -237,9 +237,23 @@ impl ProductionServer {
         config_path: Option<PathBuf>,
     ) -> Result<Self, ProductionServerError> {
         let pressure = PressureGauge::new();
-        let replay_governor =
-            ResourceGovernor::with_pressure(&config.policy.resource_governor, pressure.clone());
-        let replay = ReplayCache::new(replay_governor, &config.policy.resource_governor);
+        // Process-lifetime authorities: reload generations swap routing and
+        // protocol snapshots only — admission ceilings and the direct-dial
+        // barrier must never multiply while old sessions hold old permits.
+        let authorities = ProcessAuthorities {
+            governor: ResourceGovernor::with_pressure(
+                &config.policy.resource_governor,
+                pressure.clone(),
+            ),
+            direct_barrier: DirectBarrier::with_pressure(
+                &config.policy.direct_barrier,
+                pressure.clone(),
+            ),
+        };
+        let replay = ReplayCache::new(
+            authorities.governor.clone(),
+            &config.policy.resource_governor,
+        );
         let nxr_replays = compile_nxr_replays(&config)?;
         let startup = derive_fd_budget(&config).map_err(ProductionServerError::DescriptorBudget)?;
         let tcp_relay = TcpRelay::new(&config.policy.relay, startup.budget.clone())
@@ -251,6 +265,7 @@ impl ProductionServer {
             &nxr_replays,
             tcp_relay.clone(),
             &pressure,
+            &authorities,
         )?;
         let mut addresses: Vec<_> = initial.connections.keys().copied().collect();
         addresses.sort_unstable();
@@ -311,6 +326,7 @@ impl ProductionServer {
                 nxr_replays,
                 tcp_relay,
                 fd_budget: startup.budget,
+                authorities,
                 pressure,
                 memory: startup.memory,
                 generation: AtomicU64::new(0),
@@ -508,10 +524,20 @@ struct RuntimeStore {
     nxr_replays: HashMap<SocketAddr, NxrReplayCache>,
     tcp_relay: TcpRelay,
     fd_budget: FdBudget,
+    authorities: ProcessAuthorities,
     pressure: PressureGauge,
     memory: Option<MemoryWatch>,
     generation: AtomicU64,
     update: Mutex<()>,
+}
+
+/// Admission authorities built once at startup and shared by every generation.
+///
+/// Reload swaps routing and protocol snapshots only — these ceilings and
+/// buckets must never multiply while old sessions hold old permits.
+struct ProcessAuthorities {
+    governor: ResourceGovernor,
+    direct_barrier: DirectBarrier,
 }
 
 impl RuntimeStore {
@@ -553,6 +579,7 @@ impl RuntimeStore {
             &self.nxr_replays,
             self.tcp_relay.clone(),
             &self.pressure,
+            &self.authorities,
         )?;
         self.current.store(Arc::new(candidate));
         self.generation.store(generation, Ordering::Release);
@@ -582,13 +609,18 @@ impl RuntimeSnapshot {
         nxr_replays: &HashMap<SocketAddr, NxrReplayCache>,
         tcp_relay: TcpRelay,
         pressure: &PressureGauge,
+        authorities: &ProcessAuthorities,
     ) -> Result<Self, RuntimeUpdateError> {
         let logger = Logger::new(&config.log)?;
         let assets = Arc::new(AssetSnapshot::load_generation(&config, generation)?);
-        let vision =
-            VisionHandler::from_config_with_pressure(&config, assets, tcp_relay.clone(), pressure)?;
-        let governor =
-            ResourceGovernor::with_pressure(&config.policy.resource_governor, pressure.clone());
+        let vision = VisionHandler::from_config_with_pressure(
+            &config,
+            assets,
+            tcp_relay.clone(),
+            pressure,
+            authorities.direct_barrier.clone(),
+            authorities.governor.clone(),
+        )?;
         let mut connections = HashMap::new();
         connections
             .try_reserve(config.inbounds.len())
@@ -599,7 +631,7 @@ impl RuntimeSnapshot {
                 InboundConfig::Vless(inbound) => ConnectionHandler::Public {
                     reality: Box::new(RealityAcceptor::from_inbound_with_replay(
                         inbound,
-                        governor.clone(),
+                        authorities.governor.clone(),
                         &config.policy.resource_governor,
                         replay.clone(),
                         tcp_relay.clone(),
@@ -615,6 +647,7 @@ impl RuntimeSnapshot {
                         inbound,
                         replay,
                         tcp_relay.clone(),
+                        Duration::from_millis(config.policy.resource_governor.fallback_timeout_ms),
                     )?)
                 }
             };
@@ -623,7 +656,7 @@ impl RuntimeSnapshot {
                     address,
                     Arc::new(ConnectionRuntime {
                         tag: Arc::from(inbound.tag()),
-                        governor: governor.clone(),
+                        governor: authorities.governor.clone(),
                         handler,
                     }),
                 )
@@ -667,6 +700,9 @@ fn ensure_hot_compatible(
     }
     if candidate.policy.resource_governor != current.config.policy.resource_governor {
         return Err(RuntimeUpdateError::ReplayPolicyChanged);
+    }
+    if candidate.policy.direct_barrier != current.config.policy.direct_barrier {
+        return Err(RuntimeUpdateError::DirectBarrierPolicyChanged);
     }
     if nxr_replay_policy(candidate) != nxr_replay_policy(&current.config) {
         return Err(RuntimeUpdateError::NxrReplayPolicyChanged);
@@ -921,7 +957,8 @@ async fn run_resource_monitor(
     mut shutdown: watch::Receiver<bool>,
 ) {
     let mut memory_state = ResourcePressure::Normal;
-    let mut last_usage = None;
+    let mut last_usage: Option<u64> = None;
+    let mut last_source = watch.sampler.configured_source();
     loop {
         tokio::select! {
             changed = shutdown.changed() => {
@@ -935,11 +972,24 @@ async fn run_resource_monitor(
             break;
         }
         let fd_state = ResourcePressure::from(runtime.fd_budget.pressure());
-        if let Some(usage) = watch.sampler.sample() {
+        if let Some(reading) = watch.sampler.sample() {
             // An unreadable sample keeps the previous state: a monitoring gap
-            // must never itself raise or clear an alarm.
-            last_usage = Some(usage);
-            memory_state = watch.plan.classify(memory_state, usage);
+            // must never itself raise or clear an alarm. A sampler that falls
+            // back to a different source reports the source actually used,
+            // so a fallback can never masquerade as the configured source.
+            if reading.source != last_source {
+                let snapshot = runtime.load();
+                emit(
+                    &snapshot.logger,
+                    &LogEvent::MemorySamplerChanged {
+                        from: last_source.as_str(),
+                        to: reading.source.as_str(),
+                    },
+                );
+                last_source = reading.source;
+            }
+            last_usage = Some(reading.bytes);
+            memory_state = watch.plan.classify(memory_state, reading.bytes);
         }
         let effective = fd_state.max(memory_state);
         if runtime.pressure.set(effective) {
@@ -1094,6 +1144,7 @@ async fn run_connection(
                         downlink_backend: stats.downlink_backend().map(RelayBackend::as_str),
                         uplink_handoff_delay_us: stats.uplink_handoff_delay_us(),
                         downlink_handoff_delay_us: stats.downlink_handoff_delay_us(),
+                        pipe_capacity_downgraded: stats.pipe_capacity_downgraded(),
                     },
                 );
             }
@@ -1170,6 +1221,8 @@ fn emit_admission(logger: &Logger, error: AdmissionDenied) {
         }
         AdmissionDenied::Limit(AdmissionKind::ReplayEntry)
         | AdmissionDenied::Pressure(AdmissionKind::ReplayEntry) => AdmissionResource::ReplayEntries,
+        AdmissionDenied::Limit(AdmissionKind::DnsLookup)
+        | AdmissionDenied::Pressure(AdmissionKind::DnsLookup) => AdmissionResource::Handshakes,
         AdmissionDenied::DirectConcurrency
         | AdmissionDenied::DirectRate
         | AdmissionDenied::DirectPressure => AdmissionResource::DirectConnections,
@@ -1220,6 +1273,10 @@ impl ConnectionRunError {
             | Self::Nxr(NxrLandingError::Timeout) => RejectionReason::Timeout,
             Self::Reality(RealityAcceptError::Fallback(_)) => RejectionReason::Outbound,
             Self::Reality(_) => RejectionReason::Authentication,
+            Self::Vision(VisionSessionError::Outbound(
+                crate::server::outbound::OutboundConnectError::DescriptorBudget,
+            ))
+            | Self::Nxr(NxrLandingError::DescriptorBudget) => RejectionReason::ResourceLimit,
             Self::Vision(VisionSessionError::Route(_) | VisionSessionError::Outbound(_)) => {
                 RejectionReason::Outbound
             }
@@ -1285,6 +1342,7 @@ pub enum RuntimeUpdateError {
     ListenerTopologyChanged,
     ResourceModeChanged,
     ReplayPolicyChanged,
+    DirectBarrierPolicyChanged,
     NxrReplayPolicyChanged,
     Relay(TcpRelayConfigError),
     RelayPolicyChanged,
@@ -1318,6 +1376,9 @@ impl fmt::Display for RuntimeUpdateError {
             Self::ReplayPolicyChanged => {
                 formatter.write_str("resource governor policy requires a process restart")
             }
+            Self::DirectBarrierPolicyChanged => {
+                formatter.write_str("direct barrier policy requires a process restart")
+            }
             Self::NxrReplayPolicyChanged => {
                 formatter.write_str("NXR replay policy requires a process restart")
             }
@@ -1347,6 +1408,7 @@ impl Error for RuntimeUpdateError {
             | Self::ListenerTopologyChanged
             | Self::ResourceModeChanged
             | Self::ReplayPolicyChanged
+            | Self::DirectBarrierPolicyChanged
             | Self::NxrReplayPolicyChanged
             | Self::RelayPolicyChanged
             | Self::GenerationExhausted
@@ -1578,6 +1640,7 @@ mod tests {
             }],
             &DirectBarrierConfig::default(),
             Duration::from_secs(1),
+            crate::runtime::FdBudget::new(4_096),
         );
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
         let server_task = tokio::spawn(server.run_until(async move {
@@ -1715,5 +1778,128 @@ mod tests {
             .and_then(|listener| listener.local_addr())
             .map(|address| address.port())
             .unwrap_or_else(|error: io::Error| panic!("reserve loopback port: {error}"))
+    }
+
+    fn tiny_ceiling_config() -> crate::config::Config {
+        let generated = generated_config(unused_loopback_port());
+        let mut config = generated.config().clone();
+        config.policy.resource_governor.max_connections = 2;
+        config.policy.resource_governor.max_handshakes = 2;
+        config.policy.resource_governor.max_fallbacks = 2;
+        config.policy.resource_governor.max_crypto_operations = 2;
+        config.policy.resource_governor.max_dns_lookups = 2;
+        config.policy.relay.max_splice_relays = 2;
+        config.policy.relay.max_sockhash_relays = 2;
+        config.policy.direct_barrier = DirectBarrierConfig {
+            max_concurrent: 1,
+            max_per_second: 1_000,
+        };
+        config
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn reload_cannot_multiply_the_connection_ceiling() {
+        let server = ProductionServer::from_config(&tiny_ceiling_config()).expect("must compile");
+        let governor = server.runtime.authorities.governor.clone();
+        let permit_a = governor
+            .try_acquire(crate::runtime::AdmissionKind::Connection)
+            .expect("first connection must be admitted");
+        let permit_b = governor
+            .try_acquire(crate::runtime::AdmissionKind::Connection)
+            .expect("second connection must be admitted");
+        assert!(
+            governor
+                .try_acquire(crate::runtime::AdmissionKind::Connection)
+                .is_err(),
+            "the ceiling must hold before any reload"
+        );
+
+        for generation in 1..=10 {
+            server
+                .runtime
+                .refresh()
+                .unwrap_or_else(|error| panic!("reload {generation} must succeed: {error}"));
+        }
+
+        assert!(
+            server
+                .runtime
+                .authorities
+                .governor
+                .try_acquire(crate::runtime::AdmissionKind::Connection)
+                .is_err(),
+            "ten reloads must not multiply the connection ceiling"
+        );
+        drop(permit_a);
+        assert!(
+            server
+                .runtime
+                .authorities
+                .governor
+                .try_acquire(crate::runtime::AdmissionKind::Connection)
+                .is_ok(),
+            "releasing an old-generation permit must free capacity after reloads"
+        );
+        drop(permit_b);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn reload_cannot_reset_the_direct_dial_bucket() {
+        let server = ProductionServer::from_config(&tiny_ceiling_config()).expect("must compile");
+        let permit = server
+            .runtime
+            .authorities
+            .direct_barrier
+            .try_acquire()
+            .expect("the single direct concurrency permit must be acquirable");
+        assert!(
+            server
+                .runtime
+                .authorities
+                .direct_barrier
+                .try_acquire()
+                .is_err()
+        );
+
+        for _ in 0..10 {
+            server.runtime.refresh().expect("reload must succeed");
+        }
+
+        assert!(
+            server
+                .runtime
+                .authorities
+                .direct_barrier
+                .try_acquire()
+                .is_err(),
+            "ten reloads must not reset direct concurrency"
+        );
+        drop(permit);
+        assert!(
+            server
+                .runtime
+                .authorities
+                .direct_barrier
+                .try_acquire()
+                .is_ok(),
+            "releasing the permit must free the bucket after reloads"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn direct_barrier_policy_is_a_cold_restart_setting() {
+        let config = tiny_ceiling_config();
+        let server = ProductionServer::from_config(&config).expect("must compile");
+        let mut candidate = server.runtime.load().config.clone();
+        candidate.policy.direct_barrier.max_concurrent = 2;
+
+        let error = server
+            .runtime
+            .publish(candidate)
+            .expect_err("changing the direct barrier policy must require a restart");
+        assert!(
+            matches!(error, RuntimeUpdateError::DirectBarrierPolicyChanged),
+            "expected DirectBarrierPolicyChanged, got {error}"
+        );
     }
 }

@@ -2,6 +2,7 @@ use std::{
     error::Error,
     fmt, io,
     ops::Range,
+    os::fd::AsRawFd as _,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -30,7 +31,7 @@ use crate::{
 };
 
 use super::{
-    direct::{DirectHandoff, Direction, DirectionState, InvalidTransition},
+    direct::{DirectHandoff, Direction, DirectionState, InvalidTransition, RawDecision},
     outbound::{OutboundConnectError, OutboundConnectOutcome, OutboundRegistry},
     reality::RealityEstablished,
     routing::{AssetMatcher, RouteResolutionError, RoutingCompileError, RoutingTable},
@@ -67,6 +68,7 @@ pub struct VisionRelayStats {
     downlink_backend: Option<RelayBackend>,
     uplink_handoff_delay_us: u64,
     downlink_handoff_delay_us: u64,
+    pipe_capacity_downgraded: bool,
 }
 
 impl VisionRelayStats {
@@ -135,6 +137,13 @@ impl VisionRelayStats {
     pub const fn downlink_handoff_delay_us(self) -> u64 {
         self.downlink_handoff_delay_us
     }
+
+    /// Returns whether a raw-relay backend was granted less pipe capacity
+    /// than requested because kernel pipe-page limits downgraded it.
+    #[must_use]
+    pub const fn pipe_capacity_downgraded(self) -> bool {
+        self.pipe_capacity_downgraded
+    }
 }
 
 /// Immutable Vision data path with UUID-grouped routing and outbound selection.
@@ -173,34 +182,52 @@ impl VisionHandler {
         assets: Arc<dyn AssetMatcher>,
         relay: TcpRelay,
         pressure: &crate::runtime::PressureGauge,
+        direct_barrier: crate::runtime::DirectBarrier,
+        governor: crate::runtime::ResourceGovernor,
     ) -> Result<Self, RoutingCompileError> {
-        Self::build(config, assets, relay, Some(pressure.clone()))
+        Self::build(
+            config,
+            assets,
+            relay,
+            Some((pressure.clone(), direct_barrier, governor)),
+        )
     }
 
     fn build(
         config: &Config,
         assets: Arc<dyn AssetMatcher>,
         relay: TcpRelay,
-        pressure: Option<crate::runtime::PressureGauge>,
+        authorities: Option<(
+            crate::runtime::PressureGauge,
+            crate::runtime::DirectBarrier,
+            crate::runtime::ResourceGovernor,
+        )>,
     ) -> Result<Self, RoutingCompileError> {
         let governor = &config.policy.resource_governor;
         let connect_timeout = Duration::from_millis(governor.connect_timeout_ms);
-        let outbounds = match pressure {
-            Some(pressure) => OutboundRegistry::new_with_pressure(
-                &config.outbounds,
-                &config.policy.direct_barrier,
-                connect_timeout,
-                pressure,
+        let (outbounds, dns_governor) = match authorities {
+            Some((_pressure, direct_barrier, dns_governor)) => (
+                OutboundRegistry::with_barrier(
+                    &config.outbounds,
+                    direct_barrier,
+                    connect_timeout,
+                    relay.fd_budget().clone(),
+                ),
+                dns_governor,
             ),
-            None => OutboundRegistry::new(
-                &config.outbounds,
-                &config.policy.direct_barrier,
-                connect_timeout,
+            None => (
+                OutboundRegistry::new(
+                    &config.outbounds,
+                    &config.policy.direct_barrier,
+                    connect_timeout,
+                    relay.fd_budget().clone(),
+                ),
+                crate::runtime::ResourceGovernor::new(governor),
             ),
         };
         Ok(Self::new_with_dns(
             outbounds,
-            RoutingTable::compile(&config.routing, assets)?,
+            RoutingTable::compile(&config.routing, assets, dns_governor)?,
             relay,
             governor,
             config.routing.domain_strategy,
@@ -300,6 +327,7 @@ impl VisionHandler {
                 downlink_backend: None,
                 uplink_handoff_delay_us: 0,
                 downlink_handoff_delay_us: 0,
+                pipe_capacity_downgraded: false,
             });
         };
         let (destination, outbound_permit) = connection.into_parts();
@@ -354,6 +382,9 @@ impl VisionHandler {
             downlink_backend: downlink.backend.or(pair_backend),
             uplink_handoff_delay_us: uplink.handoff_delay_us,
             downlink_handoff_delay_us: downlink.handoff_delay_us,
+            pipe_capacity_downgraded: handed_off.and_then(RelayOutcome::pipe_downgrade).is_some()
+                || uplink.pipe_downgrade
+                || downlink.pipe_downgrade,
         })
     }
 }
@@ -448,6 +479,8 @@ struct DirectionStats {
     direct_at_bytes: u64,
     /// Microseconds from the boundary to the deposit or directional relay start.
     handoff_delay_us: u64,
+    /// The backend's pipe capacity was downgraded by kernel pipe-page limits.
+    pipe_downgrade: bool,
 }
 
 impl DirectionStats {
@@ -459,6 +492,7 @@ impl DirectionStats {
             backend: None,
             direct_at_bytes: 0,
             handoff_delay_us: 0,
+            pipe_downgrade: false,
         }
     }
 
@@ -468,6 +502,7 @@ impl DirectionStats {
         backend: Option<RelayBackend>,
         direct_at_bytes: u64,
         handoff_delay_us: u64,
+        pipe_downgrade: bool,
     ) -> Self {
         Self {
             bytes,
@@ -476,6 +511,7 @@ impl DirectionStats {
             backend,
             direct_at_bytes,
             handoff_delay_us,
+            pipe_downgrade,
         }
     }
 }
@@ -491,7 +527,65 @@ struct SessionContext<'session> {
     relay: &'session TcpRelay,
 }
 
+/// Resets both sockets with `SO_LINGER {on,0}` if the direction ends without
+/// being disarmed — cancellation via `try_join`, shutdown abort, or any error
+/// path. An aborted transfer must be distinguishable from graceful
+/// completion: the peer observes a reset, never a clean short EOF. Graceful
+/// exits disarm the guard, preserving FIN and independent half-close.
+struct DirectionAbortGuard {
+    fds: [std::os::fd::RawFd; 2],
+    disarmed: bool,
+}
+
+impl DirectionAbortGuard {
+    const fn new(client_fd: std::os::fd::RawFd, destination_fd: std::os::fd::RawFd) -> Self {
+        Self {
+            fds: [client_fd, destination_fd],
+            disarmed: false,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.disarmed = true;
+    }
+}
+
+impl Drop for DirectionAbortGuard {
+    fn drop(&mut self) {
+        if self.disarmed {
+            return;
+        }
+        for fd in self.fds {
+            let _ignored = rr_linux::socket::abort_linger(fd);
+        }
+    }
+}
+
 async fn relay_uplink(
+    client: TlsApplicationReader<OwnedReadHalf>,
+    destination: OwnedWriteHalf,
+    user_id: UserId,
+    request_buffer: Vec<u8>,
+    prefetched: Range<usize>,
+    context: &SessionContext<'_>,
+) -> Result<DirectionStats, VisionSessionError> {
+    let mut guard = DirectionAbortGuard::new(client.fd(), destination.as_ref().as_raw_fd());
+    let result = relay_uplink_inner(
+        client,
+        destination,
+        user_id,
+        request_buffer,
+        prefetched,
+        context,
+    )
+    .await;
+    if result.is_ok() {
+        guard.disarm();
+    }
+    result
+}
+
+async fn relay_uplink_inner(
     mut client: TlsApplicationReader<OwnedReadHalf>,
     mut destination: OwnedWriteHalf,
     user_id: UserId,
@@ -592,7 +686,7 @@ async fn relay_uplink(
 /// destination first, so they arrive ahead of every byte any raw relay moves.
 ///
 /// The direction then decides exactly once, after the bounded pair window
-/// [`peer_pair_window`]: when the peer is at its own raw boundary or already
+/// [`decide_raw_relay`]: when the peer is at its own raw boundary or already
 /// committed to the pair, this direction deposits its halves for the bilateral
 /// relay; otherwise it relays the direction independently. Neither branch ever
 /// waits for the peer.
@@ -603,9 +697,7 @@ async fn finish_uplink_direct(
     context: &SessionContext<'_>,
 ) -> Result<DirectionStats, VisionSessionError> {
     let SessionContext {
-        timeout,
-        handoff,
-        relay,
+        timeout, handoff, ..
     } = *context;
     let handoff_started = Instant::now();
     handoff
@@ -627,47 +719,61 @@ async fn finish_uplink_direct(
         .advance(Direction::Uplink, DirectionState::RawReady)
         .map_err(VisionSessionError::DirectTransition)?;
 
-    if peer_pair_window(handoff, Direction::Uplink).await {
-        handoff
-            .advance(Direction::Uplink, DirectionState::PairPending)
-            .map_err(VisionSessionError::DirectTransition)?;
-        let recovered = handoff
-            .deposit_uplink(raw_client, destination)
-            .map_err(VisionSessionError::Handoff)?;
-        return run_handoff(
-            relay,
-            handoff,
-            Direction::Uplink,
-            recovered,
-            BoundaryBytes {
-                total,
-                direct_at: bytes,
-            },
-            handoff_started,
-        )
-        .await;
+    match decide_raw_relay(handoff, Direction::Uplink)
+        .await
+        .map_err(VisionSessionError::DirectTransition)?
+    {
+        RawDecision::Pair => {
+            let recovered = handoff
+                .deposit_uplink(raw_client, destination)
+                .map_err(VisionSessionError::Handoff)?;
+            run_handoff(
+                context,
+                Direction::Uplink,
+                recovered,
+                BoundaryBytes {
+                    total,
+                    direct_at: bytes,
+                },
+                handoff_started,
+            )
+            .await
+        }
+        RawDecision::Directional => {
+            run_directional(
+                context,
+                Direction::Uplink,
+                raw_client,
+                destination,
+                BoundaryBytes {
+                    total,
+                    direct_at: bytes,
+                },
+                handoff_started,
+            )
+            .await
+        }
     }
-
-    handoff
-        .advance(Direction::Uplink, DirectionState::Relaying)
-        .map_err(VisionSessionError::DirectTransition)?;
-    run_directional(
-        relay,
-        handoff,
-        Direction::Uplink,
-        raw_client,
-        destination,
-        BoundaryBytes {
-            total,
-            direct_at: bytes,
-        },
-        handoff_started,
-    )
-    .await
 }
 
 async fn relay_downlink(
     destination: OwnedReadHalf,
+    client: TlsApplicationWriter<OwnedWriteHalf>,
+    user_id: UserId,
+    response_header: &[u8],
+    context: &SessionContext<'_>,
+) -> Result<DirectionStats, VisionSessionError> {
+    let nested = NestedRecordReader::new(destination);
+    let mut guard = DirectionAbortGuard::new(client.fd(), nested.fd());
+    let result = relay_downlink_inner(nested, client, user_id, response_header, context).await;
+    if result.is_ok() {
+        guard.disarm();
+    }
+    result
+}
+
+async fn relay_downlink_inner(
+    mut destination: NestedRecordReader,
     mut client: TlsApplicationWriter<OwnedWriteHalf>,
     user_id: UserId,
     response_header: &[u8],
@@ -703,7 +809,6 @@ async fn relay_downlink(
         .map_err(VisionSessionError::Tls)?;
     encoder.commit(&preamble);
 
-    let mut destination = NestedRecordReader::new(destination);
     let mut detector = NestedTlsDetector::new();
     let mut bytes = 0_u64;
     loop {
@@ -870,7 +975,7 @@ where
 /// first, ahead of every byte any raw relay moves.
 ///
 /// The direction then decides exactly once, after the bounded pair window
-/// [`peer_pair_window`]: when the peer is at its own raw boundary or already
+/// [`decide_raw_relay`]: when the peer is at its own raw boundary or already
 /// committed to the pair, this direction deposits its halves for the bilateral
 /// relay; otherwise it relays the direction independently. Neither branch ever
 /// waits for the peer.
@@ -881,9 +986,7 @@ async fn finish_downlink_direct(
     context: &SessionContext<'_>,
 ) -> Result<DirectionStats, VisionSessionError> {
     let SessionContext {
-        timeout,
-        handoff,
-        relay,
+        timeout, handoff, ..
     } = *context;
     let handoff_started = Instant::now();
     handoff
@@ -906,43 +1009,41 @@ async fn finish_downlink_direct(
         .advance(Direction::Downlink, DirectionState::RawReady)
         .map_err(VisionSessionError::DirectTransition)?;
 
-    if peer_pair_window(handoff, Direction::Downlink).await {
-        handoff
-            .advance(Direction::Downlink, DirectionState::PairPending)
-            .map_err(VisionSessionError::DirectTransition)?;
-        let recovered = handoff
-            .deposit_downlink(raw_destination, raw_client)
-            .map_err(VisionSessionError::Handoff)?;
-        return run_handoff(
-            relay,
-            handoff,
-            Direction::Downlink,
-            recovered,
-            BoundaryBytes {
-                total,
-                direct_at: bytes,
-            },
-            handoff_started,
-        )
-        .await;
+    match decide_raw_relay(handoff, Direction::Downlink)
+        .await
+        .map_err(VisionSessionError::DirectTransition)?
+    {
+        RawDecision::Pair => {
+            let recovered = handoff
+                .deposit_downlink(raw_destination, raw_client)
+                .map_err(VisionSessionError::Handoff)?;
+            run_handoff(
+                context,
+                Direction::Downlink,
+                recovered,
+                BoundaryBytes {
+                    total,
+                    direct_at: bytes,
+                },
+                handoff_started,
+            )
+            .await
+        }
+        RawDecision::Directional => {
+            run_directional(
+                context,
+                Direction::Downlink,
+                raw_destination,
+                raw_client,
+                BoundaryBytes {
+                    total,
+                    direct_at: bytes,
+                },
+                handoff_started,
+            )
+            .await
+        }
     }
-
-    handoff
-        .advance(Direction::Downlink, DirectionState::Relaying)
-        .map_err(VisionSessionError::DirectTransition)?;
-    run_directional(
-        relay,
-        handoff,
-        Direction::Downlink,
-        raw_destination,
-        raw_client,
-        BoundaryBytes {
-            total,
-            direct_at: bytes,
-        },
-        handoff_started,
-    )
-    .await
 }
 
 /// Byte counters at a raw boundary.
@@ -959,18 +1060,23 @@ struct BoundaryBytes {
 
 /// Runs one independent directional raw relay at a Direct boundary.
 ///
-/// A benign peer-teardown race (`BrokenPipe` or `ConnectionReset`) closes the
-/// direction cleanly with its accumulated stats instead of failing the whole
-/// session; errors from the framed and authentication phases never reach here.
+/// A benign peer-teardown race (`BrokenPipe`, `ConnectionReset`, or the raw
+/// stage's idle-policy `TimedOut`) closes the direction cleanly with its
+/// accumulated stats instead of failing the whole session; errors from the
+/// framed and authentication phases never reach here.
 async fn run_directional(
-    relay: &TcpRelay,
-    handoff: &DirectHandoff,
+    context: &SessionContext<'_>,
     direction: Direction,
     source: OwnedReadHalf,
     destination: OwnedWriteHalf,
     bytes: BoundaryBytes,
     handoff_started: Instant,
 ) -> Result<DirectionStats, VisionSessionError> {
+    let SessionContext {
+        timeout,
+        handoff,
+        relay,
+    } = *context;
     let delay_us = micros(handoff_started.elapsed());
     let relay_direction = match direction {
         Direction::Uplink => RelayDirection::Uplink,
@@ -982,6 +1088,7 @@ async fn run_directional(
             destination,
             relay_direction,
             BackendRequest::Automatic,
+            Some(timeout),
         )
         .await
     {
@@ -993,6 +1100,7 @@ async fn run_directional(
                 Some(outcome.backend()),
                 bytes.direct_at,
                 delay_us,
+                outcome.pipe_downgrade().is_some(),
             ))
         }
         Err(error) if is_benign_teardown(&error) => {
@@ -1003,6 +1111,7 @@ async fn run_directional(
                 None,
                 bytes.direct_at,
                 delay_us,
+                false,
             ))
         }
         Err(error) => {
@@ -1023,13 +1132,17 @@ async fn run_directional(
 /// halves with no runner. The coordinator is per-session, so the lingering
 /// state is dropped with it.
 async fn run_handoff(
-    relay: &TcpRelay,
-    handoff: &DirectHandoff,
+    context: &SessionContext<'_>,
     direction: Direction,
     recovered: Option<super::direct::RecoveredSockets>,
     bytes: BoundaryBytes,
     handoff_started: Instant,
 ) -> Result<DirectionStats, VisionSessionError> {
+    let SessionContext {
+        timeout,
+        handoff,
+        relay,
+    } = *context;
     let delay_us = micros(handoff_started.elapsed());
     let Some(sockets) = recovered else {
         return Ok(DirectionStats::direct(
@@ -1038,10 +1151,15 @@ async fn run_handoff(
             None,
             bytes.direct_at,
             delay_us,
+            false,
         ));
     };
     match relay
-        .relay_owned(sockets.client, sockets.destination, RelayContext::owned())
+        .relay_owned(
+            sockets.client,
+            sockets.destination,
+            RelayContext::owned().with_liveness(timeout),
+        )
         .await
     {
         Ok(outcome) => {
@@ -1052,6 +1170,7 @@ async fn run_handoff(
                 Some(outcome.backend()),
                 bytes.direct_at,
                 delay_us,
+                outcome.pipe_downgrade().is_some(),
             ))
         }
         Err(error) if is_benign_teardown(&error) => {
@@ -1062,6 +1181,7 @@ async fn run_handoff(
                 None,
                 bytes.direct_at,
                 delay_us,
+                false,
             ))
         }
         Err(error) => {
@@ -1074,12 +1194,15 @@ async fn run_handoff(
 /// Returns whether a raw-stage I/O error is a benign peer-teardown race.
 ///
 /// A reset or broken pipe once the raw relay owns the sockets means the peer
-/// tore the connection down mid-transfer. The session's accumulated counts
-/// stay valid and must not be suppressed by a session-level relay error.
+/// tore the connection down mid-transfer. An idle `TimedOut` is the relay's
+/// own liveness policy ending a stalled direction — the same clean teardown
+/// from the session's perspective, never a transport failure. In all three
+/// cases the session's accumulated counts stay valid and must not be
+/// suppressed by a session-level relay error.
 fn is_benign_teardown(error: &io::Error) -> bool {
     matches!(
         error.kind(),
-        io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
+        io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset | io::ErrorKind::TimedOut
     )
 }
 
@@ -1096,26 +1219,27 @@ fn settle(handoff: &DirectHandoff, direction: Direction, state: DirectionState) 
     let _ignored = handoff.advance(direction, state);
 }
 
-/// Gives the peer a bounded chance to commit to the bilateral pair.
+/// Gives the peer a bounded chance to reach a pairable state, then commits.
 ///
 /// Two scheduling points — never a sleep, a timer, or a wait on the peer — let
 /// a peer whose own boundary flight is already queued observe `RawReady` and
-/// commit before this direction decides. Both relay futures share one task
-/// that is polled before the client and destination futures, so one yield
-/// cannot span even a single peer reaction; after the second yield a peer
-/// that is still framed will never reach a pairable state in time, and this
-/// direction relays independently.
-async fn peer_pair_window(handoff: &DirectHandoff, direction: Direction) -> bool {
+/// become pairable before this direction commits. The commit itself is the
+/// mutex-serialized [`DirectHandoff::decide`]: the peer read and the state
+/// transition are one critical section, so the two directions can never
+/// disagree about the relay form — a peer that observed `RawReady` or
+/// `PairPending` pairs, and a peer that observed `Relaying` relays
+/// directionally, with no interleaving in between.
+async fn decide_raw_relay(
+    handoff: &DirectHandoff,
+    direction: Direction,
+) -> Result<RawDecision, InvalidTransition> {
     for attempt in 0..3 {
-        if handoff.peer_can_pair(direction) {
-            return true;
-        }
-        if attempt == 2 {
-            return false;
+        if handoff.peer_can_pair(direction) || attempt == 2 {
+            break;
         }
         tokio::task::yield_now().await;
     }
-    false
+    handoff.decide(direction)
 }
 
 /// Writes exactly one Vision frame straight into the final TLS AEAD plaintext.
@@ -1215,6 +1339,12 @@ struct NestedRecordReader {
 }
 
 impl NestedRecordReader {
+    /// Returns the raw destination descriptor for abort-path socket options.
+    fn fd(&self) -> std::os::fd::RawFd {
+        use std::os::fd::AsRawFd as _;
+        self.io.as_ref().as_raw_fd()
+    }
+
     fn new(io: OwnedReadHalf) -> Self {
         Self {
             io,
@@ -1624,15 +1754,16 @@ mod tests {
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::{TcpListener, TcpStream},
-        time::timeout,
+        time::{Instant, timeout},
     };
 
     use super::{
-        NestedTlsDetector, PaddingDecision, VisionHandler, is_tls13_server_hello, length_u64,
+        BoundaryBytes, NestedTlsDetector, PaddingDecision, SessionContext, VisionHandler,
+        is_benign_teardown, is_tls13_server_hello, length_u64, run_directional,
     };
     use crate::{
         config::{
-            DirectBarrierConfig, DnsStrategy, OutboundConfig, ResourceGovernorConfig,
+            DirectBarrierConfig, DnsStrategy, OutboundConfig, RelayPolicy, ResourceGovernorConfig,
             RoutingConfig, UserPolicy,
         },
         protocol::{
@@ -1645,12 +1776,14 @@ mod tests {
                 VisionCommand, VisionDecoder, VisionEncoder, VisionMode,
             },
         },
+        runtime::FdBudget,
         server::{
+            direct::{DirectHandoff, Direction},
             outbound::OutboundRegistry,
             reality::RealityEstablished,
             routing::{EmptyAssetMatcher, RoutingTable},
         },
-        transport::RelayBackend,
+        transport::{RelayBackend, TcpRelay},
     };
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -3105,21 +3238,26 @@ mod tests {
             }],
             &barrier,
             Duration::from_millis(governor.connect_timeout_ms),
+            crate::runtime::FdBudget::new(4_096),
         );
-        let routing = RoutingTable::compile(
-            &RoutingConfig {
-                domain_strategy: DnsStrategy::AsIs,
-                global_rules: Vec::new(),
-                users: vec![UserPolicy {
-                    name: "test-user".to_owned(),
-                    user_ids: vec!["33333333-3333-3333-3333-333333333333".to_owned()],
-                    default_outbound: "direct".to_owned(),
-                    rules: Vec::new(),
-                }],
-            },
-            Arc::new(EmptyAssetMatcher),
-        )
-        .expect("test routing must compile");
+        let routing =
+            RoutingTable::compile(
+                &RoutingConfig {
+                    domain_strategy: DnsStrategy::AsIs,
+                    global_rules: Vec::new(),
+                    users: vec![UserPolicy {
+                        name: "test-user".to_owned(),
+                        user_ids: vec!["33333333-3333-3333-3333-333333333333".to_owned()],
+                        default_outbound: "direct".to_owned(),
+                        rules: Vec::new(),
+                    }],
+                },
+                Arc::new(EmptyAssetMatcher),
+                crate::runtime::ResourceGovernor::new(
+                    &crate::config::ResourceGovernorConfig::default(),
+                ),
+            )
+            .expect("test routing must compile");
         let relay = crate::transport::TcpRelay::new(
             &crate::config::RelayPolicy {
                 buffer_bytes: 32 * 1024,
@@ -3135,5 +3273,61 @@ mod tests {
         )
         .expect("test relay policy must compile");
         VisionHandler::new(outbounds, routing, relay, governor)
+    }
+
+    #[test]
+    fn an_idle_timeout_is_a_benign_teardown() {
+        assert!(is_benign_teardown(&io::Error::new(
+            io::ErrorKind::TimedOut,
+            "raw relay idle timeout"
+        )));
+        assert!(is_benign_teardown(&io::Error::new(
+            io::ErrorKind::ConnectionReset,
+            "reset"
+        )));
+        assert!(!is_benign_teardown(&io::Error::other("boom")));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_idle_raw_direction_closes_cleanly_with_its_stats() {
+        // The raw stage's idle policy ends a stalled direction with TimedOut;
+        // the session must treat that like any other benign teardown — clean
+        // DirectionStats, never a session error.
+        let relay = TcpRelay::new(&RelayPolicy::default(), FdBudget::new(4_096))
+            .expect("relay policy must compile");
+        let handoff = DirectHandoff::new();
+        let (mut sender, source) = tcp_pair().await;
+        let (sink, _receiver) = tcp_pair().await;
+        let (source_reader, _source_writer) = source.into_split();
+        let (_sink_reader, sink_writer) = sink.into_split();
+        sender
+            .write_all(b"stall")
+            .await
+            .expect("the prefix must land");
+
+        let stats = timeout(
+            TEST_TIMEOUT,
+            run_directional(
+                &SessionContext {
+                    timeout: Duration::from_millis(200),
+                    handoff: &handoff,
+                    relay: &relay,
+                },
+                Direction::Uplink,
+                source_reader,
+                sink_writer,
+                BoundaryBytes {
+                    total: 3,
+                    direct_at: 3,
+                },
+                Instant::now(),
+            ),
+        )
+        .await
+        .expect("the idle direction must end within the test timeout")
+        .expect("an idle timeout must close the direction cleanly");
+        drop(sender);
+        assert!(stats.direct);
+        assert_eq!(stats.bytes, 3);
     }
 }

@@ -172,6 +172,9 @@ fn routing_table() -> RoutingTable {
             }],
         },
         Arc::new(EmptyAssetMatcher),
+        rust_reality::runtime::ResourceGovernor::new(
+            &rust_reality::config::ResourceGovernorConfig::default(),
+        ),
     )
     .expect("benchmark routing must compile")
 }

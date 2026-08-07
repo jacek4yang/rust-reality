@@ -379,6 +379,15 @@ where
     }
 }
 
+impl TlsApplicationReader<tokio::net::tcp::OwnedReadHalf> {
+    /// Returns the raw client descriptor for abort-path socket options.
+    #[must_use]
+    pub fn fd(&self) -> std::os::fd::RawFd {
+        use std::os::fd::AsRawFd as _;
+        self.io.as_ref().as_raw_fd()
+    }
+}
+
 impl<R> TlsApplicationReader<R>
 where
     R: AsyncRead + Unpin,
@@ -540,6 +549,15 @@ where
     #[must_use]
     pub fn record_storage_address(&self) -> usize {
         self.socket_buffer.as_ptr() as usize
+    }
+}
+
+impl TlsApplicationWriter<tokio::net::tcp::OwnedWriteHalf> {
+    /// Returns the raw client descriptor for abort-path socket options.
+    #[must_use]
+    pub fn fd(&self) -> std::os::fd::RawFd {
+        use std::os::fd::AsRawFd as _;
+        self.io.as_ref().as_raw_fd()
     }
 }
 
