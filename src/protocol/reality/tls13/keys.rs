@@ -50,7 +50,7 @@ impl CipherSuite {
         }
     }
 
-    const fn key_len(self) -> usize {
+    pub(crate) const fn key_len(self) -> usize {
         match self {
             Self::Aes128GcmSha256 => 16,
             Self::Aes256GcmSha384 | Self::ChaCha20Poly1305Sha256 => 32,
@@ -277,6 +277,31 @@ pub struct TrafficKeys {
 }
 
 impl TrafficKeys {
+    /// Rebuilds one direction's exported AEAD key material.
+    ///
+    /// Only the two key lengths the supported cipher suites use (16 and 32
+    /// bytes) are accepted; consistency between the key length and a cipher
+    /// suite is enforced when a record layer is reconstructed from the
+    /// returned value.
+    ///
+    /// # Errors
+    ///
+    /// Rejects key lengths no supported cipher suite can use.
+    pub fn from_raw_parts(key: &[u8], iv: [u8; 12]) -> Result<Self, Tls13KeyScheduleError> {
+        if !matches!(key.len(), 16 | 32) {
+            return Err(Tls13KeyScheduleError::InvalidLength);
+        }
+        let mut bytes = [0_u8; 32];
+        if let Some(region) = bytes.get_mut(..key.len()) {
+            region.copy_from_slice(key);
+        }
+        Ok(Self {
+            key: bytes,
+            key_len: key.len(),
+            iv,
+        })
+    }
+
     /// Returns the suite-sized AEAD key.
     #[must_use]
     pub fn key(&self) -> &[u8] {

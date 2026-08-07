@@ -340,11 +340,14 @@ impl fmt::Debug for RecordCipher {
 /// Directional TLS 1.3 AEAD state with non-reusable sequence ownership.
 ///
 /// The type deliberately does not implement `Clone`: copying it would reuse a
-/// key/nonce pair and break AEAD security.
+/// key/nonce pair and break AEAD security. The traffic keys are retained so
+/// the layer can be exported exactly once via [`Tls13RecordLayer::into_exported_state`]
+/// at a session-handoff boundary; export consumes the layer, so a live
+/// session's key and sequence never have two owners.
 pub struct Tls13RecordLayer {
     cipher: RecordCipher,
     suite: CipherSuite,
-    iv: [u8; NONCE_LEN],
+    keys: TrafficKeys,
     sequence: u64,
 }
 
@@ -356,11 +359,10 @@ impl Tls13RecordLayer {
     /// Rejects key material whose length does not match the suite.
     pub fn new(suite: CipherSuite, keys: TrafficKeys) -> Result<Self, Tls13RecordError> {
         let cipher = RecordCipher::new(suite, keys.key())?;
-        let iv = *keys.iv();
         Ok(Self {
             cipher,
             suite,
-            iv,
+            keys,
             sequence: 0,
         })
     }
@@ -369,6 +371,39 @@ impl Tls13RecordLayer {
     #[must_use]
     pub const fn records_used(&self) -> u64 {
         self.sequence
+    }
+
+    /// Consumes the layer and exports its key material and current sequence.
+    ///
+    /// This is the session-handoff escape hatch: the exported state is the
+    /// only remaining owner of this direction's key and sequence, and it can
+    /// be turned back into a working layer with
+    /// [`Tls13RecordLayer::from_exported_state`] on the same suite.
+    #[must_use]
+    pub fn into_exported_state(self) -> ExportedRecordState {
+        ExportedRecordState {
+            suite: self.suite,
+            keys: self.keys,
+            sequence: self.sequence,
+        }
+    }
+
+    /// Rebuilds a working layer from previously exported state.
+    ///
+    /// # Errors
+    ///
+    /// Rejects key material whose length does not match the exported suite and
+    /// sequences that already reached the suite's per-key record limit.
+    pub fn from_exported_state(state: ExportedRecordState) -> Result<Self, Tls13RecordError> {
+        let cipher = RecordCipher::new(state.suite, state.keys.key())?;
+        let layer = Self {
+            cipher,
+            suite: state.suite,
+            keys: state.keys,
+            sequence: state.sequence,
+        };
+        layer.ensure_key_available()?;
+        Ok(layer)
     }
 
     /// Seals one complete TLS 1.3 record into a reusable caller-owned buffer.
@@ -653,7 +688,7 @@ impl Tls13RecordLayer {
     }
 
     fn nonce(&self) -> [u8; NONCE_LEN] {
-        let mut nonce = self.iv;
+        let mut nonce = *self.keys.iv();
         let encoded = self.sequence.to_be_bytes();
         for (nonce_byte, sequence_byte) in nonce[4..].iter_mut().zip(encoded) {
             *nonce_byte ^= sequence_byte;
@@ -666,6 +701,48 @@ impl fmt::Debug for Tls13RecordLayer {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("Tls13RecordLayer")
+            .field("suite", &self.suite)
+            .field("sequence", &self.sequence)
+            .field("key_material", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// One record direction's exported application-traffic state.
+///
+/// Created only by consuming a live [`Tls13RecordLayer`], so the key/sequence
+/// pair of a session can never end up with two owners. The key material is
+/// zeroized on drop and never appears in `Debug` output.
+pub struct ExportedRecordState {
+    suite: CipherSuite,
+    keys: TrafficKeys,
+    sequence: u64,
+}
+
+impl ExportedRecordState {
+    /// Returns the cipher suite the exported keys belong to.
+    #[must_use]
+    pub const fn suite(&self) -> CipherSuite {
+        self.suite
+    }
+
+    /// Returns the exported AEAD key and static IV.
+    #[must_use]
+    pub const fn keys(&self) -> &TrafficKeys {
+        &self.keys
+    }
+
+    /// Returns how many records had been sealed or opened at export time.
+    #[must_use]
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+}
+
+impl fmt::Debug for ExportedRecordState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ExportedRecordState")
             .field("suite", &self.suite)
             .field("sequence", &self.sequence)
             .field("key_material", &"[REDACTED]")
@@ -761,7 +838,8 @@ fn slot_plaintext_region(slot: &mut [u8]) -> Result<&mut [u8], Tls13RecordError>
 mod tests {
     use super::{ContentType, Tls13RecordError, Tls13RecordLayer};
     use crate::protocol::reality::tls13::{
-        CipherSuite, HashAlgorithm, Tls13KeySchedule, TranscriptHash,
+        CipherSuite, HashAlgorithm, Tls13KeySchedule, Tls13KeyScheduleError, TrafficKeys,
+        TranscriptHash,
     };
 
     #[test]
@@ -890,6 +968,122 @@ mod tests {
         assert!(rendered.contains("[REDACTED]"));
         assert!(!rendered.contains("dbfa"));
         assert!(!rendered.contains("5bd3"));
+    }
+
+    #[test]
+    fn exported_layer_continues_interoperation_both_ways() {
+        for suite in [
+            CipherSuite::Aes128GcmSha256,
+            CipherSuite::Aes256GcmSha384,
+            CipherSuite::ChaCha20Poly1305Sha256,
+        ] {
+            // Two directions, each a writer/reader pair over shared keys.
+            let (mut up_writer, mut up_reader) = paired_layers(suite);
+            let (mut down_writer, mut down_reader) = paired_layers(suite);
+            for index in 0..3_u8 {
+                let mut record = Vec::new();
+                up_writer
+                    .seal_into(ContentType::ApplicationData, &[index; 64], 0, &mut record)
+                    .expect("pre-export record must seal");
+                up_reader
+                    .open_in_place(&mut record)
+                    .expect("pre-export record must open");
+                let mut downlink = Vec::new();
+                down_writer
+                    .seal_into(ContentType::ApplicationData, &[index; 16], 0, &mut downlink)
+                    .expect("pre-export downlink must seal");
+                down_reader
+                    .open_in_place(&mut downlink)
+                    .expect("pre-export downlink must open");
+            }
+
+            // Export after three records: the imported opener must authenticate
+            // the original writer's fourth record.
+            let exported_reader = up_reader.into_exported_state();
+            assert_eq!(exported_reader.suite(), suite);
+            assert_eq!(exported_reader.sequence(), 3);
+            let mut imported_reader = Tls13RecordLayer::from_exported_state(exported_reader)
+                .expect("exported reader state must rebuild");
+            let mut fourth = Vec::new();
+            up_writer
+                .seal_into(
+                    ContentType::ApplicationData,
+                    b"after-export",
+                    0,
+                    &mut fourth,
+                )
+                .expect("continuation record must seal");
+            let opened = imported_reader
+                .open_in_place(&mut fourth)
+                .expect("imported layer must open the original's continuation");
+            assert_eq!(opened.plaintext(), b"after-export");
+            assert_eq!(imported_reader.records_used(), 4);
+
+            // And vice versa: a record sealed by the imported writer must
+            // authenticate on the original reader.
+            let mut imported_writer =
+                Tls13RecordLayer::from_exported_state(down_writer.into_exported_state())
+                    .expect("exported writer state must rebuild");
+            let mut reply = Vec::new();
+            imported_writer
+                .seal_into(
+                    ContentType::ApplicationData,
+                    b"reply-after-export",
+                    7,
+                    &mut reply,
+                )
+                .expect("imported layer must seal the continuation");
+            let opened = down_reader
+                .open_in_place(&mut reply)
+                .expect("original layer must open the imported continuation");
+            assert_eq!(opened.plaintext(), b"reply-after-export");
+            assert_eq!(down_reader.records_used(), 4);
+        }
+    }
+
+    #[test]
+    fn exported_state_preserves_key_material_and_redacts_debug() {
+        let (writer, mut reader) = paired_layers(CipherSuite::ChaCha20Poly1305Sha256);
+        let exported = writer.into_exported_state();
+        let key = exported.keys().key().to_vec();
+        let iv = *exported.keys().iv();
+        assert_eq!(key.len(), 32);
+
+        let rebuilt_keys = TrafficKeys::from_raw_parts(&key, iv).expect("raw parts must rebuild");
+        let mut reference =
+            Tls13RecordLayer::new(CipherSuite::ChaCha20Poly1305Sha256, rebuilt_keys)
+                .expect("reference layer must initialize");
+        let mut imported =
+            Tls13RecordLayer::from_exported_state(exported).expect("exported state must rebuild");
+        let mut record = Vec::new();
+        imported
+            .seal_into(ContentType::ApplicationData, b"same-key", 0, &mut record)
+            .expect("imported layer must seal");
+        let mut peer_copy = record.clone();
+        let opened = reader
+            .open_in_place(&mut peer_copy)
+            .expect("original peer must open");
+        assert_eq!(opened.plaintext(), b"same-key");
+        let opened = reference
+            .open_in_place(&mut record)
+            .expect("raw-parts layer must agree on the first record");
+        assert_eq!(opened.plaintext(), b"same-key");
+
+        let rendered = format!("{imported:?}");
+        assert!(rendered.contains("[REDACTED]"));
+        assert!(!rendered.contains("dbfa"));
+    }
+
+    #[test]
+    fn raw_parts_reject_unsupported_key_lengths() {
+        for length in [0_usize, 8, 15, 17, 31, 33, 48] {
+            assert_eq!(
+                TrafficKeys::from_raw_parts(&vec![0x55; length], [0; 12]).unwrap_err(),
+                Tls13KeyScheduleError::InvalidLength
+            );
+        }
+        assert!(TrafficKeys::from_raw_parts(&[0x55; 16], [0; 12]).is_ok());
+        assert!(TrafficKeys::from_raw_parts(&[0x55; 32], [0; 12]).is_ok());
     }
 
     /// D9 cross-provider equivalence: the RustCrypto AES-128-GCM primitive and
