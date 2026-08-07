@@ -171,3 +171,19 @@
 - PR convergence: #17 merged (bc4b5be), #18 merged (461fd5f), #19 merged
   (45d90d8) after the check.sh benches fix (2c659e9) turned CI green;
   sanitizers dispatched green on #19 head. main = 45d90d8.
+
+# STANDING RULE: authoritative measurement exclusivity (2026-08-07)
+
+During any authoritative performance benchmark, perf recording, latency
+run, CPU/GiB measurement, or RustCrypto/ring/Xray A/B:
+
+- pause all other agents' cargo build/test/bench commands;
+- pause background compilation and CPU-intensive analysis;
+- verify no stale rust-reality/Xray/origin benchmark processes remain
+  (pattern-kills must never match the killer's own command line);
+- treat the entire host as exclusively owned by the measuring agent;
+- record the exact git SHA and binary SHA-256 before every authoritative
+  run.
+
+Parallel compile/test activity is allowed only outside authoritative
+measurement windows. The coordinator enforces this globally.
