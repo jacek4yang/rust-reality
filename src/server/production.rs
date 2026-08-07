@@ -78,11 +78,8 @@ pub struct ProductionServer {
 ///
 /// Every term is a configured bound, and the sum is deliberately pessimistic:
 /// it assumes every connection simultaneously holds an inbound socket, an
-/// outbound socket, and that every splice relay is armed at once.
-/// An armed sockhash relay adds no per-relay process descriptor — its sockets
-/// are the connection pair itself — so the backend appears only in the fixed
-/// reserve (map, program and link descriptors), not here. The number is used
-/// only to decide whether to warn about clamping; it never raises the
+/// outbound socket, and that every splice relay is armed at once. The number
+/// is used only to decide whether to warn about clamping; it never raises the
 /// admission budget.
 fn theoretical_fd_peak(config: &Config) -> u64 {
     let connections = u64::from(config.policy.resource_governor.max_connections);
@@ -120,7 +117,7 @@ struct MemoryWatch {
 /// continues with the effective soft limit.
 fn derive_fd_budget(config: &Config) -> Result<ResourceStartup, FdBudgetError> {
     let listeners = u64::try_from(config.inbounds.len()).unwrap_or(u64::MAX);
-    let reserve = FixedFdReserve::new(listeners, config.policy.relay.sockhash);
+    let reserve = FixedFdReserve::new(listeners);
     let dedicated = config.runtime.resource_mode == ResourceMode::Dedicated;
     let mut machine = if dedicated {
         MachineReport::detect()
@@ -1789,7 +1786,6 @@ mod tests {
         config.policy.resource_governor.max_crypto_operations = 2;
         config.policy.resource_governor.max_dns_lookups = 2;
         config.policy.relay.max_splice_relays = 2;
-        config.policy.relay.max_sockhash_relays = 2;
         config.policy.direct_barrier = DirectBarrierConfig {
             max_concurrent: 1,
             max_per_second: 1_000,

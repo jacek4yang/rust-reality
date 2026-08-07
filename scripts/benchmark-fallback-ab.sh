@@ -13,8 +13,8 @@ xray=${XRAY_BIN:-../artifacts/xray-reference}
 samples=${SAMPLES:-7}
 concurrencies=${CONCURRENCIES:-1 4 32}
 payload_mib=${PAYLOAD_MIB:-32}
-out_dir=${OUT_DIR:-benchmarks/final/sockhash-ab}
-work=$(mktemp -d "$repository/benchmarks/sockhash-ab.XXXXXX")
+out_dir=${OUT_DIR:-benchmarks/final/fallback-ab}
+work=$(mktemp -d "$repository/benchmarks/fallback-ab.XXXXXX")
 pids=()
 
 cleanup() {
@@ -23,7 +23,7 @@ cleanup() {
         sudo -n wait "$pid" 2>/dev/null || wait "$pid" 2>/dev/null || true
     done
     if [[ ${KEEP_WORK:-0} == 1 ]]; then
-        printf 'sockhash A/B work dir retained: %s\n' "$work" >&2
+        printf 'fallback A/B work dir retained: %s\n' "$work" >&2
     else
         sudo -n rm -rf -- "$work" 2>/dev/null || rm -rf -- "$work"
     fi

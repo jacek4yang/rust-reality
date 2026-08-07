@@ -129,8 +129,8 @@ pub fn raise_descriptor_soft_limit(_target: u64) -> io::Result<DescriptorLimit> 
 
 /// Reads the process `RLIMIT_MEMLOCK` soft and hard limits.
 ///
-/// The eBPF backends account pinned memory against this limit, so the startup
-/// machine report includes it even though no budget is derived from it.
+/// The startup machine report includes the limit for operator visibility even
+/// though no budget is derived from it.
 ///
 /// # Errors
 ///

@@ -3263,13 +3263,10 @@ mod tests {
                 buffer_bytes: 32 * 1024,
                 max_pooled_buffers: 8,
                 max_splice_relays: 0,
-                max_sockhash_relays: 0,
                 max_relay_memory_bytes: u64::MAX,
-                max_pinned_memory_bytes: u64::MAX,
                 splice: false,
                 pipe_pool: true,
                 max_pooled_pipes: 8,
-                sockhash: false,
             },
             crate::runtime::FdBudget::new(4_096),
         )

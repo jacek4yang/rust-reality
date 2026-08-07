@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 # Target-host validation for the rust-reality data plane.
 #
-# Runs every available gate in order and records a transcript. Privileged
-# gates run the built test binaries under sudo (never `sudo cargo`, which
-# pollutes target/ with root-owned files).
+# Runs every available gate in order and records a transcript.
 #
 # Usage:
-#   scripts/run-target-host-validation.sh [--skip-benchmarks] [--skip-privileged]
+#   scripts/run-target-host-validation.sh [--skip-benchmarks]
 #
 # Environment:
 #   XRAY_BIN                 Xray reference binary (default: xray from PATH)
@@ -19,11 +17,9 @@ repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repository"
 
 skip_benchmarks=0
-skip_privileged=0
 for argument in "$@"; do
     case "$argument" in
         --skip-benchmarks) skip_benchmarks=1 ;;
-        --skip-privileged) skip_privileged=1 ;;
         *) echo "unknown argument: $argument" >&2; exit 2 ;;
     esac
 done
@@ -69,27 +65,6 @@ fi
 record "benches-compile" cargo bench --workspace --no-run || failures=$((failures + 1))
 record "fuzz-compile" cargo check --manifest-path fuzz/Cargo.toml || failures=$((failures + 1))
 record "docs-links" python3 scripts/check-docs.py || failures=$((failures + 1))
-
-if (( skip_privileged == 0 )); then
-    if sudo -n true 2>/dev/null; then
-        record "build-privileged-tests" \
-            cargo test -p rr-linux --test sockhash_privileged --no-run || failures=$((failures + 1))
-        record "build-runtime-tests" \
-            cargo test --test sockhash_runtime --no-run || failures=$((failures + 1))
-        sockhash_bin=$(ls -t target/debug/deps/sockhash_privileged-* 2>/dev/null | grep -v '\.' | head -1 || true)
-        runtime_bin=$(ls -t target/debug/deps/sockhash_runtime-* 2>/dev/null | grep -v '\.' | head -1 || true)
-        if [[ -n $sockhash_bin ]]; then
-            record "sudo-sockhash-privileged" \
-                sudo -n "$sockhash_bin" --ignored --test-threads=1 || failures=$((failures + 1))
-        fi
-        if [[ -n $runtime_bin ]]; then
-            record "sudo-sockhash-runtime" \
-                sudo -n "$runtime_bin" --ignored --test-threads=1 || failures=$((failures + 1))
-        fi
-    else
-        step "privileged: SKIPPED (passwordless sudo unavailable)"
-    fi
-fi
 
 if (( skip_benchmarks == 0 )); then
     xray=${XRAY_BIN:-xray}

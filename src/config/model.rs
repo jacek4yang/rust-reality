@@ -733,15 +733,9 @@ pub struct RelayPolicy {
     /// Maximum concurrent Linux splice relays and their two pipe pairs.
     #[serde(default = "default_max_splice_relays")]
     pub max_splice_relays: u32,
-    /// Maximum concurrently armed bounded sockhash relays.
-    #[serde(default = "default_max_sockhash_relays")]
-    pub max_sockhash_relays: u32,
     /// Ceiling on relay buffer memory across every backend.
     #[serde(default = "default_max_relay_memory_bytes")]
     pub max_relay_memory_bytes: u64,
-    /// Ceiling on kernel-pinned memory across every backend.
-    #[serde(default = "default_max_pinned_memory_bytes")]
-    pub max_pinned_memory_bytes: u64,
     /// Permit nonblocking splice on plaintext TCP boundaries.
     pub splice: bool,
     /// Reuse splice pipes process-wide instead of creating and destroying
@@ -752,8 +746,6 @@ pub struct RelayPolicy {
     /// Maximum retained pipe pairs in the process pool.
     #[serde(default = "default_max_pooled_pipes")]
     pub max_pooled_pipes: u32,
-    /// Permit optional sockhash acceleration after capability probing.
-    pub sockhash: bool,
 }
 
 impl Default for RelayPolicy {
@@ -762,23 +754,16 @@ impl Default for RelayPolicy {
             buffer_bytes: 32 * 1024,
             max_pooled_buffers: 4_096,
             max_splice_relays: default_max_splice_relays(),
-            max_sockhash_relays: default_max_sockhash_relays(),
             max_relay_memory_bytes: default_max_relay_memory_bytes(),
-            max_pinned_memory_bytes: default_max_pinned_memory_bytes(),
             splice: true,
             pipe_pool: default_pipe_pool(),
             max_pooled_pipes: default_max_pooled_pipes(),
-            sockhash: false,
         }
     }
 }
 
 const fn default_max_splice_relays() -> u32 {
     256
-}
-
-const fn default_max_sockhash_relays() -> u32 {
-    4_096
 }
 
 const fn default_max_relay_memory_bytes() -> u64 {
@@ -791,8 +776,4 @@ const fn default_pipe_pool() -> bool {
 
 const fn default_max_pooled_pipes() -> u32 {
     512
-}
-
-const fn default_max_pinned_memory_bytes() -> u64 {
-    134_217_728
 }
