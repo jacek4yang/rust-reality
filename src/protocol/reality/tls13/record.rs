@@ -193,6 +193,12 @@ impl Aes128GcmRecordCipher {
         }
         #[cfg(feature = "ring-aead")]
         {
+            // Mirror split_tag's guard so both providers map an undersized
+            // body to InvalidLength (currently unreachable: open_in_place
+            // guarantees body.len() > TAG_LEN).
+            if body.len() < TAG_LEN {
+                return Err(Tls13RecordError::InvalidLength);
+            }
             self.inner
                 .open_in_place(
                     ring::aead::Nonce::assume_unique_for_key(*nonce),
@@ -267,6 +273,10 @@ impl RecordCipher {
     }
 
     /// Opens `body` — ciphertext immediately followed by its tag — in place.
+    ///
+    /// On error the body contents are UNSPECIFIED (ring decrypts before
+    /// verifying, RustCrypto does not); callers must not read the buffer
+    /// after a failed open.
     fn open(
         &self,
         nonce: &[u8; NONCE_LEN],
