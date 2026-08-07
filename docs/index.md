@@ -10,6 +10,7 @@ English | [简体中文](index.zh-CN.md)
 | [CLI reference](cli.md) | Every command, option, default, output, signal, and exit behavior. |
 | [Configuration reference](configuration.md) | Every JSON field, variant, default, validation bound, routing matcher, and reload rule. |
 | [Linux deployment](deployment.md) | Release verification, standalone and line/landing setup, systemd, firewall, files, and upgrades. |
+| [Capacity planning and tuning](tuning.md) | Machine profiles, resource knobs, cover-target selection, and latency/throughput diagnosis. |
 | [Threat model](threat-model.md) | Security goals, trust boundaries, NXR limitations, resource controls, and non-goals. |
 | [Security policy](../SECURITY.md) | Supported versions and private vulnerability reporting. |
 

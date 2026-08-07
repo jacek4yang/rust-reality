@@ -16,6 +16,8 @@ NXR 落地机。
 二进制需要出站 DNS/TCP、资产缓存写权限，以及可选文件日志目录写权限；不需要
 运行时语言或伴随守护进程。
 
+机型选择、资源档位与性能诊断见[容量规划、性能调优与故障诊断](tuning.zh-CN.md)。
+
 ## 安装官方 Release
 
 从同一个 [GitHub Release](https://github.com/jacek4yang/rust-reality/releases)

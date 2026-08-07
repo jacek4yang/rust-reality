@@ -18,6 +18,9 @@ The binary needs outbound DNS/TCP access, write access to its asset cache, and
 optional write access to its file-log directory. It does not require a runtime
 language or companion daemon.
 
+For machine sizing, resource profiles, and performance diagnosis, see
+[Capacity planning, tuning and troubleshooting](tuning.md).
+
 ## Install an official release
 
 Download these three assets from the same
