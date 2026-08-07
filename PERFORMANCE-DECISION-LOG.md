@@ -29,3 +29,23 @@ result, security review, keep/revert, confidence.
   splice chunks when availability is high (measure first), buffered-backend
   buffer sizing research, or accepting splice only for long sessions based on
   a measured (not guessed) criterion.
+
+  FALSIFICATION PLAN (per override, 2026-08-07):
+  - Causal model: at high concurrency, per-call availability limits splice
+    chunks; splice pays 2 syscalls + 2 kernel copies per chunk vs buffered
+    2 syscalls + 2 userspace copies per 32KiB buffer; if splice chunk sizes
+    stay small under contention, splice CPU/GiB exceeds buffered, which
+    explains the fallback c32 gap (Xray uses NO splice there).
+  - Falsifying observations: (a) splice CPU/GiB <= buffered at c32/c64 raw
+    relay (gap is NOT syscall-driven); (b) splice and buffered CPU/GiB equal
+    while fallback still trails Xray (gap lives elsewhere, e.g. scheduling);
+    (c) splice throughput >= buffered at c32/c64 on the raw surface.
+  - Experiment: benches/relay_backends.rs decision surface — directions x
+    {1,32,512}MiB x c{1,4,32,64} x {buffered, splice, automatic}, 3+ samples,
+    randomized order, per-sample throughput + cpuUser/System + context
+    switches + peak RSS. Then fallback end-to-end A/B (splice on/off) and
+    perf attribution if the surface shows a crossover.
+  - Revert criterion: if splice loses BOTH throughput and CPU at c32/c64,
+    the fallback path stops preferring splice for such sessions ONLY with a
+    measured criterion (size/concurrency threshold from the surface), or
+    splice chunk policy changes with evidence.
