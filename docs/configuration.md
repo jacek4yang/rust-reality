@@ -450,15 +450,12 @@ This isolates direct destination pressure from authenticated connection count.
 | `bufferBytes` | yes | `32768` | Bytes per pooled userspace buffer, `4096..=1048576`. |
 | `maxPooledBuffers` | yes | `4096` | Global pooled-buffer ceiling, `2..=65536`. |
 | `maxSpliceRelays` | no | `1024` | With splice enabled, greater than zero and no more than `maxConnections`. Each relay consumes two pipe pairs. |
-| `maxSockhashRelays` | no | `4096` | With sockhash enabled, greater than zero and no more than `maxConnections`. Each relay occupies two map entries. |
 | `maxRelayMemoryBytes` | no | `268435456` | Ceiling on pooled plus registered relay buffer memory. |
-| `maxPinnedMemoryBytes` | no | `134217728` | Ceiling on kernel-pinned memory (sockhash map capacity). |
 | `splice` | yes | `true` | Permit bounded nonblocking Linux splice only across plaintext TCP boundaries. |
-| `sockhash` | yes | `false` | Permit the bounded eBPF `SOCKHASH` backend after a successful runtime capability probe. |
 
 ### Backend selection
 
-The automatic preference order is `sockhash`, then `splice`, then `buffered`.
+The automatic preference order is `splice`, then `buffered`.
 
 A backend may hand the connection to the next one **only before it has
 transferred a byte**. After any byte moves, a backend error terminates the relay;
@@ -477,11 +474,9 @@ Validation rejects an impossible budget before any listener binds, using checked
 arithmetic:
 
 ```text
-buffered_memory     = maxPooledBuffers * bufferBytes
-sockhash_capacity   = maxSockhashRelays * 2 * (flowKey + socketEntry + statsEntry + overhead)
+buffered_memory = maxPooledBuffers * bufferBytes
 
-buffered_memory   <= maxRelayMemoryBytes
-sockhash_capacity <= maxPinnedMemoryBytes
+buffered_memory <= maxRelayMemoryBytes
 ```
 
 `maxPooledBuffers` is a **buffer count**, never a byte budget.
@@ -492,7 +487,7 @@ One `relay_backend_report` event is emitted at startup with one line per
 backend. An unavailable backend names a fixed reason from a closed vocabulary —
 `disabled`, `unsupportedOperatingSystem`, `unsupportedKernel`, `missingOperation`,
 `missingCapability`, `blockedBySeccomp`, `blockedByLsm`, `resourceLimit`,
-`queueUnavailable`, `mapUnavailable`, `unsafeToArm`, `existingQueuedBytes`,
+`queueUnavailable`, `unsafeToArm`, `existingQueuedBytes`,
 `initializationFailure` — and the decline is never repeated per connection.
 
 Splice never crosses the REALITY/TLS security boundary. If splice resources are

@@ -43,7 +43,6 @@ effective_dynamic_fd_budget = soft_rlimit - fixed_fd_reserve - safety_headroom
 | 监听套接字 | 每个已配置 inbound 一个 |
 | 标准流与日志写入端 | 4 |
 | 运行时 epoll、eventfd 与 waker | 16 |
-| eBPF map、program 与 link | 启用时 3 个 |
 | 不可取消的解析器描述符 | 32 |
 | 应急预留 | 1 |
 
@@ -147,58 +146,12 @@ accept 错误依据原始 `errno` 分类，而非 `ErrorKind`：
 |---|---|---|---|
 | buffered | 不适用 | 是 | 是 |
 | splice | 是 | 是 | 是 |
-| sockhash | 是 | 是——当策略启用且探测与控制器构建均成功时，由 `TcpRelay` 按中继 arm | 是 |
+| sockhash | — | **已移除**（D7）——见下文 | — |
 | io_uring | — | **已移除**——见决策记录附录 | — |
-
-### SOCKHASH 运行时
-
-启用 `policy.relay.sockHash` 后，`TcpRelay::new` 先执行内核探测，探测通过才构建进程级控制器：一个容量为 `maxSockhashRelays` 两倍条目的 `SOCKHASH`、一份携带的有界校验器日志加载的流裁决程序，以及 attach。启动时的 `RelayBackendReport` 只有在该控制器确实存在时才报告 sockhash 可用，否则给出精确的固定拒绝原因（探测失败、`missingCapability`、`verifierRejected` 等）。失败不会阻止中继服务——该后端只是在任何字节传输之前拒绝，自动选择顺序（`sockhash`、`splice`、`buffered`）随之回退。
-
-arm 所需权限以探测在运行中的主机上实测为准（`CAP_BPF`/`CAP_NET_ADMIN` 或 root，外加 `RLIMIT_MEMLOCK` 余量），而非凭空假设。arm 本身是事务性的（两个方向要么都安装要么都不安装，失败回滚），并会拒绝借用套接字、已发生传输的中继账本以及仍有排队输入的连接；每条中继按两个方向计入准入。由于重定向会消耗 FIN 而不传播，已 arm 的会话自行检测每个半关闭，等待以 `TCP_INFO` 度量的排空屏障确认没有重定向字节被滞留，然后才用 `shutdown(2)` 传播该半关闭。字节计数采用内核报告的 `TCP_INFO` 差值，在拆除时快照。特权一致性门禁位于 `tests/sockhash_runtime.rs`。
-
-以下为历史故障分析。
 
 ### SOCKHASH
 
-已合并的后端创建了 map，`BPF_PROG_LOAD` 以 `EACCES` 失败，将其报告为 `blockedByLsm`，且从未执行 attach 或 update。
-
-`BPF_PROG_LOAD` 返回的 `EACCES` 是**校验器拒绝**的标准 errno，而不是 LSM 拒绝。加载器现在会申请一份有界的 64 KiB 校验器日志，并对 `BPF_PROG_LOAD` 失败使用独立的映射：
-
-| errno | 类别 |
-|---|---|
-| `EACCES` | `verifierRejected` |
-| `EPERM` | `missingCapability` |
-| 其他 | 通用映射 |
-
-共发现并修复三处缺陷，其中第三处是通过实测得出的：
-
-1. **上下文偏移量。** `__bpf_md_ptr` 以 8 字节对齐、占用 8 字节存放每个上下文指针，因此 `data`/`data_end` 占据 0..16，其后每个字段都比旧常量假设的位置靠后 8 字节。偏移量 12 落在了 `data_end` 内部，校验器给出 `invalid bpf_context access off=12 size=4`。
-
-2. **键长度。** map 使用 40 字节键，而程序构造的是 16 字节键，导致 helper 的 `ARG_PTR_TO_MAP_KEY` 检查越过帧指针读取。现在由同一个常量同时驱动 map、程序与用户态序列化，程序构造函数也不再接收键长度参数。
-
-3. **程序类型。** `SK_MSG` 挂载在 `sendmsg` 上——即本地应用**发出**的数据。而代理需要的是接收路径。`SK_MSG` 程序可以正常加载与 attach，却不会为被中继的连接对重定向任何字节。后端现已改为 `BPF_PROG_TYPE_SK_SKB` 配合 `BPF_SK_SKB_STREAM_VERDICT`，其上下文为 `__sk_buff`。72 号 helper `bpf_sk_redirect_hash` 从一开始就符合设计意图，不匹配的是程序类型。
-
-**键的推导。** 旧程序构造的是**反转**键，而这只能定位到同一条连接的另一端。代理中继的是两条彼此独立的连接，它们之间不存在元组关系。现在程序只描述自身，由用户态把对端注册到该键上：
-
-```text
-map[key(inbound)]  = outbound socket
-map[key(outbound)] = inbound socket
-```
-
-**键布局**，恰好 40 字节且无填充：
-
-```text
-[ 0..16]  本端地址，v4 流量使用 IPv4-mapped 形式
-[16..32]  对端地址
-[32..36]  本端端口                        (u32，本机字节序)
-[36..40]  (family << 16) | 对端端口        (u32，本机字节序)
-```
-
-端口为 16 位，因此地址族被放入最后一个字的高半部分。这样既能区分 IPv4-mapped 地址与原生 IPv6 地址，又无需额外花费 1 字节加 3 字节填充。全部 40 字节在使用前均被清零，因此校验器的任何路径都不会看到未初始化的栈。
-
-`__sk_buff.local_port` 以主机字节序到达。`remote_port` 则以网络字节序的 16 位端口出现在 32 位字的高半部分，需要右移并做字节交换。
-
-IPv6 使用独立分支，以 4 字节为单位读取 `local_ip6`/`remote_ip6`；上下文会以 `invalid bpf_context access` 拒绝 8 字节访问。
+已移除（D7）。该后端在所有生产基准矩阵中从未 arm，特权 A/B 测试显示其与 splice 持平（c1 1642 对 1637、c4 3086 对 3109、c32 3245 对 3282 MiB/s），且无特权的生产部署模型永远无法 arm 它，因此删除了这些特权复杂度。保留的证据位于 `benchmarks/final/sockhash-ab/`。仍然设置 `sockhash`、`maxSockhashRelays` 或 `maxPinnedMemoryBytes` 的配置会作为未知字段校验失败。
 
 ### io_uring
 
@@ -234,4 +187,4 @@ LimitNOFILE=37494
 | `accept_error_recovered` | 出现可恢复的 accept 错误时，附带原始 errno |
 | `connection_rejected{reason:socketConfiguration}` | 单条连接的套接字配置失败 |
 
-任何事件都不携带目标地址、SNI、UUID、密钥或负载内容。校验器日志仅出现在显式的诊断与测试输出中，且限制为 64 KiB。
+任何事件都不携带目标地址、SNI、UUID、密钥或负载内容。

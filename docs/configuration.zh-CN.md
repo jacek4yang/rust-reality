@@ -432,15 +432,12 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 | `bufferBytes` | 是 | `32768` | 每个池化用户态缓冲区字节数，`4096..=1048576`。 |
 | `maxPooledBuffers` | 是 | `4096` | 全局池化缓冲区上限，`2..=65536`。 |
 | `maxSpliceRelays` | 否 | `1024` | splice 开启时大于零且不超过 `maxConnections`；每条 relay 使用两对 pipe。 |
-| `maxSockhashRelays` | 否 | `4096` | sockhash 开启时大于零且不超过 `maxConnections`；每条 relay 占用两个 map 条目。 |
 | `maxRelayMemoryBytes` | 否 | `268435456` | 池化加注册中继缓冲内存上限。 |
-| `maxPinnedMemoryBytes` | 否 | `134217728` | 内核固定内存上限（sockhash map 容量）。 |
 | `splice` | 是 | `true` | 只允许在明文 TCP 边界使用有界非阻塞 Linux splice。 |
-| `sockhash` | 是 | `false` | 运行时能力探测通过后，允许使用有界 eBPF `SOCKHASH` 后端。 |
 
 ### 后端选择
 
-自动优选顺序为 `sockhash`、`splice`、`buffered`。
+自动优选顺序为 `splice`、`buffered`。
 
 后端**只有在尚未传输任何字节时**才能把连接交给下一个后端。一旦有字节流动，后端
 错误将终止该中继，连接绝不会在另一个后端上重放。这一点由结构保证：构造 decline
@@ -455,11 +452,9 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 校验在任何监听器绑定之前拒绝不可能的预算，全部使用检查过的算术：
 
 ```text
-buffered_memory     = maxPooledBuffers * bufferBytes
-sockhash_capacity   = maxSockhashRelays * 2 * (flowKey + socketEntry + statsEntry + overhead)
+buffered_memory = maxPooledBuffers * bufferBytes
 
-buffered_memory   <= maxRelayMemoryBytes
-sockhash_capacity <= maxPinnedMemoryBytes
+buffered_memory <= maxRelayMemoryBytes
 ```
 
 `maxPooledBuffers` 是**缓冲区数量**，绝不是字节预算。
@@ -469,7 +464,7 @@ sockhash_capacity <= maxPinnedMemoryBytes
 启动时发出一条 `relay_backend_report` 事件，每个后端一行。不可用的后端会给出
 封闭词表中的固定原因——`disabled`、`unsupportedOperatingSystem`、
 `unsupportedKernel`、`missingOperation`、`missingCapability`、`blockedBySeccomp`、
-`blockedByLsm`、`resourceLimit`、`queueUnavailable`、`mapUnavailable`、
+`blockedByLsm`、`resourceLimit`、`queueUnavailable`、
 `unsafeToArm`、`existingQueuedBytes`、`initializationFailure`——并且该拒绝原因
 不会按连接重复输出。
 

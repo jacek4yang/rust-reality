@@ -22,7 +22,7 @@
 - Hotspot bundle for VisionDecoder::decode (0x349a50–0x349fbf) with full mapping pipeline (2334/2334 samples mapped) — pipeline proven, but it profiles the equal-wall-time built-in benchmark, NOT production traffic
 - benchmarks/final/*: multi-run A/B matrices (baseline/final/Xray, compiled Go origin, ~2.5k retained samples) — valid loopback evidence at their commits
 - closure correctness fixes c61162e/fe8cee6/c1ec2cf/f23b1ae — preserved
-- Sockhash privileged suites pass locally under sudo; sockhash is opt-in and off by default
+- Sockhash backend removed (D7): zero production arms, privileged A/B parity with splice, unprivileged deployment cannot arm it
 
 # STALE OR UNTRUSTED EVIDENCE
 
@@ -38,7 +38,7 @@
 - MB2: cancellation can truncate a transfer while the peer sees a clean FIN — abort must be distinguishable (SO_LINGER {on,0} on true abort paths)
 - Closure gate items: DNS ownership bounding/accounting, kernel liveness policy, diagnostic truthfulness (cgroup/RSS labels, pipe-capacity downgrade visibility)
 - PipePool stop/go experiment pending (fallback c32 ~0.78–0.81x Xray)
-- Sockhash pair-path reachability after c1ec2cf unmeasured (kept/deleted decision owed)
+- Sockhash pair-path reachability: resolved by deletion (D7)
 
 # FIRST EXECUTABLE EXPERIMENT
 

@@ -26,13 +26,6 @@ const MAX_NXR_NONCE_RETENTION_SECONDS: u64 = 86_400;
 const MIN_RELAY_BUFFER_BYTES: usize = 4 * 1024;
 const MAX_RELAY_BUFFER_BYTES: usize = 1024 * 1024;
 const MAX_RELAY_BUFFERS: usize = 65_536;
-/// Bounded per-direction sockhash map cost: the 40-byte flow key, the socket
-/// pointer the map stores, and a conservative kernel overhead estimate. The
-/// map holds exactly two entries per armed relay, one per direction.
-const SOCKHASH_ENTRY_BYTES: u64 = 40 + 8 + 192;
-/// Conservative pinned cost of the loaded stream-verdict program itself:
-/// instructions, verifier bookkeeping and the JIT image.
-const SOCKHASH_PROGRAM_BYTES: u64 = 4 * 1024;
 /// Kernel pipe capacity reserved worst-case per splice pipe. The kernel
 /// allocates pipe pages lazily, but capacity is the hard bound a full pipe
 /// can pin; a splice relay holds two pipe pairs (four pipes) at this size.
@@ -745,20 +738,6 @@ fn validate_policy(config: &Config) -> Result<(), ConfigError> {
             );
         }
     }
-    if relay.sockhash {
-        if relay.max_sockhash_relays == 0 {
-            return fail(
-                "policy.relay.maxSockhashRelays",
-                "must be greater than zero when sockhash is enabled",
-            );
-        }
-        if relay.max_sockhash_relays > governor.max_connections {
-            return fail(
-                "policy.relay.maxSockhashRelays",
-                "must not exceed maxConnections",
-            );
-        }
-    }
     validate_relay_memory(relay)?;
     Ok(())
 }
@@ -774,16 +753,6 @@ fn validate_relay_memory(relay: &RelayPolicy) -> Result<(), ConfigError> {
         .ok()
         .and_then(|buffers| buffers.checked_mul(buffer_bytes))
         .ok_or_else(|| ConfigError::new("policy.relay.maxPooledBuffers", "budget overflows"))?;
-
-    let sockhash_pinned = if relay.sockhash {
-        u64::from(relay.max_sockhash_relays)
-            .checked_mul(2)
-            .and_then(|entries| entries.checked_mul(SOCKHASH_ENTRY_BYTES))
-            .and_then(|map| map.checked_add(SOCKHASH_PROGRAM_BYTES))
-            .ok_or_else(|| ConfigError::new("policy.relay.maxSockhashRelays", "budget overflows"))?
-    } else {
-        0
-    };
 
     // Kernel pipe capacity is reserved worst-case, even though the kernel
     // allocates pipe pages lazily. With the process pool enabled the retained
@@ -810,14 +779,6 @@ fn validate_relay_memory(relay: &RelayPolicy) -> Result<(), ConfigError> {
         return fail(
             "policy.relay.maxRelayMemoryBytes",
             format!("configured backends require {relay_total} bytes"),
-        );
-    }
-
-    let pinned_total = sockhash_pinned;
-    if pinned_total > relay.max_pinned_memory_bytes {
-        return fail(
-            "policy.relay.maxPinnedMemoryBytes",
-            format!("configured backends pin {pinned_total} bytes"),
         );
     }
     Ok(())
@@ -933,7 +894,7 @@ mod tests {
         SecretString, validate_config,
     };
 
-    use super::{ConfigError, SOCKHASH_ENTRY_BYTES, SOCKHASH_PROGRAM_BYTES};
+    use super::ConfigError;
 
     fn valid_config() -> Config {
         serde_json::from_str(crate::config::test_config_json()).expect("fixture must decode")
@@ -1213,28 +1174,27 @@ mod tests {
     #[test]
     fn an_enabled_kernel_backend_needs_a_nonzero_relay_limit() {
         let mut config = valid_config();
-        config.policy.relay.sockhash = true;
-        config.policy.relay.max_sockhash_relays = 0;
+        config.policy.relay.splice = true;
+        config.policy.relay.max_splice_relays = 0;
         assert_eq!(
             validate_config(&config)
                 .expect_err("an enabled backend with a zero bound must fail closed")
                 .path(),
-            "policy.relay.maxSockhashRelays"
+            "policy.relay.maxSpliceRelays"
         );
     }
 
     #[test]
     fn a_kernel_relay_limit_may_not_exceed_max_connections() {
         let mut config = valid_config();
-        config.policy.relay.sockhash = true;
-        config.policy.relay.max_sockhash_relays =
-            config.policy.resource_governor.max_connections + 1;
+        config.policy.relay.splice = true;
+        config.policy.relay.max_splice_relays = config.policy.resource_governor.max_connections + 1;
 
         assert_eq!(
             validate_config(&config)
                 .expect_err("a relay bound above maxConnections must fail closed")
                 .path(),
-            "policy.relay.maxSockhashRelays"
+            "policy.relay.maxSpliceRelays"
         );
     }
 
@@ -1250,45 +1210,6 @@ mod tests {
                 .expect_err("an oversized buffered budget must fail closed")
                 .path(),
             "policy.relay.maxRelayMemoryBytes"
-        );
-    }
-
-    #[test]
-    fn an_impossible_pinned_memory_budget_is_rejected_before_binding() {
-        let mut config = valid_config();
-        config.policy.relay.sockhash = true;
-        config.policy.relay.max_sockhash_relays = 4_096;
-        config.policy.relay.max_pinned_memory_bytes = 1;
-
-        assert_eq!(
-            validate_config(&config)
-                .expect_err("an oversized pinned budget must fail closed")
-                .path(),
-            "policy.relay.maxPinnedMemoryBytes"
-        );
-    }
-
-    #[test]
-    fn sockhash_pinned_memory_accounts_two_map_entries_and_the_program() {
-        // One armed relay occupies two map entries (one per direction) at
-        // SOCKHASH_ENTRY_BYTES each, plus the loaded verdict program itself.
-        let mut config = valid_config();
-        config.policy.relay.sockhash = true;
-        config.policy.relay.max_sockhash_relays = 1;
-        let exact = 2 * SOCKHASH_ENTRY_BYTES + SOCKHASH_PROGRAM_BYTES;
-
-        config.policy.relay.max_pinned_memory_bytes = exact;
-        assert!(
-            validate_config(&config).is_ok(),
-            "the exact pinned requirement must be accepted"
-        );
-
-        config.policy.relay.max_pinned_memory_bytes = exact - 1;
-        assert_eq!(
-            validate_config(&config)
-                .expect_err("one byte below the pinned requirement must fail closed")
-                .path(),
-            "policy.relay.maxPinnedMemoryBytes"
         );
     }
 

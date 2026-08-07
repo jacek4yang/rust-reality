@@ -282,40 +282,15 @@ sudo systemctl restart rust-reality
 不要开启 debug 后未经审查公开日志。禁止把生产配置、密钥、UUID、凭据或抓包粘贴
 到公开 issue。
 
-## 可选的内核中继后端
+## 已移除的内核中继后端
 
-sockhash 内核后端**默认关闭**，并且是探测得出而非假定。保持关闭是受支持的生产配置；
-可移植的缓冲中继和 Linux `splice` 不需要额外权限。
+sockhash 后端已被移除（D7）：它在所有生产基准矩阵中从未 arm，特权 A/B 测试显示其与
+splice 持平，且无特权的生产部署模型永远无法 arm 它。仍然设置 `policy.relay.sockhash`、
+`policy.relay.maxSockhashRelays` 或 `policy.relay.maxPinnedMemoryBytes` 的配置会作为
+未知字段被拒绝。保留的 A/B 证据位于 `benchmarks/final/sockhash-ab/`。
 
 io_uring 后端已被移除（见 `decisions/adaptive-relay-implementation-plan.md`）；仍然设置
 `policy.relay.ioUring` 或 `policy.relay.maxIoUringRelays` 的配置会作为未知字段被拒绝。
 
-### sockhash
+可移植的缓冲中继和 Linux `splice` 不需要额外权限。
 
-`policy.relay.sockhash: true` 启用有界 eBPF `SOCKHASH` 后端。启动探测会创建 map
-并加载流裁决程序；被拒绝时会给出固定原因。
-
-**不要**假定 `CAP_BPF` 加 `CAP_NET_ADMIN` 普遍足够。实际需求取决于运行中的内核版本、
-生效的 Linux 安全模块、seccomp 策略、用户命名空间以及程序和 map 类型。唯一可靠的
-答案是目标主机上的探测结果。
-
-随附的 systemd unit 刻意不会自动提升权限。若要选择加入，请使用 drop-in 而不是
-修改打包的 unit：
-
-```ini
-# /etc/systemd/system/rust-reality.service.d/10-sockhash.conf
-[Service]
-AmbientCapabilities=CAP_BPF CAP_NET_ADMIN
-CapabilityBoundingSet=CAP_BPF CAP_NET_ADMIN
-# eBPF map 与程序占用内核固定内存。
-LimitMEMLOCK=infinity
-# 保留打包 unit 中的其他所有加固指令。
-```
-
-随后在目标主机上验证探测确实报告可用，再依赖它：
-
-```shell
-cargo test -p rr-linux --test capability_report -- --nocapture
-```
-
-若探测拒绝，服务器仍会正常服务流量，只是使用下一个可用后端。

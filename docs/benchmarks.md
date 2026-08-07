@@ -143,8 +143,9 @@ verification hash.
   `allocations` are recorded as `null` rather than estimated. Steady-state
   allocation behaviour is proven separately and exactly by the allocation gate.
 - sockhash rows are absent because that backend declined on the implementation
-  host; io_uring rows are absent because the backend has since been removed. A
-  decline is recorded, never a fabricated number.
+  host and has since been removed (D7); io_uring rows are absent because the
+  backend has since been removed. A decline is recorded, never a fabricated
+  number.
 
 ### Baseline
 

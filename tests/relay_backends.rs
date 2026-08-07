@@ -25,20 +25,14 @@ fn policy(backend: RelayBackend) -> RelayPolicy {
         buffer_bytes: 32 * 1024,
         max_pooled_buffers: 64,
         max_splice_relays: 16,
-        max_sockhash_relays: 0,
         max_relay_memory_bytes: u64::MAX,
-        max_pinned_memory_bytes: u64::MAX,
         splice: matches!(backend, RelayBackend::Splice),
         pipe_pool: true,
         max_pooled_pipes: 8,
-        sockhash: false,
     }
 }
 
 /// Returns the backends this environment can actually exercise.
-///
-/// sockhash needs eBPF privileges this test environment cannot assume, so it
-/// is listed as skipped rather than silently omitted.
 fn exercisable() -> Vec<RelayBackend> {
     let mut backends = vec![RelayBackend::Buffered];
     if cfg!(target_os = "linux") {
@@ -374,6 +368,8 @@ async fn many_concurrent_flows_stay_byte_exact() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_explicit_request_for_an_unavailable_backend_falls_back_before_transfer() {
+    // Splice is disabled by policy here, so an explicit splice request must
+    // decline `disabled` before any byte and fall back to buffered.
     let relay = relay_for(RelayBackend::Buffered);
     let (client, relay_inbound) = pair().await;
     let (relay_outbound, target) = pair().await;
@@ -382,7 +378,7 @@ async fn an_explicit_request_for_an_unavailable_backend_falls_back_before_transf
         let relaying = relay.relay_owned(
             relay_inbound,
             relay_outbound,
-            RelayContext::owned().with_request(BackendRequest::Explicit(RelayBackend::Sockhash)),
+            RelayContext::owned().with_request(BackendRequest::Explicit(RelayBackend::Splice)),
         );
         let client_io = async move {
             let (mut reader, mut writer) = client.into_split();
@@ -408,9 +404,9 @@ async fn an_explicit_request_for_an_unavailable_backend_falls_back_before_transf
     let outcome = outcome.expect("an unavailable backend must fall back, not fail");
     client_result.expect("client I/O must succeed");
     assert_eq!(target_result.expect("target I/O must succeed"), b"probe");
-    assert_ne!(
+    assert_eq!(
         outcome.backend(),
-        RelayBackend::Sockhash,
+        RelayBackend::Buffered,
         "an unavailable backend must never be reported as the one that ran"
     );
     assert_eq!(outcome.inbound_to_outbound(), 5);

@@ -47,8 +47,6 @@ pub struct TcpRelay {
     buffers: BufferPool,
     #[cfg(target_os = "linux")]
     splice: Option<SplicePool>,
-    #[cfg(target_os = "linux")]
-    sockhash: Option<super::sockhash::SockhashPool>,
     report: BackendReport,
     fd_budget: FdBudget,
 }
@@ -69,21 +67,14 @@ impl TcpRelay {
                 Some((policy.pipe_pool, policy.max_pooled_pipes)),
             )
         });
-        #[cfg(target_os = "linux")]
-        let (sockhash, sockhash_capability) = build_sockhash(policy);
-        #[cfg(not(target_os = "linux"))]
-        let sockhash_capability = probe_sockhash(policy);
         let report = BackendReport {
             buffered: BackendCapability::available(),
             splice: splice_capability(policy),
-            sockhash: sockhash_capability,
         };
         Ok(Self {
             buffers,
             #[cfg(target_os = "linux")]
             splice,
-            #[cfg(target_os = "linux")]
-            sockhash,
             report,
             fd_budget,
         })
@@ -245,10 +236,6 @@ impl TcpRelay {
                 self.run_splice_direction(source, destination, attempt)
                     .await
             }
-            // The sockhash backend is pair-only. It never appears in the
-            // directional selection order, so this arm only exists to keep the
-            // match exhaustive; nothing is recorded.
-            RelayBackend::Sockhash => ledger.decline(BackendDeclineReason::Disabled),
         }
     }
 
@@ -343,10 +330,6 @@ impl TcpRelay {
                 self.run_splice(inbound, outbound, ledger, started, context.liveness)
                     .await
             }
-            RelayBackend::Sockhash => {
-                self.run_sockhash(inbound, outbound, context, ledger, started)
-                    .await
-            }
         }
     }
 
@@ -379,52 +362,6 @@ impl TcpRelay {
         ledger: &TransferLedger,
         _started: Instant,
         _liveness: Option<Duration>,
-    ) -> io::Result<BackendRun> {
-        ledger.decline(BackendDeclineReason::UnsupportedOperatingSystem)
-    }
-
-    /// Runs the `SOCKHASH` backend through the process-lifetime pool.
-    ///
-    /// A missing pool declines with the exact reason construction or the
-    /// kernel probe reported; a present pool may still decline per relay —
-    /// borrowed sockets, queued bytes, exhausted admission — always before
-    /// any byte is redirected, so the selection loop falls through safely.
-    #[cfg(target_os = "linux")]
-    async fn run_sockhash(
-        &self,
-        inbound: &mut TcpStream,
-        outbound: &mut TcpStream,
-        context: RelayContext,
-        ledger: &TransferLedger,
-        started: Instant,
-    ) -> io::Result<BackendRun> {
-        let Some(pool) = &self.sockhash else {
-            let reason = self
-                .report
-                .capability(RelayBackend::Sockhash)
-                .decline_reason
-                .unwrap_or(BackendDeclineReason::Disabled);
-            return ledger.decline(reason);
-        };
-        pool.relay(
-            inbound,
-            outbound,
-            context.owns_complete_sockets,
-            ledger,
-            started,
-            context.liveness,
-        )
-        .await
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    async fn run_sockhash(
-        &self,
-        _inbound: &mut TcpStream,
-        _outbound: &mut TcpStream,
-        _context: RelayContext,
-        ledger: &TransferLedger,
-        _started: Instant,
     ) -> io::Result<BackendRun> {
         ledger.decline(BackendDeclineReason::UnsupportedOperatingSystem)
     }
@@ -472,25 +409,13 @@ fn selection_order(request: BackendRequest) -> &'static [RelayBackend] {
         BackendRequest::Explicit(RelayBackend::Splice) => {
             &[RelayBackend::Splice, RelayBackend::Buffered]
         }
-        BackendRequest::Explicit(RelayBackend::Sockhash) => &[
-            RelayBackend::Sockhash,
-            RelayBackend::Splice,
-            RelayBackend::Buffered,
-        ],
     }
 }
 
 /// Returns the backend order for one single-direction request.
-///
-/// The sockhash backend is pair-only — it must duplicate or register both
-/// complete sockets — so an explicit request for it on a single direction
-/// means splice-then-buffered, and no decline is recorded for the pair-only
-/// backend itself.
 fn directional_selection_order(request: BackendRequest) -> &'static [RelayBackend] {
     match request {
-        BackendRequest::Automatic
-        | BackendRequest::Explicit(RelayBackend::Splice)
-        | BackendRequest::Explicit(RelayBackend::Sockhash) => {
+        BackendRequest::Automatic | BackendRequest::Explicit(RelayBackend::Splice) => {
             &[RelayBackend::Splice, RelayBackend::Buffered]
         }
         BackendRequest::Explicit(RelayBackend::Buffered) => &[RelayBackend::Buffered],
@@ -508,99 +433,6 @@ fn splice_capability(policy: &RelayPolicy) -> BackendCapability {
         BackendCapability::available()
     } else {
         BackendCapability::declined(false, BackendDeclineReason::Disabled)
-    }
-}
-
-/// Builds the process-lifetime `SOCKHASH` pool, or records why it cannot run.
-///
-/// Readiness is reported honestly: the capability is `available` only when the
-/// kernel probe passed *and* the controller — map, verdict program, attach —
-/// was actually constructed and is held for the relay's lifetime. A probe
-/// refusal reports the probe's fixed reason; a construction failure reports
-/// the failed step's reason, and a verifier rejection additionally prints its
-/// bounded log to stderr as a startup diagnostic (never to the structured log
-/// path, whose vocabulary is fixed). A failure here never prevents the relay
-/// from serving: the backend simply declines every relay it is offered.
-#[cfg(target_os = "linux")]
-fn build_sockhash(
-    policy: &RelayPolicy,
-) -> (Option<super::sockhash::SockhashPool>, BackendCapability) {
-    if !policy.sockhash {
-        return (
-            None,
-            BackendCapability::declined(false, BackendDeclineReason::Disabled),
-        );
-    }
-    let Ok(budget) = kernel_budget(policy, policy.max_sockhash_relays) else {
-        return (
-            None,
-            BackendCapability::declined(true, BackendDeclineReason::ResourceLimit),
-        );
-    };
-    let probe = rr_linux::sockhash::probe(budget);
-    if !probe.is_available() {
-        let reason = probe
-            .overall()
-            .reason()
-            .map(map_reason)
-            .unwrap_or(BackendDeclineReason::InitializationFailure);
-        return (None, BackendCapability::declined(true, reason));
-    }
-    match super::sockhash::SockhashPool::new(policy.max_sockhash_relays) {
-        Ok(pool) => (Some(pool), BackendCapability::available()),
-        Err(error) => {
-            if let Some(log) = error.verifier_log() {
-                eprintln!(
-                    "sockhash verdict program rejected by the kernel verifier; \
-                     bounded verifier log follows:\n{log}"
-                );
-            }
-            let reason = error.reason();
-            (None, BackendCapability::declined(true, reason))
-        }
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn probe_sockhash(policy: &RelayPolicy) -> BackendCapability {
-    BackendCapability::declined(
-        policy.sockhash,
-        BackendDeclineReason::UnsupportedOperatingSystem,
-    )
-}
-
-/// Builds the kernel budget from validated relay policy.
-#[cfg(target_os = "linux")]
-fn kernel_budget(policy: &RelayPolicy, max_relays: u32) -> Result<rr_linux::Budget, ()> {
-    let buffer_bytes = u32::try_from(policy.buffer_bytes).map_err(|_| ())?;
-    let budget = rr_linux::Budget {
-        max_relays,
-        buffer_bytes,
-        max_shards: 4,
-        queue_depth: 256,
-    };
-    budget.validate().map_err(|_| ())?;
-    Ok(budget)
-}
-
-#[cfg(target_os = "linux")]
-pub(crate) const fn map_reason(reason: rr_linux::DeclineReason) -> BackendDeclineReason {
-    use rr_linux::DeclineReason as Kernel;
-    match reason {
-        Kernel::Disabled => BackendDeclineReason::Disabled,
-        Kernel::UnsupportedOperatingSystem => BackendDeclineReason::UnsupportedOperatingSystem,
-        Kernel::UnsupportedKernel => BackendDeclineReason::UnsupportedKernel,
-        Kernel::MissingOperation => BackendDeclineReason::MissingOperation,
-        Kernel::MissingCapability => BackendDeclineReason::MissingCapability,
-        Kernel::BlockedBySeccomp => BackendDeclineReason::BlockedBySeccomp,
-        Kernel::BlockedByLsm => BackendDeclineReason::BlockedByLsm,
-        Kernel::VerifierRejected => BackendDeclineReason::VerifierRejected,
-        Kernel::ResourceLimit => BackendDeclineReason::ResourceLimit,
-        Kernel::QueueUnavailable => BackendDeclineReason::QueueUnavailable,
-        Kernel::MapUnavailable => BackendDeclineReason::MapUnavailable,
-        Kernel::UnsafeToArm => BackendDeclineReason::UnsafeToArm,
-        Kernel::ExistingQueuedBytes => BackendDeclineReason::ExistingQueuedBytes,
-        Kernel::InitializationFailure => BackendDeclineReason::InitializationFailure,
     }
 }
 
@@ -1464,13 +1296,10 @@ mod tests {
                 buffer_bytes: 4 * 1024,
                 max_pooled_buffers: 2,
                 max_splice_relays: 0,
-                max_sockhash_relays: 0,
                 max_relay_memory_bytes: u64::MAX,
-                max_pinned_memory_bytes: u64::MAX,
                 splice: false,
                 pipe_pool: true,
                 max_pooled_pipes: 8,
-                sockhash: false,
             },
             FdBudget::new(4_096),
         )
@@ -1486,13 +1315,10 @@ mod tests {
                 buffer_bytes: 32 * 1024,
                 max_pooled_buffers: 2,
                 max_splice_relays: 1,
-                max_sockhash_relays: 0,
                 max_relay_memory_bytes: u64::MAX,
-                max_pinned_memory_bytes: u64::MAX,
                 splice: true,
                 pipe_pool: true,
                 max_pooled_pipes: 8,
-                sockhash: false,
             },
             FdBudget::new(4_096),
         )
@@ -1712,182 +1538,15 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
-    #[tokio::test(flavor = "current_thread")]
-    async fn an_explicit_sockhash_request_falls_through_before_any_byte() {
-        // The controller is absent — sockhash is disabled by policy — so an
-        // explicit sockhash request must decline with `disabled` and the
-        // selection loop must carry the connection through splice instead,
-        // byte-exact. This is the controller-absent decline path: it must be
-        // indistinguishable from any other pre-byte decline.
-        let relay = TcpRelay::new(&splice_policy(), FdBudget::new(4_096))
-            .expect("relay policy must compile");
-        assert!(!relay.report().sockhash.available);
-        assert_eq!(
-            relay.report().sockhash.decline_reason,
-            Some(crate::transport::BackendDeclineReason::Disabled)
-        );
-
-        let (mut client, relay_inbound) = tcp_pair().await;
-        let (relay_outbound, mut target) = tcp_pair().await;
-        let exchange = async {
-            let relay_io = relay.relay_owned(
-                relay_inbound,
-                relay_outbound,
-                crate::transport::RelayContext::owned()
-                    .with_request(BackendRequest::Explicit(RelayBackend::Sockhash)),
-            );
-            let client_io = async {
-                client.write_all(b"request").await?;
-                client.shutdown().await?;
-                let mut response = Vec::new();
-                client.read_to_end(&mut response).await?;
-                Ok::<_, io::Error>(response)
-            };
-            let target_io = async {
-                let mut request = Vec::new();
-                target.read_to_end(&mut request).await?;
-                target.write_all(b"response").await?;
-                target.shutdown().await?;
-                Ok::<_, io::Error>(request)
-            };
-            tokio::join!(relay_io, client_io, target_io)
-        };
-        let (outcome, response, request) = time::timeout(Duration::from_secs(5), exchange)
-            .await
-            .expect("relay must complete");
-        let outcome = outcome.expect("a declined sockhash must fall through");
-        assert_eq!(request.expect("target I/O must succeed"), b"request");
-        assert_eq!(response.expect("client I/O must succeed"), b"response");
-        assert_eq!(
-            outcome.backend(),
-            RelayBackend::Splice,
-            "the decline must happen before any byte, so splice carries the pair"
-        );
-        assert_eq!(outcome.inbound_to_outbound(), 7);
-        assert_eq!(outcome.outbound_to_inbound(), 8);
-    }
-
-    #[cfg(target_os = "linux")]
-    #[tokio::test(flavor = "current_thread")]
-    async fn a_borrowed_pair_is_never_armed_even_with_an_explicit_request() {
-        // Complete-socket ownership is a hard precondition for arming. With an
-        // explicit sockhash request on a borrowed pair, the backend must
-        // decline `unsafeToArm` — whether or not the controller exists on this
-        // host — and splice or buffered must carry the connection instead.
-        let relay = TcpRelay::new(&splice_policy(), FdBudget::new(4_096))
-            .expect("relay policy must compile");
-        let (mut client, mut relay_inbound) = tcp_pair().await;
-        let (mut relay_outbound, mut target) = tcp_pair().await;
-        let exchange = async {
-            let relay_io = relay.relay_borrowed(
-                &mut relay_inbound,
-                &mut relay_outbound,
-                crate::transport::RelayContext::borrowed()
-                    .with_request(BackendRequest::Explicit(RelayBackend::Sockhash)),
-            );
-            let client_io = async {
-                client.write_all(b"request").await?;
-                client.shutdown().await?;
-                let mut response = Vec::new();
-                client.read_to_end(&mut response).await?;
-                Ok::<_, io::Error>(response)
-            };
-            let target_io = async {
-                let mut request = Vec::new();
-                target.read_to_end(&mut request).await?;
-                target.write_all(b"response").await?;
-                target.shutdown().await?;
-                Ok::<_, io::Error>(request)
-            };
-            tokio::join!(relay_io, client_io, target_io)
-        };
-        let (outcome, response, request) = time::timeout(Duration::from_secs(5), exchange)
-            .await
-            .expect("relay must complete");
-        let outcome = outcome.expect("a borrowed pair must still be relayed");
-        assert_eq!(request.expect("target I/O must succeed"), b"request");
-        assert_eq!(response.expect("client I/O must succeed"), b"response");
-        assert_ne!(
-            outcome.backend(),
-            RelayBackend::Sockhash,
-            "a borrowed pair must never be armed"
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[tokio::test(flavor = "current_thread")]
-    async fn sockhash_availability_matches_controller_construction() {
-        // Whether or not this host permits the eBPF construction, the reported
-        // capability must agree with it: available only when the controller
-        // was built, otherwise a fixed decline reason. The automatic order
-        // must still serve the connection either way.
-        let mut policy = splice_policy();
-        policy.sockhash = true;
-        policy.max_sockhash_relays = 2;
-        let relay = TcpRelay::new(&policy, FdBudget::new(4_096)).expect("relay must compile");
-        let capability = relay.report().sockhash;
-        if capability.available {
-            assert_eq!(capability.decline_reason, None);
-        } else {
-            assert!(
-                capability.decline_reason.is_some(),
-                "an unavailable sockhash backend must name its fixed reason"
-            );
-        }
-
-        let (mut client, relay_inbound) = tcp_pair().await;
-        let (relay_outbound, mut target) = tcp_pair().await;
-        let exchange = async {
-            let relay_io = relay.relay_owned(
-                relay_inbound,
-                relay_outbound,
-                crate::transport::RelayContext::owned(),
-            );
-            let client_io = async {
-                client.write_all(b"request").await?;
-                client.shutdown().await?;
-                let mut response = Vec::new();
-                client.read_to_end(&mut response).await?;
-                Ok::<_, io::Error>(response)
-            };
-            let target_io = async {
-                let mut request = Vec::new();
-                target.read_to_end(&mut request).await?;
-                target.write_all(b"response").await?;
-                target.shutdown().await?;
-                Ok::<_, io::Error>(request)
-            };
-            tokio::join!(relay_io, client_io, target_io)
-        };
-        let (outcome, _, _) = time::timeout(Duration::from_secs(5), exchange)
-            .await
-            .expect("relay must complete");
-        let outcome = outcome.expect("the automatic order must serve the connection");
-        let expected = if capability.available {
-            RelayBackend::Sockhash
-        } else {
-            RelayBackend::Splice
-        };
-        assert_eq!(
-            outcome.backend(),
-            expected,
-            "the automatic order must prefer sockhash exactly when it is ready"
-        );
-    }
-
-    #[cfg(target_os = "linux")]
     fn splice_policy() -> RelayPolicy {
         RelayPolicy {
             buffer_bytes: 32 * 1024,
             max_pooled_buffers: 4,
             max_splice_relays: 8,
-            max_sockhash_relays: 0,
             max_relay_memory_bytes: u64::MAX,
-            max_pinned_memory_bytes: u64::MAX,
             splice: true,
             pipe_pool: true,
             max_pooled_pipes: 8,
-            sockhash: false,
         }
     }
 
@@ -2189,13 +1848,10 @@ mod tests {
                 buffer_bytes: 4 * 1024,
                 max_pooled_buffers: 2,
                 max_splice_relays: 0,
-                max_sockhash_relays: 0,
                 max_relay_memory_bytes: u64::MAX,
-                max_pinned_memory_bytes: u64::MAX,
                 splice: false,
                 pipe_pool: true,
                 max_pooled_pipes: 8,
-                sockhash: false,
             },
             FdBudget::new(4_096),
         )
@@ -2392,13 +2048,10 @@ mod tests {
                 buffer_bytes: 4 * 1024,
                 max_pooled_buffers: 2,
                 max_splice_relays: 0,
-                max_sockhash_relays: 0,
                 max_relay_memory_bytes: u64::MAX,
-                max_pinned_memory_bytes: u64::MAX,
                 splice: false,
                 pipe_pool: true,
                 max_pooled_pipes: 8,
-                sockhash: false,
             },
             FdBudget::new(4_096),
         )

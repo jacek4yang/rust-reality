@@ -51,7 +51,6 @@ splice pipe 都有明确上限。数据路径没有无界队列或缓存；协�
 
 Linux `splice` 只允许在两侧都是明文 TCP socket 后使用，不能跨越 REALITY/TLS
 应用边界。如果传输开始前无法获取有界 splice 资源，则使用有界用户态缓冲。
-sockhash 开关保持禁用，直到其实现和能力探测单独通过验收。
 
 ## 非目标
 
@@ -73,14 +72,11 @@ TCP 时，才会把套接字对交给它：REALITY 认证失败并转为伪装�
 **后端不能悄悄吞掉字节。** 只有在共享传输账本两个方向都为零时才可能回退到另一个
 后端；否则无法构造 decline 类型。一旦发生传输，错误将结束该连接。
 
-**unsafe 代码被隔离并经过探测。** 所有 Linux ABI `unsafe` 都位于
+**unsafe 代码被隔离。** 所有 Linux ABI `unsafe` 都位于
 `crates/rr-linux`，该 crate 禁止 `unsafe_op_in_unsafe_fn`；协议 crate 保持
 `unsafe_code = "deny"`。每个 unsafe 块都有 `SAFETY:` 注释，ABI 布局与描述符生命周期
-都有直接测试。
-
-**eBPF 提升权限，因此需要显式选择加入。** 启用 `sockhash` 会向内核加载程序。随附
-systemd unit 不会自动授予该能力，需求通过探测而非假定得出，拒绝的环境会干净地
-下降而不是静默降级。
+都有直接测试。服务器不加载任何 eBPF：需要特权的 sockhash 后端已被移除（D7），
+因此无需任何内核注入能力。
 
 **日志保持无秘密。** 拒绝原因、阶段和后端名称均来自封闭词表。本工作不会让任何
 UUID、密钥、PSK、SNI 值、目标地址、配置内容或负载字节进入日志行。

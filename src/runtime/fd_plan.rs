@@ -35,8 +35,6 @@ pub struct FixedFdReserve {
     pub logger: u64,
     /// Async runtime descriptors: epoll, eventfd and wakers.
     pub runtime: u64,
-    /// eBPF map, program and link descriptors.
-    pub kernel_backends: u64,
     /// Resolver descriptors held by uncancellable blocking lookups.
     pub resolver: u64,
     /// The emergency reserve descriptor held open on `/dev/null`.
@@ -50,12 +48,6 @@ impl FixedFdReserve {
     const LOGGER_SINK: u64 = 1;
     /// Tokio's reactor descriptors, over-estimated for a multi-thread runtime.
     const RUNTIME_DESCRIPTORS: u64 = 16;
-    /// eBPF map and program descriptors, plus one for a possible attach link.
-    ///
-    /// The sockhash controller holds exactly two — the `SOCKHASH` and the
-    /// loaded verdict program; `BPF_PROG_ATTACH` for a stream verdict creates
-    /// no link descriptor — so three stays a conservative over-estimate.
-    const BPF_DESCRIPTORS: u64 = 3;
     /// Concurrent uncancellable `getaddrinfo` descriptors.
     ///
     /// A cancelled `TcpStream::connect` cannot cancel the blocking resolver
@@ -65,16 +57,11 @@ impl FixedFdReserve {
 
     /// Builds the fixed reserve for a concrete process shape.
     #[must_use]
-    pub const fn new(listeners: u64, bpf_enabled: bool) -> Self {
+    pub const fn new(listeners: u64) -> Self {
         Self {
             listeners,
             logger: Self::STANDARD_STREAMS + Self::LOGGER_SINK,
             runtime: Self::RUNTIME_DESCRIPTORS,
-            kernel_backends: if bpf_enabled {
-                Self::BPF_DESCRIPTORS
-            } else {
-                0
-            },
             resolver: Self::RESOLVER_DESCRIPTORS,
             emergency: 1,
         }
@@ -86,7 +73,6 @@ impl FixedFdReserve {
         self.listeners
             .saturating_add(self.logger)
             .saturating_add(self.runtime)
-            .saturating_add(self.kernel_backends)
             .saturating_add(self.resolver)
             .saturating_add(self.emergency)
     }
@@ -295,7 +281,7 @@ mod tests {
     };
 
     fn reserve() -> FixedFdReserve {
-        FixedFdReserve::new(1, false)
+        FixedFdReserve::new(1)
     }
 
     fn derive(soft: u64, hard: u64, peak: u64) -> Result<FdBudgetPlan, FdBudgetError> {
@@ -364,13 +350,6 @@ mod tests {
                 "soft limit {soft} produced a total reservation of {total}"
             );
         }
-    }
-
-    #[test]
-    fn kernel_backend_descriptors_are_reserved_when_enabled() {
-        let without = FixedFdReserve::new(2, false).total();
-        let with = FixedFdReserve::new(2, true).total();
-        assert_eq!(with - without, 3, "a map, a program and a link");
     }
 
     #[test]

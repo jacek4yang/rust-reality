@@ -50,7 +50,6 @@ The fixed reserve is deliberately pessimistic:
 | Listening sockets | one per configured inbound |
 | Standard streams and logger sink | 4 |
 | Runtime epoll, eventfd and wakers | 16 |
-| eBPF map, program and link | 3, when enabled |
 | Uncancellable resolver descriptors | 32 |
 | Emergency reserve | 1 |
 
@@ -195,100 +194,18 @@ honest state of each:
 |---|---|---|---|
 | buffered | n/a | yes | yes |
 | splice | yes | yes | yes |
-| sockhash | yes | yes — armed per relay from `TcpRelay` when the policy enables it and the probe plus controller construction succeed | yes |
+| sockhash | — | **removed** (D7) — see below | — |
 | io_uring | — | **removed** — see the decision-record amendment | — |
-
-### SOCKHASH runtime
-
-With `policy.relay.sockHash` enabled, `TcpRelay::new` runs the kernel probe
-and, only when it passes, constructs the process-lifetime controller: one
-`SOCKHASH` sized at two entries per `maxSockhashRelays`, the stream-verdict
-program loaded with the bounded verifier log, and the attach. The startup
-`RelayBackendReport` reports sockhash available *only* when that controller
-exists; otherwise it names the exact fixed decline reason (probe failure,
-`missingCapability`, `verifierRejected`, …). A failure never stops the relay
-from serving — the backend simply declines, before any byte, and the
-automatic order (`sockhash`, `splice`, `buffered`) falls through.
-
-Arming requires the privileges the probe measures on the running host
-(`CAP_BPF`/`CAP_NET_ADMIN` or root, plus `RLIMIT_MEMLOCK` headroom); the
-unprivileged path is not guessed, it is probed. Arming itself is
-transactional (both directions installed or neither, with rollback), guarded
-against borrowed sockets, a touched transfer ledger and queued input, and
-admitted two directions per relay. Because the redirect consumes FINs without
-propagating them, the armed session detects each half-close itself, waits for
-a `TCP_INFO`-measured drain barrier so no redirected byte is stranded, and
-then propagates the half-close with `shutdown(2)`. Byte counts are
-kernel-reported `TCP_INFO` deltas snapshotted at teardown. Privileged
-conformance gates live in `tests/sockhash_runtime.rs`.
-
-The historical failure analysis follows.
 
 ### SOCKHASH
 
-The merged backend created a map, failed `BPF_PROG_LOAD` with `EACCES`, reported
-that as `blockedByLsm`, and never attached or updated anything.
-
-`EACCES` from `BPF_PROG_LOAD` is the standard errno for a **verifier
-rejection**, not an LSM denial. The loader now requests a bounded 64 KiB
-verifier log and classifies `BPF_PROG_LOAD` failures with its own mapping:
-
-| errno | Category |
-|---|---|
-| `EACCES` | `verifierRejected` |
-| `EPERM` | `missingCapability` |
-| others | generic mapping |
-
-Three defects were found and fixed, the third by measurement:
-
-1. **Context offsets.** `__bpf_md_ptr` stores each context pointer in eight
-   bytes aligned to eight, so `data`/`data_end` occupy 0..16 and every later
-   field sits eight bytes beyond where the old constants assumed. Offset 12
-   landed inside `data_end`; the verifier said
-   `invalid bpf_context access off=12 size=4`.
-
-2. **Key size.** The map used a 40-byte key while the program built a 16-byte
-   one, so the helper's `ARG_PTR_TO_MAP_KEY` check read past the frame pointer.
-   One constant now feeds the map, the program and userspace serialisation, and
-   the program builder no longer takes a key size at all.
-
-3. **Program type.** `SK_MSG` hooks `sendmsg` — what the local application is
-   sending. A proxy needs the receive path. An `SK_MSG` program loads and
-   attaches cleanly and still redirects nothing for a relayed pair. The backend
-   is now `BPF_PROG_TYPE_SK_SKB` with `BPF_SK_SKB_STREAM_VERDICT`, whose context
-   is `__sk_buff`. Helper 72, `bpf_sk_redirect_hash`, was correct for the intent
-   all along; the program type did not match it.
-
-**Key derivation.** The old program built a *reversed* key, which can only name
-the other end of the same connection. A proxy relays two independent
-connections, between which no tuple relationship exists. The program now
-describes itself and userspace registers the partner under that key:
-
-```text
-map[key(inbound)]  = outbound socket
-map[key(outbound)] = inbound socket
-```
-
-**Key layout**, exactly 40 bytes with no padding:
-
-```text
-[ 0..16]  local address, IPv4-mapped for v4 flows
-[16..32]  remote address
-[32..36]  local port                       (u32, native order)
-[36..40]  (family << 16) | remote port     (u32, native order)
-```
-
-Ports are 16-bit, so the address family rides in the high half of the last word.
-That keeps an IPv4-mapped address distinct from a native IPv6 one without
-spending a byte plus three of padding. All forty bytes are zeroed before use, so
-no verifier path sees uninitialised stack.
-
-`__sk_buff.local_port` arrives in host byte order. `remote_port` arrives as a
-network-order 16-bit port in the high half of a 32-bit word and is shifted down
-and byte-swapped.
-
-IPv6 uses an explicit branch reading `local_ip6`/`remote_ip6` four bytes at a
-time; the context refuses 8-byte access with `invalid bpf_context access`.
+Removed (D7). The backend never armed in any production benchmark matrix, a
+privileged A/B showed parity with splice (c1 1642 vs 1637, c4 3086 vs 3109,
+c32 3245 vs 3282 MiB/s), and the unprivileged production deployment model
+could never arm it, so the privileged complexity was deleted. The retained
+evidence lives in `benchmarks/final/sockhash-ab/`. Stale `sockhash`,
+`maxSockhashRelays` or `maxPinnedMemoryBytes` configuration keys fail
+validation as unknown fields.
 
 ### io_uring
 
@@ -330,6 +247,4 @@ bounds so the two agree.
 | `accept_error_recovered` | on a recoverable accept error, with raw errno |
 | `connection_rejected{reason:socketConfiguration}` | per-connection socket setup failure |
 
-No event carries a target, an SNI value, a UUID, a key or any payload. Verifier
-logs appear only in explicit diagnostic and test output and are bounded to
-64 KiB.
+No event carries a target, an SNI value, a UUID, a key or any payload.

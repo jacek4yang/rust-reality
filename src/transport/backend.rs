@@ -21,8 +21,6 @@ pub enum RelayBackend {
     Buffered,
     /// Linux nonblocking `splice` through bounded pipe pairs.
     Splice,
-    /// Linux bounded eBPF `SOCKHASH` stream-verdict redirect.
-    Sockhash,
 }
 
 impl RelayBackend {
@@ -32,20 +30,19 @@ impl RelayBackend {
         match self {
             Self::Buffered => "buffered",
             Self::Splice => "splice",
-            Self::Sockhash => "sockhash",
         }
     }
 
     /// Returns every backend in the order the automatic policy considers them.
     #[must_use]
     pub const fn automatic_preference() -> &'static [Self] {
-        &[Self::Sockhash, Self::Splice, Self::Buffered]
+        &[Self::Splice, Self::Buffered]
     }
 
     /// Returns every backend, including those excluded from automatic selection.
     #[must_use]
     pub const fn all() -> &'static [Self] {
-        &[Self::Buffered, Self::Splice, Self::Sockhash]
+        &[Self::Buffered, Self::Splice]
     }
 }
 
@@ -75,18 +72,10 @@ pub enum BackendDeclineReason {
     BlockedBySeccomp,
     /// A Linux security module rejected a required operation.
     BlockedByLsm,
-    /// The eBPF verifier refused to accept the program.
-    ///
-    /// Distinct from [`Self::BlockedByLsm`] because `BPF_PROG_LOAD` reports a
-    /// verifier rejection as `EACCES`, and conflating the two sends operators
-    /// looking for a security policy that does not exist.
-    VerifierRejected,
     /// A configured bound is currently exhausted.
     ResourceLimit,
     /// A submission queue or driver shard was unavailable.
     QueueUnavailable,
-    /// A required eBPF map was unavailable.
-    MapUnavailable,
     /// Arming would not have been safe for this socket pair.
     UnsafeToArm,
     /// Bytes were already queued on a socket that must be armed empty.
@@ -107,10 +96,8 @@ impl BackendDeclineReason {
             Self::MissingCapability => "missingCapability",
             Self::BlockedBySeccomp => "blockedBySeccomp",
             Self::BlockedByLsm => "blockedByLsm",
-            Self::VerifierRejected => "verifierRejected",
             Self::ResourceLimit => "resourceLimit",
             Self::QueueUnavailable => "queueUnavailable",
-            Self::MapUnavailable => "mapUnavailable",
             Self::UnsafeToArm => "unsafeToArm",
             Self::ExistingQueuedBytes => "existingQueuedBytes",
             Self::InitializationFailure => "initializationFailure",
@@ -300,8 +287,6 @@ pub struct BackendReport {
     pub buffered: BackendCapability,
     /// The Linux `splice` backend.
     pub splice: BackendCapability,
-    /// The Linux `SOCKHASH` backend.
-    pub sockhash: BackendCapability,
 }
 
 impl BackendReport {
@@ -311,17 +296,15 @@ impl BackendReport {
         match backend {
             RelayBackend::Buffered => self.buffered,
             RelayBackend::Splice => self.splice,
-            RelayBackend::Sockhash => self.sockhash,
         }
     }
 
     /// Returns each backend paired with its capability, in reporting order.
     #[must_use]
-    pub fn entries(&self) -> [(RelayBackend, BackendCapability); 3] {
+    pub fn entries(&self) -> [(RelayBackend, BackendCapability); 2] {
         [
             (RelayBackend::Buffered, self.buffered),
             (RelayBackend::Splice, self.splice),
-            (RelayBackend::Sockhash, self.sockhash),
         ]
     }
 }
@@ -653,13 +636,9 @@ mod tests {
     fn automatic_preference_lists_every_backend() {
         assert_eq!(
             RelayBackend::automatic_preference(),
-            [
-                RelayBackend::Sockhash,
-                RelayBackend::Splice,
-                RelayBackend::Buffered
-            ]
+            [RelayBackend::Splice, RelayBackend::Buffered]
         );
-        assert_eq!(RelayBackend::all().len(), 3);
+        assert_eq!(RelayBackend::all().len(), 2);
         for backend in RelayBackend::automatic_preference() {
             assert!(RelayBackend::all().contains(backend));
         }
@@ -677,7 +656,6 @@ mod tests {
             BackendDeclineReason::BlockedByLsm,
             BackendDeclineReason::ResourceLimit,
             BackendDeclineReason::QueueUnavailable,
-            BackendDeclineReason::MapUnavailable,
             BackendDeclineReason::UnsafeToArm,
             BackendDeclineReason::ExistingQueuedBytes,
             BackendDeclineReason::InitializationFailure,
