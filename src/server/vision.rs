@@ -463,7 +463,12 @@ impl VisionHandler {
             .relay_owned(
                 client_stream,
                 handoff_stream,
-                RelayContext::owned().with_liveness(self.io_timeout),
+                // Both sockets carry the session's TLS records, whose own
+                // close semantics LANDING and the client enforce; a teardown
+                // reset from either side ends its direction like an EOF.
+                RelayContext::owned()
+                    .with_liveness(self.io_timeout)
+                    .with_source_reset_as_eof(),
             )
             .await
             .map_err(HandoffLineError::Relay)

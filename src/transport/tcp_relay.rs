@@ -322,13 +322,26 @@ impl TcpRelay {
         match backend {
             RelayBackend::Buffered => {
                 self.buffers
-                    .relay(inbound, outbound, ledger, context.liveness)
+                    .relay(
+                        inbound,
+                        outbound,
+                        ledger,
+                        context.liveness,
+                        context.source_reset_is_eof,
+                    )
                     .await?;
                 Ok(ledger.complete(RelayBackend::Buffered, started.elapsed()))
             }
             RelayBackend::Splice => {
-                self.run_splice(inbound, outbound, ledger, started, context.liveness)
-                    .await
+                self.run_splice(
+                    inbound,
+                    outbound,
+                    ledger,
+                    started,
+                    context.liveness,
+                    context.source_reset_is_eof,
+                )
+                .await
             }
         }
     }
@@ -341,12 +354,13 @@ impl TcpRelay {
         ledger: &TransferLedger,
         started: Instant,
         liveness: Option<Duration>,
+        source_reset_is_eof: bool,
     ) -> io::Result<BackendRun> {
         let Some(splice) = &self.splice else {
             return ledger.decline(BackendDeclineReason::Disabled);
         };
         match splice
-            .try_relay(inbound, outbound, ledger, liveness)
+            .try_relay(inbound, outbound, ledger, liveness, source_reset_is_eof)
             .await?
         {
             Some(()) => Ok(ledger.complete(RelayBackend::Splice, started.elapsed())),
@@ -362,6 +376,7 @@ impl TcpRelay {
         ledger: &TransferLedger,
         _started: Instant,
         _liveness: Option<Duration>,
+        _source_reset_is_eof: bool,
     ) -> io::Result<BackendRun> {
         ledger.decline(BackendDeclineReason::UnsupportedOperatingSystem)
     }
@@ -520,6 +535,7 @@ impl BufferPool {
         outbound: &mut TcpStream,
         ledger: &TransferLedger,
         liveness: Option<Duration>,
+        source_reset_is_eof: bool,
     ) -> io::Result<()> {
         let mut pair = self.acquire_pair().await?;
         let (inbound_reader, inbound_writer) = tokio::io::split(inbound);
@@ -532,6 +548,7 @@ impl BufferPool {
             ledger,
             true,
             liveness,
+            source_reset_is_eof,
         );
         let downlink = copy_direction(
             outbound_reader,
@@ -540,6 +557,7 @@ impl BufferPool {
             ledger,
             false,
             liveness,
+            source_reset_is_eof,
         );
         tokio::try_join!(uplink, downlink)?;
         Ok(())
@@ -563,6 +581,7 @@ impl BufferPool {
             ledger,
             direction.is_inbound_to_outbound(),
             liveness,
+            false,
         )
         .await
     }
@@ -681,6 +700,10 @@ impl Drop for PooledBuffer {
 /// stalls for the whole window ends the direction with
 /// [`io::ErrorKind::TimedOut`] instead of parking on its permit forever.
 /// `None` keeps the unbounded behavior and constructs no timer at all.
+///
+/// With `source_reset_is_eof`, a source reset ends the direction like an EOF
+/// and a closing shutdown that only reports the destination is already gone
+/// is tolerated; see [`RelayContext::source_reset_is_eof`].
 async fn copy_direction<R, W>(
     mut reader: R,
     mut writer: W,
@@ -688,6 +711,7 @@ async fn copy_direction<R, W>(
     ledger: &TransferLedger,
     inbound_to_outbound: bool,
     liveness: Option<Duration>,
+    source_reset_is_eof: bool,
 ) -> io::Result<()>
 where
     R: AsyncRead + Unpin,
@@ -698,16 +722,24 @@ where
         let read = match (&mut idle, liveness) {
             (Some(idle), Some(window)) => {
                 idle.reset(window).map_err(idle_io_error)?;
-                idle.read(&mut reader, buffer)
-                    .await
-                    .map_err(idle_io_error)?
+                idle.read(&mut reader, buffer).await.map_err(idle_io_error)
             }
-            _ => reader.read(buffer).await?,
+            _ => reader.read(buffer).await,
+        };
+        let read = match read {
+            Ok(read) => read,
+            Err(error) if source_reset_is_eof && is_peer_reset(&error) => 0,
+            Err(error) => return Err(error),
         };
         if read == 0 {
-            match &mut idle {
-                Some(idle) => idle.shutdown(&mut writer).await.map_err(idle_io_error)?,
-                None => writer.shutdown().await?,
+            let shutdown = match &mut idle {
+                Some(idle) => idle.shutdown(&mut writer).await.map_err(idle_io_error),
+                None => writer.shutdown().await,
+            };
+            if let Err(error) = shutdown
+                && !(source_reset_is_eof && is_peer_gone(&error))
+            {
+                return Err(error);
             }
             return Ok(());
         }
@@ -723,6 +755,20 @@ where
         }
         record(ledger, inbound_to_outbound, read)?;
     }
+}
+
+/// Whether the error reports the source peer reset the connection.
+fn is_peer_reset(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::ConnectionReset
+}
+
+/// Whether the error only reports the destination peer is already gone, which
+/// carries no information once the direction is ending anyway.
+fn is_peer_gone(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionReset | io::ErrorKind::BrokenPipe | io::ErrorKind::NotConnected
+    )
 }
 
 /// Maps an idle-guard failure back to the relay's `io::Error` surface.
@@ -907,13 +953,21 @@ impl SplicePool {
         outbound: &TcpStream,
         ledger: &TransferLedger,
         liveness: Option<Duration>,
+        source_reset_is_eof: bool,
     ) -> io::Result<Option<()>> {
         let Ok(permit) = Arc::clone(&self.permits).try_acquire_owned() else {
             return Ok(None);
         };
         if let Some(pool) = &self.pipes {
             let result = self
-                .try_relay_pooled(pool, inbound, outbound, ledger, liveness)
+                .try_relay_pooled(
+                    pool,
+                    inbound,
+                    outbound,
+                    ledger,
+                    liveness,
+                    source_reset_is_eof,
+                )
                 .await;
             drop(permit);
             return result;
@@ -939,6 +993,7 @@ impl SplicePool {
             ledger,
             true,
             liveness,
+            source_reset_is_eof,
         );
         let downlink = splice_direction(
             outbound,
@@ -948,6 +1003,7 @@ impl SplicePool {
             ledger,
             false,
             liveness,
+            source_reset_is_eof,
         );
         tokio::try_join!(uplink, downlink)?;
         Ok(Some(()))
@@ -962,6 +1018,7 @@ impl SplicePool {
         outbound: &TcpStream,
         ledger: &TransferLedger,
         liveness: Option<Duration>,
+        source_reset_is_eof: bool,
     ) -> io::Result<Option<()>> {
         let Some(uplink_pipe) = pool.take() else {
             return Ok(None);
@@ -985,6 +1042,7 @@ impl SplicePool {
                 ledger,
                 true,
                 liveness,
+                source_reset_is_eof,
             );
             let downlink = splice_direction(
                 outbound,
@@ -994,6 +1052,7 @@ impl SplicePool {
                 ledger,
                 false,
                 liveness,
+                source_reset_is_eof,
             );
             tokio::try_join!(uplink, downlink)
         };
@@ -1136,6 +1195,10 @@ impl PipePair {
 }
 
 #[cfg(target_os = "linux")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one parameter per splice direction input"
+)]
 async fn splice_direction(
     source: &TcpStream,
     destination: &TcpStream,
@@ -1144,6 +1207,7 @@ async fn splice_direction(
     ledger: &TransferLedger,
     inbound_to_outbound: bool,
     liveness: Option<Duration>,
+    source_reset_is_eof: bool,
 ) -> io::Result<()> {
     splice_pump(
         source,
@@ -1153,10 +1217,18 @@ async fn splice_direction(
         ledger,
         inbound_to_outbound,
         liveness,
+        source_reset_is_eof,
     )
     .await?;
-    rustix::net::shutdown(destination, rustix::net::Shutdown::Write).map_err(io::Error::from)?;
-    Ok(())
+    rustix::net::shutdown(destination, rustix::net::Shutdown::Write)
+        .map_err(io::Error::from)
+        .or_else(|error| {
+            if source_reset_is_eof && is_peer_gone(&error) {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        })
 }
 
 /// Splices one direction between owned socket halves until source EOF.
@@ -1184,6 +1256,7 @@ async fn splice_owned_direction(
         ledger,
         inbound_to_outbound,
         liveness,
+        false,
     )
     .await?;
     destination.shutdown().await
@@ -1199,7 +1272,14 @@ async fn splice_owned_direction(
 /// while a stalled peer ends the direction with [`io::ErrorKind::TimedOut`]
 /// instead of parking on its pipes and permits forever. `None` keeps the
 /// unbounded behavior and constructs no timer at all.
+///
+/// With `source_reset_is_eof`, a source reset ends the direction like an EOF;
+/// see [`RelayContext::source_reset_is_eof`].
 #[cfg(target_os = "linux")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one parameter per splice pump input"
+)]
 async fn splice_pump(
     source: &TcpStream,
     destination: &TcpStream,
@@ -1208,6 +1288,7 @@ async fn splice_pump(
     ledger: &TransferLedger,
     inbound_to_outbound: bool,
     liveness: Option<Duration>,
+    source_reset_is_eof: bool,
 ) -> io::Result<()> {
     use tokio::io::Interest;
 
@@ -1223,14 +1304,19 @@ async fn splice_pump(
                     splice_retry(source, &pipe.write, chunk_bytes, flags)
                 }))
                 .await
-                .map_err(idle_io_error)?,
+                .map_err(idle_io_error),
             None => {
                 source
                     .async_io(Interest::READABLE, || {
                         splice_retry(source, &pipe.write, chunk_bytes, flags)
                     })
-                    .await?
+                    .await
             }
+        };
+        let read = match read {
+            Ok(read) => read,
+            Err(error) if source_reset_is_eof && is_peer_reset(&error) => return Ok(()),
+            Err(error) => return Err(error),
         };
         if read == 0 {
             return Ok(());

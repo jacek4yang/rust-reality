@@ -337,6 +337,19 @@ pub struct RelayContext {
     /// descriptors, pipes, map entries and permits. `None` preserves the
     /// historical unbounded behavior for compatibility entry points and tests.
     pub liveness: Option<std::time::Duration>,
+    /// Whether a source reset ends its direction like an EOF.
+    ///
+    /// Default `false`: a reset mid-transfer is a true abort, so the peer
+    /// observes a reset rather than a clean short EOF that could pass a
+    /// truncated stream off as complete. Callers whose endpoints enforce
+    /// their own record-layer close semantics — the Handoff LINE relay, where
+    /// both sockets carry the session's TLS 1.3 records — opt in: a real
+    /// client commonly closes with the server's final close_notify still
+    /// unread, which the kernel turns into a RST that reaches the raw relay
+    /// only because no TLS layer terminates the session there first. The
+    /// byte counts stay exact either way: only destination-accepted bytes are
+    /// ever recorded.
+    pub source_reset_is_eof: bool,
 }
 
 impl RelayContext {
@@ -347,6 +360,7 @@ impl RelayContext {
             request: BackendRequest::Automatic,
             owns_complete_sockets: true,
             liveness: None,
+            source_reset_is_eof: false,
         }
     }
 
@@ -357,6 +371,7 @@ impl RelayContext {
             request: BackendRequest::Automatic,
             owns_complete_sockets: false,
             liveness: None,
+            source_reset_is_eof: false,
         }
     }
 
@@ -371,6 +386,13 @@ impl RelayContext {
     #[must_use]
     pub const fn with_liveness(mut self, liveness: std::time::Duration) -> Self {
         self.liveness = Some(liveness);
+        self
+    }
+
+    /// Returns the same context treating a source reset as direction EOF.
+    #[must_use]
+    pub const fn with_source_reset_as_eof(mut self) -> Self {
+        self.source_reset_is_eof = true;
         self
     }
 }

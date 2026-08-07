@@ -1336,4 +1336,364 @@ mod tests {
             "the deadline must bound the wait, not the idle timeout"
         );
     }
+
+    /// Reads resumed downlink records until the decoded payload equals
+    /// `expected`, returning the collected payload. The Vision decoder and
+    /// the decoded prefix come from [`read_response_header_record`], keeping
+    /// the decoder state continuous across the opening frame.
+    async fn read_resumed_payload(
+        client: &mut TcpStream,
+        records: &mut Tls13RecordLayer,
+        expected: &[u8],
+        decoder: &mut VisionDecoder,
+        response: &mut Vec<u8>,
+    ) -> io::Result<Vec<u8>> {
+        let mut decoded = Vec::new();
+        while response != expected {
+            let mut record = read_tls_record(client, TEST_TIMEOUT)
+                .await
+                .map_err(io::Error::other)?
+                .into_wire();
+            let opened = records
+                .open_in_place(&mut record)
+                .map_err(io::Error::other)?;
+            if opened.content_type() != ContentType::ApplicationData {
+                return Err(io::Error::other(
+                    "unexpected non-application downlink record",
+                ));
+            }
+            let _ = decoder
+                .decode(opened.plaintext(), &mut decoded)
+                .map_err(io::Error::other)?;
+            response.extend_from_slice(&decoded);
+        }
+        Ok(std::mem::take(response))
+    }
+
+    /// Reads and validates the first resumed downlink record — the VLESS
+    /// response header plus the opening Vision frame — and returns the
+    /// decoder primed with that frame and the payload decoded so far.
+    async fn read_response_header_record(
+        client: &mut TcpStream,
+        records: &mut Tls13RecordLayer,
+    ) -> io::Result<(VisionDecoder, Vec<u8>)> {
+        let mut first = read_tls_record(client, TEST_TIMEOUT)
+            .await
+            .map_err(io::Error::other)?
+            .into_wire();
+        let opened = records
+            .open_in_place(&mut first)
+            .map_err(io::Error::other)?;
+        let plaintext = opened.plaintext();
+        if opened.content_type() != ContentType::ApplicationData
+            || plaintext.get(..2) != Some([VERSION, 0].as_slice())
+        {
+            return Err(io::Error::other("missing resumed response header"));
+        }
+        let mut decoder = VisionDecoder::new(USER);
+        let mut decoded = Vec::new();
+        let _ = decoder
+            .decode(&plaintext[2..], &mut decoded)
+            .map_err(io::Error::other)?;
+        Ok((decoder, decoded))
+    }
+
+    /// Seals `payload` into as many application records as its size requires.
+    fn seal_application_records(
+        records: &mut Tls13RecordLayer,
+        payload: &[u8],
+    ) -> io::Result<Vec<u8>> {
+        let mut output = Vec::new();
+        for chunk in payload.chunks(16_000) {
+            // `seal_into` replaces its output, so each record is staged apart.
+            let mut record = Vec::new();
+            records
+                .seal_into(ContentType::ApplicationData, chunk, 0, &mut record)
+                .map_err(io::Error::other)?;
+            output.extend_from_slice(&record);
+        }
+        Ok(output)
+    }
+
+    /// Closes the client the way a real TLS client commonly does: the final
+    /// server close_notify is left unread, so the kernel resets the
+    /// connection. Waits briefly first so LINE has spliced every downlink
+    /// byte into the client's receive queue.
+    async fn reset_client_unread(client: TcpStream) {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        rr_linux::socket::abort_linger(std::os::fd::AsRawFd::as_raw_fd(&client))
+            .expect("abort linger must apply");
+        drop(client);
+    }
+
+    struct HandoffRig {
+        destination_listener: TcpListener,
+        landing_listener: TcpListener,
+        landing_handler: HandoffLandingHandler,
+        line_handler: VisionHandler,
+        client: TcpStream,
+        established: RealityEstablished,
+        client_write_records: Tls13RecordLayer,
+        client_read_records: Tls13RecordLayer,
+    }
+
+    async fn handoff_rig() -> HandoffRig {
+        let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("destination must bind");
+        let landing_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("landing must bind");
+        let landing_address = landing_listener
+            .local_addr()
+            .expect("landing address must exist");
+        let (client, server) = tcp_pair().await;
+        let (established_tls, client_write_records, client_read_records) = tls_states();
+        HandoffRig {
+            destination_listener,
+            landing_listener,
+            landing_handler: test_landing_handler(),
+            line_handler: handoff_vision_handler(landing_address),
+            client,
+            established: RealityEstablished::from_test_parts(
+                TlsApplicationIo::new(server, established_tls),
+                UserRegistry::new([USER]),
+            ),
+            client_write_records,
+            client_read_records,
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn line_completes_a_clean_session_when_the_client_resets_at_teardown() {
+        let rig = handoff_rig().await;
+        let destination_port = rig
+            .destination_listener
+            .local_addr()
+            .expect("destination address must exist")
+            .port();
+        let request = vision_request(destination_port, b"ping");
+
+        let exchange = async {
+            let line = rig.line_handler.handle(rig.established);
+            let landing = async {
+                let (stream, _) = rig.landing_listener.accept().await?;
+                rig.landing_handler
+                    .handle(stream)
+                    .await
+                    .map_err(io::Error::other)
+            };
+            let client_io = async {
+                let mut client = rig.client;
+                let mut write_records = rig.client_write_records;
+                let mut read_records = rig.client_read_records;
+                let mut record = Vec::new();
+                write_records
+                    .seal_into(ContentType::ApplicationData, &request, 0, &mut record)
+                    .map_err(io::Error::other)?;
+                client.write_all(&record).await?;
+                let mut close_record = Vec::new();
+                write_records
+                    .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                    .map_err(io::Error::other)?;
+                client.write_all(&close_record).await?;
+                let (mut decoder, mut response) =
+                    read_response_header_record(&mut client, &mut read_records).await?;
+                let response = read_resumed_payload(
+                    &mut client,
+                    &mut read_records,
+                    b"pong",
+                    &mut decoder,
+                    &mut response,
+                )
+                .await?;
+                // The payload is complete; the client closes without reading
+                // the server's close_notify, so LINE's raw splice observes a
+                // reset instead of a FIN. The session was clean and must be
+                // accounted as completed, not rejected.
+                reset_client_unread(client).await;
+                Ok::<_, io::Error>(response)
+            };
+            let destination_io = async {
+                let (mut destination, _) = rig.destination_listener.accept().await?;
+                let mut received = Vec::new();
+                destination.read_to_end(&mut received).await?;
+                destination.write_all(b"pong").await?;
+                destination.shutdown().await?;
+                Ok::<_, io::Error>(received)
+            };
+            tokio::join!(line, landing, client_io, destination_io)
+        };
+        let (line, landing, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+            .await
+            .expect("handoff exchange must not time out");
+
+        assert_eq!(client_result.expect("client I/O must succeed"), b"pong");
+        assert_eq!(
+            destination_result.expect("destination I/O must succeed"),
+            b"ping"
+        );
+        landing.expect("LANDING handler must succeed");
+        let line_stats = line
+            .expect("a teardown reset must not fail a session that already completed byte-exactly");
+        assert!(
+            line_stats.downlink_bytes() > 0,
+            "LINE must report the spliced downlink ciphertext it moved"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn line_completes_an_upload_dominated_session_when_the_client_resets_at_teardown() {
+        let rig = handoff_rig().await;
+        let destination_port = rig
+            .destination_listener
+            .local_addr()
+            .expect("destination address must exist")
+            .port();
+        let request = vision_request(destination_port, b"ping");
+        let upload = vec![0x55_u8; 200 * 1024];
+
+        let exchange = async {
+            let line = rig.line_handler.handle(rig.established);
+            let landing = async {
+                let (stream, _) = rig.landing_listener.accept().await?;
+                rig.landing_handler
+                    .handle(stream)
+                    .await
+                    .map_err(io::Error::other)
+            };
+            let client_io = async {
+                let mut client = rig.client;
+                let mut write_records = rig.client_write_records;
+                let mut read_records = rig.client_read_records;
+                let mut record = Vec::new();
+                write_records
+                    .seal_into(ContentType::ApplicationData, &request, 0, &mut record)
+                    .map_err(io::Error::other)?;
+                client.write_all(&record).await?;
+                // Wait for the first downlink record so the upload provably
+                // travels the raw splice rather than the sealed continuation.
+                let (mut decoder, mut response) =
+                    read_response_header_record(&mut client, &mut read_records).await?;
+                client
+                    .write_all(&seal_application_records(&mut write_records, &upload)?)
+                    .await?;
+                let mut close_record = Vec::new();
+                write_records
+                    .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                    .map_err(io::Error::other)?;
+                client.write_all(&close_record).await?;
+                let response = read_resumed_payload(
+                    &mut client,
+                    &mut read_records,
+                    b"pong",
+                    &mut decoder,
+                    &mut response,
+                )
+                .await?;
+                reset_client_unread(client).await;
+                Ok::<_, io::Error>(response)
+            };
+            let destination_io = async {
+                let (mut destination, _) = rig.destination_listener.accept().await?;
+                let mut received = Vec::new();
+                destination.read_to_end(&mut received).await?;
+                destination.write_all(b"pong").await?;
+                destination.shutdown().await?;
+                Ok::<_, io::Error>(received)
+            };
+            tokio::join!(line, landing, client_io, destination_io)
+        };
+        let (line, landing, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+            .await
+            .expect("upload exchange must not time out");
+
+        assert_eq!(client_result.expect("client I/O must succeed"), b"pong");
+        let mut expected_upload = b"ping".to_vec();
+        expected_upload.extend_from_slice(&upload);
+        assert_eq!(
+            destination_result.expect("destination I/O must succeed"),
+            expected_upload,
+            "the spliced upload must arrive byte-exactly"
+        );
+        landing.expect("LANDING handler must succeed");
+        let line_stats = line.expect("a teardown reset must not fail a completed upload session");
+        assert!(
+            line_stats.uplink_bytes() > 0,
+            "the post-transfer upload must move through the raw splice"
+        );
+        assert!(line_stats.downlink_bytes() > 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn line_completes_when_the_client_half_closes_before_the_downlink() {
+        let rig = handoff_rig().await;
+        let destination_port = rig
+            .destination_listener
+            .local_addr()
+            .expect("destination address must exist")
+            .port();
+        let request = vision_request(destination_port, b"ping");
+
+        let exchange = async {
+            let line = rig.line_handler.handle(rig.established);
+            let landing = async {
+                let (stream, _) = rig.landing_listener.accept().await?;
+                rig.landing_handler
+                    .handle(stream)
+                    .await
+                    .map_err(io::Error::other)
+            };
+            let client_io = async {
+                let mut client = rig.client;
+                let mut write_records = rig.client_write_records;
+                let mut read_records = rig.client_read_records;
+                let mut burst = Vec::new();
+                write_records
+                    .seal_into(ContentType::ApplicationData, &request, 0, &mut burst)
+                    .map_err(io::Error::other)?;
+                let mut close_record = Vec::new();
+                write_records
+                    .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                    .map_err(io::Error::other)?;
+                burst.extend_from_slice(&close_record);
+                client.write_all(&burst).await?;
+                // The client half-closes its write side before a single
+                // downlink byte arrives; the response must still flow.
+                client.shutdown().await?;
+                let (mut decoder, mut response) =
+                    read_response_header_record(&mut client, &mut read_records).await?;
+                let response = read_resumed_payload(
+                    &mut client,
+                    &mut read_records,
+                    b"pong",
+                    &mut decoder,
+                    &mut response,
+                )
+                .await?;
+                Ok::<_, io::Error>(response)
+            };
+            let destination_io = async {
+                let (mut destination, _) = rig.destination_listener.accept().await?;
+                let mut received = Vec::new();
+                destination.read_to_end(&mut received).await?;
+                destination.write_all(b"pong").await?;
+                destination.shutdown().await?;
+                Ok::<_, io::Error>(received)
+            };
+            tokio::join!(line, landing, client_io, destination_io)
+        };
+        let (line, landing, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+            .await
+            .expect("half-close exchange must not time out");
+
+        assert_eq!(client_result.expect("client I/O must succeed"), b"pong");
+        assert_eq!(
+            destination_result.expect("destination I/O must succeed"),
+            b"ping"
+        );
+        landing.expect("LANDING handler must succeed");
+        let line_stats = line.expect("a client half-close first must still complete the session");
+        assert!(line_stats.downlink_bytes() > 0);
+    }
 }
