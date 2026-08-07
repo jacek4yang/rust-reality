@@ -136,7 +136,7 @@ impl fmt::Debug for HandoffPsk {
 ///
 /// Fields are encoded explicitly (no serde, no memory layout); the two
 /// variable-length byte strings are bounded by
-/// [`MAX_PENDING_CIPHERTEXT_LEN`] and [`MAX_PREFETCHED_PLAINTEXT_LEN`]. Key
+/// `MAX_PENDING_CIPHERTEXT_LEN` and `MAX_PREFETCHED_PLAINTEXT_LEN`. Key
 /// material and buffered plaintext are zeroized on drop; `Debug` is redacted.
 #[derive(Zeroize, ZeroizeOnDrop)]
 pub struct ContinuationState {
