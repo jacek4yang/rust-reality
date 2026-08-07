@@ -28,8 +28,8 @@ restart`); the last good generation keeps running.
 In dedicated mode the process detects, once, before any listener is bound:
 
 * soft and hard `RLIMIT_NOFILE`;
-* soft and hard `RLIMIT_MEMLOCK` (the eBPF backends account pinned memory
-  against it);
+* soft and hard `RLIMIT_MEMLOCK` (reported for operator visibility; no budget
+  is derived from it);
 * the cgroup v2 of the current process (`/proc/self/cgroup` +
   `/sys/fs/cgroup`): `cpu.max`, `cpuset.cpus.effective`, `memory.current`,
   `memory.high`, `memory.max` — the literal `max` is treated as unbounded,
@@ -74,7 +74,7 @@ effective_dynamic_fd_budget = effective_soft_limit - fixed_reserve - headroom
 ```
 
 The fixed reserve is identical to standard mode (listeners, standard streams
-and logger, runtime reactor, eBPF descriptors, uncancellable resolver
+and logger, runtime reactor, uncancellable resolver
 descriptors, the emergency reserve). Only the headroom policy differs:
 
 | Mode | Safety headroom | Consequence |
@@ -90,9 +90,8 @@ both policies and is tested across the full limit range.
 
 Per-resource costs are unchanged and are accounted exactly where the
 resource is acquired: one unit per inbound socket, one per outbound socket,
-two per directional splice, four per bilateral splice relay, BPF map and
-program descriptors inside the fixed reserve. Dedicated mode does not
-re-account them.
+two per directional splice, four per bilateral splice relay. Dedicated mode
+does not re-account them.
 
 ### Memory
 

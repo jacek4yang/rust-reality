@@ -27,7 +27,7 @@
 在专用模式下，进程在绑定任何监听之前检测一次：
 
 * `RLIMIT_NOFILE` 的软限制与硬限制；
-* `RLIMIT_MEMLOCK` 的软限制与硬限制（eBPF 后端按它核算锁定内存）；
+* `RLIMIT_MEMLOCK` 的软限制与硬限制（仅为运维可见性上报，不由此推导预算）；
 * 当前进程的 cgroup v2（`/proc/self/cgroup` + `/sys/fs/cgroup`）：
   `cpu.max`、`cpuset.cpus.effective`、`memory.current`、`memory.high`、
   `memory.max`——字面值 `max` 视为无界；任何缺失或不可读的文件降级为
@@ -67,7 +67,7 @@ effective_dynamic_fd_budget = effective_soft_limit - fixed_reserve - headroom
 ```
 
 固定预留与标准模式完全相同（监听 socket、标准流与日志、运行时 reactor、
-eBPF 描述符、不可取消的解析器描述符、应急预留）。只有余量策略不同：
+不可取消的解析器描述符、应急预留）。只有余量策略不同：
 
 | 模式 | 安全余量 | 结果 |
 |---|---|---|
@@ -81,7 +81,7 @@ eBPF 描述符、不可取消的解析器描述符、应急预留）。只有余
 
 各资源成本不变，并在获取资源的位置精确核算：每个入站 socket 一个单位，
 每个出站 socket 一个单位，每个单向 splice 两个单位，每个双向 splice
-relay 四个单位，BPF map 与程序描述符计入固定预留。专用模式不重复核算。
+relay 四个单位。专用模式不重复核算。
 
 ### 内存
 

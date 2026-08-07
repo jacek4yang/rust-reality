@@ -66,8 +66,7 @@ unsafe Rust.
 Linux `splice` is permitted only after both sides are plaintext TCP sockets. It
 cannot cross the REALITY/TLS application boundary. If bounded splice resources
 are unavailable before transfer starts, relay falls back to bounded userspace
-buffers. The sockhash configuration switch remains disabled until its
-implementation and capability probe are independently accepted.
+buffers.
 
 ## Non-goals
 
@@ -96,15 +95,12 @@ possible while the shared transfer ledger reads zero in both directions; the
 decline type cannot be constructed otherwise. After any transfer, an error ends
 the connection.
 
-**Unsafe code is contained and probed.** All Linux ABI `unsafe` lives in
+**Unsafe code is contained.** All Linux ABI `unsafe` lives in
 `crates/rr-linux`, which denies `unsafe_op_in_unsafe_fn`; the protocol crate
 keeps `unsafe_code = "deny"`. Every unsafe block has a `SAFETY:` comment, and
-ABI layouts and descriptor lifetimes have direct tests.
-
-**eBPF increases privilege, so it is opt-in.** Enabling `sockhash` loads a
-program into the kernel. The packaged systemd unit does not grant the capability
-automatically, the requirement is probed rather than assumed, and an environment
-that refuses declines cleanly instead of degrading silently.
+ABI layouts and descriptor lifetimes have direct tests. No eBPF is loaded:
+the privileged sockhash backend was removed (D7), so the server needs no
+kernel-injection capability.
 
 **Logs stay secret-free.** Decline reasons, phases and backend names come from
 closed vocabularies. No UUID, key, PSK, SNI value, target address, configuration

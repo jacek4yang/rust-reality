@@ -18,7 +18,6 @@ correctness-closure battery and the D8 decision surface.
 | Direct transition | both tasks | 0 | 2 atomics + 1 mutex (once) | 0 | pending-drain write |
 | raw relay (splice) | direction task(s) | 0 | pool Mutex per take/give_back (2/session) | splice×2/chunk; pipe syscalls ~0 (pool) | 0 (kernel) |
 | raw relay (buffered) | direction task(s) | pooled 32KiB buffer | pool Mutex + semaphore per session | read+write/chunk | 1 userspace copy/chunk |
-| raw relay (sockhash, opt-in) | — | 0 | arm transaction | map_update×2, teardown probes | 0 (kernel redirect) |
 | teardown | direction tasks | 0 | state CAS | shutdown/close; abort→SO_LINGER+close | 0 |
 
 Per-connection steady cost: 2 tasks, no per-record allocation, one timer
@@ -54,7 +53,7 @@ specialized relay, process-lifetime authorities (closure stage), PipePool
 | splice backend | KEEP | wins the raw surface outright |
 | buffered backend | KEEP (resize research) | needed as fallback + possibly 64KiB |
 | PipePool | KEEP-PROVISIONAL | zero-cost mechanism; delete if splice use shrinks |
-| sockhash backend | EXPERIMENTAL→decide | reachability/benefit unproven; opt-in only |
+| sockhash backend | REMOVED (D7) | zero production arms; privileged A/B parity with splice; unprivileged deployment cannot arm it |
 | DirectHandoff coordinator | KEEP | linearizable decision, mutex once/session |
 | framed TLS record layer | KEEP | zero-alloc, grow-only, buffered reads |
 | ResourceGovernor/DirectBarrier (process-lifetime) | KEEP | closure stage |

@@ -310,46 +310,19 @@ to the older version.
 Do not enable debug logs and publish them without review. Never paste production
 configuration, keys, UUIDs, credentials, or packet captures into public issues.
 
-## Optional kernel relay backends
+## Removed kernel relay backends
 
-The sockhash kernel backend is **off by default** and is probed rather than
-assumed. Leaving it off is a supported production configuration; the portable
-buffered relay and Linux `splice` require no additional privilege.
+The sockhash backend was removed (D7): it never armed in any production
+benchmark matrix, a privileged A/B showed parity with splice, and the
+unprivileged production deployment model could never arm it. Stale
+`policy.relay.sockhash`, `policy.relay.maxSockhashRelays` or
+`policy.relay.maxPinnedMemoryBytes` keys are rejected as unknown fields.
+The retained A/B evidence lives in `benchmarks/final/sockhash-ab/`.
 
 The io_uring backend was removed (see `decisions/adaptive-relay-implementation-plan.md`);
 stale `policy.relay.ioUring` or `policy.relay.maxIoUringRelays` keys are
 rejected as unknown fields.
 
-### sockhash
+The portable buffered relay and Linux `splice` require no additional
+privilege.
 
-`policy.relay.sockhash: true` enables the bounded eBPF `SOCKHASH` backend. The
-startup probe creates the map and loads the stream-verdict program; a refusal is
-reported with a fixed reason.
-
-Do **not** assume that `CAP_BPF` plus `CAP_NET_ADMIN` is universally sufficient.
-What is actually required depends on the running kernel version, the active
-Linux security module, the seccomp policy, the user namespace, and the program
-and map types. The only reliable answer is the probe result on the target host.
-
-The shipped systemd unit deliberately does not gain privileges automatically.
-To opt in, add a drop-in rather than editing the packaged unit:
-
-```ini
-# /etc/systemd/system/rust-reality.service.d/10-sockhash.conf
-[Service]
-AmbientCapabilities=CAP_BPF CAP_NET_ADMIN
-CapabilityBoundingSet=CAP_BPF CAP_NET_ADMIN
-# The eBPF map and program are pinned kernel memory.
-LimitMEMLOCK=infinity
-# Keep every other hardening directive from the packaged unit.
-```
-
-Then verify on the target host that the probe actually reports availability
-before relying on it:
-
-```shell
-cargo test -p rr-linux --test capability_report -- --nocapture
-```
-
-If the probe declines, the server still serves traffic; it simply uses the next
-available backend.

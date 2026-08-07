@@ -71,18 +71,9 @@ evidence.
 
    | situation | order |
    |---|---|
-   | bilateral pair, complete sockets, zero bytes moved | sockhash → splice → buffered |
+   | bilateral pair, complete sockets, zero bytes moved | splice → buffered |
    | single raw direction | directional splice → directional buffered |
 
-   - **sockhash** (Linux, `policy.relay.sockHash`, needs CAP_BPF/privilege):
-     both sockets are armed into a SOCKHASH with a stream-verdict SK_SKB
-     program; the kernel redirects payload socket→socket with no userspace
-     involvement. Arming is transactional (both directions or neither,
-     idempotent rollback), requires complete socket ownership, a zero-byte
-     ledger, and empty userspace input queues (FIONREAD guard). FIN is not
-     propagated by the redirect: each half-close is detected and synthesized
-     on the peer after a drain barrier proves the redirect backlog converged.
-     Accounting is kernel-reported (TCP_INFO deltas against arm baselines).
    - **splice**: one pipe pair per direction (bilateral = two pairs), exactly
      2 FD units per direction, reserved before `pipe2`. Pipes request a 256
      KiB capacity (best effort, below the unprivileged 1 MiB cap) and the
@@ -93,6 +84,10 @@ evidence.
      first byte.
    - **buffered**: bounded pool, one buffer per direction, zero-fill at
      allocation only.
+   - **sockhash**: **removed** (D7); stale `sockhash` config keys fail
+     decoding. Zero production arms, privileged A/B parity with splice, and
+     the unprivileged deployment model could never arm it. Evidence:
+     `benchmarks/final/sockhash-ab/`.
    - **io_uring**: **removed, not implemented**; stale `ioUring` config keys
      fail decoding. Rationale: `decisions/adaptive-relay-implementation-plan.md`.
 
