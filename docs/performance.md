@@ -140,8 +140,9 @@ One-line verdicts for the performance decisions that shaped v1.0.0:
   production matrices, showed privileged parity with splice, and required
   privilege the deployment model never has; removed (~5,400 lines).
 - **D8 — falsified.** The apparent fallback c32 gap was harness debug
-  logging, not splice call cost; clean A/B shows fallback splice at
-  1.04–1.05× Xray with materially lower CPU.
+  logging, not splice call cost; clean A/B at the time measured fallback splice at
+  1.04–1.05× Xray with materially lower CPU; the final v1.0.0 comparison
+  (1.00–1.03×) supersedes it as the headline.
 - **D9 — proven, shipped as default.** The framed path is AEAD-bound and
   ring is ≈2.5× RustCrypto at production record sizes; shipped as the
   default record AEAD provider with the RustCrypto fallback retained and

@@ -3,8 +3,10 @@
 # on (pooled) vs splice off (buffered at a chosen buffer size), using direct
 # curl-to-listener connections, which reach TcpRelay::relay_owned directly.
 #
-# Env: RUST_REALITY_BIN, SAMPLES (7), CONCURRENCIES ("1 4 32"), PAYLOAD_MIB (32),
-#      OUT_DIR, LEGS ("splice buffered32 buffered64 buffered128")
+# Env: RUST_REALITY_BIN, XRAY_BIN, SAMPLES (7), CONCURRENCIES ("1 4 32"),
+#      PAYLOAD_MIB (32), OUT_DIR, LEGS ("splice buffered32 buffered64 buffered128").
+#      LEGS="splice xray" gives the symmetric Xray comparison. The default
+#      OUT_DIR is timestamped so reruns never overwrite retained evidence.
 set -Eeuo pipefail
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -13,7 +15,7 @@ xray=${XRAY_BIN:-../artifacts/xray-reference}
 samples=${SAMPLES:-7}
 concurrencies=${CONCURRENCIES:-1 4 32}
 payload_mib=${PAYLOAD_MIB:-32}
-out_dir=${OUT_DIR:-benchmarks/final/fallback-ab}
+out_dir=${OUT_DIR:-benchmarks/final/fallback-ab-$(date -u +%Y%m%dT%H%M%SZ)}
 work=$(mktemp -d "$repository/benchmarks/fallback-ab.XXXXXX")
 pids=()
 

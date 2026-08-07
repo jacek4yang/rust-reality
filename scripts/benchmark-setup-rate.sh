@@ -17,7 +17,7 @@ xray=${XRAY_BIN:-../artifacts/xray-reference}
 samples=${SAMPLES:-3}
 concurrencies=${CONCURRENCIES:-1 8 32}
 conns=${CONNS:-96}
-out_dir=${OUT_DIR:-benchmarks/final/setup-rate}
+out_dir=${OUT_DIR:-benchmarks/final/setup-rate-$(date -u +%Y%m%dT%H%M%SZ)}
 work=$(readlink -f "$(mktemp -d "$repository/benchmarks/setup-rate.XXXXXX")")
 pids=()
 

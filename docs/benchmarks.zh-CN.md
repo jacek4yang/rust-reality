@@ -38,7 +38,6 @@
 `d9-framed-ab/`（ring 提供者 A/B）与 `d11-ab/`（记录批处理 A/B）是两项已发布
 设计决策的机制证据。更大的历史矩阵已在仓库之外的发布证据档案中保存。
 
-仓库中保留两组小型证据作为规范样本；更大的历史矩阵已在仓库外归档。
 
 ### framed AEAD 提供者 A/B —— `benchmarks/final/d9-framed-ab/`
 
@@ -69,7 +68,7 @@ Core i3-8100（4C/4T）、Linux 6.12.94+deb13-amd64、rustc 1.96.0、Xray 26.7.2
 | 并发 | rust-reality（splice） | Xray | 比值 |
 |---|---:|---:|---:|
 | c1 | 1631 MiB/s | 1631 MiB/s | 1.00× |
-| c4 | 3076 MiB/s | 2999 MiB/s | 1.03× |
+| c4 | 3075 MiB/s | 2999 MiB/s | 1.03× |
 | c32 | 3279 MiB/s | 3194 MiB/s | 1.03× |
 
 ## 方法规则（以及让早期数字作废的陷阱）

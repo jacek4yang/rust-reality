@@ -93,7 +93,7 @@ BoringSSL 的 C/汇编，静态链接）提供。使用 `--no-default-features` 
 | c32 p99 setup 延迟 | 59.3 ms | 59.3 ms | 持平 |
 
 测量窗口内（864 个连接）每连接服务端成本：CPU 0.65 vs 1.53 ms（**−58%**），
-指令数 −29%，上下文切换 −77%。并发下吞吐持平是因为 4 CPU 主机同时限制了两端；
+指令数 −29%，上下文切换 −77%。c32 时速率差距收窄是因为 4 CPU 主机同时限制了两端；
 每连接成本列才是更干净的信号。CPU 优势能否在更大主机上转化为速率优势尚未
 验证。
 
@@ -118,8 +118,8 @@ BoringSSL 的 C/汇编，静态链接）提供。使用 `--no-default-features` 
 - **D7——以删除解决。** sockhash 后端在生产矩阵中从未 arm，特权 A/B 与 splice
   持平，且部署模型永远不具备其所需权限；已移除（约 5400 行）。
 - **D8——证伪。** 表面上的 fallback c32 差距来自 harness 的 debug 日志而非
-  splice 调用成本；干净 A/B 显示 fallback splice 为 Xray 的 1.04–1.05× 且
-  CPU 明显更低。
+  splice 调用成本；当时的干净 A/B 录得 fallback splice 为 Xray 的 1.04–1.05× 且
+  CPU 明显更低；最终 v1.0.0 对比（1.00–1.03×）取代其成为头条数值。
 - **D9——证实，作为默认发布。** framed 路径受 AEAD 限制，ring 在生产记录尺寸
   下约为 RustCrypto 的 2.5×；作为默认记录 AEAD 提供者发布，RustCrypto 回退
   保留并持续测试。

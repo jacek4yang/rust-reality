@@ -80,7 +80,7 @@ warn-level logging both sides), medians of 7:
 | concurrency | rust-reality (splice) | Xray | ratio |
 |---|---:|---:|---:|
 | c1 | 1631 MiB/s | 1631 MiB/s | 1.00× |
-| c4 | 3076 MiB/s | 2999 MiB/s | 1.03× |
+| c4 | 3075 MiB/s | 2999 MiB/s | 1.03× |
 | c32 | 3279 MiB/s | 3194 MiB/s | 1.03× |
 
 ## Methodology rules (and the traps that invalidated earlier numbers)

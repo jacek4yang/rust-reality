@@ -1027,7 +1027,7 @@ dependencies = [
 
 [[package]]
 name = "rust-reality"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aes-gcm",
  "aho-corasick",
@@ -1036,7 +1036,6 @@ dependencies = [
  "chacha20",
  "chacha20poly1305",
  "clap",
- "crypto-common",
  "ed25519-dalek",
  "getrandom 0.4.3",
  "hkdf",
@@ -1044,6 +1043,7 @@ dependencies = [
  "libcrux-ml-dsa",
  "ml-kem",
  "regex",
+ "ring",
  "rr-linux",
  "rustix",
  "schemars",
