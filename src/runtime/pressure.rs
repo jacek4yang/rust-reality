@@ -152,12 +152,16 @@ impl PressureGauge {
 
     /// Waits until the effective state drops below `Critical`.
     ///
-    /// Returns immediately in any other state. The waiter is registered
-    /// before the final state re-check, so a transition landing between the
-    /// failed check and the wait cannot be missed. There is no poll loop.
+    /// Returns immediately in any other state. `Notify` registers a `Notified`
+    /// lazily at its first poll and `notify_waiters` stores no permit, so the
+    /// waiter is registered eagerly with `enable` *before* the state re-check:
+    /// a transition landing between the failed check and the wait then still
+    /// wakes it. There is no poll loop.
     pub async fn wait_while_critical(&self) {
         while self.state() == ResourcePressure::Critical {
             let notified = self.inner.changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             if self.state() != ResourcePressure::Critical {
                 break;
             }
@@ -257,5 +261,29 @@ mod tests {
         )
         .await
         .expect("a normal gauge must not wait");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rapid_transitions_never_strand_a_waiter() {
+        // Regression test for the lost-wakeup race: `Notify` registers a
+        // `Notified` lazily at first poll and `notify_waiters` stores no
+        // permit, so without eager registration a Critical->Normal transition
+        // landing between the state re-check and the first poll was missed
+        // forever. Thousands of rapid transitions with an active waiter must
+        // always terminate.
+        for _ in 0..4_000 {
+            let gauge = PressureGauge::new();
+            gauge.set(ResourcePressure::Critical);
+            let waiter = {
+                let gauge = gauge.clone();
+                tokio::spawn(async move { gauge.wait_while_critical().await })
+            };
+            tokio::task::yield_now().await;
+            gauge.set(ResourcePressure::Normal);
+            tokio::time::timeout(std::time::Duration::from_secs(5), waiter)
+                .await
+                .expect("a waiter must never be stranded by a missed transition")
+                .expect("the waiting task must not panic");
+        }
     }
 }
