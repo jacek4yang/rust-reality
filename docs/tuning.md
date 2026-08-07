@@ -111,7 +111,12 @@ nothing. Concretely:
   on Direct-routed sessions only: the barrier permit is acquired on the
   direct-outbound path and held for the entire session lifetime, and
   sessions routed to SOCKS5 or NXR outbounds never acquire it (VERIFIED,
-  `src/server/outbound.rs`). So with default policy a standalone/Direct
+  `src/server/outbound.rs`). Note the lifetime is a *tracked runtime
+  mismatch* (issue #26): the documented intent is a cap on concurrent
+  Direct *dial attempts* plus a dial rate, not on established sessions;
+  v1.0.0's implementation holds the permit for the whole Direct session.
+  This guide describes the measured v1.0.0 behavior; do not treat the
+  permit lifetime as the intended long-term semantics. So with default policy a standalone/Direct
   node — where every session routes direct — has an *effective* ceiling of
   2048 sessions regardless of `maxConnections` (VERIFIED, measured: session
   2049 is fast-rejected with `maxConnections` left at 16384), while a mixed

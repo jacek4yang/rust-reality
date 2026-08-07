@@ -102,6 +102,10 @@ min( admission ceiling,  FD budget,  memory budget,  CPU-for-your-SLO,  network 
   会话的第二层上限：barrier 许可只在 direct 出站路径上获取，并在整个
   会话生命周期内持有；路由到 SOCKS5 或 NXR 出站的会话从不获取它
   （VERIFIED，`src/server/outbound.rs`）。因此在默认 policy 下，
+  注意：该许可的生命周期是一个*已跟踪的运行时不一致*（issue #26）：
+  文档语义是限制并发 Direct *拨号尝试*和拨号速率，而不是已建立会话数；
+  v1.0.0 的实现会在整个 Direct 会话期间持有许可。本指南描述实测的
+  v1.0.0 行为；不要把这种许可生命周期当作长期设计语义。
   standalone/Direct 节点——每条会话都走 direct——无论
   `maxConnections` 是多少，*有效*上限都是 2048 个会话（VERIFIED，实测：
   `maxConnections` 保持 16384 时，第 2049 个会话被快速拒绝）；而混合
