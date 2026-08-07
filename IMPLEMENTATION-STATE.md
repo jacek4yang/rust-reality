@@ -125,3 +125,28 @@
   fallback-ab/, fallback-ab512/, fallback-pool-ab/.
 - next: R1+ (framed AEAD decomposition, setup-rate harness) or close out with
   reports/archive/PR updates.
+
+# STAGE: R1/R5-R6 Amdahl investigation (2026-08-07, branch perf/1.0-pipe-pool)
+
+- symmetry audit: diagnostics/master/symmetry-audit.md — all future A/B cells
+  must record log level/affinity/build/origin; the historical fallback gap was
+  a debug-logging artifact and no asymmetric harness result is reused.
+- setup-rate model (scripts/benchmark-setup-rate.sh,
+  benchmarks/final/setup-rate3/): c1 269 vs 198 conn/s (1.36x), c8 775 vs 782,
+  c32 874 vs 857; server cost at c32: 0.64 vs 1.16 ms CPU/conn (-45%),
+  3.97M vs 5.70M instr/conn, 5.5 vs 22 ctx/conn. Report:
+  CONNECTION-SETUP-PERFORMANCE.md.
+- steady-state framed decomposition (perf on diagnostic binary b95f0844…,
+  git d28c5f0; text in benchmarks/final/framed-prof/, raw perf.data in
+  ../artifacts/framed-prof-d28c5f0/): download AEAD ~51% / kernel ~47%;
+  upload AEAD ~39% / kernel ~57%; Vision+record-parse+scheduler+memcpy <2%
+  combined. Reports: FRAMED-AMDAHL-REPORT.md, FRAMED-HOT-PATH-MAP.md,
+  COPY-MAP.md (zero avoidable userspace copies on the framed path).
+- isolated crypto bench (../artifacts/crypto-bench/, AES-128-GCM):
+  OpenSSL EVP 4.12 vs RustCrypto 2.02 GiB/s at 16KiB records (2.04x,
+  conservative). D9 registered as SUPPORTED-not-integrated; Amdahl ceiling
+  1.35x download / 1.25x upload. Production integration requires a product
+  decision on the OpenSSL link dependency — flagged to user, not started.
+- next: user decision on the OpenSSL dependency; otherwise framed work
+  concludes at parity-is-target and the branch moves to remaining R-phases
+  (D7 sockhash reachability, memory density, final evidence).
