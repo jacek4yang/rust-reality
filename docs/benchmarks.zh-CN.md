@@ -26,6 +26,7 @@
 | `scripts/benchmark-fallback-ab.sh` | 干净的 fallback A/B：两侧 warn 级日志，直连 listener。 |
 | `scripts/benchmark-setup-rate.sh` | 连接 setup 速率模型（accept → 第一次 Vision 转换）。 |
 | `scripts/benchmark-vision-direct.sh`、`scripts/benchmark-xray.sh` | 聚焦的 Vision-Direct 与 Xray 对比。 |
+| `scripts/benchmark-deployment.sh` | 部署特征化：路由正确性证明、路由决策成本（含 DNS 策略）、NXR 拓扑（direct/NXR/SOCKS5/Xray）、可选的 netem RTT 扫描，以及长连接 relay 证据。 |
 | `scripts/test-xray-interop.sh` | 兼容性门禁（见下），不是基准。 |
 
 ## v1.0.0 规范样本

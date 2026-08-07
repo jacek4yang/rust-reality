@@ -32,6 +32,7 @@ harnesses; the design-level evidence behind the numbers lives in
 | `scripts/benchmark-fallback-ab.sh` | Clean fallback A/B against Xray: warn-level logging both sides, direct-to-listener. |
 | `scripts/benchmark-setup-rate.sh` | Connection setup-rate model (accept → first Vision transition). |
 | `scripts/benchmark-vision-direct.sh`, `scripts/benchmark-xray.sh` | Focused Vision-Direct and Xray comparisons. |
+| `scripts/benchmark-deployment.sh` | Deployment characterization: routing correctness proof, routing decision cost (incl. DNS strategies), NXR topologies (direct/NXR/SOCKS5/Xray), optional netem RTT sweep, and long-flow relay evidence. |
 | `scripts/test-xray-interop.sh` | Compatibility gate (below), not a benchmark. |
 
 ## Canonical v1.0.0 samples
