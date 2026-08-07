@@ -3,7 +3,7 @@ use std::{
     fmt,
     io::{self, Write},
     net::{IpAddr, Ipv4Addr},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::ExitCode,
     sync::Arc,
     time::Duration,
@@ -15,9 +15,10 @@ use rust_reality::{
     assets::{AssetLoadError, AssetSnapshot},
     benchmark::{BenchmarkError, BenchmarkOptions, run_benchmarks},
     config::{
-        ConfigLoadError, GenerateConfigError, GenerateConfigInput, GenerateLandingConfigInput,
-        GenerateLineConfigInput, SecretString, format_config, format_config_schema,
-        generate_landing_config, generate_line_config, generate_minimal_config, load_config,
+        ConfigLoadError, GenerateConfigError, GenerateConfigInput, GenerateHandoffConfigInput,
+        GenerateLandingConfigInput, GenerateLineConfigInput, GeneratedHandoffConfigs, SecretString,
+        format_config, format_config_schema, generate_handoff_configs, generate_landing_config,
+        generate_line_config, generate_minimal_config, load_config,
     },
     crypto::{
         KeyGenerationError, generate_mldsa65_key_pair, generate_mldsa65_key_pair_from_seed,
@@ -120,6 +121,27 @@ enum GenerateRole {
     Line(LineGenerateArgs),
     /// Firewall-restricted internal NXR landing node.
     Landing(LandingGenerateArgs),
+    /// Handoff line/landing node pair plus a matching Xray client, written as
+    /// line.json, landing.json, and xray-client.json.
+    Handoff(HandoffGenerateArgs),
+}
+
+#[derive(Debug, Args)]
+struct HandoffGenerateArgs {
+    #[command(flatten)]
+    public: PublicGenerateArgs,
+    /// Public address of the line node that clients dial.
+    #[arg(long, value_name = "HOST")]
+    server_address: String,
+    /// Internal Handoff landing-node address reachable by the line node.
+    #[arg(long, value_name = "HOST")]
+    landing_address: String,
+    /// Firewall-restricted Handoff landing-node port.
+    #[arg(long, default_value_t = 7_443, value_parser = clap::value_parser!(u16).range(1..))]
+    landing_port: u16,
+    /// Directory the three generated files are written to.
+    #[arg(long, value_name = "DIR")]
+    output_dir: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -450,6 +472,16 @@ fn run_config_generate(role: GenerateRole) -> Result<(), CliError> {
             })?;
             write_stdout(format_config(&config)?)
         }
+        GenerateRole::Handoff(arguments) => {
+            let output_dir = arguments.output_dir.clone();
+            let generated = generate_handoff_configs(GenerateHandoffConfigInput {
+                public: public_generation_input(arguments.public),
+                server_address: arguments.server_address,
+                landing_address: arguments.landing_address,
+                landing_port: arguments.landing_port,
+            })?;
+            write_handoff_configs(&output_dir, &generated)
+        }
     }
 }
 
@@ -470,6 +502,38 @@ fn write_public_config(generated: &rust_reality::config::GeneratedConfig) -> Res
         "REALITY public key for the client: {public_key}"
     )?;
     Ok(())
+}
+
+/// Writes the Handoff deployment as `line.json`, `landing.json`, and
+/// `xray-client.json` inside `output_dir`.
+///
+/// The client-facing public values go to stderr, mirroring the other
+/// generators; the Handoff PSK and the private keys exist only in the two
+/// server files. stdout lists the written paths.
+fn write_handoff_configs(
+    output_dir: &Path,
+    generated: &GeneratedHandoffConfigs,
+) -> Result<(), CliError> {
+    std::fs::create_dir_all(output_dir)?;
+    let line = output_dir.join("line.json");
+    let landing = output_dir.join("landing.json");
+    let client = output_dir.join("xray-client.json");
+    std::fs::write(&line, format_config(generated.line().config())?)?;
+    std::fs::write(&landing, format_config(generated.landing())?)?;
+    let mut client_json = serde_json::to_string_pretty(generated.client())?;
+    client_json.push('\n');
+    std::fs::write(&client, client_json)?;
+    let public_key = generated.line().reality_public_key();
+    let uuid = generated.client_uuid();
+    let mut stderr = io::stderr().lock();
+    writeln!(stderr, "REALITY public key for the client: {public_key}")?;
+    writeln!(stderr, "UUID for the client: {uuid}")?;
+    write_stdout(format_args!(
+        "{}\n{}\n{}\n",
+        line.display(),
+        landing.display(),
+        client.display()
+    ))
 }
 
 fn run_mldsa65(arguments: MlDsa65Args) -> Result<(), CliError> {
@@ -502,6 +566,94 @@ mod tests {
     use clap::Parser;
 
     use super::{Cli, Command, ConfigCommand, GenerateRole};
+
+    #[test]
+    fn parses_handoff_generator() {
+        let cli = Cli::try_parse_from([
+            "rust-reality",
+            "config",
+            "generate",
+            "handoff",
+            "--server-address",
+            "line.example.com",
+            "--target",
+            "cover.example.com:443",
+            "--server-name",
+            "cover.example.com",
+            "--landing-address",
+            "10.0.0.2",
+            "--landing-port",
+            "7443",
+            "--output-dir",
+            "/tmp/generated",
+        ])
+        .expect("handoff generator must parse");
+
+        assert!(matches!(
+            cli.command,
+            Command::Config {
+                command: ConfigCommand::Generate {
+                    role: GenerateRole::Handoff(_)
+                }
+            }
+        ));
+    }
+
+    #[test]
+    fn handoff_generator_writes_three_valid_files() {
+        use std::net::IpAddr;
+        use std::str::FromStr as _;
+
+        use rust_reality::config::{
+            GenerateConfigInput, GenerateHandoffConfigInput, generate_handoff_configs, load_config,
+            validate_config,
+        };
+
+        use super::write_handoff_configs;
+
+        let generated = generate_handoff_configs(GenerateHandoffConfigInput {
+            public: GenerateConfigInput {
+                listen: IpAddr::from_str("0.0.0.0").expect("address must parse"),
+                port: 443,
+                target: "cover.example.com:443".to_owned(),
+                server_name: "cover.example.com".to_owned(),
+            },
+            server_address: "line.example.com".to_owned(),
+            landing_address: "10.0.0.2".to_owned(),
+            landing_port: 7_443,
+        })
+        .expect("handoff generation must succeed");
+        let directory = std::env::temp_dir().join(format!(
+            "rust-reality-handoff-generate-{}",
+            std::process::id()
+        ));
+        write_handoff_configs(&directory, &generated).expect("the three files must be written");
+
+        for name in ["line.json", "landing.json"] {
+            let path = directory.join(name);
+            let config = load_config(&path).expect("generated configuration must load");
+            validate_config(&config).expect("generated configuration must validate");
+        }
+        let client: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(directory.join("xray-client.json"))
+                .expect("client configuration must read"),
+        )
+        .expect("client configuration must parse");
+        assert_eq!(
+            client["outbounds"][0]["settings"]["vnext"][0]["address"],
+            "line.example.com"
+        );
+        assert_eq!(client["outbounds"][0]["settings"]["vnext"][0]["port"], 443);
+        assert_eq!(
+            client["outbounds"][0]["settings"]["vnext"][0]["users"][0]["id"].as_str(),
+            Some(generated.client_uuid())
+        );
+        assert_eq!(
+            client["outbounds"][0]["streamSettings"]["realitySettings"]["publicKey"].as_str(),
+            Some(generated.line().reality_public_key())
+        );
+        std::fs::remove_dir_all(&directory).expect("temporary directory must be removed");
+    }
 
     #[test]
     fn parses_nested_generate_command() {

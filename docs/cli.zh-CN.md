@@ -138,6 +138,33 @@ rust-reality config generate landing \
 | `--port <PORT>` | 否 | `7443` | 内部 NXR TCP 端口。 |
 | `--nxr-key <BASE64>` | 是 | — | 与线路机 NXR 出站相同的 PSK。 |
 
+### `config generate handoff`
+
+```text
+rust-reality config generate handoff \
+  [--listen <IP>] [--port <PORT>] \
+  --server-address <HOST> --target <HOST:PORT> --server-name <DNS_NAME> \
+  --landing-address <HOST> [--landing-port <PORT>] --output-dir <DIR>
+```
+
+一步生成完整的 Handoff 部署：`line.json`（公网 VLESS + REALITY + Vision
+线路机，用户默认路由到 handoff 出站）、`landing.json`（防火墙限制的内部
+handoff 监听器）和 `xray-client.json`（面向线路机的 SOCKS 入站 Xray 客户端）。
+所有密钥材料均独立生成：UUID、REALITY X25519 密钥对、一个 short ID、
+Handoff 预共享密钥，以及落地机的静态 X25519 密钥对。两个服务器配置在写入前
+都会通过完整校验。
+
+| 附加选项 | 必填 | 默认值 | 含义 |
+| --- | --- | --- | --- |
+| `--server-address <HOST>` | 是 | — | 客户端拨号的线路机公网地址。 |
+| `--landing-address <HOST>` | 是 | — | 线路机可访问的落地机地址。 |
+| `--landing-port <PORT>` | 否 | `7443` | 防火墙限制的 Handoff TCP 端口。 |
+| `--output-dir <DIR>` | 是 | — | 三个文件的写入目录。 |
+
+三个文件路径写入 stdout；`REALITY public key for the client: ...` 和
+`UUID for the client: ...` 写入 stderr。Handoff PSK 和私钥只存在于两个
+服务器文件中。
+
 ### `config format`
 
 ```text

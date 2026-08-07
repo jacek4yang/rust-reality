@@ -16,9 +16,11 @@ mod target_read;
 pub(crate) use application_io::VectoredRead;
 pub use application_io::{
     ApplicationRecord, ApplicationWriteStats, TlsApplicationIo, TlsApplicationIoError,
-    TlsApplicationReader, TlsApplicationWriter, bind_application_halves,
+    TlsApplicationReader, TlsApplicationWriter, bind_application_halves, resume_application_halves,
 };
-pub use handshake::{EstablishedTls, RealityHandshakeError, ServerFlight, build_server_flight};
+pub use handshake::{
+    EstablishedTls, ExportedTlsState, RealityHandshakeError, ServerFlight, build_server_flight,
+};
 pub use handshake_read::{ClientFinishedReadError, read_client_finished};
 pub use idle::{IdleDeadline, IdleError};
 pub use keys::{
@@ -30,7 +32,8 @@ pub use messages::{
     finished_message,
 };
 pub use record::{
-    ContentType, MAX_PLAINTEXT_LEN, OpenedRecord, Tls13RecordError, Tls13RecordLayer,
+    ContentType, ExportedRecordState, MAX_PLAINTEXT_LEN, OpenedRecord, Tls13RecordError,
+    Tls13RecordLayer,
 };
 pub use record_read::{
     MAX_TLS_RECORD_WIRE_LEN, TlsRecordRead, TlsRecordReadError, TlsRecordReadErrorKind,

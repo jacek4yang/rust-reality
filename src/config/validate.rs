@@ -10,8 +10,8 @@ use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 use zeroize::Zeroizing;
 
 use super::{
-    Config, GlobalRule, InboundConfig, LogOutput, Network, NxrInboundConfig, OutboundConfig,
-    PortMatcher, RelayPolicy, SecretString, VlessInboundConfig,
+    Config, GlobalRule, HandoffInboundConfig, InboundConfig, LogOutput, Network, NxrInboundConfig,
+    OutboundConfig, PortMatcher, RelayPolicy, SecretString, VlessInboundConfig,
 };
 use crate::server_name::is_server_name_pattern;
 
@@ -23,6 +23,10 @@ const MAX_TIMEOUT_MS: u64 = 10 * 60 * 1_000;
 const MAX_NXR_TIME_DIFFERENCE_SECONDS: u64 = 300;
 const MAX_NXR_NONCE_ENTRIES: u32 = 1_000_000;
 const MAX_NXR_NONCE_RETENTION_SECONDS: u64 = 86_400;
+const MAX_HANDOFF_TIME_DIFFERENCE_SECONDS: u64 = 300;
+const MAX_HANDOFF_NONCE_ENTRIES: u32 = 1_000_000;
+const MAX_HANDOFF_NONCE_RETENTION_SECONDS: u64 = 86_400;
+const MIN_HANDOFF_FIRST_BYTE_TIMEOUT_MS: u64 = 1_000;
 const MIN_RELAY_BUFFER_BYTES: usize = 4 * 1024;
 const MAX_RELAY_BUFFER_BYTES: usize = 1024 * 1024;
 const MAX_RELAY_BUFFERS: usize = 65_536;
@@ -82,6 +86,7 @@ pub fn validate_config(config: &Config) -> Result<(), ConfigError> {
     let users = validate_inbounds(config)?;
     let outbounds = validate_outbounds(config)?;
     validate_routing(config, &users, &outbounds)?;
+    validate_handoff_key_independence(config)?;
     validate_policy(config)
 }
 
@@ -185,6 +190,7 @@ fn validate_inbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
         match inbound {
             InboundConfig::Vless(inbound) => validate_vless_inbound(&path, inbound, &mut users)?,
             InboundConfig::Nxr(inbound) => validate_nxr_inbound(&path, inbound)?,
+            InboundConfig::Handoff(inbound) => validate_handoff_inbound(&path, inbound)?,
         }
     }
     Ok(users)
@@ -337,6 +343,134 @@ fn validate_base64_key(path: &str, key: &SecretString) -> Result<(), ConfigError
     Ok(())
 }
 
+fn validate_handoff_inbound(path: &str, inbound: &HandoffInboundConfig) -> Result<(), ConfigError> {
+    let settings = &inbound.settings;
+    validate_base64_key(
+        &format!("{path}.settings.preSharedKey"),
+        &settings.pre_shared_key,
+    )?;
+    validate_base64_key(
+        &format!("{path}.settings.privateKey"),
+        &settings.private_key,
+    )?;
+    if !(1..=MAX_HANDOFF_TIME_DIFFERENCE_SECONDS).contains(&settings.max_time_difference_seconds) {
+        return fail(
+            format!("{path}.settings.maxTimeDifferenceSeconds"),
+            format!("must be between 1 and {MAX_HANDOFF_TIME_DIFFERENCE_SECONDS}"),
+        );
+    }
+    if !(1..=MAX_HANDOFF_NONCE_ENTRIES).contains(&settings.max_nonce_entries) {
+        return fail(
+            format!("{path}.settings.maxNonceEntries"),
+            format!("must be between 1 and {MAX_HANDOFF_NONCE_ENTRIES}"),
+        );
+    }
+    let minimum_retention = settings
+        .max_time_difference_seconds
+        .saturating_mul(2)
+        .saturating_add(1);
+    if !(minimum_retention..=MAX_HANDOFF_NONCE_RETENTION_SECONDS)
+        .contains(&settings.nonce_retention_seconds)
+    {
+        return fail(
+            format!("{path}.settings.nonceRetentionSeconds"),
+            format!(
+                "must be between {minimum_retention} and {MAX_HANDOFF_NONCE_RETENTION_SECONDS}"
+            ),
+        );
+    }
+    validate_timeout(
+        &format!("{path}.settings.authenticationTimeoutMs"),
+        settings.authentication_timeout_ms,
+    )?;
+    validate_timeout(
+        &format!("{path}.settings.connectTimeoutMs"),
+        settings.connect_timeout_ms,
+    )
+}
+
+/// Enforces Handoff key independence within one configuration file.
+///
+/// A Handoff pre-shared key or static private key MUST be generated
+/// independently of the NXR pre-shared keys and the REALITY private keys;
+/// same-file reuse is exactly the copy-paste error an operator makes, and it
+/// is cheap to reject here. Cross-node reuse remains an operator obligation.
+fn validate_handoff_key_independence(config: &Config) -> Result<(), ConfigError> {
+    let mut nxr_psks: Vec<Zeroizing<Vec<u8>>> = Vec::new();
+    let mut reality_keys: Vec<Zeroizing<Vec<u8>>> = Vec::new();
+    for inbound in &config.inbounds {
+        match inbound {
+            InboundConfig::Vless(inbound) => {
+                if let Some(key) =
+                    decode_key_material(&inbound.stream_settings.reality_settings.private_key)
+                {
+                    reality_keys.push(key);
+                }
+            }
+            InboundConfig::Nxr(inbound) => {
+                if let Some(key) = decode_key_material(&inbound.settings.pre_shared_key) {
+                    nxr_psks.push(key);
+                }
+            }
+            InboundConfig::Handoff(_) => {}
+        }
+    }
+    for outbound in &config.outbounds {
+        if let OutboundConfig::Nxr { settings, .. } = outbound
+            && let Some(key) = decode_key_material(&settings.pre_shared_key)
+        {
+            nxr_psks.push(key);
+        }
+    }
+    for (index, inbound) in config.inbounds.iter().enumerate() {
+        let InboundConfig::Handoff(inbound) = inbound else {
+            continue;
+        };
+        let path = format!("inbounds[{index}].settings");
+        if shares_key_material(&inbound.settings.pre_shared_key, &nxr_psks) {
+            return fail(
+                format!("{path}.preSharedKey"),
+                "must be generated independently of every NXR preSharedKey in this configuration",
+            );
+        }
+        if shares_key_material(&inbound.settings.private_key, &reality_keys) {
+            return fail(
+                format!("{path}.privateKey"),
+                "must be generated independently of every REALITY privateKey in this configuration",
+            );
+        }
+    }
+    for (index, outbound) in config.outbounds.iter().enumerate() {
+        let OutboundConfig::Handoff { settings, .. } = outbound else {
+            continue;
+        };
+        if shares_key_material(&settings.pre_shared_key, &nxr_psks) {
+            return fail(
+                format!("outbounds[{index}].settings.preSharedKey"),
+                "must be generated independently of every NXR preSharedKey in this configuration",
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Decodes one already shape-validated base64 key for cross-field comparison;
+/// undecodable keys are reported by the field-level validators.
+fn decode_key_material(key: &SecretString) -> Option<Zeroizing<Vec<u8>>> {
+    BASE64_URL_SAFE_NO_PAD
+        .decode(key.expose())
+        .ok()
+        .map(Zeroizing::new)
+}
+
+fn shares_key_material(key: &SecretString, others: &[Zeroizing<Vec<u8>>]) -> bool {
+    decode_key_material(key).is_some_and(|key| {
+        others
+            .iter()
+            .any(|other| other.as_slice() == key.as_slice())
+    })
+}
+
 fn validate_outbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
     if config.outbounds.is_empty() {
         return fail("outbounds", "must contain at least one transport");
@@ -415,6 +549,44 @@ fn validate_outbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
                     return fail(
                         format!("{path}.settings.preSharedKey"),
                         "must decode to exactly 32 bytes",
+                    );
+                }
+            }
+            OutboundConfig::Handoff { settings, .. } => {
+                validate_hostname_or_ip(&format!("{path}.settings.address"), &settings.address)?;
+                if settings.port == 0 {
+                    return fail(format!("{path}.settings.port"), "must be greater than zero");
+                }
+                validate_base64_key(
+                    &format!("{path}.settings.preSharedKey"),
+                    &settings.pre_shared_key,
+                )?;
+                let public = BASE64_URL_SAFE_NO_PAD
+                    .decode(&settings.landing_public_key)
+                    .map_err(|_| {
+                        ConfigError::new(
+                            format!("{path}.settings.landingPublicKey"),
+                            "must be URL-safe unpadded base64",
+                        )
+                    })?;
+                if public.len() != 32 {
+                    return fail(
+                        format!("{path}.settings.landingPublicKey"),
+                        "must decode to exactly 32 bytes",
+                    );
+                }
+                validate_timeout(
+                    &format!("{path}.settings.connectTimeoutMs"),
+                    settings.connect_timeout_ms,
+                )?;
+                if !(MIN_HANDOFF_FIRST_BYTE_TIMEOUT_MS..=MAX_TIMEOUT_MS)
+                    .contains(&settings.first_byte_timeout_ms)
+                {
+                    return fail(
+                        format!("{path}.settings.firstByteTimeoutMs"),
+                        format!(
+                            "must be between {MIN_HANDOFF_FIRST_BYTE_TIMEOUT_MS} and {MAX_TIMEOUT_MS}"
+                        ),
                     );
                 }
             }
@@ -1106,6 +1278,249 @@ mod tests {
                 .expect_err("short replay retention must fail")
                 .path(),
             "inbounds[1].settings.nonceRetentionSeconds"
+        );
+    }
+
+    #[test]
+    fn accepts_internal_handoff_listener_and_outbound_independently() {
+        let mut config = valid_config();
+        let key = SecretString::new("WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo");
+        config.inbounds.push(crate::config::InboundConfig::Handoff(
+            crate::config::HandoffInboundConfig {
+                tag: "handoff-landing".to_owned(),
+                listen: "127.0.0.1".parse().expect("address must parse"),
+                port: 9444,
+                settings: crate::config::HandoffInboundSettings {
+                    pre_shared_key: key.clone(),
+                    private_key: key,
+                    max_time_difference_seconds: 30,
+                    max_nonce_entries: 4_096,
+                    nonce_retention_seconds: 120,
+                    authentication_timeout_ms: 3_000,
+                    connect_timeout_ms: 10_000,
+                },
+            },
+        ));
+        config.outbounds.push(OutboundConfig::Handoff {
+            tag: "handoff-line".to_owned(),
+            settings: crate::config::HandoffSettings {
+                address: "10.0.0.3".to_owned(),
+                port: 9444,
+                pre_shared_key: SecretString::new("WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo"),
+                landing_public_key: "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo".to_owned(),
+                connect_timeout_ms: 10_000,
+                first_byte_timeout_ms: 15_000,
+            },
+        });
+
+        validate_config(&config).expect("handoff listener and outbound must validate");
+    }
+
+    #[test]
+    fn rejects_handoff_key_material_that_is_not_32_byte_base64() {
+        let mut config = valid_config();
+        config.outbounds.push(OutboundConfig::Handoff {
+            tag: "handoff-line".to_owned(),
+            settings: crate::config::HandoffSettings {
+                address: "10.0.0.3".to_owned(),
+                port: 9444,
+                pre_shared_key: SecretString::new("WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo"),
+                landing_public_key: "not-base64!".to_owned(),
+                connect_timeout_ms: 10_000,
+                first_byte_timeout_ms: 15_000,
+            },
+        });
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("a malformed landing public key must fail")
+                .path(),
+            "outbounds[2].settings.landingPublicKey"
+        );
+    }
+
+    #[test]
+    fn handoff_first_byte_timeout_is_bounded_and_defaults() {
+        for (value, expect_valid) in [
+            (0_u64, false),
+            (999, false),
+            (1_000, true),
+            (600_000, true),
+            (600_001, false),
+        ] {
+            let mut config = valid_config();
+            config.outbounds.push(OutboundConfig::Handoff {
+                tag: "handoff-line".to_owned(),
+                settings: crate::config::HandoffSettings {
+                    address: "10.0.0.3".to_owned(),
+                    port: 9444,
+                    pre_shared_key: SecretString::new(
+                        "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo",
+                    ),
+                    landing_public_key: "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo".to_owned(),
+                    connect_timeout_ms: 10_000,
+                    first_byte_timeout_ms: value,
+                },
+            });
+            let result = validate_config(&config);
+            if expect_valid {
+                result.expect("an in-bounds first-byte timeout must validate");
+            } else {
+                assert_eq!(
+                    result
+                        .expect_err("an out-of-bounds first-byte timeout must fail")
+                        .path(),
+                    "outbounds[2].settings.firstByteTimeoutMs"
+                );
+            }
+        }
+
+        let settings: crate::config::HandoffSettings = serde_json::from_str(
+            r#"{
+                "address": "10.0.0.3",
+                "port": 9444,
+                "preSharedKey": "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo",
+                "landingPublicKey": "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo",
+                "connectTimeoutMs": 10000
+            }"#,
+        )
+        .expect("handoff settings must decode");
+        assert_eq!(
+            settings.first_byte_timeout_ms, 15_000,
+            "a missing field must default to 15 s"
+        );
+    }
+
+    #[test]
+    fn handoff_replay_retention_covers_the_entire_timestamp_window() {
+        let mut config = valid_config();
+        let key = SecretString::new("WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo");
+        config.inbounds.push(crate::config::InboundConfig::Handoff(
+            crate::config::HandoffInboundConfig {
+                tag: "handoff-landing".to_owned(),
+                listen: "127.0.0.1".parse().expect("address must parse"),
+                port: 9444,
+                settings: crate::config::HandoffInboundSettings {
+                    pre_shared_key: key.clone(),
+                    private_key: key,
+                    max_time_difference_seconds: 30,
+                    max_nonce_entries: 4_096,
+                    nonce_retention_seconds: 60,
+                    authentication_timeout_ms: 3_000,
+                    connect_timeout_ms: 10_000,
+                },
+            },
+        ));
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("short replay retention must fail")
+                .path(),
+            "inbounds[1].settings.nonceRetentionSeconds"
+        );
+    }
+
+    #[test]
+    fn rejects_handoff_psk_shared_with_nxr() {
+        let shared = SecretString::new("WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo");
+        // Handoff inbound reusing an NXR inbound's PSK.
+        let mut config = valid_config();
+        config
+            .inbounds
+            .push(crate::config::InboundConfig::Nxr(NxrInboundConfig {
+                tag: "landing-internal".to_owned(),
+                listen: "127.0.0.1".parse().expect("address must parse"),
+                port: 9443,
+                settings: NxrInboundSettings {
+                    pre_shared_key: shared.clone(),
+                    max_time_difference_seconds: 30,
+                    max_nonce_entries: 4_096,
+                    nonce_retention_seconds: 120,
+                    authentication_timeout_ms: 3_000,
+                    connect_timeout_ms: 10_000,
+                },
+            }));
+        config.inbounds.push(crate::config::InboundConfig::Handoff(
+            crate::config::HandoffInboundConfig {
+                tag: "handoff-landing".to_owned(),
+                listen: "127.0.0.1".parse().expect("address must parse"),
+                port: 9444,
+                settings: crate::config::HandoffInboundSettings {
+                    pre_shared_key: shared.clone(),
+                    private_key: SecretString::new("WVpZWVpZWVpZWVpZWVpZWVpZWVpZWVpZWVpZWVpZWVo"),
+                    max_time_difference_seconds: 30,
+                    max_nonce_entries: 4_096,
+                    nonce_retention_seconds: 120,
+                    authentication_timeout_ms: 3_000,
+                    connect_timeout_ms: 10_000,
+                },
+            },
+        ));
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("a shared Handoff/NXR PSK must fail")
+                .path(),
+            "inbounds[2].settings.preSharedKey"
+        );
+
+        // Handoff outbound reusing an NXR outbound's PSK.
+        let mut config = valid_config();
+        config.outbounds.push(OutboundConfig::Nxr {
+            tag: "landing".to_owned(),
+            settings: NxrSettings {
+                address: "127.0.0.1".to_owned(),
+                port: 9443,
+                pre_shared_key: shared.clone(),
+            },
+        });
+        config.outbounds.push(OutboundConfig::Handoff {
+            tag: "handoff-line".to_owned(),
+            settings: crate::config::HandoffSettings {
+                address: "10.0.0.3".to_owned(),
+                port: 9444,
+                pre_shared_key: shared,
+                landing_public_key: "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo".to_owned(),
+                connect_timeout_ms: 10_000,
+                first_byte_timeout_ms: 15_000,
+            },
+        });
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("a shared Handoff/NXR PSK must fail")
+                .path(),
+            "outbounds[3].settings.preSharedKey"
+        );
+    }
+
+    #[test]
+    fn rejects_handoff_private_key_shared_with_reality() {
+        let mut config = valid_config();
+        // The fixture REALITY private key, reused as the Handoff static key.
+        let shared = SecretString::new("ERERERERERERERERERERERERERERERERERERERERERE");
+        config.inbounds.push(crate::config::InboundConfig::Handoff(
+            crate::config::HandoffInboundConfig {
+                tag: "handoff-landing".to_owned(),
+                listen: "127.0.0.1".parse().expect("address must parse"),
+                port: 9444,
+                settings: crate::config::HandoffInboundSettings {
+                    pre_shared_key: SecretString::new(
+                        "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo",
+                    ),
+                    private_key: shared,
+                    max_time_difference_seconds: 30,
+                    max_nonce_entries: 4_096,
+                    nonce_retention_seconds: 120,
+                    authentication_timeout_ms: 3_000,
+                    connect_timeout_ms: 10_000,
+                },
+            },
+        ));
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("a shared Handoff/REALITY private key must fail")
+                .path(),
+            "inbounds[1].settings.privateKey"
         );
     }
 

@@ -18,6 +18,7 @@ use tokio::{
 use crate::{
     config::{Config, DnsStrategy, ResourceGovernorConfig},
     protocol::{
+        handoff::ContinuationState,
         reality::tls13::{
             IdleDeadline, IdleError, MAX_PLAINTEXT_LEN, TlsApplicationIoError,
             TlsApplicationReader, TlsApplicationWriter, VectoredRead,
@@ -32,6 +33,7 @@ use crate::{
 
 use super::{
     direct::{DirectHandoff, Direction, DirectionState, InvalidTransition, RawDecision},
+    handoff::HandoffLineError,
     outbound::{OutboundConnectError, OutboundConnectOutcome, OutboundRegistry},
     reality::RealityEstablished,
     routing::{AssetMatcher, RouteResolutionError, RoutingCompileError, RoutingTable},
@@ -288,6 +290,7 @@ impl VisionHandler {
         &self,
         established: RealityEstablished,
     ) -> Result<VisionRelayStats, VisionSessionError> {
+        let client_random = *established.client_random();
         let (application, users, inbound_tag) = established.into_parts();
         let (mut client_reader, mut client_writer) = application.into_owned_split();
         let request = read_vision_request(&mut client_reader, &users, self.request_timeout).await?;
@@ -302,6 +305,16 @@ impl VisionHandler {
             )
             .await
             .map_err(VisionSessionError::Route)?;
+        // The session-handoff boundary: routing has selected the outbound, the
+        // downlink TLS direction is still at sequence zero with nothing
+        // written, and no Vision encoder or decoder exists yet. A handoff
+        // outbound transfers the session to the landing node here and this
+        // node never touches its TLS or Vision state again.
+        if let Some(line) = self.outbounds.handoff_line(route.decision().outbound()) {
+            return self
+                .relay_via_handoff(&line, client_reader, client_writer, request, client_random)
+                .await;
+        }
         let outcome = self
             .outbounds
             .connect_resolved(
@@ -362,30 +375,127 @@ impl VisionHandler {
         );
         let (uplink, downlink) = tokio::try_join!(uplink, downlink)?;
         drop(outbound_permit);
+        Ok(session_stats(uplink, downlink))
+    }
 
-        let handed_off = uplink.handoff.or(downlink.handoff);
-        let (handed_up, handed_down) = handed_off.map_or((0, 0), |outcome| {
-            (outcome.inbound_to_outbound(), outcome.outbound_to_inbound())
-        });
-        let pair_backend = handed_off.map(RelayOutcome::backend);
+    /// Transfers one boundary-session to a Handoff landing node, then relays
+    /// the client socket against the handoff socket raw in both directions.
+    ///
+    /// The continuation carries both record layers, the reader's read-ahead
+    /// ciphertext, and the prefetched VLESS payload; afterwards this node
+    /// never decrypts or frames the session again. Any failure — dial, seal,
+    /// or write — leaves the abort guard armed, so the client socket is reset
+    /// rather than half-closed and the session is never served locally with
+    /// consumed state. A successful transfer always produces immediate
+    /// downlink (the response header and opening Vision frame are LANDING's
+    /// first sealed record), while every rejection closes the connection
+    /// silently; the first landing byte is therefore awaited with a bounded
+    /// deadline before the relay starts, and its absence — close, stall, or
+    /// non-TLS bytes — is classified as rejection while every descriptor is
+    /// still open, so the armed guard resets the client socket instead of
+    /// FIN-ing it and the sockets, permits, and pipes release immediately.
+    /// The client halves are reunited before the probe so the abortive close
+    /// is not preceded by `OwnedWriteHalf`'s shutdown-on-drop FIN.
+    async fn relay_via_handoff(
+        &self,
+        line: &super::handoff::HandoffLine,
+        client_reader: TlsApplicationReader<OwnedReadHalf>,
+        client_writer: TlsApplicationWriter<OwnedWriteHalf>,
+        request: AcceptedVisionRequest,
+        client_random: [u8; 32],
+    ) -> Result<VisionRelayStats, VisionSessionError> {
+        let client_fd = client_reader.fd();
+        let (pending, client_read_half, client_records) = client_reader.into_handoff_parts();
+        let (client_write_half, server_records) = client_writer.into_handoff_parts();
+        // Until the transfer provably lands, the guard covers only the client
+        // socket (twice — the second abort is an idempotent setsockopt); the
+        // landing descriptor takes its place once it exists.
+        let mut guard = DirectionAbortGuard::new(client_fd, client_fd);
+        let (suite, client_traffic, client_sequence) =
+            client_records.into_exported_state().into_parts();
+        let (_suite, server_traffic, server_sequence) =
+            server_records.into_exported_state().into_parts();
+        let prefetched = request
+            .buffer
+            .get(request.prefetched.clone())
+            .unwrap_or_default()
+            .to_vec();
+        let state = ContinuationState::new(
+            suite,
+            client_traffic,
+            client_sequence,
+            server_traffic,
+            server_sequence,
+            *request.user_id.as_bytes(),
+            request.destination.clone(),
+            pending,
+            prefetched,
+        )
+        .map_err(HandoffLineError::Transfer)
+        .map_err(VisionSessionError::HandoffLine)?;
+        let (handoff_stream, _fd_permit) = line
+            .transfer(self.relay.fd_budget(), &state, client_random)
+            .await
+            .map_err(VisionSessionError::HandoffLine)?;
+        // The sealed continuation is on the wire; its key material must not
+        // live across the first-byte probe and the session relay below.
+        drop(state);
+        guard.fds[1] = handoff_stream.as_raw_fd();
+        let client_stream = client_read_half
+            .reunite(client_write_half)
+            .map_err(|_| VisionSessionError::HandoffLine(HandoffLineError::Reunite))?;
+        // Classify the silent protocol's only failure signal before any socket
+        // moves into the relay: no TLS downlink byte within the configured
+        // first-byte deadline means rejection. The guard's descriptors are
+        // still open here, so dropping it armed aborts both sockets
+        // (SO_LINGER {on,0}); they close as whole streams right after,
+        // delivering RST — never FIN — and the session's descriptors,
+        // permits, and pipes are not held until the idle timeout.
+        if !super::handoff::first_downlink_landed(&handoff_stream, line.first_byte_timeout()).await
+        {
+            drop(guard);
+            return Err(VisionSessionError::HandoffLine(
+                HandoffLineError::LandingRejected,
+            ));
+        }
+        let outcome = self
+            .relay
+            .relay_owned(
+                client_stream,
+                handoff_stream,
+                // Both sockets carry the session's TLS records, whose own
+                // close semantics LANDING and the client enforce; a teardown
+                // reset from either side ends its direction like an EOF.
+                RelayContext::owned()
+                    .with_liveness(self.io_timeout)
+                    .with_source_reset_as_eof(),
+            )
+            .await
+            .map_err(HandoffLineError::Relay)
+            .map_err(VisionSessionError::HandoffLine)?;
+        // Backstop for the first-byte probe above: a completed relay that
+        // moved zero downlink bytes still reads as a rejection.
+        if outcome.outbound_to_inbound() == 0 {
+            return Err(VisionSessionError::HandoffLine(
+                HandoffLineError::LandingRejected,
+            ));
+        }
+        guard.disarm();
+        // The counts are raw ciphertext bytes moved by the splice, matching how
+        // the Direct transition counts its raw phase.
         Ok(VisionRelayStats {
-            uplink_bytes: uplink.bytes.saturating_add(handed_up),
-            downlink_bytes: downlink.bytes.saturating_add(handed_down),
-            uplink_direct: uplink.direct,
-            downlink_direct: downlink.direct,
-            relay_backend: pair_backend,
-            uplink_direct_at_bytes: uplink.direct_at_bytes,
-            downlink_direct_at_bytes: downlink.direct_at_bytes,
-            // A pair outcome exists only when both directions committed to the
-            // bilateral handoff, so a directional backend and the pair backend
-            // can never both be present for one direction.
-            uplink_backend: uplink.backend.or(pair_backend),
-            downlink_backend: downlink.backend.or(pair_backend),
-            uplink_handoff_delay_us: uplink.handoff_delay_us,
-            downlink_handoff_delay_us: downlink.handoff_delay_us,
-            pipe_capacity_downgraded: handed_off.and_then(RelayOutcome::pipe_downgrade).is_some()
-                || uplink.pipe_downgrade
-                || downlink.pipe_downgrade,
+            uplink_bytes: outcome.inbound_to_outbound(),
+            downlink_bytes: outcome.outbound_to_inbound(),
+            uplink_direct: false,
+            downlink_direct: false,
+            relay_backend: Some(outcome.backend()),
+            uplink_direct_at_bytes: 0,
+            downlink_direct_at_bytes: 0,
+            uplink_backend: None,
+            downlink_backend: None,
+            uplink_handoff_delay_us: 0,
+            downlink_handoff_delay_us: 0,
+            pipe_capacity_downgraded: outcome.pipe_downgrade().is_some(),
         })
     }
 }
@@ -399,6 +509,83 @@ struct AcceptedVisionRequest {
     /// the same record.
     buffer: Vec<u8>,
     prefetched: Range<usize>,
+}
+
+/// Combines both directions' counters into per-session relay statistics.
+fn session_stats(uplink: DirectionStats, downlink: DirectionStats) -> VisionRelayStats {
+    let handed_off = uplink.handoff.or(downlink.handoff);
+    let (handed_up, handed_down) = handed_off.map_or((0, 0), |outcome| {
+        (outcome.inbound_to_outbound(), outcome.outbound_to_inbound())
+    });
+    let pair_backend = handed_off.map(RelayOutcome::backend);
+    VisionRelayStats {
+        uplink_bytes: uplink.bytes.saturating_add(handed_up),
+        downlink_bytes: downlink.bytes.saturating_add(handed_down),
+        uplink_direct: uplink.direct,
+        downlink_direct: downlink.direct,
+        relay_backend: pair_backend,
+        uplink_direct_at_bytes: uplink.direct_at_bytes,
+        downlink_direct_at_bytes: downlink.direct_at_bytes,
+        // A pair outcome exists only when both directions committed to the
+        // bilateral handoff, so a directional backend and the pair backend
+        // can never both be present for one direction.
+        uplink_backend: uplink.backend.or(pair_backend),
+        downlink_backend: downlink.backend.or(pair_backend),
+        uplink_handoff_delay_us: uplink.handoff_delay_us,
+        downlink_handoff_delay_us: downlink.handoff_delay_us,
+        pipe_capacity_downgraded: handed_off.and_then(RelayOutcome::pipe_downgrade).is_some()
+            || uplink.pipe_downgrade
+            || downlink.pipe_downgrade,
+    }
+}
+
+/// Runs the standard Vision relay for a session resumed from a Handoff
+/// transfer on a landing node.
+///
+/// The resumed halves carry the transferred record layers, and the reader is
+/// preloaded with the read-ahead ciphertext the previous owner had already
+/// consumed from the kernel, so the client-visible record stream continues
+/// exactly at the boundary. `prefetched_plaintext` enters the fresh Vision
+/// decoder before any decrypted record, mirroring the freshly accepted path.
+/// The response header and opening Vision frame are the first sealed server
+/// record, which the transfer channel guarantees sits at sequence zero.
+pub(crate) async fn run_resumed_session(
+    client_reader: TlsApplicationReader<OwnedReadHalf>,
+    client_writer: TlsApplicationWriter<OwnedWriteHalf>,
+    destination: tokio::net::TcpStream,
+    user_id: UserId,
+    prefetched_plaintext: Vec<u8>,
+    relay: &TcpRelay,
+    timeout: Duration,
+) -> Result<VisionRelayStats, VisionSessionError> {
+    let (destination_reader, destination_writer) = destination.into_split();
+    // Identical to `encode_response_header(&request.header, &[])`: the VLESS
+    // version is fixed and this implementation never negotiates addons.
+    let response_header = [crate::protocol::vless::VERSION, 0];
+    let prefetched = 0..prefetched_plaintext.len();
+    let handoff = DirectHandoff::new();
+    let context = SessionContext {
+        timeout,
+        handoff: &handoff,
+        relay,
+    };
+    let uplink = relay_uplink(
+        client_reader,
+        destination_writer,
+        user_id,
+        prefetched_plaintext,
+        prefetched,
+        &context,
+    );
+    let downlink = relay_downlink(
+        destination_reader,
+        client_writer,
+        user_id,
+        &response_header,
+        &context,
+    );
+    let (uplink, downlink) = tokio::try_join!(uplink, downlink)?;
+    Ok(session_stats(uplink, downlink))
 }
 
 async fn read_vision_request<R>(
@@ -1724,6 +1911,7 @@ pub enum VisionSessionError {
     DestinationTruncatedTlsRecord,
     DirectTransition(InvalidTransition),
     Handoff(io::Error),
+    HandoffLine(HandoffLineError),
     Relay(io::Error),
     Io(io::Error),
 }
@@ -1749,6 +1937,7 @@ impl fmt::Display for VisionSessionError {
             }
             Self::DirectTransition(source) => source.fmt(formatter),
             Self::Handoff(_) => formatter.write_str("Vision Direct socket recovery failed"),
+            Self::HandoffLine(source) => source.fmt(formatter),
             Self::Relay(_) => formatter.write_str("unified raw relay failed"),
             Self::Io(_) => formatter.write_str("Vision relay socket I/O failed"),
         }
@@ -1768,6 +1957,7 @@ impl Error for VisionSessionError {
             Self::VisionEncode(source) => Some(source),
             Self::DirectTransition(source) => Some(source),
             Self::Handoff(source) | Self::Relay(source) | Self::Io(source) => Some(source),
+            Self::HandoffLine(source) => Some(source),
             Self::Timeout
             | Self::AllocationFailed
             | Self::RequestTooLarge { .. }

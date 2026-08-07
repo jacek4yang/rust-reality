@@ -862,6 +862,24 @@ RTT 下，1 Gbps 路径需要在途 ≈12.5 MB（DERIVED BDP）；默认接收�
   每一个字节，所以它的网络和中继预算比 TLS 预算更要紧（由角色定义
   DERIVED）。
 
+采用 **Handoff** 拓扑时角色发生变化：线路机在一次性转移之后卸下逐字节
+TLS/Vision 工作，变成原始密文 splice 中继；落地机重建会话并承担完整 TLS
+工作负载和目标连接。
+
+- **Handoff 线路节点** —— 会话边界之前是 REALITY + VLESS + Vision，
+  之后是纯 splice。§4 主机档位上的 loopback 实测：下载约 98 ms CPU/GiB，
+  而 NXR 线路角色为 549（MEASURED-LOCAL，单机，无 cgroup 隔离）。其稳态
+  成本由系统调用速率的 splice 工作决定，与密码学无关——按中继而不是
+  TLS 终结者来规划。
+- **Handoff 落地节点** —— 继承 standalone TLS 预算的全部内容：记录层
+  AEAD、Vision framing、目标连接和中继（同一 loopback 实测中下载约
+  517 ms CPU/GiB）。按 §4 把它当作被转移会话的 standalone 节点来规划，
+  再加上它自己的监听器限制（由角色定义和 §4 profile DERIVED）。
+
+两种拓扑的链路系统总 CPU 大致持平（该 loopback A/B 中下载 −5.6%），
+所以选择的是 CPU 花在哪台机器上，而不是总量；实测表及其标注见
+[performance.md](performance.zh-CN.md#handoff-线路机卸载实测单机)。
+
 相同端点上实测（MEASURED-LOCAL）：NXR 段相比 direct 增加 ≈3–5% 吞吐
 税和每连接 ≈+0.15 ms CPU——小到足以让"落地节点比线路节点低一档"成为
 合理的初始假设，再用你自己的 `memory.current` 和 CPU 测量确认（作为

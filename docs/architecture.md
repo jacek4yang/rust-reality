@@ -122,6 +122,51 @@ registration per progress step, no hot-path logging.
 | raw relay (buffered) | direction task(s) | pooled 32 KiB buffer | pool Mutex + semaphore per session | read+write/chunk | 1 userspace copy/chunk |
 | teardown | direction tasks | 0 | state CAS | shutdown/close; abort→SO_LINGER+close | 0 |
 
+## Handoff session transfer
+
+When routing resolves an accepted session to a handoff outbound, the session
+changes owner instead of being served locally. The boundary is exact: routing
+has resolved, nothing was ever written toward the client, the server-direction
+record sequence is still zero, and no Vision state exists yet. The ownership
+rule is **one session, one protocol owner at any instant**:
+
+```text
+LINE_OWNED -> HANDOFF_IN_PROGRESS -> LANDING_OWNED | ABORTED
+```
+
+- **LINE_OWNED** — the line node holds the full session: both TLS 1.3 record
+  layers, the VLESS request, the client socket.
+- **HANDOFF_IN_PROGRESS** — LINE exports the continuation state and seals it
+  into one single-flight transfer (a fresh ephemeral X25519 exchange against
+  the landing node's static key, mixed with the pair PSK, ChaCha20-Poly1305
+  over the full transcript). What crosses the channel, by class: the session
+  key material (both directions' application traffic keys and IVs), the
+  record sequences and cipher suite, the routing decision (VLESS user id and
+  destination), and the in-flight buffers (client random, read-ahead
+  ciphertext the reader already consumed, prefetched request payload). After
+  the transfer write completes, LINE drops its copy of the continuation state
+  and holds no TLS or Vision state for the session again.
+- **LANDING_OWNED** — LANDING verifies the transfer (header, timestamp,
+  replay cache, key agreement, AEAD, consistency checks — in that order),
+  reconstructs the record layers, feeds the transferred pending bytes first,
+  dials the destination directly, and runs the standard Vision relay. Its
+  first sealed record (the VLESS response header and opening Vision frame)
+  doubles as the transfer's success signal.
+- **ABORTED** — every LANDING-side failure is a silent close with zero
+  response bytes. LINE awaits the first downlink byte with a bounded deadline
+  (`firstByteTimeoutMs`); its absence — close, stall, or non-TLS bytes — is
+  the rejection signal, and LINE resets the client socket with
+  `SO_LINGER{on,0}` (RST, never FIN) instead of serving the session locally
+  with consumed state.
+
+After a successful transfer LINE becomes a thin raw relay: it splices client
+ciphertext against the handoff socket in both directions without touching a
+single TLS record — the session's per-byte cryptographic ownership has moved
+to LANDING. A client that resets at teardown (a close with the final
+close_notify unread) ends the affected splice direction like an EOF, because
+both sockets carry TLS records whose close semantics the endpoints enforce;
+every other raw relay keeps the abort-on-reset semantics.
+
 ## Descriptor budget
 
 Derived at startup, before any listener is bound:

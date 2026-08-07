@@ -197,6 +197,52 @@ rust-reality config format --config config.json > config.formatted.json
 NXR 认证失败会在 DNS 和目标连接之前静默关闭；成功后连接切换成原始双向字节。
 NXR 没有认证后加密，不得直接暴露在互联网。
 
+### 内部 Handoff 入站
+
+```json
+{
+  "protocol": "handoff",
+  "tag": "internal-handoff",
+  "listen": "0.0.0.0",
+  "port": 7443,
+  "settings": {
+    "preSharedKey": "GENERATED-HANDOFF-KEY",
+    "privateKey": "GENERATED-X25519-PRIVATE-KEY",
+    "maxTimeDifferenceSeconds": 30,
+    "maxNonceEntries": 65536,
+    "nonceRetentionSeconds": 120,
+    "authenticationTimeoutMs": 3000,
+    "connectTimeoutMs": 10000
+  }
+}
+```
+
+| 字段 | 必填 | 默认值 | 含义与约束 |
+| --- | --- | --- | --- |
+| `protocol` | 是 | 固定 `handoff` | 选择内部会话转移协议。 |
+| `tag` | 是 | — | 唯一监听/运维 tag。 |
+| `listen` | 是 | — | 内部绑定地址，必须由主机/云防火墙限制。 |
+| `port` | 是 | — | 非零原始 Handoff TCP 端口。 |
+| `settings.preSharedKey` | 是 | — | 独立 URL-safe 无填充 base64，解码为恰好 32 字节；与线路机 handoff 出站共享的成对 PSK。 |
+| `settings.privateKey` | 是 | — | 独立的静态 X25519 私钥，URL-safe 无填充 base64，解码为恰好 32 字节；其公钥即线路出站的 `landingPublicKey`。 |
+| `settings.maxTimeDifferenceSeconds` | 否 | `30` | 接受的绝对墙上时钟差，`1..=300`。 |
+| `settings.maxNonceEntries` | 否 | `65536` | 已保留转移 nonce 最大条目数，`1..=1000000`。 |
+| `settings.nonceRetentionSeconds` | 否 | `120` | 重放保留时间，从 `2 * maxTimeDifferenceSeconds + 1` 到 `86400`。 |
+| `settings.authenticationTimeoutMs` | 否 | `3000` | 读取一次有界密封转移消息的截止时间，`1..=600000`。 |
+| `settings.connectTimeoutMs` | 否 | `10000` | 认证成功后才开始的被转移目标连接截止时间，`1..=600000`。 |
+
+监听器对每条连接只验证一次单程转移—— fresh ephemeral X25519 对 `privateKey`
+做 Diffie-Hellman，与成对 PSK 混合后用 ChaCha20-Poly1305 以完整 transcript 为
+关联数据密封——顺序固定为：头部结构、时间戳窗口、nonce 在有界重放缓存中预留、
+密钥协商、AEAD 开封，最后是内部一致性检查。任何失败都在 DNS 和目标连接之前
+静默关闭，零响应字节。成功后监听器重建会话的 TLS 记录层，直接连接被转移的
+目标并恢复会话；此后该连接承载会话的原始 TLS 密文。
+
+密钥独立性在同一配置文件内强制检查：Handoff `preSharedKey` 与任何 NXR
+`preSharedKey` 相同，或 Handoff `privateKey` 与任何 REALITY `privateKey` 相同，
+都无法通过校验。跨节点的独立性仍是运维者的责任。Handoff 监听器承载在线会话
+密钥，不得直接暴露在互联网：防火墙应只允许来自线路机源地址的访问。
+
 ## `outbounds`
 
 `outbounds` 不得为空。出站 tag 使用相同的 1–64 字符语法，并在出站之间唯一。
@@ -272,6 +318,43 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 
 每条用户 TCP 流建立一条 NXR TCP 连接并发送一次严格有界认证请求；没有多路复用
 或长期连接池。
+
+### Handoff 出站
+
+```json
+{
+  "protocol": "handoff",
+  "tag": "landing",
+  "settings": {
+    "address": "10.0.0.2",
+    "port": 7443,
+    "preSharedKey": "GENERATED-HANDOFF-KEY",
+    "landingPublicKey": "GENERATED-X25519-PUBLIC-KEY",
+    "connectTimeoutMs": 10000,
+    "firstByteTimeoutMs": 15000
+  }
+}
+```
+
+| 字段 | 必填 | 默认值 | 含义与约束 |
+| --- | --- | --- | --- |
+| `settings.address` | 是 | — | 有效落地机 ASCII hostname 或 IP。 |
+| `settings.port` | 是 | — | 防火墙限制的非零 Handoff TCP 端口。 |
+| `settings.preSharedKey` | 是 | — | 与落地入站相同的独立 URL-safe 无填充 32 字节成对 PSK。 |
+| `settings.landingPublicKey` | 是 | — | 落地机的静态 X25519 公钥，URL-safe 无填充 base64，解码为恰好 32 字节；公开材料，不是秘密。 |
+| `settings.connectTimeoutMs` | 否 | `10000` | 连接落地机并写入一次密封转移消息的截止时间，`1..=600000`。 |
+| `settings.firstByteTimeoutMs` | 否 | `15000` | 转移后落地机首个下行字节的截止时间，`1000..=600000`；见下文。 |
+
+把用户路由到 handoff 出站会在会话边界把整个已认证会话转移给落地机：每条
+会话一条 TCP 连接，承载一次密封转移，随后承载会话的原始 TLS 密文——没有多路
+复用或长期连接池。转移协议对任何失败都以静默关闭应答，因此线路机把
+`firstByteTimeoutMs` 内没有首个下行字节视为拒绝信号，并重置客户端 socket；
+转移失败后会话绝不在本地继续服务。
+
+`firstByteTimeoutMs` 必须大于落地机的 `authenticationTimeoutMs +
+connectTimeoutMs` 并留有余量：首个密封记录只有在转移被读取、认证完成、目标
+连接建立之后才会产生，更短的截止时间会重置那些落地机缓慢或拥塞的正常会话。
+默认值 15000 ms 覆盖落地机的默认预算（3000 + 10000 ms）。
 
 ## `routing`
 
@@ -557,7 +640,8 @@ generation，已有连接继续使用其获取的 generation。
 - DNS 超时；
 - VLESS 用户及 REALITY 认证/伪装状态；
 - 出站定义、路由组和规则；
-- 在重放容量/保留时间不变时，NXR 密钥、时钟窗口和 I/O 超时。
+- 在重放容量/保留时间不变时，NXR 密钥、时钟窗口和 I/O 超时；
+- 在重放容量/保留时间不变时，Handoff 密钥材料、时钟窗口和超时。
 
 必须重启：
 
@@ -566,7 +650,8 @@ generation，已有连接继续使用其获取的 generation。
 - 任意 `policy.resourceGovernor` 修改，因为 REALITY 重放 admission/状态属于进程生命周期；
 - 任意 `policy.directBarrier` 修改，因为直连拨号 authority 属于进程生命周期；
 - 任意 `policy.relay` 修改，因为缓冲/splice 池属于进程生命周期；
-- NXR `maxNonceEntries` 或 `nonceRetentionSeconds` 修改。
+- NXR `maxNonceEntries` 或 `nonceRetentionSeconds` 修改；
+- Handoff `maxNonceEntries` 或 `nonceRetentionSeconds` 修改。
 
 SIGHUP 前先运行 `check`，最好运行 `self-test`。文件本身有效仍可能不兼容热更新，
 此时需要受控重启。
@@ -574,7 +659,8 @@ SIGHUP 前先运行 `check`，最好运行 `self-test`。文件本身有效仍�
 ## 秘密与文件处理
 
 - 配置权限使用 `0640 root:rust-reality` 或更严格。
-- 不要提交生成 UUID、REALITY 私钥、应保密的 short ID、NXR PSK、SOCKS 凭据或真实端点。
+- 不要提交生成 UUID、REALITY 私钥、应保密的 short ID、NXR PSK、Handoff PSK、
+  Handoff 静态私钥、SOCKS 凭据或真实端点。
 - 在可信主机使用操作系统熵生成密钥，并通过已认证信道传输。
 - 使用专用可写资产目录；外部 DAT 文件必须留在该目录内。
 - `config format` 会把包括秘密在内的完整配置写到 stdout；重定向时谨慎，不要管道到日志。

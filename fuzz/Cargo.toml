@@ -9,7 +9,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-rust-reality = { path = ".." }
+rust-reality = { path = "..", features = ["fuzzing"] }
+x25519-dalek = { version = "3.0.0", default-features = false, features = ["static_secrets"] }
 
 [[bin]]
 name = "wire_parsers"
@@ -21,6 +22,27 @@ bench = false
 [[bin]]
 name = "vision_decoder"
 path = "fuzz_targets/vision_decoder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handoff_header"
+path = "fuzz_targets/handoff_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handoff_blob"
+path = "fuzz_targets/handoff_blob.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handoff_open_transfer"
+path = "fuzz_targets/handoff_open_transfer.rs"
 test = false
 doc = false
 bench = false

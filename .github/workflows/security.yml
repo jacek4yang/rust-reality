@@ -53,6 +53,12 @@ jobs:
         run: cargo +nightly fuzz run wire_parsers -- -runs=20000 -max_len=65536
       - name: Fuzz Vision framing
         run: cargo +nightly fuzz run vision_decoder -- -runs=20000 -max_len=16384
+      - name: Fuzz handoff header parser
+        run: cargo +nightly fuzz run handoff_header -- -runs=20000 -max_len=65536
+      - name: Fuzz handoff continuation blob decoder
+        run: cargo +nightly fuzz run handoff_blob -- -runs=20000 -max_len=131072
+      - name: Fuzz handoff transfer open
+        run: cargo +nightly fuzz run handoff_open_transfer -- -runs=20000 -max_len=65536
 
   sanitizers:
     name: Address and leak sanitizer

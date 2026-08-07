@@ -8,10 +8,10 @@ use zeroize::Zeroizing;
 use crate::protocol::reality::{AuthKey, ClientHello, X25519_GROUP, X25519_MLKEM768_GROUP};
 
 use super::{
-    CertificateIdentity, CipherSuite, ContentType, FinishedVerifyData, HandshakeMessageError,
-    ServerHelloError, ServerHelloTemplate, Tls13KeySchedule, Tls13KeyScheduleError,
-    Tls13RecordError, Tls13RecordLayer, certificate_message, change_cipher_spec_record,
-    encrypted_extensions, finished_message, plaintext_handshake_record,
+    CertificateIdentity, CipherSuite, ContentType, ExportedRecordState, FinishedVerifyData,
+    HandshakeMessageError, ServerHelloError, ServerHelloTemplate, Tls13KeySchedule,
+    Tls13KeyScheduleError, Tls13RecordError, Tls13RecordLayer, certificate_message,
+    change_cipher_spec_record, encrypted_extensions, finished_message, plaintext_handshake_record,
 };
 
 const FINISHED_HANDSHAKE_TYPE: u8 = 20;
@@ -106,6 +106,38 @@ impl EstablishedTls {
         (self.client_records, self.server_records)
     }
 
+    /// Consumes the session and exports both directions' application-traffic
+    /// state for a session handoff.
+    ///
+    /// After this call no live owner of the session's key material remains:
+    /// the record layers are consumed, and the returned state is the single
+    /// owner of both directions' keys and sequences.
+    #[must_use]
+    pub fn into_exported_state(self) -> ExportedTlsState {
+        ExportedTlsState {
+            client: self.client_records.into_exported_state(),
+            server: self.server_records.into_exported_state(),
+        }
+    }
+
+    /// Rebuilds a working session from previously exported state.
+    ///
+    /// # Errors
+    ///
+    /// Rejects mismatched direction suites, key material that does not match
+    /// its suite, and sequences that already reached a per-key record limit.
+    pub fn from_exported_state(state: ExportedTlsState) -> Result<Self, Tls13RecordError> {
+        if state.client.suite() != state.server.suite() {
+            return Err(Tls13RecordError::InvalidKey);
+        }
+        let suite = state.client.suite();
+        Ok(Self {
+            suite,
+            client_records: Tls13RecordLayer::from_exported_state(state.client)?,
+            server_records: Tls13RecordLayer::from_exported_state(state.server)?,
+        })
+    }
+
     #[cfg(test)]
     pub(crate) const fn from_test_records(
         suite: CipherSuite,
@@ -126,6 +158,58 @@ impl fmt::Debug for EstablishedTls {
             .debug_struct("EstablishedTls")
             .field("suite", &self.suite)
             .field("traffic_state", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// Both directions' exported application-traffic state of one session.
+///
+/// The single owner of a session's key material between export on one node
+/// and reconstruction on another; see
+/// [`EstablishedTls::into_exported_state`]. Key material is zeroized on drop
+/// and never appears in `Debug` output.
+pub struct ExportedTlsState {
+    client: ExportedRecordState,
+    server: ExportedRecordState,
+}
+
+impl ExportedTlsState {
+    /// Returns the client-to-server direction's exported state.
+    #[must_use]
+    pub const fn client(&self) -> &ExportedRecordState {
+        &self.client
+    }
+
+    /// Returns the server-to-client direction's exported state.
+    #[must_use]
+    pub const fn server(&self) -> &ExportedRecordState {
+        &self.server
+    }
+
+    /// Separates the two directions without copying key material.
+    #[must_use]
+    pub fn into_directions(self) -> (ExportedRecordState, ExportedRecordState) {
+        (self.client, self.server)
+    }
+
+    /// Reassembles both directions' exported state as received from a session
+    /// handoff.
+    ///
+    /// Direction-suite agreement and per-key record ceilings are enforced when
+    /// the state becomes a working session again through
+    /// [`EstablishedTls::from_exported_state`].
+    #[must_use]
+    pub const fn from_directions(client: ExportedRecordState, server: ExportedRecordState) -> Self {
+        Self { client, server }
+    }
+}
+
+impl fmt::Debug for ExportedTlsState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ExportedTlsState")
+            .field("client", &self.client)
+            .field("server", &self.server)
             .finish()
     }
 }
@@ -414,7 +498,7 @@ mod tests {
     use tokio::io::{AsyncWriteExt, duplex};
     use x25519_dalek::{PublicKey, StaticSecret};
 
-    use super::{RealityHandshakeError, build_server_flight};
+    use super::{EstablishedTls, RealityHandshakeError, build_server_flight};
     use crate::protocol::reality::{
         AuthKey, ClientHello, SESSION_ID_LEN, X25519_GROUP, X25519_MLKEM768_GROUP,
         client_hello::fixtures,
@@ -593,6 +677,72 @@ mod tests {
             Some(b"http/1.1"),
         );
         assert!(matches!(result, Err(RealityHandshakeError::AlpnNotOffered)));
+    }
+
+    #[test]
+    fn exported_session_state_resumes_interoperation_with_the_client() {
+        let suite = CipherSuite::Aes256GcmSha384;
+        // `established` plays the server's view; `client_*` plays the remote
+        // client holding identical key material for each direction.
+        let make_layer = || {
+            let transcript = suite.hash().digest(b"ClientHelloServerHello");
+            let schedule = Tls13KeySchedule::new(suite, &[0x42; 32], &transcript)
+                .expect("test schedule must derive");
+            let keys = schedule
+                .traffic_keys(schedule.server_handshake_secret())
+                .expect("test keys must derive");
+            Tls13RecordLayer::new(suite, keys).expect("test layer must initialize")
+        };
+        let mut client_writer = make_layer();
+        let mut client_reader = make_layer();
+        let mut established = EstablishedTls::from_test_records(suite, make_layer(), make_layer());
+
+        // Two client-direction records before the handoff boundary.
+        for index in 0..2_u8 {
+            let mut record = Vec::new();
+            client_writer
+                .seal_into(ContentType::ApplicationData, &[index; 32], 0, &mut record)
+                .expect("client record must seal");
+            established
+                .client_records_mut()
+                .open_in_place(&mut record)
+                .expect("server must open the client record");
+        }
+
+        let exported = established.into_exported_state();
+        assert_eq!(exported.client().sequence(), 2);
+        assert_eq!(exported.server().sequence(), 0);
+        let rendered = format!("{exported:?}");
+        assert!(rendered.contains("[REDACTED]"));
+
+        let mut resumed = EstablishedTls::from_exported_state(exported)
+            .expect("exported session state must rebuild");
+        assert_eq!(resumed.suite(), suite);
+
+        // Uplink continuation: the client's third record opens on the resumed
+        // client-direction layer.
+        let mut record = Vec::new();
+        client_writer
+            .seal_into(ContentType::ApplicationData, b"third", 0, &mut record)
+            .expect("client continuation must seal");
+        let opened = resumed
+            .client_records_mut()
+            .open_in_place(&mut record)
+            .expect("resumed layer must open the client continuation");
+        assert_eq!(opened.plaintext(), b"third");
+        assert_eq!(resumed.client_records_mut().records_used(), 3);
+
+        // Downlink start: the resumed server-direction layer is at sequence 0
+        // and its first record opens on the client's untouched reader.
+        let mut downlink = Vec::new();
+        resumed
+            .server_records_mut()
+            .seal_into(ContentType::ApplicationData, b"response", 0, &mut downlink)
+            .expect("resumed layer must seal");
+        let opened = client_reader
+            .open_in_place(&mut downlink)
+            .expect("client must open the resumed downlink");
+        assert_eq!(opened.plaintext(), b"response");
     }
 
     fn client_hello(group: u16, key_exchange: &[u8]) -> ClientHello {
