@@ -1,0 +1,1762 @@
+{
+  "cells": {
+    "framed-download:1:1": {
+      "concurrency": 1,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.08208800000000001,
+            "p50": 0.084106,
+            "p95": 0.086175,
+            "p99": 0.086175
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 10.138092495401533,
+            "p50": 10.125666098263947,
+            "p95": 11.018894070924238,
+            "p99": 11.018894070924238
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.0797504,
+            "p50": 0.079634,
+            "p95": 0.081653,
+            "p99": 0.081653
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 10.187698093144046,
+            "p50": 10.629057128387515,
+            "p95": 10.960538636869154,
+            "p99": 10.960538636869154
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.07977000000000001,
+            "p50": 0.080893,
+            "p95": 0.084969,
+            "p99": 0.084969
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 10.533950560262193,
+            "p50": 10.498488083985963,
+            "p95": 12.037329312033169,
+            "p99": 12.037329312033169
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "baseline",
+        "xray",
+        "baseline",
+        "xray",
+        "final",
+        "baseline",
+        "xray",
+        "final",
+        "final",
+        "xray",
+        "baseline",
+        "xray",
+        "baseline",
+        "final"
+      ],
+      "originStats": {
+        "http": {
+          "allocBytes": 1305240,
+          "cpuSysNs": 40000000,
+          "cpuUserNs": 20000000,
+          "errors": 0,
+          "getBytes": 22020096,
+          "gets": 21,
+          "goroutines": 7,
+          "putBytes": 3145728,
+          "puts": 3
+        },
+        "https": {
+          "allocBytes": 1687024,
+          "cpuSysNs": 20000000,
+          "cpuUserNs": 110000000,
+          "errors": 0,
+          "getBytes": 3145728,
+          "gets": 3,
+          "goroutines": 3,
+          "putBytes": 3145728,
+          "puts": 3
+        }
+      },
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9644880307774311,
+        "finalVsBaseline": 1.0497143620220575,
+        "finalVsXray": 1.0124369379054416
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-download"
+    },
+    "framed-download:1:32": {
+      "concurrency": 32,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.10920915625000001,
+            "p50": 0.09299099999999999,
+            "p95": 0.174981,
+            "p99": 0.305054
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 96.74696449578828,
+            "p50": 82.06772695275114,
+            "p95": 154.18084140962415,
+            "p99": 154.18084140962415
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.11087521874999999,
+            "p50": 0.0954285,
+            "p95": 0.20351,
+            "p99": 0.298324
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 100.13153192154013,
+            "p50": 91.69089065533458,
+            "p95": 116.61545187002345,
+            "p99": 116.61545187002345
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.11134096874999999,
+            "p50": 0.108126,
+            "p95": 0.150135,
+            "p99": 0.163965
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 137.28242227999112,
+            "p50": 117.88047699346505,
+            "p95": 188.93349670083367,
+            "p99": 188.93349670083367
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "xray",
+        "xray",
+        "baseline",
+        "baseline",
+        "baseline",
+        "xray",
+        "xray",
+        "final",
+        "final",
+        "final",
+        "baseline",
+        "baseline",
+        "final",
+        "xray"
+      ],
+      "originStats": {
+        "http": {
+          "allocBytes": 1631384,
+          "cpuSysNs": 520000000,
+          "cpuUserNs": 320000000,
+          "errors": 0,
+          "getBytes": 588251136,
+          "gets": 561,
+          "goroutines": 67,
+          "putBytes": 3145728,
+          "puts": 3
+        },
+        "https": {
+          "allocBytes": 1920280,
+          "cpuSysNs": 30000000,
+          "cpuUserNs": 130000000,
+          "errors": 0,
+          "getBytes": 3145728,
+          "gets": 3,
+          "goroutines": 3,
+          "putBytes": 3145728,
+          "puts": 3
+        }
+      },
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.6961943915216829,
+        "finalVsBaseline": 1.117258806352999,
+        "finalVsXray": 0.7778293148611679
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-download"
+    },
+    "framed-download:1:4": {
+      "concurrency": 4,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.0921678,
+            "p50": 0.0878475,
+            "p95": 0.092277,
+            "p99": 0.215198
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 33.13394243266754,
+            "p50": 37.03337039472144,
+            "p95": 37.21416403702984,
+            "p99": 37.21416403702984
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.0840595,
+            "p50": 0.084008,
+            "p95": 0.097826,
+            "p99": 0.109568
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 36.003373855117374,
+            "p50": 37.21850772717131,
+            "p95": 38.76044135727086,
+            "p99": 38.76044135727086
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.08617295,
+            "p50": 0.08791650000000001,
+            "p95": 0.094027,
+            "p99": 0.09486
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 37.533729257917784,
+            "p50": 38.16966161635244,
+            "p95": 38.36015969040766,
+            "p99": 38.36015969040766
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "baseline",
+        "baseline",
+        "final",
+        "xray",
+        "baseline",
+        "xray",
+        "final",
+        "baseline",
+        "final",
+        "baseline",
+        "xray",
+        "final",
+        "xray",
+        "final"
+      ],
+      "originStats": {
+        "http": {
+          "allocBytes": 1387352,
+          "cpuSysNs": 130000000,
+          "cpuUserNs": 80000000,
+          "errors": 0,
+          "getBytes": 84934656,
+          "gets": 81,
+          "goroutines": 19,
+          "putBytes": 3145728,
+          "puts": 3
+        },
+        "https": {
+          "allocBytes": 1809224,
+          "cpuSysNs": 30000000,
+          "cpuUserNs": 120000000,
+          "errors": 0,
+          "getBytes": 3145728,
+          "gets": 3,
+          "goroutines": 3,
+          "putBytes": 3145728,
+          "puts": 3
+        }
+      },
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9702305136196386,
+        "finalVsBaseline": 1.004999202893946,
+        "finalVsXray": 0.9750808928111208
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-download"
+    },
+    "framed-download:32:1": {
+      "concurrency": 1,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.1332608,
+            "p50": 0.108756,
+            "p95": 0.202655,
+            "p99": 0.202655
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 214.03097764174322,
+            "p50": 235.81573343189262,
+            "p95": 250.3645040413008,
+            "p99": 250.3645040413008
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.1198146,
+            "p50": 0.117618,
+            "p95": 0.140577,
+            "p99": 0.140577
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 232.8153938733617,
+            "p50": 237.92422693417416,
+            "p95": 245.8567095257707,
+            "p99": 245.8567095257707
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.131854,
+            "p50": 0.112253,
+            "p95": 0.217114,
+            "p99": 0.217114
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 223.80284700434854,
+            "p50": 237.5549617888448,
+            "p95": 256.8377641635949,
+            "p99": 256.8377641635949
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "baseline",
+        "xray",
+        "xray",
+        "final",
+        "final",
+        "baseline",
+        "xray",
+        "baseline",
+        "baseline",
+        "baseline",
+        "xray",
+        "final",
+        "final",
+        "final"
+      ],
+      "originStats": {
+        "http": {
+          "allocBytes": 3367184,
+          "cpuSysNs": 790000000,
+          "cpuUserNs": 370000000,
+          "errors": 0,
+          "getBytes": 1091567616,
+          "gets": 576,
+          "goroutines": 6,
+          "putBytes": 3145728,
+          "puts": 3
+        },
+        "https": {
+          "allocBytes": 2031384,
+          "cpuSysNs": 30000000,
+          "cpuUserNs": 150000000,
+          "errors": 0,
+          "getBytes": 3145728,
+          "gets": 3,
+          "goroutines": 3,
+          "putBytes": 3145728,
+          "puts": 3
+        }
+      },
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9926786275316862,
+        "finalVsBaseline": 1.008941275764751,
+        "finalVsXray": 1.0015544408862216
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-download"
+    },
+    "framed-download:32:32": {
+      "concurrency": 32,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.68268895,
+            "p50": 0.7275985,
+            "p95": 0.835677,
+            "p99": 0.857186
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 1051.280033439489,
+            "p50": 1058.8405816088655,
+            "p95": 1083.0947256157622,
+            "p99": 1083.0947256157622
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.63844128125,
+            "p50": 0.6824095,
+            "p95": 0.761786,
+            "p99": 0.782782
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 1170.2453918940078,
+            "p50": 1169.5522700824802,
+            "p95": 1194.9958632207636,
+            "p99": 1194.9958632207636
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.6698687750000001,
+            "p50": 0.719293,
+            "p95": 0.790551,
+            "p99": 0.800112
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 1087.9338411417866,
+            "p50": 1088.975094074333,
+            "p95": 1102.1150096863157,
+            "p99": 1102.1150096863157
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "baseline",
+        "final",
+        "final",
+        "xray",
+        "xray",
+        "xray",
+        "baseline",
+        "baseline",
+        "final",
+        "final",
+        "final",
+        "xray",
+        "baseline",
+        "xray",
+        "baseline"
+      ],
+      "originStats": {
+        "http": {
+          "allocBytes": 4072168,
+          "cpuSysNs": 7370000000,
+          "cpuUserNs": 1500000000,
+          "errors": 0,
+          "getBytes": 19210960896,
+          "gets": 1116,
+          "goroutines": 65,
+          "putBytes": 3145728,
+          "puts": 3
+        },
+        "https": {
+          "allocBytes": 2253848,
+          "cpuSysNs": 30000000,
+          "cpuUserNs": 180000000,
+          "errors": 0,
+          "getBytes": 3145728,
+          "gets": 3,
+          "goroutines": 3,
+          "putBytes": 3145728,
+          "puts": 3
+        }
+      },
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9723276385020698,
+        "finalVsBaseline": 1.1045593552009432,
+        "finalVsXray": 1.073993589427902
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-download"
+    },
+    "framed-download:32:4": {
+      "concurrency": 4,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.25750915,
+            "p50": 0.259016,
+            "p95": 0.269113,
+            "p99": 0.270068
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 438.9687740569133,
+            "p50": 434.61891451885265,
+            "p95": 453.93111449417063,
+            "p99": 453.93111449417063
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.25567415000000004,
+            "p50": 0.25498350000000003,
+            "p95": 0.269826,
+            "p99": 0.269961
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 438.4895355243463,
+            "p50": 434.5123312386575,
+            "p95": 455.677683047536,
+            "p99": 455.677683047536
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.2672853,
+            "p50": 0.26258,
+            "p95": 0.347878,
+            "p99": 0.376535
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 412.2738529837774,
+            "p50": 422.23428602579384,
+            "p95": 470.5107760711556,
+            "p99": 470.5107760711556
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "final",
+        "final",
+        "xray",
+        "xray",
+        "baseline",
+        "xray",
+        "baseline",
+        "xray",
+        "baseline",
+        "final",
+        "baseline",
+        "final",
+        "baseline",
+        "final"
+      ],
+      "originStats": {
+        "http": {
+          "allocBytes": 716104,
+          "cpuSysNs": 2060000000,
+          "cpuUserNs": 650000000,
+          "errors": 0,
+          "getBytes": 3104833536,
+          "gets": 636,
+          "goroutines": 11,
+          "putBytes": 3145728,
+          "puts": 3
+        },
+        "https": {
+          "allocBytes": 2142440,
+          "cpuSysNs": 30000000,
+          "cpuUserNs": 170000000,
+          "errors": 0,
+          "getBytes": 3145728,
+          "gets": 3,
+          "goroutines": 3,
+          "putBytes": 3145728,
+          "puts": 3
+        }
+      },
+      "p50ThroughputRatios": {
+        "baselineVsXray": 1.0293311767967186,
+        "finalVsBaseline": 0.9997547661258297,
+        "finalVsXray": 1.0290787499244285
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-download"
+    },
+    "framed-download:512:1": {
+      "concurrency": 1,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.7161143333333334,
+            "p50": 0.726014,
+            "p95": 0.729718,
+            "p99": 0.729718
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 691.5979784085706,
+            "p50": 682.2912700638246,
+            "p95": 713.8394670301202,
+            "p99": 713.8394670301202
+          },
+          "validSamples": 3
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.666253,
+            "p50": 0.670608,
+            "p95": 0.705503,
+            "p99": 0.705503
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 749.6103216181085,
+            "p50": 736.4814569842583,
+            "p95": 810.8881703708194,
+            "p99": 810.8881703708194
+          },
+          "validSamples": 3
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.7353866666666667,
+            "p50": 0.756856,
+            "p95": 0.766934,
+            "p99": 0.766934
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 675.0114660781111,
+            "p50": 655.1348937534082,
+            "p95": 722.996959062235,
+            "p99": 722.996959062235
+          },
+          "validSamples": 3
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "xray",
+        "final",
+        "xray",
+        "baseline",
+        "xray",
+        "baseline",
+        "final",
+        "baseline"
+      ],
+      "originStats": {
+        "http": {
+          "allocBytes": 728656,
+          "cpuSysNs": 8880000000,
+          "cpuUserNs": 1720000000,
+          "errors": 0,
+          "getBytes": 24042799104,
+          "gets": 1125,
+          "goroutines": 4,
+          "putBytes": 3145728,
+          "puts": 3
+        },
+        "https": {
+          "allocBytes": 2368144,
+          "cpuSysNs": 30000000,
+          "cpuUserNs": 200000000,
+          "errors": 0,
+          "getBytes": 3145728,
+          "gets": 3,
+          "goroutines": 3,
+          "putBytes": 3145728,
+          "puts": 3
+        }
+      },
+      "p50ThroughputRatios": {
+        "baselineVsXray": 1.0414515797728796,
+        "finalVsBaseline": 1.079423831577626,
+        "finalVsXray": 1.1241676546410133
+      },
+      "payloadMiB": 512,
+      "samplesPerImplementation": 3,
+      "scenario": "framed-download"
+    },
+    "framed-download:512:32": {
+      "concurrency": 32,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 12.328337739583333,
+            "p50": 12.41441,
+            "p95": 12.653629,
+            "p99": 12.715242
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 1280.6531850765223,
+            "p50": 1276.9651110497732,
+            "p95": 1292.6399910901484,
+            "p99": 1292.6399910901484
+          },
+          "validSamples": 3
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 10.700805739583332,
+            "p50": 10.813288,
+            "p95": 11.234679,
+            "p99": 11.268518
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 1469.7468869896622,
+            "p50": 1481.351763087844,
+            "p95": 1490.7400127354906,
+            "p99": 1490.7400127354906
+          },
+          "validSamples": 3
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 11.166462197916667,
+            "p50": 11.2975165,
+            "p95": 11.687542,
+            "p99": 12.008383
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 1376.1908866980873,
+            "p50": 1391.5899021713872,
+            "p95": 1391.6853970288853,
+            "p99": 1391.6853970288853
+          },
+          "validSamples": 3
+        }
+      },
+      "interleaveOrder": [
+        "baseline",
+        "xray",
+        "final",
+        "final",
+        "xray",
+        "baseline",
+        "final",
+        "xray",
+        "baseline"
+      ],
+      "originStats": {
+        "http": {
+          "allocBytes": 3118920,
+          "cpuSysNs": 57930000000,
+          "cpuUserNs": 7740000000,
+          "errors": 0,
+          "getBytes": 178661621760,
+          "gets": 1413,
+          "goroutines": 30,
+          "putBytes": 3145728,
+          "puts": 3
+        },
+        "https": {
+          "allocBytes": 691488,
+          "cpuSysNs": 30000000,
+          "cpuUserNs": 220000000,
+          "errors": 0,
+          "getBytes": 3145728,
+          "gets": 3,
+          "goroutines": 3,
+          "putBytes": 3145728,
+          "puts": 3
+        }
+      },
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9176303371109854,
+        "finalVsBaseline": 1.1600565671446166,
+        "finalVsXray": 1.064503098776727
+      },
+      "payloadMiB": 512,
+      "samplesPerImplementation": 3,
+      "scenario": "framed-download"
+    },
+    "framed-upload:1:1": {
+      "concurrency": 1,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.07702139999999999,
+            "p50": 0.077159,
+            "p95": 0.082165,
+            "p99": 0.082165
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 10.931218111693386,
+            "p50": 10.904995081314661,
+            "p95": 12.538896774327165,
+            "p99": 12.538896774327165
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.07835460000000001,
+            "p50": 0.078483,
+            "p95": 0.0847,
+            "p99": 0.0847
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 10.817449085156522,
+            "p50": 10.785759637192308,
+            "p95": 12.065496723146262,
+            "p99": 12.065496723146262
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.0775956,
+            "p50": 0.077434,
+            "p95": 0.085572,
+            "p99": 0.085572
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 10.842208564741243,
+            "p50": 10.912256431309887,
+            "p95": 12.023607120016115,
+            "p99": 12.023607120016115
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "baseline",
+        "baseline",
+        "baseline",
+        "xray",
+        "xray",
+        "baseline",
+        "final",
+        "final",
+        "xray",
+        "final",
+        "xray",
+        "final",
+        "xray",
+        "final",
+        "baseline"
+      ],
+      "originStats": {
+        "http": {
+          "allocBytes": 901792,
+          "cpuSysNs": 57980000000,
+          "cpuUserNs": 7750000000,
+          "errors": 0,
+          "getBytes": 178661621760,
+          "gets": 1413,
+          "goroutines": 7,
+          "putBytes": 18874368,
+          "puts": 18
+        },
+        "https": {
+          "allocBytes": 803600,
+          "cpuSysNs": 30000000,
+          "cpuUserNs": 230000000,
+          "errors": 0,
+          "getBytes": 3145728,
+          "gets": 3,
+          "goroutines": 3,
+          "putBytes": 3145728,
+          "puts": 3
+        }
+      },
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.999334569340362,
+        "finalVsBaseline": 0.9890659791010215,
+        "finalVsXray": 0.9884078242741228
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-upload"
+    },
+    "framed-upload:1:32": {
+      "concurrency": 32,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.1327701375,
+            "p50": 0.1098665,
+            "p95": 0.171045,
+            "p99": 0.240577
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 86.94305007665167,
+            "p50": 97.42022121706401,
+            "p95": 120.75060372598716,
+            "p99": 120.75060372598716
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.10984132499999999,
+            "p50": 0.1047135,
+            "p95": 0.151432,
+            "p99": 0.178653
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 100.96588611839562,
+            "p50": 115.25223970039436,
+            "p95": 119.31146298557212,
+            "p99": 119.31146298557212
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.09765328749999999,
+            "p50": 0.0932305,
+            "p95": 0.128709,
+            "p99": 0.136893
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 145.98179266363167,
+            "p50": 117.68332053086493,
+            "p95": 198.34909986215757,
+            "p99": 198.34909986215757
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "xray",
+        "xray",
+        "final",
+        "baseline",
+        "final",
+        "final",
+        "baseline",
+        "xray",
+        "final",
+        "final",
+        "baseline",
+        "baseline",
+        "baseline",
+        "xray"
+      ],
+      "originStats": {
+        "http": {
+          "allocBytes": 2033880,
+          "cpuSysNs": 58330000000,
+          "cpuUserNs": 8170000000,
+          "errors": 0,
+          "getBytes": 178661621760,
+          "gets": 1413,
+          "goroutines": 36,
+          "putBytes": 585105408,
+          "puts": 558
+        },
+        "https": {
+          "allocBytes": 1042416,
+          "cpuSysNs": 30000000,
+          "cpuUserNs": 250000000,
+          "errors": 0,
+          "getBytes": 3145728,
+          "gets": 3,
+          "goroutines": 3,
+          "putBytes": 3145728,
+          "puts": 3
+        }
+      },
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.8278167269380668,
+        "finalVsBaseline": 1.1830422704912407,
+        "finalVsXray": 0.9793421801874381
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-upload"
+    },
+    "framed-upload:1:4": {
+      "concurrency": 4,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.08790215,
+            "p50": 0.088361,
+            "p95": 0.09518,
+            "p99": 0.095626
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 35.68875490081605,
+            "p50": 33.296812997053685,
+            "p95": 42.3591054882162,
+            "p99": 42.3591054882162
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.08384925,
+            "p50": 0.083037,
+            "p95": 0.09324,
+            "p99": 0.094863
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 38.83784941802711,
+            "p50": 37.64782732252048,
+            "p95": 44.29599273894971,
+            "p99": 44.29599273894971
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.08675714999999999,
+            "p50": 0.0883095,
+            "p95": 0.096919,
+            "p99": 0.097285
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 37.3226188117807,
+            "p50": 36.48913077793856,
+            "p95": 45.69027308858646,
+            "p99": 45.69027308858646
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "xray",
+        "baseline",
+        "final",
+        "xray",
+        "baseline",
+        "final",
+        "baseline",
+        "xray",
+        "baseline",
+        "final",
+        "baseline",
+        "xray",
+        "final",
+        "xray"
+      ],
+      "originStats": {
+        "http": {
+          "allocBytes": 2937384,
+          "cpuSysNs": 58080000000,
+          "cpuUserNs": 7800000000,
+          "errors": 0,
+          "getBytes": 178661621760,
+          "gets": 1413,
+          "goroutines": 15,
+          "putBytes": 81788928,
+          "puts": 78
+        },
+        "https": {
+          "allocBytes": 923008,
+          "cpuSysNs": 30000000,
+          "cpuUserNs": 240000000,
+          "errors": 0,
+          "getBytes": 3145728,
+          "gets": 3,
+          "goroutines": 3,
+          "putBytes": 3145728,
+          "puts": 3
+        }
+      },
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9125131864523623,
+        "finalVsBaseline": 1.1306735970752455,
+        "finalVsXray": 1.0317545669046868
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-upload"
+    },
+    "framed-upload:32:1": {
+      "concurrency": 1,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.1416992,
+            "p50": 0.123542,
+            "p95": 0.183498,
+            "p99": 0.183498
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 206.16892679523136,
+            "p50": 216.19885167899272,
+            "p95": 261.9586860941211,
+            "p99": 261.9586860941211
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.1310116,
+            "p50": 0.125266,
+            "p95": 0.160542,
+            "p99": 0.160542
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 221.58607702156445,
+            "p50": 226.570134534493,
+            "p95": 249.7379920192986,
+            "p99": 249.7379920192986
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.1201262,
+            "p50": 0.115427,
+            "p95": 0.140893,
+            "p99": 0.140893
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 228.396600605012,
+            "p50": 233.2897959929701,
+            "p95": 252.58638365171143,
+            "p99": 252.58638365171143
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "baseline",
+        "baseline",
+        "baseline",
+        "final",
+        "xray",
+        "xray",
+        "final",
+        "xray",
+        "baseline",
+        "final",
+        "final",
+        "xray",
+        "final",
+        "xray",
+        "baseline"
+      ],
+      "originStats": {
+        "http": {
+          "allocBytes": 3071624,
+          "cpuSysNs": 58570000000,
+          "cpuUserNs": 8380000000,
+          "errors": 0,
+          "getBytes": 178661621760,
+          "gets": 1413,
+          "goroutines": 6,
+          "putBytes": 1088421888,
+          "puts": 573
+        },
+        "https": {
+          "allocBytes": 1153472,
+          "cpuSysNs": 30000000,
+          "cpuUserNs": 270000000,
+          "errors": 0,
+          "getBytes": 3145728,
+          "gets": 3,
+          "goroutines": 3,
+          "putBytes": 3145728,
+          "puts": 3
+        }
+      },
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9267394262092269,
+        "finalVsBaseline": 1.0479710358078096,
+        "finalVsXray": 0.9711960764084187
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-upload"
+    },
+    "framed-upload:32:32": {
+      "concurrency": 32,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.73699906875,
+            "p50": 0.7771095,
+            "p95": 0.818506,
+            "p99": 0.853152
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 1053.835768779261,
+            "p50": 1051.9121103825,
+            "p95": 1081.4617148862658,
+            "p99": 1081.4617148862658
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.6963448624999999,
+            "p50": 0.729627,
+            "p95": 0.784765,
+            "p99": 0.794563
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 1133.6005828420125,
+            "p50": 1128.2047225883462,
+            "p95": 1211.4900611927021,
+            "p99": 1211.4900611927021
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.6861589375,
+            "p50": 0.7513259999999999,
+            "p95": 0.801583,
+            "p99": 0.812632
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 1077.4721235754682,
+            "p50": 1084.2393986220463,
+            "p95": 1099.8578080210746,
+            "p99": 1099.8578080210746
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "baseline",
+        "xray",
+        "xray",
+        "baseline",
+        "baseline",
+        "final",
+        "final",
+        "final",
+        "xray",
+        "baseline",
+        "final",
+        "baseline",
+        "xray",
+        "final"
+      ],
+      "originStats": {
+        "http": {
+          "allocBytes": 1311056,
+          "cpuSysNs": 63600000000,
+          "cpuUserNs": 10210000000,
+          "errors": 0,
+          "getBytes": 178661621760,
+          "gets": 1413,
+          "goroutines": 66,
+          "putBytes": 19207815168,
+          "puts": 1113
+        },
+        "https": {
+          "allocBytes": 1375936,
+          "cpuSysNs": 30000000,
+          "cpuUserNs": 300000000,
+          "errors": 0,
+          "getBytes": 3145728,
+          "gets": 3,
+          "goroutines": 3,
+          "putBytes": 3145728,
+          "puts": 3
+        }
+      },
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9701843630838071,
+        "finalVsBaseline": 1.0725275538258652,
+        "finalVsXray": 1.0405494616983806
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-upload"
+    },
+    "framed-upload:32:4": {
+      "concurrency": 4,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.255727,
+            "p50": 0.2748505,
+            "p95": 0.288439,
+            "p99": 0.293581
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 460.8995941573192,
+            "p50": 409.49651357945726,
+            "p95": 669.1175090123363,
+            "p99": 669.1175090123363
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.2342685,
+            "p50": 0.25826,
+            "p95": 0.273122,
+            "p99": 0.275625
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 493.3935745542514,
+            "p50": 433.2697850549063,
+            "p95": 676.7673692198036,
+            "p99": 676.7673692198036
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.22358055000000002,
+            "p50": 0.210581,
+            "p95": 0.274682,
+            "p99": 0.276568
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 508.74358483442984,
+            "p50": 507.2150786153007,
+            "p95": 648.6198819633552,
+            "p99": 648.6198819633552
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "xray",
+        "baseline",
+        "xray",
+        "xray",
+        "final",
+        "baseline",
+        "xray",
+        "final",
+        "xray",
+        "baseline",
+        "baseline",
+        "baseline",
+        "final",
+        "final"
+      ],
+      "originStats": {
+        "http": {
+          "allocBytes": 2690728,
+          "cpuSysNs": 59370000000,
+          "cpuUserNs": 8780000000,
+          "errors": 0,
+          "getBytes": 178661621760,
+          "gets": 1413,
+          "goroutines": 11,
+          "putBytes": 3101687808,
+          "puts": 633
+        },
+        "https": {
+          "allocBytes": 1264528,
+          "cpuSysNs": 30000000,
+          "cpuUserNs": 280000000,
+          "errors": 0,
+          "getBytes": 3145728,
+          "gets": 3,
+          "goroutines": 3,
+          "putBytes": 3145728,
+          "puts": 3
+        }
+      },
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.8073429415729999,
+        "finalVsBaseline": 1.058054881267838,
+        "finalVsXray": 0.8542131401884476
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-upload"
+    },
+    "framed-upload:512:1": {
+      "concurrency": 1,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.764161,
+            "p50": 0.780805,
+            "p95": 0.804968,
+            "p99": 0.804968
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 652.1928969968936,
+            "p50": 635.6286873331322,
+            "p95": 703.4707340715167,
+            "p99": 703.4707340715167
+          },
+          "validSamples": 3
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.7169293333333333,
+            "p50": 0.742608,
+            "p95": 0.74626,
+            "p99": 0.74626
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 694.1933474524777,
+            "p50": 670.7951135037114,
+            "p95": 745.8426573172338,
+            "p99": 745.8426573172338
+          },
+          "validSamples": 3
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.8343493333333334,
+            "p50": 0.813266,
+            "p95": 0.903131,
+            "p99": 0.903131
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 598.5219207654546,
+            "p50": 611.2096779510117,
+            "p95": 631.1342933386173,
+            "p99": 631.1342933386173
+          },
+          "validSamples": 3
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "final",
+        "xray",
+        "baseline",
+        "baseline",
+        "final",
+        "baseline",
+        "xray",
+        "xray"
+      ],
+      "originStats": {
+        "http": {
+          "allocBytes": 1948032,
+          "cpuSysNs": 66040000000,
+          "cpuUserNs": 11680000000,
+          "errors": 0,
+          "getBytes": 178661621760,
+          "gets": 1413,
+          "goroutines": 5,
+          "putBytes": 24039653376,
+          "puts": 1122
+        },
+        "https": {
+          "allocBytes": 1486992,
+          "cpuSysNs": 30000000,
+          "cpuUserNs": 310000000,
+          "errors": 0,
+          "getBytes": 3145728,
+          "gets": 3,
+          "goroutines": 3,
+          "putBytes": 3145728,
+          "puts": 3
+        }
+      },
+      "p50ThroughputRatios": {
+        "baselineVsXray": 1.039951935093668,
+        "finalVsBaseline": 1.0553254232720752,
+        "finalVsXray": 1.097487716085339
+      },
+      "payloadMiB": 512,
+      "samplesPerImplementation": 3,
+      "scenario": "framed-upload"
+    },
+    "framed-upload:512:32": {
+      "concurrency": 32,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 12.009041239583333,
+            "p50": 12.067601,
+            "p95": 12.226566,
+            "p99": 12.313385
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 1331.202405299449,
+            "p50": 1331.3175127347463,
+            "p95": 1342.0651686869771,
+            "p99": 1342.0651686869771
+          },
+          "validSamples": 3
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 11.088915697916667,
+            "p50": 11.175878,
+            "p95": 11.328355,
+            "p99": 11.354469
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 1432.3895224030339,
+            "p50": 1429.3131432500877,
+            "p95": 1440.5190261539424,
+            "p99": 1440.5190261539424
+          },
+          "validSamples": 3
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 11.297972958333332,
+            "p50": 11.476072,
+            "p95": 11.769873,
+            "p99": 11.821153
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 1375.6106245424314,
+            "p50": 1374.9690458240689,
+            "p95": 1378.5867564797225,
+            "p99": 1378.5867564797225
+          },
+          "validSamples": 3
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "xray",
+        "xray",
+        "baseline",
+        "xray",
+        "baseline",
+        "final",
+        "final",
+        "baseline"
+      ],
+      "originStats": {
+        "http": {
+          "allocBytes": 1249128,
+          "cpuSysNs": 105350000000,
+          "cpuUserNs": 25260000000,
+          "errors": 0,
+          "getBytes": 178661621760,
+          "gets": 1413,
+          "goroutines": 33,
+          "putBytes": 178658476032,
+          "puts": 1410
+        },
+        "https": {
+          "allocBytes": 361456,
+          "cpuSysNs": 30000000,
+          "cpuUserNs": 330000000,
+          "errors": 0,
+          "getBytes": 3145728,
+          "gets": 3,
+          "goroutines": 3,
+          "putBytes": 3145728,
+          "puts": 3
+        }
+      },
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9682527157815682,
+        "finalVsBaseline": 1.0736080082910064,
+        "finalVsXray": 1.0395238697126075
+      },
+      "payloadMiB": 512,
+      "samplesPerImplementation": 3,
+      "scenario": "framed-upload"
+    }
+  },
+  "commit": "859115e0c7b5ed0bacbef9a32b2c0e0630dc5efe",
+  "failures": [],
+  "harness": "benchmark-matrix",
+  "integrity": {
+    "baseline": {
+      "invalid": false,
+      "invalidReason": null,
+      "payloadBytes": 2147483648,
+      "sha256": {
+        "match": true,
+        "origin": "382045c648d7c2a42a01bb3132186a0397d40e2e4e85a99377dbc79c20e6671e",
+        "received": "382045c648d7c2a42a01bb3132186a0397d40e2e4e85a99377dbc79c20e6671e"
+      },
+      "wallSeconds": 3.2784596607089043
+    },
+    "final": {
+      "invalid": false,
+      "invalidReason": null,
+      "payloadBytes": 2147483648,
+      "sha256": {
+        "match": true,
+        "origin": "382045c648d7c2a42a01bb3132186a0397d40e2e4e85a99377dbc79c20e6671e",
+        "received": "382045c648d7c2a42a01bb3132186a0397d40e2e4e85a99377dbc79c20e6671e"
+      },
+      "wallSeconds": 4.7049491768702865
+    },
+    "xray": {
+      "invalid": false,
+      "invalidReason": null,
+      "payloadBytes": 2147483648,
+      "sha256": {
+        "match": true,
+        "origin": "382045c648d7c2a42a01bb3132186a0397d40e2e4e85a99377dbc79c20e6671e",
+        "received": "382045c648d7c2a42a01bb3132186a0397d40e2e4e85a99377dbc79c20e6671e"
+      },
+      "wallSeconds": 17.44600869016722
+    }
+  },
+  "limitations": [
+    "single-host loopback includes the same Xray client and loopback origins in every path",
+    "the tunnel-bypass guard only covers the rust implementations (their debug logs); xray cells rely on byte-count verification",
+    "Xray's default private-target block is explicitly allowed only for the loopback origin",
+    "this does not model Internet RTT, packet loss, bandwidth shaping, or multi-core saturation",
+    "results are measurements of this host and are not a universal performance claim"
+  ],
+  "plan": {
+    "cellsFilter": [
+      "framed-*"
+    ],
+    "concurrencies": [
+      1,
+      4,
+      32
+    ],
+    "integrityMiB": 2048,
+    "largeCellConcurrencies": [
+      1,
+      32
+    ],
+    "largePayloadMiB": 512,
+    "payloadsMiB": [
+      1,
+      32,
+      512
+    ],
+    "samplesPerCell": 5,
+    "samplesPerLargeCell": 3,
+    "scenarios": [
+      "framed-download",
+      "direct-download",
+      "framed-upload",
+      "direct-upload",
+      "bidi",
+      "fallback"
+    ],
+    "skipFilter": []
+  },
+  "schemaVersion": 1,
+  "seed": "0x5252",
+  "startedUtc": "2026-08-07T04:21:12.619666+00:00",
+  "totals": {
+    "cells": 16,
+    "invalidSamples": 0,
+    "samples": 219
+  },
+  "wallSeconds": 387.1292960010469
+}
