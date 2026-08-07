@@ -35,13 +35,23 @@
 推荐值的算术是 DERIVED；干净点/弃载点是 MEASURED-LOCAL，且每次运行
 `oom_kill=0`。
 
+这些是**在被测 standalone/Direct 工作负载上验证过的起始档位**（建连
+churn + 512 MiB 批量传输 + 空闲连接阶梯），对应拓扑中每条会话都路由到
+direct 出站——这就是表中 `maxConcurrent` 与 `maxConnections` 相等的
+原因。它们不是普适的生产容量：更强的论断需要先做一个混合工作负载的
+验证阶段。对于会话经 NXR 或 SOCKS5 出站离开的节点，
+`directBarrier.maxConcurrent` 只限制 Direct 路由的那部分份额（§3）；
+§28 讲解如何为一台具体主机推导每个值。
+
 动手之前先记住两条规则：
 
-1. **默认值在上述所有机器上都是安全的，但它把你限制在 2048 个活跃会话。**
-   `policy.directBarrier.maxConcurrent` 默认 2048，而 barrier 许可在整个
-   会话生命周期内持有——即使 `maxConnections` 默认是 16384，第 2049 个
-   会话也会被快速拒绝（VERIFIED，实测）。提高真实会话容量意味着两个值
-   一起调大，然后重启：两者都需要重启才能生效（见 §10）。
+1. **默认值在上述所有机器上都是安全的，但它把 Direct 路由的会话限制在
+   2048 个。** `policy.directBarrier.maxConcurrent` 默认 2048，而 barrier
+   许可只由路由决策为 direct 出站的会话获取，并在整个会话生命周期内持有
+   ——在 standalone/Direct 节点上这就是每条会话，所以即使
+   `maxConnections` 默认是 16384，第 2049 个会话也会被快速拒绝
+   （VERIFIED，实测）。在这类节点上提高真实会话容量意味着两个值一起调大，
+   然后重启：两者都需要重启才能生效（见 §10）。
 2. **policy 块一旦写就必须写全。** 校验器会拒绝只包含你改过的几个键的
    `policy.resourceGovernor` 对象（已用 `check` 确认，VERIFIED）。请在
    `config generate` 生成的完整块内改值；不要粘贴只有两个键的片段。
@@ -87,11 +97,15 @@ min( admission ceiling,  FD budget,  memory budget,  CPU-for-your-SLO,  network 
 哪一项最小，哪一项说了算；调大其他任何项都不会改变结果。具体说：
 
 - **admission 上限** —— `policy.resourceGovernor.maxConnections`
-  （默认 16384）和 `policy.directBarrier.maxConcurrent`（默认 2048）
-  中较小的那个。barrier 许可在整个会话生命周期内持有，而不是只在
-  建连期间，所以在默认 policy 下，无论 `maxConnections` 是多少，
-  *有效*上限都是 2048 个会话（VERIFIED，实测：`maxConnections` 保持
-  16384 时，第 2049 个会话被快速拒绝）。
+  （默认 16384）是全局已接纳会话上限。在此之上，
+  `policy.directBarrier.maxConcurrent`（默认 2048）是仅针对 Direct 路由
+  会话的第二层上限：barrier 许可只在 direct 出站路径上获取，并在整个
+  会话生命周期内持有；路由到 SOCKS5 或 NXR 出站的会话从不获取它
+  （VERIFIED，`src/server/outbound.rs`）。因此在默认 policy 下，
+  standalone/Direct 节点——每条会话都走 direct——无论
+  `maxConnections` 是多少，*有效*上限都是 2048 个会话（VERIFIED，实测：
+  `maxConnections` 保持 16384 时，第 2049 个会话被快速拒绝）；而混合
+  路由节点有一个按其 Direct 路由份额定规格的 Direct 专属子上限。
 - **FD 预算** —— 服务端在启动时从 `RLIMIT_NOFILE` 推导出一个描述符
   预算，减去固定预留和安全余量，并通过 `descriptor_budget_report`
   报告一次（§6）。稳态下每个活跃会话约占 2 个 FD（MEASURED-LOCAL：
@@ -109,9 +123,9 @@ min( admission ceiling,  FD budget,  memory budget,  CPU-for-your-SLO,  network 
 由此得出的扩容结论：**CPU 和内存买的是不同的东西。** CPU 扩展握手、
 加密和 framed 中继的工作量；内存和 FD 扩展活跃连接数。1C4G 并不比
 2C2G 更适合高建连速率——两者的内存都远超一个 vCPU 能建起来的会话
-数，而 2C2G 有两倍 CPU。反过来，8C1G 仍然受内存和 FD 限制：1 GiB
-大约容纳 12000–16000 个会话（由每会话 47 KiB 加上内存池和资产推导，
-DERIVED），有多少核闲置都改变不了这一点。
+数，而 2C2G 有两倍 CPU。反过来，8C1G 仍然受内存和 FD 限制：1 GiB 上的实测证据是 12000 个会话
+干净、≈14000 开始弃载（MEASURED-LOCAL，1C1G），有多少核闲置都改变不了
+这一点。
 
 实测锚点（MEASURED-LOCAL，1C1G→4C8G 各档位一致）：≈800 conn/s 建连
 churn，32 连接 framed ≈1.6 GB/s，单流 ≈1 GB/s。这些数字受测试客户端
@@ -120,8 +134,10 @@ churn，32 连接 framed ≈1.6 GB/s，单流 ≈1 GB/s。这些数字受测试�
 
 ## 4. 机型档位
 
-验证过的档位，全部在 cgroup v2 scope 内以 `dedicated` 模式运行，每次
-运行 `oom_kill=0`（MEASURED-LOCAL）：
+VERIFIED-CGROUP **起始档位，针对被测的 standalone/Direct 工作负载**
+（在每条会话都路由到 direct 出站的节点上做建连 churn + 512 MiB 批量
+传输 + 空闲连接阶梯），全部在 cgroup v2 scope 内以 `dedicated` 模式
+运行，每次运行 `oom_kill=0`（MEASURED-LOCAL）：
 
 | 机型 | 默认 policy | 调优档位（`maxConnections` = `directBarrier.maxConcurrent`） | 验证干净 | 首次弃载/压力 | 验证档位下的 cgroup 内存峰值 |
 | --- | --- | --- | --- | --- | --- |
@@ -134,6 +150,12 @@ churn，32 连接 framed ≈1.6 GB/s，单流 ≈1 GB/s。这些数字受测试�
 
 读表须知：
 
+- **证据的适用范围。** 这些是起始档位，不是普适的生产容量。被测拓扑中
+  每条会话都走 Direct 路径，所以表中把 `directBarrier.maxConcurrent`
+  设为与 `maxConnections` 相等。不要把这个等式照抄到会话经 NXR 或
+  SOCKS5 离开的节点上：纯 NXR 出站的线路节点可能完全不需要调大
+  `maxConcurrent`，混合节点则按其 Direct 路由份额定规格（§3、§28）。
+  比这更强的论断需要先做一个混合工作负载的验证阶段。
 - **"验证干净"** 指完整负载水平跑完，且没有 admission 弃载、没有压力
   事件、没有 OOM。**推荐值刻意低于崩坏点**：8000 ≈ 1C1G 弃载点的
   57%；16000 = 2 GiB 验证值的 2/3；24000 停在验证值上、绝不做外推
@@ -168,7 +190,8 @@ churn，32 连接 framed ≈1.6 GB/s，单流 ≈1 GB/s。这些数字受测试�
 - 尝试把 `RLIMIT_NOFILE` 软限制提升到硬限制（`machine_report` 中的
   `fd_soft_raise_attempted`、`fd_soft_limit_raised`、
   `fd_effective_soft_limit`）；
-- 把描述符安全余量从 `limit/16` 放宽到 `limit/10`；
+- 预留更大的描述符安全余量：`limit/10` 而不是 `limit/16`（这是更大的
+  安全余量，不是放宽）；
 - 以 cgroup 限额为基准运行内存压力监控器。
 
 **`dedicated` 不会关闭任何限制。** 所有 admission 上限、中继内存天花板
@@ -412,8 +435,9 @@ rust-reality self-test --config config.json
 
 - 在 443 端口讲 TLS 1.3，密钥交换兼容。
 - 能为你的客户端将出示的 SNI 提供有效证书链。
-- *从你的 VPS 看*高可用、低丢包：fallback 实时借用它，不稳的 target
-  会拖累你的伪装。
+- *从你的 VPS 看*高可用、低丢包，并且距离近：fallback 实时借用它，
+  每次认证建连也要借用它的 ServerHello——不稳定或遥远的 target 既
+  拖累你的伪装，也拖慢每条连接的建连。
 - 合理自然：流量画像不会让你的服务器显得突兀的域名。
 
 **用 OpenSSL 预筛**（已测试的命令形式）。每个候选在 `timeout` 下跑
@@ -445,30 +469,46 @@ rust-reality probe-dest --target HOST:443 --server-name NAME [--timeout-ms 5000]
 `self-test --config` 对配置的 target 做同样的探测，并逐目标报告
 `compatible: true/false`。
 
-**伪装延迟不是载荷吞吐。** target 只在 fallback（非客户端）连接时被
-拨号。已认证载荷走 客户端 → rust-reality → 你的真实目标；伪装的带宽
-和距离从不承载它（VERIFIED 架构）。200 ms 外的伪装对代理流量没有
-成本；按合理性和可靠性选伪装，载荷慢到真实数据路径上诊断（§13）。
+**伪装目标在每次建连的路径里，而不在稳态载荷路径里。** 每条连接——
+包括已认证的——在 REALITY 建连期间都会拨号伪装目标并读取它的
+ServerHello，服务端用它来构建 REALITY 服务端飞行（flight），然后才
+等待 ClientFinished（VERIFIED，`src/server/reality.rs`）。因此伪装
+目标影响三件事：建连延迟（200 ms 外的伪装大致给*每一次*建连加上一个
+伪装往返）、握手兼容性（探测失败的目标会把认证建连退化成 fallback）、
+以及 fallback 流量。伪装*不*承载已认证的稳态载荷：会话建立后，字节走
+客户端 → rust-reality → 你的真实目标，伪装的带宽和距离不再重要
+（VERIFIED 架构）。按合理性、可靠性和与你 VPS 的距离选伪装；稳态变慢
+到真实数据路径上诊断（§13）。
 
 ## 12. 路由性能与结构
 
 路由求值顺序（VERIFIED）：先 `routing.globalRules`，然后按序匹配用户
 组的 `rules`——**首个命中即胜**——最后是该组的 `defaultOutbound`。
 
-`domainStrategy`（VERIFIED 语义）：
+`domainStrategy`（VERIFIED 语义，`src/server/routing.rs`
+`select_with_dns`）。只有当适用的路由快照——全局规则*或*被选中用户
+的规则——确实包含 IP 规则时，DNS 才会发生
+（`needs_ip = global_has_ip_rules || user_has_ip_rules`）。在此前提下：
 
 - **`AsIs`** —— 路由器永不解析。IP 规则只能匹配本来就是 IP 字面量
   的目标。
-- **`IPIfNonMatch`**（默认）—— 只在无规则命中时解析，以便用结果测试
-  IP 规则。域名规则命中从不为 DNS 付费。
-- **`IPOnDemand`** —— 在规则求值前解析每个域名目标，IP 规则永远
-  生效——而每条连接都为一次查找付费。
+- **`IPIfNonMatch`**（默认）—— 先在内存中匹配；只有当决策落到用户
+  默认出站时才解析，以便用结果测试 IP 规则。域名规则命中从不为 DNS
+  付费。
+- **`IPOnDemand`** —— 存在 IP 规则时，在规则求值前解析，IP 规则永远
+  生效，而每条被解析的连接都为一次查找付费。
+
+如果任何地方都**没有** IP 规则，三种策略的行为完全一致，完全不发生
+DNS。
 
 DNS 进入决策路径的实测成本是每连接 ≈0.12 ms（MEASURED-LOCAL）；大
-路由表的实测成本是零——1000 个 UUID 加 72 条规则的建连速率 896
-conn/s，与最小配置相同（MEASURED-LOCAL）。复杂度免费；到慢解析器的
-DNS 往返不免费。如果你用 `IPOnDemand`，把 `dns.servers` 指向快速
-解析器，并让 `dns.timeoutMs` 保持诚实。
+路由表的实测成本在被测配置下低于测量灵敏度——1000 个 UUID 加 72 条
+规则的建连速率 896 conn/s，与最小配置相同（MEASURED-LOCAL）。昂贵的
+部分是到慢解析器的 DNS 往返。注意 v1.0 只接受
+`dns.servers = ["system"]`——自定义解析器会被校验器拒绝（VERIFIED，
+`src/config/validate.rs`）——所以请在 OS 层让 DNS 变快：运行本地缓存
+存根（`systemd-resolved` 或同类），把 `/etc/resolv.conf` 指向它，并让
+`dns.timeoutMs` 保持诚实。
 
 已验证示例——三个用户组：A 直连，B 中国直连、默认走 NXR 落地，C 经
 上游 SOCKS5 过滤。完整配置（下面的路由加上匹配的 `outbounds` 和占位
@@ -525,6 +565,11 @@ UUID）通过 `check --config`（VERIFIED）。匹配器语法：社区 DAT 文�
 client ──RTT A──▶│ REALITY setup │ routing/DNS │ outbound │─RTT B─▶│ NXR auth  │──▶ destination connect ──▶ origin response
                  └───────────────────────────────────────┘  (NXR)  └───────────┘
 ```
+
+上面的 "REALITY setup" 包含一次到伪装目标的拨号和它的 ServerHello
+读取（服务端用它构建服务端飞行，§11）：伪装目标的 RTT 和可用性位于
+*每条*连接——无论认证与否——的建连段内（VERIFIED，
+`src/server/reality.rs`）。
 
 standalone 部署没有 RTT B 段；出站连接直达目标。每一段都可测量，每一
 段的修法都不同——所以先测量再调优。
@@ -708,13 +753,18 @@ rust-reality 在所有输出位置（stderr、journald、文件）都发出结�
   其他限制类别目前以带固定 `reason` 的 `connection_rejected` 出现，
   而不是 `admission_limited`：
 - `reason: "outbound"` 且默认 policy 下约 2048 会话 → 会话生命周期
-  barrier 许可（`directBarrier.maxConcurrent`）；机型档位允许的话，把它和
+  barrier 许可（`directBarrier.maxConcurrent`），只由 Direct 路由的
+  会话获取；机型档位允许且该节点的会话走 direct 的话，把它和
   `maxConnections` 一起调大（§3、§4）。
 - `reason: "resource_limit"` → 某个 admission 池（握手、伪装转发、密码学
   工作）或 FD 预算耗尽；结合 `descriptor_pressure_changed` 区分 FD 压力
   （§6）与调节器压力。
-- `reason: "authentication"` → 凭据错误、nonce 重放或时钟偏移——这是
-  流量/攻击信号，不是容量信号（§8、§20）。
+- `reason: "authentication"` → 在 **NXR** 入站上：密钥错误、nonce 重放
+  或时钟偏移——这是流量/攻击信号，不是容量信号（§8、§20）。在面向客户
+  端的 **REALITY** 入站上，凭据错误通常*不会*产生这个事件：预检的认证、
+  重放和时间失败会被刻意转为伪装 fallback——客户端被转发到伪装目标、
+  占用 `maxFallbacks` 额度（VERIFIED，`src/server/reality.rs`）。在那里
+  要盯 fallback 压力，而不是拒绝日志。
 - `descriptor_pressure_changed` / `resource_pressure_changed` → FD 或内存
   越过水位线；服务器会先拒绝新 admission 而不是崩溃。先测量
   （`ls /proc/PID/fd | wc -l`、`memory.current`），再判断是档位错了还是
@@ -740,9 +790,13 @@ fallback 劣势，级别对齐后即消失（VERIFIED 的测量项目教训）�
 - REALITY：`maxTimeDiffMs` 默认 60000（±60 秒）。
 - NXR：`maxTimeDifferenceSeconds` 默认 30（±30 秒）。
 
-**时钟偏移看起来和认证失败一模一样** —— 合法客户端被拒，
-`connection_rejected` 带认证类原因。它也是 VPS 挂起、迁移或 NTP 源
-死掉之后经典的"昨天还好好的，今天坏了"。先查：
+**时钟偏移看起来和认证失败一模一样**，但症状因协议而异：在 NXR 节点
+链路上，偏移的对端会以 `connection_rejected reason: "authentication"`
+被拒绝；在面向客户端的 REALITY 端口上，时钟偏移但凭据合法的客户端
+会在预检认证失败后被静默转发到伪装目标——用户报告"我打开的是伪装
+网站而不是代理"，服务端唯一的痕迹是 fallback 流量，而不是拒绝事件
+（VERIFIED，§18）。它也是 VPS 挂起、迁移或 NTP 源死掉之后经典的
+"昨天还好好的，今天坏了"。先查：
 
 ```
 timedatectl        # 期望：System clock synchronized: yes
@@ -766,7 +820,7 @@ RTT 增大时可以预期什么（由 MEASURED-LOCAL 的 100 ms 数据点和往�
 | 20 ms | 即时 | 建连往返花费几十 ms |
 | 50 ms | 轻快 | 仍远低于一秒 |
 | 100 ms | 可感知 | 实测：NXR p50 建连 218 ms，SOCKS5 p50 413 ms |
-| 200 ms | 建连拖沓，传输正常 | 每个建连往返花 200 ms；窗口打开后批量传输对 RTT 不敏感 |
+| 200 ms | 建连拖沓，传输正常 | 每个建连往返花 200 ms；已建立的传输不再支付建连往返，但单流吞吐仍受 BDP/拥塞/丢包影响（窗口 ÷ RTT） |
 
 长路径上的单流吞吐受窗口限制：`throughput ≈ window / RTT`。100 ms
 RTT 下，1 Gbps 路径需要在途 ≈12.5 MB（DERIVED BDP）；默认接收窗口
@@ -799,7 +853,9 @@ RTT 下，1 Gbps 路径需要在途 ≈12.5 MB（DERIVED BDP）；默认接收�
 - **Standalone** —— 一台机器上的 REALITY + VLESS + Vision + 路由 +
   direct 出站。§4 的档位就是在它上面测的。
 - **线路节点** —— standalone 的一切，外加 NXR 出站：完整 TLS/REALITY
-  加密、geo 资产、路由求值。最重的角色；按 §4 定规格。
+  加密、geo 资产、路由求值。最重的角色；以 §4 为起点定规格——但
+  `directBarrier.maxConcurrent` 要按路由决策为 direct 出站的会话份额
+  来定，纯 NXR 出站的线路节点上这个份额可能是零（§3、§28）。
 - **落地节点** —— NXR 认证、目标连接、裸中继。没有 REALITY 握手、
   没有 geo 资产、没有路由表：每会话更轻，但它承载所终结的每条流的
   每一个字节，所以它的网络和中继预算比 TLS 预算更要紧（由角色定义
@@ -820,7 +876,7 @@ RTT 下，1 Gbps 路径需要在途 ≈12.5 MB（DERIVED BDP）；默认接收�
 | 内存空闲却描述符压力 | FD 预算先于内存成为绑定项 | `descriptor_budget_report`、`fd_clamped` | §6：调大 `LimitNOFILE`、检查 `dedicated` 模式，再动并发 |
 | 建连慢、传输快 | 按连接成本：RTT、路径内 DNS 或认证前限制 | `curl -w`：`connect`/`tls` 对 `ttfb` | §13；查 `domainStrategy`、`connection_rejected` |
 | NXR 建连慢但已建立的流快 | 建连往返 × 线路↔落地 RTT；或时钟偏移 | 节点间 RTT；两端 `timedatectl` | 高 RTT 下属预期（§14）；修偏移；别加宽窗口 |
-| 只有 IP 规则路由慢 | DNS 在决策路径里 | `domainStrategy`、解析器延迟 | §12：`IPIfNonMatch`、更快的 `dns.servers` |
+| 只有 IP 规则路由慢 | DNS 在决策路径里 | `domainStrategy`、解析器延迟 | §12：`IPIfNonMatch`、更快的 OS 解析器（本地缓存存根） |
 | 基准只在 `debug` 级别慢 | 日志开销 | 两边配置的 `log.level` | §19：对齐级别，重新测 |
 | 一个站点慢，所有测试都快 | 那个源站或它的路径，不是代理 | 对该站点直连 `curl -w`（§13） | 源站侧修复；代理继承源站天花板（§14） |
 
@@ -867,10 +923,14 @@ MiB，留下真实余量。教训："没崩"不等于"放得下"——看
 客户端在约 2000 并发会话时被拒：`connection_rejected` 带
 `reason: "outbound"`（验证中实测：第 2049 个会话起被拒绝，FD 数恰好
 停在 2×2048+15）。默认的 `directBarrier.maxConcurrent` 2048——其许可
-在整个会话期间持有——才是有效上限（§3）。修法：两个旋钮都设为 16000
-并重启（两者都需要重启，§10）。2 GiB 上验证干净到 24000 会话、峰值
-1.12 GiB。教训：任何容量变更后，看 `connection_rejected` 的 `reason`
-字段和 FD 平台期——实际绑定的限制不一定是你改的那个。
+在整个会话期间持有，且只由 Direct 路由的会话获取——在这台每条会话
+都走 direct 的 standalone 节点上才是有效上限（§3）。修法：两个旋钮
+都设为 16000 并重启（两者都需要重启，§10）——这是 standalone/Direct
+节点上的正确做法；会话经 NXR 或 SOCKS5 离开的节点应按其 Direct 路由
+份额来定 `maxConcurrent`，甚至可以留在默认值（§22、§28）。2 GiB 上
+验证干净到 24000 会话、峰值 1.12 GiB。教训：任何容量变更后，看
+`connection_rejected` 的 `reason` 字段和 FD 平台期——实际绑定的限制
+不一定是你改的那个。
 
 **案例 6 ——不算数的对比。**
 项目自己的基准项目中，一次 fallback A/B 看似显示某变体有 25% 劣势。
@@ -946,3 +1006,177 @@ flowchart TD
 
 决策树指向某个限制时，改动前重读对应章节。指向网络时，信端到端计数
 器，别信 traceroute 的美观。
+
+## 28. 为一台未知主机定制配置
+
+§4 的档位是在一种特定 standalone/Direct 工作负载上验证过的起点。当
+你的主机不符合那个画像时，本节就是为它推导配置的方法。下面每个数字
+要么引用本指南的实测，要么指明用哪条命令测出来——没有"CPU×常数"
+公式，因为不存在诚实的常数。
+
+### 28.1 给主机做指纹采集
+
+```
+lscpu; nproc                                  # 插槽/核/线程数、型号
+cat /sys/fs/cgroup/cpu.max                    # "MAX 100000" = 未限额；"50000 100000" = 半个核
+cat /sys/fs/cgroup/cpuset.cpus.effective      # 你可以跑在哪些核上（cgroup v2）
+cat /proc/pressure/cpu                        # PSI："some" = 有任务停滞，"full" = 全部停滞
+vmstat 1 5                                    # us/sy 占比、st（steal）、si/so（换页）
+grep MemAvailable /proc/meminfo               # 新工作真正可申领的内存
+cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.high \
+    /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory.events
+grep -E '^(anon|file|kernel|sock)' /sys/fs/cgroup/memory.stat
+grep 'open files' /proc/self/limits           # 你的服务将继承的 RLIMIT_NOFILE
+ip -s link                                    # 接口丢包/错误
+ss -s                                         # 套接字状态汇总
+ss -ti                                        # 按流的 rtt/cwnd/retrans/delivery_rate
+```
+
+cgroup 文件要在服务将运行的那个 scope *内部*读（systemd 服务就是它
+在 `/sys/fs/cgroup/system.slice/...` 下的服务 cgroup）：`dedicated`
+模式正是从这些数字推导预算的（§5），所以它们——而不是厂商的产品页
+——才是真相。
+
+### 28.2 盘点同居租户
+
+```
+systemctl list-units --state=running --type=service
+ps -eo pid,comm,%cpu,rss --sort=-rss | head -20
+systemd-cgtop -b -n 1                          # 按 cgroup 的 CPU/内存快照
+```
+
+你要找的是*此刻*还有谁占着 CPU 和 RSS，以及它们的负载是平稳的（工作
+集稳定的数据库）还是突发的（CI runner、重度 cron 邻居）。
+
+### 28.3 给主机分类
+
+- **整机独占** —— 没有值得一提的同居租户、cgroup 未限额：
+  `dedicated` 模式，从 §4 对应档位的档位起步。
+- **共享主机上的独占 cgroup** —— 你拥有一个带硬限额的 slice（容器型
+  VPS 的典型形态）：`dedicated` 模式在 cgroup *内部*有效；它读取的是
+  cgroup 的 CPU 配额和内存限额（VERIFIED，`machine_report`）。按
+  cgroup 限额定规格，不按整机。
+- **共享但可预测** —— 有同居租户，但用量已测量且平稳：`standard`
+  模式，或者更好——给 rust-reality 自己的 cgroup（28.4），按你测出
+  的剩余量定规格。
+- **共享且不可预测** —— steal 时间波动、邻居未知：用最小的站得住脚
+  的信封，`standard` 模式或紧 cgroup，并且在相信任何数字之前，拐点
+  标定（28.5）是强制步骤。
+
+### 28.4 共享机器上的隔离（没有普适数字）
+
+在任何共享机器上，把服务放进一个限额*由指纹采集推导出来*的 cgroup，
+然后在里面跑 `dedicated` 模式。示例 drop-in
+（`/etc/systemd/system/rust-reality.service.d/limits.conf`）——这些值
+是一台"4C8G 带数据库"主机的示意，不是配方：
+
+```ini
+[Service]
+CPUQuota=300%        # 4 核里的 3 核：租户盘点显示数据库约占 1 核
+MemoryHigh=3500M     # 硬顶之下的节流警戒线
+MemoryMax=4G         # 总共 8G − 实测数据库工作集 ≈3G − OS 余量
+LimitNOFILE=1048576  # 覆盖 2 FD × 计划会话数再加预留（§6）
+```
+
+`CPUQuota` 来自你实际能让出的核数（28.1 + 28.2）；`MemoryMax` 来自
+`MemAvailable` 减去同居租户的实测工作集；`MemoryHigh` 设在它之下，
+让内核先节流而不是先杀；`LimitNOFILE` 覆盖每个计划会话约 2 个描述符
+加固定预留。`CPUWeight`（默认 100）只在争抢时有意义——如果代理必须
+在与同居租户的 CPU 争抢中获胜，就调大它。
+
+### 28.5 标定饱和拐点
+
+§4 的档位正是这样找到的；在你的主机上重复一遍：
+
+1. 阶梯式抬升代表性负载（建连 churn，然后并发批量流，然后空闲会话
+   阶梯——用你自己的客户端，或项目的测试框架
+   `scripts/validate-profiles.sh`）。
+2. 每一档记录：吞吐、每秒新建连接数、建连 p50/p95/p99（`curl -w`，
+   §13）、CPU（`pidstat`）、steal（`vmstat` 的 `st`）、RSS 和
+   `memory.current`、FD 数（`ls /proc/PID/fd | wc -l`）、重传
+   （`nstat`，§15），以及压力事件（`resource_pressure_changed`，§18）。
+3. 找到**拐点**：继续加码不再产生有效吞吐、而延迟和压力急剧攀升的
+   那一档——出现弃载、`memory.current` 钉在 `memory.max`、p99 与
+   p50 分叉。
+4. 生产容量定在拐点**之下**。项目给自己的起始档位取的是观测到的
+   干净点/弃载点的 ≈57–67%（§4）；这个比例是合理的起步惯例，不是
+   定律。
+
+### 28.6 逐参数推导
+
+Little 定律式推理：`在途量 ≈ 到达率 × 服务时间`，每个输入都在你的
+主机上实测：
+
+- **`maxConnections`** —— 由拐点（28.5）得出，并受内存（含 geo 资产
+  的基础 33 MiB + 每活跃会话 ≈47 KiB + 批量负载下最多数百 MiB 的瞬时
+  池增长，MEASURED-LOCAL）和 FD（每会话 ≈2 个，§6）约束。
+- **`maxHandshakes`** —— ≥ 目标 CPS × 握手服务时间。先测服务时间
+  （§13 的建连 p95）：500 CPS × 0.5 s ≈ 250 在途，默认 1024 有 4 倍
+  余量；同样 CPS 在 3 秒高 RTT 路径上则需要 ≈1500。
+- **`maxCryptoOperations`** —— 一次握手同一时间最多持有一个加密槽位，
+  所以它永远不需要超过 `maxHandshakes`；当 CPU 本来就只能撑起
+  ≈800 conn/s 时（MEASURED-LOCAL churn 锚点，受测试框架限制），默认
+  128 很充裕。
+- **`maxDnsLookups`** —— 只在 IP 规则把 DNS 放进决策路径时才有意义
+  （§12）：触发 DNS 的份额 × CPS × 解析器延迟。500 CPS 的 20% 对
+  50 ms 解析器 ≈ 5 在途；默认 64 足够。
+- **`maxReplayEntries`** —— ≥ 新认证 CPS × `replayRetentionMs`：
+  500 CPS × 120 s = 60 000，刚好低于 65 536 的默认值；在实测
+  ≈800 conn/s churn 下默认值*不够*（§8）——按你的 CPS 定。
+- **`directBarrier.maxConcurrent`** —— 预期并发会话中 Direct 路由的
+  *份额*（§3）：standalone/Direct = 100%，纯 NXR 出站的线路节点 = 0
+  （默认 2048 可以原样不动）。SOCKS5 和 NXR 出站从不获取许可
+  （VERIFIED）。
+- **`directBarrier.maxPerSecond`** —— 预期 Direct 拨号速率：Direct
+  份额 × CPS × 突发余量。
+- **中继池** —— `maxPooledBuffers` ≥ *并发传输中*（不是空闲）的会话
+  数；保持 §7 校验器公式 ≤ `maxRelayMemoryBytes`（默认 536 870 912）。
+- **NXR `maxNonceEntries`** —— NXR CPS × `nonceRetentionSeconds`，再
+  加余量；需要重启（§10）。
+
+### 28.7 五个完整推导示例
+
+**(A) 1C1G，整机独占，standalone/Direct。** 直接采用实测的 §4 档位：
+`maxConnections` = `maxConcurrent` = **8000** —— 12000 验证干净、
+cgroup 峰值 694 MiB、≈14000 开始弃载，8000 ≈ 弃载点的 57%。为什么
+放得下：33 MiB 基础 + 47 KiB × 8000 ≈ 366 MiB 会话内存 + 最多
+~300 MiB 瞬时池 ≈ 700 MiB < 1 GiB；2 × 8000 个 FD 远在自带单元允许
+的预算之内（§6）。`maxReplayEntries` 65536 可持续 ≈550 conn/s 新连接
+（§8）——高于这台主机的实测 churn 锚点，默认值保留。
+
+**(B) 同一台 1C1G，但与其他服务共享。** 租户盘点显示，比如说，有
+300 MiB 和半个核被稳定占用。两个诚实的选项：`standard` 模式（保守
+推导，§5），或者设 `MemoryMax=768M`、`CPUQuota=75%` 的 cgroup 并在
+里面跑 `dedicated`。768 MiB 之内：768 − 33 − ~300 瞬时 ≈ 435 MiB 给
+会话 ≈ 按内存 9000——但 0.75 个 vCPU 会更早触及拐点，所以
+`maxConnections` = `maxConcurrent` 先从 **4000** 起步（(A) 的一半，
+一个刻意保守选取的未测点），只有在你自己跑过拐点标定（28.5）之后才
+上调。其余参数按 28.6 由你实测的 CPS 推导。
+
+**(C) 与数据库共享的 4C8G。** 按 28.4 隔离（`CPUQuota=300%`、
+`MemoryMax=4G`、`LimitNOFILE=1048576`），cgroup 内跑 `dedicated`，
+采用 §4 中 4 GiB 档位的档位：`maxConnections` = `maxConcurrent` =
+**24000** —— 在 1.12 GiB cgroup 峰值下验证干净，且刻意停在验证值上
+不外推。内存核对：33 MiB + 47 KiB × 24000 ≈ 1.1 GiB + ~300 MiB 瞬时
+≈ 1.4 GiB ≪ 4 GiB，cgroup 有真实余量；高于 24000 的论断需要你自己的
+验证（项目的测试框架在那里先撞上了端口上限，§4）。
+
+**(D) 2C2G 线路节点，以 NXR 出站为主。** 路由把约 90% 的会话送往
+NXR 落地、约 10% 走 direct。`maxConnections` = **16000**，即 2C2G
+standalone 的已验证起点，作为更重的线路角色的初始假设接受（NXR 段
+增加 ≈3–5% 吞吐税和每连接 ≈+0.15 ms CPU，MEASURED-LOCAL）。
+`maxConcurrent`：只有 Direct 份额获取许可——10% × 16000 = 1600，
+所以**默认 2048 已经够用**，什么都不用调；纯 NXR 出站的线路节点则
+完全不需要调。`maxPerSecond`：10% × 你的 CPS（500 → 50/s）≪ 默认
+4096。如果该线路还*终结*来自其他节点的 NXR，则 `maxNonceEntries`
+≥ NXR CPS × 120 s。
+
+**(E) 2C2G 落地节点。** 没有 REALITY 握手、没有 geo 资产（约 27 MiB
+从不加载）、没有路由，而且 NXR 落地路径从不触及 direct barrier——
+`maxConcurrent` 在这里无关紧要。按中继 FD 和内存定规格：同样的
+≈47 KiB + 2 FD/会话锚点适用，16000 个会话约耗 750 MiB + 池（上限
+512 MiB，瞬时）——放进 2 GiB 有余量，与 §22"落地可以比线路低一档"
+的观察一致。真正会绑定的参数是防重放：`maxNonceEntries` ≥ NXR CPS ×
+`nonceRetentionSeconds`——在实测 ≈800 conn/s churn 和 120 s 默认值下
+约为 96 000，*超过* 65536 的默认值，所以调大它（需重启）或限制接入的
+NXR churn（§8）。
