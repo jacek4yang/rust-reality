@@ -102,6 +102,41 @@ admission 架构和运行时可观测性。设计背后的实测证据见
 | raw relay（buffered） | 方向任务 | 池化 32 KiB 缓冲区 | 每会话池互斥锁 + 信号量 | 每块 read+write | 每块 1 次用户态拷贝 |
 | 拆除 | 方向任务 | 0 | 状态 CAS | shutdown/close；abort→SO_LINGER+close | 0 |
 
+## Handoff 会话转移
+
+当路由把已认证的会话解析到 handoff 出站时，会话更换属主，而不是在本地
+服务。边界是精确的：路由已解析、从未向客户端写入任何字节、服务器方向的
+记录序号仍为零、尚不存在任何 Vision 状态。属主规则是**任意时刻一个会话
+只有一个协议属主**：
+
+```text
+LINE_OWNED -> HANDOFF_IN_PROGRESS -> LANDING_OWNED | ABORTED
+```
+
+- **LINE_OWNED** —— 线路机持有完整会话：两个方向的 TLS 1.3 记录层、
+  VLESS 请求、客户端 socket。
+- **HANDOFF_IN_PROGRESS** —— LINE 导出续接状态并密封成一次单程转移
+  （用 fresh ephemeral X25519 对落地机静态密钥交换，与成对 PSK 混合，以
+  完整 transcript 做 ChaCha20-Poly1305）。穿越信道的内容按类划分：会话
+  密钥材料（两个方向的应用流量密钥与 IV）、记录序号与密码套件、路由
+  决策（VLESS 用户 id 与目标），以及在途缓冲（client random、读取器已
+  消费的预读密文、预取的请求负载）。转移写入完成后，LINE 立即丢弃自己
+  的续接状态副本，此后不再持有该会话的任何 TLS 或 Vision 状态。
+- **LANDING_OWNED** —— LANDING 依序验证转移（头部、时间戳、重放缓存、
+  密钥协商、AEAD、一致性检查），重建记录层，先喂入转移来的待处理字节，
+  直接连接目标，然后运行标准的 Vision relay。它的首个密封记录（VLESS
+  响应头和起始 Vision 帧）同时就是转移成功的信号。
+- **ABORTED** —— LANDING 侧的任何失败都是零响应字节的静默关闭。LINE 以
+  有界截止时间（`firstByteTimeoutMs`）等待首个下行字节；其缺失——关闭、
+  停滞或非 TLS 字节——就是拒绝信号，LINE 用 `SO_LINGER{on,0}` 重置客户端
+  socket（RST，绝不是 FIN），而不会带着已消费的状态在本地继续服务。
+
+转移成功后 LINE 变成纯 raw relay：它在两个方向上对客户端密文与 handoff
+socket 做 splice，不再触碰任何 TLS 记录——会话的逐字节密码学属主已移到
+LANDING。拆除时重置的客户端（最终 close_notify 未读就关闭）只让受影响的
+splice 方向按 EOF 结束，因为两个 socket 承载的都是 TLS 记录，其关闭语义由
+端点自己保证；其余 raw relay 保持 abort-on-reset 语义。
+
 ## 描述符预算
 
 启动时、绑定任何 listener 之前推导：

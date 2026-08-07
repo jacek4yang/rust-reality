@@ -197,6 +197,44 @@ honest figure.
   880 vs 696 conn/s, 0.77 vs 1.02 ms CPU/connection.
 - **Integrity:** every cell byte-verified; no transfer errors.
 
+## Handoff line-node offload (measured, single host)
+
+The Handoff topology moves a session's per-byte TLS/Vision work from the line
+node to the landing node: after the one-time transfer, the line node is a raw
+ciphertext splice relay. The measured A/B below compares that topology against
+the NXR two-hop chain, same workload (512 MiB transfers through an unmodified
+Xray client), same host.
+
+**Evidence label:** single-host loopback on the validation host (Intel Core
+i3-8100, 4C/4T), no cgroup isolation; loopback shares the host CPUs between
+client, both server nodes, and origin. Figures are milliseconds of task-clock
+CPU per GiB over 1.5 GiB stat windows — implementation cost, never Internet
+throughput, and not cross-host transferable.
+
+| metric (ms CPU/GiB) | NXR chain | Handoff chain | Δ |
+|---|---:|---:|---:|
+| LINE download | 549 | **98.1** | **−82.1%** (5.6×) |
+| LINE upload | 1 043 | **415.0** | **−60.2%** (2.5×) |
+| LANDING download | 103 | 517.3 | 5.0× (absorbed the TLS work, as designed) |
+| **System download total** | 652 | **615.4** | **−5.6%** |
+
+Profiles confirm the mechanism: the line node's steady state contains no AEAD,
+record-layer, or Vision symbols at any percent limit (userspace is the splice
+pump and scheduler glue; the transfer path — one X25519 exchange and one
+bounded seal per session — measures ≈0.25% cumulative), while the landing
+node's profile is the transplanted TLS workload. Upload stays dearer than
+download on the line node because client records arrive in ≤16 KiB chunks,
+so the residual is syscall-rate-bound, not cryptographic.
+
+Reading this as an operator: Handoff is edge-compute migration, not a free
+lunch — the line node sheds per-byte TLS, the landing node absorbs it, and
+total system CPU is roughly flat (slightly better here). Choose **Handoff**
+when the public line node is CPU-constrained and a stronger private landing
+node is available; choose **NXR** when session keys must never leave the
+public node — NXR transfers no key material at all, at the price of the
+payload crossing the private hop in plaintext after its one-time
+authentication.
+
 ## Hot-path forensic audit (v1.0.0)
 
 Profiles of six workloads on an attribution build (same source, DWARF,

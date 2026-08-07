@@ -25,6 +25,9 @@
   Xray 客户端做端到端门禁。
 - 方向级 Vision Direct：每个方向在认证完成的瞬间就切换到 raw 内核 relay
   （优先 `splice`），分裂脑从结构上不可能发生。
+- 可选 Handoff 拓扑：线路机可以通过一条已认证的密封信道，把已接受会话的
+  TLS 属主转移给防火墙限制的落地机，把逐字节 TLS CPU 卸给落地机（loopback
+  实测：线路机下载 CPU/GiB −82%）。
 - framed 记录打包、稳态每条记录零分配、每条数据路径零可避免的用户态拷贝。
 - 默认使用 ring（源自 BoringSSL）的 AES-128-GCM 记录 AEAD；纯 Rust 的
   RustCrypto 回退构建只差一个参数，并持续测试。

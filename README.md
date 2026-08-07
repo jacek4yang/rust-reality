@@ -27,6 +27,10 @@ Xray-compatible client
 - Directional Vision Direct: each direction switches to a raw kernel relay
   (`splice` preferred) the moment it is authenticated, with split-brain made
   structurally impossible.
+- Optional Handoff topology: a line node can transfer an accepted session's
+  TLS ownership to a firewall-restricted landing node over one authenticated,
+  sealed channel, shedding its per-byte TLS CPU to the landing node
+  (measured loopback: −82% line download CPU/GiB).
 - Framed record batching, zero steady-state per-record allocations, and zero
   avoidable userspace copies on every data path.
 - ring (BoringSSL-derived) AES-128-GCM record AEAD by default; a pure-Rust

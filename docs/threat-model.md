@@ -8,8 +8,8 @@ English | [简体中文](threat-model.zh-CN.md)
 Xray-compatible client
   -> VLESS + REALITY + xtls-rprx-vision public listener
   -> UUID policy on the line node
-  -> direct | SOCKS5 | blackhole | NXR
-  -> optional firewall-restricted NXR landing node
+  -> direct | SOCKS5 | blackhole | NXR | Handoff
+  -> optional firewall-restricted NXR or Handoff landing node
   -> destination
 ```
 
@@ -34,8 +34,8 @@ bounded independently from authenticated connections.
 
 Configuration, routing assets, users, REALITY state, and outbounds are published
 as one immutable generation. A failed refresh keeps the last complete snapshot.
-Private keys, UUIDs, NXR PSKs, credentials, and full configurations are excluded
-from structured logs.
+Private keys, UUIDs, NXR PSKs, Handoff PSKs and static keys, credentials, and
+full configurations are excluded from structured logs.
 
 ## NXR boundary
 
@@ -55,6 +55,41 @@ Because post-authentication NXR traffic is plaintext, anyone who can observe or
 modify the private hop can observe or modify payload not protected by an
 end-to-end protocol such as HTTPS. Use a private network or a different secured
 transport when that threat exists.
+
+## Handoff boundary
+
+Handoff transfers an accepted session's full TLS ownership from the line node
+to a landing node over one single-flight channel. The transfer message carries
+the session's traffic keys, so the channel is sealed: a fresh ephemeral X25519
+exchange against the landing node's static key, mixed with the pair PSK in one
+HKDF-SHA256 chain, one ChaCha20-Poly1305 seal with the entire header as
+associated data. AEAD open success is the mutual key confirmation: the landing
+node proves its static key, the line node proves the PSK. Replay protection is
+a timestamp window plus a bounded nonce cache, checked before any key-agreement
+work.
+
+Forward secrecy is bounded by the landing node's static key: compromising that
+key retroactively exposes every recorded transfer it answered, and with them
+the transferred sessions. Rotate the static key to bound that window. After
+the transfer, the hop carries only the session's TLS ciphertext, which the
+endpoints' record AEAD still protects; an observer of the link sees record
+sizes and timing, not payload.
+
+Every transfer failure — structure, timestamp, replay, authentication, state —
+closes silently with zero response bytes, and the line node resets the client
+socket rather than serving the session locally. An attacker on the link who
+lacks both secrets cannot decrypt, forge, or redirect a transfer, and cannot
+inject into a transferred session without breaking its record AEAD; they can
+still close connections (the client observes a reset) and burn bounded replay
+entries with structurally valid forgeries, the same exposure the NXR cache
+already accepts — the firewall, not the cache, is the rate limit. The listener
+must be reachable only from the line nodes' addresses.
+
+Two trust statements to accept explicitly: the landing node applies no routing
+policy to the transferred destination — trust in the line node is absolute, so
+a compromised line node turns the landing node into an internal dialer; and the
+landing node holds live session keys for every transferred session, so its
+memory is part of the session's secrecy boundary.
 
 ## Resource and kernel boundaries
 

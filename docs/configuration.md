@@ -207,6 +207,57 @@ NXR authentication failure closes silently before DNS or destination connect.
 After success, the connection becomes raw bidirectional bytes. NXR has no
 post-authentication encryption and must not be exposed to the Internet.
 
+### Internal Handoff inbound
+
+```json
+{
+  "protocol": "handoff",
+  "tag": "internal-handoff",
+  "listen": "0.0.0.0",
+  "port": 7443,
+  "settings": {
+    "preSharedKey": "GENERATED-HANDOFF-KEY",
+    "privateKey": "GENERATED-X25519-PRIVATE-KEY",
+    "maxTimeDifferenceSeconds": 30,
+    "maxNonceEntries": 65536,
+    "nonceRetentionSeconds": 120,
+    "authenticationTimeoutMs": 3000,
+    "connectTimeoutMs": 10000
+  }
+}
+```
+
+| Field | Required | Default | Meaning and constraints |
+| --- | --- | --- | --- |
+| `protocol` | yes | fixed `handoff` | Selects the internal session-transfer protocol. |
+| `tag` | yes | — | Unique listener/operational tag. |
+| `listen` | yes | — | Internal bind address; restrict at the host/provider firewall. |
+| `port` | yes | — | Raw Handoff TCP port, non-zero. |
+| `settings.preSharedKey` | yes | — | Independent URL-safe unpadded base64 value decoding to exactly 32 bytes; the pair PSK shared with the line node's handoff outbound. |
+| `settings.privateKey` | yes | — | Independent static X25519 private key, URL-safe unpadded base64 decoding to exactly 32 bytes; its public half is the line outbound's `landingPublicKey`. |
+| `settings.maxTimeDifferenceSeconds` | no | `30` | Accepted absolute wall-clock skew, `1..=300`. |
+| `settings.maxNonceEntries` | no | `65536` | Maximum reserved transfer nonces, `1..=1000000`. |
+| `settings.nonceRetentionSeconds` | no | `120` | Replay retention; from `2 * maxTimeDifferenceSeconds + 1` through `86400`. |
+| `settings.authenticationTimeoutMs` | no | `3000` | Deadline to read the one bounded sealed transfer, `1..=600000`. |
+| `settings.connectTimeoutMs` | no | `10000` | Deadline to dial the transferred destination after authentication succeeds, `1..=600000`. |
+
+The listener verifies exactly one single-flight transfer per connection — a
+fresh ephemeral X25519 Diffie-Hellman against `privateKey`, mixed with the
+pair PSK and sealed with ChaCha20-Poly1305 over the full transcript — in this
+order: header structure, timestamp window, nonce reserve against the bounded
+replay cache, key agreement, AEAD open, then internal consistency checks.
+Every failure closes silently with zero response bytes, before DNS or
+destination connect. On success the listener reconstructs the session's TLS
+record layers, dials the transferred destination directly, and resumes the
+session; afterwards the connection carries the session's raw TLS ciphertext.
+
+Key independence is enforced within one configuration file: a Handoff
+`preSharedKey` equal to any NXR `preSharedKey`, or a Handoff `privateKey`
+equal to any REALITY `privateKey`, fails validation. Independence across
+nodes remains the operator's obligation. The Handoff listener carries live
+session keys and must not be exposed to the Internet: allow it only from the
+line nodes' source addresses at the firewall.
+
 ## `outbounds`
 
 `outbounds` must be non-empty. Outbound tags use the same 1–64-character syntax
@@ -285,6 +336,47 @@ uses username/password authentication.
 
 Each user TCP flow opens one NXR TCP connection and sends one authenticated,
 strictly bounded request. There is no multiplexing or persistent pool.
+
+### Handoff outbound
+
+```json
+{
+  "protocol": "handoff",
+  "tag": "landing",
+  "settings": {
+    "address": "10.0.0.2",
+    "port": 7443,
+    "preSharedKey": "GENERATED-HANDOFF-KEY",
+    "landingPublicKey": "GENERATED-X25519-PUBLIC-KEY",
+    "connectTimeoutMs": 10000,
+    "firstByteTimeoutMs": 15000
+  }
+}
+```
+
+| Field | Required | Default | Meaning and constraints |
+| --- | --- | --- | --- |
+| `settings.address` | yes | — | Valid landing-node ASCII hostname or IP address. |
+| `settings.port` | yes | — | Firewall-restricted Handoff TCP port, non-zero. |
+| `settings.preSharedKey` | yes | — | Same independent URL-safe unpadded 32-byte pair PSK as the landing inbound. |
+| `settings.landingPublicKey` | yes | — | The landing node's static X25519 public key, URL-safe unpadded base64 decoding to exactly 32 bytes; public material, not a secret. |
+| `settings.connectTimeoutMs` | no | `10000` | Deadline to dial the landing node and write the one sealed transfer, `1..=600000`. |
+| `settings.firstByteTimeoutMs` | no | `15000` | Deadline for the landing node's first downlink byte after the transfer, `1000..=600000`; see below. |
+
+Routing a user to a handoff outbound transfers the whole accepted session to
+the landing node at the session boundary: one TCP connection per session
+carries one sealed transfer and then the session's raw TLS ciphertext — no
+multiplexing or persistent pool. The transfer protocol answers every failure
+with a silent close, so the line node treats a missing first downlink byte
+within `firstByteTimeoutMs` as the rejection signal and resets the client
+socket; the session is never served locally after a failed transfer.
+
+`firstByteTimeoutMs` must exceed the landing node's
+`authenticationTimeoutMs + connectTimeoutMs` with headroom: the first sealed
+record is produced only after the transfer is read, authenticated, and the
+destination dialed, so a shorter deadline resets viable sessions whose
+landing node is slow or congested. The default 15000 ms covers the default
+landing budgets (3000 + 10000 ms).
 
 ## `routing`
 
@@ -597,7 +689,9 @@ Hot-updateable with compatible topology:
 - VLESS users and REALITY authentication/cover state;
 - outbound definitions, routing groups, and rules;
 - NXR key, clock window, and I/O timeouts when replay capacity/retention stay
-  unchanged.
+  unchanged;
+- Handoff key material, clock window, and timeouts when replay
+  capacity/retention stay unchanged.
 
 Restart required:
 
@@ -610,7 +704,8 @@ Restart required:
 - any `policy.directBarrier` change, because the direct-dial authority is
   process-lifetime;
 - any `policy.relay` change, because buffer/splice pools are process-lifetime;
-- NXR `maxNonceEntries` or `nonceRetentionSeconds` changes.
+- NXR `maxNonceEntries` or `nonceRetentionSeconds` changes;
+- Handoff `maxNonceEntries` or `nonceRetentionSeconds` changes.
 
 Run `check` and preferably `self-test` before SIGHUP. A valid file can still be
 reload-incompatible and require a controlled restart.
@@ -619,7 +714,8 @@ reload-incompatible and require a controlled restart.
 
 - Keep configuration `0640 root:rust-reality` or stricter.
 - Never commit generated UUIDs, REALITY private keys, short IDs intended to be
-  private, NXR PSKs, SOCKS credentials, or real endpoints.
+  private, NXR PSKs, Handoff PSKs, Handoff static private keys, SOCKS
+  credentials, or real endpoints.
 - Generate keys on a trusted host with OS entropy and transfer them over an
   authenticated channel.
 - Use a dedicated writable asset directory. External DAT files must remain

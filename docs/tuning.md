@@ -960,6 +960,30 @@ node's tuned numbers onto the other.
   network and relay budget matter more than its TLS budget (DERIVED from
   the role definitions).
 
+With a **Handoff** topology the roles shift: the line node sheds the
+per-byte TLS/Vision work after the one-time transfer and becomes a raw
+ciphertext splice relay, while the landing node reconstructs the session
+and carries the full TLS workload plus the destination dial.
+
+- **Handoff line node** — REALITY + VLESS + Vision up to the session
+  boundary, then pure splice. Loopback measurement on the §4 host class:
+  ≈98 ms CPU/GiB download against 549 on the NXR line role
+  (MEASURED-LOCAL, single host, no cgroup isolation). Its steady cost is
+  syscall-bound splice work, not cryptography — size it like a relay, not
+  like a TLS terminator.
+- **Handoff landing node** — inherits everything the standalone TLS
+  budget carries: record AEAD, Vision framing, destination connect, and
+  the relay (≈517 ms CPU/GiB download in the same loopback measurement).
+  Size it from §4 as if it were the standalone node for the transferred
+  sessions, plus its own listener limits (DERIVED from the role
+  definitions and the §4 profiles).
+
+System-total CPU for the chain is roughly flat between the two topologies
+(−5.6% download in that loopback A/B), so the choice is about where the
+CPU lives, not how much there is; see
+[performance.md](performance.md#handoff-line-node-offload-measured-single-host)
+for the measured table and its labels.
+
 Measured on equal endpoints (MEASURED-LOCAL): the NXR leg adds ≈3–5%
 throughput tax and ≈+0.15 ms CPU per connection over direct — small enough
 that a landing node one class smaller than its line node is a reasonable
