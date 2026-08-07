@@ -384,13 +384,18 @@ impl VisionHandler {
     /// The continuation carries both record layers, the reader's read-ahead
     /// ciphertext, and the prefetched VLESS payload; afterwards this node
     /// never decrypts or frames the session again. Any failure — dial, seal,
-    /// write, or a landing close before its first downlink byte — leaves the
-    /// abort guard armed, so the client socket is reset rather than
-    /// half-closed and the session is never served locally with consumed
-    /// state. A successful transfer always produces immediate downlink (the
-    /// response header and opening Vision frame are LANDING's first sealed
-    /// record), so a completed relay that moved zero downlink bytes is the
-    /// rejection signal of the deliberately silent protocol.
+    /// or write — leaves the abort guard armed, so the client socket is reset
+    /// rather than half-closed and the session is never served locally with
+    /// consumed state. A successful transfer always produces immediate
+    /// downlink (the response header and opening Vision frame are LANDING's
+    /// first sealed record), while every rejection closes the connection
+    /// silently; the first landing byte is therefore awaited with a bounded
+    /// deadline before the relay starts, and its absence — close, stall, or
+    /// non-TLS bytes — is classified as rejection while every descriptor is
+    /// still open, so the armed guard resets the client socket instead of
+    /// FIN-ing it and the sockets, permits, and pipes release immediately.
+    /// The client halves are reunited before the probe so the abortive close
+    /// is not preceded by `OwnedWriteHalf`'s shutdown-on-drop FIN.
     async fn relay_via_handoff(
         &self,
         line: &super::handoff::HandoffLine,
@@ -437,6 +442,23 @@ impl VisionHandler {
         let client_stream = client_read_half
             .reunite(client_write_half)
             .map_err(|_| VisionSessionError::HandoffLine(HandoffLineError::Reunite))?;
+        // Classify the silent protocol's only failure signal before any socket
+        // moves into the relay: no TLS downlink byte within the deadline means
+        // rejection. The guard's descriptors are still open here, so dropping
+        // it armed aborts both sockets (SO_LINGER {on,0}); they close as whole
+        // streams right after, delivering RST — never FIN — and the session's
+        // descriptors, permits, and pipes are not held until the idle timeout.
+        if !super::handoff::first_downlink_landed(
+            &handoff_stream,
+            super::handoff::LANDING_FIRST_BYTE_TIMEOUT,
+        )
+        .await
+        {
+            drop(guard);
+            return Err(VisionSessionError::HandoffLine(
+                HandoffLineError::LandingRejected,
+            ));
+        }
         let outcome = self
             .relay
             .relay_owned(
@@ -447,6 +469,8 @@ impl VisionHandler {
             .await
             .map_err(HandoffLineError::Relay)
             .map_err(VisionSessionError::HandoffLine)?;
+        // Backstop for the first-byte probe above: a completed relay that
+        // moved zero downlink bytes still reads as a rejection.
         if outcome.outbound_to_inbound() == 0 {
             return Err(VisionSessionError::HandoffLine(
                 HandoffLineError::LandingRejected,

@@ -157,6 +157,39 @@ impl fmt::Debug for HandoffLine {
     }
 }
 
+/// Deadline for LANDING's first downlink byte after the transfer write.
+///
+/// A successful transfer produces immediate downlink — the resumed response
+/// header and opening Vision frame are LANDING's first sealed record — while
+/// every rejection closes the connection silently, so this bound is the
+/// rejection-detection window. It must exceed the landing side's worst-case
+/// pre-relay work (the bounded transfer read, authentication, and the
+/// destination dial, whose default budgets sum to 13 s), and it replaces the
+/// session idle timeout as the detection bound so a rejected session's
+/// descriptors, permits, and pipes are released within seconds.
+pub(crate) const LANDING_FIRST_BYTE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// TLS record content type for application data: the resumed session's first
+/// record is always sealed application data.
+const TLS_APPLICATION_DATA: u8 = 23;
+
+/// Waits, without consuming, for LANDING's first byte after the transfer and
+/// classifies it.
+///
+/// Returns `true` only when a byte arrived before `deadline` and carries the
+/// TLS application-data content type. Anything else — a silent close, a
+/// reset, a stall past the deadline, or the handshake/alert bytes a misdialed
+/// REALITY cover target would mirror back — is the silent protocol's
+/// rejection signal, and the caller must reset the client socket rather than
+/// relay on. Peeking leaves the byte in the kernel buffer for the raw relay.
+pub(crate) async fn first_downlink_landed(stream: &TcpStream, deadline: Duration) -> bool {
+    let mut probe = [0_u8; 1];
+    match time::timeout(deadline, stream.peek(&mut probe)).await {
+        Ok(Ok(bytes)) => bytes > 0 && probe[0] == TLS_APPLICATION_DATA,
+        Ok(Err(_)) | Err(_) => false,
+    }
+}
+
 /// One LINE-side session transfer failed; the client socket must be reset.
 #[derive(Debug)]
 pub enum HandoffLineError {
@@ -172,8 +205,9 @@ pub enum HandoffLineError {
     Transfer(HandoffError),
     /// The handoff socket halves could not be reunited (unreachable in practice).
     Reunite,
-    /// LANDING closed the connection without producing session downlink,
-    /// which is the only failure signal the silent protocol carries.
+    /// LANDING produced no TLS downlink byte within the first-byte deadline:
+    /// it closed silently, stalled, or answered with non-session bytes — the
+    /// only failure signal the silent protocol carries.
     LandingRejected,
     /// The raw client-to-landing relay failed mid-session.
     Relay(io::Error),
@@ -1120,13 +1154,21 @@ mod tests {
                     .seal_into(ContentType::ApplicationData, &request, 0, &mut record)
                     .map_err(io::Error::other)?;
                 client.write_all(&record).await?;
-                client.shutdown().await?;
-                let mut response = Vec::new();
-                // A rejected transfer ends the session without a single
-                // downlink byte; the reset may surface as an error or a bare
-                // EOF depending on which socket teardown wins the race.
-                let _ignored = client.read_to_end(&mut response).await;
-                assert!(response.is_empty(), "a rejected session receives nothing");
+                // The client stays open like any patient client: LINE must
+                // detect the silent rejection at its own first-byte deadline —
+                // far inside TEST_TIMEOUT — and reset this socket. A clean
+                // FIN (Ok(0)) or any read byte is a failure of the spec's
+                // failure semantics, not a race to tolerate.
+                let mut byte = [0_u8; 1];
+                let error = client
+                    .read(&mut byte)
+                    .await
+                    .expect_err("a rejected transfer must reset the client, never FIN it");
+                assert_eq!(
+                    error.kind(),
+                    io::ErrorKind::ConnectionReset,
+                    "the rejection abort must reach the client as RST"
+                );
                 Ok::<_, io::Error>(())
             };
             tokio::join!(line, landing, client_io)
@@ -1220,5 +1262,67 @@ mod tests {
         let rendered = format!("{line:?}");
         assert!(rendered.contains("[REDACTED]"));
         assert!(!rendered.contains("VVVV"), "the base64 PSK must not appear");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn first_downlink_byte_classification() {
+        // Session downlink begins with a sealed application-data record and
+        // the probe must not consume it.
+        let (mut peer, mut stream) = tcp_pair().await;
+        peer.write_all(&[0x17, 0x03, 0x03, 0x00, 0x01, 0xaa])
+            .await
+            .expect("peer write must succeed");
+        assert!(
+            super::first_downlink_landed(&stream, TEST_TIMEOUT).await,
+            "a TLS application-data first byte must classify as landed"
+        );
+        drop(peer);
+        let mut rest = Vec::new();
+        stream
+            .read_to_end(&mut rest)
+            .await
+            .expect("the peeked bytes must remain for the raw relay");
+        assert_eq!(rest, [0x17, 0x03, 0x03, 0x00, 0x01, 0xaa]);
+
+        // A silent close and a mid-flight reset both read as rejection.
+        let (peer, stream) = tcp_pair().await;
+        drop(peer);
+        assert!(
+            !super::first_downlink_landed(&stream, TEST_TIMEOUT).await,
+            "a silent close must classify as rejected"
+        );
+        let (peer, stream) = tcp_pair().await;
+        rr_linux::socket::abort_linger(std::os::fd::AsRawFd::as_raw_fd(&peer))
+            .expect("abort linger must apply");
+        drop(peer);
+        assert!(
+            !super::first_downlink_landed(&stream, TEST_TIMEOUT).await,
+            "a reset must classify as rejected"
+        );
+
+        // A REALITY cover target mirroring the transfer would answer with a
+        // handshake or alert record, never session application data.
+        let (mut peer, stream) = tcp_pair().await;
+        peer.write_all(&[0x16, 0x03, 0x01])
+            .await
+            .expect("peer write must succeed");
+        assert!(
+            !super::first_downlink_landed(&stream, TEST_TIMEOUT).await,
+            "non-application-data bytes must classify as rejected"
+        );
+        drop(peer);
+
+        // A landing that holds the connection without answering trips the
+        // deadline, not the session idle timeout.
+        let (_peer, stream) = tcp_pair().await;
+        let started = std::time::Instant::now();
+        assert!(
+            !super::first_downlink_landed(&stream, Duration::from_millis(50)).await,
+            "a stalled landing must classify as rejected at the deadline"
+        );
+        assert!(
+            started.elapsed() < TEST_TIMEOUT,
+            "the deadline must bound the wait, not the idle timeout"
+        );
     }
 }
