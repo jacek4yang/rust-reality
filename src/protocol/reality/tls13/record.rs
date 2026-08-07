@@ -1,11 +1,11 @@
 use std::{error::Error, fmt};
 
+#[cfg(not(feature = "ring-aead"))]
+use aes_gcm::Aes128Gcm;
 use aes_gcm::{
     Aes256Gcm,
     aead::{AeadInOut, KeyInit, Nonce, Tag, array::Array},
 };
-#[cfg(not(feature = "ring-aead"))]
-use aes_gcm::Aes128Gcm;
 use chacha20poly1305::ChaCha20Poly1305;
 
 use super::{CipherSuite, TrafficKeys};
@@ -131,13 +131,17 @@ impl Aes128GcmRecordCipher {
         #[cfg(not(feature = "ring-aead"))]
         {
             Aes128Gcm::new_from_slice(key)
-                .map(|cipher| Self { inner: Box::new(cipher) })
+                .map(|cipher| Self {
+                    inner: Box::new(cipher),
+                })
                 .map_err(|_| Tls13RecordError::InvalidKey)
         }
         #[cfg(feature = "ring-aead")]
         {
             ring::aead::UnboundKey::new(&ring::aead::AES_128_GCM, key)
-                .map(|key| Self { inner: Box::new(ring::aead::LessSafeKey::new(key)) })
+                .map(|key| Self {
+                    inner: Box::new(ring::aead::LessSafeKey::new(key)),
+                })
                 .map_err(|_| Tls13RecordError::InvalidKey)
         }
     }
@@ -925,7 +929,6 @@ mod tests {
             }
         }
     }
-
 
     fn paired_layers(suite: CipherSuite) -> (Tls13RecordLayer, Tls13RecordLayer) {
         let transcript = suite.hash().digest(b"ClientHelloServerHello");
