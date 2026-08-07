@@ -31,7 +31,7 @@ Verify both listed files before extraction:
 
 ```shell
 sha256sum --check SHA256SUMS
-tar -xzf rust-reality-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf rust-reality-v1.0.0-x86_64-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 rust-reality --version
 ```
@@ -312,14 +312,14 @@ configuration, keys, UUIDs, credentials, or packet captures into public issues.
 
 ## Removed kernel relay backends
 
-The sockhash backend was removed (D7): it never armed in any production
+The sockhash backend was removed: it never armed in any production
 benchmark matrix, a privileged A/B showed parity with splice, and the
 unprivileged production deployment model could never arm it. Stale
 `policy.relay.sockhash`, `policy.relay.maxSockhashRelays` or
 `policy.relay.maxPinnedMemoryBytes` keys are rejected as unknown fields.
-The retained A/B evidence lives in `benchmarks/final/sockhash-ab/`.
 
-The io_uring backend was removed (see `decisions/adaptive-relay-implementation-plan.md`);
+The io_uring backend was removed (see
+[`decisions/0002-io-uring-removed.md`](decisions/0002-io-uring-removed.md));
 stale `policy.relay.ioUring` or `policy.relay.maxIoUringRelays` keys are
 rejected as unknown fields.
 

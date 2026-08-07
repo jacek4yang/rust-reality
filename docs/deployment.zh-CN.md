@@ -29,7 +29,7 @@ NXR 落地机。
 
 ```shell
 sha256sum --check SHA256SUMS
-tar -xzf rust-reality-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf rust-reality-v1.0.0-x86_64-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 rust-reality --version
 ```
@@ -284,12 +284,13 @@ sudo systemctl restart rust-reality
 
 ## 已移除的内核中继后端
 
-sockhash 后端已被移除（D7）：它在所有生产基准矩阵中从未 arm，特权 A/B 测试显示其与
+sockhash 后端已被移除：它在所有生产基准矩阵中从未 arm，特权 A/B 测试显示其与
 splice 持平，且无特权的生产部署模型永远无法 arm 它。仍然设置 `policy.relay.sockhash`、
 `policy.relay.maxSockhashRelays` 或 `policy.relay.maxPinnedMemoryBytes` 的配置会作为
-未知字段被拒绝。保留的 A/B 证据位于 `benchmarks/final/sockhash-ab/`。
+未知字段被拒绝。
 
-io_uring 后端已被移除（见 `decisions/adaptive-relay-implementation-plan.md`）；仍然设置
+io_uring 后端已被移除（见
+[`decisions/0002-io-uring-removed.md`](decisions/0002-io-uring-removed.md)）；仍然设置
 `policy.relay.ioUring` 或 `policy.relay.maxIoUringRelays` 的配置会作为未知字段被拒绝。
 
 可移植的缓冲中继和 Linux `splice` 不需要额外权限。

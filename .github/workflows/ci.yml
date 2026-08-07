@@ -53,3 +53,6 @@ jobs:
 
       - name: Run repository quality checks
         run: ./scripts/check.sh
+
+      - name: Test RustCrypto fallback configuration
+        run: cargo test --workspace --no-default-features --locked

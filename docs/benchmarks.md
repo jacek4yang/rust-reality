@@ -1,156 +1,148 @@
-# Benchmark policy and baseline
+# Benchmark policy and canonical samples
 
 English | [简体中文](benchmarks.zh-CN.md)
 
-## Built-in protocol measurements
+This document states how rust-reality is measured, which samples are canonical
+for v1.0.0, and the limits on interpreting any number here. The final frozen
+v1.0.0 release comparison matrix is produced at release time from the same
+harnesses; the design-level evidence behind the numbers lives in
+[performance.md](performance.md).
 
-Run an optimized binary on an otherwise idle host:
+## Measurement policy
 
-```shell
-./scripts/build-release.sh
-target/release/rust-reality benchmark \
-  --duration-ms 5000 \
-  --warmup-ms 1000 \
-  > benchmark.json
+- Every sample is retained; no fastest run is selected and nothing is averaged
+  away before the raw file is written.
+- Implementation order is shuffled per repetition from a recorded seed, so
+  ordering cannot favour one side.
+- Both sides run the same log level, the same origin, the same concurrency,
+  and the same payload; known asymmetries are disclosed with the numbers.
+- Loopback numbers describe implementation cost, not Internet throughput. No
+  result may claim resistance to upstream volumetric DDoS or generalize one
+  host's measurement to other CPUs, kernels, and networks.
+- Declined backends and failed cells are recorded as declines/failures, never
+  as fabricated numbers.
+
+## Harnesses
+
+| Harness | Purpose |
+|---|---|
+| `rust-reality benchmark` (built-in) | Bounded, machine-readable in-process protocol measurements (VLESS decode, Vision framing, NXR auth). |
+| `cargo bench` (criterion) | Regression analysis for VLESS decoding, Vision framing, and relay backends, with baselines and plots. |
+| `scripts/benchmark-matrix.sh` | Full A/B/C loopback matrix (baseline/final/Xray) over direction × payload × concurrency. |
+| `scripts/benchmark-fallback-ab.sh` | Clean fallback A/B against Xray: warn-level logging both sides, direct-to-listener. |
+| `scripts/benchmark-setup-rate.sh` | Connection setup-rate model (accept → first Vision transition). |
+| `scripts/benchmark-vision-direct.sh`, `scripts/benchmark-xray.sh` | Focused Vision-Direct and Xray comparisons. |
+| `scripts/benchmark-deployment.sh` | Deployment characterization: routing correctness proof, routing decision cost (incl. DNS strategies), NXR topologies (direct/NXR/SOCKS5/Xray), optional netem RTT sweep, and long-flow relay evidence. |
+| `scripts/test-xray-interop.sh` | Compatibility gate (below), not a benchmark. |
+
+## Canonical v1.0.0 samples
+
+Two small evidence sets are retained in the repository as the canonical
+samples; larger historical matrices were archived outside the repo.
+
+### Framed AEAD provider A/B — `benchmarks/final/d9-framed-ab/`
+
+Ring (default) vs RustCrypto (`baseline`) vs Xray 26.7.28, framed cells, 219
+valid samples, 0 invalid, 2 GiB sha256 integrity matched for all three
+implementations. Environment: Intel Core i3-8100 (4C/4T), Linux
+6.12.94+deb13-amd64, rustc 1.96.0, Xray 26.7.28 (`5ca6f4b`, Go 1.26.0),
+loopback with a compiled Go origin, REALITY cover `dl.google.com:443`, seed
+`0x5252`.
+
+512 MiB cells, p50 MiB/s:
+
+| cell | RustCrypto | ring (default) | Xray | ring/RustCrypto | ring/Xray |
+|---|---:|---:|---:|---:|---:|
+| download, c1 | 682.3 | 736.5 | 655.1 | 1.079 | 1.124 |
+| download, c32 | 1277.0 | 1481.4 | 1391.6 | 1.160 | 1.065 |
+| upload, c1 | 635.6 | 670.8 | 611.2 | 1.055 | 1.097 |
+| upload, c32 | 1331.3 | 1429.3 | 1375.0 | 1.074 | 1.040 |
+
+All 16 framed cells are ≥1.00 ring-vs-RustCrypto. Server cost per GiB of
+framed download (perf stat, 3 reps each): task-clock 631 vs 940 ms/GiB
+(−33%), instructions −30%, context switches −39%; RSS +3% (noise).
+
+### Fallback A/B — `benchmarks/final/fallback-ab/`
+
+Clean same-origin fallback comparison (splice backend vs Xray, warn-level
+logging both sides, concurrency 32):
+
+| payload | rust-reality (splice) | Xray | ratio | task-clock delta |
+|---|---:|---:|---:|---:|
+| 32 MiB | 3278 MiB/s | 3134 MiB/s | 1.05× | 865 ms vs 1173 ms (−26%) |
+| 512 MiB | 4197 MiB/s | 4036 MiB/s | 1.04× | 10.0 s vs 15.3 s (−35%) |
+
+## Methodology rules (and the traps that invalidated earlier numbers)
+
+1. **Symmetric log levels for any A/B claim.** rust-reality's debug level
+   serializes per-connection JSON events on the stderr lock; Xray's warning
+   level does not. An asymmetric comparison once fabricated a ~25% fallback
+   deficit. Matrix harnesses run rust servers at debug only for
+   per-connection backend statistics, and any cell sensitive to logging cost
+   is re-measured with the clean warn-level harness before a claim is made.
+2. **Strip the proxy environment.** A `NO_PROXY` entry covering `127.0.0.1`
+   makes curl bypass even an explicit `--socks5-hostname` for loopback URLs.
+   Every harness strips proxy variables and verifies tunnel usage via
+   server-side connection logs; numbers produced without this guard measure
+   direct connections, not the proxy.
+3. **Interleave with a recorded seed** and keep every sample; report per-cell
+   medians and the invalid-sample count.
+4. **Mind the filesystem.** Multi-GiB integrity transfers fail spuriously on
+   a small tmpfs (`curl` rc=23, disk full); harness working directories
+   belong on disk-backed storage.
+5. **Guard the origin.** Origins are compiled (Go), streamed, and report
+   their own errors; cells whose origin reports errors are marked invalid
+   rather than read as proxy results.
+
+## Xray 26.7.28 compatibility gate
+
+`scripts/test-xray-interop.sh` proves that an unmodified Xray client can
+drive the production public stack end to end:
+
+```text
+curl -> Xray SOCKS5 inbound -> VLESS + REALITY + xtls-rprx-vision
+     -> rust-reality -> direct -> destination
 ```
 
-The JSON records build mode, embedded commit, target OS and architecture,
-visible CPU count, requested timings, operation counts, aggregate mean, and
-per-sample p50/p95. Each case uses nine independent windows. Reported MiB/s is
-logical input throughput for the named in-process operation; it is not socket,
-proxy, or Internet throughput.
-
-Criterion remains the tool for regression analysis with baselines and plots:
-
 ```shell
-cargo bench --bench vless_decode
-cargo bench --bench vision
+XRAY_BIN=/path/to/xray ./scripts/test-xray-interop.sh
 ```
 
-## Recorded development-host sample
+The script builds a release binary, creates fresh ephemeral UUID, X25519, and
+short-ID material, starts both processes on loopback, transfers a
+deterministic 1 MiB object through Xray, verifies its SHA-256 digest, checks
+ML-DSA-65 verification-key generation against Xray for a fixed seed, and
+optionally requests one real HTTPS URL. All generated configuration and keys
+remain in a bounded temporary directory that is removed on exit.
 
-This sample is evidence that the command runs and produces stable bounded data,
-not a release performance promise:
+Recorded 2026-08-03 on the validation host (Linux 6.12.94+deb13-amd64, rustc
+1.96.0, Xray 26.7.28 `5ca6f4b`, cover `www.microsoft.com:443`, uTLS
+fingerprint `chrome`): the 1 MiB digest matched, the ML-DSA-65 verification
+key was byte-identical to Xray's, a real HTTPS request returned HTTP 302,
+and Xray's debug log showed successful Vision padding/unpadding and
+authenticated Direct-boundary detection for both transfers.
 
-- Date: 2026-08-03 (Asia/Shanghai)
-- Host: Intel Core i3-8100, 4 logical CPUs
-- Kernel: Linux 6.12.94+deb13-amd64
-- Rust: 1.96.0
-- Measured time: 900 ms per case, 100 ms warm-up
-- `vless.decode.ipv4`: 26.99 ns/op, 37.06 million ops/s
-- `vision.decode.8k`: 164.93 ns/op, 6.06 million ops/s
-- `nxr.auth.encode.domain`: 1237.62 ns/op, 0.808 million ops/s
+This is a compatibility gate, not a benchmark: its one Internet request
+carries no throughput signal.
 
-For a comparison, preserve the complete JSON and repeat runs in randomized
-implementation order on the same host, CPU governor, kernel, target, payload,
-concurrency, and network impairment. Report every sample and confidence
-interval; do not select the fastest run.
+## Limitations
 
-## Xray compatibility versus performance
+- **Real-path bandwidth gates are unverifiable from the validation host.**
+  Its NIC negotiates 100 Mb/s, so real-Internet runs cap at ~94 Mbps for
+  both implementations equally. Real-path runs (20 alternating, 5 MiB each,
+  zero crashes or protocol errors) are correctness evidence only. Loopback
+  tunneled Direct-path measurements stand in for the downlink comparison.
+- **Single-stream TLS-origin cells are origin-bound** (~400–500 MiB/s per Go
+  TLS connection); ratios there swing 0.8–1.1 between runs on all
+  implementations and are not reported as proxy performance.
+- **Loopback p99** is dominated by client/origin process startup; interpret
+  with care.
+- **Miri cannot exercise `crates/rr-linux`** (raw syscalls unsupported); that
+  crate is covered by ABI/layout tests and privileged suites instead.
+- **NXR has no A/B baseline**: Xray has no equivalent protocol, so NXR is
+  covered by conformance tests, not comparative benchmarks.
 
-`scripts/test-xray-interop.sh` is a compatibility gate: an unmodified Xray
-26.7.28 client transfers a verified payload through the real public VLESS +
-REALITY + Vision stack. Its one Internet request is not a benchmark.
-
-Any future Xray performance comparison must separate:
-
-- loopback protocol CPU cost;
-- same-host relay throughput at fixed concurrency;
-- controlled delay/loss/rate tests with `tc netem`;
-- real-web samples whose DNS, origin, and Internet variance are disclosed.
-
-No result may claim resistance to upstream volumetric DDoS or generalize one VPS
-measurement to other CPUs and networks.
-
-## Recorded Xray 26.7.28 loopback comparison
-
-`scripts/benchmark-xray.sh` runs the same unmodified Xray SOCKS5 client against
-both servers through VLESS + REALITY + Vision. It randomizes implementation
-order with a recorded seed, verifies every response length, retains every
-sample, and emits machine-readable JSON. The Xray server's new default rule that
-blocks private destinations is explicitly overridden only so both servers can
-reach the same loopback origin.
-
-Recorded on 2026-08-03 using Linux 6.12.94, rustc 1.96.0, Xray 26.7.28, an
-Intel Core i3-8100 with four cores, `dl.google.com:443` as the REALITY target,
-nine samples per implementation, and 64 MiB per request:
-
-| Concurrency | Implementation | Mean MiB/s | p50 MiB/s | Minimum MiB/s | Mean request seconds |
-| ---: | --- | ---: | ---: | ---: | ---: |
-| 1 | rust-reality | 266.56 | 259.34 | 231.38 | 0.2339 |
-| 1 | Xray | 252.34 | 245.58 | 220.31 | 0.2481 |
-| 4 | rust-reality | 762.57 | 799.18 | 616.96 | 0.3159 |
-| 4 | Xray | 701.17 | 708.35 | 429.75 | 0.3390 |
-
-The rust-reality/Xray p50 throughput ratios were 1.056 at concurrency one and
-1.128 at concurrency four. On this host that is a modest measured lead, not a
-multi-fold improvement. The shared Xray client and Python origin remain part of
-both measurements, so this comparison isolates neither server CPU time nor
-maximum NIC capacity.
-
-No `tc netem` or equivalent privileged network impairment facility was
-available on this host. Consequently these results make no weak-network claim;
-latency, loss, reordering, and rate-limited testing must be collected separately
-on a controlled interface rather than simulated and mislabeled as network data.
-
-Reproduce either profile with:
-
-```shell
-SAMPLES=9 CONCURRENCY=1 PAYLOAD_MIB=64 \
-  XRAY_BIN=/home/jacek/src/Xray-core/xray \
-  ./scripts/benchmark-xray.sh > xray-c1.json
-
-SAMPLES=9 CONCURRENCY=4 PAYLOAD_MIB=64 \
-  XRAY_BIN=/home/jacek/src/Xray-core/xray \
-  ./scripts/benchmark-xray.sh > xray-c4.json
-```
-
-## Adaptive relay backend measurements
-
-`benches/relay_backends.rs` measures the relay engine itself over loopback. It
-emits one JSON object per sample to standard output and retains every sample:
-
-```shell
-RR_BENCH_COMMIT="$(git rev-parse HEAD)" RR_BENCH_HOST="$(hostname)" \
-  cargo bench --bench relay_backends -- --samples 5 --seed 20260804 \
-  > benchmarks/relay-after.jsonl
-```
-
-Each sample records commit, timestamp, host, CPU, kernel, configuration, seed,
-sample index, direction, payload size, concurrency, requested backend, selected
-backend, duration, throughput, bytes moved, peak RSS, backend hit rate, and a
-verification hash.
-
-### Method
-
-- Implementation order is shuffled per repetition from the recorded seed, so
-  ordering cannot favour one backend.
-- Every sample is kept. No fastest run is selected and nothing is averaged away
-  before the raw file is written.
-- Directions cover uplink-only, downlink-only and simultaneous bidirectional.
-- Backends cover `buffered`, `splice` and `automatic`.
-
-### Limitations that must be stated with any number
-
-- These are **loopback** measurements on a single host. They measure relay
-  engine cost, not Internet throughput, and must never be presented as a general
-  speed promise.
-- The implementation host for this branch was a 2-vCPU virtual machine. The
-  512 MiB payload and 32-way concurrency rows of the full specification matrix
-  were not executed there; the retained matrix covers 1 MiB and 32 MiB payloads
-  at concurrency 1 and 4.
-- `cpuUserNs`, `cpuSystemNs`, `contextSwitches`, `syscallCounts` and
-  `allocations` are recorded as `null` rather than estimated. Steady-state
-  allocation behaviour is proven separately and exactly by the allocation gate.
-- sockhash rows are absent because that backend declined on the implementation
-  host and has since been removed (D7); io_uring rows are absent because the
-  backend has since been removed. A decline is recorded, never a fabricated
-  number.
-
-### Baseline
-
-`benchmarks/relay-baseline.jsonl` is produced from the unmodified baseline
-commit `14ed098505b5cd9c3f5cc0d00c393c45428b0e42` in a separate worktree, using
-the same scenario matrix, the same seed and the same shuffling, adapted only
-where the baseline API differs (the baseline has no backend enum and no owned
-relay entry point). Compare the two files by scenario tuple, never by row order.
+Earlier development-host samples (a 2026-08-03 Xray loopback table and a
+2-vCPU relay baseline whose own conclusion was "indistinguishable from
+noise") are superseded by the canonical samples above and were removed from
+the repository.

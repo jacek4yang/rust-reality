@@ -2,7 +2,7 @@
 
 English | [简体中文](configuration.zh-CN.md)
 
-This document covers every accepted JSON field in `rust-reality` 0.1.x. The
+This document covers every accepted JSON field in `rust-reality` 1.x. The
 executable remains authoritative:
 
 ```shell
@@ -500,7 +500,81 @@ Process-level resource posture. The whole object is optional.
 
 | Field | Required when object present | Default / allowed | Constraints / meaning |
 | --- | --- | --- | --- |
-| `runtime.resourceMode` | no | `standard`; `standard`, `dedicated` | `dedicated` declares single-tenant use of the machine or cgroup: raise the soft `RLIMIT_NOFILE` to the hard limit, derive the descriptor budget with the dedicated headroom, and run the bounded memory-pressure monitor. See [Dedicated-machine resource mode](dedicated-resource-mode.md). Cold setting; changing it requires a restart. |
+| `runtime.resourceMode` | no | `standard`; `standard`, `dedicated` | `dedicated` declares single-tenant use of the machine or cgroup: raise the soft `RLIMIT_NOFILE` to the hard limit, derive the descriptor budget with the dedicated headroom, and run the bounded memory-pressure monitor. See [Dedicated resource mode](#dedicated-resource-mode). Cold setting; changing it requires a restart. |
+
+### Dedicated resource mode
+
+`{ "runtime": { "resourceMode": "dedicated" } }` declares that the process
+owns the machine — or, under a container runtime, its cgroup — and budgets
+against measured machine resources instead of assuming nothing about
+co-tenants. The mode is a **cold setting**: it shapes the process-lifetime
+descriptor budget, the soft-limit raise, and the memory monitor, so a SIGHUP
+reload that changes it is rejected and the last good generation keeps
+running.
+
+**Startup detection.** Once, before any listener is bound, the process
+detects soft/hard `RLIMIT_NOFILE`, soft/hard `RLIMIT_MEMLOCK` (reported
+only), and the cgroup v2 of the current process (`cpu.max`,
+`cpuset.cpus.effective`, `memory.current`, `memory.high`, `memory.max`; the
+literal `max` is treated as unbounded, and absent or unreadable files degrade
+to "not reported" rather than a fabricated value), falling back to
+`MemTotal` and the visible CPU count when cgroup files are absent. Everything
+is reported in one structured `machine_report` event.
+
+**Soft-limit raise.** When the hard `RLIMIT_NOFILE` exceeds the soft limit,
+the dedicated mode raises the process's own soft limit to the hard limit via
+`setrlimit(2)` — no privilege required, nothing outside the process touched.
+A failed raise is not fatal; the derivation continues with the effective soft
+limit. Keep `LimitNOFILE=` in the systemd unit: the raise can only reach the
+*inherited* hard limit.
+
+**Descriptor budget.** Same formula as standard mode
+(`effective_soft_limit - fixed_reserve - headroom`), with a larger headroom
+of `max(limit / 10, 64)` instead of `max(limit / 16, 64)` — the process plans
+against the raised limit and keeps a tenth of it for descriptor consumers it
+cannot account for. The invariant `budget + reserve + headroom <=
+effective_soft_limit` holds under both policies.
+
+**Memory budget.** The effective memory total is the finite cgroup
+`memory.max` (capped by `MemTotal`), otherwise `MemTotal`; when neither is
+readable the memory dimension is disabled rather than invented. Watermarks,
+each with separate enter/exit thresholds so oscillation produces no
+transitions:
+
+| Boundary | Fraction of total |
+|---|---|
+| usable budget | 80% |
+| pressure enter / exit | 60% / 50% |
+| critical enter / exit | 90% / 80% |
+
+**Pressure model.** Two dimensions feed one effective state: the FD-budget
+watermarks (high at 15/16 of capacity, low at 13/16) and a monitor task
+sampling cgroup `memory.current` (fallback: resident set from
+`/proc/self/statm`) once per second. The monitor is the only writer; the
+read path is one atomic load, never in a data loop. An unreadable sample
+keeps the previous state.
+
+| State | New fallback | New handshake | New accept | New direct dial | Established traffic |
+|---|---|---|---|---|---|
+| `Normal` | admitted | admitted | admitted | admitted | flows |
+| `Pressure` | refused | refused | admitted | admitted | flows |
+| `Critical` | refused | refused | paused / failed fast | failed fast | flows |
+
+Permits already held are never revoked, so established relays continue
+through both tiers; the listener parks on a `Notify` wakeup and resumes
+automatically on hysteresis exit.
+
+**What the mode never does.** It never touches a sysctl, a cgroup file,
+another process, or the hard limits (the only mutation is raising its own
+soft `RLIMIT_NOFILE`); never admits beyond the derived budgets; never
+pre-allocates or burns CPU to "use" the machine (the only periodic task is
+the one-second memory sample); never polls `/proc/self/fd`.
+
+**Operational guidance.** Use `dedicated` when the process is the single
+tenant of a machine, VM, or cgroup; keep `standard` when unpredictable
+workloads share the descriptor limit or memory cgroup. If `memory_total` is
+`0` in `machine_report`, no memory watermark exists — treat that as a
+monitoring gap, not as headroom.
 
 ## Reload boundaries
 

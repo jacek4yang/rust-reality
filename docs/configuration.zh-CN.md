@@ -2,7 +2,7 @@
 
 [English](configuration.md) | 简体中文
 
-本文覆盖 `rust-reality` 0.1.x 接受的全部 JSON 字段。最终权威仍是实际二进制：
+本文覆盖 `rust-reality` 1.x 接受的全部 JSON 字段。最终权威仍是实际二进制：
 
 ```shell
 rust-reality schema > rust-reality.schema.json
@@ -477,7 +477,66 @@ splice 永远不会跨越 REALITY/TLS 安全边界。传输开始前无法获得
 
 | 字段 | 对象存在时必填 | 默认值/允许值 | 含义与约束 |
 | --- | --- | --- | --- |
-| `runtime.resourceMode` | 否 | `standard`；`standard`、`dedicated` | `dedicated` 声明独占机器或 cgroup：把 `RLIMIT_NOFILE` 软限制提升到硬限制、按专用余量推导描述符预算，并运行有界内存压力监控器。见[专用机器资源模式](dedicated-resource-mode.zh-CN.md)。冷设置，修改必须重启。 |
+| `runtime.resourceMode` | 否 | `standard`；`standard`、`dedicated` | `dedicated` 声明独占机器或 cgroup：把 `RLIMIT_NOFILE` 软限制提升到硬限制、按专用余量推导描述符预算，并运行有界内存压力监控器。见[专用资源模式](#dedicated-resource-mode)。冷设置，修改必须重启。 |
+
+### Dedicated resource mode
+
+`{ "runtime": { "resourceMode": "dedicated" } }` 声明进程独占机器——或在容器
+运行时下独占其 cgroup——并针对实测机器资源做预算，而不是假设对同机负载一无
+所知。该模式是**冷设置**：它塑造进程生命周期的描述符预算、软限制提升和内存
+监控器，因此修改它的 SIGHUP 热更新会被拒绝，最后一个有效 generation 继续
+运行。
+
+**启动检测。** 在绑定任何 listener 之前检测一次：`RLIMIT_NOFILE` 软/硬限制、
+`RLIMIT_MEMLOCK` 软/硬限制（仅上报）、当前进程的 cgroup v2（`cpu.max`、
+`cpuset.cpus.effective`、`memory.current`、`memory.high`、`memory.max`；字面
+`max` 视为无界，缺失或不可读的文件降级为"不上报"而不是编造数值），cgroup
+文件缺失时回退到 `MemTotal` 和进程可见的 CPU 数。全部内容以一个结构化
+`machine_report` 事件上报。
+
+**软限制提升。** 当 `RLIMIT_NOFILE` 硬限制高于软限制时，专用模式通过
+`setrlimit(2)` 把进程自己的软限制提升到硬限制——不需要特权，不触碰进程之外
+的任何东西。提升失败不是致命错误；推导继续使用实际生效的软限制。systemd 单
+元里的 `LimitNOFILE=` 仍要保留：提升最多只能达到*继承来的*硬限制。
+
+**描述符预算。** 公式与标准模式相同（`effective_soft_limit - fixed_reserve -
+headroom`），但安全余量更大：`max(limit / 10, 64)` 取代 `max(limit / 16,
+64)`——进程按提升后的限制规划，并为其无法记账的描述符消费者保留十分之一。
+两种策略下不变量 `budget + reserve + headroom <= effective_soft_limit` 都成立。
+
+**内存预算。** 有效内存总量取有限的 cgroup `memory.max`（以 `MemTotal` 为
+上限），否则取 `MemTotal`；两者都不可读时禁用内存维度而不是编造。各水位线
+进入/退出阈值分离，围绕单一阈值振荡不会产生跳变：
+
+| 边界 | 占总量比例 |
+|---|---|
+| 可用预算 | 80% |
+| 压力 进入/退出 | 60% / 50% |
+| 危急 进入/退出 | 90% / 80% |
+
+**压力模型。** 两个维度合成一个有效状态：FD 预算水位线（容量的 15/16 进入、
+13/16 退出）和一个每秒采样 cgroup `memory.current`（回退：`/proc/self/statm`
+常驻集）的监控任务。监控器是唯一写入者；读取路径是一次原子 load，绝不在数据
+循环中。采样不可读时保持上一个状态。
+
+| 状态 | 新 fallback | 新握手 | 新 accept | 新 direct 拨号 | 已建立流量 |
+|---|---|---|---|---|---|
+| `Normal` | 准入 | 准入 | 准入 | 准入 | 流动 |
+| `Pressure` | 拒绝 | 拒绝 | 准入 | 准入 | 流动 |
+| `Critical` | 拒绝 | 拒绝 | 暂停 / 快速失败 | 快速失败 | 流动 |
+
+已持有的许可绝不撤销，已建立 relay 在两个层级下都继续运行；listener 在
+`Notify` 唤醒上停放，迟滞退出时自动恢复。
+
+**该模式绝不做什么。** 绝不触碰 sysctl、cgroup 文件、其他进程或硬限制（唯一的
+修改是提升自己的 `RLIMIT_NOFILE` 软限制）；绝不超出推导的预算准入；绝不为
+"用满"机器而预分配或空转 CPU（唯一的周期任务是每秒一次的内存采样）；绝不
+轮询 `/proc/self/fd`。
+
+**运维指引。** 当进程是机器、VM 或 cgroup 的唯一租户时使用 `dedicated`；当有
+不可预测的负载共享描述符限制或内存 cgroup 时保持 `standard`。如果
+`machine_report` 中 `memory_total` 为 `0`，说明不存在内存水位线——应视为
+监控缺口而不是余量。
 
 ## 热更新边界
 
