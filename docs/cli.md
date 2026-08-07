@@ -150,6 +150,35 @@ VLESS, REALITY, Vision, or TLS state.
 | `--port <PORT>` | no | `7443` | Internal NXR TCP port. |
 | `--nxr-key <BASE64>` | yes | — | Same PSK used by the line node's NXR outbound. |
 
+### `config generate handoff`
+
+```text
+rust-reality config generate handoff \
+  [--listen <IP>] [--port <PORT>] \
+  --server-address <HOST> --target <HOST:PORT> --server-name <DNS_NAME> \
+  --landing-address <HOST> [--landing-port <PORT>] --output-dir <DIR>
+```
+
+Generates a complete Handoff deployment in one step: `line.json` (public
+VLESS + REALITY + Vision line node whose user routes to the handoff
+outbound), `landing.json` (firewall-restricted internal handoff listener),
+and `xray-client.json` (SOCKS-inbound Xray client for the line node). All
+key material is generated independently: the UUID, the REALITY X25519 key
+pair, one short ID, the Handoff pre-shared key, and the landing node's
+static X25519 pair. Both server configurations are validated before they
+are written.
+
+| Additional option | Required | Default | Meaning |
+| --- | --- | --- | --- |
+| `--server-address <HOST>` | yes | — | Public line-node address clients dial. |
+| `--landing-address <HOST>` | yes | — | Landing-node address reachable by the line node. |
+| `--landing-port <PORT>` | no | `7443` | Firewall-restricted Handoff TCP port. |
+| `--output-dir <DIR>` | yes | — | Directory the three files are written to. |
+
+The three file paths are written to stdout; `REALITY public key for the
+client: ...` and `UUID for the client: ...` are written to stderr. The
+Handoff PSK and the private keys exist only in the two server files.
+
 ### `config format`
 
 ```text

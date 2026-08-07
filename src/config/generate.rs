@@ -1,13 +1,17 @@
 use std::net::IpAddr;
 
+use serde_json::json;
+
 use super::{
-    AssetsConfig, BlackholeSettings, Config, ConfigError, DnsConfig, DnsStrategy, InboundConfig,
-    LogConfig, Network, NxrInboundConfig, NxrInboundSettings, NxrSettings, OutboundConfig,
-    PolicyConfig, RealityConfig, RoutingConfig, RuntimeConfig, SecretString, StreamSettings,
-    UserPolicy, VlessClient, VlessInboundConfig, VlessInboundSettings, validate_config,
+    AssetsConfig, BlackholeSettings, Config, ConfigError, DnsConfig, DnsStrategy,
+    HandoffInboundConfig, HandoffInboundSettings, HandoffSettings, InboundConfig, LogConfig,
+    Network, NxrInboundConfig, NxrInboundSettings, NxrSettings, OutboundConfig, PolicyConfig,
+    RealityConfig, RoutingConfig, RuntimeConfig, SecretString, StreamSettings, UserPolicy,
+    VlessClient, VlessInboundConfig, VlessInboundSettings, validate_config,
 };
 use crate::crypto::{
-    KeyGenerationError, generate_short_id, generate_uuid, generate_x25519_key_pair,
+    KeyGenerationError, generate_node_key, generate_short_id, generate_uuid,
+    generate_x25519_key_pair,
 };
 
 /// Inputs that cannot safely be guessed for a REALITY server.
@@ -47,6 +51,19 @@ pub struct GenerateLandingConfigInput {
     pub pre_shared_key: SecretString,
 }
 
+/// Inputs for a Handoff line/landing node pair and its Xray client.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GenerateHandoffConfigInput {
+    /// Public VLESS + REALITY + Vision listener settings of the line node.
+    pub public: GenerateConfigInput,
+    /// Public address of the line node that clients dial.
+    pub server_address: String,
+    /// Internal landing-node address reachable by the line node.
+    pub landing_address: String,
+    /// Firewall-restricted Handoff port on the landing node.
+    pub landing_port: u16,
+}
+
 /// A directly usable server configuration and its client-facing public values.
 #[derive(Debug)]
 pub struct GeneratedConfig {
@@ -71,6 +88,41 @@ impl GeneratedConfig {
     #[must_use]
     pub fn into_parts(self) -> (Config, String) {
         (self.config, self.reality_public_key)
+    }
+}
+
+/// A generated Handoff deployment: line node, landing node, and Xray client.
+#[derive(Debug)]
+pub struct GeneratedHandoffConfigs {
+    line: GeneratedConfig,
+    landing: Config,
+    client: serde_json::Value,
+    client_uuid: String,
+}
+
+impl GeneratedHandoffConfigs {
+    /// Returns the generated line-node configuration and its REALITY public key.
+    #[must_use]
+    pub const fn line(&self) -> &GeneratedConfig {
+        &self.line
+    }
+
+    /// Returns the generated landing-node configuration.
+    #[must_use]
+    pub const fn landing(&self) -> &Config {
+        &self.landing
+    }
+
+    /// Returns the generated Xray client configuration.
+    #[must_use]
+    pub const fn client(&self) -> &serde_json::Value {
+        &self.client
+    }
+
+    /// Returns the generated client UUID.
+    #[must_use]
+    pub fn client_uuid(&self) -> &str {
+        &self.client_uuid
     }
 }
 
@@ -285,6 +337,146 @@ pub fn generate_landing_config(
     Ok(config)
 }
 
+/// Generates a Handoff deployment: a public line node that transfers every
+/// accepted session to a firewall-restricted landing node, the landing node
+/// itself, and the matching Xray client configuration.
+///
+/// Every piece of key material is generated independently: the REALITY
+/// X25519 pair, the Handoff pre-shared key, and the landing node's static
+/// X25519 pair. The landing listener binds the wildcard address; the port is
+/// expected to be restricted to line-node addresses at the firewall. Direct
+/// and blackhole outbounds are included for explicit per-UUID rules, while
+/// the Handoff transfer remains the generated user's default.
+///
+/// # Errors
+///
+/// Returns an error when entropy is unavailable or any public or Handoff
+/// setting violates strict configuration invariants.
+pub fn generate_handoff_configs(
+    input: GenerateHandoffConfigInput,
+) -> Result<GeneratedHandoffConfigs, GenerateConfigError> {
+    let uuid = generate_uuid()?.to_string();
+    let short_id = generate_short_id()?;
+    let (private_key, public_key) = generate_x25519_key_pair()?.into_parts();
+    let pre_shared_key = generate_node_key()?;
+    let (landing_private_key, landing_public_key) = generate_x25519_key_pair()?.into_parts();
+    let line = Config {
+        log: LogConfig::default(),
+        assets: AssetsConfig::default(),
+        dns: DnsConfig::default(),
+        inbounds: vec![public_inbound(
+            &input.public,
+            uuid.clone(),
+            short_id.clone(),
+            private_key,
+        )],
+        outbounds: vec![
+            OutboundConfig::Handoff {
+                tag: "landing".to_owned(),
+                settings: HandoffSettings {
+                    address: input.landing_address,
+                    port: input.landing_port,
+                    pre_shared_key: pre_shared_key.clone(),
+                    landing_public_key,
+                    connect_timeout_ms: 10_000,
+                    first_byte_timeout_ms: 15_000,
+                },
+            },
+            OutboundConfig::Direct {
+                tag: "direct".to_owned(),
+            },
+            OutboundConfig::Blackhole {
+                tag: "block".to_owned(),
+                settings: BlackholeSettings::default(),
+            },
+        ],
+        routing: RoutingConfig {
+            domain_strategy: DnsStrategy::IpIfNonMatch,
+            global_rules: Vec::new(),
+            users: vec![UserPolicy {
+                name: "landing-users".to_owned(),
+                user_ids: vec![uuid.clone()],
+                default_outbound: "landing".to_owned(),
+                rules: Vec::new(),
+            }],
+        },
+        policy: PolicyConfig::default(),
+        runtime: RuntimeConfig::default(),
+    };
+    validate_config(&line)?;
+    let landing = Config {
+        log: LogConfig::default(),
+        assets: AssetsConfig::default(),
+        dns: DnsConfig::default(),
+        inbounds: vec![InboundConfig::Handoff(HandoffInboundConfig {
+            tag: "internal-handoff".to_owned(),
+            listen: IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+            port: input.landing_port,
+            settings: HandoffInboundSettings {
+                pre_shared_key,
+                private_key: landing_private_key,
+                max_time_difference_seconds: 30,
+                max_nonce_entries: 65_536,
+                nonce_retention_seconds: 120,
+                authentication_timeout_ms: 3_000,
+                connect_timeout_ms: 10_000,
+            },
+        })],
+        outbounds: vec![OutboundConfig::Direct {
+            tag: "direct".to_owned(),
+        }],
+        routing: RoutingConfig {
+            domain_strategy: DnsStrategy::AsIs,
+            global_rules: Vec::new(),
+            users: Vec::new(),
+        },
+        policy: PolicyConfig::default(),
+        runtime: RuntimeConfig::default(),
+    };
+    validate_config(&landing)?;
+    let client = json!({
+        "log": { "loglevel": "warning" },
+        "inbounds": [{
+            "listen": "127.0.0.1",
+            "port": 1080,
+            "protocol": "socks",
+            "settings": { "auth": "noauth", "udp": false },
+        }],
+        "outbounds": [{
+            "protocol": "vless",
+            "settings": { "vnext": [{
+                "address": input.server_address,
+                "port": input.public.port,
+                "users": [{
+                    "id": uuid.clone(),
+                    "encryption": "none",
+                    "flow": "xtls-rprx-vision",
+                }],
+            }]},
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "fingerprint": "chrome",
+                    "serverName": input.public.server_name,
+                    "publicKey": public_key.clone(),
+                    "shortId": short_id,
+                    "spiderX": "/",
+                },
+            },
+        }],
+    });
+    Ok(GeneratedHandoffConfigs {
+        line: GeneratedConfig {
+            config: line,
+            reality_public_key: public_key,
+        },
+        landing,
+        client,
+        client_uuid: uuid,
+    })
+}
+
 fn public_inbound(
     input: &GenerateConfigInput,
     uuid: String,
@@ -321,11 +513,31 @@ fn public_inbound(
 mod tests {
     use std::{net::IpAddr, str::FromStr};
 
+    use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
+    use x25519_dalek::{PublicKey, StaticSecret};
+
     use super::{
-        GenerateConfigInput, GenerateLandingConfigInput, GenerateLineConfigInput,
-        generate_landing_config, generate_line_config, generate_minimal_config,
+        GenerateConfigInput, GenerateHandoffConfigInput, GenerateLandingConfigInput,
+        GenerateLineConfigInput, generate_handoff_configs, generate_landing_config,
+        generate_line_config, generate_minimal_config,
     };
-    use crate::config::{InboundConfig, OutboundConfig, SecretString, format_config, load_config};
+    use crate::config::{
+        Config, InboundConfig, OutboundConfig, SecretString, format_config, load_config,
+        validate_config,
+    };
+
+    fn assert_loadable_and_valid(config: &Config, name: &str) {
+        let json = format_config(config).expect("configuration must serialize");
+        let path = std::env::temp_dir().join(format!(
+            "rust-reality-generated-{name}-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, json).expect("temporary configuration must be written");
+        let loaded = load_config(&path).expect("generated configuration must load");
+        std::fs::remove_file(&path).expect("temporary configuration must be removed");
+        assert_eq!(&loaded, config);
+        validate_config(&loaded).expect("generated configuration must validate");
+    }
 
     #[test]
     fn generated_json_is_directly_loadable() {
@@ -397,5 +609,92 @@ mod tests {
         assert!(!json.contains("\"security\": \"reality\""));
         assert!(!json.contains("\"protocol\": \"vless\""));
         assert!(!json.contains("xtls-rprx-vision"));
+    }
+
+    #[test]
+    fn handoff_templates_validate_with_independent_key_material() {
+        let generated = generate_handoff_configs(GenerateHandoffConfigInput {
+            public: GenerateConfigInput {
+                listen: IpAddr::from_str("0.0.0.0").expect("address must parse"),
+                port: 443,
+                target: "cover.example.com:443".to_owned(),
+                server_name: "cover.example.com".to_owned(),
+            },
+            server_address: "line.example.com".to_owned(),
+            landing_address: "10.0.0.2".to_owned(),
+            landing_port: 7_443,
+        })
+        .expect("handoff generation must succeed");
+        let line = generated.line().config();
+        let landing = generated.landing();
+        assert_loadable_and_valid(line, "handoff-line");
+        assert_loadable_and_valid(landing, "handoff-landing");
+
+        // The line routes its user to the handoff outbound; the landing
+        // exposes only the internal handoff listener.
+        let InboundConfig::Vless(public) = &line.inbounds[0] else {
+            panic!("line must keep the public VLESS inbound");
+        };
+        let OutboundConfig::Handoff {
+            settings: line_handoff,
+            ..
+        } = &line.outbounds[0]
+        else {
+            panic!("line default outbound must be the handoff transfer");
+        };
+        assert_eq!(line.routing.users[0].default_outbound, "landing");
+        let InboundConfig::Handoff(landing_inbound) = &landing.inbounds[0] else {
+            panic!("landing must expose the handoff inbound");
+        };
+        assert!(landing.routing.users.is_empty());
+        let landing_json = format_config(landing).expect("landing must serialize");
+        assert!(!landing_json.contains("\"security\": \"reality\""));
+        assert!(!landing_json.contains("xtls-rprx-vision"));
+
+        // The pair shares exactly the Handoff PSK; every other key material
+        // is generated independently.
+        let reality = &public.stream_settings.reality_settings;
+        assert_eq!(
+            line_handoff.pre_shared_key, landing_inbound.settings.pre_shared_key,
+            "the pair PSK must match on both sides"
+        );
+        assert_ne!(line_handoff.pre_shared_key, reality.private_key);
+        assert_ne!(landing_inbound.settings.private_key, reality.private_key);
+        assert_ne!(
+            landing_inbound.settings.private_key,
+            line_handoff.pre_shared_key
+        );
+        let landing_secret: [u8; 32] = BASE64_URL_SAFE_NO_PAD
+            .decode(landing_inbound.settings.private_key.expose())
+            .expect("landing private key must decode")
+            .try_into()
+            .expect("landing private key must be 32 bytes");
+        let landing_public = PublicKey::from(&StaticSecret::from(landing_secret));
+        assert_eq!(
+            line_handoff.landing_public_key,
+            BASE64_URL_SAFE_NO_PAD.encode(landing_public.as_bytes()),
+            "the line must pin the landing's static public key"
+        );
+
+        // The client references the generated server identity exactly.
+        let client = generated.client();
+        let vnext = &client["outbounds"][0]["settings"]["vnext"][0];
+        assert_eq!(vnext["address"], "line.example.com");
+        assert_eq!(vnext["port"], 443);
+        assert_eq!(
+            vnext["users"][0]["id"].as_str(),
+            Some(generated.client_uuid())
+        );
+        assert_eq!(generated.client_uuid(), public.settings.clients[0].id);
+        let client_reality = &client["outbounds"][0]["streamSettings"]["realitySettings"];
+        assert_eq!(
+            client_reality["publicKey"].as_str(),
+            Some(generated.line().reality_public_key())
+        );
+        assert_eq!(
+            client_reality["shortId"].as_str(),
+            Some(reality.short_ids[0].as_str())
+        );
+        assert_eq!(client_reality["serverName"], "cover.example.com");
     }
 }
