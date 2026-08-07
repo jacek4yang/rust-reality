@@ -94,7 +94,7 @@ sudo -n true || { echo "passwordless sudo required for systemd-run scopes" >&2; 
 }
 [[ -x $xray ]] || { echo "xray client binary missing or not executable: $xray" >&2; exit 1; }
 
-stray=$(pgrep -af 'release/rust-reality serve|xray-reference run|bench-origin --port' || true)
+stray=$(pgrep -af 'release/rust-reality serve|xray.* run|bench-origin --port' || true)
 if [[ -n $stray && ${FORCE:-0} != 1 ]]; then
     echo "stray benchmark processes found (refusing to run in a polluted window):" >&2
     echo "$stray" >&2
@@ -129,15 +129,16 @@ binary_sha256=$(sha256sum "$rust_bin" | awk '{print $1}')
 embedded_commit=""
 if grep -qF -- "$commit" "$rust_bin" 2>/dev/null; then
     embedded_commit=$commit
-else
-    # Linker string compaction can merge rodata, so also accept any
-    # standalone 40-hex candidate as the embedded identity.
-    embedded_commit=$(strings -a "$rust_bin" 2>/dev/null \
-        | grep -xE '[0-9a-f]{40}' | head -n1 || true)
 fi
+# No fallback extraction: a binary built with plain `cargo build --release`
+# does not embed the commit (only scripts/build-release.sh sets
+# RUST_REALITY_GIT_COMMIT), and harvesting any standalone 40-hex string can
+# match unrelated rodata constants, which would false-fail a correct binary.
+# Note: after docs-only commits the embedded commit lags HEAD by design;
+# rebuild (or set IDENTITY_STRICT=0) in that case.
 identity_note=""
 if [[ -z $embedded_commit ]]; then
-    identity_note="no git commit extractable from the binary; identity not verified (build with scripts/build-release.sh to embed RUST_REALITY_GIT_COMMIT)"
+    identity_note="no git commit embedded in the binary; identity not verified (build with scripts/build-release.sh to embed RUST_REALITY_GIT_COMMIT)"
     echo "warning: $identity_note" >&2
 elif [[ $embedded_commit != "$commit" ]]; then
     identity_note="embedded commit $embedded_commit does not match recorded HEAD $commit"

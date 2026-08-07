@@ -18,6 +18,9 @@ Every load-bearing statement carries a confidence label:
   CPU and memory limits, so they describe budgets, not any specific
   provider's product. Your hardware and network differ; treat these numbers
   as calibrated examples, not guarantees.
+- **VERIFIED-CGROUP** — a MEASURED-LOCAL result from a cgroup-constrained
+  machine-class emulation; the constraint held, but no real VPS of that
+  class was involved.
 - **DERIVED** — arithmetic or direct reasoning from verified and measured
   inputs.
 - **UNVERIFIED-EXTERNAL** — depends on real WAN paths, other providers, or

@@ -16,6 +16,8 @@
   客户端）。机型档位（1C1G、2C2G……）是用 cgroup v2 的 CPU 和内存限额
   模拟出来的，因此它们描述的是资源预算，而不是某家厂商的具体产品。你的
   硬件和网络不同；把这些数字当作校准过的示例，而不是保证。
+- **VERIFIED-CGROUP** —— 在 cgroup 限制的机型模拟下得到的 MEASURED-LOCAL
+  结果：约束确实生效，但并未使用该机型的真实 VPS。
 - **DERIVED**（推导）——由已验证和实测输入直接得出的算术或推理。
 - **UNVERIFIED-EXTERNAL**（外部未验证）——依赖真实广域网路径、其他厂商
   或项目未测试的硬件。据其行动之前，先在你自己的链路上验证。
@@ -101,11 +103,11 @@ min( admission ceiling,  FD budget,  memory budget,  CPU-for-your-SLO,  network 
   `policy.directBarrier.maxConcurrent`（默认 2048）是仅针对 Direct 路由
   会话的第二层上限：barrier 许可只在 direct 出站路径上获取，并在整个
   会话生命周期内持有；路由到 SOCKS5 或 NXR 出站的会话从不获取它
-  （VERIFIED，`src/server/outbound.rs`）。因此在默认 policy 下，
-  注意：该许可的生命周期是一个*已跟踪的运行时不一致*（issue #26）：
-  文档语义是限制并发 Direct *拨号尝试*和拨号速率，而不是已建立会话数；
-  v1.0.0 的实现会在整个 Direct 会话期间持有许可。本指南描述实测的
-  v1.0.0 行为；不要把这种许可生命周期当作长期设计语义。
+  （VERIFIED，`src/server/outbound.rs`）。注意：该许可的生命周期是一个
+  *已跟踪的运行时不一致*（issue #26）：文档语义是限制并发 Direct
+  *拨号尝试*和拨号速率，而不是已建立会话数；v1.0.0 的实现会在整个
+  Direct 会话期间持有许可。本指南描述实测的 v1.0.0 行为；不要把这种
+  许可生命周期当作长期设计语义。因此在默认 policy 下，
   standalone/Direct 节点——每条会话都走 direct——无论
   `maxConnections` 是多少，*有效*上限都是 2048 个会话（VERIFIED，实测：
   `maxConnections` 保持 16384 时，第 2049 个会话被快速拒绝）；而混合
