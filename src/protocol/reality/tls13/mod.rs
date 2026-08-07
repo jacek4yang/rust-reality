@@ -13,6 +13,7 @@ mod record_read;
 mod server_hello;
 mod target_read;
 
+pub(crate) use application_io::VectoredRead;
 pub use application_io::{
     ApplicationRecord, ApplicationWriteStats, TlsApplicationIo, TlsApplicationIoError,
     TlsApplicationReader, TlsApplicationWriter, bind_application_halves,
