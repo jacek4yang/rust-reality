@@ -79,6 +79,10 @@ unimplemented = "deny"
 # equivalence tests.
 default = ["ring-aead"]
 ring-aead = ["dep:ring"]
+# Exposes #[doc(hidden)] fuzz entry points for internal parsers (currently
+# the handoff continuation blob decoder). Enabled only by the separate
+# fuzz/ workspace; never part of a production build.
+fuzzing = []
 
 [dev-dependencies]
 allocation-counter = "0.8.1"

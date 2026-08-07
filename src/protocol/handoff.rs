@@ -979,6 +979,16 @@ impl fmt::Display for HandoffError {
 
 impl Error for HandoffError {}
 
+/// Fuzz-target entry point for the continuation blob decoder: `blob` is
+/// treated as already-decrypted plaintext, so the decoder's bounds checks
+/// can be exercised without defeating the AEAD. Built only with the
+/// `fuzzing` feature, which the `fuzz/` workspace enables on this crate.
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub fn fuzz_decode_blob(blob: &[u8]) -> Result<ContinuationState, HandoffError> {
+    decode_blob(blob)
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
