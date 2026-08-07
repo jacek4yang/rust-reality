@@ -9,6 +9,6 @@ pub use backend::{
     BackendCapability, BackendDeclineReason, BackendReport, BackendRequest,
     DirectionalRelayOutcome, RelayBackend, RelayContext, RelayDirection, RelayOutcome,
 };
-pub use relay::{RelayStats, relay_bidirectional};
+pub use relay::RelayStats;
 pub use tcp::{AcceptBackoff, AcceptErrorClass, EmergencyDescriptor, TcpAcceptor};
 pub use tcp_relay::{TcpRelay, TcpRelayConfigError};
