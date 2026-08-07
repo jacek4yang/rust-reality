@@ -50,7 +50,6 @@ The fixed reserve is deliberately pessimistic:
 | Listening sockets | one per configured inbound |
 | Standard streams and logger sink | 4 |
 | Runtime epoll, eventfd and wakers | 16 |
-| io_uring ring descriptors | one per shard, when enabled |
 | eBPF map, program and link | 3, when enabled |
 | Uncancellable resolver descriptors | 32 |
 | Emergency reserve | 1 |
@@ -110,7 +109,6 @@ Conservative unit costs:
 | Connected outbound socket | 1 |
 | Live connector candidate | 1 |
 | Bidirectional splice relay | 4 |
-| io_uring session | 2 |
 
 The count over-reserves rather than modelling kernel-internal objects. It is a
 reservation, not a measurement.
@@ -197,8 +195,34 @@ honest state of each:
 |---|---|---|---|
 | buffered | n/a | yes | yes |
 | splice | yes | yes | yes |
-| sockhash | yes | program + arm/disarm verified; **not yet wired into `TcpRelay`** | no |
-| io_uring | probed only | **no** — driver exists but is unreachable from the relay path | no |
+| sockhash | yes | yes — armed per relay from `TcpRelay` when the policy enables it and the probe plus controller construction succeed | yes |
+| io_uring | — | **removed** — see the decision-record amendment | — |
+
+### SOCKHASH runtime
+
+With `policy.relay.sockHash` enabled, `TcpRelay::new` runs the kernel probe
+and, only when it passes, constructs the process-lifetime controller: one
+`SOCKHASH` sized at two entries per `maxSockhashRelays`, the stream-verdict
+program loaded with the bounded verifier log, and the attach. The startup
+`RelayBackendReport` reports sockhash available *only* when that controller
+exists; otherwise it names the exact fixed decline reason (probe failure,
+`missingCapability`, `verifierRejected`, …). A failure never stops the relay
+from serving — the backend simply declines, before any byte, and the
+automatic order (`sockhash`, `splice`, `buffered`) falls through.
+
+Arming requires the privileges the probe measures on the running host
+(`CAP_BPF`/`CAP_NET_ADMIN` or root, plus `RLIMIT_MEMLOCK` headroom); the
+unprivileged path is not guessed, it is probed. Arming itself is
+transactional (both directions installed or neither, with rollback), guarded
+against borrowed sockets, a touched transfer ledger and queued input, and
+admitted two directions per relay. Because the redirect consumes FINs without
+propagating them, the armed session detects each half-close itself, waits for
+a `TCP_INFO`-measured drain barrier so no redirected byte is stranded, and
+then propagates the half-close with `shutdown(2)`. Byte counts are
+kernel-reported `TCP_INFO` deltas snapshotted at teardown. Privileged
+conformance gates live in `tests/sockhash_runtime.rs`.
+
+The historical failure analysis follows.
 
 ### SOCKHASH
 
@@ -268,14 +292,9 @@ time; the context refuses 8-byte access with `invalid bpf_context access`.
 
 ### io_uring
 
-The driver in `crates/rr-linux/src/uring.rs` compiles but is constructed only
-from its own tests. `TcpRelay::run_backend` declines io_uring, and
-`automatic_preference()` omits it. The startup report must not be read as a
-claim that production traffic uses it.
-
-It is excluded from automatic selection because no retained measurement on a
-target host justifies it, and the specification forbids a speculative
-classifier.
+Removed, not implemented. The audit and rationale are recorded in
+`decisions/adaptive-relay-implementation-plan.md`; stale `ioUring` or
+`maxIoUringRelays` configuration keys fail validation as unknown fields.
 
 ## 6. Deployment guidance
 

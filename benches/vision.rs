@@ -12,6 +12,7 @@ const USER_UUID: &str = "11111111-1111-1111-1111-111111111111";
 
 fn vision_benchmarks(criterion: &mut Criterion) {
     decode_benchmarks(criterion);
+    raw_decode_benchmarks(criterion);
     encode_benchmarks(criterion);
     routing_benchmarks(criterion);
 }
@@ -68,6 +69,44 @@ fn encode_benchmarks(criterion: &mut Criterion) {
         });
     });
     group.finish();
+}
+
+/// Measures the raw-mode relay decode: staged copy versus borrowed output.
+fn raw_decode_benchmarks(criterion: &mut Criterion) {
+    let record = vec![0x5a; 16_384];
+    let mut group = criterion.benchmark_group("vision/raw_decode");
+    group.throughput(Throughput::Bytes(record.len() as u64));
+    group.bench_function("16k_staged", |bencher| {
+        let mut decoder = raw_decoder();
+        let mut output = Vec::with_capacity(record.len());
+        bencher.iter(|| {
+            let mode = decoder
+                .decode(std::hint::black_box(&record), &mut output)
+                .expect("raw benchmark record must decode");
+            std::hint::black_box((mode, output.as_slice()));
+        });
+    });
+    group.bench_function("16k_borrowed", |bencher| {
+        let mut decoder = raw_decoder();
+        let mut output = Vec::new();
+        bencher.iter(|| {
+            let (mode, payload) = decoder
+                .decode_borrowed(std::hint::black_box(&record), &mut output)
+                .expect("raw benchmark record must decode");
+            std::hint::black_box((mode, payload));
+        });
+    });
+    group.finish();
+}
+
+fn raw_decoder() -> VisionDecoder {
+    let mut decoder = VisionDecoder::new(USER);
+    let end_frame = unpadded_frame(b"x", VisionCommand::End);
+    let mut output = Vec::new();
+    decoder
+        .decode(&end_frame, &mut output)
+        .expect("benchmark end frame must decode");
+    decoder
 }
 
 fn routing_benchmarks(criterion: &mut Criterion) {

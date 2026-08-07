@@ -26,9 +26,17 @@ const MAX_NXR_NONCE_RETENTION_SECONDS: u64 = 86_400;
 const MIN_RELAY_BUFFER_BYTES: usize = 4 * 1024;
 const MAX_RELAY_BUFFER_BYTES: usize = 1024 * 1024;
 const MAX_RELAY_BUFFERS: usize = 65_536;
-/// Bounded per-direction sockhash cost: flow key, socket entry, statistics entry
-/// and a conservative kernel overhead estimate.
-const SOCKHASH_ENTRY_BYTES: u64 = 40 + 8 + 16 + 192;
+/// Bounded per-direction sockhash map cost: the 40-byte flow key, the socket
+/// pointer the map stores, and a conservative kernel overhead estimate. The
+/// map holds exactly two entries per armed relay, one per direction.
+const SOCKHASH_ENTRY_BYTES: u64 = 40 + 8 + 192;
+/// Conservative pinned cost of the loaded stream-verdict program itself:
+/// instructions, verifier bookkeeping and the JIT image.
+const SOCKHASH_PROGRAM_BYTES: u64 = 4 * 1024;
+/// Kernel pipe capacity reserved worst-case per splice pipe. The kernel
+/// allocates pipe pages lazily, but capacity is the hard bound a full pipe
+/// can pin; a splice relay holds two pipe pairs (four pipes) at this size.
+const SPLICE_PIPE_CAPACITY_BYTES: u64 = 256 * 1024;
 
 /// One validation failure identified by a stable JSON path.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -732,20 +740,6 @@ fn validate_policy(config: &Config) -> Result<(), ConfigError> {
             );
         }
     }
-    if relay.io_uring {
-        if relay.max_io_uring_relays == 0 {
-            return fail(
-                "policy.relay.maxIoUringRelays",
-                "must be greater than zero when ioUring is enabled",
-            );
-        }
-        if relay.max_io_uring_relays > governor.max_connections {
-            return fail(
-                "policy.relay.maxIoUringRelays",
-                "must not exceed maxConnections",
-            );
-        }
-    }
     if relay.sockhash {
         if relay.max_sockhash_relays == 0 {
             return fail(
@@ -776,27 +770,31 @@ fn validate_relay_memory(relay: &RelayPolicy) -> Result<(), ConfigError> {
         .and_then(|buffers| buffers.checked_mul(buffer_bytes))
         .ok_or_else(|| ConfigError::new("policy.relay.maxPooledBuffers", "budget overflows"))?;
 
-    let io_uring_registered = if relay.io_uring {
-        u64::from(relay.max_io_uring_relays)
-            .checked_mul(2)
-            .and_then(|directions| directions.checked_mul(buffer_bytes))
-            .ok_or_else(|| ConfigError::new("policy.relay.maxIoUringRelays", "budget overflows"))?
-    } else {
-        0
-    };
-
-    let sockhash_capacity = if relay.sockhash {
+    let sockhash_pinned = if relay.sockhash {
         u64::from(relay.max_sockhash_relays)
             .checked_mul(2)
             .and_then(|entries| entries.checked_mul(SOCKHASH_ENTRY_BYTES))
+            .and_then(|map| map.checked_add(SOCKHASH_PROGRAM_BYTES))
             .ok_or_else(|| ConfigError::new("policy.relay.maxSockhashRelays", "budget overflows"))?
     } else {
         0
     };
 
+    // Every splice relay holds two pipe pairs whose kernel capacity is
+    // reserved worst-case, even though the kernel allocates pipe pages
+    // lazily: conservative accounting matches the rest of this validator.
+    let splice_pipes = if relay.splice {
+        u64::from(relay.max_splice_relays)
+            .checked_mul(4)
+            .and_then(|pipes| pipes.checked_mul(SPLICE_PIPE_CAPACITY_BYTES))
+            .ok_or_else(|| ConfigError::new("policy.relay.maxSpliceRelays", "budget overflows"))?
+    } else {
+        0
+    };
+
     let relay_total = buffered
-        .checked_add(io_uring_registered)
-        .ok_or_else(|| ConfigError::new("policy.relay.maxRelayMemoryBytes", "budget overflows"))?;
+        .checked_add(splice_pipes)
+        .ok_or_else(|| ConfigError::new("policy.relay", "budget overflows"))?;
     if relay_total > relay.max_relay_memory_bytes {
         return fail(
             "policy.relay.maxRelayMemoryBytes",
@@ -804,9 +802,7 @@ fn validate_relay_memory(relay: &RelayPolicy) -> Result<(), ConfigError> {
         );
     }
 
-    let pinned_total = io_uring_registered
-        .checked_add(sockhash_capacity)
-        .ok_or_else(|| ConfigError::new("policy.relay.maxPinnedMemoryBytes", "budget overflows"))?;
+    let pinned_total = sockhash_pinned;
     if pinned_total > relay.max_pinned_memory_bytes {
         return fail(
             "policy.relay.maxPinnedMemoryBytes",
@@ -926,7 +922,7 @@ mod tests {
         SecretString, validate_config,
     };
 
-    use super::ConfigError;
+    use super::{ConfigError, SOCKHASH_ENTRY_BYTES, SOCKHASH_PROGRAM_BYTES};
 
     fn valid_config() -> Config {
         serde_json::from_str(crate::config::test_config_json()).expect("fixture must decode")
@@ -1206,16 +1202,6 @@ mod tests {
     #[test]
     fn an_enabled_kernel_backend_needs_a_nonzero_relay_limit() {
         let mut config = valid_config();
-        config.policy.relay.io_uring = true;
-        config.policy.relay.max_io_uring_relays = 0;
-        assert_eq!(
-            validate_config(&config)
-                .expect_err("an enabled backend with a zero bound must fail closed")
-                .path(),
-            "policy.relay.maxIoUringRelays"
-        );
-
-        config.policy.relay.io_uring = false;
         config.policy.relay.sockhash = true;
         config.policy.relay.max_sockhash_relays = 0;
         assert_eq!(
@@ -1229,15 +1215,15 @@ mod tests {
     #[test]
     fn a_kernel_relay_limit_may_not_exceed_max_connections() {
         let mut config = valid_config();
-        config.policy.relay.io_uring = true;
-        config.policy.relay.max_io_uring_relays =
+        config.policy.relay.sockhash = true;
+        config.policy.relay.max_sockhash_relays =
             config.policy.resource_governor.max_connections + 1;
 
         assert_eq!(
             validate_config(&config)
                 .expect_err("a relay bound above maxConnections must fail closed")
                 .path(),
-            "policy.relay.maxIoUringRelays"
+            "policy.relay.maxSockhashRelays"
         );
     }
 
@@ -1272,16 +1258,42 @@ mod tests {
     }
 
     #[test]
+    fn sockhash_pinned_memory_accounts_two_map_entries_and_the_program() {
+        // One armed relay occupies two map entries (one per direction) at
+        // SOCKHASH_ENTRY_BYTES each, plus the loaded verdict program itself.
+        let mut config = valid_config();
+        config.policy.relay.sockhash = true;
+        config.policy.relay.max_sockhash_relays = 1;
+        let exact = 2 * SOCKHASH_ENTRY_BYTES + SOCKHASH_PROGRAM_BYTES;
+
+        config.policy.relay.max_pinned_memory_bytes = exact;
+        assert!(
+            validate_config(&config).is_ok(),
+            "the exact pinned requirement must be accepted"
+        );
+
+        config.policy.relay.max_pinned_memory_bytes = exact - 1;
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("one byte below the pinned requirement must fail closed")
+                .path(),
+            "policy.relay.maxPinnedMemoryBytes"
+        );
+    }
+
+    #[test]
     fn pooled_buffers_are_counted_as_buffers_rather_than_bytes() {
         let mut config = valid_config();
         config.policy.relay.buffer_bytes = 32 * 1024;
         config.policy.relay.max_pooled_buffers = 4_096;
-        // 4096 buffers x 32 KiB is exactly 128 MiB; a byte budget one below must
-        // be rejected and the exact budget accepted.
+        // 4096 buffers x 32 KiB is exactly 128 MiB; a byte budget one below
+        // must be rejected. With splice enabled, the budget must additionally
+        // cover the relays' pipe pairs (4 pipes x 256 KiB per relay).
+        let splice_pipes = u64::from(config.policy.relay.max_splice_relays) * 4 * 256 * 1024;
         config.policy.relay.max_relay_memory_bytes = 4_096 * 32 * 1024 - 1;
         assert!(validate_config(&config).is_err());
 
-        config.policy.relay.max_relay_memory_bytes = 4_096 * 32 * 1024;
+        config.policy.relay.max_relay_memory_bytes = 4_096 * 32 * 1024 + splice_pipes;
         assert!(validate_config(&config).is_ok());
     }
 
@@ -1295,6 +1307,53 @@ mod tests {
                 .expect_err("custom DNS must not be silently ignored")
                 .path(),
             "dns.servers"
+        );
+    }
+
+    #[test]
+    fn accepts_dedicated_resource_mode() {
+        let mut config: serde_json::Value =
+            serde_json::from_str(crate::config::test_config_json()).expect("fixture must decode");
+        config["runtime"] = serde_json::json!({ "resourceMode": "dedicated" });
+        let config: Config = serde_json::from_value(config).expect("dedicated mode must decode");
+
+        assert_eq!(
+            config.runtime.resource_mode,
+            crate::config::ResourceMode::Dedicated
+        );
+        validate_config(&config).expect("dedicated mode must validate");
+    }
+
+    #[test]
+    fn defaults_to_standard_resource_mode() {
+        let config = valid_config();
+        assert_eq!(
+            config.runtime.resource_mode,
+            crate::config::ResourceMode::Standard
+        );
+        assert_eq!(config.runtime.resource_mode.as_str(), "standard");
+        validate_config(&config).expect("the default mode must validate");
+    }
+
+    #[test]
+    fn rejects_unknown_resource_mode_values() {
+        let mut config: serde_json::Value =
+            serde_json::from_str(crate::config::test_config_json()).expect("fixture must decode");
+        config["runtime"] = serde_json::json!({ "resourceMode": "exclusive" });
+        assert!(
+            serde_json::from_value::<Config>(config).is_err(),
+            "an unknown resourceMode must fail closed at decode time"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_runtime_fields() {
+        let mut config: serde_json::Value =
+            serde_json::from_str(crate::config::test_config_json()).expect("fixture must decode");
+        config["runtime"] = serde_json::json!({ "resourceMode": "dedicated", "tuning": {} });
+        assert!(
+            serde_json::from_value::<Config>(config).is_err(),
+            "deny_unknown_fields applies to the runtime section"
         );
     }
 }

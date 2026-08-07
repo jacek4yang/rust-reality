@@ -29,7 +29,8 @@ rust-reality config format --config config.json > config.formatted.json
   "inbounds": [],
   "outbounds": [],
   "routing": {},
-  "policy": {}
+  "policy": {},
+  "runtime": {}
 }
 ```
 
@@ -42,6 +43,7 @@ rust-reality config format --config config.json > config.formatted.json
 | `outbounds` | 是 | — | 至少一个 `direct`、`blackhole`、`socks5` 或 `nxr` 传输。 |
 | `routing` | 是 | — | 全局规则和显式 UUID 分组策略。 |
 | `policy` | 否 | 有界生产默认值 | admission、direct 拨号、缓冲和 Linux relay 策略。 |
+| `runtime` | 否 | `standard` | 进程资源姿态。 |
 
 ## `log`
 
@@ -430,20 +432,15 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 | `bufferBytes` | 是 | `32768` | 每个池化用户态缓冲区字节数，`4096..=1048576`。 |
 | `maxPooledBuffers` | 是 | `4096` | 全局池化缓冲区上限，`2..=65536`。 |
 | `maxSpliceRelays` | 否 | `1024` | splice 开启时大于零且不超过 `maxConnections`；每条 relay 使用两对 pipe。 |
-| `maxIoUringRelays` | 否 | `256` | ioUring 开启时大于零且不超过 `maxConnections`。 |
 | `maxSockhashRelays` | 否 | `4096` | sockhash 开启时大于零且不超过 `maxConnections`；每条 relay 占用两个 map 条目。 |
 | `maxRelayMemoryBytes` | 否 | `268435456` | 池化加注册中继缓冲内存上限。 |
-| `maxPinnedMemoryBytes` | 否 | `134217728` | 内核固定内存上限（io_uring 注册缓冲加 sockhash map 容量）。 |
+| `maxPinnedMemoryBytes` | 否 | `134217728` | 内核固定内存上限（sockhash map 容量）。 |
 | `splice` | 是 | `true` | 只允许在明文 TCP 边界使用有界非阻塞 Linux splice。 |
-| `ioUring` | 是 | `false` | 运行时能力探测通过后，允许使用有界 io_uring 后端。 |
 | `sockhash` | 是 | `false` | 运行时能力探测通过后，允许使用有界 eBPF `SOCKHASH` 后端。 |
 
 ### 后端选择
 
-自动优选顺序为 `sockhash`、`splice`、`buffered`。io_uring 已实现、已探测、已上报
-并可显式选择，但在本分支中**不参与自动选择**：没有任何目标主机上的留存测量证明
-它对该工作负载类别不会明显更慢，而仅仅为了宣称“自适应”而加入的推测式分类器比
-不加更糟。
+自动优选顺序为 `sockhash`、`splice`、`buffered`。
 
 后端**只有在尚未传输任何字节时**才能把连接交给下一个后端。一旦有字节流动，后端
 错误将终止该中继，连接绝不会在另一个后端上重放。这一点由结构保证：构造 decline
@@ -459,11 +456,10 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 
 ```text
 buffered_memory     = maxPooledBuffers * bufferBytes
-io_uring_registered = maxIoUringRelays * 2 * bufferBytes
 sockhash_capacity   = maxSockhashRelays * 2 * (flowKey + socketEntry + statsEntry + overhead)
 
-buffered_memory + io_uring_registered <= maxRelayMemoryBytes
-io_uring_registered + sockhash_capacity <= maxPinnedMemoryBytes
+buffered_memory   <= maxRelayMemoryBytes
+sockhash_capacity <= maxPinnedMemoryBytes
 ```
 
 `maxPooledBuffers` 是**缓冲区数量**，绝不是字节预算。
@@ -479,6 +475,14 @@ io_uring_registered + sockhash_capacity <= maxPinnedMemoryBytes
 
 splice 永远不会跨越 REALITY/TLS 安全边界。传输开始前无法获得 splice 资源时，
 回退到有界用户态缓冲。
+
+## `runtime`
+
+进程级资源姿态。整个对象可选。
+
+| 字段 | 对象存在时必填 | 默认值/允许值 | 含义与约束 |
+| --- | --- | --- | --- |
+| `runtime.resourceMode` | 否 | `standard`；`standard`、`dedicated` | `dedicated` 声明独占机器或 cgroup：把 `RLIMIT_NOFILE` 软限制提升到硬限制、按专用余量推导描述符预算，并运行有界内存压力监控器。见[专用机器资源模式](dedicated-resource-mode.zh-CN.md)。冷设置，修改必须重启。 |
 
 ## 热更新边界
 
@@ -498,6 +502,7 @@ generation，已有连接继续使用其获取的 generation。
 必须重启：
 
 - 添加/删除监听、修改绑定地址/端口，或改变某地址的协议；
+- 任意 `runtime` 修改，因为资源模式影响进程生命周期的描述符预算和内存监控器；
 - 任意 `policy.resourceGovernor` 修改，因为 REALITY 重放 admission/状态属于进程生命周期；
 - 任意 `policy.relay` 修改，因为缓冲/splice 池属于进程生命周期；
 - NXR `maxNonceEntries` 或 `nonceRetentionSeconds` 修改。

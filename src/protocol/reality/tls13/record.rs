@@ -364,8 +364,84 @@ impl Tls13RecordLayer {
         Ok(())
     }
 
-    /// Authenticates and decrypts exactly one complete TLS 1.3 record in place.
+    /// Seals one record whose plaintext a caller already wrote into `output`.
     ///
+    /// This is the asynchronous sibling of [`Tls13RecordLayer::seal_assembled`]:
+    /// the caller filled the plaintext region obtained from
+    /// `application_plaintext_region` — typically by reading a socket
+    /// directly into it — and only the byte count is decided afterwards. The
+    /// destination read therefore lands in final AEAD storage and is sealed in
+    /// place, with no scratch buffer and no intermediate copy.
+    ///
+    /// `output` must hold `plaintext_len` plaintext bytes starting at the
+    /// record header length and must already have length covering the header,
+    /// the plaintext, the inner content type, and the tag, which
+    /// `application_plaintext_region` guarantees. The buffer length is left
+    /// unchanged so the storage stays grow-only; the returned length is the
+    /// exact sealed record prefix to write.
+    ///
+    /// # Errors
+    ///
+    /// Rejects oversized content, exhausted traffic keys, a too-short buffer,
+    /// and AEAD primitive failure.
+    pub fn seal_filled(
+        &mut self,
+        content_type: ContentType,
+        plaintext_len: usize,
+        output: &mut [u8],
+    ) -> Result<usize, Tls13RecordError> {
+        self.ensure_key_available()?;
+        if plaintext_len > MAX_PLAINTEXT_LEN {
+            return Err(Tls13RecordError::InvalidLength);
+        }
+        let inner_len = plaintext_len
+            .checked_add(1)
+            .filter(|length| *length <= MAX_INNER_PLAINTEXT_LEN)
+            .ok_or(Tls13RecordError::InvalidLength)?;
+        let ciphertext_len = inner_len
+            .checked_add(TAG_LEN)
+            .ok_or(Tls13RecordError::InvalidLength)?;
+        let ciphertext_len =
+            u16::try_from(ciphertext_len).map_err(|_| Tls13RecordError::InvalidLength)?;
+        let header = [
+            OUTER_APPLICATION_DATA,
+            LEGACY_RECORD_VERSION[0],
+            LEGACY_RECORD_VERSION[1],
+            ciphertext_len.to_be_bytes()[0],
+            ciphertext_len.to_be_bytes()[1],
+        ];
+        let plaintext_end = HEADER_LEN
+            .checked_add(plaintext_len)
+            .ok_or(Tls13RecordError::InvalidLength)?;
+        let tag_end = plaintext_end
+            .checked_add(1)
+            .and_then(|end| end.checked_add(TAG_LEN))
+            .ok_or(Tls13RecordError::InvalidLength)?;
+        if output.len() < tag_end {
+            return Err(Tls13RecordError::InvalidLength);
+        }
+
+        output
+            .get_mut(..HEADER_LEN)
+            .ok_or(Tls13RecordError::InvalidLength)?
+            .copy_from_slice(&header);
+        *output
+            .get_mut(plaintext_end)
+            .ok_or(Tls13RecordError::InvalidLength)? = content_type.wire_value();
+        let nonce = self.nonce();
+        let encrypted = output
+            .get_mut(HEADER_LEN..plaintext_end + 1)
+            .ok_or(Tls13RecordError::InvalidLength)?;
+        let tag = self.cipher.seal(&nonce, &header, encrypted)?;
+        output
+            .get_mut(plaintext_end + 1..tag_end)
+            .ok_or(Tls13RecordError::InvalidLength)?
+            .copy_from_slice(&tag);
+        self.advance()?;
+        Ok(tag_end)
+    }
+
+    /// Authenticates and decrypts exactly one complete TLS 1.3 record in place.    ///
     /// # Errors
     ///
     /// Rejects malformed framing, exhausted traffic keys, an invalid AEAD tag,
@@ -461,6 +537,34 @@ impl fmt::Debug for Tls13RecordLayer {
             .field("key_material", &"[REDACTED]")
             .finish()
     }
+}
+
+/// Reserves one reusable record buffer and returns its maximum plaintext region.
+///
+/// The buffer grows — and zero-fills — at most once; afterwards the region is
+/// already-initialized memory that a socket read can overwrite directly. This
+/// is the write-side counterpart of the read path's grow-only record storage:
+/// a destination read lands in final AEAD plaintext storage and is sealed in
+/// place by [`Tls13RecordLayer::seal_filled`].
+///
+/// # Errors
+///
+/// Returns the allocator's reservation failure without panicking.
+pub(crate) fn application_plaintext_region(
+    output: &mut Vec<u8>,
+) -> Result<&mut [u8], Tls13RecordError> {
+    const WIRE_CAPACITY: usize = HEADER_LEN + MAX_INNER_PLAINTEXT_LEN + TAG_LEN;
+    if output.len() < WIRE_CAPACITY {
+        if WIRE_CAPACITY > output.capacity() {
+            output
+                .try_reserve_exact(WIRE_CAPACITY - output.len())
+                .map_err(|_| Tls13RecordError::BufferAllocation)?;
+        }
+        output.resize(WIRE_CAPACITY, 0);
+    }
+    output
+        .get_mut(HEADER_LEN..HEADER_LEN + MAX_PLAINTEXT_LEN)
+        .ok_or(Tls13RecordError::InvalidLength)
 }
 
 #[cfg(test)]

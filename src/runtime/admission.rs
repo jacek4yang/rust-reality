@@ -8,6 +8,7 @@ use std::{
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
 use crate::config::{DirectBarrierConfig, ResourceGovernorConfig};
+use crate::runtime::pressure::{PressureGauge, ResourcePressure};
 
 /// Independently bounded work categories in the unauthenticated and setup paths.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -29,10 +30,14 @@ pub enum AdmissionKind {
 pub enum AdmissionDenied {
     /// No permit is currently available for this category.
     Limit(AdmissionKind),
+    /// The resource-pressure state pauses this category.
+    Pressure(AdmissionKind),
     /// The direct outbound concurrency barrier is full.
     DirectConcurrency,
     /// The direct outbound new-connection rate was exceeded.
     DirectRate,
+    /// The resource-pressure state pauses new direct outbound connects.
+    DirectPressure,
     /// Internal synchronization is unavailable after a poisoned lock or closed semaphore.
     Unavailable,
 }
@@ -41,10 +46,16 @@ impl fmt::Display for AdmissionDenied {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Limit(kind) => write!(formatter, "admission limit reached for {kind:?}"),
+            Self::Pressure(kind) => {
+                write!(formatter, "resource pressure pauses admission for {kind:?}")
+            }
             Self::DirectConcurrency => {
                 formatter.write_str("direct outbound concurrency limit reached")
             }
             Self::DirectRate => formatter.write_str("direct outbound rate limit reached"),
+            Self::DirectPressure => {
+                formatter.write_str("resource pressure pauses direct outbound connects")
+            }
             Self::Unavailable => formatter.write_str("admission control is unavailable"),
         }
     }
@@ -72,6 +83,7 @@ struct GovernorInner {
     fallbacks: Arc<Semaphore>,
     crypto_operations: Arc<Semaphore>,
     replay_entries: Arc<Semaphore>,
+    pressure: Option<PressureGauge>,
 }
 
 /// Non-waiting admission control for resources exposed before authentication.
@@ -84,6 +96,22 @@ impl ResourceGovernor {
     /// Creates independent bounded resource pools from validated configuration.
     #[must_use]
     pub fn new(config: &ResourceGovernorConfig) -> Self {
+        Self::pools(config, None)
+    }
+
+    /// Creates bounded resource pools that also honor the pressure gauge.
+    ///
+    /// The gauge is process-lifetime; in standard resource mode it never
+    /// leaves `Normal`, so gating is one extra atomic load that always
+    /// admits. Under `Pressure`, new fallback and handshake work is refused;
+    /// under `Critical`, every new category is refused. Held permits are
+    /// never affected.
+    #[must_use]
+    pub fn with_pressure(config: &ResourceGovernorConfig, pressure: PressureGauge) -> Self {
+        Self::pools(config, Some(pressure))
+    }
+
+    fn pools(config: &ResourceGovernorConfig, pressure: Option<PressureGauge>) -> Self {
         Self {
             inner: Arc::new(GovernorInner {
                 connections: semaphore(config.max_connections),
@@ -91,6 +119,7 @@ impl ResourceGovernor {
                 fallbacks: semaphore(config.max_fallbacks),
                 crypto_operations: semaphore(config.max_crypto_operations),
                 replay_entries: semaphore(config.max_replay_entries),
+                pressure,
             }),
         }
     }
@@ -99,8 +128,14 @@ impl ResourceGovernor {
     ///
     /// # Errors
     ///
-    /// Returns [`AdmissionDenied`] when the selected limit is full or unavailable.
+    /// Returns [`AdmissionDenied`] when the selected limit is full, the
+    /// pressure state pauses the category, or synchronization is unavailable.
     pub fn try_acquire(&self, kind: AdmissionKind) -> Result<AdmissionPermit, AdmissionDenied> {
+        if let Some(gauge) = &self.inner.pressure
+            && !gauge.state().admits(kind)
+        {
+            return Err(AdmissionDenied::Pressure(kind));
+        }
         let semaphore = match kind {
             AdmissionKind::Connection => &self.inner.connections,
             AdmissionKind::Handshake => &self.inner.handshakes,
@@ -169,6 +204,7 @@ impl TokenBucket {
 struct DirectBarrierInner {
     concurrency: Arc<Semaphore>,
     rate: Mutex<TokenBucket>,
+    pressure: Option<PressureGauge>,
 }
 
 /// Direct outbound isolation with independent concurrency and token-bucket limits.
@@ -181,10 +217,23 @@ impl DirectBarrier {
     /// Creates a direct-dial barrier from validated configuration.
     #[must_use]
     pub fn new(config: &DirectBarrierConfig) -> Self {
+        Self::barrier(config, None)
+    }
+
+    /// Creates a direct-dial barrier that pauses new dials at `Critical`
+    /// pressure. Established relays hold no barrier permit, so pausing new
+    /// dials never interrupts traffic already flowing.
+    #[must_use]
+    pub fn with_pressure(config: &DirectBarrierConfig, pressure: PressureGauge) -> Self {
+        Self::barrier(config, Some(pressure))
+    }
+
+    fn barrier(config: &DirectBarrierConfig, pressure: Option<PressureGauge>) -> Self {
         Self {
             inner: Arc::new(DirectBarrierInner {
                 concurrency: semaphore(config.max_concurrent),
                 rate: Mutex::new(TokenBucket::new(config.max_per_second)),
+                pressure,
             }),
         }
     }
@@ -193,9 +242,14 @@ impl DirectBarrier {
     ///
     /// # Errors
     ///
-    /// Returns a category-specific denial when concurrency, rate, or synchronization
-    /// prevents immediate admission.
+    /// Returns a category-specific denial when concurrency, rate, pressure, or
+    /// synchronization prevents immediate admission.
     pub fn try_acquire(&self) -> Result<DirectPermit, AdmissionDenied> {
+        if let Some(gauge) = &self.inner.pressure
+            && gauge.state() == ResourcePressure::Critical
+        {
+            return Err(AdmissionDenied::DirectPressure);
+        }
         let permit = Arc::clone(&self.inner.concurrency)
             .try_acquire_owned()
             .map_err(|error| match error {
@@ -271,5 +325,76 @@ mod tests {
             barrier.try_acquire(),
             Err(AdmissionDenied::DirectRate)
         ));
+    }
+
+    #[test]
+    fn pressure_refuses_fallback_first_then_handshake_then_everything() {
+        let config = ResourceGovernorConfig::default();
+        let gauge = crate::runtime::PressureGauge::new();
+        let governor = ResourceGovernor::with_pressure(&config, gauge.clone());
+
+        gauge.set(crate::runtime::ResourcePressure::Pressure);
+        assert!(matches!(
+            governor.try_acquire(AdmissionKind::Fallback),
+            Err(AdmissionDenied::Pressure(AdmissionKind::Fallback))
+        ));
+        assert!(matches!(
+            governor.try_acquire(AdmissionKind::Handshake),
+            Err(AdmissionDenied::Pressure(AdmissionKind::Handshake))
+        ));
+        assert!(
+            governor.try_acquire(AdmissionKind::Connection).is_ok(),
+            "new connections are still admitted under pressure"
+        );
+
+        gauge.set(crate::runtime::ResourcePressure::Critical);
+        assert!(matches!(
+            governor.try_acquire(AdmissionKind::Connection),
+            Err(AdmissionDenied::Pressure(AdmissionKind::Connection))
+        ));
+
+        gauge.set(crate::runtime::ResourcePressure::Normal);
+        assert!(
+            governor.try_acquire(AdmissionKind::Handshake).is_ok(),
+            "admission resumes when the pressure state exits"
+        );
+    }
+
+    #[test]
+    fn a_governor_without_a_gauge_never_sees_pressure() {
+        let config = ResourceGovernorConfig {
+            max_fallbacks: 1,
+            ..ResourceGovernorConfig::default()
+        };
+        let governor = ResourceGovernor::new(&config);
+        assert!(
+            governor.try_acquire(AdmissionKind::Fallback).is_ok(),
+            "standard mode behavior is unchanged"
+        );
+    }
+
+    #[test]
+    fn the_direct_barrier_pauses_only_at_critical_pressure() {
+        let config = DirectBarrierConfig {
+            max_concurrent: 4,
+            max_per_second: 1_000,
+        };
+        let gauge = crate::runtime::PressureGauge::new();
+        let barrier = DirectBarrier::with_pressure(&config, gauge.clone());
+
+        gauge.set(crate::runtime::ResourcePressure::Pressure);
+        assert!(
+            barrier.try_acquire().is_ok(),
+            "pressure does not pause outbound dials for admitted sessions"
+        );
+
+        gauge.set(crate::runtime::ResourcePressure::Critical);
+        assert!(matches!(
+            barrier.try_acquire(),
+            Err(AdmissionDenied::DirectPressure)
+        ));
+
+        gauge.set(crate::runtime::ResourcePressure::Normal);
+        assert!(barrier.try_acquire().is_ok());
     }
 }

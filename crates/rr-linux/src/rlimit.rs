@@ -80,6 +80,94 @@ pub fn descriptor_limit() -> io::Result<DescriptorLimit> {
     ))
 }
 
+/// Raises the process `RLIMIT_NOFILE` soft limit to `target`, clamped to the
+/// hard limit, and returns the re-read limit pair.
+///
+/// This touches only the calling process. Raising the soft limit up to the
+/// hard limit requires no privilege; nothing here can raise the hard limit or
+/// touch any other process or any system-wide setting.
+///
+/// # Errors
+///
+/// Returns the raw OS error when `getrlimit(2)` or `setrlimit(2)` fails. A
+/// failure leaves the previous soft limit in place.
+#[cfg(target_os = "linux")]
+pub fn raise_descriptor_soft_limit(target: u64) -> io::Result<DescriptorLimit> {
+    let current = descriptor_limit()?;
+    let new_soft = target.min(current.hard);
+    if new_soft <= current.soft {
+        return Ok(current);
+    }
+    let limit = libc::rlimit {
+        rlim_cur: new_soft,
+        rlim_max: current.hard,
+    };
+    // SAFETY: `RLIMIT_NOFILE` is a valid resource identifier and `limit` is a
+    // live, correctly sized, correctly aligned `struct rlimit` whose fields
+    // are fully initialised from the values just read back from the kernel.
+    // The call affects only the calling process and never retains the pointer.
+    let result = unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raw const limit) };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    descriptor_limit()
+}
+
+/// Raises the process descriptor soft limit on a platform that does not report one.
+///
+/// # Errors
+///
+/// Always returns [`io::ErrorKind::Unsupported`] so a caller cannot mistake an
+/// absent limit for a successful raise.
+#[cfg(not(target_os = "linux"))]
+pub fn raise_descriptor_soft_limit(_target: u64) -> io::Result<DescriptorLimit> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "descriptor limits are only adjustable on Linux",
+    ))
+}
+
+/// Reads the process `RLIMIT_MEMLOCK` soft and hard limits.
+///
+/// The eBPF backends account pinned memory against this limit, so the startup
+/// machine report includes it even though no budget is derived from it.
+///
+/// # Errors
+///
+/// Returns the raw OS error when `getrlimit(2)` fails, or
+/// [`io::ErrorKind::Unsupported`] off Linux.
+#[cfg(target_os = "linux")]
+pub fn memlock_limit() -> io::Result<DescriptorLimit> {
+    // SAFETY: same contract as `descriptor_limit`: a zeroed `struct rlimit`
+    // is valid and is fully overwritten by `getrlimit` on the success path.
+    let mut limit: libc::rlimit = unsafe { std::mem::zeroed() };
+    // SAFETY: `RLIMIT_MEMLOCK` is a valid resource identifier and `limit` is
+    // a live, correctly sized, correctly aligned `struct rlimit` that the
+    // kernel writes at most `size_of::<rlimit>()` bytes into and never retains.
+    let result = unsafe { libc::getrlimit(libc::RLIMIT_MEMLOCK, &raw mut limit) };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(DescriptorLimit {
+        soft: limit.rlim_cur,
+        hard: limit.rlim_max,
+    })
+}
+
+/// Reads the process memory-lock limit on a platform that does not report one.
+///
+/// # Errors
+///
+/// Always returns [`io::ErrorKind::Unsupported`] so a caller cannot mistake an
+/// absent limit for an unlimited one.
+#[cfg(not(target_os = "linux"))]
+pub fn memlock_limit() -> io::Result<DescriptorLimit> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "memory-lock limits are only discoverable on Linux",
+    ))
+}
+
 /// Opens the emergency reserve descriptor on `/dev/null`.
 ///
 /// The reserve exists so the listener can still perform one `accept` and one

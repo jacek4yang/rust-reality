@@ -142,8 +142,9 @@ verification hash.
 - `cpuUserNs`, `cpuSystemNs`, `contextSwitches`, `syscallCounts` and
   `allocations` are recorded as `null` rather than estimated. Steady-state
   allocation behaviour is proven separately and exactly by the allocation gate.
-- io_uring and sockhash rows are absent because those backends declined on the
-  implementation host. A decline is recorded, never a fabricated number.
+- sockhash rows are absent because that backend declined on the implementation
+  host; io_uring rows are absent because the backend has since been removed. A
+  decline is recorded, never a fabricated number.
 
 ### Baseline
 

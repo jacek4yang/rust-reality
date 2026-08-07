@@ -21,8 +21,6 @@ pub enum RelayBackend {
     Buffered,
     /// Linux nonblocking `splice` through bounded pipe pairs.
     Splice,
-    /// Linux bounded io_uring driver shards.
-    IoUring,
     /// Linux bounded eBPF `SOCKHASH` stream-verdict redirect.
     Sockhash,
 }
@@ -34,17 +32,11 @@ impl RelayBackend {
         match self {
             Self::Buffered => "buffered",
             Self::Splice => "splice",
-            Self::IoUring => "ioUring",
             Self::Sockhash => "sockhash",
         }
     }
 
     /// Returns every backend in the order the automatic policy considers them.
-    ///
-    /// io_uring is deliberately absent: it is implemented, probed and explicitly
-    /// selectable, but no retained target-host measurement has shown it is not
-    /// materially slower for this workload class, and the specification forbids
-    /// adding a speculative classifier merely to claim adaptivity.
     #[must_use]
     pub const fn automatic_preference() -> &'static [Self] {
         &[Self::Sockhash, Self::Splice, Self::Buffered]
@@ -53,7 +45,7 @@ impl RelayBackend {
     /// Returns every backend, including those excluded from automatic selection.
     #[must_use]
     pub const fn all() -> &'static [Self] {
-        &[Self::Buffered, Self::Splice, Self::IoUring, Self::Sockhash]
+        &[Self::Buffered, Self::Splice, Self::Sockhash]
     }
 }
 
@@ -181,6 +173,69 @@ impl RelayOutcome {
     }
 }
 
+/// One direction of a raw TCP relay.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RelayDirection {
+    /// Inbound socket to outbound socket.
+    Uplink,
+    /// Outbound socket to inbound socket.
+    Downlink,
+}
+
+impl RelayDirection {
+    /// Returns whether this direction records into the inbound-to-outbound
+    /// ledger counter.
+    #[must_use]
+    pub const fn is_inbound_to_outbound(self) -> bool {
+        matches!(self, Self::Uplink)
+    }
+}
+
+impl fmt::Display for RelayDirection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Uplink => "uplink",
+            Self::Downlink => "downlink",
+        })
+    }
+}
+
+/// Byte count and backend produced by one completed single-direction relay.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DirectionalRelayOutcome {
+    bytes: u64,
+    backend: RelayBackend,
+    duration: Duration,
+}
+
+impl DirectionalRelayOutcome {
+    pub(crate) const fn new(bytes: u64, backend: RelayBackend, duration: Duration) -> Self {
+        Self {
+            bytes,
+            backend,
+            duration,
+        }
+    }
+
+    /// Returns the bytes transferred in the relayed direction.
+    #[must_use]
+    pub const fn bytes(self) -> u64 {
+        self.bytes
+    }
+
+    /// Returns the backend that actually transferred the bytes.
+    #[must_use]
+    pub const fn backend(self) -> RelayBackend {
+        self.backend
+    }
+
+    /// Returns the wall-clock duration of the relay.
+    #[must_use]
+    pub const fn duration(self) -> Duration {
+        self.duration
+    }
+}
+
 /// Whether a backend is usable, and if not, exactly why.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BackendCapability {
@@ -221,8 +276,6 @@ pub struct BackendReport {
     pub buffered: BackendCapability,
     /// The Linux `splice` backend.
     pub splice: BackendCapability,
-    /// The Linux io_uring backend.
-    pub io_uring: BackendCapability,
     /// The Linux `SOCKHASH` backend.
     pub sockhash: BackendCapability,
 }
@@ -234,18 +287,16 @@ impl BackendReport {
         match backend {
             RelayBackend::Buffered => self.buffered,
             RelayBackend::Splice => self.splice,
-            RelayBackend::IoUring => self.io_uring,
             RelayBackend::Sockhash => self.sockhash,
         }
     }
 
     /// Returns each backend paired with its capability, in reporting order.
     #[must_use]
-    pub fn entries(&self) -> [(RelayBackend, BackendCapability); 4] {
+    pub fn entries(&self) -> [(RelayBackend, BackendCapability); 3] {
         [
             (RelayBackend::Buffered, self.buffered),
             (RelayBackend::Splice, self.splice),
-            (RelayBackend::IoUring, self.io_uring),
             (RelayBackend::Sockhash, self.sockhash),
         ]
     }
@@ -503,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    fn automatic_preference_excludes_io_uring() {
+    fn automatic_preference_lists_every_backend() {
         assert_eq!(
             RelayBackend::automatic_preference(),
             [
@@ -512,7 +563,10 @@ mod tests {
                 RelayBackend::Buffered
             ]
         );
-        assert!(RelayBackend::all().contains(&RelayBackend::IoUring));
+        assert_eq!(RelayBackend::all().len(), 3);
+        for backend in RelayBackend::automatic_preference() {
+            assert!(RelayBackend::all().contains(backend));
+        }
     }
 
     #[test]

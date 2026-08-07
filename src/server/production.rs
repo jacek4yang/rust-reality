@@ -22,13 +22,18 @@ use tokio::{
 
 use crate::{
     assets::{AssetLoadError, AssetSnapshot},
-    config::{Config, ConfigError, ConfigLoadError, InboundConfig, load_config, validate_config},
+    config::{
+        Config, ConfigError, ConfigLoadError, InboundConfig, ResourceMode, load_config,
+        validate_config,
+    },
     logging::{AdmissionResource, BackendStatus, LogEvent, LogWriteError, Logger, RejectionReason},
     protocol::reality::ReplayCache,
     runtime::{
         AdmissionDenied, AdmissionKind, AdmissionPermit, FdBudget, FdBudgetError, FdBudgetPlan,
-        FdPermit, FixedFdReserve, ResourceGovernor, UNITS_INBOUND_SOCKET,
+        FdHeadroomPolicy, FdPermit, FixedFdReserve, PressureGauge, ResourceGovernor,
+        ResourcePressure, UNITS_INBOUND_SOCKET,
         connection::ConnectionTasks,
+        machine::{self, MachineReport, MemoryPlan, MemorySampler},
     },
     transport::{
         BackendDeclineReason, BackendReport, RelayBackend,
@@ -48,6 +53,13 @@ use super::{
 
 const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How often the memory pressure monitor samples its bounded signal.
+///
+/// One sample per second is cheap (one small file read), fast enough to
+/// refuse new work well before a cgroup OOM kill, and slow enough that it
+/// can never show up in a profile of the data path.
+const MEMORY_SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
+
 /// Fully compiled production server using only REALITY-protected Vision inbounds.
 ///
 /// New connections acquire one lock-free immutable runtime snapshot. A successful
@@ -66,34 +78,113 @@ pub struct ProductionServer {
 ///
 /// Every term is a configured bound, and the sum is deliberately pessimistic:
 /// it assumes every connection simultaneously holds an inbound socket, an
-/// outbound socket, and that every splice and io_uring relay is armed at once.
-/// The number is used only to decide whether to warn about clamping; it never
-/// raises the admission budget.
+/// outbound socket, and that every splice relay is armed at once.
+/// An armed sockhash relay adds no per-relay process descriptor — its sockets
+/// are the connection pair itself — so the backend appears only in the fixed
+/// reserve (map, program and link descriptors), not here. The number is used
+/// only to decide whether to warn about clamping; it never raises the
+/// admission budget.
 fn theoretical_fd_peak(config: &Config) -> u64 {
     let connections = u64::from(config.policy.resource_governor.max_connections);
     let splice = u64::from(config.policy.relay.max_splice_relays)
         .saturating_mul(u64::from(crate::runtime::UNITS_SPLICE_RELAY));
-    let uring = u64::from(config.policy.relay.max_io_uring_relays)
-        .saturating_mul(u64::from(crate::runtime::UNITS_URING_SESSION));
-    connections
-        .saturating_mul(2)
-        .saturating_add(splice)
-        .saturating_add(uring)
+    connections.saturating_mul(2).saturating_add(splice)
+}
+
+/// Everything the startup resource derivation decided, before any listener
+/// is bound.
+struct ResourceStartup {
+    plan: FdBudgetPlan,
+    budget: FdBudget,
+    machine: MachineReport,
+    fd_effective_soft_limit: u64,
+    fd_soft_raise_attempted: bool,
+    fd_soft_limit_raised: bool,
+    memory: Option<MemoryWatch>,
+}
+
+/// The bounded memory signal the pressure monitor samples.
+#[derive(Clone)]
+struct MemoryWatch {
+    sampler: MemorySampler,
+    plan: MemoryPlan,
 }
 
 /// Derives the process descriptor budget before any listener is bound.
-fn derive_fd_budget(config: &Config) -> Result<(FdBudgetPlan, FdBudget), FdBudgetError> {
+///
+/// In standard resource mode this is exactly the historical derivation from
+/// the inherited soft limit. In dedicated mode the process first raises its
+/// own soft `RLIMIT_NOFILE` to the hard limit — a process-local, privilege-
+/// free adjustment — and plans against the relaxed dedicated headroom. A
+/// failed raise is logged through the machine report and the derivation
+/// continues with the effective soft limit.
+fn derive_fd_budget(config: &Config) -> Result<ResourceStartup, FdBudgetError> {
     let listeners = u64::try_from(config.inbounds.len()).unwrap_or(u64::MAX);
-    let uring_rings = if config.policy.relay.io_uring {
-        u64::from(crate::transport::tcp_relay::MAX_URING_SHARDS)
+    let reserve = FixedFdReserve::new(listeners, config.policy.relay.sockhash);
+    let dedicated = config.runtime.resource_mode == ResourceMode::Dedicated;
+    let mut machine = if dedicated {
+        MachineReport::detect()
     } else {
-        0
+        MachineReport::conservative()
     };
-    let reserve = FixedFdReserve::new(listeners, uring_rings, config.policy.relay.sockhash);
-    let limit = read_descriptor_limit();
-    let plan = FdBudgetPlan::derive(limit.0, limit.1, reserve, theoretical_fd_peak(config))?;
+    if !dedicated {
+        let limit = read_descriptor_limit();
+        machine.fd_soft_limit = limit.0;
+        machine.fd_hard_limit = limit.1;
+    }
+
+    #[cfg(target_os = "linux")]
+    let (raise_attempted, raised, effective_soft, effective_hard) = {
+        let mut attempted = false;
+        let mut raised = false;
+        let mut soft = machine.fd_soft_limit;
+        let mut hard = machine.fd_hard_limit;
+        if dedicated && let Some(target) = machine::soft_limit_raise_target(soft, hard) {
+            attempted = true;
+            if let Ok(limit) = rr_linux::raise_descriptor_soft_limit(target) {
+                raised = limit.soft > soft;
+                soft = limit.soft;
+                hard = limit.hard;
+            }
+            // A failed raise is not fatal: the report records it and the plan
+            // below derives from the effective soft limit, whatever it is.
+        }
+        (attempted, raised, soft, hard)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let (raise_attempted, raised, effective_soft, effective_hard) =
+        (false, false, machine.fd_soft_limit, machine.fd_hard_limit);
+
+    let headroom_policy = if dedicated {
+        FdHeadroomPolicy::Dedicated
+    } else {
+        FdHeadroomPolicy::Standard
+    };
+    let plan = FdBudgetPlan::derive(
+        effective_soft,
+        effective_hard,
+        reserve,
+        theoretical_fd_peak(config),
+        headroom_policy,
+    )?;
     let budget = FdBudget::new(plan.effective_budget());
-    Ok((plan, budget))
+    let memory = if dedicated {
+        MemoryPlan::derive(machine.memory_total).map(|plan| MemoryWatch {
+            sampler: machine.memory_sampler(),
+            plan,
+        })
+    } else {
+        None
+    };
+    Ok(ResourceStartup {
+        plan,
+        budget,
+        fd_effective_soft_limit: effective_soft,
+        fd_soft_raise_attempted: raise_attempted,
+        fd_soft_limit_raised: raised,
+        machine,
+        memory,
+    })
 }
 
 /// Reads the process descriptor limit, falling back to a conservative default.
@@ -145,28 +236,59 @@ impl ProductionServer {
         config: Config,
         config_path: Option<PathBuf>,
     ) -> Result<Self, ProductionServerError> {
-        let replay_governor = ResourceGovernor::new(&config.policy.resource_governor);
+        let pressure = PressureGauge::new();
+        let replay_governor =
+            ResourceGovernor::with_pressure(&config.policy.resource_governor, pressure.clone());
         let replay = ReplayCache::new(replay_governor, &config.policy.resource_governor);
         let nxr_replays = compile_nxr_replays(&config)?;
-        let (fd_plan, fd_budget) =
-            derive_fd_budget(&config).map_err(ProductionServerError::DescriptorBudget)?;
-        let tcp_relay = TcpRelay::new(&config.policy.relay, fd_budget.clone())
+        let startup = derive_fd_budget(&config).map_err(ProductionServerError::DescriptorBudget)?;
+        let tcp_relay = TcpRelay::new(&config.policy.relay, startup.budget.clone())
             .map_err(RuntimeUpdateError::Relay)?;
-        let initial =
-            RuntimeSnapshot::compile(config, 0, replay.clone(), &nxr_replays, tcp_relay.clone())?;
+        let initial = RuntimeSnapshot::compile(
+            config,
+            0,
+            replay.clone(),
+            &nxr_replays,
+            tcp_relay.clone(),
+            &pressure,
+        )?;
         let mut addresses: Vec<_> = initial.connections.keys().copied().collect();
         addresses.sort_unstable();
         emit(&initial.logger, &LogEvent::ServerStarting);
+        if initial.config.runtime.resource_mode == ResourceMode::Dedicated {
+            emit(
+                &initial.logger,
+                &LogEvent::MachineReport {
+                    resource_mode: initial.config.runtime.resource_mode.as_str(),
+                    fd_soft_limit: startup.machine.fd_soft_limit,
+                    fd_hard_limit: startup.machine.fd_hard_limit,
+                    fd_effective_soft_limit: startup.fd_effective_soft_limit,
+                    fd_soft_raise_attempted: startup.fd_soft_raise_attempted,
+                    fd_soft_limit_raised: startup.fd_soft_limit_raised,
+                    memlock_soft_limit: startup.machine.memlock_soft_limit,
+                    memlock_hard_limit: startup.machine.memlock_hard_limit,
+                    available_cpus: startup.machine.available_cpus,
+                    cpu_quota_us: startup.machine.cpu_quota_us,
+                    cpu_period_us: startup.machine.cpu_period_us,
+                    cpuset_effective: startup.machine.cpuset_effective.clone(),
+                    memory_source: startup.machine.memory_source,
+                    memory_current: startup.machine.memory_current,
+                    memory_high: startup.machine.memory_high,
+                    memory_max: startup.machine.memory_max,
+                    memory_total: startup.machine.memory_total,
+                },
+            );
+        }
         emit(
             &initial.logger,
             &LogEvent::DescriptorBudgetReport {
-                fd_soft_limit: fd_plan.soft_limit(),
-                fd_hard_limit: fd_plan.hard_limit(),
-                fd_fixed_reserve: fd_plan.fixed_reserve().total(),
-                fd_safety_headroom: fd_plan.safety_headroom(),
-                fd_effective_budget: fd_plan.effective_budget(),
-                fd_clamped: fd_plan.is_clamped(),
-                fd_recommended_soft_limit: fd_plan.recommended_soft_limit(),
+                fd_soft_limit: startup.plan.soft_limit(),
+                fd_hard_limit: startup.plan.hard_limit(),
+                fd_fixed_reserve: startup.plan.fixed_reserve().total(),
+                fd_safety_headroom: startup.plan.safety_headroom(),
+                fd_effective_budget: startup.plan.effective_budget(),
+                fd_clamped: startup.plan.is_clamped(),
+                fd_recommended_soft_limit: startup.plan.recommended_soft_limit(),
             },
         );
         emit(
@@ -188,12 +310,25 @@ impl ProductionServer {
                 replay,
                 nxr_replays,
                 tcp_relay,
-                fd_budget,
+                fd_budget: startup.budget,
+                pressure,
+                memory: startup.memory,
                 generation: AtomicU64::new(0),
                 update: Mutex::new(()),
             }),
             config_path,
         })
+    }
+
+    /// Returns the live resource-pressure gauge.
+    ///
+    /// In standard resource mode the gauge never leaves `Normal`. In
+    /// dedicated mode the pressure monitor publishes the combined
+    /// descriptor/memory state. Supervisors and tests can observe it; the
+    /// listener and admission governor already consult it on their own.
+    #[must_use]
+    pub fn pressure_gauge(&self) -> PressureGauge {
+        self.runtime.pressure.clone()
     }
 
     /// Binds every configured listener before serving any connection and runs
@@ -290,6 +425,14 @@ impl ProductionServer {
         }
         drop(initial);
 
+        let monitor_task = self.runtime.memory.clone().map(|watch| {
+            tokio::spawn(run_resource_monitor(
+                Arc::clone(&self.runtime),
+                watch,
+                shutdown_receiver.clone(),
+            ))
+        });
+
         tokio::pin!(shutdown);
         let refresh_deadline = Instant::now() + self.runtime.reload_interval();
         let mut refresh = Box::pin(time::sleep_until(refresh_deadline));
@@ -339,6 +482,9 @@ impl ProductionServer {
         };
 
         update_tasks.abort_all();
+        if let Some(task) = monitor_task {
+            task.abort();
+        }
         let _ignored = shutdown_sender.send(true);
         while let Some(completed) = listener_tasks.join_next().await {
             match completed {
@@ -362,6 +508,8 @@ struct RuntimeStore {
     nxr_replays: HashMap<SocketAddr, NxrReplayCache>,
     tcp_relay: TcpRelay,
     fd_budget: FdBudget,
+    pressure: PressureGauge,
+    memory: Option<MemoryWatch>,
     generation: AtomicU64,
     update: Mutex<()>,
 }
@@ -404,6 +552,7 @@ impl RuntimeStore {
             self.replay.clone(),
             &self.nxr_replays,
             self.tcp_relay.clone(),
+            &self.pressure,
         )?;
         self.current.store(Arc::new(candidate));
         self.generation.store(generation, Ordering::Release);
@@ -432,11 +581,14 @@ impl RuntimeSnapshot {
         replay: ReplayCache,
         nxr_replays: &HashMap<SocketAddr, NxrReplayCache>,
         tcp_relay: TcpRelay,
+        pressure: &PressureGauge,
     ) -> Result<Self, RuntimeUpdateError> {
         let logger = Logger::new(&config.log)?;
         let assets = Arc::new(AssetSnapshot::load_generation(&config, generation)?);
-        let vision = VisionHandler::from_config(&config, assets, tcp_relay.clone())?;
-        let governor = ResourceGovernor::new(&config.policy.resource_governor);
+        let vision =
+            VisionHandler::from_config_with_pressure(&config, assets, tcp_relay.clone(), pressure)?;
+        let governor =
+            ResourceGovernor::with_pressure(&config.policy.resource_governor, pressure.clone());
         let mut connections = HashMap::new();
         connections
             .try_reserve(config.inbounds.len())
@@ -450,6 +602,7 @@ impl RuntimeSnapshot {
                         governor.clone(),
                         &config.policy.resource_governor,
                         replay.clone(),
+                        tcp_relay.clone(),
                     )?),
                     vision: vision.clone(),
                 },
@@ -508,6 +661,9 @@ fn ensure_hot_compatible(
 ) -> Result<(), RuntimeUpdateError> {
     if listener_topology(candidate) != listener_topology(&current.config) {
         return Err(RuntimeUpdateError::ListenerTopologyChanged);
+    }
+    if candidate.runtime != current.config.runtime {
+        return Err(RuntimeUpdateError::ResourceModeChanged);
     }
     if candidate.policy.resource_governor != current.config.policy.resource_governor {
         return Err(RuntimeUpdateError::ReplayPolicyChanged);
@@ -605,6 +761,22 @@ async fn run_listener(
     let mut reserve = EmergencyDescriptor::open().ok();
     let mut last_pressure = fd_budget.pressure();
     loop {
+        // At critical resource pressure, pause before touching the listener.
+        // The wait is a `Notify` wakeup, never a poll loop, it costs one
+        // atomic load in any other state, and it stays cancellable so
+        // shutdown is prompt. Established connections are unaffected: their
+        // tasks are already running.
+        tokio::select! {
+            biased;
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    break;
+                }
+                continue;
+            }
+            () = runtime.pressure.wait_while_critical() => {}
+        }
+
         // Acquire the inbound descriptor permit before touching the listener.
         // When capacity is exhausted this waits on a `Notify` rather than
         // spinning, and it remains cancellable so shutdown is still prompt.
@@ -648,6 +820,23 @@ async fn run_listener(
                 match accepted {
                     Ok((stream, peer)) => {
                         backoff.reset();
+                        if runtime.pressure.state() == ResourcePressure::Critical {
+                            // The connection raced the critical transition
+                            // while the listener was parked in `accept`. Fail
+                            // it fast through the ordinary decline path; the
+                            // next loop iteration parks on the pressure gate.
+                            drop(stream);
+                            drop(fd_permit);
+                            let snapshot = runtime.load();
+                            emit(
+                                &snapshot.logger,
+                                &LogEvent::ConnectionRejected {
+                                    peer,
+                                    reason: RejectionReason::ResourceLimit,
+                                },
+                            );
+                            continue;
+                        }
                         admit_accepted_connection(
                             &runtime,
                             &mut connections,
@@ -717,6 +906,56 @@ async fn run_listener(
     }
     drain_connections(&mut connections).await;
     Ok(())
+}
+
+/// Samples the bounded memory signal and publishes the combined pressure state.
+///
+/// This is the only place the pressure gauge is written outside tests. It
+/// runs on a fixed interval — never in a read, write or record loop — folds
+/// the descriptor dimension in from the budget's own hysteresis watermarks,
+/// and logs transitions only, so a sustained condition costs two log lines
+/// rather than one per second.
+async fn run_resource_monitor(
+    runtime: Arc<RuntimeStore>,
+    watch: MemoryWatch,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    let mut memory_state = ResourcePressure::Normal;
+    let mut last_usage = None;
+    loop {
+        tokio::select! {
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    break;
+                }
+            }
+            () = time::sleep(MEMORY_SAMPLE_INTERVAL) => {}
+        }
+        if *shutdown.borrow() {
+            break;
+        }
+        let fd_state = ResourcePressure::from(runtime.fd_budget.pressure());
+        if let Some(usage) = watch.sampler.sample() {
+            // An unreadable sample keeps the previous state: a monitoring gap
+            // must never itself raise or clear an alarm.
+            last_usage = Some(usage);
+            memory_state = watch.plan.classify(memory_state, usage);
+        }
+        let effective = fd_state.max(memory_state);
+        if runtime.pressure.set(effective) {
+            let snapshot = runtime.load();
+            emit(
+                &snapshot.logger,
+                &LogEvent::ResourcePressureChanged {
+                    pressure_state: effective.as_str(),
+                    fd_pressure_state: runtime.fd_budget.pressure().as_str(),
+                    memory_bytes_in_use: last_usage,
+                    memory_pressure_enter: watch.plan.pressure_enter(),
+                    memory_critical_enter: watch.plan.critical_enter(),
+                },
+            );
+        }
+    }
 }
 
 /// Configures and admits one accepted stream.
@@ -849,6 +1088,12 @@ async fn run_connection(
                         uplink_direct: stats.uplink_direct(),
                         downlink_direct: stats.downlink_direct(),
                         relay_backend: stats.relay_backend().map(RelayBackend::as_str),
+                        uplink_direct_at_bytes: stats.uplink_direct_at_bytes(),
+                        downlink_direct_at_bytes: stats.downlink_direct_at_bytes(),
+                        uplink_backend: stats.uplink_backend().map(RelayBackend::as_str),
+                        downlink_backend: stats.downlink_backend().map(RelayBackend::as_str),
+                        uplink_handoff_delay_us: stats.uplink_handoff_delay_us(),
+                        downlink_handoff_delay_us: stats.downlink_handoff_delay_us(),
                     },
                 );
             }
@@ -913,16 +1158,21 @@ fn emit_rejected(runtime: &RuntimeStore, field: &'static str) {
 
 fn emit_admission(logger: &Logger, error: AdmissionDenied) {
     let resource = match error {
-        AdmissionDenied::Limit(AdmissionKind::Connection) => AdmissionResource::Connections,
-        AdmissionDenied::Limit(AdmissionKind::Handshake) => AdmissionResource::Handshakes,
-        AdmissionDenied::Limit(AdmissionKind::Fallback) => AdmissionResource::Fallbacks,
-        AdmissionDenied::Limit(AdmissionKind::CryptoOperation) => {
+        AdmissionDenied::Limit(AdmissionKind::Connection)
+        | AdmissionDenied::Pressure(AdmissionKind::Connection) => AdmissionResource::Connections,
+        AdmissionDenied::Limit(AdmissionKind::Handshake)
+        | AdmissionDenied::Pressure(AdmissionKind::Handshake) => AdmissionResource::Handshakes,
+        AdmissionDenied::Limit(AdmissionKind::Fallback)
+        | AdmissionDenied::Pressure(AdmissionKind::Fallback) => AdmissionResource::Fallbacks,
+        AdmissionDenied::Limit(AdmissionKind::CryptoOperation)
+        | AdmissionDenied::Pressure(AdmissionKind::CryptoOperation) => {
             AdmissionResource::CryptoOperations
         }
-        AdmissionDenied::Limit(AdmissionKind::ReplayEntry) => AdmissionResource::ReplayEntries,
-        AdmissionDenied::DirectConcurrency | AdmissionDenied::DirectRate => {
-            AdmissionResource::DirectConnections
-        }
+        AdmissionDenied::Limit(AdmissionKind::ReplayEntry)
+        | AdmissionDenied::Pressure(AdmissionKind::ReplayEntry) => AdmissionResource::ReplayEntries,
+        AdmissionDenied::DirectConcurrency
+        | AdmissionDenied::DirectRate
+        | AdmissionDenied::DirectPressure => AdmissionResource::DirectConnections,
         AdmissionDenied::Unavailable => AdmissionResource::Connections,
     };
     emit(logger, &LogEvent::AdmissionLimited { resource });
@@ -1033,6 +1283,7 @@ pub enum RuntimeUpdateError {
     DuplicateListener(SocketAddr),
     MissingNxrReplay(SocketAddr),
     ListenerTopologyChanged,
+    ResourceModeChanged,
     ReplayPolicyChanged,
     NxrReplayPolicyChanged,
     Relay(TcpRelayConfigError),
@@ -1060,6 +1311,9 @@ impl fmt::Display for RuntimeUpdateError {
             }
             Self::ListenerTopologyChanged => {
                 formatter.write_str("listener addresses require a process restart")
+            }
+            Self::ResourceModeChanged => {
+                formatter.write_str("the runtime resource mode requires a process restart")
             }
             Self::ReplayPolicyChanged => {
                 formatter.write_str("resource governor policy requires a process restart")
@@ -1091,6 +1345,7 @@ impl Error for RuntimeUpdateError {
             Self::DuplicateListener(_)
             | Self::MissingNxrReplay(_)
             | Self::ListenerTopologyChanged
+            | Self::ResourceModeChanged
             | Self::ReplayPolicyChanged
             | Self::NxrReplayPolicyChanged
             | Self::RelayPolicyChanged
@@ -1425,6 +1680,22 @@ mod tests {
         assert!(matches!(
             server.runtime.publish(replacement),
             Err(RuntimeUpdateError::ReplayPolicyChanged)
+        ));
+        assert!(Arc::ptr_eq(&previous, &server.runtime.load()));
+    }
+
+    #[test]
+    fn resource_mode_change_requires_restart() {
+        let generated = generated_config(8443);
+        let server =
+            ProductionServer::from_config(generated.config()).expect("server must compile");
+        let previous = server.runtime.load();
+        let mut replacement = generated.config().clone();
+        replacement.runtime.resource_mode = crate::config::ResourceMode::Dedicated;
+
+        assert!(matches!(
+            server.runtime.publish(replacement),
+            Err(RuntimeUpdateError::ResourceModeChanged)
         ));
         assert!(Arc::ptr_eq(&previous, &server.runtime.load()));
     }

@@ -7,7 +7,6 @@ description = "Bounded Linux kernel relay backends isolated from the rust-realit
 publish = false
 
 [dependencies]
-io-uring = "=0.7.13"
 libc = { version = "0.2.180", default-features = false, features = ["std"] }
 
 [lints.rust]

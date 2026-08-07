@@ -1,0 +1,4341 @@
+{
+  "cells": {
+    "bidi:1:1": {
+      "concurrency": 1,
+      "direction": "bidi",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 1,
+          "perRequestSeconds": {
+            "mean": 0.102071375,
+            "p50": 0.096485,
+            "p95": 0.131162,
+            "p99": 0.131162
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 16.785616355487573,
+            "p50": 15.952432013357459,
+            "p95": 21.440388850445654,
+            "p99": 21.440388850445654
+          },
+          "validSamples": 4
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.12268159999999999,
+            "p50": 0.12286349999999999,
+            "p95": 0.190254,
+            "p99": 0.190254
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 13.028043459724572,
+            "p50": 13.753304015484924,
+            "p95": 14.149245653331816,
+            "p99": 14.149245653331816
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.11593230000000002,
+            "p50": 0.1175815,
+            "p95": 0.146988,
+            "p99": 0.146988
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 13.680655330569024,
+            "p50": 13.228596677541343,
+            "p95": 15.98973765983065,
+            "p99": 15.98973765983065
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "baseline",
+        "baseline",
+        "xray",
+        "baseline",
+        "baseline",
+        "final",
+        "xray",
+        "xray",
+        "xray",
+        "baseline",
+        "xray",
+        "final",
+        "final",
+        "final",
+        "final"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 1.205905085944639,
+        "finalVsBaseline": 0.8621446563112672,
+        "finalVsXray": 1.03966462586575
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "bidi"
+    },
+    "bidi:1:32": {
+      "concurrency": 32,
+      "direction": "bidi",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 5,
+          "samples": 5,
+          "validSamples": 0
+        },
+        "final": {
+          "invalidSamples": 5,
+          "samples": 5,
+          "validSamples": 0
+        },
+        "xray": {
+          "invalidSamples": 5,
+          "samples": 5,
+          "validSamples": 0
+        }
+      },
+      "interleaveOrder": [
+        "baseline",
+        "final",
+        "xray",
+        "xray",
+        "baseline",
+        "final",
+        "xray",
+        "final",
+        "xray",
+        "final",
+        "final",
+        "baseline",
+        "baseline",
+        "baseline",
+        "xray"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": null,
+        "finalVsBaseline": null,
+        "finalVsXray": null
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "bidi"
+    },
+    "bidi:1:4": {
+      "concurrency": 4,
+      "direction": "bidi",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.1341215,
+            "p50": 0.1337275,
+            "p95": 0.183616,
+            "p99": 0.231339
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 38.31892717315334,
+            "p50": 34.71789062740039,
+            "p95": 57.24598385376393,
+            "p99": 57.24598385376393
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.143530125,
+            "p50": 0.1501345,
+            "p95": 0.186774,
+            "p99": 0.217424
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 32.71798679914525,
+            "p50": 33.09759985686932,
+            "p95": 34.97355823945391,
+            "p99": 34.97355823945391
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.140627975,
+            "p50": 0.14072449999999997,
+            "p95": 0.175204,
+            "p99": 0.23489
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 31.710169878295506,
+            "p50": 32.01503529936094,
+            "p95": 33.79958693953949,
+            "p99": 33.79958693953949
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "baseline",
+        "xray",
+        "xray",
+        "final",
+        "baseline",
+        "xray",
+        "final",
+        "final",
+        "baseline",
+        "final",
+        "final",
+        "xray",
+        "xray",
+        "baseline",
+        "baseline"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 1.0844245618587027,
+        "finalVsBaseline": 0.9533298037049439,
+        "finalVsXray": 1.0338142546895768
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "bidi"
+    },
+    "bidi:32:1": {
+      "concurrency": 1,
+      "direction": "bidi",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 1,
+          "perRequestSeconds": {
+            "mean": 0.216359375,
+            "p50": 0.218179,
+            "p95": 0.246529,
+            "p99": 0.246529
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 245.18266505398313,
+            "p50": 244.23611947135612,
+            "p95": 258.4846069034659,
+            "p99": 258.4846069034659
+          },
+          "validSamples": 4
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.2733056,
+            "p50": 0.2140665,
+            "p95": 0.606582,
+            "p99": 0.606582
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 207.23084818918602,
+            "p50": 231.95946106252663,
+            "p95": 338.6860064551718,
+            "p99": 338.6860064551718
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.22310789999999997,
+            "p50": 0.2283285,
+            "p95": 0.248131,
+            "p99": 0.248131
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 239.9891304623166,
+            "p50": 240.96687268842453,
+            "p95": 249.85461677755512,
+            "p99": 249.85461677755512
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "baseline",
+        "final",
+        "baseline",
+        "xray",
+        "final",
+        "xray",
+        "xray",
+        "xray",
+        "final",
+        "baseline",
+        "baseline",
+        "xray",
+        "baseline",
+        "final",
+        "final"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 1.0135672042652883,
+        "finalVsBaseline": 0.9497344682866643,
+        "finalVsXray": 0.9626197098156946
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "bidi"
+    },
+    "bidi:32:32": {
+      "concurrency": 32,
+      "direction": "bidi",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 5,
+          "samples": 5,
+          "validSamples": 0
+        },
+        "final": {
+          "invalidSamples": 5,
+          "samples": 5,
+          "validSamples": 0
+        },
+        "xray": {
+          "invalidSamples": 5,
+          "samples": 5,
+          "validSamples": 0
+        }
+      },
+      "interleaveOrder": [
+        "baseline",
+        "final",
+        "baseline",
+        "final",
+        "baseline",
+        "final",
+        "final",
+        "xray",
+        "baseline",
+        "xray",
+        "baseline",
+        "xray",
+        "xray",
+        "final",
+        "xray"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": null,
+        "finalVsBaseline": null,
+        "finalVsXray": null
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "bidi"
+    },
+    "bidi:32:4": {
+      "concurrency": 4,
+      "direction": "bidi",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.3318119,
+            "p50": 0.3011735,
+            "p95": 0.479817,
+            "p99": 0.496704
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 495.399238703832,
+            "p50": 471.8198411082921,
+            "p95": 563.726353216978,
+            "p99": 563.726353216978
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.290167225,
+            "p50": 0.27323200000000003,
+            "p95": 0.441155,
+            "p99": 0.456111
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 558.090465974455,
+            "p50": 518.345057666652,
+            "p95": 752.7451440390294,
+            "p99": 752.7451440390294
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.3398089,
+            "p50": 0.31972100000000003,
+            "p95": 0.50606,
+            "p99": 0.519422
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 494.1741399211969,
+            "p50": 490.3374861638437,
+            "p95": 539.7244260804184,
+            "p99": 539.7244260804184
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "xray",
+        "final",
+        "final",
+        "final",
+        "xray",
+        "baseline",
+        "xray",
+        "xray",
+        "baseline",
+        "baseline",
+        "xray",
+        "final",
+        "baseline",
+        "baseline"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9622348982525802,
+        "finalVsBaseline": 1.09860801200957,
+        "finalVsXray": 1.057118968655498
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "bidi"
+    },
+    "bidi:512:1": {
+      "concurrency": 1,
+      "direction": "bidi",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.8295766666666666,
+            "p50": 0.841059,
+            "p95": 0.854808,
+            "p99": 0.854808
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 1171.8850243078894,
+            "p50": 1169.672589382587,
+            "p95": 1183.0093899384726,
+            "p99": 1183.0093899384726
+          },
+          "validSamples": 3
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.7945358333333333,
+            "p50": 0.802484,
+            "p95": 0.883582,
+            "p99": 0.883582
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 1212.2744187540065,
+            "p50": 1180.0738372129645,
+            "p95": 1330.831496366728,
+            "p99": 1330.831496366728
+          },
+          "validSamples": 3
+        },
+        "xray": {
+          "invalidSamples": 1,
+          "perRequestSeconds": {
+            "mean": 0.83393725,
+            "p50": 0.8341339999999999,
+            "p95": 0.857636,
+            "p99": 0.857636
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 1172.9190199132536,
+            "p50": 1172.9190199132536,
+            "p95": 1186.8053200015672,
+            "p99": 1186.8053200015672
+          },
+          "validSamples": 2
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "xray",
+        "xray",
+        "baseline",
+        "baseline",
+        "final",
+        "baseline",
+        "final",
+        "final"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9972321784577193,
+        "finalVsBaseline": 1.0088924438554792,
+        "finalVsXray": 1.0061000096155317
+      },
+      "payloadMiB": 512,
+      "samplesPerImplementation": 3,
+      "scenario": "bidi"
+    },
+    "bidi:512:32": {
+      "concurrency": 32,
+      "direction": "bidi",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 3,
+          "samples": 3,
+          "validSamples": 0
+        },
+        "final": {
+          "invalidSamples": 3,
+          "samples": 3,
+          "validSamples": 0
+        },
+        "xray": {
+          "invalidSamples": 3,
+          "samples": 3,
+          "validSamples": 0
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "xray",
+        "xray",
+        "xray",
+        "baseline",
+        "baseline",
+        "final",
+        "baseline",
+        "final"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": null,
+        "finalVsBaseline": null,
+        "finalVsXray": null
+      },
+      "payloadMiB": 512,
+      "samplesPerImplementation": 3,
+      "scenario": "bidi"
+    },
+    "direct-download:1:1": {
+      "concurrency": 1,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.11581540000000001,
+            "p50": 0.121382,
+            "p95": 0.133178,
+            "p99": 0.133178
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 7.712767560089763,
+            "p50": 7.256401900773451,
+            "p95": 10.130280063642891,
+            "p99": 10.130280063642891
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.1255006,
+            "p50": 0.126239,
+            "p95": 0.130075,
+            "p99": 0.130075
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 7.234715338642253,
+            "p50": 7.069703175420782,
+            "p95": 7.670860669190763,
+            "p99": 7.670860669190763
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.12261219999999999,
+            "p50": 0.121824,
+            "p95": 0.133785,
+            "p99": 0.133785
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 6.941026811643647,
+            "p50": 7.101678425939666,
+            "p95": 7.343933339079713,
+            "p99": 7.343933339079713
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "final",
+        "baseline",
+        "xray",
+        "xray",
+        "baseline",
+        "xray",
+        "final",
+        "xray",
+        "final",
+        "baseline",
+        "final",
+        "baseline",
+        "baseline",
+        "final"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 1.0217868883317274,
+        "finalVsBaseline": 0.9742711707667724,
+        "finalVsXray": 0.9954975079690893
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "direct-download"
+    },
+    "direct-download:1:32": {
+      "concurrency": 32,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.24117324375,
+            "p50": 0.12056800000000001,
+            "p95": 1.150152,
+            "p99": 1.198895
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 37.26250840379928,
+            "p50": 25.57645914056778,
+            "p95": 87.47780605921649,
+            "p99": 87.47780605921649
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.33871131875,
+            "p50": 0.134578,
+            "p95": 1.16254,
+            "p99": 1.330831
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 24.826267328633513,
+            "p50": 25.553688049403387,
+            "p95": 25.652263453491642,
+            "p99": 25.652263453491642
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 1,
+          "perRequestSeconds": {
+            "mean": 0.420467640625,
+            "p50": 0.136032,
+            "p95": 1.344183,
+            "p99": 2.141918
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 22.99705396248913,
+            "p50": 25.711177877994146,
+            "p95": 26.50601510456309,
+            "p99": 26.50601510456309
+          },
+          "validSamples": 4
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "xray",
+        "xray",
+        "final",
+        "final",
+        "baseline",
+        "baseline",
+        "baseline",
+        "baseline",
+        "final",
+        "xray",
+        "xray",
+        "xray",
+        "baseline",
+        "final"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9947603047178298,
+        "finalVsBaseline": 0.999109685549542,
+        "finalVsXray": 0.9938746552437976
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "direct-download"
+    },
+    "direct-download:1:4": {
+      "concurrency": 4,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.12885425,
+            "p50": 0.1343935,
+            "p95": 0.156561,
+            "p99": 0.160281
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 24.146323931335655,
+            "p50": 23.544548118052397,
+            "p95": 26.10854843270938,
+            "p99": 26.10854843270938
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.1290404,
+            "p50": 0.13514150000000003,
+            "p95": 0.160803,
+            "p99": 0.162075
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 23.1314274617222,
+            "p50": 23.06362955069718,
+            "p95": 24.20464806494961,
+            "p99": 24.20464806494961
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.12789774999999998,
+            "p50": 0.1303975,
+            "p95": 0.152744,
+            "p99": 0.159704
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 24.298775283816383,
+            "p50": 23.670127744243263,
+            "p95": 27.73674470896739,
+            "p99": 27.73674470896739
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "baseline",
+        "baseline",
+        "final",
+        "final",
+        "xray",
+        "final",
+        "xray",
+        "baseline",
+        "xray",
+        "final",
+        "xray",
+        "xray",
+        "final",
+        "baseline",
+        "baseline"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9946945944885571,
+        "finalVsBaseline": 0.9795741007666025,
+        "finalVsXray": 0.9743770629335285
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "direct-download"
+    },
+    "direct-download:32:1": {
+      "concurrency": 1,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.1430066,
+            "p50": 0.148093,
+            "p95": 0.159887,
+            "p99": 0.159887
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 198.3349879407261,
+            "p50": 198.34688772068392,
+            "p95": 238.58449551780095,
+            "p99": 238.58449551780095
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.171497,
+            "p50": 0.176263,
+            "p95": 0.18872,
+            "p99": 0.18872
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 170.53259880866102,
+            "p50": 166.67985353017616,
+            "p95": 185.75290968998056,
+            "p99": 185.75290968998056
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.1339518,
+            "p50": 0.128998,
+            "p95": 0.181598,
+            "p99": 0.181598
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 219.09450403713672,
+            "p50": 226.43475446716963,
+            "p95": 251.2443351996118,
+            "p99": 251.2443351996118
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "final",
+        "baseline",
+        "final",
+        "final",
+        "xray",
+        "xray",
+        "baseline",
+        "baseline",
+        "baseline",
+        "xray",
+        "baseline",
+        "xray",
+        "xray",
+        "final"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.8759560262178829,
+        "finalVsBaseline": 0.8403451924332591,
+        "finalVsXray": 0.7361054354151397
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "direct-download"
+    },
+    "direct-download:32:32": {
+      "concurrency": 32,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 5,
+          "samples": 5,
+          "validSamples": 0
+        },
+        "final": {
+          "invalidSamples": 5,
+          "samples": 5,
+          "validSamples": 0
+        },
+        "xray": {
+          "invalidSamples": 5,
+          "samples": 5,
+          "validSamples": 0
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "baseline",
+        "final",
+        "baseline",
+        "xray",
+        "baseline",
+        "xray",
+        "xray",
+        "xray",
+        "final",
+        "baseline",
+        "final",
+        "final",
+        "xray",
+        "baseline"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": null,
+        "finalVsBaseline": null,
+        "finalVsXray": null
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "direct-download"
+    },
+    "direct-download:32:4": {
+      "concurrency": 4,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.25739955000000003,
+            "p50": 0.25235,
+            "p95": 0.290466,
+            "p99": 0.306336
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 419.55632198181127,
+            "p50": 434.67806427964996,
+            "p95": 448.8846591116458,
+            "p99": 448.8846591116458
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.23528525,
+            "p50": 0.24188900000000002,
+            "p95": 0.284529,
+            "p99": 0.288153
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 456.90119785168736,
+            "p50": 440.3589848645888,
+            "p95": 603.7226888880009,
+            "p99": 603.7226888880009
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.23895490000000003,
+            "p50": 0.239311,
+            "p95": 0.246965,
+            "p99": 0.249119
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 473.8836735140264,
+            "p50": 469.1912202934859,
+            "p95": 498.6872150392147,
+            "p99": 498.6872150392147
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "xray",
+        "final",
+        "baseline",
+        "xray",
+        "xray",
+        "baseline",
+        "final",
+        "baseline",
+        "final",
+        "baseline",
+        "baseline",
+        "xray",
+        "final",
+        "final"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9264411725516785,
+        "finalVsBaseline": 1.0130692598770847,
+        "finalVsXray": 0.9385490729965874
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "direct-download"
+    },
+    "direct-download:512:1": {
+      "concurrency": 1,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.56378,
+            "p50": 0.599196,
+            "p95": 0.606845,
+            "p99": 0.606845
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 888.2053571323131,
+            "p50": 818.8405252427127,
+            "p95": 1028.2730382652178,
+            "p99": 1028.2730382652178
+          },
+          "validSamples": 3
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.5635583333333333,
+            "p50": 0.577604,
+            "p95": 0.601748,
+            "p99": 0.601748
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 878.1545648962964,
+            "p50": 849.9030134300169,
+            "p95": 955.1118780344325,
+            "p99": 955.1118780344325
+          },
+          "validSamples": 3
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.544141,
+            "p50": 0.560906,
+            "p95": 0.56409,
+            "p99": 0.56409
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 914.76483229289,
+            "p50": 900.0053833389798,
+            "p95": 957.0819873886027,
+            "p99": 957.0819873886027
+          },
+          "validSamples": 3
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "final",
+        "baseline",
+        "xray",
+        "final",
+        "baseline",
+        "xray",
+        "final",
+        "baseline"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9098173637638155,
+        "finalVsBaseline": 1.0379347226104827,
+        "finalVsXray": 0.9443310330843964
+      },
+      "payloadMiB": 512,
+      "samplesPerImplementation": 3,
+      "scenario": "direct-download"
+    },
+    "direct-download:512:32": {
+      "concurrency": 32,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 3,
+          "samples": 3,
+          "validSamples": 0
+        },
+        "final": {
+          "invalidSamples": 3,
+          "samples": 3,
+          "validSamples": 0
+        },
+        "xray": {
+          "invalidSamples": 3,
+          "samples": 3,
+          "validSamples": 0
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "final",
+        "xray",
+        "baseline",
+        "baseline",
+        "final",
+        "xray",
+        "final",
+        "baseline"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": null,
+        "finalVsBaseline": null,
+        "finalVsXray": null
+      },
+      "payloadMiB": 512,
+      "samplesPerImplementation": 3,
+      "scenario": "direct-download"
+    },
+    "direct-upload:1:1": {
+      "concurrency": 1,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.09081239999999999,
+            "p50": 0.090583,
+            "p95": 0.105239,
+            "p99": 0.105239
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 9.48439355457748,
+            "p50": 8.81846174772451,
+            "p95": 11.83343423192222,
+            "p99": 11.83343423192222
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.0913592,
+            "p50": 0.093519,
+            "p95": 0.100503,
+            "p99": 0.100503
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 9.392423239909247,
+            "p50": 8.942821587010492,
+            "p95": 10.822217183742534,
+            "p99": 10.822217183742534
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.098495,
+            "p50": 0.10022,
+            "p95": 0.104845,
+            "p99": 0.104845
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 8.758283697688753,
+            "p50": 8.52609941286073,
+            "p95": 10.086841949617694,
+            "p99": 10.086841949617694
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "baseline",
+        "final",
+        "xray",
+        "baseline",
+        "baseline",
+        "final",
+        "final",
+        "baseline",
+        "xray",
+        "xray",
+        "xray",
+        "final",
+        "final",
+        "baseline"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 1.034290279846231,
+        "finalVsBaseline": 1.01410221451809,
+        "finalVsXray": 1.0488760632465979
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "direct-upload"
+    },
+    "direct-upload:1:32": {
+      "concurrency": 32,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 2,
+          "perRequestSeconds": {
+            "mean": 0.43799671875,
+            "p50": 0.12467400000000001,
+            "p95": 1.175262,
+            "p99": 1.339565
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 23.727700448433435,
+            "p50": 23.668155957227533,
+            "p95": 25.04751509554373,
+            "p99": 25.04751509554373
+          },
+          "validSamples": 3
+        },
+        "final": {
+          "invalidSamples": 3,
+          "perRequestSeconds": {
+            "mean": 0.3309759375,
+            "p50": 0.125674,
+            "p95": 1.139118,
+            "p99": 1.14611
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 25.506151985797672,
+            "p50": 25.506151985797672,
+            "p95": 26.486866043466897,
+            "p99": 26.486866043466897
+          },
+          "validSamples": 2
+        },
+        "xray": {
+          "invalidSamples": 2,
+          "perRequestSeconds": {
+            "mean": 0.5339160520833334,
+            "p50": 0.1261165,
+            "p95": 1.24656,
+            "p99": 2.148867
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 22.05036294910113,
+            "p50": 26.088064915228813,
+            "p95": 26.163199537506646,
+            "p99": 26.163199537506646
+          },
+          "validSamples": 3
+        }
+      },
+      "interleaveOrder": [
+        "baseline",
+        "xray",
+        "final",
+        "final",
+        "xray",
+        "xray",
+        "baseline",
+        "baseline",
+        "xray",
+        "xray",
+        "final",
+        "baseline",
+        "final",
+        "baseline",
+        "final"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9072407644697071,
+        "finalVsBaseline": 1.077656917247449,
+        "finalVsXray": 0.9776942854396437
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "direct-upload"
+    },
+    "direct-upload:1:4": {
+      "concurrency": 4,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.12860690000000002,
+            "p50": 0.129167,
+            "p95": 0.149114,
+            "p99": 0.151929
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 23.080215526143068,
+            "p50": 22.528065618843474,
+            "p95": 25.39512368936993,
+            "p99": 25.39512368936993
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.12915000000000001,
+            "p50": 0.130786,
+            "p95": 0.150346,
+            "p99": 0.150355
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 22.547623466227115,
+            "p50": 22.384157045314634,
+            "p95": 23.832881034152706,
+            "p99": 23.832881034152706
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.129215,
+            "p50": 0.13046950000000002,
+            "p95": 0.145778,
+            "p99": 0.150177
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 22.88075268311676,
+            "p50": 22.770961788227265,
+            "p95": 23.51701567050613,
+            "p99": 23.51701567050613
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "baseline",
+        "xray",
+        "final",
+        "final",
+        "final",
+        "baseline",
+        "xray",
+        "final",
+        "xray",
+        "final",
+        "xray",
+        "baseline",
+        "baseline",
+        "xray",
+        "baseline"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.989333073778668,
+        "finalVsBaseline": 0.9936120315004556,
+        "finalVsXray": 0.9830132452678125
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "direct-upload"
+    },
+    "direct-upload:32:1": {
+      "concurrency": 1,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.1760118,
+            "p50": 0.165432,
+            "p95": 0.201049,
+            "p99": 0.201049
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 167.23306768799944,
+            "p50": 179.3657835895356,
+            "p95": 183.71835133489242,
+            "p99": 183.71835133489242
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.1709622,
+            "p50": 0.162274,
+            "p95": 0.191193,
+            "p99": 0.191193
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 168.76893658429918,
+            "p50": 171.0553332571577,
+            "p95": 183.7483780606103,
+            "p99": 183.7483780606103
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.17488679999999998,
+            "p50": 0.184308,
+            "p95": 0.189424,
+            "p99": 0.189424
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 169.96752819450944,
+            "p50": 160.09661581902432,
+            "p95": 193.4519875366876,
+            "p99": 193.4519875366876
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "final",
+        "xray",
+        "final",
+        "xray",
+        "baseline",
+        "baseline",
+        "final",
+        "baseline",
+        "xray",
+        "final",
+        "baseline",
+        "xray",
+        "final",
+        "baseline"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 1.1203596195455714,
+        "finalVsBaseline": 0.9536675827124549,
+        "finalVsXray": 1.0684506501406705
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "direct-upload"
+    },
+    "direct-upload:32:32": {
+      "concurrency": 32,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 5,
+          "samples": 5,
+          "validSamples": 0
+        },
+        "final": {
+          "invalidSamples": 5,
+          "samples": 5,
+          "validSamples": 0
+        },
+        "xray": {
+          "invalidSamples": 5,
+          "samples": 5,
+          "validSamples": 0
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "final",
+        "xray",
+        "xray",
+        "final",
+        "xray",
+        "xray",
+        "final",
+        "baseline",
+        "xray",
+        "baseline",
+        "baseline",
+        "final",
+        "baseline",
+        "baseline"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": null,
+        "finalVsBaseline": null,
+        "finalVsXray": null
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "direct-upload"
+    },
+    "direct-upload:32:4": {
+      "concurrency": 4,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.29345915,
+            "p50": 0.315933,
+            "p95": 0.322093,
+            "p99": 0.33056
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 408.8672062901131,
+            "p50": 371.8082203952643,
+            "p95": 573.7053718220383,
+            "p99": 573.7053718220383
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.3007525,
+            "p50": 0.316685,
+            "p95": 0.330103,
+            "p99": 0.333947
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 375.62882349731245,
+            "p50": 360.0691393866926,
+            "p95": 435.0922112278857,
+            "p99": 435.0922112278857
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.32543500000000003,
+            "p50": 0.3215785,
+            "p95": 0.379799,
+            "p99": 0.40421
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 339.502725335682,
+            "p50": 345.85309375862147,
+            "p95": 368.7954558236392,
+            "p99": 368.7954558236392
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "xray",
+        "final",
+        "final",
+        "xray",
+        "baseline",
+        "xray",
+        "final",
+        "baseline",
+        "final",
+        "baseline",
+        "baseline",
+        "xray",
+        "baseline",
+        "final"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 1.0750466805271879,
+        "finalVsBaseline": 0.9684270536135752,
+        "finalVsXray": 1.041104289319999
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "direct-upload"
+    },
+    "direct-upload:512:1": {
+      "concurrency": 1,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.7097349999999999,
+            "p50": 0.728957,
+            "p95": 0.743914,
+            "p99": 0.743914
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 698.8866904138282,
+            "p50": 679.1612050495123,
+            "p95": 751.4925297323508,
+            "p99": 751.4925297323508
+          },
+          "validSamples": 3
+        },
+        "final": {
+          "invalidSamples": 1,
+          "perRequestSeconds": {
+            "mean": 0.7380935,
+            "p50": 0.7380935,
+            "p95": 0.742553,
+            "p99": 0.742553
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 671.0133406178875,
+            "p50": 671.0133406178875,
+            "p95": 674.8504948992461,
+            "p99": 674.8504948992461
+          },
+          "validSamples": 2
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.7186343333333333,
+            "p50": 0.741729,
+            "p95": 0.761342,
+            "p99": 0.761342
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 696.0306341786718,
+            "p50": 681.2069480683748,
+            "p95": 755.4450458656308,
+            "p99": 755.4450458656308
+          },
+          "validSamples": 3
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "final",
+        "baseline",
+        "xray",
+        "final",
+        "xray",
+        "baseline",
+        "baseline",
+        "xray"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.996996884684363,
+        "finalVsBaseline": 0.9880030479199252,
+        "finalVsXray": 0.9850359608348208
+      },
+      "payloadMiB": 512,
+      "samplesPerImplementation": 3,
+      "scenario": "direct-upload"
+    },
+    "direct-upload:512:32": {
+      "concurrency": 32,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 3,
+          "samples": 3,
+          "validSamples": 0
+        },
+        "final": {
+          "invalidSamples": 2,
+          "perRequestSeconds": {
+            "mean": 26.8312353125,
+            "p50": 30.746415,
+            "p95": 32.534115,
+            "p99": 32.568577
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 500.47881907538437,
+            "p50": 500.47881907538437,
+            "p95": 500.47881907538437,
+            "p99": 500.47881907538437
+          },
+          "validSamples": 1
+        },
+        "xray": {
+          "invalidSamples": 2,
+          "perRequestSeconds": {
+            "mean": 25.33619903125,
+            "p50": 30.842963500000003,
+            "p95": 31.888042,
+            "p99": 31.89638
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 510.87197677850855,
+            "p50": 510.87197677850855,
+            "p95": 510.87197677850855,
+            "p99": 510.87197677850855
+          },
+          "validSamples": 1
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "final",
+        "baseline",
+        "final",
+        "baseline",
+        "final",
+        "xray",
+        "baseline",
+        "xray"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": null,
+        "finalVsBaseline": null,
+        "finalVsXray": 0.9796560426573756
+      },
+      "payloadMiB": 512,
+      "samplesPerImplementation": 3,
+      "scenario": "direct-upload"
+    },
+    "fallback:1:1": {
+      "concurrency": 1,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.0024619999999999998,
+            "p50": 0.00168,
+            "p95": 0.005575,
+            "p99": 0.005575
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 64.11736285312836,
+            "p50": 72.33643506019936,
+            "p95": 73.19166300563555,
+            "p99": 73.19166300563555
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.0015778,
+            "p50": 0.001183,
+            "p95": 0.003145,
+            "p99": 0.003145
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 68.35289754185703,
+            "p50": 73.7679422520571,
+            "p95": 79.07396294214234,
+            "p99": 79.07396294214234
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.0022524,
+            "p50": 0.001746,
+            "p95": 0.003747,
+            "p99": 0.003747
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 59.20547736881203,
+            "p50": 73.33636338613796,
+            "p95": 77.30878729146899,
+            "p99": 77.30878729146899
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "final",
+        "baseline",
+        "xray",
+        "baseline",
+        "xray",
+        "baseline",
+        "xray",
+        "baseline",
+        "final",
+        "xray",
+        "final",
+        "baseline",
+        "final",
+        "xray"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.98636517711311,
+        "finalVsBaseline": 1.0197895734102242,
+        "finalVsXray": 1.0058849231948788
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "fallback"
+    },
+    "fallback:1:32": {
+      "concurrency": 32,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.1554893125,
+            "p50": 0.0182635,
+            "p95": 1.018346,
+            "p99": 1.029362
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 28.838438688034763,
+            "p50": 29.192389130726887,
+            "p95": 29.56734333210256,
+            "p99": 29.56734333210256
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 2,
+          "perRequestSeconds": {
+            "mean": 0.067190375,
+            "p50": 0.0143485,
+            "p95": 1.007384,
+            "p99": 1.045953
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 228.72940058165713,
+            "p50": 301.0580405988533,
+            "p95": 356.075294621906,
+            "p99": 356.075294621906
+          },
+          "validSamples": 3
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.20423106875000002,
+            "p50": 0.0169975,
+            "p95": 1.019518,
+            "p99": 1.045177
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 28.972412199006744,
+            "p50": 29.27051976781396,
+            "p95": 30.353875496783473,
+            "p99": 30.353875496783473
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "baseline",
+        "baseline",
+        "final",
+        "final",
+        "final",
+        "baseline",
+        "baseline",
+        "baseline",
+        "final",
+        "xray",
+        "xray",
+        "xray",
+        "xray",
+        "xray"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9973307396757272,
+        "finalVsBaseline": 10.31289488676931,
+        "finalVsXray": 10.285367085619662
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "fallback"
+    },
+    "fallback:1:4": {
+      "concurrency": 4,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.0029939,
+            "p50": 0.0029405,
+            "p95": 0.004123,
+            "p99": 0.004685
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 225.34099079224387,
+            "p50": 210.06094410812835,
+            "p95": 291.18536845772,
+            "p99": 291.18536845772
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.00349555,
+            "p50": 0.0024035000000000003,
+            "p95": 0.009219,
+            "p99": 0.009322
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 196.53811997415042,
+            "p50": 210.29190604281942,
+            "p95": 239.7638370187465,
+            "p99": 239.7638370187465
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.00286095,
+            "p50": 0.0027545,
+            "p95": 0.004754,
+            "p99": 0.005885
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 233.00242810942177,
+            "p50": 232.119698149138,
+            "p95": 239.3209483010159,
+            "p99": 239.3209483010159
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "final",
+        "final",
+        "xray",
+        "final",
+        "final",
+        "xray",
+        "baseline",
+        "baseline",
+        "baseline",
+        "baseline",
+        "xray",
+        "final",
+        "baseline",
+        "xray"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9049681943544627,
+        "finalVsBaseline": 1.0010994996507878,
+        "finalVsXray": 0.9059632065681297
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "fallback"
+    },
+    "fallback:32:1": {
+      "concurrency": 1,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.0268974,
+            "p50": 0.027874,
+            "p95": 0.029121,
+            "p99": 0.029121
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 713.1790765735901,
+            "p50": 611.4244290956644,
+            "p95": 882.6383588997501,
+            "p99": 882.6383588997501
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.011164199999999999,
+            "p50": 0.010789,
+            "p95": 0.014228,
+            "p99": 0.014228
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 1292.7259373945074,
+            "p50": 1405.812221375951,
+            "p95": 1437.5332999217258,
+            "p99": 1437.5332999217258
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.013552400000000001,
+            "p50": 0.014446,
+            "p95": 0.017729,
+            "p99": 0.017729
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 1121.2883797172583,
+            "p50": 822.4984621842681,
+            "p95": 1765.860091833647,
+            "p99": 1765.860091833647
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "baseline",
+        "xray",
+        "final",
+        "final",
+        "baseline",
+        "xray",
+        "xray",
+        "final",
+        "xray",
+        "final",
+        "xray",
+        "final",
+        "baseline",
+        "baseline",
+        "baseline"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.7433745559498496,
+        "finalVsBaseline": 2.2992411727075357,
+        "finalVsXray": 1.7091973857830756
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "fallback"
+    },
+    "fallback:32:32": {
+      "concurrency": 32,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.4953191,
+            "p50": 0.4334935,
+            "p95": 1.104914,
+            "p99": 1.146642
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 960.5759106576185,
+            "p50": 814.7025940763583,
+            "p95": 1556.6714439636448,
+            "p99": 1556.6714439636448
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.39341295625,
+            "p50": 0.230908,
+            "p95": 1.088346,
+            "p99": 1.123751
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 804.9690557303151,
+            "p50": 808.7816506242275,
+            "p95": 824.9693306271179,
+            "p99": 824.9693306271179
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.4103211,
+            "p50": 0.20287850000000002,
+            "p95": 1.078302,
+            "p99": 1.112101
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 784.1479562757329,
+            "p50": 803.3290722377561,
+            "p95": 823.3589572818659,
+            "p99": 823.3589572818659
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "baseline",
+        "xray",
+        "baseline",
+        "final",
+        "baseline",
+        "final",
+        "final",
+        "final",
+        "xray",
+        "baseline",
+        "xray",
+        "baseline",
+        "final",
+        "xray"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 1.014157986100167,
+        "finalVsBaseline": 0.9927323866461436,
+        "finalVsXray": 1.0067874779774653
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "fallback"
+    },
+    "fallback:32:4": {
+      "concurrency": 4,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.11161185,
+            "p50": 0.119843,
+            "p95": 0.134789,
+            "p99": 0.140142
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 907.4709556484328,
+            "p50": 823.012361788905,
+            "p95": 1329.2297385967222,
+            "p99": 1329.2297385967222
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.09029505,
+            "p50": 0.0922605,
+            "p95": 0.1026,
+            "p99": 0.104723
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 1004.4826343709367,
+            "p50": 1023.0646102638481,
+            "p95": 1045.2140497747664,
+            "p99": 1045.2140497747664
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.07393675,
+            "p50": 0.0834905,
+            "p95": 0.090284,
+            "p99": 0.097558
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 1390.36339408236,
+            "p50": 1095.8399415347717,
+            "p95": 2648.450877067085,
+            "p99": 2648.450877067085
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "baseline",
+        "baseline",
+        "final",
+        "baseline",
+        "final",
+        "baseline",
+        "xray",
+        "baseline",
+        "xray",
+        "final",
+        "final",
+        "xray",
+        "xray",
+        "final"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.7510333677345619,
+        "finalVsBaseline": 1.2430732000672606,
+        "finalVsXray": 0.9335894517870935
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "fallback"
+    },
+    "fallback:512:1": {
+      "concurrency": 1,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.40072033333333335,
+            "p50": 0.384919,
+            "p95": 0.434104,
+            "p99": 0.434104
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 1206.3471023265568,
+            "p50": 1247.2159165709286,
+            "p95": 1256.1435282681207,
+            "p99": 1256.1435282681207
+          },
+          "validSamples": 3
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.15567733333333333,
+            "p50": 0.145191,
+            "p95": 0.178861,
+            "p99": 0.178861
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 3021.0313702799663,
+            "p50": 3246.4322014370773,
+            "p95": 3298.240469190758,
+            "p99": 3298.240469190758
+          },
+          "validSamples": 3
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.193792,
+            "p50": 0.209223,
+            "p95": 0.225562,
+            "p99": 0.225562
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 2414.5647684500927,
+            "p50": 2199.9614291034413,
+            "p95": 2994.8523479891196,
+            "p99": 2994.8523479891196
+          },
+          "validSamples": 3
+        }
+      },
+      "interleaveOrder": [
+        "baseline",
+        "xray",
+        "xray",
+        "final",
+        "final",
+        "baseline",
+        "baseline",
+        "xray",
+        "final"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.5669262651932999,
+        "finalVsBaseline": 2.6029432099958725,
+        "finalVsXray": 1.4756768725532194
+      },
+      "payloadMiB": 512,
+      "samplesPerImplementation": 3,
+      "scenario": "fallback"
+    },
+    "fallback:512:32": {
+      "concurrency": 32,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 2,
+          "perRequestSeconds": {
+            "mean": 7.457285375,
+            "p50": 7.519126,
+            "p95": 7.694786,
+            "p99": 7.698291
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 2075.4839500406933,
+            "p50": 2075.4839500406933,
+            "p95": 2075.4839500406933,
+            "p99": 2075.4839500406933
+          },
+          "validSamples": 1
+        },
+        "final": {
+          "invalidSamples": 1,
+          "perRequestSeconds": {
+            "mean": 5.35908578125,
+            "p50": 5.950809,
+            "p95": 6.281943,
+            "p99": 6.313378
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 2567.1064597765094,
+            "p50": 2567.1064597765094,
+            "p95": 2607.933404732701,
+            "p99": 2607.933404732701
+          },
+          "validSamples": 2
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 3.815061802083333,
+            "p50": 3.945326,
+            "p95": 4.241159,
+            "p99": 4.274421
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 3771.7120734044365,
+            "p50": 3766.6167946532405,
+            "p95": 3876.2313830361513,
+            "p99": 3876.2313830361513
+          },
+          "validSamples": 3
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "baseline",
+        "final",
+        "xray",
+        "baseline",
+        "final",
+        "baseline",
+        "xray",
+        "final"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.5510207337754317,
+        "finalVsBaseline": 1.2368712654830103,
+        "finalVsXray": 0.6815417122921952
+      },
+      "payloadMiB": 512,
+      "samplesPerImplementation": 3,
+      "scenario": "fallback"
+    },
+    "framed-download:1:1": {
+      "concurrency": 1,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.0813812,
+            "p50": 0.08058,
+            "p95": 0.087163,
+            "p99": 0.087163
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 9.69976946434478,
+            "p50": 9.234910572315354,
+            "p95": 11.333585223193372,
+            "p99": 11.333585223193372
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.0749488,
+            "p50": 0.076152,
+            "p95": 0.08348,
+            "p99": 0.08348
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 11.315180361373558,
+            "p50": 11.067656524860707,
+            "p95": 13.021003247350764,
+            "p99": 13.021003247350764
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.0794708,
+            "p50": 0.079032,
+            "p95": 0.086213,
+            "p99": 0.086213
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 10.460283727821759,
+            "p50": 10.82697104076031,
+            "p95": 11.224176249603328,
+            "p99": 11.224176249603328
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "baseline",
+        "xray",
+        "baseline",
+        "xray",
+        "final",
+        "baseline",
+        "xray",
+        "final",
+        "final",
+        "xray",
+        "baseline",
+        "xray",
+        "baseline",
+        "final"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.8529542138377092,
+        "finalVsBaseline": 1.1984584407389505,
+        "finalVsXray": 1.0222301771376583
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-download"
+    },
+    "framed-download:1:32": {
+      "concurrency": 32,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.15480090625,
+            "p50": 0.0885525,
+            "p95": 1.08139,
+            "p99": 1.12056
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 76.90516766220915,
+            "p50": 27.711147721477502,
+            "p95": 195.59194096320837,
+            "p99": 195.59194096320837
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.11449250625,
+            "p50": 0.086978,
+            "p95": 0.124668,
+            "p99": 1.132521
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 106.28861748694526,
+            "p50": 90.32661401477904,
+            "p95": 193.12049625915557,
+            "p99": 193.12049625915557
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.16908801874999999,
+            "p50": 0.09542049999999999,
+            "p95": 1.114772,
+            "p99": 1.126088
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 59.211477492766655,
+            "p50": 26.875631324415696,
+            "p95": 190.73022122467782,
+            "p99": 190.73022122467782
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "xray",
+        "xray",
+        "baseline",
+        "baseline",
+        "baseline",
+        "xray",
+        "xray",
+        "final",
+        "final",
+        "final",
+        "baseline",
+        "baseline",
+        "final",
+        "xray"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 1.0310882519177424,
+        "finalVsBaseline": 3.2595767927999413,
+        "finalVsXray": 3.360911337279733
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-download"
+    },
+    "framed-download:1:4": {
+      "concurrency": 4,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.09360535,
+            "p50": 0.08881149999999999,
+            "p95": 0.09548,
+            "p99": 0.205506
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 30.37065208937947,
+            "p50": 31.122610988541396,
+            "p95": 37.735767775427085,
+            "p99": 37.735767775427085
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.0841726,
+            "p50": 0.085706,
+            "p95": 0.095578,
+            "p99": 0.10267
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 36.74804505838368,
+            "p50": 36.63614267868881,
+            "p95": 37.95107215975051,
+            "p99": 37.95107215975051
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.0977689,
+            "p50": 0.08743000000000001,
+            "p95": 0.217507,
+            "p99": 0.223633
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 31.677299007507678,
+            "p50": 35.37892568516465,
+            "p95": 51.5403072632114,
+            "p99": 51.5403072632114
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "baseline",
+        "baseline",
+        "final",
+        "xray",
+        "baseline",
+        "xray",
+        "final",
+        "baseline",
+        "final",
+        "baseline",
+        "xray",
+        "final",
+        "xray",
+        "final"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.8796935007439176,
+        "finalVsBaseline": 1.1771551780208083,
+        "finalVsXray": 1.0355357594719543
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-download"
+    },
+    "framed-download:32:1": {
+      "concurrency": 1,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.138846,
+            "p50": 0.115148,
+            "p95": 0.202088,
+            "p99": 0.202088
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 224.87081743779385,
+            "p50": 227.52495995793433,
+            "p95": 311.4428031548617,
+            "p99": 311.4428031548617
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.16018079999999998,
+            "p50": 0.115828,
+            "p95": 0.333649,
+            "p99": 0.333649
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 210.8884403993008,
+            "p50": 244.2674320779055,
+            "p95": 279.9750475472304,
+            "p99": 279.9750475472304
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.128424,
+            "p50": 0.115401,
+            "p95": 0.190946,
+            "p99": 0.190946
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 228.0872432766143,
+            "p50": 227.9976124301051,
+            "p95": 288.97415159516083,
+            "p99": 288.97415159516083
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "baseline",
+        "xray",
+        "xray",
+        "final",
+        "final",
+        "baseline",
+        "xray",
+        "baseline",
+        "baseline",
+        "baseline",
+        "xray",
+        "final",
+        "final",
+        "final"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.997926941132703,
+        "finalVsBaseline": 1.0735852107086035,
+        "finalVsXray": 1.0713596053677452
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-download"
+    },
+    "framed-download:32:32": {
+      "concurrency": 32,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.7178275562499999,
+            "p50": 0.6819554999999999,
+            "p95": 1.228842,
+            "p99": 1.331553
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 778.2584554306502,
+            "p50": 726.7349858161239,
+            "p95": 1028.2494456835532,
+            "p99": 1028.2494456835532
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.7392013937499999,
+            "p50": 0.7732525,
+            "p95": 0.859831,
+            "p99": 1.244185
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 924.6924704405367,
+            "p50": 1010.7339613826796,
+            "p95": 1128.6670381134422,
+            "p99": 1128.6670381134422
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.680795175,
+            "p50": 0.728127,
+            "p95": 0.805402,
+            "p99": 1.204713
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 987.0986570398454,
+            "p50": 1048.643047786879,
+            "p95": 1094.5214930465527,
+            "p99": 1094.5214930465527
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "baseline",
+        "final",
+        "final",
+        "xray",
+        "xray",
+        "xray",
+        "baseline",
+        "baseline",
+        "final",
+        "final",
+        "final",
+        "xray",
+        "baseline",
+        "xray",
+        "baseline"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.6930241776263814,
+        "finalVsBaseline": 1.390787537561061,
+        "finalVsXray": 0.9638493894712743
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-download"
+    },
+    "framed-download:32:4": {
+      "concurrency": 4,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.26447705,
+            "p50": 0.267323,
+            "p95": 0.277105,
+            "p99": 0.277987
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 425.8039666914274,
+            "p50": 425.1800769109717,
+            "p95": 432.70576547845513,
+            "p99": 432.70576547845513
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.2624978,
+            "p50": 0.26330200000000004,
+            "p95": 0.278018,
+            "p99": 0.281779
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 426.25804655752063,
+            "p50": 418.54939363397784,
+            "p95": 448.18032607509434,
+            "p99": 448.18032607509434
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.2727102,
+            "p50": 0.2735765,
+            "p95": 0.288722,
+            "p99": 0.289989
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 420.2547772303511,
+            "p50": 417.911743312712,
+            "p95": 438.3324271433471,
+            "p99": 438.3324271433471
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "final",
+        "final",
+        "xray",
+        "xray",
+        "baseline",
+        "xray",
+        "baseline",
+        "xray",
+        "baseline",
+        "final",
+        "baseline",
+        "final",
+        "baseline",
+        "final"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 1.0173920300507588,
+        "finalVsBaseline": 0.9844050000527605,
+        "finalVsXray": 1.0015258013957955
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-download"
+    },
+    "framed-download:512:1": {
+      "concurrency": 1,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.708393,
+            "p50": 0.711348,
+            "p95": 0.7151,
+            "p99": 0.7151
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 698.5528865102923,
+            "p50": 695.7703874275272,
+            "p95": 707.7492707821611,
+            "p99": 707.7492707821611
+          },
+          "validSamples": 3
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.708339,
+            "p50": 0.712142,
+            "p95": 0.713058,
+            "p99": 0.713058
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 698.6978535535727,
+            "p50": 694.8997181488742,
+            "p95": 706.994464150427,
+            "p99": 706.994464150427
+          },
+          "validSamples": 3
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.8283363333333332,
+            "p50": 0.793503,
+            "p95": 0.939247,
+            "p99": 0.939247
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 605.2860310933547,
+            "p50": 625.44595098961,
+            "p95": 659.1925433321377,
+            "p99": 659.1925433321377
+          },
+          "validSamples": 3
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "xray",
+        "final",
+        "xray",
+        "baseline",
+        "xray",
+        "baseline",
+        "final",
+        "baseline"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 1.1124388707395845,
+        "finalVsBaseline": 0.9987486255604062,
+        "finalVsXray": 1.1110467931711305
+      },
+      "payloadMiB": 512,
+      "samplesPerImplementation": 3,
+      "scenario": "framed-download"
+    },
+    "framed-download:512:32": {
+      "concurrency": 32,
+      "direction": "download",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 12.585511447916666,
+            "p50": 12.6762435,
+            "p95": 12.944024,
+            "p99": 12.978715
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 1251.1546503902596,
+            "p50": 1250.4338880036535,
+            "p95": 1252.6257213924794,
+            "p99": 1252.6257213924794
+          },
+          "validSamples": 3
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 12.502581354166667,
+            "p50": 12.5784495,
+            "p95": 12.851961,
+            "p99": 13.085405
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 1254.7480899310845,
+            "p50": 1257.978514386751,
+            "p95": 1260.292284595221,
+            "p99": 1260.292284595221
+          },
+          "validSamples": 3
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 11.16951209375,
+            "p50": 11.208262,
+            "p95": 11.64531,
+            "p99": 11.696294
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 1386.7284842667377,
+            "p50": 1388.087390221592,
+            "p95": 1390.3554487396862,
+            "p99": 1390.3554487396862
+          },
+          "validSamples": 3
+        }
+      },
+      "interleaveOrder": [
+        "baseline",
+        "xray",
+        "final",
+        "final",
+        "xray",
+        "baseline",
+        "final",
+        "xray",
+        "baseline"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9008322507735167,
+        "finalVsBaseline": 1.0060336067787978,
+        "finalVsXray": 0.9062675183483436
+      },
+      "payloadMiB": 512,
+      "samplesPerImplementation": 3,
+      "scenario": "framed-download"
+    },
+    "framed-upload:1:1": {
+      "concurrency": 1,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.0796818,
+            "p50": 0.079657,
+            "p95": 0.090915,
+            "p99": 0.090915
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 10.421343946849772,
+            "p50": 10.676883991294337,
+            "p95": 11.973908178678142,
+            "p99": 11.973908178678142
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.077262,
+            "p50": 0.075963,
+            "p95": 0.085431,
+            "p99": 0.085431
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 10.610376597118393,
+            "p50": 11.038093761638756,
+            "p95": 11.254814853007618,
+            "p99": 11.254814853007618
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.079681,
+            "p50": 0.077016,
+            "p95": 0.101006,
+            "p99": 0.101006
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 10.756581455148202,
+            "p50": 11.181321162687144,
+            "p95": 11.987382534897616,
+            "p99": 11.987382534897616
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "baseline",
+        "baseline",
+        "baseline",
+        "xray",
+        "xray",
+        "baseline",
+        "final",
+        "final",
+        "xray",
+        "final",
+        "xray",
+        "final",
+        "xray",
+        "final",
+        "baseline"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9548857273614366,
+        "finalVsBaseline": 1.0338310101185832,
+        "finalVsXray": 0.987190476065892
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-upload"
+    },
+    "framed-upload:1:32": {
+      "concurrency": 32,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.17516715,
+            "p50": 0.099501,
+            "p95": 1.107396,
+            "p99": 1.144675
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 78.65560508774054,
+            "p50": 39.566262288383896,
+            "p95": 190.61250014340428,
+            "p99": 190.61250014340428
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.11539647500000001,
+            "p50": 0.1007755,
+            "p95": 0.133902,
+            "p99": 1.105546
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 96.3340668280744,
+            "p50": 114.47167390603072,
+            "p95": 115.60238986007785,
+            "p99": 115.60238986007785
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.1282287875,
+            "p50": 0.1029645,
+            "p95": 0.174716,
+            "p99": 1.127442
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 135.4279747276118,
+            "p50": 162.87894253710402,
+            "p95": 196.1508430307453,
+            "p99": 196.1508430307453
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "xray",
+        "xray",
+        "final",
+        "baseline",
+        "final",
+        "final",
+        "baseline",
+        "xray",
+        "final",
+        "final",
+        "baseline",
+        "baseline",
+        "baseline",
+        "xray"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.24291821687981952,
+        "finalVsBaseline": 2.89316370274475,
+        "finalVsXray": 0.7028021678121709
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-upload"
+    },
+    "framed-upload:1:4": {
+      "concurrency": 4,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.0883129,
+            "p50": 0.08784549999999999,
+            "p95": 0.093454,
+            "p99": 0.093853
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 37.54334962568267,
+            "p50": 37.24595691950662,
+            "p95": 38.91290906176434,
+            "p99": 38.91290906176434
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.0872474,
+            "p50": 0.088345,
+            "p95": 0.092427,
+            "p99": 0.098705
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 36.853654811398926,
+            "p50": 37.47684267752588,
+            "p95": 40.24346098161314,
+            "p99": 40.24346098161314
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.08936975,
+            "p50": 0.08962200000000001,
+            "p95": 0.095748,
+            "p99": 0.096369
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 35.38502141234319,
+            "p50": 35.684608537029746,
+            "p95": 37.82362404225584,
+            "p99": 37.82362404225584
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "xray",
+        "baseline",
+        "final",
+        "xray",
+        "baseline",
+        "final",
+        "baseline",
+        "xray",
+        "baseline",
+        "final",
+        "baseline",
+        "xray",
+        "final",
+        "xray"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 1.0437541126689582,
+        "finalVsBaseline": 1.006198948211164,
+        "finalVsXray": 1.0502242903585826
+      },
+      "payloadMiB": 1,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-upload"
+    },
+    "framed-upload:32:1": {
+      "concurrency": 1,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.15620640000000002,
+            "p50": 0.13711,
+            "p95": 0.234551,
+            "p99": 0.234551
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 190.3941777664235,
+            "p50": 199.64880930629454,
+            "p95": 223.14812463842472,
+            "p99": 223.14812463842472
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.1367932,
+            "p50": 0.13095,
+            "p95": 0.155802,
+            "p99": 0.155802
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 206.66891495542322,
+            "p50": 214.75186525540366,
+            "p95": 230.93222580548888,
+            "p99": 230.93222580548888
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.1365648,
+            "p50": 0.147627,
+            "p95": 0.150931,
+            "p99": 0.150931
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 206.30291273805886,
+            "p50": 200.25865658657005,
+            "p95": 232.58542066179112,
+            "p99": 232.58542066179112
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "baseline",
+        "baseline",
+        "baseline",
+        "final",
+        "xray",
+        "xray",
+        "final",
+        "xray",
+        "baseline",
+        "final",
+        "final",
+        "xray",
+        "final",
+        "xray",
+        "baseline"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9969547020305118,
+        "finalVsBaseline": 1.0756481143142633,
+        "finalVsXray": 1.0723724452958583
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-upload"
+    },
+    "framed-upload:32:32": {
+      "concurrency": 32,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.89018366875,
+            "p50": 0.8972705000000001,
+            "p95": 1.429275,
+            "p99": 1.482253
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 847.8845899106445,
+            "p50": 922.8206834064932,
+            "p95": 1001.2992157291404,
+            "p99": 1001.2992157291404
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.85591530625,
+            "p50": 0.8823975,
+            "p95": 0.946445,
+            "p99": 1.386364
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 785.0839943138951,
+            "p50": 725.776031412844,
+            "p95": 940.685988225537,
+            "p99": 940.685988225537
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.7154090125,
+            "p50": 0.7549295,
+            "p95": 0.809092,
+            "p99": 1.247284
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 909.1148261523929,
+            "p50": 1034.9103153249812,
+            "p95": 1053.487729708564,
+            "p99": 1053.487729708564
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "xray",
+        "baseline",
+        "xray",
+        "xray",
+        "baseline",
+        "baseline",
+        "final",
+        "final",
+        "final",
+        "xray",
+        "baseline",
+        "final",
+        "baseline",
+        "xray",
+        "final"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.8916914535891067,
+        "finalVsBaseline": 0.7864756874907917,
+        "finalVsXray": 0.701293648991156
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-upload"
+    },
+    "framed-upload:32:4": {
+      "concurrency": 4,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.27580905,
+            "p50": 0.2781965,
+            "p95": 0.292445,
+            "p99": 0.293898
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 407.88575202454956,
+            "p50": 403.8010610741063,
+            "p95": 428.2405848749047,
+            "p99": 428.2405848749047
+          },
+          "validSamples": 5
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.2793331,
+            "p50": 0.2805495,
+            "p95": 0.295739,
+            "p99": 0.297274
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 408.3158026873231,
+            "p50": 398.61514484924436,
+            "p95": 460.2060976978676,
+            "p99": 460.2060976978676
+          },
+          "validSamples": 5
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.27465115,
+            "p50": 0.274009,
+            "p95": 0.287897,
+            "p99": 0.289698
+          },
+          "samples": 5,
+          "throughputMiBPerSecond": {
+            "mean": 414.1998901809076,
+            "p50": 413.4334934294332,
+            "p95": 424.02201833777764,
+            "p99": 424.02201833777764
+          },
+          "validSamples": 5
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "xray",
+        "baseline",
+        "xray",
+        "xray",
+        "final",
+        "baseline",
+        "xray",
+        "final",
+        "xray",
+        "baseline",
+        "baseline",
+        "baseline",
+        "final",
+        "final"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9767013739612004,
+        "finalVsBaseline": 0.9871572496340959,
+        "finalVsXray": 0.9641578420333811
+      },
+      "payloadMiB": 32,
+      "samplesPerImplementation": 5,
+      "scenario": "framed-upload"
+    },
+    "framed-upload:512:1": {
+      "concurrency": 1,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.8419036666666667,
+            "p50": 0.825343,
+            "p95": 0.883994,
+            "p99": 0.883994
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 591.6599137505536,
+            "p50": 602.4808612764454,
+            "p95": 608.888055655056,
+            "p99": 608.888055655056
+          },
+          "validSamples": 3
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.8354766666666666,
+            "p50": 0.86132,
+            "p95": 0.861348,
+            "p99": 0.861348
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 598.6650662094561,
+            "p50": 578.277771524023,
+            "p95": 639.8216896479225,
+            "p99": 639.8216896479225
+          },
+          "validSamples": 3
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 0.7399263333333334,
+            "p50": 0.774426,
+            "p95": 0.793414,
+            "p99": 0.793414
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 675.5917492705892,
+            "p50": 642.4438531124079,
+            "p95": 758.3450833340289,
+            "p99": 758.3450833340289
+          },
+          "validSamples": 3
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "final",
+        "xray",
+        "baseline",
+        "baseline",
+        "final",
+        "baseline",
+        "xray",
+        "xray"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.9377953549678213,
+        "finalVsBaseline": 0.9598276205801053,
+        "finalVsXray": 0.9001218841498391
+      },
+      "payloadMiB": 512,
+      "samplesPerImplementation": 3,
+      "scenario": "framed-upload"
+    },
+    "framed-upload:512:32": {
+      "concurrency": 32,
+      "direction": "upload",
+      "implementations": {
+        "baseline": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 14.319708447916668,
+            "p50": 14.4217735,
+            "p95": 14.713268,
+            "p99": 14.768237
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 1110.6540332089014,
+            "p50": 1111.32290759515,
+            "p95": 1121.469962683794,
+            "p99": 1121.469962683794
+          },
+          "validSamples": 3
+        },
+        "final": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 14.220301614583333,
+            "p50": 14.2505015,
+            "p95": 14.571122,
+            "p99": 14.595197
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 1121.8945189143972,
+            "p50": 1119.801975305638,
+            "p95": 1136.3903244827388,
+            "p99": 1136.3903244827388
+          },
+          "validSamples": 3
+        },
+        "xray": {
+          "invalidSamples": 0,
+          "perRequestSeconds": {
+            "mean": 11.382840739583335,
+            "p50": 11.5399465,
+            "p95": 11.883187,
+            "p99": 12.036369
+          },
+          "samples": 3,
+          "throughputMiBPerSecond": {
+            "mean": 1361.9354738537133,
+            "p50": 1365.910338589886,
+            "p95": 1367.4280482637548,
+            "p99": 1367.4280482637548
+          },
+          "validSamples": 3
+        }
+      },
+      "interleaveOrder": [
+        "final",
+        "xray",
+        "xray",
+        "baseline",
+        "xray",
+        "baseline",
+        "final",
+        "final",
+        "baseline"
+      ],
+      "p50ThroughputRatios": {
+        "baselineVsXray": 0.813613365532058,
+        "finalVsBaseline": 1.0076297065889126,
+        "finalVsXray": 0.8198209967878852
+      },
+      "payloadMiB": 512,
+      "samplesPerImplementation": 3,
+      "scenario": "framed-upload"
+    }
+  },
+  "commit": "f5a6d4e187561f809ccdb359df51a922db07a5a0",
+  "failures": [
+    {
+      "cell": "direct-download:1:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "direct-download:32:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "direct-download:32:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "direct-download:32:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "direct-download:32:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "direct-download:32:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "direct-download:32:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "direct-download:32:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "direct-download:32:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "direct-download:32:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 3
+    },
+    {
+      "cell": "direct-download:32:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "direct-download:32:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 3
+    },
+    {
+      "cell": "direct-download:32:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 3
+    },
+    {
+      "cell": "direct-download:32:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 4
+    },
+    {
+      "cell": "direct-download:32:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 4
+    },
+    {
+      "cell": "direct-download:32:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 4
+    },
+    {
+      "cell": "direct-download:512:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "direct-download:512:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "direct-download:512:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "direct-download:512:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "direct-download:512:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "direct-download:512:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "direct-download:512:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "direct-download:512:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "direct-download:512:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "direct-upload:1:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "direct-upload:1:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "direct-upload:1:32",
+      "implementation": "final",
+      "reason": "https origin logged 93 PUTs, expected 32",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "direct-upload:1:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "direct-upload:1:32",
+      "implementation": "xray",
+      "reason": "https origin logged 63 PUTs, expected 32",
+      "sampleIndex": 3
+    },
+    {
+      "cell": "direct-upload:1:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 4
+    },
+    {
+      "cell": "direct-upload:1:32",
+      "implementation": "final",
+      "reason": "https origin logged 62 PUTs, expected 32",
+      "sampleIndex": 4
+    },
+    {
+      "cell": "direct-upload:32:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "direct-upload:32:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "direct-upload:32:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "direct-upload:32:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "direct-upload:32:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "direct-upload:32:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "direct-upload:32:32",
+      "implementation": "xray",
+      "reason": "https origin logged 174 PUTs, expected 32",
+      "sampleIndex": 3
+    },
+    {
+      "cell": "direct-upload:32:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 3
+    },
+    {
+      "cell": "direct-upload:32:32",
+      "implementation": "baseline",
+      "reason": "https origin logged 59 PUTs, expected 32",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "direct-upload:32:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 4
+    },
+    {
+      "cell": "direct-upload:32:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "direct-upload:32:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "direct-upload:32:32",
+      "implementation": "final",
+      "reason": "https origin logged 107 PUTs, expected 32",
+      "sampleIndex": 4
+    },
+    {
+      "cell": "direct-upload:32:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 3
+    },
+    {
+      "cell": "direct-upload:32:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 4
+    },
+    {
+      "cell": "direct-upload:512:1",
+      "implementation": "final",
+      "reason": "https origin logged 52 PUTs, expected 1; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "direct-upload:512:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "direct-upload:512:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "direct-upload:512:32",
+      "implementation": "baseline",
+      "reason": "https origin logged 86 PUTs, expected 32",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "direct-upload:512:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "direct-upload:512:32",
+      "implementation": "xray",
+      "reason": "https origin logged 58 PUTs, expected 32",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "direct-upload:512:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "direct-upload:512:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "bidi:1:1",
+      "implementation": "baseline",
+      "reason": "https origin logged 56 PUTs, expected 1; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes; https origin received 536870912 != 1048576 bytes",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "bidi:1:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "bidi:1:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "bidi:1:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "bidi:1:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "bidi:1:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "bidi:1:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "bidi:1:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "bidi:1:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "bidi:1:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 3
+    },
+    {
+      "cell": "bidi:1:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 3
+    },
+    {
+      "cell": "bidi:1:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 4
+    },
+    {
+      "cell": "bidi:1:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "bidi:1:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 3
+    },
+    {
+      "cell": "bidi:1:32",
+      "implementation": "baseline",
+      "reason": "https origin logged 422 PUTs, expected 32",
+      "sampleIndex": 4
+    },
+    {
+      "cell": "bidi:1:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 4
+    },
+    {
+      "cell": "bidi:32:1",
+      "implementation": "baseline",
+      "reason": "https origin logged 32 PUTs, expected 1; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes; https origin received 1048576 != 33554432 bytes",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "bidi:32:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "bidi:32:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "bidi:32:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "bidi:32:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "bidi:32:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "bidi:32:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "bidi:32:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 3
+    },
+    {
+      "cell": "bidi:32:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "bidi:32:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 3
+    },
+    {
+      "cell": "bidi:32:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "bidi:32:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 4
+    },
+    {
+      "cell": "bidi:32:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "bidi:32:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 3
+    },
+    {
+      "cell": "bidi:32:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 4
+    },
+    {
+      "cell": "bidi:32:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 4
+    },
+    {
+      "cell": "bidi:512:1",
+      "implementation": "xray",
+      "reason": "https origin logged 271 PUTs, expected 1; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes; https origin received 33554432 != 536870912 bytes",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "bidi:512:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "bidi:512:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "bidi:512:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "bidi:512:32",
+      "implementation": "xray",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "bidi:512:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "bidi:512:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "bidi:512:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "bidi:512:32",
+      "implementation": "baseline",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "bidi:512:32",
+      "implementation": "final",
+      "reason": "curl rc=35: curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+      "sampleIndex": 2
+    },
+    {
+      "cell": "fallback:1:32",
+      "implementation": "final",
+      "reason": "curl rc=52: curl: (52) Empty reply from server",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "fallback:1:32",
+      "implementation": "final",
+      "reason": "curl rc=52: curl: (52) Empty reply from server",
+      "sampleIndex": 4
+    },
+    {
+      "cell": "fallback:512:32",
+      "implementation": "baseline",
+      "reason": "curl rc=52: curl: (52) Empty reply from server",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "fallback:512:32",
+      "implementation": "final",
+      "reason": "curl rc=52: curl: (52) Empty reply from server",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "fallback:512:32",
+      "implementation": "baseline",
+      "reason": "curl rc=52: curl: (52) Empty reply from server",
+      "sampleIndex": 1
+    },
+    {
+      "cell": "integrity",
+      "implementation": "final",
+      "reason": "curl rc=23: curl: (23) Failure writing output to destination, passed 16384 returned 4096",
+      "sampleIndex": 0
+    },
+    {
+      "cell": "integrity",
+      "implementation": "xray",
+      "reason": "curl rc=23: curl: (23) Failure writing output to destination, passed 16384 returned 0",
+      "sampleIndex": 0
+    }
+  ],
+  "harness": "benchmark-matrix",
+  "integrity": {
+    "baseline": {
+      "invalid": false,
+      "invalidReason": null,
+      "payloadBytes": 2147483648,
+      "sha256": {
+        "match": true,
+        "origin": "382045c648d7c2a42a01bb3132186a0397d40e2e4e85a99377dbc79c20e6671e",
+        "received": "382045c648d7c2a42a01bb3132186a0397d40e2e4e85a99377dbc79c20e6671e"
+      },
+      "wallSeconds": 2.3496805001050234
+    },
+    "final": {
+      "invalid": true,
+      "invalidReason": "curl rc=23: curl: (23) Failure writing output to destination, passed 16384 returned 4096",
+      "payloadBytes": 2147483648,
+      "sha256": null,
+      "wallSeconds": null
+    },
+    "xray": {
+      "invalid": true,
+      "invalidReason": "curl rc=23: curl: (23) Failure writing output to destination, passed 16384 returned 0",
+      "payloadBytes": 2147483648,
+      "sha256": null,
+      "wallSeconds": null
+    }
+  },
+  "limitations": [
+    "single-host loopback includes the same Xray client and Python origins in every path",
+    "the tunnel-bypass guard only covers the rust implementations (their debug logs); xray cells rely on byte-count verification",
+    "Xray's default private-target block is explicitly allowed only for the loopback origin",
+    "this does not model Internet RTT, packet loss, bandwidth shaping, or multi-core saturation",
+    "results are measurements of this host and are not a universal performance claim"
+  ],
+  "plan": {
+    "cellsFilter": [],
+    "concurrencies": [
+      1,
+      4,
+      32
+    ],
+    "integrityMiB": 2048,
+    "largeCellConcurrencies": [
+      1,
+      32
+    ],
+    "largePayloadMiB": 512,
+    "payloadsMiB": [
+      1,
+      32,
+      512
+    ],
+    "samplesPerCell": 5,
+    "samplesPerLargeCell": 3,
+    "scenarios": [
+      "framed-download",
+      "direct-download",
+      "framed-upload",
+      "direct-upload",
+      "bidi",
+      "fallback"
+    ],
+    "skipFilter": []
+  },
+  "schemaVersion": 1,
+  "seed": "0x5252",
+  "startedUtc": "2026-08-05T15:03:52.431292+00:00",
+  "totals": {
+    "cells": 48,
+    "invalidSamples": 104,
+    "samples": 651
+  },
+  "wallSeconds": 1508.7508992776275
+}

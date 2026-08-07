@@ -457,6 +457,109 @@ impl std::fmt::Display for VerifierRejection {
 
 impl std::error::Error for VerifierRejection {}
 
+/// A process-lifetime owner of one armed `SOCKHASH` and its verdict program.
+///
+/// The controller performs the full construction sequence — create the map,
+/// load the program with a bounded verifier log, attach it as a stream
+/// verdict — and owns both descriptors until it is dropped. Construction is
+/// transactional: any failed step closes whatever earlier steps opened, so a
+/// half-built backend can never leak a descriptor.
+#[derive(Debug)]
+pub struct Controller {
+    map_fd: RawFd,
+    prog_fd: RawFd,
+}
+
+impl Controller {
+    /// Creates a controller for at most `max_relays` concurrently armed relays.
+    ///
+    /// The map capacity is exactly two entries per relay, one per direction.
+    ///
+    /// # Errors
+    ///
+    /// Returns the step that failed together with its classified reason. A
+    /// program rejection carries the bounded verifier log for diagnostics.
+    pub fn new(max_relays: u32) -> Result<Self, ControllerError> {
+        let capacity = max_relays
+            .checked_mul(2)
+            .filter(|capacity| *capacity > 0)
+            .ok_or(ControllerError::MapCreate(DeclineReason::ResourceLimit))?;
+        let map_fd = create_sockhash(capacity)
+            .map_err(|error| ControllerError::MapCreate(DeclineReason::from_errno(&error)))?;
+        let prog_fd = match load_with_verifier_log(map_fd) {
+            Ok(prog_fd) => prog_fd,
+            Err(rejection) => {
+                close(map_fd);
+                return Err(ControllerError::ProgramLoad(rejection));
+            }
+        };
+        if let Err(error) = attach_verdict_program(map_fd, prog_fd) {
+            close(prog_fd);
+            close(map_fd);
+            return Err(ControllerError::Attach(DeclineReason::from_errno(&error)));
+        }
+        Ok(Self { map_fd, prog_fd })
+    }
+
+    /// Returns the map descriptor arming installs entries into.
+    ///
+    /// The descriptor stays owned by the controller; callers must not close it.
+    #[must_use]
+    pub const fn map_fd(&self) -> RawFd {
+        self.map_fd
+    }
+}
+
+impl Drop for Controller {
+    fn drop(&mut self) {
+        close(self.prog_fd);
+        close(self.map_fd);
+    }
+}
+
+/// One step of controller construction failed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ControllerError {
+    /// `BPF_MAP_CREATE` failed.
+    MapCreate(DeclineReason),
+    /// `BPF_PROG_LOAD` failed; the bounded verifier log is attached.
+    ProgramLoad(VerifierRejection),
+    /// `BPF_PROG_ATTACH` failed.
+    Attach(DeclineReason),
+}
+
+impl ControllerError {
+    /// Returns the fixed decline category of the failed step.
+    #[must_use]
+    pub const fn reason(&self) -> DeclineReason {
+        match self {
+            Self::MapCreate(reason) | Self::Attach(reason) => *reason,
+            Self::ProgramLoad(rejection) => rejection.reason,
+        }
+    }
+
+    /// Returns the bounded verifier log when the program was rejected.
+    #[must_use]
+    pub fn verifier_log(&self) -> Option<&str> {
+        match self {
+            Self::ProgramLoad(rejection) if !rejection.log.is_empty() => Some(&rejection.log),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for ControllerError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MapCreate(reason) => write!(formatter, "SOCKHASH creation failed: {reason}"),
+            Self::ProgramLoad(rejection) => write!(formatter, "{rejection}"),
+            Self::Attach(reason) => write!(formatter, "stream-verdict attach failed: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ControllerError {}
+
 /// Creates one bounded `SOCKHASH`.
 ///
 /// # Errors

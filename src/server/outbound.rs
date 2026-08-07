@@ -48,13 +48,44 @@ impl OutboundRegistry {
         direct_barrier: &DirectBarrierConfig,
         connect_timeout: Duration,
     ) -> Self {
+        Self::build(
+            outbounds,
+            DirectBarrier::new(direct_barrier),
+            connect_timeout,
+        )
+    }
+
+    /// Compiles outbound configuration with a pressure-aware direct barrier.
+    ///
+    /// At `Critical` pressure new direct dials fail fast through the existing
+    /// admission path; established relays hold no barrier permit and are
+    /// never interrupted.
+    #[must_use]
+    pub fn new_with_pressure(
+        outbounds: &[OutboundConfig],
+        direct_barrier: &DirectBarrierConfig,
+        connect_timeout: Duration,
+        pressure: crate::runtime::PressureGauge,
+    ) -> Self {
+        Self::build(
+            outbounds,
+            DirectBarrier::with_pressure(direct_barrier, pressure),
+            connect_timeout,
+        )
+    }
+
+    fn build(
+        outbounds: &[OutboundConfig],
+        direct_barrier: DirectBarrier,
+        connect_timeout: Duration,
+    ) -> Self {
         let outbounds = outbounds
             .iter()
             .map(|outbound| (outbound.tag().to_owned(), CompiledOutbound::from(outbound)))
             .collect();
         Self {
             outbounds: Arc::new(outbounds),
-            direct_barrier: DirectBarrier::new(direct_barrier),
+            direct_barrier,
             connect_timeout,
         }
     }

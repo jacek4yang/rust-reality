@@ -1,21 +1,30 @@
-use std::{error::Error, fmt, io, ops::Range, sync::Arc, time::Duration};
+use std::{
+    error::Error,
+    fmt, io,
+    ops::Range,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
+};
 
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncWrite, ReadBuf},
     net::tcp::{OwnedReadHalf, OwnedWriteHalf},
-    time::{self, Instant},
+    time::Instant,
 };
 
 use crate::{
     config::{Config, DnsStrategy, ResourceGovernorConfig},
     protocol::{
         reality::tls13::{
-            MAX_PLAINTEXT_LEN, TlsApplicationIoError, TlsApplicationReader, TlsApplicationWriter,
+            IdleDeadline, IdleError, MAX_PLAINTEXT_LEN, TlsApplicationIoError,
+            TlsApplicationReader, TlsApplicationWriter,
         },
         vless::{
             DecodeError, Destination, RequestHeader, RequestValidationError, UserId, UserRegistry,
             VISION_FRAME_SIZE, VisionCommand, VisionDecodeError, VisionDecoder, VisionEncodeError,
-            VisionEncoder, VisionMode, decode_request, encode_response_header,
+            VisionEncoder, VisionMode, VisionPayload, decode_request, encode_response_header,
         },
     },
 };
@@ -26,7 +35,9 @@ use super::{
     reality::RealityEstablished,
     routing::{AssetMatcher, RouteResolutionError, RoutingCompileError, RoutingTable},
 };
-use crate::transport::{RelayBackend, RelayContext, RelayOutcome, TcpRelay};
+use crate::transport::{
+    BackendRequest, RelayBackend, RelayContext, RelayDirection, RelayOutcome, TcpRelay,
+};
 
 const MAX_REQUEST_HEADER_SIZE: usize = 533;
 const MAX_REQUEST_BUFFER_SIZE: usize = MAX_REQUEST_HEADER_SIZE + MAX_PLAINTEXT_LEN;
@@ -50,6 +61,12 @@ pub struct VisionRelayStats {
     uplink_direct: bool,
     downlink_direct: bool,
     relay_backend: Option<RelayBackend>,
+    uplink_direct_at_bytes: u64,
+    downlink_direct_at_bytes: u64,
+    uplink_backend: Option<RelayBackend>,
+    downlink_backend: Option<RelayBackend>,
+    uplink_handoff_delay_us: u64,
+    downlink_handoff_delay_us: u64,
 }
 
 impl VisionRelayStats {
@@ -82,6 +99,42 @@ impl VisionRelayStats {
     pub const fn relay_backend(self) -> Option<RelayBackend> {
         self.relay_backend
     }
+
+    /// Returns uplink bytes delivered before the uplink Direct boundary.
+    #[must_use]
+    pub const fn uplink_direct_at_bytes(self) -> u64 {
+        self.uplink_direct_at_bytes
+    }
+
+    /// Returns downlink bytes delivered before the downlink Direct boundary.
+    #[must_use]
+    pub const fn downlink_direct_at_bytes(self) -> u64 {
+        self.downlink_direct_at_bytes
+    }
+
+    /// Returns the backend that moved the uplink's raw bytes, when direct.
+    #[must_use]
+    pub const fn uplink_backend(self) -> Option<RelayBackend> {
+        self.uplink_backend
+    }
+
+    /// Returns the backend that moved the downlink's raw bytes, when direct.
+    #[must_use]
+    pub const fn downlink_backend(self) -> Option<RelayBackend> {
+        self.downlink_backend
+    }
+
+    /// Returns microseconds from the uplink boundary to its raw relay start.
+    #[must_use]
+    pub const fn uplink_handoff_delay_us(self) -> u64 {
+        self.uplink_handoff_delay_us
+    }
+
+    /// Returns microseconds from the downlink boundary to its raw relay start.
+    #[must_use]
+    pub const fn downlink_handoff_delay_us(self) -> u64 {
+        self.downlink_handoff_delay_us
+    }
 }
 
 /// Immutable Vision data path with UUID-grouped routing and outbound selection.
@@ -107,13 +160,46 @@ impl VisionHandler {
         assets: Arc<dyn AssetMatcher>,
         relay: TcpRelay,
     ) -> Result<Self, RoutingCompileError> {
+        Self::build(config, assets, relay, None)
+    }
+
+    /// Compiles the data path with a pressure-aware outbound registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns a routing matcher or UUID compilation error.
+    pub fn from_config_with_pressure(
+        config: &Config,
+        assets: Arc<dyn AssetMatcher>,
+        relay: TcpRelay,
+        pressure: &crate::runtime::PressureGauge,
+    ) -> Result<Self, RoutingCompileError> {
+        Self::build(config, assets, relay, Some(pressure.clone()))
+    }
+
+    fn build(
+        config: &Config,
+        assets: Arc<dyn AssetMatcher>,
+        relay: TcpRelay,
+        pressure: Option<crate::runtime::PressureGauge>,
+    ) -> Result<Self, RoutingCompileError> {
         let governor = &config.policy.resource_governor;
-        Ok(Self::new_with_dns(
-            OutboundRegistry::new(
+        let connect_timeout = Duration::from_millis(governor.connect_timeout_ms);
+        let outbounds = match pressure {
+            Some(pressure) => OutboundRegistry::new_with_pressure(
                 &config.outbounds,
                 &config.policy.direct_barrier,
-                Duration::from_millis(governor.connect_timeout_ms),
+                connect_timeout,
+                pressure,
             ),
+            None => OutboundRegistry::new(
+                &config.outbounds,
+                &config.policy.direct_barrier,
+                connect_timeout,
+            ),
+        };
+        Ok(Self::new_with_dns(
+            outbounds,
             RoutingTable::compile(&config.routing, assets)?,
             relay,
             governor,
@@ -208,6 +294,12 @@ impl VisionHandler {
                 uplink_direct: false,
                 downlink_direct: false,
                 relay_backend: None,
+                uplink_direct_at_bytes: 0,
+                downlink_direct_at_bytes: 0,
+                uplink_backend: None,
+                downlink_backend: None,
+                uplink_handoff_delay_us: 0,
+                downlink_handoff_delay_us: 0,
             });
         };
         let (destination, outbound_permit) = connection.into_parts();
@@ -246,12 +338,22 @@ impl VisionHandler {
         let (handed_up, handed_down) = handed_off.map_or((0, 0), |outcome| {
             (outcome.inbound_to_outbound(), outcome.outbound_to_inbound())
         });
+        let pair_backend = handed_off.map(RelayOutcome::backend);
         Ok(VisionRelayStats {
             uplink_bytes: uplink.bytes.saturating_add(handed_up),
             downlink_bytes: downlink.bytes.saturating_add(handed_down),
             uplink_direct: uplink.direct,
             downlink_direct: downlink.direct,
-            relay_backend: handed_off.map(RelayOutcome::backend),
+            relay_backend: pair_backend,
+            uplink_direct_at_bytes: uplink.direct_at_bytes,
+            downlink_direct_at_bytes: downlink.direct_at_bytes,
+            // A pair outcome exists only when both directions committed to the
+            // bilateral handoff, so a directional backend and the pair backend
+            // can never both be present for one direction.
+            uplink_backend: uplink.backend.or(pair_backend),
+            downlink_backend: downlink.backend.or(pair_backend),
+            uplink_handoff_delay_us: uplink.handoff_delay_us,
+            downlink_handoff_delay_us: downlink.handoff_delay_us,
         })
     }
 }
@@ -338,6 +440,14 @@ struct DirectionStats {
     /// Byte counts produced by the unified raw relay, present only on the
     /// direction that deposited its sockets last and therefore ran the relay.
     handoff: Option<RelayOutcome>,
+    /// The backend that moved this direction's raw bytes: the directional
+    /// backend for an independent relay, or the pair backend for the direction
+    /// that ran the bilateral relay.
+    backend: Option<RelayBackend>,
+    /// Bytes this direction had delivered when it reached its Direct boundary.
+    direct_at_bytes: u64,
+    /// Microseconds from the boundary to the deposit or directional relay start.
+    handoff_delay_us: u64,
 }
 
 impl DirectionStats {
@@ -346,14 +456,26 @@ impl DirectionStats {
             bytes,
             direct: false,
             handoff: None,
+            backend: None,
+            direct_at_bytes: 0,
+            handoff_delay_us: 0,
         }
     }
 
-    const fn direct(bytes: u64, handoff: Option<RelayOutcome>) -> Self {
+    const fn direct(
+        bytes: u64,
+        handoff: Option<RelayOutcome>,
+        backend: Option<RelayBackend>,
+        direct_at_bytes: u64,
+        handoff_delay_us: u64,
+    ) -> Self {
         Self {
             bytes,
             direct: true,
             handoff,
+            backend,
+            direct_at_bytes,
+            handoff_delay_us,
         }
     }
 }
@@ -382,9 +504,12 @@ async fn relay_uplink(
     } = *context;
     let mut decoder = VisionDecoder::new(user_id);
     let mut plaintext = Vec::new();
+    // A raw-mode record can carry a full maximum-sized TLS plaintext; the
+    // staged output is reserved for that worst case exactly once.
     plaintext
-        .try_reserve_exact(VISION_FRAME_SIZE)
+        .try_reserve_exact(MAX_PLAINTEXT_LEN)
         .map_err(|_| VisionSessionError::AllocationFailed)?;
+    let mut idle = IdleDeadline::new();
     let mut bytes = 0_u64;
 
     // The prefetched payload is a borrowed range inside the retained request
@@ -398,7 +523,10 @@ async fn relay_uplink(
             .decode(initial, &mut plaintext)
             .map_err(VisionSessionError::VisionDecode)?;
         if !plaintext.is_empty() {
-            write_all_before(&mut destination, &plaintext, timeout).await?;
+            idle.reset(timeout).map_err(idle_failure)?;
+            idle.write_all(&mut destination, &plaintext)
+                .await
+                .map_err(idle_failure)?;
             bytes = bytes.saturating_add(length_u64(plaintext.len()));
         }
         if mode == VisionMode::Direct {
@@ -408,35 +536,45 @@ async fn relay_uplink(
     drop(request_buffer);
 
     loop {
-        // The borrow of the reader's reusable record storage lives only for this
-        // block: the decoder copies decoded content into `plaintext`, and the
-        // borrow ends before the next read or the socket handoff.
-        let mode = {
-            let record = match client.read_application(timeout).await {
-                Ok(record) => record,
-                Err(TlsApplicationIoError::PeerAlert {
-                    level: _,
-                    description: 0,
-                }) => {
-                    shutdown_before(&mut destination, timeout).await?;
-                    settle(handoff, Direction::Uplink, DirectionState::Closed);
-                    return Ok(DirectionStats::framed(bytes));
-                }
-                Err(error) => {
-                    settle(handoff, Direction::Uplink, DirectionState::Failed);
-                    return Err(VisionSessionError::Tls(error));
-                }
-            };
-            if record.is_empty() {
-                continue;
+        // Raw-mode records are relayed straight out of the reader's reusable
+        // record storage: the decoder borrows the payload from the record, so
+        // the steady-state uplink performs no per-record copy at all. The
+        // borrow of the record storage ends before the next read or the
+        // socket handoff.
+        let record = match client.read_application(timeout).await {
+            Ok(record) => record,
+            Err(TlsApplicationIoError::PeerAlert {
+                level: _,
+                description: 0,
+            }) => {
+                idle.reset(timeout).map_err(idle_failure)?;
+                idle.shutdown(&mut destination)
+                    .await
+                    .map_err(idle_failure)?;
+                settle(handoff, Direction::Uplink, DirectionState::Closed);
+                return Ok(DirectionStats::framed(bytes));
             }
-            decoder
-                .decode(record.plaintext(), &mut plaintext)
-                .map_err(VisionSessionError::VisionDecode)?
+            Err(error) => {
+                settle(handoff, Direction::Uplink, DirectionState::Failed);
+                return Err(VisionSessionError::Tls(error));
+            }
         };
-        if !plaintext.is_empty() {
-            write_all_before(&mut destination, &plaintext, timeout).await?;
-            bytes = bytes.saturating_add(length_u64(plaintext.len()));
+        if record.is_empty() {
+            continue;
+        }
+        let (mode, payload) = decoder
+            .decode_borrowed(record.plaintext(), &mut plaintext)
+            .map_err(VisionSessionError::VisionDecode)?;
+        let content = match payload {
+            VisionPayload::Borrowed(bytes) => bytes,
+            VisionPayload::Staged => plaintext.as_slice(),
+        };
+        if !content.is_empty() {
+            idle.reset(timeout).map_err(idle_failure)?;
+            idle.write_all(&mut destination, content)
+                .await
+                .map_err(idle_failure)?;
+            bytes = bytes.saturating_add(length_u64(content.len()));
         }
         if mode == VisionMode::Direct {
             return finish_uplink_direct(client, destination, bytes, context).await;
@@ -447,11 +585,17 @@ async fn relay_uplink(
 /// Relays the raw uplink after an authenticated Direct boundary.
 ///
 /// Every decoded plaintext byte was already written to the destination in order
-/// by the caller, so this direction is at the exact raw boundary. It advances
-/// through `DirectPending` to `RawReady` and then either hands both complete
-/// sockets to the unified relay — only once the peer direction has also reached
-/// `RawReady` — or, when the peer can never become raw, relays this single
-/// direction with one bounded userspace buffer.
+/// by the caller, so this direction is at the exact raw boundary. The buffered
+/// reader behind `client` may already hold post-boundary raw bytes the client
+/// pipelined after its boundary record; this is the re-derived equivalent of
+/// Xray's input/rawInput drain: those pending bytes are written to the
+/// destination first, so they arrive ahead of every byte any raw relay moves.
+///
+/// The direction then decides exactly once, after the bounded pair window
+/// [`peer_pair_window`]: when the peer is at its own raw boundary or already
+/// committed to the pair, this direction deposits its halves for the bilateral
+/// relay; otherwise it relays the direction independently. Neither branch ever
+/// waits for the peer.
 async fn finish_uplink_direct(
     client: TlsApplicationReader<OwnedReadHalf>,
     mut destination: OwnedWriteHalf,
@@ -463,68 +607,67 @@ async fn finish_uplink_direct(
         handoff,
         relay,
     } = *context;
+    let handoff_started = Instant::now();
     handoff
         .advance(Direction::Uplink, DirectionState::DirectPending)
         .map_err(VisionSessionError::DirectTransition)?;
+
+    // Drain first, then declare the raw boundary: the pending bytes precede
+    // every byte the pair or directional relay will move.
+    let (pending, raw_client) = client.into_inner_with_pending();
+    if !pending.is_empty() {
+        let mut idle = IdleDeadline::new();
+        idle.reset(timeout).map_err(idle_failure)?;
+        idle.write_all(&mut destination, &pending)
+            .await
+            .map_err(idle_failure)?;
+    }
+    let total = bytes.saturating_add(length_u64(pending.len()));
     handoff
         .advance(Direction::Uplink, DirectionState::RawReady)
         .map_err(VisionSessionError::DirectTransition)?;
 
-    let mut raw_client = client.into_inner();
-    let mut copied = 0_u64;
-    let mut buffer = raw_buffer()?;
-    let mut versions = handoff.subscribe();
-
-    loop {
-        if handoff.both_raw_ready() {
-            let recovered = handoff
-                .deposit_uplink(raw_client, destination)
-                .map_err(VisionSessionError::Handoff)?;
-            return run_handoff(relay, recovered, bytes.saturating_add(copied)).await;
-        }
-        if handoff.peer_is_settled(Direction::Uplink) {
-            let extra = copy_before(&mut raw_client, &mut destination, timeout).await?;
-            shutdown_before(&mut destination, timeout).await?;
-            settle(handoff, Direction::Uplink, DirectionState::Closed);
-            return Ok(DirectionStats::direct(
-                bytes.saturating_add(copied).saturating_add(extra),
-                None,
-            ));
-        }
-
-        tokio::select! {
-            // `AsyncReadExt::read` is cancellation-safe on a TCP half, so losing
-            // this branch to a peer state change cannot consume a raw byte.
-            read = read_before(&mut raw_client, &mut buffer, timeout) => {
-                let read = read?;
-                if read == 0 {
-                    if handoff.both_raw_ready() {
-                        let recovered = handoff
-                            .deposit_uplink(raw_client, destination)
-                            .map_err(VisionSessionError::Handoff)?;
-                        return run_handoff(relay, recovered, bytes.saturating_add(copied)).await;
-                    }
-                    shutdown_before(&mut destination, timeout).await?;
-                    settle(handoff, Direction::Uplink, DirectionState::Closed);
-                    return Ok(DirectionStats::direct(bytes.saturating_add(copied), None));
-                }
-                let payload = buffer
-                    .get(..read)
-                    .ok_or(VisionSessionError::DestinationTruncatedTlsRecord)?;
-                write_all_before(&mut destination, payload, timeout).await?;
-                copied = copied.saturating_add(length_u64(read));
-            }
-            changed = versions.changed() => {
-                changed.map_err(|_| VisionSessionError::Handoff(io::Error::other(
-                    "Vision direction coordinator closed",
-                )))?;
-            }
-        }
+    if peer_pair_window(handoff, Direction::Uplink).await {
+        handoff
+            .advance(Direction::Uplink, DirectionState::PairPending)
+            .map_err(VisionSessionError::DirectTransition)?;
+        let recovered = handoff
+            .deposit_uplink(raw_client, destination)
+            .map_err(VisionSessionError::Handoff)?;
+        return run_handoff(
+            relay,
+            handoff,
+            Direction::Uplink,
+            recovered,
+            BoundaryBytes {
+                total,
+                direct_at: bytes,
+            },
+            handoff_started,
+        )
+        .await;
     }
+
+    handoff
+        .advance(Direction::Uplink, DirectionState::Relaying)
+        .map_err(VisionSessionError::DirectTransition)?;
+    run_directional(
+        relay,
+        handoff,
+        Direction::Uplink,
+        raw_client,
+        destination,
+        BoundaryBytes {
+            total,
+            direct_at: bytes,
+        },
+        handoff_started,
+    )
+    .await
 }
 
 async fn relay_downlink(
-    mut destination: OwnedReadHalf,
+    destination: OwnedReadHalf,
     mut client: TlsApplicationWriter<OwnedWriteHalf>,
     user_id: UserId,
     response_header: &[u8],
@@ -560,14 +703,11 @@ async fn relay_downlink(
         .map_err(VisionSessionError::Tls)?;
     encoder.commit(&preamble);
 
-    let mut nested = Vec::new();
-    nested
-        .try_reserve_exact(NESTED_TLS_HEADER_SIZE + MAX_NESTED_TLS_RECORD_SIZE)
-        .map_err(|_| VisionSessionError::AllocationFailed)?;
+    let mut destination = NestedRecordReader::new(destination);
     let mut detector = NestedTlsDetector::new();
     let mut bytes = 0_u64;
     loop {
-        match read_nested_record(&mut destination, &mut nested, timeout).await? {
+        match destination.next(timeout).await? {
             NestedRead::Eof => {
                 client
                     .shutdown(timeout)
@@ -576,12 +716,12 @@ async fn relay_downlink(
                 settle(handoff, Direction::Downlink, DirectionState::Closed);
                 return Ok(DirectionStats::framed(bytes));
             }
-            NestedRead::Unframed(length) => {
-                bytes = bytes.saturating_add(length_u64(length));
+            NestedRead::Unframed(content) => {
+                bytes = bytes.saturating_add(length_u64(content.len()));
                 write_vision_content(
                     &mut client,
                     &mut encoder,
-                    &nested[..length],
+                    content,
                     VisionCommand::End,
                     false,
                     timeout,
@@ -594,23 +734,16 @@ async fn relay_downlink(
                 settle(handoff, Direction::Downlink, DirectionState::Closed);
                 return Ok(DirectionStats::framed(bytes));
             }
-            NestedRead::Record(length) => {
-                bytes = bytes.saturating_add(length_u64(length));
-                let decision = detector.observe(&nested[..length]);
+            NestedRead::Record(record) => {
+                bytes = bytes.saturating_add(length_u64(record.len()));
+                let decision = detector.observe(record);
                 let command = match decision {
                     PaddingDecision::Continue => VisionCommand::Continue,
                     PaddingDecision::End => VisionCommand::End,
                     PaddingDecision::Direct => VisionCommand::Direct,
                 };
-                write_vision_content(
-                    &mut client,
-                    &mut encoder,
-                    &nested[..length],
-                    command,
-                    true,
-                    timeout,
-                )
-                .await?;
+                write_vision_content(&mut client, &mut encoder, record, command, true, timeout)
+                    .await?;
 
                 match decision {
                     PaddingDecision::Continue => {}
@@ -631,6 +764,13 @@ async fn relay_downlink(
     }
 }
 
+/// Upper bound of Vision frames packed into one outer TLS record.
+///
+/// Full content chunks are `MAX_VISION_CONTENT_AFTER_FIRST_FRAME` bytes, so at
+/// most two full frames ever fit one maximum-sized record; the constant only
+/// bounds the on-stack plan storage, never the wire image.
+const MAX_FRAMES_PER_OUTER_RECORD: usize = 4;
+
 async fn write_vision_content<W>(
     writer: &mut TlsApplicationWriter<W>,
     encoder: &mut VisionEncoder,
@@ -648,16 +788,71 @@ where
     }
 
     let chunk_count = content.len().div_ceil(MAX_VISION_CONTENT_AFTER_FIRST_FRAME);
-    for (index, chunk) in content
-        .chunks(MAX_VISION_CONTENT_AFTER_FIRST_FRAME)
-        .enumerate()
-    {
-        let command = if index + 1 == chunk_count {
-            final_command
-        } else {
-            VisionCommand::Continue
-        };
-        write_vision_frame(writer, encoder, chunk, command, long_padding, timeout).await?;
+    let mut index = 0;
+    while index < chunk_count {
+        // Pack as many complete frames as fit one maximum-sized outer record.
+        // Every frame stays a complete Xray padding block, so the plaintext
+        // byte stream a client decoder sees is identical; only the outer
+        // record boundaries move, which TLS explicitly does not preserve.
+        let mut plans = [None; MAX_FRAMES_PER_OUTER_RECORD];
+        let mut ranges = [(0_usize, 0_usize); MAX_FRAMES_PER_OUTER_RECORD];
+        let mut wire_len = 0_usize;
+        let mut packed = 0_usize;
+        while packed < MAX_FRAMES_PER_OUTER_RECORD && index + packed < chunk_count {
+            let start = (index + packed) * MAX_VISION_CONTENT_AFTER_FIRST_FRAME;
+            let end = content
+                .len()
+                .min(start + MAX_VISION_CONTENT_AFTER_FIRST_FRAME);
+            let command = if index + packed + 1 == chunk_count {
+                final_command
+            } else {
+                VisionCommand::Continue
+            };
+            let Some(plan) = encoder
+                .plan_within(
+                    end - start,
+                    command,
+                    long_padding,
+                    MAX_PLAINTEXT_LEN - wire_len,
+                )
+                .map_err(VisionSessionError::VisionEncode)?
+            else {
+                break;
+            };
+            wire_len = wire_len.saturating_add(plan.wire_len());
+            plans[packed] = Some(plan);
+            ranges[packed] = (start, end);
+            packed += 1;
+        }
+        writer
+            .write_assembled(
+                wire_len,
+                |destination| {
+                    let mut cursor = 0;
+                    for slot in 0..packed {
+                        let Some(plan) = plans[slot] else {
+                            continue;
+                        };
+                        let (start, end) = ranges[slot];
+                        let Some(frame) = destination.get_mut(cursor..cursor + plan.wire_len())
+                        else {
+                            return;
+                        };
+                        let Some(chunk) = content.get(start..end) else {
+                            return;
+                        };
+                        encoder.assemble(&plan, chunk, frame);
+                        cursor += plan.wire_len();
+                    }
+                },
+                timeout,
+            )
+            .await
+            .map_err(VisionSessionError::Tls)?;
+        for plan in plans.iter().take(packed).flatten() {
+            encoder.commit(plan);
+        }
+        index += packed;
     }
     Ok(())
 }
@@ -665,9 +860,22 @@ where
 /// Relays the raw downlink after an authenticated Direct boundary.
 ///
 /// The Direct-carrying Vision frame has already been sealed and written to the
-/// client, so this direction is at its exact raw boundary with nothing pending.
+/// client, so this direction is at its exact raw boundary. Starting the raw
+/// relay only after that final framed write has fully completed is the ordering
+/// Xray commit f926ee4a protects: a splice that raced the frame would
+/// interleave raw bytes with framed ciphertext. The buffered nested reader may
+/// already hold post-boundary raw bytes the destination pipelined after its
+/// boundary record; like the uplink drain (the re-derived equivalent of Xray's
+/// input/rawInput handling) those pending bytes are written to the client
+/// first, ahead of every byte any raw relay moves.
+///
+/// The direction then decides exactly once, after the bounded pair window
+/// [`peer_pair_window`]: when the peer is at its own raw boundary or already
+/// committed to the pair, this direction deposits its halves for the bilateral
+/// relay; otherwise it relays the direction independently. Neither branch ever
+/// waits for the peer.
 async fn finish_downlink_direct(
-    mut destination: OwnedReadHalf,
+    destination: NestedRecordReader,
     client: TlsApplicationWriter<OwnedWriteHalf>,
     bytes: u64,
     context: &SessionContext<'_>,
@@ -677,60 +885,129 @@ async fn finish_downlink_direct(
         handoff,
         relay,
     } = *context;
+    let handoff_started = Instant::now();
     handoff
         .advance(Direction::Downlink, DirectionState::DirectPending)
         .map_err(VisionSessionError::DirectTransition)?;
+
+    // Drain first, then declare the raw boundary: the pending bytes precede
+    // every byte the pair or directional relay will move.
+    let (pending, raw_destination) = destination.into_inner_with_pending();
+    let mut raw_client = client.into_inner();
+    if !pending.is_empty() {
+        let mut idle = IdleDeadline::new();
+        idle.reset(timeout).map_err(idle_failure)?;
+        idle.write_all(&mut raw_client, &pending)
+            .await
+            .map_err(idle_failure)?;
+    }
+    let total = bytes.saturating_add(length_u64(pending.len()));
     handoff
         .advance(Direction::Downlink, DirectionState::RawReady)
         .map_err(VisionSessionError::DirectTransition)?;
 
-    let mut raw_client = client.into_inner();
-    let mut copied = 0_u64;
-    let mut buffer = raw_buffer()?;
-    let mut versions = handoff.subscribe();
+    if peer_pair_window(handoff, Direction::Downlink).await {
+        handoff
+            .advance(Direction::Downlink, DirectionState::PairPending)
+            .map_err(VisionSessionError::DirectTransition)?;
+        let recovered = handoff
+            .deposit_downlink(raw_destination, raw_client)
+            .map_err(VisionSessionError::Handoff)?;
+        return run_handoff(
+            relay,
+            handoff,
+            Direction::Downlink,
+            recovered,
+            BoundaryBytes {
+                total,
+                direct_at: bytes,
+            },
+            handoff_started,
+        )
+        .await;
+    }
 
-    loop {
-        if handoff.both_raw_ready() {
-            let recovered = handoff
-                .deposit_downlink(destination, raw_client)
-                .map_err(VisionSessionError::Handoff)?;
-            return run_handoff(relay, recovered, bytes.saturating_add(copied)).await;
-        }
-        if handoff.peer_is_settled(Direction::Downlink) {
-            let extra = copy_before(&mut destination, &mut raw_client, timeout).await?;
-            shutdown_before(&mut raw_client, timeout).await?;
-            settle(handoff, Direction::Downlink, DirectionState::Closed);
-            return Ok(DirectionStats::direct(
-                bytes.saturating_add(copied).saturating_add(extra),
+    handoff
+        .advance(Direction::Downlink, DirectionState::Relaying)
+        .map_err(VisionSessionError::DirectTransition)?;
+    run_directional(
+        relay,
+        handoff,
+        Direction::Downlink,
+        raw_destination,
+        raw_client,
+        BoundaryBytes {
+            total,
+            direct_at: bytes,
+        },
+        handoff_started,
+    )
+    .await
+}
+
+/// Byte counters at a raw boundary.
+///
+/// `total` is every byte the direction delivered, including pending bytes
+/// drained out of a socket buffer; `direct_at` is the framed-only count the
+/// direction had delivered when it reached its Direct boundary, which excludes
+/// the raw phase whether the bytes were drained or relayed.
+#[derive(Clone, Copy)]
+struct BoundaryBytes {
+    total: u64,
+    direct_at: u64,
+}
+
+/// Runs one independent directional raw relay at a Direct boundary.
+///
+/// A benign peer-teardown race (`BrokenPipe` or `ConnectionReset`) closes the
+/// direction cleanly with its accumulated stats instead of failing the whole
+/// session; errors from the framed and authentication phases never reach here.
+async fn run_directional(
+    relay: &TcpRelay,
+    handoff: &DirectHandoff,
+    direction: Direction,
+    source: OwnedReadHalf,
+    destination: OwnedWriteHalf,
+    bytes: BoundaryBytes,
+    handoff_started: Instant,
+) -> Result<DirectionStats, VisionSessionError> {
+    let delay_us = micros(handoff_started.elapsed());
+    let relay_direction = match direction {
+        Direction::Uplink => RelayDirection::Uplink,
+        Direction::Downlink => RelayDirection::Downlink,
+    };
+    match relay
+        .relay_direction(
+            source,
+            destination,
+            relay_direction,
+            BackendRequest::Automatic,
+        )
+        .await
+    {
+        Ok(outcome) => {
+            settle(handoff, direction, DirectionState::Closed);
+            Ok(DirectionStats::direct(
+                bytes.total.saturating_add(outcome.bytes()),
                 None,
-            ));
+                Some(outcome.backend()),
+                bytes.direct_at,
+                delay_us,
+            ))
         }
-
-        tokio::select! {
-            read = read_before(&mut destination, &mut buffer, timeout) => {
-                let read = read?;
-                if read == 0 {
-                    if handoff.both_raw_ready() {
-                        let recovered = handoff
-                            .deposit_downlink(destination, raw_client)
-                            .map_err(VisionSessionError::Handoff)?;
-                        return run_handoff(relay, recovered, bytes.saturating_add(copied)).await;
-                    }
-                    shutdown_before(&mut raw_client, timeout).await?;
-                    settle(handoff, Direction::Downlink, DirectionState::Closed);
-                    return Ok(DirectionStats::direct(bytes.saturating_add(copied), None));
-                }
-                let payload = buffer
-                    .get(..read)
-                    .ok_or(VisionSessionError::DestinationTruncatedTlsRecord)?;
-                write_all_before(&mut raw_client, payload, timeout).await?;
-                copied = copied.saturating_add(length_u64(read));
-            }
-            changed = versions.changed() => {
-                changed.map_err(|_| VisionSessionError::Handoff(io::Error::other(
-                    "Vision direction coordinator closed",
-                )))?;
-            }
+        Err(error) if is_benign_teardown(&error) => {
+            settle(handoff, direction, DirectionState::Closed);
+            Ok(DirectionStats::direct(
+                bytes.total,
+                None,
+                None,
+                bytes.direct_at,
+                delay_us,
+            ))
+        }
+        Err(error) => {
+            settle(handoff, direction, DirectionState::Failed);
+            Err(VisionSessionError::Relay(error))
         }
     }
 }
@@ -739,20 +1016,76 @@ async fn finish_downlink_direct(
 ///
 /// A `None` deposit means the peer direction still holds one half pair; that
 /// peer becomes the last depositor and runs the relay instead. Exactly one of
-/// the two directions therefore ever drives the raw relay.
+/// the two directions therefore ever drives the raw relay. The first depositor
+/// deliberately remains in `PairPending` rather than transitioning `Closed`:
+/// a peer still inside its pair window must keep observing a pairable state
+/// until it deposits — transitioning `Closed` here would strand the deposited
+/// halves with no runner. The coordinator is per-session, so the lingering
+/// state is dropped with it.
 async fn run_handoff(
     relay: &TcpRelay,
+    handoff: &DirectHandoff,
+    direction: Direction,
     recovered: Option<super::direct::RecoveredSockets>,
-    bytes: u64,
+    bytes: BoundaryBytes,
+    handoff_started: Instant,
 ) -> Result<DirectionStats, VisionSessionError> {
+    let delay_us = micros(handoff_started.elapsed());
     let Some(sockets) = recovered else {
-        return Ok(DirectionStats::direct(bytes, None));
+        return Ok(DirectionStats::direct(
+            bytes.total,
+            None,
+            None,
+            bytes.direct_at,
+            delay_us,
+        ));
     };
-    let outcome = relay
+    match relay
         .relay_owned(sockets.client, sockets.destination, RelayContext::owned())
         .await
-        .map_err(VisionSessionError::Relay)?;
-    Ok(DirectionStats::direct(bytes, Some(outcome)))
+    {
+        Ok(outcome) => {
+            settle(handoff, direction, DirectionState::Closed);
+            Ok(DirectionStats::direct(
+                bytes.total,
+                Some(outcome),
+                Some(outcome.backend()),
+                bytes.direct_at,
+                delay_us,
+            ))
+        }
+        Err(error) if is_benign_teardown(&error) => {
+            settle(handoff, direction, DirectionState::Closed);
+            Ok(DirectionStats::direct(
+                bytes.total,
+                None,
+                None,
+                bytes.direct_at,
+                delay_us,
+            ))
+        }
+        Err(error) => {
+            settle(handoff, direction, DirectionState::Failed);
+            Err(VisionSessionError::Relay(error))
+        }
+    }
+}
+
+/// Returns whether a raw-stage I/O error is a benign peer-teardown race.
+///
+/// A reset or broken pipe once the raw relay owns the sockets means the peer
+/// tore the connection down mid-transfer. The session's accumulated counts
+/// stay valid and must not be suppressed by a session-level relay error.
+fn is_benign_teardown(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
+    )
+}
+
+/// Converts a duration to microseconds, saturating at the representable bound.
+fn micros(duration: Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
 
 /// Records a terminal direction state without masking the original failure.
@@ -763,14 +1096,26 @@ fn settle(handoff: &DirectHandoff, direction: Direction, state: DirectionState) 
     let _ignored = handoff.advance(direction, state);
 }
 
-/// Allocates one bounded raw-relay buffer for a mixed one-way Direct session.
-fn raw_buffer() -> Result<Vec<u8>, VisionSessionError> {
-    let mut buffer = Vec::new();
-    buffer
-        .try_reserve_exact(MAX_PLAINTEXT_LEN)
-        .map_err(|_| VisionSessionError::AllocationFailed)?;
-    buffer.resize(MAX_PLAINTEXT_LEN, 0);
-    Ok(buffer)
+/// Gives the peer a bounded chance to commit to the bilateral pair.
+///
+/// Two scheduling points — never a sleep, a timer, or a wait on the peer — let
+/// a peer whose own boundary flight is already queued observe `RawReady` and
+/// commit before this direction decides. Both relay futures share one task
+/// that is polled before the client and destination futures, so one yield
+/// cannot span even a single peer reaction; after the second yield a peer
+/// that is still framed will never reach a pairable state in time, and this
+/// direction relays independently.
+async fn peer_pair_window(handoff: &DirectHandoff, direction: Direction) -> bool {
+    for attempt in 0..3 {
+        if handoff.peer_can_pair(direction) {
+            return true;
+        }
+        if attempt == 2 {
+            return false;
+        }
+        tokio::task::yield_now().await;
+    }
+    false
 }
 
 /// Writes exactly one Vision frame straight into the final TLS AEAD plaintext.
@@ -813,10 +1158,15 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let mut buffer = vec![0_u8; MAX_PLAINTEXT_LEN];
     let mut copied = 0_u64;
     loop {
-        let read = read_before(reader, &mut buffer, timeout).await?;
+        // The destination read lands directly in the final AEAD plaintext
+        // region of the connection's reusable record buffer and is sealed in
+        // place: no scratch buffer and no per-chunk copy exist on this path.
+        let read = writer
+            .write_application_read_from(reader, timeout)
+            .await
+            .map_err(VisionSessionError::Tls)?;
         if read == 0 {
             writer
                 .shutdown(timeout)
@@ -824,71 +1174,209 @@ where
                 .map_err(VisionSessionError::Tls)?;
             return Ok(copied);
         }
-        writer
-            .write_application(&buffer[..read], timeout)
-            .await
-            .map_err(VisionSessionError::Tls)?;
         copied = copied.saturating_add(length_u64(read));
     }
 }
 
-/// The outcome of one nested-record read into reusable connection storage.
+/// The outcome of one nested-record read from the buffered connection storage.
 ///
-/// Both non-EOF variants carry a length into the caller's retained buffer rather
-/// than an owned `Vec`, which removes the per-record downlink allocation.
-enum NestedRead {
+/// Both non-EOF variants borrow their bytes from the reader's socket buffer
+/// rather than copying into an owned `Vec`, which removes the per-record
+/// downlink allocation. The borrow ends before the next read.
+enum NestedRead<'a> {
     Eof,
-    Record(usize),
-    Unframed(usize),
+    Record(&'a [u8]),
+    Unframed(&'a [u8]),
 }
 
-async fn read_nested_record<R>(
-    reader: &mut R,
-    storage: &mut Vec<u8>,
-    timeout: Duration,
-) -> Result<NestedRead, VisionSessionError>
-where
-    R: AsyncRead + Unpin,
-{
-    let deadline = operation_deadline(timeout)?;
-    let capacity = NESTED_TLS_HEADER_SIZE + MAX_NESTED_TLS_RECORD_SIZE;
-    if storage.capacity() < capacity {
-        storage
-            .try_reserve_exact(capacity - storage.len())
-            .map_err(|_| VisionSessionError::AllocationFailed)?;
-    }
-    storage.clear();
-    storage.resize(NESTED_TLS_HEADER_SIZE, 0);
-    let header_read = read_exact_or_eof(reader, storage, deadline).await?;
-    if header_read == 0 {
-        return Ok(NestedRead::Eof);
-    }
-    storage.truncate(header_read);
-    if header_read < NESTED_TLS_HEADER_SIZE {
-        return Ok(NestedRead::Unframed(header_read));
-    }
-    let header: [u8; NESTED_TLS_HEADER_SIZE] = storage
-        .get(..NESTED_TLS_HEADER_SIZE)
-        .and_then(|bytes| bytes.try_into().ok())
-        .ok_or(VisionSessionError::DestinationTruncatedTlsRecord)?;
-    if !looks_like_tls_record_header(&header) {
-        return Ok(NestedRead::Unframed(NESTED_TLS_HEADER_SIZE));
-    }
-    let body_length = usize::from(u16::from_be_bytes([header[3], header[4]]));
-    if body_length > MAX_NESTED_TLS_RECORD_SIZE {
-        return Ok(NestedRead::Unframed(NESTED_TLS_HEADER_SIZE));
+/// Capacity of the nested reader's socket buffer.
+///
+/// Four maximum-sized nested records per refill, so a burst of destination
+/// records costs one syscall per refill instead of one header read plus one
+/// body read per record.
+const NESTED_SOCKET_BUFFER_CAPACITY: usize =
+    4 * (NESTED_TLS_HEADER_SIZE + MAX_NESTED_TLS_RECORD_SIZE);
+
+/// Buffered nested-TLS record reader over the destination's read half.
+///
+/// The same grow-only socket-buffer mechanics as the outer TLS reader: one
+/// refill moves available destination bytes into the connection-owned buffer
+/// with a single socket read, and nested records are classified out of the
+/// buffered range. Bytes buffered beyond an unframed prefix or a Direct
+/// boundary stay owned by the reader: the outer downlink relay drains them
+/// first through the `AsyncRead` impl, and the Direct transition hands them to
+/// the caller via [`NestedRecordReader::into_inner_with_pending`].
+struct NestedRecordReader {
+    io: OwnedReadHalf,
+    socket_buffer: Vec<u8>,
+    buffered_start: usize,
+    buffered_end: usize,
+    idle: IdleDeadline,
+}
+
+impl NestedRecordReader {
+    fn new(io: OwnedReadHalf) -> Self {
+        Self {
+            io,
+            socket_buffer: Vec::new(),
+            buffered_start: 0,
+            buffered_end: 0,
+            idle: IdleDeadline::new(),
+        }
     }
 
-    let record_length = NESTED_TLS_HEADER_SIZE + body_length;
-    storage.resize(record_length, 0);
-    let body = storage
-        .get_mut(NESTED_TLS_HEADER_SIZE..)
-        .ok_or(VisionSessionError::DestinationTruncatedTlsRecord)?;
-    let read = read_exact_or_eof(reader, body, deadline).await?;
-    if read != body_length {
-        return Err(VisionSessionError::DestinationTruncatedTlsRecord);
+    /// Classifies the next nested record out of the buffered range.
+    ///
+    /// The classification semantics are exactly the record-exact reader's: EOF
+    /// before any byte is `Eof`; socket EOF with fewer than five buffered bytes
+    /// yields the remaining bytes as `Unframed`; a header that fails
+    /// [`looks_like_tls_record_header`] or declares a body above
+    /// [`MAX_NESTED_TLS_RECORD_SIZE`] yields the five header bytes as
+    /// `Unframed` while any remaining buffered bytes stay owned by the reader;
+    /// EOF inside an otherwise accepted record is
+    /// [`VisionSessionError::DestinationTruncatedTlsRecord`].
+    async fn next(&mut self, timeout: Duration) -> Result<NestedRead<'_>, VisionSessionError> {
+        while self.buffered_end - self.buffered_start < NESTED_TLS_HEADER_SIZE {
+            if !self.refill(timeout).await? {
+                let start = self.buffered_start;
+                let remaining = self.buffered_end - start;
+                if remaining == 0 {
+                    return Ok(NestedRead::Eof);
+                }
+                self.buffered_start = self.buffered_end;
+                return Ok(NestedRead::Unframed(
+                    self.socket_buffer
+                        .get(start..self.buffered_end)
+                        .unwrap_or_default(),
+                ));
+            }
+        }
+        let header_end = self.buffered_start + NESTED_TLS_HEADER_SIZE;
+        let header: [u8; NESTED_TLS_HEADER_SIZE] = self
+            .socket_buffer
+            .get(self.buffered_start..header_end)
+            .and_then(|bytes| bytes.try_into().ok())
+            .ok_or(VisionSessionError::DestinationTruncatedTlsRecord)?;
+        let body_length = usize::from(u16::from_be_bytes([header[3], header[4]]));
+        if !looks_like_tls_record_header(&header) || body_length > MAX_NESTED_TLS_RECORD_SIZE {
+            let start = self.buffered_start;
+            self.buffered_start = header_end;
+            return Ok(NestedRead::Unframed(
+                self.socket_buffer
+                    .get(start..header_end)
+                    .unwrap_or_default(),
+            ));
+        }
+
+        let record_length = NESTED_TLS_HEADER_SIZE + body_length;
+        while self.buffered_end - self.buffered_start < record_length {
+            if !self.refill(timeout).await? {
+                return Err(VisionSessionError::DestinationTruncatedTlsRecord);
+            }
+        }
+        let start = self.buffered_start;
+        self.buffered_start = start + record_length;
+        Ok(NestedRead::Record(
+            self.socket_buffer
+                .get(start..start + record_length)
+                .unwrap_or_default(),
+        ))
     }
-    Ok(NestedRead::Record(record_length))
+
+    /// Moves available socket bytes into the buffer under one idle window.
+    ///
+    /// Returns `false` on socket EOF. The buffer is allocated and zero-filled
+    /// once, compacted only when the free tail can no longer hold one
+    /// maximum-sized nested record, and grown only if a single record ever
+    /// needs more than the whole buffer.
+    async fn refill(&mut self, timeout: Duration) -> Result<bool, VisionSessionError> {
+        if self.socket_buffer.capacity() == 0 {
+            let mut buffer = Vec::new();
+            buffer
+                .try_reserve_exact(NESTED_SOCKET_BUFFER_CAPACITY)
+                .map_err(|_| VisionSessionError::AllocationFailed)?;
+            buffer.resize(NESTED_SOCKET_BUFFER_CAPACITY, 0);
+            self.socket_buffer = buffer;
+        }
+        if self.buffered_start == self.buffered_end {
+            self.buffered_start = 0;
+            self.buffered_end = 0;
+        } else if self.socket_buffer.len() - self.buffered_end
+            < NESTED_TLS_HEADER_SIZE + MAX_NESTED_TLS_RECORD_SIZE
+        {
+            let buffered = self.buffered_end - self.buffered_start;
+            self.socket_buffer
+                .copy_within(self.buffered_start..self.buffered_end, 0);
+            self.buffered_start = 0;
+            self.buffered_end = buffered;
+        }
+        if self.buffered_end == self.socket_buffer.len() {
+            self.socket_buffer
+                .try_reserve_exact(NESTED_SOCKET_BUFFER_CAPACITY)
+                .map_err(|_| VisionSessionError::AllocationFailed)?;
+            self.socket_buffer
+                .resize(self.socket_buffer.len() + NESTED_SOCKET_BUFFER_CAPACITY, 0);
+        }
+        self.idle
+            .reset(timeout)
+            .map_err(|_| VisionSessionError::Timeout)?;
+        let end = self.buffered_end;
+        let destination = self
+            .socket_buffer
+            .get_mut(end..)
+            .ok_or(VisionSessionError::AllocationFailed)?;
+        let read = self
+            .idle
+            .read(&mut self.io, destination)
+            .await
+            .map_err(idle_failure)?;
+        if read == 0 {
+            return Ok(false);
+        }
+        self.buffered_end += read;
+        Ok(true)
+    }
+
+    /// Consumes the reader and returns unparsed buffered bytes plus the transport.
+    ///
+    /// Every buffered byte is a post-boundary raw byte the destination
+    /// pipelined behind its boundary record; the caller must deliver them, in
+    /// order, ahead of every byte any raw relay moves.
+    fn into_inner_with_pending(self) -> (Vec<u8>, OwnedReadHalf) {
+        let pending = self
+            .socket_buffer
+            .get(self.buffered_start..self.buffered_end)
+            .unwrap_or_default()
+            .to_vec();
+        (pending, self.io)
+    }
+}
+
+impl AsyncRead for NestedRecordReader {
+    /// Drains buffered bytes before touching the socket.
+    ///
+    /// The outer downlink relay reads through this impl, so bytes buffered by
+    /// the classification reads are forwarded ahead of — never lost behind —
+    /// the bytes still in the kernel.
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let buffered = self.buffered_end - self.buffered_start;
+        if buffered > 0 {
+            let start = self.buffered_start;
+            let count = buffered.min(buffer.remaining());
+            buffer.put_slice(
+                self.socket_buffer
+                    .get(start..start + count)
+                    .unwrap_or_default(),
+            );
+            self.buffered_start += count;
+            return Poll::Ready(Ok(()));
+        }
+        Pin::new(&mut self.io).poll_read(context, buffer)
+    }
 }
 
 const fn looks_like_tls_record_header(header: &[u8; NESTED_TLS_HEADER_SIZE]) -> bool {
@@ -1117,84 +1605,11 @@ fn operation_deadline(timeout: Duration) -> Result<Instant, VisionSessionError> 
         .ok_or(VisionSessionError::Timeout)
 }
 
-async fn read_exact_or_eof<R>(
-    reader: &mut R,
-    output: &mut [u8],
-    deadline: Instant,
-) -> Result<usize, VisionSessionError>
-where
-    R: AsyncRead + Unpin,
-{
-    let mut read = 0;
-    while read < output.len() {
-        let count = time::timeout_at(deadline, reader.read(&mut output[read..]))
-            .await
-            .map_err(|_| VisionSessionError::Timeout)?
-            .map_err(VisionSessionError::Io)?;
-        if count == 0 {
-            break;
-        }
-        read += count;
-    }
-    Ok(read)
-}
-
-async fn read_before<R>(
-    reader: &mut R,
-    output: &mut [u8],
-    timeout: Duration,
-) -> Result<usize, VisionSessionError>
-where
-    R: AsyncRead + Unpin,
-{
-    time::timeout(timeout, reader.read(output))
-        .await
-        .map_err(|_| VisionSessionError::Timeout)?
-        .map_err(VisionSessionError::Io)
-}
-
-async fn write_all_before<W>(
-    writer: &mut W,
-    input: &[u8],
-    timeout: Duration,
-) -> Result<(), VisionSessionError>
-where
-    W: AsyncWrite + Unpin,
-{
-    time::timeout(timeout, writer.write_all(input))
-        .await
-        .map_err(|_| VisionSessionError::Timeout)?
-        .map_err(VisionSessionError::Io)
-}
-
-async fn shutdown_before<W>(writer: &mut W, timeout: Duration) -> Result<(), VisionSessionError>
-where
-    W: AsyncWrite + Unpin,
-{
-    time::timeout(timeout, writer.shutdown())
-        .await
-        .map_err(|_| VisionSessionError::Timeout)?
-        .map_err(VisionSessionError::Io)
-}
-
-async fn copy_before<R, W>(
-    reader: &mut R,
-    writer: &mut W,
-    timeout: Duration,
-) -> Result<u64, VisionSessionError>
-where
-    R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin,
-{
-    let mut buffer = vec![0_u8; MAX_PLAINTEXT_LEN];
-    let mut copied = 0_u64;
-    loop {
-        let read = read_before(reader, &mut buffer, timeout).await?;
-        if read == 0 {
-            return Ok(copied);
-        }
-        write_all_before(writer, &buffer[..read], timeout).await?;
-        copied = copied.saturating_add(length_u64(read));
+/// Maps an idle-guarded operation failure to the session error.
+fn idle_failure(error: IdleError) -> VisionSessionError {
+    match error {
+        IdleError::Timeout => VisionSessionError::Timeout,
+        IdleError::Io(source) => VisionSessionError::Io(source),
     }
 }
 
@@ -1226,8 +1641,8 @@ mod tests {
                 TlsApplicationIo, read_tls_record,
             },
             vless::{
-                Command, UserId, UserRegistry, VERSION, VISION_FLOW, VisionCommand, VisionDecoder,
-                VisionEncoder, VisionMode,
+                Command, UserId, UserRegistry, VERSION, VISION_FLOW, VISION_FRAME_SIZE,
+                VisionCommand, VisionDecoder, VisionEncoder, VisionMode,
             },
         },
         server::{
@@ -1235,6 +1650,7 @@ mod tests {
             reality::RealityEstablished,
             routing::{EmptyAssetMatcher, RoutingTable},
         },
+        transport::RelayBackend,
     };
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -1462,10 +1878,24 @@ mod tests {
         );
         assert!(stats.uplink_direct());
         assert!(stats.downlink_direct());
+        // The uplink reaches its Direct boundary while the downlink is still
+        // framed, so each direction relays independently rather than waiting
+        // to form a pair.
+        assert_eq!(stats.relay_backend(), None);
+        assert_eq!(stats.uplink_backend(), Some(RelayBackend::Buffered));
+        assert_eq!(stats.downlink_backend(), Some(RelayBackend::Buffered));
+        assert_eq!(
+            stats.uplink_direct_at_bytes(),
+            length_u64(b"up-framed".len())
+        );
+        assert_eq!(
+            stats.downlink_direct_at_bytes(),
+            length_u64(expected_framed.len())
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn one_way_direct_keeps_the_pair_in_mixed_userspace_relay() {
+    async fn one_way_direct_relays_the_direction_independently() {
         let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("destination must bind");
@@ -1491,10 +1921,12 @@ mod tests {
             VisionCommand::Direct,
         );
         // The destination never speaks TLS, so the downlink can never reach a
-        // Direct boundary. The uplink is raw and the downlink stays framed:
-        // exactly the one-way case that must not hand the pair to a backend.
+        // Direct boundary. The uplink must therefore relay its raw direction
+        // independently — reporting a backend — while the downlink continues
+        // framed outer TLS undisturbed.
         let uplink_raw = vec![0x5a_u8; 96 * 1024];
-        let downlink_plain = b"plain-http-response";
+        let downlink_part_one = b"plain-http-part-one";
+        let downlink_part_two = b"plain-http-part-two";
 
         let expected_uplink = uplink_raw.clone();
         let exchange = async {
@@ -1548,9 +1980,14 @@ mod tests {
             };
             let destination_io = async move {
                 let (mut destination, _) = destination_listener.accept().await?;
-                destination.write_all(downlink_plain).await?;
+                destination.write_all(downlink_part_one).await?;
+                // `read_to_end` only completes once the directional uplink
+                // relay propagated the client EOF as a write-side shutdown of
+                // the destination socket. Writing *after* that EOF proves the
+                // half-close left the peer direction fully operational.
                 let mut request = Vec::new();
                 destination.read_to_end(&mut request).await?;
+                destination.write_all(downlink_part_two).await?;
                 destination.shutdown().await?;
                 Ok::<_, io::Error>(request)
             };
@@ -1563,13 +2000,18 @@ mod tests {
         let response = client_result.expect("client I/O must succeed");
         let mut expected = b"up-framed".to_vec();
         expected.extend_from_slice(&expected_uplink);
+        let mut expected_downlink = downlink_part_one.to_vec();
+        expected_downlink.extend_from_slice(downlink_part_two);
 
         assert_eq!(
             destination_result.expect("destination I/O must succeed"),
             expected,
             "every raw uplink byte must reach the destination in order"
         );
-        assert_eq!(response, downlink_plain);
+        assert_eq!(
+            response, expected_downlink,
+            "the framed downlink must survive the directional uplink's half-close"
+        );
         assert!(
             stats.uplink_direct(),
             "the uplink authenticated a Direct command"
@@ -1579,7 +2021,24 @@ mod tests {
             "a non-TLS destination must never reach a Direct boundary"
         );
         assert_eq!(stats.uplink_bytes(), length_u64(expected.len()));
-        assert_eq!(stats.downlink_bytes(), length_u64(downlink_plain.len()));
+        assert_eq!(stats.downlink_bytes(), length_u64(expected_downlink.len()));
+        assert_eq!(
+            stats.uplink_backend(),
+            Some(RelayBackend::Buffered),
+            "the directional uplink relay must report the backend that moved its bytes"
+        );
+        assert_eq!(stats.downlink_backend(), None);
+        assert_eq!(
+            stats.relay_backend(),
+            None,
+            "no bilateral handoff happened for a one-way Direct session"
+        );
+        assert_eq!(
+            stats.uplink_direct_at_bytes(),
+            length_u64(b"up-framed".len()),
+            "the boundary byte count excludes the raw phase"
+        );
+        assert_eq!(stats.downlink_direct_at_bytes(), 0);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1603,8 +2062,34 @@ mod tests {
             ..ResourceGovernorConfig::default()
         };
         let handler = direct_handler(&governor);
-        let request =
-            vision_request_with_command(destination_address.port(), b"", VisionCommand::Direct);
+        // The client's first frame continues; the client follows with its own
+        // Direct frame only after the server sent its Direct frame, which is
+        // the real Vision flow. The downlink therefore reaches its boundary
+        // first and is still at `RawReady` when the uplink arrives, so the
+        // uplink commits to the pair and the downlink — resuming while the
+        // peer is `PairPending` — deposits last and runs the bilateral relay.
+        let mut addons = vec![0x0a, 0x10];
+        addons.extend_from_slice(VISION_FLOW.as_bytes());
+        let mut request = Vec::new();
+        request.push(VERSION);
+        request.extend_from_slice(USER.as_bytes());
+        request.push(u8::try_from(addons.len()).unwrap_or(u8::MAX));
+        request.extend_from_slice(&addons);
+        request.push(Command::Tcp.as_byte());
+        request.extend_from_slice(&destination_address.port().to_be_bytes());
+        request.push(1);
+        request.extend_from_slice(&Ipv4Addr::LOCALHOST.octets());
+        let mut uplink_encoder = VisionEncoder::with_padding_seed(USER, &[0x5a; 44]);
+        let mut first_frame = Vec::new();
+        uplink_encoder
+            .encode(
+                b"up-framed",
+                VisionCommand::Continue,
+                false,
+                &mut first_frame,
+            )
+            .expect("Vision payload must encode");
+        request.extend_from_slice(&first_frame);
         let nested_server_hello = record(22, &server_hello(0x1301, true));
         let nested_application = record(23, b"encrypted-handshake");
         let uplink_raw: Vec<u8> = (0..512_u32 * 1024).map(|value| value as u8).collect();
@@ -1612,7 +2097,6 @@ mod tests {
             .map(|value| (value >> 3) as u8)
             .collect();
 
-        let expected_up = uplink_raw.clone();
         let expected_down = downlink_raw.clone();
         let exchange = async {
             let handle = handler.handle(established);
@@ -1653,6 +2137,21 @@ mod tests {
                         .map_err(io::Error::other)?;
                     framed.extend_from_slice(&decoded);
                 }
+
+                let mut direct_frame = Vec::new();
+                uplink_encoder
+                    .encode(b"", VisionCommand::Direct, false, &mut direct_frame)
+                    .map_err(io::Error::other)?;
+                let mut direct_record = Vec::new();
+                client_write_records
+                    .seal_into(
+                        ContentType::ApplicationData,
+                        &direct_frame,
+                        0,
+                        &mut direct_record,
+                    )
+                    .map_err(io::Error::other)?;
+                client.write_all(&direct_record).await?;
 
                 let (mut reader, mut writer) = client.into_split();
                 let send = async move {
@@ -1701,7 +2200,8 @@ mod tests {
         let received_up = destination_result.expect("destination I/O must succeed");
         let mut expected_framed = nested_server_hello;
         expected_framed.extend_from_slice(&nested_application);
-
+        let mut expected_up = b"up-framed".to_vec();
+        expected_up.extend_from_slice(&uplink_raw);
         assert_eq!(framed, expected_framed);
         assert_eq!(
             received_up.len(),
@@ -1722,6 +2222,695 @@ mod tests {
             stats.downlink_bytes(),
             length_u64(expected_framed.len() + expected_down.len())
         );
+        assert_eq!(
+            stats.relay_backend(),
+            Some(RelayBackend::Buffered),
+            "both directions paired, so the pair relay moved the raw bytes"
+        );
+        assert_eq!(stats.uplink_backend(), Some(RelayBackend::Buffered));
+        assert_eq!(stats.downlink_backend(), Some(RelayBackend::Buffered));
+        assert_eq!(
+            stats.uplink_direct_at_bytes(),
+            length_u64(b"up-framed".len())
+        );
+        assert_eq!(
+            stats.downlink_direct_at_bytes(),
+            length_u64(expected_framed.len())
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn one_way_direct_downlink_relays_independently() {
+        let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("destination must bind");
+        let destination_address = destination_listener
+            .local_addr()
+            .expect("destination address must exist");
+        let (mut client, server) = tcp_pair().await;
+        let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
+        let established = RealityEstablished::from_test_parts(
+            TlsApplicationIo::new(server, established_tls),
+            UserRegistry::new([USER]),
+        );
+        let governor = ResourceGovernorConfig {
+            connect_timeout_ms: 1_000,
+            handshake_timeout_ms: 1_000,
+            fallback_timeout_ms: 1_000,
+            ..ResourceGovernorConfig::default()
+        };
+        let handler = direct_handler(&governor);
+        // The client ends its Vision flow (`End`), so the uplink stays in
+        // framed pass-through and never reaches a Direct boundary. The
+        // destination speaks TLS 1.3, so the downlink goes Direct alone and
+        // must relay its direction independently.
+        let request =
+            vision_request_with_command(destination_address.port(), b"up-ping", VisionCommand::End);
+        let nested_server_hello = record(22, &server_hello(0x1301, true));
+        let nested_application = record(23, b"encrypted-handshake");
+
+        let exchange = async {
+            let handle = handler.handle(established);
+            let client_io = async {
+                let mut request_record = Vec::new();
+                client_write_records
+                    .seal_into(
+                        ContentType::ApplicationData,
+                        &request,
+                        0,
+                        &mut request_record,
+                    )
+                    .map_err(io::Error::other)?;
+                client.write_all(&request_record).await?;
+                let mut more_record = Vec::new();
+                client_write_records
+                    .seal_into(
+                        ContentType::ApplicationData,
+                        b"up-more",
+                        0,
+                        &mut more_record,
+                    )
+                    .map_err(io::Error::other)?;
+                client.write_all(&more_record).await?;
+                let mut close_record = Vec::new();
+                client_write_records
+                    .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                    .map_err(io::Error::other)?;
+                client.write_all(&close_record).await?;
+
+                let mut decoder = VisionDecoder::new(USER);
+                let mut decoded = Vec::new();
+                let mut framed = Vec::new();
+                let mut response_header = true;
+                while decoder.mode() != VisionMode::Direct {
+                    let mut record = read_tls_record(&mut client, TEST_TIMEOUT)
+                        .await
+                        .map_err(io::Error::other)?
+                        .into_wire();
+                    let opened = client_read_records
+                        .open_in_place(&mut record)
+                        .map_err(io::Error::other)?;
+                    let plaintext = opened.plaintext();
+                    let vision = if response_header {
+                        response_header = false;
+                        &plaintext[2..]
+                    } else {
+                        plaintext
+                    };
+                    let _ = decoder
+                        .decode(vision, &mut decoded)
+                        .map_err(io::Error::other)?;
+                    framed.extend_from_slice(&decoded);
+                }
+                let mut raw_response = Vec::new();
+                client.read_to_end(&mut raw_response).await?;
+                Ok::<_, io::Error>((framed, raw_response))
+            };
+            let server_hello_record = nested_server_hello.clone();
+            let application_record = nested_application.clone();
+            let destination_io = async move {
+                let (mut destination, _) = destination_listener.accept().await?;
+                destination.write_all(&server_hello_record).await?;
+                destination.write_all(&application_record).await?;
+                destination.write_all(b"down-raw").await?;
+                destination.shutdown().await?;
+                let mut received = Vec::new();
+                destination.read_to_end(&mut received).await?;
+                Ok::<_, io::Error>(received)
+            };
+            tokio::join!(handle, client_io, destination_io)
+        };
+        let (stats, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+            .await
+            .expect("downlink direct exchange must not time out");
+        let stats = stats.expect("downlink direct handler must succeed");
+        let (framed, raw_response) = client_result.expect("client I/O must succeed");
+        let mut expected_framed = nested_server_hello;
+        expected_framed.extend_from_slice(&nested_application);
+
+        assert_eq!(
+            destination_result.expect("destination I/O must succeed"),
+            b"up-pingup-more",
+            "the framed uplink pass-through must stay undisturbed"
+        );
+        assert_eq!(framed, expected_framed);
+        assert_eq!(raw_response, b"down-raw");
+        assert!(
+            !stats.uplink_direct(),
+            "an End flow never reaches an uplink Direct boundary"
+        );
+        assert!(stats.downlink_direct());
+        assert_eq!(
+            stats.uplink_bytes(),
+            length_u64(b"up-ping".len() + b"up-more".len())
+        );
+        assert_eq!(
+            stats.downlink_bytes(),
+            length_u64(expected_framed.len() + b"down-raw".len())
+        );
+        assert_eq!(stats.relay_backend(), None);
+        assert_eq!(stats.uplink_backend(), None);
+        assert_eq!(
+            stats.downlink_backend(),
+            Some(RelayBackend::Buffered),
+            "the directional downlink relay must report its backend"
+        );
+        assert_eq!(stats.uplink_direct_at_bytes(), 0);
+        assert_eq!(
+            stats.downlink_direct_at_bytes(),
+            length_u64(expected_framed.len())
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn packs_multiple_vision_frames_into_one_outer_record() {
+        let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("destination must bind");
+        let destination_address = destination_listener
+            .local_addr()
+            .expect("destination address must exist");
+        let (mut client, server) = tcp_pair().await;
+        let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
+        let established = RealityEstablished::from_test_parts(
+            TlsApplicationIo::new(server, established_tls),
+            UserRegistry::new([USER]),
+        );
+        let governor = ResourceGovernorConfig {
+            connect_timeout_ms: 1_000,
+            handshake_timeout_ms: 1_000,
+            fallback_timeout_ms: 1_000,
+            ..ResourceGovernorConfig::default()
+        };
+        let handler = direct_handler(&governor);
+        let request = vision_request(destination_address.port(), b"up-ping");
+        let nested_server_hello = record(22, &server_hello(0x1301, true));
+        // A maximum-sized nested handshake record is framed as three Vision
+        // frames; the two full frames carry no padding and must share one
+        // maximum-sized outer record.
+        let nested_certificate = record(22, &[0x5a_u8; 16_384]);
+        let nested_application = record(23, b"encrypted-handshake");
+
+        let exchange = async {
+            let handle = handler.handle(established);
+            let client_io = async {
+                let mut request_record = Vec::new();
+                client_write_records
+                    .seal_into(
+                        ContentType::ApplicationData,
+                        &request,
+                        0,
+                        &mut request_record,
+                    )
+                    .map_err(io::Error::other)?;
+                client.write_all(&request_record).await?;
+                let mut close_record = Vec::new();
+                client_write_records
+                    .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                    .map_err(io::Error::other)?;
+                client.write_all(&close_record).await?;
+
+                let mut decoder = VisionDecoder::new(USER);
+                let mut decoded = Vec::new();
+                let mut framed = Vec::new();
+                let mut outer_records = 0_usize;
+                let mut saw_packed_record = false;
+                let mut response_header = true;
+                while decoder.mode() != VisionMode::Direct {
+                    let mut record = read_tls_record(&mut client, TEST_TIMEOUT)
+                        .await
+                        .map_err(io::Error::other)?
+                        .into_wire();
+                    let opened = client_read_records
+                        .open_in_place(&mut record)
+                        .map_err(io::Error::other)?;
+                    if opened.content_type() != ContentType::ApplicationData {
+                        return Err(io::Error::other("expected outer application record"));
+                    }
+                    let plaintext = opened.plaintext();
+                    outer_records += 1;
+                    saw_packed_record |= plaintext.len() > VISION_FRAME_SIZE;
+                    let vision = if response_header {
+                        response_header = false;
+                        &plaintext[2..]
+                    } else {
+                        plaintext
+                    };
+                    let _ = decoder
+                        .decode(vision, &mut decoded)
+                        .map_err(io::Error::other)?;
+                    framed.extend_from_slice(&decoded);
+                }
+                let mut raw_response = Vec::new();
+                client.read_to_end(&mut raw_response).await?;
+                Ok::<_, io::Error>((framed, raw_response, outer_records, saw_packed_record))
+            };
+            let server_hello_record = nested_server_hello.clone();
+            let certificate_record = nested_certificate.clone();
+            let application_record = nested_application.clone();
+            let destination_io = async move {
+                let (mut destination, _) = destination_listener.accept().await?;
+                destination.write_all(&server_hello_record).await?;
+                destination.write_all(&certificate_record).await?;
+                destination.write_all(&application_record).await?;
+                destination.write_all(b"down-raw").await?;
+                destination.shutdown().await?;
+                let mut received = Vec::new();
+                destination.read_to_end(&mut received).await?;
+                Ok::<_, io::Error>(received)
+            };
+            tokio::join!(handle, client_io, destination_io)
+        };
+        let (stats, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+            .await
+            .expect("packed Vision exchange must not time out");
+        let stats = stats.expect("packed Vision handler must succeed");
+        let (framed, raw_response, outer_records, saw_packed_record) =
+            client_result.expect("client I/O must succeed");
+        let mut expected_framed = nested_server_hello;
+        expected_framed.extend_from_slice(&nested_certificate);
+        expected_framed.extend_from_slice(&nested_application);
+
+        assert_eq!(
+            destination_result.expect("destination I/O must succeed"),
+            b"up-ping"
+        );
+        assert_eq!(
+            framed, expected_framed,
+            "frames packed into shared outer records must decode byte-exactly"
+        );
+        assert_eq!(raw_response, b"down-raw");
+        // Preamble, ServerHello frame, two records for the three certificate
+        // frames, and the Direct frame: five records where unpacked framing
+        // needed six.
+        assert_eq!(outer_records, 5, "full frames must share outer records");
+        assert!(
+            saw_packed_record,
+            "one outer record must carry more than one Vision frame"
+        );
+        assert!(stats.downlink_direct());
+        assert_eq!(
+            stats.downlink_bytes(),
+            length_u64(expected_framed.len() + b"down-raw".len())
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn uplink_direct_drains_pipelined_raw_bytes_ahead_of_the_raw_relay() {
+        let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("destination must bind");
+        let destination_address = destination_listener
+            .local_addr()
+            .expect("destination address must exist");
+        let (mut client, server) = tcp_pair().await;
+        let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
+        let established = RealityEstablished::from_test_parts(
+            TlsApplicationIo::new(server, established_tls),
+            UserRegistry::new([USER]),
+        );
+        let governor = ResourceGovernorConfig {
+            connect_timeout_ms: 1_000,
+            handshake_timeout_ms: 1_000,
+            fallback_timeout_ms: 1_000,
+            ..ResourceGovernorConfig::default()
+        };
+        let handler = direct_handler(&governor);
+        let request = vision_request_with_command(
+            destination_address.port(),
+            b"up-framed",
+            VisionCommand::Direct,
+        );
+
+        let exchange = async {
+            let handle = handler.handle(established);
+            let client_io = async {
+                let mut burst = Vec::new();
+                client_write_records
+                    .seal_into(ContentType::ApplicationData, &request, 0, &mut burst)
+                    .map_err(io::Error::other)?;
+                // The over-read regression shape: the boundary outer record and
+                // the post-boundary raw bytes arrive in ONE socket burst, so the
+                // buffered reader must drain them to the destination in order.
+                burst.extend_from_slice(b"up-raw-pipelined");
+                client.write_all(&burst).await?;
+                client.shutdown().await?;
+
+                let mut decoder = VisionDecoder::new(USER);
+                let mut decoded = Vec::new();
+                let mut response = Vec::new();
+                let mut response_header = true;
+                loop {
+                    let mut record = read_tls_record(&mut client, TEST_TIMEOUT)
+                        .await
+                        .map_err(io::Error::other)?
+                        .into_wire();
+                    let opened = client_read_records
+                        .open_in_place(&mut record)
+                        .map_err(io::Error::other)?;
+                    match opened.content_type() {
+                        ContentType::ApplicationData => {
+                            let plaintext = opened.plaintext();
+                            let vision = if response_header {
+                                response_header = false;
+                                &plaintext[2..]
+                            } else {
+                                plaintext
+                            };
+                            let _ = decoder
+                                .decode(vision, &mut decoded)
+                                .map_err(io::Error::other)?;
+                            response.extend_from_slice(&decoded);
+                        }
+                        ContentType::Alert if opened.plaintext() == [1, 0] => break,
+                        _ => return Err(io::Error::other("unexpected outer TLS content")),
+                    }
+                }
+                Ok::<_, io::Error>(response)
+            };
+            let destination_io = async {
+                let (mut destination, _) = destination_listener.accept().await?;
+                let mut request = Vec::new();
+                destination.read_to_end(&mut request).await?;
+                destination.write_all(b"pong").await?;
+                destination.shutdown().await?;
+                Ok::<_, io::Error>(request)
+            };
+            tokio::join!(handle, client_io, destination_io)
+        };
+        let (stats, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+            .await
+            .expect("pipelined direct exchange must not time out");
+        let stats = stats.expect("pipelined direct handler must succeed");
+
+        assert_eq!(
+            destination_result.expect("destination I/O must succeed"),
+            b"up-framedup-raw-pipelined",
+            "the drained pending bytes must reach the destination in order, after the framed prefix"
+        );
+        assert_eq!(client_result.expect("client I/O must succeed"), b"pong");
+        assert!(stats.uplink_direct());
+        assert_eq!(
+            stats.uplink_bytes(),
+            length_u64(b"up-framed".len() + b"up-raw-pipelined".len()),
+            "pending bytes count toward the uplink total exactly once"
+        );
+        assert_eq!(
+            stats.uplink_direct_at_bytes(),
+            length_u64(b"up-framed".len()),
+            "the boundary byte count excludes the raw phase, drained or relayed"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn downlink_direct_drains_pipelined_raw_bytes_ahead_of_the_raw_relay() {
+        let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("destination must bind");
+        let destination_address = destination_listener
+            .local_addr()
+            .expect("destination address must exist");
+        let (mut client, server) = tcp_pair().await;
+        let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
+        let established = RealityEstablished::from_test_parts(
+            TlsApplicationIo::new(server, established_tls),
+            UserRegistry::new([USER]),
+        );
+        let governor = ResourceGovernorConfig {
+            connect_timeout_ms: 1_000,
+            handshake_timeout_ms: 1_000,
+            fallback_timeout_ms: 1_000,
+            ..ResourceGovernorConfig::default()
+        };
+        let handler = direct_handler(&governor);
+        let request =
+            vision_request_with_command(destination_address.port(), b"up-ping", VisionCommand::End);
+        let nested_server_hello = record(22, &server_hello(0x1301, true));
+        let nested_application = record(23, b"encrypted-handshake");
+
+        let exchange = async {
+            let handle = handler.handle(established);
+            let client_io = async {
+                let mut request_record = Vec::new();
+                client_write_records
+                    .seal_into(
+                        ContentType::ApplicationData,
+                        &request,
+                        0,
+                        &mut request_record,
+                    )
+                    .map_err(io::Error::other)?;
+                client.write_all(&request_record).await?;
+                let mut close_record = Vec::new();
+                client_write_records
+                    .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                    .map_err(io::Error::other)?;
+                client.write_all(&close_record).await?;
+
+                let mut decoder = VisionDecoder::new(USER);
+                let mut decoded = Vec::new();
+                let mut framed = Vec::new();
+                let mut response_header = true;
+                while decoder.mode() != VisionMode::Direct {
+                    let mut record = read_tls_record(&mut client, TEST_TIMEOUT)
+                        .await
+                        .map_err(io::Error::other)?
+                        .into_wire();
+                    let opened = client_read_records
+                        .open_in_place(&mut record)
+                        .map_err(io::Error::other)?;
+                    let plaintext = opened.plaintext();
+                    let vision = if response_header {
+                        response_header = false;
+                        &plaintext[2..]
+                    } else {
+                        plaintext
+                    };
+                    let _ = decoder
+                        .decode(vision, &mut decoded)
+                        .map_err(io::Error::other)?;
+                    framed.extend_from_slice(&decoded);
+                }
+                let mut raw_response = Vec::new();
+                client.read_to_end(&mut raw_response).await?;
+                Ok::<_, io::Error>((framed, raw_response))
+            };
+            let server_hello_record = nested_server_hello.clone();
+            let application_record = nested_application.clone();
+            let destination_io = async move {
+                let (mut destination, _) = destination_listener.accept().await?;
+                // One burst: the classification flight, the boundary record, and
+                // the post-boundary raw bytes land in the nested reader's buffer
+                // together, so the Direct drain must forward them in order.
+                let mut burst = server_hello_record;
+                burst.extend_from_slice(&application_record);
+                burst.extend_from_slice(b"down-raw-pipelined");
+                destination.write_all(&burst).await?;
+                destination.shutdown().await?;
+                let mut received = Vec::new();
+                destination.read_to_end(&mut received).await?;
+                Ok::<_, io::Error>(received)
+            };
+            tokio::join!(handle, client_io, destination_io)
+        };
+        let (stats, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+            .await
+            .expect("pipelined downlink exchange must not time out");
+        let stats = stats.expect("pipelined downlink handler must succeed");
+        let (framed, raw_response) = client_result.expect("client I/O must succeed");
+        let mut expected_framed = nested_server_hello;
+        expected_framed.extend_from_slice(&nested_application);
+
+        assert_eq!(
+            destination_result.expect("destination I/O must succeed"),
+            b"up-ping"
+        );
+        assert_eq!(framed, expected_framed);
+        assert_eq!(
+            raw_response, b"down-raw-pipelined",
+            "the drained pending bytes must reach the client after the framed records, in order"
+        );
+        assert!(stats.downlink_direct());
+        assert_eq!(
+            stats.downlink_bytes(),
+            length_u64(expected_framed.len() + b"down-raw-pipelined".len())
+        );
+        assert_eq!(
+            stats.downlink_direct_at_bytes(),
+            length_u64(expected_framed.len())
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn outer_downlink_forwards_bytes_buffered_by_classification() {
+        let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("destination must bind");
+        let destination_address = destination_listener
+            .local_addr()
+            .expect("destination address must exist");
+        let (mut client, server) = tcp_pair().await;
+        let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
+        let established = RealityEstablished::from_test_parts(
+            TlsApplicationIo::new(server, established_tls),
+            UserRegistry::new([USER]),
+        );
+        let governor = ResourceGovernorConfig {
+            connect_timeout_ms: 1_000,
+            handshake_timeout_ms: 1_000,
+            fallback_timeout_ms: 1_000,
+            ..ResourceGovernorConfig::default()
+        };
+        let handler = direct_handler(&governor);
+        let request = vision_request(destination_address.port(), b"ping");
+        // A non-TLS payload larger than the five classification bytes: the
+        // classification read buffers the whole burst, returns the header
+        // prefix as unframed, and the outer downlink must forward the rest
+        // from the buffer before touching the socket again.
+        let payload: Vec<u8> = (0..16 * 1024_u32)
+            .map(|value| 0x61 + (value % 26) as u8)
+            .collect();
+
+        let exchange = async {
+            let handle = handler.handle(established);
+            let client_io = async {
+                let mut request_record = Vec::new();
+                client_write_records
+                    .seal_into(
+                        ContentType::ApplicationData,
+                        &request,
+                        0,
+                        &mut request_record,
+                    )
+                    .map_err(io::Error::other)?;
+                client.write_all(&request_record).await?;
+                let mut close_record = Vec::new();
+                client_write_records
+                    .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                    .map_err(io::Error::other)?;
+                client.write_all(&close_record).await?;
+
+                let mut decoder = VisionDecoder::new(USER);
+                let mut decoded = Vec::new();
+                let mut response = Vec::new();
+                let mut response_header = true;
+                loop {
+                    let mut record = read_tls_record(&mut client, TEST_TIMEOUT)
+                        .await
+                        .map_err(io::Error::other)?
+                        .into_wire();
+                    let opened = client_read_records
+                        .open_in_place(&mut record)
+                        .map_err(io::Error::other)?;
+                    match opened.content_type() {
+                        ContentType::ApplicationData => {
+                            let plaintext = opened.plaintext();
+                            let vision = if response_header {
+                                response_header = false;
+                                &plaintext[2..]
+                            } else {
+                                plaintext
+                            };
+                            let _ = decoder
+                                .decode(vision, &mut decoded)
+                                .map_err(io::Error::other)?;
+                            response.extend_from_slice(&decoded);
+                        }
+                        ContentType::Alert if opened.plaintext() == [1, 0] => break,
+                        _ => return Err(io::Error::other("unexpected outer TLS content")),
+                    }
+                }
+                Ok::<_, io::Error>(response)
+            };
+            let downlink = payload.clone();
+            let destination_io = async move {
+                let (mut destination, _) = destination_listener.accept().await?;
+                let mut request = Vec::new();
+                destination.read_to_end(&mut request).await?;
+                destination.write_all(&downlink).await?;
+                destination.shutdown().await?;
+                Ok::<_, io::Error>(request)
+            };
+            tokio::join!(handle, client_io, destination_io)
+        };
+        let (stats, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+            .await
+            .expect("outer downlink exchange must not time out");
+        let stats = stats.expect("outer downlink handler must succeed");
+        let response = client_result.expect("client I/O must succeed");
+
+        assert_eq!(
+            destination_result.expect("destination I/O must succeed"),
+            b"ping"
+        );
+        assert_eq!(
+            response, payload,
+            "bytes buffered by classification must be forwarded, never lost"
+        );
+        assert!(!stats.downlink_direct());
+        assert_eq!(stats.downlink_bytes(), length_u64(payload.len()));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn nested_reader_classifies_fragmented_records_and_clean_eof() {
+        let (mut client, server) = tcp_pair().await;
+        let (destination, _) = server.into_split();
+        let mut reader = super::NestedRecordReader::new(destination);
+        let hello = record(22, &server_hello(0x1301, true));
+
+        client
+            .write_all(&hello[..3])
+            .await
+            .expect("fragment must be written");
+        client
+            .write_all(&hello[3..])
+            .await
+            .expect("fragment must be written");
+        match reader
+            .next(TEST_TIMEOUT)
+            .await
+            .expect("record must classify")
+        {
+            super::NestedRead::Record(bytes) => assert_eq!(bytes, hello.as_slice()),
+            _ => panic!("fragmented record must classify as a record"),
+        }
+
+        client.shutdown().await.expect("client must half-close");
+        assert!(matches!(
+            reader.next(TEST_TIMEOUT).await.expect("EOF must classify"),
+            super::NestedRead::Eof
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn nested_reader_reports_truncated_records_and_partial_headers() {
+        let (mut client, server) = tcp_pair().await;
+        let (destination, _) = server.into_split();
+        let mut reader = super::NestedRecordReader::new(destination);
+        let mut truncated = vec![23, 0x03, 0x03, 0, 100];
+        truncated.extend_from_slice(&[0x5a; 10]);
+        client
+            .write_all(&truncated)
+            .await
+            .expect("truncated record must be written");
+        client.shutdown().await.expect("client must half-close");
+        assert!(matches!(
+            reader.next(TEST_TIMEOUT).await,
+            Err(super::VisionSessionError::DestinationTruncatedTlsRecord)
+        ));
+
+        let (mut client, server) = tcp_pair().await;
+        let (destination, _) = server.into_split();
+        let mut reader = super::NestedRecordReader::new(destination);
+        client
+            .write_all(&[0x16, 0x03, 0x01])
+            .await
+            .expect("partial header must be written");
+        client.shutdown().await.expect("client must half-close");
+        match reader.next(TEST_TIMEOUT).await.expect("partial header") {
+            super::NestedRead::Unframed(bytes) => assert_eq!(bytes, &[0x16, 0x03, 0x01]),
+            _ => panic!("a partial header at EOF must classify as unframed bytes"),
+        }
     }
 
     #[test]
@@ -1936,12 +3125,10 @@ mod tests {
                 buffer_bytes: 32 * 1024,
                 max_pooled_buffers: 8,
                 max_splice_relays: 0,
-                max_io_uring_relays: 0,
                 max_sockhash_relays: 0,
                 max_relay_memory_bytes: u64::MAX,
                 max_pinned_memory_bytes: u64::MAX,
                 splice: false,
-                io_uring: false,
                 sockhash: false,
             },
             crate::runtime::FdBudget::new(4_096),

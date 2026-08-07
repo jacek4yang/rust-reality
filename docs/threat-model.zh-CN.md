@@ -51,7 +51,7 @@ splice pipe 都有明确上限。数据路径没有无界队列或缓存；协�
 
 Linux `splice` 只允许在两侧都是明文 TCP socket 后使用，不能跨越 REALITY/TLS
 应用边界。如果传输开始前无法获取有界 splice 资源，则使用有界用户态缓冲。
-`io_uring` 和 sockhash 开关保持禁用，直到其实现和能力探测单独通过验收。
+sockhash 开关保持禁用，直到其实现和能力探测单独通过验收。
 
 ## 非目标
 
@@ -77,10 +77,6 @@ TCP 时，才会把套接字对交给它：REALITY 认证失败并转为伪装�
 `crates/rr-linux`，该 crate 禁止 `unsafe_op_in_unsafe_fn`；协议 crate 保持
 `unsafe_code = "deny"`。每个 unsafe 块都有 `SAFETY:` 注释，ABI 布局与描述符生命周期
 都有直接测试。
-
-**已防御描述符复用。** io_uring 会话复制两个描述符，并在所有完成事件被回收之前
-持有副本，因此进程中其他地方回收的数字描述符不会被旧操作作用到。完成事件带有
-generation 标记，过期或重复的完成会被丢弃而不是作用到新操作上。
 
 **eBPF 提升权限，因此需要显式选择加入。** 启用 `sockhash` 会向内核加载程序。随附
 systemd unit 不会自动授予该能力，需求通过探测而非假定得出，拒绝的环境会干净地

@@ -25,21 +25,18 @@ fn policy(backend: RelayBackend) -> RelayPolicy {
         buffer_bytes: 32 * 1024,
         max_pooled_buffers: 64,
         max_splice_relays: 16,
-        max_io_uring_relays: 0,
         max_sockhash_relays: 0,
         max_relay_memory_bytes: u64::MAX,
         max_pinned_memory_bytes: u64::MAX,
         splice: matches!(backend, RelayBackend::Splice),
-        io_uring: false,
         sockhash: false,
     }
 }
 
 /// Returns the backends this environment can actually exercise.
 ///
-/// io_uring and sockhash are implemented in `rr-linux` but are not reachable
-/// through the portable relay policy in this build, so they are listed as
-/// skipped rather than silently omitted.
+/// sockhash needs eBPF privileges this test environment cannot assume, so it
+/// is listed as skipped rather than silently omitted.
 fn exercisable() -> Vec<RelayBackend> {
     let mut backends = vec![RelayBackend::Buffered];
     if cfg!(target_os = "linux") {
@@ -383,7 +380,7 @@ async fn an_explicit_request_for_an_unavailable_backend_falls_back_before_transf
         let relaying = relay.relay_owned(
             relay_inbound,
             relay_outbound,
-            RelayContext::owned().with_request(BackendRequest::Explicit(RelayBackend::IoUring)),
+            RelayContext::owned().with_request(BackendRequest::Explicit(RelayBackend::Sockhash)),
         );
         let client_io = async move {
             let (mut reader, mut writer) = client.into_split();
@@ -411,7 +408,7 @@ async fn an_explicit_request_for_an_unavailable_backend_falls_back_before_transf
     assert_eq!(target_result.expect("target I/O must succeed"), b"probe");
     assert_ne!(
         outcome.backend(),
-        RelayBackend::IoUring,
+        RelayBackend::Sockhash,
         "an unavailable backend must never be reported as the one that ran"
     );
     assert_eq!(outcome.inbound_to_outbound(), 5);

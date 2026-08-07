@@ -73,7 +73,10 @@ start_process() {
 }
 
 cd "$repository"
-cargo build --release --locked
+rust_bin=${RUST_REALITY_BIN:-target/release/rust-reality}
+if [[ ! -x $rust_bin ]]; then
+    cargo build --release --locked
+fi
 
 rust_port=$(free_port)
 xray_port=$(free_port)
@@ -81,7 +84,7 @@ rust_socks=$(free_port)
 xray_socks=$(free_port)
 http_port=$(free_port)
 
-target/release/rust-reality config generate standalone \
+"$rust_bin" config generate standalone \
     --listen 127.0.0.1 \
     --port "$rust_port" \
     --target "$cover_target" \
@@ -180,7 +183,7 @@ make_client() {
 make_client "$rust_port" "$rust_socks" "$rust_public_key" "$work/rust-client.json"
 make_client "$xray_port" "$xray_socks" "$xray_public_key" "$work/xray-client.json"
 
-start_process target/release/rust-reality serve --config "$work/rust.json" \
+start_process "$rust_bin" serve --config "$work/rust.json" \
     >"$work/rust.log" 2>&1
 start_process "$xray" run -config "$work/xray-server.json" \
     >"$work/xray-server.log" 2>&1
@@ -232,6 +235,17 @@ cover_sni = sys.argv[9]
 expected = payload_mib * 1024 * 1024
 url = f"http://127.0.0.1:{http_port}/payload.bin"
 
+# The workspace proxy environment (ALL_PROXY/HTTP_PROXY/...) sets NO_PROXY with
+# 127.0.0.1, which makes curl bypass EVEN an explicit --socks5-hostname for
+# loopback URLs — the transfer then measures a direct connection and neither
+# proxy server sees a session. Strip every proxy variable from curl's
+# environment.
+curl_env = {
+    key: value
+    for key, value in os.environ.items()
+    if key.lower() not in ("all_proxy", "http_proxy", "https_proxy", "no_proxy")
+}
+
 def transfer(port):
     completed = subprocess.run(
         [
@@ -243,6 +257,7 @@ def transfer(port):
         check=True,
         capture_output=True,
         text=True,
+        env=curl_env,
     )
     size, elapsed = completed.stdout.split()
     if int(size) != expected:

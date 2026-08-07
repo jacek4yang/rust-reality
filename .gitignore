@@ -20,6 +20,7 @@
 /test-output/
 /fuzz/artifacts/
 /fuzz/corpus/
+/benchmarks/rust-reality-matrix.*/
 /fuzz/target/
 
 # Editor files
@@ -27,3 +28,4 @@
 *.swo
 /.idea/
 /.vscode/
+/scripts/bench-origin/benchmarks/

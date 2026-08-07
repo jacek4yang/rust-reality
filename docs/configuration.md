@@ -33,7 +33,8 @@ Top-level shape:
   "inbounds": [],
   "outbounds": [],
   "routing": {},
-  "policy": {}
+  "policy": {},
+  "runtime": {}
 }
 ```
 
@@ -46,6 +47,7 @@ Top-level shape:
 | `outbounds` | yes | — | At least one `direct`, `blackhole`, `socks5`, or `nxr` transport. |
 | `routing` | yes | — | Global rules and explicit per-UUID policy groups. |
 | `policy` | no | bounded production defaults | Admission, direct-dial, buffer, and Linux relay policy. |
+| `runtime` | no | `standard` | Process resource posture. |
 
 ## `log`
 
@@ -448,21 +450,15 @@ This isolates direct destination pressure from authenticated connection count.
 | `bufferBytes` | yes | `32768` | Bytes per pooled userspace buffer, `4096..=1048576`. |
 | `maxPooledBuffers` | yes | `4096` | Global pooled-buffer ceiling, `2..=65536`. |
 | `maxSpliceRelays` | no | `1024` | With splice enabled, greater than zero and no more than `maxConnections`. Each relay consumes two pipe pairs. |
-| `maxIoUringRelays` | no | `256` | With ioUring enabled, greater than zero and no more than `maxConnections`. |
 | `maxSockhashRelays` | no | `4096` | With sockhash enabled, greater than zero and no more than `maxConnections`. Each relay occupies two map entries. |
 | `maxRelayMemoryBytes` | no | `268435456` | Ceiling on pooled plus registered relay buffer memory. |
-| `maxPinnedMemoryBytes` | no | `134217728` | Ceiling on kernel-pinned memory (io_uring registered buffers plus sockhash map capacity). |
+| `maxPinnedMemoryBytes` | no | `134217728` | Ceiling on kernel-pinned memory (sockhash map capacity). |
 | `splice` | yes | `true` | Permit bounded nonblocking Linux splice only across plaintext TCP boundaries. |
-| `ioUring` | yes | `false` | Permit the bounded io_uring backend after a successful runtime capability probe. |
 | `sockhash` | yes | `false` | Permit the bounded eBPF `SOCKHASH` backend after a successful runtime capability probe. |
 
 ### Backend selection
 
 The automatic preference order is `sockhash`, then `splice`, then `buffered`.
-io_uring is implemented, probed, reported and explicitly selectable, but is
-**excluded from automatic selection** on this branch: no retained target-host
-measurement has shown it is not materially slower for this workload class, and a
-speculative classifier added only to claim adaptivity would be worse than none.
 
 A backend may hand the connection to the next one **only before it has
 transferred a byte**. After any byte moves, a backend error terminates the relay;
@@ -482,11 +478,10 @@ arithmetic:
 
 ```text
 buffered_memory     = maxPooledBuffers * bufferBytes
-io_uring_registered = maxIoUringRelays * 2 * bufferBytes
 sockhash_capacity   = maxSockhashRelays * 2 * (flowKey + socketEntry + statsEntry + overhead)
 
-buffered_memory + io_uring_registered <= maxRelayMemoryBytes
-io_uring_registered + sockhash_capacity <= maxPinnedMemoryBytes
+buffered_memory   <= maxRelayMemoryBytes
+sockhash_capacity <= maxPinnedMemoryBytes
 ```
 
 `maxPooledBuffers` is a **buffer count**, never a byte budget.
@@ -503,6 +498,14 @@ backend. An unavailable backend names a fixed reason from a closed vocabulary �
 Splice never crosses the REALITY/TLS security boundary. If splice resources are
 unavailable before transfer starts, relay falls back to bounded userspace
 buffers.
+
+## `runtime`
+
+Process-level resource posture. The whole object is optional.
+
+| Field | Required when object present | Default / allowed | Constraints / meaning |
+| --- | --- | --- | --- |
+| `runtime.resourceMode` | no | `standard`; `standard`, `dedicated` | `dedicated` declares single-tenant use of the machine or cgroup: raise the soft `RLIMIT_NOFILE` to the hard limit, derive the descriptor budget with the dedicated headroom, and run the bounded memory-pressure monitor. See [Dedicated-machine resource mode](dedicated-resource-mode.md). Cold setting; changing it requires a restart. |
 
 ## Reload boundaries
 
@@ -525,6 +528,8 @@ Restart required:
 
 - adding/removing a listener, changing bind address/port, or changing protocol
   at an address;
+- any `runtime` change, because the resource mode shapes the process-lifetime
+  descriptor budget and memory monitor;
 - any `policy.resourceGovernor` change, because REALITY replay admission/state
   is process-lifetime;
 - any `policy.relay` change, because buffer/splice pools are process-lifetime;

@@ -197,9 +197,10 @@ impl RealityAcceptor {
         inbound: &VlessInboundConfig,
         governor: ResourceGovernor,
         policy: &ResourceGovernorConfig,
+        relay: crate::transport::TcpRelay,
     ) -> Result<Self, RealityAcceptorConfigError> {
         let replay = ReplayCache::new(governor.clone(), policy);
-        Self::from_inbound_with_replay(inbound, governor, policy, replay)
+        Self::from_inbound_with_replay(inbound, governor, policy, replay, relay)
     }
 
     /// Compiles an inbound while retaining process-wide replay history across
@@ -209,6 +210,7 @@ impl RealityAcceptor {
         governor: ResourceGovernor,
         policy: &ResourceGovernorConfig,
         replay: ReplayCache,
+        relay: crate::transport::TcpRelay,
     ) -> Result<Self, RealityAcceptorConfigError> {
         let reality = &inbound.stream_settings.reality_settings;
         let authenticator = RealityAuthenticator::from_config(reality)
@@ -230,7 +232,12 @@ impl RealityAcceptor {
             authenticator,
             replay,
             identity,
-            fallback: RealityFallback::new(reality.target.as_str(), governor.clone(), policy),
+            fallback: RealityFallback::new(
+                reality.target.as_str(),
+                governor.clone(),
+                policy,
+                relay,
+            ),
             governor,
             users: Arc::new(UserRegistry::new(users)),
             inbound_tag: Arc::from(inbound.tag.as_str()),
@@ -264,14 +271,14 @@ impl RealityAcceptor {
             Err(error) => {
                 let (_, prefix) = error.into_parts();
                 return self
-                    .fallback_prefix(&mut stream, &prefix, handshake_permit)
+                    .fallback_prefix(stream, &prefix, handshake_permit)
                     .await;
             }
         };
         let (hello, client_prefix, remainder) = read.into_parts();
         if !remainder.is_empty() {
             return self
-                .fallback_prefix(&mut stream, &client_prefix, handshake_permit)
+                .fallback_prefix(stream, &client_prefix, handshake_permit)
                 .await;
         }
 
@@ -279,7 +286,7 @@ impl RealityAcceptor {
             Ok(permit) => permit,
             Err(_) => {
                 return self
-                    .fallback_prefix(&mut stream, &client_prefix, handshake_permit)
+                    .fallback_prefix(stream, &client_prefix, handshake_permit)
                     .await;
             }
         };
@@ -289,7 +296,7 @@ impl RealityAcceptor {
             Err(_) => {
                 drop(crypto_permit);
                 return self
-                    .fallback_prefix(&mut stream, &client_prefix, handshake_permit)
+                    .fallback_prefix(stream, &client_prefix, handshake_permit)
                     .await;
             }
         };
@@ -298,7 +305,7 @@ impl RealityAcceptor {
             Ok(replay) => replay,
             Err(_) => {
                 return self
-                    .fallback_prefix(&mut stream, &client_prefix, handshake_permit)
+                    .fallback_prefix(stream, &client_prefix, handshake_permit)
                     .await;
             }
         };
@@ -322,8 +329,7 @@ impl RealityAcceptor {
             Err(error) => {
                 let (_, target_prefix) = error.into_parts();
                 drop(replay);
-                return transition_cover(&mut stream, cover, &target_prefix, handshake_permit)
-                    .await;
+                return transition_cover(stream, cover, &target_prefix, handshake_permit).await;
             }
         };
         let (target, target_prefix) = target_hello.into_parts();
@@ -331,8 +337,7 @@ impl RealityAcceptor {
             Ok(permit) => permit,
             Err(_) => {
                 drop(replay);
-                return transition_cover(&mut stream, cover, &target_prefix, handshake_permit)
-                    .await;
+                return transition_cover(stream, cover, &target_prefix, handshake_permit).await;
             }
         };
         let selected_alpn = hello.alpn_protocols().next().map(<[u8]>::to_vec);
@@ -347,8 +352,7 @@ impl RealityAcceptor {
             Err(_) => {
                 drop(crypto_permit);
                 drop(replay);
-                return transition_cover(&mut stream, cover, &target_prefix, handshake_permit)
-                    .await;
+                return transition_cover(stream, cover, &target_prefix, handshake_permit).await;
             }
         };
         drop(crypto_permit);
@@ -377,7 +381,7 @@ impl RealityAcceptor {
 
     async fn fallback_prefix(
         &self,
-        stream: &mut TcpStream,
+        stream: TcpStream,
         prefix: &[u8],
         handshake_permit: AdmissionPermit,
     ) -> Result<RealityAcceptOutcome, RealityAcceptError> {
@@ -406,7 +410,7 @@ impl fmt::Debug for RealityAcceptor {
 }
 
 async fn transition_cover(
-    stream: &mut TcpStream,
+    stream: TcpStream,
     cover: CoverConnection,
     target_prefix: &[u8],
     handshake_permit: AdmissionPermit,
@@ -424,12 +428,24 @@ async fn write_server_flight(
     flight: &ServerFlight,
     deadline: Instant,
 ) -> Result<(), RealityAcceptError> {
-    write_before(stream, flight.server_hello_record(), deadline).await?;
-    write_before(stream, flight.change_cipher_spec(), deadline).await?;
+    // ServerHello, the compatibility CCS, and the encrypted records form one
+    // contiguous flight; assembling them once turns 2+N writes into a single
+    // write_all under the same handshake deadline.
+    let mut assembled = Vec::with_capacity(
+        flight.server_hello_record().len()
+            + flight.change_cipher_spec().len()
+            + flight
+                .encrypted_handshake_records()
+                .iter()
+                .map(Vec::len)
+                .sum::<usize>(),
+    );
+    assembled.extend_from_slice(flight.server_hello_record());
+    assembled.extend_from_slice(flight.change_cipher_spec());
     for record in flight.encrypted_handshake_records() {
-        write_before(stream, record, deadline).await?;
+        assembled.extend_from_slice(record);
     }
-    Ok(())
+    write_before(stream, &assembled, deadline).await
 }
 
 async fn write_before(
@@ -497,6 +513,11 @@ mod tests {
                 .expect("fixture must contain VLESS"),
             governor,
             &policy,
+            crate::transport::TcpRelay::new(
+                &crate::config::RelayPolicy::default(),
+                crate::runtime::FdBudget::new(4_096),
+            )
+            .expect("test relay must build"),
         )
         .expect("validated inbound must compile");
         let (mut client, server, peer_addr) = tcp_pair().await;

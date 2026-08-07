@@ -1,0 +1,1801 @@
+==> fmt
+PASS fmt
+==> clippy
+   Compiling ring v0.17.14
+   Compiling rustls v0.23.43
+    Checking rustls-webpki v0.103.13
+    Checking ureq v3.3.0
+    Checking rust-reality v0.1.0 (/home/jacek/work/kimi-rust-reality-performance/rust-reality)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.12s
+PASS clippy
+==> test-workspace
+   Compiling ring v0.17.14
+   Compiling rustls-webpki v0.103.13
+   Compiling rustls v0.23.43
+   Compiling ureq v3.3.0
+   Compiling rust-reality v0.1.0 (/home/jacek/work/kimi-rust-reality-performance/rust-reality)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.25s
+     Running unittests src/lib.rs (target/debug/deps/rr_linux-a3e750221116dd3e)
+
+running 44 tests
+test bpf::tests::a_map_descriptor_load_is_a_two_slot_wide_immediate ... ok
+test bpf::tests::opcode_bytes_match_the_documented_encodings ... ok
+test bpf::tests::both_address_families_are_handled_explicitly ... ok
+test bpf::tests::every_key_byte_is_initialised_before_the_helper_call ... ok
+test bpf::tests::the_context_offsets_match_the_kernel_layout ... ok
+test bpf::tests::the_address_family_rides_in_the_high_half_of_the_last_key_word ... ok
+test bpf::tests::registers_pack_into_the_low_and_high_nibble ... ok
+test bpf::tests::the_instruction_layout_matches_the_kernel_abi ... ok
+test bpf::tests::the_program_calls_the_socket_redirect_helper_for_its_program_type ... ok
+test bpf::tests::the_key_pointer_and_the_map_key_size_are_one_constant ... ok
+test bpf::tests::the_program_returns_the_helper_verdict ... ok
+test bpf::tests::the_verdict_program_is_bounded_and_loop_free ... ok
+test capability::tests::a_single_declined_operation_downgrades_the_backend ... ok
+test bpf::tests::the_remote_port_is_normalised_to_host_order ... ok
+test capability::tests::errno_classification_never_guesses_a_capability ... ok
+test capability::tests::probe_from_result_maps_success_and_failure ... ok
+test capability::tests::rendering_never_includes_anything_connection_specific ... ok
+test capability::tests::the_first_decline_is_the_reported_reason ... ok
+test rlimit::tests::a_finite_soft_limit_below_the_ceiling_is_returned_unchanged ... ok
+test rlimit::tests::an_unlimited_soft_limit_is_clamped_rather_than_overflowing ... ok
+test rlimit::tests::the_reported_soft_limit_never_exceeds_the_hard_limit ... ok
+test rlimit::tests::the_emergency_reserve_descriptor_opens_and_closes ... ok
+test socket::tests::local_fin_wait_states_are_not_peer_close ... ok
+test socket::tests::a_peer_close_moves_the_state_out_of_established ... ok
+test socket::tests::pending_input_reports_queued_bytes_and_drains_to_zero ... ok
+test socket::tests::tcp_counters_report_an_established_connection_and_its_bytes ... ok
+test sockhash::tests::a_committed_transaction_rolls_nothing_back ... ok
+test sockhash::tests::a_zero_relay_bound_is_rejected ... ok
+test sockhash::tests::admission_accounts_two_directions_per_relay ... ok
+test socket::tests::the_tcp_info_layout_matches_the_kernel_uapi ... ok
+test sockhash::tests::concurrent_flows_from_one_listener_never_collide ... ok
+test sockhash::tests::ipv4_and_ipv6_flows_are_distinguishable ... ok
+test sockhash::tests::redirected_counts_are_checked_rather_than_wrapping ... ok
+test sockhash::tests::reversing_a_flow_key_swaps_both_endpoints ... ok
+test sockhash::tests::rollback_undoes_exactly_the_installed_directions ... ok
+test sockhash::tests::the_drain_barrier_handles_counter_wrap ... ok
+test sockhash::tests::the_attribute_layouts_match_the_kernel_abi ... ok
+test sockhash::tests::the_serialized_key_length_is_fixed ... ok
+test sockhash::tests::the_drain_barrier_ignores_progress_made_before_arming ... ok
+test sockhash::tests::the_probe_reports_a_fixed_reason_without_privilege ... ok
+test tests::a_valid_budget_is_accepted ... ok
+test tests::every_impossible_budget_is_named ... ok
+test tests::shard_count_is_bounded_by_both_cpus_and_configuration ... ok
+test tests::the_maximum_budget_product_does_not_overflow_silently ... ok
+
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/capability_report.rs (target/debug/deps/capability_report-a6c79ba312e11c89)
+
+running 1 test
+test reports_measured_kernel_capability ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/sockhash_privileged.rs (target/debug/deps/sockhash_privileged-5ae32e6abb507e46)
+
+running 11 tests
+test a_helper_program_type_mismatch_is_a_verifier_rejection ... ignored, requires privilege to load a BPF_PROG_TYPE_SK_SKB program
+test an_armed_pair_redirects_production_bytes ... ignored, requires privilege to arm a SOCKHASH redirect
+test an_unarmed_flow_is_delivered_to_userspace_rather_than_dropped ... ignored, requires privilege to load a BPF_PROG_TYPE_SK_SKB program
+test both_directions_install_and_remove_for_ipv4 ... ignored, requires privilege to create and populate a SOCKHASH
+test both_directions_install_and_remove_for_ipv6 ... ignored, requires privilege and a host with IPv6 loopback
+test the_probe_reports_availability_on_a_privileged_host ... ignored, requires privilege to create a SOCKHASH
+test the_program_attaches_as_a_stream_verdict ... ignored, requires privilege to load a BPF_PROG_TYPE_SK_SKB program
+test a_mapped_ipv4_key_cannot_collide_with_a_native_ipv6_key ... ok
+test the_verdict_program_passes_the_kernel_verifier ... ignored, requires privilege to load a BPF_PROG_TYPE_SK_SKB program
+test the_serialized_key_matches_the_layout_the_program_builds ... ok
+test flow_identity_is_captured_before_teardown ... ok
+
+test result: ok. 3 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/rust_reality-a657acc3a7cb42eb)
+
+running 321 tests
+test assets::tests::loads_live_community_geoip_and_geosite_release ... ignored, downloads the current community release from GitHub
+test assets::tests::loads_xray_geosite_and_geoip_wire_shapes ... ok
+test config::generate::tests::generated_json_is_directly_loadable ... ok
+test assets::tests::failed_reload_preserves_last_good_snapshot ... ok
+test config::generate::tests::landing_template_exposes_only_nxr ... ok
+test config::generate::tests::line_template_keeps_reality_public_and_nxr_internal ... ok
+test config::io::tests::rejects_removed_io_uring_relay_fields ... ok
+test config::io::tests::formatted_configuration_round_trips ... ok
+test config::io::tests::rejects_unknown_top_level_fields ... ok
+test config::snapshot::tests::failed_publication_keeps_last_good_snapshot ... ok
+test config::snapshot::tests::publication_preserves_existing_readers ... ok
+test config::validate::tests::a_kernel_relay_limit_may_not_exceed_max_connections ... ok
+test config::validate::tests::accepts_dedicated_resource_mode ... ok
+test config::validate::tests::accepts_internal_nxr_listener_without_public_routing_identity ... ok
+test config::validate::tests::accepts_leftmost_reality_server_name_wildcard ... ok
+test config::validate::tests::accepts_strict_production_configuration ... ok
+test config::validate::tests::an_enabled_kernel_backend_needs_a_nonzero_relay_limit ... ok
+test assets::tests::downloads_once_then_revalidates_cached_asset_with_etag ... ok
+test config::validate::tests::an_impossible_pinned_memory_budget_is_rejected_before_binding ... ok
+test config::validate::tests::an_impossible_relay_memory_budget_is_rejected_before_binding ... ok
+test config::validate::tests::assets_require_https_without_embedded_credentials ... ok
+test config::validate::tests::assigns_each_uuid_exactly_once ... ok
+test config::validate::tests::bounds_reality_client_clock_difference ... ok
+test config::validate::tests::defaults_to_standard_resource_mode ... ok
+test config::validate::tests::external_assets_cannot_escape_cache_directory ... ok
+test config::validate::tests::file_logging_requires_bounded_file_settings ... ok
+test config::validate::tests::nxr_replay_retention_covers_the_entire_timestamp_window ... ok
+test config::validate::tests::nxr_uses_one_independent_fixed_size_psk_without_pool_settings ... ok
+test config::validate::tests::pooled_buffers_are_counted_as_buffers_rather_than_bytes ... ok
+test config::validate::tests::rejects_duplicate_listener_addresses ... ok
+test config::validate::tests::rejects_malformed_reality_private_key ... ok
+test config::validate::tests::rejects_plain_vless_inbound ... ok
+test config::validate::tests::rejects_missing_outbound_reference ... ok
+test config::validate::tests::rejects_unimplemented_custom_dns_resolvers ... ok
+test config::validate::tests::rejects_unknown_resource_mode_values ... ok
+test config::validate::tests::rejects_unknown_runtime_fields ... ok
+test config::validate::tests::rejects_unsafe_or_duplicate_reality_server_name_patterns ... ok
+test config::schema::tests::schema_excludes_removed_operational_surfaces ... ok
+test config::validate::tests::secret_debug_output_is_redacted ... ok
+test crypto::keygen::tests::generates_eight_byte_short_id ... ok
+test config::validate::tests::sockhash_pinned_memory_accounts_two_map_entries_and_the_program ... ok
+test crypto::keygen::tests::generates_rfc4122_version_four_uuid ... ok
+test crypto::keygen::tests::node_key_contains_32_random_bytes ... ok
+test crypto::keygen::tests::x25519_public_key_matches_private_key ... ok
+test logging::sink::tests::filters_debug_events_at_info_level ... ok
+test logging::sink::tests::enforces_file_count_and_total_byte_limits ... ok
+test protocol::nxr::tests::domain_and_ipv6_requests_round_trip_at_exact_boundaries ... ok
+test protocol::nxr::tests::fixed_ipv4_hmac_vector_round_trips ... ok
+test protocol::nxr::tests::arbitrary_bytes_never_panic_or_exceed_declared_bound ... ok
+test protocol::nxr::tests::rejects_tamper_wrong_key_time_and_trailing_data ... ok
+test protocol::reality::auth::tests::authenticates_one_label_server_name_wildcard ... ok
+test protocol::reality::auth::tests::authenticates_xray_session_id_layout ... ok
+test protocol::reality::auth::tests::nist_aes256_gcm_vector_decrypts ... ok
+test protocol::reality::auth::tests::rejects_invalid_server_name_when_config_validation_is_bypassed ... ok
+test protocol::reality::auth::tests::rejects_non_contributory_x25519_share ... ok
+test protocol::reality::auth::tests::rejects_ciphertext_and_aad_tampering ... ok
+test protocol::reality::auth::tests::rejects_wrong_server_identity_and_private_key ... ok
+test protocol::reality::auth::tests::rejects_unknown_short_id_and_time_skew ... ok
+test protocol::reality::auth::tests::rfc5869_sha256_case_one_matches ... ok
+test protocol::reality::auth::tests::rfc7748_alice_bob_shared_secret_matches ... ok
+test protocol::reality::client_hello::tests::builds_exact_reality_aad_and_nonce ... ok
+test protocol::reality::client_hello::tests::extracts_hybrid_x25519_and_mlkem_parts ... ok
+test protocol::reality::client_hello::tests::parses_exact_record_and_rejects_trailing_bytes ... ok
+test protocol::reality::client_hello::tests::parses_fields_without_copying_variable_payloads ... ok
+test protocol::reality::client_hello::tests::rejects_odd_cipher_suite_vector ... ok
+test protocol::reality::client_hello::tests::rejects_oversized_input_before_parsing ... ok
+test protocol::reality::read::tests::assembles_client_hello_across_tls_records ... ok
+test protocol::reality::read::tests::parse_failure_returns_byte_exact_prefix ... ok
+test protocol::reality::read::tests::preserves_same_record_handshake_remainder ... ok
+test protocol::reality::read::tests::reads_network_fragmentation_one_byte_at_a_time ... ok
+test protocol::reality::read::tests::rejects_oversized_record_before_reading_body ... ok
+test crypto::keygen::tests::mldsa65_derivation_is_deterministic_and_redacted ... ok
+test protocol::reality::replay::tests::concurrent_duplicate_race_has_one_winner ... ok
+test protocol::reality::replay::tests::expired_entries_release_global_capacity ... ok
+test protocol::reality::replay::tests::expired_pending_reservation_cannot_commit ... ok
+test protocol::reality::replay::tests::expired_pending_reservation_cannot_remove_replacement ... ok
+test protocol::reality::replay::tests::only_explicit_client_finished_commit_persists ... ok
+test protocol::reality::replay::tests::pending_duplicate_is_rejected_and_drop_rolls_back ... ok
+test protocol::reality::tls13::allocation_gate::assembled_frames_match_the_reference_encoder_on_the_wire ... ok
+test protocol::reality::read::tests::timeout_returns_every_received_byte ... ok
+test protocol::reality::client_hello::tests::arbitrary_bytes_never_panic ... ok
+test benchmark::tests::emits_finite_bounded_results_for_every_case ... ok
+test protocol::reality::tls13::allocation_gate::raw_mode_borrowed_decode_allocates_nothing_per_record ... ok
+test protocol::reality::tls13::allocation_gate::vision_decode_of_borrowed_plaintext_allocates_nothing_per_record ... ok
+test protocol::reality::tls13::application_io::tests::alert_is_read_out_of_a_multi_record_burst ... ok
+test protocol::reality::tls13::application_io::tests::authenticated_peer_alert_is_not_application_eof ... ok
+test protocol::reality::tls13::application_io::tests::clean_eof_at_a_record_boundary_keeps_the_exact_error_shape ... ok
+test protocol::reality::tls13::application_io::tests::decrypts_and_encrypts_application_records_without_plaintext_copy ... ok
+test protocol::reality::tls13::application_io::tests::eof_mid_record_reports_exactly_the_buffered_partial_bytes ... ok
+test protocol::reality::tls13::application_io::tests::fragmented_record_is_reassembled_across_refills ... ok
+test protocol::reality::tls13::application_io::tests::oversized_declared_length_fails_with_the_five_byte_header ... ok
+test protocol::reality::tls13::application_io::tests::pending_drain_returns_exactly_the_pipelined_raw_bytes ... ok
+test protocol::reality::tls13::application_io::tests::two_records_in_one_burst_cost_one_socket_read ... ok
+test protocol::reality::tls13::allocation_gate::framed_write_path_allocates_nothing_per_record_after_warm_up ... ok
+test protocol::reality::tls13::handshake::tests::full_x25519_flight_establishes_only_after_valid_client_finished ... ok
+test protocol::reality::tls13::handshake::tests::unoffered_alpn_is_rejected_before_flight ... ok
+test protocol::reality::tls13::idle::tests::ready_operation_wins_over_an_elapsed_window ... ok
+test protocol::reality::tls13::handshake::tests::hybrid_share_combines_mlkem_then_x25519_like_xray ... ok
+test protocol::reality::tls13::idle::tests::steady_progress_never_times_out_across_many_steps ... ok
+test protocol::reality::tls13::idle::tests::unarmed_deadline_fails_without_polling ... ok
+test protocol::reality::tls13::keys::tests::rejects_hash_mismatch_and_invalid_shared_secret ... ok
+test protocol::reality::tls13::keys::tests::rfc8448_application_secrets_and_server_keys_match ... ok
+test protocol::reality::tls13::keys::tests::rfc8448_handshake_keys_and_finished_match ... ok
+test protocol::reality::tls13::keys::tests::rfc8448_simple_handshake_schedule_matches ... ok
+test protocol::reality::tls13::keys::tests::sha384_suite_uses_48_byte_transcripts_and_32_byte_keys ... ok
+test protocol::reality::tls13::messages::tests::certificate_verify_signature_is_standard_ed25519 ... ok
+test protocol::reality::tls13::messages::tests::forged_certificate_matches_xray_hmac_binding ... ok
+test protocol::reality::tls13::messages::tests::handshake_vectors_have_exact_nested_lengths ... ok
+test protocol::reality::tls13::messages::tests::identity_debug_is_redacted ... ok
+test protocol::reality::tls13::messages::tests::rejects_invalid_alpn_certificate_and_digest_lengths ... ok
+test protocol::reality::tls13::record::tests::debug_never_exposes_key_or_iv ... ok
+test protocol::reality::tls13::record::tests::rejects_tamper_reordering_trailing_bytes_and_oversize ... ok
+test protocol::reality::tls13::record::tests::rfc8448_client_finished_record_matches_byte_for_byte ... ok
+test protocol::reality::tls13::record::tests::rfc8448_client_finished_record_opens_in_place ... ok
+test protocol::reality::tls13::allocation_gate::framed_read_path_allocates_nothing_per_record_after_warm_up ... ok
+test protocol::reality::tls13::record_read::tests::accepts_exact_change_cipher_spec_record ... ok
+test protocol::reality::tls13::record_read::tests::reads_maximum_record_into_reserved_storage ... ok
+test protocol::reality::tls13::record_read::tests::reads_one_fragmented_record_without_consuming_the_next ... ok
+test protocol::reality::tls13::record_read::tests::rejects_oversized_header_before_reading_body ... ok
+test protocol::reality::tls13::record_read::tests::rejects_zero_length_body_before_reading_more ... ok
+test protocol::reality::tls13::record_read::tests::reused_storage_address_is_stable_across_successful_records ... ok
+test protocol::reality::tls13::record_read::tests::reused_storage_retains_exact_prefix_after_timeout ... ok
+test protocol::reality::tls13::record_read::tests::shrinking_records_reuse_high_water_storage_with_exact_prefix ... ok
+test protocol::reality::tls13::record::tests::round_trips_all_supported_suites_with_padding_and_sequence ... ok
+test protocol::reality::tls13::record_read::tests::timeout_preserves_incomplete_record_prefix ... ok
+test protocol::reality::tls13::server_hello::tests::parses_target_and_replaces_only_x25519_key_exchange ... ok
+test protocol::reality::tls13::server_hello::tests::rejects_negotiation_not_offered_by_client ... ok
+test protocol::reality::tls13::server_hello::tests::rejects_target_psk_selection_and_bad_key_length ... ok
+test protocol::reality::tls13::server_hello::tests::wraps_plaintext_record_and_emits_fixed_ccs ... ok
+test protocol::reality::tls13::target_read::tests::invalid_target_returns_complete_byte_exact_record ... ok
+test protocol::reality::tls13::target_read::tests::reads_fragmented_target_record_without_consuming_next_record ... ok
+test protocol::reality::tls13::target_read::tests::rejects_non_handshake_header_without_reading_declared_body ... ok
+test protocol::reality::tls13::server_hello::tests::arbitrary_target_bytes_never_panic ... ok
+test protocol::vless::addons::tests::decodes_xray_vision_flow_and_seed ... ok
+test protocol::vless::addons::tests::rejects_truncated_length_delimited_value ... ok
+test protocol::vless::addons::tests::skips_supported_unknown_wire_fields ... ok
+test protocol::vless::addons::tests::uses_last_repeated_scalar_like_protobuf ... ok
+test protocol::vless::decode::tests::decodes_domain_request_and_preserves_payload ... ok
+test protocol::vless::decode::tests::decodes_ipv4_destination ... ok
+test protocol::vless::decode::tests::decodes_ipv6_destination ... ok
+test protocol::vless::decode::tests::decodes_mux_without_destination ... ok
+test protocol::vless::decode::tests::rejects_unknown_command ... ok
+test protocol::vless::decode::tests::reports_truncated_user_id ... ok
+test protocol::vless::padding::tests::deterministic_seed_reproduces_the_same_sequence ... ok
+test protocol::vless::padding::tests::different_seeds_produce_different_sequences ... ok
+test protocol::reality::tls13::idle::tests::stalled_operation_times_out_and_the_timer_is_reusable ... ok
+test protocol::vless::padding::tests::operating_system_seeding_succeeds ... ok
+test protocol::vless::padding::tests::refill_crosses_block_boundaries_without_repeating_state ... ok
+test protocol::vless::padding::tests::values_stay_inside_the_requested_range ... ok
+test protocol::vless::read::tests::preserves_payload_read_with_header ... ok
+test protocol::vless::read::tests::reads_header_fragmented_one_byte_at_a_time ... ok
+test protocol::vless::read::tests::reports_eof_before_complete_header ... ok
+test protocol::vless::response::tests::encodes_empty_response_header ... ok
+test protocol::vless::response::tests::encodes_response_addons ... ok
+test protocol::vless::response::tests::rejects_addons_larger_than_wire_length ... ok
+test protocol::vless::response::tests::writes_response_header_to_async_stream ... ok
+test protocol::vless::validate::tests::authorizes_registered_plain_tcp_request ... ok
+test protocol::vless::validate::tests::authorizes_registered_vision_tcp_request ... ok
+test protocol::vless::validate::tests::rejects_malformed_vision_addons ... ok
+test protocol::vless::validate::tests::rejects_plain_request_on_vision_inbound ... ok
+test protocol::vless::validate::tests::rejects_request_addons ... ok
+test protocol::vless::validate::tests::rejects_tcp_request_without_destination ... ok
+test protocol::vless::validate::tests::rejects_unknown_user_before_capability_checks ... ok
+test protocol::vless::validate::tests::rejects_unsupported_command ... ok
+test protocol::vless::vision::tests::borrowed_decode_returns_input_verbatim_once_raw ... ok
+test protocol::vless::vision::tests::borrowed_decode_stages_the_framed_to_raw_transition ... ok
+test protocol::vless::vision::tests::decodes_multiple_frames_packed_into_one_fragment ... ok
+test protocol::vless::vision::tests::decodes_xray_wire_vector_fragmented_at_every_byte ... ok
+test protocol::vless::vision::tests::encoder_roundtrips_and_emits_uuid_only_once ... ok
+test protocol::vless::vision::tests::plan_within_caps_padding_to_the_record_budget ... ok
+test protocol::vless::vision::tests::rejects_frame_larger_than_xray_buffer ... ok
+test protocol::vless::vision::tests::rejects_wrong_user_id_and_poison_decoder ... ok
+test protocol::vless::vision::tests::reports_authenticated_direct_boundary_and_preserves_remainder ... ok
+test runtime::admission::tests::a_governor_without_a_gauge_never_sees_pressure ... ok
+test runtime::admission::tests::direct_barrier_enforces_concurrency_then_rate ... ok
+test runtime::admission::tests::governor_keeps_resource_pools_independent ... ok
+test runtime::admission::tests::governor_releases_permit_on_drop ... ok
+test runtime::admission::tests::pressure_refuses_fallback_first_then_handshake_then_everything ... ok
+test runtime::admission::tests::the_direct_barrier_pauses_only_at_critical_pressure ... ok
+test runtime::connection::tests::completed_task_retains_peer_address ... ok
+test protocol::reality::tls13::target_read::tests::timeout_returns_partial_target_prefix ... ok
+test runtime::connection::tests::connection_error_does_not_remove_other_tasks ... ok
+test runtime::fd_budget::tests::a_multi_unit_permit_is_all_or_nothing ... ok
+test runtime::fd_budget::tests::a_strict_budget_never_admits_more_than_its_capacity ... ok
+test runtime::fd_budget::tests::a_waiting_acquirer_is_woken_by_a_release ... ok
+test runtime::fd_budget::tests::a_zero_unit_permit_is_inert ... ok
+test runtime::fd_budget::tests::concurrent_acquisition_never_overshoots ... ok
+test runtime::fd_budget::tests::merging_across_budgets_is_refused_without_losing_either_reservation ... ok
+test runtime::fd_budget::tests::merging_permits_preserves_the_total_reservation ... ok
+test runtime::fd_budget::tests::pressure_uses_hysteresis_rather_than_a_single_threshold ... ok
+test runtime::fd_budget::tests::releasing_early_returns_capacity_before_the_permit_scope_ends ... ok
+test runtime::fd_budget::tests::repeated_cycles_return_the_counter_to_baseline ... ok
+test runtime::fd_plan::tests::a_generous_limit_is_not_clamped ... ok
+test runtime::fd_plan::tests::an_impossible_limit_is_rejected_before_binding ... ok
+test runtime::fd_plan::tests::an_unlimited_soft_limit_is_planned_against_a_finite_ceiling ... ok
+test runtime::fd_plan::tests::kernel_backend_descriptors_are_reserved_when_enabled ... ok
+test runtime::fd_plan::tests::the_budget_plus_every_reserve_never_exceeds_the_soft_limit ... ok
+test runtime::fd_plan::tests::the_dedicated_policy_admits_more_but_never_overshoots ... ok
+test runtime::fd_plan::tests::the_dedicated_policy_holds_back_one_tenth_of_the_limit ... ok
+test runtime::fd_plan::tests::the_dedicated_policy_still_refuses_an_impossible_limit ... ok
+test runtime::fd_plan::tests::the_incident_limit_produces_a_clamped_but_serviceable_budget ... ok
+test runtime::machine::tests::a_conservative_report_disables_the_memory_dimension ... ok
+test runtime::machine::tests::assembly_combines_readings_without_touching_the_host ... ok
+test runtime::machine::tests::cgroup_detection_degrades_when_the_hierarchy_is_absent ... ok
+test runtime::machine::tests::cgroup_detection_reads_synthetic_files ... ok
+test runtime::machine::tests::cgroup_limits_treat_max_as_unbounded ... ok
+test runtime::machine::tests::cpu_max_parses_quota_and_period ... ok
+test runtime::machine::tests::host_detection_produces_a_coherent_report ... ok
+test runtime::machine::tests::meminfo_total_is_reported_in_bytes ... ok
+test runtime::machine::tests::memory_hysteresis_does_not_flap_around_any_threshold ... ok
+test runtime::machine::tests::memory_transitions_never_skip_a_tier_downward ... ok
+test runtime::machine::tests::the_effective_total_prefers_the_tighter_boundary ... ok
+test runtime::machine::tests::the_memory_plan_uses_the_documented_fractions ... ok
+test runtime::machine::tests::the_memory_plan_watermarks_are_strictly_ordered ... ok
+test runtime::machine::tests::the_raise_target_is_the_hard_limit_only_when_it_is_higher ... ok
+test runtime::pressure::tests::a_critical_waiter_is_woken_by_a_transition ... ok
+test runtime::pressure::tests::a_non_critical_state_never_waits ... ok
+test runtime::pressure::tests::pressure_refuses_fallback_before_handshake_before_connection ... ok
+test runtime::pressure::tests::set_reports_only_real_transitions ... ok
+test runtime::pressure::tests::the_worse_dimension_wins ... ok
+test server::config::tests::preserves_explicit_server_settings ... ok
+test server::connector::tests::connects_to_ipv4_destination ... ok
+test server::connector::tests::resolves_and_connects_to_domain_destination ... ok
+test server::connector::tests::reuses_pre_resolved_address_without_second_dns_lookup ... ok
+test server::direct::tests::a_relaying_peer_can_no_longer_join_the_pair ... ok
+test server::direct::tests::coordinator_rejects_an_invalid_transition_without_changing_state ... ok
+test server::direct::tests::forbidden_transitions_are_rejected ... ok
+test server::direct::tests::mismatched_halves_are_rejected_instead_of_aliasing_descriptors ... ok
+test server::direct::tests::only_the_last_depositor_receives_both_complete_sockets ... ok
+test server::direct::tests::permitted_transitions_match_the_specified_lifecycle ... ok
+test server::direct::tests::the_pair_decision_reads_raw_ready_and_pair_pending_peers ... ok
+test server::fallback::tests::forwards_consumed_prefix_byte_exactly_before_live_bytes ... ok
+test server::fallback::tests::inspected_target_response_can_rejoin_same_fallback_connection ... ok
+test server::fallback::tests::target_mirror_acquires_fallback_capacity_only_when_relaying ... ok
+test protocol::reality::tls13::allocation_gate::outer_downlink_read_into_record_allocates_nothing_per_chunk_after_warm_up ... ok
+test runtime::fd_budget::tests::a_cancelled_acquirer_reserves_nothing ... ok
+test server::handler::tests::rejects_unauthorized_request_before_connecting ... ok
+test server::nxr::tests::authenticator_rejects_nonce_reuse_before_returning_destination ... ok
+test server::nxr::tests::replay_cache_is_bounded_and_expires_monotonically ... ok
+test server::outbound::tests::blackhole_never_opens_a_destination_stream ... ok
+test server::nxr::tests::landing_relays_raw_payload_and_preserves_half_close ... ok
+test server::outbound::tests::negotiates_authenticated_socks5_domain_connect ... ok
+test server::outbound::tests::nxr_writes_one_authentication_request_then_raw_payload ... ok
+test server::probe::tests::generated_probe_client_hello_passes_strict_parser ... ok
+test server::probe::tests::rejects_unbounded_or_non_dns_sni ... ok
+test server::probe::tests::wildcard_probe_requires_matching_concrete_target_hostname ... ok
+test server::probe::tests::probes_live_loopback_target_and_reports_negotiation ... ok
+{"timestampUnixMs":1785958976468,"level":"info","event":"server_starting"}
+{"timestampUnixMs":1785958976468,"level":"info","event":"descriptor_budget_report","fd_soft_limit":524288,"fd_hard_limit":524288,"fd_fixed_reserve":54,"fd_safety_headroom":32768,"fd_effective_budget":491466,"fd_clamped":false,"fd_recommended_soft_limit":66614}
+{"timestampUnixMs":1785958976468,"level":"info","event":"relay_backend_report","backends":[{"backend":"buffered","available":true},{"backend":"splice","available":true},{"backend":"sockhash","available":false,"declineReason":"disabled"}]}
+{"timestampUnixMs":1785958976468,"level":"info","event":"configuration_published","generation":0}
+{"timestampUnixMs":1785958976469,"level":"info","event":"server_starting"}
+{"timestampUnixMs":1785958976469,"level":"info","event":"descriptor_budget_report","fd_soft_limit":524288,"fd_hard_limit":524288,"fd_fixed_reserve":54,"fd_safety_headroom":32768,"fd_effective_budget":491466,"fd_clamped":false,"fd_recommended_soft_limit":66614}
+{"timestampUnixMs":1785958976469,"level":"info","event":"configuration_published","generation":1}
+{"timestampUnixMs":1785958976469,"level":"info","event":"relay_backend_report","backends":[{"backend":"buffered","available":true},{"backend":"splice","available":true},{"backend":"sockhash","available":false,"declineReason":"disabled"}]}
+{"timestampUnixMs":1785958976469,"level":"info","event":"configuration_published","generation":0}
+{"timestampUnixMs":1785958976469,"level":"info","event":"listener_started","tag":"public-reality","address":"127.0.0.1:46173"}
+test server::production::tests::atomically_publishes_hot_runtime_generation ... ok
+test server::production::tests::binds_all_listeners_and_stops_on_injected_shutdown ... ok
+{"timestampUnixMs":1785958976469,"level":"info","event":"server_starting"}
+{"timestampUnixMs":1785958976469,"level":"info","event":"descriptor_budget_report","fd_soft_limit":524288,"fd_hard_limit":524288,"fd_fixed_reserve":54,"fd_safety_headroom":32768,"fd_effective_budget":491466,"fd_clamped":false,"fd_recommended_soft_limit":66614}
+{"timestampUnixMs":1785958976469,"level":"info","event":"relay_backend_report","backends":[{"backend":"buffered","available":true},{"backend":"splice","available":true},{"backend":"sockhash","available":false,"declineReason":"disabled"}]}
+{"timestampUnixMs":1785958976469,"level":"info","event":"configuration_published","generation":0}
+test server::production::tests::compiles_generated_reality_vision_server_without_plain_inbound ... ok
+{"timestampUnixMs":1785958976469,"level":"info","event":"server_starting"}
+{"timestampUnixMs":1785958976469,"level":"info","event":"descriptor_budget_report","fd_soft_limit":524288,"fd_hard_limit":524288,"fd_fixed_reserve":54,"fd_safety_headroom":32768,"fd_effective_budget":491466,"fd_clamped":false,"fd_recommended_soft_limit":66614}
+{"timestampUnixMs":1785958976469,"level":"info","event":"relay_backend_report","backends":[{"backend":"buffered","available":true},{"backend":"splice","available":true},{"backend":"sockhash","available":false,"declineReason":"disabled"}]}
+{"timestampUnixMs":1785958976469,"level":"info","event":"configuration_published","generation":0}
+test server::production::tests::rejected_hot_update_keeps_last_good_runtime ... ok
+{"timestampUnixMs":1785958976470,"level":"info","event":"server_starting"}
+{"timestampUnixMs":1785958976470,"level":"info","event":"descriptor_budget_report","fd_soft_limit":524288,"fd_hard_limit":524288,"fd_fixed_reserve":54,"fd_safety_headroom":32768,"fd_effective_budget":491466,"fd_clamped":false,"fd_recommended_soft_limit":66614}
+{"timestampUnixMs":1785958976470,"level":"info","event":"relay_backend_report","backends":[{"backend":"buffered","available":true},{"backend":"splice","available":true},{"backend":"sockhash","available":false,"declineReason":"disabled"}]}
+{"timestampUnixMs":1785958976470,"level":"info","event":"configuration_published","generation":0}
+test server::production::tests::replay_policy_change_requires_restart ... ok
+{"timestampUnixMs":1785958976470,"level":"info","event":"server_starting"}
+{"timestampUnixMs":1785958976470,"level":"info","event":"descriptor_budget_report","fd_soft_limit":524288,"fd_hard_limit":524288,"fd_fixed_reserve":54,"fd_safety_headroom":32768,"fd_effective_budget":491466,"fd_clamped":false,"fd_recommended_soft_limit":66614}
+{"timestampUnixMs":1785958976470,"level":"info","event":"relay_backend_report","backends":[{"backend":"buffered","available":true},{"backend":"splice","available":true},{"backend":"sockhash","available":false,"declineReason":"disabled"}]}
+{"timestampUnixMs":1785958976470,"level":"info","event":"configuration_published","generation":0}
+test server::production::tests::resource_mode_change_requires_restart ... ok
+{"timestampUnixMs":1785958976471,"level":"info","event":"server_starting"}
+{"timestampUnixMs":1785958976471,"level":"info","event":"descriptor_budget_report","fd_soft_limit":524288,"fd_hard_limit":524288,"fd_fixed_reserve":55,"fd_safety_headroom":32768,"fd_effective_budget":491465,"fd_clamped":false,"fd_recommended_soft_limit":66615}
+{"timestampUnixMs":1785958976471,"level":"info","event":"relay_backend_report","backends":[{"backend":"buffered","available":true},{"backend":"splice","available":true},{"backend":"sockhash","available":false,"declineReason":"disabled"}]}
+{"timestampUnixMs":1785958976471,"level":"info","event":"configuration_published","generation":0}
+{"timestampUnixMs":1785958976471,"level":"info","event":"listener_started","tag":"landing-internal","address":"127.0.0.1:33675"}
+{"timestampUnixMs":1785958976471,"level":"info","event":"listener_started","tag":"public-reality","address":"127.0.0.1:41279"}
+test server::reality::tests::authentication_failure_relays_exact_client_hello_to_cover ... ok
+test server::routing::tests::as_is_does_not_resolve_domain_for_ip_rules ... ok
+test server::routing::tests::global_private_rule_precedes_user_domain_rule ... ok
+test server::routing::tests::ip_if_non_match_resolves_domain_for_ip_rules ... ok
+test server::routing::tests::suffix_requires_dns_label_boundary ... ok
+test server::routing::tests::user_rules_are_first_match_and_conditions_are_conjunctive ... ok
+test server::vision::tests::assembles_fragmented_handshake_header_across_records ... ok
+test server::vision::tests::assembles_fragmented_server_hello_across_records ... ok
+test server::production::tests::serves_internal_nxr_alongside_public_reality_vision ... ok
+test server::vision::tests::downlink_direct_drains_pipelined_raw_bytes_ahead_of_the_raw_relay ... ok
+test server::fallback::tests::timeout_releases_fallback_admission_permit ... ok
+test server::vision::tests::nested_reader_classifies_fragmented_records_and_clean_eof ... ok
+test server::vision::tests::nested_reader_reports_truncated_records_and_partial_headers ... ok
+test server::vision::tests::one_way_direct_downlink_relays_independently ... ok
+test server::vision::tests::one_way_direct_relays_the_direction_independently ... ok
+test server::vision::tests::bilateral_direct_handoff_transfers_large_payloads_byte_exactly ... ok
+test server::vision::tests::recognizes_tls13_server_hello_then_direct_application_record ... ok
+test server::vision::tests::rejects_ccm8_and_tls12_for_direct_transition ... ok
+test server::vision::tests::relays_non_tls_vision_session_inside_reality_records ... ok
+test server::vision::tests::switches_both_directions_only_after_authenticated_direct_boundaries ... ok
+test server::vision::tests::outer_downlink_forwards_bytes_buffered_by_classification ... ok
+test server_name::tests::validates_only_leftmost_single_label_wildcards ... ok
+test server_name::tests::wildcard_matches_exactly_one_concrete_dns_label ... ok
+test server_name::tests::wildcard_probe_uses_only_a_matching_target_hostname ... ok
+test transport::backend::tests::a_ledger_that_moved_bytes_can_never_decline ... ok
+test transport::backend::tests::an_untouched_ledger_may_decline ... ok
+test transport::backend::tests::automatic_preference_lists_every_backend ... ok
+test server::vision::tests::uplink_direct_drains_pipelined_raw_bytes_ahead_of_the_raw_relay ... ok
+test transport::backend::tests::borrowed_contexts_never_claim_complete_socket_ownership ... ok
+test transport::backend::tests::byte_counters_are_checked_rather_than_wrapping ... ok
+test transport::backend::tests::completion_reports_both_directions_and_the_backend ... ok
+test transport::backend::tests::decline_reasons_are_stable_low_cardinality_identifiers ... ok
+test transport::relay::tests::preserves_reverse_flow_after_inbound_half_close ... ok
+test transport::sockhash::tests::a_borrowed_pair_is_unsafe_to_arm ... ok
+test transport::sockhash::tests::a_clean_owned_pair_passes_every_precheck ... ok
+test transport::sockhash::tests::map_exhaustion_is_a_resource_limit_decline ... ok
+test transport::sockhash::tests::arming_after_a_transferred_byte_is_forbidden ... ok
+test transport::sockhash::tests::the_payload_delta_excludes_exactly_the_fin_byte ... ok
+test transport::sockhash::tests::queued_input_declines_before_arming ... ok
+test transport::tcp::tests::accept_enables_tcp_nodelay ... ok
+test transport::tcp::tests::accept_only_leaves_socket_configuration_to_a_separate_phase ... ok
+test transport::tcp::tests::backoff_is_bounded_and_resets_after_success ... ok
+test transport::tcp::tests::an_error_without_an_errno_is_not_assumed_retryable_forever ... ok
+test transport::tcp::tests::descriptor_pressure_is_never_classified_as_fatal ... ok
+test transport::tcp::tests::memory_pressure_backs_off_rather_than_busy_looping ... ok
+test transport::tcp::tests::bind_replaces_zero_port_with_kernel_assigned_port ... ok
+test transport::tcp::tests::permanent_listener_corruption_stops_only_that_listener ... ok
+test transport::tcp::tests::readiness_errors_are_not_logged_as_failures ... ok
+test transport::tcp::tests::the_declared_errno_values_match_the_platform ... ok
+test transport::tcp::tests::transient_network_errors_do_not_stop_the_listener ... ok
+test transport::tcp::tests::the_emergency_descriptor_survives_a_full_release_and_reacquire_cycle ... ok
+test server::vision::tests::packs_multiple_vision_frames_into_one_outer_record ... ok
+test transport::tcp_relay::tests::a_borrowed_pair_is_never_armed_even_with_an_explicit_request ... ok
+test transport::tcp_relay::tests::a_splice_relay_reserves_four_descriptor_units_before_creating_pipes ... ok
+test transport::tcp_relay::tests::a_directional_splice_relay_reserves_two_descriptor_units ... ok
+test transport::tcp_relay::tests::an_explicit_sockhash_request_falls_through_before_any_byte ... ok
+test transport::tcp_relay::tests::bounded_buffered_relay_preserves_half_close ... ok
+test transport::tcp_relay::tests::an_explicit_buffered_directional_request_bypasses_splice ... ok
+test transport::tcp_relay::tests::directional_buffered_relay_is_byte_exact_in_both_directions ... ok
+test transport::tcp_relay::tests::directional_splice_declines_to_buffered_with_bytes_intact ... ok
+test transport::tcp_relay::tests::nonblocking_splice_relay_preserves_half_close ... ok
+test transport::tcp_relay::tests::repeated_directional_splice_relays_return_descriptor_units_to_baseline ... ok
+test transport::tcp_relay::tests::directional_splice_relay_is_byte_exact_in_both_directions ... ok
+test transport::tcp_relay::tests::sockhash_availability_matches_controller_construction ... ok
+test transport::tcp_relay::tests::splice_declines_to_buffered_when_descriptors_are_exhausted ... ok
+test transport::tcp_relay::tests::repeated_splice_relays_return_descriptor_units_to_baseline ... ok
+test protocol::vless::padding::tests::distribution_covers_the_range_uniformly_enough ... ok
+test transport::tcp_relay::tests::a_cancelled_splice_relay_releases_its_descriptor_units ... ok
+
+test result: ok. 320 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running unittests src/main.rs (target/debug/deps/rust_reality-40a9f9ecd38b3937)
+
+running 7 tests
+test tests::parses_nested_generate_command ... ok
+test tests::bounds_builtin_benchmark_duration ... ok
+test tests::parses_bounded_destination_probe ... ok
+test tests::parses_explicit_line_and_landing_generators ... ok
+test tests::parses_self_test_config_path ... ok
+test tests::rejects_zero_uuid_count ... ok
+test tests::parses_serve_and_run_config_paths ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/connection_tasks.rs (target/debug/deps/connection_tasks-ba4a0a2ac89920e4)
+
+running 1 test
+test isolates_connection_failure_from_sibling_task ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/relay_backends.rs (target/debug/deps/relay_backends-eecabd2bb48cb6ac)
+
+running 11 tests
+test an_explicit_request_for_an_unavailable_backend_falls_back_before_transfer ... ok
+test cancellation_stops_the_relay_without_reporting_completion ... ok
+test preserves_reverse_flow_after_a_client_half_close ... ok
+test transfers_a_single_byte_in_each_direction ... ok
+test transfers_downlink_only ... ok
+test many_concurrent_flows_stay_byte_exact ... ok
+test transfers_uplink_only ... ok
+test unexercisable_backends_are_reported_rather_than_ignored ... ok
+test an_abruptly_closed_peer_surfaces_instead_of_silently_truncating ... ok
+test transfers_more_than_every_internal_buffer ... ok
+test applies_backpressure_when_the_reader_is_slow ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.75s
+
+     Running tests/resource_pressure.rs (target/debug/deps/resource_pressure-be52d8bf3d37bb6d)
+
+running 2 tests
+{"timestampUnixMs":1785958977336,"level":"info","event":"server_starting"}
+{"timestampUnixMs":1785958977337,"level":"info","event":"descriptor_budget_report","fd_soft_limit":524288,"fd_hard_limit":524288,"fd_fixed_reserve":54,"fd_safety_headroom":32768,"fd_effective_budget":491466,"fd_clamped":false,"fd_recommended_soft_limit":66614}
+{"timestampUnixMs":1785958977337,"level":"info","event":"relay_backend_report","backends":[{"backend":"buffered","available":true},{"backend":"splice","available":true},{"backend":"sockhash","available":false,"declineReason":"disabled"}]}
+{"timestampUnixMs":1785958977337,"level":"info","event":"configuration_published","generation":0}
+{"timestampUnixMs":1785958977337,"level":"info","event":"listener_started","tag":"internal-nxr","address":"127.0.0.1:44271"}
+test dedicated_mode_raises_the_soft_limit_in_a_child_process ... ok
+{"timestampUnixMs":1785958977351,"level":"warn","event":"connection_rejected","peer":"127.0.0.1:43870","reason":"resource_limit"}
+test a_critical_pause_keeps_established_traffic_and_resumes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/sockhash_runtime.rs (target/debug/deps/sockhash_runtime-afc392597f421a51)
+
+running 8 tests
+test a_connection_tuple_is_reusable_after_teardown ... ignored, requires privilege to construct the SOCKHASH controller
+test a_large_payload_drains_before_the_synthesized_fin ... ignored, requires privilege to construct the SOCKHASH controller
+test a_reset_mid_session_aborts_and_releases_everything ... ignored, requires privilege to construct the SOCKHASH controller
+test automatic_selection_arms_sockhash_and_reports_exact_counts ... ignored, requires privilege to construct the SOCKHASH controller
+test half_close_drains_and_the_reverse_direction_still_works ... ignored, requires privilege to construct the SOCKHASH controller
+test map_exhaustion_falls_through_to_splice_before_any_byte ... ignored, requires privilege to construct the SOCKHASH controller
+test repeated_arm_disarm_cycles_return_to_baseline ... ignored, requires privilege to construct the SOCKHASH controller
+test the_redirect_consumes_fin_and_readiness_signals_it ... ignored, requires privilege to arm a SOCKHASH redirect
+
+test result: ok. 0 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/tcp_accept.rs (target/debug/deps/tcp_accept-c0f723774bdfa114)
+
+running 1 test
+test accepts_loopback_connection ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/tcp_relay.rs (target/debug/deps/tcp_relay-600844ec2da7816f)
+
+running 1 test
+test preserves_tcp_response_after_client_half_close ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/vision_encoder_oracle.rs (target/debug/deps/vision_encoder_oracle-6853af37d268e28d)
+
+running 7 tests
+test agrees_across_multi_frame_sequences ... ok
+test assembly_emits_the_user_id_exactly_once ... ok
+test assembly_rejects_mismatched_regions_without_panicking ... ok
+test agrees_on_every_terminal_command ... ok
+test direct_command_stops_framing_at_the_exact_boundary ... ok
+test agrees_on_all_boundary_content_lengths ... ok
+test agrees_on_randomized_sequences ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+     Running tests/vless_request.rs (target/debug/deps/vless_request-863c336f432bc789)
+
+running 2 tests
+test decodes_fixed_domain_request_vector ... ok
+test reports_incomplete_fixed_vector ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/vless_server.rs (target/debug/deps/vless_server-7065018e33f2ba9e)
+
+running 1 test
+test relays_authorized_vless_tcp_connection ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rr_linux
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rust_reality
+
+running 1 test
+test src/transport/tcp.rs - transport::tcp (line 7) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.12s; merged doctests compilation took 0.12s
+PASS test-workspace
+==> test-workspace-release
+   Compiling ring v0.17.14
+   Compiling rustls v0.23.43
+   Compiling rustls-webpki v0.103.13
+   Compiling ureq v3.3.0
+   Compiling rust-reality v0.1.0 (/home/jacek/work/kimi-rust-reality-performance/rust-reality)
+    Finished `release` profile [optimized] target(s) in 2m 08s
+     Running unittests src/lib.rs (target/release/deps/rr_linux-8c1c194d11d6c9cc)
+
+running 44 tests
+test bpf::tests::a_map_descriptor_load_is_a_two_slot_wide_immediate ... ok
+test bpf::tests::every_key_byte_is_initialised_before_the_helper_call ... ok
+test bpf::tests::both_address_families_are_handled_explicitly ... ok
+test bpf::tests::opcode_bytes_match_the_documented_encodings ... ok
+test bpf::tests::registers_pack_into_the_low_and_high_nibble ... ok
+test bpf::tests::the_context_offsets_match_the_kernel_layout ... ok
+test bpf::tests::the_address_family_rides_in_the_high_half_of_the_last_key_word ... ok
+test bpf::tests::the_instruction_layout_matches_the_kernel_abi ... ok
+test bpf::tests::the_key_pointer_and_the_map_key_size_are_one_constant ... ok
+test bpf::tests::the_program_returns_the_helper_verdict ... ok
+test bpf::tests::the_program_calls_the_socket_redirect_helper_for_its_program_type ... ok
+test bpf::tests::the_verdict_program_is_bounded_and_loop_free ... ok
+test bpf::tests::the_remote_port_is_normalised_to_host_order ... ok
+test capability::tests::a_single_declined_operation_downgrades_the_backend ... ok
+test capability::tests::probe_from_result_maps_success_and_failure ... ok
+test capability::tests::errno_classification_never_guesses_a_capability ... ok
+test capability::tests::rendering_never_includes_anything_connection_specific ... ok
+test rlimit::tests::a_finite_soft_limit_below_the_ceiling_is_returned_unchanged ... ok
+test capability::tests::the_first_decline_is_the_reported_reason ... ok
+test rlimit::tests::the_emergency_reserve_descriptor_opens_and_closes ... ok
+test rlimit::tests::an_unlimited_soft_limit_is_clamped_rather_than_overflowing ... ok
+test rlimit::tests::the_reported_soft_limit_never_exceeds_the_hard_limit ... ok
+test socket::tests::a_peer_close_moves_the_state_out_of_established ... ok
+test socket::tests::local_fin_wait_states_are_not_peer_close ... ok
+test socket::tests::the_tcp_info_layout_matches_the_kernel_uapi ... ok
+test socket::tests::tcp_counters_report_an_established_connection_and_its_bytes ... ok
+test socket::tests::pending_input_reports_queued_bytes_and_drains_to_zero ... ok
+test sockhash::tests::a_committed_transaction_rolls_nothing_back ... ok
+test sockhash::tests::a_zero_relay_bound_is_rejected ... ok
+test sockhash::tests::concurrent_flows_from_one_listener_never_collide ... ok
+test sockhash::tests::admission_accounts_two_directions_per_relay ... ok
+test sockhash::tests::redirected_counts_are_checked_rather_than_wrapping ... ok
+test sockhash::tests::ipv4_and_ipv6_flows_are_distinguishable ... ok
+test sockhash::tests::rollback_undoes_exactly_the_installed_directions ... ok
+test sockhash::tests::the_drain_barrier_handles_counter_wrap ... ok
+test sockhash::tests::the_attribute_layouts_match_the_kernel_abi ... ok
+test sockhash::tests::reversing_a_flow_key_swaps_both_endpoints ... ok
+test sockhash::tests::the_drain_barrier_ignores_progress_made_before_arming ... ok
+test sockhash::tests::the_probe_reports_a_fixed_reason_without_privilege ... ok
+test sockhash::tests::the_serialized_key_length_is_fixed ... ok
+test tests::every_impossible_budget_is_named ... ok
+test tests::a_valid_budget_is_accepted ... ok
+test tests::shard_count_is_bounded_by_both_cpus_and_configuration ... ok
+test tests::the_maximum_budget_product_does_not_overflow_silently ... ok
+
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/capability_report.rs (target/release/deps/capability_report-4e159881a5c91e8e)
+
+running 1 test
+test reports_measured_kernel_capability ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/sockhash_privileged.rs (target/release/deps/sockhash_privileged-564b47c216796c54)
+
+running 11 tests
+test a_helper_program_type_mismatch_is_a_verifier_rejection ... ignored, requires privilege to load a BPF_PROG_TYPE_SK_SKB program
+test an_armed_pair_redirects_production_bytes ... ignored, requires privilege to arm a SOCKHASH redirect
+test an_unarmed_flow_is_delivered_to_userspace_rather_than_dropped ... ignored, requires privilege to load a BPF_PROG_TYPE_SK_SKB program
+test both_directions_install_and_remove_for_ipv4 ... ignored, requires privilege to create and populate a SOCKHASH
+test both_directions_install_and_remove_for_ipv6 ... ignored, requires privilege and a host with IPv6 loopback
+test the_probe_reports_availability_on_a_privileged_host ... ignored, requires privilege to create a SOCKHASH
+test the_program_attaches_as_a_stream_verdict ... ignored, requires privilege to load a BPF_PROG_TYPE_SK_SKB program
+test a_mapped_ipv4_key_cannot_collide_with_a_native_ipv6_key ... ok
+test the_verdict_program_passes_the_kernel_verifier ... ignored, requires privilege to load a BPF_PROG_TYPE_SK_SKB program
+test the_serialized_key_matches_the_layout_the_program_builds ... ok
+test flow_identity_is_captured_before_teardown ... ok
+
+test result: ok. 3 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/release/deps/rust_reality-f158c3f5fe4dff2a)
+
+running 321 tests
+test assets::tests::loads_live_community_geoip_and_geosite_release ... ignored, downloads the current community release from GitHub
+test assets::tests::loads_xray_geosite_and_geoip_wire_shapes ... ok
+test assets::tests::failed_reload_preserves_last_good_snapshot ... ok
+test assets::tests::downloads_once_then_revalidates_cached_asset_with_etag ... ok
+test config::generate::tests::landing_template_exposes_only_nxr ... ok
+test config::generate::tests::line_template_keeps_reality_public_and_nxr_internal ... ok
+test config::generate::tests::generated_json_is_directly_loadable ... ok
+test config::io::tests::rejects_removed_io_uring_relay_fields ... ok
+test config::io::tests::formatted_configuration_round_trips ... ok
+test config::io::tests::rejects_unknown_top_level_fields ... ok
+test config::schema::tests::schema_excludes_removed_operational_surfaces ... ok
+test config::snapshot::tests::publication_preserves_existing_readers ... ok
+test config::validate::tests::a_kernel_relay_limit_may_not_exceed_max_connections ... ok
+test config::snapshot::tests::failed_publication_keeps_last_good_snapshot ... ok
+test config::validate::tests::accepts_leftmost_reality_server_name_wildcard ... ok
+test config::validate::tests::accepts_dedicated_resource_mode ... ok
+test config::validate::tests::accepts_internal_nxr_listener_without_public_routing_identity ... ok
+test config::validate::tests::accepts_strict_production_configuration ... ok
+test config::validate::tests::an_enabled_kernel_backend_needs_a_nonzero_relay_limit ... ok
+test config::validate::tests::an_impossible_pinned_memory_budget_is_rejected_before_binding ... ok
+test config::validate::tests::an_impossible_relay_memory_budget_is_rejected_before_binding ... ok
+test config::validate::tests::bounds_reality_client_clock_difference ... ok
+test config::validate::tests::assets_require_https_without_embedded_credentials ... ok
+test config::validate::tests::assigns_each_uuid_exactly_once ... ok
+test config::validate::tests::external_assets_cannot_escape_cache_directory ... ok
+test config::validate::tests::file_logging_requires_bounded_file_settings ... ok
+test config::validate::tests::defaults_to_standard_resource_mode ... ok
+test config::validate::tests::nxr_replay_retention_covers_the_entire_timestamp_window ... ok
+test config::validate::tests::pooled_buffers_are_counted_as_buffers_rather_than_bytes ... ok
+test config::validate::tests::nxr_uses_one_independent_fixed_size_psk_without_pool_settings ... ok
+test config::validate::tests::rejects_duplicate_listener_addresses ... ok
+test config::validate::tests::rejects_missing_outbound_reference ... ok
+test config::validate::tests::rejects_malformed_reality_private_key ... ok
+test config::validate::tests::rejects_plain_vless_inbound ... ok
+test config::validate::tests::rejects_unimplemented_custom_dns_resolvers ... ok
+test config::validate::tests::rejects_unknown_resource_mode_values ... ok
+test config::validate::tests::rejects_unsafe_or_duplicate_reality_server_name_patterns ... ok
+test config::validate::tests::rejects_unknown_runtime_fields ... ok
+test config::validate::tests::secret_debug_output_is_redacted ... ok
+test crypto::keygen::tests::generates_eight_byte_short_id ... ok
+test config::validate::tests::sockhash_pinned_memory_accounts_two_map_entries_and_the_program ... ok
+test crypto::keygen::tests::generates_rfc4122_version_four_uuid ... ok
+test crypto::keygen::tests::x25519_public_key_matches_private_key ... ok
+test crypto::keygen::tests::node_key_contains_32_random_bytes ... ok
+test crypto::keygen::tests::mldsa65_derivation_is_deterministic_and_redacted ... ok
+test logging::sink::tests::filters_debug_events_at_info_level ... ok
+test protocol::nxr::tests::arbitrary_bytes_never_panic_or_exceed_declared_bound ... ok
+test protocol::nxr::tests::domain_and_ipv6_requests_round_trip_at_exact_boundaries ... ok
+test protocol::nxr::tests::fixed_ipv4_hmac_vector_round_trips ... ok
+test protocol::nxr::tests::rejects_tamper_wrong_key_time_and_trailing_data ... ok
+test logging::sink::tests::enforces_file_count_and_total_byte_limits ... ok
+test protocol::reality::auth::tests::nist_aes256_gcm_vector_decrypts ... ok
+test protocol::reality::auth::tests::authenticates_xray_session_id_layout ... ok
+test protocol::reality::auth::tests::rejects_invalid_server_name_when_config_validation_is_bypassed ... ok
+test protocol::reality::auth::tests::authenticates_one_label_server_name_wildcard ... ok
+test protocol::reality::auth::tests::rejects_non_contributory_x25519_share ... ok
+test protocol::reality::auth::tests::rejects_ciphertext_and_aad_tampering ... ok
+test protocol::reality::auth::tests::rejects_wrong_server_identity_and_private_key ... ok
+test protocol::reality::auth::tests::rfc5869_sha256_case_one_matches ... ok
+test protocol::reality::auth::tests::rejects_unknown_short_id_and_time_skew ... ok
+test protocol::reality::auth::tests::rfc7748_alice_bob_shared_secret_matches ... ok
+test protocol::reality::client_hello::tests::builds_exact_reality_aad_and_nonce ... ok
+test protocol::reality::client_hello::tests::extracts_hybrid_x25519_and_mlkem_parts ... ok
+test protocol::reality::client_hello::tests::parses_exact_record_and_rejects_trailing_bytes ... ok
+test protocol::reality::client_hello::tests::parses_fields_without_copying_variable_payloads ... ok
+test protocol::reality::client_hello::tests::rejects_odd_cipher_suite_vector ... ok
+test protocol::reality::client_hello::tests::rejects_oversized_input_before_parsing ... ok
+test protocol::reality::read::tests::assembles_client_hello_across_tls_records ... ok
+test protocol::reality::read::tests::parse_failure_returns_byte_exact_prefix ... ok
+test protocol::reality::read::tests::preserves_same_record_handshake_remainder ... ok
+test protocol::reality::read::tests::reads_network_fragmentation_one_byte_at_a_time ... ok
+test protocol::reality::read::tests::rejects_oversized_record_before_reading_body ... ok
+test protocol::reality::replay::tests::concurrent_duplicate_race_has_one_winner ... ok
+test protocol::reality::replay::tests::expired_entries_release_global_capacity ... ok
+test protocol::reality::replay::tests::expired_pending_reservation_cannot_commit ... ok
+test protocol::reality::replay::tests::expired_pending_reservation_cannot_remove_replacement ... ok
+test protocol::reality::replay::tests::only_explicit_client_finished_commit_persists ... ok
+test protocol::reality::replay::tests::pending_duplicate_is_rejected_and_drop_rolls_back ... ok
+test protocol::reality::tls13::allocation_gate::assembled_frames_match_the_reference_encoder_on_the_wire ... ok
+test protocol::reality::tls13::allocation_gate::framed_read_path_allocates_nothing_per_record_after_warm_up ... ok
+test protocol::reality::client_hello::tests::arbitrary_bytes_never_panic ... ok
+test protocol::reality::tls13::allocation_gate::framed_write_path_allocates_nothing_per_record_after_warm_up ... ok
+test protocol::reality::tls13::allocation_gate::raw_mode_borrowed_decode_allocates_nothing_per_record ... ok
+test protocol::reality::tls13::allocation_gate::vision_decode_of_borrowed_plaintext_allocates_nothing_per_record ... ok
+test protocol::reality::tls13::application_io::tests::alert_is_read_out_of_a_multi_record_burst ... ok
+test protocol::reality::tls13::application_io::tests::authenticated_peer_alert_is_not_application_eof ... ok
+test protocol::reality::tls13::application_io::tests::clean_eof_at_a_record_boundary_keeps_the_exact_error_shape ... ok
+test protocol::reality::tls13::application_io::tests::decrypts_and_encrypts_application_records_without_plaintext_copy ... ok
+test protocol::reality::tls13::application_io::tests::eof_mid_record_reports_exactly_the_buffered_partial_bytes ... ok
+test protocol::reality::tls13::allocation_gate::outer_downlink_read_into_record_allocates_nothing_per_chunk_after_warm_up ... ok
+test protocol::reality::tls13::application_io::tests::fragmented_record_is_reassembled_across_refills ... ok
+test protocol::reality::tls13::application_io::tests::oversized_declared_length_fails_with_the_five_byte_header ... ok
+test protocol::reality::tls13::application_io::tests::pending_drain_returns_exactly_the_pipelined_raw_bytes ... ok
+test protocol::reality::tls13::application_io::tests::two_records_in_one_burst_cost_one_socket_read ... ok
+test protocol::reality::tls13::handshake::tests::full_x25519_flight_establishes_only_after_valid_client_finished ... ok
+test protocol::reality::tls13::handshake::tests::unoffered_alpn_is_rejected_before_flight ... ok
+test protocol::reality::tls13::idle::tests::ready_operation_wins_over_an_elapsed_window ... ok
+test protocol::reality::tls13::handshake::tests::hybrid_share_combines_mlkem_then_x25519_like_xray ... ok
+test protocol::reality::tls13::idle::tests::steady_progress_never_times_out_across_many_steps ... ok
+test protocol::reality::tls13::idle::tests::unarmed_deadline_fails_without_polling ... ok
+test protocol::reality::tls13::keys::tests::rejects_hash_mismatch_and_invalid_shared_secret ... ok
+test protocol::reality::tls13::keys::tests::rfc8448_application_secrets_and_server_keys_match ... ok
+test protocol::reality::tls13::keys::tests::rfc8448_handshake_keys_and_finished_match ... ok
+test protocol::reality::tls13::keys::tests::rfc8448_simple_handshake_schedule_matches ... ok
+test protocol::reality::tls13::keys::tests::sha384_suite_uses_48_byte_transcripts_and_32_byte_keys ... ok
+test protocol::reality::tls13::messages::tests::certificate_verify_signature_is_standard_ed25519 ... ok
+test protocol::reality::tls13::messages::tests::forged_certificate_matches_xray_hmac_binding ... ok
+test protocol::reality::tls13::messages::tests::handshake_vectors_have_exact_nested_lengths ... ok
+test protocol::reality::tls13::messages::tests::identity_debug_is_redacted ... ok
+test protocol::reality::tls13::messages::tests::rejects_invalid_alpn_certificate_and_digest_lengths ... ok
+test protocol::reality::tls13::record::tests::debug_never_exposes_key_or_iv ... ok
+test protocol::reality::tls13::record::tests::rejects_tamper_reordering_trailing_bytes_and_oversize ... ok
+test protocol::reality::tls13::record::tests::rfc8448_client_finished_record_matches_byte_for_byte ... ok
+test protocol::reality::tls13::record::tests::rfc8448_client_finished_record_opens_in_place ... ok
+test protocol::reality::tls13::record::tests::round_trips_all_supported_suites_with_padding_and_sequence ... ok
+test protocol::reality::tls13::record_read::tests::accepts_exact_change_cipher_spec_record ... ok
+test protocol::reality::tls13::record_read::tests::reads_maximum_record_into_reserved_storage ... ok
+test protocol::reality::tls13::record_read::tests::reads_one_fragmented_record_without_consuming_the_next ... ok
+test protocol::reality::tls13::record_read::tests::rejects_oversized_header_before_reading_body ... ok
+test protocol::reality::tls13::record_read::tests::rejects_zero_length_body_before_reading_more ... ok
+test protocol::reality::tls13::record_read::tests::reused_storage_address_is_stable_across_successful_records ... ok
+test protocol::reality::read::tests::timeout_returns_every_received_byte ... ok
+test protocol::reality::tls13::record_read::tests::shrinking_records_reuse_high_water_storage_with_exact_prefix ... ok
+test protocol::reality::tls13::record_read::tests::reused_storage_retains_exact_prefix_after_timeout ... ok
+test benchmark::tests::emits_finite_bounded_results_for_every_case ... ok
+test protocol::reality::tls13::server_hello::tests::parses_target_and_replaces_only_x25519_key_exchange ... ok
+test protocol::reality::tls13::server_hello::tests::rejects_negotiation_not_offered_by_client ... ok
+test protocol::reality::tls13::server_hello::tests::rejects_target_psk_selection_and_bad_key_length ... ok
+test protocol::reality::tls13::server_hello::tests::wraps_plaintext_record_and_emits_fixed_ccs ... ok
+test protocol::reality::tls13::target_read::tests::invalid_target_returns_complete_byte_exact_record ... ok
+test protocol::reality::tls13::target_read::tests::reads_fragmented_target_record_without_consuming_next_record ... ok
+test protocol::reality::tls13::target_read::tests::rejects_non_handshake_header_without_reading_declared_body ... ok
+test protocol::reality::tls13::server_hello::tests::arbitrary_target_bytes_never_panic ... ok
+test protocol::vless::addons::tests::decodes_xray_vision_flow_and_seed ... ok
+test protocol::vless::addons::tests::rejects_truncated_length_delimited_value ... ok
+test protocol::vless::addons::tests::skips_supported_unknown_wire_fields ... ok
+test protocol::vless::addons::tests::uses_last_repeated_scalar_like_protobuf ... ok
+test protocol::vless::decode::tests::decodes_domain_request_and_preserves_payload ... ok
+test protocol::vless::decode::tests::decodes_ipv4_destination ... ok
+test protocol::vless::decode::tests::decodes_ipv6_destination ... ok
+test protocol::vless::decode::tests::decodes_mux_without_destination ... ok
+test protocol::vless::decode::tests::rejects_unknown_command ... ok
+test protocol::vless::decode::tests::reports_truncated_user_id ... ok
+test protocol::vless::padding::tests::deterministic_seed_reproduces_the_same_sequence ... ok
+test protocol::vless::padding::tests::different_seeds_produce_different_sequences ... ok
+test protocol::vless::padding::tests::distribution_covers_the_range_uniformly_enough ... ok
+test protocol::vless::padding::tests::operating_system_seeding_succeeds ... ok
+test protocol::vless::padding::tests::refill_crosses_block_boundaries_without_repeating_state ... ok
+test protocol::vless::padding::tests::values_stay_inside_the_requested_range ... ok
+test protocol::vless::read::tests::preserves_payload_read_with_header ... ok
+test protocol::vless::read::tests::reads_header_fragmented_one_byte_at_a_time ... ok
+test protocol::vless::read::tests::reports_eof_before_complete_header ... ok
+test protocol::vless::response::tests::encodes_empty_response_header ... ok
+test protocol::vless::response::tests::encodes_response_addons ... ok
+test protocol::vless::response::tests::rejects_addons_larger_than_wire_length ... ok
+test protocol::vless::response::tests::writes_response_header_to_async_stream ... ok
+test protocol::vless::validate::tests::authorizes_registered_plain_tcp_request ... ok
+test protocol::vless::validate::tests::authorizes_registered_vision_tcp_request ... ok
+test protocol::vless::validate::tests::rejects_malformed_vision_addons ... ok
+test protocol::vless::validate::tests::rejects_plain_request_on_vision_inbound ... ok
+test protocol::vless::validate::tests::rejects_request_addons ... ok
+test protocol::vless::validate::tests::rejects_tcp_request_without_destination ... ok
+test protocol::vless::validate::tests::rejects_unknown_user_before_capability_checks ... ok
+test protocol::vless::validate::tests::rejects_unsupported_command ... ok
+test protocol::vless::vision::tests::borrowed_decode_returns_input_verbatim_once_raw ... ok
+test protocol::vless::vision::tests::borrowed_decode_stages_the_framed_to_raw_transition ... ok
+test protocol::vless::vision::tests::decodes_multiple_frames_packed_into_one_fragment ... ok
+test protocol::vless::vision::tests::decodes_xray_wire_vector_fragmented_at_every_byte ... ok
+test protocol::vless::vision::tests::encoder_roundtrips_and_emits_uuid_only_once ... ok
+test protocol::vless::vision::tests::plan_within_caps_padding_to_the_record_budget ... ok
+test protocol::vless::vision::tests::rejects_frame_larger_than_xray_buffer ... ok
+test protocol::vless::vision::tests::rejects_wrong_user_id_and_poison_decoder ... ok
+test protocol::vless::vision::tests::reports_authenticated_direct_boundary_and_preserves_remainder ... ok
+test runtime::admission::tests::a_governor_without_a_gauge_never_sees_pressure ... ok
+test runtime::admission::tests::direct_barrier_enforces_concurrency_then_rate ... ok
+test runtime::admission::tests::governor_keeps_resource_pools_independent ... ok
+test runtime::admission::tests::governor_releases_permit_on_drop ... ok
+test runtime::admission::tests::pressure_refuses_fallback_first_then_handshake_then_everything ... ok
+test runtime::admission::tests::the_direct_barrier_pauses_only_at_critical_pressure ... ok
+test runtime::connection::tests::completed_task_retains_peer_address ... ok
+test runtime::connection::tests::connection_error_does_not_remove_other_tasks ... ok
+test protocol::reality::tls13::record_read::tests::timeout_preserves_incomplete_record_prefix ... ok
+test runtime::fd_budget::tests::a_multi_unit_permit_is_all_or_nothing ... ok
+test runtime::fd_budget::tests::a_strict_budget_never_admits_more_than_its_capacity ... ok
+test runtime::fd_budget::tests::a_waiting_acquirer_is_woken_by_a_release ... ok
+test runtime::fd_budget::tests::a_zero_unit_permit_is_inert ... ok
+test protocol::reality::tls13::target_read::tests::timeout_returns_partial_target_prefix ... ok
+test runtime::fd_budget::tests::merging_across_budgets_is_refused_without_losing_either_reservation ... ok
+test runtime::fd_budget::tests::merging_permits_preserves_the_total_reservation ... ok
+test runtime::fd_budget::tests::pressure_uses_hysteresis_rather_than_a_single_threshold ... ok
+test runtime::fd_budget::tests::releasing_early_returns_capacity_before_the_permit_scope_ends ... ok
+test runtime::fd_budget::tests::repeated_cycles_return_the_counter_to_baseline ... ok
+test runtime::fd_plan::tests::a_generous_limit_is_not_clamped ... ok
+test runtime::fd_budget::tests::concurrent_acquisition_never_overshoots ... ok
+test runtime::fd_plan::tests::an_unlimited_soft_limit_is_planned_against_a_finite_ceiling ... ok
+test runtime::fd_plan::tests::an_impossible_limit_is_rejected_before_binding ... ok
+test runtime::fd_plan::tests::the_budget_plus_every_reserve_never_exceeds_the_soft_limit ... ok
+test runtime::fd_plan::tests::kernel_backend_descriptors_are_reserved_when_enabled ... ok
+test runtime::fd_plan::tests::the_dedicated_policy_admits_more_but_never_overshoots ... ok
+test runtime::fd_plan::tests::the_dedicated_policy_still_refuses_an_impossible_limit ... ok
+test runtime::fd_plan::tests::the_dedicated_policy_holds_back_one_tenth_of_the_limit ... ok
+test runtime::fd_plan::tests::the_incident_limit_produces_a_clamped_but_serviceable_budget ... ok
+test runtime::machine::tests::a_conservative_report_disables_the_memory_dimension ... ok
+test runtime::machine::tests::assembly_combines_readings_without_touching_the_host ... ok
+test runtime::machine::tests::cgroup_detection_degrades_when_the_hierarchy_is_absent ... ok
+test runtime::machine::tests::cgroup_limits_treat_max_as_unbounded ... ok
+test runtime::machine::tests::cpu_max_parses_quota_and_period ... ok
+test runtime::machine::tests::cgroup_detection_reads_synthetic_files ... ok
+test runtime::machine::tests::meminfo_total_is_reported_in_bytes ... ok
+test runtime::machine::tests::memory_hysteresis_does_not_flap_around_any_threshold ... ok
+test runtime::machine::tests::host_detection_produces_a_coherent_report ... ok
+test runtime::machine::tests::memory_transitions_never_skip_a_tier_downward ... ok
+test runtime::machine::tests::the_effective_total_prefers_the_tighter_boundary ... ok
+test runtime::machine::tests::the_memory_plan_uses_the_documented_fractions ... ok
+test runtime::machine::tests::the_memory_plan_watermarks_are_strictly_ordered ... ok
+test runtime::machine::tests::the_raise_target_is_the_hard_limit_only_when_it_is_higher ... ok
+test runtime::pressure::tests::a_non_critical_state_never_waits ... ok
+test runtime::pressure::tests::a_critical_waiter_is_woken_by_a_transition ... ok
+test runtime::pressure::tests::pressure_refuses_fallback_before_handshake_before_connection ... ok
+test runtime::pressure::tests::set_reports_only_real_transitions ... ok
+test runtime::pressure::tests::the_worse_dimension_wins ... ok
+test server::config::tests::preserves_explicit_server_settings ... ok
+test server::connector::tests::connects_to_ipv4_destination ... ok
+test server::connector::tests::reuses_pre_resolved_address_without_second_dns_lookup ... ok
+test server::direct::tests::a_relaying_peer_can_no_longer_join_the_pair ... ok
+test server::connector::tests::resolves_and_connects_to_domain_destination ... ok
+test server::direct::tests::coordinator_rejects_an_invalid_transition_without_changing_state ... ok
+test server::direct::tests::forbidden_transitions_are_rejected ... ok
+test server::direct::tests::mismatched_halves_are_rejected_instead_of_aliasing_descriptors ... ok
+test server::direct::tests::only_the_last_depositor_receives_both_complete_sockets ... ok
+test server::direct::tests::permitted_transitions_match_the_specified_lifecycle ... ok
+test server::direct::tests::the_pair_decision_reads_raw_ready_and_pair_pending_peers ... ok
+test server::fallback::tests::forwards_consumed_prefix_byte_exactly_before_live_bytes ... ok
+test server::fallback::tests::inspected_target_response_can_rejoin_same_fallback_connection ... ok
+test server::fallback::tests::target_mirror_acquires_fallback_capacity_only_when_relaying ... ok
+test server::handler::tests::rejects_unauthorized_request_before_connecting ... ok
+test server::nxr::tests::authenticator_rejects_nonce_reuse_before_returning_destination ... ok
+test server::nxr::tests::landing_relays_raw_payload_and_preserves_half_close ... ok
+test server::nxr::tests::replay_cache_is_bounded_and_expires_monotonically ... ok
+test server::outbound::tests::blackhole_never_opens_a_destination_stream ... ok
+test server::outbound::tests::negotiates_authenticated_socks5_domain_connect ... ok
+test server::outbound::tests::nxr_writes_one_authentication_request_then_raw_payload ... ok
+test server::probe::tests::generated_probe_client_hello_passes_strict_parser ... ok
+test server::probe::tests::probes_live_loopback_target_and_reports_negotiation ... ok
+test server::probe::tests::rejects_unbounded_or_non_dns_sni ... ok
+test server::probe::tests::wildcard_probe_requires_matching_concrete_target_hostname ... ok
+test runtime::fd_budget::tests::a_cancelled_acquirer_reserves_nothing ... ok
+{"timestampUnixMs":1785959106909,"level":"info","event":"server_starting"}
+{"timestampUnixMs":1785959106909,"level":"info","event":"descriptor_budget_report","fd_soft_limit":524288,"fd_hard_limit":524288,"fd_fixed_reserve":54,"fd_safety_headroom":32768,"fd_effective_budget":491466,"fd_clamped":false,"fd_recommended_soft_limit":66614}
+{"timestampUnixMs":1785959106909,"level":"info","event":"relay_backend_report","backends":[{"backend":"buffered","available":true},{"backend":"splice","available":true},{"backend":"sockhash","available":false,"declineReason":"disabled"}]}
+{"timestampUnixMs":1785959106909,"level":"info","event":"configuration_published","generation":0}
+{"timestampUnixMs":1785959106909,"level":"info","event":"configuration_published","generation":1}
+{"timestampUnixMs":1785959106909,"level":"info","event":"server_starting"}
+{"timestampUnixMs":1785959106909,"level":"info","event":"descriptor_budget_report","fd_soft_limit":524288,"fd_hard_limit":524288,"fd_fixed_reserve":54,"fd_safety_headroom":32768,"fd_effective_budget":491466,"fd_clamped":false,"fd_recommended_soft_limit":66614}
+test server::production::tests::atomically_publishes_hot_runtime_generation ... {"timestampUnixMs":1785959106909,"level":"info","event":"relay_backend_report","backends":[{"backend":"buffered","available":true},{"backend":"splice","available":true},{"backend":"sockhash","available":false,"declineReason":"disabled"}]}
+ok{"timestampUnixMs":1785959106909,"level":"info","event":"configuration_published","generation":0}
+
+{"timestampUnixMs":1785959106909,"level":"info","event":"listener_started","tag":"public-reality","address":"127.0.0.1:41931"}
+{"timestampUnixMs":1785959106909,"level":"info","event":"server_starting"}
+{"timestampUnixMs":1785959106909,"level":"info","event":"descriptor_budget_report","fd_soft_limit":524288,"fd_hard_limit":524288,"fd_fixed_reserve":54,"fd_safety_headroom":32768,"fd_effective_budget":491466,"fd_clamped":false,"fd_recommended_soft_limit":66614}
+{"timestampUnixMs":1785959106909,"level":"info","event":"relay_backend_report","backends":[{"backend":"buffered","available":true},{"backend":"splice","available":true},{"backend":"sockhash","available":false,"declineReason":"disabled"}]}
+{"timestampUnixMs":1785959106909,"level":"info","event":"configuration_published","generation":0}
+test server::production::tests::binds_all_listeners_and_stops_on_injected_shutdown ... ok
+test server::production::tests::compiles_generated_reality_vision_server_without_plain_inbound ... ok
+{"timestampUnixMs":1785959106909,"level":"info","event":"server_starting"}
+{"timestampUnixMs":1785959106909,"level":"info","event":"descriptor_budget_report","fd_soft_limit":524288,"fd_hard_limit":524288,"fd_fixed_reserve":54,"fd_safety_headroom":32768,"fd_effective_budget":491466,"fd_clamped":false,"fd_recommended_soft_limit":66614}
+{"timestampUnixMs":1785959106909,"level":"info","event":"relay_backend_report","backends":[{"backend":"buffered","available":true},{"backend":"splice","available":true},{"backend":"sockhash","available":false,"declineReason":"disabled"}]}
+{"timestampUnixMs":1785959106909,"level":"info","event":"configuration_published","generation":0}
+{"timestampUnixMs":1785959106910,"level":"info","event":"server_starting"}
+{"timestampUnixMs":1785959106910,"level":"info","event":"descriptor_budget_report","fd_soft_limit":524288,"fd_hard_limit":524288,"fd_fixed_reserve":54,"fd_safety_headroom":32768,"fd_effective_budget":491466,"fd_clamped":false,"fd_recommended_soft_limit":66614}
+{"timestampUnixMs":1785959106910,"level":"info","event":"relay_backend_report","backends":[{"backend":"buffered","available":true},{"backend":"splice","available":true},{"backend":"sockhash","available":false,"declineReason":"disabled"}]}
+{"timestampUnixMs":1785959106910,"level":"info","event":"configuration_published","generation":0}
+test server::production::tests::replay_policy_change_requires_restart ... ok
+test server::production::tests::rejected_hot_update_keeps_last_good_runtime ... ok
+{"timestampUnixMs":1785959106910,"level":"info","event":"server_starting"}
+{"timestampUnixMs":1785959106910,"level":"info","event":"descriptor_budget_report","fd_soft_limit":524288,"fd_hard_limit":524288,"fd_fixed_reserve":54,"fd_safety_headroom":32768,"fd_effective_budget":491466,"fd_clamped":false,"fd_recommended_soft_limit":66614}
+{"timestampUnixMs":1785959106910,"level":"info","event":"relay_backend_report","backends":[{"backend":"buffered","available":true},{"backend":"splice","available":true},{"backend":"sockhash","available":false,"declineReason":"disabled"}]}
+{"timestampUnixMs":1785959106910,"level":"info","event":"configuration_published","generation":0}
+test server::production::tests::resource_mode_change_requires_restart ... ok
+{"timestampUnixMs":1785959106910,"level":"info","event":"server_starting"}
+{"timestampUnixMs":1785959106910,"level":"info","event":"descriptor_budget_report","fd_soft_limit":524288,"fd_hard_limit":524288,"fd_fixed_reserve":55,"fd_safety_headroom":32768,"fd_effective_budget":491465,"fd_clamped":false,"fd_recommended_soft_limit":66615}
+{"timestampUnixMs":1785959106910,"level":"info","event":"relay_backend_report","backends":[{"backend":"buffered","available":true},{"backend":"splice","available":true},{"backend":"sockhash","available":false,"declineReason":"disabled"}]}
+{"timestampUnixMs":1785959106910,"level":"info","event":"configuration_published","generation":0}
+{"timestampUnixMs":1785959106910,"level":"info","event":"listener_started","tag":"public-reality","address":"127.0.0.1:35695"}
+{"timestampUnixMs":1785959106910,"level":"info","event":"listener_started","tag":"landing-internal","address":"127.0.0.1:44753"}
+test server::reality::tests::authentication_failure_relays_exact_client_hello_to_cover ... ok
+test server::routing::tests::as_is_does_not_resolve_domain_for_ip_rules ... ok
+test server::routing::tests::global_private_rule_precedes_user_domain_rule ... ok
+test server::routing::tests::ip_if_non_match_resolves_domain_for_ip_rules ... ok
+test server::routing::tests::suffix_requires_dns_label_boundary ... ok
+test server::routing::tests::user_rules_are_first_match_and_conditions_are_conjunctive ... ok
+test server::vision::tests::assembles_fragmented_handshake_header_across_records ... ok
+test server::vision::tests::assembles_fragmented_server_hello_across_records ... ok
+test server::vision::tests::bilateral_direct_handoff_transfers_large_payloads_byte_exactly ... ok
+test server::vision::tests::downlink_direct_drains_pipelined_raw_bytes_ahead_of_the_raw_relay ... ok
+test server::vision::tests::nested_reader_classifies_fragmented_records_and_clean_eof ... ok
+test server::vision::tests::nested_reader_reports_truncated_records_and_partial_headers ... ok
+test server::vision::tests::one_way_direct_downlink_relays_independently ... ok
+test server::vision::tests::one_way_direct_relays_the_direction_independently ... ok
+test server::vision::tests::outer_downlink_forwards_bytes_buffered_by_classification ... ok
+test server::vision::tests::packs_multiple_vision_frames_into_one_outer_record ... ok
+test server::vision::tests::recognizes_tls13_server_hello_then_direct_application_record ... ok
+test server::vision::tests::rejects_ccm8_and_tls12_for_direct_transition ... ok
+test server::vision::tests::relays_non_tls_vision_session_inside_reality_records ... ok
+test server::vision::tests::switches_both_directions_only_after_authenticated_direct_boundaries ... ok
+test server::vision::tests::uplink_direct_drains_pipelined_raw_bytes_ahead_of_the_raw_relay ... ok
+test server_name::tests::validates_only_leftmost_single_label_wildcards ... ok
+test server_name::tests::wildcard_matches_exactly_one_concrete_dns_label ... ok
+test server_name::tests::wildcard_probe_uses_only_a_matching_target_hostname ... ok
+test transport::backend::tests::a_ledger_that_moved_bytes_can_never_decline ... ok
+test transport::backend::tests::an_untouched_ledger_may_decline ... ok
+test transport::backend::tests::automatic_preference_lists_every_backend ... ok
+test transport::backend::tests::borrowed_contexts_never_claim_complete_socket_ownership ... ok
+test transport::backend::tests::byte_counters_are_checked_rather_than_wrapping ... ok
+test transport::backend::tests::completion_reports_both_directions_and_the_backend ... ok
+test transport::backend::tests::decline_reasons_are_stable_low_cardinality_identifiers ... ok
+test transport::relay::tests::preserves_reverse_flow_after_inbound_half_close ... ok
+test transport::sockhash::tests::a_borrowed_pair_is_unsafe_to_arm ... ok
+test transport::sockhash::tests::a_clean_owned_pair_passes_every_precheck ... ok
+test transport::sockhash::tests::arming_after_a_transferred_byte_is_forbidden ... ok
+test transport::sockhash::tests::map_exhaustion_is_a_resource_limit_decline ... ok
+test transport::sockhash::tests::queued_input_declines_before_arming ... ok
+test transport::sockhash::tests::the_payload_delta_excludes_exactly_the_fin_byte ... ok
+test transport::tcp::tests::accept_enables_tcp_nodelay ... ok
+test transport::tcp::tests::accept_only_leaves_socket_configuration_to_a_separate_phase ... ok
+test transport::tcp::tests::an_error_without_an_errno_is_not_assumed_retryable_forever ... ok
+test transport::tcp::tests::backoff_is_bounded_and_resets_after_success ... ok
+test transport::tcp::tests::bind_replaces_zero_port_with_kernel_assigned_port ... ok
+test transport::tcp::tests::descriptor_pressure_is_never_classified_as_fatal ... ok
+test transport::tcp::tests::memory_pressure_backs_off_rather_than_busy_looping ... ok
+test transport::tcp::tests::permanent_listener_corruption_stops_only_that_listener ... ok
+test transport::tcp::tests::readiness_errors_are_not_logged_as_failures ... ok
+test transport::tcp::tests::the_declared_errno_values_match_the_platform ... ok
+test transport::tcp::tests::the_emergency_descriptor_survives_a_full_release_and_reacquire_cycle ... ok
+test transport::tcp::tests::transient_network_errors_do_not_stop_the_listener ... ok
+test transport::tcp_relay::tests::a_borrowed_pair_is_never_armed_even_with_an_explicit_request ... ok
+test server::production::tests::serves_internal_nxr_alongside_public_reality_vision ... ok
+test transport::tcp_relay::tests::a_directional_splice_relay_reserves_two_descriptor_units ... ok
+test transport::tcp_relay::tests::a_splice_relay_reserves_four_descriptor_units_before_creating_pipes ... ok
+test transport::tcp_relay::tests::an_explicit_buffered_directional_request_bypasses_splice ... ok
+test transport::tcp_relay::tests::an_explicit_sockhash_request_falls_through_before_any_byte ... ok
+test transport::tcp_relay::tests::bounded_buffered_relay_preserves_half_close ... ok
+test transport::tcp_relay::tests::directional_buffered_relay_is_byte_exact_in_both_directions ... ok
+test transport::tcp_relay::tests::directional_splice_declines_to_buffered_with_bytes_intact ... ok
+test transport::tcp_relay::tests::directional_splice_relay_is_byte_exact_in_both_directions ... ok
+test transport::tcp_relay::tests::nonblocking_splice_relay_preserves_half_close ... ok
+test transport::tcp_relay::tests::repeated_directional_splice_relays_return_descriptor_units_to_baseline ... ok
+test server::fallback::tests::timeout_releases_fallback_admission_permit ... ok
+test transport::tcp_relay::tests::sockhash_availability_matches_controller_construction ... ok
+test transport::tcp_relay::tests::repeated_splice_relays_return_descriptor_units_to_baseline ... ok
+test transport::tcp_relay::tests::splice_declines_to_buffered_when_descriptors_are_exhausted ... ok
+test protocol::reality::tls13::idle::tests::stalled_operation_times_out_and_the_timer_is_reusable ... ok
+test transport::tcp_relay::tests::a_cancelled_splice_relay_releases_its_descriptor_units ... ok
+
+test result: ok. 320 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running unittests src/main.rs (target/release/deps/rust_reality-078a4ebc9962f353)
+
+running 7 tests
+test tests::bounds_builtin_benchmark_duration ... ok
+test tests::parses_bounded_destination_probe ... ok
+test tests::parses_explicit_line_and_landing_generators ... ok
+test tests::parses_nested_generate_command ... ok
+test tests::parses_self_test_config_path ... ok
+test tests::rejects_zero_uuid_count ... ok
+test tests::parses_serve_and_run_config_paths ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/connection_tasks.rs (target/release/deps/connection_tasks-4ae3babace44bcc5)
+
+running 1 test
+test isolates_connection_failure_from_sibling_task ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/relay_backends.rs (target/release/deps/relay_backends-4fedb918afd66600)
+
+running 11 tests
+test an_explicit_request_for_an_unavailable_backend_falls_back_before_transfer ... ok
+test an_abruptly_closed_peer_surfaces_instead_of_silently_truncating ... ok
+test preserves_reverse_flow_after_a_client_half_close ... ok
+test transfers_a_single_byte_in_each_direction ... ok
+test transfers_downlink_only ... ok
+test many_concurrent_flows_stay_byte_exact ... ok
+test transfers_uplink_only ... ok
+test unexercisable_backends_are_reported_rather_than_ignored ... ok
+test transfers_more_than_every_internal_buffer ... ok
+test cancellation_stops_the_relay_without_reporting_completion ... ok
+test applies_backpressure_when_the_reader_is_slow ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+
+     Running tests/resource_pressure.rs (target/release/deps/resource_pressure-4f16f42f2b2154a6)
+
+running 2 tests
+{"timestampUnixMs":1785959107596,"level":"info","event":"server_starting"}
+{"timestampUnixMs":1785959107596,"level":"info","event":"descriptor_budget_report","fd_soft_limit":524288,"fd_hard_limit":524288,"fd_fixed_reserve":54,"fd_safety_headroom":32768,"fd_effective_budget":491466,"fd_clamped":false,"fd_recommended_soft_limit":66614}
+{"timestampUnixMs":1785959107596,"level":"info","event":"relay_backend_report","backends":[{"backend":"buffered","available":true},{"backend":"splice","available":true},{"backend":"sockhash","available":false,"declineReason":"disabled"}]}
+{"timestampUnixMs":1785959107596,"level":"info","event":"configuration_published","generation":0}
+{"timestampUnixMs":1785959107596,"level":"info","event":"listener_started","tag":"internal-nxr","address":"127.0.0.1:42733"}
+test dedicated_mode_raises_the_soft_limit_in_a_child_process ... ok
+{"timestampUnixMs":1785959107609,"level":"warn","event":"connection_rejected","peer":"127.0.0.1:53918","reason":"resource_limit"}
+test a_critical_pause_keeps_established_traffic_and_resumes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/sockhash_runtime.rs (target/release/deps/sockhash_runtime-03b60fc2a181669c)
+
+running 8 tests
+test a_connection_tuple_is_reusable_after_teardown ... ignored, requires privilege to construct the SOCKHASH controller
+test a_large_payload_drains_before_the_synthesized_fin ... ignored, requires privilege to construct the SOCKHASH controller
+test a_reset_mid_session_aborts_and_releases_everything ... ignored, requires privilege to construct the SOCKHASH controller
+test automatic_selection_arms_sockhash_and_reports_exact_counts ... ignored, requires privilege to construct the SOCKHASH controller
+test half_close_drains_and_the_reverse_direction_still_works ... ignored, requires privilege to construct the SOCKHASH controller
+test map_exhaustion_falls_through_to_splice_before_any_byte ... ignored, requires privilege to construct the SOCKHASH controller
+test repeated_arm_disarm_cycles_return_to_baseline ... ignored, requires privilege to construct the SOCKHASH controller
+test the_redirect_consumes_fin_and_readiness_signals_it ... ignored, requires privilege to arm a SOCKHASH redirect
+
+test result: ok. 0 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/tcp_accept.rs (target/release/deps/tcp_accept-90639a52a762c2f1)
+
+running 1 test
+test accepts_loopback_connection ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/tcp_relay.rs (target/release/deps/tcp_relay-033f2a22b63a70fd)
+
+running 1 test
+test preserves_tcp_response_after_client_half_close ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/vision_encoder_oracle.rs (target/release/deps/vision_encoder_oracle-1273643efe81ba6a)
+
+running 7 tests
+test agrees_on_every_terminal_command ... ok
+test agrees_across_multi_frame_sequences ... ok
+test assembly_emits_the_user_id_exactly_once ... ok
+test assembly_rejects_mismatched_regions_without_panicking ... ok
+test direct_command_stops_framing_at_the_exact_boundary ... ok
+test agrees_on_all_boundary_content_lengths ... ok
+test agrees_on_randomized_sequences ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/vless_request.rs (target/release/deps/vless_request-09e1c0f5700c90a3)
+
+running 2 tests
+test decodes_fixed_domain_request_vector ... ok
+test reports_incomplete_fixed_vector ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/vless_server.rs (target/release/deps/vless_server-6a87e3c0983c8492)
+
+running 1 test
+test relays_authorized_vless_tcp_connection ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rr_linux
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rust_reality
+
+running 1 test
+test src/transport/tcp.rs - transport::tcp (line 7) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.80s; merged doctests compilation took 0.80s
+PASS test-workspace-release
+==> test-doc
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+   Doc-tests rr_linux
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rust_reality
+
+running 1 test
+test src/transport/tcp.rs - transport::tcp (line 7) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.12s; merged doctests compilation took 0.12s
+PASS test-doc
+==> nextest
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s
+────────────
+ Nextest run ID 20eb1e1c-6110-43f4-8557-306e6fe76684 with nextest profile: default
+    Starting 401 tests across 14 binaries (17 tests skipped)
+        PASS [   0.005s] (  1/401) rr-linux bpf::tests::a_map_descriptor_load_is_a_two_slot_wide_immediate
+        PASS [   0.005s] (  2/401) rr-linux bpf::tests::both_address_families_are_handled_explicitly
+        PASS [   0.005s] (  3/401) rr-linux bpf::tests::every_key_byte_is_initialised_before_the_helper_call
+        PASS [   0.005s] (  4/401) rr-linux bpf::tests::opcode_bytes_match_the_documented_encodings
+        PASS [   0.005s] (  5/401) rr-linux bpf::tests::registers_pack_into_the_low_and_high_nibble
+        PASS [   0.005s] (  6/401) rr-linux bpf::tests::the_instruction_layout_matches_the_kernel_abi
+        PASS [   0.005s] (  7/401) rr-linux bpf::tests::the_context_offsets_match_the_kernel_layout
+        PASS [   0.005s] (  8/401) rr-linux bpf::tests::the_address_family_rides_in_the_high_half_of_the_last_key_word
+        PASS [   0.005s] (  9/401) rr-linux bpf::tests::the_remote_port_is_normalised_to_host_order
+        PASS [   0.005s] ( 10/401) rr-linux bpf::tests::the_program_calls_the_socket_redirect_helper_for_its_program_type
+        PASS [   0.005s] ( 11/401) rr-linux bpf::tests::the_key_pointer_and_the_map_key_size_are_one_constant
+        PASS [   0.005s] ( 12/401) rr-linux bpf::tests::the_program_returns_the_helper_verdict
+        PASS [   0.004s] ( 13/401) rr-linux capability::tests::probe_from_result_maps_success_and_failure
+        PASS [   0.005s] ( 14/401) rr-linux bpf::tests::the_verdict_program_is_bounded_and_loop_free
+        PASS [   0.005s] ( 15/401) rr-linux capability::tests::errno_classification_never_guesses_a_capability
+        PASS [   0.005s] ( 16/401) rr-linux capability::tests::a_single_declined_operation_downgrades_the_backend
+        PASS [   0.005s] ( 17/401) rr-linux rlimit::tests::a_finite_soft_limit_below_the_ceiling_is_returned_unchanged
+        PASS [   0.004s] ( 18/401) rr-linux rlimit::tests::an_unlimited_soft_limit_is_clamped_rather_than_overflowing
+        PASS [   0.005s] ( 19/401) rr-linux capability::tests::the_first_decline_is_the_reported_reason
+        PASS [   0.005s] ( 20/401) rr-linux capability::tests::rendering_never_includes_anything_connection_specific
+        PASS [   0.005s] ( 21/401) rr-linux rlimit::tests::the_reported_soft_limit_never_exceeds_the_hard_limit
+        PASS [   0.005s] ( 22/401) rr-linux socket::tests::local_fin_wait_states_are_not_peer_close
+        PASS [   0.005s] ( 23/401) rr-linux rlimit::tests::the_emergency_reserve_descriptor_opens_and_closes
+        PASS [   0.008s] ( 24/401) rr-linux socket::tests::a_peer_close_moves_the_state_out_of_established
+        PASS [   0.005s] ( 25/401) rr-linux socket::tests::pending_input_reports_queued_bytes_and_drains_to_zero
+        PASS [   0.004s] ( 26/401) rr-linux socket::tests::the_tcp_info_layout_matches_the_kernel_uapi
+        PASS [   0.008s] ( 27/401) rr-linux socket::tests::tcp_counters_report_an_established_connection_and_its_bytes
+        PASS [   0.006s] ( 28/401) rr-linux sockhash::tests::a_committed_transaction_rolls_nothing_back
+        PASS [   0.005s] ( 29/401) rr-linux sockhash::tests::a_zero_relay_bound_is_rejected
+        PASS [   0.006s] ( 30/401) rr-linux sockhash::tests::admission_accounts_two_directions_per_relay
+        PASS [   0.005s] ( 31/401) rr-linux sockhash::tests::ipv4_and_ipv6_flows_are_distinguishable
+        PASS [   0.005s] ( 32/401) rr-linux sockhash::tests::redirected_counts_are_checked_rather_than_wrapping
+        PASS [   0.010s] ( 33/401) rr-linux sockhash::tests::concurrent_flows_from_one_listener_never_collide
+        PASS [   0.005s] ( 34/401) rr-linux sockhash::tests::the_attribute_layouts_match_the_kernel_abi
+        PASS [   0.006s] ( 35/401) rr-linux sockhash::tests::rollback_undoes_exactly_the_installed_directions
+        PASS [   0.005s] ( 36/401) rr-linux sockhash::tests::the_drain_barrier_handles_counter_wrap
+        PASS [   0.014s] ( 37/401) rr-linux sockhash::tests::reversing_a_flow_key_swaps_both_endpoints
+        PASS [   0.005s] ( 38/401) rr-linux sockhash::tests::the_probe_reports_a_fixed_reason_without_privilege
+        PASS [   0.005s] ( 39/401) rr-linux sockhash::tests::the_drain_barrier_ignores_progress_made_before_arming
+        PASS [   0.004s] ( 40/401) rr-linux tests::shard_count_is_bounded_by_both_cpus_and_configuration
+        PASS [   0.005s] ( 41/401) rr-linux tests::a_valid_budget_is_accepted
+        PASS [   0.009s] ( 42/401) rr-linux sockhash::tests::the_serialized_key_length_is_fixed
+        PASS [   0.005s] ( 43/401) rr-linux tests::the_maximum_budget_product_does_not_overflow_silently
+        PASS [   0.010s] ( 44/401) rr-linux tests::every_impossible_budget_is_named
+        PASS [   0.005s] ( 45/401) rr-linux::sockhash_privileged a_mapped_ipv4_key_cannot_collide_with_a_native_ipv6_key
+        PASS [   0.005s] ( 46/401) rr-linux::sockhash_privileged flow_identity_is_captured_before_teardown
+        PASS [   0.010s] ( 47/401) rr-linux::capability_report reports_measured_kernel_capability
+        PASS [   0.007s] ( 48/401) rr-linux::sockhash_privileged the_serialized_key_matches_the_layout_the_program_builds
+        PASS [   0.013s] ( 49/401) rust-reality assets::tests::failed_reload_preserves_last_good_snapshot
+        PASS [   0.014s] ( 50/401) rust-reality assets::tests::loads_xray_geosite_and_geoip_wire_shapes
+        PASS [   0.019s] ( 51/401) rust-reality assets::tests::downloads_once_then_revalidates_cached_asset_with_etag
+        PASS [   0.009s] ( 52/401) rust-reality config::generate::tests::landing_template_exposes_only_nxr
+        PASS [   0.008s] ( 53/401) rust-reality config::generate::tests::line_template_keeps_reality_public_and_nxr_internal
+        PASS [   0.013s] ( 54/401) rust-reality config::generate::tests::generated_json_is_directly_loadable
+        PASS [   0.008s] ( 55/401) rust-reality config::io::tests::formatted_configuration_round_trips
+        PASS [   0.006s] ( 56/401) rust-reality config::io::tests::rejects_removed_io_uring_relay_fields
+        PASS [   0.009s] ( 57/401) rust-reality config::io::tests::rejects_unknown_top_level_fields
+        PASS [   0.006s] ( 58/401) rust-reality config::snapshot::tests::failed_publication_keeps_last_good_snapshot
+        PASS [   0.006s] ( 59/401) rust-reality config::snapshot::tests::publication_preserves_existing_readers
+        PASS [   0.011s] ( 60/401) rust-reality config::schema::tests::schema_excludes_removed_operational_surfaces
+        PASS [   0.007s] ( 61/401) rust-reality config::validate::tests::a_kernel_relay_limit_may_not_exceed_max_connections
+        PASS [   0.006s] ( 62/401) rust-reality config::validate::tests::accepts_dedicated_resource_mode
+        PASS [   0.006s] ( 63/401) rust-reality config::validate::tests::accepts_internal_nxr_listener_without_public_routing_identity
+        PASS [   0.006s] ( 64/401) rust-reality config::validate::tests::accepts_leftmost_reality_server_name_wildcard
+        PASS [   0.006s] ( 65/401) rust-reality config::validate::tests::an_enabled_kernel_backend_needs_a_nonzero_relay_limit
+        PASS [   0.007s] ( 66/401) rust-reality config::validate::tests::accepts_strict_production_configuration
+        PASS [   0.006s] ( 67/401) rust-reality config::validate::tests::an_impossible_pinned_memory_budget_is_rejected_before_binding
+        PASS [   0.006s] ( 68/401) rust-reality config::validate::tests::assets_require_https_without_embedded_credentials
+        PASS [   0.006s] ( 69/401) rust-reality config::validate::tests::an_impossible_relay_memory_budget_is_rejected_before_binding
+        PASS [   0.007s] ( 70/401) rust-reality config::validate::tests::assigns_each_uuid_exactly_once
+        PASS [   0.006s] ( 71/401) rust-reality config::validate::tests::bounds_reality_client_clock_difference
+        PASS [   0.006s] ( 72/401) rust-reality config::validate::tests::defaults_to_standard_resource_mode
+        PASS [   0.007s] ( 73/401) rust-reality config::validate::tests::external_assets_cannot_escape_cache_directory
+        PASS [   0.008s] ( 74/401) rust-reality config::validate::tests::nxr_replay_retention_covers_the_entire_timestamp_window
+        PASS [   0.008s] ( 75/401) rust-reality config::validate::tests::file_logging_requires_bounded_file_settings
+        PASS [   0.006s] ( 76/401) rust-reality config::validate::tests::nxr_uses_one_independent_fixed_size_psk_without_pool_settings
+        PASS [   0.006s] ( 77/401) rust-reality config::validate::tests::pooled_buffers_are_counted_as_buffers_rather_than_bytes
+        PASS [   0.006s] ( 78/401) rust-reality config::validate::tests::rejects_malformed_reality_private_key
+        PASS [   0.010s] ( 79/401) rust-reality config::validate::tests::rejects_duplicate_listener_addresses
+        PASS [   0.006s] ( 80/401) rust-reality config::validate::tests::rejects_plain_vless_inbound
+        PASS [   0.010s] ( 81/401) rust-reality config::validate::tests::rejects_missing_outbound_reference
+        PASS [   0.089s] ( 82/401) rust-reality benchmark::tests::emits_finite_bounded_results_for_every_case
+        PASS [   0.008s] ( 83/401) rust-reality config::validate::tests::rejects_unimplemented_custom_dns_resolvers
+        PASS [   0.006s] ( 84/401) rust-reality config::validate::tests::rejects_unknown_resource_mode_values
+        PASS [   0.006s] ( 85/401) rust-reality config::validate::tests::rejects_unknown_runtime_fields
+        PASS [   0.008s] ( 86/401) rust-reality config::validate::tests::rejects_unsafe_or_duplicate_reality_server_name_patterns
+        PASS [   0.007s] ( 87/401) rust-reality config::validate::tests::secret_debug_output_is_redacted
+        PASS [   0.005s] ( 88/401) rust-reality crypto::keygen::tests::generates_eight_byte_short_id
+        PASS [   0.007s] ( 89/401) rust-reality config::validate::tests::sockhash_pinned_memory_accounts_two_map_entries_and_the_program
+        PASS [   0.006s] ( 90/401) rust-reality crypto::keygen::tests::generates_rfc4122_version_four_uuid
+        PASS [   0.006s] ( 91/401) rust-reality crypto::keygen::tests::node_key_contains_32_random_bytes
+        PASS [   0.006s] ( 92/401) rust-reality crypto::keygen::tests::x25519_public_key_matches_private_key
+        PASS [   0.007s] ( 93/401) rust-reality logging::sink::tests::enforces_file_count_and_total_byte_limits
+        PASS [   0.006s] ( 94/401) rust-reality logging::sink::tests::filters_debug_events_at_info_level
+        PASS [   0.006s] ( 95/401) rust-reality protocol::nxr::tests::domain_and_ipv6_requests_round_trip_at_exact_boundaries
+        PASS [   0.006s] ( 96/401) rust-reality protocol::nxr::tests::fixed_ipv4_hmac_vector_round_trips
+        PASS [   0.006s] ( 97/401) rust-reality protocol::nxr::tests::rejects_tamper_wrong_key_time_and_trailing_data
+        PASS [   0.025s] ( 98/401) rust-reality crypto::keygen::tests::mldsa65_derivation_is_deterministic_and_redacted
+        PASS [   0.008s] ( 99/401) rust-reality protocol::reality::auth::tests::authenticates_one_label_server_name_wildcard
+        PASS [   0.022s] (100/401) rust-reality protocol::nxr::tests::arbitrary_bytes_never_panic_or_exceed_declared_bound
+        PASS [   0.007s] (101/401) rust-reality protocol::reality::auth::tests::authenticates_xray_session_id_layout
+        PASS [   0.007s] (102/401) rust-reality protocol::reality::auth::tests::nist_aes256_gcm_vector_decrypts
+        PASS [   0.009s] (103/401) rust-reality protocol::reality::auth::tests::rejects_ciphertext_and_aad_tampering
+        PASS [   0.010s] (104/401) rust-reality protocol::reality::auth::tests::rejects_non_contributory_x25519_share
+        PASS [   0.012s] (105/401) rust-reality protocol::reality::auth::tests::rejects_unknown_short_id_and_time_skew
+        PASS [   0.014s] (106/401) rust-reality protocol::reality::auth::tests::rejects_invalid_server_name_when_config_validation_is_bypassed
+        PASS [   0.008s] (107/401) rust-reality protocol::reality::auth::tests::rejects_wrong_server_identity_and_private_key
+        PASS [   0.006s] (108/401) rust-reality protocol::reality::auth::tests::rfc5869_sha256_case_one_matches
+        PASS [   0.006s] (109/401) rust-reality protocol::reality::client_hello::tests::builds_exact_reality_aad_and_nonce
+        PASS [   0.006s] (110/401) rust-reality protocol::reality::client_hello::tests::extracts_hybrid_x25519_and_mlkem_parts
+        PASS [   0.013s] (111/401) rust-reality protocol::reality::auth::tests::rfc7748_alice_bob_shared_secret_matches
+        PASS [   0.006s] (112/401) rust-reality protocol::reality::client_hello::tests::parses_exact_record_and_rejects_trailing_bytes
+        PASS [   0.005s] (113/401) rust-reality protocol::reality::client_hello::tests::rejects_oversized_input_before_parsing
+        PASS [   0.009s] (114/401) rust-reality protocol::reality::client_hello::tests::parses_fields_without_copying_variable_payloads
+        PASS [   0.008s] (115/401) rust-reality protocol::reality::client_hello::tests::rejects_odd_cipher_suite_vector
+        PASS [   0.008s] (116/401) rust-reality protocol::reality::read::tests::parse_failure_returns_byte_exact_prefix
+        PASS [   0.006s] (117/401) rust-reality protocol::reality::read::tests::preserves_same_record_handshake_remainder
+        PASS [   0.014s] (118/401) rust-reality protocol::reality::read::tests::assembles_client_hello_across_tls_records
+        PASS [   0.005s] (119/401) rust-reality protocol::reality::read::tests::rejects_oversized_record_before_reading_body
+        PASS [   0.008s] (120/401) rust-reality protocol::reality::read::tests::reads_network_fragmentation_one_byte_at_a_time
+        PASS [   0.007s] (121/401) rust-reality protocol::reality::replay::tests::concurrent_duplicate_race_has_one_winner
+        PASS [   0.006s] (122/401) rust-reality protocol::reality::replay::tests::expired_entries_release_global_capacity
+        PASS [   0.006s] (123/401) rust-reality protocol::reality::replay::tests::expired_pending_reservation_cannot_commit
+        PASS [   0.005s] (124/401) rust-reality protocol::reality::replay::tests::expired_pending_reservation_cannot_remove_replacement
+        PASS [   0.006s] (125/401) rust-reality protocol::reality::replay::tests::only_explicit_client_finished_commit_persists
+        PASS [   0.051s] (126/401) rust-reality protocol::reality::client_hello::tests::arbitrary_bytes_never_panic
+        PASS [   0.005s] (127/401) rust-reality protocol::reality::replay::tests::pending_duplicate_is_rejected_and_drop_rolls_back
+        PASS [   0.031s] (128/401) rust-reality protocol::reality::read::tests::timeout_returns_every_received_byte
+        PASS [   0.015s] (129/401) rust-reality protocol::reality::tls13::allocation_gate::assembled_frames_match_the_reference_encoder_on_the_wire
+        PASS [   0.006s] (130/401) rust-reality protocol::reality::tls13::allocation_gate::raw_mode_borrowed_decode_allocates_nothing_per_record
+        PASS [   0.007s] (131/401) rust-reality protocol::reality::tls13::allocation_gate::vision_decode_of_borrowed_plaintext_allocates_nothing_per_record
+        PASS [   0.008s] (132/401) rust-reality protocol::reality::tls13::application_io::tests::alert_is_read_out_of_a_multi_record_burst
+        PASS [   0.006s] (133/401) rust-reality protocol::reality::tls13::application_io::tests::authenticated_peer_alert_is_not_application_eof
+        PASS [   0.007s] (134/401) rust-reality protocol::reality::tls13::application_io::tests::clean_eof_at_a_record_boundary_keeps_the_exact_error_shape
+        PASS [   0.007s] (135/401) rust-reality protocol::reality::tls13::application_io::tests::decrypts_and_encrypts_application_records_without_plaintext_copy
+        PASS [   0.007s] (136/401) rust-reality protocol::reality::tls13::application_io::tests::eof_mid_record_reports_exactly_the_buffered_partial_bytes
+        PASS [   0.063s] (137/401) rust-reality protocol::reality::tls13::allocation_gate::framed_write_path_allocates_nothing_per_record_after_warm_up
+        PASS [   0.007s] (138/401) rust-reality protocol::reality::tls13::application_io::tests::fragmented_record_is_reassembled_across_refills
+        PASS [   0.008s] (139/401) rust-reality protocol::reality::tls13::application_io::tests::oversized_declared_length_fails_with_the_five_byte_header
+        PASS [   0.007s] (140/401) rust-reality protocol::reality::tls13::application_io::tests::pending_drain_returns_exactly_the_pipelined_raw_bytes
+        PASS [   0.007s] (141/401) rust-reality protocol::reality::tls13::application_io::tests::two_records_in_one_burst_cost_one_socket_read
+        PASS [   0.009s] (142/401) rust-reality protocol::reality::tls13::handshake::tests::full_x25519_flight_establishes_only_after_valid_client_finished
+        PASS [   0.006s] (143/401) rust-reality protocol::reality::tls13::handshake::tests::unoffered_alpn_is_rejected_before_flight
+        PASS [   0.009s] (144/401) rust-reality protocol::reality::tls13::idle::tests::ready_operation_wins_over_an_elapsed_window
+        PASS [   0.023s] (145/401) rust-reality protocol::reality::tls13::handshake::tests::hybrid_share_combines_mlkem_then_x25519_like_xray
+        PASS [   0.108s] (146/401) rust-reality protocol::reality::tls13::allocation_gate::framed_read_path_allocates_nothing_per_record_after_warm_up
+        PASS [   0.006s] (147/401) rust-reality protocol::reality::tls13::idle::tests::steady_progress_never_times_out_across_many_steps
+        PASS [   0.006s] (148/401) rust-reality protocol::reality::tls13::idle::tests::unarmed_deadline_fails_without_polling
+        PASS [   0.005s] (149/401) rust-reality protocol::reality::tls13::keys::tests::rejects_hash_mismatch_and_invalid_shared_secret
+        PASS [   0.006s] (150/401) rust-reality protocol::reality::tls13::keys::tests::rfc8448_handshake_keys_and_finished_match
+        PASS [   0.006s] (151/401) rust-reality protocol::reality::tls13::keys::tests::rfc8448_application_secrets_and_server_keys_match
+        PASS [   0.006s] (152/401) rust-reality protocol::reality::tls13::keys::tests::sha384_suite_uses_48_byte_transcripts_and_32_byte_keys
+        PASS [   0.009s] (153/401) rust-reality protocol::reality::tls13::keys::tests::rfc8448_simple_handshake_schedule_matches
+        PASS [   0.006s] (154/401) rust-reality protocol::reality::tls13::messages::tests::forged_certificate_matches_xray_hmac_binding
+        PASS [   0.014s] (155/401) rust-reality protocol::reality::tls13::messages::tests::certificate_verify_signature_is_standard_ed25519
+        PASS [   0.005s] (156/401) rust-reality protocol::reality::tls13::messages::tests::handshake_vectors_have_exact_nested_lengths
+        PASS [   0.006s] (157/401) rust-reality protocol::reality::tls13::messages::tests::identity_debug_is_redacted
+        PASS [   0.006s] (158/401) rust-reality protocol::reality::tls13::messages::tests::rejects_invalid_alpn_certificate_and_digest_lengths
+        PASS [   0.006s] (159/401) rust-reality protocol::reality::tls13::record::tests::debug_never_exposes_key_or_iv
+        PASS [   0.007s] (160/401) rust-reality protocol::reality::tls13::record::tests::rejects_tamper_reordering_trailing_bytes_and_oversize
+        PASS [   0.006s] (161/401) rust-reality protocol::reality::tls13::record::tests::rfc8448_client_finished_record_opens_in_place
+        PASS [   0.007s] (162/401) rust-reality protocol::reality::tls13::record::tests::rfc8448_client_finished_record_matches_byte_for_byte
+        PASS [   0.006s] (163/401) rust-reality protocol::reality::tls13::record_read::tests::accepts_exact_change_cipher_spec_record
+        PASS [   0.006s] (164/401) rust-reality protocol::reality::tls13::record_read::tests::reads_maximum_record_into_reserved_storage
+        PASS [   0.006s] (165/401) rust-reality protocol::reality::tls13::record_read::tests::reads_one_fragmented_record_without_consuming_the_next
+        PASS [   0.166s] (166/401) rust-reality protocol::reality::tls13::allocation_gate::outer_downlink_read_into_record_allocates_nothing_per_chunk_after_warm_up
+        PASS [   0.006s] (167/401) rust-reality protocol::reality::tls13::record_read::tests::rejects_oversized_header_before_reading_body
+        PASS [   0.006s] (168/401) rust-reality protocol::reality::tls13::record_read::tests::rejects_zero_length_body_before_reading_more
+        PASS [   0.006s] (169/401) rust-reality protocol::reality::tls13::record_read::tests::reused_storage_address_is_stable_across_successful_records
+        PASS [   0.090s] (170/401) rust-reality protocol::reality::tls13::idle::tests::stalled_operation_times_out_and_the_timer_is_reusable
+        PASS [   0.006s] (171/401) rust-reality protocol::reality::tls13::record_read::tests::shrinking_records_reuse_high_water_storage_with_exact_prefix
+        PASS [   0.037s] (172/401) rust-reality protocol::reality::tls13::record::tests::round_trips_all_supported_suites_with_padding_and_sequence
+        PASS [   0.005s] (173/401) rust-reality protocol::reality::tls13::server_hello::tests::parses_target_and_replaces_only_x25519_key_exchange
+        PASS [   0.005s] (174/401) rust-reality protocol::reality::tls13::server_hello::tests::rejects_negotiation_not_offered_by_client
+        PASS [   0.027s] (175/401) rust-reality protocol::reality::tls13::record_read::tests::reused_storage_retains_exact_prefix_after_timeout
+        PASS [   0.008s] (176/401) rust-reality protocol::reality::tls13::server_hello::tests::rejects_target_psk_selection_and_bad_key_length
+        PASS [   0.005s] (177/401) rust-reality protocol::reality::tls13::server_hello::tests::wraps_plaintext_record_and_emits_fixed_ccs
+        PASS [   0.027s] (178/401) rust-reality protocol::reality::tls13::record_read::tests::timeout_preserves_incomplete_record_prefix
+        PASS [   0.006s] (179/401) rust-reality protocol::reality::tls13::target_read::tests::invalid_target_returns_complete_byte_exact_record
+        PASS [   0.028s] (180/401) rust-reality protocol::reality::tls13::server_hello::tests::arbitrary_target_bytes_never_panic
+        PASS [   0.006s] (181/401) rust-reality protocol::reality::tls13::target_read::tests::reads_fragmented_target_record_without_consuming_next_record
+        PASS [   0.006s] (182/401) rust-reality protocol::reality::tls13::target_read::tests::rejects_non_handshake_header_without_reading_declared_body
+        PASS [   0.006s] (183/401) rust-reality protocol::vless::addons::tests::decodes_xray_vision_flow_and_seed
+        PASS [   0.006s] (184/401) rust-reality protocol::vless::addons::tests::rejects_truncated_length_delimited_value
+        PASS [   0.005s] (185/401) rust-reality protocol::vless::addons::tests::skips_supported_unknown_wire_fields
+        PASS [   0.006s] (186/401) rust-reality protocol::vless::addons::tests::uses_last_repeated_scalar_like_protobuf
+        PASS [   0.005s] (187/401) rust-reality protocol::vless::decode::tests::decodes_domain_request_and_preserves_payload
+        PASS [   0.005s] (188/401) rust-reality protocol::vless::decode::tests::decodes_ipv4_destination
+        PASS [   0.006s] (189/401) rust-reality protocol::vless::decode::tests::decodes_ipv6_destination
+        PASS [   0.005s] (190/401) rust-reality protocol::vless::decode::tests::decodes_mux_without_destination
+        PASS [   0.005s] (191/401) rust-reality protocol::vless::decode::tests::rejects_unknown_command
+        PASS [   0.006s] (192/401) rust-reality protocol::vless::decode::tests::reports_truncated_user_id
+        PASS [   0.006s] (193/401) rust-reality protocol::vless::padding::tests::different_seeds_produce_different_sequences
+        PASS [   0.008s] (194/401) rust-reality protocol::vless::padding::tests::deterministic_seed_reproduces_the_same_sequence
+        PASS [   0.028s] (195/401) rust-reality protocol::reality::tls13::target_read::tests::timeout_returns_partial_target_prefix
+        PASS [   0.006s] (196/401) rust-reality protocol::vless::padding::tests::operating_system_seeding_succeeds
+        PASS [   0.006s] (197/401) rust-reality protocol::vless::padding::tests::refill_crosses_block_boundaries_without_repeating_state
+        PASS [   0.006s] (198/401) rust-reality protocol::vless::read::tests::preserves_payload_read_with_header
+        PASS [   0.006s] (199/401) rust-reality protocol::vless::read::tests::reads_header_fragmented_one_byte_at_a_time
+        PASS [   0.006s] (200/401) rust-reality protocol::vless::read::tests::reports_eof_before_complete_header
+        PASS [   0.016s] (201/401) rust-reality protocol::vless::padding::tests::values_stay_inside_the_requested_range
+        PASS [   0.005s] (202/401) rust-reality protocol::vless::response::tests::encodes_empty_response_header
+        PASS [   0.005s] (203/401) rust-reality protocol::vless::response::tests::encodes_response_addons
+        PASS [   0.006s] (204/401) rust-reality protocol::vless::response::tests::rejects_addons_larger_than_wire_length
+        PASS [   0.008s] (205/401) rust-reality protocol::vless::response::tests::writes_response_header_to_async_stream
+        PASS [   0.006s] (206/401) rust-reality protocol::vless::validate::tests::authorizes_registered_plain_tcp_request
+        PASS [   0.006s] (207/401) rust-reality protocol::vless::validate::tests::authorizes_registered_vision_tcp_request
+        PASS [   0.006s] (208/401) rust-reality protocol::vless::validate::tests::rejects_malformed_vision_addons
+        PASS [   0.005s] (209/401) rust-reality protocol::vless::validate::tests::rejects_plain_request_on_vision_inbound
+        PASS [   0.006s] (210/401) rust-reality protocol::vless::validate::tests::rejects_request_addons
+        PASS [   0.005s] (211/401) rust-reality protocol::vless::validate::tests::rejects_unknown_user_before_capability_checks
+        PASS [   0.006s] (212/401) rust-reality protocol::vless::validate::tests::rejects_tcp_request_without_destination
+        PASS [   0.006s] (213/401) rust-reality protocol::vless::validate::tests::rejects_unsupported_command
+        PASS [   0.005s] (214/401) rust-reality protocol::vless::vision::tests::borrowed_decode_stages_the_framed_to_raw_transition
+        PASS [   0.006s] (215/401) rust-reality protocol::vless::vision::tests::borrowed_decode_returns_input_verbatim_once_raw
+        PASS [   0.006s] (216/401) rust-reality protocol::vless::vision::tests::decodes_multiple_frames_packed_into_one_fragment
+        PASS [   0.005s] (217/401) rust-reality protocol::vless::vision::tests::decodes_xray_wire_vector_fragmented_at_every_byte
+        PASS [   0.006s] (218/401) rust-reality protocol::vless::vision::tests::encoder_roundtrips_and_emits_uuid_only_once
+        PASS [   0.006s] (219/401) rust-reality protocol::vless::vision::tests::plan_within_caps_padding_to_the_record_budget
+        PASS [   0.005s] (220/401) rust-reality protocol::vless::vision::tests::rejects_wrong_user_id_and_poison_decoder
+        PASS [   0.005s] (221/401) rust-reality protocol::vless::vision::tests::rejects_frame_larger_than_xray_buffer
+        PASS [   0.007s] (222/401) rust-reality protocol::vless::vision::tests::reports_authenticated_direct_boundary_and_preserves_remainder
+        PASS [   0.006s] (223/401) rust-reality runtime::admission::tests::direct_barrier_enforces_concurrency_then_rate
+        PASS [   0.006s] (224/401) rust-reality runtime::admission::tests::a_governor_without_a_gauge_never_sees_pressure
+        PASS [   0.006s] (225/401) rust-reality runtime::admission::tests::governor_keeps_resource_pools_independent
+        PASS [   0.007s] (226/401) rust-reality runtime::admission::tests::pressure_refuses_fallback_first_then_handshake_then_everything
+        PASS [   0.007s] (227/401) rust-reality runtime::admission::tests::governor_releases_permit_on_drop
+        PASS [   0.006s] (228/401) rust-reality runtime::admission::tests::the_direct_barrier_pauses_only_at_critical_pressure
+        PASS [   0.006s] (229/401) rust-reality runtime::connection::tests::connection_error_does_not_remove_other_tasks
+        PASS [   0.006s] (230/401) rust-reality runtime::connection::tests::completed_task_retains_peer_address
+        PASS [   0.005s] (231/401) rust-reality runtime::fd_budget::tests::a_multi_unit_permit_is_all_or_nothing
+        PASS [   0.008s] (232/401) rust-reality runtime::fd_budget::tests::a_strict_budget_never_admits_more_than_its_capacity
+        PASS [   0.006s] (233/401) rust-reality runtime::fd_budget::tests::a_waiting_acquirer_is_woken_by_a_release
+        PASS [   0.005s] (234/401) rust-reality runtime::fd_budget::tests::a_zero_unit_permit_is_inert
+        PASS [   0.005s] (235/401) rust-reality runtime::fd_budget::tests::merging_across_budgets_is_refused_without_losing_either_reservation
+        PASS [   0.034s] (236/401) rust-reality runtime::fd_budget::tests::a_cancelled_acquirer_reserves_nothing
+        PASS [   0.013s] (237/401) rust-reality runtime::fd_budget::tests::merging_permits_preserves_the_total_reservation
+        PASS [   0.021s] (238/401) rust-reality runtime::fd_budget::tests::concurrent_acquisition_never_overshoots
+        PASS [   0.006s] (239/401) rust-reality runtime::fd_budget::tests::pressure_uses_hysteresis_rather_than_a_single_threshold
+        PASS [   0.008s] (240/401) rust-reality runtime::fd_budget::tests::releasing_early_returns_capacity_before_the_permit_scope_ends
+        PASS [   0.010s] (241/401) rust-reality runtime::fd_budget::tests::repeated_cycles_return_the_counter_to_baseline
+        PASS [   0.122s] (242/401) rust-reality protocol::vless::padding::tests::distribution_covers_the_range_uniformly_enough
+        PASS [   0.010s] (243/401) rust-reality runtime::fd_plan::tests::a_generous_limit_is_not_clamped
+        PASS [   0.006s] (244/401) rust-reality runtime::fd_plan::tests::an_impossible_limit_is_rejected_before_binding
+        PASS [   0.005s] (245/401) rust-reality runtime::fd_plan::tests::kernel_backend_descriptors_are_reserved_when_enabled
+        PASS [   0.006s] (246/401) rust-reality runtime::fd_plan::tests::an_unlimited_soft_limit_is_planned_against_a_finite_ceiling
+        PASS [   0.005s] (247/401) rust-reality runtime::fd_plan::tests::the_budget_plus_every_reserve_never_exceeds_the_soft_limit
+        PASS [   0.005s] (248/401) rust-reality runtime::fd_plan::tests::the_dedicated_policy_admits_more_but_never_overshoots
+        PASS [   0.006s] (249/401) rust-reality runtime::fd_plan::tests::the_dedicated_policy_still_refuses_an_impossible_limit
+        PASS [   0.006s] (250/401) rust-reality runtime::fd_plan::tests::the_dedicated_policy_holds_back_one_tenth_of_the_limit
+        PASS [   0.006s] (251/401) rust-reality runtime::fd_plan::tests::the_incident_limit_produces_a_clamped_but_serviceable_budget
+        PASS [   0.006s] (252/401) rust-reality runtime::machine::tests::a_conservative_report_disables_the_memory_dimension
+        PASS [   0.006s] (253/401) rust-reality runtime::machine::tests::assembly_combines_readings_without_touching_the_host
+        PASS [   0.006s] (254/401) rust-reality runtime::machine::tests::cgroup_detection_degrades_when_the_hierarchy_is_absent
+        PASS [   0.006s] (255/401) rust-reality runtime::machine::tests::cgroup_limits_treat_max_as_unbounded
+        PASS [   0.006s] (256/401) rust-reality runtime::machine::tests::cgroup_detection_reads_synthetic_files
+        PASS [   0.006s] (257/401) rust-reality runtime::machine::tests::cpu_max_parses_quota_and_period
+        PASS [   0.006s] (258/401) rust-reality runtime::machine::tests::host_detection_produces_a_coherent_report
+        PASS [   0.006s] (259/401) rust-reality runtime::machine::tests::memory_hysteresis_does_not_flap_around_any_threshold
+        PASS [   0.006s] (260/401) rust-reality runtime::machine::tests::meminfo_total_is_reported_in_bytes
+        PASS [   0.006s] (261/401) rust-reality runtime::machine::tests::memory_transitions_never_skip_a_tier_downward
+        PASS [   0.005s] (262/401) rust-reality runtime::machine::tests::the_effective_total_prefers_the_tighter_boundary
+        PASS [   0.005s] (263/401) rust-reality runtime::machine::tests::the_memory_plan_watermarks_are_strictly_ordered
+        PASS [   0.006s] (264/401) rust-reality runtime::machine::tests::the_memory_plan_uses_the_documented_fractions
+        PASS [   0.006s] (265/401) rust-reality runtime::machine::tests::the_raise_target_is_the_hard_limit_only_when_it_is_higher
+        PASS [   0.006s] (266/401) rust-reality runtime::pressure::tests::a_critical_waiter_is_woken_by_a_transition
+        PASS [   0.006s] (267/401) rust-reality runtime::pressure::tests::pressure_refuses_fallback_before_handshake_before_connection
+        PASS [   0.008s] (268/401) rust-reality runtime::pressure::tests::a_non_critical_state_never_waits
+        PASS [   0.006s] (269/401) rust-reality runtime::pressure::tests::set_reports_only_real_transitions
+        PASS [   0.006s] (270/401) rust-reality runtime::pressure::tests::the_worse_dimension_wins
+        PASS [   0.007s] (271/401) rust-reality server::config::tests::preserves_explicit_server_settings
+        PASS [   0.006s] (272/401) rust-reality server::connector::tests::connects_to_ipv4_destination
+        PASS [   0.006s] (273/401) rust-reality server::connector::tests::reuses_pre_resolved_address_without_second_dns_lookup
+        PASS [   0.007s] (274/401) rust-reality server::connector::tests::resolves_and_connects_to_domain_destination
+        PASS [   0.006s] (275/401) rust-reality server::direct::tests::a_relaying_peer_can_no_longer_join_the_pair
+        PASS [   0.006s] (276/401) rust-reality server::direct::tests::coordinator_rejects_an_invalid_transition_without_changing_state
+        PASS [   0.006s] (277/401) rust-reality server::direct::tests::forbidden_transitions_are_rejected
+        PASS [   0.006s] (278/401) rust-reality server::direct::tests::mismatched_halves_are_rejected_instead_of_aliasing_descriptors
+        PASS [   0.005s] (279/401) rust-reality server::direct::tests::permitted_transitions_match_the_specified_lifecycle
+        PASS [   0.007s] (280/401) rust-reality server::direct::tests::only_the_last_depositor_receives_both_complete_sockets
+        PASS [   0.007s] (281/401) rust-reality server::direct::tests::the_pair_decision_reads_raw_ready_and_pair_pending_peers
+        PASS [   0.007s] (282/401) rust-reality server::fallback::tests::forwards_consumed_prefix_byte_exactly_before_live_bytes
+        PASS [   0.006s] (283/401) rust-reality server::fallback::tests::target_mirror_acquires_fallback_capacity_only_when_relaying
+        PASS [   0.008s] (284/401) rust-reality server::fallback::tests::inspected_target_response_can_rejoin_same_fallback_connection
+        PASS [   0.006s] (285/401) rust-reality server::handler::tests::rejects_unauthorized_request_before_connecting
+        PASS [   0.006s] (286/401) rust-reality server::nxr::tests::authenticator_rejects_nonce_reuse_before_returning_destination
+        PASS [   0.007s] (287/401) rust-reality server::nxr::tests::landing_relays_raw_payload_and_preserves_half_close
+        PASS [   0.006s] (288/401) rust-reality server::nxr::tests::replay_cache_is_bounded_and_expires_monotonically
+        PASS [   0.006s] (289/401) rust-reality server::outbound::tests::blackhole_never_opens_a_destination_stream
+        PASS [   0.006s] (290/401) rust-reality server::outbound::tests::negotiates_authenticated_socks5_domain_connect
+        PASS [   0.007s] (291/401) rust-reality server::outbound::tests::nxr_writes_one_authentication_request_then_raw_payload
+        PASS [   0.006s] (292/401) rust-reality server::probe::tests::generated_probe_client_hello_passes_strict_parser
+        PASS [   0.006s] (293/401) rust-reality server::probe::tests::probes_live_loopback_target_and_reports_negotiation
+        PASS [   0.006s] (294/401) rust-reality server::probe::tests::rejects_unbounded_or_non_dns_sni
+        PASS [   0.006s] (295/401) rust-reality server::probe::tests::wildcard_probe_requires_matching_concrete_target_hostname
+        PASS [   0.028s] (296/401) rust-reality server::fallback::tests::timeout_releases_fallback_admission_permit
+        PASS [   0.007s] (297/401) rust-reality server::production::tests::atomically_publishes_hot_runtime_generation
+        PASS [   0.008s] (298/401) rust-reality server::production::tests::binds_all_listeners_and_stops_on_injected_shutdown
+        PASS [   0.007s] (299/401) rust-reality server::production::tests::rejected_hot_update_keeps_last_good_runtime
+        PASS [   0.008s] (300/401) rust-reality server::production::tests::compiles_generated_reality_vision_server_without_plain_inbound
+        PASS [   0.008s] (301/401) rust-reality server::production::tests::replay_policy_change_requires_restart
+        PASS [   0.010s] (302/401) rust-reality server::production::tests::resource_mode_change_requires_restart
+        PASS [   0.008s] (303/401) rust-reality server::reality::tests::authentication_failure_relays_exact_client_hello_to_cover
+        PASS [   0.006s] (304/401) rust-reality server::routing::tests::as_is_does_not_resolve_domain_for_ip_rules
+        PASS [   0.006s] (305/401) rust-reality server::routing::tests::global_private_rule_precedes_user_domain_rule
+        PASS [   0.006s] (306/401) rust-reality server::routing::tests::ip_if_non_match_resolves_domain_for_ip_rules
+        PASS [   0.006s] (307/401) rust-reality server::routing::tests::suffix_requires_dns_label_boundary
+        PASS [   0.020s] (308/401) rust-reality server::production::tests::serves_internal_nxr_alongside_public_reality_vision
+        PASS [   0.005s] (309/401) rust-reality server::vision::tests::assembles_fragmented_handshake_header_across_records
+        PASS [   0.006s] (310/401) rust-reality server::routing::tests::user_rules_are_first_match_and_conditions_are_conjunctive
+        PASS [   0.010s] (311/401) rust-reality server::vision::tests::assembles_fragmented_server_hello_across_records
+        PASS [   0.006s] (312/401) rust-reality server::vision::tests::nested_reader_classifies_fragmented_records_and_clean_eof
+        PASS [   0.011s] (313/401) rust-reality server::vision::tests::downlink_direct_drains_pipelined_raw_bytes_ahead_of_the_raw_relay
+        PASS [   0.012s] (314/401) rust-reality server::vision::tests::nested_reader_reports_truncated_records_and_partial_headers
+        PASS [   0.014s] (315/401) rust-reality server::vision::tests::one_way_direct_downlink_relays_independently
+        PASS [   0.011s] (316/401) rust-reality server::vision::tests::one_way_direct_relays_the_direction_independently
+        PASS [   0.031s] (317/401) rust-reality server::vision::tests::bilateral_direct_handoff_transfers_large_payloads_byte_exactly
+        PASS [   0.006s] (318/401) rust-reality server::vision::tests::rejects_ccm8_and_tls12_for_direct_transition
+        PASS [   0.015s] (319/401) rust-reality server::vision::tests::recognizes_tls13_server_hello_then_direct_application_record
+        PASS [   0.023s] (320/401) rust-reality server::vision::tests::outer_downlink_forwards_bytes_buffered_by_classification
+        PASS [   0.023s] (321/401) rust-reality server::vision::tests::packs_multiple_vision_frames_into_one_outer_record
+        PASS [   0.012s] (322/401) rust-reality server::vision::tests::relays_non_tls_vision_session_inside_reality_records
+        PASS [   0.006s] (323/401) rust-reality server_name::tests::validates_only_leftmost_single_label_wildcards
+        PASS [   0.011s] (324/401) rust-reality server::vision::tests::switches_both_directions_only_after_authenticated_direct_boundaries
+        PASS [   0.011s] (325/401) rust-reality server::vision::tests::uplink_direct_drains_pipelined_raw_bytes_ahead_of_the_raw_relay
+        PASS [   0.006s] (326/401) rust-reality server_name::tests::wildcard_matches_exactly_one_concrete_dns_label
+        PASS [   0.006s] (327/401) rust-reality server_name::tests::wildcard_probe_uses_only_a_matching_target_hostname
+        PASS [   0.006s] (328/401) rust-reality transport::backend::tests::a_ledger_that_moved_bytes_can_never_decline
+        PASS [   0.006s] (329/401) rust-reality transport::backend::tests::an_untouched_ledger_may_decline
+        PASS [   0.005s] (330/401) rust-reality transport::backend::tests::byte_counters_are_checked_rather_than_wrapping
+        PASS [   0.006s] (331/401) rust-reality transport::backend::tests::borrowed_contexts_never_claim_complete_socket_ownership
+        PASS [   0.006s] (332/401) rust-reality transport::backend::tests::automatic_preference_lists_every_backend
+        PASS [   0.006s] (333/401) rust-reality transport::backend::tests::completion_reports_both_directions_and_the_backend
+        PASS [   0.006s] (334/401) rust-reality transport::backend::tests::decline_reasons_are_stable_low_cardinality_identifiers
+        PASS [   0.006s] (335/401) rust-reality transport::relay::tests::preserves_reverse_flow_after_inbound_half_close
+        PASS [   0.007s] (336/401) rust-reality transport::sockhash::tests::a_borrowed_pair_is_unsafe_to_arm
+        PASS [   0.006s] (337/401) rust-reality transport::sockhash::tests::a_clean_owned_pair_passes_every_precheck
+        PASS [   0.005s] (338/401) rust-reality transport::sockhash::tests::map_exhaustion_is_a_resource_limit_decline
+        PASS [   0.006s] (339/401) rust-reality transport::sockhash::tests::arming_after_a_transferred_byte_is_forbidden
+        PASS [   0.006s] (340/401) rust-reality transport::sockhash::tests::queued_input_declines_before_arming
+        PASS [   0.006s] (341/401) rust-reality transport::sockhash::tests::the_payload_delta_excludes_exactly_the_fin_byte
+        PASS [   0.006s] (342/401) rust-reality transport::tcp::tests::accept_only_leaves_socket_configuration_to_a_separate_phase
+        PASS [   0.006s] (343/401) rust-reality transport::tcp::tests::accept_enables_tcp_nodelay
+        PASS [   0.006s] (344/401) rust-reality transport::tcp::tests::an_error_without_an_errno_is_not_assumed_retryable_forever
+        PASS [   0.006s] (345/401) rust-reality transport::tcp::tests::backoff_is_bounded_and_resets_after_success
+        PASS [   0.005s] (346/401) rust-reality transport::tcp::tests::memory_pressure_backs_off_rather_than_busy_looping
+        PASS [   0.006s] (347/401) rust-reality transport::tcp::tests::descriptor_pressure_is_never_classified_as_fatal
+        PASS [   0.006s] (348/401) rust-reality transport::tcp::tests::permanent_listener_corruption_stops_only_that_listener
+        PASS [   0.006s] (349/401) rust-reality transport::tcp::tests::the_declared_errno_values_match_the_platform
+        PASS [   0.012s] (350/401) rust-reality transport::tcp::tests::bind_replaces_zero_port_with_kernel_assigned_port
+        PASS [   0.006s] (351/401) rust-reality transport::tcp::tests::readiness_errors_are_not_logged_as_failures
+        PASS [   0.006s] (352/401) rust-reality transport::tcp::tests::the_emergency_descriptor_survives_a_full_release_and_reacquire_cycle
+        PASS [   0.007s] (353/401) rust-reality transport::tcp_relay::tests::a_borrowed_pair_is_never_armed_even_with_an_explicit_request
+        PASS [   0.012s] (354/401) rust-reality transport::tcp::tests::transient_network_errors_do_not_stop_the_listener
+        PASS [   0.008s] (355/401) rust-reality transport::tcp_relay::tests::a_splice_relay_reserves_four_descriptor_units_before_creating_pipes
+        PASS [   0.014s] (356/401) rust-reality transport::tcp_relay::tests::a_directional_splice_relay_reserves_two_descriptor_units
+        PASS [   0.006s] (357/401) rust-reality transport::tcp_relay::tests::an_explicit_sockhash_request_falls_through_before_any_byte
+        PASS [   0.012s] (358/401) rust-reality transport::tcp_relay::tests::an_explicit_buffered_directional_request_bypasses_splice
+        PASS [   0.006s] (359/401) rust-reality transport::tcp_relay::tests::bounded_buffered_relay_preserves_half_close
+        PASS [   0.013s] (360/401) rust-reality transport::tcp_relay::tests::directional_buffered_relay_is_byte_exact_in_both_directions
+        PASS [   0.011s] (361/401) rust-reality transport::tcp_relay::tests::directional_splice_declines_to_buffered_with_bytes_intact
+        PASS [   0.012s] (362/401) rust-reality transport::tcp_relay::tests::directional_splice_relay_is_byte_exact_in_both_directions
+        PASS [   0.006s] (363/401) rust-reality transport::tcp_relay::tests::nonblocking_splice_relay_preserves_half_close
+        PASS [   0.011s] (364/401) rust-reality transport::tcp_relay::tests::repeated_directional_splice_relays_return_descriptor_units_to_baseline
+        PASS [   0.006s] (365/401) rust-reality transport::tcp_relay::tests::sockhash_availability_matches_controller_construction
+        PASS [   0.012s] (366/401) rust-reality transport::tcp_relay::tests::repeated_splice_relays_return_descriptor_units_to_baseline
+        PASS [   0.007s] (367/401) rust-reality transport::tcp_relay::tests::splice_declines_to_buffered_when_descriptors_are_exhausted
+        PASS [   0.005s] (368/401) rust-reality::connection_tasks isolates_connection_failure_from_sibling_task
+        PASS [   0.008s] (369/401) rust-reality::relay_backends an_explicit_request_for_an_unavailable_backend_falls_back_before_transfer
+        PASS [   0.061s] (370/401) rust-reality transport::tcp_relay::tests::a_cancelled_splice_relay_releases_its_descriptor_units
+        PASS [   0.113s] (371/401) rust-reality::relay_backends cancellation_stops_the_relay_without_reporting_completion
+        PASS [   0.007s] (372/401) rust-reality::relay_backends preserves_reverse_flow_after_a_client_half_close
+        PASS [   0.122s] (373/401) rust-reality::relay_backends many_concurrent_flows_stay_byte_exact
+        PASS [   0.007s] (374/401) rust-reality::relay_backends transfers_a_single_byte_in_each_direction
+        PASS [   0.015s] (375/401) rust-reality::relay_backends transfers_downlink_only
+        PASS [   0.015s] (376/401) rust-reality::relay_backends transfers_uplink_only
+        PASS [   0.005s] (377/401) rust-reality::relay_backends unexercisable_backends_are_reported_rather_than_ignored
+        PASS [   0.019s] (378/401) rust-reality::resource_pressure a_critical_pause_keeps_established_traffic_and_resumes
+        PASS [   0.010s] (379/401) rust-reality::resource_pressure dedicated_mode_raises_the_soft_limit_in_a_child_process
+        PASS [   0.005s] (380/401) rust-reality::tcp_accept accepts_loopback_connection
+        PASS [   0.006s] (381/401) rust-reality::tcp_relay preserves_tcp_response_after_client_half_close
+        PASS [   0.006s] (382/401) rust-reality::vision_encoder_oracle agrees_across_multi_frame_sequences
+        PASS [   0.014s] (383/401) rust-reality::vision_encoder_oracle agrees_on_all_boundary_content_lengths
+        PASS [   0.006s] (384/401) rust-reality::vision_encoder_oracle agrees_on_every_terminal_command
+        PASS [   0.253s] (385/401) rust-reality::relay_backends an_abruptly_closed_peer_surfaces_instead_of_silently_truncating
+        PASS [   0.004s] (386/401) rust-reality::vision_encoder_oracle assembly_emits_the_user_id_exactly_once
+        PASS [   0.004s] (387/401) rust-reality::vision_encoder_oracle assembly_rejects_mismatched_regions_without_panicking
+        PASS [   0.004s] (388/401) rust-reality::vision_encoder_oracle direct_command_stops_framing_at_the_exact_boundary
+        PASS [   0.004s] (389/401) rust-reality::vless_request decodes_fixed_domain_request_vector
+        PASS [   0.004s] (390/401) rust-reality::vless_request reports_incomplete_fixed_vector
+        PASS [   0.005s] (391/401) rust-reality::vless_server relays_authorized_vless_tcp_connection
+        PASS [   0.005s] (392/401) rust-reality::bin/rust-reality tests::bounds_builtin_benchmark_duration
+        PASS [   0.005s] (393/401) rust-reality::bin/rust-reality tests::parses_bounded_destination_probe
+        PASS [   0.005s] (394/401) rust-reality::bin/rust-reality tests::parses_explicit_line_and_landing_generators
+        PASS [   0.005s] (395/401) rust-reality::bin/rust-reality tests::parses_nested_generate_command
+        PASS [   0.005s] (396/401) rust-reality::bin/rust-reality tests::parses_self_test_config_path
+        PASS [   0.005s] (397/401) rust-reality::bin/rust-reality tests::parses_serve_and_run_config_paths
+        PASS [   0.005s] (398/401) rust-reality::bin/rust-reality tests::rejects_zero_uuid_count
+        PASS [   0.207s] (399/401) rust-reality::relay_backends transfers_more_than_every_internal_buffer
+        PASS [   0.159s] (400/401) rust-reality::vision_encoder_oracle agrees_on_randomized_sequences
+        PASS [   0.683s] (401/401) rust-reality::relay_backends applies_backpressure_when_the_reader_is_slow
+────────────
+     Summary [   1.573s] 401 tests run: 401 passed, 17 skipped
+PASS nextest
+==> deny
+warning[duplicate]: found 2 duplicate entries for crate 'base64'
+   ┌─ /home/jacek/work/kimi-rust-reality-performance/rust-reality/Cargo.lock:11:1
+   │  
+11 │ ╭ base64 0.22.1 registry+https://github.com/rust-lang/crates.io-index
+12 │ │ base64 0.23.0 registry+https://github.com/rust-lang/crates.io-index
+   │ ╰───────────────────────────────────────────────────────────────────┘ lock entries
+   │  
+   ├ base64 v0.22.1
+     ├── ureq v3.3.0
+     │   └── rust-reality v0.1.0
+     └── ureq-proto v0.6.0
+         └── ureq v3.3.0 (*)
+   ├ base64 v0.23.0
+     └── rust-reality v0.1.0
+
+warning[duplicate]: found 2 duplicate entries for crate 'getrandom'
+   ┌─ /home/jacek/work/kimi-rust-reality-performance/rust-reality/Cargo.lock:49:1
+   │  
+49 │ ╭ getrandom 0.2.17 registry+https://github.com/rust-lang/crates.io-index
+50 │ │ getrandom 0.4.3 registry+https://github.com/rust-lang/crates.io-index
+   │ ╰─────────────────────────────────────────────────────────────────────┘ lock entries
+   │  
+   ├ getrandom v0.2.17
+     └── ring v0.17.14
+         ├── rustls v0.23.43
+         │   └── ureq v3.3.0
+         │       └── rust-reality v0.1.0
+         └── rustls-webpki v0.103.13
+             └── rustls v0.23.43 (*)
+   ├ getrandom v0.4.3
+     └── rust-reality v0.1.0
+
+warning[duplicate]: found 2 duplicate entries for crate 'syn'
+    ┌─ /home/jacek/work/kimi-rust-reality-performance/rust-reality/Cargo.lock:128:1
+    │  
+128 │ ╭ syn 2.0.119 registry+https://github.com/rust-lang/crates.io-index
+129 │ │ syn 3.0.3 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰───────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ syn v2.0.119
+      ├── curve25519-dalek-derive v0.1.1
+      │   └── curve25519-dalek v5.0.0
+      │       ├── ed25519-dalek v3.0.0
+      │       │   └── rust-reality v0.1.0
+      │       └── x25519-dalek v3.0.0
+      │           └── rust-reality v0.1.0 (*)
+      ├── hax-lib-macros v0.3.7
+      │   └── hax-lib v0.3.7
+      │       ├── libcrux-intrinsics v0.0.8
+      │       │   ├── libcrux-ml-dsa v0.0.10
+      │       │   │   └── rust-reality v0.1.0 (*)
+      │       │   └── libcrux-sha3 v0.0.10
+      │       │       └── libcrux-ml-dsa v0.0.10 (*)
+      │       ├── libcrux-ml-dsa v0.0.10 (*)
+      │       ├── libcrux-secrets v0.0.6
+      │       │   ├── libcrux-ml-dsa v0.0.10 (*)
+      │       │   └── libcrux-traits v0.0.8
+      │       │       └── libcrux-sha3 v0.0.10 (*)
+      │       └── libcrux-sha3 v0.0.10 (*)
+      ├── libcrux-macros v0.0.3
+      │   └── libcrux-ml-dsa v0.0.10 (*)
+      ├── tokio-macros v2.7.1
+      │   └── tokio v1.53.0
+      │       └── rust-reality v0.1.0 (*)
+      ├── zerocopy-derive v0.8.55
+      │   └── zerocopy v0.8.55
+      │       └── half v2.7.1
+      │           └── ciborium-ll v0.2.2
+      │               └── ciborium v0.2.2
+      │                   └── criterion v0.8.2
+      │                       └── (dev) rust-reality v0.1.0 (*)
+      └── zeroize_derive v1.5.0
+          └── zeroize v1.9.0
+              ├── aes-gcm v0.11.0
+              │   └── rust-reality v0.1.0 (*)
+              ├── block-buffer v0.12.1
+              │   ├── cipher v0.5.2
+              │   │   ├── aes v0.9.2
+              │   │   │   └── aes-gcm v0.11.0 (*)
+              │   │   ├── aes-gcm v0.11.0 (*)
+              │   │   ├── chacha20 v0.10.1
+              │   │   │   ├── chacha20poly1305 v0.11.0
+              │   │   │   │   └── rust-reality v0.1.0 (*)
+              │   │   │   └── rust-reality v0.1.0 (*)
+              │   │   ├── chacha20poly1305 v0.11.0 (*)
+              │   │   └── ctr v0.10.1
+              │   │       └── aes-gcm v0.11.0 (*)
+              │   └── digest v0.11.3
+              │       ├── curve25519-dalek v5.0.0 (*)
+              │       ├── hmac v0.13.0
+              │       │   ├── hkdf v0.13.0
+              │       │   │   └── rust-reality v0.1.0 (*)
+              │       │   └── rust-reality v0.1.0 (*)
+              │       ├── sha2 v0.11.0
+              │       │   ├── ed25519-dalek v3.0.0 (*)
+              │       │   └── rust-reality v0.1.0 (*)
+              │       └── sha3 v0.11.0
+              │           └── ml-kem v0.3.2
+              │               └── rust-reality v0.1.0 (*)
+              ├── chacha20 v0.10.1 (*)
+              ├── chacha20poly1305 v0.11.0 (*)
+              ├── curve25519-dalek v5.0.0 (*)
+              ├── digest v0.11.3 (*)
+              ├── ed25519-dalek v3.0.0 (*)
+              ├── hybrid-array v0.4.14
+              │   ├── block-buffer v0.12.1 (*)
+              │   ├── crypto-common v0.2.2
+              │   │   ├── aead v0.6.1
+              │   │   │   ├── aes-gcm v0.11.0 (*)
+              │   │   │   └── chacha20poly1305 v0.11.0 (*)
+              │   │   ├── cipher v0.5.2 (*)
+              │   │   ├── digest v0.11.3 (*)
+              │   │   ├── kem v0.3.0
+              │   │   │   └── ml-kem v0.3.2 (*)
+              │   │   ├── rust-reality v0.1.0 (*)
+              │   │   └── universal-hash v0.6.1
+              │   │       ├── poly1305 v0.9.1
+              │   │       │   └── chacha20poly1305 v0.11.0 (*)
+              │   │       └── polyval v0.7.3
+              │   │           └── ghash v0.6.0
+              │   │               └── aes-gcm v0.11.0 (*)
+              │   ├── inout v0.2.2
+              │   │   ├── aead v0.6.1 (*)
+              │   │   └── cipher v0.5.2 (*)
+              │   ├── ml-kem v0.3.2 (*)
+              │   └── module-lattice v0.2.3
+              │       └── ml-kem v0.3.2 (*)
+              ├── ml-kem v0.3.2 (*)
+              ├── module-lattice v0.2.3 (*)
+              ├── rust-reality v0.1.0 (*)
+              ├── rustls v0.23.43
+              │   └── ureq v3.3.0
+              │       └── rust-reality v0.1.0 (*)
+              ├── rustls-pki-types v1.15.1
+              │   ├── rustls v0.23.43 (*)
+              │   ├── rustls-webpki v0.103.13
+              │   │   └── rustls v0.23.43 (*)
+              │   ├── ureq v3.3.0 (*)
+              │   └── webpki-roots v1.0.9
+              │       └── ureq v3.3.0 (*)
+              └── x25519-dalek v3.0.0 (*)
+    ├ syn v3.0.3
+      ├── clap_derive v4.6.4
+      │   └── clap v4.6.5
+      │       ├── criterion v0.8.2
+      │       │   └── (dev) rust-reality v0.1.0
+      │       └── rust-reality v0.1.0 (*)
+      ├── ref-cast-impl v1.0.26
+      │   └── ref-cast v1.0.26
+      │       └── schemars v1.2.2
+      │           └── rust-reality v0.1.0 (*)
+      ├── schemars_derive v1.2.2
+      │   └── schemars v1.2.2 (*)
+      ├── serde_derive v1.0.229
+      │   └── serde v1.0.229
+      │       ├── ciborium v0.2.2
+      │       │   └── criterion v0.8.2 (*)
+      │       ├── criterion v0.8.2 (*)
+      │       ├── rust-reality v0.1.0 (*)
+      │       ├── schemars v1.2.2 (*)
+      │       └── tinytemplate v1.2.1
+      │           └── criterion v0.8.2 (*)
+      └── serde_derive_internals v0.30.0
+          └── schemars_derive v1.2.2 (*)
+
+advisories ok, bans ok, licenses ok, sources ok
+PASS deny
+==> audit
+    Fetching advisory database from `https://github.com/RustSec/advisory-db.git`
+      Loaded 1189 security advisories (from /home/jacek/.cargo/advisory-db)
+    Updating crates.io index
+    Scanning Cargo.lock for vulnerabilities (200 crate dependencies)
+PASS audit
+==> benches-compile
+   Compiling rust-reality v0.1.0 (/home/jacek/work/kimi-rust-reality-performance/rust-reality)
+    Finished `bench` profile [optimized] target(s) in 22.77s
+  Executable benches src/lib.rs (target/release/deps/rr_linux-8c1c194d11d6c9cc)
+  Executable benches src/lib.rs (target/release/deps/rust_reality-f158c3f5fe4dff2a)
+  Executable benches src/main.rs (target/release/deps/rust_reality-078a4ebc9962f353)
+  Executable benches/relay_backends.rs (target/release/deps/relay_backends-831ca581e91c3039)
+  Executable benches/vision.rs (target/release/deps/vision-29a45d355cb8683f)
+  Executable benches/vless_decode.rs (target/release/deps/vless_decode-3f8b11a5b973c60e)
+PASS benches-compile
+==> fuzz-compile
+   Compiling ring v0.17.14
+   Compiling rustls v0.23.43
+    Checking rustls-webpki v0.103.13
+    Checking ureq v3.3.0
+    Checking rust-reality v0.1.0 (/home/jacek/work/kimi-rust-reality-performance/rust-reality)
+    Checking rust-reality-fuzz v0.0.0 (/home/jacek/work/kimi-rust-reality-performance/rust-reality/fuzz)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.89s
+PASS fuzz-compile
+==> docs-links
+documentation links verified across 27 Markdown files
+PASS docs-links
+==> build-privileged-tests
+error: unexpected argument '--test-threads' found
+
+  tip: a similar argument exists: '--test'
+  tip: to pass '--test-threads' as a value, use '-- --test-threads'
+
+Usage: cargo test --package [<SPEC>] --test [<NAME>] [TESTNAME] [-- [ARGS]...]
+
+For more information, try '--help'.
+FAIL build-privileged-tests (see transcript)
+==> build-runtime-tests
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+  Executable tests/sockhash_runtime.rs (target/debug/deps/sockhash_runtime-afc392597f421a51)
+PASS build-runtime-tests
+==> sudo-sockhash-privileged
+
+running 8 tests
+test a_helper_program_type_mismatch_is_a_verifier_rejection ... ok
+test an_armed_pair_redirects_production_bytes ... ok
+test an_unarmed_flow_is_delivered_to_userspace_rather_than_dropped ... ok
+test both_directions_install_and_remove_for_ipv4 ... ok
+test both_directions_install_and_remove_for_ipv6 ... ok
+test the_probe_reports_availability_on_a_privileged_host ... ok
+test the_program_attaches_as_a_stream_verdict ... ok
+test the_verdict_program_passes_the_kernel_verifier ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+PASS sudo-sockhash-privileged
+==> sudo-sockhash-runtime
+
+running 8 tests
+test a_connection_tuple_is_reusable_after_teardown ... ok
+test a_large_payload_drains_before_the_synthesized_fin ... ok
+test a_reset_mid_session_aborts_and_releases_everything ... ok
+test automatic_selection_arms_sockhash_and_reports_exact_counts ... ok
+test half_close_drains_and_the_reverse_direction_still_works ... ok
+test map_exhaustion_falls_through_to_splice_before_any_byte ... ok
+test repeated_arm_disarm_cycles_return_to_baseline ... ok
+test the_redirect_consumes_fin_and_readiness_signals_it ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.06s
+
+PASS sudo-sockhash-runtime
+==> done: 1 failing gate(s); transcript at diagnostics/final/validation/transcript.log

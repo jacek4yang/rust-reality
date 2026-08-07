@@ -43,7 +43,6 @@ effective_dynamic_fd_budget = soft_rlimit - fixed_fd_reserve - safety_headroom
 | 监听套接字 | 每个已配置 inbound 一个 |
 | 标准流与日志写入端 | 4 |
 | 运行时 epoll、eventfd 与 waker | 16 |
-| io_uring ring 描述符 | 启用时每分片一个 |
 | eBPF map、program 与 link | 启用时 3 个 |
 | 不可取消的解析器描述符 | 32 |
 | 应急预留 | 1 |
@@ -88,7 +87,6 @@ effective_dynamic_fd_budget = soft_rlimit - fixed_fd_reserve - safety_headroom
 | 已连接的 outbound 套接字 | 1 |
 | 存活的连接候选 | 1 |
 | 双向 splice 中继 | 4 |
-| io_uring 会话 | 2 |
 
 该计数宁可多预留，也不去建模内核内部对象。它是预留，不是测量。
 
@@ -149,8 +147,16 @@ accept 错误依据原始 `errno` 分类，而非 `ErrorKind`：
 |---|---|---|---|
 | buffered | 不适用 | 是 | 是 |
 | splice | 是 | 是 | 是 |
-| sockhash | 是 | 程序与 arm/disarm 已验证；**尚未接入 `TcpRelay`** | 否 |
-| io_uring | 仅探测 | **否**——驱动存在但中继路径无法到达 | 否 |
+| sockhash | 是 | 是——当策略启用且探测与控制器构建均成功时，由 `TcpRelay` 按中继 arm | 是 |
+| io_uring | — | **已移除**——见决策记录附录 | — |
+
+### SOCKHASH 运行时
+
+启用 `policy.relay.sockHash` 后，`TcpRelay::new` 先执行内核探测，探测通过才构建进程级控制器：一个容量为 `maxSockhashRelays` 两倍条目的 `SOCKHASH`、一份携带的有界校验器日志加载的流裁决程序，以及 attach。启动时的 `RelayBackendReport` 只有在该控制器确实存在时才报告 sockhash 可用，否则给出精确的固定拒绝原因（探测失败、`missingCapability`、`verifierRejected` 等）。失败不会阻止中继服务——该后端只是在任何字节传输之前拒绝，自动选择顺序（`sockhash`、`splice`、`buffered`）随之回退。
+
+arm 所需权限以探测在运行中的主机上实测为准（`CAP_BPF`/`CAP_NET_ADMIN` 或 root，外加 `RLIMIT_MEMLOCK` 余量），而非凭空假设。arm 本身是事务性的（两个方向要么都安装要么都不安装，失败回滚），并会拒绝借用套接字、已发生传输的中继账本以及仍有排队输入的连接；每条中继按两个方向计入准入。由于重定向会消耗 FIN 而不传播，已 arm 的会话自行检测每个半关闭，等待以 `TCP_INFO` 度量的排空屏障确认没有重定向字节被滞留，然后才用 `shutdown(2)` 传播该半关闭。字节计数采用内核报告的 `TCP_INFO` 差值，在拆除时快照。特权一致性门禁位于 `tests/sockhash_runtime.rs`。
+
+以下为历史故障分析。
 
 ### SOCKHASH
 
@@ -196,9 +202,7 @@ IPv6 使用独立分支，以 4 字节为单位读取 `local_ip6`/`remote_ip6`�
 
 ### io_uring
 
-`crates/rr-linux/src/uring.rs` 中的驱动可以编译，但只在其自身的测试中被构造。`TcpRelay::run_backend` 会拒绝 io_uring，`automatic_preference()` 也未包含它。启动报告不应被理解为生产流量正在使用它。
-
-之所以将其排除在自动选择之外，是因为目标主机上没有保留下来的实测数据支持这一选择，而规范禁止引入推测性的分类器。
+已移除，未实现。审计与理由记录于 `decisions/adaptive-relay-implementation-plan.md` 的附录；仍然设置 `ioUring` 或 `maxIoUringRelays` 的配置会作为未知字段校验失败。
 
 ## 6. 部署建议
 

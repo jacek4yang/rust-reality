@@ -1,0 +1,249 @@
+{
+  "expectedBytes": 5000000,
+  "harness": "benchmark-real-path",
+  "results": [
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 1063590.0,
+      "httpCode": "200",
+      "implementation": "rust-reality",
+      "index": 0,
+      "ok": true,
+      "seconds": 4.701058,
+      "wallSeconds": 4.712833796162158
+    },
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 201962.0,
+      "httpCode": "200",
+      "implementation": "xray",
+      "index": 1,
+      "ok": true,
+      "seconds": 24.757109,
+      "wallSeconds": 24.765043512918055
+    },
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 1249280.0,
+      "httpCode": "200",
+      "implementation": "rust-reality",
+      "index": 2,
+      "ok": true,
+      "seconds": 4.002305,
+      "wallSeconds": 4.011241603177041
+    },
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 451827.0,
+      "httpCode": "200",
+      "implementation": "xray",
+      "index": 3,
+      "ok": true,
+      "seconds": 11.066169,
+      "wallSeconds": 11.075068255886436
+    },
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 317057.0,
+      "httpCode": "200",
+      "implementation": "rust-reality",
+      "index": 4,
+      "ok": true,
+      "seconds": 15.769992,
+      "wallSeconds": 15.778258423320949
+    },
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 305682.0,
+      "httpCode": "200",
+      "implementation": "xray",
+      "index": 5,
+      "ok": true,
+      "seconds": 16.356834,
+      "wallSeconds": 16.369387765880674
+    },
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 349730.0,
+      "httpCode": "200",
+      "implementation": "rust-reality",
+      "index": 6,
+      "ok": true,
+      "seconds": 14.296706,
+      "wallSeconds": 14.309031122364104
+    },
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 236952.0,
+      "httpCode": "200",
+      "implementation": "xray",
+      "index": 7,
+      "ok": true,
+      "seconds": 21.10125,
+      "wallSeconds": 21.112431906163692
+    },
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 397878.0,
+      "httpCode": "200",
+      "implementation": "rust-reality",
+      "index": 8,
+      "ok": true,
+      "seconds": 12.56666,
+      "wallSeconds": 12.578827805817127
+    },
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 1341455.0,
+      "httpCode": "200",
+      "implementation": "xray",
+      "index": 9,
+      "ok": true,
+      "seconds": 3.727294,
+      "wallSeconds": 3.7468037880025804
+    },
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 320859.0,
+      "httpCode": "200",
+      "implementation": "rust-reality",
+      "index": 10,
+      "ok": true,
+      "seconds": 15.583153,
+      "wallSeconds": 15.59815709805116
+    },
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 315054.0,
+      "httpCode": "200",
+      "implementation": "xray",
+      "index": 11,
+      "ok": true,
+      "seconds": 15.870268,
+      "wallSeconds": 15.887205196544528
+    },
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 1294426.0,
+      "httpCode": "200",
+      "implementation": "rust-reality",
+      "index": 12,
+      "ok": true,
+      "seconds": 3.862715,
+      "wallSeconds": 3.8761471319012344
+    },
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 360906.0,
+      "httpCode": "200",
+      "implementation": "xray",
+      "index": 13,
+      "ok": true,
+      "seconds": 13.853987,
+      "wallSeconds": 13.867813362274319
+    },
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 247289.0,
+      "httpCode": "200",
+      "implementation": "rust-reality",
+      "index": 14,
+      "ok": true,
+      "seconds": 20.219242,
+      "wallSeconds": 20.235961723141372
+    },
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 525870.0,
+      "httpCode": "200",
+      "implementation": "xray",
+      "index": 15,
+      "ok": true,
+      "seconds": 9.508048,
+      "wallSeconds": 9.525258262176067
+    },
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 407803.0,
+      "httpCode": "200",
+      "implementation": "rust-reality",
+      "index": 16,
+      "ok": true,
+      "seconds": 12.260803,
+      "wallSeconds": 12.277629568241537
+    },
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 347497.0,
+      "httpCode": "200",
+      "implementation": "xray",
+      "index": 17,
+      "ok": true,
+      "seconds": 14.388588,
+      "wallSeconds": 14.397306233644485
+    },
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 373132.0,
+      "httpCode": "200",
+      "implementation": "rust-reality",
+      "index": 18,
+      "ok": true,
+      "seconds": 13.400058,
+      "wallSeconds": 13.41452946793288
+    },
+    {
+      "bytes": 5000000,
+      "bytesPerSecond": 340971.0,
+      "httpCode": "200",
+      "implementation": "xray",
+      "index": 19,
+      "ok": true,
+      "seconds": 14.663988,
+      "wallSeconds": 14.68212705431506
+    }
+  ],
+  "rustServerPort": 52215,
+  "schemaVersion": 1,
+  "summary": {
+    "alternatingOrder": [
+      "rust-reality",
+      "xray",
+      "rust-reality",
+      "xray",
+      "rust-reality",
+      "xray",
+      "rust-reality",
+      "xray",
+      "rust-reality",
+      "xray",
+      "rust-reality",
+      "xray",
+      "rust-reality",
+      "xray",
+      "rust-reality",
+      "xray",
+      "rust-reality",
+      "xray",
+      "rust-reality",
+      "xray"
+    ],
+    "failedRuns": [],
+    "failures": 0,
+    "runs": 20,
+    "rust-reality": {
+      "maxMiBPerSecond": 1.2344608306884766,
+      "medianMiBPerSecond": 0.37944602966308594,
+      "minMiBPerSecond": 0.23583316802978516,
+      "samples": 10
+    },
+    "xray": {
+      "maxMiBPerSecond": 1.279311180114746,
+      "medianMiBPerSecond": 0.33139896392822266,
+      "minMiBPerSecond": 0.19260597229003906,
+      "samples": 10
+    }
+  },
+  "timestampUnix": 1785945669,
+  "url": "https://speed.cloudflare.com/__down"
+}

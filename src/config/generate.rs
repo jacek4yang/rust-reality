@@ -3,8 +3,8 @@ use std::net::IpAddr;
 use super::{
     AssetsConfig, BlackholeSettings, Config, ConfigError, DnsConfig, DnsStrategy, InboundConfig,
     LogConfig, Network, NxrInboundConfig, NxrInboundSettings, NxrSettings, OutboundConfig,
-    PolicyConfig, RealityConfig, RoutingConfig, SecretString, StreamSettings, UserPolicy,
-    VlessClient, VlessInboundConfig, VlessInboundSettings, validate_config,
+    PolicyConfig, RealityConfig, RoutingConfig, RuntimeConfig, SecretString, StreamSettings,
+    UserPolicy, VlessClient, VlessInboundConfig, VlessInboundSettings, validate_config,
 };
 use crate::crypto::{
     KeyGenerationError, generate_short_id, generate_uuid, generate_x25519_key_pair,
@@ -168,6 +168,7 @@ pub fn generate_minimal_config(
             }],
         },
         policy: PolicyConfig::default(),
+        runtime: RuntimeConfig::default(),
     };
     validate_config(&config)?;
     Ok(GeneratedConfig {
@@ -231,6 +232,7 @@ pub fn generate_line_config(
             }],
         },
         policy: PolicyConfig::default(),
+        runtime: RuntimeConfig::default(),
     };
     validate_config(&config)?;
     Ok(GeneratedConfig {
@@ -277,6 +279,7 @@ pub fn generate_landing_config(
             users: Vec::new(),
         },
         policy: PolicyConfig::default(),
+        runtime: RuntimeConfig::default(),
     };
     validate_config(&config)?;
     Ok(config)

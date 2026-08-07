@@ -26,6 +26,56 @@ pub struct Config {
     /// Resource and relay limits.
     #[serde(default)]
     pub policy: PolicyConfig,
+    /// Process resource mode.
+    #[serde(default)]
+    pub runtime: RuntimeConfig,
+}
+
+/// Process-level resource posture.
+///
+/// The resource mode is a cold setting: it shapes the process-lifetime
+/// descriptor budget and the memory monitor, so changing it requires a
+/// process restart and is rejected on hot reload.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RuntimeConfig {
+    /// How conservatively the process treats machine resources.
+    ///
+    /// `standard` (default) derives every budget from the inherited limits
+    /// exactly as documented in the descriptor-budget reference and assumes
+    /// nothing about what else runs on the machine.
+    ///
+    /// `dedicated` declares that this process owns the machine (or its
+    /// cgroup): at startup it raises the soft `RLIMIT_NOFILE` to the hard
+    /// limit when possible, relaxes the descriptor safety headroom from
+    /// `limit/16` to `limit/10`, and runs a bounded memory-pressure monitor
+    /// that pauses new setup work before the kernel or the cgroup OOM killer
+    /// is reached. See `docs/dedicated-resource-mode.md`.
+    #[serde(default)]
+    pub resource_mode: ResourceMode,
+}
+
+/// Supported process resource modes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResourceMode {
+    /// Shared-machine posture; every budget derives from inherited limits.
+    #[default]
+    Standard,
+    /// Single-tenant posture; the process budgets against the whole machine
+    /// or cgroup and supervises its own memory pressure.
+    Dedicated,
+}
+
+impl ResourceMode {
+    /// Returns the stable identifier used in logs and reports.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Dedicated => "dedicated",
+        }
+    }
 }
 
 /// A string whose debug representation never reveals its contents.
@@ -674,9 +724,6 @@ pub struct RelayPolicy {
     /// Maximum concurrent Linux splice relays and their two pipe pairs.
     #[serde(default = "default_max_splice_relays")]
     pub max_splice_relays: u32,
-    /// Maximum concurrently armed bounded io_uring relays.
-    #[serde(default = "default_max_io_uring_relays")]
-    pub max_io_uring_relays: u32,
     /// Maximum concurrently armed bounded sockhash relays.
     #[serde(default = "default_max_sockhash_relays")]
     pub max_sockhash_relays: u32,
@@ -688,8 +735,6 @@ pub struct RelayPolicy {
     pub max_pinned_memory_bytes: u64,
     /// Permit nonblocking splice on plaintext TCP boundaries.
     pub splice: bool,
-    /// Permit io_uring when the runtime probe accepts the kernel.
-    pub io_uring: bool,
     /// Permit optional sockhash acceleration after capability probing.
     pub sockhash: bool,
 }
@@ -700,22 +745,16 @@ impl Default for RelayPolicy {
             buffer_bytes: 32 * 1024,
             max_pooled_buffers: 4_096,
             max_splice_relays: default_max_splice_relays(),
-            max_io_uring_relays: default_max_io_uring_relays(),
             max_sockhash_relays: default_max_sockhash_relays(),
             max_relay_memory_bytes: default_max_relay_memory_bytes(),
             max_pinned_memory_bytes: default_max_pinned_memory_bytes(),
             splice: true,
-            io_uring: false,
             sockhash: false,
         }
     }
 }
 
 const fn default_max_splice_relays() -> u32 {
-    1_024
-}
-
-const fn default_max_io_uring_relays() -> u32 {
     256
 }
 
@@ -724,7 +763,7 @@ const fn default_max_sockhash_relays() -> u32 {
 }
 
 const fn default_max_relay_memory_bytes() -> u64 {
-    268_435_456
+    536_870_912
 }
 
 const fn default_max_pinned_memory_bytes() -> u64 {

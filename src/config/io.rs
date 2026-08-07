@@ -154,6 +154,20 @@ mod tests {
     }
 
     #[test]
+    fn rejects_removed_io_uring_relay_fields() {
+        // The io_uring backend was removed; its former keys must fail decoding
+        // rather than being silently accepted.
+        let json = test_config_json().replace(
+            "\"policy\": {}",
+            "\"policy\": { \"relay\": { \"ioUring\": true, \"maxIoUringRelays\": 256 } }",
+        );
+        let error = decode_config(Path::new("test.json"), json.as_bytes())
+            .expect_err("removed io_uring fields must be rejected");
+
+        assert!(matches!(error, ConfigLoadError::Decode { .. }));
+    }
+
+    #[test]
     fn formatted_configuration_round_trips() {
         let config = decode_config(Path::new("test.json"), test_config_json().as_bytes())
             .expect("fixture must be valid");

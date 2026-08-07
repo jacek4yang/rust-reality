@@ -5,6 +5,7 @@ mod allocation_gate;
 mod application_io;
 mod handshake;
 mod handshake_read;
+mod idle;
 mod keys;
 mod messages;
 mod record;
@@ -18,6 +19,7 @@ pub use application_io::{
 };
 pub use handshake::{EstablishedTls, RealityHandshakeError, ServerFlight, build_server_flight};
 pub use handshake_read::{ClientFinishedReadError, read_client_finished};
+pub use idle::{IdleDeadline, IdleError};
 pub use keys::{
     ApplicationTrafficSecrets, CipherSuite, FinishedVerifyData, HashAlgorithm, Tls13KeySchedule,
     Tls13KeyScheduleError, TrafficKeys, TrafficSecret, TranscriptHash,
@@ -33,6 +35,7 @@ pub use record_read::{
     MAX_TLS_RECORD_WIRE_LEN, TlsRecordRead, TlsRecordReadError, TlsRecordReadErrorKind,
     read_tls_record, read_tls_record_into, record_storage,
 };
+pub(crate) use record_read::{MAX_TLS13_CIPHERTEXT_LEN, TLS_RECORD_HEADER_LEN, buffered_failure};
 pub use server_hello::{
     ServerHelloError, ServerHelloTemplate, change_cipher_spec_record, plaintext_handshake_record,
 };

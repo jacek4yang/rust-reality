@@ -284,17 +284,11 @@ sudo systemctl restart rust-reality
 
 ## 可选的内核中继后端
 
-两个内核后端**默认关闭**，并且都是探测得出而非假定。保持关闭是受支持的生产配置；
+sockhash 内核后端**默认关闭**，并且是探测得出而非假定。保持关闭是受支持的生产配置；
 可移植的缓冲中继和 Linux `splice` 不需要额外权限。
 
-### io_uring
-
-`policy.relay.ioUring: true` 启用有界 io_uring 后端。启动时探测其需求：创建 ring
-以及 `recv`、`send`、`shutdown` 和异步取消操作。内核或 seccomp 策略拒绝其中任意一项
-时，会输出一行启动拒绝原因，服务器继续使用其余后端运行。
-
-请注意，io_uring 在本分支中**不**参与自动选择。可以启用它来测量或显式选择它，但
-不要期待系统自动为你选中它。
+io_uring 后端已被移除（见 `decisions/adaptive-relay-implementation-plan.md`）；仍然设置
+`policy.relay.ioUring` 或 `policy.relay.maxIoUringRelays` 的配置会作为未知字段被拒绝。
 
 ### sockhash
 

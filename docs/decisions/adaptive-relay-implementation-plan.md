@@ -3,6 +3,24 @@
 Status: accepted for `perf/adaptive-relay-backends`
 Baseline: `main@14ed098505b5cd9c3f5cc0d00c393c45428b0e42`
 
+> Amendment (io_uring removal): the io_uring backend planned and partially
+> built here was later **removed, not implemented**. The lifecycle audit of
+> the former `crates/rr-linux/src/uring.rs` driver found: it was recv/send
+> only (not zero-copy — a cross-thread channel round trip and a heap box per
+> operation made it strictly worse than the buffered backend); it had no
+> operation cancellation, so shard `Drop` could join forever behind a quiet
+> peer; its `SessionFds` fd-safety duplication was never wired into any
+> caller; it had no session layer (no partial-I/O resubmit, no half-close
+> assembly); and production never drove it — `TcpRelay::run_backend`
+> declined it unconditionally and `automatic_preference()` omitted it.
+> Completing it would have been a rewrite for dubious gain over the working
+> splice and sockhash backends, so the module, the `io-uring` dependency,
+> the `RelayBackend::IoUring` variant, the `ioUring`/`maxIoUringRelays`
+> configuration keys, the ring descriptor reserve, the session FD unit, and
+> the pinned-memory formula were all deleted. Stale configuration keys fail
+> strict decoding as unknown fields (regression-pinned in
+> `src/config/io.rs`). The io_uring statements below are historical.
+
 This record captures the audit performed before any hot-path edit, the ownership
 model the branch adopts, the resource formulas that bound every new structure,
 and the mapping from requirement to test. It is deliberately written so that a

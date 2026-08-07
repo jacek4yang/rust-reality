@@ -1,23 +1,32 @@
 use std::{error::Error, fmt, io, time::Duration};
 
-use tokio::{
-    io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf, split},
-    time::{self, Instant},
-};
+use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf, split};
 
 use super::{
-    ContentType, EstablishedTls, MAX_PLAINTEXT_LEN, Tls13RecordError, TlsRecordReadError,
-    read_tls_record_into, record_storage,
+    ContentType, EstablishedTls, IdleDeadline, IdleError, MAX_PLAINTEXT_LEN,
+    MAX_TLS_RECORD_WIRE_LEN, MAX_TLS13_CIPHERTEXT_LEN, TLS_RECORD_HEADER_LEN, Tls13RecordError,
+    TlsRecordReadError, TlsRecordReadErrorKind, buffered_failure, read_tls_record_into,
+    record_storage,
 };
 
 const ALERT_LEVEL_WARNING: u8 = 1;
 const ALERT_CLOSE_NOTIFY: u8 = 0;
 
-/// One authenticated application record borrowed from reusable record storage.
+/// Capacity of the connection-owned socket buffer behind a split reader.
 ///
-/// The borrow keeps the connection's single record buffer immutable until the
-/// caller finishes with the plaintext, which is what makes the successful record
-/// loop allocation-free: no owned `Vec` is produced per record.
+/// One refill moves up to this many bytes per socket read — four maximum-sized
+/// records, matching the 64 KiB read window of the reference implementation —
+/// so a pipelined peer costs one syscall per refill instead of one header read
+/// plus one body read per record. The buffer is allocated and zero-filled once
+/// and then treated as fully initialized storage; only the start/end cursors
+/// move afterwards.
+const SOCKET_BUFFER_CAPACITY: usize = 4 * MAX_TLS_RECORD_WIRE_LEN;
+
+/// One authenticated application record borrowed from the connection's buffer.
+///
+/// The borrow keeps the connection's socket buffer immutable until the caller
+/// finishes with the plaintext, which is what makes the successful record loop
+/// allocation-free: no owned `Vec` is produced per record.
 pub struct ApplicationRecord<'record> {
     plaintext: &'record [u8],
 }
@@ -75,7 +84,7 @@ impl ApplicationWriteStats {
 /// Established TLS application I/O failed or received unsupported control traffic.
 #[derive(Debug)]
 pub enum TlsApplicationIoError {
-    /// The requested absolute operation deadline could not be represented or elapsed.
+    /// The requested idle window could not be represented or elapsed.
     Timeout,
     /// Reading one exact encrypted record failed.
     Read(TlsRecordReadError),
@@ -127,17 +136,24 @@ pub struct TlsApplicationIo<S> {
     tls: EstablishedTls,
     read_record: Vec<u8>,
     write_record: Vec<u8>,
+    idle: IdleDeadline,
 }
 
 /// Authenticated client-to-server TLS application records.
 ///
-/// The reader owns one maximum-sized record buffer for the whole connection.
-/// Every record is read into it, opened in place, and exposed as a borrowed
-/// slice, so the steady-state path performs no allocation.
+/// The reader owns one grow-only socket buffer and one idle deadline for the
+/// whole connection. Each refill reads available socket bytes into the buffer
+/// once, complete records are parsed out of the buffered range and opened in
+/// place, and the plaintext is exposed as a borrowed slice. The steady-state
+/// path therefore performs no allocation and one socket read per refill, and
+/// bytes already buffered survive a dropped future untouched.
 pub struct TlsApplicationReader<R> {
     io: R,
     records: super::Tls13RecordLayer,
-    read_record: Vec<u8>,
+    socket_buffer: Vec<u8>,
+    buffered_start: usize,
+    buffered_end: usize,
+    idle: IdleDeadline,
 }
 
 /// Server-to-client TLS application records with one reusable ciphertext buffer.
@@ -145,16 +161,26 @@ pub struct TlsApplicationWriter<W> {
     io: W,
     records: super::Tls13RecordLayer,
     write_record: Vec<u8>,
+    idle: IdleDeadline,
 }
 
 impl<R> TlsApplicationReader<R> {
-    /// Consumes record state and returns the transport reader at a record boundary.
+    /// Consumes record state and returns unparsed buffered bytes plus the transport.
     ///
     /// This is only appropriate after an authenticated higher-level protocol has
     /// explicitly negotiated a transition away from the outer TLS record layer.
+    /// The boundary record is the last outer record the peer sends, so every
+    /// byte still in the socket buffer is post-boundary raw bytes the peer
+    /// pipelined behind it; the caller must deliver them, in order, ahead of
+    /// every byte any raw relay moves.
     #[must_use]
-    pub fn into_inner(self) -> R {
-        self.io
+    pub fn into_inner_with_pending(self) -> (Vec<u8>, R) {
+        let pending = self
+            .socket_buffer
+            .get(self.buffered_start..self.buffered_end)
+            .unwrap_or_default()
+            .to_vec();
+        (pending, self.io)
     }
 }
 
@@ -181,12 +207,16 @@ pub fn bind_application_halves<R, W>(
         TlsApplicationReader {
             io: reader,
             records: client_records,
-            read_record: Vec::new(),
+            socket_buffer: Vec::new(),
+            buffered_start: 0,
+            buffered_end: 0,
+            idle: IdleDeadline::new(),
         },
         TlsApplicationWriter {
             io: writer,
             records: server_records,
             write_record: Vec::new(),
+            idle: IdleDeadline::new(),
         },
     )
 }
@@ -200,6 +230,7 @@ impl<S> TlsApplicationIo<S> {
             tls,
             read_record: Vec::new(),
             write_record: Vec::new(),
+            idle: IdleDeadline::new(),
         }
     }
 
@@ -231,12 +262,16 @@ impl TlsApplicationIo<tokio::net::TcpStream> {
             TlsApplicationReader {
                 io: reader,
                 records: client_records,
-                read_record: self.read_record,
+                socket_buffer: Vec::new(),
+                buffered_start: 0,
+                buffered_end: 0,
+                idle: IdleDeadline::new(),
             },
             TlsApplicationWriter {
                 io: writer,
                 records: server_records,
                 write_record: self.write_record,
+                idle: IdleDeadline::new(),
             },
         )
     }
@@ -260,12 +295,16 @@ where
             TlsApplicationReader {
                 io: reader,
                 records: client_records,
-                read_record: self.read_record,
+                socket_buffer: Vec::new(),
+                buffered_start: 0,
+                buffered_end: 0,
+                idle: IdleDeadline::new(),
             },
             TlsApplicationWriter {
                 io: writer,
                 records: server_records,
                 write_record: self.write_record,
+                idle: IdleDeadline::new(),
             },
         )
     }
@@ -275,7 +314,7 @@ impl<S> TlsApplicationIo<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    /// Reads and authenticates one application record under an absolute deadline.
+    /// Reads and authenticates one application record under one idle window.
     ///
     /// Decryption occurs in place. The returned value owns the record buffer and
     /// exposes the plaintext as a range, avoiding a second plaintext allocation.
@@ -287,11 +326,14 @@ where
         &mut self,
         timeout: Duration,
     ) -> Result<ApplicationRecord<'_>, TlsApplicationIoError> {
+        self.idle
+            .reset(timeout)
+            .map_err(|_| TlsApplicationIoError::Timeout)?;
         read_application_record(
             &mut self.io,
             self.tls.client_records_mut(),
             &mut self.read_record,
-            timeout,
+            &mut self.idle,
         )
         .await
     }
@@ -299,7 +341,7 @@ where
     /// Encrypts application bytes into bounded records and writes every ciphertext byte.
     ///
     /// The reusable ciphertext buffer is retained by the connection. Empty writes
-    /// produce no record, and all chunks share one absolute deadline.
+    /// produce no record, and each record gets its own idle window.
     ///
     /// # Errors
     ///
@@ -313,6 +355,7 @@ where
             &mut self.io,
             self.tls.server_records_mut(),
             &mut self.write_record,
+            &mut self.idle,
             plaintext,
             timeout,
         )
@@ -329,6 +372,7 @@ where
             &mut self.io,
             self.tls.server_records_mut(),
             &mut self.write_record,
+            &mut self.idle,
             timeout,
         )
         .await
@@ -341,26 +385,161 @@ where
 {
     /// Reads and authenticates one client application record.
     ///
+    /// Complete records are parsed out of the connection-owned socket buffer;
+    /// a refill moves available socket bytes into that buffer with a single
+    /// read, so a pipelined peer costs one syscall per refill rather than two
+    /// per record. The record is opened in place inside the buffer and the
+    /// plaintext is exposed as a borrowed slice, exactly like the record-exact
+    /// path: no owned `Vec` is produced per record.
+    ///
     /// # Errors
     ///
     /// Returns a bounded record, AEAD, alert, content-type, or deadline error.
+    /// The kinds and consumed-byte prefixes are identical to the record-exact
+    /// read: EOF at a record boundary is an [`TlsRecordReadErrorKind::UnexpectedEof`]
+    /// with an empty prefix, EOF or timeout mid-record carries exactly the
+    /// partial record bytes buffered so far, and an invalid declared length is
+    /// [`TlsRecordReadErrorKind::RecordTooLarge`] with the five-byte header.
     pub async fn read_application(
         &mut self,
         timeout: Duration,
     ) -> Result<ApplicationRecord<'_>, TlsApplicationIoError> {
-        read_application_record(
-            &mut self.io,
-            &mut self.records,
-            &mut self.read_record,
-            timeout,
-        )
-        .await
+        while self.buffered_end - self.buffered_start < TLS_RECORD_HEADER_LEN {
+            self.refill(timeout).await?;
+        }
+        let header_end = self.buffered_start + TLS_RECORD_HEADER_LEN;
+        let header = self
+            .socket_buffer
+            .get(self.buffered_start..header_end)
+            .ok_or(TlsApplicationIoError::Record(
+                Tls13RecordError::InvalidLength,
+            ))?;
+        let body_len = usize::from(u16::from_be_bytes([header[3], header[4]]));
+        if body_len == 0 || body_len > MAX_TLS13_CIPHERTEXT_LEN {
+            return Err(TlsApplicationIoError::Read(buffered_failure(
+                TlsRecordReadErrorKind::RecordTooLarge,
+                header,
+            )));
+        }
+        let record_len = TLS_RECORD_HEADER_LEN + body_len;
+        while self.buffered_end - self.buffered_start < record_len {
+            self.refill(timeout).await?;
+        }
+        // Advance the cursor past the record before borrowing the buffer for
+        // the in-place open: the AEAD then mutates only the record slice while
+        // any bytes of later records stay untouched behind the cursor.
+        let record_start = self.buffered_start;
+        let record_end = record_start + record_len;
+        self.buffered_start = record_end;
+        let record = self.socket_buffer.get_mut(record_start..record_end).ok_or(
+            TlsApplicationIoError::Record(Tls13RecordError::InvalidLength),
+        )?;
+        let opened = self
+            .records
+            .open_in_place(record)
+            .map_err(TlsApplicationIoError::Record)?;
+        let content_type = opened.content_type();
+        match content_type {
+            ContentType::ApplicationData => Ok(ApplicationRecord {
+                plaintext: opened.plaintext(),
+            }),
+            ContentType::Alert => {
+                let [level, description] = <[u8; 2]>::try_from(opened.plaintext())
+                    .map_err(|_| TlsApplicationIoError::InvalidAlert)?;
+                Err(TlsApplicationIoError::PeerAlert { level, description })
+            }
+            ContentType::ChangeCipherSpec | ContentType::Handshake => {
+                Err(TlsApplicationIoError::UnexpectedContentType(content_type))
+            }
+        }
+    }
+
+    /// Moves available socket bytes into the buffer under one idle window.
+    ///
+    /// The buffer is compacted only when the free tail can no longer hold one
+    /// maximum-sized record, so the steady-state path neither copies nor
+    /// allocates. One refill is one idle window: steady progress resets the
+    /// deadline, never a session cap.
+    async fn refill(&mut self, timeout: Duration) -> Result<(), TlsApplicationIoError> {
+        self.ensure_socket_buffer()?;
+        if self.buffered_start == self.buffered_end {
+            self.buffered_start = 0;
+            self.buffered_end = 0;
+        } else if self.socket_buffer.len() - self.buffered_end < MAX_TLS_RECORD_WIRE_LEN {
+            let buffered = self.buffered_end - self.buffered_start;
+            self.socket_buffer
+                .copy_within(self.buffered_start..self.buffered_end, 0);
+            self.buffered_start = 0;
+            self.buffered_end = buffered;
+        }
+        if self.buffered_end == self.socket_buffer.len() {
+            // Unreachable for validated record lengths (one record never
+            // exceeds a quarter of the buffer): a single record larger than
+            // the whole buffer grows the storage once, following the same
+            // reserve-then-zero-fill pattern as the initial allocation.
+            self.socket_buffer
+                .try_reserve_exact(SOCKET_BUFFER_CAPACITY)
+                .map_err(|_| TlsApplicationIoError::Record(Tls13RecordError::BufferAllocation))?;
+            self.socket_buffer
+                .resize(self.socket_buffer.len() + SOCKET_BUFFER_CAPACITY, 0);
+        }
+        self.idle
+            .reset(timeout)
+            .map_err(|_| TlsApplicationIoError::Timeout)?;
+        let end = self.buffered_end;
+        let destination =
+            self.socket_buffer
+                .get_mut(end..)
+                .ok_or(TlsApplicationIoError::Record(
+                    Tls13RecordError::InvalidLength,
+                ))?;
+        let kind = match self.idle.read(&mut self.io, destination).await {
+            Ok(0) => TlsRecordReadErrorKind::UnexpectedEof,
+            Ok(read) => {
+                self.buffered_end += read;
+                return Ok(());
+            }
+            Err(IdleError::Timeout) => TlsRecordReadErrorKind::Timeout,
+            Err(IdleError::Io(source)) => TlsRecordReadErrorKind::Io(source),
+        };
+        Err(self.refill_failure(kind))
+    }
+
+    /// Maps a failed refill to the record-exact read error shape.
+    ///
+    /// The unconsumed buffered bytes are exactly the partial record a
+    /// record-exact read would have consumed when the failure hit, so the
+    /// error kind and prefix match `read_tls_record_into` one to one —
+    /// including the clean-EOF case, where nothing is buffered and the prefix
+    /// is empty.
+    fn refill_failure(&self, kind: TlsRecordReadErrorKind) -> TlsApplicationIoError {
+        let buffered = self
+            .socket_buffer
+            .get(self.buffered_start..self.buffered_end)
+            .unwrap_or_default();
+        TlsApplicationIoError::Read(buffered_failure(kind, buffered))
+    }
+
+    /// Allocates and zero-fills the connection's socket buffer exactly once.
+    fn ensure_socket_buffer(&mut self) -> Result<(), TlsApplicationIoError> {
+        if self.socket_buffer.capacity() == 0 {
+            let mut buffer = Vec::new();
+            buffer
+                .try_reserve_exact(SOCKET_BUFFER_CAPACITY)
+                .map_err(|_| TlsApplicationIoError::Record(Tls13RecordError::BufferAllocation))?;
+            buffer.resize(SOCKET_BUFFER_CAPACITY, 0);
+            self.socket_buffer = buffer;
+        }
+        Ok(())
     }
 
     /// Returns the address of the reusable record storage for allocation tests.
+    ///
+    /// The socket buffer is allocated on the first read and never moves
+    /// afterwards, so a warm connection reports one stable address.
     #[must_use]
     pub fn record_storage_address(&self) -> usize {
-        self.read_record.as_ptr() as usize
+        self.socket_buffer.as_ptr() as usize
     }
 }
 
@@ -382,10 +561,63 @@ where
             &mut self.io,
             &mut self.records,
             &mut self.write_record,
+            &mut self.idle,
             plaintext,
             timeout,
         )
         .await
+    }
+
+    /// Reads transport bytes straight into AEAD plaintext storage and seals in place.
+    ///
+    /// This is the relay shape of [`TlsApplicationWriter::write_assembled`]:
+    /// instead of assembling a framed payload, the plaintext region of the
+    /// connection's reusable record buffer is the destination of one socket
+    /// read, and exactly the bytes read are sealed. The scratch buffer and its
+    /// per-chunk copy are gone; the only copy left is the socket read itself.
+    /// One idle window covers the read and the write, so a relay chunk costs
+    /// one timer registration.
+    ///
+    /// Returns the number of plaintext bytes sealed; `0` means the peer
+    /// reached EOF and no record was written.
+    ///
+    /// # Errors
+    ///
+    /// Returns a record-protection, allocation, socket, or deadline error.
+    pub async fn write_application_read_from<R>(
+        &mut self,
+        reader: &mut R,
+        timeout: Duration,
+    ) -> Result<usize, TlsApplicationIoError>
+    where
+        R: AsyncRead + Unpin,
+    {
+        self.idle
+            .reset(timeout)
+            .map_err(|_| TlsApplicationIoError::Timeout)?;
+        let read = {
+            let region = super::record::application_plaintext_region(&mut self.write_record)
+                .map_err(TlsApplicationIoError::Record)?;
+            self.idle.read(reader, region).await.map_err(idle_failure)?
+        };
+        if read == 0 {
+            return Ok(0);
+        }
+        let record_len = self
+            .records
+            .seal_filled(ContentType::ApplicationData, read, &mut self.write_record)
+            .map_err(TlsApplicationIoError::Record)?;
+        let record = self
+            .write_record
+            .get(..record_len)
+            .ok_or(TlsApplicationIoError::Record(
+                Tls13RecordError::InvalidLength,
+            ))?;
+        self.idle
+            .write_all(&mut self.io, record)
+            .await
+            .map_err(idle_failure)?;
+        Ok(read)
     }
 
     /// Encrypts one record whose plaintext is assembled in final AEAD storage.
@@ -406,7 +638,9 @@ where
     where
         Assemble: FnOnce(&mut [u8]),
     {
-        let deadline = operation_deadline(timeout)?;
+        self.idle
+            .reset(timeout)
+            .map_err(|_| TlsApplicationIoError::Timeout)?;
         self.records
             .seal_assembled(
                 ContentType::ApplicationData,
@@ -416,10 +650,11 @@ where
                 assemble,
             )
             .map_err(TlsApplicationIoError::Record)?;
-        time::timeout_at(deadline, self.io.write_all(&self.write_record))
+        let record = self.write_record.as_slice();
+        self.idle
+            .write_all(&mut self.io, record)
             .await
-            .map_err(|_| TlsApplicationIoError::Timeout)?
-            .map_err(TlsApplicationIoError::Io)
+            .map_err(idle_failure)
     }
 
     /// Sends an authenticated `close_notify` and shuts down the transport writer.
@@ -432,6 +667,7 @@ where
             &mut self.io,
             &mut self.records,
             &mut self.write_record,
+            &mut self.idle,
             timeout,
         )
         .await
@@ -448,17 +684,20 @@ async fn read_application_record<'record, R>(
     io: &mut R,
     records: &mut super::Tls13RecordLayer,
     wire: &'record mut Vec<u8>,
-    timeout: Duration,
+    idle: &mut IdleDeadline,
 ) -> Result<ApplicationRecord<'record>, TlsApplicationIoError>
 where
     R: AsyncRead + Unpin,
 {
     ensure_record_storage(wire)?;
-    read_tls_record_into(io, wire, timeout)
+    let length = read_tls_record_into(io, wire, idle)
         .await
         .map_err(TlsApplicationIoError::Read)?;
+    let record = wire.get_mut(..length).ok_or(TlsApplicationIoError::Record(
+        Tls13RecordError::InvalidLength,
+    ))?;
     let opened = records
-        .open_in_place(wire)
+        .open_in_place(record)
         .map_err(TlsApplicationIoError::Record)?;
     let content_type = opened.content_type();
     match content_type {
@@ -489,22 +728,26 @@ async fn write_application_data<W>(
     io: &mut W,
     records: &mut super::Tls13RecordLayer,
     write_record: &mut Vec<u8>,
+    idle: &mut IdleDeadline,
     plaintext: &[u8],
     timeout: Duration,
 ) -> Result<ApplicationWriteStats, TlsApplicationIoError>
 where
     W: AsyncWrite + Unpin,
 {
-    let deadline = operation_deadline(timeout)?;
     let mut record_count = 0_u64;
     for chunk in plaintext.chunks(MAX_PLAINTEXT_LEN) {
+        // One idle window per record: steady progress can never time out,
+        // while a stalled peer is still bounded per record.
+        idle.reset(timeout)
+            .map_err(|_| TlsApplicationIoError::Timeout)?;
         write_content(
             io,
             records,
             write_record,
+            idle,
             ContentType::ApplicationData,
             chunk,
-            deadline,
         )
         .await?;
         record_count = record_count.saturating_add(1);
@@ -519,34 +762,33 @@ async fn shutdown_tls_writer<W>(
     io: &mut W,
     records: &mut super::Tls13RecordLayer,
     write_record: &mut Vec<u8>,
+    idle: &mut IdleDeadline,
     timeout: Duration,
 ) -> Result<(), TlsApplicationIoError>
 where
     W: AsyncWrite + Unpin,
 {
-    let deadline = operation_deadline(timeout)?;
+    idle.reset(timeout)
+        .map_err(|_| TlsApplicationIoError::Timeout)?;
     write_content(
         io,
         records,
         write_record,
+        idle,
         ContentType::Alert,
         &[ALERT_LEVEL_WARNING, ALERT_CLOSE_NOTIFY],
-        deadline,
     )
     .await?;
-    time::timeout_at(deadline, io.shutdown())
-        .await
-        .map_err(|_| TlsApplicationIoError::Timeout)?
-        .map_err(TlsApplicationIoError::Io)
+    idle.shutdown(io).await.map_err(idle_failure)
 }
 
 async fn write_content<W>(
     io: &mut W,
     records: &mut super::Tls13RecordLayer,
     write_record: &mut Vec<u8>,
+    idle: &mut IdleDeadline,
     content_type: ContentType,
     plaintext: &[u8],
-    deadline: Instant,
 ) -> Result<(), TlsApplicationIoError>
 where
     W: AsyncWrite + Unpin,
@@ -554,10 +796,15 @@ where
     records
         .seal_into(content_type, plaintext, 0, write_record)
         .map_err(TlsApplicationIoError::Record)?;
-    time::timeout_at(deadline, io.write_all(write_record))
-        .await
-        .map_err(|_| TlsApplicationIoError::Timeout)?
-        .map_err(TlsApplicationIoError::Io)
+    idle.write_all(io, write_record).await.map_err(idle_failure)
+}
+
+/// Maps an idle-guarded operation failure to the application I/O error.
+fn idle_failure(error: IdleError) -> TlsApplicationIoError {
+    match error {
+        IdleError::Timeout => TlsApplicationIoError::Timeout,
+        IdleError::Io(source) => TlsApplicationIoError::Io(source),
+    }
 }
 
 impl<S> fmt::Debug for TlsApplicationIo<S> {
@@ -592,22 +839,25 @@ impl<W> fmt::Debug for TlsApplicationWriter<W> {
     }
 }
 
-fn operation_deadline(timeout: Duration) -> Result<Instant, TlsApplicationIoError> {
-    Instant::now()
-        .checked_add(timeout)
-        .ok_or(TlsApplicationIoError::Timeout)
-}
-
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{
+        io,
+        pin::Pin,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        task::{Context, Poll},
+        time::Duration,
+    };
 
-    use tokio::io::{AsyncWriteExt, duplex};
+    use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf, duplex};
 
     use super::{TlsApplicationIo, TlsApplicationIoError};
     use crate::protocol::reality::tls13::{
         CipherSuite, ContentType, EstablishedTls, Tls13KeySchedule, Tls13RecordLayer,
-        read_tls_record,
+        TlsRecordReadErrorKind, read_tls_record,
     };
 
     const TIMEOUT: Duration = Duration::from_secs(1);
@@ -761,5 +1011,288 @@ mod tests {
             &suite.hash().digest(b"server hello transcript"),
         )
         .expect("test key schedule must derive")
+    }
+
+    /// Server-side TLS state plus the client's write record layer.
+    fn buffered_reader_states() -> (EstablishedTls, Tls13RecordLayer) {
+        let suite = CipherSuite::Aes128GcmSha256;
+        let schedule = schedule(suite);
+        let secrets = schedule
+            .application_traffic_secrets(&suite.hash().digest(b"server finished transcript"))
+            .expect("application secrets must derive");
+        let layer = |secret| {
+            Tls13RecordLayer::new(
+                suite,
+                schedule
+                    .traffic_keys(secret)
+                    .expect("traffic keys must derive"),
+            )
+            .expect("record layer must initialize")
+        };
+        (
+            EstablishedTls::from_test_records(
+                suite,
+                layer(secrets.client()),
+                layer(secrets.server()),
+            ),
+            layer(secrets.client()),
+        )
+    }
+
+    /// A transport replaying input in bounded chunks and counting socket reads.
+    struct CountingTransport {
+        input: Vec<u8>,
+        position: usize,
+        chunk: usize,
+        reads: Arc<AtomicUsize>,
+    }
+
+    impl AsyncRead for CountingTransport {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+            output: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            let available = self.input.len().saturating_sub(self.position);
+            let length = available.min(output.remaining()).min(self.chunk);
+            if length == 0 {
+                return Poll::Ready(Ok(()));
+            }
+            let start = self.position;
+            output.put_slice(
+                self.input
+                    .get(start..start + length)
+                    .expect("replay window must exist"),
+            );
+            self.position += length;
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    impl AsyncWrite for CountingTransport {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+            buffer: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Ok(buffer.len()))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    fn sealed_records(records: &mut Tls13RecordLayer, plaintexts: &[&[u8]]) -> Vec<u8> {
+        let mut stream = Vec::new();
+        for plaintext in plaintexts {
+            let mut record = Vec::new();
+            records
+                .seal_into(ContentType::ApplicationData, plaintext, 0, &mut record)
+                .expect("record must seal");
+            stream.extend_from_slice(&record);
+        }
+        stream
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn two_records_in_one_burst_cost_one_socket_read() {
+        let (established, mut client_write) = buffered_reader_states();
+        let stream = sealed_records(&mut client_write, &[b"first", b"second"]);
+        let reads = Arc::new(AtomicUsize::new(0));
+        let transport = CountingTransport {
+            input: stream,
+            position: 0,
+            chunk: usize::MAX,
+            reads: reads.clone(),
+        };
+        let application = TlsApplicationIo::new(transport, established);
+        let (mut reader, _writer) = application.into_split();
+
+        {
+            let first = reader
+                .read_application(TIMEOUT)
+                .await
+                .expect("first record must authenticate");
+            assert_eq!(first.plaintext(), b"first");
+            assert_eq!(reads.load(Ordering::Relaxed), 1);
+        }
+
+        let second = reader
+            .read_application(TIMEOUT)
+            .await
+            .expect("second record must come from the buffer");
+        assert_eq!(second.plaintext(), b"second");
+        assert_eq!(
+            reads.load(Ordering::Relaxed),
+            1,
+            "the buffered second record must not touch the socket"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fragmented_record_is_reassembled_across_refills() {
+        let (established, mut client_write) = buffered_reader_states();
+        let stream = sealed_records(&mut client_write, &[b"fragmented plaintext"]);
+        let reads = Arc::new(AtomicUsize::new(0));
+        let transport = CountingTransport {
+            input: stream,
+            position: 0,
+            chunk: 7,
+            reads: reads.clone(),
+        };
+        let application = TlsApplicationIo::new(transport, established);
+        let (mut reader, _writer) = application.into_split();
+
+        let record = reader
+            .read_application(TIMEOUT)
+            .await
+            .expect("fragmented record must authenticate");
+        assert_eq!(record.plaintext(), b"fragmented plaintext");
+        assert!(
+            reads.load(Ordering::Relaxed) > 1,
+            "a fragmented record must span multiple refills"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn clean_eof_at_a_record_boundary_keeps_the_exact_error_shape() {
+        let (established, mut client_write) = buffered_reader_states();
+        let stream = sealed_records(&mut client_write, &[b"only record"]);
+        let transport = CountingTransport {
+            input: stream,
+            position: 0,
+            chunk: usize::MAX,
+            reads: Arc::new(AtomicUsize::new(0)),
+        };
+        let application = TlsApplicationIo::new(transport, established);
+        let (mut reader, _writer) = application.into_split();
+
+        {
+            let record = reader
+                .read_application(TIMEOUT)
+                .await
+                .expect("record must authenticate");
+            assert_eq!(record.plaintext(), b"only record");
+        }
+
+        let error = reader
+            .read_application(TIMEOUT)
+            .await
+            .expect_err("EOF at the boundary must fail the next read");
+        let TlsApplicationIoError::Read(read) = error else {
+            panic!("boundary EOF must surface as a record read error");
+        };
+        assert!(matches!(read.kind(), TlsRecordReadErrorKind::UnexpectedEof));
+        assert_eq!(read.wire_prefix(), b"");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn eof_mid_record_reports_exactly_the_buffered_partial_bytes() {
+        let (established, mut client_write) = buffered_reader_states();
+        let stream = sealed_records(&mut client_write, &[b"truncated record body"]);
+        let partial = stream[..stream.len() / 2].to_vec();
+        let transport = CountingTransport {
+            input: partial.clone(),
+            position: 0,
+            chunk: usize::MAX,
+            reads: Arc::new(AtomicUsize::new(0)),
+        };
+        let application = TlsApplicationIo::new(transport, established);
+        let (mut reader, _writer) = application.into_split();
+
+        let error = reader
+            .read_application(TIMEOUT)
+            .await
+            .expect_err("a truncated record must fail");
+        let TlsApplicationIoError::Read(read) = error else {
+            panic!("mid-record EOF must surface as a record read error");
+        };
+        assert!(matches!(read.kind(), TlsRecordReadErrorKind::UnexpectedEof));
+        assert_eq!(read.wire_prefix(), partial.as_slice());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn alert_is_read_out_of_a_multi_record_burst() {
+        let (established, mut client_write) = buffered_reader_states();
+        let mut stream = Vec::new();
+        client_write
+            .seal_into(ContentType::Alert, &[2, 40], 0, &mut stream)
+            .expect("alert must seal");
+        stream.extend_from_slice(&sealed_records(&mut client_write, &[b"after alert"]));
+        let transport = CountingTransport {
+            input: stream,
+            position: 0,
+            chunk: usize::MAX,
+            reads: Arc::new(AtomicUsize::new(0)),
+        };
+        let application = TlsApplicationIo::new(transport, established);
+        let (mut reader, _writer) = application.into_split();
+
+        assert!(matches!(
+            reader.read_application(TIMEOUT).await,
+            Err(TlsApplicationIoError::PeerAlert {
+                level: 2,
+                description: 40
+            })
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pending_drain_returns_exactly_the_pipelined_raw_bytes() {
+        let (established, mut client_write) = buffered_reader_states();
+        let mut stream = sealed_records(&mut client_write, &[b"boundary record"]);
+        stream.extend_from_slice(b"raw-after-boundary");
+        let transport = CountingTransport {
+            input: stream,
+            position: 0,
+            chunk: usize::MAX,
+            reads: Arc::new(AtomicUsize::new(0)),
+        };
+        let application = TlsApplicationIo::new(transport, established);
+        let (mut reader, _writer) = application.into_split();
+
+        {
+            let record = reader
+                .read_application(TIMEOUT)
+                .await
+                .expect("boundary record must authenticate");
+            assert_eq!(record.plaintext(), b"boundary record");
+        }
+
+        let (pending, _transport) = reader.into_inner_with_pending();
+        assert_eq!(pending, b"raw-after-boundary");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn oversized_declared_length_fails_with_the_five_byte_header() {
+        let (established, _client_write) = buffered_reader_states();
+        let header = [23, 3, 3, 0xff, 0xff];
+        let transport = CountingTransport {
+            input: header.to_vec(),
+            position: 0,
+            chunk: usize::MAX,
+            reads: Arc::new(AtomicUsize::new(0)),
+        };
+        let application = TlsApplicationIo::new(transport, established);
+        let (mut reader, _writer) = application.into_split();
+
+        let error = reader
+            .read_application(TIMEOUT)
+            .await
+            .expect_err("an oversized declared length must fail at its header");
+        let TlsApplicationIoError::Read(read) = error else {
+            panic!("an invalid length must surface as a record read error");
+        };
+        assert!(matches!(
+            read.kind(),
+            TlsRecordReadErrorKind::RecordTooLarge
+        ));
+        assert_eq!(read.wire_prefix(), header);
     }
 }
