@@ -152,3 +152,22 @@
 - next: user decision on the OpenSSL dependency; otherwise framed work
   concludes at parity-is-target and the branch moves to remaining R-phases
   (D7 sockhash reachability, memory density, final evidence).
+
+# STAGE: D9 ring experiment + PR convergence (2026-08-07, branch perf/d9-ring-aead)
+
+- ring-aead feature (ca2ba28 + guard fix 859115e): AES-128-GCM record
+  primitive selected at compile time; nonce/sequence/AAD/framing shared.
+- adversarial review: no blockers; zeroization gap + failed-open buffer
+  semantics documented; error-mapping guard added.
+- E2E matrix (benchmarks/final/d9-framed-ab, 219 valid samples): ring
+  1.00-1.18x rustcrypto in every framed cell; 512MiB cells 1.05-1.16x;
+  ring >= Xray in all four 512MiB cells; integrity sha256 matched.
+- server CPU/GiB -33%, instructions/GiB -30% (perf stat, 2GiB downloads);
+  perf attribution: RustCrypto AEAD symbols gone, ring AVX2 GCM asm hot,
+  userspace share 49.2->37.0%.
+- supply chain: ZERO new crates (ring already via ureq/rustls), deny/audit
+  pass, static link, -13KiB binary.
+- VERDICT: PROVEN. Full report: reports/D9-RING-AEAD-EVIDENCE.md.
+- PR convergence: #17 merged (bc4b5be), #18 merged (461fd5f), #19 merged
+  (45d90d8) after the check.sh benches fix (2c659e9) turned CI green;
+  sanitizers dispatched green on #19 head. main = 45d90d8.
