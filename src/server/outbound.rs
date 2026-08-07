@@ -23,7 +23,10 @@ use crate::{
     runtime::{AdmissionDenied, DirectBarrier, FdBudget, FdPermit},
 };
 
-use super::connector::{DestinationConnectError, DestinationConnector};
+use super::{
+    connector::{DestinationConnectError, DestinationConnector},
+    handoff::HandoffLine,
+};
 
 const SOCKS_VERSION: u8 = 5;
 const SOCKS_AUTH_VERSION: u8 = 1;
@@ -173,6 +176,23 @@ impl OutboundRegistry {
                 }))
             }
             CompiledOutbound::Nxr(None) => Err(OutboundConnectError::NxrSettings),
+            // The Vision session pipeline intercepts a handoff route at the
+            // session boundary via `handoff_line`; a handoff outbound never
+            // serves a plain destination dial.
+            CompiledOutbound::Handoff(_) => Err(OutboundConnectError::HandoffUnsupported),
+        }
+    }
+
+    /// Returns the compiled landing endpoint when the tag is a handoff outbound.
+    ///
+    /// The session pipeline checks this at the handoff boundary before any
+    /// dial: `Some` transfers the session to the landing node instead of
+    /// connecting an outbound stream for local serving.
+    #[must_use]
+    pub fn handoff_line(&self, tag: &str) -> Option<HandoffLine> {
+        match self.outbounds.get(tag) {
+            Some(CompiledOutbound::Handoff(line)) => line.clone(),
+            _ => None,
         }
     }
 
@@ -200,6 +220,7 @@ enum CompiledOutbound {
     Blackhole { delay: Duration },
     Socks5(CompiledSocks5),
     Nxr(Option<CompiledNxr>),
+    Handoff(Option<HandoffLine>),
 }
 
 impl From<&OutboundConfig> for CompiledOutbound {
@@ -211,6 +232,9 @@ impl From<&OutboundConfig> for CompiledOutbound {
             },
             OutboundConfig::Socks5 { settings, .. } => Self::Socks5(settings.into()),
             OutboundConfig::Nxr { settings, .. } => Self::Nxr(CompiledNxr::new(settings)),
+            OutboundConfig::Handoff { settings, .. } => {
+                Self::Handoff(HandoffLine::from_settings(settings))
+            }
         }
     }
 }
@@ -322,6 +346,7 @@ pub enum OutboundConnectError {
     NxrClock,
     NxrRandom,
     NxrProtocol(NxrProtocolError),
+    HandoffUnsupported,
 }
 
 impl fmt::Display for OutboundConnectError {
@@ -342,6 +367,9 @@ impl fmt::Display for OutboundConnectError {
             Self::NxrClock => formatter.write_str("system clock is before the Unix epoch"),
             Self::NxrRandom => formatter.write_str("NXR nonce generation failed"),
             Self::NxrProtocol(source) => source.fmt(formatter),
+            Self::HandoffUnsupported => {
+                formatter.write_str("handoff outbounds transfer sessions and cannot dial directly")
+            }
         }
     }
 }
@@ -361,7 +389,8 @@ impl Error for OutboundConnectError {
             | Self::NxrSettings
             | Self::NxrTimeout
             | Self::NxrClock
-            | Self::NxrRandom => None,
+            | Self::NxrRandom
+            | Self::HandoffUnsupported => None,
         }
     }
 }

@@ -128,6 +128,7 @@ pub struct RealityEstablished {
     stream: TlsApplicationIo<TcpStream>,
     users: Arc<UserRegistry>,
     inbound_tag: Arc<str>,
+    client_random: [u8; 32],
 }
 
 impl RealityEstablished {
@@ -141,6 +142,16 @@ impl RealityEstablished {
     #[must_use]
     pub fn inbound_tag(&self) -> &str {
         &self.inbound_tag
+    }
+
+    /// Returns the client random of the accepted TLS session.
+    ///
+    /// A session-handoff transfer binds this value into its authenticated
+    /// transcript so a continuation cannot be replayed onto a different
+    /// session.
+    #[must_use]
+    pub const fn client_random(&self) -> &[u8; 32] {
+        &self.client_random
     }
 
     /// Separates authenticated TLS I/O, authorization, and routing identity.
@@ -158,6 +169,7 @@ impl RealityEstablished {
             stream,
             users: Arc::new(users),
             inbound_tag: Arc::from("test-reality"),
+            client_random: [0; 32],
         }
     }
 }
@@ -276,6 +288,7 @@ impl RealityAcceptor {
             }
         };
         let (hello, client_prefix, remainder) = read.into_parts();
+        let client_random = *hello.random();
         if !remainder.is_empty() {
             return self
                 .fallback_prefix(stream, &client_prefix, handshake_permit)
@@ -380,6 +393,7 @@ impl RealityAcceptor {
                 stream: TlsApplicationIo::new(stream, established),
                 users: Arc::clone(&self.users),
                 inbound_tag: Arc::clone(&self.inbound_tag),
+                client_random,
             },
         )))
     }

@@ -27,7 +27,7 @@ use crate::{
         validate_config,
     },
     logging::{AdmissionResource, BackendStatus, LogEvent, LogWriteError, Logger, RejectionReason},
-    protocol::reality::ReplayCache,
+    protocol::{handoff::HandoffReplayCache, reality::ReplayCache},
     runtime::{
         AdmissionDenied, AdmissionKind, AdmissionPermit, DirectBarrier, FdBudget, FdBudgetError,
         FdBudgetPlan, FdHeadroomPolicy, FdPermit, FixedFdReserve, PressureGauge, ResourceGovernor,
@@ -43,6 +43,7 @@ use crate::{
 };
 
 use super::{
+    handoff::{HandoffLandingConfigError, HandoffLandingError, HandoffLandingHandler},
     nxr::{NxrLandingConfigError, NxrLandingError, NxrLandingHandler, NxrReplayCache},
     reality::{
         RealityAcceptError, RealityAcceptOutcome, RealityAcceptor, RealityAcceptorConfigError,
@@ -263,7 +264,10 @@ impl ProductionServer {
             authorities.governor.clone(),
             &config.policy.resource_governor,
         );
-        let nxr_replays = compile_nxr_replays(&config)?;
+        let listener_replays = ListenerReplays {
+            nxr: compile_nxr_replays(&config)?,
+            handoff: compile_handoff_replays(&config)?,
+        };
         let startup = derive_fd_budget(&config).map_err(ProductionServerError::DescriptorBudget)?;
         let tcp_relay = TcpRelay::new(&config.policy.relay, startup.budget.clone())
             .map_err(RuntimeUpdateError::Relay)?;
@@ -271,7 +275,7 @@ impl ProductionServer {
             config,
             0,
             replay.clone(),
-            &nxr_replays,
+            &listener_replays,
             tcp_relay.clone(),
             &pressure,
             &authorities,
@@ -332,7 +336,7 @@ impl ProductionServer {
             runtime: Arc::new(RuntimeStore {
                 current: ArcSwap::from(Arc::new(initial)),
                 replay,
-                nxr_replays,
+                listener_replays,
                 tcp_relay,
                 fd_budget: startup.budget,
                 authorities,
@@ -527,10 +531,17 @@ impl ProductionServer {
     }
 }
 
+/// Process-lifetime bounded replay caches for internal landing listeners,
+/// retained across immutable runtime generations.
+struct ListenerReplays {
+    nxr: HashMap<SocketAddr, NxrReplayCache>,
+    handoff: HashMap<SocketAddr, HandoffReplayCache>,
+}
+
 struct RuntimeStore {
     current: ArcSwap<RuntimeSnapshot>,
     replay: ReplayCache,
-    nxr_replays: HashMap<SocketAddr, NxrReplayCache>,
+    listener_replays: ListenerReplays,
     tcp_relay: TcpRelay,
     fd_budget: FdBudget,
     authorities: ProcessAuthorities,
@@ -585,7 +596,7 @@ impl RuntimeStore {
             config,
             generation,
             self.replay.clone(),
-            &self.nxr_replays,
+            &self.listener_replays,
             self.tcp_relay.clone(),
             &self.pressure,
             &self.authorities,
@@ -615,7 +626,7 @@ impl RuntimeSnapshot {
         config: Config,
         generation: u64,
         replay: ReplayCache,
-        nxr_replays: &HashMap<SocketAddr, NxrReplayCache>,
+        listener_replays: &ListenerReplays,
         tcp_relay: TcpRelay,
         pressure: &PressureGauge,
         authorities: &ProcessAuthorities,
@@ -648,11 +659,25 @@ impl RuntimeSnapshot {
                     vision: vision.clone(),
                 },
                 InboundConfig::Nxr(inbound) => {
-                    let replay = nxr_replays
+                    let replay = listener_replays
+                        .nxr
                         .get(&address)
                         .cloned()
                         .ok_or(RuntimeUpdateError::MissingNxrReplay(address))?;
                     ConnectionHandler::Nxr(NxrLandingHandler::from_inbound_with_replay(
+                        inbound,
+                        replay,
+                        tcp_relay.clone(),
+                        Duration::from_millis(config.policy.resource_governor.fallback_timeout_ms),
+                    )?)
+                }
+                InboundConfig::Handoff(inbound) => {
+                    let replay = listener_replays
+                        .handoff
+                        .get(&address)
+                        .cloned()
+                        .ok_or(RuntimeUpdateError::MissingHandoffReplay(address))?;
+                    ConnectionHandler::Handoff(HandoffLandingHandler::from_inbound_with_replay(
                         inbound,
                         replay,
                         tcp_relay.clone(),
@@ -695,6 +720,7 @@ enum ConnectionHandler {
         vision: VisionHandler,
     },
     Nxr(NxrLandingHandler),
+    Handoff(HandoffLandingHandler),
 }
 
 fn ensure_hot_compatible(
@@ -716,6 +742,9 @@ fn ensure_hot_compatible(
     if nxr_replay_policy(candidate) != nxr_replay_policy(&current.config) {
         return Err(RuntimeUpdateError::NxrReplayPolicyChanged);
     }
+    if handoff_replay_policy(candidate) != handoff_replay_policy(&current.config) {
+        return Err(RuntimeUpdateError::HandoffReplayPolicyChanged);
+    }
     if candidate.policy.relay != current.config.policy.relay {
         return Err(RuntimeUpdateError::RelayPolicyChanged);
     }
@@ -726,6 +755,7 @@ fn ensure_hot_compatible(
 enum ListenerProtocol {
     Vless,
     Nxr,
+    Handoff,
 }
 
 fn listener_topology(config: &Config) -> HashMap<SocketAddr, ListenerProtocol> {
@@ -736,6 +766,7 @@ fn listener_topology(config: &Config) -> HashMap<SocketAddr, ListenerProtocol> {
             let protocol = match inbound {
                 InboundConfig::Vless(_) => ListenerProtocol::Vless,
                 InboundConfig::Nxr(_) => ListenerProtocol::Nxr,
+                InboundConfig::Handoff(_) => ListenerProtocol::Handoff,
             };
             (SocketAddr::new(inbound.listen(), inbound.port()), protocol)
         })
@@ -747,7 +778,7 @@ fn nxr_replay_policy(config: &Config) -> HashMap<SocketAddr, (u32, u64)> {
         .inbounds
         .iter()
         .filter_map(|inbound| match inbound {
-            InboundConfig::Vless(_) => None,
+            InboundConfig::Vless(_) | InboundConfig::Handoff(_) => None,
             InboundConfig::Nxr(inbound) => Some((
                 SocketAddr::new(inbound.listen, inbound.port),
                 (
@@ -757,6 +788,46 @@ fn nxr_replay_policy(config: &Config) -> HashMap<SocketAddr, (u32, u64)> {
             )),
         })
         .collect()
+}
+
+fn handoff_replay_policy(config: &Config) -> HashMap<SocketAddr, (u32, u64)> {
+    config
+        .inbounds
+        .iter()
+        .filter_map(|inbound| match inbound {
+            InboundConfig::Vless(_) | InboundConfig::Nxr(_) => None,
+            InboundConfig::Handoff(inbound) => Some((
+                SocketAddr::new(inbound.listen, inbound.port),
+                (
+                    inbound.settings.max_nonce_entries,
+                    inbound.settings.nonce_retention_seconds,
+                ),
+            )),
+        })
+        .collect()
+}
+
+fn compile_handoff_replays(
+    config: &Config,
+) -> Result<HashMap<SocketAddr, HandoffReplayCache>, RuntimeUpdateError> {
+    let mut replays = HashMap::new();
+    for inbound in &config.inbounds {
+        if let InboundConfig::Handoff(inbound) = inbound {
+            let address = SocketAddr::new(inbound.listen, inbound.port);
+            let replay = HandoffReplayCache::new(
+                usize::try_from(inbound.settings.max_nonce_entries)
+                    .map_err(|_| HandoffLandingConfigError::Capacity)
+                    .map_err(RuntimeUpdateError::Handoff)?,
+                Duration::from_secs(inbound.settings.nonce_retention_seconds),
+            )
+            .map_err(HandoffLandingConfigError::Replay)
+            .map_err(RuntimeUpdateError::Handoff)?;
+            if replays.insert(address, replay).is_some() {
+                return Err(RuntimeUpdateError::DuplicateListener(address));
+            }
+        }
+    }
+    Ok(replays)
 }
 
 fn compile_nxr_replays(
@@ -1129,6 +1200,9 @@ async fn run_connection(
             ConnectionHandler::Nxr(handler) => {
                 handler.handle(stream).await?;
             }
+            ConnectionHandler::Handoff(handler) => {
+                handler.handle(stream).await?;
+            }
         }
         Ok::<(), ConnectionRunError>(())
     }
@@ -1281,6 +1355,7 @@ enum ConnectionRunError {
     Reality(RealityAcceptError),
     Vision(VisionSessionError),
     Nxr(NxrLandingError),
+    Handoff(HandoffLandingError),
 }
 
 impl ConnectionRunError {
@@ -1289,21 +1364,30 @@ impl ConnectionRunError {
             Self::Reality(RealityAcceptError::Admission(_)) => RejectionReason::ResourceLimit,
             Self::Reality(RealityAcceptError::HandshakeWriteTimeout)
             | Self::Vision(VisionSessionError::Timeout)
-            | Self::Nxr(NxrLandingError::Timeout) => RejectionReason::Timeout,
+            | Self::Nxr(NxrLandingError::Timeout)
+            | Self::Handoff(HandoffLandingError::Timeout) => RejectionReason::Timeout,
             Self::Reality(RealityAcceptError::Fallback(_)) => RejectionReason::Outbound,
             Self::Reality(_) => RejectionReason::Authentication,
             Self::Vision(VisionSessionError::Outbound(
                 crate::server::outbound::OutboundConnectError::Admission(_)
                 | crate::server::outbound::OutboundConnectError::DescriptorBudget,
             ))
-            | Self::Nxr(NxrLandingError::DescriptorBudget) => RejectionReason::ResourceLimit,
+            | Self::Vision(VisionSessionError::HandoffLine(
+                crate::server::handoff::HandoffLineError::DescriptorBudget,
+            ))
+            | Self::Nxr(NxrLandingError::DescriptorBudget)
+            | Self::Handoff(HandoffLandingError::DescriptorBudget) => {
+                RejectionReason::ResourceLimit
+            }
             Self::Vision(VisionSessionError::Route(_) | VisionSessionError::Outbound(_)) => {
                 RejectionReason::Outbound
             }
-            Self::Nxr(NxrLandingError::Destination(_) | NxrLandingError::Relay(_)) => {
-                RejectionReason::Outbound
-            }
-            Self::Nxr(_) => RejectionReason::Authentication,
+            Self::Vision(VisionSessionError::HandoffLine(_))
+            | Self::Nxr(NxrLandingError::Destination(_) | NxrLandingError::Relay(_))
+            | Self::Handoff(
+                HandoffLandingError::Destination(_) | HandoffLandingError::Session(_),
+            ) => RejectionReason::Outbound,
+            Self::Nxr(_) | Self::Handoff(_) => RejectionReason::Authentication,
             Self::Vision(_) => RejectionReason::Protocol,
         }
     }
@@ -1337,12 +1421,19 @@ impl From<NxrLandingError> for ConnectionRunError {
     }
 }
 
+impl From<HandoffLandingError> for ConnectionRunError {
+    fn from(source: HandoffLandingError) -> Self {
+        Self::Handoff(source)
+    }
+}
+
 impl fmt::Display for ConnectionRunError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Reality(source) => source.fmt(formatter),
             Self::Vision(source) => source.fmt(formatter),
             Self::Nxr(source) => source.fmt(formatter),
+            Self::Handoff(source) => source.fmt(formatter),
         }
     }
 }
@@ -1353,6 +1444,7 @@ impl Error for ConnectionRunError {
             Self::Reality(source) => Some(source),
             Self::Vision(source) => Some(source),
             Self::Nxr(source) => Some(source),
+            Self::Handoff(source) => Some(source),
         }
     }
 }
@@ -1367,13 +1459,16 @@ pub enum RuntimeUpdateError {
     Routing(RoutingCompileError),
     Reality(RealityAcceptorConfigError),
     Nxr(NxrLandingConfigError),
+    Handoff(HandoffLandingConfigError),
     DuplicateListener(SocketAddr),
     MissingNxrReplay(SocketAddr),
+    MissingHandoffReplay(SocketAddr),
     ListenerTopologyChanged,
     ResourceModeChanged,
     ReplayPolicyChanged,
     DirectBarrierPolicyChanged,
     NxrReplayPolicyChanged,
+    HandoffReplayPolicyChanged,
     Relay(TcpRelayConfigError),
     RelayPolicyChanged,
     GenerationExhausted,
@@ -1390,11 +1485,18 @@ impl fmt::Display for RuntimeUpdateError {
             Self::Routing(source) => source.fmt(formatter),
             Self::Reality(source) => source.fmt(formatter),
             Self::Nxr(source) => source.fmt(formatter),
+            Self::Handoff(source) => source.fmt(formatter),
             Self::DuplicateListener(address) => write!(formatter, "duplicate listener {address}"),
             Self::MissingNxrReplay(address) => {
                 write!(
                     formatter,
                     "NXR replay cache is missing for listener {address}"
+                )
+            }
+            Self::MissingHandoffReplay(address) => {
+                write!(
+                    formatter,
+                    "Handoff replay cache is missing for listener {address}"
                 )
             }
             Self::ListenerTopologyChanged => {
@@ -1411,6 +1513,9 @@ impl fmt::Display for RuntimeUpdateError {
             }
             Self::NxrReplayPolicyChanged => {
                 formatter.write_str("NXR replay policy requires a process restart")
+            }
+            Self::HandoffReplayPolicyChanged => {
+                formatter.write_str("Handoff replay policy requires a process restart")
             }
             Self::Relay(source) => source.fmt(formatter),
             Self::RelayPolicyChanged => {
@@ -1432,14 +1537,17 @@ impl Error for RuntimeUpdateError {
             Self::Routing(source) => Some(source),
             Self::Reality(source) => Some(source),
             Self::Nxr(source) => Some(source),
+            Self::Handoff(source) => Some(source),
             Self::Relay(source) => Some(source),
             Self::DuplicateListener(_)
             | Self::MissingNxrReplay(_)
+            | Self::MissingHandoffReplay(_)
             | Self::ListenerTopologyChanged
             | Self::ResourceModeChanged
             | Self::ReplayPolicyChanged
             | Self::DirectBarrierPolicyChanged
             | Self::NxrReplayPolicyChanged
+            | Self::HandoffReplayPolicyChanged
             | Self::RelayPolicyChanged
             | Self::GenerationExhausted
             | Self::Unavailable => None,
@@ -1486,6 +1594,12 @@ impl From<RealityAcceptorConfigError> for RuntimeUpdateError {
 impl From<NxrLandingConfigError> for RuntimeUpdateError {
     fn from(source: NxrLandingConfigError) -> Self {
         Self::Nxr(source)
+    }
+}
+
+impl From<HandoffLandingConfigError> for RuntimeUpdateError {
+    fn from(source: HandoffLandingConfigError) -> Self {
+        Self::Handoff(source)
     }
 }
 
