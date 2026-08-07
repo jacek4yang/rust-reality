@@ -200,21 +200,6 @@ pub struct RealityAcceptor {
 }
 
 impl RealityAcceptor {
-    /// Compiles one validated inbound snapshot into process runtime state.
-    ///
-    /// # Errors
-    ///
-    /// Returns an authentication-key, certificate-identity, or UUID error.
-    pub fn from_inbound(
-        inbound: &VlessInboundConfig,
-        governor: ResourceGovernor,
-        policy: &ResourceGovernorConfig,
-        relay: crate::transport::TcpRelay,
-    ) -> Result<Self, RealityAcceptorConfigError> {
-        let replay = ReplayCache::new(governor.clone(), policy);
-        Self::from_inbound_with_replay(inbound, governor, policy, replay, relay)
-    }
-
     /// Compiles an inbound while retaining process-wide replay history across
     /// immutable runtime generations.
     pub(crate) fn from_inbound_with_replay(
@@ -502,7 +487,7 @@ mod tests {
     use super::{RealityAcceptOutcome, RealityAcceptor};
     use crate::{
         config::{Config, test_config_json},
-        protocol::reality::{SESSION_ID_LEN, client_hello_fixtures},
+        protocol::reality::{ReplayCache, SESSION_ID_LEN, client_hello_fixtures},
         runtime::ResourceGovernor,
     };
 
@@ -526,12 +511,14 @@ mod tests {
             .to_string();
         let policy = config.policy.resource_governor.clone();
         let governor = ResourceGovernor::new(&policy);
-        let acceptor = RealityAcceptor::from_inbound(
+        let replay = ReplayCache::new(governor.clone(), &policy);
+        let acceptor = RealityAcceptor::from_inbound_with_replay(
             config.inbounds[0]
                 .as_vless()
                 .expect("fixture must contain VLESS"),
             governor,
             &policy,
+            replay,
             crate::transport::TcpRelay::new(
                 &crate::config::RelayPolicy::default(),
                 crate::runtime::FdBudget::new(4_096),

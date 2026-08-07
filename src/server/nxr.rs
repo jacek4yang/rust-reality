@@ -18,7 +18,7 @@ use tokio::{
 use zeroize::Zeroizing;
 
 use crate::{
-    config::{NxrInboundConfig, RelayPolicy},
+    config::NxrInboundConfig,
     protocol::{
         nxr::{
             NxrKey, NxrProtocolError, REQUEST_HEADER_LEN, decode_authenticated_request,
@@ -229,22 +229,6 @@ pub struct NxrLandingHandler {
 }
 
 impl NxrLandingHandler {
-    /// Compiles one validated internal listener with a new replay cache.
-    ///
-    /// # Errors
-    ///
-    /// Rejects invalid key material or replay-cache policy.
-    pub fn from_inbound(
-        inbound: &NxrInboundConfig,
-        relay_policy: &RelayPolicy,
-        fd_budget: crate::runtime::FdBudget,
-        liveness: Duration,
-    ) -> Result<Self, NxrLandingConfigError> {
-        let replay = NxrReplayCache::from_inbound(inbound)?;
-        let relay = TcpRelay::new(relay_policy, fd_budget).map_err(NxrLandingConfigError::Relay)?;
-        Self::from_inbound_with_replay(inbound, replay, relay, liveness)
-    }
-
     /// Compiles one validated listener while retaining its process-lifetime
     /// replay history across immutable runtime generations.
     ///

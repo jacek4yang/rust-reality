@@ -57,7 +57,7 @@ const TLS13_VERSION: [u8; 2] = [0x03, 0x04];
 const TLS_AES_128_CCM_8_SHA256: u16 = 0x1305;
 
 /// Counts and direct-transition results from one Vision relay.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct VisionRelayStats {
     uplink_bytes: u64,
     downlink_bytes: u64,
@@ -329,20 +329,7 @@ impl VisionHandler {
                 .shutdown(self.io_timeout)
                 .await
                 .map_err(VisionSessionError::Tls)?;
-            return Ok(VisionRelayStats {
-                uplink_bytes: 0,
-                downlink_bytes: 0,
-                uplink_direct: false,
-                downlink_direct: false,
-                relay_backend: None,
-                uplink_direct_at_bytes: 0,
-                downlink_direct_at_bytes: 0,
-                uplink_backend: None,
-                downlink_backend: None,
-                uplink_handoff_delay_us: 0,
-                downlink_handoff_delay_us: 0,
-                pipe_capacity_downgraded: false,
-            });
+            return Ok(VisionRelayStats::default());
         };
         let (destination, outbound_permit) = connection.into_parts();
         let (destination_reader, destination_writer) = destination.into_split();
@@ -486,16 +473,9 @@ impl VisionHandler {
         Ok(VisionRelayStats {
             uplink_bytes: outcome.inbound_to_outbound(),
             downlink_bytes: outcome.outbound_to_inbound(),
-            uplink_direct: false,
-            downlink_direct: false,
             relay_backend: Some(outcome.backend()),
-            uplink_direct_at_bytes: 0,
-            downlink_direct_at_bytes: 0,
-            uplink_backend: None,
-            downlink_backend: None,
-            uplink_handoff_delay_us: 0,
-            downlink_handoff_delay_us: 0,
             pipe_capacity_downgraded: outcome.pipe_downgrade().is_some(),
+            ..VisionRelayStats::default()
         })
     }
 }
