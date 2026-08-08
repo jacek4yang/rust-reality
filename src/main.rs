@@ -16,9 +16,10 @@ use rust_reality::{
     benchmark::{BenchmarkError, BenchmarkOptions, run_benchmarks},
     config::{
         ConfigLoadError, GenerateConfigError, GenerateConfigInput, GenerateHandoffConfigInput,
-        GenerateLandingConfigInput, GenerateLineConfigInput, GeneratedHandoffConfigs, SecretString,
+        GenerateLandingConfigInput, GenerateLineConfigInput, GenerateMultiHandoffConfigInput,
+        GeneratedHandoffConfigs, GeneratedMultiHandoffConfigs, HandoffLandingInput, SecretString,
         format_config, format_config_schema, generate_handoff_configs, generate_landing_config,
-        generate_line_config, generate_minimal_config, load_config,
+        generate_line_config, generate_minimal_config, generate_multi_handoff_configs, load_config,
     },
     crypto::{
         KeyGenerationError, generate_mldsa65_key_pair, generate_mldsa65_key_pair_from_seed,
@@ -122,7 +123,8 @@ enum GenerateRole {
     /// Firewall-restricted internal NXR landing node.
     Landing(LandingGenerateArgs),
     /// Handoff line/landing node pair plus a matching Xray client, written as
-    /// line.json, landing.json, and xray-client.json.
+    /// line.json, landing.json (or landing-N.json per landing with repeated
+    /// --landing-address), and xray-client.json.
     Handoff(HandoffGenerateArgs),
 }
 
@@ -134,12 +136,16 @@ struct HandoffGenerateArgs {
     #[arg(long, value_name = "HOST")]
     server_address: String,
     /// Internal Handoff landing-node address reachable by the line node.
-    #[arg(long, value_name = "HOST")]
-    landing_address: String,
-    /// Firewall-restricted Handoff landing-node port.
-    #[arg(long, default_value_t = 7_443, value_parser = clap::value_parser!(u16).range(1..))]
-    landing_port: u16,
-    /// Directory the three generated files are written to.
+    /// Repeat for a multi-landing deployment: each landing gets its own UUID
+    /// group (landing-N) on the line node and independent key material.
+    #[arg(long, value_name = "HOST", required = true)]
+    landing_address: Vec<String>,
+    /// Firewall-restricted Handoff landing-node port. With repeated
+    /// --landing-address, either pass one port applied to every landing or
+    /// repeat the flag exactly once per address.
+    #[arg(long, default_value = "7443", value_parser = clap::value_parser!(u16).range(1..))]
+    landing_port: Vec<u16>,
+    /// Directory the generated files are written to.
     #[arg(long, value_name = "DIR")]
     output_dir: PathBuf,
 }
@@ -474,15 +480,50 @@ fn run_config_generate(role: GenerateRole) -> Result<(), CliError> {
         }
         GenerateRole::Handoff(arguments) => {
             let output_dir = arguments.output_dir.clone();
-            let generated = generate_handoff_configs(GenerateHandoffConfigInput {
-                public: public_generation_input(arguments.public),
-                server_address: arguments.server_address,
-                landing_address: arguments.landing_address,
-                landing_port: arguments.landing_port,
-            })?;
-            write_handoff_configs(&output_dir, &generated)
+            let landings =
+                resolve_handoff_landings(&arguments.landing_address, &arguments.landing_port)?;
+            if let [landing] = landings.as_slice() {
+                let generated = generate_handoff_configs(GenerateHandoffConfigInput {
+                    public: public_generation_input(arguments.public),
+                    server_address: arguments.server_address,
+                    landing_address: landing.address.clone(),
+                    landing_port: landing.port,
+                })?;
+                write_handoff_configs(&output_dir, &generated)
+            } else {
+                let generated = generate_multi_handoff_configs(GenerateMultiHandoffConfigInput {
+                    public: public_generation_input(arguments.public),
+                    server_address: arguments.server_address,
+                    landings,
+                })?;
+                write_multi_handoff_configs(&output_dir, &generated)
+            }
         }
     }
+}
+
+/// Zips repeated `--landing-address`/`--landing-port` values into one entry
+/// per landing: a single port applies to every landing, otherwise the flag
+/// counts must match exactly.
+fn resolve_handoff_landings(
+    addresses: &[String],
+    ports: &[u16],
+) -> Result<Vec<HandoffLandingInput>, CliError> {
+    let ports: Vec<u16> = match ports {
+        [port] => vec![*port; addresses.len()],
+        _ if ports.len() == addresses.len() => ports.to_vec(),
+        _ => {
+            return Err(CliError::InvalidArgument(
+                "--landing-port must appear at most once, or exactly once per --landing-address",
+            ));
+        }
+    };
+    Ok(addresses
+        .iter()
+        .cloned()
+        .zip(ports)
+        .map(|(address, port)| HandoffLandingInput { address, port })
+        .collect())
 }
 
 fn public_generation_input(arguments: PublicGenerateArgs) -> GenerateConfigInput {
@@ -534,6 +575,44 @@ fn write_handoff_configs(
         landing.display(),
         client.display()
     ))
+}
+
+/// Writes a multi-landing Handoff deployment as `line.json`, one
+/// `landing-N.json` per landing, and `xray-client.json` inside `output_dir`.
+///
+/// Mirrors `write_handoff_configs`; the client file keeps its single-UUID
+/// shape and references the first landing's UUID — assigning the other
+/// generated UUIDs to clients is an operator choice, noted on stderr.
+fn write_multi_handoff_configs(
+    output_dir: &Path,
+    generated: &GeneratedMultiHandoffConfigs,
+) -> Result<(), CliError> {
+    std::fs::create_dir_all(output_dir)?;
+    let line = output_dir.join("line.json");
+    std::fs::write(&line, format_config(generated.line().config())?)?;
+    let mut paths = vec![line.display().to_string()];
+    for (index, landing) in generated.landings().iter().enumerate() {
+        let path = output_dir.join(format!("landing-{}.json", index + 1));
+        std::fs::write(&path, format_config(landing)?)?;
+        paths.push(path.display().to_string());
+    }
+    let client = output_dir.join("xray-client.json");
+    let mut client_json = serde_json::to_string_pretty(generated.client())?;
+    client_json.push('\n');
+    std::fs::write(&client, client_json)?;
+    paths.push(client.display().to_string());
+    let public_key = generated.line().reality_public_key();
+    let uuid = generated.client_uuid();
+    let mut stderr = io::stderr().lock();
+    writeln!(stderr, "REALITY public key for the client: {public_key}")?;
+    writeln!(stderr, "UUID for the client: {uuid}")?;
+    writeln!(
+        stderr,
+        "line.json routes one UUID group per landing (landing-1 .. landing-{}); \
+         xray-client.json uses the first UUID — using further UUIDs in a client is an operator choice.",
+        generated.landings().len()
+    )?;
+    write_stdout(format_args!("{}\n", paths.join("\n")))
 }
 
 fn run_mldsa65(arguments: MlDsa65Args) -> Result<(), CliError> {
@@ -651,6 +730,134 @@ mod tests {
         assert_eq!(
             client["outbounds"][0]["streamSettings"]["realitySettings"]["publicKey"].as_str(),
             Some(generated.line().reality_public_key())
+        );
+        std::fs::remove_dir_all(&directory).expect("temporary directory must be removed");
+    }
+
+    #[test]
+    fn parses_multi_landing_handoff_generator() {
+        let cli = Cli::try_parse_from([
+            "rust-reality",
+            "config",
+            "generate",
+            "handoff",
+            "--server-address",
+            "line.example.com",
+            "--target",
+            "cover.example.com:443",
+            "--server-name",
+            "cover.example.com",
+            "--landing-address",
+            "10.0.0.2",
+            "--landing-port",
+            "7443",
+            "--landing-address",
+            "10.0.0.3",
+            "--landing-port",
+            "8443",
+            "--output-dir",
+            "/tmp/generated",
+        ])
+        .expect("multi-landing handoff generator must parse");
+
+        let Command::Config {
+            command:
+                ConfigCommand::Generate {
+                    role: GenerateRole::Handoff(arguments),
+                },
+        } = cli.command
+        else {
+            panic!("command must be the handoff generator");
+        };
+        assert_eq!(arguments.landing_address, ["10.0.0.2", "10.0.0.3"]);
+        assert_eq!(arguments.landing_port, [7_443, 8_443]);
+    }
+
+    #[test]
+    fn resolves_repeated_landing_ports() {
+        use super::resolve_handoff_landings;
+
+        let addresses = vec!["10.0.0.2".to_owned(), "10.0.0.3".to_owned()];
+        let broadcast = resolve_handoff_landings(&addresses, &[7_443])
+            .expect("a single port must apply to every landing");
+        assert_eq!(
+            broadcast
+                .iter()
+                .map(|landing| landing.port)
+                .collect::<Vec<_>>(),
+            [7_443, 7_443]
+        );
+        let zipped = resolve_handoff_landings(&addresses, &[7_443, 8_443])
+            .expect("equal counts must zip in order");
+        assert_eq!(
+            zipped
+                .iter()
+                .map(|landing| landing.port)
+                .collect::<Vec<_>>(),
+            [7_443, 8_443]
+        );
+        assert_eq!(zipped[0].address, "10.0.0.2");
+        assert_eq!(zipped[1].address, "10.0.0.3");
+        assert!(resolve_handoff_landings(&addresses, &[7_443, 8_443, 9_443]).is_err());
+        assert!(resolve_handoff_landings(&addresses[..1], &[7_443, 8_443]).is_err());
+    }
+
+    #[test]
+    fn multi_handoff_generator_writes_valid_files() {
+        use std::net::IpAddr;
+        use std::str::FromStr as _;
+
+        use rust_reality::config::{
+            GenerateConfigInput, GenerateMultiHandoffConfigInput, HandoffLandingInput,
+            generate_multi_handoff_configs, load_config, validate_config,
+        };
+
+        use super::write_multi_handoff_configs;
+
+        let generated = generate_multi_handoff_configs(GenerateMultiHandoffConfigInput {
+            public: GenerateConfigInput {
+                listen: IpAddr::from_str("0.0.0.0").expect("address must parse"),
+                port: 443,
+                target: "cover.example.com:443".to_owned(),
+                server_name: "cover.example.com".to_owned(),
+            },
+            server_address: "line.example.com".to_owned(),
+            landings: vec![
+                HandoffLandingInput {
+                    address: "10.0.0.2".to_owned(),
+                    port: 7_443,
+                },
+                HandoffLandingInput {
+                    address: "10.0.0.3".to_owned(),
+                    port: 7_443,
+                },
+            ],
+        })
+        .expect("multi-landing generation must succeed");
+        let directory = std::env::temp_dir().join(format!(
+            "rust-reality-multi-handoff-generate-{}",
+            std::process::id()
+        ));
+        write_multi_handoff_configs(&directory, &generated)
+            .expect("the multi-landing files must be written");
+
+        for name in ["line.json", "landing-1.json", "landing-2.json"] {
+            let path = directory.join(name);
+            let config = load_config(&path).expect("generated configuration must load");
+            validate_config(&config).expect("generated configuration must validate");
+        }
+        assert!(
+            !directory.join("landing.json").exists(),
+            "multi-landing output must use numbered landing files only"
+        );
+        let client: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(directory.join("xray-client.json"))
+                .expect("client configuration must read"),
+        )
+        .expect("client configuration must parse");
+        assert_eq!(
+            client["outbounds"][0]["settings"]["vnext"][0]["users"][0]["id"].as_str(),
+            Some(generated.client_uuid())
         );
         std::fs::remove_dir_all(&directory).expect("temporary directory must be removed");
     }
