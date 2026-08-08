@@ -239,6 +239,15 @@ X25519 pair — and both server configurations are validated before they are
 written. The client UUID and REALITY public key are printed to stderr; the
 Handoff PSK and the private keys exist only in the two server files.
 
+One line node can also front several landing nodes: repeat
+`--landing-address` (with one shared `--landing-port`, or one per address)
+and the generator writes `landing-1.json`, `landing-2.json`, ... plus a
+`line.json` that carries one UUID per landing and routes each UUID's own
+group to that landing's `landing-N` handoff outbound. Every landing pair
+gets independent key material. Route different UUID groups to different
+landings to split clients across egress paths; `xray-client.json` uses the
+first UUID, and assigning the rest is an operator choice.
+
 ### 2. Place and validate the configurations
 
 Install `line.json` on the line node and `landing.json` on the landing node,

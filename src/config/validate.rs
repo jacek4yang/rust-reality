@@ -46,7 +46,7 @@ pub struct ConfigError {
 }
 
 impl ConfigError {
-    fn new(path: impl Into<String>, message: impl Into<String>) -> Self {
+    pub(crate) fn new(path: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             path: path.into(),
             message: message.into(),

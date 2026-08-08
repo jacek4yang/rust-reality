@@ -157,13 +157,32 @@ Handoff 预共享密钥，以及落地机的静态 X25519 密钥对。两个服�
 | 附加选项 | 必填 | 默认值 | 含义 |
 | --- | --- | --- | --- |
 | `--server-address <HOST>` | 是 | — | 客户端拨号的线路机公网地址。 |
-| `--landing-address <HOST>` | 是 | — | 线路机可访问的落地机地址。 |
-| `--landing-port <PORT>` | 否 | `7443` | 防火墙限制的 Handoff TCP 端口。 |
+| `--landing-address <HOST>` | 是 | — | 线路机可访问的落地机地址。重复该标志即生成多落地部署。 |
+| `--landing-port <PORT>` | 否 | `7443` | 防火墙限制的 Handoff TCP 端口。多落地时可只传一个端口应用于全部落地机，或按地址逐一重复。 |
 | `--output-dir <DIR>` | 是 | — | 三个文件的写入目录。 |
 
 三个文件路径写入 stdout；`REALITY public key for the client: ...` 和
 `UUID for the client: ...` 写入 stderr。Handoff PSK 和私钥只存在于两个
 服务器文件中。
+
+重复 `--landing-address` 时生成多落地部署：
+
+```shell
+rust-reality config generate handoff \
+  --server-address line.example.com \
+  --target cover.example.com:443 \
+  --server-name cover.example.com \
+  --landing-address 10.0.0.2 --landing-port 7443 \
+  --landing-address 10.0.0.3 --landing-port 7443 \
+  --output-dir handoff/
+```
+
+此时写出 `line.json`、`landing-1.json`、`landing-2.json` 和
+`xray-client.json`（单落地仍使用不带序号的 `landing.json`）。线路机为每个
+落地机分配一个 UUID，并把每个 UUID 的用户组路由到对应落地的 handoff 出站
+（`landing-1`、`landing-2`……）；每对落地的密钥材料相互独立，所有服务端文件
+在写出前都经过校验。`xray-client.json` 保持单 UUID 形态，使用第一个落地的
+UUID——是否把其余 UUID 分配给客户端由运维自行决定。
 
 ### `config format`
 

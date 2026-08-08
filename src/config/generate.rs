@@ -64,6 +64,27 @@ pub struct GenerateHandoffConfigInput {
     pub landing_port: u16,
 }
 
+/// One landing node of a generated multi-landing Handoff deployment.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HandoffLandingInput {
+    /// Internal landing-node address reachable by the line node.
+    pub address: String,
+    /// Firewall-restricted Handoff port on the landing node.
+    pub port: u16,
+}
+
+/// Inputs for a Handoff line node with one or more landing nodes, plus its
+/// Xray client.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GenerateMultiHandoffConfigInput {
+    /// Public VLESS + REALITY + Vision listener settings of the line node.
+    pub public: GenerateConfigInput,
+    /// Public address of the line node that clients dial.
+    pub server_address: String,
+    /// Landing nodes the line transfers to, in `landing-N` order.
+    pub landings: Vec<HandoffLandingInput>,
+}
+
 /// A directly usable server configuration and its client-facing public values.
 #[derive(Debug)]
 pub struct GeneratedConfig {
@@ -120,6 +141,42 @@ impl GeneratedHandoffConfigs {
     }
 
     /// Returns the generated client UUID.
+    #[must_use]
+    pub fn client_uuid(&self) -> &str {
+        &self.client_uuid
+    }
+}
+
+/// A generated multi-landing Handoff deployment: one line node, one
+/// configuration per landing node, and the Xray client.
+#[derive(Debug)]
+pub struct GeneratedMultiHandoffConfigs {
+    line: GeneratedConfig,
+    landings: Vec<Config>,
+    client: serde_json::Value,
+    client_uuid: String,
+}
+
+impl GeneratedMultiHandoffConfigs {
+    /// Returns the generated line-node configuration and its REALITY public key.
+    #[must_use]
+    pub const fn line(&self) -> &GeneratedConfig {
+        &self.line
+    }
+
+    /// Returns the generated landing-node configurations, in `landing-N` order.
+    #[must_use]
+    pub fn landings(&self) -> &[Config] {
+        &self.landings
+    }
+
+    /// Returns the generated Xray client configuration.
+    #[must_use]
+    pub const fn client(&self) -> &serde_json::Value {
+        &self.client
+    }
+
+    /// Returns the generated client UUID (the first landing's group).
     #[must_use]
     pub fn client_uuid(&self) -> &str {
         &self.client_uuid
@@ -355,63 +412,219 @@ pub fn generate_landing_config(
 pub fn generate_handoff_configs(
     input: GenerateHandoffConfigInput,
 ) -> Result<GeneratedHandoffConfigs, GenerateConfigError> {
-    let uuid = generate_uuid()?.to_string();
+    let generated = generate_multi_handoff_configs(GenerateMultiHandoffConfigInput {
+        public: input.public,
+        server_address: input.server_address,
+        landings: vec![HandoffLandingInput {
+            address: input.landing_address,
+            port: input.landing_port,
+        }],
+    })?;
+    let GeneratedMultiHandoffConfigs {
+        line,
+        landings,
+        client,
+        client_uuid,
+    } = generated;
+    let [landing] = landings
+        .try_into()
+        .expect("single-landing generation produces exactly one landing");
+    Ok(GeneratedHandoffConfigs {
+        line,
+        landing,
+        client,
+        client_uuid,
+    })
+}
+
+/// Generates a multi-landing Handoff deployment: one public line node whose
+/// accepted sessions are transferred to one of several firewall-restricted
+/// landing nodes, one configuration per landing node, and the matching Xray
+/// client configuration.
+///
+/// The line node carries one VLESS UUID per landing and routes each UUID's
+/// own group to that landing's handoff outbound (`landing-1`, `landing-2`,
+/// ...). Every landing pair gets independent key material: its own Handoff
+/// pre-shared key and static X25519 pair, generated fresh per landing. A
+/// single landing keeps the unnumbered `landing` tag, `landing-users` group,
+/// and `default-user` email of [`generate_handoff_configs`]. The Xray client
+/// references the first UUID only; assigning further UUIDs to clients is an
+/// operator choice.
+///
+/// # Errors
+///
+/// Returns an error when the landing list is empty, when entropy is
+/// unavailable, or when any public or Handoff setting violates strict
+/// configuration invariants. Every emitted server configuration is validated
+/// before it is returned.
+pub fn generate_multi_handoff_configs(
+    input: GenerateMultiHandoffConfigInput,
+) -> Result<GeneratedMultiHandoffConfigs, GenerateConfigError> {
+    if input.landings.is_empty() {
+        return Err(ConfigError::new("landings", "must contain at least one landing node").into());
+    }
+    let multi = input.landings.len() > 1;
     let short_id = generate_short_id()?;
     let (private_key, public_key) = generate_x25519_key_pair()?.into_parts();
-    let pre_shared_key = generate_node_key()?;
-    let (landing_private_key, landing_public_key) = generate_x25519_key_pair()?.into_parts();
+
+    let mut uuids = Vec::with_capacity(input.landings.len());
+    let mut handoff_outbounds = Vec::with_capacity(input.landings.len());
+    let mut landing_material = Vec::with_capacity(input.landings.len());
+    for (index, landing) in input.landings.iter().enumerate() {
+        let pre_shared_key = generate_node_key()?;
+        let (landing_private_key, landing_public_key) = generate_x25519_key_pair()?.into_parts();
+        handoff_outbounds.push(OutboundConfig::Handoff {
+            tag: handoff_tag(index, multi),
+            settings: HandoffSettings {
+                address: landing.address.clone(),
+                port: landing.port,
+                pre_shared_key: pre_shared_key.clone(),
+                landing_public_key,
+                connect_timeout_ms: 10_000,
+                first_byte_timeout_ms: 15_000,
+            },
+        });
+        landing_material.push((landing.port, pre_shared_key, landing_private_key));
+        uuids.push(generate_uuid()?.to_string());
+    }
+
+    let clients = uuids
+        .iter()
+        .enumerate()
+        .map(|(index, uuid)| VlessClient {
+            id: uuid.clone(),
+            email: Some(handoff_email(index, multi)),
+            flow: "xtls-rprx-vision".to_owned(),
+        })
+        .collect();
+    let users = uuids
+        .iter()
+        .enumerate()
+        .map(|(index, uuid)| UserPolicy {
+            name: handoff_user_group(index, multi),
+            user_ids: vec![uuid.clone()],
+            default_outbound: handoff_tag(index, multi),
+            rules: Vec::new(),
+        })
+        .collect();
+    let mut outbounds = handoff_outbounds;
+    outbounds.push(OutboundConfig::Direct {
+        tag: "direct".to_owned(),
+    });
+    outbounds.push(OutboundConfig::Blackhole {
+        tag: "block".to_owned(),
+        settings: BlackholeSettings::default(),
+    });
     let line = Config {
         log: LogConfig::default(),
         assets: AssetsConfig::default(),
         dns: DnsConfig::default(),
-        inbounds: vec![public_inbound(
+        inbounds: vec![public_inbound_with_clients(
             &input.public,
-            uuid.clone(),
+            clients,
             short_id.clone(),
             private_key,
         )],
-        outbounds: vec![
-            OutboundConfig::Handoff {
-                tag: "landing".to_owned(),
-                settings: HandoffSettings {
-                    address: input.landing_address,
-                    port: input.landing_port,
-                    pre_shared_key: pre_shared_key.clone(),
-                    landing_public_key,
-                    connect_timeout_ms: 10_000,
-                    first_byte_timeout_ms: 15_000,
-                },
-            },
-            OutboundConfig::Direct {
-                tag: "direct".to_owned(),
-            },
-            OutboundConfig::Blackhole {
-                tag: "block".to_owned(),
-                settings: BlackholeSettings::default(),
-            },
-        ],
+        outbounds,
         routing: RoutingConfig {
             domain_strategy: DnsStrategy::IpIfNonMatch,
             global_rules: Vec::new(),
-            users: vec![UserPolicy {
-                name: "landing-users".to_owned(),
-                user_ids: vec![uuid.clone()],
-                default_outbound: "landing".to_owned(),
-                rules: Vec::new(),
-            }],
+            users,
         },
         policy: PolicyConfig::default(),
         runtime: RuntimeConfig::default(),
     };
     validate_config(&line)?;
-    let landing = Config {
+
+    let mut landings = Vec::with_capacity(landing_material.len());
+    for (port, pre_shared_key, landing_private_key) in landing_material {
+        let landing = handoff_landing_config(port, pre_shared_key, landing_private_key);
+        validate_config(&landing)?;
+        landings.push(landing);
+    }
+
+    let client = json!({
+        "log": { "loglevel": "warning" },
+        "inbounds": [{
+            "listen": "127.0.0.1",
+            "port": 1080,
+            "protocol": "socks",
+            "settings": { "auth": "noauth", "udp": false },
+        }],
+        "outbounds": [{
+            "protocol": "vless",
+            "settings": { "vnext": [{
+                "address": input.server_address,
+                "port": input.public.port,
+                "users": [{
+                    "id": uuids[0].clone(),
+                    "encryption": "none",
+                    "flow": "xtls-rprx-vision",
+                }],
+            }]},
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "fingerprint": "chrome",
+                    "serverName": input.public.server_name,
+                    "publicKey": public_key.clone(),
+                    "shortId": short_id,
+                    "spiderX": "/",
+                },
+            },
+        }],
+    });
+    Ok(GeneratedMultiHandoffConfigs {
+        line: GeneratedConfig {
+            config: line,
+            reality_public_key: public_key,
+        },
+        landings,
+        client,
+        client_uuid: uuids[0].clone(),
+    })
+}
+
+/// Single-landing deployments keep the historical unnumbered names; numbered
+/// names appear only from the second landing onward.
+fn handoff_tag(index: usize, multi: bool) -> String {
+    if multi {
+        format!("landing-{}", index + 1)
+    } else {
+        "landing".to_owned()
+    }
+}
+
+fn handoff_user_group(index: usize, multi: bool) -> String {
+    if multi {
+        format!("landing-{}-users", index + 1)
+    } else {
+        "landing-users".to_owned()
+    }
+}
+
+fn handoff_email(index: usize, multi: bool) -> String {
+    if multi {
+        format!("default-user-{}", index + 1)
+    } else {
+        "default-user".to_owned()
+    }
+}
+
+fn handoff_landing_config(
+    port: u16,
+    pre_shared_key: SecretString,
+    landing_private_key: SecretString,
+) -> Config {
+    Config {
         log: LogConfig::default(),
         assets: AssetsConfig::default(),
         dns: DnsConfig::default(),
         inbounds: vec![InboundConfig::Handoff(HandoffInboundConfig {
             tag: "internal-handoff".to_owned(),
             listen: IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
-            port: input.landing_port,
+            port,
             settings: HandoffInboundSettings {
                 pre_shared_key,
                 private_key: landing_private_key,
@@ -435,49 +648,7 @@ pub fn generate_handoff_configs(
         },
         policy: PolicyConfig::default(),
         runtime: RuntimeConfig::default(),
-    };
-    validate_config(&landing)?;
-    let client = json!({
-        "log": { "loglevel": "warning" },
-        "inbounds": [{
-            "listen": "127.0.0.1",
-            "port": 1080,
-            "protocol": "socks",
-            "settings": { "auth": "noauth", "udp": false },
-        }],
-        "outbounds": [{
-            "protocol": "vless",
-            "settings": { "vnext": [{
-                "address": input.server_address,
-                "port": input.public.port,
-                "users": [{
-                    "id": uuid.clone(),
-                    "encryption": "none",
-                    "flow": "xtls-rprx-vision",
-                }],
-            }]},
-            "streamSettings": {
-                "network": "tcp",
-                "security": "reality",
-                "realitySettings": {
-                    "fingerprint": "chrome",
-                    "serverName": input.public.server_name,
-                    "publicKey": public_key.clone(),
-                    "shortId": short_id,
-                    "spiderX": "/",
-                },
-            },
-        }],
-    });
-    Ok(GeneratedHandoffConfigs {
-        line: GeneratedConfig {
-            config: line,
-            reality_public_key: public_key,
-        },
-        landing,
-        client,
-        client_uuid: uuid,
-    })
+    }
 }
 
 fn public_inbound(
@@ -486,16 +657,30 @@ fn public_inbound(
     short_id: String,
     private_key: SecretString,
 ) -> InboundConfig {
+    public_inbound_with_clients(
+        input,
+        vec![VlessClient {
+            id: uuid,
+            email: Some("default-user".to_owned()),
+            flow: "xtls-rprx-vision".to_owned(),
+        }],
+        short_id,
+        private_key,
+    )
+}
+
+fn public_inbound_with_clients(
+    input: &GenerateConfigInput,
+    clients: Vec<VlessClient>,
+    short_id: String,
+    private_key: SecretString,
+) -> InboundConfig {
     InboundConfig::Vless(VlessInboundConfig {
         tag: "public-reality".to_owned(),
         listen: input.listen,
         port: input.port,
         settings: VlessInboundSettings {
-            clients: vec![VlessClient {
-                id: uuid,
-                email: Some("default-user".to_owned()),
-                flow: "xtls-rprx-vision".to_owned(),
-            }],
+            clients,
             decryption: "none".to_owned(),
         },
         stream_settings: StreamSettings {
@@ -521,8 +706,9 @@ mod tests {
 
     use super::{
         GenerateConfigInput, GenerateHandoffConfigInput, GenerateLandingConfigInput,
-        GenerateLineConfigInput, generate_handoff_configs, generate_landing_config,
-        generate_line_config, generate_minimal_config,
+        GenerateLineConfigInput, GenerateMultiHandoffConfigInput, HandoffLandingInput,
+        generate_handoff_configs, generate_landing_config, generate_line_config,
+        generate_minimal_config, generate_multi_handoff_configs,
     };
     use crate::config::{
         Config, InboundConfig, OutboundConfig, SecretString, format_config, load_config,
@@ -699,5 +885,133 @@ mod tests {
             Some(reality.short_ids[0].as_str())
         );
         assert_eq!(client_reality["serverName"], "cover.example.com");
+    }
+
+    #[test]
+    fn multi_handoff_templates_validate_with_independent_key_material() {
+        let generated = generate_multi_handoff_configs(GenerateMultiHandoffConfigInput {
+            public: GenerateConfigInput {
+                listen: IpAddr::from_str("0.0.0.0").expect("address must parse"),
+                port: 443,
+                target: "cover.example.com:443".to_owned(),
+                server_name: "cover.example.com".to_owned(),
+            },
+            server_address: "line.example.com".to_owned(),
+            landings: vec![
+                HandoffLandingInput {
+                    address: "10.0.0.2".to_owned(),
+                    port: 7_443,
+                },
+                HandoffLandingInput {
+                    address: "10.0.0.3".to_owned(),
+                    port: 8_443,
+                },
+            ],
+        })
+        .expect("multi-landing generation must succeed");
+        let line = generated.line().config();
+        assert_loadable_and_valid(line, "multi-handoff-line");
+        assert_eq!(generated.landings().len(), 2);
+        for (index, landing) in generated.landings().iter().enumerate() {
+            assert_loadable_and_valid(landing, &format!("multi-handoff-landing-{}", index + 1));
+        }
+
+        // One UUID per landing, each routed by its own first-class group to
+        // that landing's numbered handoff outbound.
+        let InboundConfig::Vless(public) = &line.inbounds[0] else {
+            panic!("line must keep the public VLESS inbound");
+        };
+        assert_eq!(public.settings.clients.len(), 2);
+        let mut handoff_settings = Vec::new();
+        for index in 0..2 {
+            let tag = format!("landing-{}", index + 1);
+            let OutboundConfig::Handoff {
+                tag: outbound_tag,
+                settings,
+            } = &line.outbounds[index]
+            else {
+                panic!("line outbound {index} must be the handoff transfer");
+            };
+            assert_eq!(outbound_tag, &tag);
+            let group = &line.routing.users[index];
+            assert_eq!(group.name, format!("landing-{}-users", index + 1));
+            assert_eq!(group.default_outbound, tag);
+            assert_eq!(
+                group.user_ids,
+                vec![public.settings.clients[index].id.clone()]
+            );
+            handoff_settings.push(settings);
+        }
+
+        // Each landing pair shares exactly its own Handoff PSK, and every
+        // other piece of key material is independent across ALL emitted files.
+        let reality = &public.stream_settings.reality_settings;
+        let mut landing_inbounds = Vec::new();
+        for landing in generated.landings() {
+            let InboundConfig::Handoff(inbound) = &landing.inbounds[0] else {
+                panic!("landing must expose the handoff inbound");
+            };
+            landing_inbounds.push(inbound);
+        }
+        for (settings, inbound) in handoff_settings.iter().zip(&landing_inbounds) {
+            assert_eq!(
+                settings.pre_shared_key, inbound.settings.pre_shared_key,
+                "the pair PSK must match on both sides"
+            );
+        }
+        let first = handoff_settings[0];
+        let second = handoff_settings[1];
+        assert_ne!(first.pre_shared_key, second.pre_shared_key);
+        assert_ne!(
+            landing_inbounds[0].settings.private_key,
+            landing_inbounds[1].settings.private_key
+        );
+        assert_ne!(
+            first.pre_shared_key, landing_inbounds[1].settings.pre_shared_key,
+            "landing pairs must not share key material across files"
+        );
+        for settings in [&first, &second] {
+            assert_ne!(settings.pre_shared_key, reality.private_key);
+        }
+        for inbound in &landing_inbounds {
+            assert_ne!(inbound.settings.private_key, reality.private_key);
+        }
+        for (settings, inbound) in handoff_settings.iter().zip(&landing_inbounds) {
+            let landing_secret: [u8; 32] = BASE64_URL_SAFE_NO_PAD
+                .decode(inbound.settings.private_key.expose())
+                .expect("landing private key must decode")
+                .try_into()
+                .expect("landing private key must be 32 bytes");
+            let landing_public = PublicKey::from(&StaticSecret::from(landing_secret));
+            assert_eq!(
+                settings.landing_public_key,
+                BASE64_URL_SAFE_NO_PAD.encode(landing_public.as_bytes()),
+                "the line must pin each landing's static public key"
+            );
+        }
+
+        // The client references the first landing's UUID only.
+        assert_eq!(generated.client_uuid(), public.settings.clients[0].id);
+        let vnext = &generated.client()["outbounds"][0]["settings"]["vnext"][0];
+        assert_eq!(
+            vnext["users"][0]["id"].as_str(),
+            Some(generated.client_uuid())
+        );
+    }
+
+    #[test]
+    fn multi_handoff_requires_at_least_one_landing() {
+        let error = generate_multi_handoff_configs(GenerateMultiHandoffConfigInput {
+            public: GenerateConfigInput {
+                listen: IpAddr::from_str("0.0.0.0").expect("address must parse"),
+                port: 443,
+                target: "cover.example.com:443".to_owned(),
+                server_name: "cover.example.com".to_owned(),
+            },
+            server_address: "line.example.com".to_owned(),
+            landings: Vec::new(),
+        })
+        .expect_err("an empty landing list must fail");
+        assert!(error.to_string().contains("at least one landing"));
     }
 }

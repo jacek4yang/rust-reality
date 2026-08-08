@@ -224,6 +224,13 @@ rust-reality config generate handoff \
 UUID 和 REALITY 公钥打印到标准错误；Handoff PSK 和私钥只存在于两份服务端
 文件中。
 
+一台线路机也可以同时对接多台落地机：重复 `--landing-address`（配合一个共用
+的 `--landing-port`，或按地址逐一指定），生成器会写出 `landing-1.json`、
+`landing-2.json`……以及一份为每个落地各持有一个 UUID、并把每个 UUID 的
+用户组路由到对应 `landing-N` handoff 出站的 `line.json`。每对落地的密钥材料
+相互独立。把不同的 UUID 组路由到不同的落地机，即可把客户端分流到不同的出网
+路径；`xray-client.json` 使用第一个 UUID，其余 UUID 的分配由运维自行决定。
+
 ### 2. 部署并校验配置
 
 把 `line.json` 安装到线路机、`landing.json` 安装到落地机，各自按单机流程的

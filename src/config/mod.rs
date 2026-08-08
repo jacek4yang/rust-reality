@@ -8,9 +8,10 @@ mod validate;
 
 pub use generate::{
     GenerateConfigError, GenerateConfigInput, GenerateHandoffConfigInput,
-    GenerateLandingConfigInput, GenerateLineConfigInput, GeneratedConfig, GeneratedHandoffConfigs,
+    GenerateLandingConfigInput, GenerateLineConfigInput, GenerateMultiHandoffConfigInput,
+    GeneratedConfig, GeneratedHandoffConfigs, GeneratedMultiHandoffConfigs, HandoffLandingInput,
     generate_handoff_configs, generate_landing_config, generate_line_config,
-    generate_minimal_config,
+    generate_minimal_config, generate_multi_handoff_configs,
 };
 pub use io::{ConfigLoadError, MAX_CONFIG_BYTES, format_config, load_config};
 pub use model::{

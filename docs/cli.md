@@ -171,13 +171,35 @@ are written.
 | Additional option | Required | Default | Meaning |
 | --- | --- | --- | --- |
 | `--server-address <HOST>` | yes | — | Public line-node address clients dial. |
-| `--landing-address <HOST>` | yes | — | Landing-node address reachable by the line node. |
-| `--landing-port <PORT>` | no | `7443` | Firewall-restricted Handoff TCP port. |
+| `--landing-address <HOST>` | yes | — | Landing-node address reachable by the line node. Repeat for a multi-landing deployment. |
+| `--landing-port <PORT>` | no | `7443` | Firewall-restricted Handoff TCP port. With repeated `--landing-address`, pass one port for all landings or repeat once per address. |
 | `--output-dir <DIR>` | yes | — | Directory the three files are written to. |
 
 The three file paths are written to stdout; `REALITY public key for the
 client: ...` and `UUID for the client: ...` are written to stderr. The
 Handoff PSK and the private keys exist only in the two server files.
+
+With repeated `--landing-address` the generator writes a multi-landing
+deployment:
+
+```shell
+rust-reality config generate handoff \
+  --server-address line.example.com \
+  --target cover.example.com:443 \
+  --server-name cover.example.com \
+  --landing-address 10.0.0.2 --landing-port 7443 \
+  --landing-address 10.0.0.3 --landing-port 7443 \
+  --output-dir handoff/
+```
+
+This writes `line.json`, `landing-1.json`, `landing-2.json`, and
+`xray-client.json` (a single landing keeps the unnumbered `landing.json`).
+The line node carries one UUID per landing and routes each UUID's group to
+that landing's handoff outbound (`landing-1`, `landing-2`, ...); each
+landing pair has independent key material, and every emitted server file is
+validated before it is written. `xray-client.json` keeps its single-UUID
+shape and uses the first landing's UUID — assigning further UUIDs to
+clients is an operator choice.
 
 ### `config format`
 
