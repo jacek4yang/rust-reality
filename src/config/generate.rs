@@ -420,6 +420,7 @@ pub fn generate_handoff_configs(
                 nonce_retention_seconds: 120,
                 authentication_timeout_ms: 3_000,
                 connect_timeout_ms: 10_000,
+                egress: None,
             },
         })],
         outbounds: vec![OutboundConfig::Direct {

@@ -241,6 +241,7 @@ post-authentication encryption and must not be exposed to the Internet.
 | `settings.nonceRetentionSeconds` | no | `120` | Replay retention; from `2 * maxTimeDifferenceSeconds + 1` through `86400`. |
 | `settings.authenticationTimeoutMs` | no | `3000` | Deadline to read the one bounded sealed transfer, `1..=600000`. |
 | `settings.connectTimeoutMs` | no | `10000` | Deadline to dial the transferred destination after authentication succeeds, `1..=600000`. |
+| `settings.egress` | no | direct dial | Outbound tag selecting how the landing reaches transferred destinations. The tag must reference a `direct`, `socks5`, `nxr`, or `blackhole` outbound; a `handoff` outbound is rejected — landings cannot be chained. |
 
 The listener verifies exactly one single-flight transfer per connection — a
 fresh ephemeral X25519 Diffie-Hellman against `privateKey`, mixed with the
@@ -249,7 +250,8 @@ order: header structure, timestamp window, nonce reserve against the bounded
 replay cache, key agreement, AEAD open, then internal consistency checks.
 Every failure closes silently with zero response bytes, before DNS or
 destination connect. On success the listener reconstructs the session's TLS
-record layers, dials the transferred destination directly, and resumes the
+record layers, dials the transferred destination — directly by default, or
+through the outbound selected by `settings.egress` — and resumes the
 session; afterwards the connection carries the session's raw TLS ciphertext.
 
 Key independence is enforced within one configuration file: a Handoff
@@ -691,8 +693,8 @@ Hot-updateable with compatible topology:
 - outbound definitions, routing groups, and rules;
 - NXR key, clock window, and I/O timeouts when replay capacity/retention stay
   unchanged;
-- Handoff key material, clock window, and timeouts when replay
-  capacity/retention stay unchanged.
+- Handoff key material, clock window, timeouts, and the egress outbound
+  selection when replay capacity/retention stay unchanged.
 
 Restart required:
 

@@ -237,6 +237,13 @@ impl VisionHandler {
         ))
     }
 
+    /// Returns the shared outbound registry, for Handoff landings whose
+    /// configured egress dials through the same compiled transports.
+    #[must_use]
+    pub const fn outbounds(&self) -> &OutboundRegistry {
+        &self.outbounds
+    }
+
     /// Binds compiled routing and outbound snapshots to bounded session timeouts.
     #[must_use]
     pub fn new(

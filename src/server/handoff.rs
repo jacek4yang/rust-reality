@@ -7,7 +7,8 @@
 //! client socket against the handoff socket raw and never touches TLS or
 //! Vision state for the session again; LANDING reconstructs the record layers,
 //! feeds the transferred pending bytes first, and runs the standard Vision
-//! relay against a directly dialed destination.
+//! relay against the transferred destination — dialed directly, or through the
+//! listener's configured egress outbound.
 
 use std::{
     error::Error,
@@ -47,6 +48,7 @@ use crate::{
 
 use super::{
     connector::{DestinationConnectError, DestinationConnector},
+    outbound::{OutboundConnectError, OutboundConnectOutcome, OutboundRegistry},
     vision::{VisionSessionError, run_resumed_session},
 };
 
@@ -250,7 +252,8 @@ impl Error for HandoffLineError {
 }
 
 /// One Handoff landing connection: verify and decrypt one transfer, dial the
-/// transferred destination directly, then resume the session's Vision relay.
+/// transferred destination — directly, or through the listener's configured
+/// egress outbound — then resume the session's Vision relay.
 ///
 /// Every failure before the session relay starts closes the connection with
 /// zero response bytes; LINE observes the close as a transfer rejection.
@@ -261,6 +264,7 @@ pub struct HandoffLandingHandler {
     replay: HandoffReplayCache,
     maximum_time_difference: u64,
     connector: DestinationConnector,
+    egress: Option<LandingEgress>,
     authentication_timeout: Duration,
     relay: TcpRelay,
     /// Idle bound handed to the resumed Vision relay, so a stalled peer cannot
@@ -268,9 +272,21 @@ pub struct HandoffLandingHandler {
     io_timeout: Duration,
 }
 
+/// A validated outbound the landing dials transferred destinations through.
+#[derive(Clone)]
+struct LandingEgress {
+    registry: OutboundRegistry,
+    tag: Arc<str>,
+}
+
 impl HandoffLandingHandler {
     /// Compiles one validated listener while retaining its process-lifetime
     /// replay history across immutable runtime generations.
+    ///
+    /// When the listener configures `settings.egress`, the landing dials
+    /// transferred destinations through that tag of the shared outbound
+    /// registry instead of dialing directly; validation has already excluded
+    /// unknown tags and handoff-typed outbounds.
     ///
     /// # Errors
     ///
@@ -280,6 +296,7 @@ impl HandoffLandingHandler {
         replay: HandoffReplayCache,
         relay: TcpRelay,
         io_timeout: Duration,
+        outbounds: &OutboundRegistry,
     ) -> Result<Self, HandoffLandingConfigError> {
         let psk = Zeroizing::new(
             BASE64_URL_SAFE_NO_PAD
@@ -299,7 +316,7 @@ impl HandoffLandingHandler {
             .as_slice()
             .try_into()
             .map_err(|_| HandoffLandingConfigError::Key)?;
-        Ok(Self::new(
+        let handler = Self::new(
             HandoffPsk::new(psk),
             StaticSecret::from(secret),
             replay,
@@ -308,7 +325,22 @@ impl HandoffLandingHandler {
             Duration::from_millis(inbound.settings.authentication_timeout_ms),
             relay,
             io_timeout,
-        ))
+        );
+        Ok(match &inbound.settings.egress {
+            Some(tag) => handler.with_egress(outbounds.clone(), tag),
+            None => handler,
+        })
+    }
+
+    /// Selects the validated outbound the landing dials transferred
+    /// destinations through, replacing the default direct dial.
+    #[must_use]
+    pub fn with_egress(mut self, outbounds: OutboundRegistry, tag: &str) -> Self {
+        self.egress = Some(LandingEgress {
+            registry: outbounds,
+            tag: Arc::from(tag),
+        });
+        self
     }
 
     /// Creates a landing handler from already compiled policy.
@@ -333,6 +365,7 @@ impl HandoffLandingHandler {
             replay,
             maximum_time_difference,
             connector: DestinationConnector::new(connect_timeout),
+            egress: None,
             authentication_timeout,
             relay,
             io_timeout,
@@ -379,13 +412,34 @@ impl HandoffLandingHandler {
         // whole-session relay below.
         drop(opened);
         // The descriptor unit is reserved before connect(2) and outlives the
-        // relay: the outbound socket closes before its unit is released.
-        let _fd_permit = self
-            .relay
-            .fd_budget()
-            .try_acquire(UNITS_OUTBOUND_SOCKET)
-            .ok_or(HandoffLandingError::DescriptorBudget)?;
-        let destination = self.connector.connect(&destination).await?;
+        // relay: the outbound socket closes before its unit is released. Both
+        // permit slots are declared before the socket so either dial path
+        // keeps that drop order. An egress registry acquires its own unit, so
+        // the manual acquisition stays on the default direct path only.
+        let _fd_permit;
+        let _egress_permit;
+        let destination = match &self.egress {
+            Some(egress) => match egress.registry.connect(&egress.tag, &destination).await {
+                Ok(OutboundConnectOutcome::Connected(connection)) => {
+                    let (stream, permit) = connection.into_parts();
+                    _egress_permit = permit;
+                    stream
+                }
+                // A blackhole egress discards the session by configuration:
+                // end it without dialing and without an error, leaving the
+                // silent close the line node reads as a rejection.
+                Ok(OutboundConnectOutcome::Blackholed) => return Ok(RelayStats::new(0, 0)),
+                Err(source) => return Err(HandoffLandingError::Egress(source)),
+            },
+            None => {
+                _fd_permit = self
+                    .relay
+                    .fd_budget()
+                    .try_acquire(UNITS_OUTBOUND_SOCKET)
+                    .ok_or(HandoffLandingError::DescriptorBudget)?;
+                self.connector.connect(&destination).await?
+            }
+        };
         let (reader_half, writer_half) = inbound.into_split();
         let (client_reader, client_writer) =
             resume_application_halves(reader_half, pending, writer_half, tls);
@@ -504,6 +558,9 @@ pub enum HandoffLandingError {
     Allocation,
     Clock,
     Destination(DestinationConnectError),
+    /// The configured egress outbound could not serve the transferred
+    /// destination dial.
+    Egress(OutboundConnectError),
     Session(VisionSessionError),
     DescriptorBudget,
 }
@@ -520,6 +577,7 @@ impl Error for HandoffLandingError {
             Self::Read(source) => Some(source),
             Self::Protocol(source) => Some(source),
             Self::Destination(source) => Some(source),
+            Self::Egress(source) => Some(source),
             Self::Session(source) => Some(source),
             Self::Timeout | Self::Allocation | Self::Clock | Self::DescriptorBudget => None,
         }
@@ -549,8 +607,9 @@ mod tests {
     };
     use crate::{
         config::{
-            DirectBarrierConfig, DnsStrategy, HandoffSettings, OutboundConfig, RelayPolicy,
-            ResourceGovernorConfig, RoutingConfig, SecretString, UserPolicy,
+            BlackholeSettings, DirectBarrierConfig, DnsStrategy, HandoffSettings, OutboundConfig,
+            RelayPolicy, ResourceGovernorConfig, RoutingConfig, SecretString, Socks5Settings,
+            UserPolicy,
         },
         protocol::{
             handoff::{ContinuationState, HandoffPsk, HandoffReplayCache, seal_transfer},
@@ -1090,6 +1149,251 @@ mod tests {
         assert!(
             line_stats.uplink_bytes() > 0,
             "post-transfer records must move through the raw splice"
+        );
+    }
+
+    fn egress_registry(outbounds: &[OutboundConfig]) -> OutboundRegistry {
+        OutboundRegistry::new(
+            outbounds,
+            &DirectBarrierConfig::default(),
+            Duration::from_secs(1),
+            FdBudget::new(4_096),
+        )
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn landing_serves_a_transferred_session_through_a_socks5_egress() {
+        let socks_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("SOCKS stub must bind");
+        let socks_address = socks_listener
+            .local_addr()
+            .expect("SOCKS stub address must exist");
+        let landing_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("landing must bind");
+        let landing_address = landing_listener
+            .local_addr()
+            .expect("landing address must exist");
+        // Reserve a destination port and drop its listener: nothing accepts a
+        // direct dial, so the session can only succeed through the egress hop.
+        let destination_port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("probe listener must bind")
+            .local_addr()
+            .expect("probe address must exist")
+            .port();
+        let landing_handler = test_landing_handler().with_egress(
+            egress_registry(&[OutboundConfig::Socks5 {
+                tag: "socks".to_owned(),
+                settings: Socks5Settings {
+                    address: socks_address.ip().to_string(),
+                    port: socks_address.port(),
+                    username: None,
+                    password: None,
+                },
+            }]),
+            "socks",
+        );
+        let line_handler = handoff_vision_handler(landing_address);
+        let (mut client, server) = tcp_pair().await;
+        let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
+        let established = RealityEstablished::from_test_parts(
+            TlsApplicationIo::new(server, established_tls),
+            UserRegistry::new([USER]),
+        );
+        let request = vision_request(destination_port, b"ping");
+
+        let exchange = async {
+            let line = line_handler.handle(established);
+            let landing = async {
+                let (stream, _) = landing_listener.accept().await?;
+                landing_handler
+                    .handle(stream)
+                    .await
+                    .map_err(io::Error::other)
+            };
+            let client_io = async {
+                let mut burst = Vec::new();
+                client_write_records
+                    .seal_into(ContentType::ApplicationData, &request, 0, &mut burst)
+                    .map_err(io::Error::other)?;
+                let mut more = Vec::new();
+                client_write_records
+                    .seal_into(ContentType::ApplicationData, b"-more", 0, &mut more)
+                    .map_err(io::Error::other)?;
+                burst.extend_from_slice(&more);
+                let mut close_record = Vec::new();
+                client_write_records
+                    .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                    .map_err(io::Error::other)?;
+                burst.extend_from_slice(&close_record);
+                client.write_all(&burst).await?;
+
+                let mut decoder = VisionDecoder::new(USER);
+                let mut decoded = Vec::new();
+                let mut response = Vec::new();
+                let mut response_header = true;
+                loop {
+                    let mut record = read_tls_record(&mut client, TEST_TIMEOUT)
+                        .await
+                        .map_err(io::Error::other)?
+                        .into_wire();
+                    let opened = client_read_records
+                        .open_in_place(&mut record)
+                        .map_err(io::Error::other)?;
+                    match opened.content_type() {
+                        ContentType::ApplicationData => {
+                            let plaintext = opened.plaintext();
+                            let vision = if response_header {
+                                response_header = false;
+                                if plaintext.get(..2) != Some([VERSION, 0].as_slice()) {
+                                    return Err(io::Error::other("invalid VLESS response header"));
+                                }
+                                &plaintext[2..]
+                            } else {
+                                plaintext
+                            };
+                            let _ = decoder
+                                .decode(vision, &mut decoded)
+                                .map_err(io::Error::other)?;
+                            response.extend_from_slice(&decoded);
+                        }
+                        ContentType::Alert if opened.plaintext() == [1, 0] => break,
+                        _ => return Err(io::Error::other("unexpected outer TLS content")),
+                    }
+                }
+                client.shutdown().await?;
+                Ok::<_, io::Error>(response)
+            };
+            // A minimal no-auth SOCKS5 peer: negotiate, verify the CONNECT
+            // carries the transferred destination byte-exactly, then serve as
+            // the destination without ever dialing it.
+            let socks_io = async {
+                let (mut stream, _) = socks_listener.accept().await?;
+                let mut greeting = [0_u8; 3];
+                stream.read_exact(&mut greeting).await?;
+                if greeting != [5, 1, 0] {
+                    return Err(io::Error::other("unexpected SOCKS greeting"));
+                }
+                stream.write_all(&[5, 0]).await?;
+                let mut header = [0_u8; 4];
+                stream.read_exact(&mut header).await?;
+                let mut address = [0_u8; 4];
+                stream.read_exact(&mut address).await?;
+                let mut port = [0_u8; 2];
+                stream.read_exact(&mut port).await?;
+                if header != [5, 1, 0, 1]
+                    || address != Ipv4Addr::LOCALHOST.octets()
+                    || u16::from_be_bytes(port) != destination_port
+                {
+                    return Err(io::Error::other(
+                        "the CONNECT request must carry the transferred destination",
+                    ));
+                }
+                stream.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await?;
+                let mut received = Vec::new();
+                stream.read_to_end(&mut received).await?;
+                stream.write_all(b"pong").await?;
+                stream.shutdown().await?;
+                Ok::<_, io::Error>(received)
+            };
+            tokio::join!(line, landing, client_io, socks_io)
+        };
+        let (line, landing, client_result, socks_result) = timeout(TEST_TIMEOUT, exchange)
+            .await
+            .expect("egress exchange must not time out");
+        line.expect("LINE handler must succeed");
+        let landing_stats = landing.expect("LANDING handler must succeed");
+
+        assert_eq!(
+            socks_result.expect("SOCKS stub I/O must succeed"),
+            b"ping-more",
+            "the session payload must reach the egress hop byte-exactly"
+        );
+        assert_eq!(
+            client_result.expect("client I/O must succeed"),
+            b"pong",
+            "the egress hop's downlink must decrypt byte-exactly at the client"
+        );
+        assert_eq!(landing_stats.inbound_to_outbound_bytes(), 9);
+        assert_eq!(landing_stats.outbound_to_inbound_bytes(), 4);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn landing_ends_a_transferred_session_silently_when_the_egress_blackholes() {
+        let landing_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("landing must bind");
+        let landing_address = landing_listener
+            .local_addr()
+            .expect("landing address must exist");
+        let landing_handler = test_landing_handler().with_egress(
+            egress_registry(&[OutboundConfig::Blackhole {
+                tag: "block".to_owned(),
+                settings: BlackholeSettings::default(),
+            }]),
+            "block",
+        );
+        let line_handler = handoff_vision_handler(landing_address);
+        let (mut client, server) = tcp_pair().await;
+        let (established_tls, mut client_write_records, _client_read_records) = tls_states();
+        let established = RealityEstablished::from_test_parts(
+            TlsApplicationIo::new(server, established_tls),
+            UserRegistry::new([USER]),
+        );
+        // Port 9 is the discard sink: if the landing dialed despite the
+        // blackhole, the session would fail with a destination error instead
+        // of ending cleanly.
+        let request = vision_request(9, b"ping");
+
+        let exchange = async {
+            let line = line_handler.handle(established);
+            let landing = async {
+                let (stream, _) = landing_listener.accept().await?;
+                landing_handler
+                    .handle(stream)
+                    .await
+                    .map_err(io::Error::other)
+            };
+            let client_io = async {
+                let mut record = Vec::new();
+                client_write_records
+                    .seal_into(ContentType::ApplicationData, &request, 0, &mut record)
+                    .map_err(io::Error::other)?;
+                client.write_all(&record).await?;
+                // The blackholed session never produces downlink, so LINE's
+                // first-byte deadline classifies the silent close as a
+                // rejection and resets the client socket.
+                let mut byte = [0_u8; 1];
+                let error = client
+                    .read(&mut byte)
+                    .await
+                    .expect_err("a blackholed transfer must reset the client, never FIN it");
+                assert_eq!(
+                    error.kind(),
+                    io::ErrorKind::ConnectionReset,
+                    "the rejection abort must reach the client as RST"
+                );
+                Ok::<_, io::Error>(())
+            };
+            tokio::join!(line, landing, client_io)
+        };
+        let (line, landing, client_result) = timeout(TEST_TIMEOUT, exchange)
+            .await
+            .expect("blackhole exchange must not time out");
+        let landing_stats =
+            landing.expect("a blackholed egress must end the session without an error");
+        assert_eq!(landing_stats.inbound_to_outbound_bytes(), 0);
+        assert_eq!(landing_stats.outbound_to_inbound_bytes(), 0);
+        client_result.expect("client I/O must succeed");
+        let error = line.expect_err("LINE must fail the session, never serve it locally");
+        assert!(
+            matches!(
+                error,
+                VisionSessionError::HandoffLine(HandoffLineError::LandingRejected)
+            ),
+            "a blackholed landing close must read as a rejection: {error}"
         );
     }
 
