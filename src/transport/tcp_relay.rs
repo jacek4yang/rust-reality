@@ -452,6 +452,23 @@ fn classify_abort(error: io::Error) -> io::Error {
     }
 }
 
+/// Returns whether an error is the mid-transfer liveness abort that
+/// [`classify_abort`] produces: `ConnectionAborted` carrying the original
+/// `TimedOut` as its payload.
+///
+/// The rewrap exists so the session layer never mistakes a truncated transfer
+/// for a clean idle close, but the underlying cause is still the liveness
+/// policy, not a protocol violation — the session's rejection classification
+/// uses this to file the event as a timeout.
+#[must_use]
+pub fn is_liveness_timeout_abort(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::ConnectionAborted
+        && error
+            .get_ref()
+            .and_then(|payload| payload.downcast_ref::<io::Error>())
+            .is_some_and(|payload| payload.kind() == io::ErrorKind::TimedOut)
+}
+
 fn splice_capability(policy: &RelayPolicy) -> BackendCapability {
     if !cfg!(target_os = "linux") {
         return BackendCapability::declined(
@@ -1381,7 +1398,7 @@ mod tests {
         time,
     };
 
-    use super::TcpRelay;
+    use super::{TcpRelay, classify_abort, is_liveness_timeout_abort};
     use crate::{
         config::RelayPolicy,
         runtime::FdBudget,
@@ -2198,6 +2215,68 @@ mod tests {
             error.kind(),
             io::ErrorKind::TimedOut,
             "an untouched ledger means nothing was truncated: the timeout stays clean"
+        );
+    }
+
+    #[test]
+    fn only_a_rewrapped_timeout_is_a_liveness_abort() {
+        let abort = classify_abort(io::Error::new(io::ErrorKind::TimedOut, "idle"));
+        assert!(is_liveness_timeout_abort(&abort));
+        assert!(!is_liveness_timeout_abort(&io::Error::new(
+            io::ErrorKind::TimedOut,
+            "an untouched-ledger timeout stays clean"
+        )));
+        assert!(!is_liveness_timeout_abort(&io::Error::new(
+            io::ErrorKind::ConnectionAborted,
+            "a peer abort without a timeout payload"
+        )));
+        assert!(!is_liveness_timeout_abort(&io::Error::other("boom")));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_paired_liveness_timeout_is_a_timeout_abort() {
+        // Bilateral relay: the uplink moves bytes while the downlink never
+        // sends anything. The shared ledger is non-untouched when the
+        // downlink idle guard trips, so the abort surfaces as
+        // ConnectionAborted carrying the original TimedOut — the exact shape
+        // the session layer must file as a timeout, not a protocol error.
+        let relay = TcpRelay::new(
+            &RelayPolicy {
+                splice: false,
+                ..RelayPolicy::default()
+            },
+            FdBudget::new(4_096),
+        )
+        .expect("relay must build");
+        let (mut source_peer, relay_inbound) = tcp_pair().await;
+        let (relay_outbound, mut sink_peer) = tcp_pair().await;
+        source_peer
+            .write_all(b"prefix")
+            .await
+            .expect("the prefix must land");
+        let context = RelayContext::owned()
+            .with_request(BackendRequest::Explicit(RelayBackend::Buffered))
+            .with_liveness(Duration::from_millis(200));
+        let relaying = relay.relay_owned(relay_inbound, relay_outbound, context);
+        let drain = async {
+            let mut received = [0_u8; 6];
+            sink_peer
+                .read_exact(&mut received)
+                .await
+                .expect("the prefix must arrive");
+            assert_eq!(&received, b"prefix");
+        };
+        let (outcome, ()) = time::timeout(Duration::from_secs(2), async {
+            tokio::join!(relaying, drain)
+        })
+        .await
+        .expect("a stalled direction must end the relay well within two seconds");
+        drop(source_peer);
+        let error = outcome.expect_err("a stalled direction must fail the paired relay");
+        assert_timeout_abort(&error);
+        assert!(
+            is_liveness_timeout_abort(&error),
+            "the session layer must be able to file the abort as a timeout"
         );
     }
 

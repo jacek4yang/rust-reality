@@ -38,7 +38,7 @@ use crate::{
     transport::{
         BackendDeclineReason, BackendReport, RelayBackend,
         tcp::{AcceptBackoff, AcceptErrorClass, EmergencyDescriptor, TcpAcceptor},
-        tcp_relay::{TcpRelay, TcpRelayConfigError},
+        tcp_relay::{TcpRelay, TcpRelayConfigError, is_liveness_timeout_abort},
     },
 };
 
@@ -1359,7 +1359,7 @@ enum ConnectionRunError {
 }
 
 impl ConnectionRunError {
-    const fn rejection_reason(&self) -> RejectionReason {
+    fn rejection_reason(&self) -> RejectionReason {
         match self {
             Self::Reality(RealityAcceptError::Admission(_)) => RejectionReason::ResourceLimit,
             Self::Reality(RealityAcceptError::HandshakeWriteTimeout)
@@ -1388,6 +1388,13 @@ impl ConnectionRunError {
                 HandoffLandingError::Destination(_) | HandoffLandingError::Session(_),
             ) => RejectionReason::Outbound,
             Self::Nxr(_) | Self::Handoff(_) => RejectionReason::Authentication,
+            Self::Vision(VisionSessionError::Relay(error)) if is_liveness_timeout_abort(error) => {
+                // A mid-transfer liveness kill is rewrapped as
+                // `ConnectionAborted` so a truncated transfer can never pass
+                // for a clean idle close, but the cause is the liveness
+                // policy: classify it as a timeout, not a protocol rejection.
+                RejectionReason::Timeout
+            }
             Self::Vision(_) => RejectionReason::Protocol,
         }
     }
@@ -2149,5 +2156,39 @@ mod tests {
             "expected the resource_limit reason, got {contents}"
         );
         fs::remove_dir_all(&directory).expect("log directory must be removed");
+    }
+
+    #[test]
+    fn a_mid_transfer_liveness_abort_is_reported_as_a_timeout() {
+        use crate::{
+            logging::RejectionReason,
+            server::{production::ConnectionRunError, vision::VisionSessionError},
+        };
+
+        // A healthy transfer whose peer direction stalls past the liveness
+        // deadline aborts both sockets with RST and surfaces as
+        // ConnectionAborted carrying the original TimedOut (the exact shape
+        // classify_abort produces). That is a liveness-policy kill: the
+        // rejection log must say timeout, not protocol.
+        let abort = io::Error::new(
+            io::ErrorKind::ConnectionAborted,
+            io::Error::new(io::ErrorKind::TimedOut, "raw relay idle timeout"),
+        );
+        let error = ConnectionRunError::Vision(VisionSessionError::Relay(abort));
+        assert_eq!(
+            error.rejection_reason(),
+            RejectionReason::Timeout,
+            "a liveness timeout that truncated a live transfer is still a timeout"
+        );
+
+        let error = ConnectionRunError::Vision(VisionSessionError::Relay(io::Error::new(
+            io::ErrorKind::ConnectionAborted,
+            "peer abort",
+        )));
+        assert_eq!(
+            error.rejection_reason(),
+            RejectionReason::Protocol,
+            "a plain relay abort without a timeout payload stays a protocol rejection"
+        );
     }
 }
