@@ -2,6 +2,63 @@
 
 All notable user-facing changes to this project are documented in this file.
 
+## [1.1.0] - 2026-08-08
+
+### Added
+
+- **Handoff session transfer** (`handoff` inbound/outbound): after REALITY
+  authentication, VLESS request decode, and routing, a line node transfers
+  the entire session — TLS 1.3 record-layer state, sequence numbers, Vision
+  context, pending bytes — to a landing node over one sealed, bounded,
+  replay-protected message (per-transfer ephemeral X25519 against the
+  landing's static key, PSK mixed in one HKDF-SHA256 chain,
+  ChaCha20-Poly1305, versioned binary format). The landing becomes the sole
+  TLS/Vision owner; the line degrades to a thin kernel splice relay.
+  Unmodified Xray clients are unaffected. Measured on the validation host
+  (single-host loopback): line-node CPU per GiB −82% downlink / −60% uplink
+  versus the NXR topology; two-node total roughly flat. See
+  docs/performance.md for the labeled evidence and docs/threat-model.md for
+  the security boundary (the line↔landing link must be private/firewalled).
+- `config generate handoff` produces `line.json`, `landing.json`, and
+  `xray-client.json` with all key material generated and both server
+  configurations pre-validated.
+- Numeric IP literals carried as VLESS domains (destinations, REALITY cover
+  targets, NXR/SOCKS5 upstreams) now dial directly without entering the
+  blocking system resolver or consuming bounded DNS-pool permits.
+- New outbound setting `firstByteTimeoutMs` bounds how long a handoff line
+  waits for the landing's first sealed record before declaring rejection.
+- Fuzz targets for the Handoff header, continuation blob decoder, and
+  transfer open path.
+
+### Fixed
+
+- Two `Notify` lost-wakeup races in the resource-pressure gauge and the FD
+  budget: a state transition or capacity release landing between the waiter's
+  re-check and its first poll could strand the waiter forever.
+- The replay reservation and the handshake deadline are now anchored to one
+  instant; a ClientFinished admitted by the deadline can no longer be
+  rejected by an already-expired reservation.
+- A liveness timeout that truncates an in-flight transfer is now classified
+  as an abort (RST semantics) instead of a clean timeout, and reports as
+  `timeout`, not `protocol`, in rejection accounting.
+- Descriptor accounting: a soft RLIMIT of 0 is refused instead of planned as
+  unlimited; the theoretical FD peak includes pipe-pool retention; the
+  emergency reserve scales with the listener count.
+- Teardown resets at the handoff line relay (both sockets carry TLS records)
+  count as clean EOF, ending spurious `connection_rejected` events on clean
+  session completion.
+
+### Removed
+
+- The test-only plain-VLESS server path and the orphaned config snapshot
+  store, plus dead APIs found by the final audit (about −950 LOC total).
+  Coverage of the deleted paths exists against the production relay.
+
+### Notes
+
+- No configuration migration is required; v1.0 configurations load
+  unchanged.
+
 ## [1.0.0] - 2026-08-07
 
 First stable release.
