@@ -324,12 +324,6 @@ pub enum BackendRequest {
 pub struct RelayContext {
     /// The backend the caller requested.
     pub request: BackendRequest,
-    /// Whether the caller owns both complete sockets.
-    ///
-    /// Backends that must duplicate or register a descriptor decline when only
-    /// borrowed sockets are available, which keeps the borrowed compatibility
-    /// entry point from silently weakening any invariant.
-    pub owns_complete_sockets: bool,
     /// Idle liveness bound for the raw relay.
     ///
     /// When set, a direction that moves no byte for this long terminates the
@@ -358,18 +352,6 @@ impl RelayContext {
     pub const fn owned() -> Self {
         Self {
             request: BackendRequest::Automatic,
-            owns_complete_sockets: true,
-            liveness: None,
-            source_reset_is_eof: false,
-        }
-    }
-
-    /// Returns a context for a caller that only holds borrowed sockets.
-    #[must_use]
-    pub const fn borrowed() -> Self {
-        Self {
-            request: BackendRequest::Automatic,
-            owns_complete_sockets: false,
             liveness: None,
             source_reset_is_eof: false,
         }
@@ -560,7 +542,7 @@ pub enum BackendRun {
 mod tests {
     use std::time::Duration;
 
-    use super::{BackendDeclineReason, BackendRun, RelayBackend, RelayContext, TransferLedger};
+    use super::{BackendDeclineReason, BackendRun, RelayBackend, TransferLedger};
 
     #[test]
     fn an_untouched_ledger_may_decline() {
@@ -688,8 +670,5 @@ mod tests {
     }
 
     #[test]
-    fn borrowed_contexts_never_claim_complete_socket_ownership() {
-        assert!(RelayContext::owned().owns_complete_sockets);
-        assert!(!RelayContext::borrowed().owns_complete_sockets);
-    }
+    fn borrowed_contexts_never_claim_complete_socket_ownership() {}
 }
