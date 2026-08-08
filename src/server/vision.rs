@@ -420,10 +420,14 @@ impl VisionHandler {
         )
         .map_err(HandoffLineError::Transfer)
         .map_err(VisionSessionError::HandoffLine)?;
-        let (handoff_stream, _fd_permit) = line
+        let transferred = line
             .transfer(self.relay.fd_budget(), &state, client_random)
             .await
             .map_err(VisionSessionError::HandoffLine)?;
+        // Declared before the stream so every error path closes the handoff
+        // descriptor before its budget unit is released.
+        let _fd_permit = transferred.1;
+        let handoff_stream = transferred.0;
         // The sealed continuation is on the wire; its key material must not
         // live across the first-byte probe and the session relay below.
         drop(state);
@@ -445,7 +449,7 @@ impl VisionHandler {
                 HandoffLineError::LandingRejected,
             ));
         }
-        let outcome = self
+        let result = self
             .relay
             .relay_owned(
                 client_stream,
@@ -457,7 +461,13 @@ impl VisionHandler {
                     .with_liveness(self.io_timeout)
                     .with_source_reset_as_eof(),
             )
-            .await
+            .await;
+        // The relay consumed both sockets: it aborts them itself on a
+        // mid-transfer error, and on every return their descriptors are
+        // already closed, so the guard must never fire on what another
+        // connection may have recycled those descriptor numbers into.
+        guard.disarm();
+        let outcome = result
             .map_err(HandoffLineError::Relay)
             .map_err(VisionSessionError::HandoffLine)?;
         // Backstop for the first-byte probe above: a completed relay that
@@ -467,7 +477,6 @@ impl VisionHandler {
                 HandoffLineError::LandingRejected,
             ));
         }
-        guard.disarm();
         // The counts are raw ciphertext bytes moved by the splice, matching how
         // the Direct transition counts its raw phase.
         Ok(VisionRelayStats {
@@ -745,6 +754,7 @@ async fn relay_uplink(
         request_buffer,
         prefetched,
         context,
+        &mut guard,
     )
     .await;
     if result.is_ok() {
@@ -760,6 +770,7 @@ async fn relay_uplink_inner(
     request_buffer: Vec<u8>,
     prefetched: Range<usize>,
     context: &SessionContext<'_>,
+    guard: &mut DirectionAbortGuard,
 ) -> Result<DirectionStats, VisionSessionError> {
     let SessionContext {
         timeout, handoff, ..
@@ -792,6 +803,10 @@ async fn relay_uplink_inner(
             bytes = bytes.saturating_add(length_u64(plaintext.len()));
         }
         if mode == VisionMode::Direct {
+            // The direct path takes both halves: from here on the raw relay
+            // owns abort semantics and its drop closes the descriptors, so
+            // the guard must never fire on recycled descriptor numbers.
+            guard.disarm();
             return finish_uplink_direct(client, destination, bytes, context).await;
         }
     }
@@ -839,6 +854,9 @@ async fn relay_uplink_inner(
             bytes = bytes.saturating_add(length_u64(content.len()));
         }
         if mode == VisionMode::Direct {
+            // See the prefetched branch above: the raw relay owns the halves
+            // and their abort semantics from here on.
+            guard.disarm();
             return finish_uplink_direct(client, destination, bytes, context).await;
         }
     }
@@ -933,7 +951,15 @@ async fn relay_downlink(
 ) -> Result<DirectionStats, VisionSessionError> {
     let nested = NestedRecordReader::new(destination);
     let mut guard = DirectionAbortGuard::new(client.fd(), nested.fd());
-    let result = relay_downlink_inner(nested, client, user_id, response_header, context).await;
+    let result = relay_downlink_inner(
+        nested,
+        client,
+        user_id,
+        response_header,
+        context,
+        &mut guard,
+    )
+    .await;
     if result.is_ok() {
         guard.disarm();
     }
@@ -946,6 +972,7 @@ async fn relay_downlink_inner(
     user_id: UserId,
     response_header: &[u8],
     context: &SessionContext<'_>,
+    guard: &mut DirectionAbortGuard,
 ) -> Result<DirectionStats, VisionSessionError> {
     let SessionContext {
         timeout, handoff, ..
@@ -1029,6 +1056,11 @@ async fn relay_downlink_inner(
                         return Ok(DirectionStats::framed(bytes));
                     }
                     PaddingDecision::Direct => {
+                        // The direct path takes both halves: from here on the
+                        // raw relay owns abort semantics and its drop closes
+                        // the descriptors, so the guard must never fire on
+                        // recycled descriptor numbers.
+                        guard.disarm();
                         return finish_downlink_direct(destination, client, bytes, context).await;
                     }
                 }

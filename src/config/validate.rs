@@ -433,6 +433,12 @@ fn validate_handoff_key_independence(config: &Config) -> Result<(), ConfigError>
                 "must be generated independently of every NXR preSharedKey in this configuration",
             );
         }
+        if shares_key_material(&inbound.settings.pre_shared_key, &reality_keys) {
+            return fail(
+                format!("{path}.preSharedKey"),
+                "must be generated independently of every REALITY privateKey in this configuration",
+            );
+        }
         if shares_key_material(&inbound.settings.private_key, &reality_keys) {
             return fail(
                 format!("{path}.privateKey"),
@@ -448,6 +454,12 @@ fn validate_handoff_key_independence(config: &Config) -> Result<(), ConfigError>
             return fail(
                 format!("outbounds[{index}].settings.preSharedKey"),
                 "must be generated independently of every NXR preSharedKey in this configuration",
+            );
+        }
+        if shares_key_material(&settings.pre_shared_key, &reality_keys) {
+            return fail(
+                format!("outbounds[{index}].settings.preSharedKey"),
+                "must be generated independently of every REALITY privateKey in this configuration",
             );
         }
     }
@@ -1521,6 +1533,31 @@ mod tests {
                 .expect_err("a shared Handoff/REALITY private key must fail")
                 .path(),
             "inbounds[1].settings.privateKey"
+        );
+    }
+
+    #[test]
+    fn rejects_handoff_psk_shared_with_reality_private_key() {
+        // The two 32-byte secrets coexisting in one generated line.json: the
+        // fixture REALITY private key reused as a Handoff outbound PSK.
+        let shared = SecretString::new("ERERERERERERERERERERERERERERERERERERERERERE");
+        let mut config = valid_config();
+        config.outbounds.push(OutboundConfig::Handoff {
+            tag: "handoff-line".to_owned(),
+            settings: crate::config::HandoffSettings {
+                address: "10.0.0.3".to_owned(),
+                port: 9444,
+                pre_shared_key: shared,
+                landing_public_key: "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo".to_owned(),
+                connect_timeout_ms: 10_000,
+                first_byte_timeout_ms: 15_000,
+            },
+        });
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("a Handoff PSK equal to a REALITY privateKey must fail")
+                .path(),
+            "outbounds[2].settings.preSharedKey"
         );
     }
 

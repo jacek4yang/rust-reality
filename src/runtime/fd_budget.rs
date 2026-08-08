@@ -103,6 +103,18 @@ struct FdBudgetInner {
     pressure_transitions: AtomicU64,
 }
 
+/// Balances one `FdBudget::acquire` waiter registration, including when the
+/// acquire future is cancelled while parked on the notify.
+struct WaiterCount<'budget> {
+    inner: &'budget FdBudgetInner,
+}
+
+impl Drop for WaiterCount<'_> {
+    fn drop(&mut self) {
+        self.inner.waiters.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 impl FdBudget {
     /// Creates a budget with hysteresis watermarks derived from `capacity`.
     ///
@@ -247,15 +259,18 @@ impl FdBudget {
             // either lands on the recheck or on the registered waiter. The
             // release path pays the Notify cost only when someone listens.
             self.inner.waiters.fetch_add(1, Ordering::Relaxed);
+            // Balances the count on every exit — including cancellation while
+            // parked on the notify, which a plain fetch_sub after the await
+            // would never run; an orphaned count would force every later
+            // release to pay the global wait-list lock forever.
+            let _waiter = WaiterCount { inner: &self.inner };
             let notified = self.inner.released.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
             if let Some(permit) = self.try_acquire(units) {
-                self.inner.waiters.fetch_sub(1, Ordering::Relaxed);
                 return permit;
             }
             notified.await;
-            self.inner.waiters.fetch_sub(1, Ordering::Relaxed);
         }
     }
 
@@ -386,7 +401,10 @@ impl Drop for FdPermit {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Barrier, atomic::AtomicU64};
+    use std::sync::{
+        Arc, Barrier,
+        atomic::{AtomicU64, Ordering},
+    };
 
     use super::{FdBudget, FdPressure};
 
@@ -572,6 +590,11 @@ mod tests {
             budget.in_use(),
             1,
             "a cancelled acquire must not have reserved anything"
+        );
+        assert_eq!(
+            budget.inner.waiters.load(Ordering::Relaxed),
+            0,
+            "a cancelled acquire must not leak its waiter registration"
         );
         drop(held);
         assert_eq!(budget.in_use(), 0);
