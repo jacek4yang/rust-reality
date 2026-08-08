@@ -119,6 +119,22 @@ pub enum LogEvent {
         /// Stable JSON path; never a value from the configuration.
         field: String,
     },
+    /// A Handoff landing listener was published with a key-rotation window
+    /// still open: retired keys remain accepted.
+    ///
+    /// Emitted once per listener per published generation (startup and every
+    /// reload), never per connection. A lingering retired key silently voids
+    /// the forward-secrecy bound promised by the threat model, so the open
+    /// window must stay visible until the retired keys are dropped. Counts
+    /// only — never key material.
+    HandoffRotationWindowOpen {
+        /// Validated inbound tag.
+        tag: String,
+        /// Retired pre-shared keys still accepted.
+        previous_pre_shared_keys: usize,
+        /// Retired static private keys still accepted.
+        previous_private_keys: usize,
+    },
     /// One stable capability line per relay backend, emitted once at startup.
     ///
     /// Static capability declines are reported here and never repeated per
@@ -300,6 +316,7 @@ impl LogEvent {
             Self::ConnectionRejected { .. }
             | Self::AdmissionLimited { .. }
             | Self::ConfigurationRejected { .. }
+            | Self::HandoffRotationWindowOpen { .. }
             | Self::DescriptorPressureChanged { .. }
             | Self::ResourcePressureChanged { .. }
             | Self::MemorySamplerChanged { .. }

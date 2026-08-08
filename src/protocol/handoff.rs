@@ -18,8 +18,11 @@
 //!
 //! LANDING validates in exactly this order: header structure, timestamp
 //! window, nonce reserve (bounded sharded replay cache), DH + HKDF, AEAD open,
-//! then internal cross-checks. The blob is decrypted fully before any
-//! plaintext field is parsed, and every failure maps to the closed-vocabulary
+//! then internal cross-checks. During a bounded key-rotation window LANDING
+//! accepts retired keys alongside the active pair (see [`HandoffLandingKeys`]);
+//! the timestamp check and the one nonce reserve stay hoisted ahead of all
+//! candidate trials. The blob is decrypted fully before any plaintext field
+//! is parsed, and every failure maps to the closed-vocabulary
 //! [`HandoffError`]; a handler must answer any failure with zero bytes and a
 //! silent close.
 
@@ -129,6 +132,99 @@ impl HandoffPsk {
 impl fmt::Debug for HandoffPsk {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("HandoffPsk([REDACTED])")
+    }
+}
+
+/// Maximum retired keys of each kind a landing accepts during a rotation
+/// window. The candidate space is bounded at (1 + 2) PSKs times (1 + 2)
+/// static secrets — nine trials worst case, all after the one nonce reserve.
+pub const MAX_PREVIOUS_KEYS: usize = 2;
+
+/// The key material one Handoff landing listener accepts, in trial order.
+///
+/// The active pair always comes first; retired keys configured for a bounded
+/// zero-downtime rotation window follow. Senders always seal with the active
+/// pair only, so previous keys never change the wire format — they only widen
+/// what the landing will open while line nodes move to the new key material.
+/// `Debug` never reveals key bytes.
+#[derive(Clone)]
+pub struct HandoffLandingKeys {
+    active_psk: HandoffPsk,
+    previous_psks: Vec<HandoffPsk>,
+    active_secret: StaticSecret,
+    previous_secrets: Vec<StaticSecret>,
+}
+
+impl HandoffLandingKeys {
+    /// A landing that accepts exactly one active key pair — the steady state
+    /// outside any rotation window.
+    #[must_use]
+    pub fn single(active_psk: HandoffPsk, active_secret: StaticSecret) -> Self {
+        Self {
+            active_psk,
+            previous_psks: Vec::new(),
+            active_secret,
+            previous_secrets: Vec::new(),
+        }
+    }
+
+    /// A landing inside a rotation window, still accepting retired keys.
+    ///
+    /// Each retired list is bounded at [`MAX_PREVIOUS_KEYS`]; configuration
+    /// validation enforces the same bound before this constructor runs.
+    /// Returns `None` when either retired list exceeds the bound — an
+    /// unbounded candidate space would multiply the per-message trial work.
+    pub fn with_previous(
+        active_psk: HandoffPsk,
+        previous_psks: Vec<HandoffPsk>,
+        active_secret: StaticSecret,
+        previous_secrets: Vec<StaticSecret>,
+    ) -> Option<Self> {
+        if previous_psks.len() > MAX_PREVIOUS_KEYS || previous_secrets.len() > MAX_PREVIOUS_KEYS {
+            return None;
+        }
+        Some(Self {
+            active_psk,
+            previous_psks,
+            active_secret,
+            previous_secrets,
+        })
+    }
+
+    /// Every candidate pair this landing opens with, active pair first.
+    ///
+    /// The candidate space is deliberately the full cross product of
+    /// {active, previous...} PSKs x {active, previous...} static secrets:
+    /// the pair PSK and the static key rotate on independent schedules, and
+    /// restricting trials to pairwise-aligned slots would break a rotation
+    /// where one list moved and the other has not. The bound is 3 x 3 by
+    /// [`MAX_PREVIOUS_KEYS`], and every entry is tried only after the single
+    /// hoisted nonce reserve.
+    fn candidates(&self) -> impl Iterator<Item = (&HandoffPsk, &StaticSecret)> {
+        std::iter::once(&self.active_psk)
+            .chain(&self.previous_psks)
+            .flat_map(|psk| {
+                std::iter::once(&self.active_secret)
+                    .chain(&self.previous_secrets)
+                    .map(move |secret| (psk, secret))
+            })
+    }
+
+    /// Whether any retired key material is still accepted (window open).
+    #[must_use]
+    pub fn rotation_window_open(&self) -> bool {
+        !self.previous_psks.is_empty() || !self.previous_secrets.is_empty()
+    }
+}
+
+impl fmt::Debug for HandoffLandingKeys {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HandoffLandingKeys")
+            .field("key_material", &"[REDACTED]")
+            .field("previous_psks", &self.previous_psks.len())
+            .field("previous_secrets", &self.previous_secrets.len())
+            .finish()
     }
 }
 
@@ -519,20 +615,24 @@ pub fn seal_transfer(
 /// Verifies, decrypts, and validates exactly one complete transfer message.
 ///
 /// Validation order is load-bearing: header structure, timestamp window,
-/// nonce reserve, ephemeral DH plus HKDF, AEAD open, and only then the
-/// internal cross-checks (blob `state_version`, known suite, server-direction
-/// sequence zero, header/blob user-id agreement). The nonce stays reserved
-/// even when a later step fails, so a replayed message is rejected before any
-/// DH work. The blob is decrypted fully before any plaintext field is parsed.
+/// nonce reserve, per-candidate ephemeral DH plus HKDF, AEAD open, and only
+/// then the internal cross-checks (blob `state_version`, known suite,
+/// server-direction sequence zero, header/blob user-id agreement). The
+/// timestamp check and the single nonce reserve stay hoisted ahead of every
+/// candidate trial: the nonce is reserved exactly once, so a forgery burns
+/// one replay slot no matter how many candidates the landing accepts, and a
+/// replayed message is rejected before any DH work. The blob is decrypted
+/// fully before any plaintext field is parsed.
 ///
 /// # Errors
 ///
 /// Every failure maps to the closed [`HandoffError`] vocabulary; callers must
-/// answer with zero bytes and a silent close.
+/// answer with zero bytes and a silent close. Which candidate matched — or
+/// how many were tried — is never exposed in the error or elsewhere, so an
+/// observer cannot tell an open rotation window from a single-key landing.
 pub fn open_transfer(
     message: &[u8],
-    psk: &HandoffPsk,
-    landing_secret: &StaticSecret,
+    keys: &HandoffLandingKeys,
     replay: &HandoffReplayCache,
     now: u64,
     maximum_time_difference: u64,
@@ -549,21 +649,6 @@ pub fn open_transfer(
     replay.reserve(header.nonce)?;
 
     let ephemeral_public = PublicKey::from(header.ephemeral_public);
-    let shared = landing_secret.diffie_hellman(&ephemeral_public);
-    if !shared.was_contributory() {
-        return Err(HandoffError::Authentication);
-    }
-    let landing_public = PublicKey::from(landing_secret);
-    let (key, aead_nonce) = derive_aead(
-        &header.raw,
-        shared.as_bytes(),
-        psk,
-        landing_public.as_bytes(),
-    )?;
-    let cipher =
-        ChaCha20Poly1305::new_from_slice(key.as_slice()).map_err(|_| HandoffError::Crypto)?;
-    let nonce_bytes: Nonce<ChaCha20Poly1305> = Array(*aead_nonce);
-
     let ciphertext_end = HEADER_LEN
         .checked_add(header.blob_len)
         .ok_or(HandoffError::Length)?;
@@ -575,14 +660,50 @@ pub fn open_transfer(
         .ok_or(HandoffError::Length)?
         .try_into()
         .map_err(|_| HandoffError::Length)?;
+    let tag: Tag<ChaCha20Poly1305> = Array(*tag_bytes);
     let mut blob = Zeroizing::new(Vec::new());
     blob.try_reserve_exact(header.blob_len)
         .map_err(|_| HandoffError::Allocation)?;
-    blob.extend_from_slice(body);
-    let tag: Tag<ChaCha20Poly1305> = Array(*tag_bytes);
-    cipher
-        .decrypt_inout_detached(&nonce_bytes, header_bytes, blob.as_mut_slice().into(), &tag)
-        .map_err(|_| HandoffError::Authentication)?;
+
+    // Candidate trials over the bounded cross product (see
+    // `HandoffLandingKeys::candidates`). Every candidate performs its OWN
+    // Diffie-Hellman, its own contributory check, and its own S_pub
+    // derivation feeding `derive_aead` — none of these may be hoisted or
+    // shared across candidates, or one candidate's DH output could be mixed
+    // with another candidate's key material. A failed candidate is
+    // indistinguishable from a wrong key: the trial moves on, and only the
+    // closed Authentication error is ever reported when none matches.
+    let mut decrypted = false;
+    for (psk, landing_secret) in keys.candidates() {
+        let shared = landing_secret.diffie_hellman(&ephemeral_public);
+        if !shared.was_contributory() {
+            continue;
+        }
+        let landing_public = PublicKey::from(landing_secret);
+        let (key, aead_nonce) = derive_aead(
+            &header.raw,
+            shared.as_bytes(),
+            psk,
+            landing_public.as_bytes(),
+        )?;
+        let cipher =
+            ChaCha20Poly1305::new_from_slice(key.as_slice()).map_err(|_| HandoffError::Crypto)?;
+        let nonce_bytes: Nonce<ChaCha20Poly1305> = Array(*aead_nonce);
+        // A detached decrypt may scribble on its buffer before failing, so
+        // every trial starts from a fresh copy of the wire ciphertext.
+        blob.clear();
+        blob.extend_from_slice(body);
+        if cipher
+            .decrypt_inout_detached(&nonce_bytes, header_bytes, blob.as_mut_slice().into(), &tag)
+            .is_ok()
+        {
+            decrypted = true;
+            break;
+        }
+    }
+    if !decrypted {
+        return Err(HandoffError::Authentication);
+    }
 
     let state = decode_blob(&blob)?;
     if state.server_sequence() != 0 || state.user_id() != &header.user_id {
@@ -983,9 +1104,9 @@ mod tests {
 
     use super::{
         CONTINUATION_STATE_VERSION, ContinuationState, HANDOFF_PROTOCOL_VERSION, HEADER_LEN,
-        HandoffError, HandoffPsk, HandoffReplayCache, MAX_BLOB_LEN, MAX_MESSAGE_LEN,
-        MAX_PENDING_CIPHERTEXT_LEN, MAX_PREFETCHED_PLAINTEXT_LEN, message_len_from_header,
-        open_transfer, seal_transfer,
+        HandoffError, HandoffLandingKeys, HandoffPsk, HandoffReplayCache, MAX_BLOB_LEN,
+        MAX_MESSAGE_LEN, MAX_PENDING_CIPHERTEXT_LEN, MAX_PREFETCHED_PLAINTEXT_LEN,
+        MAX_PREVIOUS_KEYS, message_len_from_header, open_transfer, seal_transfer,
     };
     use crate::protocol::reality::tls13::{CipherSuite, TrafficKeys};
     use crate::protocol::vless::{Address, Destination};
@@ -1032,9 +1153,15 @@ mod tests {
         cache: &HandoffReplayCache,
         now: u64,
     ) -> HandoffError {
-        open_transfer(message, psk, secret, cache, now, WINDOW)
-            .map(|_| ())
-            .expect_err("transfer must fail closed")
+        open_transfer(
+            message,
+            &HandoffLandingKeys::single(psk.clone(), secret.clone()),
+            cache,
+            now,
+            WINDOW,
+        )
+        .map(|_| ())
+        .expect_err("transfer must fail closed")
     }
 
     fn assert_states_equal(opened: &ContinuationState, expected: &ContinuationState) {
@@ -1064,8 +1191,14 @@ mod tests {
             message.len()
         );
 
-        let opened = open_transfer(&message, &psk, &landing_secret, &test_cache(), NOW, WINDOW)
-            .expect("valid transfer must open");
+        let opened = open_transfer(
+            &message,
+            &HandoffLandingKeys::single(psk, landing_secret),
+            &test_cache(),
+            NOW,
+            WINDOW,
+        )
+        .expect("valid transfer must open");
         assert_eq!(opened.timestamp(), NOW);
         assert_eq!(opened.client_random(), &[0x44; 32]);
         assert_states_equal(opened.state(), &state);
@@ -1085,8 +1218,14 @@ mod tests {
             let state = test_state(pending, prefetched);
             let message = seal(&state, &psk, &landing_public);
             assert!(message.len() <= MAX_MESSAGE_LEN);
-            let opened = open_transfer(&message, &psk, &landing_secret, &test_cache(), NOW, WINDOW)
-                .expect("bounded transfer must open");
+            let opened = open_transfer(
+                &message,
+                &HandoffLandingKeys::single(psk.clone(), landing_secret.clone()),
+                &test_cache(),
+                NOW,
+                WINDOW,
+            )
+            .expect("bounded transfer must open");
             assert_states_equal(opened.state(), &state);
         }
     }
@@ -1142,8 +1281,14 @@ mod tests {
         let message = seal(&state, &psk, &landing_public);
         let cache = test_cache();
 
-        open_transfer(&message, &psk, &landing_secret, &cache, NOW, WINDOW)
-            .expect("first delivery must open");
+        open_transfer(
+            &message,
+            &HandoffLandingKeys::single(psk.clone(), landing_secret.clone()),
+            &cache,
+            NOW,
+            WINDOW,
+        )
+        .expect("first delivery must open");
         assert_eq!(cache.entry_count(), 1);
         // Even with the WRONG static key the replay check fires first,
         // proving the rejection happens before the DH.
@@ -1173,8 +1318,7 @@ mod tests {
         // Boundary values inside the window still authenticate.
         open_transfer(
             &message,
-            &psk,
-            &landing_secret,
+            &HandoffLandingKeys::single(psk, landing_secret),
             &test_cache(),
             NOW + WINDOW,
             WINDOW,
@@ -1220,6 +1364,176 @@ mod tests {
                 HandoffError::Authentication
             );
         }
+    }
+
+    /// A landing mid-rotation: the new pair is active, the retired pair is
+    /// still accepted inside the bounded window.
+    fn rotating_landing_keys() -> (HandoffLandingKeys, PublicKey, PublicKey) {
+        let (old_secret, old_public) = landing_key_pair(0x90);
+        let (new_secret, new_public) = landing_key_pair(0x91);
+        let keys = HandoffLandingKeys::with_previous(
+            HandoffPsk::new([0x66; 32]),
+            vec![HandoffPsk::new([0x65; 32])],
+            new_secret,
+            vec![old_secret],
+        )
+        .expect("bounded previous lists must build");
+        (keys, old_public, new_public)
+    }
+
+    fn open_with_keys(
+        message: &[u8],
+        keys: &HandoffLandingKeys,
+        cache: &HandoffReplayCache,
+    ) -> Result<(), HandoffError> {
+        open_transfer(message, keys, cache, NOW, WINDOW).map(|_| ())
+    }
+
+    #[test]
+    fn previous_key_pair_opens_during_the_window_and_fails_after_it_closes() {
+        let (window_keys, old_public, new_public) = rotating_landing_keys();
+        assert!(window_keys.rotation_window_open());
+        let old_psk = HandoffPsk::new([0x65; 32]);
+        let new_psk = HandoffPsk::new([0x66; 32]);
+        let state = test_state(Vec::new(), Vec::new());
+        let old_message = seal(&state, &old_psk, &old_public);
+        let new_message = seal(&state, &new_psk, &new_public);
+
+        // During the window both the retired pair and the active pair open.
+        let opened = open_transfer(&old_message, &window_keys, &test_cache(), NOW, WINDOW)
+            .expect("a transfer sealed with the retired pair must open during the window");
+        assert_states_equal(opened.state(), &state);
+        open_with_keys(&new_message, &window_keys, &test_cache())
+            .expect("the active pair must open during the window");
+
+        // Once the retired keys are dropped the window is closed: the same
+        // old-key transfer fails closed while the active pair still opens.
+        let closed_keys =
+            HandoffLandingKeys::single(HandoffPsk::new([0x66; 32]), landing_key_pair(0x91).0);
+        assert!(!closed_keys.rotation_window_open());
+        assert_eq!(
+            open_with_keys(&old_message, &closed_keys, &test_cache()),
+            Err(HandoffError::Authentication),
+            "a dropped previous key must fail closed"
+        );
+        open_with_keys(&new_message, &closed_keys, &test_cache())
+            .expect("the active pair must open after the window closes");
+    }
+
+    #[test]
+    fn candidate_space_is_the_cross_product_of_psks_and_static_keys() {
+        let (window_keys, old_public, new_public) = rotating_landing_keys();
+        let old_psk = HandoffPsk::new([0x65; 32]);
+        let new_psk = HandoffPsk::new([0x66; 32]);
+        let state = test_state(Vec::new(), Vec::new());
+
+        // The PSK and the static key rotate on independent schedules, so the
+        // mixed combinations must open too.
+        let mixed_old_psk = seal(&state, &old_psk, &new_public);
+        let mixed_old_static = seal(&state, &new_psk, &old_public);
+        open_with_keys(&mixed_old_psk, &window_keys, &test_cache())
+            .expect("retired PSK with the active static key must open");
+        open_with_keys(&mixed_old_static, &window_keys, &test_cache())
+            .expect("active PSK with the retired static key must open");
+
+        // A pair outside every candidate still fails closed.
+        let (outside_secret, outside_public) = landing_key_pair(0x92);
+        let outside_message = seal(&state, &HandoffPsk::new([0x67; 32]), &outside_public);
+        drop(outside_secret);
+        assert_eq!(
+            open_with_keys(&outside_message, &window_keys, &test_cache()),
+            Err(HandoffError::Authentication)
+        );
+    }
+
+    #[test]
+    fn replayed_nonce_is_rejected_across_candidate_keys() {
+        let (window_keys, old_public, _) = rotating_landing_keys();
+        let state = test_state(Vec::new(), Vec::new());
+        let message = seal(&state, &HandoffPsk::new([0x65; 32]), &old_public);
+        let cache = test_cache();
+
+        open_with_keys(&message, &window_keys, &cache)
+            .expect("first delivery must open through a previous candidate");
+        assert_eq!(cache.entry_count(), 1);
+        assert_eq!(
+            open_with_keys(&message, &window_keys, &cache),
+            Err(HandoffError::Replay),
+            "the same blob must stay rejected no matter which candidate opened it"
+        );
+        assert_eq!(cache.entry_count(), 1);
+    }
+
+    #[test]
+    fn a_forgery_burns_exactly_one_replay_slot_regardless_of_candidate_count() {
+        let (window_keys, _, new_public) = rotating_landing_keys();
+        let state = test_state(Vec::new(), Vec::new());
+        // Sealed under a key pair the landing does not accept at all.
+        let message = seal(&state, &HandoffPsk::new([0x67; 32]), &new_public);
+        let cache = test_cache();
+
+        assert_eq!(
+            open_with_keys(&message, &window_keys, &cache),
+            Err(HandoffError::Authentication)
+        );
+        assert_eq!(
+            cache.entry_count(),
+            1,
+            "one forged message must reserve exactly one slot, not one per candidate"
+        );
+        assert_eq!(
+            open_with_keys(&message, &window_keys, &cache),
+            Err(HandoffError::Replay)
+        );
+    }
+
+    #[test]
+    fn low_order_ephemerals_are_rejected_for_every_candidate() {
+        let (window_keys, _, new_public) = rotating_landing_keys();
+        let state = test_state(Vec::new(), Vec::new());
+        let message = seal(&state, &HandoffPsk::new([0x66; 32]), &new_public);
+
+        for low_order in [[0_u8; 32], [1_u8; 32]] {
+            let mut crafted = message.clone();
+            crafted[30..62].copy_from_slice(&low_order);
+            assert_eq!(
+                open_with_keys(&crafted, &window_keys, &test_cache()),
+                Err(HandoffError::Authentication),
+                "every candidate must run its own contributory check"
+            );
+        }
+    }
+
+    #[test]
+    fn previous_key_lists_are_bounded() {
+        let (secret, _) = landing_key_pair(0x93);
+        let psk = || HandoffPsk::new([0x68; 32]);
+        let too_many_psks = vec![psk(), psk(), psk()];
+        assert!(
+            HandoffLandingKeys::with_previous(psk(), too_many_psks, secret.clone(), Vec::new())
+                .is_none()
+        );
+        let too_many_secrets = vec![secret.clone(), secret.clone(), secret];
+        assert!(
+            HandoffLandingKeys::with_previous(
+                psk(),
+                Vec::new(),
+                landing_key_pair(0x93).0,
+                too_many_secrets
+            )
+            .is_none()
+        );
+        let at_bound = vec![psk(), psk()];
+        assert!(
+            HandoffLandingKeys::with_previous(
+                psk(),
+                at_bound,
+                landing_key_pair(0x93).0,
+                Vec::new()
+            )
+            .is_some()
+        );
+        assert_eq!(MAX_PREVIOUS_KEYS, 2);
     }
 
     #[test]
@@ -1328,6 +1642,17 @@ mod tests {
     fn debug_output_is_redacted() {
         let psk = HandoffPsk::new([0x55; 32]);
         assert_eq!(format!("{psk:?}"), "HandoffPsk([REDACTED])");
+        let (secret, _) = landing_key_pair(0x94);
+        let keys = HandoffLandingKeys::with_previous(
+            psk,
+            vec![HandoffPsk::new([0x65; 32])],
+            secret,
+            Vec::new(),
+        )
+        .expect("bounded previous lists must build");
+        let rendered_keys = format!("{keys:?}");
+        assert!(rendered_keys.contains("[REDACTED]"));
+        assert!(!rendered_keys.contains("0x55"));
         let state = test_state(b"pending".to_vec(), Vec::new());
         let rendered = format!("{state:?}");
         assert!(!rendered.contains("0x11"));

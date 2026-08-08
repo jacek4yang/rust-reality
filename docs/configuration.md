@@ -242,6 +242,8 @@ post-authentication encryption and must not be exposed to the Internet.
 | `settings.authenticationTimeoutMs` | no | `3000` | Deadline to read the one bounded sealed transfer, `1..=600000`. |
 | `settings.connectTimeoutMs` | no | `10000` | Deadline to dial the transferred destination after authentication succeeds, `1..=600000`. |
 | `settings.egress` | no | direct dial | Outbound tag selecting how the landing reaches transferred destinations. The tag must reference a `direct`, `socks5`, `nxr`, or `blackhole` outbound; a `handoff` outbound is rejected — landings cannot be chained. |
+| `settings.previousPreSharedKeys` | no | `[]` | Retired pair PSKs still accepted during a bounded key-rotation window: at most two independent URL-safe unpadded base64 values decoding to exactly 32 bytes each; duplicates within the list and any value equal to `preSharedKey` are rejected. |
+| `settings.previousPrivateKeys` | no | `[]` | Retired static X25519 private keys still accepted during a bounded key-rotation window; same shape, two-entry bound, and equality rules as `previousPreSharedKeys`. |
 
 The listener verifies exactly one single-flight transfer per connection — a
 fresh ephemeral X25519 Diffie-Hellman against `privateKey`, mixed with the
@@ -256,10 +258,34 @@ session; afterwards the connection carries the session's raw TLS ciphertext.
 
 Key independence is enforced within one configuration file: a Handoff
 `preSharedKey` equal to any NXR `preSharedKey`, or a Handoff `privateKey`
-equal to any REALITY `privateKey`, fails validation. Independence across
-nodes remains the operator's obligation. The Handoff listener carries live
+equal to any REALITY `privateKey`, fails validation — and so does any
+previous-key entry equal to that material. Independence across nodes remains
+the operator's obligation. The Handoff listener carries live
 session keys and must not be exposed to the Internet: allow it only from the
 line nodes' source addresses at the firewall.
+
+#### Key rotation
+
+`preSharedKey` and `privateKey` rotate without downtime in three steps.
+Previous keys never appear on the wire — senders always seal with the active
+pair only — so a line node that never sets these fields interoperates with a
+landing that does, in either upgrade order.
+
+1. Reload the landing with the new pair active and the retired values listed
+   in `previousPreSharedKeys`/`previousPrivateKeys`. The landing now opens
+   transfers sealed under the retired material as well, and emits one
+   `handoff_rotation_window_open` warning per listener per generation while
+   any retired key remains configured.
+2. Move every line node's handoff outbound to the new pair (`preSharedKey`
+   and the new `landingPublicKey`).
+3. Reload the landing with the previous-key lists empty again.
+
+Drop previous keys promptly: while a retired key stays accepted, the
+forward-secrecy bound the rotation exists to restore has not yet taken hold
+(see the [threat model](threat-model.md)). The open path tries the active
+pair first, bounds all candidate trials at nine, and never reveals which
+candidate matched — failures keep the closed error vocabulary and the silent
+close.
 
 ## `outbounds`
 

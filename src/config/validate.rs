@@ -26,6 +26,9 @@ const MAX_NXR_NONCE_RETENTION_SECONDS: u64 = 86_400;
 const MAX_HANDOFF_TIME_DIFFERENCE_SECONDS: u64 = 300;
 const MAX_HANDOFF_NONCE_ENTRIES: u32 = 1_000_000;
 const MAX_HANDOFF_NONCE_RETENTION_SECONDS: u64 = 86_400;
+/// Retired keys of each kind a Handoff landing may still accept during a
+/// rotation window; the open path's candidate space stays bounded at 3 x 3.
+const MAX_HANDOFF_PREVIOUS_KEYS: usize = 2;
 const MIN_HANDOFF_FIRST_BYTE_TIMEOUT_MS: u64 = 1_000;
 const MIN_RELAY_BUFFER_BYTES: usize = 4 * 1024;
 const MAX_RELAY_BUFFER_BYTES: usize = 1024 * 1024;
@@ -354,6 +357,16 @@ fn validate_handoff_inbound(path: &str, inbound: &HandoffInboundConfig) -> Resul
         &format!("{path}.settings.privateKey"),
         &settings.private_key,
     )?;
+    validate_handoff_previous_keys(
+        &format!("{path}.settings.previousPreSharedKeys"),
+        &settings.previous_pre_shared_keys,
+        &settings.pre_shared_key,
+    )?;
+    validate_handoff_previous_keys(
+        &format!("{path}.settings.previousPrivateKeys"),
+        &settings.previous_private_keys,
+        &settings.private_key,
+    )?;
     if !(1..=MAX_HANDOFF_TIME_DIFFERENCE_SECONDS).contains(&settings.max_time_difference_seconds) {
         return fail(
             format!("{path}.settings.maxTimeDifferenceSeconds"),
@@ -388,6 +401,49 @@ fn validate_handoff_inbound(path: &str, inbound: &HandoffInboundConfig) -> Resul
         &format!("{path}.settings.connectTimeoutMs"),
         settings.connect_timeout_ms,
     )
+}
+
+/// Validates one retired-key list of a Handoff rotation window.
+///
+/// Each entry must be an independent 32-byte base64 key, the list is bounded
+/// at [`MAX_HANDOFF_PREVIOUS_KEYS`], no entry repeats inside the list, and no
+/// entry equals the active key it retired from — a previous key that still
+/// matches the active key would silently mark an open window that rotates
+/// nothing. The active key is shape-validated by the caller first, so its
+/// decode cannot fail here.
+fn validate_handoff_previous_keys(
+    path: &str,
+    keys: &[SecretString],
+    active: &SecretString,
+) -> Result<(), ConfigError> {
+    if keys.len() > MAX_HANDOFF_PREVIOUS_KEYS {
+        return fail(
+            path,
+            format!("must contain at most {MAX_HANDOFF_PREVIOUS_KEYS} retired keys"),
+        );
+    }
+    let active = decode_key_material(active);
+    let mut seen: Vec<Zeroizing<Vec<u8>>> = Vec::new();
+    for (index, key) in keys.iter().enumerate() {
+        let entry_path = format!("{path}[{index}]");
+        validate_base64_key(&entry_path, key)?;
+        let decoded =
+            decode_key_material(key).expect("a key that just passed shape validation must decode");
+        if active
+            .as_ref()
+            .is_some_and(|active| active.as_slice() == decoded.as_slice())
+        {
+            return fail(entry_path, "must differ from the active key it retires");
+        }
+        if seen
+            .iter()
+            .any(|other| other.as_slice() == decoded.as_slice())
+        {
+            return fail(entry_path, "retired key is configured more than once");
+        }
+        seen.push(decoded);
+    }
+    Ok(())
 }
 
 /// Enforces that a Handoff landing's egress selects a dialable outbound.
@@ -428,9 +484,12 @@ fn validate_handoff_egress(config: &Config) -> Result<(), ConfigError> {
 /// Enforces Handoff key independence within one configuration file.
 ///
 /// A Handoff pre-shared key or static private key MUST be generated
-/// independently of the NXR pre-shared keys and the REALITY private keys;
-/// same-file reuse is exactly the copy-paste error an operator makes, and it
-/// is cheap to reject here. Cross-node reuse remains an operator obligation.
+/// independently of the NXR pre-shared keys and the REALITY private keys —
+/// and a retired key accepted during a rotation window carries exactly the
+/// same requirement, so the previous-key lists are compared against the same
+/// material. Same-file reuse is exactly the copy-paste error an operator
+/// makes, and it is cheap to reject here. Cross-node reuse remains an
+/// operator obligation.
 fn validate_handoff_key_independence(config: &Config) -> Result<(), ConfigError> {
     let mut nxr_psks: Vec<Zeroizing<Vec<u8>>> = Vec::new();
     let mut reality_keys: Vec<Zeroizing<Vec<u8>>> = Vec::new();
@@ -480,6 +539,29 @@ fn validate_handoff_key_independence(config: &Config) -> Result<(), ConfigError>
                 format!("{path}.privateKey"),
                 "must be generated independently of every REALITY privateKey in this configuration",
             );
+        }
+        for (key_index, key) in inbound.settings.previous_pre_shared_keys.iter().enumerate() {
+            let path = format!("{path}.previousPreSharedKeys[{key_index}]");
+            if shares_key_material(key, &nxr_psks) {
+                return fail(
+                    path,
+                    "must be generated independently of every NXR preSharedKey in this configuration",
+                );
+            }
+            if shares_key_material(key, &reality_keys) {
+                return fail(
+                    path,
+                    "must be generated independently of every REALITY privateKey in this configuration",
+                );
+            }
+        }
+        for (key_index, key) in inbound.settings.previous_private_keys.iter().enumerate() {
+            if shares_key_material(key, &reality_keys) {
+                return fail(
+                    format!("{path}.previousPrivateKeys[{key_index}]"),
+                    "must be generated independently of every REALITY privateKey in this configuration",
+                );
+            }
         }
     }
     for (index, outbound) in config.outbounds.iter().enumerate() {
@@ -1109,6 +1191,8 @@ fn fail<T>(path: impl Into<String>, message: impl Into<String>) -> Result<T, Con
 
 #[cfg(test)]
 mod tests {
+    use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
+
     use crate::config::{
         Config, LogOutput, NxrInboundConfig, NxrInboundSettings, NxrSettings, OutboundConfig,
         SecretString, validate_config,
@@ -1347,6 +1431,8 @@ mod tests {
                     authentication_timeout_ms: 3_000,
                     connect_timeout_ms: 10_000,
                     egress: None,
+                    previous_pre_shared_keys: Vec::new(),
+                    previous_private_keys: Vec::new(),
                 },
             },
         ));
@@ -1380,6 +1466,8 @@ mod tests {
                 authentication_timeout_ms: 3_000,
                 connect_timeout_ms: 10_000,
                 egress: egress.map(str::to_owned),
+                previous_pre_shared_keys: Vec::new(),
+                previous_private_keys: Vec::new(),
             },
         })
     }
@@ -1556,6 +1644,8 @@ mod tests {
                     authentication_timeout_ms: 3_000,
                     connect_timeout_ms: 10_000,
                     egress: None,
+                    previous_pre_shared_keys: Vec::new(),
+                    previous_private_keys: Vec::new(),
                 },
             },
         ));
@@ -1602,6 +1692,8 @@ mod tests {
                     authentication_timeout_ms: 3_000,
                     connect_timeout_ms: 10_000,
                     egress: None,
+                    previous_pre_shared_keys: Vec::new(),
+                    previous_private_keys: Vec::new(),
                 },
             },
         ));
@@ -1662,6 +1754,8 @@ mod tests {
                     authentication_timeout_ms: 3_000,
                     connect_timeout_ms: 10_000,
                     egress: None,
+                    previous_pre_shared_keys: Vec::new(),
+                    previous_private_keys: Vec::new(),
                 },
             },
         ));
@@ -1696,6 +1790,202 @@ mod tests {
                 .expect_err("a Handoff PSK equal to a REALITY privateKey must fail")
                 .path(),
             "outbounds[2].settings.preSharedKey"
+        );
+    }
+
+    /// A Handoff landing inbound whose active pair is `[0x5a; 32]` /
+    /// `[0x5a; 32]` with the given retired-key lists.
+    fn handoff_landing_with_previous(
+        previous_psks: Vec<[u8; 32]>,
+        previous_secrets: Vec<[u8; 32]>,
+    ) -> crate::config::InboundConfig {
+        let encode = |bytes: [u8; 32]| SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(bytes));
+        let active = encode([0x5a; 32]);
+        crate::config::InboundConfig::Handoff(crate::config::HandoffInboundConfig {
+            tag: "handoff-landing".to_owned(),
+            listen: "127.0.0.1".parse().expect("address must parse"),
+            port: 9444,
+            settings: crate::config::HandoffInboundSettings {
+                pre_shared_key: active.clone(),
+                private_key: active,
+                max_time_difference_seconds: 30,
+                max_nonce_entries: 4_096,
+                nonce_retention_seconds: 120,
+                authentication_timeout_ms: 3_000,
+                connect_timeout_ms: 10_000,
+                egress: None,
+                previous_pre_shared_keys: previous_psks.into_iter().map(encode).collect(),
+                previous_private_keys: previous_secrets.into_iter().map(encode).collect(),
+            },
+        })
+    }
+
+    #[test]
+    fn accepts_handoff_previous_keys_within_the_rotation_bound() {
+        let mut config = valid_config();
+        config.inbounds.push(handoff_landing_with_previous(
+            vec![[0x5b; 32], [0x5c; 32]],
+            vec![[0x5d; 32]],
+        ));
+
+        validate_config(&config)
+            .expect("two retired PSKs and one retired static key must validate");
+    }
+
+    #[test]
+    fn rejects_handoff_previous_keys_above_the_rotation_bound() {
+        let mut config = valid_config();
+        config.inbounds.push(handoff_landing_with_previous(
+            vec![[0x5b; 32], [0x5c; 32], [0x5d; 32]],
+            Vec::new(),
+        ));
+        let error = validate_config(&config).expect_err("three retired PSKs must fail");
+        assert_eq!(error.path(), "inbounds[1].settings.previousPreSharedKeys");
+
+        let mut config = valid_config();
+        config.inbounds.push(handoff_landing_with_previous(
+            Vec::new(),
+            vec![[0x5b; 32], [0x5c; 32], [0x5d; 32]],
+        ));
+        let error = validate_config(&config).expect_err("three retired static keys must fail");
+        assert_eq!(error.path(), "inbounds[1].settings.previousPrivateKeys");
+    }
+
+    #[test]
+    fn rejects_malformed_handoff_previous_keys() {
+        for (field, bad) in [
+            ("previousPreSharedKeys", SecretString::new("not-base64!")),
+            ("previousPrivateKeys", SecretString::new("not-base64!")),
+        ] {
+            let mut config = valid_config();
+            let mut inbound = handoff_landing_with_previous(Vec::new(), Vec::new());
+            let crate::config::InboundConfig::Handoff(handoff) = &mut inbound else {
+                panic!("helper must build a handoff inbound")
+            };
+            if field == "previousPreSharedKeys" {
+                handoff.settings.previous_pre_shared_keys = vec![bad];
+            } else {
+                handoff.settings.previous_private_keys = vec![bad];
+            }
+            config.inbounds.push(inbound);
+            assert_eq!(
+                validate_config(&config)
+                    .expect_err("a malformed retired key must fail")
+                    .path(),
+                format!("inbounds[1].settings.{field}[0]")
+            );
+        }
+
+        // A well-formed base64 value of the wrong length fails the same way.
+        let mut config = valid_config();
+        let mut inbound = handoff_landing_with_previous(Vec::new(), Vec::new());
+        let crate::config::InboundConfig::Handoff(handoff) = &mut inbound else {
+            panic!("helper must build a handoff inbound")
+        };
+        handoff.settings.previous_private_keys =
+            vec![SecretString::new(BASE64_URL_SAFE_NO_PAD.encode([0x5b; 16]))];
+        config.inbounds.push(inbound);
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("a 16-byte retired key must fail")
+                .path(),
+            "inbounds[1].settings.previousPrivateKeys[0]"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_handoff_previous_keys_within_a_list() {
+        let mut config = valid_config();
+        config.inbounds.push(handoff_landing_with_previous(
+            vec![[0x5b; 32], [0x5b; 32]],
+            Vec::new(),
+        ));
+        let error = validate_config(&config).expect_err("a repeated retired key must fail");
+        assert_eq!(
+            error.path(),
+            "inbounds[1].settings.previousPreSharedKeys[1]"
+        );
+        assert_eq!(error.message(), "retired key is configured more than once");
+    }
+
+    #[test]
+    fn rejects_handoff_previous_keys_equal_to_the_active_key() {
+        let mut config = valid_config();
+        config
+            .inbounds
+            .push(handoff_landing_with_previous(vec![[0x5a; 32]], Vec::new()));
+        let error =
+            validate_config(&config).expect_err("a retired PSK equal to the active PSK must fail");
+        assert_eq!(
+            error.path(),
+            "inbounds[1].settings.previousPreSharedKeys[0]"
+        );
+        assert_eq!(
+            error.message(),
+            "must differ from the active key it retires"
+        );
+
+        let mut config = valid_config();
+        config
+            .inbounds
+            .push(handoff_landing_with_previous(Vec::new(), vec![[0x5a; 32]]));
+        let error = validate_config(&config)
+            .expect_err("a retired static key equal to the active static key must fail");
+        assert_eq!(error.path(), "inbounds[1].settings.previousPrivateKeys[0]");
+    }
+
+    #[test]
+    fn rejects_handoff_previous_psk_shared_with_nxr() {
+        let mut config = valid_config();
+        config
+            .inbounds
+            .push(crate::config::InboundConfig::Nxr(NxrInboundConfig {
+                tag: "landing-internal".to_owned(),
+                listen: "127.0.0.1".parse().expect("address must parse"),
+                port: 9443,
+                settings: NxrInboundSettings {
+                    pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode([0x5b; 32])),
+                    max_time_difference_seconds: 30,
+                    max_nonce_entries: 4_096,
+                    nonce_retention_seconds: 120,
+                    authentication_timeout_ms: 3_000,
+                    connect_timeout_ms: 10_000,
+                },
+            }));
+        config
+            .inbounds
+            .push(handoff_landing_with_previous(vec![[0x5b; 32]], Vec::new()));
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("a retired PSK equal to an NXR preSharedKey must fail")
+                .path(),
+            "inbounds[2].settings.previousPreSharedKeys[0]"
+        );
+    }
+
+    #[test]
+    fn rejects_handoff_previous_keys_shared_with_reality_private_key() {
+        // The fixture REALITY private key is `[0x11; 32]`.
+        let mut config = valid_config();
+        config
+            .inbounds
+            .push(handoff_landing_with_previous(vec![[0x11; 32]], Vec::new()));
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("a retired PSK equal to a REALITY privateKey must fail")
+                .path(),
+            "inbounds[1].settings.previousPreSharedKeys[0]"
+        );
+
+        let mut config = valid_config();
+        config
+            .inbounds
+            .push(handoff_landing_with_previous(Vec::new(), vec![[0x11; 32]]));
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("a retired static key equal to a REALITY privateKey must fail")
+                .path(),
+            "inbounds[1].settings.previousPrivateKeys[0]"
         );
     }
 

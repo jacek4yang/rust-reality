@@ -677,6 +677,24 @@ impl RuntimeSnapshot {
                         .get(&address)
                         .cloned()
                         .ok_or(RuntimeUpdateError::MissingHandoffReplay(address))?;
+                    if !inbound.settings.previous_pre_shared_keys.is_empty()
+                        || !inbound.settings.previous_private_keys.is_empty()
+                    {
+                        // One warning per listener per generation, startup and
+                        // reload alike: an open rotation window voids the
+                        // forward-secrecy bound until the retired keys drop.
+                        emit(
+                            &logger,
+                            &LogEvent::HandoffRotationWindowOpen {
+                                tag: inbound.tag.clone(),
+                                previous_pre_shared_keys: inbound
+                                    .settings
+                                    .previous_pre_shared_keys
+                                    .len(),
+                                previous_private_keys: inbound.settings.previous_private_keys.len(),
+                            },
+                        );
+                    }
                     ConnectionHandler::Handoff(HandoffLandingHandler::from_inbound_with_replay(
                         inbound,
                         replay,
@@ -1696,7 +1714,7 @@ fn backend_statuses(report: &BackendReport) -> Vec<BackendStatus> {
 mod tests {
     use std::{
         io,
-        net::{IpAddr, Ipv4Addr},
+        net::{IpAddr, Ipv4Addr, SocketAddr},
         str::FromStr,
         sync::Arc,
         time::Duration,
@@ -1915,6 +1933,255 @@ mod tests {
             Err(RuntimeUpdateError::ListenerTopologyChanged)
         ));
         assert!(Arc::ptr_eq(&previous, &server.runtime.load()));
+    }
+
+    const ROTATION_PSK_A: [u8; 32] = [0x5a; 32];
+    const ROTATION_PSK_B: [u8; 32] = [0x5b; 32];
+    const ROTATION_SECRET_A: [u8; 32] = [0x77; 32];
+    const ROTATION_SECRET_B: [u8; 32] = [0x78; 32];
+
+    fn rotation_config(
+        port: u16,
+        active_psk: [u8; 32],
+        active_secret: [u8; 32],
+        previous_psks: &[[u8; 32]],
+        previous_secrets: &[[u8; 32]],
+    ) -> crate::config::Config {
+        let encode = |bytes: [u8; 32]| SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(bytes));
+        let generated = generated_config(unused_loopback_port());
+        let mut config = generated.config().clone();
+        config.inbounds.push(InboundConfig::Handoff(
+            crate::config::HandoffInboundConfig {
+                tag: "handoff-landing".to_owned(),
+                listen: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port,
+                settings: crate::config::HandoffInboundSettings {
+                    pre_shared_key: encode(active_psk),
+                    private_key: encode(active_secret),
+                    max_time_difference_seconds: 30,
+                    max_nonce_entries: 4_096,
+                    nonce_retention_seconds: 120,
+                    authentication_timeout_ms: 1_000,
+                    connect_timeout_ms: 1_000,
+                    egress: None,
+                    previous_pre_shared_keys: previous_psks.iter().copied().map(encode).collect(),
+                    previous_private_keys: previous_secrets.iter().copied().map(encode).collect(),
+                },
+            },
+        ));
+        config
+    }
+
+    /// Rotates only the handoff landing's key material, keeping the listener
+    /// topology (and therefore hot reload compatibility) intact.
+    fn rotated_config(
+        base: &crate::config::Config,
+        active_psk: [u8; 32],
+        active_secret: [u8; 32],
+        previous_psks: &[[u8; 32]],
+        previous_secrets: &[[u8; 32]],
+    ) -> crate::config::Config {
+        let encode = |bytes: [u8; 32]| SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(bytes));
+        let mut config = base.clone();
+        let InboundConfig::Handoff(handoff) = config
+            .inbounds
+            .last_mut()
+            .expect("the handoff listener must exist")
+        else {
+            panic!("the last inbound must be the handoff landing");
+        };
+        handoff.settings.pre_shared_key = encode(active_psk);
+        handoff.settings.private_key = encode(active_secret);
+        handoff.settings.previous_pre_shared_keys =
+            previous_psks.iter().copied().map(encode).collect();
+        handoff.settings.previous_private_keys =
+            previous_secrets.iter().copied().map(encode).collect();
+        config
+    }
+
+    fn handoff_handler(
+        server: &ProductionServer,
+        address: &SocketAddr,
+    ) -> crate::server::handoff::HandoffLandingHandler {
+        let snapshot = server.runtime.load();
+        let super::ConnectionHandler::Handoff(handler) = &snapshot
+            .connections
+            .get(address)
+            .expect("the handoff listener must exist")
+            .handler
+        else {
+            panic!("the listener must be a handoff landing");
+        };
+        handler.clone()
+    }
+
+    /// Seals a fresh transfer (fresh nonce) toward the discard port: when the
+    /// landing authenticates it, the dial fails — proving every
+    /// authentication step passed without standing up a destination.
+    fn rotation_message(psk: [u8; 32], landing_secret: [u8; 32]) -> Vec<u8> {
+        use crate::protocol::{
+            handoff::{ContinuationState, HandoffPsk, seal_transfer},
+            reality::tls13::{CipherSuite, TrafficKeys},
+        };
+        let landing_public =
+            x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(landing_secret));
+        let state = ContinuationState::new(
+            CipherSuite::ChaCha20Poly1305Sha256,
+            TrafficKeys::from_raw_parts(&[0x11; 32], [0x21; 12]).expect("client keys"),
+            1,
+            TrafficKeys::from_raw_parts(&[0x12; 32], [0x22; 12]).expect("server keys"),
+            0,
+            [0x33; 16],
+            Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 9),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("test state must be valid");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("test clock must be valid")
+            .as_secs();
+        let mut message = Vec::new();
+        seal_transfer(
+            &state,
+            &HandoffPsk::new(psk),
+            &landing_public,
+            [0x44; 32],
+            now,
+            &mut message,
+        )
+        .expect("test state must seal");
+        message
+    }
+
+    async fn deliver(
+        handler: &crate::server::handoff::HandoffLandingHandler,
+        message: &[u8],
+    ) -> crate::server::handoff::HandoffLandingError {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("peer listener must bind");
+        let address = listener.local_addr().expect("peer address must exist");
+        let mut peer = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("peer must connect");
+        let (stream, _) = listener.accept().await.expect("listener must accept");
+        peer.write_all(message).await.expect("message must write");
+        let result = handler.handle(stream).await;
+        drop(peer);
+        result.expect_err("a transfer toward the discard port never relays")
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn handoff_reload_rotates_keys_without_dropping_in_window_transfers() {
+        use crate::protocol::handoff::HandoffError;
+        use crate::server::handoff::HandoffLandingError;
+
+        let port = unused_loopback_port();
+        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+        let base = rotation_config(port, ROTATION_PSK_A, ROTATION_SECRET_A, &[], &[]);
+        let server = ProductionServer::from_config(&base).expect("generation 0 must compile");
+
+        // Generation 0: only the original pair is accepted.
+        let handler = handoff_handler(&server, &address);
+        assert!(
+            matches!(
+                deliver(
+                    &handler,
+                    &rotation_message(ROTATION_PSK_A, ROTATION_SECRET_A)
+                )
+                .await,
+                HandoffLandingError::Destination(_)
+            ),
+            "the active pair must authenticate before rotation"
+        );
+        assert!(
+            matches!(
+                deliver(
+                    &handler,
+                    &rotation_message(ROTATION_PSK_B, ROTATION_SECRET_B)
+                )
+                .await,
+                HandoffLandingError::Protocol(HandoffError::Authentication)
+            ),
+            "the next pair must fail before the window opens"
+        );
+
+        // Reload: the new pair becomes active, the retired pair stays
+        // accepted inside the bounded window. The listener address and the
+        // replay cache carry over untouched.
+        server
+            .runtime
+            .publish(rotated_config(
+                &base,
+                ROTATION_PSK_B,
+                ROTATION_SECRET_B,
+                &[ROTATION_PSK_A],
+                &[ROTATION_SECRET_A],
+            ))
+            .expect("a key rotation must be hot-compatible");
+        let handler = handoff_handler(&server, &address);
+        assert!(
+            matches!(
+                deliver(
+                    &handler,
+                    &rotation_message(ROTATION_PSK_B, ROTATION_SECRET_B)
+                )
+                .await,
+                HandoffLandingError::Destination(_)
+            ),
+            "senders already on the new pair must land"
+        );
+        let old_pair_message = rotation_message(ROTATION_PSK_A, ROTATION_SECRET_A);
+        assert!(
+            matches!(
+                deliver(&handler, &old_pair_message).await,
+                HandoffLandingError::Destination(_)
+            ),
+            "senders still on the retired pair must land during the window"
+        );
+        assert!(
+            matches!(
+                deliver(&handler, &old_pair_message).await,
+                HandoffLandingError::Protocol(HandoffError::Replay)
+            ),
+            "the retained replay cache must reject a redelivery across the reload"
+        );
+
+        // Reload again: the retired keys are dropped and the window closes.
+        server
+            .runtime
+            .publish(rotated_config(
+                &base,
+                ROTATION_PSK_B,
+                ROTATION_SECRET_B,
+                &[],
+                &[],
+            ))
+            .expect("dropping retired keys must be hot-compatible");
+        let handler = handoff_handler(&server, &address);
+        assert!(
+            matches!(
+                deliver(
+                    &handler,
+                    &rotation_message(ROTATION_PSK_A, ROTATION_SECRET_A)
+                )
+                .await,
+                HandoffLandingError::Protocol(HandoffError::Authentication)
+            ),
+            "the retired pair must fail closed once dropped"
+        );
+        assert!(
+            matches!(
+                deliver(
+                    &handler,
+                    &rotation_message(ROTATION_PSK_B, ROTATION_SECRET_B)
+                )
+                .await,
+                HandoffLandingError::Destination(_)
+            ),
+            "the active pair must keep landing after the window closes"
+        );
     }
 
     #[test]
