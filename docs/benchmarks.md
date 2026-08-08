@@ -107,6 +107,42 @@ warn-level logging both sides), medians of 7:
    their own errors; cells whose origin reports errors are marked invalid
    rather than read as proxy results.
 
+## v1.2.0 distributed and WAN-emulation evidence (LAB-NETEM)
+
+The v1.2 cycle characterized the distributed topologies on a namespace/veth
+rig with `tc netem` (LAB-NETEM; **not** real-WAN evidence — real multi-host,
+real WAN, ≥8-core, and NUMA remain unverified):
+
+- **RTT sweep** (client↔line delayed 0–200 ms): all topologies — standalone,
+  NXR, Handoff, and the Xray comparator — are within run-level noise of each
+  other at every RTT (e.g. ~15 MiB/s at 100 ms for all four), and Handoff
+  adds at most ~0.5 internal-link RTT of setup vs NXR, matching its
+  one-sealed-flight design. Single-stream numbers are host TCP-autotuning
+  dependent.
+- **Loss** (0.5% at 50 ms): NXR and Handoff are statistically
+  indistinguishable; both show the rig's bistable slow mode (see below).
+- **Bistability warning**: single-stream large transfers on this rig fall
+  into a ~70–150 MiB/s slow mode in ~15–25% of samples regardless of
+  topology or relay backend (a TCP receive-window autotuning equilibrium,
+  root-caused with `ss -ti` to a bogus initial RTT under churn). Any
+  single-stream cell therefore needs n≥15 and medians; n=3 spikes are not
+  evidence.
+- **Multi-peer Handoff**: 1 LINE→2 LANDINGs, 2 LINEs→1 LANDING, and a 2×2
+  mesh all transfer byte-exactly with per-UUID routing; only the intended
+  landing can open its pair's sealed transfer.
+- **Rolling upgrade**: mixed v1.1.0↔v1.2.0 LINE/LANDING pairs (Handoff and
+  NXR) transfer byte-exactly in both directions; either node may be
+  upgraded first.
+- **Failure semantics**: landing down or wrong key fails the client in
+  ~12–13 ms; a landing killed mid-transfer truncates the client's stream
+  (never a false clean EOF); SIGTERM during an active transfer drains for
+  up to 30 s, then force-aborts.
+- **Backpressure**: a 1 MiB/s client through a Handoff chain leaves both
+  nodes' RSS/FDs flat for a full 512 MiB transfer.
+- **Soak**: 6-hour mixed distributed soak (Handoff + NXR + churn + periodic
+  line reloads + landing restarts): zero transfer failures, bounded RSS/FD
+  growth on both nodes.
+
 ## Xray 26.7.28 compatibility gate
 
 `scripts/test-xray-interop.sh` proves that an unmodified Xray client can
