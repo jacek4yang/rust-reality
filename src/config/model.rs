@@ -468,6 +468,21 @@ pub struct HandoffInboundSettings {
     /// `handoff` outbound, so landings cannot be chained.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress: Option<String>,
+    /// Retired pair PSKs still accepted during a bounded zero-downtime
+    /// rotation window: at most two URL-safe unpadded base64 values decoding
+    /// to exactly 32 bytes each, none equal to `preSharedKey`. Senders always
+    /// seal with the active key only; drop each retired key promptly — while
+    /// it stays accepted, the rotation window it opens is reported at
+    /// startup and on every reload, and the forward-secrecy bound of the
+    /// retired material has not yet taken hold.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub previous_pre_shared_keys: Vec<SecretString>,
+    /// Retired static X25519 private keys still accepted during a bounded
+    /// rotation window: at most two URL-safe unpadded base64 values decoding
+    /// to exactly 32 bytes each, none equal to `privateKey`. The same
+    /// drop-promptly rule as `previousPreSharedKeys` applies.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub previous_private_keys: Vec<SecretString>,
 }
 
 const fn default_handoff_time_difference_seconds() -> u64 {

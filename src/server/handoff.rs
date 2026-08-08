@@ -27,11 +27,11 @@ use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
 use crate::{
-    config::{HandoffInboundConfig, HandoffSettings},
+    config::{HandoffInboundConfig, HandoffSettings, SecretString},
     protocol::{
         handoff::{
-            ContinuationState, HEADER_LEN, HandoffError, HandoffPsk, HandoffReplayCache,
-            message_len_from_header, open_transfer, seal_transfer,
+            ContinuationState, HEADER_LEN, HandoffError, HandoffLandingKeys, HandoffPsk,
+            HandoffReplayCache, message_len_from_header, open_transfer, seal_transfer,
         },
         reality::tls13::{
             EstablishedTls, ExportedRecordState, ExportedTlsState, TrafficKeys,
@@ -259,8 +259,7 @@ impl Error for HandoffLineError {
 /// zero response bytes; LINE observes the close as a transfer rejection.
 #[derive(Clone)]
 pub struct HandoffLandingHandler {
-    psk: HandoffPsk,
-    landing_secret: StaticSecret,
+    keys: HandoffLandingKeys,
     replay: HandoffReplayCache,
     maximum_time_difference: u64,
     connector: DestinationConnector,
@@ -298,27 +297,28 @@ impl HandoffLandingHandler {
         io_timeout: Duration,
         outbounds: &OutboundRegistry,
     ) -> Result<Self, HandoffLandingConfigError> {
-        let psk = Zeroizing::new(
-            BASE64_URL_SAFE_NO_PAD
-                .decode(inbound.settings.pre_shared_key.expose())
-                .map_err(|_| HandoffLandingConfigError::Key)?,
-        );
-        let psk: [u8; 32] = psk
-            .as_slice()
-            .try_into()
-            .map_err(|_| HandoffLandingConfigError::Key)?;
-        let secret = Zeroizing::new(
-            BASE64_URL_SAFE_NO_PAD
-                .decode(inbound.settings.private_key.expose())
-                .map_err(|_| HandoffLandingConfigError::Key)?,
-        );
-        let secret: [u8; 32] = secret
-            .as_slice()
-            .try_into()
-            .map_err(|_| HandoffLandingConfigError::Key)?;
-        let handler = Self::new(
+        let settings = &inbound.settings;
+        let psk = decode_key(&settings.pre_shared_key)?;
+        let secret = decode_key(&settings.private_key)?;
+        let previous_psks = settings
+            .previous_pre_shared_keys
+            .iter()
+            .map(|key| decode_key(key).map(HandoffPsk::new))
+            .collect::<Result<Vec<_>, _>>()?;
+        let previous_secrets = settings
+            .previous_private_keys
+            .iter()
+            .map(|key| decode_key(key).map(StaticSecret::from))
+            .collect::<Result<Vec<_>, _>>()?;
+        let keys = HandoffLandingKeys::with_previous(
             HandoffPsk::new(psk),
+            previous_psks,
             StaticSecret::from(secret),
+            previous_secrets,
+        )
+        .ok_or(HandoffLandingConfigError::Key)?;
+        let handler = Self::new(
+            keys,
             replay,
             inbound.settings.max_time_difference_seconds,
             Duration::from_millis(inbound.settings.connect_timeout_ms),
@@ -350,8 +350,7 @@ impl HandoffLandingHandler {
         reason = "one parameter per compiled listener policy input"
     )]
     pub const fn new(
-        psk: HandoffPsk,
-        landing_secret: StaticSecret,
+        keys: HandoffLandingKeys,
         replay: HandoffReplayCache,
         maximum_time_difference: u64,
         connect_timeout: Duration,
@@ -360,8 +359,7 @@ impl HandoffLandingHandler {
         io_timeout: Duration,
     ) -> Self {
         Self {
-            psk,
-            landing_secret,
+            keys,
             replay,
             maximum_time_difference,
             connector: DestinationConnector::new(connect_timeout),
@@ -390,8 +388,7 @@ impl HandoffLandingHandler {
         let now = unix_seconds()?;
         let opened = open_transfer(
             &message,
-            &self.psk,
-            &self.landing_secret,
+            &self.keys,
             &self.replay,
             now,
             self.maximum_time_difference,
@@ -459,6 +456,20 @@ impl HandoffLandingHandler {
             stats.downlink_bytes(),
         ))
     }
+}
+
+/// Decodes one validated base64 32-byte secret; validated configuration has
+/// already excluded every failure this maps to `Key`.
+fn decode_key(key: &SecretString) -> Result<[u8; 32], HandoffLandingConfigError> {
+    let decoded = Zeroizing::new(
+        BASE64_URL_SAFE_NO_PAD
+            .decode(key.expose())
+            .map_err(|_| HandoffLandingConfigError::Key)?,
+    );
+    decoded
+        .as_slice()
+        .try_into()
+        .map_err(|_| HandoffLandingConfigError::Key)
 }
 
 /// Rebuilds the session's TLS application state from a verified transfer.
@@ -612,7 +623,10 @@ mod tests {
             UserPolicy,
         },
         protocol::{
-            handoff::{ContinuationState, HandoffPsk, HandoffReplayCache, seal_transfer},
+            handoff::{
+                ContinuationState, HandoffLandingKeys, HandoffPsk, HandoffReplayCache,
+                seal_transfer,
+            },
             reality::tls13::{
                 CipherSuite, ContentType, EstablishedTls, Tls13KeySchedule, Tls13RecordLayer,
                 TlsApplicationIo, TrafficKeys, read_tls_record,
@@ -646,8 +660,7 @@ mod tests {
         let replay = HandoffReplayCache::new(1_024, Duration::from_secs(120))
             .expect("test replay cache must compile");
         HandoffLandingHandler::new(
-            HandoffPsk::new(PSK),
-            StaticSecret::from(LANDING_SECRET),
+            HandoffLandingKeys::single(HandoffPsk::new(PSK), StaticSecret::from(LANDING_SECRET)),
             replay,
             30,
             Duration::from_secs(1),
@@ -1405,8 +1418,10 @@ mod tests {
             let replay = HandoffReplayCache::new(1_024, Duration::from_secs(120))
                 .expect("test replay cache must compile");
             HandoffLandingHandler::new(
-                HandoffPsk::new([0x66; 32]),
-                StaticSecret::from(LANDING_SECRET),
+                HandoffLandingKeys::single(
+                    HandoffPsk::new([0x66; 32]),
+                    StaticSecret::from(LANDING_SECRET),
+                ),
                 replay,
                 30,
                 Duration::from_secs(1),

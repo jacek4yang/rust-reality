@@ -70,8 +70,11 @@ work.
 
 Forward secrecy is bounded by the landing node's static key: compromising that
 key retroactively exposes every recorded transfer it answered, and with them
-the transferred sessions. Rotate the static key to bound that window. After
-the transfer, the hop carries only the session's TLS ciphertext, which the
+the transferred sessions. Rotate the static key to bound that window. During a
+zero-downtime rotation the landing may still accept retired keys from its
+`previousPreSharedKeys`/`previousPrivateKeys` lists, and the forward-secrecy
+bound holds only after those previous static keys are dropped. After the
+transfer, the hop carries only the session's TLS ciphertext, which the
 endpoints' record AEAD still protects; an observer of the link sees record
 sizes and timing, not payload.
 

@@ -421,6 +421,8 @@ pub fn generate_handoff_configs(
                 authentication_timeout_ms: 3_000,
                 connect_timeout_ms: 10_000,
                 egress: None,
+                previous_pre_shared_keys: Vec::new(),
+                previous_private_keys: Vec::new(),
             },
         })],
         outbounds: vec![OutboundConfig::Direct {

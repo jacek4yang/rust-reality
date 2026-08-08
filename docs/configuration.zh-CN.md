@@ -231,6 +231,8 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 | `settings.authenticationTimeoutMs` | 否 | `3000` | 读取一次有界密封转移消息的截止时间，`1..=600000`。 |
 | `settings.connectTimeoutMs` | 否 | `10000` | 认证成功后才开始的被转移目标连接截止时间，`1..=600000`。 |
 | `settings.egress` | 否 | 直接连接 | 选择落地机到达被转移目标所用出站的 tag。该 tag 必须引用 `direct`、`socks5`、`nxr` 或 `blackhole` 出站；引用 `handoff` 出站会被拒绝——落地机不允许串联。 |
+| `settings.previousPreSharedKeys` | 否 | `[]` | 有界密钥轮换窗口内仍被接受的已退役成对 PSK：最多两个独立的 URL-safe 无填充 base64 值，各解码为恰好 32 字节；列表内重复或与 `preSharedKey` 相同都会被拒绝。 |
+| `settings.previousPrivateKeys` | 否 | `[]` | 有界密钥轮换窗口内仍被接受的已退役静态 X25519 私钥；形状、两条上限与相等性规则同 `previousPreSharedKeys`。 |
 
 监听器对每条连接只验证一次单程转移—— fresh ephemeral X25519 对 `privateKey`
 做 Diffie-Hellman，与成对 PSK 混合后用 ChaCha20-Poly1305 以完整 transcript 为
@@ -242,8 +244,28 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 
 密钥独立性在同一配置文件内强制检查：Handoff `preSharedKey` 与任何 NXR
 `preSharedKey` 相同，或 Handoff `privateKey` 与任何 REALITY `privateKey` 相同，
-都无法通过校验。跨节点的独立性仍是运维者的责任。Handoff 监听器承载在线会话
+都无法通过校验；任何 previous-key 条目与上述材料相同同样会被拒绝。跨节点的
+独立性仍是运维者的责任。Handoff 监听器承载在线会话
 密钥，不得直接暴露在互联网：防火墙应只允许来自线路机源地址的访问。
+
+#### 密钥轮换
+
+`preSharedKey` 与 `privateKey` 通过三步实现零停机轮换。退役密钥从不出现在
+线上——发送方始终只用活跃密钥对密封——因此从不配置这些字段的线路机与配置了
+这些字段的落地机可以互操作，升级顺序不限。
+
+1. 重载落地机：新密钥对作为活跃值，退役值列入
+   `previousPreSharedKeys`/`previousPrivateKeys`。落地机同时能开启用退役材料
+   密封的转移，并且只要仍配置着任何退役密钥，每个监听每代配置都会发出一条
+   `handoff_rotation_window_open` 警告日志。
+2. 把每台线路机的 handoff 出站切到新密钥对（`preSharedKey` 与新的
+   `landingPublicKey`）。
+3. 再次重载落地机，将两个 previous-key 列表清空。
+
+退役密钥必须及时移除：只要退役密钥仍被接受，轮换所要恢复的前向保密界就尚未
+生效（见[威胁模型](threat-model.zh-CN.md)）。开封路径总是先尝试活跃密钥对，
+候选尝试以九次为硬上限，且绝不暴露哪个候选命中——失败保持封闭错误词汇与静默
+关闭。
 
 ## `outbounds`
 
