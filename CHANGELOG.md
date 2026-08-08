@@ -2,6 +2,64 @@
 
 All notable user-facing changes to this project are documented in this file.
 
+## [1.2.0] - 2026-08-08
+
+### Added
+
+- **Multi-landing Handoff**: one line node can route different UUID groups to
+  different landing nodes using the existing routing language — one tagged
+  handoff outbound per landing, and per-group rules can still reach local
+  direct egress. `config generate handoff` accepts repeated
+  `--landing-address`/`--landing-port` and writes `landing-1.json` …
+  `landing-N.json` (independent key material per landing), a merged
+  `line.json` with one UUID group per landing, and a matching
+  `xray-client.json`. Every emitted file is validated before it is written.
+- **Landing egress** (`egress` on the handoff inbound): a landing node can
+  reach transferred destinations through a configured `direct`, `socks5`,
+  `nxr`, or `blackhole` outbound instead of only dialing directly. A
+  `handoff` egress is rejected — Handoff never chains.
+- **Zero-downtime Handoff key rotation**: a landing accepts up to two
+  `previousPreSharedKeys` and `previousPrivateKeys` during a rotation window,
+  so rotating the Handoff PSK or static key no longer requires a
+  synchronized two-node swap. An open rotation window is announced once per
+  listener with a warning event; previous keys must be dropped promptly
+  after rotation (the forward-secrecy bound in the threat model holds only
+  once they are gone).
+
+### Fixed
+
+- A relay abort guard could fire on an already-closed descriptor after the
+  raw relay had consumed the sockets; under descriptor recycling that could
+  reset an unrelated connection. The guard now disarms exactly where the
+  relay takes ownership.
+- A cancelled descriptor-budget wait no longer leaks its waiter
+  registration, which had silently disabled the release path's notify
+  optimization.
+- The Handoff transfer's descriptor permit is now released strictly after
+  its socket closes on every error path.
+- The Handoff key-independence validator also rejects a `preSharedKey`
+  equal to a REALITY `privateKey` — the most plausible same-file copy-paste
+  collision.
+
+### Removed
+
+- The test-only borrowed-socket relay entry points (`TcpRelay::relay`,
+  `relay_borrowed`, `RelayContext::borrowed`) and the write-only
+  `owns_complete_sockets` state; the single-variant `RouteError` was folded
+  into `RouteResolutionError`.
+
+### Compatibility
+
+- No wire or configuration breakage: v1.1.0 configurations load unchanged,
+  and mixed v1.1.0/v1.2.0 LINE↔LANDING pairs interoperate byte-exactly in
+  both directions over Handoff and NXR. Upgrade either node first.
+
+### Notes
+
+- Validated on Linux x86_64. Real multi-host LAN, real WAN, ≥8-core, and
+  NUMA behavior are explicitly unverified in this release; the WAN-emulation
+  characterization lives in docs/benchmarks.md.
+
 ## [1.1.0] - 2026-08-08
 
 ### Added
