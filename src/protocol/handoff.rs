@@ -628,8 +628,9 @@ pub fn seal_transfer(
 ///
 /// Every failure maps to the closed [`HandoffError`] vocabulary; callers must
 /// answer with zero bytes and a silent close. Which candidate matched — or
-/// how many were tried — is never exposed in the error or elsewhere, so an
-/// observer cannot tell an open rotation window from a single-key landing.
+/// how many were tried — is never exposed in the error or log vocabulary.
+/// (Trial count is still observable in fine-grained timing on a co-located
+/// observer; the listener is firewall-restricted by design.)
 pub fn open_transfer(
     message: &[u8],
     keys: &HandoffLandingKeys,

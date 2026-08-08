@@ -84,8 +84,14 @@ landing node's static key, mixed with an independent pair PSK in one
 HKDF-SHA256 chain under one ChaCha20-Poly1305 seal; a timestamp window and a
 bounded nonce cache are checked before any key-agreement work, and every
 failure closes silently with zero response bytes. On success the landing node
-reconstructs the session's TLS record layers, dials the transferred
-destination directly, and resumes the session. The landing node applies no
+reconstructs the session's TLS record layers and dials the transferred
+destination — directly by default, or through the outbound named by the
+listener's `egress` setting (`direct`, `socks5`, `nxr`, or `blackhole`;
+Handoff never chains) — and resumes the session. During a key-rotation window the landing also accepts
+up to two retired pre-shared keys and static key pairs
+(`previousPreSharedKeys`/`previousPrivateKeys`), so peers can rotate without
+downtime; retired keys are dropped promptly after the window. The landing
+node applies no
 routing policy to the transferred destination and holds live session keys, so
 its memory is part of the session's secrecy boundary. The Handoff listener
 must be reachable only from the line nodes' addresses.

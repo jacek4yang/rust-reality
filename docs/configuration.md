@@ -257,10 +257,10 @@ through the outbound selected by `settings.egress` — and resumes the
 session; afterwards the connection carries the session's raw TLS ciphertext.
 
 Key independence is enforced within one configuration file: a Handoff
-`preSharedKey` equal to any NXR `preSharedKey`, or a Handoff `privateKey`
-equal to any REALITY `privateKey`, fails validation — and so does any
-previous-key entry equal to that material. Independence across nodes remains
-the operator's obligation. The Handoff listener carries live
+`preSharedKey` equal to any NXR `preSharedKey` or to any REALITY
+`privateKey`, or a Handoff `privateKey` equal to any REALITY `privateKey`,
+fails validation — and so does any previous-key entry equal to that
+material. Independence across nodes remains the operator's obligation. The Handoff listener carries live
 session keys and must not be exposed to the Internet: allow it only from the
 line nodes' source addresses at the firewall.
 
