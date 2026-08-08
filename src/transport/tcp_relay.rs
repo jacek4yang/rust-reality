@@ -453,7 +453,7 @@ fn classify_abort(error: io::Error) -> io::Error {
 }
 
 /// Returns whether an error is the mid-transfer liveness abort that
-/// [`classify_abort`] produces: `ConnectionAborted` carrying the original
+/// `classify_abort` produces: `ConnectionAborted` carrying the original
 /// `TimedOut` as its payload.
 ///
 /// The rewrap exists so the session layer never mistakes a truncated transfer
