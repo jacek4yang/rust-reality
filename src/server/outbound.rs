@@ -657,7 +657,9 @@ mod tests {
         net::TcpListener,
     };
 
-    use super::{OutboundConnectError, OutboundConnectOutcome, OutboundRegistry};
+    use super::{
+        OutboundConnectError, OutboundConnectOutcome, OutboundRegistry, Socks5ProtocolError,
+    };
     use crate::{
         config::{DirectBarrierConfig, NxrSettings, OutboundConfig, SecretString, Socks5Settings},
         protocol::{
@@ -798,6 +800,292 @@ mod tests {
             connect_result.expect("SOCKS connection must succeed"),
             OutboundConnectOutcome::Connected(_)
         ));
+    }
+
+    fn socks5_registry(
+        address: std::net::SocketAddr,
+        credentials: Option<(&str, &str)>,
+        connect_timeout: Duration,
+    ) -> OutboundRegistry {
+        let (username, password) = match credentials {
+            Some((username, password)) => (
+                Some(SecretString::new(username)),
+                Some(SecretString::new(password)),
+            ),
+            None => (None, None),
+        };
+        OutboundRegistry::new(
+            &[OutboundConfig::Socks5 {
+                tag: "socks".to_owned(),
+                settings: Socks5Settings {
+                    address: address.ip().to_string(),
+                    port: address.port(),
+                    username,
+                    password,
+                },
+            }],
+            &DirectBarrierConfig::default(),
+            connect_timeout,
+            crate::runtime::FdBudget::new(4_096),
+        )
+    }
+
+    fn socks_protocol_error(error: OutboundConnectError) -> Socks5ProtocolError {
+        match error {
+            OutboundConnectError::SocksProtocol(error) => error,
+            other => panic!("expected a SOCKS protocol error, got {other}"),
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn socks5_method_rejection_maps_to_unexpected_method() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("SOCKS listener must bind");
+        let address = listener.local_addr().expect("SOCKS address must exist");
+        let registry = socks5_registry(address, None, Duration::from_secs(1));
+        let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
+
+        let proxy = async {
+            let (mut stream, _) = listener.accept().await?;
+            let mut greeting = [0_u8; 3];
+            stream.read_exact(&mut greeting).await?;
+            assert_eq!(greeting, [5, 1, 0]);
+            // 0xFF: no acceptable authentication methods.
+            stream.write_all(&[5, 0xff]).await?;
+            Ok::<_, std::io::Error>(())
+        };
+        let connect = registry.connect("socks", &destination);
+        let (proxy_result, connect_result) = tokio::join!(proxy, connect);
+
+        proxy_result.expect("SOCKS exchange must succeed");
+        assert_eq!(
+            socks_protocol_error(
+                connect_result.expect_err("a method rejection must fail the connect")
+            ),
+            Socks5ProtocolError::UnexpectedMethod {
+                expected: 0,
+                received: 0xff,
+            }
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn socks5_username_password_failure_maps_to_authentication_failed() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("SOCKS listener must bind");
+        let address = listener.local_addr().expect("SOCKS address must exist");
+        let registry = socks5_registry(address, Some(("user", "pass")), Duration::from_secs(1));
+        let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
+
+        let proxy = async {
+            let (mut stream, _) = listener.accept().await?;
+            let mut greeting = [0_u8; 3];
+            stream.read_exact(&mut greeting).await?;
+            assert_eq!(greeting, [5, 1, 2]);
+            stream.write_all(&[5, 2]).await?;
+            let mut auth = [0_u8; 11];
+            stream.read_exact(&mut auth).await?;
+            assert_eq!(
+                auth,
+                [1, 4, b'u', b's', b'e', b'r', 4, b'p', b'a', b's', b's']
+            );
+            // Status 1: the credentials were rejected.
+            stream.write_all(&[1, 1]).await?;
+            Ok::<_, std::io::Error>(())
+        };
+        let connect = registry.connect("socks", &destination);
+        let (proxy_result, connect_result) = tokio::join!(proxy, connect);
+
+        proxy_result.expect("SOCKS exchange must succeed");
+        assert_eq!(
+            socks_protocol_error(
+                connect_result.expect_err("a rejected login must fail the connect")
+            ),
+            Socks5ProtocolError::AuthenticationFailed(1)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn socks5_connect_failure_codes_map_to_connect_failed() {
+        for code in [5_u8, 4_u8] {
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+                .await
+                .expect("SOCKS listener must bind");
+            let address = listener.local_addr().expect("SOCKS address must exist");
+            let registry = socks5_registry(address, None, Duration::from_secs(1));
+            let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
+
+            let proxy = async {
+                let (mut stream, _) = listener.accept().await?;
+                let mut greeting = [0_u8; 3];
+                stream.read_exact(&mut greeting).await?;
+                stream.write_all(&[5, 0]).await?;
+                let mut connect = [0_u8; 18];
+                stream.read_exact(&mut connect).await?;
+                // Failure codes: 0x05 connection refused, 0x04 host unreachable.
+                stream
+                    .write_all(&[5, code, 0, 1, 127, 0, 0, 1, 0x12, 0x34])
+                    .await?;
+                Ok::<_, std::io::Error>(())
+            };
+            let connect = registry.connect("socks", &destination);
+            let (proxy_result, connect_result) = tokio::join!(proxy, connect);
+
+            proxy_result.expect("SOCKS exchange must succeed");
+            assert_eq!(
+                socks_protocol_error(
+                    connect_result.expect_err("a failure reply code must fail the connect")
+                ),
+                Socks5ProtocolError::ConnectFailed(code),
+                "reply code {code:#04x} must map to ConnectFailed"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn socks5_malformed_connect_replies_map_to_invalid_reply() {
+        let garbage_headers: [[u8; 10]; 3] = [
+            // Wrong SOCKS version in the reply header.
+            [4, 0, 0, 1, 127, 0, 0, 1, 0x12, 0x34],
+            // Non-zero reserved byte in the reply header.
+            [5, 0, 1, 1, 127, 0, 0, 1, 0x12, 0x34],
+            // Unknown address type in the reply header.
+            [5, 0, 0, 9, 127, 0, 0, 1, 0x12, 0x34],
+        ];
+        for garbage in garbage_headers {
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+                .await
+                .expect("SOCKS listener must bind");
+            let address = listener.local_addr().expect("SOCKS address must exist");
+            let registry = socks5_registry(address, None, Duration::from_secs(1));
+            let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
+
+            let proxy = async {
+                let (mut stream, _) = listener.accept().await?;
+                let mut greeting = [0_u8; 3];
+                stream.read_exact(&mut greeting).await?;
+                stream.write_all(&[5, 0]).await?;
+                let mut connect = [0_u8; 18];
+                stream.read_exact(&mut connect).await?;
+                stream.write_all(&garbage).await?;
+                Ok::<_, std::io::Error>(())
+            };
+            let connect = registry.connect("socks", &destination);
+            let (proxy_result, connect_result) = tokio::join!(proxy, connect);
+
+            proxy_result.expect("SOCKS exchange must succeed");
+            assert_eq!(
+                socks_protocol_error(
+                    connect_result.expect_err("a malformed reply must fail the connect")
+                ),
+                Socks5ProtocolError::InvalidReply,
+                "garbage reply {garbage:02x?} must map to InvalidReply"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn socks5_garbage_method_reply_maps_to_unexpected_method() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("SOCKS listener must bind");
+        let address = listener.local_addr().expect("SOCKS address must exist");
+        let registry = socks5_registry(address, None, Duration::from_secs(1));
+        let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
+
+        let proxy = async {
+            let (mut stream, _) = listener.accept().await?;
+            let mut greeting = [0_u8; 3];
+            stream.read_exact(&mut greeting).await?;
+            // Not a SOCKS5 method selection reply at all.
+            stream.write_all(b"NO").await?;
+            Ok::<_, std::io::Error>(())
+        };
+        let connect = registry.connect("socks", &destination);
+        let (proxy_result, connect_result) = tokio::join!(proxy, connect);
+
+        proxy_result.expect("SOCKS exchange must succeed");
+        assert_eq!(
+            socks_protocol_error(
+                connect_result.expect_err("a garbage method reply must fail the connect")
+            ),
+            Socks5ProtocolError::UnexpectedMethod {
+                expected: 0,
+                received: b'O',
+            }
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn socks5_truncated_reply_fails_instead_of_hanging() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("SOCKS listener must bind");
+        let address = listener.local_addr().expect("SOCKS address must exist");
+        let registry = socks5_registry(address, None, Duration::from_secs(1));
+        let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
+
+        let proxy = async {
+            let (mut stream, _) = listener.accept().await?;
+            let mut greeting = [0_u8; 3];
+            stream.read_exact(&mut greeting).await?;
+            stream.write_all(&[5, 0]).await?;
+            let mut connect = [0_u8; 18];
+            stream.read_exact(&mut connect).await?;
+            // Half a reply header, then an abrupt close: the client must see an
+            // I/O failure, not a panic or a hang.
+            stream.write_all(&[5, 0]).await?;
+            Ok::<_, std::io::Error>(())
+        };
+        let connect = registry.connect("socks", &destination);
+        let (proxy_result, connect_result) = tokio::join!(proxy, connect);
+
+        proxy_result.expect("SOCKS exchange must succeed");
+        assert!(
+            matches!(
+                connect_result.expect_err("a truncated reply must fail the connect"),
+                OutboundConnectError::SocksConnect(_)
+            ),
+            "a truncated reply must surface as a SOCKS connect I/O error"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn socks5_silent_server_fails_within_the_connect_timeout() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("SOCKS listener must bind");
+        let address = listener.local_addr().expect("SOCKS address must exist");
+        let registry = socks5_registry(address, None, Duration::from_millis(100));
+        let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
+
+        let proxy = async {
+            let (mut stream, _) = listener.accept().await?;
+            let mut greeting = [0_u8; 3];
+            stream.read_exact(&mut greeting).await?;
+            // Never answer: the client deadline must bound the wait.
+            let mut byte = [0_u8; 1];
+            let _ = stream.read(&mut byte).await;
+            Ok::<_, std::io::Error>(())
+        };
+        let connect = registry.connect("socks", &destination);
+        let (proxy_result, connect_result) =
+            tokio::time::timeout(Duration::from_secs(2), async move {
+                tokio::join!(proxy, connect)
+            })
+            .await
+            .expect("a silent server must be bounded by the connect timeout");
+
+        proxy_result.expect("SOCKS exchange must succeed");
+        assert!(
+            matches!(
+                connect_result.expect_err("a silent server must fail the connect"),
+                OutboundConnectError::SocksTimeout
+            ),
+            "a silent server must hit the SOCKS timeout"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

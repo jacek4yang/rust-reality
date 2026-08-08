@@ -513,6 +513,37 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn refused_cover_target_fails_closed_and_releases_capacity() {
+        // Reserve a port and drop the listener so cover connects are refused.
+        let refused_target = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("probe listener must bind")
+            .local_addr()
+            .expect("probe address must exist")
+            .to_string();
+        let config = ResourceGovernorConfig::default();
+        let fallback = test_fallback(refused_target, &config);
+
+        // Two attempts: the second proves the refused first attempt released
+        // its fallback admission permit instead of leaking capacity.
+        for _ in 0..2 {
+            let (_client, inbound) = tcp_pair().await;
+            let error = fallback
+                .relay(inbound, PREFIX)
+                .await
+                .expect_err("a refused cover target must fail the fallback");
+            match error {
+                FallbackError::Io(error) => assert_eq!(
+                    error.kind(),
+                    io::ErrorKind::ConnectionRefused,
+                    "a refused cover target must surface the connect refusal"
+                ),
+                other => panic!("expected a fallback I/O error, got {other}"),
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn target_mirror_acquires_fallback_capacity_only_when_relaying() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await

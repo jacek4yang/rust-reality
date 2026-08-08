@@ -484,11 +484,12 @@ mod tests {
         time::timeout,
     };
 
-    use super::{RealityAcceptOutcome, RealityAcceptor};
+    use super::{RealityAcceptError, RealityAcceptOutcome, RealityAcceptor};
     use crate::{
         config::{Config, test_config_json},
         protocol::reality::{ReplayCache, SESSION_ID_LEN, client_hello_fixtures},
         runtime::ResourceGovernor,
+        server::fallback::FallbackError,
     };
 
     const COVER_RESPONSE: &[u8] = b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n";
@@ -562,6 +563,82 @@ mod tests {
         assert!(matches!(outcome, RealityAcceptOutcome::Fallback(_)));
         assert_eq!(response.expect("client I/O must succeed"), COVER_RESPONSE);
         assert_eq!(request.expect("cover I/O must succeed"), client_prefix);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn unavailable_cover_fails_closed_with_fallback_error() {
+        // Reserve a port and drop the listener so cover connects are refused.
+        let refused_target = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("probe listener must bind")
+            .local_addr()
+            .expect("probe address must exist")
+            .to_string();
+        let mut config: Config =
+            serde_json::from_str(test_config_json()).expect("test config must parse");
+        config.inbounds[0]
+            .as_vless_mut()
+            .expect("fixture must contain VLESS")
+            .stream_settings
+            .reality_settings
+            .target = refused_target;
+        let policy = config.policy.resource_governor.clone();
+        let governor = ResourceGovernor::new(&policy);
+        let replay = ReplayCache::new(governor.clone(), &policy);
+        let acceptor = RealityAcceptor::from_inbound_with_replay(
+            config.inbounds[0]
+                .as_vless()
+                .expect("fixture must contain VLESS"),
+            governor,
+            &policy,
+            replay,
+            crate::transport::TcpRelay::new(
+                &crate::config::RelayPolicy::default(),
+                crate::runtime::FdBudget::new(4_096),
+            )
+            .expect("test relay must build"),
+        )
+        .expect("validated inbound must compile");
+        let (mut client, server, peer_addr) = tcp_pair().await;
+        let message = client_hello_fixtures::client_hello(
+            [0x44; 32],
+            &[0x11; SESSION_ID_LEN],
+            "www.example.com",
+            &[b"h2"],
+        );
+        let client_prefix = client_hello_fixtures::record(&message);
+
+        let exchange = async {
+            let accept = acceptor.accept(server, peer_addr);
+            let client_io = async {
+                client.write_all(&client_prefix).await?;
+                client.shutdown().await?;
+                let mut response = Vec::new();
+                // Failing closed drops the session without serving cover
+                // bytes; a reset satisfies the same observation as an EOF.
+                let _ = client.read_to_end(&mut response).await;
+                Ok::<_, io::Error>(response)
+            };
+            tokio::join!(accept, client_io)
+        };
+        let (outcome, response) = timeout(Duration::from_secs(2), exchange)
+            .await
+            .expect("a refused cover target must fail fast, not hang");
+
+        let error = outcome.expect_err("an unreachable cover target must fail closed");
+        match error {
+            RealityAcceptError::Fallback(FallbackError::Io(error)) => assert_eq!(
+                error.kind(),
+                io::ErrorKind::ConnectionRefused,
+                "the cover refusal must surface inside the fallback error"
+            ),
+            other => panic!("expected a fail-closed Fallback(Io) error, got {other}"),
+        }
+        assert_eq!(
+            response.expect("client I/O must succeed"),
+            b"",
+            "a failed fallback must not serve any bytes to the client"
+        );
     }
 
     async fn tcp_pair() -> (TcpStream, TcpStream, SocketAddr) {
