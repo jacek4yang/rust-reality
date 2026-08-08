@@ -14,7 +14,7 @@ then verify all assets before installation:
 
 ```shell
 sha256sum --check SHA256SUMS
-tar -xzf rust-reality-v1.0.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 rust-reality --version
 ```
@@ -76,6 +76,10 @@ confirm traffic flows.
 - Line node + firewall-restricted NXR landing node: generate one shared NXR
   key with `rust-reality node-keygen` and see the
   [deployment guide](deployment.md).
+- Line node + Handoff landing node (the hop carries only TLS ciphertext):
+  generate both configurations in one step with
+  `rust-reality config generate handoff` and see the
+  [deployment guide](deployment.md#line-node-and-handoff-landing-node).
 - Every configuration field: [configuration.md](configuration.md).
 - Every command: [cli.md](cli.md).
 - Security posture before exposing a listener:

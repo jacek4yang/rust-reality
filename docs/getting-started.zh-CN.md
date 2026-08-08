@@ -12,7 +12,7 @@
 
 ```shell
 sha256sum --check SHA256SUMS
-tar -xzf rust-reality-v1.0.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 rust-reality --version
 ```
@@ -69,6 +69,9 @@ Xray 的客户端，确认流量正常。
 
 - 线路机 + 受防火墙限制的 NXR 落地机：先用 `rust-reality node-keygen` 生成一
   个共享 NXR 密钥，然后阅读[部署指南](deployment.zh-CN.md)。
+- 线路机 + Handoff 落地机（转移后该跳只承载 TLS 密文）：用
+  `rust-reality config generate handoff` 一步生成两侧配置，然后阅读
+  [部署指南](deployment.zh-CN.md#线路机与-handoff-落地机)。
 - 全部配置字段：[configuration.zh-CN.md](configuration.zh-CN.md)。
 - 全部命令：[cli.zh-CN.md](cli.zh-CN.md)。
 - 开放监听端口前的安全姿态：

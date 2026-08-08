@@ -2,7 +2,7 @@
 
 [English](protocol.md) | 简体中文
 
-`rust-reality` 只暴露一个公网协议栈和一个内部跳转协议。本页概括各自的含义；
+`rust-reality` 只暴露一个公网协议栈和两个内部跳转协议。本页概括各自的含义；
 安全属性和信任边界以 [threat-model.zh-CN.md](threat-model.zh-CN.md) 为准。
 
 ## 公网栈：VLESS + REALITY + Vision
@@ -11,7 +11,7 @@
 兼容 Xray 的客户端
   -> VLESS + REALITY + xtls-rprx-vision 公网 listener
   -> 服务端上的 UUID 策略与路由
-  -> direct | SOCKS5 | blackhole | NXR 出站
+  -> direct | SOCKS5 | blackhole | NXR | Handoff 出站
   -> 目标地址
 ```
 
@@ -40,6 +40,7 @@
 - **SOCKS5**：指向上游 SOCKS5 服务器的出站，可选用户名/密码认证。
 - **blackhole**：有界丢弃，可选响应延迟。
 - **NXR**：把流量转发到落地机（见下）。
+- **Handoff**：把整个会话转移到落地机（见下）。
 
 ## NXR：内部线路机到落地机跳转
 
@@ -55,10 +56,24 @@ TLS、REALITY、AEAD、证书、多路复用、连接池、持久 framing，也�
 必须按明文对待：任何能观测该链路的人都能观测没有端到端保护（例如 HTTPS）
 的载荷。
 
+## Handoff：内部会话转移跳转
+
+Handoff 是内部的会话转移机制，不是公网协议。在 REALITY 认证、VLESS 解码和
+路由之后，线路机把整个会话——TLS 记录状态、序列号、Vision 上下文和待发送
+字节——用一条密封且防重放的消息转移给落地机；此后线路机只中继该会话的
+TLS 密文。
+
+转移消息用落地机静态密钥做一次新的临时 X25519 交换，与独立的配对 PSK 在同一
+条 HKDF-SHA256 链上混合，并以一次 ChaCha20-Poly1305 密封；在任何密钥协商
+之前先检查时间窗和有界 nonce 缓存，任何失败都静默关闭、零响应字节。成功后
+落地机重建会话的 TLS 记录层，直接连接转移过来的目标并恢复会话。落地机不对
+转移的目标应用路由策略，且持有活跃会话密钥，因此其内存属于会话保密边界的
+一部分。Handoff listener 必须只允许线路机的地址访问。
+
 ## 一段话信任边界
 
 公网 listener 抵御未认证的协议识别、主动探测、ClientHello 重放、畸形记录输入
 和本地资源耗尽。认证前的一切都有界且日志不含秘密。部署者仍然要负责伪装目标
-的选择、防火墙策略（尤其是 NXR）、VPS 链路（应用无法吸收上游流量型 DDoS）和
+的选择、防火墙策略（尤其是 NXR 和 Handoff）、VPS 链路（应用无法吸收上游流量型 DDoS）和
 端点被控（REALITY 不会让被控端点变得可信）。完整模型与非目标见
 [threat-model.zh-CN.md](threat-model.zh-CN.md)。

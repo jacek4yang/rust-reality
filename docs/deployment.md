@@ -34,7 +34,7 @@ Verify both listed files before extraction:
 
 ```shell
 sha256sum --check SHA256SUMS
-tar -xzf rust-reality-v1.0.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 rust-reality --version
 ```
@@ -210,6 +210,57 @@ NXR publicly.
 Keep clocks synchronized. The default NXR request accepts 30 seconds of skew
 and retains nonces for 120 seconds. Authentication failure closes before DNS or
 destination connect.
+
+## Line node and Handoff landing node
+
+Handoff transfers an accepted session's full TLS ownership from the line node
+to a landing node in one sealed, replay-protected message. Unlike NXR, the hop
+carries only the session's TLS ciphertext after the transfer, and the landing
+node holds live session keys for every transferred session.
+
+### 1. Generate the pair in one step
+
+On a trusted host:
+
+```shell
+rust-reality config generate handoff \
+  --server-address LINE_PUBLIC_ADDRESS \
+  --target www.microsoft.com:443 \
+  --server-name www.microsoft.com \
+  --landing-address LANDING_PRIVATE_ADDRESS \
+  --output-dir handoff/
+```
+
+This writes `line.json` (public line node routing to the handoff outbound),
+`landing.json` (internal Handoff listener only), and `xray-client.json`. All
+key material is generated independently — the UUID, the REALITY X25519 pair,
+one short ID, the Handoff pre-shared key, and the landing node's static
+X25519 pair — and both server configurations are validated before they are
+written. The client UUID and REALITY public key are printed to stderr; the
+Handoff PSK and the private keys exist only in the two server files.
+
+### 2. Place and validate the configurations
+
+Install `line.json` on the line node and `landing.json` on the landing node,
+validating and installing each as in the standalone
+[validate and install](#4-validate-and-install) step. The landing
+configuration exposes only the internal Handoff listener and has no public
+client identity.
+
+### 3. Enforce the Handoff firewall boundary
+
+Before starting the landing service, allow the Handoff TCP port (default
+7443) only from the line nodes' source addresses and reject every other
+source. Prefer both provider security groups and host firewall rules. This is
+a hard requirement, not a recommendation: the landing node applies no routing
+policy to transferred destinations and holds live session keys, so an exposed
+listener turns the landing node into an internal dialer for anyone who
+reaches it.
+
+Keep clocks synchronized. The default transfer accepts 30 seconds of skew and
+reserves nonces for 120 seconds. Every transfer failure closes silently with
+zero response bytes, and the line node resets the client socket rather than
+serving the session locally.
 
 ## GeoIP and GeoSite
 

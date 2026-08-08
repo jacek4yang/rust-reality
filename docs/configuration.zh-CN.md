@@ -39,8 +39,8 @@ rust-reality config format --config config.json > config.formatted.json
 | `log` | 否 | stderr/info | 日志目标、级别和有界文件保留。 |
 | `assets` | 否 | 社区 GeoIP/GeoSite URL 和有界缓存默认值 | 路由资产来源与刷新策略。 |
 | `dns` | 否 | 系统解析器、5000 ms | IP 辅助路由使用的 DNS 行为。 |
-| `inbounds` | 是 | — | 至少一个强类型 `vless` 或内部 `nxr` 监听。 |
-| `outbounds` | 是 | — | 至少一个 `direct`、`blackhole`、`socks5` 或 `nxr` 传输。 |
+| `inbounds` | 是 | — | 至少一个强类型 `vless` 或内部 `nxr`、`handoff` 监听。 |
+| `outbounds` | 是 | — | 至少一个 `direct`、`blackhole`、`socks5`、`nxr` 或 `handoff` 传输。 |
 | `routing` | 是 | — | 全局规则和显式 UUID 分组策略。 |
 | `policy` | 否 | 有界生产默认值 | admission、direct 拨号、缓冲和 Linux relay 策略。 |
 | `runtime` | 否 | `standard` | 进程资源姿态。 |
@@ -126,8 +126,8 @@ rust-reality config format --config config.json > config.formatted.json
 }
 ```
 
-以上占位符故意不能直接使用。请通过 `config generate standalone` 或
-`config generate line` 生成真实状态。
+以上占位符故意不能直接使用。请通过 `config generate standalone`、
+`config generate line` 或 `config generate handoff` 生成真实状态。
 
 | 字段 | 必填 | 默认值/固定值 | 含义与约束 |
 | --- | --- | --- | --- |
