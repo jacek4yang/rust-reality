@@ -27,13 +27,10 @@ use crate::{
 #[cfg(target_os = "linux")]
 use crate::runtime::{FdPermit, UNITS_SPLICE_DIRECTION, UNITS_SPLICE_RELAY};
 
-use super::{
-    backend::{
-        BackendCapability, BackendDeclineReason, BackendReport, BackendRequest, BackendRun,
-        DirectionalRelayOutcome, RelayBackend, RelayContext, RelayDirection, RelayOutcome,
-        TransferLedger,
-    },
-    relay::RelayStats,
+use super::backend::{
+    BackendCapability, BackendDeclineReason, BackendReport, BackendRequest, BackendRun,
+    DirectionalRelayOutcome, RelayBackend, RelayContext, RelayDirection, RelayOutcome,
+    TransferLedger,
 };
 
 /// Process-wide bounded relay state for plaintext TCP-to-TCP boundaries.
@@ -120,28 +117,6 @@ impl TcpRelay {
         context: RelayContext,
     ) -> io::Result<RelayOutcome> {
         self.run(&mut inbound, &mut outbound, context).await
-    }
-
-    /// Relays one plaintext TCP pair through borrowed sockets.
-    ///
-    /// This compatibility entry point exists for call sites that cannot yield
-    /// complete ownership yet. Backends that require a complete descriptor
-    /// decline here rather than weakening any invariant.
-    ///
-    /// # Errors
-    ///
-    /// Returns allocation, socket, pipe, or shutdown errors.
-    pub async fn relay_borrowed(
-        &self,
-        inbound: &mut TcpStream,
-        outbound: &mut TcpStream,
-        context: RelayContext,
-    ) -> io::Result<RelayOutcome> {
-        let context = RelayContext {
-            owns_complete_sockets: false,
-            ..context
-        };
-        self.run(inbound, outbound, context).await
     }
 
     /// Relays a single direction between two owned socket halves.
@@ -379,27 +354,6 @@ impl TcpRelay {
         _source_reset_is_eof: bool,
     ) -> io::Result<BackendRun> {
         ledger.decline(BackendDeclineReason::UnsupportedOperatingSystem)
-    }
-
-    /// Relays one plaintext TCP pair while preserving both half-close directions.
-    ///
-    /// # Errors
-    ///
-    /// Returns allocation, socket, pipe, or shutdown errors. A splice error after
-    /// transfer starts is never retried through userspace because byte ownership
-    /// can no longer be reconstructed safely.
-    pub async fn relay(
-        &self,
-        inbound: &mut TcpStream,
-        outbound: &mut TcpStream,
-    ) -> io::Result<RelayStats> {
-        let outcome = self
-            .relay_borrowed(inbound, outbound, RelayContext::borrowed())
-            .await?;
-        Ok(RelayStats::new(
-            outcome.inbound_to_outbound(),
-            outcome.outbound_to_inbound(),
-        ))
     }
 }
 
@@ -1445,10 +1399,10 @@ mod tests {
     }
 
     async fn exercise_tcp_relay(relay: TcpRelay) {
-        let (mut client, mut relay_inbound) = tcp_pair().await;
-        let (mut relay_outbound, mut target) = tcp_pair().await;
+        let (mut client, relay_inbound) = tcp_pair().await;
+        let (relay_outbound, mut target) = tcp_pair().await;
         let operation = async {
-            let relay_io = relay.relay(&mut relay_inbound, &mut relay_outbound);
+            let relay_io = relay.relay_owned(relay_inbound, relay_outbound, RelayContext::owned());
             let client_io = async {
                 client.write_all(b"request").await?;
                 client.shutdown().await?;
@@ -1471,8 +1425,8 @@ mod tests {
         let stats = stats.expect("relay must succeed");
         assert_eq!(request.expect("target I/O must succeed"), b"request");
         assert_eq!(response.expect("client I/O must succeed"), b"response");
-        assert_eq!(stats.inbound_to_outbound_bytes(), 7);
-        assert_eq!(stats.outbound_to_inbound_bytes(), 8);
+        assert_eq!(stats.inbound_to_outbound(), 7);
+        assert_eq!(stats.outbound_to_inbound(), 8);
     }
 
     #[cfg(target_os = "linux")]
@@ -1482,8 +1436,8 @@ mod tests {
         let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
         assert_eq!(budget.in_use(), 0);
 
-        let (mut client, mut relay_inbound) = tcp_pair().await;
-        let (mut relay_outbound, mut target) = tcp_pair().await;
+        let (mut client, relay_inbound) = tcp_pair().await;
+        let (relay_outbound, mut target) = tcp_pair().await;
         let observed = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
         let sampler = {
             let budget = budget.clone();
@@ -1496,7 +1450,7 @@ mod tests {
             }
         };
         let exchange = async {
-            let relay_io = relay.relay(&mut relay_inbound, &mut relay_outbound);
+            let relay_io = relay.relay_owned(relay_inbound, relay_outbound, RelayContext::owned());
             let client_io = async {
                 client.write_all(b"request").await?;
                 client.shutdown().await?;
@@ -1545,10 +1499,10 @@ mod tests {
         // backend must decline *before* `pipe2` and fall through.
         let budget = FdBudget::new(3);
         let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
-        let (mut client, mut relay_inbound) = tcp_pair().await;
-        let (mut relay_outbound, mut target) = tcp_pair().await;
+        let (mut client, relay_inbound) = tcp_pair().await;
+        let (relay_outbound, mut target) = tcp_pair().await;
         let exchange = async {
-            let relay_io = relay.relay(&mut relay_inbound, &mut relay_outbound);
+            let relay_io = relay.relay_owned(relay_inbound, relay_outbound, RelayContext::owned());
             let client_io = async {
                 client.write_all(b"request").await?;
                 client.shutdown().await?;
@@ -1571,7 +1525,7 @@ mod tests {
         let stats = stats.expect("the buffered backend must carry the connection");
         assert_eq!(request.expect("target I/O must succeed"), b"request");
         assert_eq!(response.expect("client I/O must succeed"), b"response");
-        assert_eq!(stats.inbound_to_outbound_bytes(), 7);
+        assert_eq!(stats.inbound_to_outbound(), 7);
         assert!(
             budget.in_use() <= u64::from(crate::runtime::UNITS_SPLICE_DIRECTION),
             "a declined attempt may retain one drained pipe in the pool"
@@ -1594,10 +1548,11 @@ mod tests {
         let budget = FdBudget::new(64);
         let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
         for _ in 0..16 {
-            let (mut client, mut relay_inbound) = tcp_pair().await;
-            let (mut relay_outbound, mut target) = tcp_pair().await;
+            let (mut client, relay_inbound) = tcp_pair().await;
+            let (relay_outbound, mut target) = tcp_pair().await;
             let exchange = async {
-                let relay_io = relay.relay(&mut relay_inbound, &mut relay_outbound);
+                let relay_io =
+                    relay.relay_owned(relay_inbound, relay_outbound, RelayContext::owned());
                 let client_io = async {
                     client.write_all(b"request").await?;
                     client.shutdown().await?;
@@ -1638,12 +1593,12 @@ mod tests {
     async fn a_cancelled_splice_relay_releases_its_descriptor_units() {
         let budget = FdBudget::new(64);
         let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
-        let (_client, mut relay_inbound) = tcp_pair().await;
-        let (mut relay_outbound, _target) = tcp_pair().await;
+        let (_client, relay_inbound) = tcp_pair().await;
+        let (relay_outbound, _target) = tcp_pair().await;
         // Neither peer sends or closes, so the relay parks with its pipes open.
         let cancelled = time::timeout(
             Duration::from_millis(50),
-            relay.relay(&mut relay_inbound, &mut relay_outbound),
+            relay.relay_owned(relay_inbound, relay_outbound, RelayContext::owned()),
         )
         .await;
         assert!(cancelled.is_err(), "the relay must still be running");

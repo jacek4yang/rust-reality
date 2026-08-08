@@ -117,8 +117,11 @@ impl RoutingTable {
     ///
     /// # Errors
     ///
-    /// Returns [`RouteError::UnknownUser`] if the immutable routing snapshot has no group.
-    pub fn select(&self, context: &RouteContext<'_>) -> Result<RouteDecision, RouteError> {
+    /// Returns [`RouteResolutionError::UnknownUser`] if the routing snapshot has no group.
+    pub fn select(
+        &self,
+        context: &RouteContext<'_>,
+    ) -> Result<RouteDecision, RouteResolutionError> {
         if let Some(rule) = self
             .global_rules
             .iter()
@@ -129,7 +132,7 @@ impl RoutingTable {
         let user = self
             .users
             .get(&context.user_id)
-            .ok_or(RouteError::UnknownUser)?;
+            .ok_or(RouteResolutionError::UnknownUser)?;
         if let Some(rule) = user
             .rules
             .iter()
@@ -166,7 +169,7 @@ impl RoutingTable {
         let user_has_ip_rules = self
             .users
             .get(&user_id)
-            .ok_or(RouteError::UnknownUser)?
+            .ok_or(RouteResolutionError::UnknownUser)?
             .has_ip_rules;
         let needs_ip = self.global_has_ip_rules || user_has_ip_rules;
         let unresolved = RouteContext {
@@ -681,24 +684,11 @@ impl fmt::Display for RoutingCompileError {
 
 impl Error for RoutingCompileError {}
 
-/// Routing state has no policy for an authenticated UUID.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RouteError {
-    UnknownUser,
-}
-
-impl fmt::Display for RouteError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("authenticated VLESS user has no routing policy")
-    }
-}
-
-impl Error for RouteError {}
-
 /// DNS-assisted route evaluation failed before any outbound was selected.
 #[derive(Debug)]
 pub enum RouteResolutionError {
-    Route(RouteError),
+    /// The immutable routing snapshot has no policy for an authenticated UUID.
+    UnknownUser,
     DnsTimeout,
     DnsLimit,
     Dns(io::Error),
@@ -710,7 +700,9 @@ pub enum RouteResolutionError {
 impl fmt::Display for RouteResolutionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Route(source) => source.fmt(formatter),
+            Self::UnknownUser => {
+                formatter.write_str("authenticated VLESS user has no routing policy")
+            }
             Self::DnsTimeout => formatter.write_str("routing DNS resolution timed out"),
             Self::DnsLimit => {
                 formatter.write_str("routing DNS resolution exceeded the bounded resolver pool")
@@ -728,20 +720,14 @@ impl fmt::Display for RouteResolutionError {
 impl Error for RouteResolutionError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Route(source) => Some(source),
             Self::Dns(source) => Some(source),
-            Self::DnsTimeout
+            Self::UnknownUser
+            | Self::DnsTimeout
             | Self::DnsLimit
             | Self::NoAddresses
             | Self::TooManyAddresses
             | Self::Allocation => None,
         }
-    }
-}
-
-impl From<RouteError> for RouteResolutionError {
-    fn from(source: RouteError) -> Self {
-        Self::Route(source)
     }
 }
 
