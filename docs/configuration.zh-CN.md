@@ -243,8 +243,8 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 此后该连接承载会话的原始 TLS 密文。
 
 密钥独立性在同一配置文件内强制检查：Handoff `preSharedKey` 与任何 NXR
-`preSharedKey` 相同，或 Handoff `privateKey` 与任何 REALITY `privateKey` 相同，
-都无法通过校验；任何 previous-key 条目与上述材料相同同样会被拒绝。跨节点的
+`preSharedKey` 或任何 REALITY `privateKey` 相同，或 Handoff `privateKey`
+与任何 REALITY `privateKey` 相同，都无法通过校验；任何 previous-key 条目与上述材料相同同样会被拒绝。跨节点的
 独立性仍是运维者的责任。Handoff 监听器承载在线会话
 密钥，不得直接暴露在互联网：防火墙应只允许来自线路机源地址的访问。
 

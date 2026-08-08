@@ -668,7 +668,4 @@ mod tests {
             assert!(!reason.as_str().contains(' '));
         }
     }
-
-    #[test]
-    fn borrowed_contexts_never_claim_complete_socket_ownership() {}
 }
