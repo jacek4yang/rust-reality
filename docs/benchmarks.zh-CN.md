@@ -29,6 +29,8 @@
 | `scripts/benchmark-setup-rate.sh` | 连接 setup 速率模型（accept → 第一次 Vision 转换）。 |
 | `scripts/benchmark-vision-direct.sh`、`scripts/benchmark-xray.sh` | 聚焦的 Vision-Direct 与 Xray 对比。 |
 | `scripts/benchmark-deployment.sh` | 部署特征化：路由正确性证明、路由决策成本（含 DNS 策略）、NXR 拓扑（direct/NXR/SOCKS5/Xray）、可选的 netem RTT 扫描，以及长连接 relay 证据。 |
+| `scripts/soak-test.sh` | 回环混合负载浸泡测试（隧道流量 + 连接churn），用 `/proc` 快照做泄漏上界检查；环境变量：`DURATION_MIN`、`ROUND_SLEEP`、`RUST_REALITY_BIN`、`XRAY_BIN`、`OUT_DIR`。 |
+| `scripts/benchmark-real-path.sh` | 真实互联网路径上与 Xray 的 A/B：崩溃与协议错误门禁；吞吐受路径最慢链路限制，不能用于区分带宽。 |
 | `scripts/test-xray-interop.sh` | 兼容性门禁（见下），不是基准。 |
 
 ## v1.0.0 规范样本

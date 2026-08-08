@@ -43,8 +43,8 @@ Top-level shape:
 | `log` | no | stderr/info | Logging sink, severity, and bounded file retention. |
 | `assets` | no | community GeoIP/GeoSite URLs and bounded cache defaults | Routing asset sources and refresh policy. |
 | `dns` | no | system resolver, 5000 ms | DNS behavior used by IP-assisted routing. |
-| `inbounds` | yes | — | At least one strictly typed `vless` or internal `nxr` listener. |
-| `outbounds` | yes | — | At least one `direct`, `blackhole`, `socks5`, or `nxr` transport. |
+| `inbounds` | yes | — | At least one strictly typed `vless` or internal `nxr` or `handoff` listener. |
+| `outbounds` | yes | — | At least one `direct`, `blackhole`, `socks5`, `nxr`, or `handoff` transport. |
 | `routing` | yes | — | Global rules and explicit per-UUID policy groups. |
 | `policy` | no | bounded production defaults | Admission, direct-dial, buffer, and Linux relay policy. |
 | `runtime` | no | `standard` | Process resource posture. |
@@ -135,7 +135,8 @@ dots, dashes, or underscores. `port` is `1..=65535`.
 ```
 
 The placeholder values above are intentionally not usable. Generate real state
-with `config generate standalone` or `config generate line`.
+with `config generate standalone`, `config generate line`, or `config generate
+handoff`.
 
 | Field | Required | Default / fixed value | Meaning and constraints |
 | --- | --- | --- | --- |

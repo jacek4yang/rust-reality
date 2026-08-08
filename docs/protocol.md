@@ -2,8 +2,8 @@
 
 English | [简体中文](protocol.zh-CN.md)
 
-`rust-reality` exposes exactly one public protocol stack and one internal
-hop protocol. This page summarizes what each is; the security properties and
+`rust-reality` exposes exactly one public protocol stack and two internal
+hop protocols. This page summarizes what each is; the security properties and
 trust boundaries are normative in [threat-model.md](threat-model.md).
 
 ## Public stack: VLESS + REALITY + Vision
@@ -12,7 +12,7 @@ trust boundaries are normative in [threat-model.md](threat-model.md).
 Xray-compatible client
   -> VLESS + REALITY + xtls-rprx-vision public listener
   -> UUID policy and routing on the server
-  -> direct | SOCKS5 | blackhole | NXR outbound
+  -> direct | SOCKS5 | blackhole | NXR | Handoff outbound
   -> destination
 ```
 
@@ -51,6 +51,7 @@ gate is described in [benchmarks.md](benchmarks.md).
   username/password authentication.
 - **blackhole**: bounded discard with an optional response delay.
 - **NXR**: forwards the flow to a landing node (below).
+- **Handoff**: transfers the whole session to a landing node (below).
 
 ## NXR: the internal line-to-landing hop
 
@@ -70,13 +71,32 @@ to the line node's fixed source IP, and the hop must be treated as plaintext:
 anyone who can observe it can observe payload that is not protected
 end-to-end (for example by HTTPS).
 
+## Handoff: the internal session-transfer hop
+
+Handoff is an internal session transfer, not a public protocol. After REALITY
+authentication, VLESS decode, and routing, the line node transfers the whole
+session — TLS record state, sequence numbers, Vision context, and pending
+bytes — to a landing node in one sealed, replay-protected message; the line
+node then relays the session's TLS ciphertext.
+
+The transfer is sealed with a fresh ephemeral X25519 exchange against the
+landing node's static key, mixed with an independent pair PSK in one
+HKDF-SHA256 chain under one ChaCha20-Poly1305 seal; a timestamp window and a
+bounded nonce cache are checked before any key-agreement work, and every
+failure closes silently with zero response bytes. On success the landing node
+reconstructs the session's TLS record layers, dials the transferred
+destination directly, and resumes the session. The landing node applies no
+routing policy to the transferred destination and holds live session keys, so
+its memory is part of the session's secrecy boundary. The Handoff listener
+must be reachable only from the line nodes' addresses.
+
 ## Trust boundaries in one paragraph
 
 The public listener resists unauthenticated protocol identification, active
 probing, ClientHello replay, malformed record input, and local resource
 exhaustion. Everything pre-authentication is bounded and secret-free in logs.
 The server operator still owns the cover-target choice, the firewall policy
-(especially for NXR), the VPS link (no application can absorb upstream
+(especially for NXR and Handoff), the VPS link (no application can absorb upstream
 volumetric DDoS), and endpoint compromise (REALITY does not make a
 compromised endpoint trustworthy). See [threat-model.md](threat-model.md)
 for the full model and the non-goals.

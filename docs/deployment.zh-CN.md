@@ -31,7 +31,7 @@ NXR 落地机。
 
 ```shell
 sha256sum --check SHA256SUMS
-tar -xzf rust-reality-v1.0.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 rust-reality --version
 ```
@@ -197,6 +197,48 @@ rust-reality config generate landing \
 
 保持时钟同步。默认 NXR 请求接受 30 秒误差并保留 nonce 120 秒；认证失败会在
 DNS 和目标连接之前关闭。
+
+## 线路机与 Handoff 落地机
+
+Handoff 把已接受会话的完整 TLS 所有权用一条密封且防重放的消息从线路机转移
+到落地机。与 NXR 不同，转移之后该跳只承载会话的 TLS 密文，但落地机持有每个
+已转移会话的活跃会话密钥。
+
+### 1. 一步生成两侧配置
+
+在可信主机执行：
+
+```shell
+rust-reality config generate handoff \
+  --server-address LINE_PUBLIC_ADDRESS \
+  --target www.microsoft.com:443 \
+  --server-name www.microsoft.com \
+  --landing-address LANDING_PRIVATE_ADDRESS \
+  --output-dir handoff/
+```
+
+该命令写出 `line.json`（用户路由到 handoff 出站的公网线路机）、
+`landing.json`（仅内部 Handoff 监听）和 `xray-client.json`。所有密钥材料
+独立生成——UUID、REALITY X25519 密钥对、一个 short ID、Handoff 预共享密钥
+和落地机静态 X25519 密钥对——且两份服务端配置在写出前均已通过校验。客户端
+UUID 和 REALITY 公钥打印到标准错误；Handoff PSK 和私钥只存在于两份服务端
+文件中。
+
+### 2. 部署并校验配置
+
+把 `line.json` 安装到线路机、`landing.json` 安装到落地机，各自按单机流程的
+[校验并安装](#4-验证并安装)步骤执行。落地配置只暴露内部 Handoff 监听，
+没有公网客户端身份。
+
+### 3. 强制 Handoff 防火墙边界
+
+启动落地服务前，只允许线路机的源地址访问 Handoff TCP 端口（默认 7443），并
+拒绝所有其他来源。建议云安全组和主机防火墙同时限制。这是硬性要求而非建议：
+落地机不对转移的目标应用路由策略，且持有活跃会话密钥，暴露在外的监听会让
+落地机变成任何可触达者的内部拨号器。
+
+保持时钟同步。默认转移接受 30 秒误差并预留 nonce 120 秒。任何转移失败都静默
+关闭、零响应字节，且线路机会重置客户端连接而不是在本地服务该会话。
 
 ## GeoIP 与 GeoSite
 
