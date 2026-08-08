@@ -462,6 +462,12 @@ pub struct HandoffInboundSettings {
     /// Absolute deadline for connecting to the transferred destination.
     #[serde(default = "default_handoff_connect_timeout_ms")]
     pub connect_timeout_ms: u64,
+    /// Optional outbound tag selecting how the landing reaches transferred
+    /// destinations. Absent means the landing dials directly; a tag must name
+    /// a `direct`, `socks5`, `nxr`, or `blackhole` outbound — never another
+    /// `handoff` outbound, so landings cannot be chained.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egress: Option<String>,
 }
 
 const fn default_handoff_time_difference_seconds() -> u64 {

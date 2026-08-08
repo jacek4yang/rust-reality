@@ -86,6 +86,7 @@ pub fn validate_config(config: &Config) -> Result<(), ConfigError> {
     let users = validate_inbounds(config)?;
     let outbounds = validate_outbounds(config)?;
     validate_routing(config, &users, &outbounds)?;
+    validate_handoff_egress(config)?;
     validate_handoff_key_independence(config)?;
     validate_policy(config)
 }
@@ -387,6 +388,41 @@ fn validate_handoff_inbound(path: &str, inbound: &HandoffInboundConfig) -> Resul
         &format!("{path}.settings.connectTimeoutMs"),
         settings.connect_timeout_ms,
     )
+}
+
+/// Enforces that a Handoff landing's egress selects a dialable outbound.
+///
+/// The egress tag must reference a configured outbound, and that outbound
+/// must not be `handoff`-typed: a landing that transferred its sessions onward
+/// would chain landings and recurse the transfer protocol, so direct, SOCKS5,
+/// NXR, and blackhole transports are the only dial targets a landing accepts.
+fn validate_handoff_egress(config: &Config) -> Result<(), ConfigError> {
+    for (index, inbound) in config.inbounds.iter().enumerate() {
+        let InboundConfig::Handoff(inbound) = inbound else {
+            continue;
+        };
+        let Some(egress) = &inbound.settings.egress else {
+            continue;
+        };
+        let path = format!("inbounds[{index}].settings.egress");
+        let outbound = config
+            .outbounds
+            .iter()
+            .find(|outbound| outbound.tag() == egress);
+        match outbound {
+            None => {
+                return fail(path, "must reference a configured outbound tag");
+            }
+            Some(OutboundConfig::Handoff { .. }) => {
+                return fail(
+                    path,
+                    "must not reference a handoff outbound; landing chaining is not supported",
+                );
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(())
 }
 
 /// Enforces Handoff key independence within one configuration file.
@@ -1310,6 +1346,7 @@ mod tests {
                     nonce_retention_seconds: 120,
                     authentication_timeout_ms: 3_000,
                     connect_timeout_ms: 10_000,
+                    egress: None,
                 },
             },
         ));
@@ -1326,6 +1363,104 @@ mod tests {
         });
 
         validate_config(&config).expect("handoff listener and outbound must validate");
+    }
+
+    fn handoff_landing_inbound(egress: Option<&str>) -> crate::config::InboundConfig {
+        let key = SecretString::new("WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo");
+        crate::config::InboundConfig::Handoff(crate::config::HandoffInboundConfig {
+            tag: "handoff-landing".to_owned(),
+            listen: "127.0.0.1".parse().expect("address must parse"),
+            port: 9444,
+            settings: crate::config::HandoffInboundSettings {
+                pre_shared_key: key.clone(),
+                private_key: key,
+                max_time_difference_seconds: 30,
+                max_nonce_entries: 4_096,
+                nonce_retention_seconds: 120,
+                authentication_timeout_ms: 3_000,
+                connect_timeout_ms: 10_000,
+                egress: egress.map(str::to_owned),
+            },
+        })
+    }
+
+    #[test]
+    fn rejects_handoff_egress_with_an_unknown_tag() {
+        let mut config = valid_config();
+        config
+            .inbounds
+            .push(handoff_landing_inbound(Some("missing")));
+
+        let error = validate_config(&config).expect_err("an unknown egress tag must fail");
+        assert_eq!(error.path(), "inbounds[1].settings.egress");
+        assert_eq!(error.message(), "must reference a configured outbound tag");
+    }
+
+    #[test]
+    fn rejects_handoff_egress_chaining_a_handoff_outbound() {
+        let mut config = valid_config();
+        config
+            .inbounds
+            .push(handoff_landing_inbound(Some("handoff-line")));
+        config.outbounds.push(OutboundConfig::Handoff {
+            tag: "handoff-line".to_owned(),
+            settings: crate::config::HandoffSettings {
+                address: "10.0.0.3".to_owned(),
+                port: 9444,
+                pre_shared_key: SecretString::new("WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo"),
+                landing_public_key: "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo".to_owned(),
+                connect_timeout_ms: 10_000,
+                first_byte_timeout_ms: 15_000,
+            },
+        });
+
+        let error = validate_config(&config)
+            .expect_err("a handoff-typed egress must fail: landings cannot be chained");
+        assert_eq!(error.path(), "inbounds[1].settings.egress");
+    }
+
+    #[test]
+    fn accepts_handoff_egress_to_dialable_outbounds() {
+        let key = SecretString::new("WVpZWVpZWVpZWVpZWVpZWVpZWVpZWVpZWVpZWVpZWVo");
+        for tag in ["direct", "block", "socks", "nxr-hop"] {
+            let mut config = valid_config();
+            config.inbounds.push(handoff_landing_inbound(Some(tag)));
+            config.outbounds.push(OutboundConfig::Socks5 {
+                tag: "socks".to_owned(),
+                settings: crate::config::Socks5Settings {
+                    address: "10.0.0.4".to_owned(),
+                    port: 1080,
+                    username: None,
+                    password: None,
+                },
+            });
+            config.outbounds.push(OutboundConfig::Nxr {
+                tag: "nxr-hop".to_owned(),
+                settings: crate::config::NxrSettings {
+                    address: "10.0.0.5".to_owned(),
+                    port: 9443,
+                    pre_shared_key: key.clone(),
+                },
+            });
+
+            validate_config(&config)
+                .unwrap_or_else(|error| panic!("egress to `{tag}` must validate: {error}"));
+        }
+    }
+
+    #[test]
+    fn handoff_inbound_settings_decode_without_egress() {
+        let settings: crate::config::HandoffInboundSettings = serde_json::from_str(
+            r#"{
+                "preSharedKey": "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo",
+                "privateKey": "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo"
+            }"#,
+        )
+        .expect("handoff inbound settings must decode");
+        assert_eq!(
+            settings.egress, None,
+            "a missing field must default to None"
+        );
     }
 
     #[test]
@@ -1420,6 +1555,7 @@ mod tests {
                     nonce_retention_seconds: 60,
                     authentication_timeout_ms: 3_000,
                     connect_timeout_ms: 10_000,
+                    egress: None,
                 },
             },
         ));
@@ -1465,6 +1601,7 @@ mod tests {
                     nonce_retention_seconds: 120,
                     authentication_timeout_ms: 3_000,
                     connect_timeout_ms: 10_000,
+                    egress: None,
                 },
             },
         ));
@@ -1524,6 +1661,7 @@ mod tests {
                     nonce_retention_seconds: 120,
                     authentication_timeout_ms: 3_000,
                     connect_timeout_ms: 10_000,
+                    egress: None,
                 },
             },
         ));

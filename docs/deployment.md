@@ -262,6 +262,14 @@ reserves nonces for 120 seconds. Every transfer failure closes silently with
 zero response bytes, and the line node resets the client socket rather than
 serving the session locally.
 
+By default the landing node dials every transferred destination directly. When
+the landing itself has no direct route — its destinations are reachable only
+through an upstream SOCKS5 proxy or a further NXR hop — set `settings.egress`
+on the Handoff inbound to the tag of that `socks5` or `nxr` outbound; a
+`blackhole` tag instead discards every transferred session after
+authentication. The tag must never reference a `handoff` outbound: landings
+cannot be chained.
+
 ## GeoIP and GeoSite
 
 Only HTTPS source URLs are required. Defaults point to community-compatible

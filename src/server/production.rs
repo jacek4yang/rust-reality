@@ -682,6 +682,7 @@ impl RuntimeSnapshot {
                         replay,
                         tcp_relay.clone(),
                         Duration::from_millis(config.policy.resource_governor.fallback_timeout_ms),
+                        vision.outbounds(),
                     )?)
                 }
             };
@@ -1385,7 +1386,9 @@ impl ConnectionRunError {
             Self::Vision(VisionSessionError::HandoffLine(_))
             | Self::Nxr(NxrLandingError::Destination(_) | NxrLandingError::Relay(_))
             | Self::Handoff(
-                HandoffLandingError::Destination(_) | HandoffLandingError::Session(_),
+                HandoffLandingError::Destination(_)
+                | HandoffLandingError::Egress(_)
+                | HandoffLandingError::Session(_),
             ) => RejectionReason::Outbound,
             Self::Nxr(_) | Self::Handoff(_) => RejectionReason::Authentication,
             Self::Vision(VisionSessionError::Relay(error)) if is_liveness_timeout_abort(error) => {

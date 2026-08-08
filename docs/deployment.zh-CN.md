@@ -240,6 +240,12 @@ UUID 和 REALITY 公钥打印到标准错误；Handoff PSK 和私钥只存在于
 保持时钟同步。默认转移接受 30 秒误差并预留 nonce 120 秒。任何转移失败都静默
 关闭、零响应字节，且线路机会重置客户端连接而不是在本地服务该会话。
 
+默认情况下落地机直接连接每个被转移的目标。当落地机本身没有直连路由——目标
+只能经由上游 SOCKS5 代理或再一跳 NXR 到达——在 Handoff 入站上把
+`settings.egress` 设为该 `socks5` 或 `nxr` 出站的 tag；若设为 `blackhole`
+tag，则每个已认证的转移会话都会被丢弃。该 tag 绝不能引用 `handoff` 出站：
+落地机不允许串联。
+
 ## GeoIP 与 GeoSite
 
 只需要 HTTPS URL。默认值已指向社区兼容文件，多数部署可完全省略 `assets`，

@@ -230,13 +230,15 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 | `settings.nonceRetentionSeconds` | 否 | `120` | 重放保留时间，从 `2 * maxTimeDifferenceSeconds + 1` 到 `86400`。 |
 | `settings.authenticationTimeoutMs` | 否 | `3000` | 读取一次有界密封转移消息的截止时间，`1..=600000`。 |
 | `settings.connectTimeoutMs` | 否 | `10000` | 认证成功后才开始的被转移目标连接截止时间，`1..=600000`。 |
+| `settings.egress` | 否 | 直接连接 | 选择落地机到达被转移目标所用出站的 tag。该 tag 必须引用 `direct`、`socks5`、`nxr` 或 `blackhole` 出站；引用 `handoff` 出站会被拒绝——落地机不允许串联。 |
 
 监听器对每条连接只验证一次单程转移—— fresh ephemeral X25519 对 `privateKey`
 做 Diffie-Hellman，与成对 PSK 混合后用 ChaCha20-Poly1305 以完整 transcript 为
 关联数据密封——顺序固定为：头部结构、时间戳窗口、nonce 在有界重放缓存中预留、
 密钥协商、AEAD 开封，最后是内部一致性检查。任何失败都在 DNS 和目标连接之前
-静默关闭，零响应字节。成功后监听器重建会话的 TLS 记录层，直接连接被转移的
-目标并恢复会话；此后该连接承载会话的原始 TLS 密文。
+静默关闭，零响应字节。成功后监听器重建会话的 TLS 记录层，连接被转移的
+目标——默认直接连接，或通过 `settings.egress` 选择的出站——并恢复会话；
+此后该连接承载会话的原始 TLS 密文。
 
 密钥独立性在同一配置文件内强制检查：Handoff `preSharedKey` 与任何 NXR
 `preSharedKey` 相同，或 Handoff `privateKey` 与任何 REALITY `privateKey` 相同，
@@ -641,7 +643,7 @@ generation，已有连接继续使用其获取的 generation。
 - VLESS 用户及 REALITY 认证/伪装状态；
 - 出站定义、路由组和规则；
 - 在重放容量/保留时间不变时，NXR 密钥、时钟窗口和 I/O 超时；
-- 在重放容量/保留时间不变时，Handoff 密钥材料、时钟窗口和超时。
+- 在重放容量/保留时间不变时，Handoff 密钥材料、时钟窗口、超时和 egress 出站选择。
 
 必须重启：
 
