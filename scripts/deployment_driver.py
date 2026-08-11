@@ -321,6 +321,41 @@ def dump_json(config, path):
         fh.write("\n")
 
 
+def clients_with_owned_short_ids(base_client, uuids, email_prefix=None):
+    """Build replacement VLESS clients without losing short-ID ownership.
+
+    Keep the generated base client's IDs on the first (measured) UUID so the
+    shell harness can reuse its generated client environment. Added UUIDs get
+    one deterministic, unique 16-hex-character ID each.
+    """
+    base_short_ids = base_client.get("shortIds")
+    if not isinstance(base_short_ids, list) or not base_short_ids:
+        raise SystemExit("base VLESS client must contain at least one shortIds entry")
+    used = {short_id.lower() for short_id in base_short_ids}
+    clients = []
+    for index, uuid in enumerate(uuids):
+        if index == 0:
+            short_ids = list(base_short_ids)
+        else:
+            for salt in range(256):
+                short_id = hashlib.sha256(f"{uuid}:{salt}".encode()).hexdigest()[:16]
+                if short_id.lower() not in used:
+                    break
+            else:
+                raise SystemExit("could not derive a unique short ID for VLESS client")
+            short_ids = [short_id]
+        used.update(short_id.lower() for short_id in short_ids)
+        client = {
+            "id": uuid,
+            "shortIds": short_ids,
+            "flow": "xtls-rprx-vision",
+        }
+        if email_prefix is not None:
+            client["email"] = f"{email_prefix}-{index}"
+        clients.append(client)
+    return clients
+
+
 def gen_routing_config(args):
     """Routing correctness proof config: 4 UUIDs in 2 groups, direct +
     blackhole + fixed-target socks5 outbounds, global and per-group rules
@@ -330,10 +365,10 @@ def gen_routing_config(args):
     uuids = [u.strip() for u in args.uuids.split(",")]
     if len(uuids) != 4:
         raise SystemExit("exactly four UUIDs required")
-    config["inbounds"][0]["settings"]["clients"] = [
-        {"id": u, "email": f"proof-{i}", "flow": "xtls-rprx-vision"}
-        for i, u in enumerate(uuids)
-    ]
+    settings = config["inbounds"][0]["settings"]
+    settings["clients"] = clients_with_owned_short_ids(
+        settings["clients"][0], uuids, email_prefix="proof"
+    )
     config["outbounds"] = [
         {"protocol": "direct", "tag": "direct"},
         {"protocol": "blackhole", "tag": "block", "settings": {"responseDelayMs": 0}},
@@ -460,9 +495,8 @@ def gen_scale_config(args):
     if len(uuids) != args.uuids:
         raise SystemExit(f"uuid file must hold exactly {args.uuids} UUIDs")
     measured, bulk = uuids[0], uuids[1:]
-    config["inbounds"][0]["settings"]["clients"] = [
-        {"id": u, "flow": "xtls-rprx-vision"} for u in uuids
-    ]
+    settings = config["inbounds"][0]["settings"]
+    settings["clients"] = clients_with_owned_short_ids(settings["clients"][0], uuids)
     config["outbounds"] = [
         {"protocol": "direct", "tag": "direct"},
         {"protocol": "blackhole", "tag": "block", "settings": {"responseDelayMs": 0}},

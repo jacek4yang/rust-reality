@@ -19,6 +19,9 @@ const MAX_INNER_PLAINTEXT_LEN: usize = MAX_PLAINTEXT_LEN + 1;
 const MAX_CIPHERTEXT_LEN: usize = MAX_INNER_PLAINTEXT_LEN + TAG_LEN;
 const AES_GCM_RECORD_LIMIT: u64 = 1 << 24;
 
+/// Header, authenticated inner content type, and AEAD tag around an unpadded record.
+pub(crate) const UNPADDED_RECORD_WIRE_OVERHEAD: usize = HEADER_LEN + 1 + TAG_LEN;
+
 /// Wire capacity of one record slot: header + maximum inner plaintext + tag.
 pub(crate) const RECORD_SLOT_WIRE_CAPACITY: usize = HEADER_LEN + MAX_INNER_PLAINTEXT_LEN + TAG_LEN;
 

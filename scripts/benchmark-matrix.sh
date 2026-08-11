@@ -56,7 +56,12 @@
 # KEEP_WORK (0), SAMPLES, SAMPLES_LARGE, PAYLOADS, CONCURRENCIES,
 # LARGE_PAYLOAD_MIB (512), LARGE_CONCURRENCIES ("1 32"), INTEGRITY_MIB (2048),
 # ORIGIN_IMPL (go|python; go falls back to python when go is unavailable),
-# RUST_REALITY_BASELINE_COMMIT (override baseline SHA detection).
+# RUST_REALITY_BASELINE_COMMIT (override baseline SHA detection),
+# RUST_REALITY_COMMIT (source SHA for the candidate),
+# RUST_REALITY_BASELINE_SHA256/RUST_REALITY_SHA256/XRAY_SHA256 (expected binary
+# hashes), REQUIRE_PINNED_BINARIES=1 (require all three expected hashes),
+# RUST_REALITY_BUILD_PROFILE and RUST_REALITY_BUILD_FEATURES (recorded build
+# identity; default "unknown-prebuilt").
 #
 # Output in OUT_DIR: samples.jsonl (one record per individual sample),
 # summary.json (per-cell p50/p95/p99 + ratios), environment.json.
@@ -109,7 +114,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for program in curl jq openssl python3; do
+for program in curl jq openssl python3 sha256sum; do
     if ! command -v "$program" >/dev/null 2>&1; then
         echo "required program is unavailable: $program" >&2
         exit 1
@@ -124,6 +129,43 @@ done
 if [[ ! -x $rust_bin ]]; then
     cargo build --release --locked
 fi
+
+sha256_file() {
+    sha256sum -- "$1" | awk '{print $1}'
+}
+
+baseline_binary_sha256=$(sha256_file "$baseline_bin")
+rust_binary_sha256=$(sha256_file "$rust_bin")
+xray_binary_sha256=$(sha256_file "$xray")
+require_pinned_binaries=${REQUIRE_PINNED_BINARIES:-0}
+if [[ $require_pinned_binaries != 0 && $require_pinned_binaries != 1 ]]; then
+    echo "REQUIRE_PINNED_BINARIES must be 0 or 1" >&2
+    exit 1
+fi
+verify_binary_sha256() {
+    local label=$1
+    local actual=$2
+    local expected=$3
+    if [[ -z $expected ]]; then
+        if [[ $require_pinned_binaries == 1 ]]; then
+            echo "${label} expected SHA-256 is required when REQUIRE_PINNED_BINARIES=1" >&2
+            exit 1
+        fi
+        return
+    fi
+    if [[ ! $expected =~ ^[0-9a-fA-F]{64}$ ]]; then
+        echo "${label} expected SHA-256 is not 64 hexadecimal characters" >&2
+        exit 1
+    fi
+    if [[ ${expected,,} != "$actual" ]]; then
+        echo "${label} SHA-256 mismatch: expected ${expected,,}, got $actual" >&2
+        exit 1
+    fi
+}
+verify_binary_sha256 baseline "$baseline_binary_sha256" "${RUST_REALITY_BASELINE_SHA256:-}"
+verify_binary_sha256 candidate "$rust_binary_sha256" "${RUST_REALITY_SHA256:-}"
+verify_binary_sha256 xray "$xray_binary_sha256" "${XRAY_SHA256:-}"
+
 origin_impl=${ORIGIN_IMPL:-go}
 case $origin_impl in
     go)
@@ -506,6 +548,11 @@ wait_port "$https_port"
 # --------------------------------------------------------------------------
 
 commit=$(git rev-parse HEAD)
+git_describe=$(git describe --tags --always --dirty)
+candidate_commit=${RUST_REALITY_COMMIT:-$commit}
+build_profile=${RUST_REALITY_BUILD_PROFILE:-unknown-prebuilt}
+build_features=${RUST_REALITY_BUILD_FEATURES:-unknown-prebuilt}
+cargo_lock_sha256=$(sha256_file Cargo.lock)
 baseline_commit=${RUST_REALITY_BASELINE_COMMIT:-}
 if [[ -z $baseline_commit ]]; then
     baseline_commit=$(basename "$baseline_bin" | sed -n 's/.*[^0-9a-f]\([0-9a-f]\{7,40\}\)$/\1/p')
@@ -537,10 +584,20 @@ jq -n \
     --arg cells "$cells_filter" \
     --arg skip "$skip_filter" \
     --arg commit "$commit" \
+    --arg git_describe "$git_describe" \
+    --arg candidate_commit "$candidate_commit" \
     --arg baseline_commit "$baseline_commit" \
     --arg baseline_bin "$baseline_bin" \
+    --arg baseline_binary_sha256 "$baseline_binary_sha256" \
     --arg rust_bin "$rust_bin" \
+    --arg rust_binary_sha256 "$rust_binary_sha256" \
     --arg xray "$xray" \
+    --arg xray_binary_sha256 "$xray_binary_sha256" \
+    --arg cargo_lock_sha256 "$cargo_lock_sha256" \
+    --arg build_profile "$build_profile" \
+    --arg build_features "$build_features" \
+    --arg rust_log_level "$rust_log_level" \
+    --argjson binaries_pinned "$require_pinned_binaries" \
     --arg cover_target "$cover_target" \
     --arg cover_sni "$cover_sni" \
     --arg nic_interface "$nic_interface" \
@@ -573,10 +630,20 @@ jq -n \
       cells: $cells,
       skip: $skip,
       commit: $commit,
+      git_describe: $git_describe,
+      candidate_commit: $candidate_commit,
       baseline_commit: $baseline_commit,
       baseline_bin: $baseline_bin,
+      baseline_binary_sha256: $baseline_binary_sha256,
       rust_bin: $rust_bin,
+      rust_binary_sha256: $rust_binary_sha256,
       xray: $xray,
+      xray_binary_sha256: $xray_binary_sha256,
+      cargo_lock_sha256: $cargo_lock_sha256,
+      build_profile: $build_profile,
+      build_features: $build_features,
+      rust_log_level: $rust_log_level,
+      binaries_pinned: ($binaries_pinned == 1),
       cover_target: $cover_target,
       cover_sni: $cover_sni,
       nic_interface: $nic_interface,
@@ -1228,6 +1295,13 @@ if integrity_mib > 0:
                 problems.append("sha256 mismatch between origin and received payload")
         except Exception as error:
             problems.append(str(error))
+        finally:
+            try:
+                os.remove(received_path)
+            except FileNotFoundError:
+                pass
+            except OSError as error:
+                problems.append(f"failed to remove integrity output: {error}")
         time.sleep(0.25)
         events = rust_events_for(impl_name, "direct-download")
         if events is not None:
@@ -1330,6 +1404,28 @@ summary = {
     "harness": "benchmark-matrix",
     "seed": seed_text,
     "commit": commit,
+    "identity": {
+        "repositoryHead": commit,
+        "repositoryDescribe": cfg["git_describe"],
+        "candidateCommit": cfg["candidate_commit"],
+        "baselineCommit": cfg["baseline_commit"],
+        "cargoLockSha256": cfg["cargo_lock_sha256"],
+        "binariesPinned": cfg["binaries_pinned"],
+        "binaries": {
+            "baseline": {
+                "path": cfg["baseline_bin"],
+                "sha256": cfg["baseline_binary_sha256"],
+            },
+            "final": {
+                "path": cfg["rust_bin"],
+                "sha256": cfg["rust_binary_sha256"],
+            },
+            "xray": {"path": cfg["xray"], "sha256": cfg["xray_binary_sha256"]},
+        },
+        "releaseProfile": cfg["build_profile"],
+        "featureSet": cfg["build_features"],
+        "logging": cfg["rust_log_level"],
+    },
     "startedUtc": started_utc,
     "wallSeconds": time.perf_counter() - run_started,
     "plan": {
@@ -1390,17 +1486,34 @@ environment = {
         "unknown",
     ),
     "cpuCount": os.cpu_count(),
-    "rustcVersion": command_output(["rustc", "--version"]),
+    "captureHostTools": {
+        "rustc": command_output(["rustc", "--version"]),
+        "rustcVerbose": command_output(["rustc", "-Vv"]),
+        "cc": command_output(["cc", "--version"]).splitlines()[0],
+    },
     "xrayVersion": (lambda output: output.splitlines()[0] if output != "unknown" else output)(
         command_output([cfg["xray"], "version"])
     ),
-    "finalCommit": commit,
+    "repositoryHead": commit,
+    "repositoryDescribe": cfg["git_describe"],
+    "finalCommit": cfg["candidate_commit"],
     "baselineCommit": cfg["baseline_commit"],
     "binaries": {
-        "baseline": cfg["baseline_bin"],
-        "final": cfg["rust_bin"],
-        "xray": cfg["xray"],
+        "baseline": {
+            "path": cfg["baseline_bin"],
+            "sha256": cfg["baseline_binary_sha256"],
+        },
+        "final": {
+            "path": cfg["rust_bin"],
+            "sha256": cfg["rust_binary_sha256"],
+        },
+        "xray": {"path": cfg["xray"], "sha256": cfg["xray_binary_sha256"]},
     },
+    "binariesPinned": cfg["binaries_pinned"],
+    "cargoLockSha256": cfg["cargo_lock_sha256"],
+    "releaseProfile": cfg["build_profile"],
+    "featureSet": cfg["build_features"],
+    "logging": cfg["rust_log_level"],
     "nic": {"interface": cfg["nic_interface"], "speed": cfg["nic_speed"]},
     "rlimitNofile": {"soft": soft_limit, "hard": hard_limit},
     "realityCover": {"target": cfg["cover_target"], "serverName": cfg["cover_sni"]},

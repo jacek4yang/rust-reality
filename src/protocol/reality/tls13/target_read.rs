@@ -7,13 +7,28 @@ use tokio::{
 
 use crate::protocol::reality::ClientHello;
 
-use super::{ServerHelloError, ServerHelloTemplate};
+use super::{MAX_TLS13_CIPHERTEXT_LEN, ServerHelloError, ServerHelloTemplate};
 
 const TLS_RECORD_HEADER_LEN: usize = 5;
+const TLS_CONTENT_TYPE_CHANGE_CIPHER_SPEC: u8 = 20;
 const TLS_CONTENT_TYPE_HANDSHAKE: u8 = 22;
+const TLS_CONTENT_TYPE_APPLICATION_DATA: u8 = 23;
 const TLS_LEGACY_RECORD_VERSION: [u8; 2] = [3, 3];
 const MAX_TLS_PLAINTEXT_BYTES: usize = 16 * 1024;
 const READ_SCRATCH_BYTES: usize = 4 * 1024;
+const COALESCED_COVER_RECORD_THRESHOLD: usize = 512;
+
+/// Bounded cover-derived policy for the encrypted server handshake records.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CoverHandshakeRecordShape {
+    /// The four generated messages share one record padded to the cover's wire length.
+    Coalesced { wire_len: usize },
+    /// The four generated messages use the cover's four positional outer lengths.
+    ///
+    /// Cover ciphertext does not reveal its inner message boundaries; the
+    /// positional association is an intentionally bounded policy inference.
+    PositionalRecords { wire_lens: [usize; 4] },
+}
 
 /// A validated target ServerHello and its exact plaintext TLS record.
 #[derive(Debug)]
@@ -42,7 +57,22 @@ impl TargetServerHelloRead {
     }
 }
 
-/// Category of a bounded target ServerHello read failure.
+/// Validated target presentation plus its bounded post-ServerHello record shape.
+#[derive(Debug)]
+pub(crate) struct TargetServerFlightRead {
+    template: ServerHelloTemplate,
+    shape: CoverHandshakeRecordShape,
+    wire_prefix: Vec<u8>,
+}
+
+impl TargetServerFlightRead {
+    /// Separates the template, cover-derived shape, and exact consumed bytes.
+    pub(crate) fn into_parts(self) -> (ServerHelloTemplate, CoverHandshakeRecordShape, Vec<u8>) {
+        (self.template, self.shape, self.wire_prefix)
+    }
+}
+
+/// Category of a bounded target TLS server-flight read failure.
 #[derive(Debug)]
 pub enum TargetServerHelloReadErrorKind {
     /// The absolute read deadline elapsed.
@@ -51,7 +81,7 @@ pub enum TargetServerHelloReadErrorKind {
     UnexpectedEof,
     /// Socket input failed.
     Io(io::Error),
-    /// The plaintext record exceeded the TLS limit or was empty.
+    /// A declared record exceeded the applicable TLS limit or was empty.
     RecordTooLarge,
     /// The first target record was not a TLS 1.3 ServerHello record.
     UnexpectedRecord,
@@ -62,14 +92,14 @@ pub enum TargetServerHelloReadErrorKind {
 impl fmt::Display for TargetServerHelloReadErrorKind {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Timeout => formatter.write_str("target TLS ServerHello read timed out"),
-            Self::UnexpectedEof => formatter.write_str("target closed during TLS ServerHello"),
-            Self::Io(_) => formatter.write_str("target TLS ServerHello socket read failed"),
+            Self::Timeout => formatter.write_str("target TLS server-flight read timed out"),
+            Self::UnexpectedEof => formatter.write_str("target closed during TLS server flight"),
+            Self::Io(_) => formatter.write_str("target TLS server-flight socket read failed"),
             Self::RecordTooLarge => {
-                formatter.write_str("target TLS ServerHello record is too large")
+                formatter.write_str("target TLS server-flight record length is invalid")
             }
             Self::UnexpectedRecord => {
-                formatter.write_str("target did not begin with a TLS 1.3 ServerHello record")
+                formatter.write_str("target TLS server-flight record sequence is invalid")
             }
             Self::Invalid(source) => source.fmt(formatter),
         }
@@ -148,6 +178,17 @@ where
     let Some(deadline) = Instant::now().checked_add(timeout) else {
         return Err(failure(TargetServerHelloReadErrorKind::Timeout, Vec::new()));
     };
+    read_target_server_hello_until(reader, client, deadline).await
+}
+
+async fn read_target_server_hello_until<R>(
+    reader: &mut R,
+    client: &ClientHello,
+    deadline: Instant,
+) -> Result<TargetServerHelloRead, TargetServerHelloReadError>
+where
+    R: AsyncRead + Unpin,
+{
     let mut wire_record = Vec::with_capacity(512);
     if let Err(kind) =
         read_exact_to(reader, &mut wire_record, TLS_RECORD_HEADER_LEN, deadline).await
@@ -205,6 +246,176 @@ where
     })
 }
 
+/// Reads the cover-derived encrypted-handshake record plan under one deadline.
+///
+/// This follows stock Xray's measured 512-wire-byte adaptive branch policy. A
+/// larger first encrypted record selects one coalesced generated record; its
+/// header and first body byte are consumed before accepting the shape. Otherwise
+/// exactly four positional encrypted records are consumed. Rust's existing TLS
+/// 1.3 record limit remains authoritative rather than copying Xray's internal
+/// observation-buffer size. Every consumed byte is retained for byte-exact
+/// fallback.
+pub(crate) async fn read_target_server_flight<R>(
+    reader: &mut R,
+    client: &ClientHello,
+    timeout: Duration,
+) -> Result<TargetServerFlightRead, TargetServerHelloReadError>
+where
+    R: AsyncRead + Unpin,
+{
+    let Some(deadline) = Instant::now().checked_add(timeout) else {
+        return Err(failure(TargetServerHelloReadErrorKind::Timeout, Vec::new()));
+    };
+    let hello = read_target_server_hello_until(reader, client, deadline).await?;
+    let (template, mut wire_prefix) = hello.into_parts();
+
+    if let Err(kind) = read_change_cipher_spec(reader, &mut wire_prefix, deadline).await {
+        return Err(failure(kind, wire_prefix));
+    }
+
+    let first_start = wire_prefix.len();
+    let first_wire_len = match read_encrypted_header(reader, &mut wire_prefix, deadline).await {
+        Ok(wire_len) => wire_len,
+        Err(kind) => return Err(failure(kind, wire_prefix)),
+    };
+    if first_wire_len > COALESCED_COVER_RECORD_THRESHOLD {
+        // Xray does not classify a header-only response as a usable cover
+        // flight: at least one declared ciphertext byte must have arrived.
+        // Stop immediately after that byte so fallback can replay this exact
+        // prefix and relay the unread body without buffering the large record.
+        let Some(first_body_byte_end) = first_start.checked_add(TLS_RECORD_HEADER_LEN + 1) else {
+            return Err(failure(
+                TargetServerHelloReadErrorKind::RecordTooLarge,
+                wire_prefix,
+            ));
+        };
+        if let Err(kind) =
+            read_exact_to(reader, &mut wire_prefix, first_body_byte_end, deadline).await
+        {
+            return Err(failure(kind, wire_prefix));
+        }
+        return Ok(TargetServerFlightRead {
+            template,
+            shape: CoverHandshakeRecordShape::Coalesced {
+                wire_len: first_wire_len,
+            },
+            wire_prefix,
+        });
+    }
+
+    if let Err(kind) = read_record_body(
+        reader,
+        &mut wire_prefix,
+        first_start,
+        first_wire_len,
+        deadline,
+    )
+    .await
+    {
+        return Err(failure(kind, wire_prefix));
+    }
+    let mut wire_lens = [0_usize; 4];
+    wire_lens[0] = first_wire_len;
+    for wire_len in wire_lens.iter_mut().skip(1) {
+        let record_start = wire_prefix.len();
+        *wire_len = match read_encrypted_header(reader, &mut wire_prefix, deadline).await {
+            Ok(wire_len) => wire_len,
+            Err(kind) => return Err(failure(kind, wire_prefix)),
+        };
+        if let Err(kind) =
+            read_record_body(reader, &mut wire_prefix, record_start, *wire_len, deadline).await
+        {
+            return Err(failure(kind, wire_prefix));
+        }
+    }
+
+    Ok(TargetServerFlightRead {
+        template,
+        shape: CoverHandshakeRecordShape::PositionalRecords { wire_lens },
+        wire_prefix,
+    })
+}
+
+async fn read_change_cipher_spec<R>(
+    reader: &mut R,
+    wire_prefix: &mut Vec<u8>,
+    deadline: Instant,
+) -> Result<(), TargetServerHelloReadErrorKind>
+where
+    R: AsyncRead + Unpin,
+{
+    let record_start = wire_prefix.len();
+    let (outer_type, wire_len) = read_record_header(reader, wire_prefix, deadline).await?;
+    if outer_type != TLS_CONTENT_TYPE_CHANGE_CIPHER_SPEC || wire_len != TLS_RECORD_HEADER_LEN + 1 {
+        return Err(TargetServerHelloReadErrorKind::UnexpectedRecord);
+    }
+    read_record_body(reader, wire_prefix, record_start, wire_len, deadline).await?;
+    if wire_prefix.get(record_start + TLS_RECORD_HEADER_LEN) != Some(&1) {
+        return Err(TargetServerHelloReadErrorKind::UnexpectedRecord);
+    }
+    Ok(())
+}
+
+async fn read_encrypted_header<R>(
+    reader: &mut R,
+    wire_prefix: &mut Vec<u8>,
+    deadline: Instant,
+) -> Result<usize, TargetServerHelloReadErrorKind>
+where
+    R: AsyncRead + Unpin,
+{
+    let (outer_type, wire_len) = read_record_header(reader, wire_prefix, deadline).await?;
+    if outer_type != TLS_CONTENT_TYPE_APPLICATION_DATA {
+        return Err(TargetServerHelloReadErrorKind::UnexpectedRecord);
+    }
+    Ok(wire_len)
+}
+
+async fn read_record_header<R>(
+    reader: &mut R,
+    wire_prefix: &mut Vec<u8>,
+    deadline: Instant,
+) -> Result<(u8, usize), TargetServerHelloReadErrorKind>
+where
+    R: AsyncRead + Unpin,
+{
+    let record_start = wire_prefix.len();
+    let header_end = record_start
+        .checked_add(TLS_RECORD_HEADER_LEN)
+        .ok_or(TargetServerHelloReadErrorKind::RecordTooLarge)?;
+    read_exact_to(reader, wire_prefix, header_end, deadline).await?;
+    let header = wire_prefix
+        .get(record_start..header_end)
+        .ok_or(TargetServerHelloReadErrorKind::UnexpectedEof)?;
+    if header[1..3] != TLS_LEGACY_RECORD_VERSION {
+        return Err(TargetServerHelloReadErrorKind::UnexpectedRecord);
+    }
+    let body_len = usize::from(u16::from_be_bytes([header[3], header[4]]));
+    if body_len == 0 || body_len > MAX_TLS13_CIPHERTEXT_LEN {
+        return Err(TargetServerHelloReadErrorKind::RecordTooLarge);
+    }
+    let wire_len = TLS_RECORD_HEADER_LEN
+        .checked_add(body_len)
+        .ok_or(TargetServerHelloReadErrorKind::RecordTooLarge)?;
+    Ok((header[0], wire_len))
+}
+
+async fn read_record_body<R>(
+    reader: &mut R,
+    wire_prefix: &mut Vec<u8>,
+    record_start: usize,
+    wire_len: usize,
+    deadline: Instant,
+) -> Result<(), TargetServerHelloReadErrorKind>
+where
+    R: AsyncRead + Unpin,
+{
+    let record_end = record_start
+        .checked_add(wire_len)
+        .ok_or(TargetServerHelloReadErrorKind::RecordTooLarge)?;
+    read_exact_to(reader, wire_prefix, record_end, deadline).await
+}
+
 async fn read_exact_to<R>(
     reader: &mut R,
     output: &mut Vec<u8>,
@@ -215,6 +426,11 @@ where
     R: AsyncRead + Unpin,
 {
     let mut scratch = [0_u8; READ_SCRATCH_BYTES];
+    if output.capacity() < target_len {
+        output
+            .try_reserve_exact(target_len.saturating_sub(output.len()))
+            .map_err(|_| TargetServerHelloReadErrorKind::RecordTooLarge)?;
+    }
     while output.len() < target_len {
         let remaining = target_len.saturating_sub(output.len());
         let read_len = remaining.min(scratch.len());
@@ -248,7 +464,10 @@ mod tests {
 
     use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
 
-    use super::{TargetServerHelloReadErrorKind, read_target_server_hello};
+    use super::{
+        CoverHandshakeRecordShape, TargetServerHelloReadErrorKind, read_target_server_flight,
+        read_target_server_hello,
+    };
     use crate::protocol::reality::{
         ClientHello, SESSION_ID_LEN, X25519_GROUP, client_hello::fixtures,
     };
@@ -356,6 +575,162 @@ mod tests {
         assert_eq!(reader.position, header.len());
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn coalesced_shape_consumes_the_header_and_first_body_byte() {
+        let client = client();
+        let server_hello = target_record(&[0x55; 32]);
+        let ccs = [20, 3, 3, 0, 1, 1];
+        let encrypted = opaque_record(23, 600, 0xa5);
+        let expected_prefix_len = server_hello.len() + ccs.len() + 6;
+        let mut input = server_hello.clone();
+        input.extend_from_slice(&ccs);
+        input.extend_from_slice(&encrypted);
+        let mut reader = OneByteReader {
+            bytes: input.clone(),
+            position: 0,
+        };
+
+        let read = read_target_server_flight(&mut reader, &client, Duration::from_secs(1))
+            .await
+            .expect("large first encrypted record must select coalescing");
+        let (_, shape, prefix) = read.into_parts();
+
+        assert_eq!(
+            shape,
+            CoverHandshakeRecordShape::Coalesced { wire_len: 605 }
+        );
+        assert_eq!(prefix, input[..expected_prefix_len]);
+        assert_eq!(reader.position, expected_prefix_len);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn coalesced_header_without_a_body_byte_times_out_with_exact_prefix() {
+        let client = client();
+        let mut prefix = target_record(&[0x55; 32]);
+        prefix.extend_from_slice(&[20, 3, 3, 0, 1, 1]);
+        prefix.extend_from_slice(&[23, 3, 3, 2, 88]);
+        let (mut local, mut remote) = tokio::io::duplex(2_048);
+        remote
+            .write_all(&prefix)
+            .await
+            .expect("header-only target flight must be written");
+
+        let error = read_target_server_flight(&mut local, &client, Duration::from_millis(20))
+            .await
+            .expect_err("a declared coalesced record must contain ciphertext");
+
+        assert!(matches!(
+            error.kind(),
+            TargetServerHelloReadErrorKind::Timeout
+        ));
+        assert_eq!(error.fallback_prefix(), prefix);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn invalid_change_cipher_spec_retains_the_exact_consumed_prefix() {
+        let client = client();
+        let mut input = target_record(&[0x55; 32]);
+        input.extend_from_slice(&[20, 3, 3, 0, 1, 2]);
+        let mut reader = OneByteReader {
+            bytes: input.clone(),
+            position: 0,
+        };
+
+        let error = read_target_server_flight(&mut reader, &client, Duration::from_secs(1))
+            .await
+            .expect_err("invalid CCS content must be rejected");
+
+        assert!(matches!(
+            error.kind(),
+            TargetServerHelloReadErrorKind::UnexpectedRecord
+        ));
+        assert_eq!(error.fallback_prefix(), input);
+        assert_eq!(reader.position, input.len());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn positional_shape_consumes_exactly_four_encrypted_records() {
+        let client = client();
+        let mut input = target_record(&[0x55; 32]);
+        input.extend_from_slice(&[20, 3, 3, 0, 1, 1]);
+        let body_lens = [32_usize, 208, 89, 53];
+        for (index, body_len) in body_lens.into_iter().enumerate() {
+            input.extend_from_slice(&opaque_record(23, body_len, index as u8));
+        }
+        let expected_prefix_len = input.len();
+        input.extend_from_slice(&opaque_record(23, 24, 0xff));
+        let mut reader = OneByteReader {
+            bytes: input.clone(),
+            position: 0,
+        };
+
+        let read = read_target_server_flight(&mut reader, &client, Duration::from_secs(1))
+            .await
+            .expect("four small encrypted records must be read positionally");
+        let (_, shape, prefix) = read.into_parts();
+
+        assert_eq!(
+            shape,
+            CoverHandshakeRecordShape::PositionalRecords {
+                wire_lens: [37, 213, 94, 58],
+            }
+        );
+        assert_eq!(prefix, input[..expected_prefix_len]);
+        assert_eq!(reader.position, expected_prefix_len);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn positional_timeout_retains_the_exact_partial_record() {
+        let client = client();
+        let mut prefix = target_record(&[0x55; 32]);
+        prefix.extend_from_slice(&[20, 3, 3, 0, 1, 1]);
+        prefix.extend_from_slice(&opaque_record(23, 32, 0x01));
+        prefix.extend_from_slice(&[23, 3, 3, 0, 64, 0xaa, 0xbb, 0xcc]);
+        let (mut local, mut remote) = tokio::io::duplex(2_048);
+        remote
+            .write_all(&prefix)
+            .await
+            .expect("partial target flight must be written");
+
+        let error = read_target_server_flight(&mut local, &client, Duration::from_millis(20))
+            .await
+            .expect_err("partial positional record must time out");
+
+        assert!(matches!(
+            error.kind(),
+            TargetServerHelloReadErrorKind::Timeout
+        ));
+        assert_eq!(error.fallback_prefix(), prefix);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn every_positional_flight_truncation_retains_the_exact_prefix() {
+        let client = client();
+        let mut complete = target_record(&[0x55; 32]);
+        complete.extend_from_slice(&[20, 3, 3, 0, 1, 1]);
+        for (index, body_len) in [32_usize, 48, 64, 40].into_iter().enumerate() {
+            complete.extend_from_slice(&opaque_record(23, body_len, index as u8));
+        }
+
+        for cutoff in 0..complete.len() {
+            let expected = complete[..cutoff].to_vec();
+            let mut reader = OneByteReader {
+                bytes: expected.clone(),
+                position: 0,
+            };
+            let error = read_target_server_flight(&mut reader, &client, Duration::from_secs(1))
+                .await
+                .expect_err("every truncated flight must fail closed");
+
+            assert!(matches!(
+                error.kind(),
+                TargetServerHelloReadErrorKind::UnexpectedEof
+            ));
+            assert_eq!(error.fallback_prefix(), expected);
+            assert_eq!(reader.position, cutoff);
+        }
+    }
+
     fn client() -> ClientHello {
         ClientHello::parse_message(&fixtures::client_hello_with_key_share(
             [0x44; 32],
@@ -407,6 +782,17 @@ mod tests {
                 .to_be_bytes(),
         );
         record.extend_from_slice(&message);
+        record
+    }
+
+    fn opaque_record(content_type: u8, body_len: usize, fill: u8) -> Vec<u8> {
+        let mut record = vec![content_type, 3, 3];
+        record.extend_from_slice(
+            &u16::try_from(body_len)
+                .expect("test record body must fit")
+                .to_be_bytes(),
+        );
+        record.resize(5 + body_len, fill);
         record
     }
 

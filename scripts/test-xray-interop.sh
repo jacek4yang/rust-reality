@@ -3,6 +3,7 @@ set -euo pipefail
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 xray=${XRAY_BIN:-xray}
+rust_bin=${RUST_REALITY_BIN:-}
 cover_target=${COVER_TARGET:-www.microsoft.com:443}
 cover_sni=${COVER_SNI:-www.microsoft.com}
 internet_url=${INTERNET_URL:-https://www.bing.com/}
@@ -25,12 +26,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for program in "$xray" cargo curl jq python3 sha256sum; do
+unset ALL_PROXY HTTP_PROXY HTTPS_PROXY NO_PROXY all_proxy http_proxy https_proxy no_proxy
+
+for program in "$xray" curl jq python3 sha256sum; do
     if ! command -v "$program" >/dev/null 2>&1; then
         echo "required program is unavailable: $program" >&2
         exit 1
     fi
 done
+if [[ -z $rust_bin ]] && ! command -v cargo >/dev/null 2>&1; then
+    echo "required program is unavailable: cargo" >&2
+    exit 1
+fi
 
 free_port() {
     python3 - <<'PY'
@@ -60,13 +67,18 @@ PY
 }
 
 cd "$repository"
-cargo build --release --locked
+if [[ -z $rust_bin ]]; then
+    cargo build --release --locked
+    rust_bin=target/release/rust-reality
+fi
+[[ -x $rust_bin ]] || { echo "rust-reality binary is not executable: $rust_bin" >&2; exit 1; }
+rust_bin=$(readlink -f "$rust_bin")
 
 server_port=$(free_port)
 socks_port=$(free_port)
 http_port=$(free_port)
 
-target/release/rust-reality config generate \
+"$rust_bin" config generate \
     standalone \
     --listen 127.0.0.1 \
     --port "$server_port" \
@@ -81,7 +93,7 @@ jq --arg cache "$work/assets" \
     '.assets.cacheDirectory = $cache | .assets.requestTimeoutSeconds = 15' \
     "$work/server.raw.json" >"$work/server.json"
 
-target/release/rust-reality serve --config "$work/server.json" \
+"$rust_bin" serve --config "$work/server.json" \
     >"$work/rust.log" 2>&1 &
 rust_pid=$!
 wait_port "$server_port"
@@ -176,7 +188,7 @@ if [[ ${SKIP_INTERNET:-0} != 1 ]]; then
 fi
 
 mldsa_seed=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-rust_verify=$(target/release/rust-reality mldsa65 --seed "$mldsa_seed" | jq -r .verify)
+rust_verify=$("$rust_bin" mldsa65 --seed "$mldsa_seed" | jq -r .verify)
 xray_verify=$("$xray" mldsa65 -i "$mldsa_seed" | sed -n 's/^Verify: //p')
 if [[ -z "$xray_verify" || "$rust_verify" != "$xray_verify" ]]; then
     echo "ML-DSA-65 differential verification-key mismatch" >&2

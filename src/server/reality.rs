@@ -14,7 +14,7 @@ use crate::{
             read_client_hello,
             tls13::{
                 CertificateIdentity, ClientFinishedReadError, HandshakeMessageError, ServerFlight,
-                TlsApplicationIo, build_server_flight, read_client_finished,
+                TlsApplicationIo, build_server_flight_with_shape, read_client_finished,
             },
         },
         vless::UserId,
@@ -295,22 +295,22 @@ impl RealityAcceptor {
             .mirror(&client_prefix)
             .await
             .map_err(RealityAcceptError::Fallback)?;
-        let target_hello = match cover
-            .read_server_hello(
+        let target_flight = match cover
+            .read_server_flight(
                 &hello,
                 self.target_hello_timeout
                     .min(handshake_deadline.saturating_duration_since(Instant::now())),
             )
             .await
         {
-            Ok(target_hello) => target_hello,
+            Ok(target_flight) => target_flight,
             Err(error) => {
                 let (_, target_prefix) = error.into_parts();
                 drop(replay);
                 return transition_cover(stream, cover, &target_prefix, handshake_permit).await;
             }
         };
-        let (target, target_prefix) = target_hello.into_parts();
+        let (target, record_shape, target_prefix) = target_flight.into_parts();
         let crypto_permit = match self.governor.try_acquire(AdmissionKind::CryptoOperation) {
             Ok(permit) => permit,
             Err(_) => {
@@ -319,12 +319,13 @@ impl RealityAcceptor {
             }
         };
         let selected_alpn = hello.alpn_protocols().next();
-        let flight = match build_server_flight(
+        let flight = match build_server_flight_with_shape(
             &hello,
             authenticated.auth_key(),
             target,
             &self.identity,
             selected_alpn,
+            record_shape,
         ) {
             Ok(flight) => flight,
             Err(_) => {
@@ -335,6 +336,7 @@ impl RealityAcceptor {
         };
         drop(crypto_permit);
         drop(cover);
+        drop(target_prefix);
         write_server_flight(&mut stream, &flight, handshake_deadline).await?;
         let established = read_client_finished(
             &mut stream,

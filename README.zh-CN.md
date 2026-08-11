@@ -31,6 +31,9 @@
 - framed 记录打包、稳态每条记录零分配、每条数据路径零可避免的用户态拷贝。
 - 默认使用 ring（源自 BoringSSL）的 AES-128-GCM 记录 AEAD；纯 Rust 的
   RustCrypto 回退构建只差一个参数，并持续测试。
+- 已认证服务端 flight 保留伪装目标派生的 ServerHello，并跟随目标实测的合并/
+  四记录 post-ServerHello 形状。v1.4 仅在文档列出的记录/写入维度上与 OpenSSL
+  参考对齐，不声称与参考流量完全相同。
 - 一切皆有界：连接、握手、fallback、密码学工作、重放状态、缓冲区、DNS 结果、
   描述符和 splice 资源——压力下迟滞降级而不是崩溃。
 - 支持具体和单标签通配的 REALITY server name、按 UUID 的路由分组、UUID 独占
@@ -96,7 +99,7 @@ relay。生命周期、热路径拓扑、描述符预算模型和可观测事件
 
 ```shell
 sha256sum --check SHA256SUMS
-tar -xzf rust-reality-v1.3.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf rust-reality-v1.4.0-x86_64-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 ```
 

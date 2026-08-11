@@ -35,6 +35,10 @@ Xray-compatible client
   avoidable userspace copies on every data path.
 - ring (BoringSSL-derived) AES-128-GCM record AEAD by default; a pure-Rust
   RustCrypto fallback build is one flag away and continuously tested.
+- The authenticated server flight preserves the cover-derived ServerHello and
+  follows the cover's measured coalesced/four-record post-ServerHello shape.
+  The v1.4 result is OpenSSL-reference-aligned on documented record/write
+  dimensions—not a claim of indistinguishability.
 - Bounded everything: connections, handshakes, fallbacks, crypto work, replay
   state, buffers, DNS results, descriptors, and splice resources — with
   pressure hysteresis instead of collapse.
@@ -114,7 +118,7 @@ then verify all assets before installation:
 
 ```shell
 sha256sum --check SHA256SUMS
-tar -xzf rust-reality-v1.3.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf rust-reality-v1.4.0-x86_64-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 ```
 
