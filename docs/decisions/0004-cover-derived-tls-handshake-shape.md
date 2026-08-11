@@ -40,6 +40,8 @@ valid. The local pinned reference consistently used four encrypted records;
 `www.microsoft.com` also used four (`36, 8268, 281, 69`), while
 `dl.google.com` consistently coalesced the flight into one `3842`-byte record.
 Certificate and deployment choices therefore dominate some record lengths.
+The lengths quoted in this ADR are TLS record body lengths; on the wire each
+record adds its five-byte header.
 
 ## Decision
 
@@ -79,8 +81,9 @@ also cover-aligned for the measured Microsoft four-record and Google coalesced
 classes. This is not a claim that its traffic is indistinguishable from
 OpenSSL, Xray, or any cover.
 
-The adaptive read adds about ten `recvfrom` calls per setup in the controlled
-c1 syscall trace. Repeated setup profiling measured a 0.26% setup-rate decrease,
+The adaptive read adds about 3.4 additional cover `recvfrom` calls per setup
+connection in the controlled 768-connection c1 syscall trace. Repeated setup
+profiling measured a 0.26% setup-rate decrease,
 a 1.86% task-clock/connection increase, and a 2.11% cycles/connection increase,
 all within the setup budget. The controlled Direct workload measured +0.26%
 throughput, -1.87% task clock/GiB, and +1.03% cycles/GiB; no steady-state cost or
@@ -91,6 +94,24 @@ packet sequences on loopback do not generalize across kernels, offload, MSS,
 or networks. Instrumented timing samples are `NOT_COMPARABLE` with untraced
 production timing, and the small public corpus does not establish universal
 cover behavior. Application-data recordization is unchanged.
+
+The policy makes the cover flight an admission contract for authenticated
+clients. A cover must emit the middlebox-compatibility CCS immediately after
+its ServerHello; TLS 1.3 covers that legitimately omit CCS (for example when
+the mirrored ClientHello carries an empty legacy session ID) fall back. In the
+positional class the cover must present four encrypted records whose lengths
+each fit the generated message; covers that coalesce a small flight into fewer
+records, or whose per-position lengths are smaller than the generated
+EncryptedExtensions/Certificate/CertificateVerify/Finished messages, fall
+back. In the coalesced class a first encrypted record between 513 wire bytes
+and the generated flight size falls back, and a cover whose flight continues
+past a large first record is matched with a single coalesced record rather
+than its true multi-record shape. Every one of these mismatches fails closed:
+the already authenticated client is spliced to the cover byte-exactly, exactly
+as an unauthenticated probe is. Stock Xray fingerprints send a session ID and
+negotiate the measured classes, so mainstream clients are unaffected, but
+these combinations are deterministic per (client fingerprint, cover) pair and
+are documented here as the known incompatibility classes of v1.4.
 
 Fixed padding and random padding profiles were rejected because they discard
 cover evidence or add unjustified variability and overhead. Full libssl

@@ -57,8 +57,8 @@ All notable user-facing changes to this project are documented in this file.
 ### Performance and provider decisions
 
 - Controlled setup profiling measured −0.26% median setup rate, +1.86%
-  CPU/connection, +0.67% instructions/connection, and about ten additional
-  cover `recvfrom` calls per positional handshake. Vision Direct throughput was
+  CPU/connection, +0.67% instructions/connection, and about 3.4 additional
+  cover `recvfrom` calls per setup connection. Vision Direct throughput was
   +0.26% with −1.87% CPU/GiB and −0.21% instructions/GiB. These same-host
   effects are within the v1.4 keep budget; noisy loopback throughput cells are
   retained as samples rather than headline wins or regressions.
@@ -81,6 +81,18 @@ All notable user-facing changes to this project are documented in this file.
   flights, bounded allocation, replay ordering, and provider equivalence have
   dedicated tests. The maximum retained positional cover prefix is 66,125
   bytes per already authenticated/admitted connection.
+
+### Known limitations
+
+- The cover flight is now an admission contract for authenticated clients:
+  the cover must emit the middlebox-compatibility CCS after its ServerHello
+  and present either a four-record flight whose positional lengths fit the
+  generated messages or a coalesced first record larger than the generated
+  flight. Covers outside these measured classes (including TLS 1.3 covers
+  that legitimately omit CCS when the mirrored ClientHello has an empty
+  legacy session ID) fail closed: the authenticated client rejoins the cover
+  byte-exactly instead of completing the REALITY handshake. Stock Xray
+  fingerprints negotiate the supported classes. See ADR 0004.
 
 ## [1.3.0] - 2026-08-10
 

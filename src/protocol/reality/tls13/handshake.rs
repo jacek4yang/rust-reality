@@ -785,6 +785,107 @@ mod tests {
         assert_eq!(messages_per_record, [4]);
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn coalesced_flight_establishes_only_after_valid_client_finished() {
+        let client_secret = StaticSecret::from([0x31; 32]);
+        let client_public = PublicKey::from(&client_secret).to_bytes();
+        let client = client_hello(X25519_GROUP, &client_public);
+        let target = ServerHelloTemplate::parse(&server_hello(X25519_GROUP, &[0x55; 32]), &client)
+            .expect("test target must parse");
+        let identity = CertificateIdentity::from_seed([0x42; 32]);
+        let auth_key = AuthKey::from_test_bytes([0x99; 32]);
+        let flight = build_server_flight_with_shape(
+            &client,
+            &auth_key,
+            target,
+            &identity,
+            Some(b"h2"),
+            CoverHandshakeRecordShape::Coalesced { wire_len: 605 },
+        )
+        .expect("coalesced server flight must build");
+        assert_eq!(flight.change_cipher_spec(), &change_cipher_spec_record());
+
+        let server_hello = &flight.server_hello_record()[5..];
+        let server_public: [u8; 32] = server_hello
+            .get(server_hello.len() - 32..)
+            .expect("test ServerHello ends with key share")
+            .try_into()
+            .expect("X25519 server share is fixed");
+        let shared = client_secret.diffie_hellman(&PublicKey::from(server_public));
+        let mut transcript = client.raw_message().to_vec();
+        transcript.extend_from_slice(server_hello);
+        let suite = CipherSuite::Aes128GcmSha256;
+        let schedule =
+            Tls13KeySchedule::new(suite, shared.as_bytes(), &suite.hash().digest(&transcript))
+                .expect("client schedule must derive");
+
+        let server_keys = schedule
+            .traffic_keys(schedule.server_handshake_secret())
+            .expect("server handshake keys must derive");
+        let mut server_records =
+            Tls13RecordLayer::new(suite, server_keys).expect("server record state must initialize");
+        let (server_handshake, record_lens, message_types, messages_per_record) =
+            open_handshake_records(flight.encrypted_handshake_records(), &mut server_records);
+        assert_eq!(record_lens, [605]);
+        assert_eq!(message_types, [8, 11, 15, 20]);
+        assert_eq!(messages_per_record, [4]);
+        transcript.extend_from_slice(&server_handshake);
+
+        let finished_data = schedule
+            .finished_verify_data(
+                schedule.client_handshake_secret(),
+                &suite.hash().digest(&transcript),
+            )
+            .expect("client Finished must derive");
+        let finished =
+            finished_message(finished_data.as_bytes()).expect("client Finished must encode");
+        let client_keys = schedule
+            .traffic_keys(schedule.client_handshake_secret())
+            .expect("client handshake keys must derive");
+        let mut client_records =
+            Tls13RecordLayer::new(suite, client_keys).expect("client record state must initialize");
+        let mut record = Vec::new();
+        client_records
+            .seal_into(ContentType::Handshake, &finished, 0, &mut record)
+            .expect("client Finished must seal");
+        let mut client_wire = change_cipher_spec_record().to_vec();
+        client_wire.extend_from_slice(&record);
+        let (mut client_io, mut server_io) = duplex(client_wire.len());
+        client_io
+            .write_all(&client_wire)
+            .await
+            .expect("client Finished flight must be written");
+        let mut established = read_client_finished(&mut server_io, flight, Duration::from_secs(1))
+            .await
+            .expect("valid ClientFinished must establish TLS");
+        assert_eq!(established.suite(), suite);
+        assert_eq!(established.client_records_mut().records_used(), 0);
+        assert_eq!(established.server_records_mut().records_used(), 0);
+
+        let application = schedule
+            .application_traffic_secrets(&suite.hash().digest(&transcript))
+            .expect("application secrets must derive");
+        let client_application_keys = schedule
+            .traffic_keys(application.client())
+            .expect("client application keys must derive");
+        let mut client_application = Tls13RecordLayer::new(suite, client_application_keys)
+            .expect("client application state must initialize");
+        let mut application_record = Vec::new();
+        client_application
+            .seal_into(
+                ContentType::ApplicationData,
+                b"VLESS request",
+                0,
+                &mut application_record,
+            )
+            .expect("client application record must seal");
+        let opened = established
+            .client_records_mut()
+            .open_in_place(&mut application_record)
+            .expect("established server must authenticate application data");
+        assert_eq!(opened.plaintext(), b"VLESS request");
+    }
+
     #[test]
     fn authenticated_record_partitioning_preserves_exact_handshake_bytes() {
         let messages: [&[u8]; 4] = [
