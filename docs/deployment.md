@@ -104,14 +104,15 @@ rust-reality config generate standalone \
   > config.json 2> client-values.txt
 ```
 
-The server JSON contains the generated UUID, REALITY private key, short ID, and
-policy. `client-values.txt` contains the REALITY public key. Neither file is a
+The server JSON contains the generated UUID, REALITY private key, two short IDs
+owned by that UUID, and policy. `client-values.txt` contains the REALITY public key. Neither file is a
 log; protect and transfer it as secret deployment material.
 
 ### 3. Configure an Xray client
 
 Insert the server address, port, UUID from `settings.clients[0].id`, public key
-from `client-values.txt`, server name, and short ID into an Xray 26.7.28 client:
+from `client-values.txt`, server name, and one value from
+`settings.clients[0].shortIds` into an Xray 26.7.28 client:
 
 ```json
 {
@@ -234,7 +235,7 @@ rust-reality config generate handoff \
 This writes `line.json` (public line node routing to the handoff outbound),
 `landing.json` (internal Handoff listener only), and `xray-client.json`. All
 key material is generated independently — the UUID, the REALITY X25519 pair,
-one short ID, the Handoff pre-shared key, and the landing node's static
+two short IDs owned by that UUID, the Handoff pre-shared key, and the landing node's static
 X25519 pair — and both server configurations are validated before they are
 written. The client UUID and REALITY public key are printed to stderr; the
 Handoff PSK and the private keys exist only in the two server files.
@@ -397,4 +398,3 @@ rejected as unknown fields.
 
 The portable buffered relay and Linux `splice` require no additional
 privilege.
-

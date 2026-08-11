@@ -21,10 +21,13 @@ canonical samples live in [benchmarks.md](benchmarks.md).
    prefix is replayed to the cover target, any inspected target prefix is
    replayed to the client, and the remaining raw pair is handed to the unified
    relay (`TcpRelay::relay_owned`) — splice-capable and FD-accounted, never a
-   borrowed userspace copy.
+   borrowed userspace copy. The authenticated short ID resolves through a
+   cardinality-adaptive immutable index and carries its unique owner UUID into
+   the established session.
 3. **VLESS + Vision.** The request is decoded from the outer TLS stream;
-   routing selects an outbound; the session splits into two independent
-   direction tasks (uplink, downlink).
+   the adaptive UUID index finds the header user and requires it to equal the
+   short-ID owner before any routing; routing then selects an outbound and the
+   session splits into two independent direction tasks (uplink, downlink).
 4. **Framed phase.** Both directions run outer-TLS record I/O with Vision
    padding. Hot-path properties (measured, regression-gated):
    - zero steady-state heap allocations per record (instrumented-allocator
@@ -110,11 +113,11 @@ registration per progress step, no hot-path logging.
 | stage | owner | allocations | atomics/locks | syscalls | copies |
 |---|---|---|---|---|---|
 | accept | 1 task/listener | none steady | FD permit CAS + governor CAS | accept4, setsockopt×5 | 0 |
-| REALITY auth | conn task | ClientHello buffer (≤16 KiB, once) | handshake/crypto CAS permits, replay cache shard locks | 1–3 reads, flight write | hello parse borrow-based |
+| REALITY auth | conn task | ClientHello + target buffers; one contiguous server-flight wire buffer | handshake/crypto CAS permits, replay cache shard locks | 1–3 reads, flight write | hello/ALPN parse borrowed; transcript tail sealed directly |
 | fallback | conn task | prefix vecs (bounded) | fallback CAS, FD CAS ×2, connect | connect, prefix write, then relay | prefix writes only |
-| VLESS request | conn task | request buffer ≤533+16 KiB once | 0 | TLS records | 0 (borrowed prefetch) |
-| routing | conn task | 0 hit path | shared rules (Arc) | optional bounded DNS (spawn_blocking, 1 semaphore slot held till op ends) | 0 |
-| outbound connect | conn task | 0 | FD unit CAS, direct barrier CAS | connect | 0 |
+| VLESS request | conn task | 533 B initial buffer; grows only for coalesced payload; accepted domain owned once | 0 | TLS records | Addons/domain/prefetch parsed borrowed |
+| routing | conn task | 0 no-DNS hit path | one UUID lookup; group policy shared by Arc | optional bounded DNS (spawn_blocking, 1 semaphore slot held till op ends) | 0 |
+| outbound connect | conn task | 0 | one tag lookup; FD unit CAS; lock-free rate + concurrency CAS | connect | 0 |
 | Vision framed uplink | direction task | socket buffer once (grow-only) | 0 in loop | 1 read/refill (≤64 KiB), 1 write/record | AEAD open in place; borrowed Vision decode (0) |
 | Vision framed downlink | direction task | socket buffer once | 0 in loop | 1 read/refill, 1 write per packed record set | AEAD seal in place; Vision frames packed |
 | Direct transition | both tasks | 0 | 2 atomics + 1 mutex (once) | 0 | pending-drain write |

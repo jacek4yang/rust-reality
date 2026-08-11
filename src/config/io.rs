@@ -168,6 +168,23 @@ mod tests {
     }
 
     #[test]
+    fn rejects_ambiguous_pre_v13_shared_short_ids() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(test_config_json()).expect("fixture must parse");
+        let shared = value["inbounds"][0]["settings"]["clients"][0]
+            .as_object_mut()
+            .expect("client must be an object")
+            .remove("shortIds")
+            .expect("fixture must contain owned short IDs");
+        value["inbounds"][0]["streamSettings"]["realitySettings"]["shortIds"] = shared;
+        let json = serde_json::to_vec(&value).expect("legacy shape must encode");
+
+        let error = decode_config(Path::new("v1.2.json"), &json)
+            .expect_err("the server must not guess ownership of a shared credential list");
+        assert!(matches!(error, ConfigLoadError::Decode { .. }));
+    }
+
+    #[test]
     fn existing_configuration_without_max_dns_lookups_uses_the_default() {
         // The fixture predates maxDnsLookups: decoding must succeed and apply
         // the default rather than failing or silently disabling the bound.

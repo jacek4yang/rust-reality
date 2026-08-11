@@ -1,4 +1,4 @@
-use std::{error::Error, fmt};
+use std::{collections::HashMap, error::Error, fmt};
 
 use aes_gcm::{
     Aes256Gcm, KeyInit,
@@ -7,19 +7,23 @@ use aes_gcm::{
 use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 use hkdf::Hkdf;
 use sha2::Sha256;
-use subtle::{Choice, ConstantTimeEq};
+use uuid::Uuid;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use super::ClientHello;
 use crate::{
-    config::RealityConfig,
+    config::{RealityConfig, VlessInboundConfig},
+    protocol::vless::UserId,
     server_name::{is_server_name_pattern, server_name_matches},
 };
 
 const AUTH_KEY_INFO: &[u8] = b"REALITY";
 const SESSION_PLAINTEXT_LEN: usize = 16;
 const GCM_TAG_LEN: usize = 16;
+/// Measured crossover: sorted lookup wins through 256 short IDs; SipHash wins
+/// both hit and miss at 512. Keep the lower observed boundary.
+const SORTED_SHORT_ID_LIMIT: usize = 256;
 
 /// A decoded REALITY setting cannot be compiled into authentication state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -34,6 +38,10 @@ pub enum RealityAuthConfigError {
     InvalidServerName,
     /// No short ID was configured.
     MissingShortId,
+    /// A short ID was assigned more than once when validation was bypassed.
+    DuplicateShortId,
+    /// A client UUID was malformed when validation was bypassed.
+    InvalidUserId,
 }
 
 impl fmt::Display for RealityAuthConfigError {
@@ -44,6 +52,8 @@ impl fmt::Display for RealityAuthConfigError {
             Self::MissingServerName => formatter.write_str("REALITY server name set is empty"),
             Self::InvalidServerName => formatter.write_str("invalid REALITY server name pattern"),
             Self::MissingShortId => formatter.write_str("REALITY short ID set is empty"),
+            Self::DuplicateShortId => formatter.write_str("REALITY short ID has multiple owners"),
+            Self::InvalidUserId => formatter.write_str("invalid REALITY client UUID"),
         }
     }
 }
@@ -69,7 +79,7 @@ pub enum RealityAuthError {
     OpenFailed,
     /// The reserved plaintext byte is non-zero.
     ReservedByte,
-    /// No configured short ID matched in constant time.
+    /// No configured short ID has an owner on this listener.
     ShortId,
     /// Client clock difference exceeds the configured limit.
     TimeSkew,
@@ -110,7 +120,7 @@ impl fmt::Debug for AuthKey {
 pub struct RealityAuthResult {
     client_version: [u8; 3],
     client_time: u32,
-    short_id: [u8; 8],
+    user_id: UserId,
     auth_key: AuthKey,
 }
 
@@ -127,10 +137,10 @@ impl RealityAuthResult {
         self.client_time
     }
 
-    /// Returns the padded eight-byte short ID for replay partitioning.
+    /// Returns the UUID that owns the authenticated short ID.
     #[must_use]
-    pub const fn short_id(&self) -> [u8; 8] {
-        self.short_id
+    pub const fn user_id(&self) -> UserId {
+        self.user_id
     }
 
     /// Returns the derived authentication key.
@@ -146,7 +156,7 @@ impl fmt::Debug for RealityAuthResult {
             .debug_struct("RealityAuthResult")
             .field("client_version", &self.client_version)
             .field("client_time", &self.client_time)
-            .field("short_id", &"[REDACTED]")
+            .field("user_id", &"[REDACTED]")
             .field("auth_key", &self.auth_key)
             .finish()
     }
@@ -157,8 +167,54 @@ impl fmt::Debug for RealityAuthResult {
 pub struct RealityAuthenticator {
     private_key: StaticSecret,
     server_names: Vec<String>,
-    short_ids: Vec<[u8; 8]>,
+    short_ids: ShortIdOwnerIndex,
     max_time_diff_ms: u64,
+}
+
+/// One sorted authentication selector and its unique UUID owner.
+#[derive(Clone, Copy)]
+struct ShortIdBinding {
+    short_id: [u8; 8],
+    user_id: UserId,
+}
+
+/// Cardinality-adaptive short-ID-to-UUID ownership index.
+#[derive(Clone)]
+enum ShortIdOwnerIndex {
+    Sorted(Box<[ShortIdBinding]>),
+    Hashed(HashMap<[u8; 8], UserId>),
+}
+
+impl ShortIdOwnerIndex {
+    fn from_sorted(bindings: Vec<ShortIdBinding>) -> Self {
+        if bindings.len() <= SORTED_SHORT_ID_LIMIT {
+            Self::Sorted(bindings.into_boxed_slice())
+        } else {
+            Self::Hashed(
+                bindings
+                    .into_iter()
+                    .map(|binding| (binding.short_id, binding.user_id))
+                    .collect(),
+            )
+        }
+    }
+
+    fn owner(&self, candidate: &[u8; 8]) -> Option<UserId> {
+        match self {
+            Self::Sorted(bindings) => bindings
+                .binary_search_by_key(candidate, |binding| binding.short_id)
+                .ok()
+                .map(|index| bindings[index].user_id),
+            Self::Hashed(bindings) => bindings.get(candidate).copied(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Sorted(bindings) => bindings.len(),
+            Self::Hashed(bindings) => bindings.len(),
+        }
+    }
 }
 
 impl fmt::Debug for RealityAuthenticator {
@@ -174,12 +230,32 @@ impl fmt::Debug for RealityAuthenticator {
 }
 
 impl RealityAuthenticator {
-    /// Decodes and compiles validated configuration into immutable authentication state.
+    /// Decodes and compiles one validated inbound into immutable authentication state.
     ///
     /// # Errors
     ///
     /// Returns an error for malformed key material, server names, short IDs, or empty identity sets.
-    pub fn from_config(config: &RealityConfig) -> Result<Self, RealityAuthConfigError> {
+    pub fn from_inbound(inbound: &VlessInboundConfig) -> Result<Self, RealityAuthConfigError> {
+        let config = &inbound.stream_settings.reality_settings;
+        let mut short_ids = Vec::new();
+        for client in &inbound.settings.clients {
+            let uuid =
+                Uuid::parse_str(&client.id).map_err(|_| RealityAuthConfigError::InvalidUserId)?;
+            let user_id = UserId::new(*uuid.as_bytes());
+            short_ids.extend(
+                client
+                    .short_ids
+                    .iter()
+                    .map(|short_id| (user_id, short_id.as_str())),
+            );
+        }
+        Self::compile(config, short_ids)
+    }
+
+    fn compile<'a>(
+        config: &RealityConfig,
+        configured_short_ids: impl IntoIterator<Item = (UserId, &'a str)>,
+    ) -> Result<Self, RealityAuthConfigError> {
         if config.server_names.is_empty() {
             return Err(RealityAuthConfigError::MissingServerName);
         }
@@ -190,9 +266,6 @@ impl RealityAuthenticator {
         {
             return Err(RealityAuthConfigError::InvalidServerName);
         }
-        if config.short_ids.is_empty() {
-            return Err(RealityAuthConfigError::MissingShortId);
-        }
         let decoded_private = Zeroizing::new(
             BASE64_URL_SAFE_NO_PAD
                 .decode(config.private_key.expose())
@@ -202,15 +275,26 @@ impl RealityAuthenticator {
             .as_slice()
             .try_into()
             .map_err(|_| RealityAuthConfigError::InvalidPrivateKey)?;
-        let short_ids = config
-            .short_ids
-            .iter()
-            .map(|short_id| decode_short_id(short_id))
+        let mut short_ids = configured_short_ids
+            .into_iter()
+            .map(|(user_id, short_id)| {
+                decode_short_id(short_id).map(|short_id| ShortIdBinding { short_id, user_id })
+            })
             .collect::<Result<Vec<_>, _>>()?;
+        if short_ids.is_empty() {
+            return Err(RealityAuthConfigError::MissingShortId);
+        }
+        short_ids.sort_unstable_by_key(|binding| binding.short_id);
+        if short_ids
+            .windows(2)
+            .any(|pair| pair[0].short_id == pair[1].short_id)
+        {
+            return Err(RealityAuthConfigError::DuplicateShortId);
+        }
         Ok(Self {
             private_key: StaticSecret::from(private_bytes),
             server_names: config.server_names.clone(),
-            short_ids,
+            short_ids: ShortIdOwnerIndex::from_sorted(short_ids),
             max_time_diff_ms: config.max_time_diff_ms,
         })
     }
@@ -267,22 +351,26 @@ impl RealityAuthenticator {
         short_id.copy_from_slice(&plaintext[8..16]);
         plaintext.zeroize();
 
-        if !constant_time_short_id_match(&self.short_ids, &short_id) {
+        let Some(user_id) = self.short_id_owner(&short_id) else {
             short_id.zeroize();
             return Err(RealityAuthError::ShortId);
-        }
+        };
+        short_id.zeroize();
         let difference_ms = u128::from(now_unix_seconds.abs_diff(u64::from(client_time))) * 1_000;
         if self.max_time_diff_ms != 0 && difference_ms > u128::from(self.max_time_diff_ms) {
-            short_id.zeroize();
             return Err(RealityAuthError::TimeSkew);
         }
 
         Ok(RealityAuthResult {
             client_version,
             client_time,
-            short_id,
+            user_id,
             auth_key,
         })
+    }
+
+    fn short_id_owner(&self, candidate: &[u8; 8]) -> Option<UserId> {
+        self.short_ids.owner(candidate)
     }
 }
 
@@ -323,7 +411,7 @@ fn open_session_id(
     Ok(plaintext)
 }
 
-fn decode_short_id(encoded: &str) -> Result<[u8; 8], RealityAuthConfigError> {
+pub(crate) fn decode_short_id(encoded: &str) -> Result<[u8; 8], RealityAuthConfigError> {
     if encoded.is_empty() || encoded.len() > 16 || !encoded.len().is_multiple_of(2) {
         return Err(RealityAuthConfigError::InvalidShortId);
     }
@@ -348,14 +436,6 @@ const fn decode_hex(byte: u8) -> Option<u8> {
     }
 }
 
-fn constant_time_short_id_match(configured: &[[u8; 8]], candidate: &[u8; 8]) -> bool {
-    let mut matched = Choice::from(0);
-    for short_id in configured {
-        matched |= short_id.ct_eq(candidate);
-    }
-    bool::from(matched)
-}
-
 #[cfg(test)]
 mod tests {
     use aes_gcm::{
@@ -368,18 +448,20 @@ mod tests {
     use x25519_dalek::{PublicKey, StaticSecret};
 
     use super::{
-        RealityAuthConfigError, RealityAuthError, RealityAuthenticator, derive_auth_key,
-        open_session_id,
+        RealityAuthConfigError, RealityAuthError, RealityAuthenticator, SORTED_SHORT_ID_LIMIT,
+        ShortIdBinding, ShortIdOwnerIndex, derive_auth_key, open_session_id,
     };
     use crate::{
         config::{RealityConfig, SecretString},
         protocol::reality::{
             ClientHello, X25519_GROUP, client_hello::fixtures::client_hello_with_key_share,
         },
+        protocol::vless::UserId,
     };
 
     const NOW: u32 = 1_700_000_000;
     const SHORT_ID: [u8; 8] = [0xaa, 0xbb, 0, 0, 0, 0, 0, 0];
+    const TEST_USER: UserId = UserId::new([0x42; 16]);
 
     #[test]
     fn authenticates_xray_session_id_layout() {
@@ -390,7 +472,7 @@ mod tests {
 
         assert_eq!(result.client_version(), [1, 2, 3]);
         assert_eq!(result.client_time(), NOW);
-        assert_eq!(result.short_id(), SHORT_ID);
+        assert_eq!(result.user_id(), TEST_USER);
         assert_eq!(
             result.auth_key().as_bytes(),
             &hex_array::<32>("913b3e7485c67fb677b4cc65906953c2f6a23eb7b6e24cf3d69091004ccd5a9d"),
@@ -402,16 +484,16 @@ mod tests {
     #[test]
     fn rejects_wrong_server_identity_and_private_key() {
         let (_, hello) = valid_handshake(SHORT_ID, NOW, &["aabb"]);
-        let mut wrong_name = auth_config([0x11; 32], &["aabb"]);
+        let mut wrong_name = auth_config([0x11; 32]);
         wrong_name.server_names = vec!["other.example.com".to_owned()];
         let wrong_name =
-            RealityAuthenticator::from_config(&wrong_name).expect("configuration must compile");
+            compile_config(&wrong_name, &["aabb"]).expect("configuration must compile");
         assert!(matches!(
             wrong_name.authenticate(&hello, u64::from(NOW)),
             Err(RealityAuthError::ServerName)
         ));
 
-        let wrong_key = RealityAuthenticator::from_config(&auth_config([0x55; 32], &["aabb"]))
+        let wrong_key = compile_config(&auth_config([0x55; 32]), &["aabb"])
             .expect("configuration must compile");
         assert!(matches!(
             wrong_key.authenticate(&hello, u64::from(NOW)),
@@ -422,10 +504,9 @@ mod tests {
     #[test]
     fn authenticates_one_label_server_name_wildcard() {
         let (_, hello) = valid_handshake(SHORT_ID, NOW, &["aabb"]);
-        let mut config = auth_config([0x11; 32], &["aabb"]);
+        let mut config = auth_config([0x11; 32]);
         config.server_names = vec!["*.example.com".to_owned()];
-        let authenticator =
-            RealityAuthenticator::from_config(&config).expect("configuration must compile");
+        let authenticator = compile_config(&config, &["aabb"]).expect("configuration must compile");
 
         authenticator
             .authenticate(&hello, u64::from(NOW))
@@ -434,13 +515,76 @@ mod tests {
 
     #[test]
     fn rejects_invalid_server_name_when_config_validation_is_bypassed() {
-        let mut config = auth_config([0x11; 32], &["aabb"]);
+        let mut config = auth_config([0x11; 32]);
         config.server_names = vec!["www.*.edu".to_owned()];
 
         assert!(matches!(
-            RealityAuthenticator::from_config(&config),
+            compile_config(&config, &["aabb"]),
             Err(RealityAuthConfigError::InvalidServerName)
         ));
+    }
+
+    #[test]
+    fn rejects_duplicate_short_id_ownership_when_validation_is_bypassed() {
+        let config = auth_config([0x11; 32]);
+        assert!(matches!(
+            RealityAuthenticator::compile(
+                &config,
+                [(TEST_USER, "aabb"), (UserId::new([0x43; 16]), "AABB")]
+            ),
+            Err(RealityAuthConfigError::DuplicateShortId)
+        ));
+    }
+
+    #[test]
+    fn resolves_every_short_id_to_its_exact_owner() {
+        let config = auth_config([0x11; 32]);
+        let other_user = UserId::new([0x43; 16]);
+        let authenticator = RealityAuthenticator::compile(
+            &config,
+            [
+                (TEST_USER, "aabb"),
+                (TEST_USER, "ccdd"),
+                (other_user, "0102"),
+            ],
+        )
+        .expect("disjoint ownership must compile");
+
+        assert_eq!(
+            authenticator.short_id_owner(&[0xaa, 0xbb, 0, 0, 0, 0, 0, 0]),
+            Some(TEST_USER)
+        );
+        assert_eq!(
+            authenticator.short_id_owner(&[0xcc, 0xdd, 0, 0, 0, 0, 0, 0]),
+            Some(TEST_USER)
+        );
+        assert_eq!(
+            authenticator.short_id_owner(&[1, 2, 0, 0, 0, 0, 0, 0]),
+            Some(other_user)
+        );
+        assert_eq!(authenticator.short_id_owner(&[9; 8]), None);
+    }
+
+    #[test]
+    fn short_id_index_switches_at_the_measured_boundary() {
+        let bindings = |count: usize| {
+            (0..count)
+                .map(|index| ShortIdBinding {
+                    short_id: (index as u64).to_be_bytes(),
+                    user_id: UserId::new((index as u128).to_be_bytes()),
+                })
+                .collect()
+        };
+
+        let sorted = ShortIdOwnerIndex::from_sorted(bindings(SORTED_SHORT_ID_LIMIT));
+        assert!(matches!(sorted, ShortIdOwnerIndex::Sorted(_)));
+
+        let hashed = ShortIdOwnerIndex::from_sorted(bindings(SORTED_SHORT_ID_LIMIT + 1));
+        assert!(matches!(hashed, ShortIdOwnerIndex::Hashed(_)));
+        assert_eq!(
+            hashed.owner(&(SORTED_SHORT_ID_LIMIT as u64).to_be_bytes()),
+            Some(UserId::new((SORTED_SHORT_ID_LIMIT as u128).to_be_bytes()))
+        );
     }
 
     #[test]
@@ -484,9 +628,8 @@ mod tests {
 
     #[test]
     fn rejects_non_contributory_x25519_share() {
-        let config = auth_config([0x11; 32], &["aabb"]);
-        let authenticator =
-            RealityAuthenticator::from_config(&config).expect("configuration must compile");
+        let config = auth_config([0x11; 32]);
+        let authenticator = compile_config(&config, &["aabb"]).expect("configuration must compile");
         let hello = ClientHello::parse_message(&client_hello_with_key_share(
             [0x33; 32],
             &[0; 32],
@@ -585,18 +728,27 @@ mod tests {
             &client_public,
         );
         let hello = ClientHello::parse_message(&message).expect("ClientHello must parse");
-        let config = auth_config([0x11; 32], configured_short_ids);
+        let config = auth_config([0x11; 32]);
         let authenticator =
-            RealityAuthenticator::from_config(&config).expect("configuration must compile");
+            compile_config(&config, configured_short_ids).expect("configuration must compile");
         (authenticator, hello)
     }
 
-    fn auth_config(private_key: [u8; 32], short_ids: &[&str]) -> RealityConfig {
+    fn compile_config(
+        config: &RealityConfig,
+        short_ids: &[&str],
+    ) -> Result<RealityAuthenticator, RealityAuthConfigError> {
+        RealityAuthenticator::compile(
+            config,
+            short_ids.iter().map(|short_id| (TEST_USER, *short_id)),
+        )
+    }
+
+    fn auth_config(private_key: [u8; 32]) -> RealityConfig {
         RealityConfig {
             target: "www.example.com:443".to_owned(),
             server_names: vec!["www.example.com".to_owned()],
             private_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(private_key)),
-            short_ids: short_ids.iter().map(|value| (*value).to_owned()).collect(),
             max_time_diff_ms: 60_000,
         }
     }

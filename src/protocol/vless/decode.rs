@@ -35,6 +35,64 @@ impl<'a> DecodeRequest<'a> {
     }
 }
 
+/// Zero-copy request fields used by the production session path while its
+/// bounded input buffer remains alive.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DecodeRequestRef<'a> {
+    version: u8,
+    user_id: UserId,
+    addons: &'a [u8],
+    command: Command,
+    destination: Option<DestinationRef<'a>>,
+    payload: &'a [u8],
+}
+
+impl<'a> DecodeRequestRef<'a> {
+    pub(crate) const fn user_id(&self) -> UserId {
+        self.user_id
+    }
+
+    pub(crate) const fn addons(&self) -> &'a [u8] {
+        self.addons
+    }
+
+    pub(crate) const fn command(&self) -> Command {
+        self.command
+    }
+
+    pub(crate) const fn destination(&self) -> Option<DestinationRef<'a>> {
+        self.destination
+    }
+
+    pub(crate) const fn payload(&self) -> &'a [u8] {
+        self.payload
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DestinationRef<'a> {
+    address: AddressRef<'a>,
+    port: u16,
+}
+
+impl DestinationRef<'_> {
+    pub(crate) fn into_owned(self) -> Destination {
+        let address = match self.address {
+            AddressRef::Ipv4(address) => Address::Ipv4(address),
+            AddressRef::Domain(domain) => Address::Domain(domain.to_owned()),
+            AddressRef::Ipv6(address) => Address::Ipv6(address),
+        };
+        Destination::new(address, self.port)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AddressRef<'a> {
+    Ipv4(Ipv4Addr),
+    Domain(&'a str),
+    Ipv6(Ipv6Addr),
+}
+
 /// An error produced while decoding a VLESS request header.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DecodeError {
@@ -109,17 +167,56 @@ pub fn decode_request(input: &[u8]) -> Result<DecodeRequest<'_>, DecodeError> {
     let command = decode_command(cursor.read_u8("command")?)?;
 
     let destination = if command.requires_destination() {
-        Some(decode_destination(&mut cursor)?)
+        Some(decode_destination_owned(&mut cursor)?)
     } else {
         None
     };
 
     let header = RequestHeader::new(version, user_id, addons, command, destination);
+    let payload = cursor.remaining_slice();
 
-    Ok(DecodeRequest {
-        header,
+    Ok(DecodeRequest { header, payload })
+}
+
+pub(crate) fn decode_request_ref(input: &[u8]) -> Result<DecodeRequestRef<'_>, DecodeError> {
+    let mut cursor = Cursor::new(input);
+
+    let version = cursor.read_u8("protocol version")?;
+
+    if version != VERSION {
+        return Err(DecodeError::UnsupportedVersion(version));
+    }
+
+    let user_id = UserId::new(cursor.read_array::<16>("user ID")?);
+
+    let addons_length = usize::from(cursor.read_u8("addons length")?);
+
+    let addons = cursor.take(addons_length, "addons")?;
+
+    let command = decode_command(cursor.read_u8("command")?)?;
+
+    let destination = if command.requires_destination() {
+        Some(decode_destination_ref(&mut cursor)?)
+    } else {
+        None
+    };
+
+    Ok(DecodeRequestRef {
+        version,
+        user_id,
+        addons,
+        command,
+        destination,
         payload: cursor.remaining_slice(),
     })
+}
+
+/// Exercises the production borrowed parser without exposing its
+/// lifetime-bound result type as public API.
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub fn fuzz_decode_request_ref(input: &[u8]) {
+    let _ = decode_request_ref(input);
 }
 
 fn decode_command(value: u8) -> Result<Command, DecodeError> {
@@ -132,7 +229,7 @@ fn decode_command(value: u8) -> Result<Command, DecodeError> {
     }
 }
 
-fn decode_destination(cursor: &mut Cursor<'_>) -> Result<Destination, DecodeError> {
+fn decode_destination_owned(cursor: &mut Cursor<'_>) -> Result<Destination, DecodeError> {
     let port = cursor.read_u16("destination port")?;
     let address_type = cursor.read_u8("address type")?;
 
@@ -143,7 +240,7 @@ fn decode_destination(cursor: &mut Cursor<'_>) -> Result<Destination, DecodeErro
             Address::Ipv4(Ipv4Addr::from(octets))
         }
 
-        ADDRESS_TYPE_DOMAIN => decode_domain(cursor)?,
+        ADDRESS_TYPE_DOMAIN => decode_domain_owned(cursor)?,
 
         ADDRESS_TYPE_IPV6 => {
             let octets = cursor.read_array("IPv6 address")?;
@@ -159,7 +256,34 @@ fn decode_destination(cursor: &mut Cursor<'_>) -> Result<Destination, DecodeErro
     Ok(Destination::new(address, port))
 }
 
-fn decode_domain(cursor: &mut Cursor<'_>) -> Result<Address, DecodeError> {
+fn decode_destination_ref<'a>(cursor: &mut Cursor<'a>) -> Result<DestinationRef<'a>, DecodeError> {
+    let port = cursor.read_u16("destination port")?;
+    let address_type = cursor.read_u8("address type")?;
+
+    let address = match address_type {
+        ADDRESS_TYPE_IPV4 => {
+            let octets = cursor.read_array("IPv4 address")?;
+
+            AddressRef::Ipv4(Ipv4Addr::from(octets))
+        }
+
+        ADDRESS_TYPE_DOMAIN => decode_domain_ref(cursor)?,
+
+        ADDRESS_TYPE_IPV6 => {
+            let octets = cursor.read_array("IPv6 address")?;
+
+            AddressRef::Ipv6(Ipv6Addr::from(octets))
+        }
+
+        unknown => {
+            return Err(DecodeError::UnknownAddressType(unknown));
+        }
+    };
+
+    Ok(DestinationRef { address, port })
+}
+
+fn decode_domain_owned(cursor: &mut Cursor<'_>) -> Result<Address, DecodeError> {
     let length = usize::from(cursor.read_u8("domain length")?);
 
     if length == 0 {
@@ -177,6 +301,24 @@ fn decode_domain(cursor: &mut Cursor<'_>) -> Result<Address, DecodeError> {
         .to_owned();
 
     Ok(Address::Domain(domain))
+}
+
+fn decode_domain_ref<'a>(cursor: &mut Cursor<'a>) -> Result<AddressRef<'a>, DecodeError> {
+    let length = usize::from(cursor.read_u8("domain length")?);
+
+    if length == 0 {
+        return Err(DecodeError::EmptyDomain);
+    }
+
+    let bytes = cursor.take(length, "domain")?;
+
+    if !bytes.iter().copied().all(is_domain_byte) {
+        return Err(DecodeError::InvalidDomainName);
+    }
+
+    let domain = str::from_utf8(bytes).map_err(|_| DecodeError::InvalidDomainName)?;
+
+    Ok(AddressRef::Domain(domain))
 }
 
 const fn is_domain_byte(byte: u8) -> bool {
@@ -236,9 +378,15 @@ impl<'a> Cursor<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::{
+        hint::black_box,
+        net::{Ipv4Addr, Ipv6Addr},
+    };
 
-    use super::{Address, Command, DecodeError, VERSION, decode_request};
+    use super::{
+        ADDRESS_TYPE_DOMAIN, Address, Command, DecodeError, VERSION, decode_request,
+        decode_request_ref,
+    };
 
     const USER_ID: [u8; 16] = [
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
@@ -277,6 +425,78 @@ mod tests {
             &Address::Domain("example.com".to_owned())
         );
         assert_eq!(decoded.payload(), b"payload");
+    }
+
+    #[test]
+    fn borrowed_decode_allocates_nothing_for_vision_domain_request() {
+        let mut input = Vec::new();
+        input.push(VERSION);
+        input.extend_from_slice(&USER_ID);
+        input.push(18);
+        input.extend_from_slice(&[0x0a, 0x10]);
+        input.extend_from_slice(crate::protocol::vless::VISION_FLOW.as_bytes());
+        input.push(Command::Tcp.as_byte());
+        input.extend_from_slice(&443_u16.to_be_bytes());
+        input.push(ADDRESS_TYPE_DOMAIN);
+        input.push(11);
+        input.extend_from_slice(b"example.com");
+
+        let measured = allocation_counter::measure(|| {
+            for _ in 0..1_024 {
+                let decoded = decode_request_ref(black_box(&input))
+                    .expect("borrowed Vision request should decode");
+                black_box(decoded);
+            }
+        });
+
+        assert_eq!(
+            measured.count_total, 0,
+            "borrowed request parsing must not allocate: {measured:?}"
+        );
+    }
+
+    #[test]
+    fn owned_and_borrowed_decoders_remain_equivalent() {
+        let mut ipv4 = request_prefix(Command::Tcp);
+        ipv4.extend_from_slice(&53_u16.to_be_bytes());
+        ipv4.push(0x01);
+        ipv4.extend_from_slice(&[1, 1, 1, 1]);
+
+        let mut domain = request_prefix(Command::Tcp);
+        domain.extend_from_slice(&443_u16.to_be_bytes());
+        domain.push(ADDRESS_TYPE_DOMAIN);
+        domain.push(11);
+        domain.extend_from_slice(b"example.com");
+
+        let mut ipv6 = request_prefix(Command::Udp);
+        ipv6.extend_from_slice(&5353_u16.to_be_bytes());
+        ipv6.push(0x03);
+        ipv6.extend_from_slice(&Ipv6Addr::LOCALHOST.octets());
+
+        let mut mux = request_prefix(Command::Mux);
+        mux.extend_from_slice(b"mux payload");
+
+        for input in [&ipv4, &domain, &ipv6, &mux] {
+            assert_decoders_equivalent(input);
+        }
+    }
+
+    #[test]
+    fn owned_and_borrowed_decoders_agree_on_every_truncation_and_field_mutation() {
+        let input = maximum_request();
+        assert_eq!(input.len(), 533, "fixture must fill the maximum header");
+
+        for end in 0..input.len() {
+            assert_decoders_equivalent(&input[..end]);
+        }
+
+        for index in 0..input.len() {
+            for replacement in [0_u8, 1, u8::MAX] {
+                let mut mutated = input.clone();
+                mutated[index] = replacement;
+                assert_decoders_equivalent(&mutated);
+            }
+        }
     }
 
     #[test]
@@ -374,5 +594,39 @@ mod tests {
         input.push(command.as_byte());
 
         input
+    }
+
+    fn maximum_request() -> Vec<u8> {
+        let mut input = Vec::with_capacity(533);
+        input.push(VERSION);
+        input.extend_from_slice(&USER_ID);
+        input.push(u8::MAX);
+        input.extend_from_slice(&[0xaa; u8::MAX as usize]);
+        input.push(Command::Tcp.as_byte());
+        input.extend_from_slice(&443_u16.to_be_bytes());
+        input.push(ADDRESS_TYPE_DOMAIN);
+        input.push(u8::MAX);
+        input.extend_from_slice(&[b'a'; u8::MAX as usize]);
+        input
+    }
+
+    fn assert_decoders_equivalent(input: &[u8]) {
+        match (decode_request(input), decode_request_ref(input)) {
+            (Ok(owned), Ok(borrowed)) => {
+                assert_eq!(borrowed.version, owned.header().version());
+                assert_eq!(borrowed.user_id(), owned.header().user_id());
+                assert_eq!(borrowed.addons(), owned.header().addons());
+                assert_eq!(borrowed.command(), owned.header().command());
+                assert_eq!(
+                    borrowed.destination().map(|value| value.into_owned()),
+                    owned.header().destination().cloned()
+                );
+                assert_eq!(borrowed.payload(), owned.payload());
+            }
+            (Err(owned), Err(borrowed)) => assert_eq!(owned, borrowed),
+            (owned, borrowed) => panic!(
+                "owned and borrowed parser outcomes diverged: owned={owned:?}, borrowed={borrowed:?}"
+            ),
+        }
     }
 }

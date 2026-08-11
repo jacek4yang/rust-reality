@@ -19,11 +19,16 @@
   看似普通 TLS 1.3 握手的过程中证明持有每用户密钥材料。配置的 server name
   可以是具体 DNS 名称，也可以是 `*.lmu.edu` 这样的最左单标签模式；
   ClientHello 的 SNI 必须保持具体。只有验证通过预期的 TLS 1.3
-  ClientFinished 之后才提交认证状态。
+  ClientFinished 之后才提交认证状态。每个 VLESS UUID 拥有一个或多个 REALITY
+  short ID：ClientHello short ID 先通过不可变、按基数自适应的 owner 索引解析
+  出 UUID；VLESS 解码后，头中的 UUID 必须与该 owner 完全相等。因此从两个
+  不同客户端条目分别复制 UUID 与 short ID，无法拼成获准会话。
 - **Fallback** 是失败模式：未认证连接会按序、逐字节地转发到伪装目标。没有
   任何合成响应会把服务标识为代理，且 fallback 并发独立于已认证流量计数。
 - **VLESS** 是 TLS 流内的已认证请求协议：UUID、命令和目标。解密为 `none`——
-  机密性与完整性由外层 REALITY TLS 1.3 记录层提供。
+  机密性与完整性由外层 REALITY TLS 1.3 记录层提供。v1.3 不在 REALITY 内再
+  叠加 VLESS Encryption，因为它会禁用 Vision splice 并重复逐字节加密；实测
+  与结论见[决策记录](decisions/0003-do-not-stack-vless-encryption-on-reality.md)。
 - **`xtls-rprx-vision`** 是唯一接受的 flow。它在 framed 阶段提供 padding 与
   长度混淆，并支持 **Direct** 转换：当某方向完成认证并识别出内层 TLS 1.3
   应用数据后，该方向切换为 raw relay（优先 Linux `splice`），边界不变量见

@@ -1,7 +1,9 @@
 use std::{
-    collections::HashMap,
+    cmp::Reverse,
+    collections::{BinaryHeap, HashMap},
     error::Error,
     fmt,
+    hash::{BuildHasherDefault, Hash, Hasher},
     sync::{
         Arc, Mutex, MutexGuard,
         atomic::{AtomicU64, Ordering},
@@ -40,7 +42,7 @@ impl fmt::Display for ReplayError {
 
 impl Error for ReplayError {}
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 struct ReplayKey([u8; 32]);
 
 impl ReplayKey {
@@ -51,6 +53,45 @@ impl ReplayKey {
         Self(key)
     }
 }
+
+impl Hash for ReplayKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // The first digest byte selects the mutex shard. Use a disjoint digest
+        // word for the table hash so every shard still sees all 64 hash bits.
+        let digest_word = u64::from_ne_bytes([
+            self.0[8], self.0[9], self.0[10], self.0[11], self.0[12], self.0[13], self.0[14],
+            self.0[15],
+        ]);
+        state.write_u64(digest_word);
+    }
+}
+
+/// Identity finalizer for a key that is already a uniformly distributed
+/// SHA-256 digest. Re-running keyed SipHash over all 32 bytes adds work but no
+/// useful collision resistance: targeting this 64-bit digest word still
+/// requires a SHA-256 preimage search.
+#[derive(Default)]
+struct ReplayKeyHasher(u64);
+
+impl Hasher for ReplayKeyHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        // ReplayKey always calls write_u64. Keep the required generic entry
+        // point deterministic and well-defined for defensive future use.
+        self.0 = bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = value;
+    }
+}
+
+type ReplayEntries = HashMap<ReplayKey, ReplayEntry, BuildHasherDefault<ReplayKeyHasher>>;
 
 impl fmt::Debug for ReplayKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -65,8 +106,14 @@ struct ReplayEntry {
     _permit: AdmissionPermit,
 }
 
+#[derive(Default)]
+struct ReplayShard {
+    entries: ReplayEntries,
+    expirations: BinaryHeap<Reverse<(Instant, u64, ReplayKey)>>,
+}
+
 struct ReplayCacheInner {
-    shards: Box<[Mutex<HashMap<ReplayKey, ReplayEntry>>]>,
+    shards: Box<[Mutex<ReplayShard>]>,
     governor: ResourceGovernor,
     pending_ttl: Duration,
     committed_ttl: Duration,
@@ -87,7 +134,7 @@ impl ReplayCache {
     #[must_use]
     pub fn new(governor: ResourceGovernor, config: &ResourceGovernorConfig) -> Self {
         let shards = (0..REPLAY_SHARDS)
-            .map(|_| Mutex::new(HashMap::new()))
+            .map(|_| Mutex::new(ReplayShard::default()))
             .collect();
         Self {
             inner: Arc::new(ReplayCacheInner {
@@ -141,9 +188,9 @@ impl ReplayCache {
             .ok_or(ReplayError::Unavailable)?;
         let shard_index = shard_index(key);
         {
-            let mut entries = lock_recover(&self.inner.shards[shard_index]);
-            entries.retain(|_, entry| entry.expires_at > now);
-            if entries.contains_key(&key) {
+            let mut shard = lock_recover(&self.inner.shards[shard_index]);
+            purge_replay_shard(&mut shard, now);
+            if shard.entries.contains_key(&key) {
                 return Err(ReplayError::Duplicate);
             }
         }
@@ -159,14 +206,27 @@ impl ReplayCache {
                     .map_err(|_| ReplayError::Capacity)?
             }
         };
-        let generation = self.inner.next_generation.fetch_add(1, Ordering::Relaxed);
-        let mut entries = lock_recover(&self.inner.shards[shard_index]);
-        entries.retain(|_, entry| entry.expires_at > now);
-        if entries.contains_key(&key) {
+        let generation = self
+            .inner
+            .next_generation
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                current.checked_add(1)
+            })
+            .map_err(|_| ReplayError::Unavailable)?;
+        let mut shard = lock_recover(&self.inner.shards[shard_index]);
+        purge_replay_shard(&mut shard, now);
+        if shard.entries.contains_key(&key) {
             return Err(ReplayError::Duplicate);
         }
-        entries.try_reserve(1).map_err(|_| ReplayError::Capacity)?;
-        entries.insert(
+        shard
+            .entries
+            .try_reserve(1)
+            .map_err(|_| ReplayError::Capacity)?;
+        shard
+            .expirations
+            .try_reserve(1)
+            .map_err(|_| ReplayError::Capacity)?;
+        shard.entries.insert(
             key,
             ReplayEntry {
                 generation,
@@ -175,6 +235,9 @@ impl ReplayCache {
                 _permit: permit,
             },
         );
+        shard
+            .expirations
+            .push(Reverse((expires_at, generation, key)));
         Ok(ReplayReservation {
             cache: self.clone(),
             key,
@@ -188,10 +251,8 @@ impl ReplayCache {
             .shards
             .iter()
             .map(|shard| {
-                let mut entries = lock_recover(shard);
-                let previous = entries.len();
-                entries.retain(|_, entry| entry.expires_at > now);
-                previous.saturating_sub(entries.len())
+                let mut shard = lock_recover(shard);
+                purge_replay_shard(&mut shard, now)
             })
             .sum()
     }
@@ -201,7 +262,7 @@ impl ReplayCache {
         self.inner
             .shards
             .iter()
-            .map(|shard| lock_recover(shard).len())
+            .map(|shard| lock_recover(shard).entries.len())
             .sum()
     }
 }
@@ -233,18 +294,29 @@ impl ReplayReservation {
             .checked_add(self.cache.inner.committed_ttl)
             .ok_or(ReplayError::Unavailable)?;
         let shard_index = shard_index(self.key);
-        let mut entries = lock_recover(&self.cache.inner.shards[shard_index]);
-        let Some(entry) = entries.get_mut(&self.key) else {
+        let mut shard = lock_recover(&self.cache.inner.shards[shard_index]);
+        let Some(entry) = shard.entries.get(&self.key) else {
             return Err(ReplayError::ReservationLost);
         };
         if entry.generation != self.generation || entry.committed || entry.expires_at <= now {
             if entry.generation == self.generation && !entry.committed {
-                entries.remove(&self.key);
+                shard.entries.remove(&self.key);
+                compact_stale_expirations(&mut shard);
             }
             return Err(ReplayError::ReservationLost);
         }
+        shard
+            .expirations
+            .try_reserve(1)
+            .map_err(|_| ReplayError::Capacity)?;
+        let Some(entry) = shard.entries.get_mut(&self.key) else {
+            return Err(ReplayError::ReservationLost);
+        };
         entry.committed = true;
         entry.expires_at = expires_at;
+        shard
+            .expirations
+            .push(Reverse((expires_at, self.generation, self.key)));
         self.active = false;
         Ok(())
     }
@@ -266,14 +338,56 @@ impl Drop for ReplayReservation {
             return;
         }
         let shard_index = shard_index(self.key);
-        let mut entries = lock_recover(&self.cache.inner.shards[shard_index]);
-        if entries
+        let mut shard = lock_recover(&self.cache.inner.shards[shard_index]);
+        if shard
+            .entries
             .get(&self.key)
             .is_some_and(|entry| entry.generation == self.generation && !entry.committed)
         {
-            entries.remove(&self.key);
+            shard.entries.remove(&self.key);
+            compact_stale_expirations(&mut shard);
         }
     }
+}
+
+fn purge_replay_shard(shard: &mut ReplayShard, now: Instant) -> usize {
+    let mut removed = 0;
+    while shard
+        .expirations
+        .peek()
+        .is_some_and(|Reverse((expires_at, _, _))| *expires_at <= now)
+    {
+        let Some(Reverse((expires_at, generation, key))) = shard.expirations.pop() else {
+            break;
+        };
+        if shard
+            .entries
+            .get(&key)
+            .is_some_and(|entry| entry.generation == generation && entry.expires_at == expires_at)
+        {
+            shard.entries.remove(&key);
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// Dropped pending reservations leave one unreachable heap record. Compact
+/// only after a generous slack threshold, bounding memory while amortizing
+/// the scan over at least 1,024 failed handshakes.
+fn compact_stale_expirations(shard: &mut ReplayShard) {
+    let maximum = shard.entries.len().saturating_mul(2).saturating_add(1_024);
+    if shard.expirations.len() <= maximum {
+        return;
+    }
+    let entries = &shard.entries;
+    shard
+        .expirations
+        .retain(|Reverse((expires_at, generation, key))| {
+            entries.get(key).is_some_and(|entry| {
+                entry.generation == *generation && entry.expires_at == *expires_at
+            })
+        });
 }
 
 fn shard_index(key: ReplayKey) -> usize {
@@ -289,7 +403,7 @@ fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::{Arc, Barrier},
+        sync::{Arc, Barrier, atomic::Ordering},
         thread,
         time::{Duration, Instant},
     };
@@ -413,6 +527,27 @@ mod tests {
             .expect("a ClientFinished accepted before the handshake deadline must commit");
         drop(reservation);
         assert_eq!(cache.entry_count(), 1);
+    }
+
+    #[test]
+    fn exhausted_generation_fails_closed_without_leaking_capacity() {
+        let cache = test_cache(1);
+        let now = Instant::now();
+        cache
+            .inner
+            .next_generation
+            .store(u64::MAX, Ordering::Relaxed);
+
+        assert!(matches!(
+            cache.reserve_key_at(replay_key(10), now),
+            Err(ReplayError::Unavailable)
+        ));
+        assert_eq!(cache.entry_count(), 0);
+
+        // Resetting the synthetic test state proves the failed reservation
+        // released its global admission permit instead of stranding capacity.
+        cache.inner.next_generation.store(1, Ordering::Relaxed);
+        assert!(cache.reserve_key_at(replay_key(10), now).is_ok());
     }
 
     #[test]

@@ -10,6 +10,96 @@
 v1.0.0 发布对比矩阵见
 [benchmarks.zh-CN.md](benchmarks.zh-CN.md)。
 
+## v1.3 控制面与建连路径结构
+
+v1.3 审计按用途区分哈希结构，而不是全局替换 `HashMap`：
+
+- 攻击者可影响的可变重放状态和大型 Geo 资产集合保留带随机种子的标准哈希器，
+  维持抗碰撞能力；
+- 校验/reload 中的 map 只在启动路径使用，不值得引入自定义哈希器；
+- 不可变 UUID 与出站 tag 索引只在实测的小基数边界内使用连续排序布局，超过
+  边界自动使用标准哈希表。
+
+发布主机 Criterion 选择 64 作为 UUID 边界：64 项时排序命中/未命中为
+19.95/16.32 ns，同尺寸 value 的 SipHash map 为 20.26/20.76 ns；到 128 项，
+排序命中升至 23.59 ns，切换后的哈希表示为 22.01 ns。出站 tag 在 4 项以内
+使用排序存储（4 项命中 11.58 ns，对哈希 20.40 ns），超过后用哈希（16 项时
+排序 27.02 ns，对哈希 25.85 ns）。
+
+强化后的 short-ID/UUID 配对本身也是查找结构：一个解码 short ID 直接解析为
+owner UUID，随后 VLESS 校验只做一次相等比较，不再二次搜索 short ID。owner
+索引在 256 项以内保持排序表示（命中/未命中 17.41/16.87 ns，哈希为
+19.60/18.17 ns），超过该实测边界后切换 SipHash；512 项时哈希以
+19.59/18.18 ns 胜过排序的 20.23/19.84 ns。常见的两个 short ID 排序命中为
+3.50 ns，比被替换的 owner-selecting 常量时间线性扫描 35.04 ns 低 10.0 倍。
+对外失败策略没有被弱化：Finished 之前的所有认证失败仍进入同一条有界、逐字节
+精确的 fallback。
+
+short-ID owner 索引已经认证了相同身份，因此 REALITY 不再额外构建第二份每
+listener UUID registry。owner UUID 直接随已建立会话传递，VLESS UUID 校验就是
+一次相等比较。路由同样每次决策只查一次 UUID，同组全部 UUID 共享一个
+`Arc<CompiledUserPolicy>`；空 DNS 结果有 allocation-counter 门禁证明堆分配为
+零。Handoff 与普通连接也共用一次出站 tag 解析，不再分层各查一次。
+
+VLESS 解析现在有两条明确专用路径：公共 API 直接构造 owned header；生产
+Vision 路径从有界请求缓冲区借用 Addons、域名和预取载荷，只在请求被接受时把
+域名拥有一次。allocation-counter 测得连续 1024 次 borrowed domain 解析为零
+分配。完整 Criterion 重复测得 owned API：IPv4 27.23 ns、domain 53.67 ns、
+IPv6 27.46 ns、最大头 425.01 ns；四项相对紧邻基线都在 Criterion 噪声门槛内。
+请求缓冲区现在以协议最大头部 533 B 起步，只有 TLS 记录同时带入预取载荷时才
+增长，不再预先保留整条记录。
+
+重放缓存用哈希表做精确重复检测，用 deadline 最小堆做过期。REALITY 只清理目标
+分片；NXR/Handoff 的常态 reserve 也只处理目标分片，只有真正触及全局容量才
+扫描全部 16 个分片。已有 4096 个存活 nonce 时，连续预留 64 个 nonce 从旧版
+全量 retain 的 593.18 µs 降到 17.43 µs（**34.0×**）；对无过期存活集合做 purge
+约为与基数无关的 282 ns，而不是 10.54 µs。REALITY key 本来就是服务端计算的
+SHA-256 digest，因此该表直接使用另一个独立的 64-bit digest word，不再对全部
+32 字节跑 SipHash：4096 项时命中/未命中从 25.25/24.99 ns 降到
+2.18/1.11 ns（**11.6×/22.4×**）。Handoff 与 NXR 的 nonce 仍由对端影响，继续
+使用随机化哈希。
+
+direct 拨号速率门从 `Mutex<f64 token bucket>` 改为原子 GCRA；它使用保守的整数
+纳秒间隔，保留相同的一秒 burst 容量，既不排队也不会超过配置速率。连同未变的
+Tokio 并发信号量，Criterion 测得单线程 68.34 vs 84.90 ns，四线程争用
+145.60 vs 181.75 ns（耗时约低 **19.5%/19.9%**）。
+
+常见 X25519 握手把固定 32 字节服务端 share 留在栈上。server flight 只构建一次
+连续 wire 缓冲区，并直接密封现有 transcript 尾部；原来的外层 record vector、
+重复 flight-plaintext vector，以及发送时组装分配/拷贝均已删除。
+
+依赖 feature 已收紧到实际使用面，直接 `base64` 版本完成统一，Criterion 默认的
+绘图/并行依赖图被移除，lockfile 共减少 10 个 package。全部源码变化后的剥离版
+release 二进制为 6,309,616 字节，比审计前 6,332,536 字节少 22,920 字节
+（0.36%）。规范值保存在
+`benchmarks/final/v1.3-hot-structures/summary.json`。
+
+随后以每个 cell 3 轮、每轮 96 条连接、零失败，对完整 setup 路径（accept 到
+首个 Vision 载荷）与 Xray 26.7.28 做了复测。rust-reality 在 c1/c8/c32 的中位数
+为 190/793/892 conn/s，Xray 为 177/721/833。按 864 条被测连接归一后的服务端
+perf 成本为每连接 0.757 ms、4.00 M 指令，Xray 为 1.239 ms、5.69 M 指令。
+这是组合路径的同机验证，不是 WAN 容量承诺；原始和汇总证据保存在
+`benchmarks/final/v1.3-setup-refactor/`。
+
+VLESS Encryption 的 REALITY + Vision 精确叠加 A/B 及不在该档位发布它的结论见
+[ADR 0003](decisions/0003-do-not-stack-vless-encryption-on-reality.md)：p50 吞吐
+为 0.696×，服务端 CPU/GiB 为 5.50×，且 Vision splice 被禁用。
+
+## 鲁棒性门禁
+
+每个有界解析器都有 libFuzzer 目标。v1.3 门禁对 `wire_parsers`（包含生产借用式
+VLESS 解码器）、Vision framing、Handoff 头、Handoff blob 和完整 Handoff 开封各跑
+20,000 个 ASan 插桩用例。受限验证 shell 在 ptrace 下无法初始化 LeakSanitizer，因而
+本地 fuzz smoke 设置 `ASAN_OPTIONS=detect_leaks=0`；定时 CI 在普通 runner 上执行
+完整 ASan + LSan 套件。
+
+解析属性门禁对一个 533 字节最大请求的每个前缀，以及每个字节替换为 0/1/255 的情况，
+比较 owned 与 borrowed VLESS 解码结果，要求错误或字段完全一致。重放、准入、FD 和
+relay 测试覆盖取消、锁 poison 恢复、容量回收与并发争用。定时 CI 还会在
+AddressSanitizer/LeakSanitizer 下跑完整测试，并在 ThreadSanitizer 下跑 REALITY 重放
+并发竞态测试。单调 deadline 和计数器使用 checked 算术；时间域耗尽会返回明确的
+unavailable，而不会饱和后错误放行。
+
 ## framed 路径成本分解
 
 对 ring 之前构建的稳态 framed profile（仅已建立连接，不含 setup）中服务端

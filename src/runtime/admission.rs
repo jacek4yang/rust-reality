@@ -1,7 +1,10 @@
 use std::{
     error::Error,
     fmt,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Instant,
 };
 
@@ -175,44 +178,74 @@ pub struct DirectPermit {
     _permit: OwnedSemaphorePermit,
 }
 
-struct TokenBucket {
-    tokens: f64,
-    capacity: f64,
-    refill_per_second: f64,
-    updated: Instant,
+const NANOS_PER_SECOND: u64 = 1_000_000_000;
+
+/// Lock-free GCRA gate with the same one-second burst allowance as the former
+/// token bucket. A conservative integral-nanosecond interval prevents the gate
+/// from ever exceeding the configured rate.
+struct DialRateGate {
+    origin: Instant,
+    interval_nanos: u64,
+    burst_nanos: u64,
+    next_nanos: AtomicU64,
 }
 
-impl TokenBucket {
+impl DialRateGate {
     fn new(max_per_second: u32) -> Self {
-        let capacity = f64::from(max_per_second);
+        let rate = u64::from(max_per_second);
+        let interval_nanos = if rate == 0 {
+            0
+        } else {
+            NANOS_PER_SECOND.div_ceil(rate)
+        };
         Self {
-            tokens: capacity,
-            capacity,
-            refill_per_second: capacity,
-            updated: Instant::now(),
+            origin: Instant::now(),
+            interval_nanos,
+            burst_nanos: interval_nanos.saturating_mul(rate),
+            next_nanos: AtomicU64::new(0),
         }
     }
 
-    fn try_take(&mut self) -> bool {
-        let now = Instant::now();
-        let elapsed = now.saturating_duration_since(self.updated).as_secs_f64();
-        self.tokens = (self.tokens + elapsed * self.refill_per_second).min(self.capacity);
-        self.updated = now;
-        if self.tokens < 1.0 {
+    fn try_take(&self) -> bool {
+        let now_nanos = u64::try_from(self.origin.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        self.try_take_at(now_nanos)
+    }
+
+    fn try_take_at(&self, now_nanos: u64) -> bool {
+        if self.interval_nanos == 0 {
             return false;
         }
-        self.tokens -= 1.0;
-        true
+        let latest = now_nanos.saturating_add(self.burst_nanos);
+        let mut observed = self.next_nanos.load(Ordering::Relaxed);
+        loop {
+            let Some(next) = observed.max(now_nanos).checked_add(self.interval_nanos) else {
+                // Do not let saturation turn MAX -> MAX into an endlessly
+                // successful compare-exchange after the time domain is spent.
+                return false;
+            };
+            if next > latest {
+                return false;
+            }
+            match self.next_nanos.compare_exchange_weak(
+                observed,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(actual) => observed = actual,
+            }
+        }
     }
 }
 
 struct DirectBarrierInner {
     concurrency: Arc<Semaphore>,
-    rate: Mutex<TokenBucket>,
+    rate: DialRateGate,
     pressure: Option<PressureGauge>,
 }
 
-/// Direct outbound isolation with independent concurrency and token-bucket limits.
+/// Direct outbound isolation with independent concurrency and lock-free GCRA limits.
 #[derive(Clone)]
 pub struct DirectBarrier {
     inner: Arc<DirectBarrierInner>,
@@ -237,7 +270,7 @@ impl DirectBarrier {
         Self {
             inner: Arc::new(DirectBarrierInner {
                 concurrency: semaphore(config.max_concurrent),
-                rate: Mutex::new(TokenBucket::new(config.max_per_second)),
+                rate: DialRateGate::new(config.max_per_second),
                 pressure,
             }),
         }
@@ -265,12 +298,7 @@ impl DirectBarrier {
                 TryAcquireError::NoPermits => AdmissionDenied::DirectConcurrency,
                 TryAcquireError::Closed => AdmissionDenied::Unavailable,
             })?;
-        let mut bucket = self
-            .inner
-            .rate
-            .lock()
-            .map_err(|_| AdmissionDenied::Unavailable)?;
-        if !bucket.try_take() {
+        if !self.inner.rate.try_take() {
             return Err(AdmissionDenied::DirectRate);
         }
         Ok(DirectPermit { _permit: permit })
@@ -279,9 +307,11 @@ impl DirectBarrier {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::Ordering;
+
     use crate::config::{DirectBarrierConfig, ResourceGovernorConfig};
 
-    use super::{AdmissionDenied, AdmissionKind, DirectBarrier, ResourceGovernor};
+    use super::{AdmissionDenied, AdmissionKind, DialRateGate, DirectBarrier, ResourceGovernor};
 
     #[test]
     fn governor_releases_permit_on_drop() {
@@ -334,6 +364,50 @@ mod tests {
             barrier.try_acquire(),
             Err(AdmissionDenied::DirectRate)
         ));
+    }
+
+    #[test]
+    fn rate_gate_enforces_burst_and_refill_without_a_lock() {
+        let gate = DialRateGate::new(4);
+
+        assert!((0..4).all(|_| gate.try_take_at(0)));
+        assert!(!gate.try_take_at(0));
+        assert!(gate.try_take_at(gate.interval_nanos));
+        assert!(!gate.try_take_at(gate.interval_nanos));
+    }
+
+    #[test]
+    fn rate_gate_never_oversubscribes_under_contention() {
+        const RATE: u32 = 1_024;
+        let gate = DialRateGate::new(RATE);
+        let accepted = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..8)
+                .map(|_| scope.spawn(|| (0..512).filter(|_| gate.try_take_at(0)).count()))
+                .collect();
+            workers
+                .into_iter()
+                .map(|worker| worker.join().expect("rate worker must not panic"))
+                .sum::<usize>()
+        });
+
+        assert_eq!(accepted, RATE as usize);
+    }
+
+    #[test]
+    fn zero_rate_rejects_without_panicking() {
+        let gate = DialRateGate::new(0);
+        assert!(!gate.try_take_at(0));
+        assert!(!gate.try_take_at(u64::MAX));
+    }
+
+    #[test]
+    fn exhausted_monotonic_time_fails_closed_instead_of_admitting_forever() {
+        let gate = DialRateGate::new(1);
+        assert!(!gate.try_take_at(u64::MAX));
+
+        gate.next_nanos.store(u64::MAX, Ordering::Relaxed);
+        assert!(!gate.try_take_at(0));
+        assert_eq!(gate.next_nanos.load(Ordering::Relaxed), u64::MAX);
     }
 
     #[test]

@@ -24,9 +24,9 @@ use crate::{
             TlsApplicationReader, TlsApplicationWriter, VectoredRead,
         },
         vless::{
-            DecodeError, Destination, RequestHeader, RequestValidationError, UserId, UserRegistry,
-            VISION_FRAME_SIZE, VisionCommand, VisionDecodeError, VisionDecoder, VisionEncodeError,
-            VisionEncoder, VisionMode, VisionPayload, decode_request, encode_response_header,
+            DecodeError, Destination, RequestValidationError, UserId, VERSION, VISION_FRAME_SIZE,
+            VisionCommand, VisionDecodeError, VisionDecoder, VisionEncodeError, VisionEncoder,
+            VisionMode, VisionPayload, decode_request_ref, validate_authenticated_vision_fields,
         },
     },
 };
@@ -34,7 +34,9 @@ use crate::{
 use super::{
     direct::{DirectHandoff, Direction, DirectionState, InvalidTransition, RawDecision},
     handoff::HandoffLineError,
-    outbound::{OutboundConnectError, OutboundConnectOutcome, OutboundRegistry},
+    outbound::{
+        OutboundConnectError, OutboundConnectOutcome, OutboundRegistry, SessionOutboundOutcome,
+    },
     reality::RealityEstablished,
     routing::{AssetMatcher, RouteResolutionError, RoutingCompileError, RoutingTable},
 };
@@ -298,9 +300,14 @@ impl VisionHandler {
         established: RealityEstablished,
     ) -> Result<VisionRelayStats, VisionSessionError> {
         let client_random = *established.client_random();
-        let (application, users, inbound_tag) = established.into_parts();
+        let (application, inbound_tag, authenticated_user_id) = established.into_parts();
         let (mut client_reader, mut client_writer) = application.into_owned_split();
-        let request = read_vision_request(&mut client_reader, &users, self.request_timeout).await?;
+        let request = read_vision_request(
+            &mut client_reader,
+            authenticated_user_id,
+            self.request_timeout,
+        )
+        .await?;
         let route = self
             .routing
             .select_with_dns(
@@ -312,25 +319,28 @@ impl VisionHandler {
             )
             .await
             .map_err(VisionSessionError::Route)?;
-        // The session-handoff boundary: routing has selected the outbound, the
-        // downlink TLS direction is still at sequence zero with nothing
-        // written, and no Vision encoder or decoder exists yet. A handoff
-        // outbound transfers the session to the landing node here and this
-        // node never touches its TLS or Vision state again.
-        if let Some(line) = self.outbounds.handoff_line(route.decision().outbound()) {
-            return self
-                .relay_via_handoff(&line, client_reader, client_writer, request, client_random)
-                .await;
-        }
         let outcome = self
             .outbounds
-            .connect_resolved(
+            .connect_session_resolved(
                 route.decision().outbound(),
                 &request.destination,
                 route.resolved_ips(),
             )
             .await
             .map_err(VisionSessionError::Outbound)?;
+        // The session-handoff boundary: routing has selected the outbound, the
+        // downlink TLS direction is still at sequence zero with nothing
+        // written, and no Vision encoder or decoder exists yet. A handoff
+        // outbound transfers the session to the landing node here and this
+        // node never touches its TLS or Vision state again.
+        let outcome = match outcome {
+            SessionOutboundOutcome::Handoff(line) => {
+                return self
+                    .relay_via_handoff(&line, client_reader, client_writer, request, client_random)
+                    .await;
+            }
+            SessionOutboundOutcome::Connected(outcome) => outcome,
+        };
         let OutboundConnectOutcome::Connected(connection) = outcome else {
             client_writer
                 .shutdown(self.io_timeout)
@@ -341,8 +351,9 @@ impl VisionHandler {
         let (destination, outbound_permit) = connection.into_parts();
         let (destination_reader, destination_writer) = destination.into_split();
         let user_id = request.user_id;
-        let response_header = encode_response_header(&request.header, &[])
-            .map_err(VisionSessionError::ResponseHeader)?;
+        // The decoder accepted VLESS v0 and this inbound never negotiates
+        // response Addons, so the response is a fixed stack value.
+        let response_header = [VERSION, 0];
 
         // One coordinator per session. It holds two atomics, four socket-half
         // slots, and a version watch; never a queue and never a payload.
@@ -421,7 +432,7 @@ impl VisionHandler {
             server_traffic,
             server_sequence,
             *request.user_id.as_bytes(),
-            request.destination.clone(),
+            request.destination,
             pending,
             prefetched,
         )
@@ -497,7 +508,6 @@ impl VisionHandler {
 }
 
 struct AcceptedVisionRequest {
-    header: RequestHeader,
     user_id: UserId,
     destination: Destination,
     /// The retained request buffer. The prefetched payload is a range inside it,
@@ -555,8 +565,8 @@ pub(crate) async fn run_resumed_session(
     timeout: Duration,
 ) -> Result<VisionRelayStats, VisionSessionError> {
     let (destination_reader, destination_writer) = destination.into_split();
-    // Identical to `encode_response_header(&request.header, &[])`: the VLESS
-    // version is fixed and this implementation never negotiates addons.
+    // The VLESS version is fixed and this implementation never negotiates
+    // response Addons.
     let response_header = [crate::protocol::vless::VERSION, 0];
     let prefetched = 0..prefetched_plaintext.len();
     let handoff = DirectHandoff::new();
@@ -586,28 +596,40 @@ pub(crate) async fn run_resumed_session(
 
 async fn read_vision_request<R>(
     reader: &mut TlsApplicationReader<R>,
-    users: &UserRegistry,
+    authenticated_user_id: UserId,
     timeout: Duration,
 ) -> Result<AcceptedVisionRequest, VisionSessionError>
 where
     R: AsyncRead + Unpin,
 {
     let deadline = operation_deadline(timeout)?;
-    let mut buffer = Vec::with_capacity(MAX_REQUEST_BUFFER_SIZE);
+    // Small/setup-only sessions pay for the maximum header, not a speculative
+    // full TLS record. A coalesced payload grows this same retained buffer on
+    // demand and still stays under MAX_REQUEST_BUFFER_SIZE.
+    let mut buffer = Vec::with_capacity(MAX_REQUEST_HEADER_SIZE);
 
     loop {
-        match decode_request(&buffer) {
+        match decode_request_ref(&buffer) {
             Ok(decoded) => {
-                let (header, payload) = decoded.into_parts();
-                let payload_len = payload.len();
-                let destination = users
-                    .authorize_vision_tcp(&header)
-                    .map_err(VisionSessionError::Validate)?
-                    .clone();
+                let payload_len = decoded.payload().len();
+                validate_authenticated_vision_fields(
+                    decoded.user_id(),
+                    decoded.addons(),
+                    decoded.command(),
+                    decoded.destination().is_some(),
+                    authenticated_user_id,
+                )
+                .map_err(VisionSessionError::Validate)?;
+                let user_id = decoded.user_id();
+                let destination = decoded
+                    .destination()
+                    .map(|destination| destination.into_owned())
+                    .ok_or(VisionSessionError::Validate(
+                        RequestValidationError::MissingDestination,
+                    ))?;
                 let prefetched_start = buffer.len().saturating_sub(payload_len);
                 return Ok(AcceptedVisionRequest {
-                    user_id: header.user_id(),
-                    header,
+                    user_id,
                     destination,
                     prefetched: prefetched_start..buffer.len(),
                     buffer,
@@ -1923,7 +1945,6 @@ pub enum VisionSessionError {
     Validate(RequestValidationError),
     Route(RouteResolutionError),
     Outbound(OutboundConnectError),
-    ResponseHeader(crate::protocol::vless::ResponseEncodeError),
     Tls(TlsApplicationIoError),
     VisionDecode(VisionDecodeError),
     VisionEncode(VisionEncodeError),
@@ -1947,7 +1968,6 @@ impl fmt::Display for VisionSessionError {
             Self::Validate(source) => source.fmt(formatter),
             Self::Route(source) => source.fmt(formatter),
             Self::Outbound(source) => source.fmt(formatter),
-            Self::ResponseHeader(source) => source.fmt(formatter),
             Self::Tls(source) => source.fmt(formatter),
             Self::VisionDecode(source) => source.fmt(formatter),
             Self::VisionEncode(source) => source.fmt(formatter),
@@ -1970,7 +1990,6 @@ impl Error for VisionSessionError {
             Self::Validate(source) => Some(source),
             Self::Route(source) => Some(source),
             Self::Outbound(source) => Some(source),
-            Self::ResponseHeader(source) => Some(source),
             Self::Tls(source) => Some(source),
             Self::VisionDecode(source) => Some(source),
             Self::VisionEncode(source) => Some(source),
@@ -2028,8 +2047,8 @@ mod tests {
                 TlsApplicationIo, read_tls_record,
             },
             vless::{
-                Command, UserId, UserRegistry, VERSION, VISION_FLOW, VISION_FRAME_SIZE,
-                VisionCommand, VisionDecoder, VisionEncoder, VisionMode,
+                Command, UserId, VERSION, VISION_FLOW, VISION_FRAME_SIZE, VisionCommand,
+                VisionDecoder, VisionEncoder, VisionMode,
             },
         },
         runtime::FdBudget,
@@ -2057,7 +2076,7 @@ mod tests {
         let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
         let established = RealityEstablished::from_test_parts(
             TlsApplicationIo::new(server, established_tls),
-            UserRegistry::new([USER]),
+            USER,
         );
         let governor = ResourceGovernorConfig {
             connect_timeout_ms: 1_000,
@@ -2162,7 +2181,7 @@ mod tests {
         let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
         let established = RealityEstablished::from_test_parts(
             TlsApplicationIo::new(server, established_tls),
-            UserRegistry::new([USER]),
+            USER,
         );
         let governor = ResourceGovernorConfig {
             connect_timeout_ms: 1_000,
@@ -2295,7 +2314,7 @@ mod tests {
         let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
         let established = RealityEstablished::from_test_parts(
             TlsApplicationIo::new(server, established_tls),
-            UserRegistry::new([USER]),
+            USER,
         );
         let governor = ResourceGovernorConfig {
             connect_timeout_ms: 1_000,
@@ -2442,7 +2461,7 @@ mod tests {
         let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
         let established = RealityEstablished::from_test_parts(
             TlsApplicationIo::new(server, established_tls),
-            UserRegistry::new([USER]),
+            USER,
         );
         let governor = ResourceGovernorConfig {
             connect_timeout_ms: 2_000,
@@ -2640,7 +2659,7 @@ mod tests {
         let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
         let established = RealityEstablished::from_test_parts(
             TlsApplicationIo::new(server, established_tls),
-            UserRegistry::new([USER]),
+            USER,
         );
         let governor = ResourceGovernorConfig {
             connect_timeout_ms: 1_000,
@@ -2783,7 +2802,7 @@ mod tests {
         let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
         let established = RealityEstablished::from_test_parts(
             TlsApplicationIo::new(server, established_tls),
-            UserRegistry::new([USER]),
+            USER,
         );
         let governor = ResourceGovernorConfig {
             connect_timeout_ms: 1_000,
@@ -2916,7 +2935,7 @@ mod tests {
         let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
         let established = RealityEstablished::from_test_parts(
             TlsApplicationIo::new(server, established_tls),
-            UserRegistry::new([USER]),
+            USER,
         );
         let governor = ResourceGovernorConfig {
             connect_timeout_ms: 1_000,
@@ -3023,7 +3042,7 @@ mod tests {
         let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
         let established = RealityEstablished::from_test_parts(
             TlsApplicationIo::new(server, established_tls),
-            UserRegistry::new([USER]),
+            USER,
         );
         let governor = ResourceGovernorConfig {
             connect_timeout_ms: 1_000,
@@ -3142,7 +3161,7 @@ mod tests {
         let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
         let established = RealityEstablished::from_test_parts(
             TlsApplicationIo::new(server, established_tls),
-            UserRegistry::new([USER]),
+            USER,
         );
         let governor = ResourceGovernorConfig {
             connect_timeout_ms: 1_000,

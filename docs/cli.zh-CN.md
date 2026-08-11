@@ -94,7 +94,7 @@ rust-reality config generate standalone \
 ```
 
 生成一个公网 VLESS + REALITY + Vision 入站、一个 UUID、一对 REALITY X25519
-密钥、一个 short ID，以及 direct 出站和用户策略。
+密钥、归该 UUID 独占的两个 short ID，以及 direct 出站和用户策略。
 
 | 选项 | 必填 | 默认值 | 含义 |
 | --- | --- | --- | --- |
@@ -150,7 +150,7 @@ rust-reality config generate handoff \
 一步生成完整的 Handoff 部署：`line.json`（公网 VLESS + REALITY + Vision
 线路机，用户默认路由到 handoff 出站）、`landing.json`（防火墙限制的内部
 handoff 监听器）和 `xray-client.json`（面向线路机的 SOCKS 入站 Xray 客户端）。
-所有密钥材料均独立生成：UUID、REALITY X25519 密钥对、一个 short ID、
+所有密钥材料均独立生成：UUID、REALITY X25519 密钥对、归该 UUID 独占的两个 short ID、
 Handoff 预共享密钥，以及落地机的静态 X25519 密钥对。两个服务器配置在写入前
 都会通过完整校验。
 
@@ -183,6 +183,38 @@ rust-reality config generate handoff \
 （`landing-1`、`landing-2`……）；每对落地的密钥材料相互独立，所有服务端文件
 在写出前都经过校验。`xray-client.json` 保持单 UUID 形态，使用第一个落地的
 UUID——是否把其余 UUID 分配给客户端由运维自行决定。
+
+### `config autotune`
+
+```text
+rust-reality config autotune \
+  --config <INPUT.json> --output <TUNED.json> \
+  [--report <REPORT.json>] [--scratch-directory <DIR>] \
+  [--duration-ms <N>] [--warmup-ms <N>] \
+  [--storage-mib <N>] [--network-mib <N>] [--dedicated]
+```
+
+执行有界的本机协议、机器/cgroup、存储和 TCP loopback 探测，然后写出经过
+完整校验的调优副本及测量报告。输入文件永不修改；输出文件权限为仅所有者
+可读写（`0600`），并通过同目录原子 rename 发布。先发布报告，最后发布已
+校验配置。
+
+| 选项 | 必填 | 默认值/范围 | 含义 |
+| --- | --- | --- | --- |
+| `-c, --config <PATH>` | 是 | — | 现有有效配置；凭据、监听、路由、超时和日志保持不变。 |
+| `-o, --output <PATH>` | 是 | — | 调优配置路径；必须与输入、报告路径不同。 |
+| `--report <PATH>` | 否 | `<OUTPUT>.report.json` | 可审计的完整测量与最终所选 policy。 |
+| `--duration-ms <N>` | 否 | `900`，`90..=30000` | 每个协议 case 的测量时间。 |
+| `--warmup-ms <N>` | 否 | `100`，`1..=10000` | 每个协议 case 的预热时间。 |
+| `--storage-mib <N>` | 否 | `32`，`1..=256` | 在 scratch 目录中写入、同步并读取的数据量。 |
+| `--network-mib <N>` | 否 | `32`，`1..=256` | TCP loopback 每个方向的传输量。 |
+| `--scratch-directory <DIR>` | 否 | 操作系统临时目录 | 有界存储探测要测量的文件系统。 |
+| `--dedicated` | 否 | 关闭 | 同时把副本切换为 `runtime.resourceMode: "dedicated"`；仅在 rust-reality 独占主机或 cgroup 时使用。 |
+
+自动调优只改变 resource governor、Direct 拨号和中继策略；不会替你选择安全
+协议、UUID/short ID 归属、伪装目标、路由或超时策略。审查 diff 与报告，执行
+`check`，再按正常重启流程部署。详见
+[调优指南](tuning.zh-CN.md#自动测量的起始策略)。
 
 ### `config format`
 

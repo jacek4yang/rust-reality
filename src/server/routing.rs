@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error, fmt, io, net::IpAddr, sync::Arc, time::Duration};
+use std::{error::Error, fmt, io, net::IpAddr, sync::Arc, time::Duration};
 
 use regex::{Regex, RegexBuilder};
 use tokio::time;
@@ -8,6 +8,7 @@ pub use crate::assets::{AssetMatcher, AssetSource, EmptyAssetMatcher};
 use crate::{
     config::{DnsStrategy, GlobalRule, Network, RoutingConfig, UserPolicy},
     protocol::vless::{Address, Destination, UserId},
+    user_map::AdaptiveUserMap,
 };
 
 const MAX_RESOLVED_IPS: usize = 64;
@@ -69,7 +70,7 @@ impl RouteDecision {
 #[derive(Clone)]
 pub struct RoutingTable {
     global_rules: Arc<[CompiledRule]>,
-    users: Arc<HashMap<UserId, CompiledUserPolicy>>,
+    users: Arc<AdaptiveUserMap<Arc<CompiledUserPolicy>>>,
     assets: Arc<dyn AssetMatcher>,
     global_has_ip_rules: bool,
     dns_governor: crate::runtime::ResourceGovernor,
@@ -92,13 +93,13 @@ impl RoutingTable {
             .map(CompiledRule::compile)
             .collect::<Result<Vec<_>, _>>()?
             .into();
-        let mut users = HashMap::new();
+        let mut users = Vec::new();
         for policy in &config.users {
-            let compiled = CompiledUserPolicy::compile(policy)?;
+            let compiled = Arc::new(CompiledUserPolicy::compile(policy)?);
             for user_id in &policy.user_ids {
                 let uuid =
                     Uuid::parse_str(user_id).map_err(|_| RoutingCompileError::InvalidUuid)?;
-                users.insert(UserId::new(*uuid.as_bytes()), compiled.clone());
+                users.push((UserId::new(*uuid.as_bytes()), Arc::clone(&compiled)));
             }
         }
         let global_has_ip_rules = global_rules
@@ -106,7 +107,7 @@ impl RoutingTable {
             .any(|rule: &CompiledRule| !rule.ips.is_empty());
         Ok(Self {
             global_rules,
-            users: Arc::new(users),
+            users: Arc::new(AdaptiveUserMap::from_entries(users)),
             assets,
             global_has_ip_rules,
             dns_governor,
@@ -122,29 +123,37 @@ impl RoutingTable {
         &self,
         context: &RouteContext<'_>,
     ) -> Result<RouteDecision, RouteResolutionError> {
+        let user = self
+            .users
+            .get(&context.user_id)
+            .ok_or(RouteResolutionError::UnknownUser)?;
+        Ok(self.select_for_user(context, user))
+    }
+
+    fn select_for_user(
+        &self,
+        context: &RouteContext<'_>,
+        user: &CompiledUserPolicy,
+    ) -> RouteDecision {
         if let Some(rule) = self
             .global_rules
             .iter()
             .find(|rule| rule.matches(context, self.assets.as_ref()))
         {
-            return Ok(rule.decision(RouteScope::Global));
+            return rule.decision(RouteScope::Global);
         }
-        let user = self
-            .users
-            .get(&context.user_id)
-            .ok_or(RouteResolutionError::UnknownUser)?;
         if let Some(rule) = user
             .rules
             .iter()
             .find(|rule| rule.matches(context, self.assets.as_ref()))
         {
-            return Ok(rule.decision(RouteScope::User));
+            return rule.decision(RouteScope::User);
         }
-        Ok(RouteDecision {
+        RouteDecision {
             outbound: Arc::clone(&user.default_outbound),
             rule_name: Arc::clone(&user.name),
             scope: RouteScope::UserDefault,
-        })
+        }
     }
 
     /// Resolves a domain only when required by the configured routing strategy,
@@ -166,12 +175,11 @@ impl RoutingTable {
         strategy: DnsStrategy,
         timeout: Duration,
     ) -> Result<ResolvedRoute, RouteResolutionError> {
-        let user_has_ip_rules = self
+        let user = self
             .users
             .get(&user_id)
-            .ok_or(RouteResolutionError::UnknownUser)?
-            .has_ip_rules;
-        let needs_ip = self.global_has_ip_rules || user_has_ip_rules;
+            .ok_or(RouteResolutionError::UnknownUser)?;
+        let needs_ip = self.global_has_ip_rules || user.has_ip_rules;
         let unresolved = RouteContext {
             user_id,
             inbound_tag,
@@ -183,11 +191,14 @@ impl RoutingTable {
             || strategy == DnsStrategy::AsIs
             || !needs_ip
         {
-            return Ok(ResolvedRoute::new(self.select(&unresolved)?, Vec::new()));
+            return Ok(ResolvedRoute::new(
+                self.select_for_user(&unresolved, user),
+                Vec::new(),
+            ));
         }
 
         if strategy == DnsStrategy::IpIfNonMatch {
-            let decision = self.select(&unresolved)?;
+            let decision = self.select_for_user(&unresolved, user);
             if decision.scope() != RouteScope::UserDefault {
                 return Ok(ResolvedRoute::new(decision, Vec::new()));
             }
@@ -200,7 +211,10 @@ impl RoutingTable {
             destination,
             resolved_ips: &resolved_ips,
         };
-        Ok(ResolvedRoute::new(self.select(&resolved)?, resolved_ips))
+        Ok(ResolvedRoute::new(
+            self.select_for_user(&resolved, user),
+            resolved_ips,
+        ))
     }
 }
 
@@ -216,7 +230,6 @@ impl fmt::Debug for RoutingTable {
     }
 }
 
-#[derive(Clone)]
 struct CompiledUserPolicy {
     name: Arc<str>,
     default_outbound: Arc<str>,
@@ -243,17 +256,17 @@ impl CompiledUserPolicy {
 }
 
 /// One route decision and the exact bounded DNS snapshot used to reach it.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ResolvedRoute {
     decision: RouteDecision,
-    resolved_ips: Arc<[IpAddr]>,
+    resolved_ips: Vec<IpAddr>,
 }
 
 impl ResolvedRoute {
     fn new(decision: RouteDecision, resolved_ips: Vec<IpAddr>) -> Self {
         Self {
             decision,
-            resolved_ips: resolved_ips.into(),
+            resolved_ips,
         }
     }
 
@@ -735,7 +748,10 @@ impl Error for RouteResolutionError {
 mod tests {
     use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 
-    use super::{EmptyAssetMatcher, RouteContext, RouteScope, RoutingTable};
+    use super::{
+        EmptyAssetMatcher, ResolvedRoute, RouteContext, RouteResolutionError, RouteScope,
+        RoutingTable,
+    };
     use crate::{
         config::{DnsStrategy, GlobalRule, Network, PortMatcher, RoutingConfig, UserPolicy},
         protocol::vless::{Address, Destination, UserId},
@@ -758,6 +774,41 @@ mod tests {
         assert_eq!(decision.outbound(), "blocked");
         assert_eq!(decision.rule_name(), "private");
         assert_eq!(decision.scope(), RouteScope::Global);
+    }
+
+    #[test]
+    fn unknown_uuid_cannot_bypass_authorization_through_a_global_rule() {
+        let table = table();
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::new(10, 1, 2, 3)), 443);
+        let context = RouteContext {
+            user_id: UserId::new([0xff; 16]),
+            inbound_tag: "public-reality",
+            destination: &destination,
+            resolved_ips: &[],
+        };
+
+        assert!(matches!(
+            table.select(&context),
+            Err(RouteResolutionError::UnknownUser)
+        ));
+    }
+
+    #[test]
+    fn empty_dns_snapshot_adds_no_heap_allocation() {
+        let table = table();
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 443);
+        let decision = table
+            .select(&context(&destination))
+            .expect("configured user must route");
+
+        let measured = allocation_counter::measure(|| {
+            std::hint::black_box(ResolvedRoute::new(decision.clone(), Vec::new()));
+        });
+
+        assert_eq!(
+            measured.count_total, 0,
+            "an empty DNS snapshot must remain allocation-free: {measured:?}"
+        );
     }
 
     #[test]
@@ -869,7 +920,7 @@ mod tests {
 
     use std::net::{IpAddr, SocketAddr};
 
-    use super::{RouteResolutionError, resolve_domain_with};
+    use super::resolve_domain_with;
     use crate::{config::ResourceGovernorConfig, runtime::ResourceGovernor};
 
     fn tiny_dns_governor(permits: u32) -> ResourceGovernor {

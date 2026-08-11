@@ -18,8 +18,10 @@ admission 架构和运行时可观测性。设计背后的实测证据见
    fallback。fallback 逐字节精确：已从客户端读取的前缀原样转发到伪装目标，
    已检查的目标前缀回写给客户端，剩余 raw 连接对交给统一 relay
    （`TcpRelay::relay_owned`）——支持 splice、计入 FD 预算，绝不借用用户态
-   拷贝。
-3. **VLESS + Vision。** 请求从外层 TLS 流解码；路由选择出站；会话拆成两个
+   拷贝。认证 short ID 通过按基数自适应的不可变索引解析，并把其唯一 owner
+   UUID 带入 established 会话。
+3. **VLESS + Vision。** 请求从外层 TLS 流解码；自适应 UUID 索引先定位用户并
+   要求头中用户与 short-ID owner 完全相等；随后路由选择出站，会话拆成两个
    独立的方向任务（上行、下行）。
 4. **Framed 阶段。** 两个方向都运行带 Vision padding 的外层 TLS 记录 I/O。
    热路径属性（已测量并有回归门禁）：
@@ -90,11 +92,11 @@ admission 架构和运行时可观测性。设计背后的实测证据见
 | 阶段 | 所有者 | 分配 | 原子操作/锁 | 系统调用 | 拷贝 |
 |---|---|---|---|---|---|
 | accept | 1 任务/listener | 稳态无 | FD 许可 CAS + governor CAS | accept4、setsockopt×5 | 0 |
-| REALITY 认证 | 连接任务 | ClientHello 缓冲区（≤16 KiB，一次） | 握手/密码学 CAS 许可、重放缓存分片锁 | 1–3 次读，flight 写 | hello 解析基于借用 |
+| REALITY 认证 | 连接任务 | ClientHello + 目标缓冲；一个连续 server-flight wire 缓冲区 | 握手/密码学 CAS 许可、重放缓存分片锁 | 1–3 次读，flight 写 | hello/ALPN 借用解析；直接密封 transcript 尾部 |
 | fallback | 连接任务 | 前缀 vec（有界） | fallback CAS、FD CAS ×2、connect | connect、前缀写，然后 relay | 仅前缀写 |
-| VLESS 请求 | 连接任务 | 请求缓冲区 ≤533+16 KiB，一次 | 0 | TLS 记录 | 0（借用预取） |
-| 路由 | 连接任务 | 命中路径 0 | 共享规则（Arc） | 可选有界 DNS（spawn_blocking，信号量槽持有到操作结束） | 0 |
-| 出站连接 | 连接任务 | 0 | FD 单元 CAS、direct barrier CAS | connect | 0 |
+| VLESS 请求 | 连接任务 | 初始 533 B；仅为同记录载荷增长；接受后域名拥有一次 | 0 | TLS 记录 | Addons/域名/预取均借用解析 |
+| 路由 | 连接任务 | 无 DNS 命中路径 0 | 一次 UUID 查找；组策略由 Arc 共享 | 可选有界 DNS（spawn_blocking，信号量槽持有到操作结束） | 0 |
+| 出站连接 | 连接任务 | 0 | 一次 tag 查找；FD 单元 CAS；无锁速率 + 并发 CAS | connect | 0 |
 | Vision framed 上行 | 方向任务 | socket 缓冲区一次（只增） | 循环内 0 | 每次补充 1 读（≤64 KiB）、每记录 1 写 | AEAD 原地 open；Vision 借用解码（0） |
 | Vision framed 下行 | 方向任务 | socket 缓冲区一次 | 循环内 0 | 每次补充 1 读、每组打包记录 1 写 | AEAD 原地 seal；Vision 帧打包 |
 | Direct 转换 | 两个任务 | 0 | 2 个原子量 + 1 个互斥锁（一次） | 0 | 待排空数据写入 |

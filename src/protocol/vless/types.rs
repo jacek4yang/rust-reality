@@ -4,7 +4,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 pub const VERSION: u8 = 0;
 
 /// The 16-byte user identifier carried in a VLESS request.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct UserId([u8; 16]);
 
 impl UserId {

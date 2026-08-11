@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "harness": "benchmark-vless-encryption",
+  "date": "2026-08-10",
+  "xray": {
+    "version": "26.7.28",
+    "commit": "5ca6f4b7d4dc20a881d4330e498892697627ec0c",
+    "go": "go1.26.0"
+  },
+  "environment": {
+    "kernel": "6.12.100+deb13-amd64",
+    "machine": "x86_64",
+    "cpuCount": 4
+  },
+  "method": {
+    "outerTransport": "REALITY",
+    "flow": "xtls-rprx-vision",
+    "encryptedMode": "mlkem768x25519plus.native.0rtt after warm-up",
+    "samplesPerMode": 5,
+    "concurrency": 4,
+    "payloadMiBPerRequest": 64,
+    "setupConnectionsPerSample": 64,
+    "setupConcurrency": 8
+  },
+  "summary": {
+    "none": {
+      "p50ThroughputMiBPerSecond": 841.4074983228304,
+      "meanServerCpuSecondsPerGiB": 0.288,
+      "p50ConnectionsPerSecond": 93.95346462331844,
+      "meanServerCpuMicrosecondsPerConnection": 4937.5
+    },
+    "vlessEncryption": {
+      "p50ThroughputMiBPerSecond": 585.6365400386576,
+      "meanServerCpuSecondsPerGiB": 1.584,
+      "p50ConnectionsPerSecond": 90.50980228807883,
+      "meanServerCpuMicrosecondsPerConnection": 5812.500000000002
+    }
+  },
+  "ratios": {
+    "encryptedToNoneP50Throughput": 0.6960201105956405,
+    "encryptedToNoneMeanServerCpuPerGiB": 5.500000000000001,
+    "encryptedToNoneP50ConnectionsPerSecond": 0.9633471490482436
+  },
+  "sourceReportSha256": "17b43ef394921c2511d531a39c45c612610f7fd966f7eab87fee8a8d17d78a00"
+}

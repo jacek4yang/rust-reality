@@ -18,6 +18,11 @@ the Vision flow. A configuration that attempts plain VLESS is rejected before
 listeners are bound.
 Configured server names may be concrete DNS names or a leftmost one-label
 pattern such as `*.lmu.edu`; the ClientHello SNI must remain concrete.
+Every configured UUID owns a non-empty set of globally unique short IDs. The
+REALITY phase resolves the presented short ID directly to its unique owner;
+after the encrypted VLESS header is decoded, authorization requires its UUID to
+equal that owner. This two-stage binding prevents cross-account UUID/short-ID
+mixing.
 
 ## Security objectives
 
@@ -36,6 +41,13 @@ Configuration, routing assets, users, REALITY state, and outbounds are published
 as one immutable generation. A failed refresh keeps the last complete snapshot.
 Private keys, UUIDs, NXR PSKs, Handoff PSKs and static keys, credentials, and
 full configurations are excluded from structured logs.
+
+VLESS Encryption is not an additional objective for the mandatory REALITY
+profile. The outer TLS 1.3 record layer already supplies confidentiality,
+integrity, and forward-secret traffic keys; stacking another data AEAD would
+disable the supported Vision raw/splice path. The security/performance decision
+and its revisit gates are recorded in
+[ADR 0003](decisions/0003-do-not-stack-vless-encryption-on-reality.md).
 
 ## NXR boundary
 
@@ -100,6 +112,19 @@ All pre-authentication work, connections, fallbacks, cryptographic work, replay
 entries, destination dials, relay buffers, and splice pipes have explicit
 ceilings. The data path has no unbounded queue or cache. Protocol code denies
 unsafe Rust.
+
+The admission and replay clocks are bounded integer domains. A deadline that
+cannot be represented, a replay-generation counter that is exhausted, or a
+rate finer than one nanosecond per token is rejected as unavailable; arithmetic
+must never turn saturation into successful admission. Every temporary replay
+reservation owns an RAII permit and rolls back on parse failure, timeout,
+cancellation, duplicate detection, allocation failure, and counter exhaustion.
+
+Robustness is continuously checked by bounded parser fuzz targets, truncation
+and field-mutation equivalence properties, and scheduled ASan/LSan plus TSan
+gates. These tests do not claim mathematical absence of all defects, but they
+make unhandled input, resource, arithmetic, and race states explicit release
+criteria.
 
 Linux `splice` is permitted only after both sides are plaintext TCP sockets. It
 cannot cross the REALITY/TLS application boundary. If bounded splice resources

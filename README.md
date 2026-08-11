@@ -15,8 +15,8 @@ a firewall-restricted landing node.
 Xray-compatible client
   -> VLESS + REALITY + Vision
   -> rust-reality line or standalone node
-  -> direct | SOCKS5 | blackhole | NXR
-  -> optional NXR landing node
+  -> direct | SOCKS5 | blackhole | NXR | Handoff
+  -> optional NXR or Handoff landing node
   -> destination
 ```
 
@@ -39,7 +39,11 @@ Xray-compatible client
   state, buffers, DNS results, descriptors, and splice resources — with
   pressure hysteresis instead of collapse.
 - Exact and one-label wildcard REALITY server names, per-UUID routing groups,
-  Xray-compatible GeoIP/GeoSite assets with atomic last-known-good updates.
+  UUID-owned multi-short-ID authentication, Xray-compatible GeoIP/GeoSite
+  assets with atomic last-known-good updates.
+- Measured host-local `config autotune` with auditable atomic output, plus
+  cardinality-adaptive UUID/routing/outbound indexes and deadline-driven replay
+  expiry instead of unconditional live-table scans.
 - Strict JSON configuration, atomic SIGHUP reload, secret-free bounded
   logging, key generation, destination probing, self-test, and schema from
   one binary.
@@ -110,7 +114,7 @@ then verify all assets before installation:
 
 ```shell
 sha256sum --check SHA256SUMS
-tar -xzf rust-reality-v1.0.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf rust-reality-v1.3.0-x86_64-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 ```
 
@@ -127,11 +131,15 @@ rust-reality config generate standalone \
   > config.json 2> client-values.txt
 
 rust-reality check --config config.json
-rust-reality self-test --config config.json
-rust-reality serve --config config.json
+rust-reality config autotune \
+  --config config.json --output config.tuned.json
+rust-reality check --config config.tuned.json
+rust-reality self-test --config config.tuned.json
+rust-reality serve --config config.tuned.json
 ```
 
-The generated JSON contains a UUID, private REALITY key, short ID, and a
+The generated JSON contains a UUID, private REALITY key, two UUID-owned short
+IDs, and a
 direct-routing policy. The client-facing REALITY public key is written to
 standard error so the private server configuration can be captured separately.
 Protect both outputs and replace the example target with a destination that
@@ -151,7 +159,9 @@ UUID's `routing.users[].rules` in order, then that user group's
 categories and alternative values inside a category are ORed. See the
 complete [configuration reference](docs/configuration.md) for every field,
 default, constraint, matcher syntax, reload behavior, and the dedicated
-resource mode.
+resource mode. v1.2 configurations must move the former shared
+`realitySettings.shortIds` list under its owning `clients[]` entry before a
+v1.3 restart.
 
 ## Deployment
 

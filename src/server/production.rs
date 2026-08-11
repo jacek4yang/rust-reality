@@ -554,7 +554,7 @@ struct RuntimeStore {
 /// Admission authorities built once at startup and shared by every generation.
 ///
 /// Reload swaps routing and protocol snapshots only — these ceilings and
-/// buckets must never multiply while old sessions hold old permits.
+/// rate gates must never multiply while old sessions hold old permits.
 struct ProcessAuthorities {
     governor: ResourceGovernor,
     direct_barrier: DirectBarrier,
@@ -2296,7 +2296,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn reload_cannot_reset_the_direct_dial_bucket() {
+    async fn reload_cannot_reset_the_direct_dial_rate_gate() {
         let server = ProductionServer::from_config(&tiny_ceiling_config()).expect("must compile");
         let permit = server
             .runtime
@@ -2334,7 +2334,7 @@ mod tests {
                 .direct_barrier
                 .try_acquire()
                 .is_ok(),
-            "releasing the permit must free the bucket after reloads"
+            "releasing the permit must free the rate gate after reloads"
         );
     }
 

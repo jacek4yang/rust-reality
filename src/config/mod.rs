@@ -48,6 +48,7 @@ pub(crate) fn test_config_json() -> &'static str {
     "settings": {
       "clients": [{
         "id": "11111111-1111-4111-8111-111111111111",
+        "shortIds": ["0123456789abcdef", "1023456789abcdef"],
         "email": "test-user",
         "flow": "xtls-rprx-vision"
       }],
@@ -59,8 +60,7 @@ pub(crate) fn test_config_json() -> &'static str {
       "realitySettings": {
         "target": "www.example.com:443",
         "serverNames": ["www.example.com"],
-        "privateKey": "ERERERERERERERERERERERERERERERERERERERERERE",
-        "shortIds": ["0123456789abcdef"]
+        "privateKey": "ERERERERERERERERERERERERERERERERERERERERERE"
       }
     }
   }],

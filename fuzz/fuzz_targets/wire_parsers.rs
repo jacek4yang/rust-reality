@@ -4,11 +4,12 @@ use libfuzzer_sys::fuzz_target;
 use rust_reality::protocol::{
     nxr::{NxrKey, decode_authenticated_request, request_len_from_header},
     reality::ClientHello,
-    vless::decode_request,
+    vless::{decode_request, fuzz_decode_request_ref},
 };
 
 fuzz_target!(|input: &[u8]| {
     let _ = decode_request(input);
+    fuzz_decode_request_ref(input);
     let _ = ClientHello::parse_message(input);
     let _ = ClientHello::parse_record(input);
     let _ = request_len_from_header(input);

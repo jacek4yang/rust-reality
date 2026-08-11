@@ -106,6 +106,7 @@ rust-reality config format --config config.json > config.formatted.json
     "clients": [
       {
         "id": "GENERATED-UUID",
+        "shortIds": ["0123456789abcdef", "1023456789abcdef"],
         "email": "operator-label",
         "flow": "xtls-rprx-vision"
       }
@@ -119,7 +120,6 @@ rust-reality config format --config config.json > config.formatted.json
       "target": "www.example.com:443",
       "serverNames": ["www.example.com"],
       "privateKey": "GENERATED-X25519-PRIVATE-KEY",
-      "shortIds": ["0123456789abcdef"],
       "maxTimeDiffMs": 60000
     }
   }
@@ -129,6 +129,12 @@ rust-reality config format --config config.json > config.formatted.json
 以上占位符故意不能直接使用。请通过 `config generate standalone`、
 `config generate line` 或 `config generate handoff` 生成真实状态。
 
+**v1.2 → v1.3 迁移：**把 `streamSettings.realitySettings.shortIds` 移进其
+所属的 `settings.clients[]` 对象，并改名为 `shortIds`，然后删除旧字段。单客户端
+可原样移动整个数组；多客户端必须拆分或重新生成，使每个 UUID 至少有一个，且
+任何 short ID 都不出现在两个 UUID 下。每台客户端设备改用其 UUID 所拥有的一个
+值。v1.3 会刻意拒绝含糊的旧共享列表，不会替认证凭据猜测归属关系。
+
 | 字段 | 必填 | 默认值/固定值 | 含义与约束 |
 | --- | --- | --- | --- |
 | `protocol` | 是 | 固定 `vless` | 选择唯一公网协议。 |
@@ -137,6 +143,7 @@ rust-reality config format --config config.json > config.formatted.json
 | `port` | 是 | — | 非零 TCP 端口。 |
 | `settings.clients` | 是 | — | 非空授权客户端数组；UUID 在所有公网入站中全局唯一。 |
 | `settings.clients[].id` | 是 | — | 带横线的规范 UUID；身份比较时十六进制大小写不敏感。 |
+| `settings.clients[].shortIds` | 是 | — | 此 UUID 独占的非空 short ID 列表；每项为 2–16 个偶数长度十六进制字符，在本入站内大小写不敏感唯一；多个值用于轮换。 |
 | `settings.clients[].email` | 否 | 不存在 | 非秘密运维标签，不参与认证或路由。 |
 | `settings.clients[].flow` | 是 | 固定 `xtls-rprx-vision` | 其他 flow 全部拒绝。 |
 | `settings.decryption` | 否 | 固定/默认 `none` | 为接近 Xray 配置形状而保留，其他值拒绝。 |
@@ -145,7 +152,6 @@ rust-reality config format --config config.json > config.formatted.json
 | `streamSettings.realitySettings.target` | 是 | — | `host:port` 伪装目标；IPv6 加方括号；先从服务器探测。 |
 | `streamSettings.realitySettings.serverNames` | 是 | — | 非空、大小写不敏感唯一的具体 ASCII DNS 名或最左侧单标签模式，如 `*.lmu.edu`。 |
 | `streamSettings.realitySettings.privateKey` | 是 | — | URL-safe 无填充 base64，解码为恰好 32 字节 X25519 私钥；秘密。 |
-| `streamSettings.realitySettings.shortIds` | 是 | — | 非空且大小写不敏感唯一；每项为 2–16 个偶数长度十六进制字符。 |
 | `streamSettings.realitySettings.maxTimeDiffMs` | 否 | `60000` | 接受的客户端时钟差，`0..=600000`；零表示关闭该检查。 |
 
 每个公网 UUID 必须在 `routing.users[].userIds` 中恰好出现一次。
@@ -529,7 +535,7 @@ connectTimeoutMs` 并留有余量：首个密封记录只有在转移被读取�
 | 字段 | 对象存在时必填 | 整体默认值 | 约束/含义 |
 | --- | --- | --- | --- |
 | `maxConcurrent` | 是 | `2048` | 并发 direct 拨号，大于零且不超过 `maxConnections`。 |
-| `maxPerSecond` | 是 | `4096` | 每秒新 direct 拨号，大于零。 |
+| `maxPerSecond` | 是 | `4096` | 每秒新 direct 拨号，范围为 1 至 1,000,000,000。 |
 
 它把 direct 目标压力与已认证连接总数隔离。
 

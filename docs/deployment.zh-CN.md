@@ -98,13 +98,15 @@ rust-reality config generate standalone \
   > config.json 2> client-values.txt
 ```
 
-服务器 JSON 包含 UUID、REALITY 私钥、short ID 和策略；`client-values.txt` 包含
+服务器 JSON 包含 UUID、REALITY 私钥、归该 UUID 独占的两个 short ID 和策略；
+`client-values.txt` 包含
 REALITY 公钥。两者都不是普通日志，而是秘密部署材料，必须妥善保护和传输。
 
 ### 3. 配置 Xray 客户端
 
 把服务器地址、端口、`settings.clients[0].id` 中的 UUID、`client-values.txt`
-中的公钥、server name 和 short ID 写入 Xray 26.7.28 客户端：
+中的公钥、server name 和 `settings.clients[0].shortIds` 中的一个值写入
+Xray 26.7.28 客户端：
 
 ```json
 {
@@ -219,7 +221,7 @@ rust-reality config generate handoff \
 
 该命令写出 `line.json`（用户路由到 handoff 出站的公网线路机）、
 `landing.json`（仅内部 Handoff 监听）和 `xray-client.json`。所有密钥材料
-独立生成——UUID、REALITY X25519 密钥对、一个 short ID、Handoff 预共享密钥
+独立生成——UUID、REALITY X25519 密钥对、归该 UUID 独占的两个 short ID、Handoff 预共享密钥
 和落地机静态 X25519 密钥对——且两份服务端配置在写出前均已通过校验。客户端
 UUID 和 REALITY 公钥打印到标准错误；Handoff PSK 和私钥只存在于两份服务端
 文件中。
@@ -351,4 +353,3 @@ io_uring 后端已被移除（见
 `policy.relay.ioUring` 或 `policy.relay.maxIoUringRelays` 的配置会作为未知字段被拒绝。
 
 可移植的缓冲中继和 Linux `splice` 不需要额外权限。
-

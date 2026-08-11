@@ -12,6 +12,118 @@ these numbers describe implementation cost, never Internet throughput. The
 frozen v1.0.0 release comparison matrix is published in
 [benchmarks.md](benchmarks.md).
 
+## v1.3 control-plane and setup-path structures
+
+The v1.3 audit separated hashes by purpose instead of globally replacing
+`HashMap`:
+
+- attacker-influenced mutable replay state and large Geo asset sets retain the
+  randomized standard hasher for collision resistance;
+- validation/reload maps are startup-only and do not justify a custom hasher;
+- immutable UUID and outbound-tag indexes select a contiguous sorted layout
+  only below measured cardinality boundaries, then use the standard hash map.
+
+Criterion on the release host selected 64 as the UUID boundary: with 64
+entries, sorted hit/miss were 19.95/16.32 ns versus 20.26/20.76 ns for a
+same-value SipHash map; at 128, sorted hit had risen to 23.59 ns and switching
+to the hashed representation measured 22.01 ns. Outbound tags select sorted
+storage through four entries (11.58 ns hit versus 20.40 ns hash at four) and
+hash above it (at sixteen: 27.02 ns sorted versus 25.85 ns hash).
+
+The strengthened short-ID/UUID pairing is also the lookup structure: one
+decoded short ID resolves directly to its owner UUID, so the later VLESS check
+is one equality rather than a second short-ID search. The owner index stays
+sorted through 256 IDs (17.41/16.87 ns hit/miss versus 19.60/18.17 ns hash) and
+switches to SipHash above that measured boundary; at 512, hash wins
+19.59/18.18 ns versus 20.23/19.84 ns. A normal two-ID sorted hit is 3.50 ns,
+10.0× below the replaced owner-selecting constant-time scan's 35.04 ns. This
+does not weaken the externally visible failure policy: every pre-Finished
+authentication failure still follows the same bounded byte-exact fallback.
+
+REALITY no longer constructs a second per-listener UUID registry after the
+short-ID owner index has already authenticated the same identities. The owner
+UUID is carried into the established session and the VLESS UUID check is one
+equality. Routing likewise performs one UUID lookup per decision and shares
+one `Arc<CompiledUserPolicy>` among every UUID in a group; the empty-DNS
+result has an allocation-counter gate proving zero heap allocation. The
+outbound tag is resolved once for both Handoff and ordinary connects rather
+than once in each layer.
+
+VLESS parsing now has two explicit specializations. The public API constructs
+its owned header directly, while the production Vision path borrows Addons,
+domain and prefetched payload from the bounded request buffer and owns the
+accepted domain exactly once. An allocation-counter test measured zero
+allocations across 1,024 borrowed domain parses. A repeated full Criterion run
+measured the owned API at 27.23 ns IPv4, 53.67 ns domain, 27.46 ns IPv6 and
+425.01 ns for the maximum header; every case remained inside Criterion's noise
+threshold against its immediate baseline. The request buffer now starts at
+the protocol maximum header size (533 B) and grows only when a TLS record also
+contains prefetched payload, instead of reserving a full record up front.
+
+Replay caches combine a hash table for exact duplicate detection with a
+deadline min-heap for expiry. REALITY purges the selected shard; NXR/Handoff
+also do so on the normal reserve path and scan all sixteen shards only after
+real global capacity pressure. With 4,096 live nonces, reserving a batch of 64
+fell from 593.18 µs for the legacy full-retain path to 17.43 µs (**34.0×**);
+purging a no-expiry live set is cardinality-independent at about 282 ns rather
+than 10.54 µs. REALITY keys are already server-computed SHA-256 digests, so its
+table uses an independent 64-bit digest word directly instead of running
+SipHash over all 32 bytes: at 4,096 entries, hit/miss fell from 25.25/24.99 ns
+to 2.18/1.11 ns (**11.6×/22.4×**). Handoff and NXR keep randomized hashing
+because their nonce keys remain peer-controlled.
+
+The direct-dial rate gate is now an atomic GCRA with a conservative integral
+nanosecond interval and the same one-second burst allowance as the former
+`Mutex<f64 token bucket>`. It never queues and cannot exceed the configured
+rate. Including the unchanged Tokio concurrency semaphore, Criterion measured
+68.34 vs 84.90 ns single-threaded and 145.60 vs 181.75 ns with four contending
+threads (about **19.5%/19.9% less time**).
+
+The common X25519 handshake keeps its fixed 32-byte server share on the stack.
+The server flight is built once as one contiguous wire buffer and sealed from
+the existing transcript tail; the former outer record vector, duplicate
+flight-plaintext vector, and send-time assembly allocation/copy are gone.
+
+Dependency features were tightened to the used surfaces, direct `base64`
+versions were unified, and Criterion's plotting/parallel default graph was
+removed. The lockfile lost ten packages. After all source changes the stripped
+release binary is 6,309,616 bytes, 22,920 bytes (0.36%) below the pre-audit
+6,332,536-byte build. Canonical values are retained in
+`benchmarks/final/v1.3-hot-structures/summary.json`.
+
+The complete setup path (accept through first Vision payload) was then run
+against Xray 26.7.28 with three 96-connection samples per cell and zero
+failures. rust-reality medians were 190/793/892 conn/s at c1/c8/c32 versus
+177/721/833 for Xray. Server perf cost normalized over the 864 measured
+connections was 0.757 ms and 4.00 M instructions per connection versus
+1.239 ms and 5.69 M for Xray. This same-host result validates the composed
+path; it is not a WAN capacity claim. Raw and summarized evidence lives in
+`benchmarks/final/v1.3-setup-refactor/`.
+
+For VLESS Encryption, the exact nested REALITY + Vision A/B and the decision
+not to ship it in this profile are documented in
+[ADR 0003](decisions/0003-do-not-stack-vless-encryption-on-reality.md): p50
+throughput was 0.696×, server CPU/GiB 5.50×, and Vision splice was disabled.
+
+## Robustness gates
+
+Every bounded parser has a libFuzzer target. The v1.3 gate runs 20,000 ASan
+instrumented cases each for `wire_parsers` (including the production borrowed
+VLESS decoder), Vision framing, Handoff headers, Handoff blobs, and complete
+Handoff opening. The restricted validation shell cannot initialize
+LeakSanitizer under ptrace, so those local fuzz smoke runs set
+`ASAN_OPTIONS=detect_leaks=0`; the scheduled CI workflow runs the full ASan +
+LSan suite on a normal runner.
+
+The parser property gate compares owned and borrowed VLESS decoding for every
+prefix of a 533-byte maximum header and for zero/one/255 replacements at every
+byte. Replay, admission, FD, and relay tests cover cancellation, poison
+recovery, capacity reclamation, and contention. Scheduled CI additionally runs
+the complete test suite under AddressSanitizer/LeakSanitizer and the concurrent
+REALITY replay race under ThreadSanitizer. Monotonic deadlines and counters
+use checked arithmetic; exhausted domains return an explicit unavailable error
+instead of saturating into an unsafe success state.
+
 ## Framed-path cost decomposition
 
 A steady-state framed profile (established connections only; setup excluded)

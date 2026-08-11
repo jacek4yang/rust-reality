@@ -185,9 +185,9 @@ impl fmt::Debug for ExportedTlsState {
 
 /// Server records ready to send, plus the only valid transition to application state.
 pub struct ServerFlight {
-    server_hello_record: Vec<u8>,
-    change_cipher_spec: [u8; 6],
-    encrypted_handshake_records: Vec<Vec<u8>>,
+    wire: Vec<u8>,
+    server_hello_end: usize,
+    encrypted_handshake_start: usize,
     client_handshake_records: Tls13RecordLayer,
     expected_client_finished: FinishedVerifyData,
     established: EstablishedTls,
@@ -197,19 +197,32 @@ impl ServerFlight {
     /// Returns the plaintext target-shaped ServerHello record.
     #[must_use]
     pub fn server_hello_record(&self) -> &[u8] {
-        &self.server_hello_record
+        self.wire
+            .get(..self.server_hello_end)
+            .expect("server flight retains its ServerHello prefix")
     }
 
     /// Returns the fixed middlebox-compatibility record.
     #[must_use]
-    pub const fn change_cipher_spec(&self) -> &[u8; 6] {
-        &self.change_cipher_spec
+    pub fn change_cipher_spec(&self) -> &[u8; 6] {
+        self.wire
+            .get(self.server_hello_end..self.encrypted_handshake_start)
+            .and_then(|record| record.try_into().ok())
+            .expect("server flight retains its fixed compatibility record")
     }
 
-    /// Returns encrypted records containing EE through server Finished.
+    /// Returns the encrypted record containing EE through server Finished.
     #[must_use]
-    pub fn encrypted_handshake_records(&self) -> &[Vec<u8>] {
-        &self.encrypted_handshake_records
+    pub fn encrypted_handshake_record(&self) -> &[u8] {
+        self.wire
+            .get(self.encrypted_handshake_start..)
+            .expect("server flight retains its encrypted suffix")
+    }
+
+    /// Returns the complete contiguous flight ready for one socket write.
+    #[must_use]
+    pub fn wire(&self) -> &[u8] {
+        &self.wire
     }
 
     /// Authenticates an exact encrypted ClientFinished and consumes handshake state.
@@ -254,10 +267,13 @@ impl fmt::Debug for ServerFlight {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ServerFlight")
-            .field("server_hello_len", &self.server_hello_record.len())
+            .field("server_hello_len", &self.server_hello_end)
             .field(
-                "encrypted_record_count",
-                &self.encrypted_handshake_records.len(),
+                "encrypted_record_len",
+                &self
+                    .wire
+                    .len()
+                    .saturating_sub(self.encrypted_handshake_start),
             )
             .field("handshake_state", &"[REDACTED]")
             .finish()
@@ -286,7 +302,7 @@ pub fn build_server_flight(
     let suite = target.suite();
     let group = target.key_share_group();
     let agreement = agree_key_share(client, group)?;
-    let server_hello_message = target.into_patched_message(&agreement.server_share)?;
+    let server_hello_message = target.into_patched_message(agreement.server_share.as_slice())?;
 
     let mut transcript = Vec::new();
     let initial_capacity = client
@@ -309,6 +325,7 @@ pub fn build_server_flight(
     let client_handshake_records = Tls13RecordLayer::new(suite, client_handshake_keys)?;
 
     let encrypted_extensions_message = encrypted_extensions(selected_alpn)?;
+    let flight_plaintext_start = transcript.len();
     transcript.extend_from_slice(&encrypted_extensions_message);
     let certificate_der = identity.forge_certificate(auth_key)?;
     let certificate = certificate_message(&certificate_der)?;
@@ -330,33 +347,31 @@ pub fn build_server_flight(
     let client_application_keys = schedule.traffic_keys(application.client())?;
     let server_application_keys = schedule.traffic_keys(application.server())?;
 
-    let flight_len = encrypted_extensions_message
-        .len()
-        .checked_add(certificate.len())
-        .and_then(|length| length.checked_add(certificate_verify.len()))
-        .and_then(|length| length.checked_add(server_finished.len()))
-        .filter(|length| *length <= MAX_FLIGHT_PLAINTEXT)
+    let flight_plaintext = transcript
+        .get(flight_plaintext_start..)
+        .filter(|plaintext| plaintext.len() <= MAX_FLIGHT_PLAINTEXT)
         .ok_or(RealityHandshakeError::BufferAllocation)?;
-    let mut flight_plaintext = Vec::new();
-    flight_plaintext
-        .try_reserve_exact(flight_len)
-        .map_err(|_| RealityHandshakeError::BufferAllocation)?;
-    flight_plaintext.extend_from_slice(&encrypted_extensions_message);
-    flight_plaintext.extend_from_slice(&certificate);
-    flight_plaintext.extend_from_slice(&certificate_verify);
-    flight_plaintext.extend_from_slice(&server_finished);
     let mut encrypted_flight = Vec::new();
     server_handshake_records.seal_into(
         ContentType::Handshake,
-        &flight_plaintext,
+        flight_plaintext,
         0,
         &mut encrypted_flight,
     )?;
 
+    let mut wire = plaintext_handshake_record(&server_hello_message)?;
+    let server_hello_end = wire.len();
+    let change_cipher_spec = change_cipher_spec_record();
+    wire.try_reserve_exact(change_cipher_spec.len() + encrypted_flight.len())
+        .map_err(|_| RealityHandshakeError::BufferAllocation)?;
+    wire.extend_from_slice(&change_cipher_spec);
+    let encrypted_handshake_start = wire.len();
+    wire.extend_from_slice(&encrypted_flight);
+
     Ok(ServerFlight {
-        server_hello_record: plaintext_handshake_record(&server_hello_message)?,
-        change_cipher_spec: change_cipher_spec_record(),
-        encrypted_handshake_records: vec![encrypted_flight],
+        wire,
+        server_hello_end,
+        encrypted_handshake_start,
         client_handshake_records,
         expected_client_finished,
         established: EstablishedTls {
@@ -368,7 +383,7 @@ pub fn build_server_flight(
 }
 
 struct KeyAgreement {
-    server_share: Vec<u8>,
+    server_share: ServerShare,
     shared: Zeroizing<[u8; 64]>,
     shared_len: usize,
 }
@@ -376,6 +391,20 @@ struct KeyAgreement {
 impl KeyAgreement {
     fn shared_secret(&self) -> &[u8] {
         self.shared.get(..self.shared_len).unwrap_or_default()
+    }
+}
+
+enum ServerShare {
+    X25519([u8; 32]),
+    Hybrid(Vec<u8>),
+}
+
+impl ServerShare {
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::X25519(share) => share,
+            Self::Hybrid(share) => share,
+        }
     }
 }
 
@@ -405,7 +434,7 @@ fn agree_key_share(
             let mut shared_output = Zeroizing::new([0_u8; 64]);
             shared_output[..32].copy_from_slice(shared.as_bytes());
             Ok(KeyAgreement {
-                server_share: server_public.to_vec(),
+                server_share: ServerShare::X25519(server_public),
                 shared: shared_output,
                 shared_len: 32,
             })
@@ -445,7 +474,7 @@ fn agree_key_share(
             shared[..32].copy_from_slice(mlkem_shared.as_ref());
             shared[32..].copy_from_slice(x25519_shared.as_bytes());
             Ok(KeyAgreement {
-                server_share,
+                server_share: ServerShare::Hybrid(server_share),
                 shared,
                 shared_len: 64,
             })
@@ -508,7 +537,7 @@ mod tests {
             .expect("server handshake keys must derive");
         let mut server_records =
             Tls13RecordLayer::new(suite, server_keys).expect("server record state must initialize");
-        let mut encrypted = flight.encrypted_handshake_records()[0].clone();
+        let mut encrypted = flight.encrypted_handshake_record().to_vec();
         let opened = server_records
             .open_in_place(&mut encrypted)
             .expect("server flight must authenticate");
@@ -624,7 +653,7 @@ mod tests {
             .expect("hybrid server keys must derive");
         let mut records =
             Tls13RecordLayer::new(suite, keys).expect("hybrid record state must initialize");
-        let mut encrypted = flight.encrypted_handshake_records()[0].clone();
+        let mut encrypted = flight.encrypted_handshake_record().to_vec();
         let opened = records
             .open_in_place(&mut encrypted)
             .expect("hybrid flight must authenticate with combined shared secret");

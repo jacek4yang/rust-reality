@@ -86,7 +86,7 @@ rust_socks=$(free_port); xray_socks=$(free_port)
     > "$work/rust.raw.json" 2> "$work/gen.log"
 rust_pub=$(sed -n 's/^REALITY public key for the client: //p' "$work/gen.log")
 uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$work/rust.raw.json")
-sid=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$work/rust.raw.json")
+sid=$(jq -r '.inbounds[0].settings.clients[0].shortIds[0]' "$work/rust.raw.json")
 "$xray" x25519 > "$work/keys"
 xpriv=$(sed -n 's/^PrivateKey: //p' "$work/keys")
 xpub=$(sed -n 's/^Password (PublicKey): //p' "$work/keys")

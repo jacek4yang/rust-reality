@@ -58,6 +58,34 @@ direct 出站。它们不是普适的生产容量：更强的论断需要先做�
    `policy.resourceGovernor` 对象（已用 `check` 确认，VERIFIED）。请在
    `config generate` 生成的完整块内改值；不要粘贴只有两个键的片段。
 
+### 自动测量的起始策略
+
+上表是可移植的手工基线。v1.3 可以在实际部署主机上推导更具体的起始 policy，
+并且不改动身份与安全配置：
+
+```shell
+sudo -u rust-reality rust-reality config autotune \
+  --config /etc/rust-reality/config.json \
+  --output /etc/rust-reality/config.tuned.json \
+  --report /var/lib/rust-reality/autotune.json \
+  --scratch-directory /var/lib/rust-reality
+rust-reality check --config /etc/rust-reality/config.tuned.json
+diff -u /etc/rust-reality/config.json /etc/rust-reality/config.tuned.json
+```
+
+仅当服务独占主机或所属 cgroup 时才加 `--dedicated`。该命令观察 affinity/cgroup
+CPU、cgroup 内存、继承的 FD 限额、协议热点、scratch 文件系统吞吐，以及 TCP
+loopback 双向性能。它只修改 `policy.resourceGovernor`、
+`policy.directBarrier` 和 `policy.relay`；UUID 及其 short ID、私钥、监听、
+路由、日志、伪装目标和全部超时值在 JSON 解码意义下保持一致。原文件永不
+覆盖，两个输出都是仅所有者可读写的原子文件，报告记录所有输入和最终选择
+（VERIFIED）。
+
+自动调优只是经过测量的**起始策略**，不是生产负载测试。loopback 看不到 WAN
+RTT/丢包、厂商限速、目标站行为和你的流量组合。审查 diff、保留报告、执行
+`check`/`self-test`，再用 §28 的手工方法和灰度负载提高任何上限。自动调优
+刻意不会启用 VLESS Encryption，也不会改变任何线协议或安全协议。
+
 速查表——每种症状的第一条命令：
 
 | 症状 | 第一条命令 | 看什么 |
@@ -1141,7 +1169,8 @@ Little 定律式推理：`在途量 ≈ 到达率 × 服务时间`，每个输�
   拨号 CPS × 拨号耗时（毫秒级），默认 2048 几乎总是足够；纯 NXR 出站的
   线路节点从不使用它。SOCKS5 和 NXR 出站从不获取许可（VERIFIED）。
 - **`directBarrier.maxPerSecond`** —— 预期 Direct 拨号速率：Direct
-  份额 × CPS × 突发余量。
+  份额 × CPS × 突发余量；取值须为 1 至 1,000,000,000，因为无锁门禁的纳秒整数
+  时钟无法表示更细的补充间隔。
 - **中继池** —— `maxPooledBuffers` ≥ *并发传输中*（不是空闲）的会话
   数；保持 §7 校验器公式 ≤ `maxRelayMemoryBytes`（默认 536 870 912）。
 - **NXR `maxNonceEntries`** —— NXR CPS × `nonceRetentionSeconds`，再

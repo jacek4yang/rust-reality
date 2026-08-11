@@ -530,6 +530,12 @@ fn default_decryption() -> String {
 pub struct VlessClient {
     /// Canonical UUID string.
     pub id: String,
+    /// REALITY short IDs owned exclusively by this UUID.
+    ///
+    /// A client selects one value for each connection. Multiple values allow
+    /// staged client-side rotation without sharing an authentication identity
+    /// with another UUID.
+    pub short_ids: Vec<String>,
     /// Optional non-secret operator label.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
@@ -569,8 +575,6 @@ pub struct RealityConfig {
     pub server_names: Vec<String>,
     /// X25519 private key encoded as URL-safe base64 without padding.
     pub private_key: SecretString,
-    /// Accepted hexadecimal REALITY short IDs.
-    pub short_ids: Vec<String>,
     /// Maximum accepted client-clock difference; zero disables the check.
     #[serde(default = "default_reality_time_diff_ms")]
     pub max_time_diff_ms: u64,

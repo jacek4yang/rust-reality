@@ -93,7 +93,7 @@ http_port=$(free_port)
 
 rust_public_key=$(sed -n 's/^REALITY public key for the client: //p' "$work/generate.log")
 uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$work/rust.raw.json")
-short_id=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$work/rust.raw.json")
+short_id=$(jq -r '.inbounds[0].settings.clients[0].shortIds[0]' "$work/rust.raw.json")
 "$xray" x25519 >"$work/xray.keys"
 xray_private_key=$(sed -n 's/^PrivateKey: //p' "$work/xray.keys")
 xray_public_key=$(sed -n 's/^Password (PublicKey): //p' "$work/xray.keys")

@@ -27,7 +27,8 @@
 //! silent close.
 
 use std::{
-    collections::HashMap,
+    cmp::Reverse,
+    collections::{BinaryHeap, HashMap},
     error::Error,
     fmt,
     net::{Ipv4Addr, Ipv6Addr},
@@ -415,8 +416,13 @@ pub struct HandoffReplayCache {
     inner: Arc<HandoffReplayCacheInner>,
 }
 
-type NonceEntries = HashMap<[u8; NONCE_LEN], MonotonicInstant>;
-type NonceShards = Box<[Mutex<NonceEntries>]>;
+#[derive(Default)]
+struct NonceShard {
+    entries: HashMap<[u8; NONCE_LEN], MonotonicInstant>,
+    expirations: BinaryHeap<Reverse<(MonotonicInstant, [u8; NONCE_LEN])>>,
+}
+
+type NonceShards = Box<[Mutex<NonceShard>]>;
 
 struct HandoffReplayCacheInner {
     shards: NonceShards,
@@ -436,7 +442,7 @@ impl HandoffReplayCache {
             return Err(HandoffError::Replay);
         }
         let shards = (0..REPLAY_SHARDS)
-            .map(|_| Mutex::new(HashMap::new()))
+            .map(|_| Mutex::new(NonceShard::default()))
             .collect();
         Ok(Self {
             inner: Arc::new(HandoffReplayCacheInner {
@@ -456,35 +462,76 @@ impl HandoffReplayCache {
     /// Rejects duplicate nonces, exhausted bounded capacity, and allocation
     /// failure.
     pub fn reserve(&self, nonce: [u8; NONCE_LEN]) -> Result<(), HandoffError> {
-        let expires_at = MonotonicInstant::now()
+        self.reserve_at(nonce, MonotonicInstant::now())
+    }
+
+    fn reserve_at(
+        &self,
+        nonce: [u8; NONCE_LEN],
+        now: MonotonicInstant,
+    ) -> Result<(), HandoffError> {
+        let expires_at = now
             .checked_add(self.inner.retention)
             .ok_or(HandoffError::Replay)?;
-        self.purge_expired();
-        let shard = usize::from(nonce[0]) % REPLAY_SHARDS;
-        let mut entries = lock_recover(&self.inner.shards[shard]);
-        if entries.contains_key(&nonce) {
-            return Err(HandoffError::Replay);
+        let shard_index = usize::from(nonce[0]) % REPLAY_SHARDS;
+        let mut swept_all = false;
+        loop {
+            let mut shard = lock_recover(&self.inner.shards[shard_index]);
+            let removed = purge_nonce_shard(&mut shard, now);
+            if removed != 0 {
+                self.inner.used.fetch_sub(removed, Ordering::AcqRel);
+            }
+            if shard.entries.contains_key(&nonce) {
+                return Err(HandoffError::Replay);
+            }
+
+            if self.inner.used.load(Ordering::Acquire) >= self.inner.capacity {
+                drop(shard);
+                if swept_all {
+                    return Err(HandoffError::Replay);
+                }
+                self.purge_expired_at(now);
+                swept_all = true;
+                continue;
+            }
+
+            shard
+                .entries
+                .try_reserve(1)
+                .map_err(|_| HandoffError::Allocation)?;
+            shard
+                .expirations
+                .try_reserve(1)
+                .map_err(|_| HandoffError::Allocation)?;
+            match self.reserve_slot() {
+                Ok(()) => {
+                    shard.entries.insert(nonce, expires_at);
+                    shard.expirations.push(Reverse((expires_at, nonce)));
+                    return Ok(());
+                }
+                Err(_) if !swept_all => {
+                    drop(shard);
+                    self.purge_expired_at(now);
+                    swept_all = true;
+                }
+                Err(error) => return Err(error),
+            }
         }
-        entries
-            .try_reserve(1)
-            .map_err(|_| HandoffError::Allocation)?;
-        self.reserve_slot()?;
-        entries.insert(nonce, expires_at);
-        Ok(())
     }
 
     /// Removes every expired nonce and returns the number of released entries.
     pub fn purge_expired(&self) -> usize {
-        let now = MonotonicInstant::now();
+        self.purge_expired_at(MonotonicInstant::now())
+    }
+
+    fn purge_expired_at(&self, now: MonotonicInstant) -> usize {
         let removed: usize = self
             .inner
             .shards
             .iter()
             .map(|shard| {
-                let mut entries = lock_recover(shard);
-                let previous = entries.len();
-                entries.retain(|_, expires_at| *expires_at > now);
-                previous.saturating_sub(entries.len())
+                let mut shard = lock_recover(shard);
+                purge_nonce_shard(&mut shard, now)
             })
             .sum();
         if removed != 0 {
@@ -515,6 +562,28 @@ impl HandoffReplayCache {
     fn entry_count(&self) -> usize {
         self.inner.used.load(Ordering::Acquire)
     }
+}
+
+fn purge_nonce_shard(shard: &mut NonceShard, now: MonotonicInstant) -> usize {
+    let mut removed = 0;
+    while shard
+        .expirations
+        .peek()
+        .is_some_and(|Reverse((expires_at, _))| *expires_at <= now)
+    {
+        let Some(Reverse((expires_at, nonce))) = shard.expirations.pop() else {
+            break;
+        };
+        if shard
+            .entries
+            .get(&nonce)
+            .is_some_and(|current| *current == expires_at)
+        {
+            shard.entries.remove(&nonce);
+            removed += 1;
+        }
+    }
+    removed
 }
 
 impl fmt::Debug for HandoffReplayCache {
@@ -1107,7 +1176,8 @@ mod tests {
         CONTINUATION_STATE_VERSION, ContinuationState, HANDOFF_PROTOCOL_VERSION, HEADER_LEN,
         HandoffError, HandoffLandingKeys, HandoffPsk, HandoffReplayCache, MAX_BLOB_LEN,
         MAX_MESSAGE_LEN, MAX_PENDING_CIPHERTEXT_LEN, MAX_PREFETCHED_PLAINTEXT_LEN,
-        MAX_PREVIOUS_KEYS, message_len_from_header, open_transfer, seal_transfer,
+        MAX_PREVIOUS_KEYS, MonotonicInstant, NONCE_LEN, message_len_from_header, open_transfer,
+        seal_transfer,
     };
     use crate::protocol::reality::tls13::{CipherSuite, TrafficKeys};
     use crate::protocol::vless::{Address, Destination};
@@ -1462,6 +1532,25 @@ mod tests {
             Err(HandoffError::Replay),
             "the same blob must stay rejected no matter which candidate opened it"
         );
+        assert_eq!(cache.entry_count(), 1);
+    }
+
+    #[test]
+    fn replay_capacity_recovers_expired_entries_from_other_shards() {
+        let cache = HandoffReplayCache::new(1, Duration::from_millis(100))
+            .expect("replay policy must compile");
+        let now = MonotonicInstant::now();
+        cache
+            .reserve_at([1; NONCE_LEN], now)
+            .expect("first nonce must fit");
+        assert_eq!(
+            cache.reserve_at([2; NONCE_LEN], now),
+            Err(HandoffError::Replay),
+            "live global capacity must remain strict"
+        );
+        cache
+            .reserve_at([2; NONCE_LEN], now + Duration::from_millis(101))
+            .expect("capacity sweep must reclaim the other expired shard");
         assert_eq!(cache.entry_count(), 1);
     }
 

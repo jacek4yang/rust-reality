@@ -39,7 +39,7 @@ rust_port=28101; rust_socks=28103; https_port=28105; http_port=28106
     > "$work/base.json" 2> "$work/gen.log"
 rust_pub=$(sed -n 's/^REALITY public key for the client: //p' "$work/gen.log")
 uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$work/base.json")
-sid=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$work/base.json")
+sid=$(jq -r '.inbounds[0].settings.clients[0].shortIds[0]' "$work/base.json")
 jq --arg c "$work/assets" '.log.level="warn" | .assets.cacheDirectory=$c' \
     "$work/base.json" > "$work/rust.json"
 jq -n --arg uuid "$uuid" --arg pk "$rust_pub" --arg sid "$sid" \

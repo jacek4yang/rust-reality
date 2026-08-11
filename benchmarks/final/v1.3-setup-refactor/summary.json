@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-08-11",
+  "environment": {
+    "kernel": "6.12.100+deb13-amd64",
+    "machine": "x86_64",
+    "cpu": "Intel Core i3-8100 4C/4T",
+    "rustc": "1.96.0",
+    "xray": "26.7.28 5ca6f4b go1.26.0",
+    "topology": "same-host loopback, compiled Go origin, Xray client"
+  },
+  "method": {
+    "samplesPerCell": 3,
+    "connectionsPerSample": 96,
+    "concurrencies": [1, 8, 32],
+    "failures": 0,
+    "serverPerfMeasuredConnections": 864
+  },
+  "medianConnectionsPerSecond": {
+    "rustReality": {
+      "c1": 189.5944,
+      "c8": 792.9313,
+      "c32": 892.123
+    },
+    "xray": {
+      "c1": 176.5434,
+      "c8": 720.5774,
+      "c32": 833.2322
+    }
+  },
+  "medianLatencyMilliseconds": {
+    "rustReality": {
+      "c1P50": 5.2096,
+      "c1P99": 6.7145,
+      "c8P50": 9.8104,
+      "c8P99": 18.704,
+      "c32P50": 29.8425,
+      "c32P99": 59.9881
+    },
+    "xray": {
+      "c1P50": 5.5332,
+      "c1P99": 8.3939,
+      "c8P50": 10.3007,
+      "c8P99": 23.4893,
+      "c32P50": 30.9719,
+      "c32P99": 64.5912
+    }
+  },
+  "serverCostPerMeasuredConnection": {
+    "rustReality": {
+      "taskClockMilliseconds": 0.7572,
+      "instructions": 4004117
+    },
+    "xray": {
+      "taskClockMilliseconds": 1.2387,
+      "instructions": 5694191
+    },
+    "rustToXray": {
+      "taskClock": 0.6113,
+      "instructions": 0.7032
+    }
+  },
+  "rawEvidence": [
+    "samples-rust.json",
+    "samples-xray.json",
+    "perf-rust.txt",
+    "perf-xray.txt"
+  ]
+}

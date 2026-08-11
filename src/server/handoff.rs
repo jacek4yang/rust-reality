@@ -632,8 +632,8 @@ mod tests {
                 TlsApplicationIo, TrafficKeys, read_tls_record,
             },
             vless::{
-                Address, Command, Destination, UserId, UserRegistry, VERSION, VISION_FLOW,
-                VisionCommand, VisionDecoder, VisionEncoder,
+                Address, Command, Destination, UserId, VERSION, VISION_FLOW, VisionCommand,
+                VisionDecoder, VisionEncoder,
             },
         },
         runtime::FdBudget,
@@ -929,7 +929,7 @@ mod tests {
         let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
         let established = RealityEstablished::from_test_parts(
             TlsApplicationIo::new(server, established_tls),
-            UserRegistry::new([USER]),
+            USER,
         );
         let request = vision_request(destination_address.port(), b"ping");
 
@@ -1060,7 +1060,7 @@ mod tests {
         let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
         let established = RealityEstablished::from_test_parts(
             TlsApplicationIo::new(server, established_tls),
-            UserRegistry::new([USER]),
+            USER,
         );
         let request = vision_request(destination_address.port(), b"ping");
 
@@ -1213,7 +1213,7 @@ mod tests {
         let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
         let established = RealityEstablished::from_test_parts(
             TlsApplicationIo::new(server, established_tls),
-            UserRegistry::new([USER]),
+            USER,
         );
         let request = vision_request(destination_port, b"ping");
 
@@ -1353,7 +1353,7 @@ mod tests {
         let (established_tls, mut client_write_records, _client_read_records) = tls_states();
         let established = RealityEstablished::from_test_parts(
             TlsApplicationIo::new(server, established_tls),
-            UserRegistry::new([USER]),
+            USER,
         );
         // Port 9 is the discard sink: if the landing dialed despite the
         // blackhole, the session would fail with a destination error instead
@@ -1441,7 +1441,7 @@ mod tests {
         let (established_tls, mut client_write_records, _client_read_records) = tls_states();
         let established = RealityEstablished::from_test_parts(
             TlsApplicationIo::new(server, established_tls),
-            UserRegistry::new([USER]),
+            USER,
         );
         let request = vision_request(9, b"ping");
 
@@ -1509,7 +1509,7 @@ mod tests {
         let (established_tls, mut client_write_records, _client_read_records) = tls_states();
         let established = RealityEstablished::from_test_parts(
             TlsApplicationIo::new(server, established_tls),
-            UserRegistry::new([USER]),
+            USER,
         );
         let request = vision_request(9, b"ping");
 
@@ -1754,7 +1754,7 @@ mod tests {
             client,
             established: RealityEstablished::from_test_parts(
                 TlsApplicationIo::new(server, established_tls),
-                UserRegistry::new([USER]),
+                USER,
             ),
             client_write_records,
             client_read_records,
