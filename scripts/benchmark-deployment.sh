@@ -62,7 +62,8 @@
 #      REQUIRE_NETEM=1), OUT_DIR, SMOKE (0; 1 = tiny-scale harness self-test),
 #      SAMPLES (3), CONNS (96), CONCURRENCIES ("8 32"), TPUT_SAMPLES (3),
 #      TPUT_CELLS ("32:1 32:32 512:32"), LONGFLOW_MIB (512),
-#      RTTS ("0 20 50 100"), KEEP_WORK (0), REQUIRE_NETEM (0).
+#      RTTS ("0 20 50 100"), KEEP_WORK (0), REQUIRE_NETEM (0), TMPDIR
+#      (optional external work root for generated payloads and secrets).
 #
 # Exit status: 0 when the run completed and every verdict is PASS, 1 when any
 # section verdict is FAIL (gate semantics), 2 on harness misuse.
@@ -106,7 +107,8 @@ if [[ $smoke == 1 ]]; then
     rtts="20"
 fi
 
-work=$(mktemp -d "$repository/benchmarks/deployment.XXXXXX")
+temporary_root=${TMPDIR:-$repository/benchmarks}
+work=$(mktemp -d "$temporary_root/rust-reality-deployment.XXXXXX")
 pids=()
 ns_pidfiles=()
 netns_name=""
@@ -442,10 +444,18 @@ section_routing() {
     start_server "$work/routing.json" routing 60
     local server_pid=$SERVER_PID
 
-    # One Xray SOCKS entry per UUID.
-    local socks_ports=() i
+    # One Xray SOCKS entry per UUID, using the short ID owned by that UUID.
+    local socks_ports=() routing_short_ids=() i
+    mapfile -t routing_short_ids < <(
+        jq -r '.inbounds[0].settings.clients[].shortIds[0]' "$work/routing.json"
+    )
+    if (( ${#routing_short_ids[@]} != ${#uuids[@]} )); then
+        echo "routing config did not assign one client short ID per UUID" >&2
+        return 1
+    fi
     for i in 0 1 2 3; do
-        start_client "$server_port" "$PUBLIC_KEY" "${uuids[$i]}" "$SHORT_ID" "routing-$i"
+        start_client "$server_port" "$PUBLIC_KEY" "${uuids[$i]}" \
+            "${routing_short_ids[$i]}" "routing-$i"
         socks_ports+=("$CLIENT_SOCKS")
     done
 

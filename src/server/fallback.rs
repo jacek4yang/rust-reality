@@ -11,7 +11,8 @@ use crate::{
     protocol::reality::{
         ClientHello,
         tls13::{
-            TargetServerHelloRead, TargetServerHelloReadError,
+            TargetServerFlightRead, TargetServerHelloRead, TargetServerHelloReadError,
+            read_target_server_flight as read_server_flight,
             read_target_server_hello as read_server_hello,
         },
     },
@@ -223,6 +224,24 @@ impl RealityFallback {
 }
 
 impl CoverConnection {
+    /// Reads the target ServerHello and bounded encrypted-handshake record shape.
+    ///
+    /// The shorter of `timeout` and the remaining fallback lifetime is used.
+    /// Every consumed target byte remains owned by the returned value or error
+    /// so a rejected shape can still transition to exact fallback.
+    ///
+    /// # Errors
+    ///
+    /// Returns a byte-owning target read error suitable for exact fallback.
+    pub(crate) async fn read_server_flight(
+        &mut self,
+        client: &ClientHello,
+        timeout: Duration,
+    ) -> Result<TargetServerFlightRead, TargetServerHelloReadError> {
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        read_server_flight(&mut self.stream, client, timeout.min(remaining)).await
+    }
+
     /// Reads the compatible target ServerHello without consuming its next record.
     ///
     /// The shorter of `timeout` and the remaining fallback lifetime is used.
@@ -409,6 +428,157 @@ mod tests {
         assert_eq!(
             stats.relay().outbound_to_inbound_bytes(),
             RESPONSE.len() as u64
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn coalesced_flight_prefix_rejoins_its_unread_body_byte_exactly() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("cover listener must bind");
+        let target = listener
+            .local_addr()
+            .expect("cover listener address must exist")
+            .to_string();
+        let config = ResourceGovernorConfig::default();
+        let fallback = test_fallback(target, &config);
+        let client_hello = client_hello();
+        let mut target_flight = target_server_hello_record();
+        target_flight.extend_from_slice(&[20, 3, 3, 0, 1, 1]);
+        target_flight.extend_from_slice(&opaque_record(23, 600, 0xa5));
+        let inspected_prefix_len = target_server_hello_record().len() + 6 + 6;
+        let (mut client, inbound) = tcp_pair().await;
+
+        let exchange = async {
+            let fallback_io = async {
+                let mut connection = fallback
+                    .connect(PREFIX)
+                    .await
+                    .expect("cover connection must open");
+                let flight = connection
+                    .read_server_flight(&client_hello, Duration::from_secs(1))
+                    .await
+                    .expect("coalesced cover flight must be classified");
+                let (_, _, inspected_prefix) = flight.into_parts();
+                assert_eq!(inspected_prefix, target_flight[..inspected_prefix_len]);
+                connection.relay(inbound, &inspected_prefix).await
+            };
+            let client_io = async {
+                client.write_all(SUFFIX).await?;
+                client.shutdown().await?;
+                let mut response = Vec::new();
+                client.read_to_end(&mut response).await?;
+                Ok::<_, io::Error>(response)
+            };
+            let cover_io = async {
+                let (mut cover, _) = listener.accept().await?;
+                let mut prefix = vec![0_u8; PREFIX.len()];
+                cover.read_exact(&mut prefix).await?;
+                cover.write_all(&target_flight).await?;
+                cover.write_all(RESPONSE).await?;
+                let mut suffix = Vec::new();
+                cover.read_to_end(&mut suffix).await?;
+                cover.shutdown().await?;
+                Ok::<_, io::Error>((prefix, suffix))
+            };
+            tokio::join!(fallback_io, client_io, cover_io)
+        };
+        let (fallback_result, client_result, cover_result) =
+            timeout(Duration::from_secs(2), exchange)
+                .await
+                .expect("coalesced fallback exchange must finish");
+
+        let stats = fallback_result.expect("same cover connection must relay");
+        let response = client_result.expect("client I/O must succeed");
+        let (prefix, suffix) = cover_result.expect("cover I/O must succeed");
+        let mut expected_response = target_flight.clone();
+        expected_response.extend_from_slice(RESPONSE);
+        assert_eq!(prefix, PREFIX);
+        assert_eq!(suffix, SUFFIX);
+        assert_eq!(response, expected_response);
+        assert_eq!(stats.returned_prefix_bytes(), inspected_prefix_len as u64);
+        assert_eq!(
+            stats.relay().outbound_to_inbound_bytes(),
+            (target_flight.len() - inspected_prefix_len + RESPONSE.len()) as u64
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn partial_positional_record_rejoins_after_shape_timeout() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("cover listener must bind");
+        let target = listener
+            .local_addr()
+            .expect("cover listener address must exist")
+            .to_string();
+        let config = ResourceGovernorConfig::default();
+        let fallback = test_fallback(target, &config);
+        let client_hello = client_hello();
+        let mut initial = target_server_hello_record();
+        initial.extend_from_slice(&[20, 3, 3, 0, 1, 1]);
+        initial.extend_from_slice(&opaque_record(23, 32, 0x11));
+        let second = opaque_record(23, 64, 0x22);
+        initial.extend_from_slice(&second[..8]);
+        let mut remainder = second[8..].to_vec();
+        remainder.extend_from_slice(&opaque_record(23, 48, 0x33));
+        remainder.extend_from_slice(&opaque_record(23, 40, 0x44));
+        let (mut client, inbound) = tcp_pair().await;
+
+        let exchange = async {
+            let fallback_io = async {
+                let mut connection = fallback
+                    .connect(PREFIX)
+                    .await
+                    .expect("cover connection must open");
+                let error = connection
+                    .read_server_flight(&client_hello, Duration::from_millis(10))
+                    .await
+                    .expect_err("partial positional record must time out");
+                let (_, inspected_prefix) = error.into_parts();
+                assert_eq!(inspected_prefix, initial);
+                connection.relay(inbound, &inspected_prefix).await
+            };
+            let client_io = async {
+                client.write_all(SUFFIX).await?;
+                client.shutdown().await?;
+                let mut response = Vec::new();
+                client.read_to_end(&mut response).await?;
+                Ok::<_, io::Error>(response)
+            };
+            let cover_io = async {
+                let (mut cover, _) = listener.accept().await?;
+                let mut prefix = vec![0_u8; PREFIX.len()];
+                cover.read_exact(&mut prefix).await?;
+                cover.write_all(&initial).await?;
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                cover.write_all(&remainder).await?;
+                cover.write_all(RESPONSE).await?;
+                let mut suffix = Vec::new();
+                cover.read_to_end(&mut suffix).await?;
+                cover.shutdown().await?;
+                Ok::<_, io::Error>((prefix, suffix))
+            };
+            tokio::join!(fallback_io, client_io, cover_io)
+        };
+        let (fallback_result, client_result, cover_result) =
+            timeout(Duration::from_secs(2), exchange)
+                .await
+                .expect("partial positional fallback exchange must finish");
+
+        let stats = fallback_result.expect("same cover connection must relay");
+        let response = client_result.expect("client I/O must succeed");
+        let (prefix, suffix) = cover_result.expect("cover I/O must succeed");
+        let mut expected_response = initial.clone();
+        expected_response.extend_from_slice(&remainder);
+        expected_response.extend_from_slice(RESPONSE);
+        assert_eq!(prefix, PREFIX);
+        assert_eq!(suffix, SUFFIX);
+        assert_eq!(response, expected_response);
+        assert_eq!(stats.returned_prefix_bytes(), initial.len() as u64);
+        assert_eq!(
+            stats.relay().outbound_to_inbound_bytes(),
+            (remainder.len() + RESPONSE.len()) as u64
         );
     }
 
@@ -626,6 +796,17 @@ mod tests {
                 .to_be_bytes(),
         );
         record.extend_from_slice(&message);
+        record
+    }
+
+    fn opaque_record(content_type: u8, body_len: usize, fill: u8) -> Vec<u8> {
+        let mut record = vec![content_type, 3, 3];
+        record.extend_from_slice(
+            &u16::try_from(body_len)
+                .expect("test record body must fit")
+                .to_be_bytes(),
+        );
+        record.resize(5 + body_len, fill);
         record
     }
 

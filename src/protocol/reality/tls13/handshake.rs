@@ -8,10 +8,11 @@ use zeroize::Zeroizing;
 use crate::protocol::reality::{AuthKey, ClientHello, X25519_GROUP, X25519_MLKEM768_GROUP};
 
 use super::{
-    CertificateIdentity, CipherSuite, ContentType, ExportedRecordState, FinishedVerifyData,
-    HandshakeMessageError, ServerHelloError, ServerHelloTemplate, Tls13KeySchedule,
-    Tls13KeyScheduleError, Tls13RecordError, Tls13RecordLayer, certificate_message,
-    change_cipher_spec_record, encrypted_extensions, finished_message, plaintext_handshake_record,
+    CertificateIdentity, CipherSuite, ContentType, CoverHandshakeRecordShape, ExportedRecordState,
+    FinishedVerifyData, HandshakeMessageError, ServerHelloError, ServerHelloTemplate,
+    Tls13KeySchedule, Tls13KeyScheduleError, Tls13RecordError, Tls13RecordLayer,
+    certificate_message, change_cipher_spec_record, encrypted_extensions, finished_message,
+    plaintext_handshake_record, record::UNPADDED_RECORD_WIRE_OVERHEAD,
 };
 
 const FINISHED_HANDSHAKE_TYPE: u8 = 20;
@@ -211,12 +212,21 @@ impl ServerFlight {
             .expect("server flight retains its fixed compatibility record")
     }
 
-    /// Returns the encrypted record containing EE through server Finished.
+    /// Returns the encrypted record sequence containing EE through Finished.
     #[must_use]
-    pub fn encrypted_handshake_record(&self) -> &[u8] {
+    pub fn encrypted_handshake_records(&self) -> &[u8] {
         self.wire
             .get(self.encrypted_handshake_start..)
             .expect("server flight retains its encrypted suffix")
+    }
+
+    /// Compatibility alias for [`Self::encrypted_handshake_records`].
+    ///
+    /// Depending on the cover-derived shape, the returned suffix may contain
+    /// one coalesced record or four positional records.
+    #[must_use]
+    pub fn encrypted_handshake_record(&self) -> &[u8] {
+        self.encrypted_handshake_records()
     }
 
     /// Returns the complete contiguous flight ready for one socket write.
@@ -269,7 +279,7 @@ impl fmt::Debug for ServerFlight {
             .debug_struct("ServerFlight")
             .field("server_hello_len", &self.server_hello_end)
             .field(
-                "encrypted_record_len",
+                "encrypted_records_len",
                 &self
                     .wire
                     .len()
@@ -292,6 +302,35 @@ pub fn build_server_flight(
     target: ServerHelloTemplate,
     identity: &CertificateIdentity,
     selected_alpn: Option<&[u8]>,
+) -> Result<ServerFlight, RealityHandshakeError> {
+    build_server_flight_inner(client, auth_key, target, identity, selected_alpn, None)
+}
+
+pub(crate) fn build_server_flight_with_shape(
+    client: &ClientHello,
+    auth_key: &AuthKey,
+    target: ServerHelloTemplate,
+    identity: &CertificateIdentity,
+    selected_alpn: Option<&[u8]>,
+    shape: CoverHandshakeRecordShape,
+) -> Result<ServerFlight, RealityHandshakeError> {
+    build_server_flight_inner(
+        client,
+        auth_key,
+        target,
+        identity,
+        selected_alpn,
+        Some(shape),
+    )
+}
+
+fn build_server_flight_inner(
+    client: &ClientHello,
+    auth_key: &AuthKey,
+    target: ServerHelloTemplate,
+    identity: &CertificateIdentity,
+    selected_alpn: Option<&[u8]>,
+    shape: Option<CoverHandshakeRecordShape>,
 ) -> Result<ServerFlight, RealityHandshakeError> {
     if let Some(protocol) = selected_alpn
         && !client.alpn_protocols().any(|offered| offered == protocol)
@@ -351,22 +390,79 @@ pub fn build_server_flight(
         .get(flight_plaintext_start..)
         .filter(|plaintext| plaintext.len() <= MAX_FLIGHT_PLAINTEXT)
         .ok_or(RealityHandshakeError::BufferAllocation)?;
-    let mut encrypted_flight = Vec::new();
-    server_handshake_records.seal_into(
-        ContentType::Handshake,
-        flight_plaintext,
-        0,
-        &mut encrypted_flight,
-    )?;
+    let handshake_messages = [
+        encrypted_extensions_message.as_slice(),
+        certificate.as_slice(),
+        certificate_verify.as_slice(),
+        server_finished.as_slice(),
+    ];
+    let (encrypted_wire_len, largest_record_len) = match shape {
+        None => {
+            let wire_len = unpadded_record_wire_len(flight_plaintext.len())?;
+            (wire_len, wire_len)
+        }
+        Some(CoverHandshakeRecordShape::Coalesced { wire_len }) => {
+            shaped_record_padding(flight_plaintext.len(), wire_len)?;
+            (wire_len, wire_len)
+        }
+        Some(CoverHandshakeRecordShape::PositionalRecords { wire_lens }) => {
+            let mut total = 0_usize;
+            let mut largest = 0_usize;
+            for (message, wire_len) in handshake_messages.iter().zip(wire_lens) {
+                shaped_record_padding(message.len(), wire_len)?;
+                total = total
+                    .checked_add(wire_len)
+                    .ok_or(RealityHandshakeError::BufferAllocation)?;
+                largest = largest.max(wire_len);
+            }
+            (total, largest)
+        }
+    };
+    let mut encrypted_record = Vec::new();
+    encrypted_record
+        .try_reserve_exact(largest_record_len)
+        .map_err(|_| RealityHandshakeError::BufferAllocation)?;
 
     let mut wire = plaintext_handshake_record(&server_hello_message)?;
     let server_hello_end = wire.len();
     let change_cipher_spec = change_cipher_spec_record();
-    wire.try_reserve_exact(change_cipher_spec.len() + encrypted_flight.len())
+    let remaining_wire_len = change_cipher_spec
+        .len()
+        .checked_add(encrypted_wire_len)
+        .ok_or(RealityHandshakeError::BufferAllocation)?;
+    wire.try_reserve_exact(remaining_wire_len)
         .map_err(|_| RealityHandshakeError::BufferAllocation)?;
     wire.extend_from_slice(&change_cipher_spec);
     let encrypted_handshake_start = wire.len();
-    wire.extend_from_slice(&encrypted_flight);
+    match shape {
+        None => seal_shaped_handshake_record(
+            &mut server_handshake_records,
+            flight_plaintext,
+            unpadded_record_wire_len(flight_plaintext.len())?,
+            &mut encrypted_record,
+            &mut wire,
+        )?,
+        Some(CoverHandshakeRecordShape::Coalesced { wire_len }) => {
+            seal_shaped_handshake_record(
+                &mut server_handshake_records,
+                flight_plaintext,
+                wire_len,
+                &mut encrypted_record,
+                &mut wire,
+            )?;
+        }
+        Some(CoverHandshakeRecordShape::PositionalRecords { wire_lens }) => {
+            for (message, wire_len) in handshake_messages.iter().zip(wire_lens) {
+                seal_shaped_handshake_record(
+                    &mut server_handshake_records,
+                    message,
+                    wire_len,
+                    &mut encrypted_record,
+                    &mut wire,
+                )?;
+            }
+        }
+    }
 
     Ok(ServerFlight {
         wire,
@@ -380,6 +476,38 @@ pub fn build_server_flight(
             server_records: Tls13RecordLayer::new(suite, server_application_keys)?,
         },
     })
+}
+
+fn unpadded_record_wire_len(plaintext_len: usize) -> Result<usize, RealityHandshakeError> {
+    plaintext_len
+        .checked_add(UNPADDED_RECORD_WIRE_OVERHEAD)
+        .ok_or(RealityHandshakeError::BufferAllocation)
+}
+
+fn shaped_record_padding(
+    plaintext_len: usize,
+    target_wire_len: usize,
+) -> Result<usize, RealityHandshakeError> {
+    let natural_wire_len = unpadded_record_wire_len(plaintext_len)?;
+    target_wire_len
+        .checked_sub(natural_wire_len)
+        .ok_or_else(|| Tls13RecordError::InvalidLength.into())
+}
+
+fn seal_shaped_handshake_record(
+    records: &mut Tls13RecordLayer,
+    plaintext: &[u8],
+    target_wire_len: usize,
+    scratch: &mut Vec<u8>,
+    wire: &mut Vec<u8>,
+) -> Result<(), RealityHandshakeError> {
+    let padding_len = shaped_record_padding(plaintext.len(), target_wire_len)?;
+    records.seal_into(ContentType::Handshake, plaintext, padding_len, scratch)?;
+    if scratch.len() != target_wire_len {
+        return Err(Tls13RecordError::InvalidLength.into());
+    }
+    wire.extend_from_slice(scratch);
+    Ok(())
 }
 
 struct KeyAgreement {
@@ -496,13 +624,17 @@ mod tests {
     use tokio::io::{AsyncWriteExt, duplex};
     use x25519_dalek::{PublicKey, StaticSecret};
 
-    use super::{EstablishedTls, ExportedTlsState, RealityHandshakeError, build_server_flight};
+    use super::{
+        EstablishedTls, ExportedTlsState, RealityHandshakeError, build_server_flight,
+        build_server_flight_with_shape, seal_shaped_handshake_record, unpadded_record_wire_len,
+    };
     use crate::protocol::reality::{
         AuthKey, ClientHello, SESSION_ID_LEN, X25519_GROUP, X25519_MLKEM768_GROUP,
         client_hello::fixtures,
         tls13::{
-            CertificateIdentity, CipherSuite, ContentType, ServerHelloTemplate, Tls13KeySchedule,
-            Tls13RecordLayer, change_cipher_spec_record, finished_message, read_client_finished,
+            CertificateIdentity, CipherSuite, ContentType, CoverHandshakeRecordShape,
+            ServerHelloTemplate, Tls13KeySchedule, Tls13RecordLayer, TrafficKeys,
+            change_cipher_spec_record, finished_message, read_client_finished,
         },
     };
 
@@ -515,8 +647,18 @@ mod tests {
             .expect("test target must parse");
         let identity = CertificateIdentity::from_seed([0x42; 32]);
         let auth_key = AuthKey::from_test_bytes([0x99; 32]);
-        let flight = build_server_flight(&client, &auth_key, target, &identity, Some(b"h2"))
-            .expect("server flight must build");
+        let flight = build_server_flight_with_shape(
+            &client,
+            &auth_key,
+            target,
+            &identity,
+            Some(b"h2"),
+            CoverHandshakeRecordShape::PositionalRecords {
+                wire_lens: [37, 838, 286, 58],
+            },
+        )
+        .expect("server flight must build");
+        assert_eq!(flight.change_cipher_spec(), &change_cipher_spec_record());
 
         let server_hello = &flight.server_hello_record()[5..];
         let server_public: [u8; 32] = server_hello
@@ -537,12 +679,12 @@ mod tests {
             .expect("server handshake keys must derive");
         let mut server_records =
             Tls13RecordLayer::new(suite, server_keys).expect("server record state must initialize");
-        let mut encrypted = flight.encrypted_handshake_record().to_vec();
-        let opened = server_records
-            .open_in_place(&mut encrypted)
-            .expect("server flight must authenticate");
-        assert_eq!(opened.content_type(), ContentType::Handshake);
-        transcript.extend_from_slice(opened.plaintext());
+        let (server_handshake, record_lens, message_types, messages_per_record) =
+            open_handshake_records(flight.encrypted_handshake_records(), &mut server_records);
+        assert_eq!(record_lens, [37, 838, 286, 58]);
+        assert_eq!(message_types, [8, 11, 15, 20]);
+        assert_eq!(messages_per_record, [1, 1, 1, 1]);
+        transcript.extend_from_slice(&server_handshake);
 
         let finished_data = schedule
             .finished_verify_data(
@@ -572,6 +714,8 @@ mod tests {
             .await
             .expect("valid ClientFinished must establish TLS");
         assert_eq!(established.suite(), suite);
+        assert_eq!(established.client_records_mut().records_used(), 0);
+        assert_eq!(established.server_records_mut().records_used(), 0);
 
         let application = schedule
             .application_traffic_secrets(&suite.hash().digest(&transcript))
@@ -595,6 +739,232 @@ mod tests {
             .open_in_place(&mut application_record)
             .expect("established server must authenticate application data");
         assert_eq!(opened.plaintext(), b"VLESS request");
+    }
+
+    #[test]
+    fn large_cover_record_coalesces_and_pads_the_unchanged_handshake_messages() {
+        let client_secret = StaticSecret::from([0x31; 32]);
+        let client_public = PublicKey::from(&client_secret).to_bytes();
+        let client = client_hello(X25519_GROUP, &client_public);
+        let target = ServerHelloTemplate::parse(&server_hello(X25519_GROUP, &[0x55; 32]), &client)
+            .expect("test target must parse");
+        let flight = build_server_flight_with_shape(
+            &client,
+            &AuthKey::from_test_bytes([0x99; 32]),
+            target,
+            &CertificateIdentity::from_seed([0x42; 32]),
+            Some(b"h2"),
+            CoverHandshakeRecordShape::Coalesced { wire_len: 605 },
+        )
+        .expect("coalesced cover shape must build");
+
+        let server_hello = &flight.server_hello_record()[5..];
+        let server_public: [u8; 32] = server_hello
+            .get(server_hello.len() - 32..)
+            .expect("test ServerHello ends with key share")
+            .try_into()
+            .expect("X25519 server share is fixed");
+        let shared = client_secret.diffie_hellman(&PublicKey::from(server_public));
+        let mut transcript = client.raw_message().to_vec();
+        transcript.extend_from_slice(server_hello);
+        let suite = CipherSuite::Aes128GcmSha256;
+        let schedule =
+            Tls13KeySchedule::new(suite, shared.as_bytes(), &suite.hash().digest(&transcript))
+                .expect("client schedule must derive");
+        let server_keys = schedule
+            .traffic_keys(schedule.server_handshake_secret())
+            .expect("server handshake keys must derive");
+        let mut server_records =
+            Tls13RecordLayer::new(suite, server_keys).expect("record state must initialize");
+
+        let (_plaintext, record_lens, message_types, messages_per_record) =
+            open_handshake_records(flight.encrypted_handshake_records(), &mut server_records);
+
+        assert_eq!(record_lens, [605]);
+        assert_eq!(message_types, [8, 11, 15, 20]);
+        assert_eq!(messages_per_record, [4]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn coalesced_flight_establishes_only_after_valid_client_finished() {
+        let client_secret = StaticSecret::from([0x31; 32]);
+        let client_public = PublicKey::from(&client_secret).to_bytes();
+        let client = client_hello(X25519_GROUP, &client_public);
+        let target = ServerHelloTemplate::parse(&server_hello(X25519_GROUP, &[0x55; 32]), &client)
+            .expect("test target must parse");
+        let identity = CertificateIdentity::from_seed([0x42; 32]);
+        let auth_key = AuthKey::from_test_bytes([0x99; 32]);
+        let flight = build_server_flight_with_shape(
+            &client,
+            &auth_key,
+            target,
+            &identity,
+            Some(b"h2"),
+            CoverHandshakeRecordShape::Coalesced { wire_len: 605 },
+        )
+        .expect("coalesced server flight must build");
+        assert_eq!(flight.change_cipher_spec(), &change_cipher_spec_record());
+
+        let server_hello = &flight.server_hello_record()[5..];
+        let server_public: [u8; 32] = server_hello
+            .get(server_hello.len() - 32..)
+            .expect("test ServerHello ends with key share")
+            .try_into()
+            .expect("X25519 server share is fixed");
+        let shared = client_secret.diffie_hellman(&PublicKey::from(server_public));
+        let mut transcript = client.raw_message().to_vec();
+        transcript.extend_from_slice(server_hello);
+        let suite = CipherSuite::Aes128GcmSha256;
+        let schedule =
+            Tls13KeySchedule::new(suite, shared.as_bytes(), &suite.hash().digest(&transcript))
+                .expect("client schedule must derive");
+
+        let server_keys = schedule
+            .traffic_keys(schedule.server_handshake_secret())
+            .expect("server handshake keys must derive");
+        let mut server_records =
+            Tls13RecordLayer::new(suite, server_keys).expect("server record state must initialize");
+        let (server_handshake, record_lens, message_types, messages_per_record) =
+            open_handshake_records(flight.encrypted_handshake_records(), &mut server_records);
+        assert_eq!(record_lens, [605]);
+        assert_eq!(message_types, [8, 11, 15, 20]);
+        assert_eq!(messages_per_record, [4]);
+        transcript.extend_from_slice(&server_handshake);
+
+        let finished_data = schedule
+            .finished_verify_data(
+                schedule.client_handshake_secret(),
+                &suite.hash().digest(&transcript),
+            )
+            .expect("client Finished must derive");
+        let finished =
+            finished_message(finished_data.as_bytes()).expect("client Finished must encode");
+        let client_keys = schedule
+            .traffic_keys(schedule.client_handshake_secret())
+            .expect("client handshake keys must derive");
+        let mut client_records =
+            Tls13RecordLayer::new(suite, client_keys).expect("client record state must initialize");
+        let mut record = Vec::new();
+        client_records
+            .seal_into(ContentType::Handshake, &finished, 0, &mut record)
+            .expect("client Finished must seal");
+        let mut client_wire = change_cipher_spec_record().to_vec();
+        client_wire.extend_from_slice(&record);
+        let (mut client_io, mut server_io) = duplex(client_wire.len());
+        client_io
+            .write_all(&client_wire)
+            .await
+            .expect("client Finished flight must be written");
+        let mut established = read_client_finished(&mut server_io, flight, Duration::from_secs(1))
+            .await
+            .expect("valid ClientFinished must establish TLS");
+        assert_eq!(established.suite(), suite);
+        assert_eq!(established.client_records_mut().records_used(), 0);
+        assert_eq!(established.server_records_mut().records_used(), 0);
+
+        let application = schedule
+            .application_traffic_secrets(&suite.hash().digest(&transcript))
+            .expect("application secrets must derive");
+        let client_application_keys = schedule
+            .traffic_keys(application.client())
+            .expect("client application keys must derive");
+        let mut client_application = Tls13RecordLayer::new(suite, client_application_keys)
+            .expect("client application state must initialize");
+        let mut application_record = Vec::new();
+        client_application
+            .seal_into(
+                ContentType::ApplicationData,
+                b"VLESS request",
+                0,
+                &mut application_record,
+            )
+            .expect("client application record must seal");
+        let opened = established
+            .client_records_mut()
+            .open_in_place(&mut application_record)
+            .expect("established server must authenticate application data");
+        assert_eq!(opened.plaintext(), b"VLESS request");
+    }
+
+    #[test]
+    fn authenticated_record_partitioning_preserves_exact_handshake_bytes() {
+        let messages: [&[u8]; 4] = [
+            &[8, 0, 0, 1, 0xa1],
+            &[11, 0, 0, 2, 0xb1, 0xb2],
+            &[15, 0, 0, 3, 0xc1, 0xc2, 0xc3],
+            &[20, 0, 0, 1, 0xd1],
+        ];
+        let expected = messages.concat();
+        let make_layer = || {
+            let keys = TrafficKeys::from_raw_parts(&[0x11; 16], [0x22; 12])
+                .expect("fixed test traffic keys must be valid");
+            Tls13RecordLayer::new(CipherSuite::Aes128GcmSha256, keys)
+                .expect("fixed test record layer must initialize")
+        };
+
+        let mut compact_writer = make_layer();
+        let mut compact_scratch = Vec::new();
+        let mut compact_wire = Vec::new();
+        seal_shaped_handshake_record(
+            &mut compact_writer,
+            &expected,
+            unpadded_record_wire_len(expected.len()).expect("compact record must fit"),
+            &mut compact_scratch,
+            &mut compact_wire,
+        )
+        .expect("compact handshake record must seal");
+
+        let mut shaped_writer = make_layer();
+        let mut shaped_scratch = Vec::new();
+        let mut shaped_wire = Vec::new();
+        for (index, message) in messages.iter().enumerate() {
+            let target_wire_len = unpadded_record_wire_len(message.len())
+                .expect("positional record must fit")
+                + index;
+            seal_shaped_handshake_record(
+                &mut shaped_writer,
+                message,
+                target_wire_len,
+                &mut shaped_scratch,
+                &mut shaped_wire,
+            )
+            .expect("positional handshake record must seal");
+        }
+
+        let (compact_plaintext, compact_lens, compact_types, compact_counts) =
+            open_handshake_records(&compact_wire, &mut make_layer());
+        let (shaped_plaintext, shaped_lens, shaped_types, shaped_counts) =
+            open_handshake_records(&shaped_wire, &mut make_layer());
+
+        assert_eq!(compact_plaintext, expected);
+        assert_eq!(shaped_plaintext, expected);
+        assert_eq!(compact_plaintext, shaped_plaintext);
+        assert_eq!(compact_lens.len(), 1);
+        assert_eq!(shaped_lens.len(), 4);
+        assert_eq!(compact_types, [8, 11, 15, 20]);
+        assert_eq!(shaped_types, compact_types);
+        assert_eq!(compact_counts, [4]);
+        assert_eq!(shaped_counts, [1, 1, 1, 1]);
+    }
+
+    #[test]
+    fn cover_record_shorter_than_the_handshake_fails_before_wire_escape() {
+        let client_secret = StaticSecret::from([0x31; 32]);
+        let client_public = PublicKey::from(&client_secret).to_bytes();
+        let client = client_hello(X25519_GROUP, &client_public);
+        let target = ServerHelloTemplate::parse(&server_hello(X25519_GROUP, &[0x55; 32]), &client)
+            .expect("test target must parse");
+
+        let result = build_server_flight_with_shape(
+            &client,
+            &AuthKey::from_test_bytes([0x99; 32]),
+            target,
+            &CertificateIdentity::from_seed([0x42; 32]),
+            Some(b"h2"),
+            CoverHandshakeRecordShape::Coalesced { wire_len: 128 },
+        );
+
+        assert!(matches!(result, Err(RealityHandshakeError::Record)));
     }
 
     #[test]
@@ -756,6 +1126,58 @@ mod tests {
             key_exchange,
         ))
         .expect("test ClientHello must parse")
+    }
+
+    fn open_handshake_records(
+        wire: &[u8],
+        records: &mut Tls13RecordLayer,
+    ) -> (Vec<u8>, Vec<usize>, Vec<u8>, Vec<usize>) {
+        let mut offset = 0_usize;
+        let mut plaintext = Vec::new();
+        let mut record_lens = Vec::new();
+        let mut message_types = Vec::new();
+        let mut messages_per_record = Vec::new();
+        while offset < wire.len() {
+            let header = wire
+                .get(offset..offset + 5)
+                .expect("encrypted record header must be complete");
+            assert_eq!(header[0], 23);
+            assert_eq!(&header[1..3], &[3, 3]);
+            let body_len = usize::from(u16::from_be_bytes([header[3], header[4]]));
+            let record_len = 5 + body_len;
+            let record_end = offset + record_len;
+            let mut encrypted = wire
+                .get(offset..record_end)
+                .expect("encrypted record body must be complete")
+                .to_vec();
+            let opened = records
+                .open_in_place(&mut encrypted)
+                .expect("encrypted handshake record must authenticate");
+            assert_eq!(opened.content_type(), ContentType::Handshake);
+            let record_plaintext = opened.plaintext();
+            let mut message_offset = 0_usize;
+            let mut record_message_count = 0_usize;
+            while message_offset < record_plaintext.len() {
+                let message_header = record_plaintext
+                    .get(message_offset..message_offset + 4)
+                    .expect("handshake message header must be complete");
+                let message_len = (usize::from(message_header[1]) << 16)
+                    | (usize::from(message_header[2]) << 8)
+                    | usize::from(message_header[3]);
+                let message_end = message_offset + 4 + message_len;
+                assert!(message_end <= record_plaintext.len());
+                message_types.push(message_header[0]);
+                record_message_count += 1;
+                message_offset = message_end;
+            }
+            assert_eq!(message_offset, record_plaintext.len());
+            plaintext.extend_from_slice(record_plaintext);
+            record_lens.push(record_len);
+            messages_per_record.push(record_message_count);
+            offset = record_end;
+        }
+        assert_eq!(offset, wire.len());
+        (plaintext, record_lens, message_types, messages_per_record)
     }
 
     fn server_hello(group: u16, key_exchange: &[u8]) -> Vec<u8> {

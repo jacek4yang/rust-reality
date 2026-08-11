@@ -2,6 +2,98 @@
 
 All notable user-facing changes to this project are documented in this file.
 
+## [1.4.0] - 2026-08-11
+
+### Added
+
+- A bounded, cover-derived TLS 1.3 server-flight policy now reproduces either
+  one coalesced post-ServerHello encrypted record or four positional records.
+  The choice and outer lengths come from the authenticated connection's actual
+  cover flight; the cover ServerHello remains authoritative.
+- `scripts/benchmark-tls-shape.sh` and its small libssl reference/helper tools
+  provide a reproducible four-way comparison of a byte-identical stock-Xray
+  ClientHello against a pinned OpenSSL reference, v1.3.0, the candidate, and
+  Xray. Reports separate TLS records, process writes, loopback packets, and
+  timings, and require exact binary hashes before opening listeners.
+
+### Changed
+
+- The REALITY cover reader now validates middlebox-compatibility CCS and a
+  bounded portion of the encrypted cover flight under the existing absolute
+  handshake deadline. Every consumed byte is retained so incompatibility,
+  timeout, admission failure, or pre-write shape failure still rejoins the same
+  cover socket byte-exactly.
+- EncryptedExtensions, Certificate, CertificateVerify, and Finished are built
+  and transcripted exactly once, then only their TLS record boundaries and
+  authenticated zero padding are shaped. The flight remains one contiguous
+  socket write; application record layers still begin at sequence zero, so
+  Vision Direct and Handoff state ownership are unchanged.
+- Benchmark/deployment harnesses now pin and report binary, source, lockfile,
+  compiler, feature, logging, kernel, and CPU identities. Routing/scale
+  generators preserve UUID-owned short IDs, and large integrity outputs are
+  deleted after each cell instead of accumulating across implementations.
+
+### Wire-shape evidence
+
+- The reference is official OpenSSL 3.5.6 tag `openssl-3.5.6` at commit
+  `286ddeaac037533bbdce65b3c689e3f7ffebf0f6`, built statically with its built-in
+  default provider and ambient configuration disabled. Exact executable and
+  static-library hashes are recorded in ADR 0004.
+- With identical authenticated ClientHellos, v1.3.0 emitted one encrypted
+  handshake record (`[331]` bytes for AES-128-GCM/ChaCha20-Poly1305 and `[347]`
+  for AES-256-GCM). The candidate, pinned OpenSSL reference, and Xray all
+  emitted `[32, 833, 281, 53]` or `[32, 833, 281, 69]` in the controlled local
+  certificate cases. ServerHello length, CCS placement, legacy record version,
+  record count, per-position lengths, first-flight bytes, and write count/size
+  align on those measured dimensions.
+- This is not a universal cover fingerprint. A three-sample cover corpus was
+  stable per target but varied materially: the pinned local reference and
+  Microsoft used four records, while Google used one coalesced record. The
+  adaptive policy follows that measured outer shape; fixed/random padding was
+  rejected. Loopback TCP packetization remains network-dependent, the Rust and
+  reference syscall primitives differ, and straced single-sample timings are
+  not comparable.
+
+### Performance and provider decisions
+
+- Controlled setup profiling measured −0.26% median setup rate, +1.86%
+  CPU/connection, +0.67% instructions/connection, and about 3.4 additional
+  cover `recvfrom` calls per setup connection. Vision Direct throughput was
+  +0.26% with −1.87% CPU/GiB and −0.21% instructions/GiB. These same-host
+  effects are within the v1.4 keep budget; noisy loopback throughput cells are
+  retained as samples rather than headline wins or regressions.
+- OpenSSL EVP was independently tested but not retained. AES-128-GCM lost to
+  the current ring provider on the real record path; AES-256-GCM,
+  ChaCha20-Poly1305, bulk hashes, and X25519 showed isolated wins in some cells
+  but lacked an end-to-end gain sufficient to justify provider lifecycle,
+  deployment, ABI, and dependency cost. Full libssl termination was not
+  attempted because supported APIs cannot preserve the project's explicit
+  record state, Handoff, cover-derived ServerHello, and Vision Direct model.
+
+### Compatibility and security
+
+- Stock Xray 26.7.28 interoperability passes with both four-record Microsoft
+  and coalesced Google covers, including exact 1 MiB payload integrity and the
+  hybrid ML-DSA profile. No public configuration, application-data record
+  policy, dependency, or wire-semantic migration is introduced.
+- Transcript partition-invariance, exact ClientFinished verification,
+  application sequence ownership, cover fallback rejoin, malformed/truncated
+  flights, bounded allocation, replay ordering, and provider equivalence have
+  dedicated tests. The maximum retained positional cover prefix is 66,125
+  bytes per already authenticated/admitted connection.
+
+### Known limitations
+
+- The cover flight is now an admission contract for authenticated clients:
+  the cover must emit the middlebox-compatibility CCS after its ServerHello
+  and present either a four-record flight whose positional lengths fit the
+  generated messages or a coalesced first record larger than the generated
+  flight. Covers outside these measured classes (including TLS 1.3 covers
+  that legitimately omit CCS when the mirrored ClientHello has an empty
+  legacy session ID) fail closed: the authenticated client rejoins the cover
+  byte-exactly instead of completing the REALITY handshake. Stock Xray
+  fingerprints negotiate the supported classes. See ADR 0004.
+
 ## [1.3.0] - 2026-08-10
 
 ### Added
