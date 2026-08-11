@@ -14,8 +14,8 @@
 兼容 Xray 的客户端
   -> VLESS + REALITY + Vision
   -> rust-reality 线路机或单机节点
-  -> direct | SOCKS5 | blackhole | NXR
-  -> 可选的 NXR 落地机
+  -> direct | SOCKS5 | blackhole | NXR | Handoff
+  -> 可选的 NXR 或 Handoff 落地机
   -> 目标地址
 ```
 
@@ -33,8 +33,11 @@
   RustCrypto 回退构建只差一个参数，并持续测试。
 - 一切皆有界：连接、握手、fallback、密码学工作、重放状态、缓冲区、DNS 结果、
   描述符和 splice 资源——压力下迟滞降级而不是崩溃。
-- 支持具体和单标签通配的 REALITY server name、按 UUID 的路由分组、兼容 Xray
-  的 GeoIP/GeoSite 资产（原子 last-known-good 更新）。
+- 支持具体和单标签通配的 REALITY server name、按 UUID 的路由分组、UUID 独占
+  多 short ID 认证，以及兼容 Xray 的 GeoIP/GeoSite 资产（原子 last-known-good
+  更新）。
+- 基于实测的本机 `config autotune`（可审计原子输出），以及按基数自适应的
+  UUID/路由/出站索引和 deadline 驱动的重放过期，不再无条件扫描存活表。
 - 严格 JSON 配置、SIGHUP 原子热更新、不含秘密的有界日志、密钥生成、目标探测、
   self-test 和 Schema，全部由同一个二进制提供。
 - 稳定 Rust：主协议 crate 禁止 `unsafe`（Linux ABI 的 unsafe 隔离在
@@ -93,7 +96,7 @@ relay。生命周期、热路径拓扑、描述符预算模型和可观测事件
 
 ```shell
 sha256sum --check SHA256SUMS
-tar -xzf rust-reality-v1.0.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf rust-reality-v1.3.0-x86_64-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 ```
 
@@ -110,11 +113,15 @@ rust-reality config generate standalone \
   > config.json 2> client-values.txt
 
 rust-reality check --config config.json
-rust-reality self-test --config config.json
-rust-reality serve --config config.json
+rust-reality config autotune \
+  --config config.json --output config.tuned.json
+rust-reality check --config config.tuned.json
+rust-reality self-test --config config.tuned.json
+rust-reality serve --config config.tuned.json
 ```
 
-生成的 JSON 已包含 UUID、REALITY 私钥、short ID 和 direct 路由策略。供客户端
+生成的 JSON 已包含 UUID、REALITY 私钥、归该 UUID 独占的两个 short ID 和
+direct 路由策略。供客户端
 使用的 REALITY 公钥写入标准错误，使服务器私密配置可以单独保存。两个输出都应
 妥善保护；示例目标必须替换成从实际部署机器执行 `probe-dest` 能通过的目标。
 完整步骤（含线路机/落地机 NXR 拓扑）见
@@ -129,7 +136,8 @@ rust-reality serve --config config.json
 `routing.users[].rules`，最后使用该用户组的 `defaultOutbound`。同一规则中不同
 条件类别之间是 AND；同一类别的多个值之间是 OR。所有字段、默认值、约束、匹配
 器语法、热更新行为和专用资源模式见
-[配置参考](docs/configuration.zh-CN.md)。
+[配置参考](docs/configuration.zh-CN.md)。v1.2 配置在 v1.3 重启前必须把原来共享的
+`realitySettings.shortIds` 列表移到其所属的 `clients[]` 条目下。
 
 ## 部署
 

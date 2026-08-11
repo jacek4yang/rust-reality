@@ -1,18 +1,21 @@
 use std::{
     error::Error,
     fmt,
+    fs::{File, OpenOptions},
     io::{self, Write},
     net::{IpAddr, Ipv4Addr},
+    os::unix::fs::OpenOptionsExt as _,
     path::{Path, PathBuf},
     process::ExitCode,
     sync::Arc,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 use clap::{Args, Parser, Subcommand};
 use rust_reality::{
     assets::{AssetLoadError, AssetSnapshot},
+    autotune::{AutotuneError, AutotuneOptions, autotune_config},
     benchmark::{BenchmarkError, BenchmarkOptions, run_benchmarks},
     config::{
         ConfigLoadError, GenerateConfigError, GenerateConfigInput, GenerateHandoffConfigInput,
@@ -87,8 +90,41 @@ enum ConfigCommand {
         #[command(subcommand)]
         role: GenerateRole,
     },
+    /// Benchmark this host and write a validated automatically tuned copy.
+    Autotune(AutotuneArgs),
     /// Validate and print a canonical pretty JSON configuration.
     Format(ConfigPath),
+}
+
+#[derive(Debug, Args)]
+struct AutotuneArgs {
+    /// Existing valid configuration whose routing and secrets are preserved.
+    #[arg(short, long, value_name = "PATH")]
+    config: PathBuf,
+    /// New tuned configuration path.
+    #[arg(short, long, value_name = "PATH")]
+    output: PathBuf,
+    /// Measurement report path; defaults to OUTPUT.report.json.
+    #[arg(long, value_name = "PATH")]
+    report: Option<PathBuf>,
+    /// Measured milliseconds for each protocol hot-path case.
+    #[arg(long, default_value_t = 900, value_parser = clap::value_parser!(u64).range(90..=30_000))]
+    duration_ms: u64,
+    /// Warm-up milliseconds before each protocol case.
+    #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u64).range(1..=10_000))]
+    warmup_ms: u64,
+    /// MiB written/read in the bounded temporary storage probe.
+    #[arg(long, default_value_t = 32, value_parser = clap::value_parser!(u16).range(1..=256))]
+    storage_mib: u16,
+    /// MiB transferred in each direction through TCP loopback.
+    #[arg(long, default_value_t = 32, value_parser = clap::value_parser!(u16).range(1..=256))]
+    network_mib: u16,
+    /// Storage-probe directory; defaults to the operating-system temp directory.
+    #[arg(long, value_name = "DIR")]
+    scratch_directory: Option<PathBuf>,
+    /// Declare this process the exclusive owner of the host or cgroup.
+    #[arg(long)]
+    dedicated: bool,
 }
 
 #[derive(Debug, Args)]
@@ -221,6 +257,7 @@ enum CliError {
     Io(io::Error),
     InvalidArgument(&'static str),
     Benchmark(BenchmarkError),
+    Autotune(AutotuneError),
 }
 
 impl fmt::Display for CliError {
@@ -237,6 +274,7 @@ impl fmt::Display for CliError {
             Self::Io(_) => formatter.write_str("failed to write command output"),
             Self::InvalidArgument(message) => formatter.write_str(message),
             Self::Benchmark(source) => source.fmt(formatter),
+            Self::Autotune(source) => source.fmt(formatter),
         }
     }
 }
@@ -255,6 +293,7 @@ impl Error for CliError {
             Self::Io(source) => Some(source),
             Self::InvalidArgument(_) => None,
             Self::Benchmark(source) => Some(source),
+            Self::Autotune(source) => Some(source),
         }
     }
 }
@@ -316,6 +355,12 @@ impl From<io::Error> for CliError {
 impl From<BenchmarkError> for CliError {
     fn from(source: BenchmarkError) -> Self {
         Self::Benchmark(source)
+    }
+}
+
+impl From<AutotuneError> for CliError {
+    fn from(source: AutotuneError) -> Self {
+        Self::Autotune(source)
     }
 }
 
@@ -448,9 +493,112 @@ fn run_probe_destination(arguments: ProbeDestinationArgs) -> Result<(), CliError
 fn run_config(command: ConfigCommand) -> Result<(), CliError> {
     match command {
         ConfigCommand::Generate { role } => run_config_generate(role),
+        ConfigCommand::Autotune(arguments) => run_config_autotune(arguments),
         ConfigCommand::Format(arguments) => {
             let config = load_config(arguments.config)?;
             write_stdout(format_config(&config)?)
+        }
+    }
+}
+
+fn run_config_autotune(arguments: AutotuneArgs) -> Result<(), CliError> {
+    if arguments.config == arguments.output {
+        return Err(CliError::InvalidArgument(
+            "--output must differ from --config; autotune never overwrites its input",
+        ));
+    }
+    let report_path = arguments.report.unwrap_or_else(|| {
+        let mut path = arguments.output.as_os_str().to_os_string();
+        path.push(".report.json");
+        PathBuf::from(path)
+    });
+    if report_path == arguments.config || report_path == arguments.output {
+        return Err(CliError::InvalidArgument(
+            "--report must differ from both --config and --output",
+        ));
+    }
+    let source = load_config(&arguments.config)?;
+    let tuned = autotune_config(
+        &source,
+        &AutotuneOptions {
+            benchmark_duration: Duration::from_millis(arguments.duration_ms),
+            benchmark_warmup: Duration::from_millis(arguments.warmup_ms),
+            storage_bytes: u64::from(arguments.storage_mib) * 1024 * 1024,
+            network_bytes: u64::from(arguments.network_mib) * 1024 * 1024,
+            scratch_directory: arguments
+                .scratch_directory
+                .unwrap_or_else(std::env::temp_dir),
+            dedicated: arguments.dedicated,
+        },
+    )?;
+    let config_json = format_config(tuned.config())?;
+    let mut report_json = serde_json::to_string_pretty(tuned.report())?;
+    report_json.push('\n');
+    // Publish the non-authoritative report first and the validated config
+    // last. A crash can leave an orphan report, but never advertises a config
+    // whose matching report was only partially written.
+    write_atomic(&report_path, report_json.as_bytes())?;
+    write_atomic(&arguments.output, config_json.as_bytes())?;
+    write_stdout(format_args!(
+        "tuned configuration: {}\nmeasurement report: {}\n",
+        arguments.output.display(),
+        report_path.display()
+    ))
+}
+
+/// Writes one complete owner-only file through a same-directory temporary and
+/// rename, so readers observe either the previous generation or the new one.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), CliError> {
+    let directory = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    let directory = directory.unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .ok_or(CliError::InvalidArgument("output path must name a file"))?;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(io::Error::other)?
+        .as_nanos();
+    let temporary = directory.join(format!(
+        ".{}.{}.{timestamp}.tmp",
+        name.to_string_lossy(),
+        std::process::id()
+    ));
+    let mut pending = PendingFile::create(&temporary)?;
+    pending.file.write_all(bytes)?;
+    pending.file.sync_all()?;
+    std::fs::rename(&temporary, path)?;
+    pending.committed = true;
+    File::open(directory)?.sync_all()?;
+    Ok(())
+}
+
+struct PendingFile {
+    file: File,
+    path: PathBuf,
+    committed: bool,
+}
+
+impl PendingFile {
+    fn create(path: &Path) -> Result<Self, CliError> {
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)?;
+        Ok(Self {
+            file,
+            path: path.to_owned(),
+            committed: false,
+        })
+    }
+}
+
+impl Drop for PendingFile {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = std::fs::remove_file(&self.path);
         }
     }
 }
@@ -642,9 +790,97 @@ fn write_stdout(output: impl fmt::Display) -> Result<(), CliError> {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt as _;
+
     use clap::Parser;
 
-    use super::{Cli, Command, ConfigCommand, GenerateRole};
+    use super::{Cli, Command, ConfigCommand, GenerateRole, write_atomic};
+
+    #[test]
+    fn atomic_output_is_complete_owner_only_and_replaceable() {
+        let directory = std::env::temp_dir().join(format!(
+            "rust-reality-atomic-output-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir(&directory).expect("unique temporary directory must be created");
+        let output = directory.join("config.json");
+
+        write_atomic(&output, b"first\n").expect("first atomic write must succeed");
+        assert_eq!(
+            std::fs::read(&output).expect("output must read"),
+            b"first\n"
+        );
+        assert_eq!(
+            std::fs::metadata(&output)
+                .expect("metadata must read")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+
+        write_atomic(&output, b"second generation\n")
+            .expect("replacement atomic write must succeed");
+        assert_eq!(
+            std::fs::read(&output).expect("replacement must read"),
+            b"second generation\n"
+        );
+        assert_eq!(
+            std::fs::read_dir(&directory)
+                .expect("directory must read")
+                .count(),
+            1,
+            "no temporary file may remain"
+        );
+        std::fs::remove_dir_all(directory).expect("temporary directory must be removed");
+    }
+
+    #[test]
+    fn parses_bounded_config_autotune() {
+        let cli = Cli::try_parse_from([
+            "rust-reality",
+            "config",
+            "autotune",
+            "--config",
+            "/etc/rust-reality/config.json",
+            "--output",
+            "/etc/rust-reality/config.tuned.json",
+            "--report",
+            "/var/lib/rust-reality/autotune.json",
+            "--duration-ms",
+            "250",
+            "--warmup-ms",
+            "10",
+            "--storage-mib",
+            "1",
+            "--network-mib",
+            "1",
+            "--dedicated",
+        ])
+        .expect("autotune command must parse");
+
+        assert!(matches!(
+            cli.command,
+            Command::Config {
+                command: ConfigCommand::Autotune(_)
+            }
+        ));
+        assert!(
+            Cli::try_parse_from([
+                "rust-reality",
+                "config",
+                "autotune",
+                "--config",
+                "input.json",
+                "--output",
+                "output.json",
+                "--storage-mib",
+                "0",
+            ])
+            .is_err()
+        );
+    }
 
     #[test]
     fn parses_handoff_generator() {

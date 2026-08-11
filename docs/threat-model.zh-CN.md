@@ -16,6 +16,9 @@
 公网监听始终要求 TCP、REALITY、VLESS decryption `none` 和 Vision flow。尝试纯
 VLESS 的配置会在绑定监听端口前被拒绝。`serverNames` 可使用具体 DNS 名或
 `*.lmu.edu` 这样的最左侧单标签模式，但 ClientHello SNI 必须是具体名称。
+每个配置 UUID 拥有一组非空、全局唯一的 short ID。REALITY 阶段把提交的 short ID
+直接解析为其唯一 owner；解出加密的 VLESS 头后，其中 UUID 必须与 owner 完全相等。
+这种两阶段绑定阻止跨账户拼接 UUID 与 short ID。
 
 ## 安全目标
 
@@ -30,6 +33,11 @@ VLESS 的配置会在绑定监听端口前被拒绝。`serverNames` 可使用具
 配置、路由资产、用户、REALITY 状态和出站作为一个不可变 generation 发布。
 刷新失败保留最后一个完整快照。私钥、UUID、NXR PSK、Handoff PSK 和静态密钥、
 凭据和完整配置不进入结构化日志。
+
+强制 REALITY 档位不把 VLESS Encryption 作为额外安全目标。外层 TLS 1.3 记录层
+已经提供机密性、完整性与前向保密的流量密钥；再叠一层数据 AEAD 会禁用本项目
+支持的 Vision raw/splice 路径。安全/性能结论及重新评估门槛记录在
+[ADR 0003](decisions/0003-do-not-stack-vless-encryption-on-reality.md)。
 
 ## NXR 边界
 
@@ -76,6 +84,15 @@ Handoff 通过一条单程信道把已认证会话的完整 TLS 属主从线路�
 
 所有认证前工作、连接、fallback、密码学操作、重放条目、目标拨号、relay 缓冲和
 splice pipe 都有明确上限。数据路径没有无界队列或缓存；协议代码禁止 unsafe Rust。
+
+准入和重放时钟使用有界整数域。无法表示的 deadline、已耗尽的重放 generation 计数器、
+或细于每 token 一纳秒的速率都会以 unavailable 拒绝；算术绝不能把饱和变成成功准入。
+每个临时重放预留都拥有 RAII permit，在解析失败、超时、取消、重复、分配失败或计数器
+耗尽时回滚。
+
+鲁棒性由有界协议 fuzz、截断/字段变异等价属性测试，以及定时 ASan/LSan 和 TSan 门禁
+持续检查。这些测试不能宣称数学意义上的绝对无缺陷，但会把未处理输入、资源、算术和
+竞态状态明确纳入发布条件。
 
 Linux `splice` 只允许在两侧都是明文 TCP socket 后使用，不能跨越 REALITY/TLS
 应用边界。如果传输开始前无法获取有界 splice 资源，则使用有界用户态缓冲。

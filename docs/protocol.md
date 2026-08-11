@@ -22,14 +22,21 @@ Xray-compatible client
   TLS 1.3 handshake. Configured server names may be concrete DNS names or a
   leftmost one-label pattern such as `*.lmu.edu`; the ClientHello SNI must
   remain concrete. Authentication is committed only after the expected TLS
-  1.3 ClientFinished is verified.
+  1.3 ClientFinished is verified. Each VLESS UUID owns one or more REALITY
+  short IDs. The ClientHello short ID resolves through an immutable,
+  cardinality-adaptive owner index; after VLESS decode, the header UUID must
+  equal that resolved owner. A UUID and a short ID copied from different client
+  entries therefore cannot be combined into an authorized session.
 - **Fallback** is the failure mode: an unauthenticated connection is
   forwarded byte-for-byte, in order, to the cover target. No synthetic
   response identifies the service as a proxy, and fallback concurrency is
   bounded independently of authenticated traffic.
 - **VLESS** is the authenticated request protocol inside the TLS stream:
   UUID, command, and destination. Decryption is `none` — the outer REALITY
-  TLS 1.3 record layer provides confidentiality and integrity.
+  TLS 1.3 record layer provides confidentiality and integrity. v1.3 does not
+  stack VLESS Encryption inside REALITY because it disables Vision splice and
+  duplicates per-byte encryption; see the measured
+  [decision record](decisions/0003-do-not-stack-vless-encryption-on-reality.md).
 - **`xtls-rprx-vision`** is the only accepted flow. It adds padding and
   length obfuscation in the framed phase and supports **Direct** transitions:
   once a direction is authenticated and its inner TLS 1.3 application data

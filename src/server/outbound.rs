@@ -34,11 +34,64 @@ const SOCKS_CONNECT: u8 = 1;
 const SOCKS_NO_AUTH: u8 = 0;
 const SOCKS_USERNAME_PASSWORD: u8 = 2;
 const SOCKS_NO_ACCEPTABLE_METHODS: u8 = 0xff;
+/// Benchmarked crossover for immutable outbound tags: sorted lookup is faster
+/// at one and four entries; hashing wins by sixteen entries.
+const SORTED_OUTBOUND_LIMIT: usize = 4;
+
+enum OutboundIndex {
+    Sorted(Box<[(Box<str>, CompiledOutbound)]>),
+    Hashed(HashMap<Box<str>, CompiledOutbound>),
+}
+
+impl OutboundIndex {
+    fn from_config(outbounds: &[OutboundConfig]) -> Self {
+        let mut entries = outbounds
+            .iter()
+            .map(|outbound| {
+                (
+                    Box::<str>::from(outbound.tag()),
+                    CompiledOutbound::from(outbound),
+                )
+            })
+            .collect::<Vec<_>>();
+        if entries.len() <= SORTED_OUTBOUND_LIMIT {
+            entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+            Self::Sorted(entries.into_boxed_slice())
+        } else {
+            Self::Hashed(entries.into_iter().collect())
+        }
+    }
+
+    fn get(&self, tag: &str) -> Option<&CompiledOutbound> {
+        match self {
+            Self::Sorted(entries) => entries
+                .binary_search_by(|(candidate, _)| candidate.as_ref().cmp(tag))
+                .ok()
+                .map(|index| &entries[index].1),
+            Self::Hashed(entries) => entries.get(tag),
+        }
+    }
+
+    fn contains(&self, tag: &str) -> bool {
+        self.get(tag).is_some()
+    }
+
+    fn tags(&self) -> Vec<&str> {
+        match self {
+            Self::Sorted(entries) => entries.iter().map(|(tag, _)| tag.as_ref()).collect(),
+            Self::Hashed(entries) => {
+                let mut tags = entries.keys().map(Box::as_ref).collect::<Vec<_>>();
+                tags.sort_unstable();
+                tags
+            }
+        }
+    }
+}
 
 /// Immutable outbound transports indexed by validated routing tags.
 #[derive(Clone)]
 pub struct OutboundRegistry {
-    outbounds: Arc<HashMap<String, CompiledOutbound>>,
+    outbounds: Arc<OutboundIndex>,
     direct_barrier: DirectBarrier,
     connect_timeout: Duration,
     fd_budget: FdBudget,
@@ -81,12 +134,8 @@ impl OutboundRegistry {
         connect_timeout: Duration,
         fd_budget: FdBudget,
     ) -> Self {
-        let outbounds = outbounds
-            .iter()
-            .map(|outbound| (outbound.tag().to_owned(), CompiledOutbound::from(outbound)))
-            .collect();
         Self {
-            outbounds: Arc::new(outbounds),
+            outbounds: Arc::new(OutboundIndex::from_config(outbounds)),
             direct_barrier,
             connect_timeout,
             fd_budget,
@@ -131,6 +180,39 @@ impl OutboundRegistry {
             .outbounds
             .get(tag)
             .ok_or_else(|| OutboundConnectError::UnknownTag(tag.to_owned()))?;
+        self.connect_compiled(outbound, destination, resolved_ips)
+            .await
+    }
+
+    /// Resolves one Vision route exactly once, returning a session handoff or
+    /// the completed ordinary outbound decision.
+    pub(crate) async fn connect_session_resolved(
+        &self,
+        tag: &str,
+        destination: &Destination,
+        resolved_ips: &[std::net::IpAddr],
+    ) -> Result<SessionOutboundOutcome, OutboundConnectError> {
+        let outbound = self
+            .outbounds
+            .get(tag)
+            .ok_or_else(|| OutboundConnectError::UnknownTag(tag.to_owned()))?;
+        if let CompiledOutbound::Handoff(line) = outbound {
+            return line
+                .clone()
+                .map(SessionOutboundOutcome::Handoff)
+                .ok_or(OutboundConnectError::HandoffUnsupported);
+        }
+        self.connect_compiled(outbound, destination, resolved_ips)
+            .await
+            .map(SessionOutboundOutcome::Connected)
+    }
+
+    async fn connect_compiled(
+        &self,
+        outbound: &CompiledOutbound,
+        destination: &Destination,
+        resolved_ips: &[std::net::IpAddr],
+    ) -> Result<OutboundConnectOutcome, OutboundConnectError> {
         match outbound {
             CompiledOutbound::Direct => {
                 let fd_permit = self.acquire_descriptor()?;
@@ -183,33 +265,18 @@ impl OutboundRegistry {
         }
     }
 
-    /// Returns the compiled landing endpoint when the tag is a handoff outbound.
-    ///
-    /// The session pipeline checks this at the handoff boundary before any
-    /// dial: `Some` transfers the session to the landing node instead of
-    /// connecting an outbound stream for local serving.
-    #[must_use]
-    pub fn handoff_line(&self, tag: &str) -> Option<HandoffLine> {
-        match self.outbounds.get(tag) {
-            Some(CompiledOutbound::Handoff(line)) => line.clone(),
-            _ => None,
-        }
-    }
-
     /// Returns whether a validated tag is present in this immutable snapshot.
     #[must_use]
     pub fn contains(&self, tag: &str) -> bool {
-        self.outbounds.contains_key(tag)
+        self.outbounds.contains(tag)
     }
 }
 
 impl fmt::Debug for OutboundRegistry {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut tags: Vec<_> = self.outbounds.keys().map(String::as_str).collect();
-        tags.sort_unstable();
         formatter
             .debug_struct("OutboundRegistry")
-            .field("tags", &tags)
+            .field("tags", &self.outbounds.tags())
             .field("connect_timeout", &self.connect_timeout)
             .finish_non_exhaustive()
     }
@@ -328,6 +395,13 @@ pub struct OutboundPermit {
 pub enum OutboundConnectOutcome {
     Connected(OutboundConnection),
     Blackholed,
+}
+
+/// A Vision route either transfers the authenticated session or completes an
+/// ordinary outbound decision.
+pub(crate) enum SessionOutboundOutcome {
+    Handoff(HandoffLine),
+    Connected(OutboundConnectOutcome),
 }
 
 /// Outbound selection or connection failed.
@@ -658,7 +732,8 @@ mod tests {
     };
 
     use super::{
-        OutboundConnectError, OutboundConnectOutcome, OutboundRegistry, Socks5ProtocolError,
+        OutboundConnectError, OutboundConnectOutcome, OutboundIndex, OutboundRegistry,
+        SORTED_OUTBOUND_LIMIT, Socks5ProtocolError,
     };
     use crate::{
         config::{DirectBarrierConfig, NxrSettings, OutboundConfig, SecretString, Socks5Settings},
@@ -670,6 +745,23 @@ mod tests {
         },
         runtime::{AdmissionDenied, DirectBarrier, ResourcePressure},
     };
+
+    #[test]
+    fn outbound_index_uses_the_measured_cardinality_boundary() {
+        let configs = (0..=SORTED_OUTBOUND_LIMIT)
+            .map(|index| OutboundConfig::Direct {
+                tag: format!("direct-{index}"),
+            })
+            .collect::<Vec<_>>();
+        let small = OutboundIndex::from_config(&configs[..SORTED_OUTBOUND_LIMIT]);
+        assert!(matches!(small, OutboundIndex::Sorted(_)));
+        assert!(small.contains("direct-2"));
+        assert!(!small.contains("missing"));
+
+        let large = OutboundIndex::from_config(&configs);
+        assert!(matches!(large, OutboundIndex::Hashed(_)));
+        assert!(large.contains("direct-4"));
+    }
 
     fn direct_registry(barrier: &DirectBarrier, connect_timeout: Duration) -> OutboundRegistry {
         OutboundRegistry::with_barrier(
@@ -1378,7 +1470,7 @@ mod tests {
             "a direct route must connect"
         );
         // The first dial's concurrency permit is already released, so only the
-        // token bucket can refuse an immediate second dial.
+        // rate gate can refuse an immediate second dial.
         let error = registry
             .connect("direct", &destination)
             .await

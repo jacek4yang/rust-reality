@@ -76,7 +76,7 @@ target/release/rust-reality config generate \
 
 public_key=$(sed -n 's/^REALITY public key for the client: //p' "$work/generate.log")
 uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$work/server.raw.json")
-short_id=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$work/server.raw.json")
+short_id=$(jq -r '.inbounds[0].settings.clients[0].shortIds[0]' "$work/server.raw.json")
 jq --arg cache "$work/assets" \
     '.assets.cacheDirectory = $cache | .assets.requestTimeoutSeconds = 15' \
     "$work/server.raw.json" >"$work/server.json"

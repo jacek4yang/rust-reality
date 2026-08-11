@@ -104,7 +104,8 @@ rust-reality config generate standalone \
 ```
 
 Generates one public VLESS + REALITY + Vision inbound, one UUID, one REALITY
-X25519 key pair, one short ID, and a direct outbound/user policy.
+X25519 key pair, two short IDs owned by that UUID, and a direct outbound/user
+policy.
 
 | Option | Required | Default | Meaning |
 | --- | --- | --- | --- |
@@ -164,7 +165,7 @@ VLESS + REALITY + Vision line node whose user routes to the handoff
 outbound), `landing.json` (firewall-restricted internal handoff listener),
 and `xray-client.json` (SOCKS-inbound Xray client for the line node). All
 key material is generated independently: the UUID, the REALITY X25519 key
-pair, one short ID, the Handoff pre-shared key, and the landing node's
+pair, two short IDs owned by that UUID, the Handoff pre-shared key, and the landing node's
 static X25519 pair. Both server configurations are validated before they
 are written.
 
@@ -200,6 +201,40 @@ landing pair has independent key material, and every emitted server file is
 validated before it is written. `xray-client.json` keeps its single-UUID
 shape and uses the first landing's UUID — assigning further UUIDs to
 clients is an operator choice.
+
+### `config autotune`
+
+```text
+rust-reality config autotune \
+  --config <INPUT.json> --output <TUNED.json> \
+  [--report <REPORT.json>] [--scratch-directory <DIR>] \
+  [--duration-ms <N>] [--warmup-ms <N>] \
+  [--storage-mib <N>] [--network-mib <N>] [--dedicated]
+```
+
+Runs bounded host-local protocol, machine/cgroup, storage, and TCP-loopback
+probes, then writes a validated tuned copy and its complete measurement report.
+It never edits the input. Output files are owner-only (`0600`) and published by
+same-directory atomic rename; the report is published first and the validated
+configuration last.
+
+| Option | Required | Default/range | Meaning |
+| --- | --- | --- | --- |
+| `-c, --config <PATH>` | yes | — | Existing valid configuration; credentials, listeners, routing, timeouts, and logging are preserved. |
+| `-o, --output <PATH>` | yes | — | Tuned configuration path; must differ from input and report. |
+| `--report <PATH>` | no | `<OUTPUT>.report.json` | Auditable measurements and the exact selected policy. |
+| `--duration-ms <N>` | no | `900`, `90..=30000` | Measured time per protocol case. |
+| `--warmup-ms <N>` | no | `100`, `1..=10000` | Warm-up per protocol case. |
+| `--storage-mib <N>` | no | `32`, `1..=256` | Bytes written, synced, and read in the scratch directory. |
+| `--network-mib <N>` | no | `32`, `1..=256` | Bytes transferred in each TCP-loopback direction. |
+| `--scratch-directory <DIR>` | no | OS temporary directory | Filesystem measured by the bounded storage probe. |
+| `--dedicated` | no | off | Also switch the copy to `runtime.resourceMode: "dedicated"`; use only when rust-reality owns the host or cgroup. |
+
+Autotune changes only resource-governor, direct-dial, and relay policy. It does
+not choose security protocol, UUID/short-ID ownership, cover target, routing,
+or timeout policy. Inspect the diff and report, run `check`, then deploy through
+the normal restart procedure. See the
+[tuning guide](tuning.md#automatic-measured-starting-policy).
 
 ### `config format`
 

@@ -6,13 +6,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use tokio::{
-    io::AsyncWriteExt,
-    net::TcpStream,
-    time::{self, Instant},
-};
-use uuid::Uuid;
-
 use crate::{
     config::{ResourceGovernorConfig, VlessInboundConfig},
     protocol::{
@@ -24,9 +17,14 @@ use crate::{
                 TlsApplicationIo, build_server_flight, read_client_finished,
             },
         },
-        vless::{UserId, UserRegistry},
+        vless::UserId,
     },
     runtime::{AdmissionDenied, AdmissionKind, AdmissionPermit, ResourceGovernor},
+};
+use tokio::{
+    io::AsyncWriteExt,
+    net::TcpStream,
+    time::{self, Instant},
 };
 
 use super::fallback::{CoverConnection, FallbackError, FallbackStats, RealityFallback};
@@ -38,8 +36,6 @@ pub enum RealityAcceptorConfigError {
     Authentication(RealityAuthConfigError),
     /// Process-lifetime certificate identity generation failed.
     Certificate(HandshakeMessageError),
-    /// A configured VLESS UUID was not canonical after validation.
-    UserId,
 }
 
 impl fmt::Display for RealityAcceptorConfigError {
@@ -47,7 +43,6 @@ impl fmt::Display for RealityAcceptorConfigError {
         match self {
             Self::Authentication(source) => source.fmt(formatter),
             Self::Certificate(source) => source.fmt(formatter),
-            Self::UserId => formatter.write_str("invalid VLESS user ID in listener snapshot"),
         }
     }
 }
@@ -57,7 +52,6 @@ impl Error for RealityAcceptorConfigError {
         match self {
             Self::Authentication(source) => Some(source),
             Self::Certificate(source) => Some(source),
-            Self::UserId => None,
         }
     }
 }
@@ -126,18 +120,12 @@ pub enum RealityAcceptOutcome {
 /// Established REALITY transport plus immutable VLESS authorization state.
 pub struct RealityEstablished {
     stream: TlsApplicationIo<TcpStream>,
-    users: Arc<UserRegistry>,
     inbound_tag: Arc<str>,
     client_random: [u8; 32],
+    authenticated_user_id: UserId,
 }
 
 impl RealityEstablished {
-    /// Returns the immutable VLESS user registry for the listener snapshot.
-    #[must_use]
-    pub fn users(&self) -> &UserRegistry {
-        &self.users
-    }
-
     /// Returns the inbound routing tag without exposing any key material.
     #[must_use]
     pub fn inbound_tag(&self) -> &str {
@@ -156,20 +144,20 @@ impl RealityEstablished {
 
     /// Separates authenticated TLS I/O, authorization, and routing identity.
     #[must_use]
-    pub fn into_parts(self) -> (TlsApplicationIo<TcpStream>, Arc<UserRegistry>, Arc<str>) {
-        (self.stream, self.users, self.inbound_tag)
+    pub fn into_parts(self) -> (TlsApplicationIo<TcpStream>, Arc<str>, UserId) {
+        (self.stream, self.inbound_tag, self.authenticated_user_id)
     }
 
     #[cfg(test)]
     pub(crate) fn from_test_parts(
         stream: TlsApplicationIo<TcpStream>,
-        users: UserRegistry,
+        authenticated_user_id: UserId,
     ) -> Self {
         Self {
             stream,
-            users: Arc::new(users),
             inbound_tag: Arc::from("test-reality"),
             client_random: [0; 32],
+            authenticated_user_id,
         }
     }
 }
@@ -179,7 +167,6 @@ impl fmt::Debug for RealityEstablished {
         formatter
             .debug_struct("RealityEstablished")
             .field("stream", &self.stream)
-            .field("users", &"[COMPILED]")
             .field("inbound_tag", &self.inbound_tag)
             .finish_non_exhaustive()
     }
@@ -192,7 +179,6 @@ pub struct RealityAcceptor {
     identity: Arc<CertificateIdentity>,
     fallback: RealityFallback,
     governor: ResourceGovernor,
-    users: Arc<UserRegistry>,
     inbound_tag: Arc<str>,
     client_hello_timeout: Duration,
     handshake_timeout: Duration,
@@ -210,21 +196,11 @@ impl RealityAcceptor {
         relay: crate::transport::TcpRelay,
     ) -> Result<Self, RealityAcceptorConfigError> {
         let reality = &inbound.stream_settings.reality_settings;
-        let authenticator = RealityAuthenticator::from_config(reality)
+        let authenticator = RealityAuthenticator::from_inbound(inbound)
             .map_err(RealityAcceptorConfigError::Authentication)?;
         let identity = CertificateIdentity::generate()
             .map(Arc::new)
             .map_err(RealityAcceptorConfigError::Certificate)?;
-        let users = inbound
-            .settings
-            .clients
-            .iter()
-            .map(|client| {
-                Uuid::parse_str(&client.id)
-                    .map(|uuid| UserId::new(*uuid.as_bytes()))
-                    .map_err(|_| RealityAcceptorConfigError::UserId)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             authenticator,
             replay,
@@ -236,7 +212,6 @@ impl RealityAcceptor {
                 relay,
             ),
             governor,
-            users: Arc::new(UserRegistry::new(users)),
             inbound_tag: Arc::from(inbound.tag.as_str()),
             client_hello_timeout: Duration::from_millis(policy.client_hello_timeout_ms),
             handshake_timeout: Duration::from_millis(policy.handshake_timeout_ms),
@@ -343,13 +318,13 @@ impl RealityAcceptor {
                 return transition_cover(stream, cover, &target_prefix, handshake_permit).await;
             }
         };
-        let selected_alpn = hello.alpn_protocols().next().map(<[u8]>::to_vec);
+        let selected_alpn = hello.alpn_protocols().next();
         let flight = match build_server_flight(
             &hello,
             authenticated.auth_key(),
             target,
             &self.identity,
-            selected_alpn.as_deref(),
+            selected_alpn,
         ) {
             Ok(flight) => flight,
             Err(_) => {
@@ -376,9 +351,9 @@ impl RealityAcceptor {
         Ok(RealityAcceptOutcome::Established(Box::new(
             RealityEstablished {
                 stream: TlsApplicationIo::new(stream, established),
-                users: Arc::clone(&self.users),
                 inbound_tag: Arc::clone(&self.inbound_tag),
                 client_random,
+                authenticated_user_id: authenticated.user_id(),
             },
         )))
     }
@@ -405,7 +380,6 @@ impl fmt::Debug for RealityAcceptor {
             .field("authenticator", &self.authenticator)
             .field("identity", &self.identity)
             .field("fallback", &self.fallback)
-            .field("users", &"[COMPILED]")
             .field("inbound_tag", &self.inbound_tag)
             .field("client_hello_timeout", &self.client_hello_timeout)
             .field("handshake_timeout", &self.handshake_timeout)
@@ -432,24 +406,7 @@ async fn write_server_flight(
     flight: &ServerFlight,
     deadline: Instant,
 ) -> Result<(), RealityAcceptError> {
-    // ServerHello, the compatibility CCS, and the encrypted records form one
-    // contiguous flight; assembling them once turns 2+N writes into a single
-    // write_all under the same handshake deadline.
-    let mut assembled = Vec::with_capacity(
-        flight.server_hello_record().len()
-            + flight.change_cipher_spec().len()
-            + flight
-                .encrypted_handshake_records()
-                .iter()
-                .map(Vec::len)
-                .sum::<usize>(),
-    );
-    assembled.extend_from_slice(flight.server_hello_record());
-    assembled.extend_from_slice(flight.change_cipher_spec());
-    for record in flight.encrypted_handshake_records() {
-        assembled.extend_from_slice(record);
-    }
-    write_before(stream, &assembled, deadline).await
+    write_before(stream, flight.wire(), deadline).await
 }
 
 async fn write_before(

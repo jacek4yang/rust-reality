@@ -114,6 +114,7 @@ dots, dashes, or underscores. `port` is `1..=65535`.
     "clients": [
       {
         "id": "GENERATED-UUID",
+        "shortIds": ["0123456789abcdef", "1023456789abcdef"],
         "email": "operator-label",
         "flow": "xtls-rprx-vision"
       }
@@ -127,7 +128,6 @@ dots, dashes, or underscores. `port` is `1..=65535`.
       "target": "www.example.com:443",
       "serverNames": ["www.example.com"],
       "privateKey": "GENERATED-X25519-PRIVATE-KEY",
-      "shortIds": ["0123456789abcdef"],
       "maxTimeDiffMs": 60000
     }
   }
@@ -138,6 +138,14 @@ The placeholder values above are intentionally not usable. Generate real state
 with `config generate standalone`, `config generate line`, or `config generate
 handoff`.
 
+**v1.2 → v1.3 migration:** move `streamSettings.realitySettings.shortIds`
+into the owning `settings.clients[]` object as `shortIds`, then remove the old
+field. For a single client, move the whole array unchanged. For multiple
+clients, partition or generate values so every UUID has at least one and no
+short ID appears under two UUIDs. Update each client device to use one value
+owned by its UUID. v1.3 deliberately rejects the ambiguous old shared list;
+it does not guess ownership for authentication credentials.
+
 | Field | Required | Default / fixed value | Meaning and constraints |
 | --- | --- | --- | --- |
 | `protocol` | yes | fixed `vless` | Selects the only public protocol. |
@@ -146,6 +154,7 @@ handoff`.
 | `port` | yes | — | TCP bind port, non-zero. |
 | `settings.clients` | yes | — | Non-empty authorized-client array. UUIDs are globally unique across public inbounds. |
 | `settings.clients[].id` | yes | — | Canonical hyphenated UUID; hex is case-insensitive for identity. |
+| `settings.clients[].shortIds` | yes | — | Non-empty IDs owned exclusively by this UUID. Each is 2–16 even hexadecimal characters and is unique case-insensitively across the inbound. Multiple values support rotation. |
 | `settings.clients[].email` | no | absent | Non-secret operator label; not used for authentication or routing. |
 | `settings.clients[].flow` | yes | fixed `xtls-rprx-vision` | Any other flow is rejected. |
 | `settings.decryption` | no | fixed/default `none` | Retained for Xray-shaped configuration; any other value is rejected. |
@@ -154,7 +163,6 @@ handoff`.
 | `streamSettings.realitySettings.target` | yes | — | Cover endpoint `host:port`; bracket IPv6. Probe it from the server first. |
 | `streamSettings.realitySettings.serverNames` | yes | — | Non-empty, case-insensitively unique array of concrete ASCII DNS names or leftmost one-label patterns such as `*.lmu.edu`. |
 | `streamSettings.realitySettings.privateKey` | yes | — | URL-safe unpadded base64 decoding to exactly 32 X25519 bytes. Secret. |
-| `streamSettings.realitySettings.shortIds` | yes | — | Non-empty, unique case-insensitive hex IDs; each is 2–16 even characters. |
 | `streamSettings.realitySettings.maxTimeDiffMs` | no | `60000` | Accepted client clock difference, `0..=600000`; zero disables this check. |
 
 Every public UUID must appear exactly once in `routing.users[].userIds`.
@@ -561,7 +569,7 @@ defaults visible.
 | Field | Required when object present | Whole-object default | Constraints / meaning |
 | --- | --- | --- | --- |
 | `maxConcurrent` | yes | `2048` | Concurrent direct dials, greater than zero and no more than `maxConnections`. |
-| `maxPerSecond` | yes | `4096` | New direct dials per second, greater than zero. |
+| `maxPerSecond` | yes | `4096` | New direct dials per second, from 1 through 1,000,000,000. |
 
 This isolates direct destination pressure from authenticated connection count.
 

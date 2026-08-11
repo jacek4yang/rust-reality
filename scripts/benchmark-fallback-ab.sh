@@ -164,7 +164,7 @@ run_xray_leg() {
     port=$(free_port)
     stats_file="$out_dir/perf-xray.txt"
     uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$work/base.splice.json")
-    sid=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$work/base.splice.json")
+    sid=$(jq -r '.inbounds[0].settings.clients[0].shortIds[0]' "$work/base.splice.json")
     local xpriv xpub
     xpriv=$(jq -r '.inbounds[0].streamSettings.realitySettings.privateKey' "$work/base.splice.json")
     xpub=$(sed -n 's/^REALITY public key for the client: //p' "$work/gen.true.32.log")

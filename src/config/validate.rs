@@ -33,6 +33,10 @@ const MIN_HANDOFF_FIRST_BYTE_TIMEOUT_MS: u64 = 1_000;
 const MIN_RELAY_BUFFER_BYTES: usize = 4 * 1024;
 const MAX_RELAY_BUFFER_BYTES: usize = 1024 * 1024;
 const MAX_RELAY_BUFFERS: usize = 65_536;
+/// Nanosecond GCRA cannot represent a finer refill interval than one token
+/// per nanosecond. Reject larger values instead of silently under-delivering
+/// the configured steady-state rate.
+const MAX_DIRECT_DIALS_PER_SECOND: u32 = 1_000_000_000;
 /// Kernel pipe capacity reserved worst-case per splice pipe. The kernel
 /// allocates pipe pages lazily, but capacity is the hard bound a full pipe
 /// can pin; a splice relay holds two pipe pairs (four pipes) at this size.
@@ -205,6 +209,7 @@ fn validate_vless_inbound(
     inbound: &VlessInboundConfig,
     users: &mut HashSet<String>,
 ) -> Result<(), ConfigError> {
+    let mut short_ids = HashSet::new();
     if inbound.settings.decryption != "none" {
         return fail(format!("{path}.settings.decryption"), "must be none");
     }
@@ -226,6 +231,27 @@ fn validate_vless_inbound(
         }
         if client.flow != "xtls-rprx-vision" {
             return fail(format!("{client_path}.flow"), "must be xtls-rprx-vision");
+        }
+        if client.short_ids.is_empty() {
+            return fail(
+                format!("{client_path}.shortIds"),
+                "must contain at least one short ID owned by this UUID",
+            );
+        }
+        for (short_index, short_id) in client.short_ids.iter().enumerate() {
+            let short_path = format!("{client_path}.shortIds[{short_index}]");
+            if !(2..=16).contains(&short_id.len())
+                || !short_id.len().is_multiple_of(2)
+                || !short_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                return fail(short_path, "must be 2 to 16 even hexadecimal characters");
+            }
+            if !short_ids.insert(short_id.to_ascii_lowercase()) {
+                return fail(
+                    short_path,
+                    "short ID is already owned by another entry in this inbound",
+                );
+            }
         }
     }
     if inbound.stream_settings.network != Network::Tcp {
@@ -266,25 +292,6 @@ fn validate_vless_inbound(
         &format!("{path}.streamSettings.realitySettings.privateKey"),
         &reality.private_key,
     )?;
-    if reality.short_ids.is_empty() {
-        return fail(
-            format!("{path}.streamSettings.realitySettings.shortIds"),
-            "must contain at least one short ID",
-        );
-    }
-    let mut short_ids = HashSet::new();
-    for (short_index, short_id) in reality.short_ids.iter().enumerate() {
-        let short_path = format!("{path}.streamSettings.realitySettings.shortIds[{short_index}]");
-        if !(2..=16).contains(&short_id.len())
-            || !short_id.len().is_multiple_of(2)
-            || !short_id.bytes().all(|byte| byte.is_ascii_hexdigit())
-        {
-            return fail(short_path, "must be 2 to 16 even hexadecimal characters");
-        }
-        if !short_ids.insert(short_id.to_ascii_lowercase()) {
-            return fail(short_path, "short ID is configured more than once");
-        }
-    }
     if reality.max_time_diff_ms > MAX_TIMEOUT_MS {
         return fail(
             format!("{path}.streamSettings.realitySettings.maxTimeDiffMs"),
@@ -1006,6 +1013,12 @@ fn validate_policy(config: &Config) -> Result<(), ConfigError> {
     if barrier.max_concurrent == 0 || barrier.max_per_second == 0 {
         return fail("policy.directBarrier", "limits must be greater than zero");
     }
+    if barrier.max_per_second > MAX_DIRECT_DIALS_PER_SECOND {
+        return fail(
+            "policy.directBarrier.maxPerSecond",
+            format!("must not exceed {MAX_DIRECT_DIALS_PER_SECOND}"),
+        );
+    }
     if barrier.max_concurrent > governor.max_connections {
         return fail(
             "policy.directBarrier.maxConcurrent",
@@ -1210,6 +1223,19 @@ mod tests {
     }
 
     #[test]
+    fn rejects_direct_rate_finer_than_the_monotonic_clock_domain() {
+        let mut config = valid_config();
+        config.policy.direct_barrier.max_per_second = 1_000_000_001;
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("sub-nanosecond rates cannot be represented exactly")
+                .path(),
+            "policy.directBarrier.maxPerSecond"
+        );
+    }
+
+    #[test]
     fn rejects_plain_vless_inbound() {
         let mut config = valid_config();
         config.inbounds[0]
@@ -1223,6 +1249,44 @@ mod tests {
                 .expect_err("plain VLESS must be rejected")
                 .path(),
             "inbounds[0].streamSettings.security"
+        );
+    }
+
+    #[test]
+    fn rejects_short_id_reused_by_another_uuid() {
+        let mut config = valid_config();
+        let inbound = config.inbounds[0]
+            .as_vless_mut()
+            .expect("fixture must contain VLESS");
+        let mut second = inbound.settings.clients[0].clone();
+        second.id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee".to_owned();
+        second.short_ids = vec!["0123456789ABCDEF".to_owned()];
+        inbound.settings.clients.push(second);
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("one short ID cannot belong to two UUIDs")
+                .path(),
+            "inbounds[0].settings.clients[1].shortIds[0]"
+        );
+    }
+
+    #[test]
+    fn requires_at_least_one_short_id_per_uuid() {
+        let mut config = valid_config();
+        config.inbounds[0]
+            .as_vless_mut()
+            .expect("fixture must contain VLESS")
+            .settings
+            .clients[0]
+            .short_ids
+            .clear();
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("every UUID must own a short ID")
+                .path(),
+            "inbounds[0].settings.clients[0].shortIds"
         );
     }
 

@@ -2,6 +2,113 @@
 
 All notable user-facing changes to this project are documented in this file.
 
+## [1.3.0] - 2026-08-10
+
+### Added
+
+- **Measured host-local autotuning:** `config autotune` runs bounded protocol,
+  cgroup/machine, scratch-storage, and bidirectional TCP-loopback probes and
+  writes a validated tuned copy plus a complete JSON decision report. The
+  input, identity/security state, routing, logging, cover targets, and timeout
+  policy are preserved. Outputs are owner-only (`0600`) same-directory atomic
+  replacements. Its connection ceiling is independently bounded by FD and a
+  conservative 64 KiB-per-session memory plan; `--dedicated` is explicit.
+- Reproducible Criterion gates for short-ID ownership, UUID lookup,
+  outbound-tag lookup, REALITY digest hashing, direct-admission contention,
+  and replay expiry/reservation, plus executable Xray v26.7.28 A/B harnesses
+  for setup and VLESS Encryption nested inside the mandatory REALITY + Vision
+  stack.
+
+### Changed
+
+- **UUID-owned REALITY short IDs:** `shortIds` now lives inside every
+  `settings.clients[]` object. One UUID owns one or more IDs, each ID is unique
+  within the inbound, and authorization is two-stage: REALITY resolves the
+  short ID directly to its unique owner UUID, then the decoded VLESS UUID must
+  equal that owner. Generators emit two independent IDs per UUID for staged
+  rotation and never share them across multi-landing identities.
+- The immutable short-ID owner index uses a compact sorted array through 256
+  IDs and the randomized standard hash map above it, at the measured 256/512
+  crossover. Normal two-ID ownership lookup is 3.50 ns versus 35.04 ns for the
+  replaced owner-selecting linear constant-time scan on the release host.
+- UUID authentication and UUID-group routing share a cardinality-adaptive
+  immutable index: up to 64 UUIDs use a compact sorted array; larger tables
+  use the randomized standard hash map. Outbound tags use the same measured
+  idea with a four-entry sorted boundary. This avoids SipHash/bucket overhead
+  for normal small configurations without sacrificing large-table lookup or
+  hash-flood resistance.
+- REALITY, NXR, and Handoff replay caches now maintain deadline heaps instead
+  of retaining/scanning every live hash entry. NXR/Handoff normally lock and
+  purge only the nonce's shard; a sixteen-shard sweep happens only under real
+  capacity pressure. With 4,096 live entries, reserving a 64-nonce batch fell
+  from 593.18 µs to 17.43 µs on the release host (34.0×).
+- The production REALITY path no longer builds a duplicate UUID registry or
+  performs a second UUID lookup after the short ID has authenticated its
+  owner. Routing shares one compiled policy among UUIDs in the same group and
+  does one user lookup per decision; outbound selection resolves its tag once
+  across both Handoff and ordinary connects.
+- VLESS request parsing has separate owned-public and borrowed-production
+  specializations. The Vision parser allocates nothing while inspecting
+  Addons/domain/prefetch, and its request buffer starts at 533 bytes instead
+  of a full TLS record. The common X25519 handshake uses a fixed server-share
+  array and writes one preassembled contiguous server flight, eliminating the
+  duplicate plaintext and send-time assembly allocations.
+- The direct-dial mutex/floating-point token bucket is now a lock-free atomic
+  GCRA with the same one-second burst allowance. Full-barrier Criterion time
+  fell about 19.5% single-threaded and 19.9% with four contending threads.
+- REALITY replay lookup uses an independent word of its server-computed
+  SHA-256 key directly as the table hash (11.6× hit and 22.4× miss speedup at
+  4,096 entries). Peer-controlled NXR and Handoff nonce tables deliberately
+  retain randomized hashing for collision resistance.
+- Dependency features now match the used surfaces, the duplicate direct
+  `base64` version is unified, and Criterion no longer pulls its unused
+  plotting/parallel defaults. Cargo.lock lost ten packages; the final stripped
+  release binary is 6,309,616 bytes, 22,920 bytes (0.36%) smaller than the
+  6,332,536-byte pre-audit build.
+
+### Fixed
+
+- Monotonic-time exhaustion now fails closed in both the lock-free direct-dial
+  GCRA and REALITY replay-generation counter. Saturation can no longer turn a
+  spent `u64` domain into an endlessly admitted or duplicate-prone state; the
+  replay admission permit is released on every rejected generation.
+- Expiry-heap cleanup no longer relies on runtime `expect` assertions after a
+  peek, and the direct rate configuration rejects sub-nanosecond refill rates
+  that its integral clock model cannot represent exactly.
+- The production borrowed VLESS decoder is now exercised by the wire fuzz
+  target and a deterministic property test covering every truncation and
+  byte-field mutation of a maximum-sized request. Owned and borrowed paths
+  must return identical errors or decoded fields.
+
+### Security decision
+
+- VLESS Encryption is **not** stacked inside REALITY in v1.3. The exact Xray
+  v26.7.28 A/B measured 30.4% lower p50 throughput, 5.5× server CPU/GiB, and
+  loss of the Vision splice path for a 3.7% setup-rate reduction. REALITY TLS
+  1.3 already supplies confidentiality and integrity for this mandatory
+  profile. The benefits for raw/CDN/untrusted-relay profiles, threat analysis,
+  and explicit revisit gates are retained in ADR 0003.
+
+### Compatibility and migration
+
+- **Configuration migration is required for every public VLESS inbound.** Move
+  `streamSettings.realitySettings.shortIds` into the owning
+  `settings.clients[].shortIds` and delete the old field. A single client can
+  keep the array unchanged; multiple clients must receive disjoint non-empty
+  arrays. v1.3 rejects the ambiguous shared form instead of guessing credential
+  ownership. Run `check` before restart; the configuration guide contains the
+  complete migration rule.
+- The public and internal wire formats are unchanged. Existing Xray clients
+  continue to use one short ID belonging to their UUID. NXR/Handoff rolling
+  interoperability is unchanged; only the rust-reality server JSON shape is
+  intentionally incompatible with v1.2.
+
+### Notes
+
+- Validated on Linux x86_64. Autotune results are starting policies, not WAN or
+  production load tests; retain the report, inspect the diff, and canary the
+  result on the real traffic mix.
+
 ## [1.2.0] - 2026-08-08
 
 ### Added
@@ -199,3 +306,5 @@ First stable release.
   deployment/forensic gates in `docs/performance.md`.
 
 [1.0.0]: https://github.com/jacek4yang/rust-reality/releases/tag/v1.0.0
+[1.2.0]: https://github.com/jacek4yang/rust-reality/releases/tag/v1.2.0
+[1.3.0]: https://github.com/jacek4yang/rust-reality/releases/tag/v1.3.0

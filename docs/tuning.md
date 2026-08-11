@@ -68,6 +68,39 @@ Two rules before anything else:
    you changed (VERIFIED with `check`). Edit values inside the full block
    that `config generate` emits; do not paste a two-key fragment.
 
+### Automatic measured starting policy
+
+The table above is the manual, portable baseline. On the deployment host,
+v1.3 can derive a more specific starting policy without touching identity or
+security configuration:
+
+```shell
+sudo -u rust-reality rust-reality config autotune \
+  --config /etc/rust-reality/config.json \
+  --output /etc/rust-reality/config.tuned.json \
+  --report /var/lib/rust-reality/autotune.json \
+  --scratch-directory /var/lib/rust-reality
+rust-reality check --config /etc/rust-reality/config.tuned.json
+diff -u /etc/rust-reality/config.json /etc/rust-reality/config.tuned.json
+```
+
+Add `--dedicated` only when the service exclusively owns the host or its
+cgroup. The command observes affinity/cgroup CPU, cgroup memory, inherited FD
+limits, protocol hot paths, scratch-filesystem throughput, and both directions
+of TCP loopback. It changes only `policy.resourceGovernor`,
+`policy.directBarrier`, and `policy.relay`; UUIDs and their short IDs, private
+keys, listeners, routing, logging, cover targets, and all timeout values remain
+equivalent after JSON decoding. The original file is never overwritten, both
+outputs are atomic owner-only files, and the report records every input and
+selected value (VERIFIED).
+
+Automatic tuning is a measured **starting policy**, not a production load
+test. Loopback cannot observe WAN RTT/loss, provider shaping, destination
+behavior, or your traffic mix. Review the diff, retain the report, validate
+with `check`/`self-test`, and use the manual method in §28 plus canary load to
+raise any limit further. Autotune deliberately does not enable VLESS
+Encryption or change any wire/security protocol.
+
 Quick reference — first command for each symptom:
 
 | Symptom | First command | What to look for |
@@ -1273,7 +1306,9 @@ each input measured on your host:
   almost always ample; a pure NXR-out line node never uses it. SOCKS5 and
   NXR outbounds never acquire permits (VERIFIED).
 - **`directBarrier.maxPerSecond`** — expected Direct dial rate: Direct
-  share × CPS × burst margin.
+  share × CPS × burst margin; keep it between 1 and 1,000,000,000 because
+  the lock-free gate's integral nanosecond clock cannot represent a finer
+  refill interval.
 - **Relay pools** — `maxPooledBuffers` ≥ the number of *concurrently
   transferring* (not idle) sessions; keep the §7 validator formula ≤
   `maxRelayMemoryBytes` (default 536 870 912).

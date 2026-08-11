@@ -299,7 +299,7 @@ generate_base() {
         > "$prefix.base.json" 2> "$prefix.generate.log"
     {
         sed -n 's/^REALITY public key for the client: /PUBLIC_KEY=/p' "$prefix.generate.log"
-        jq -r '"SHORT_ID=" + .inbounds[0].streamSettings.realitySettings.shortIds[0]' \
+        jq -r '"SHORT_ID=" + .inbounds[0].settings.clients[0].shortIds[0]' \
             "$prefix.base.json"
     } > "$prefix.base.env"
 }
@@ -649,10 +649,10 @@ section_nxr() {
     uuid_a=$(jq -r '.inbounds[0].settings.clients[0].id' "$work/topo-a.base.json")
     local pub_b sid_b uuid_b pub_c sid_c uuid_c
     pub_b=$(sed -n 's/^REALITY public key for the client: //p' "$work/topo-b.line.generate.log")
-    sid_b=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$work/topo-b.line.base.json")
+    sid_b=$(jq -r '.inbounds[0].settings.clients[0].shortIds[0]' "$work/topo-b.line.base.json")
     uuid_b=$(jq -r '.inbounds[0].settings.clients[0].id' "$work/topo-b.line.base.json")
     pub_c=$(sed -n 's/^REALITY public key for the client: //p' "$work/topo-c.line.generate.log")
-    sid_c=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$work/topo-c.line.base.json")
+    sid_c=$(jq -r '.inbounds[0].settings.clients[0].shortIds[0]' "$work/topo-c.line.base.json")
     uuid_c=$(jq -r '.inbounds[0].settings.clients[0].id' "$work/topo-c.line.base.json")
 
     start_client "$port_a" "$pub_a" "$uuid_a" "$sid_a" topo-a
@@ -825,10 +825,10 @@ section_rtt() {
     start_server "$work/rtt-c.line.json" rtt-c-line
     local pub_b sid_b uuid_b pub_c sid_c uuid_c
     pub_b=$(sed -n 's/^REALITY public key for the client: //p' "$work/rtt-b.generate.log")
-    sid_b=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$work/rtt-b.line.json")
+    sid_b=$(jq -r '.inbounds[0].settings.clients[0].shortIds[0]' "$work/rtt-b.line.json")
     uuid_b=$(jq -r '.inbounds[0].settings.clients[0].id' "$work/rtt-b.line.json")
     pub_c=$(sed -n 's/^REALITY public key for the client: //p' "$work/rtt-c.generate.log")
-    sid_c=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$work/rtt-c.line.json")
+    sid_c=$(jq -r '.inbounds[0].settings.clients[0].shortIds[0]' "$work/rtt-c.line.json")
     uuid_c=$(jq -r '.inbounds[0].settings.clients[0].id' "$work/rtt-c.line.json")
     start_client "$port_line_b" "$pub_b" "$uuid_b" "$sid_b" rtt-b
     local socks_b=$CLIENT_SOCKS
@@ -903,7 +903,7 @@ section_longflow() {
 
     local pub sid uuid
     pub=$(sed -n 's/^REALITY public key for the client: //p' "$work/lf.line.generate.log")
-    sid=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$work/lf.line.base.json")
+    sid=$(jq -r '.inbounds[0].settings.clients[0].shortIds[0]' "$work/lf.line.base.json")
     uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$work/lf.line.base.json")
     start_client "$port_line" "$pub" "$uuid" "$sid" lf
     local socks=$CLIENT_SOCKS

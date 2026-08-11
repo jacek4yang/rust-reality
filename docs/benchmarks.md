@@ -32,7 +32,7 @@ harnesses; the design-level evidence behind the numbers lives in
 | Harness | Purpose |
 |---|---|
 | `rust-reality benchmark` (built-in) | Bounded, machine-readable in-process protocol measurements (VLESS decode, Vision framing, NXR auth). |
-| `cargo bench` (criterion) | Regression analysis for VLESS decoding, Vision framing, and relay backends, with baselines and plots. |
+| `cargo bench` (criterion) | Regression analysis for VLESS decoding, Vision framing, relay backends, adaptive short-ID/identity/tag lookup, REALITY digest hashing, replay expiry/reservation, and direct admission contention, with baselines and plots. |
 | `scripts/benchmark-matrix.sh` | Full A/B/C loopback matrix (baseline/final/Xray) over direction × payload × concurrency. |
 | `scripts/benchmark-fallback-ab.sh` | Clean fallback A/B against Xray: warn-level logging both sides, direct-to-listener. |
 | `scripts/benchmark-setup-rate.sh` | Connection setup-rate model (accept → first Vision transition). |
@@ -40,6 +40,7 @@ harnesses; the design-level evidence behind the numbers lives in
 | `scripts/benchmark-deployment.sh` | Deployment characterization: routing correctness proof, routing decision cost (incl. DNS strategies), NXR topologies (direct/NXR/SOCKS5/Xray), optional netem RTT sweep, and long-flow relay evidence. |
 | `scripts/soak-test.sh` | Loopback mixed-workload soak (tunnel traffic + connection churn) with `/proc`-based leak bounding; env: `DURATION_MIN`, `ROUND_SLEEP`, `RUST_REALITY_BIN`, `XRAY_BIN`, `OUT_DIR`. |
 | `scripts/benchmark-real-path.sh` | Real-Internet A/B against Xray: crash and protocol-error gates on a real path; throughput is capped by the slowest link, so it does not discriminate bandwidth. |
+| `scripts/benchmark-vless-encryption.sh` | Xray v26.7.28 A/B for `encryption:none` versus VLESS Encryption inside the same REALITY + Vision stack; measures throughput, server CPU/GiB, and warmed setup. |
 | `scripts/test-xray-interop.sh` | Compatibility gate (below), not a benchmark. |
 
 ## Canonical v1.0.0 samples
@@ -84,6 +85,32 @@ warn-level logging both sides), medians of 7:
 | c1 | 1631 MiB/s | 1631 MiB/s | 1.00× |
 | c4 | 3075 MiB/s | 2999 MiB/s | 1.03× |
 | c32 | 3279 MiB/s | 3194 MiB/s | 1.03× |
+
+## Canonical v1.3 structure and encryption samples
+
+- `benchmarks/final/v1.3-hot-structures/summary.json` records the Criterion
+  short-ID/UUID/tag crossover evidence, zero-copy VLESS gate, REALITY digest
+  hashing, lock-free direct admission, and replay heap/selected-shard A/B. The
+  benchmark sources are `benches/short_id_lookup.rs`,
+  `benches/identity_lookup.rs`, `benches/tag_lookup.rs`, and
+  `benches/replay_expiry.rs`, `benches/vless_decode.rs`, and
+  `benches/admission.rs`. The admission benchmark keeps the replaced mutex
+  token bucket as an executable reference, so the contention claim remains
+  reproducible.
+- `benchmarks/final/v1.3-setup-refactor/` records the composed setup-path
+  rerun after the allocation/lookup refactor: raw samples and perf counters
+  plus `summary.json`. It is same-host loopback evidence, not a WAN claim.
+- `benchmarks/final/v1.3-vless-encryption/summary.json` records the same-host
+  Xray v26.7.28 nested-stack A/B. It applies only to VLESS Encryption inside
+  REALITY + Vision, not raw VLESS Encryption; complete interpretation and
+  revisit gates are in ADR 0003.
+
+The robustness evidence is intentionally separate from throughput numbers:
+each of the five bounded fuzz targets runs 20,000 cases, and the parser
+property gate covers every maximum-request prefix plus three byte mutations at
+every position. Local restricted-shell runs disable only LSan's ptrace-
+unsupported leak detector; CI's scheduled sanitizer jobs retain leak detection
+and run the full suite, while TSan covers the replay duplicate race.
 
 ## Methodology rules (and the traps that invalidated earlier numbers)
 

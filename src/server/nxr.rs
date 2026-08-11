@@ -1,5 +1,6 @@
 use std::{
-    collections::HashMap,
+    cmp::Reverse,
+    collections::{BinaryHeap, HashMap},
     error::Error,
     fmt, io,
     sync::{
@@ -37,8 +38,13 @@ use super::connector::{DestinationConnectError, DestinationConnector};
 
 const REPLAY_SHARDS: usize = 16;
 
-type NonceEntries = HashMap<[u8; 16], MonotonicInstant>;
-type NonceShards = Box<[Mutex<NonceEntries>]>;
+#[derive(Default)]
+struct NonceShard {
+    entries: HashMap<[u8; 16], MonotonicInstant>,
+    expirations: BinaryHeap<Reverse<(MonotonicInstant, [u8; 16])>>,
+}
+
+type NonceShards = Box<[Mutex<NonceShard>]>;
 
 /// Bounded nonce cache shared by all generations of one NXR landing listener.
 #[derive(Clone)]
@@ -79,7 +85,7 @@ impl NxrReplayCache {
             return Err(NxrReplayError::Unavailable);
         }
         let shards = (0..REPLAY_SHARDS)
-            .map(|_| Mutex::new(HashMap::new()))
+            .map(|_| Mutex::new(NonceShard::default()))
             .collect();
         Ok(Self {
             inner: Arc::new(NxrReplayCacheInner {
@@ -110,18 +116,53 @@ impl NxrReplayCache {
         let expires_at = now
             .checked_add(self.inner.retention)
             .ok_or(NxrReplayError::Unavailable)?;
-        self.purge_expired_at(now);
-        let shard = nonce_shard(nonce);
-        let mut entries = lock_recover(&self.inner.shards[shard]);
-        if entries.contains_key(&nonce) {
-            return Err(NxrReplayError::Duplicate);
+        let shard_index = nonce_shard(nonce);
+        let mut swept_all = false;
+        loop {
+            let mut shard = lock_recover(&self.inner.shards[shard_index]);
+            let removed = purge_nonce_shard(&mut shard, now);
+            if removed != 0 {
+                self.inner.used.fetch_sub(removed, Ordering::AcqRel);
+            }
+            if shard.entries.contains_key(&nonce) {
+                return Err(NxrReplayError::Duplicate);
+            }
+
+            // The normal path touches only the nonce's shard. A full sweep is
+            // reserved for actual global pressure, amortizing sixteen locks
+            // over a capacity event rather than every accepted connection.
+            if self.inner.used.load(Ordering::Acquire) >= self.inner.capacity {
+                drop(shard);
+                if swept_all {
+                    return Err(NxrReplayError::Capacity);
+                }
+                self.purge_expired_at(now);
+                swept_all = true;
+                continue;
+            }
+
+            shard
+                .entries
+                .try_reserve(1)
+                .map_err(|_| NxrReplayError::Capacity)?;
+            shard
+                .expirations
+                .try_reserve(1)
+                .map_err(|_| NxrReplayError::Capacity)?;
+            match reserve_slot(&self.inner) {
+                Ok(()) => {
+                    shard.entries.insert(nonce, expires_at);
+                    shard.expirations.push(Reverse((expires_at, nonce)));
+                    return Ok(());
+                }
+                Err(_) if !swept_all => {
+                    drop(shard);
+                    self.purge_expired_at(now);
+                    swept_all = true;
+                }
+                Err(error) => return Err(error),
+            }
         }
-        entries
-            .try_reserve(1)
-            .map_err(|_| NxrReplayError::Capacity)?;
-        reserve_slot(&self.inner)?;
-        entries.insert(nonce, expires_at);
-        Ok(())
     }
 
     fn purge_expired_at(&self, now: MonotonicInstant) -> usize {
@@ -130,10 +171,8 @@ impl NxrReplayCache {
             .shards
             .iter()
             .map(|shard| {
-                let mut entries = lock_recover(shard);
-                let previous = entries.len();
-                entries.retain(|_, expires_at| *expires_at > now);
-                previous.saturating_sub(entries.len())
+                let mut shard = lock_recover(shard);
+                purge_nonce_shard(&mut shard, now)
             })
             .sum();
         if removed != 0 {
@@ -146,6 +185,28 @@ impl NxrReplayCache {
     fn entry_count(&self) -> usize {
         self.inner.used.load(Ordering::Acquire)
     }
+}
+
+fn purge_nonce_shard(shard: &mut NonceShard, now: MonotonicInstant) -> usize {
+    let mut removed = 0;
+    while shard
+        .expirations
+        .peek()
+        .is_some_and(|Reverse((expires_at, _))| *expires_at <= now)
+    {
+        let Some(Reverse((expires_at, nonce))) = shard.expirations.pop() else {
+            break;
+        };
+        if shard
+            .entries
+            .get(&nonce)
+            .is_some_and(|current| *current == expires_at)
+        {
+            shard.entries.remove(&nonce);
+            removed += 1;
+        }
+    }
+    removed
 }
 
 fn reserve_slot(inner: &NxrReplayCacheInner) -> Result<(), NxrReplayError> {

@@ -43,7 +43,8 @@ rust-reality config generate standalone \
   > config.json 2> client-values.txt
 ```
 
-The generated JSON contains a UUID, a private REALITY key, a short ID, and a
+The generated JSON contains a UUID, a private REALITY key, and two short IDs
+owned by that UUID, plus a
 direct-routing policy. The client-facing values (including the REALITY public
 key) are written to standard error so the private server configuration can be
 captured separately. Protect both outputs, and replace the example target with
@@ -68,7 +69,8 @@ rust-reality serve --config config.json
 
 `serve` stays in the foreground for systemd or another supervisor. Point an
 Xray-compatible client at the node using the values from step 3 (address,
-port, UUID, public key, short ID, server name, flow `xtls-rprx-vision`) and
+port, UUID, public key, one short ID selected from that UUID's `shortIds`,
+server name, flow `xtls-rprx-vision`) and
 confirm traffic flows.
 
 ## Next steps

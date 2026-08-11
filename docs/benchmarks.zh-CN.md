@@ -23,7 +23,7 @@
 | Harness | 用途 |
 |---|---|
 | `rust-reality benchmark`（内置） | 有界、机器可读的进程内协议测量（VLESS 解码、Vision framing、NXR 认证）。 |
-| `cargo bench`（criterion） | VLESS 解码、Vision framing 和 relay 后端的回归分析，带基线和图表。 |
+| `cargo bench`（criterion） | VLESS 解码、Vision framing、relay 后端、自适应 short-ID/身份/tag 查找、REALITY digest 哈希、重放过期/reserve 和 direct admission 争用的回归分析，带基线和图表。 |
 | `scripts/benchmark-matrix.sh` | 完整 A/B/C loopback 矩阵（baseline/final/Xray），覆盖 方向 × 载荷 × 并发。 |
 | `scripts/benchmark-fallback-ab.sh` | 干净的 fallback A/B：两侧 warn 级日志，直连 listener。 |
 | `scripts/benchmark-setup-rate.sh` | 连接 setup 速率模型（accept → 第一次 Vision 转换）。 |
@@ -31,6 +31,7 @@
 | `scripts/benchmark-deployment.sh` | 部署特征化：路由正确性证明、路由决策成本（含 DNS 策略）、NXR 拓扑（direct/NXR/SOCKS5/Xray）、可选的 netem RTT 扫描，以及长连接 relay 证据。 |
 | `scripts/soak-test.sh` | 回环混合负载浸泡测试（隧道流量 + 连接churn），用 `/proc` 快照做泄漏上界检查；环境变量：`DURATION_MIN`、`ROUND_SLEEP`、`RUST_REALITY_BIN`、`XRAY_BIN`、`OUT_DIR`。 |
 | `scripts/benchmark-real-path.sh` | 真实互联网路径上与 Xray 的 A/B：崩溃与协议错误门禁；吞吐受路径最慢链路限制，不能用于区分带宽。 |
+| `scripts/benchmark-vless-encryption.sh` | Xray v26.7.28 下 `encryption:none` 与同一 REALITY + Vision 内叠加 VLESS Encryption 的 A/B；测吞吐、服务端 CPU/GiB 和预热后的 setup。 |
 | `scripts/test-xray-interop.sh` | 兼容性门禁（见下），不是基准。 |
 
 ## v1.0.0 规范样本
@@ -72,6 +73,26 @@ Core i3-8100（4C/4T）、Linux 6.12.94+deb13-amd64、rustc 1.96.0、Xray 26.7.2
 | c1 | 1631 MiB/s | 1631 MiB/s | 1.00× |
 | c4 | 3075 MiB/s | 2999 MiB/s | 1.03× |
 | c32 | 3279 MiB/s | 3194 MiB/s | 1.03× |
+
+## v1.3 规范结构与加密样本
+
+- `benchmarks/final/v1.3-hot-structures/summary.json` 记录 Criterion 的
+  short-ID/UUID/tag 交叉点、VLESS 零拷贝门禁、REALITY digest 哈希、无锁 direct
+  admission 及重放 deadline 堆/目标分片 A/B；基准源码为
+  `benches/short_id_lookup.rs`、`benches/identity_lookup.rs`、
+  `benches/tag_lookup.rs`、`benches/replay_expiry.rs`、
+  `benches/vless_decode.rs` 和 `benches/admission.rs`。admission 基准保留了被替换的
+  mutex token bucket 作为可执行对照，使争用结论可以持续复现。
+- `benchmarks/final/v1.3-setup-refactor/` 保存分配/查找重构后的组合 setup 路径复测：
+  原始样本、perf 计数器和 `summary.json`。它是同机 loopback 证据，不是 WAN 承诺。
+- `benchmarks/final/v1.3-vless-encryption/summary.json` 记录同机 Xray v26.7.28
+  叠加栈 A/B。它只适用于 REALITY + Vision 内的 VLESS Encryption，不代表 raw
+  VLESS Encryption；完整解释和重审门槛见 ADR 0003。
+
+鲁棒性证据与吞吐数字分开记录：五个有界 fuzz 目标各运行 20,000 个用例，解析属性
+门禁覆盖最大请求的每个前缀以及每个位置的三种字节变异。受限 shell 本地运行只关闭
+ptrace 不支持的 LSan 泄漏检测；定时 CI 保留泄漏检测并运行完整套件，TSan 则覆盖
+重放重复竞态。
 
 ## 方法规则（以及让早期数字作废的陷阱）
 

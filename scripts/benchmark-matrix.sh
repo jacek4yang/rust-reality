@@ -205,7 +205,7 @@ make_rust_config() {
     {
         sed -n 's/^REALITY public key for the client: /PUBLIC_KEY=/p' "$prefix.generate.log"
         jq -r '"UUID=" + .inbounds[0].settings.clients[0].id' "$prefix.raw.json"
-        jq -r '"SHORT_ID=" + .inbounds[0].streamSettings.realitySettings.shortIds[0]' "$prefix.raw.json"
+        jq -r '"SHORT_ID=" + .inbounds[0].settings.clients[0].shortIds[0]' "$prefix.raw.json"
     } >"$prefix.client.env"
 }
 

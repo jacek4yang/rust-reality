@@ -232,7 +232,7 @@ pub fn generate_minimal_config(
     input: GenerateConfigInput,
 ) -> Result<GeneratedConfig, GenerateConfigError> {
     let uuid = generate_uuid()?.to_string();
-    let short_id = generate_short_id()?;
+    let short_ids = generate_client_short_ids()?;
     let key_pair = generate_x25519_key_pair()?;
     let (private_key, public_key) = key_pair.into_parts();
     let config = Config {
@@ -246,6 +246,7 @@ pub fn generate_minimal_config(
             settings: VlessInboundSettings {
                 clients: vec![VlessClient {
                     id: uuid.clone(),
+                    short_ids,
                     email: Some("default-user".to_owned()),
                     flow: "xtls-rprx-vision".to_owned(),
                 }],
@@ -258,7 +259,6 @@ pub fn generate_minimal_config(
                     target: input.target,
                     server_names: vec![input.server_name],
                     private_key,
-                    short_ids: vec![short_id],
                     max_time_diff_ms: 60_000,
                 },
             },
@@ -300,7 +300,7 @@ pub fn generate_line_config(
     input: GenerateLineConfigInput,
 ) -> Result<GeneratedConfig, GenerateConfigError> {
     let uuid = generate_uuid()?.to_string();
-    let short_id = generate_short_id()?;
+    let short_ids = generate_client_short_ids()?;
     let key_pair = generate_x25519_key_pair()?;
     let (private_key, public_key) = key_pair.into_parts();
     let config = Config {
@@ -310,7 +310,7 @@ pub fn generate_line_config(
         inbounds: vec![public_inbound(
             &input.public,
             uuid.clone(),
-            short_id,
+            short_ids,
             private_key,
         )],
         outbounds: vec![
@@ -464,10 +464,10 @@ pub fn generate_multi_handoff_configs(
         return Err(ConfigError::new("landings", "must contain at least one landing node").into());
     }
     let multi = input.landings.len() > 1;
-    let short_id = generate_short_id()?;
     let (private_key, public_key) = generate_x25519_key_pair()?.into_parts();
 
     let mut uuids = Vec::with_capacity(input.landings.len());
+    let mut client_short_ids = Vec::with_capacity(input.landings.len());
     let mut handoff_outbounds = Vec::with_capacity(input.landings.len());
     let mut landing_material = Vec::with_capacity(input.landings.len());
     for (index, landing) in input.landings.iter().enumerate() {
@@ -486,6 +486,7 @@ pub fn generate_multi_handoff_configs(
         });
         landing_material.push((landing.port, pre_shared_key, landing_private_key));
         uuids.push(generate_uuid()?.to_string());
+        client_short_ids.push(generate_client_short_ids()?);
     }
 
     let clients = uuids
@@ -493,6 +494,7 @@ pub fn generate_multi_handoff_configs(
         .enumerate()
         .map(|(index, uuid)| VlessClient {
             id: uuid.clone(),
+            short_ids: client_short_ids[index].clone(),
             email: Some(handoff_email(index, multi)),
             flow: "xtls-rprx-vision".to_owned(),
         })
@@ -522,7 +524,6 @@ pub fn generate_multi_handoff_configs(
         inbounds: vec![public_inbound_with_clients(
             &input.public,
             clients,
-            short_id.clone(),
             private_key,
         )],
         outbounds,
@@ -569,7 +570,7 @@ pub fn generate_multi_handoff_configs(
                     "fingerprint": "chrome",
                     "serverName": input.public.server_name,
                     "publicKey": public_key.clone(),
-                    "shortId": short_id,
+                    "shortId": client_short_ids[0][0].clone(),
                     "spiderX": "/",
                 },
             },
@@ -654,17 +655,17 @@ fn handoff_landing_config(
 fn public_inbound(
     input: &GenerateConfigInput,
     uuid: String,
-    short_id: String,
+    short_ids: Vec<String>,
     private_key: SecretString,
 ) -> InboundConfig {
     public_inbound_with_clients(
         input,
         vec![VlessClient {
             id: uuid,
+            short_ids,
             email: Some("default-user".to_owned()),
             flow: "xtls-rprx-vision".to_owned(),
         }],
-        short_id,
         private_key,
     )
 }
@@ -672,7 +673,6 @@ fn public_inbound(
 fn public_inbound_with_clients(
     input: &GenerateConfigInput,
     clients: Vec<VlessClient>,
-    short_id: String,
     private_key: SecretString,
 ) -> InboundConfig {
     InboundConfig::Vless(VlessInboundConfig {
@@ -690,16 +690,26 @@ fn public_inbound_with_clients(
                 target: input.target.clone(),
                 server_names: vec![input.server_name.clone()],
                 private_key,
-                short_ids: vec![short_id],
                 max_time_diff_ms: 60_000,
             },
         },
     })
 }
 
+/// Generates two independent short IDs for one UUID. The spare value supports
+/// staged client rotation while preserving exclusive UUID ownership.
+fn generate_client_short_ids() -> Result<Vec<String>, KeyGenerationError> {
+    let first = generate_short_id()?;
+    let mut second = generate_short_id()?;
+    while second.eq_ignore_ascii_case(&first) {
+        second = generate_short_id()?;
+    }
+    Ok(vec![first, second])
+}
+
 #[cfg(test)]
 mod tests {
-    use std::{net::IpAddr, str::FromStr};
+    use std::{collections::HashSet, net::IpAddr, str::FromStr};
 
     use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
     use x25519_dalek::{PublicKey, StaticSecret};
@@ -742,6 +752,14 @@ mod tests {
         assert!(json.contains("xtls-rprx-vision"));
         assert!(json.contains("\"security\": \"reality\""));
         assert_eq!(generated.reality_public_key().len(), 43);
+        let public = generated.config().inbounds[0]
+            .as_vless()
+            .expect("generated inbound must be VLESS");
+        assert_eq!(public.settings.clients[0].short_ids.len(), 2);
+        assert_ne!(
+            public.settings.clients[0].short_ids[0],
+            public.settings.clients[0].short_ids[1]
+        );
 
         let path = std::env::temp_dir().join(format!(
             "rust-reality-generated-config-{}.json",
@@ -875,6 +893,7 @@ mod tests {
             Some(generated.client_uuid())
         );
         assert_eq!(generated.client_uuid(), public.settings.clients[0].id);
+        assert_eq!(public.settings.clients[0].short_ids.len(), 2);
         let client_reality = &client["outbounds"][0]["streamSettings"]["realitySettings"];
         assert_eq!(
             client_reality["publicKey"].as_str(),
@@ -882,7 +901,7 @@ mod tests {
         );
         assert_eq!(
             client_reality["shortId"].as_str(),
-            Some(reality.short_ids[0].as_str())
+            Some(public.settings.clients[0].short_ids[0].as_str())
         );
         assert_eq!(client_reality["serverName"], "cover.example.com");
     }
@@ -922,6 +941,25 @@ mod tests {
             panic!("line must keep the public VLESS inbound");
         };
         assert_eq!(public.settings.clients.len(), 2);
+        let short_ids = public
+            .settings
+            .clients
+            .iter()
+            .flat_map(|client| {
+                client
+                    .short_ids
+                    .iter()
+                    .map(|value| value.to_ascii_lowercase())
+            })
+            .collect::<HashSet<_>>();
+        assert_eq!(short_ids.len(), 4, "each UUID must own two unique IDs");
+        assert!(
+            public
+                .settings
+                .clients
+                .iter()
+                .all(|client| client.short_ids.len() == 2)
+        );
         let mut handoff_settings = Vec::new();
         for index in 0..2 {
             let tag = format!("landing-{}", index + 1);

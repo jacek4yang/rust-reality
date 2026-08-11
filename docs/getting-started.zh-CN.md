@@ -40,7 +40,8 @@ rust-reality config generate standalone \
   > config.json 2> client-values.txt
 ```
 
-生成的 JSON 包含 UUID、REALITY 私钥、short ID 和 direct 路由策略。客户端所需
+生成的 JSON 包含 UUID、REALITY 私钥、归该 UUID 独占的两个 short ID 和 direct
+路由策略。客户端所需
 的值（包括 REALITY 公钥）写入标准错误，使服务器私密配置可以单独保存。两个
 输出都应妥善保护；示例目标必须替换成从实际部署机器执行 `probe-dest` 能通过
 的目标。
@@ -62,7 +63,8 @@ rust-reality serve --config config.json
 ```
 
 `serve` 在前台运行，适合 systemd 或其他进程管理器。用第 3 步得到的值（地址、
-端口、UUID、公钥、short ID、server name、flow `xtls-rprx-vision`）配置兼容
+端口、UUID、公钥、从该 UUID 的 `shortIds` 中选择的一个 short ID、server name、
+flow `xtls-rprx-vision`）配置兼容
 Xray 的客户端，确认流量正常。
 
 ## 下一步
