@@ -30,6 +30,49 @@ self_test=${SELF_TEST:-0}
 
 die() { printf 'benchmark-setup-rate: %s\n' "$*" >&2; exit 2; }
 
+
+harness_tree_snapshot() {
+    python3 - "$1" <<'PY_HARNESS'
+import hashlib
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+files = []
+for path in root.rglob("*"):
+    if path.is_symlink():
+        raise SystemExit(f"symlink in harness tree: {path}")
+    if path.is_file():
+        files.append(path.relative_to(root).as_posix())
+files.sort()
+if not files:
+    raise SystemExit("empty harness tree")
+digest = hashlib.sha256()
+for relative in files:
+    digest.update(relative.encode())
+    digest.update(b"\0")
+    digest.update(hashlib.sha256((root / relative).read_bytes()).digest())
+print(digest.hexdigest(), len(files))
+PY_HARNESS
+}
+
+verify_harness_inputs() {
+    local current_manifest current_count current_head current_identity_sha
+    [[ $(sha256sum "$script_path" | awk '{print $1}') == "$script_sha" ]] ||
+        die 'benchmark entrypoint changed during run'
+    read -r current_manifest current_count < <(harness_tree_snapshot "$bench_origin_tree")
+    [[ $current_manifest == "$bench_origin_manifest_sha" &&
+       $current_count == "$bench_origin_file_count" ]] ||
+        die 'bench-origin source tree changed during run'
+    current_head=$(git -C "$REPOSITORY" rev-parse --verify 'HEAD^{commit}') ||
+        die 'repository HEAD became invalid during run'
+    [[ $current_head == "$repository_head" ]] || die 'repository HEAD changed during run'
+    [[ -z $(git -C "$REPOSITORY" status --porcelain=v1 --untracked-files=normal) ]] ||
+        die 'repository became dirty during run'
+    current_identity_sha=$(sha256sum "$baseline_identity" | awk '{print $1}')
+    [[ $current_identity_sha == "$baseline_identity_sha" ]] ||
+        die 'baseline identity sidecar changed during run'
+}
+
 validate_perf_csv() {
     python3 - "$1" "$2" <<'PY'
 import csv, json, math, sys
@@ -182,7 +225,15 @@ jq -e --arg commit "$baseline_commit" --arg sha "$baseline_sha" '
     and .sha256sumsVerified == true
 ' "$baseline_identity" >/dev/null || die 'baseline identity does not bind the requested commit and binary SHA-256'
 baseline_identity_sha=$(sha256sum "$baseline_identity" | awk '{print $1}')
-repository_head=$(git -C "$REPOSITORY" rev-parse --verify HEAD)
+repository_head=$(git -C "$REPOSITORY" rev-parse --verify 'HEAD^{commit}')
+script_path=$(realpath "$0")
+script_sha=$(sha256sum "$script_path" | awk '{print $1}')
+bench_origin_tree=$(realpath "$REPOSITORY/scripts/bench-origin")
+read -r bench_origin_manifest_sha bench_origin_file_count < <(
+    harness_tree_snapshot "$bench_origin_tree"
+)
+[[ $bench_origin_manifest_sha =~ ^[0-9a-f]{64}$ &&
+   $bench_origin_file_count =~ ^[1-9][0-9]*$ ]] || die 'invalid bench-origin source manifest'
 repository_dirty=false
 [[ -z $(git -C "$REPOSITORY" status --porcelain=v1 --untracked-files=normal) ]] || repository_dirty=true
 [[ $repository_dirty == false ]] || die 'formal benchmark requires a clean repository'
@@ -376,10 +427,11 @@ PY
 jq -n --arg runId "$run_id" --arg startedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg baselineBin "$baseline_bin" --arg baselineSha "$baseline_sha" --arg baselineBuildId "$baseline_build_id" --arg baselineCommit "$baseline_commit" --arg baselineIdentity "$baseline_identity" --arg baselineIdentitySha "$baseline_identity_sha" \
     --arg candidateBin "$candidate_bin" --arg candidateSha "$candidate_sha" --arg candidateBuildId "$candidate_build_id" --arg candidateCommit "$candidate_commit" \
+    --arg scriptPath "$script_path" --arg scriptSha "$script_sha" --arg benchOriginTree "$bench_origin_tree" --arg benchOriginManifest "$bench_origin_manifest_sha" --argjson benchOriginFiles "$bench_origin_file_count" \
     --arg xrayBin "$xray_bin" --arg xraySha "$xray_sha" --arg xrayBuildId "$xray_build_id" \
     --arg repositoryHead "$repository_head" --argjson repositoryDirty "$repository_dirty" --arg mode "$measure_mode" --arg concurrencies "$concurrencies" --argjson blocks "$blocks" --argjson samples "$samples" --argjson conns "$connections" \
     --argjson portBase "$port_base" --argjson portCount "$port_count" \
-    '{schemaVersion:2,runId:$runId,startedAt:$startedAt,repository:{head:$repositoryHead,dirty:$repositoryDirty},method:"balanced block ABBA",blocks:$blocks,samplesPerSlot:$samples,connectionsPerSample:$conns,concurrencies:$concurrencies,measureMode:$mode,ports:{address:"127.0.0.1",base:$portBase,count:$portCount},baseline:{path:$baselineBin,sha256:$baselineSha,buildId:$baselineBuildId,commit:$baselineCommit,identity:{path:$baselineIdentity,sha256:$baselineIdentitySha}},candidate:{path:$candidateBin,sha256:$candidateSha,buildId:$candidateBuildId,commit:$candidateCommit},xray:{path:$xrayBin,sha256:$xraySha,buildId:$xrayBuildId}}' >"$out_dir/environment.json"
+    '{schemaVersion:2,runId:$runId,startedAt:$startedAt,repository:{head:$repositoryHead,dirty:$repositoryDirty},method:"balanced block ABBA",blocks:$blocks,samplesPerSlot:$samples,connectionsPerSample:$conns,concurrencies:$concurrencies,measureMode:$mode,ports:{address:"127.0.0.1",base:$portBase,count:$portCount},baseline:{path:$baselineBin,sha256:$baselineSha,buildId:$baselineBuildId,commit:$baselineCommit,identity:{path:$baselineIdentity,sha256:$baselineIdentitySha}},candidate:{path:$candidateBin,sha256:$candidateSha,buildId:$candidateBuildId,commit:$candidateCommit},harness:{entrypoint:{path:$scriptPath,sha256:$scriptSha},benchOrigin:{path:$benchOriginTree,manifestSha256:$benchOriginManifest,fileCount:$benchOriginFiles}},xray:{path:$xrayBin,sha256:$xraySha,buildId:$xrayBuildId}}' >"$out_dir/environment.json"
 
 slot_index=0
 while IFS=$'\t' read -r block position implementation server_port socks_port; do
@@ -483,5 +535,6 @@ PY
 [[ $(sha256sum "$baseline_bin" | awk '{print $1}') == "$baseline_sha" ]] || die 'baseline changed during run'
 [[ $(sha256sum "$candidate_bin" | awk '{print $1}') == "$candidate_sha" ]] || die 'candidate changed during run'
 [[ $(sha256sum "$xray_bin" | awk '{print $1}') == "$xray_sha" ]] || die 'Xray changed during run'
+verify_harness_inputs
 jq -e --argjson slots "$slot_count" '.status=="COMPLETE" and .slotCount==$slots and .failures==0' "$out_dir/summary.json" >/dev/null || die 'aggregate gate failed'
 printf 'setup ABBA complete: %s\n' "$out_dir"
