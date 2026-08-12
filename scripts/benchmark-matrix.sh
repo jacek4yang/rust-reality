@@ -61,7 +61,8 @@
 # RUST_REALITY_BASELINE_SHA256/RUST_REALITY_SHA256/XRAY_SHA256 (expected binary
 # hashes), REQUIRE_PINNED_BINARIES=1 (require all three expected hashes),
 # RUST_REALITY_BUILD_PROFILE and RUST_REALITY_BUILD_FEATURES (recorded build
-# identity; default "unknown-prebuilt").
+# identity; default "unknown-prebuilt"), ABBA_START (baseline|final; default
+# baseline, reverse on a second formal round to balance cross-run drift).
 #
 # Output in OUT_DIR: samples.jsonl (one record per individual sample),
 # summary.json (per-cell p50/p95/p99 + ratios), environment.json.
@@ -93,7 +94,12 @@ seed=${SEED:-0x5252}
 cells_filter=${CELLS:-}
 skip_filter=${SKIP:-}
 rust_log_level=${RUST_LOG_LEVEL:-warn}
+abba_start=${ABBA_START:-baseline}
 out_dir=${OUT_DIR:-benchmarks/final/matrix-$(date -u +%Y%m%dT%H%M%SZ)}
+[[ $abba_start == baseline || $abba_start == final ]] || {
+    echo "ABBA_START must be baseline or final" >&2
+    exit 2
+}
 [[ ! -e $out_dir ]] || {
     echo "OUT_DIR already exists; refusing to overwrite evidence: $out_dir" >&2
     exit 2
@@ -601,6 +607,7 @@ jq -n \
     --arg build_profile "$build_profile" \
     --arg build_features "$build_features" \
     --arg rust_log_level "$rust_log_level" \
+    --arg abba_start "$abba_start" \
     --argjson binaries_pinned "$require_pinned_binaries" \
     --arg cover_target "$cover_target" \
     --arg cover_sni "$cover_sni" \
@@ -647,6 +654,7 @@ jq -n \
       build_profile: $build_profile,
       build_features: $build_features,
       rust_log_level: $rust_log_level,
+      abba_start: $abba_start,
       binaries_pinned: ($binaries_pinned == 1),
       cover_target: $cover_target,
       cover_sni: $cover_sni,
@@ -706,6 +714,7 @@ large_payload_mib = cfg["large_payload_mib"]
 integrity_mib = cfg["integrity_mib"]
 cells_filter = [p for p in cfg["cells"].replace(",", " ").split() if p]
 skip_filter = [p for p in cfg["skip"].replace(",", " ").split() if p]
+abba_start = cfg["abba_start"]
 
 SCENARIOS = [
     "framed-download",
@@ -1195,18 +1204,15 @@ for scenario, mib, concurrency in cells:
     # after each A/B pair so comparator drift is visible without breaking the
     # release-candidate ABBA ordering.
     abba = []
+    def block_order(block):
+        baseline_first = (block % 2 == 0) == (abba_start == "baseline")
+        first, second = ("baseline", "final") if baseline_first else ("final", "baseline")
+        return [first, second, second, first]
+
     for block in range(sample_count // 2):
-        abba.extend(
-            ["baseline", "final", "final", "baseline"]
-            if block % 2 == 0
-            else ["final", "baseline", "baseline", "final"]
-        )
+        abba.extend(block_order(block))
     if sample_count % 2:
-        abba.extend(
-            ["baseline", "final"]
-            if (sample_count // 2) % 2 == 0
-            else ["final", "baseline"]
-        )
+        abba.extend(block_order(sample_count // 2)[:2])
     order = []
     for offset in range(0, len(abba), 2):
         order.extend(abba[offset:offset + 2])
@@ -1464,6 +1470,7 @@ summary = {
         "cellsFilter": cells_filter,
         "skipFilter": skip_filter,
         "integrityMiB": integrity_mib,
+        "abbaStart": abba_start,
     },
     "totals": {
         "cells": len(cell_results),
