@@ -181,6 +181,10 @@ terminate_registered_pid() {
 
 cleanup() {
     local exit_status=$?
+    # The shared EXIT handler must become the sole owner of the final status.
+    # Remove it before the explicit exit below so a verification failure can
+    # upgrade success to failure without recursively invoking cleanup.
+    trap - EXIT
     set +e
     local pid unit live scoped_server=${server_pid:-}
     for pid in "${sampler_pids[@]:-}" "${client_pids[@]:-}"; do
@@ -221,12 +225,13 @@ cleanup() {
     elif [[ -d $work && $work == "$RR_TMPDIR"/rust-reality-profile-validation.* ]]; then
         rm -rf -- "$work"
     fi
+    local final_rc
     if rr_contract_verify_on_exit "$exit_status"; then
-        exit_status=0
+        final_rc=0
     else
-        exit_status=$?
+        final_rc=$?
     fi
-    return "$exit_status"
+    exit "$final_rc"
 }
 trap cleanup EXIT
 
