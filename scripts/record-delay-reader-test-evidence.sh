@@ -11,8 +11,10 @@ readonly PROJECT_ROOT="$(dirname -- "$(dirname -- "$GIT_COMMON_DIR")")"
 # helper in another flock. Non-blocking acquisition fails closed if an outer
 # job already owns the formal host lock; there is deliberately no env bypass.
 readonly LOCK="$PROJECT_ROOT/.coord/v1.5.0/locks/host-exclusive.lock"
+readonly CARGO_BIN="$(command -v cargo || true)"
 [[ $EXPECTED =~ ^[0-9a-f]{40}$ ]] || { echo 'EXPECTED_SOURCE_COMMIT must be a full lowercase SHA' >&2; exit 2; }
 [[ $DESTINATION == /* && ! -e $DESTINATION ]] || { echo 'OUT_DIR must be an absent absolute path' >&2; exit 2; }
+[[ -n $CARGO_BIN && -x $CARGO_BIN ]] || { echo 'cargo is not available on PATH' >&2; exit 2; }
 mkdir -p -- "$(dirname -- "$LOCK")" "$DESTINATION"
 exec 9>"$LOCK"
 flock -n 9 || { echo 'host-exclusive lock is busy' >&2; exit 3; }
@@ -23,13 +25,13 @@ if pgrep -x cargo >/dev/null || pgrep -x rustc >/dev/null; then
 fi
 started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 set +e
-(cd "$REPOSITORY" && cargo test --lib "$TEST_NAME" -- --exact --nocapture) >"$DESTINATION/cargo-test.log" 2>&1
+(cd "$REPOSITORY" && "$CARGO_BIN" test --lib "$TEST_NAME" -- --exact --nocapture) >"$DESTINATION/cargo-test.log" 2>&1
 status=$?
 set -e
 completed=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 output_sha=$(sha256sum "$DESTINATION/cargo-test.log" | awk '{print $1}')
 passed=false
 if ((status == 0)) && grep -Fq "test $TEST_NAME ... ok" "$DESTINATION/cargo-test.log" && grep -Eq 'test result: ok\. 1 passed; 0 failed;' "$DESTINATION/cargo-test.log"; then passed=true; fi
-jq -n --arg head "$head" --arg expected "$EXPECTED" --arg test "$TEST_NAME" --arg started "$started" --arg completed "$completed" --arg output "$DESTINATION/cargo-test.log" --arg output_sha "$output_sha" --argjson exit_code "$status" --argjson ok "$passed" '{schemaVersion:1,gate:"production-cover-reader-single-probe-present",repositoryHead:$head,expectedSourceCommit:$expected,testName:$test,command:["cargo","test","--lib",$test,"--","--exact","--nocapture"],startedAt:$started,completedAt:$completed,cargoExitCode:$exit_code,output:{path:$output,sha256:$output_sha},ok:$ok}' >"$DESTINATION/evidence.json"
+jq -n --arg head "$head" --arg expected "$EXPECTED" --arg test "$TEST_NAME" --arg cargo "$CARGO_BIN" --arg started "$started" --arg completed "$completed" --arg output "$DESTINATION/cargo-test.log" --arg output_sha "$output_sha" --argjson exit_code "$status" --argjson ok "$passed" '{schemaVersion:1,gate:"production-cover-reader-single-probe-present",repositoryHead:$head,expectedSourceCommit:$expected,testName:$test,command:[$cargo,"test","--lib",$test,"--","--exact","--nocapture"],startedAt:$started,completedAt:$completed,cargoExitCode:$exit_code,output:{path:$output,sha256:$output_sha},ok:$ok}' >"$DESTINATION/evidence.json"
 jq -e '.ok == true and .cargoExitCode == 0 and .repositoryHead == .expectedSourceCommit' "$DESTINATION/evidence.json" >/dev/null
 printf 'Production cover reader evidence: %s\n' "$DESTINATION/evidence.json"
