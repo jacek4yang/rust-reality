@@ -623,6 +623,90 @@ const fn failure(
     TargetServerHelloReadError { kind, wire_prefix }
 }
 
+/// Exercises the complete bounded cover-flight reader with arbitrary bytes.
+///
+/// This entry point only exists for the dedicated libFuzzer build. A fixed,
+/// valid ClientHello keeps mutations focused on the server flight, while the
+/// first input byte controls fragmentation and non-blocking NST visibility.
+#[cfg(feature = "fuzzing")]
+pub fn fuzz_cover_flight(input: &[u8]) {
+    use std::sync::OnceLock;
+
+    use crate::protocol::reality::{SESSION_ID_LEN, X25519_GROUP, client_hello::fixtures};
+
+    static CLIENT: OnceLock<ClientHello> = OnceLock::new();
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+
+    let client = CLIENT.get_or_init(|| {
+        ClientHello::parse_message(&fixtures::client_hello_with_key_share(
+            [0x44; 32],
+            &[0x11; SESSION_ID_LEN],
+            "www.example.com",
+            &[b"h2"],
+            X25519_GROUP,
+            &[0x22; 32],
+        ))
+        .expect("fixed fuzz ClientHello must parse")
+    });
+    let Some((&control, bytes)) = input.split_first() else {
+        return;
+    };
+    let runtime = RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("fuzz runtime must build")
+    });
+    let mut reader = FuzzFlightReader {
+        bytes,
+        position: 0,
+        chunk_size: usize::from(control & 0x7f) + 1,
+        probe_would_block: control & 0x80 != 0,
+    };
+    let _ = runtime.block_on(read_target_server_flight(
+        &mut reader,
+        client,
+        Duration::from_millis(1),
+    ));
+}
+
+#[cfg(feature = "fuzzing")]
+struct FuzzFlightReader<'input> {
+    bytes: &'input [u8],
+    position: usize,
+    chunk_size: usize,
+    probe_would_block: bool,
+}
+
+#[cfg(feature = "fuzzing")]
+impl AsyncRead for FuzzFlightReader<'_> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        _context: &mut std::task::Context<'_>,
+        output: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        let remaining = &self.bytes[self.position..];
+        let read = remaining.len().min(self.chunk_size).min(output.remaining());
+        output.put_slice(&remaining[..read]);
+        self.position += read;
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+#[cfg(feature = "fuzzing")]
+impl CoverFlightIo for FuzzFlightReader<'_> {
+    fn try_read_now(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        if self.probe_would_block {
+            return Err(io::Error::from(io::ErrorKind::WouldBlock));
+        }
+        let remaining = &self.bytes[self.position..];
+        let read = remaining.len().min(output.len());
+        output[..read].copy_from_slice(&remaining[..read]);
+        self.position += read;
+        Ok(read)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{io, pin::Pin, task::Poll, time::Duration};

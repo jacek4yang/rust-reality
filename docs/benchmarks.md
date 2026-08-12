@@ -106,7 +106,7 @@ warn-level logging both sides), medians of 7:
   revisit gates are in ADR 0003.
 
 The robustness evidence is intentionally separate from throughput numbers:
-each of the five bounded fuzz targets runs 20,000 cases, and the parser
+each of the six bounded fuzz targets runs 20,000 cases, and the parser
 property gate covers every maximum-request prefix plus three byte mutations at
 every position. Local restricted-shell runs disable only LSan's ptrace-
 unsupported leak detector; CI's scheduled sanitizer jobs retain leak detection

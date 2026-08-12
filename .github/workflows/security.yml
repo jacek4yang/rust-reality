@@ -59,6 +59,8 @@ jobs:
         run: cargo +nightly fuzz run handoff_blob -- -runs=20000 -max_len=131072
       - name: Fuzz handoff transfer open
         run: cargo +nightly fuzz run handoff_open_transfer -- -runs=20000 -max_len=65536
+      - name: Fuzz bounded cover flight
+        run: cargo +nightly fuzz run cover_flight -- -runs=20000 -max_len=131072
 
   sanitizers:
     name: Address and leak sanitizer
