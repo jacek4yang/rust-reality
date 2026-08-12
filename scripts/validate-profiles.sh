@@ -25,8 +25,9 @@
 #      RUST_REALITY_SHA256 (REQUIRED exact SHA-256 of RUST_REALITY_BIN),
 #      EXPECTED_SOURCE_COMMIT (REQUIRED full commit embedded by build-release),
 #      XRAY_BIN (REQUIRED, no default: path to an xray-core client binary),
-#      OUT_ROOT (default: a unique UTC/PID run directory; an existing path or
-#      symlink is always rejected), ASSET_CACHE_DIR (default: the repository's
+#      XRAY_SHA256 (REQUIRED exact SHA-256 of XRAY_BIN), RUN_ID, absolute
+#      unique OUT_DIR, disk-backed TMPDIR, and PORT_BASE are REQUIRED for a
+#      formal run. ASSET_CACHE_DIR (default: the repository's
 #      reusable benchmarks/profile-validation/.asset-cache), KEEP_WORK (0),
 #      FORCE (0), IDENTITY_CHECK_ONLY (0; explicit preflight only, never profile
 #      evidence). Formal runs are always fail-closed on identity and immutability.
@@ -36,13 +37,13 @@
 set -Eeuo pipefail
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$repository/scripts/benchmark-contract.sh"
 cd "$repository"
 
 rust_bin=${RUST_REALITY_BIN:-$repository/target/release/rust-reality}
 expected_binary_sha256=${RUST_REALITY_SHA256:-}
 expected_source_commit=${EXPECTED_SOURCE_COMMIT:-}
 xray=${XRAY_BIN:-}
-out_root_input=${OUT_ROOT:-benchmarks/profile-validation/$(date -u +%Y%m%dT%H%M%SZ)-$$}
 asset_cache_input=${ASSET_CACHE_DIR:-benchmarks/profile-validation/.asset-cache}
 classes=${CLASSES:-"1c1g:100:1G 1c2g:100:2G 2c2g:200:2G 2c4g:200:4G 4c4g:400:4G 4c8g:400:8G"}
 only=${ONLY:-}
@@ -57,7 +58,20 @@ identity_check_only=${IDENTITY_CHECK_ONLY:-0}
 uid=$(id -u)
 gid=$(id -g)
 
-work=$(mktemp -d "$repository/benchmarks/profile-validation.XXXXXX")
+if [[ ${EXPLORATORY:-0} == 1 && -z ${OUT_DIR:-} && -n ${OUT_ROOT:-} ]]; then
+    OUT_DIR=$OUT_ROOT
+fi
+rr_contract_init "$repository" validate-profiles benchmarks/profile-validation 128
+rr_register_harness_file "$repository/scripts/profile-driver.py"
+rr_register_harness_file "$repository/scripts/profile-summarize.py"
+rr_register_binary rust-reality "$rust_bin" "$expected_binary_sha256" rust \
+    "$expected_source_commit"
+rust_bin=${RR_BINARY_PATHS[rust-reality]}
+rr_register_binary xray "$xray" "${XRAY_SHA256:-}" xray
+xray=${RR_BINARY_PATHS[xray]}
+rr_write_contract_metadata
+out_root=$RR_OUT_DIR
+work=$(mktemp -d "$RR_TMPDIR/rust-reality-profile-validation.XXXXXX")
 runner_pids=()
 client_pids=()
 sampler_pids=()
@@ -89,13 +103,16 @@ pid_snapshot() {
 }
 
 register_pid() {
-    local pid=$1 start
+    local pid=$1 expected_exe=${2:-} start
     pid_snapshot "$pid" || {
         echo "background process $pid exited before it could be registered" >&2
         return 1
     }
     start=$pid_snapshot_start
     pid_start_times[$pid]=$start
+    if [[ -n $expected_exe ]]; then
+        rr_assert_pid_exe "$pid" "$expected_exe"
+    fi
 }
 
 pid_is_registered() {
@@ -199,7 +216,7 @@ cleanup() {
     [[ -n $scoped_server ]] && forget_pid "$scoped_server"
     if [[ ${KEEP_WORK:-0} == 1 ]]; then
         printf 'work directory retained: %s\n' "$work" >&2
-    elif [[ -d $work && $work == "$repository"/benchmarks/profile-validation.* ]]; then
+    elif [[ -d $work && $work == "$RR_TMPDIR"/rust-reality-profile-validation.* ]]; then
         rm -rf -- "$work"
     fi
     if (( binary_identity_verified == 1 )); then
@@ -252,23 +269,12 @@ verify_binary_sha256() {
 # expose their embedded RUST_REALITY_GIT_COMMIT in the read-only benchmark JSON;
 # never infer identity from repository HEAD or by searching arbitrary ELF bytes.
 verify_binary_sha256 "before profile validation"
-identity_json=$("$rust_bin" benchmark --duration-ms 90 --warmup-ms 1) || {
-    echo "measured binary could not report benchmark identity JSON" >&2
-    exit 1
-}
-embedded_commit=$(jq -er '.environment.gitCommit
-    | select(type == "string" and test("^[0-9a-f]{40}$"))' <<< "$identity_json") || {
-    echo "measured binary did not report a valid environment.gitCommit" >&2
-    exit 1
-}
-if [[ $embedded_commit != "$expected_source_commit" ]]; then
-    echo "binary source commit mismatch: expected $expected_source_commit, got $embedded_commit" >&2
-    exit 1
-fi
+embedded_commit=${RR_BINARY_SOURCE_COMMITS[rust-reality]}
 binary_identity_verified=1
 if [[ $identity_check_only == 1 ]]; then
     binary_identity_verified=0
     verify_binary_sha256 "after identity-only preflight"
+    rr_finalize_contract
     echo "identity-only preflight passed; no profile evidence was produced" >&2
     exit 0
 fi
@@ -316,12 +322,7 @@ for spec in $classes; do
     fi
 done
 
-out_root=$(absolute_from_repository "$out_root_input")
 asset_cache=$(absolute_from_repository "$asset_cache_input")
-if [[ -e $out_root || -L $out_root ]]; then
-    echo "OUT_ROOT must be unique and must not already exist: $out_root" >&2
-    exit 1
-fi
 case "$asset_cache/" in
     "$out_root/"*)
         echo "ASSET_CACHE_DIR must be outside OUT_ROOT so cached assets cannot be overwritten" >&2
@@ -335,8 +336,6 @@ if [[ -n $stray && ${FORCE:-0} != 1 ]]; then
     exit 1
 fi
 
-mkdir -p -- "$(dirname "$out_root")"
-mkdir -- "$out_root"
 mkdir -p -- "$asset_cache"
 
 # --- one-time asset cache population (proxy env used only here) -------------
@@ -377,14 +376,7 @@ jq -n \
       note: "server CPU via /proc/pid/stat utime+stime (perf stat unusable on this host)"}' \
     > "$out_root/environment.json"
 
-free_port() {
-    python3 - <<'PY'
-import socket
-with socket.socket() as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-}
+free_port() { rr_next_port; }
 
 wait_port() {
     python3 - "$1" "$2" <<'PY'
@@ -537,7 +529,7 @@ start_scoped_server() {
         sleep 0.1
     done
     [[ -n $server_pid ]] || { echo "server did not appear in scope $unit" >&2; return 1; }
-    register_pid "$server_pid"
+    register_pid "$server_pid" "$rust_bin"
 }
 
 # stop_scoped_server
@@ -694,7 +686,7 @@ run_class() {
         > "$classdir/xray-client.log" 2>&1 &
     local xray_pid=$!
     client_pids+=("$xray_pid")
-    register_pid "$xray_pid"
+    register_pid "$xray_pid" "$xray"
     wait_port "$socks_b" 30
     # Fail fast when the tunnel path is broken instead of recording garbage cells.
     if ! "${CLEANENV[@]}" python3 - "$socks_b" "$http_port" <<'PY'
@@ -772,7 +764,7 @@ PY
             > "$classdir/xray-client-tuned.log" 2>&1 &
         local xray_tuned_pid=$!
         client_pids+=("$xray_tuned_pid")
-        register_pid "$xray_tuned_pid"
+        register_pid "$xray_tuned_pid" "$xray"
         wait_port "$socks_c" 30
         start_sampler tuned "$classdir/samples-tuned.tsv"
         sleep 2
@@ -862,4 +854,5 @@ PY
 
 binary_identity_verified=0
 verify_binary_sha256 "after profile validation"
+rr_finalize_contract
 echo "all classes done; evidence under $out_root" >&2

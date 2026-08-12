@@ -4,6 +4,7 @@
 set -Eeuo pipefail
 
 readonly REPOSITORY="$({ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."; pwd; })"
+source "$REPOSITORY/scripts/benchmark-contract.sh"
 readonly HELPER="$REPOSITORY/scripts/tls-shape-helper.py"
 readonly REFERENCE_SOURCE="$REPOSITORY/scripts/tls-shape-reference.c"
 
@@ -28,9 +29,9 @@ split_fragment=0
 padding=0
 tcp_nodelay=0
 samples=3
-base_port=39460
+base_port=${PORT_BASE:-39460}
 xray_server_comparator=1
-output_dir=
+output_dir=${OUT_DIR:-}
 strace_mode=auto
 tcpdump_mode=auto
 self_test=0
@@ -54,6 +55,9 @@ tls-shape-reference.c. --openssl-reference-version is a human-readable expected
 label; the linked OpenSSL compile/runtime identity is read from the executable.
 When the optional baseline is supplied, baseline and candidate run sequentially
 with the same generated config and exact captured authenticated ClientHello.
+Formal runs additionally require RUN_ID, absolute OUT_DIR and disk-backed
+TMPDIR, EXPECTED_SOURCE_COMMIT, and read-only absolute binary paths. An
+optional Rust baseline also requires EXPECTED_BASELINE_SOURCE_COMMIT.
 
 Options:
   --case NAME                    Result label (default: openssl-reference-shape)
@@ -259,20 +263,33 @@ if [[ $baseline_present == true ]]; then
         "$baseline_rust_sha256"
 fi
 
-if [[ -z $output_dir ]]; then
-    output_dir="$REPOSITORY/../artifacts/tls-shape/${case_name}-$(date -u +%Y%m%dT%H%M%SZ)"
+OUT_DIR=$output_dir
+PORT_BASE=$base_port
+rr_contract_init "$REPOSITORY" benchmark-tls-shape ../artifacts/tls-shape 16
+rr_register_harness_file "$HELPER"
+rr_register_harness_file "$REFERENCE_SOURCE"
+rr_register_binary openssl-reference "$reference_server" "$reference_sha256" generic
+reference_server=${RR_BINARY_PATHS[openssl-reference]}
+rr_register_binary rust-reality "$rust_binary" "$rust_sha256" rust \
+    "${EXPECTED_SOURCE_COMMIT:-}"
+rust_binary=${RR_BINARY_PATHS[rust-reality]}
+rr_register_binary xray "$xray_binary" "$xray_sha256" xray
+xray_binary=${RR_BINARY_PATHS[xray]}
+if [[ $baseline_present == true ]]; then
+    rr_register_binary baseline-rust-reality "$baseline_rust_binary" \
+        "$baseline_rust_sha256" rust "${EXPECTED_BASELINE_SOURCE_COMMIT:-}"
+    baseline_rust_binary=${RR_BINARY_PATHS[baseline-rust-reality]}
 fi
-mkdir -p "$(dirname -- "$output_dir")"
-output_parent=$(realpath "$(dirname -- "$output_dir")")
-output_dir="$output_parent/$(basename -- "$output_dir")"
+rr_write_contract_metadata
+output_dir=$RR_OUT_DIR
+base_port=$RR_PORT_BASE
 case "$output_dir/" in
     "$REPOSITORY"/*) die '--output-dir must be outside the Git worktree' ;;
 esac
-[[ ! -e $output_dir ]] || die "output directory already exists: $output_dir"
-mkdir -m 700 "$output_dir"
+chmod 700 "$output_dir"
 
 umask 077
-work=$(mktemp -d "${TMPDIR:-/tmp}/rust-reality-tls-shape.XXXXXX")
+work=$(mktemp -d "$RR_TMPDIR/rust-reality-tls-shape.XXXXXX")
 declare -A active_pids=()
 declare -A active_process_groups=()
 declare -A active_capture_paths=()
@@ -670,12 +687,17 @@ jq -n --slurpfile reference_self_identity "$work/reference-self-identity.json" \
     --arg reference_self_identity_sha256 "$reference_self_identity_sha256" \
     --arg certificate_sha256 "$certificate_sha256" \
     --arg rust_path "$rust_binary" --arg rust_sha256 "$rust_actual_sha256" \
+    --arg rust_source_commit "${RR_BINARY_SOURCE_COMMITS[rust-reality]}" \
+    --arg rust_build_id "${RR_BINARY_BUILD_IDS[rust-reality]}" \
     --arg rust_version "$rust_version" --arg xray_path "$xray_binary" \
     --argjson baseline_present "$baseline_present" \
     --arg baseline_rust_path "$baseline_rust_binary" \
     --arg baseline_rust_sha256 "$baseline_rust_actual_sha256" \
     --arg baseline_rust_version "$baseline_rust_version" \
+    --arg baseline_source_commit "${RR_BINARY_SOURCE_COMMITS[baseline-rust-reality]:-}" \
+    --arg baseline_build_id "${RR_BINARY_BUILD_IDS[baseline-rust-reality]:-}" \
     --arg xray_sha256 "$xray_actual_sha256" --arg xray_version "$xray_version" \
+    --arg xray_build_id "${RR_BINARY_BUILD_IDS[xray]}" \
     --argjson xray_server_comparator "$xray_server_comparator" \
     --arg ciphersuites "$ciphersuites" --arg tls_groups "$tls_groups" \
     --arg alpn "$alpn" --argjson middlebox "$middlebox" \
@@ -691,7 +713,7 @@ jq -n --slurpfile reference_self_identity "$work/reference-self-identity.json" \
     --arg ephemeral_rust_config_sha256 "$ephemeral_rust_config_sha256" \
     --arg harness_sha256 "$harness_sha256" --arg helper_sha256 "$helper_sha256" \
     --arg reference_source_sha256 "$reference_source_sha256" \
-    '{repository:{head:$repository_head,describe:$repository_describe,dirty:$repository_dirty,role:"capture harness worktree; not proof of binary source provenance"},captureHost:{rustc:$capture_host_rustc,cc:$capture_host_cc,kernel:$kernel,cpu:$cpu},case:$case_name,reference:{path:$reference_path,sha256:$reference_sha256,requestedVersionLabel:$reference_version_label,selfIdentity:$reference_self_identity[0],selfIdentitySha256:$reference_self_identity_sha256,buildId:$reference_build_id,certificateFileSha256:$certificate_sha256},baselineRustReality:(if $baseline_present then {path:$baseline_rust_path,sha256:$baseline_rust_sha256,version:$baseline_rust_version,logging:"warn",sourceProvenance:"UNVERIFIED_BY_HARNESS"} else null end),rustReality:{role:"candidate",path:$rust_path,sha256:$rust_sha256,version:$rust_version,logging:"warn",sourceProvenance:"UNVERIFIED_BY_HARNESS"},xray:{path:$xray_path,sha256:$xray_sha256,version:$xray_version,logging:"warning",sourceProvenance:"UNVERIFIED_BY_HARNESS",serverComparatorEnabled:($xray_server_comparator == 1)},referenceOptions:{tlsVersion:"1.3-only",ciphersuites:$ciphersuites,groups:$tls_groups,alpn:$alpn,middlebox:$middlebox,maxFragment:$max_fragment,splitFragment:$split_fragment,padding:$padding,tcpNodelay:$tcp_nodelay},topology:{network:"loopback",packetCaptureInterface:"lo",ports:{cover:$cover_port,rustRealitySequentialComparators:$rust_port,captureProxy:$proxy_port,socks:$socks_port,origin:$origin_port,opensslReference:$reference_port,xrayServer:(if $xray_server_comparator == 1 then $xray_server_port else null end)}},clientHello:{source:"stock Xray chrome/uTLS",sha256:$client_hello_sha256,sharedAcrossAllComparators:true,ephemeralServerConfigSha256:$ephemeral_rust_config_sha256,ephemeralServerConfigRetained:false},tools:{strace:$strace_status,tcpdump:$tcpdump_status},harness:{entrypointSha256:$harness_sha256,helperSha256:$helper_sha256,referenceSourceSha256:$reference_source_sha256},rawCaptureNotice:"Raw ClientHello, wire, strace, and PCAP data; keep outside Git."}' \
+    '{repository:{head:$repository_head,describe:$repository_describe,dirty:$repository_dirty,role:"capture harness worktree; binary provenance is read from each executable"},captureHost:{rustc:$capture_host_rustc,cc:$capture_host_cc,kernel:$kernel,cpu:$cpu},case:$case_name,reference:{path:$reference_path,sha256:$reference_sha256,requestedVersionLabel:$reference_version_label,selfIdentity:$reference_self_identity[0],selfIdentitySha256:$reference_self_identity_sha256,buildId:$reference_build_id,certificateFileSha256:$certificate_sha256},baselineRustReality:(if $baseline_present then {path:$baseline_rust_path,sha256:$baseline_rust_sha256,version:$baseline_rust_version,logging:"warn",sourceCommit:$baseline_source_commit,buildId:$baseline_build_id} else null end),rustReality:{role:"candidate",path:$rust_path,sha256:$rust_sha256,version:$rust_version,logging:"warn",sourceCommit:$rust_source_commit,buildId:$rust_build_id},xray:{path:$xray_path,sha256:$xray_sha256,version:$xray_version,logging:"warning",buildId:$xray_build_id,serverComparatorEnabled:($xray_server_comparator == 1)},referenceOptions:{tlsVersion:"1.3-only",ciphersuites:$ciphersuites,groups:$tls_groups,alpn:$alpn,middlebox:$middlebox,maxFragment:$max_fragment,splitFragment:$split_fragment,padding:$padding,tcpNodelay:$tcp_nodelay},topology:{network:"loopback",packetCaptureInterface:"lo",ports:{cover:$cover_port,rustRealitySequentialComparators:$rust_port,captureProxy:$proxy_port,socks:$socks_port,origin:$origin_port,opensslReference:$reference_port,xrayServer:(if $xray_server_comparator == 1 then $xray_server_port else null end)}},clientHello:{source:"stock Xray chrome/uTLS",sha256:$client_hello_sha256,sharedAcrossAllComparators:true,ephemeralServerConfigSha256:$ephemeral_rust_config_sha256,ephemeralServerConfigRetained:false},tools:{strace:$strace_status,tcpdump:$tcpdump_status},harness:{entrypointSha256:$harness_sha256,helperSha256:$helper_sha256,referenceSourceSha256:$reference_source_sha256},rawCaptureNotice:"Raw ClientHello, wire, strace, and PCAP data; keep outside Git."}' \
     >"$output_dir/identity.json"
 
 run_reference_sample() {
@@ -841,6 +863,7 @@ python3 "$HELPER" summarize --identity "$output_dir/identity.json" \
     "${summary_xray_arguments[@]}" \
     --output "$output_dir/summary.json"
 
+rr_finalize_contract
 run_state=COMPLETE
 run_phase=complete
 write_run_status
