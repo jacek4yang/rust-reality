@@ -8,7 +8,9 @@
 # server process; an Xray leg provides the reference.
 #
 # Env: RUST_REALITY_BIN, XRAY_BIN, SAMPLES (3), CONCURRENCIES ("1 8 32"),
-#      CONNS (96 per sample per concurrency), OUT_DIR.
+#      CONNS (96 per sample per concurrency), OUT_DIR. STRACE_OUT optionally
+#      enables a separate, non-authoritative syscall-attribution round while
+#      keeping RUST_REALITY_BIN pinned to the exact ELF under test.
 set -Eeuo pipefail
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -18,6 +20,7 @@ samples=${SAMPLES:-3}
 concurrencies=${CONCURRENCIES:-1 8 32}
 conns=${CONNS:-96}
 out_dir=${OUT_DIR:-benchmarks/final/setup-rate-$(date -u +%Y%m%dT%H%M%SZ)}
+strace_out=${STRACE_OUT:-}
 work=$(readlink -f "$(mktemp -d "$repository/benchmarks/setup-rate.XXXXXX")")
 pids=()
 
@@ -33,6 +36,11 @@ trap cleanup EXIT
 for program in curl jq openssl python3 go readelf sha256sum; do
     command -v "$program" >/dev/null || { echo "missing: $program" >&2; exit 1; }
 done
+if [[ -n $strace_out ]]; then
+    command -v strace >/dev/null || { echo "missing: strace" >&2; exit 1; }
+    [[ $strace_out = /* ]] || { echo "STRACE_OUT must be absolute" >&2; exit 1; }
+    [[ ! -e $strace_out ]] || { echo "STRACE_OUT already exists: $strace_out" >&2; exit 1; }
+fi
 sudo -n true || { echo "passwordless sudo required for perf stat" >&2; exit 1; }
 
 cd "$repository"
@@ -62,9 +70,10 @@ jq -n --arg rustBin "$rust_bin" --arg rustSha256 "$rust_sha256" \
     --arg xraySha256 "$xray_sha256" --arg xrayBuildId "$xray_build_id" \
     --arg startedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg concurrencies "$concurrencies" --argjson samples "$samples" \
-    --argjson connectionsPerSample "$conns" \
+    --argjson connectionsPerSample "$conns" --arg straceOut "$strace_out" \
     '{schemaVersion:1,startedAt:$startedAt,samples:$samples,
       connectionsPerSample:$connectionsPerSample,concurrencies:$concurrencies,
+      attribution:{straceOut:(if $straceOut == "" then null else $straceOut end)},
       rustReality:{path:$rustBin,sha256:$rustSha256,buildId:$rustBuildId},
       xray:{path:$xrayBin,sha256:$xraySha256,buildId:$xrayBuildId}}' \
     >"$out_dir/environment.json"
@@ -136,8 +145,39 @@ make_client() {
 make_client "$rust_port" "$rust_socks" "$rust_pub" "$work/rust-client.json"
 make_client "$xray_port" "$xray_socks" "$xpub" "$work/xray-client.json"
 
-"$rust_bin" serve --config "$work/rust.json" > "$work/rust.log" 2>&1 &
-pids+=("$!"); rust_pid=$!
+if [[ -n $strace_out ]]; then
+    [[ $(realpath -m "$(dirname "$strace_out")") == $(realpath "$out_dir") ]] || {
+        echo "STRACE_OUT must be a direct child of OUT_DIR" >&2
+        exit 1
+    }
+    strace --kill-on-exit -f -qq -c -e trace=recvfrom,recvmsg,read \
+        -o "$strace_out" "$rust_bin" serve --config "$work/rust.json" \
+        > "$work/rust.log" 2>&1 &
+    pids+=("$!"); strace_pid=$!
+    rust_pid=
+    for _ in {1..250}; do
+        if [[ -r /proc/$strace_pid/task/$strace_pid/children ]]; then
+            for child in $(</proc/$strace_pid/task/$strace_pid/children); do
+                if [[ $(readlink -f "/proc/$child/exe" 2>/dev/null || true) == "$rust_bin" ]]; then
+                    rust_pid=$child
+                    break 2
+                fi
+            done
+        fi
+        sleep 0.02
+    done
+    [[ $rust_pid =~ ^[1-9][0-9]*$ ]] || {
+        echo "could not identify the straced rust-reality child" >&2
+        exit 1
+    }
+    [[ $(sha256sum "/proc/$rust_pid/exe" | awk '{print $1}') == "$rust_sha256" ]] || {
+        echo "straced server ELF identity mismatch" >&2
+        exit 1
+    }
+else
+    "$rust_bin" serve --config "$work/rust.json" > "$work/rust.log" 2>&1 &
+    pids+=("$!"); rust_pid=$!
+fi
 "$xray" run -config "$work/xray-server.json" > "$work/xray-server.log" 2>&1 &
 pids+=("$!"); xray_pid=$!
 "$xray" run -config "$work/rust-client.json" > /dev/null 2>&1 &
