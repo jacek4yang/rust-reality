@@ -16,6 +16,7 @@ declare -Ag RR_BINARY_IDENTITIES=()
 declare -Ag RR_PID_STARTS=()
 declare -ag RR_HARNESS_FILES=()
 declare -Ag RR_HARNESS_SHA256=()
+RR_CONTRACT_FINALIZED=0
 RR_CONTRACT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
 RR_CONTRACT_SHA256=$(sha256sum -- "$RR_CONTRACT_PATH" | awk '{print $1}')
 
@@ -271,13 +272,20 @@ rr_register_harness_file() {
 }
 
 rr_assert_pid_exe() {
-    local pid=$1 expected=$2 attempt actual
+    local pid=$1 expected=$2 attempt actual registered_start current_start
     expected=$(readlink -f -- "$expected")
+    registered_start=${RR_PID_STARTS[$pid]:-}
+    [[ -n $registered_start ]] ||
+        rr_contract_die "PID $pid has no registered starttime" || return
     for attempt in $(seq 1 50); do
+        current_start=$(rr_pid_starttime "$pid" 2>/dev/null) || break
+        [[ $current_start == "$registered_start" ]] || {
+            rr_contract_die "PID $pid starttime changed during executable verification"
+            return
+        }
         if [[ -e /proc/$pid/exe ]]; then
             actual=$(readlink -f -- "/proc/$pid/exe" 2>/dev/null || true)
             [[ $actual == "$expected" ]] && return 0
-            [[ -n $actual ]] && break
         fi
         sleep 0.01
     done
@@ -315,9 +323,16 @@ rr_pid_is_registered() {
 }
 
 rr_stop_registered_pid() {
-    local pid=$1
+    local pid=$1 attempt
     if rr_pid_is_registered "$pid"; then
         kill -TERM "$pid" 2>/dev/null || true
+    fi
+    for attempt in $(seq 1 50); do
+        rr_pid_is_registered "$pid" || break
+        sleep 0.1
+    done
+    if rr_pid_is_registered "$pid"; then
+        kill -KILL "$pid" 2>/dev/null || true
     fi
     wait "$pid" 2>/dev/null || true
     unset 'RR_PID_STARTS[$pid]'
@@ -385,4 +400,16 @@ rr_finalize_contract() {
     rr_verify_registered_files || return
     rm -f -- "$RR_PORT_STATE"
     rr_write_contract_metadata complete
+    RR_CONTRACT_FINALIZED=1
+}
+
+# Call from every EXIT trap after process cleanup. The caller must return this
+# status from its trap: a successful run is upgraded to failure when immutable
+# files changed; an existing failure status is preserved.
+rr_contract_verify_on_exit() {
+    local original_status=$1
+    if (( RR_CONTRACT_FINALIZED == 0 )); then
+        rr_verify_registered_files || return 1
+    fi
+    return "$original_status"
 }
