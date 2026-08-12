@@ -104,15 +104,16 @@ pid_snapshot() {
 
 register_pid() {
     local pid=$1 expected_exe=${2:-} start
-    pid_snapshot "$pid" || {
-        echo "background process $pid exited before it could be registered" >&2
+    rr_register_pid "$pid" "$expected_exe" || {
+        echo "background process $pid exited or changed identity before registration" >&2
         return 1
     }
-    start=$pid_snapshot_start
+    start=${RR_PID_STARTS[$pid]:-}
+    [[ -n $start ]] || {
+        echo "contract did not retain starttime for PID $pid" >&2
+        return 1
+    }
     pid_start_times[$pid]=$start
-    if [[ -n $expected_exe ]]; then
-        rr_assert_pid_exe "$pid" "$expected_exe"
-    fi
 }
 
 pid_is_registered() {
@@ -139,6 +140,7 @@ signal_registered_pid() {
 
 forget_pid() {
     unset 'pid_start_times[$1]'
+    unset 'RR_PID_STARTS[$1]'
 }
 
 unit_is_registered() {
