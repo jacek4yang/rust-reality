@@ -224,6 +224,19 @@ for conc in concurrencies:
             f"{x['connectionsPerSecond']:.0f} conn/s (p50 {x['p50Seconds']*1000:.0f}ms, "
             f"p99 {x['p99Seconds']*1000:.0f}ms, fail {x['failed']})" for x in cells))
 PY
+    jq -e --argjson samples "$samples" --argjson conns "$conns" \
+        --arg concurrencies "$concurrencies" '
+        ($concurrencies | split(" ") | map(select(length > 0) | tonumber)) as $cs
+        | length == ($samples * ($cs | length))
+        and all(.[];
+            .connections == $conns
+            and .failed == 0
+            and (.concurrency as $c | $cs | index($c) != null)
+        )
+    ' "$out_dir/samples-$label.json" >/dev/null || {
+        echo "$label setup samples are incomplete or contain failures" >&2
+        return 1
+    }
 }
 
 run_leg rust "$rust_socks" "$rust_pid"

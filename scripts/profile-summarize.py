@@ -12,6 +12,7 @@ import glob
 import json
 import os
 import statistics
+import sys
 
 
 def load_cells(path):
@@ -214,8 +215,19 @@ def main():
         [ladder["oomKills"] if ladder else 0,
          ladder_tuned["oomKills"] if ladder_tuned else 0]
         + [f.get("cgroupOomKills") or 0 for f in finals])
-    passed = churn_ok and download_ok and oom_kills == 0 and (
-        ladder is None or ladder["maxCleanLevel"] > 0)
+    ladder_ok = bool(
+        ladder
+        and ladder["completed"]
+        and ladder["abortReason"] is None
+        and ladder["maxCleanLevel"] > 0
+    )
+    tuned_ladder_ok = bool(
+        ladder_tuned
+        and ladder_tuned["completed"]
+        and ladder_tuned["abortReason"] is None
+        and ladder_tuned["maxCleanLevel"] > 0
+    )
+    passed = churn_ok and download_ok and oom_kills == 0 and ladder_ok and tuned_ladder_ok
 
     ladder_fd_max = 0
     ladder_peak_max = 0
@@ -359,6 +371,9 @@ def main():
 
     with open(os.path.join(args.classdir, "summary.md"), "w", encoding="utf-8") as fh:
         fh.write("\n".join(md))
+
+    if not passed:
+        raise SystemExit("profile validation failed; inspect summary.json")
 
 
 if __name__ == "__main__":
