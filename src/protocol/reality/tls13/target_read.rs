@@ -772,7 +772,11 @@ impl CoverFlightIo for FuzzFlightReader<'_> {
 mod tests {
     use std::{io, pin::Pin, task::Poll, time::Duration};
 
-    use tokio::io::{AsyncRead, AsyncWriteExt, DuplexStream, ReadBuf};
+    use tokio::{
+        io::{AsyncRead, AsyncWriteExt, DuplexStream, ReadBuf},
+        net::{TcpListener, TcpStream},
+        sync::oneshot,
+    };
 
     use super::{
         BufferedFlightReader, CoverFlightIo, CoverHandshakePlan, CoverHandshakeRecordShape,
@@ -1097,6 +1101,102 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn tcp_mid_record_close_returns_exact_prefix_and_unexpected_eof() {
+        let client = client();
+        let prefix = partial_positional_flight();
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("ephemeral TCP listener must bind");
+        let address = listener
+            .local_addr()
+            .expect("ephemeral TCP listener must have an address");
+        let server_prefix = prefix.clone();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("cover TCP connection must arrive");
+            stream
+                .write_all(&server_prefix)
+                .await
+                .expect("partial cover flight must be written");
+            stream
+                .shutdown()
+                .await
+                .expect("partial cover connection must close cleanly");
+        });
+        let mut stream = TcpStream::connect(address)
+            .await
+            .expect("cover TCP connection must open");
+
+        let error = tokio::time::timeout(
+            Duration::from_secs(1),
+            read_target_server_flight(&mut stream, &client, Duration::from_millis(250)),
+        )
+        .await
+        .expect("closed cover connection must fail within the outer test deadline")
+        .expect_err("closing in the middle of a record must fail");
+        server.await.expect("cover TCP task must complete");
+
+        assert!(matches!(
+            error.kind(),
+            TargetServerHelloReadErrorKind::UnexpectedEof
+        ));
+        assert_eq!(error.fallback_prefix(), prefix);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tcp_mid_record_stall_returns_exact_prefix_and_timeout() {
+        let client = client();
+        let prefix = partial_positional_flight();
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("ephemeral TCP listener must bind");
+        let address = listener
+            .local_addr()
+            .expect("ephemeral TCP listener must have an address");
+        let server_prefix = prefix.clone();
+        let (written_tx, written_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("cover TCP connection must arrive");
+            stream
+                .write_all(&server_prefix)
+                .await
+                .expect("partial cover flight must be written");
+            written_tx
+                .send(())
+                .expect("test reader must await the written prefix");
+            let _ = release_rx.await;
+        });
+        let mut stream = TcpStream::connect(address)
+            .await
+            .expect("cover TCP connection must open");
+        written_rx
+            .await
+            .expect("cover TCP task must report the written prefix");
+
+        let error = tokio::time::timeout(
+            Duration::from_secs(1),
+            read_target_server_flight(&mut stream, &client, Duration::from_millis(100)),
+        )
+        .await
+        .expect("stalled cover connection must fail within the outer test deadline")
+        .expect_err("stalling in the middle of a record must time out");
+        assert!(matches!(
+            error.kind(),
+            TargetServerHelloReadErrorKind::Timeout
+        ));
+        assert_eq!(error.fallback_prefix(), prefix);
+
+        let _ = release_tx.send(());
+        server.await.expect("cover TCP task must complete");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn every_positional_flight_truncation_retains_the_exact_prefix() {
         let client = client();
         let mut complete = target_record(&[0x55; 32]);
@@ -1187,6 +1287,14 @@ mod tests {
         );
         record.resize(5 + body_len, fill);
         record
+    }
+
+    fn partial_positional_flight() -> Vec<u8> {
+        let mut prefix = target_record(&[0x55; 32]);
+        prefix.extend_from_slice(&[20, 3, 3, 0, 1, 1]);
+        prefix.extend_from_slice(&opaque_record(23, 32, 0x01));
+        prefix.extend_from_slice(&[23, 3, 3, 0, 64, 0xaa, 0xbb, 0xcc]);
+        prefix
     }
 
     fn push_extension(output: &mut Vec<u8>, extension_type: u16, value: &[u8]) {
