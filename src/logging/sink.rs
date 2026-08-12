@@ -294,6 +294,13 @@ pub enum LogEvent {
         uplink_handoff_delay_us: u64,
         /// Microseconds from the downlink boundary to its raw relay start.
         downlink_handoff_delay_us: u64,
+        /// Server application-record sequence exported to LANDING.
+        ///
+        /// Present only for a distributed Handoff session. This non-secret
+        /// counter lets operators prove whether a cover-shaped fake ticket
+        /// consumed sequence zero without exposing keys or packet contents.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        handoff_server_sequence: Option<u64>,
         /// The raw-relay pipe capacity was downgraded by kernel pipe-page
         /// limits (skipped when false, so normal connections stay quiet).
         #[serde(skip_serializing_if = "std::ops::Not::not")]

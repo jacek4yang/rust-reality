@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import socket
-import threading
 
 MAX_TLS_CIPHERTEXT_LEN = 16_640
 FAKE_FIFTH = b"\x17\x03\x03\x00\x86" + bytes(134)
@@ -32,7 +31,7 @@ def read_record(connection: socket.socket) -> bytes:
     return header + read_exact(connection, length)
 
 
-def handle(client: socket.socket, upstream_port: int) -> None:
+def handle(client: socket.socket, upstream_port: int) -> bool:
     """Forward one ClientHello and shape the corresponding server flight."""
     try:
         client.settimeout(2)
@@ -64,6 +63,7 @@ def handle(client: socket.socket, upstream_port: int) -> None:
                 ),
                 flush=True,
             )
+            return True
     except (EOFError, TimeoutError, ConnectionError, OSError, ValueError) as error:
         print(
             json.dumps(
@@ -72,6 +72,7 @@ def handle(client: socket.socket, upstream_port: int) -> None:
             ),
             flush=True,
         )
+        return False
     finally:
         client.close()
 
@@ -89,13 +90,11 @@ def main() -> None:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind(("127.0.0.1", args.listen_port))
         listener.listen(16)
-        while True:
+        for _ in range(8):
             connection, _ = listener.accept()
-            threading.Thread(
-                target=handle,
-                args=(connection, args.upstream_port),
-                daemon=True,
-            ).start()
+            if handle(connection, args.upstream_port):
+                return
+        raise SystemExit("no cover flight was shaped in eight accepted connections")
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ xray=${XRAY_BIN:-../artifacts/xray-reference}
 duration_min=${DURATION_MIN:-30}
 round_sleep=${ROUND_SLEEP:-5}
 minimum_rounds=${MIN_ROUNDS:-$duration_min}
+require_release_qualified=${REQUIRE_RELEASE_QUALIFIED:-0}
 expected_rust_sha256=${RUST_REALITY_SHA256:-}
 expected_xray_sha256=${XRAY_SHA256:-}
 out_dir=${OUT_DIR:-diagnostics/final/soak-$(date -u +%Y%m%dT%H%M%SZ)}
@@ -90,6 +91,8 @@ done
 [[ $duration_min =~ ^[1-9][0-9]*$ ]] || { echo "DURATION_MIN must be positive" >&2; exit 2; }
 [[ $round_sleep =~ ^[0-9]+$ ]] || { echo "ROUND_SLEEP must be non-negative" >&2; exit 2; }
 [[ $minimum_rounds =~ ^[1-9][0-9]*$ ]] || { echo "MIN_ROUNDS must be positive" >&2; exit 2; }
+[[ $require_release_qualified == 0 || $require_release_qualified == 1 ]] \
+    || { echo "REQUIRE_RELEASE_QUALIFIED must be 0 or 1" >&2; exit 2; }
 [[ -x $rust_bin ]] || { echo "RUST_REALITY_BIN not executable: $rust_bin" >&2; exit 1; }
 rust_bin=$(realpath "$rust_bin")
 rust_sha256=$(sha256sum "$rust_bin" | awk '{print $1}')
@@ -113,7 +116,9 @@ jq -n --arg rustBin "$rust_bin" --arg rustSha256 "$rust_sha256" \
     --arg xrayBin "$xray" --arg xraySha256 "$xray_sha256" \
     --arg startedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson durationMinutes "$duration_min" \
+    --argjson requireReleaseQualified "$require_release_qualified" \
     '{schemaVersion:1,startedAt:$startedAt,durationMinutes:$durationMinutes,
+      requireReleaseQualified:$requireReleaseQualified,
       rustReality:{path:$rustBin,sha256:$rustSha256},
       xray:{path:$xrayBin,sha256:$xraySha256}}' \
     >"$out_dir/environment.json"
@@ -146,16 +151,26 @@ PY
 }
 
 wait_port() {
-    local port=$1 pid=$2
-    python3 - "$port" "$pid" <<'PY'
+    local port=$1 pid=$2 expected=${active_starts[$2]:-}
+    [[ -n $expected ]] || { echo "unregistered process PID $pid" >&2; return 1; }
+    python3 - "$port" "$pid" "$expected" <<'PY'
 import os, socket, sys, time
-port, pid = int(sys.argv[1]), int(sys.argv[2])
+port, pid, expected = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
+
+
+def owned():
+    try:
+        raw = open(f"/proc/{pid}/stat", encoding="ascii").read()
+    except FileNotFoundError:
+        return False
+    end = raw.rfind(")")
+    return end >= 0 and raw[end + 2:].split()[19] == expected
+
+
 deadline = time.monotonic() + 10
 while time.monotonic() < deadline:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        raise SystemExit(f"process {pid} exited before port {port} became ready")
+    if not owned():
+        raise SystemExit(f"process identity {pid}/{expected} exited before port {port} became ready")
     with socket.socket() as sock:
         sock.settimeout(0.1)
         if sock.connect_ex(("127.0.0.1", port)) == 0:
@@ -337,6 +352,16 @@ wait_port "$handoff_socks_port" "$handoff_xray_pid"
 verify_one_mib_download "$handoff_socks_port" "$work/handoff-download.bin" \
     "$distributed_payload_sha256"
 wait_log_event "$out_dir/handoff-line.log" '"event":"connection_completed"'
+handoff_server_sequence=$(jq -s -e '
+    [.[] | select(.event == "connection_completed"
+        and .handoff_server_sequence != null) | .handoff_server_sequence]
+    | if length == 1 then .[0] else error("expected one Handoff completion sequence") end
+' "$out_dir/handoff-line.log")
+[[ $handoff_server_sequence == 1 ]] || {
+    echo "Handoff exported server sequence $handoff_server_sequence, expected 1" >&2
+    exit 1
+}
+install -m 0600 "$work/handoff-download.bin" "$out_dir/handoff-download.bin"
 stop_pid "$handoff_xray_pid"
 stop_pid "$handoff_line_pid"
 stop_pid "$handoff_landing_pid"
@@ -405,12 +430,16 @@ wait_port "$nxr_socks_port" "$nxr_xray_pid"
 verify_one_mib_download "$nxr_socks_port" "$work/nxr-download.bin" \
     "$distributed_payload_sha256"
 wait_log_event "$out_dir/nxr-line.log" '"event":"connection_completed"'
+install -m 0600 "$work/nxr-download.bin" "$out_dir/nxr-download.bin"
 stop_pid "$nxr_xray_pid"
 stop_pid "$nxr_line_pid"
 stop_pid "$nxr_landing_pid"
 
 jq -n --arg payloadSha256 "$distributed_payload_sha256" \
     --argjson handoffShapeEvents "$handoff_shape_events" \
+    --argjson handoffServerSequence "$handoff_server_sequence" \
+    --arg handoffDownloadSha256 "$(sha256sum "$out_dir/handoff-download.bin" | awk '{print $1}')" \
+    --arg nxrDownloadSha256 "$(sha256sum "$out_dir/nxr-download.bin" | awk '{print $1}')" \
     --arg handoffLineConfigSha256 "$(sha256sum "$work/handoff-line.json" | awk '{print $1}')" \
     --arg handoffLandingConfigSha256 "$(sha256sum "$work/handoff-landing.json" | awk '{print $1}')" \
     --arg nxrLineConfigSha256 "$(sha256sum "$work/nxr-line.json" | awk '{print $1}')" \
@@ -418,10 +447,13 @@ jq -n --arg payloadSha256 "$distributed_payload_sha256" \
     '{schemaVersion:1,payloadBytes:1048576,payloadSha256:$payloadSha256,
       handoffSeq1:{attempts:1,successes:1,fakeNstExpected:true,
         coverShapeEvents:$handoffShapeEvents,appendedWireLength:139,
+        exportedServerSequence:$handoffServerSequence,
+        download:{path:"handoff-download.bin",bytes:1048576,sha256:$handoffDownloadSha256},
         evidence:{coverTrace:"handoff-cover-trace.log",shapeProxyLog:"handoff-cover-shape-proxy.log",lineLog:"handoff-line.log",
           landingLog:"handoff-landing.log"},lineConfigSha256:$handoffLineConfigSha256,
         landingConfigSha256:$handoffLandingConfigSha256},
       nxrByteIntegrity:{attempts:1,successes:1,lineLog:"nxr-line.log",
+        download:{path:"nxr-download.bin",bytes:1048576,sha256:$nxrDownloadSha256},
         landingLog:"nxr-landing.log",lineConfigSha256:$nxrLineConfigSha256,
         landingConfigSha256:$nxrLandingConfigSha256},ok:true}' \
     >"$out_dir/distributed-gates.json"
@@ -432,15 +464,24 @@ start_logged /dev/null "$xray" run -config "$work/rust-client.json"
 sleep 1.5
 
 snapshot() {
-    python3 - "$server_pid" "$1" >> "$out_dir/resources.jsonl" <<'PY'
+    local expected=${active_starts[$server_pid]:-}
+    [[ -n $expected ]] || { echo "server PID is not registered" >&2; return 1; }
+    python3 - "$server_pid" "$expected" "$1" >> "$out_dir/resources.jsonl" <<'PY'
 import json, os, sys
-pid, label = sys.argv[1], sys.argv[2]
+pid, expected, label = sys.argv[1], sys.argv[2], sys.argv[3]
+raw = open(f"/proc/{pid}/stat", encoding="ascii").read()
+end = raw.rfind(")")
+observed = raw[end + 2:].split()[19] if end >= 0 else None
+if observed != expected:
+    raise SystemExit(f"server PID identity changed: {pid}/{expected} -> {observed}")
 with open(f"/proc/{pid}/status") as fh:
     fields = dict(line.split(":", 1) for line in fh if ":" in line)
 print(json.dumps({
     "label": label,
     "monotonicSeconds": __import__("time").monotonic(),
     "serverAlive": True,
+    "pid": int(pid),
+    "pidStarttime": observed,
     "fds": len(os.listdir(f"/proc/{pid}/fd")),
     "vmRssKiB": int(fields["VmRSS"].split()[0]),
     "threads": int(fields["Threads"].split()[0]),
@@ -459,9 +500,9 @@ verify_download() {
 
 failures=0
 round=0
-deadline=$(( $(date +%s) + duration_min * 60 ))
+deadline=$(( SECONDS + duration_min * 60 ))
 snapshot start
-while (( $(date +%s) < deadline )); do
+while (( SECONDS < deadline )); do
     round=$((round + 1))
     verify_download -sS --insecure --fail --socks5-hostname 127.0.0.1:$rust_socks \
         --max-time 60 https://127.0.0.1:$https_port/payload-4.bin \
@@ -491,13 +532,15 @@ final_xray_sha256=$(sha256sum "$xray" | awk '{print $1}')
     || { echo 'XRAY_BIN changed during soak' >&2; exit 1; }
 
 python3 - "$out_dir/resources.jsonl" "$failures" "$round" "$minimum_rounds" \
-    "$duration_min" "$expected_payload_sha256" "$out_dir/distributed-gates.json" \
+    "$duration_min" "$require_release_qualified" "$expected_payload_sha256" \
+    "$out_dir/distributed-gates.json" \
     "$out_dir/soak-summary.json" <<'PY'
 import json, statistics, sys
 records = [json.loads(line) for line in open(sys.argv[1])]
 failures, rounds, minimum_rounds = map(int, sys.argv[2:5])
 duration_minutes = int(sys.argv[5])
-payload_sha256, distributed_path, output = sys.argv[6:9]
+require_release_qualified = bool(int(sys.argv[6]))
+payload_sha256, distributed_path, output = sys.argv[7:10]
 with open(distributed_path) as handle:
     distributed = json.load(handle)
 start, end = records[0], records[-1]
@@ -521,6 +564,7 @@ if len(xs) >= 2 and len(set(xs)) > 1:
 else:
     rss_slope_mib_per_hour = 0.0
 slope_gate_applied = duration_minutes >= 30
+elapsed_seconds = end["monotonicSeconds"] - start["monotonicSeconds"]
 ok = (
     failures == 0
     and rounds >= minimum_rounds
@@ -538,8 +582,19 @@ ok = (
     and distributed.get("handoffSeq1", {}).get("fakeNstExpected") is True
     and distributed.get("handoffSeq1", {}).get("coverShapeEvents", 0) >= 1
     and distributed.get("handoffSeq1", {}).get("appendedWireLength") == 139
+    and distributed.get("handoffSeq1", {}).get("exportedServerSequence") == 1
+    and distributed.get("handoffSeq1", {}).get("download", {}).get("bytes") == 1048576
+    and distributed.get("handoffSeq1", {}).get("download", {}).get("sha256") == distributed.get("payloadSha256")
     and distributed.get("nxrByteIntegrity", {}).get("attempts") == 1
     and distributed.get("nxrByteIntegrity", {}).get("successes") == 1
+    and distributed.get("nxrByteIntegrity", {}).get("download", {}).get("bytes") == 1048576
+    and distributed.get("nxrByteIntegrity", {}).get("download", {}).get("sha256") == distributed.get("payloadSha256")
+)
+release_qualified = (
+    ok
+    and duration_minutes == 720
+    and elapsed_seconds >= 720 * 60
+    and slope_gate_applied
 )
 summary = {
     "rounds": rounds,
@@ -556,11 +611,14 @@ summary = {
     "rssPeakGrowthMiB": round(rss_peak_growth_mib, 1),
     "rssTailSlopeMiBPerHour": round(rss_slope_mib_per_hour, 3),
     "rssTailSlopeGateApplied": slope_gate_applied,
+    "durationMinutes": duration_minutes,
+    "elapsedSeconds": round(elapsed_seconds, 3),
+    "releaseQualified": release_qualified,
     "distributedGates": distributed,
     "ok": ok,
 }
 with open(output, "x") as fh:
     json.dump({"summary": summary, "snapshots": records}, fh, indent=2)
 print(json.dumps(summary))
-sys.exit(0 if ok else 1)
+sys.exit(0 if ok and (not require_release_qualified or release_qualified) else 1)
 PY

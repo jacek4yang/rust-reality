@@ -1246,6 +1246,7 @@ async fn run_connection(
                         downlink_backend: stats.downlink_backend().map(RelayBackend::as_str),
                         uplink_handoff_delay_us: stats.uplink_handoff_delay_us(),
                         downlink_handoff_delay_us: stats.downlink_handoff_delay_us(),
+                        handoff_server_sequence: stats.handoff_server_sequence(),
                         pipe_capacity_downgraded: stats.pipe_capacity_downgraded(),
                     },
                 );

@@ -72,6 +72,7 @@ pub struct VisionRelayStats {
     downlink_backend: Option<RelayBackend>,
     uplink_handoff_delay_us: u64,
     downlink_handoff_delay_us: u64,
+    handoff_server_sequence: Option<u64>,
     pipe_capacity_downgraded: bool,
 }
 
@@ -140,6 +141,13 @@ impl VisionRelayStats {
     #[must_use]
     pub const fn downlink_handoff_delay_us(self) -> u64 {
         self.downlink_handoff_delay_us
+    }
+
+    /// Returns the server record sequence exported to LANDING, when this
+    /// session used the distributed Handoff path.
+    #[must_use]
+    pub const fn handoff_server_sequence(self) -> Option<u64> {
+        self.handoff_server_sequence
     }
 
     /// Returns whether a raw-relay backend was granted less pipe capacity
@@ -501,6 +509,7 @@ impl VisionHandler {
             uplink_bytes: outcome.inbound_to_outbound(),
             downlink_bytes: outcome.outbound_to_inbound(),
             relay_backend: Some(outcome.backend()),
+            handoff_server_sequence: Some(server_sequence),
             pipe_capacity_downgraded: outcome.pipe_downgrade().is_some(),
             ..VisionRelayStats::default()
         })
