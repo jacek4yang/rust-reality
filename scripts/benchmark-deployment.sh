@@ -128,23 +128,63 @@ ns_pidfiles=()
 netns_name=""
 host_veth=""
 ns_veth=""
+netns_created=0
+host_veth_created=0
+netns_identity=""
+host_veth_ifindex=""
 
 log() { printf '[deployment %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
+
+current_netns_identity() {
+    sudo -n stat -Lc '%d:%i' -- "/run/netns/$1" 2>/dev/null
+}
+
+current_link_ifindex() {
+    cat -- "/sys/class/net/$1/ifindex" 2>/dev/null
+}
 
 # --------------------------------------------------------------------------
 # Cleanup: every spawned process, then network state, then the work dir.
 # --------------------------------------------------------------------------
 netns_teardown() {
-    if [[ -n $netns_name ]]; then
-        log "netns: tearing down $netns_name (veth pair is destroyed with it)"
+    local current
+    if (( netns_created == 1 )); then
+        log "netns: tearing down owned namespace $netns_name"
         for pidfile in "${ns_pidfiles[@]:-}"; do
             [[ -f $pidfile ]] && rr_stop_registered_pid "$(cat "$pidfile")"
         done
-        sudo -n ip netns del "$netns_name" 2>/dev/null || true
-        [[ -n $host_veth ]] && sudo -n ip link del "$host_veth" 2>/dev/null || true
-        netns_name=""
-        log "netns: teardown done; remaining namespaces: $(sudo -n ip netns list 2>/dev/null)"
+        current=$(current_netns_identity "$netns_name" || true)
+        if [[ -n $netns_identity && $current == "$netns_identity" ]]; then
+            sudo -n ip netns del "$netns_name"
+            netns_created=0
+        elif [[ -z $current ]]; then
+            log "netns: owned namespace $netns_name is already absent"
+            netns_created=0
+        else
+            log "netns: REFUSING to delete $netns_name: identity changed (expected $netns_identity, got $current)"
+        fi
     fi
+
+    if (( host_veth_created == 1 )); then
+        current=$(current_link_ifindex "$host_veth" || true)
+        if [[ -n $host_veth_ifindex && $current == "$host_veth_ifindex" ]]; then
+            sudo -n ip link del "$host_veth"
+            host_veth_created=0
+        elif [[ -z $current ]]; then
+            log "netns: owned link $host_veth is already absent"
+            host_veth_created=0
+        else
+            log "netns: REFUSING to delete $host_veth: ifindex changed (expected $host_veth_ifindex, got $current)"
+        fi
+    fi
+    if (( netns_created == 0 && host_veth_created == 0 )); then
+        netns_name=""
+        host_veth=""
+        ns_veth=""
+        netns_identity=""
+        host_veth_ifindex=""
+    fi
+    log "netns: teardown done; remaining namespaces: $(sudo -n ip netns list 2>/dev/null)"
 }
 
 cleanup() {
@@ -754,8 +794,14 @@ section_rtt() {
 
     log "netns: ip netns add $netns_name"
     sudo -n ip netns add "$netns_name"
+    netns_created=1
+    netns_identity=$(current_netns_identity "$netns_name")
+    [[ -n $netns_identity ]] || { echo "could not capture namespace identity" >&2; return 1; }
     log "netns: veth pair $host_veth (host, 10.203.0.1/30) <-> $ns_veth ($netns_name, 10.203.0.2/30)"
     sudo -n ip link add "$host_veth" type veth peer name "$ns_veth"
+    host_veth_created=1
+    host_veth_ifindex=$(current_link_ifindex "$host_veth")
+    [[ $host_veth_ifindex =~ ^[1-9][0-9]*$ ]] || { echo "could not capture veth ifindex" >&2; return 1; }
     sudo -n ip link set "$ns_veth" netns "$netns_name"
     sudo -n ip addr add 10.203.0.1/30 dev "$host_veth"
     sudo -n ip link set "$host_veth" up
