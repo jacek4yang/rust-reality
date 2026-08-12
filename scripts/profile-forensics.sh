@@ -269,13 +269,16 @@ finish() {
     trap - EXIT INT TERM
     set +e
     cleanup_owned
-    if (( completed == 0 )); then
-        write_metadata FAILED "$original_rc" || true
+    rr_contract_verify_on_exit "$original_rc"
+    final_rc=$?
+    # An incomplete fall-through is never success. More importantly, the
+    # second immutable-input verification can fail after metadata was marked
+    # COMPLETE; rewrite it with the actual final status in that case.
+    if (( completed == 0 && final_rc == 0 )); then
+        final_rc=1
     fi
-    if rr_contract_verify_on_exit "$original_rc"; then
-        final_rc=0
-    else
-        final_rc=$?
+    if (( completed == 0 || final_rc != 0 )); then
+        write_metadata FAILED "$final_rc" || true
     fi
     exit "$final_rc"
 }
