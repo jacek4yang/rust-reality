@@ -206,7 +206,9 @@ cleanup() {
     final_rc=$?
     exit "$final_rc"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 for program in curl jq python3 go openssl sha256sum; do
     command -v "$program" >/dev/null || { echo "missing: $program" >&2; exit 2; }
