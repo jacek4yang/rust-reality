@@ -2,6 +2,69 @@
 
 All notable user-facing changes to this project are documented in this file.
 
+## [1.5.0] - 2026-08-12
+
+### Added
+
+- The authenticated REALITY cover-flight plan now models optional
+  middlebox-compatibility CCS, four positional encrypted handshake records,
+  and an optional fifth post-Finished record. When that fifth record is
+  present, rust-reality emits an empty TLS 1.3 ApplicationData record as a
+  bounded cover-shaped fake NST; it carries no ticket or resumption state.
+- Official Linux x86_64 releases contain two independently identified assets:
+  the portable `x86_64-unknown-linux-gnu` archive and an opt-in
+  `x86_64-v3-unknown-linux-gnu` archive. `release-manifest.json` schema v2
+  records each tier's requirements and SHA-256; `SHA256SUMS` covers both
+  archives and the manifest.
+- The benchmark and forensic scripts accept explicit run IDs, immutable binary
+  paths and hashes, unique output/temp directories, and isolated perf/IDA
+  inputs. Authoritative comparisons use balanced ABBA blocks and fail closed
+  on missing samples or integrity failures.
+
+### Changed
+
+- Cover flight inspection is bounded to a 66,642-byte retained prefix. Reads
+  are incremental and deadline-bound; optional fifth-record detection uses
+  buffered bytes first and then at most one nonblocking probe. Every inspected
+  byte remains available to the byte-exact fallback path.
+- A fake NST consumes server application record sequence 0, so the established
+  server record layer starts at sequence 1 for that shape and at sequence 0
+  otherwise. Client application sequence ownership remains unchanged.
+- Handoff keeps `HND1`, protocol version 1, continuation-state version 1, and
+  the existing wire encoding. A v1.5 LANDING accepts server sequence 0 or 1
+  and rejects sequence 2 or greater before record-layer restoration, avoiding
+  AEAD nonce reuse.
+
+### Compatibility and operations
+
+- Xray 26.7.28 end-to-end gates passed with the Microsoft, Google, and Fastly
+  public covers. A local OpenSSL 3.5.6 cover that omits compatibility CCS also
+  passed. Each gate verified an exact 1 MiB SHA-256 payload and ML-DSA-65 key
+  compatibility; these are interoperability results, not throughput claims.
+- Rolling Handoff upgrades are LANDING-first, then LINE: a v1.4 LINE can use a
+  v1.5 LANDING. Rollback is LINE-first, followed by admission stop and active
+  session drain before LANDING downgrade. A v1.5 LINE that exports sequence 1
+  is not compatible with a v1.4 LANDING.
+
+### Performance evidence
+
+- Same-host warn-level setup ABBA against v1.4 measured candidate/baseline
+  medians of -0.38% at c1 (95% bootstrap CI -0.465% to +0.170%), +0.26% at c8
+  (-3.368% to +2.497%), and +0.53% at c32 (-1.257% to +1.557%). Every interval
+  crosses no difference; no setup-throughput win or regression is claimed.
+- Normalized setup counters changed by -0.768% task-clock, -0.190%
+  instructions, and +1.042% context switches (about +0.058 per connection).
+  A separate current trace measured 4.0013 fewer `recvfrom` calls per
+  connection in the candidate. Instrumented and uninstrumented timing are not
+  compared.
+- Two balanced six-path matrix rounds covering bidirectional, Direct
+  download/upload, fallback, and framed download/upload each retained 219
+  samples with zero invalid samples. Every throughput and latency 95%
+  block-bootstrap interval crossed no difference. Direct-upload's median ratio
+  reversed from 0.9511 to 1.1390 between rounds, confirming order/host noise;
+  the evidence establishes no statistically significant protected-path
+  change, not a performance victory.
+
 ## [1.4.0] - 2026-08-11
 
 ### Added

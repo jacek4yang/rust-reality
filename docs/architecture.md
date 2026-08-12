@@ -24,6 +24,15 @@ canonical samples live in [benchmarks.md](benchmarks.md).
    borrowed userspace copy. The authenticated short ID resolves through a
    cardinality-adaptive immutable index and carries its unique owner UUID into
    the established session.
+
+   In v1.5, the cover response is consumed through a bounded incremental
+   reader. Its plan can contain optional CCS, four positional encrypted
+   handshake records, and an optional fifth post-Finished record. At most
+   66,642 cover bytes are retained; fifth-record discovery first uses buffered
+   data and otherwise performs one nonblocking probe. A fifth record causes an
+   empty encrypted ApplicationData fake NST to consume server application
+   sequence 0. The established server record layer therefore begins at 0 or 1
+   according to the authenticated plan; fallback receives every inspected byte.
 3. **VLESS + Vision.** The request is decoded from the outer TLS stream;
    the adaptive UUID index finds the header user and requires it to equal the
    short-ID owner before any routing; routing then selects an outbound and the
@@ -129,9 +138,10 @@ registration per progress step, no hot-path logging.
 
 When routing resolves an accepted session to a handoff outbound, the session
 changes owner instead of being served locally. The boundary is exact: routing
-has resolved, nothing was ever written toward the client, the server-direction
-record sequence is still zero, and no Vision state exists yet. The ownership
-rule is **one session, one protocol owner at any instant**:
+has resolved, no Vision response was written toward the client, the
+server-direction record sequence is either zero or one (depending on the
+optional fake NST), and no Vision state exists yet. The ownership rule is
+**one session, one protocol owner at any instant**:
 
 ```text
 LINE_OWNED -> HANDOFF_IN_PROGRESS -> LANDING_OWNED | ABORTED

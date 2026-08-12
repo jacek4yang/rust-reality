@@ -134,6 +134,35 @@ and run the full suite, while TSan covers the replay duplicate race.
    their own errors; cells whose origin reports errors are marked invalid
    rather than read as proxy results.
 
+## v1.5 balanced ABBA evidence
+
+The v1.5 release comparison uses immutable candidate and v1.4 binaries. Every
+authoritative setup or data-path comparison is arranged in balanced ABBA
+blocks after reproducible warmup; raw samples, failures, binary SHA-256,
+frequency and temperature metadata are retained. Perf attribution and syscall
+tracing run in separate rounds and never lend their instrumented elapsed time
+to an uninstrumented performance claim.
+
+Three warmed setup blocks measured candidate/baseline medians of -0.38% at c1
+(95% bootstrap interval -0.465% to +0.170%), +0.26% at c8 (-3.368% to
++2.497%), and +0.53% at c32 (-1.257% to +1.557%). Normalized task-clock and
+instructions changed by -0.768% and -0.190%; context switches changed by
++1.042%, approximately +0.058 per connection. A separate current syscall
+trace measured 4.0013 fewer candidate `recvfrom` calls per connection.
+
+Two six-path matrix rounds exercised bidirectional, Direct download/upload,
+fallback, and framed download/upload with exact payload hashes. Each retained
+219 samples with zero invalid samples. Every workload's throughput and latency
+95% block-bootstrap interval crossed no difference. Direct upload's median
+ratio reversed from 0.9511 to 1.1390 between rounds, confirming order/host
+noise. These results are retained as no-difference evidence: they neither
+establish a protected-path regression nor justify a performance-win headline.
+
+The v1.5 interoperability matrix also exercised Xray 26.7.28 against
+Microsoft, Google, and Fastly public covers plus local OpenSSL 3.5.6 without
+CCS. Each case passed exact 1 MiB SHA-256 and ML-DSA-65 compatibility. It is a
+protocol gate and carries no timing claim.
+
 ## v1.2.0 distributed and WAN-emulation evidence (LAB-NETEM)
 
 The v1.2 cycle characterized the distributed topologies on a namespace/veth

@@ -36,9 +36,10 @@ Xray-compatible client
 - ring (BoringSSL-derived) AES-128-GCM record AEAD by default; a pure-Rust
   RustCrypto fallback build is one flag away and continuously tested.
 - The authenticated server flight preserves the cover-derived ServerHello and
-  follows the cover's measured coalesced/four-record post-ServerHello shape.
-  The v1.4 result is OpenSSL-reference-aligned on documented record/write
-  dimensions—not a claim of indistinguishability.
+  follows optional CCS, the measured four-position/coalesced handshake shape,
+  and an optional fifth post-Finished shape. The latter is represented by an
+  empty ApplicationData fake NST with no resumption state. Inspection is
+  bounded to 66,642 retained bytes and remains byte-exact on fallback.
 - Bounded everything: connections, handshakes, fallbacks, crypto work, replay
   state, buffers, DNS results, descriptors, and splice resources — with
   pressure hysteresis instead of collapse.
@@ -85,6 +86,15 @@ characterization (routing, NXR vs SOCKS5, RTT sensitivity), the hot-path
 forensic report, and everything needed to reproduce them are in
 [docs/performance.md](docs/performance.md) and
 [docs/benchmarks.md](docs/benchmarks.md).
+
+For v1.5, a balanced same-host ABBA comparison against v1.4 found no
+statistically significant setup or protected-path throughput/latency change:
+all reported 95% intervals in two complete matrix rounds crossed no difference.
+The candidate did remove
+4.0013 cover `recvfrom` calls per setup connection in a separate syscall
+trace. These are bounded implementation-cost observations, not a claimed
+throughput win; the exact intervals are in
+[docs/performance.md](docs/performance.md#v15-cover-flight-and-release-evidence).
 
 ## Architecture
 

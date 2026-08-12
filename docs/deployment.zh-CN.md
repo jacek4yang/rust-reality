@@ -76,6 +76,11 @@ sudo install -d -o rust-reality -g rust-reality -m 0750 \
 
 ### 1. 选择并探测伪装目标
 
+v1.5 接受带或不带 compatibility CCS 的 TLS 1.3 伪装 flight，并可表达四条
+位置化加密握手记录及可选的第五条 Finished 后记录。必须探测实际生产目标和
+SNI；另一个主机探测成功不代表本目标可用。不支持、截断、超界或内部不一致的
+flight 会 fail closed 到逐字节精确 fallback，没有削弱这些检查的运行时开关。
+
 SNI 必须是目标实际服务的 DNS 名，目标必须协商兼容的 TLS 1.3 ServerHello。
 从真实 VPS 执行：
 
@@ -271,6 +276,9 @@ v1.4 落地机：伪装形状消耗首个服务端应用序号的会话会静默
 LINE 可以继续连接 v1.5 LANDING。回滚时，必须先降级所有 LINE，确保不再产生
 新的序号 1 转移；随后停止接纳新的 Handoff 会话并排空 LANDING 上的活跃会话，
 最后再降级 LANDING。不得在仍有活跃转移会话时重启或降级 LANDING。
+
+记录序号安全边界与混合版本依据见
+[ADR 0005](decisions/0005-handoff-server-record-sequences.md)。
 
 ## GeoIP 与 GeoSite
 

@@ -81,6 +81,13 @@ Recommended layout:
 
 ### 1. Select and probe the cover target
 
+v1.5 accepts TLS 1.3 cover flights with or without compatibility CCS and can
+model four positional encrypted handshake records plus an optional fifth
+post-Finished record. Probe the exact production target and SNI: a successful
+probe of another host is not evidence for this one. Any unsupported,
+truncated, oversized, or inconsistent flight fails closed into byte-exact
+fallback; there is no operator switch that weakens these checks.
+
 The SNI must be a DNS name served by the target and the target must negotiate a
 compatible TLS 1.3 ServerHello. Test from the real VPS:
 
@@ -301,6 +308,9 @@ window. For rollback, downgrade every LINE first so no new sequence-1 transfer
 can be created, stop admitting new Handoff sessions and drain the active
 sessions on the LANDINGs, then downgrade the LANDINGs. Never restart or
 downgrade a LANDING underneath active transferred sessions.
+
+The record-sequence safety boundary and mixed-version rationale are recorded in
+[ADR 0005](decisions/0005-handoff-server-record-sequences.md).
 
 ## GeoIP and GeoSite
 

@@ -12,6 +12,42 @@ these numbers describe implementation cost, never Internet throughput. The
 frozen v1.0.0 release comparison matrix is published in
 [benchmarks.md](benchmarks.md).
 
+## v1.5 cover-flight and release evidence
+
+The v1.5 candidate was compared with the immutable v1.4 release binary on the
+same four-core validation host. The setup harness used symmetric warn logging,
+three warmed balanced ABBA blocks, exact binary hashes, and independent cells
+at c1/c8/c32. Candidate/baseline setup-rate medians and 95% block-bootstrap
+intervals were:
+
+| concurrency | median change | 95% interval |
+|---:|---:|---:|
+| 1 | -0.38% | -0.465% to +0.170% |
+| 8 | +0.26% | -3.368% to +2.497% |
+| 32 | +0.53% | -1.257% to +1.557% |
+
+All three intervals cross no difference. Normalized counters changed by
+-0.768% task-clock, -0.190% instructions, and +1.042% context switches; the
+last is approximately +0.058 context switches per setup connection. A
+separate current `strace` round found 4.0013 fewer `recvfrom` calls per
+candidate connection. The trace is mechanism evidence only: its timings are
+not compared with the uninstrumented ABBA.
+
+Two full balanced matrix rounds covered bidirectional, Direct download/upload,
+fallback, and framed download/upload. Each retained 219 samples with zero
+invalid samples; payload hashes passed, and every workload's candidate/baseline
+throughput and latency 95% block-bootstrap interval crossed no difference.
+Direct upload's median ratio reversed from 0.9511 in the first round to 1.1390
+in the second, confirming order/host noise. Thus the evidence detects neither
+a statistically significant protected-path regression nor a throughput win.
+The same source is released as portable and x86-64-v3 artifacts, but CPU-tier
+identity alone is not treated as performance evidence.
+
+Interoperability gates passed against Xray 26.7.28 with Microsoft, Google, and
+Fastly public covers and against a local OpenSSL 3.5.6 cover without CCS. Each
+case verified an exact 1 MiB SHA-256 transfer and ML-DSA-65 key compatibility.
+These gates establish wire correctness, not throughput.
+
 ## v1.3 control-plane and setup-path structures
 
 The v1.3 audit separated hashes by purpose instead of globally replacing
