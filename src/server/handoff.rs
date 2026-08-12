@@ -776,6 +776,34 @@ mod tests {
         )
     }
 
+    fn tls_states_after_cover_shaped_fake_ticket()
+    -> (EstablishedTls, Tls13RecordLayer, Tls13RecordLayer) {
+        let (mut established, client_write_records, mut client_read_records) = tls_states();
+        assert_eq!(established.server_records_mut().records_used(), 0);
+        assert_eq!(client_read_records.records_used(), 0);
+
+        // The cover-shaped fake NewSessionTicket is an empty application-data
+        // record under the server application key. It consumes sequence zero
+        // before authenticated Vision traffic begins, exactly as production
+        // `build_server_flight_with_shape` does.
+        let mut fake_ticket = Vec::new();
+        established
+            .server_records_mut()
+            .seal_into(ContentType::ApplicationData, b"", 117, &mut fake_ticket)
+            .expect("cover-shaped fake ticket must seal at sequence zero");
+        // 5-byte record header + 1-byte inner type + 117-byte padding + 16-byte tag.
+        assert_eq!(fake_ticket.len(), 139);
+        let opened = client_read_records
+            .open_in_place(&mut fake_ticket)
+            .expect("client must authenticate the cover-shaped fake ticket");
+        assert_eq!(opened.content_type(), ContentType::ApplicationData);
+        assert!(opened.plaintext().is_empty());
+        assert_eq!(established.server_records_mut().records_used(), 1);
+        assert_eq!(client_read_records.records_used(), 1);
+
+        (established, client_write_records, client_read_records)
+    }
+
     fn vision_request(destination_port: u16, payload: &[u8]) -> Vec<u8> {
         let mut addons = vec![0x0a, 0x10];
         addons.extend_from_slice(VISION_FLOW.as_bytes());
@@ -953,6 +981,15 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn line_to_landing_moves_a_full_vision_session_byte_exactly() {
+        run_line_to_landing_full_vision_session(false).await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn line_to_landing_resumes_after_cover_shaped_server_sequence_one() {
+        run_line_to_landing_full_vision_session(true).await;
+    }
+
+    async fn run_line_to_landing_full_vision_session(consume_cover_shaped_fake_ticket: bool) {
         let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("destination must bind");
@@ -968,7 +1005,21 @@ mod tests {
         let landing_handler = test_landing_handler();
         let line_handler = handoff_vision_handler(landing_address);
         let (mut client, server) = tcp_pair().await;
-        let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
+        let (established_tls, mut client_write_records, mut client_read_records) =
+            if consume_cover_shaped_fake_ticket {
+                tls_states_after_cover_shaped_fake_ticket()
+            } else {
+                tls_states()
+            };
+        let expected_first_visible_server_sequence = if consume_cover_shaped_fake_ticket {
+            1
+        } else {
+            0
+        };
+        assert_eq!(
+            client_read_records.records_used(),
+            expected_first_visible_server_sequence
+        );
         let established = RealityEstablished::from_test_parts(
             TlsApplicationIo::new(server, established_tls),
             USER,
@@ -1021,6 +1072,11 @@ mod tests {
                         ContentType::ApplicationData => {
                             let plaintext = opened.plaintext();
                             let vision = if response_header {
+                                assert_eq!(
+                                    client_read_records.records_used(),
+                                    expected_first_visible_server_sequence + 1,
+                                    "the first visible response must decrypt at the exported server sequence",
+                                );
                                 response_header = false;
                                 if plaintext.get(..2) != Some([VERSION, 0].as_slice()) {
                                     return Err(io::Error::other("invalid VLESS response header"));
