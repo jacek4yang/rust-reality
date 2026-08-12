@@ -775,8 +775,9 @@ mod tests {
     use tokio::io::{AsyncRead, AsyncWriteExt, DuplexStream, ReadBuf};
 
     use super::{
-        CoverFlightIo, CoverHandshakePlan, CoverHandshakeRecordShape,
-        TargetServerHelloReadErrorKind, read_target_server_flight, read_target_server_hello,
+        BufferedFlightReader, CoverFlightIo, CoverHandshakePlan, CoverHandshakeRecordShape,
+        MAX_RETAINED_COVER_PREFIX_LEN, TargetServerHelloReadErrorKind, read_target_server_flight,
+        read_target_server_hello,
     };
     use crate::protocol::reality::{
         ClientHello, SESSION_ID_LEN, X25519_GROUP, client_hello::fixtures,
@@ -819,6 +820,32 @@ mod tests {
         fn try_read_now(&mut self, _output: &mut [u8]) -> io::Result<usize> {
             Err(io::Error::from(io::ErrorKind::WouldBlock))
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn retained_prefix_accepts_the_exact_global_limit_and_rejects_one_more_byte() {
+        let mut reader = OneByteReader {
+            bytes: vec![0x5a],
+            position: 0,
+        };
+        let mut flight = BufferedFlightReader {
+            reader: &mut reader,
+            deadline: tokio::time::Instant::now() + Duration::from_secs(1),
+            buffer: vec![0; MAX_RETAINED_COVER_PREFIX_LEN - 1],
+            consumed: MAX_RETAINED_COVER_PREFIX_LEN - 1,
+        };
+
+        flight
+            .fill(1)
+            .await
+            .expect("the exact 66,642-byte prefix limit must be accepted");
+        assert_eq!(flight.buffer.len(), MAX_RETAINED_COVER_PREFIX_LEN);
+        assert_eq!(flight.buffer.last(), Some(&0x5a));
+        assert!(matches!(
+            flight.fill(2).await,
+            Err(TargetServerHelloReadErrorKind::RecordTooLarge)
+        ));
+        assert_eq!(flight.buffer.len(), MAX_RETAINED_COVER_PREFIX_LEN);
     }
 
     #[tokio::test(flavor = "current_thread")]

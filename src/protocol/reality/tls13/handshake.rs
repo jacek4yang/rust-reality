@@ -667,8 +667,9 @@ mod tests {
         client_hello::fixtures,
         tls13::{
             CertificateIdentity, CipherSuite, ContentType, CoverHandshakePlan,
-            CoverHandshakeRecordShape, ServerHelloTemplate, Tls13KeySchedule, Tls13RecordLayer,
-            TrafficKeys, change_cipher_spec_record, finished_message, read_client_finished,
+            CoverHandshakeRecordShape, MAX_TLS_RECORD_WIRE_LEN, ServerHelloTemplate,
+            Tls13KeySchedule, Tls13RecordLayer, TrafficKeys, change_cipher_spec_record,
+            finished_message, read_client_finished,
         },
     };
 
@@ -803,6 +804,62 @@ mod tests {
             .open_in_place(&mut application_record)
             .expect("established server must authenticate application data");
         assert_eq!(opened.plaintext(), b"VLESS request");
+    }
+
+    #[test]
+    fn fake_ticket_accepts_the_minimum_and_maximum_tls_record_wire_lengths() {
+        let client_secret = StaticSecret::from([0x31; 32]);
+        let client_public = PublicKey::from(&client_secret).to_bytes();
+
+        for nst_wire_len in [22, MAX_TLS_RECORD_WIRE_LEN] {
+            let client = client_hello(X25519_GROUP, &client_public);
+            let target =
+                ServerHelloTemplate::parse(&server_hello(X25519_GROUP, &[0x55; 32]), &client)
+                    .expect("test target must parse");
+            let flight = build_server_flight_with_shape(
+                &client,
+                &AuthKey::from_test_bytes([0x99; 32]),
+                target,
+                &CertificateIdentity::from_seed([0x42; 32]),
+                Some(b"h2"),
+                cover_plan(CoverHandshakeRecordShape::PositionalRecords {
+                    wire_lens: [37, 838, 286, 58],
+                    nst_wire_len: Some(nst_wire_len),
+                }),
+            )
+            .expect("boundary-sized fake ticket must build");
+
+            let handshake_wire_len = [37_usize, 838, 286, 58].into_iter().sum::<usize>();
+            assert_eq!(
+                flight.encrypted_handshake_records().len(),
+                handshake_wire_len + nst_wire_len
+            );
+        }
+    }
+
+    #[test]
+    fn fake_ticket_rejects_wire_lengths_outside_tls_record_bounds() {
+        let client_secret = StaticSecret::from([0x31; 32]);
+        let client_public = PublicKey::from(&client_secret).to_bytes();
+
+        for nst_wire_len in [21, MAX_TLS_RECORD_WIRE_LEN + 1] {
+            let client = client_hello(X25519_GROUP, &client_public);
+            let target =
+                ServerHelloTemplate::parse(&server_hello(X25519_GROUP, &[0x55; 32]), &client)
+                    .expect("test target must parse");
+            let result = build_server_flight_with_shape(
+                &client,
+                &AuthKey::from_test_bytes([0x99; 32]),
+                target,
+                &CertificateIdentity::from_seed([0x42; 32]),
+                Some(b"h2"),
+                cover_plan(CoverHandshakeRecordShape::PositionalRecords {
+                    wire_lens: [37, 838, 286, 58],
+                    nst_wire_len: Some(nst_wire_len),
+                }),
+            );
+            assert!(matches!(result, Err(RealityHandshakeError::Record)));
+        }
     }
 
     #[test]
