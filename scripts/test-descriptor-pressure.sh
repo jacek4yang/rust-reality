@@ -17,6 +17,7 @@
 set -Eeuo pipefail
 
 readonly REPOSITORY="$({ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."; pwd; })"
+run_id=${RUN_ID:-descriptor-pressure-$(date -u +%Y%m%dT%H%M%SZ)-$$}
 rust_bin=${RUST_REALITY_BIN:-}
 xray_bin=${XRAY_BIN:-}
 nofile_limit=${NOFILE_LIMIT:-192}
@@ -33,6 +34,7 @@ die() {
 
 [[ -n $rust_bin ]] || die 'RUST_REALITY_BIN is required; this gate never builds'
 [[ -n $xray_bin ]] || die 'XRAY_BIN is required; this gate never downloads Xray'
+[[ $run_id =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die 'RUN_ID is invalid'
 [[ $nofile_limit =~ ^[1-9][0-9]*$ ]] || die 'NOFILE_LIMIT must be a positive integer'
 [[ $max_held =~ ^[1-9][0-9]*$ ]] || die 'MAX_HELD_CONNECTIONS must be positive'
 [[ $storm_connections =~ ^[1-9][0-9]*$ ]] || die 'STORM_CONNECTIONS must be positive'
@@ -186,12 +188,28 @@ read -r server_port socks_port cover_port echo_port < <(allocate_ports)
 readonly server_port socks_port cover_port echo_port
 
 # A small local TLS 1.3 cover target; no external network or shared cache is used.
-openssl req -x509 -newkey rsa:2048 -nodes \
-    -keyout "$work/cover.key" -out "$work/cover.crt" -days 1 \
+# Keep its private CA isolated to the rust-reality child.  A CA-signed leaf is
+# intentional: the cover probe performs normal hostname and chain validation.
+openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+    -subj '/CN=rust-reality descriptor gate CA' \
+    -addext 'basicConstraints=critical,CA:TRUE' \
+    -addext 'keyUsage=critical,keyCertSign,cRLSign' \
+    -keyout "$work/ca.key" -out "$work/ca.crt" >/dev/null 2>&1
+openssl req -new -newkey rsa:2048 -nodes -sha256 \
     -subj '/CN=localhost' \
-    -addext 'subjectAltName=DNS:localhost' >/dev/null 2>&1
-openssl s_server -quiet -tls1_3 -accept "127.0.0.1:$cover_port" \
-    -key "$work/cover.key" -cert "$work/cover.crt" \
+    -addext 'basicConstraints=critical,CA:FALSE' \
+    -addext 'keyUsage=critical,digitalSignature,keyEncipherment' \
+    -addext 'extendedKeyUsage=serverAuth' \
+    -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
+    -keyout "$work/cover.key" -out "$work/cover.csr" >/dev/null 2>&1
+openssl x509 -req -sha256 -days 1 \
+    -in "$work/cover.csr" -CA "$work/ca.crt" -CAkey "$work/ca.key" \
+    -CAcreateserial -copy_extensions copy -out "$work/cover.crt" >/dev/null 2>&1
+openssl verify -CAfile "$work/ca.crt" -verify_hostname localhost \
+    "$work/cover.crt" >"$out_dir/certificate-verify.log" 2>&1
+openssl s_server -quiet -tls1_3 -no_middlebox \
+    -accept "127.0.0.1:$cover_port" -alpn 'h2,http/1.1' \
+    -key "$work/cover.key" -cert "$work/cover.crt" -CAfile "$work/ca.crt" \
     >"$out_dir/cover.log" 2>&1 &
 cover_pid=$!
 track_pid cover "$cover_pid"
@@ -232,7 +250,7 @@ done
 
 "$rust_bin" config generate standalone \
     --listen 127.0.0.1 --port "$server_port" \
-    --target "127.0.0.1:$cover_port" --server-name localhost \
+    --target "localhost:$cover_port" --server-name localhost \
     >"$work/server.raw.json" 2>"$work/generate.log"
 public_key=$(sed -n 's/^REALITY public key for the client: //p' "$work/generate.log")
 uuid=$(jq -er '.inbounds[0].settings.clients[0].id' "$work/server.raw.json")
@@ -285,8 +303,9 @@ if [[ $launcher == systemd-user ]]; then
             ulimit -Hn "$1"
             printf "%s\n" "$$" >"$2"
             exec env -i PATH=/usr/local/bin:/usr/bin:/bin \
+                SSL_CERT_FILE="$5" \
                 "$3" serve --config "$4"
-        ' _ "$nofile_limit" "$pidfile" "$rust_bin" "$work/server.json" \
+        ' _ "$nofile_limit" "$pidfile" "$rust_bin" "$work/server.json" "$work/ca.crt" \
         >"$out_dir/server.log" 2>&1 &
     runner_pid=$!
     track_pid systemd-run "$runner_pid"
@@ -297,8 +316,9 @@ else
         ulimit -Hn "$1"
         printf "%s\n" "$$" >"$2"
         exec env -i PATH=/usr/local/bin:/usr/bin:/bin \
+            SSL_CERT_FILE="$5" \
             "$3" serve --config "$4"
-    ' _ "$nofile_limit" "$pidfile" "$rust_bin" "$work/server.json" \
+    ' _ "$nofile_limit" "$pidfile" "$rust_bin" "$work/server.json" "$work/ca.crt" \
         >"$out_dir/server.log" 2>&1 &
     runner_pid=$!
     track_pid server-runner "$runner_pid"
@@ -557,6 +577,7 @@ jq -e '.ok == true and .stormFailures > 0 and .recoverySha256 == .expectedRecove
 
 git_head=$(git -C "$REPOSITORY" rev-parse --verify HEAD)
 jq -n \
+    --arg runId "$run_id" \
     --arg startedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg gitHead "$git_head" \
     --arg launcher "$launcher" \
@@ -568,6 +589,7 @@ jq -n \
     --slurpfile result "$out_dir/pressure-result.json" '
     {
       schemaVersion: 1,
+      runId: $runId,
       gate: "descriptor-pressure-recovery",
       startedAt: $startedAt,
       repositoryHead: $gitHead,
