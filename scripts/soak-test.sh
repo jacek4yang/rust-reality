@@ -20,6 +20,8 @@ duration_min=${DURATION_MIN:-30}
 round_sleep=${ROUND_SLEEP:-5}
 minimum_rounds=${MIN_ROUNDS:-$duration_min}
 require_release_qualified=${REQUIRE_RELEASE_QUALIFIED:-0}
+run_id=${RUN_ID:-${RR_RUN_ID:-soak-$(date -u +%Y%m%dT%H%M%SZ)-$$}}
+port_base=${PORT_BASE:-}
 expected_rust_sha256=${RUST_REALITY_SHA256:-}
 expected_xray_sha256=${XRAY_SHA256:-}
 out_dir=${OUT_DIR:-diagnostics/final/soak-$(date -u +%Y%m%dT%H%M%SZ)}
@@ -93,6 +95,12 @@ done
 [[ $minimum_rounds =~ ^[1-9][0-9]*$ ]] || { echo "MIN_ROUNDS must be positive" >&2; exit 2; }
 [[ $require_release_qualified == 0 || $require_release_qualified == 1 ]] \
     || { echo "REQUIRE_RELEASE_QUALIFIED must be 0 or 1" >&2; exit 2; }
+[[ $run_id =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
+    || { echo "RUN_ID is invalid: $run_id" >&2; exit 2; }
+if [[ -n $port_base ]]; then
+    [[ $port_base =~ ^[0-9]+$ ]] && (( port_base >= 1024 && port_base <= 65524 )) \
+        || { echo "PORT_BASE must leave a 12-port block in 1024..65535" >&2; exit 2; }
+fi
 [[ -x $rust_bin ]] || { echo "RUST_REALITY_BIN not executable: $rust_bin" >&2; exit 1; }
 rust_bin=$(realpath "$rust_bin")
 rust_sha256=$(sha256sum "$rust_bin" | awk '{print $1}')
@@ -112,26 +120,19 @@ fi
     || { echo "OUT_DIR already exists: $out_dir" >&2; exit 1; }
 mkdir -p "$(dirname "$out_dir")"
 mkdir "$out_dir"
-jq -n --arg rustBin "$rust_bin" --arg rustSha256 "$rust_sha256" \
-    --arg xrayBin "$xray" --arg xraySha256 "$xray_sha256" \
-    --arg startedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --argjson durationMinutes "$duration_min" \
-    --argjson requireReleaseQualified "$require_release_qualified" \
-    '{schemaVersion:1,startedAt:$startedAt,durationMinutes:$durationMinutes,
-      requireReleaseQualified:$requireReleaseQualified,
-      rustReality:{path:$rustBin,sha256:$rustSha256},
-      xray:{path:$xrayBin,sha256:$xraySha256}}' \
-    >"$out_dir/environment.json"
-
 allocate_ports() {
-    python3 - <<'PY'
+    python3 - "$port_base" <<'PY'
 import socket
+import sys
+
+base = int(sys.argv[1]) if sys.argv[1] else None
 sockets = []
 try:
-    for _ in range(4):
+    for index in range(12):
         sock = socket.socket()
         sockets.append(sock)
-        sock.bind(("127.0.0.1", 0))
+        port = base + index if base is not None else 0
+        sock.bind(("127.0.0.1", port))
     print(*(sock.getsockname()[1] for sock in sockets))
 finally:
     for sock in sockets:
@@ -139,16 +140,27 @@ finally:
 PY
 }
 
-read -r rust_port rust_socks https_port http_port < <(allocate_ports)
+read -r rust_port rust_socks https_port http_port \
+    handoff_cover_upstream_port handoff_cover_port handoff_line_port \
+    handoff_landing_port handoff_socks_port nxr_line_port nxr_landing_port \
+    nxr_socks_port < <(allocate_ports)
+port_block_json=$(printf '%s\n' "$rust_port" "$rust_socks" "$https_port" "$http_port" \
+    "$handoff_cover_upstream_port" "$handoff_cover_port" "$handoff_line_port" \
+    "$handoff_landing_port" "$handoff_socks_port" "$nxr_line_port" \
+    "$nxr_landing_port" "$nxr_socks_port" | jq -sc 'map(tonumber)')
 
-free_port() {
-    python3 - <<'PY'
-import socket
-with socket.socket() as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-}
+jq -n --arg runId "$run_id" --arg rustBin "$rust_bin" --arg rustSha256 "$rust_sha256" \
+    --arg xrayBin "$xray" --arg xraySha256 "$xray_sha256" \
+    --arg startedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --argjson durationMinutes "$duration_min" \
+    --argjson requireReleaseQualified "$require_release_qualified" \
+    --argjson portBlock "$port_block_json" \
+    '{schemaVersion:1,runId:$runId,startedAt:$startedAt,durationMinutes:$durationMinutes,
+      requireReleaseQualified:$requireReleaseQualified,
+      ports:{address:"127.0.0.1",block:$portBlock},
+      rustReality:{path:$rustBin,sha256:$rustSha256},
+      xray:{path:$xrayBin,sha256:$xraySha256}}' \
+    >"$out_dir/environment.json"
 
 wait_port() {
     local port=$1 pid=$2 expected=${active_starts[$2]:-}
@@ -284,11 +296,6 @@ distributed_payload_sha256=$(sha256sum "$work/payload-1.bin" | awk '{print $1}')
 # before Vision begins. A byte-exact download through the generated
 # LINE -> sealed HND1 transfer -> LANDING topology then proves the first
 # visible response resumed and decrypted at sequence one.
-handoff_cover_upstream_port=$(free_port)
-handoff_cover_port=$(free_port)
-handoff_line_port=$(free_port)
-handoff_landing_port=$(free_port)
-handoff_socks_port=$(free_port)
 openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
     -subj '/CN=rust-reality Handoff soak CA' \
     -addext 'basicConstraints=critical,CA:TRUE' \
@@ -393,9 +400,6 @@ PY
 
 # NXR: a separate generated LINE -> authenticated NXR -> LANDING topology
 # must carry the same one-MiB payload byte-exactly. No failure is masked.
-nxr_line_port=$(free_port)
-nxr_landing_port=$(free_port)
-nxr_socks_port=$(free_port)
 nxr_key=$("$rust_bin" node-keygen | jq -r .preSharedKey)
 "$rust_bin" config generate line --listen 127.0.0.1 --port "$nxr_line_port" \
     --target "127.0.0.1:$https_port" --server-name localhost \
