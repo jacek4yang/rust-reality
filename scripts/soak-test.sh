@@ -10,11 +10,15 @@
 # rust-reality process individually and in aggregate.
 #
 # Env: DURATION_MIN (30), ROUND_SLEEP (5), DISTRIBUTED_INTERVAL_SECONDS (1800),
-# RUST_REALITY_BIN, XRAY_BIN, OUT_DIR.
+# RUST_REALITY_BIN, XRAY_BIN, OUT_DIR. REQUIRE_RELEASE_QUALIFIED=1 additionally
+# requires explicit RUN_ID, absolute new OUT_DIR, disk-backed TMPDIR, PORT_BASE,
+# RUST_REALITY_SHA256, XRAY_SHA256, EXPECTED_SOURCE_COMMIT, and read-only
+# absolute binary paths.
 set -Eeuo pipefail
 umask 077
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$repository/scripts/benchmark-contract.sh"
 rust_bin=${RUST_REALITY_BIN:-target/release/rust-reality}
 xray=${XRAY_BIN:-../artifacts/xray-reference}
 duration_min=${DURATION_MIN:-30}
@@ -28,7 +32,9 @@ port_base=${PORT_BASE:-}
 expected_rust_sha256=${RUST_REALITY_SHA256:-}
 expected_xray_sha256=${XRAY_SHA256:-}
 out_dir=${OUT_DIR:-diagnostics/final/soak-$(date -u +%Y%m%dT%H%M%SZ)}
-work=$(readlink -f "$(mktemp -d "$repository/benchmarks/soak.XXXXXX")")
+temporary_root=${TMPDIR:-$repository/benchmarks}
+work=
+contract_initialized=0
 pids=()
 declare -A active_pids=()
 declare -A active_starts=()
@@ -74,16 +80,24 @@ stop_pid() {
 }
 
 cleanup() {
-    local index pid
+    local original_status=$? final_status index pid
+    trap - EXIT INT TERM
+    set +e
     for ((index=${#pids[@]} - 1; index >= 0; index--)); do
         pid=${pids[index]}
         if [[ ${active_pids[$pid]+present} ]]; then
             stop_pid "$pid"
         fi
     done
-    if [[ -d $work && $work == "$repository"/benchmarks/soak.* ]]; then
+    if [[ -n $work && -d $work && $work == "$temporary_root"/rust-reality-soak.* ]]; then
         rm -rf -- "$work"
     fi
+    final_status=$original_status
+    if (( contract_initialized == 1 )); then
+        rr_contract_verify_on_exit "$original_status"
+        final_status=$?
+    fi
+    exit "$final_status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -117,29 +131,70 @@ planned_distributed_payload_bytes=$((
 ))
 [[ $run_id =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
     || { echo "RUN_ID is invalid: $run_id" >&2; exit 2; }
-if [[ -n $port_base ]]; then
-    [[ $port_base =~ ^[0-9]+$ ]] && (( port_base >= 1024 && port_base <= 65524 )) \
-        || { echo "PORT_BASE must leave a 12-port block in 1024..65535" >&2; exit 2; }
+if (( require_release_qualified == 1 )); then
+    [[ ${EXPLORATORY:-0} == 0 ]] \
+        || { echo "release-qualified soak cannot be exploratory" >&2; exit 2; }
+    rr_contract_init "$repository" soak-test diagnostics/final 12
+    contract_initialized=1
+    case $(realpath -m -- "$RR_OUT_DIR")/ in
+        "$repository"/*)
+            echo "release-qualified OUT_DIR must be outside the repository" >&2
+            exit 2
+            ;;
+    esac
+    case "$RR_TMPDIR"/ in
+        "$repository"/*)
+            echo "release-qualified TMPDIR must be outside the repository" >&2
+            exit 2
+            ;;
+    esac
+    rr_register_harness_file "$repository/scripts/cover-flight-shape-proxy.py"
+    rr_register_harness_tree "$repository/scripts/bench-origin"
+    rr_register_binary rust-reality "$rust_bin" "$expected_rust_sha256" rust \
+        "${EXPECTED_SOURCE_COMMIT:-}"
+    rr_register_binary xray "$xray" "$expected_xray_sha256" xray
+    [[ ${RR_BINARY_BUILD_IDS[rust-reality]} =~ ^[0-9a-f]+$ ]] \
+        || { echo "release-qualified rust-reality binary has no ELF Build ID" >&2; exit 2; }
+    [[ ${RR_BINARY_BUILD_IDS[xray]} =~ ^[0-9a-f]+$ ]] \
+        || { echo "release-qualified Xray binary has no ELF Build ID" >&2; exit 2; }
+    [[ $RR_HARNESS_COMMIT == "${EXPECTED_SOURCE_COMMIT:-}" ]] \
+        || { echo "release-qualified binary source commit must equal harness HEAD" >&2; exit 2; }
+    rr_write_contract_metadata preflight
+    run_id=$RR_RUN_ID
+    port_base=$RR_PORT_BASE
+    out_dir=$RR_OUT_DIR
+    temporary_root=$RR_TMPDIR
+    rust_bin=${RR_BINARY_PATHS[rust-reality]}
+    rust_sha256=${RR_BINARY_SHA256[rust-reality]}
+    xray=${RR_BINARY_PATHS[xray]}
+    xray_sha256=${RR_BINARY_SHA256[xray]}
+else
+    if [[ -n $port_base ]]; then
+        [[ $port_base =~ ^[0-9]+$ ]] && (( port_base >= 1024 && port_base <= 65524 )) \
+            || { echo "PORT_BASE must leave a 12-port block in 1024..65535" >&2; exit 2; }
+    fi
+    [[ -x $rust_bin ]] || { echo "RUST_REALITY_BIN not executable: $rust_bin" >&2; exit 1; }
+    rust_bin=$(realpath "$rust_bin")
+    rust_sha256=$(sha256sum "$rust_bin" | awk '{print $1}')
+    if [[ -n $expected_rust_sha256 && ${expected_rust_sha256,,} != $rust_sha256 ]]; then
+        echo "RUST_REALITY_SHA256 mismatch: expected $expected_rust_sha256, got $rust_sha256" >&2
+        exit 1
+    fi
+    command -v "$xray" >/dev/null 2>&1 || { echo "XRAY_BIN is required" >&2; exit 1; }
+    xray=$(realpath "$(command -v "$xray")")
+    xray_sha256=$(sha256sum "$xray" | awk '{print $1}')
+    if [[ -n $expected_xray_sha256 && ${expected_xray_sha256,,} != $xray_sha256 ]]; then
+        echo "XRAY_SHA256 mismatch: expected $expected_xray_sha256, got $xray_sha256" >&2
+        exit 1
+    fi
+    [[ ! -e $out_dir && ! -L $out_dir ]] \
+        || { echo "OUT_DIR already exists: $out_dir" >&2; exit 1; }
+    mkdir -p "$(dirname "$out_dir")"
+    mkdir "$out_dir"
 fi
-[[ -x $rust_bin ]] || { echo "RUST_REALITY_BIN not executable: $rust_bin" >&2; exit 1; }
-rust_bin=$(realpath "$rust_bin")
-rust_sha256=$(sha256sum "$rust_bin" | awk '{print $1}')
-if [[ -n $expected_rust_sha256 && ${expected_rust_sha256,,} != $rust_sha256 ]]; then
-    echo "RUST_REALITY_SHA256 mismatch: expected $expected_rust_sha256, got $rust_sha256" >&2
-    exit 1
-fi
-command -v "$xray" >/dev/null 2>&1 || { echo "XRAY_BIN is required" >&2; exit 1; }
-xray=$(realpath "$(command -v "$xray")")
-xray_sha256=$(sha256sum "$xray" | awk '{print $1}')
-if [[ -n $expected_xray_sha256 && ${expected_xray_sha256,,} != $xray_sha256 ]]; then
-    echo "XRAY_SHA256 mismatch: expected $expected_xray_sha256, got $xray_sha256" >&2
-    exit 1
-fi
-
-[[ ! -e $out_dir && ! -L $out_dir ]] \
-    || { echo "OUT_DIR already exists: $out_dir" >&2; exit 1; }
-mkdir -p "$(dirname "$out_dir")"
-mkdir "$out_dir"
+mkdir -p "$temporary_root"
+temporary_root=$(readlink -f "$temporary_root")
+work=$(readlink -f "$(mktemp -d "$temporary_root/rust-reality-soak.${run_id}.XXXXXX")")
 mkdir "$out_dir/distributed"
 proxy_max_accepted=$((planned_distributed_attempts + 16))
 allocate_ports() {
@@ -170,9 +225,12 @@ port_block_json=$(printf '%s\n' "$rust_port" "$rust_socks" "$https_port" "$http_
     "$handoff_cover_upstream_port" "$handoff_cover_port" "$handoff_line_port" \
     "$handoff_landing_port" "$handoff_socks_port" "$nxr_line_port" \
     "$nxr_landing_port" "$nxr_socks_port" | jq -sc 'map(tonumber)')
+run_contract_file=
+(( contract_initialized == 0 )) || run_contract_file=run-contract.json
 
 jq -n --arg runId "$run_id" --arg rustBin "$rust_bin" --arg rustSha256 "$rust_sha256" \
     --arg xrayBin "$xray" --arg xraySha256 "$xray_sha256" \
+    --arg runContract "$run_contract_file" \
     --arg startedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson durationMinutes "$duration_min" \
     --argjson distributedIntervalSeconds "$distributed_interval_seconds" \
@@ -187,6 +245,7 @@ jq -n --arg runId "$run_id" --arg rustBin "$rust_bin" --arg rustSha256 "$rust_sh
       maxDistributedAttempts:$maxDistributedAttempts,
       plannedDistributedPayloadBytes:$plannedDistributedPayloadBytes,
       requireReleaseQualified:$requireReleaseQualified,
+      formalRunContract:(if $runContract == "" then null else $runContract end),
       ports:{address:"127.0.0.1",block:$portBlock},
       rustReality:{path:$rustBin,sha256:$rustSha256},
       xray:{path:$xrayBin,sha256:$xraySha256}}' \
@@ -954,3 +1013,6 @@ with open(output, "x") as fh:
 print(json.dumps(summary))
 sys.exit(0 if ok and (not require_release_qualified or release_qualified) else 1)
 PY
+if (( contract_initialized == 1 )); then
+    rr_finalize_contract
+fi
