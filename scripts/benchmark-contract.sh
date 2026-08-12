@@ -403,13 +403,14 @@ rr_finalize_contract() {
     RR_CONTRACT_FINALIZED=1
 }
 
-# Call from every EXIT trap after process cleanup. The caller must return this
-# status from its trap: a successful run is upgraded to failure when immutable
-# files changed; an existing failure status is preserved.
+# Call from every EXIT trap after process cleanup. Always recheck immutable
+# inputs at actual shell exit: preserve an existing failure, otherwise upgrade
+# a successful run when verification fails.
 rr_contract_verify_on_exit() {
-    local original_status=$1
-    if (( RR_CONTRACT_FINALIZED == 0 )); then
-        rr_verify_registered_files || return 1
+    local original_status=$1 verify_status=0
+    rr_verify_registered_files || verify_status=1
+    if (( original_status != 0 )); then
+        return "$original_status"
     fi
-    return "$original_status"
+    return "$verify_status"
 }

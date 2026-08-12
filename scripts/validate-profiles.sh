@@ -219,7 +219,11 @@ cleanup() {
     elif [[ -d $work && $work == "$RR_TMPDIR"/rust-reality-profile-validation.* ]]; then
         rm -rf -- "$work"
     fi
-    rr_contract_verify_on_exit "$exit_status" || exit_status=1
+    if rr_contract_verify_on_exit "$exit_status"; then
+        exit_status=0
+    else
+        exit_status=$?
+    fi
     return "$exit_status"
 }
 trap cleanup EXIT

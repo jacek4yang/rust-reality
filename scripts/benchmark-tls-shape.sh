@@ -390,7 +390,11 @@ finish() {
         write_run_status 2>/dev/null || true
     fi
     cleanup
-    rr_contract_verify_on_exit "$status" || status=1
+    if rr_contract_verify_on_exit "$status"; then
+        status=0
+    else
+        status=$?
+    fi
     exit "$status"
 }
 trap finish EXIT
