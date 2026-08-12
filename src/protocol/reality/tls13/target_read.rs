@@ -2,6 +2,7 @@ use std::{error::Error, fmt, io, time::Duration};
 
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
+    net::TcpStream,
     time::{self, Instant},
 };
 
@@ -28,6 +29,21 @@ const NST_PROBE_SCRATCH_BYTES: usize = 512;
 /// (at most [`TLS_RECORD_HEADER_LEN`]) + one non-blocking NewSessionTicket
 /// probe (at most [`NST_PROBE_SCRATCH_BYTES`]).
 pub(crate) const MAX_RETAINED_COVER_PREFIX_LEN: usize = 66_642;
+
+/// Socket operations needed by the cover-flight reader.
+///
+/// The fifth-record probe must be non-blocking. Keeping that operation on a
+/// small internal trait makes the production path use `TcpStream::try_read`
+/// while deterministic test readers can model buffered and delayed arrivals.
+pub(crate) trait CoverFlightIo: AsyncRead + Unpin {
+    fn try_read_now(&mut self, output: &mut [u8]) -> io::Result<usize>;
+}
+
+impl CoverFlightIo for TcpStream {
+    fn try_read_now(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        self.try_read(output)
+    }
+}
 
 /// Bounded cover-derived policy for the encrypted server handshake records.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -294,7 +310,7 @@ pub(crate) async fn read_target_server_flight<R>(
     timeout: Duration,
 ) -> Result<TargetServerFlightRead, TargetServerHelloReadError>
 where
-    R: AsyncRead + Unpin,
+    R: CoverFlightIo,
 {
     let Some(deadline) = Instant::now().checked_add(timeout) else {
         return Err(failure(TargetServerHelloReadErrorKind::Timeout, Vec::new()));
@@ -386,7 +402,7 @@ struct BufferedFlightReader<'a, R> {
 
 impl<R> BufferedFlightReader<'_, R>
 where
-    R: AsyncRead + Unpin,
+    R: CoverFlightIo,
 {
     /// Ensures at least `len` unconsumed bytes, refilling once per read call.
     ///
@@ -400,6 +416,11 @@ where
             .consumed
             .checked_add(len)
             .ok_or(TargetServerHelloReadErrorKind::RecordTooLarge)?;
+        if target > MAX_RETAINED_COVER_PREFIX_LEN
+            || self.buffer.len() > MAX_RETAINED_COVER_PREFIX_LEN
+        {
+            return Err(TargetServerHelloReadErrorKind::RecordTooLarge);
+        }
         if self.buffer.len() >= target {
             return Ok(());
         }
@@ -415,8 +436,15 @@ where
             let needed = target.saturating_sub(self.buffer.len());
             let read_len = needed
                 .checked_add(TLS_RECORD_HEADER_LEN)
-                .map(|request| request.min(scratch.len()))
+                .map(|request| {
+                    request
+                        .min(scratch.len())
+                        .min(MAX_RETAINED_COVER_PREFIX_LEN - self.buffer.len())
+                })
                 .ok_or(TargetServerHelloReadErrorKind::RecordTooLarge)?;
+            if read_len == 0 {
+                return Err(TargetServerHelloReadErrorKind::RecordTooLarge);
+            }
             let request = scratch
                 .get_mut(..read_len)
                 .ok_or(TargetServerHelloReadErrorKind::UnexpectedEof)?;
@@ -506,15 +534,25 @@ where
     async fn probe_session_ticket(
         &mut self,
     ) -> Result<Option<usize>, TargetServerHelloReadErrorKind> {
-        let mut scratch = [0_u8; NST_PROBE_SCRATCH_BYTES];
-        if let Ok(read @ 1..) = self.reader.try_read(&mut scratch) {
-            self.buffer
-                .try_reserve_exact(read)
-                .map_err(|_| TargetServerHelloReadErrorKind::RecordTooLarge)?;
-            let bytes = scratch
-                .get(..read)
-                .ok_or(TargetServerHelloReadErrorKind::UnexpectedEof)?;
-            self.buffer.extend_from_slice(bytes);
+        let buffered = self.buffer.len().saturating_sub(self.consumed);
+        if buffered < TLS_RECORD_HEADER_LEN {
+            let remaining_capacity = MAX_RETAINED_COVER_PREFIX_LEN
+                .checked_sub(self.buffer.len())
+                .ok_or(TargetServerHelloReadErrorKind::RecordTooLarge)?;
+            if remaining_capacity == 0 {
+                return Err(TargetServerHelloReadErrorKind::RecordTooLarge);
+            }
+            let mut scratch = [0_u8; NST_PROBE_SCRATCH_BYTES];
+            let request_len = scratch.len().min(remaining_capacity);
+            if let Ok(read @ 1..) = self.reader.try_read_now(&mut scratch[..request_len]) {
+                self.buffer
+                    .try_reserve_exact(read)
+                    .map_err(|_| TargetServerHelloReadErrorKind::RecordTooLarge)?;
+                let bytes = scratch
+                    .get(..read)
+                    .ok_or(TargetServerHelloReadErrorKind::UnexpectedEof)?;
+                self.buffer.extend_from_slice(bytes);
+            }
         }
         let Some(header) = self
             .buffer
@@ -589,11 +627,11 @@ const fn failure(
 mod tests {
     use std::{io, pin::Pin, task::Poll, time::Duration};
 
-    use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
+    use tokio::io::{AsyncRead, AsyncWriteExt, DuplexStream, ReadBuf};
 
     use super::{
-        CoverHandshakeRecordShape, TargetServerHelloReadErrorKind, read_target_server_flight,
-        read_target_server_hello,
+        CoverFlightIo, CoverHandshakePlan, CoverHandshakeRecordShape,
+        TargetServerHelloReadErrorKind, read_target_server_flight, read_target_server_hello,
     };
     use crate::protocol::reality::{
         ClientHello, SESSION_ID_LEN, X25519_GROUP, client_hello::fixtures,
@@ -616,6 +654,25 @@ mod tests {
             output.put_slice(&[byte]);
             self.position += 1;
             Poll::Ready(Ok(()))
+        }
+    }
+
+    impl CoverFlightIo for OneByteReader {
+        fn try_read_now(&mut self, output: &mut [u8]) -> io::Result<usize> {
+            let remaining = self.bytes.len().saturating_sub(self.position);
+            let read = remaining.min(output.len());
+            if read == 0 {
+                return Ok(0);
+            }
+            output[..read].copy_from_slice(&self.bytes[self.position..self.position + read]);
+            self.position += read;
+            Ok(read)
+        }
+    }
+
+    impl CoverFlightIo for DuplexStream {
+        fn try_read_now(&mut self, _output: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::from(io::ErrorKind::WouldBlock))
         }
     }
 
@@ -720,11 +777,14 @@ mod tests {
         let read = read_target_server_flight(&mut reader, &client, Duration::from_secs(1))
             .await
             .expect("large first encrypted record must select coalescing");
-        let (_, shape, prefix) = read.into_parts();
+        let (_, plan, prefix) = read.into_parts();
 
         assert_eq!(
-            shape,
-            CoverHandshakeRecordShape::Coalesced { wire_len: 605 }
+            plan,
+            CoverHandshakePlan {
+                emit_ccs: true,
+                shape: CoverHandshakeRecordShape::Coalesced { wire_len: 605 },
+            }
         );
         assert_eq!(prefix, input[..expected_prefix_len]);
         assert_eq!(reader.position, expected_prefix_len);
@@ -776,7 +836,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn positional_shape_consumes_exactly_four_encrypted_records() {
+    async fn positional_shape_probes_and_retains_a_fifth_ticket_record() {
         let client = client();
         let mut input = target_record(&[0x55; 32]);
         input.extend_from_slice(&[20, 3, 3, 0, 1, 1]);
@@ -784,7 +844,6 @@ mod tests {
         for (index, body_len) in body_lens.into_iter().enumerate() {
             input.extend_from_slice(&opaque_record(23, body_len, index as u8));
         }
-        let expected_prefix_len = input.len();
         input.extend_from_slice(&opaque_record(23, 24, 0xff));
         let mut reader = OneByteReader {
             bytes: input.clone(),
@@ -794,16 +853,51 @@ mod tests {
         let read = read_target_server_flight(&mut reader, &client, Duration::from_secs(1))
             .await
             .expect("four small encrypted records must be read positionally");
-        let (_, shape, prefix) = read.into_parts();
+        let (_, plan, prefix) = read.into_parts();
 
         assert_eq!(
-            shape,
-            CoverHandshakeRecordShape::PositionalRecords {
-                wire_lens: [37, 213, 94, 58],
+            plan,
+            CoverHandshakePlan {
+                emit_ccs: true,
+                shape: CoverHandshakeRecordShape::PositionalRecords {
+                    wire_lens: [37, 213, 94, 58],
+                    nst_wire_len: Some(29),
+                },
             }
         );
-        assert_eq!(prefix, input[..expected_prefix_len]);
-        assert_eq!(reader.position, expected_prefix_len);
+        assert_eq!(prefix, input);
+        assert_eq!(reader.position, input.len());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn positional_shape_without_ccs_or_ticket_is_retained_exactly() {
+        let client = client();
+        let mut input = target_record(&[0x55; 32]);
+        for (index, body_len) in [32_usize, 208, 89, 53].into_iter().enumerate() {
+            input.extend_from_slice(&opaque_record(23, body_len, index as u8));
+        }
+        let mut reader = OneByteReader {
+            bytes: input.clone(),
+            position: 0,
+        };
+
+        let read = read_target_server_flight(&mut reader, &client, Duration::from_secs(1))
+            .await
+            .expect("CCS-less four-record cover flight must be accepted");
+        let (_, plan, prefix) = read.into_parts();
+
+        assert_eq!(
+            plan,
+            CoverHandshakePlan {
+                emit_ccs: false,
+                shape: CoverHandshakeRecordShape::PositionalRecords {
+                    wire_lens: [37, 213, 94, 58],
+                    nst_wire_len: None,
+                },
+            }
+        );
+        assert_eq!(prefix, input);
+        assert_eq!(reader.position, input.len());
     }
 
     #[tokio::test(flavor = "current_thread")]

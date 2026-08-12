@@ -45,7 +45,8 @@ pub use server_hello::{
     ServerHelloError, ServerHelloTemplate, change_cipher_spec_record, plaintext_handshake_record,
 };
 pub(crate) use target_read::{
-    CoverHandshakeRecordShape, TargetServerFlightRead, read_target_server_flight,
+    CoverHandshakePlan, CoverHandshakeRecordShape, TargetServerFlightRead,
+    read_target_server_flight,
 };
 pub use target_read::{
     TargetServerHelloRead, TargetServerHelloReadError, TargetServerHelloReadErrorKind,
