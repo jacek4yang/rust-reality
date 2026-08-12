@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Append one deterministic opaque record to a loopback TLS 1.3 server flight."""
+"""Append deterministic opaque records to bounded loopback TLS 1.3 flights."""
 
 from __future__ import annotations
 
@@ -81,20 +81,47 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--listen-port", type=int, required=True)
     parser.add_argument("--upstream-port", type=int, required=True)
-    return parser.parse_args()
+    parser.add_argument("--max-shaped", type=int, default=1)
+    parser.add_argument("--max-accepted", type=int, default=8)
+    args = parser.parse_args()
+    if args.max_shaped <= 0:
+        parser.error("--max-shaped must be positive")
+    if args.max_accepted < args.max_shaped:
+        parser.error("--max-accepted must be at least --max-shaped")
+    return args
 
 
 def main() -> None:
     args = parse_args()
+    accepted = 0
+    shaped = 0
     with socket.socket() as listener:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind(("127.0.0.1", args.listen_port))
         listener.listen(16)
-        for _ in range(8):
+        while accepted < args.max_accepted and shaped < args.max_shaped:
             connection, _ = listener.accept()
+            accepted += 1
             if handle(connection, args.upstream_port):
-                return
-        raise SystemExit("no cover flight was shaped in eight accepted connections")
+                shaped += 1
+        print(
+            json.dumps(
+                {
+                    "event": "proxy_complete",
+                    "accepted": accepted,
+                    "shaped": shaped,
+                    "maxAccepted": args.max_accepted,
+                    "maxShaped": args.max_shaped,
+                },
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
+        if shaped != args.max_shaped:
+            raise SystemExit(
+                f"shaped {shaped} of {args.max_shaped} flights after "
+                f"{accepted} accepted connections"
+            )
 
 
 if __name__ == "__main__":

@@ -4,14 +4,15 @@
 #
 # Workload mix per round: direct download (TLS origin), framed download
 # (plain origin), fallback (direct-to-listener), and rapid connect/drop
-# churn. A fail-closed distributed preflight additionally proves one real
-# cover-NST/sequence-one Handoff resume and one byte-exact NXR transfer.
-# /proc snapshots (FDs, RSS, threads) are captured at start, each round, and
-# end; the summary fails the run if the end snapshot exceeds the start by
-# more than a bounded slack after a drain pause.
+# churn. Real cover-NST/sequence-one Handoff and byte-exact NXR topologies
+# remain alive for the timed soak and are exercised at the start, at each
+# monotonic interval, and at the end. /proc snapshots cover every
+# rust-reality process individually and in aggregate.
 #
-# Env: DURATION_MIN (30), ROUND_SLEEP (5), RUST_REALITY_BIN, XRAY_BIN, OUT_DIR.
+# Env: DURATION_MIN (30), ROUND_SLEEP (5), DISTRIBUTED_INTERVAL_SECONDS (1800),
+# RUST_REALITY_BIN, XRAY_BIN, OUT_DIR.
 set -Eeuo pipefail
+umask 077
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 rust_bin=${RUST_REALITY_BIN:-target/release/rust-reality}
@@ -20,6 +21,7 @@ duration_min=${DURATION_MIN:-30}
 round_sleep=${ROUND_SLEEP:-5}
 minimum_rounds=${MIN_ROUNDS:-$duration_min}
 require_release_qualified=${REQUIRE_RELEASE_QUALIFIED:-0}
+distributed_interval_seconds=${DISTRIBUTED_INTERVAL_SECONDS:-1800}
 run_id=${RUN_ID:-${RR_RUN_ID:-soak-$(date -u +%Y%m%dT%H%M%SZ)-$$}}
 port_base=${PORT_BASE:-}
 expected_rust_sha256=${RUST_REALITY_SHA256:-}
@@ -95,6 +97,12 @@ done
 [[ $minimum_rounds =~ ^[1-9][0-9]*$ ]] || { echo "MIN_ROUNDS must be positive" >&2; exit 2; }
 [[ $require_release_qualified == 0 || $require_release_qualified == 1 ]] \
     || { echo "REQUIRE_RELEASE_QUALIFIED must be 0 or 1" >&2; exit 2; }
+[[ $distributed_interval_seconds =~ ^[1-9][0-9]*$ ]] \
+    || { echo "DISTRIBUTED_INTERVAL_SECONDS must be positive" >&2; exit 2; }
+if (( require_release_qualified == 1 && distributed_interval_seconds > 1800 )); then
+    echo "release soak DISTRIBUTED_INTERVAL_SECONDS must be <= 1800" >&2
+    exit 2
+fi
 [[ $run_id =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
     || { echo "RUN_ID is invalid: $run_id" >&2; exit 2; }
 if [[ -n $port_base ]]; then
@@ -120,6 +128,11 @@ fi
     || { echo "OUT_DIR already exists: $out_dir" >&2; exit 1; }
 mkdir -p "$(dirname "$out_dir")"
 mkdir "$out_dir"
+mkdir "$out_dir/distributed"
+planned_distributed_attempts=$((
+    2 + (duration_min * 60 - 1) / distributed_interval_seconds
+))
+proxy_max_accepted=$((planned_distributed_attempts + 16))
 allocate_ports() {
     python3 - "$port_base" <<'PY'
 import socket
@@ -153,9 +166,13 @@ jq -n --arg runId "$run_id" --arg rustBin "$rust_bin" --arg rustSha256 "$rust_sh
     --arg xrayBin "$xray" --arg xraySha256 "$xray_sha256" \
     --arg startedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson durationMinutes "$duration_min" \
+    --argjson distributedIntervalSeconds "$distributed_interval_seconds" \
+    --argjson plannedDistributedAttempts "$planned_distributed_attempts" \
     --argjson requireReleaseQualified "$require_release_qualified" \
     --argjson portBlock "$port_block_json" \
-    '{schemaVersion:1,runId:$runId,startedAt:$startedAt,durationMinutes:$durationMinutes,
+    '{schemaVersion:2,runId:$runId,startedAt:$startedAt,durationMinutes:$durationMinutes,
+      distributedIntervalSeconds:$distributedIntervalSeconds,
+      plannedDistributedAttempts:$plannedDistributedAttempts,
       requireReleaseQualified:$requireReleaseQualified,
       ports:{address:"127.0.0.1",block:$portBlock},
       rustReality:{path:$rustBin,sha256:$rustSha256},
@@ -234,7 +251,7 @@ chunk = bytes(range(256)) * 4096
 PY
 openssl req -x509 -newkey rsa:2048 -nodes -keyout "$work/o.key" -out "$work/o.crt" \
     -days 1 -subj "/CN=localhost" >/dev/null 2>&1
-(cd scripts/bench-origin && go build -o "$work/bench-origin" .)
+(cd scripts/bench-origin && go build -buildvcs=false -o "$work/bench-origin" .)
 start_logged "$work/https-origin.log" "$work/bench-origin" \
     --port "$https_port" --payload-dir "$work" --put-log "$work/https-put.jsonl" \
     --tls-cert "$work/o.crt" --tls-key "$work/o.key"
@@ -282,10 +299,8 @@ verify_one_mib_download() {
 }
 
 # -------------------------------------------------------------------------
-# One-shot distributed correctness gates. These are deliberately outside the
-# timed resource loop: the soak evidence must prove both distributed paths at
-# least once without making their extra server processes part of the primary
-# server's leak baseline.
+# Long-lived distributed correctness topologies. Their rust-reality processes
+# are part of the timed resource baseline and every later snapshot.
 # -------------------------------------------------------------------------
 distributed_payload_sha256=$(sha256sum "$work/payload-1.bin" | awk '{print $1}')
 
@@ -324,7 +339,9 @@ wait_port "$handoff_cover_upstream_port" "$handoff_cover_upstream_pid"
 start_logged "$out_dir/handoff-cover-shape-proxy.log" python3 -u \
     "$repository/scripts/cover-flight-shape-proxy.py" \
     --listen-port "$handoff_cover_port" \
-    --upstream-port "$handoff_cover_upstream_port"
+    --upstream-port "$handoff_cover_upstream_port" \
+    --max-shaped "$planned_distributed_attempts" \
+    --max-accepted "$proxy_max_accepted"
 handoff_cover_proxy_pid=$last_pid
 wait_port "$handoff_cover_port" "$handoff_cover_proxy_pid"
 
@@ -356,47 +373,6 @@ wait_port "$handoff_line_port" "$handoff_line_pid"
 start_logged "$out_dir/handoff-xray.log" "$xray" run -config "$work/handoff-client.json"
 handoff_xray_pid=$last_pid
 wait_port "$handoff_socks_port" "$handoff_xray_pid"
-verify_one_mib_download "$handoff_socks_port" "$work/handoff-download.bin" \
-    "$distributed_payload_sha256"
-wait_log_event "$out_dir/handoff-line.log" '"event":"connection_completed"'
-handoff_server_sequence=$(jq -s -e '
-    [.[] | select(.event == "connection_completed"
-        and .handoff_server_sequence != null) | .handoff_server_sequence]
-    | if length == 1 then .[0] else error("expected one Handoff completion sequence") end
-' "$out_dir/handoff-line.log")
-[[ $handoff_server_sequence == 1 ]] || {
-    echo "Handoff exported server sequence $handoff_server_sequence, expected 1" >&2
-    exit 1
-}
-install -m 0600 "$work/handoff-download.bin" "$out_dir/handoff-download.bin"
-stop_pid "$handoff_xray_pid"
-stop_pid "$handoff_line_pid"
-stop_pid "$handoff_landing_pid"
-stop_pid "$handoff_cover_proxy_pid"
-stop_pid "$handoff_cover_upstream_pid"
-handoff_shape_events=$(python3 - \
-    "$out_dir/handoff-cover-shape-proxy.log" <<'PY'
-import json
-from pathlib import Path
-import sys
-
-count = 0
-for line in Path(sys.argv[1]).read_text(errors="replace").splitlines():
-    try:
-        event = json.loads(line)
-    except json.JSONDecodeError:
-        continue
-    if (event.get("event") == "flight_shaped"
-            and len(event.get("upstreamEncryptedWireLengths", [])) == 4
-            and event.get("appendedWireLength") == 139):
-        count += 1
-print(count)
-PY
-)
-(( handoff_shape_events >= 1 )) || {
-    echo "Handoff cover shim did not append a fifth 139-byte record" >&2
-    exit 1
-}
 
 # NXR: a separate generated LINE -> authenticated NXR -> LANDING topology
 # must carry the same one-MiB payload byte-exactly. No failure is masked.
@@ -431,64 +407,190 @@ wait_port "$nxr_line_port" "$nxr_line_pid"
 start_logged "$out_dir/nxr-xray.log" "$xray" run -config "$work/nxr-client.json"
 nxr_xray_pid=$last_pid
 wait_port "$nxr_socks_port" "$nxr_xray_pid"
-verify_one_mib_download "$nxr_socks_port" "$work/nxr-download.bin" \
-    "$distributed_payload_sha256"
-wait_log_event "$out_dir/nxr-line.log" '"event":"connection_completed"'
-install -m 0600 "$work/nxr-download.bin" "$out_dir/nxr-download.bin"
-stop_pid "$nxr_xray_pid"
-stop_pid "$nxr_line_pid"
-stop_pid "$nxr_landing_pid"
 
-jq -n --arg payloadSha256 "$distributed_payload_sha256" \
-    --argjson handoffShapeEvents "$handoff_shape_events" \
-    --argjson handoffServerSequence "$handoff_server_sequence" \
-    --arg handoffDownloadSha256 "$(sha256sum "$out_dir/handoff-download.bin" | awk '{print $1}')" \
-    --arg nxrDownloadSha256 "$(sha256sum "$out_dir/nxr-download.bin" | awk '{print $1}')" \
-    --arg handoffLineConfigSha256 "$(sha256sum "$work/handoff-line.json" | awk '{print $1}')" \
-    --arg handoffLandingConfigSha256 "$(sha256sum "$work/handoff-landing.json" | awk '{print $1}')" \
-    --arg nxrLineConfigSha256 "$(sha256sum "$work/nxr-line.json" | awk '{print $1}')" \
-    --arg nxrLandingConfigSha256 "$(sha256sum "$work/nxr-landing.json" | awk '{print $1}')" \
-    '{schemaVersion:1,payloadBytes:1048576,payloadSha256:$payloadSha256,
-      handoffSeq1:{attempts:1,successes:1,fakeNstExpected:true,
-        coverShapeEvents:$handoffShapeEvents,appendedWireLength:139,
-        exportedServerSequence:$handoffServerSequence,
-        download:{path:"handoff-download.bin",bytes:1048576,sha256:$handoffDownloadSha256},
-        evidence:{coverTrace:"handoff-cover-trace.log",shapeProxyLog:"handoff-cover-shape-proxy.log",lineLog:"handoff-line.log",
-          landingLog:"handoff-landing.log"},lineConfigSha256:$handoffLineConfigSha256,
-        landingConfigSha256:$handoffLandingConfigSha256},
-      nxrByteIntegrity:{attempts:1,successes:1,lineLog:"nxr-line.log",
-        download:{path:"nxr-download.bin",bytes:1048576,sha256:$nxrDownloadSha256},
-        landingLog:"nxr-landing.log",lineConfigSha256:$nxrLineConfigSha256,
-        landingConfigSha256:$nxrLandingConfigSha256},ok:true}' \
-    >"$out_dir/distributed-gates.json"
+distributed_samples="$out_dir/distributed-samples.jsonl"
+: >"$distributed_samples"
+distributed_attempts=0
+last_handoff_download=
+last_nxr_download=
+
+monotonic_now() {
+    python3 - <<'PY'
+import time
+print(f"{time.monotonic():.6f}")
+PY
+}
+
+wait_handoff_sequence() {
+    local expected_index=$1
+    python3 - "$out_dir/handoff-line.log" "$expected_index" <<'PY'
+import json
+from pathlib import Path
+import sys
+import time
+
+path, expected_index = Path(sys.argv[1]), int(sys.argv[2])
+deadline = time.monotonic() + 10
+while time.monotonic() < deadline:
+    sequences = []
+    for line in path.read_text(errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("event") == "connection_completed" and event.get("handoff_server_sequence") is not None:
+            sequences.append(event["handoff_server_sequence"])
+    if len(sequences) >= expected_index:
+        print(sequences[expected_index - 1])
+        raise SystemExit(0)
+    time.sleep(0.02)
+raise SystemExit(f"missing Handoff completion {expected_index}")
+PY
+}
+
+record_distributed_sample() {
+    local attempt=$1 trigger=$2 path=$3 success=$4 failure_class=$5
+    local bytes=$6 sha256=$7 sequence=$8 output=$9
+    local monotonic
+    monotonic=$(monotonic_now)
+    jq -cn --argjson attempt "$attempt" --arg trigger "$trigger" --arg path "$path" \
+        --argjson success "$success" --arg failureClass "$failure_class" \
+        --argjson bytes "$bytes" --arg sha256 "$sha256" \
+        --arg serverSequence "$sequence" --arg output "$output" \
+        --arg expectedSha256 "$distributed_payload_sha256" \
+        --argjson monotonicSeconds "$monotonic" \
+        '{attempt:$attempt,trigger:$trigger,path:$path,success:$success,
+          failureClass:($failureClass | if length == 0 then null else . end),
+          bytes:$bytes,sha256:($sha256 | if length == 0 then null else . end),
+          expectedBytes:1048576,expectedSha256:$expectedSha256,
+          serverSequence:($serverSequence | if length == 0 then null else tonumber end),output:$output,
+          monotonicSeconds:$monotonicSeconds}' >>"$distributed_samples"
+}
+
+run_distributed_download() {
+    local attempt=$1 trigger=$2 path=$3 socks_port=$4 output=$5
+    local curl_rc=0 bytes=0 sha256= sequence= success=true failure_class=
+    local relative_output=${output#"$out_dir"/}
+    if clean_curl -sS --fail --socks5-hostname "127.0.0.1:$socks_port" \
+        --max-time 30 "http://127.0.0.1:$http_port/payload-1.bin" --output "$output"; then
+        :
+    else
+        curl_rc=$?
+        success=false
+        failure_class="curl_exit_$curl_rc"
+    fi
+    if [[ -f $output ]]; then
+        bytes=$(stat -c %s "$output")
+        sha256=$(sha256sum "$output" | awk '{print $1}')
+    fi
+    if [[ $success == true && $bytes != 1048576 ]]; then
+        success=false
+        failure_class=size_mismatch
+    fi
+    if [[ $success == true && $sha256 != "$distributed_payload_sha256" ]]; then
+        success=false
+        failure_class=sha256_mismatch
+    fi
+    if [[ $path == handoff-seq1 ]]; then
+        if observed_sequence=$(wait_handoff_sequence "$attempt" 2>/dev/null); then
+            sequence=$observed_sequence
+            if [[ $success == true && $sequence != 1 ]]; then
+                success=false
+                failure_class=server_sequence_mismatch
+            fi
+        elif [[ $success == true ]]; then
+            success=false
+            failure_class=server_sequence_missing
+        fi
+    fi
+    record_distributed_sample "$attempt" "$trigger" "$path" "$success" \
+        "$failure_class" "$bytes" "$sha256" "$sequence" "$relative_output"
+}
+
+run_distributed_attempt() {
+    local trigger=$1 attempt
+    distributed_attempts=$((distributed_attempts + 1))
+    attempt=$distributed_attempts
+    last_handoff_download=$(printf '%s/distributed/handoff-%04d.bin' "$out_dir" "$attempt")
+    last_nxr_download=$(printf '%s/distributed/nxr-%04d.bin' "$out_dir" "$attempt")
+    run_distributed_download "$attempt" "$trigger" handoff-seq1 \
+        "$handoff_socks_port" "$last_handoff_download"
+    run_distributed_download "$attempt" "$trigger" nxr-byte-integrity \
+        "$nxr_socks_port" "$last_nxr_download"
+}
 
 start_logged "$work/rust.log" "$rust_bin" serve --config "$work/rust.json"
 server_pid=$last_pid
+wait_port "$rust_port" "$server_pid"
 start_logged /dev/null "$xray" run -config "$work/rust-client.json"
-sleep 1.5
+rust_xray_pid=$last_pid
+wait_port "$rust_socks" "$rust_xray_pid"
+
+rust_process_names=(standalone handoff-line handoff-landing nxr-line nxr-landing)
+rust_process_pids=("$server_pid" "$handoff_line_pid" "$handoff_landing_pid" \
+    "$nxr_line_pid" "$nxr_landing_pid")
 
 snapshot() {
-    local expected=${active_starts[$server_pid]:-}
-    [[ -n $expected ]] || { echo "server PID is not registered" >&2; return 1; }
-    python3 - "$server_pid" "$expected" "$1" >> "$out_dir/resources.jsonl" <<'PY'
-import json, os, sys
-pid, expected, label = sys.argv[1], sys.argv[2], sys.argv[3]
-raw = open(f"/proc/{pid}/stat", encoding="ascii").read()
-end = raw.rfind(")")
-observed = raw[end + 2:].split()[19] if end >= 0 else None
-if observed != expected:
-    raise SystemExit(f"server PID identity changed: {pid}/{expected} -> {observed}")
-with open(f"/proc/{pid}/status") as fh:
-    fields = dict(line.split(":", 1) for line in fh if ":" in line)
+    local label=$1 index pid expected
+    local -a identities=()
+    for index in "${!rust_process_pids[@]}"; do
+        pid=${rust_process_pids[index]}
+        expected=${active_starts[$pid]:-}
+        [[ -n $expected ]] || {
+            echo "rust process ${rust_process_names[index]} PID $pid is not registered" >&2
+            return 1
+        }
+        identities+=("${rust_process_names[index]}" "$pid" "$expected")
+    done
+    python3 - "$label" "${identities[@]}" >> "$out_dir/resources.jsonl" <<'PY'
+import json
+import os
+import sys
+import time
+
+label, raw_identities = sys.argv[1], sys.argv[2:]
+if len(raw_identities) % 3:
+    raise SystemExit("invalid process identity argument count")
+processes = {}
+for offset in range(0, len(raw_identities), 3):
+    name, pid_text, expected = raw_identities[offset:offset + 3]
+    pid = int(pid_text)
+    try:
+        raw = open(f"/proc/{pid}/stat", encoding="ascii").read()
+    except FileNotFoundError:
+        raise SystemExit(f"rust process exited: {name} {pid}/{expected}")
+    end = raw.rfind(")")
+    observed = raw[end + 2:].split()[19] if end >= 0 else None
+    if observed != expected:
+        raise SystemExit(
+            f"rust process identity changed: {name} {pid}/{expected} -> {observed}"
+        )
+    with open(f"/proc/{pid}/status", encoding="ascii") as handle:
+        fields = dict(line.split(":", 1) for line in handle if ":" in line)
+    rss = int(fields["VmRSS"].split()[0])
+    processes[name] = {
+        "alive": True,
+        "pid": pid,
+        "pidStarttime": observed,
+        "fds": len(os.listdir(f"/proc/{pid}/fd")),
+        "vmRssKiB": rss,
+        "vmHwmKiB": int(fields.get("VmHWM", fields["VmRSS"]).split()[0]),
+        "threads": int(fields["Threads"].split()[0]),
+    }
+totals = {
+    field: sum(process[field] for process in processes.values())
+    for field in ("fds", "vmRssKiB", "vmHwmKiB", "threads")
+}
 print(json.dumps({
     "label": label,
-    "monotonicSeconds": __import__("time").monotonic(),
-    "serverAlive": True,
-    "pid": int(pid),
-    "pidStarttime": observed,
-    "fds": len(os.listdir(f"/proc/{pid}/fd")),
-    "vmRssKiB": int(fields["VmRSS"].split()[0]),
-    "threads": int(fields["Threads"].split()[0]),
+    "monotonicSeconds": time.monotonic(),
+    "serverAlive": all(process["alive"] for process in processes.values()),
+    "processes": processes,
+    "totals": totals,
+    "fds": totals["fds"],
+    "vmRssKiB": totals["vmRssKiB"],
+    "vmHwmKiB": totals["vmHwmKiB"],
+    "threads": totals["threads"],
 }))
 PY
 }
@@ -504,7 +606,10 @@ verify_download() {
 
 failures=0
 round=0
-deadline=$(( SECONDS + duration_min * 60 ))
+timed_start_seconds=$SECONDS
+deadline=$(( timed_start_seconds + duration_min * 60 ))
+next_distributed=$(( timed_start_seconds + distributed_interval_seconds ))
+run_distributed_attempt start
 snapshot start
 while (( SECONDS < deadline )); do
     round=$((round + 1))
@@ -522,11 +627,159 @@ while (( SECONDS < deadline )); do
             https://127.0.0.1:$rust_port/payload-4.bin 2>/dev/null \
             || failures=$((failures + 1))
     done
+    while (( next_distributed < deadline && SECONDS >= next_distributed )); do
+        run_distributed_attempt interval
+        next_distributed=$((next_distributed + distributed_interval_seconds))
+    done
     snapshot "round-$round"
     sleep "$round_sleep"
 done
+run_distributed_attempt end
+install -m 0600 "$last_handoff_download" "$out_dir/handoff-download.bin"
+install -m 0600 "$last_nxr_download" "$out_dir/nxr-download.bin"
 sleep 5
 snapshot end
+
+python3 - "$distributed_samples" "$out_dir/handoff-cover-shape-proxy.log" \
+    "$distributed_interval_seconds" "$distributed_payload_sha256" \
+    "$(sha256sum "$work/handoff-line.json" | awk '{print $1}')" \
+    "$(sha256sum "$work/handoff-landing.json" | awk '{print $1}')" \
+    "$(sha256sum "$work/nxr-line.json" | awk '{print $1}')" \
+    "$(sha256sum "$work/nxr-landing.json" | awk '{print $1}')" \
+    "$out_dir/distributed-gates.json" <<'PY'
+import collections
+import json
+from pathlib import Path
+import sys
+
+(
+    samples_path,
+    proxy_log_path,
+    interval_text,
+    payload_sha256,
+    handoff_line_sha256,
+    handoff_landing_sha256,
+    nxr_line_sha256,
+    nxr_landing_sha256,
+    output_path,
+) = sys.argv[1:]
+interval = int(interval_text)
+samples = [json.loads(line) for line in Path(samples_path).read_text().splitlines()]
+paths = {
+    name: [sample for sample in samples if sample.get("path") == name]
+    for name in ("handoff-seq1", "nxr-byte-integrity")
+}
+handoff, nxr = paths["handoff-seq1"], paths["nxr-byte-integrity"]
+attempts = len({sample.get("attempt") for sample in samples})
+elapsed = handoff[-1]["monotonicSeconds"] - handoff[0]["monotonicSeconds"] if handoff else 0
+required_attempts = 1 + int(elapsed // interval)
+shape_events = []
+proxy_completions = []
+for line in Path(proxy_log_path).read_text(errors="replace").splitlines():
+    try:
+        event = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if (
+        event.get("event") == "flight_shaped"
+        and len(event.get("upstreamEncryptedWireLengths", [])) == 4
+        and event.get("appendedWireLength") == 139
+    ):
+        shape_events.append(event)
+    elif event.get("event") == "proxy_complete":
+        proxy_completions.append(event)
+
+
+def path_summary(records, require_sequence):
+    failures = [record for record in records if record.get("success") is not True]
+    final = records[-1] if records else {}
+    return {
+        "attempts": len(records),
+        "successes": sum(record.get("success") is True for record in records),
+        "failures": len(failures),
+        "failureClasses": dict(collections.Counter(
+            record.get("failureClass", "unclassified") for record in failures
+        )),
+        "allPayloadBytes": all(record.get("bytes") == 1048576 for record in records),
+        "allPayloadSha256": all(record.get("sha256") == payload_sha256 for record in records),
+        "allServerSequenceOne": (
+            all(record.get("serverSequence") == 1 for record in records)
+            if require_sequence else None
+        ),
+        "download": {
+            "path": final.get("output"),
+            "bytes": final.get("bytes"),
+            "sha256": final.get("sha256"),
+        },
+    }
+
+
+handoff_summary = path_summary(handoff, True)
+handoff_summary.update({
+    "fakeNstExpected": True,
+    "coverShapeEvents": len(shape_events),
+    "appendedWireLength": 139,
+    "exportedServerSequence": 1 if handoff_summary["allServerSequenceOne"] else None,
+    "evidence": {
+        "coverTrace": "handoff-cover-trace.log",
+        "shapeProxyLog": "handoff-cover-shape-proxy.log",
+        "lineLog": "handoff-line.log",
+        "landingLog": "handoff-landing.log",
+    },
+    "lineConfigSha256": handoff_line_sha256,
+    "landingConfigSha256": handoff_landing_sha256,
+})
+nxr_summary = path_summary(nxr, False)
+nxr_summary.update({
+    "lineLog": "nxr-line.log",
+    "landingLog": "nxr-landing.log",
+    "lineConfigSha256": nxr_line_sha256,
+    "landingConfigSha256": nxr_landing_sha256,
+})
+triggers = collections.Counter(sample.get("trigger") for sample in handoff)
+proxy_complete = proxy_completions[-1] if proxy_completions else None
+ok = (
+    attempts >= required_attempts
+    and len(handoff) == attempts
+    and len(nxr) == attempts
+    and triggers.get("start") == 1
+    and triggers.get("end") == 1
+    and handoff_summary["successes"] == attempts
+    and handoff_summary["failures"] == 0
+    and handoff_summary["allPayloadBytes"]
+    and handoff_summary["allPayloadSha256"]
+    and handoff_summary["allServerSequenceOne"]
+    and nxr_summary["successes"] == attempts
+    and nxr_summary["failures"] == 0
+    and nxr_summary["allPayloadBytes"]
+    and nxr_summary["allPayloadSha256"]
+    and len(shape_events) == attempts
+    and proxy_complete is not None
+    and proxy_complete.get("shaped") == attempts
+)
+result = {
+    "schemaVersion": 2,
+    "payloadBytes": 1048576,
+    "payloadSha256": payload_sha256,
+    "intervalSeconds": interval,
+    "elapsedSeconds": round(elapsed, 3),
+    "attempts": attempts,
+    "requiredAttempts": required_attempts,
+    "samplesPath": "distributed-samples.jsonl",
+    "handoffSeq1": handoff_summary,
+    "nxrByteIntegrity": nxr_summary,
+    "proxy": {
+        "accepted": proxy_complete.get("accepted") if proxy_complete else None,
+        "shaped": proxy_complete.get("shaped") if proxy_complete else None,
+        "maxAccepted": proxy_complete.get("maxAccepted") if proxy_complete else None,
+        "maxShaped": proxy_complete.get("maxShaped") if proxy_complete else None,
+    },
+    "ok": ok,
+}
+with open(output_path, "x", encoding="utf-8") as handle:
+    json.dump(result, handle, indent=2)
+print(json.dumps(result, separators=(",", ":")))
+PY
 
 final_rust_sha256=$(sha256sum "$rust_bin" | awk '{print $1}')
 final_xray_sha256=$(sha256sum "$xray" | awk '{print $1}')
@@ -548,49 +801,89 @@ payload_sha256, distributed_path, output = sys.argv[7:10]
 with open(distributed_path) as handle:
     distributed = json.load(handle)
 start, end = records[0], records[-1]
-# Slack: a few dozen FDs/threads and 32 MiB RSS cover allocator arenas and
-# parked runtime state; anything beyond that is a leak.
-fd_growth = end["fds"] - start["fds"]
-thread_growth = end["threads"] - start["threads"]
-rss_growth_mib = (end["vmRssKiB"] - start["vmRssKiB"]) / 1024
-fd_peak_growth = max(r["fds"] for r in records) - start["fds"]
-thread_peak_growth = max(r["threads"] for r in records) - start["threads"]
-rss_peak_growth_mib = (max(r["vmRssKiB"] for r in records) - start["vmRssKiB"]) / 1024
-tail = records[max(1, len(records) // 2):]
-xs = [r["monotonicSeconds"] for r in tail]
-ys = [r["vmRssKiB"] / 1024 for r in tail]
-if len(xs) >= 2 and len(set(xs)) > 1:
-    xbar, ybar = statistics.mean(xs), statistics.mean(ys)
-    denominator = sum((x - xbar) ** 2 for x in xs)
-    rss_slope_mib_per_hour = 3600 * sum(
-        (x - xbar) * (y - ybar) for x, y in zip(xs, ys)
-    ) / denominator
-else:
-    rss_slope_mib_per_hour = 0.0
 slope_gate_applied = duration_minutes >= 30
 elapsed_seconds = end["monotonicSeconds"] - start["monotonicSeconds"]
+
+
+def resource_stats(values):
+    first, last = values[0], values[-1]
+    tail_offset = max(1, len(values) // 2)
+    tail_records = records[tail_offset:]
+    tail_values = values[tail_offset:]
+    xs = [record["monotonicSeconds"] for record in tail_records]
+    ys = [value["vmRssKiB"] / 1024 for value in tail_values]
+    if len(xs) >= 2 and len(set(xs)) > 1:
+        xbar, ybar = statistics.mean(xs), statistics.mean(ys)
+        denominator = sum((x - xbar) ** 2 for x in xs)
+        slope = 3600 * sum(
+            (x - xbar) * (y - ybar) for x, y in zip(xs, ys)
+        ) / denominator
+    else:
+        slope = 0.0
+    return {
+        "start": first,
+        "end": last,
+        "fdGrowth": last["fds"] - first["fds"],
+        "threadGrowth": last["threads"] - first["threads"],
+        "rssGrowthMiB": round((last["vmRssKiB"] - first["vmRssKiB"]) / 1024, 1),
+        "fdPeakGrowth": max(value["fds"] for value in values) - first["fds"],
+        "threadPeakGrowth": max(value["threads"] for value in values) - first["threads"],
+        "rssPeakGrowthMiB": round(
+            (max(value["vmRssKiB"] for value in values) - first["vmRssKiB"]) / 1024,
+            1,
+        ),
+        "rssTailSlopeMiBPerHour": round(slope, 3),
+    }
+
+
+aggregate_resources = resource_stats([record["totals"] for record in records])
+process_names = set(start["processes"])
+if any(set(record["processes"]) != process_names for record in records):
+    raise SystemExit("rust process set changed during soak")
+resources_by_process = {
+    name: resource_stats([record["processes"][name] for record in records])
+    for name in sorted(process_names)
+}
+
+
+def resources_ok(stats):
+    return (
+        stats["fdGrowth"] <= 32
+        and stats["threadGrowth"] <= 8
+        and stats["rssGrowthMiB"] <= 32
+        and stats["fdPeakGrowth"] <= 128
+        and stats["threadPeakGrowth"] <= 8
+        and stats["rssPeakGrowthMiB"] <= 64
+        and (
+            not slope_gate_applied
+            or stats["rssTailSlopeMiBPerHour"] <= 2
+        )
+    )
+
+
+distributed_attempts = distributed.get("attempts", 0)
+required_distributed_attempts = distributed.get("requiredAttempts", 0)
 ok = (
     failures == 0
     and rounds >= minimum_rounds
-    and fd_growth <= 32
-    and thread_growth <= 8
-    and rss_growth_mib <= 32
-    and fd_peak_growth <= 128
-    and thread_peak_growth <= 8
-    and rss_peak_growth_mib <= 64
-    and (not slope_gate_applied or rss_slope_mib_per_hour <= 2)
+    and resources_ok(aggregate_resources)
+    and all(resources_ok(stats) for stats in resources_by_process.values())
     and all(r.get("serverAlive") for r in records)
     and distributed.get("ok") is True
-    and distributed.get("handoffSeq1", {}).get("attempts") == 1
-    and distributed.get("handoffSeq1", {}).get("successes") == 1
+    and distributed_attempts >= required_distributed_attempts
+    and distributed.get("handoffSeq1", {}).get("attempts") == distributed_attempts
+    and distributed.get("handoffSeq1", {}).get("successes") == distributed_attempts
+    and distributed.get("handoffSeq1", {}).get("failures") == 0
     and distributed.get("handoffSeq1", {}).get("fakeNstExpected") is True
-    and distributed.get("handoffSeq1", {}).get("coverShapeEvents", 0) >= 1
+    and distributed.get("handoffSeq1", {}).get("coverShapeEvents") == distributed_attempts
     and distributed.get("handoffSeq1", {}).get("appendedWireLength") == 139
     and distributed.get("handoffSeq1", {}).get("exportedServerSequence") == 1
+    and distributed.get("handoffSeq1", {}).get("allServerSequenceOne") is True
     and distributed.get("handoffSeq1", {}).get("download", {}).get("bytes") == 1048576
     and distributed.get("handoffSeq1", {}).get("download", {}).get("sha256") == distributed.get("payloadSha256")
-    and distributed.get("nxrByteIntegrity", {}).get("attempts") == 1
-    and distributed.get("nxrByteIntegrity", {}).get("successes") == 1
+    and distributed.get("nxrByteIntegrity", {}).get("attempts") == distributed_attempts
+    and distributed.get("nxrByteIntegrity", {}).get("successes") == distributed_attempts
+    and distributed.get("nxrByteIntegrity", {}).get("failures") == 0
     and distributed.get("nxrByteIntegrity", {}).get("download", {}).get("bytes") == 1048576
     and distributed.get("nxrByteIntegrity", {}).get("download", {}).get("sha256") == distributed.get("payloadSha256")
 )
@@ -599,21 +892,31 @@ release_qualified = (
     and duration_minutes == 720
     and elapsed_seconds >= 720 * 60
     and slope_gate_applied
+    and distributed.get("intervalSeconds", 1801) <= 1800
+    and distributed_attempts >= 25
+    and distributed.get("handoffSeq1", {}).get("attempts", 0) >= 25
+    and distributed.get("handoffSeq1", {}).get("successes", 0) >= 25
+    and distributed.get("handoffSeq1", {}).get("failures") == 0
+    and distributed.get("nxrByteIntegrity", {}).get("attempts", 0) >= 25
+    and distributed.get("nxrByteIntegrity", {}).get("successes", 0) >= 25
+    and distributed.get("nxrByteIntegrity", {}).get("failures") == 0
 )
 summary = {
     "rounds": rounds,
     "transferFailures": failures,
     "start": start,
     "end": end,
-    "fdGrowth": fd_growth,
-    "threadGrowth": thread_growth,
-    "rssGrowthMiB": round(rss_growth_mib, 1),
+    "fdGrowth": aggregate_resources["fdGrowth"],
+    "threadGrowth": aggregate_resources["threadGrowth"],
+    "rssGrowthMiB": aggregate_resources["rssGrowthMiB"],
     "minimumRounds": minimum_rounds,
     "payloadSha256": payload_sha256,
-    "fdPeakGrowth": fd_peak_growth,
-    "threadPeakGrowth": thread_peak_growth,
-    "rssPeakGrowthMiB": round(rss_peak_growth_mib, 1),
-    "rssTailSlopeMiBPerHour": round(rss_slope_mib_per_hour, 3),
+    "fdPeakGrowth": aggregate_resources["fdPeakGrowth"],
+    "threadPeakGrowth": aggregate_resources["threadPeakGrowth"],
+    "rssPeakGrowthMiB": aggregate_resources["rssPeakGrowthMiB"],
+    "rssTailSlopeMiBPerHour": aggregate_resources["rssTailSlopeMiBPerHour"],
+    "resourceAggregate": aggregate_resources,
+    "resourceByProcess": resources_by_process,
     "rssTailSlopeGateApplied": slope_gate_applied,
     "durationMinutes": duration_minutes,
     "elapsedSeconds": round(elapsed_seconds, 3),
