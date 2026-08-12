@@ -4,9 +4,11 @@
 #
 # Workload mix per round: direct download (TLS origin), framed download
 # (plain origin), fallback (direct-to-listener), and rapid connect/drop
-# churn. /proc snapshots (FDs, RSS, threads) are captured at start, each
-# round, and end; the summary fails the run if the end snapshot exceeds the
-# start by more than a bounded slack after a drain pause.
+# churn. A fail-closed distributed preflight additionally proves one real
+# cover-NST/sequence-one Handoff resume and one byte-exact NXR transfer.
+# /proc snapshots (FDs, RSS, threads) are captured at start, each round, and
+# end; the summary fails the run if the end snapshot exceeds the start by
+# more than a bounded slack after a drain pause.
 #
 # Env: DURATION_MIN (30), ROUND_SLEEP (5), RUST_REALITY_BIN, XRAY_BIN, OUT_DIR.
 set -Eeuo pipefail
@@ -18,21 +20,48 @@ duration_min=${DURATION_MIN:-30}
 round_sleep=${ROUND_SLEEP:-5}
 minimum_rounds=${MIN_ROUNDS:-$duration_min}
 expected_rust_sha256=${RUST_REALITY_SHA256:-}
+expected_xray_sha256=${XRAY_SHA256:-}
 out_dir=${OUT_DIR:-diagnostics/final/soak-$(date -u +%Y%m%dT%H%M%SZ)}
 work=$(readlink -f "$(mktemp -d "$repository/benchmarks/soak.XXXXXX")")
 pids=()
+declare -A active_pids=()
+last_pid=
+
+stop_pid() {
+    local pid=${1:-}
+    [[ -n $pid ]] || return 0
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -TERM "$pid" 2>/dev/null || true
+        for _ in {1..50}; do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.02
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -KILL "$pid" 2>/dev/null || true
+        fi
+    fi
+    wait "$pid" 2>/dev/null || true
+    unset "active_pids[$pid]"
+}
 
 cleanup() {
-    for pid in "${pids[@]}"; do
-        kill "$pid" 2>/dev/null || true
-        wait "$pid" 2>/dev/null || true
+    local index pid
+    for ((index=${#pids[@]} - 1; index >= 0; index--)); do
+        pid=${pids[index]}
+        if [[ ${active_pids[$pid]+present} ]]; then
+            stop_pid "$pid"
+        fi
     done
-    rm -rf -- "$work"
+    if [[ -d $work && $work == "$repository"/benchmarks/soak.* ]]; then
+        rm -rf -- "$work"
+    fi
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 cd "$repository"
-for program in curl jq openssl python3 sha256sum; do
+for program in curl go grep jq openssl python3 sha256sum stat; do
     command -v "$program" >/dev/null || { echo "missing: $program" >&2; exit 1; }
 done
 [[ $duration_min =~ ^[1-9][0-9]*$ ]] || { echo "DURATION_MIN must be positive" >&2; exit 2; }
@@ -48,8 +77,13 @@ fi
 command -v "$xray" >/dev/null 2>&1 || { echo "XRAY_BIN is required" >&2; exit 1; }
 xray=$(realpath "$(command -v "$xray")")
 xray_sha256=$(sha256sum "$xray" | awk '{print $1}')
+if [[ -n $expected_xray_sha256 && ${expected_xray_sha256,,} != $xray_sha256 ]]; then
+    echo "XRAY_SHA256 mismatch: expected $expected_xray_sha256, got $xray_sha256" >&2
+    exit 1
+fi
 
-[[ ! -e $out_dir ]] || { echo "OUT_DIR already exists: $out_dir" >&2; exit 1; }
+[[ ! -e $out_dir && ! -L $out_dir ]] \
+    || { echo "OUT_DIR already exists: $out_dir" >&2; exit 1; }
 mkdir -p "$(dirname "$out_dir")"
 mkdir "$out_dir"
 jq -n --arg rustBin "$rust_bin" --arg rustSha256 "$rust_sha256" \
@@ -79,6 +113,49 @@ PY
 
 read -r rust_port rust_socks https_port http_port < <(allocate_ports)
 
+free_port() {
+    python3 - <<'PY'
+import socket
+with socket.socket() as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+}
+
+wait_port() {
+    local port=$1 pid=$2
+    python3 - "$port" "$pid" <<'PY'
+import os, socket, sys, time
+port, pid = int(sys.argv[1]), int(sys.argv[2])
+deadline = time.monotonic() + 10
+while time.monotonic() < deadline:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        raise SystemExit(f"process {pid} exited before port {port} became ready")
+    with socket.socket() as sock:
+        sock.settimeout(0.1)
+        if sock.connect_ex(("127.0.0.1", port)) == 0:
+            raise SystemExit(0)
+    time.sleep(0.02)
+raise SystemExit(f"port {port} did not become ready")
+PY
+}
+
+start_logged() {
+    local log=$1
+    shift
+    "$@" >"$log" 2>&1 &
+    last_pid=$!
+    pids+=("$last_pid")
+    active_pids["$last_pid"]=1
+}
+
+clean_curl() {
+    env -u ALL_PROXY -u all_proxy -u HTTP_PROXY -u http_proxy \
+        -u HTTPS_PROXY -u https_proxy -u NO_PROXY -u no_proxy curl "$@"
+}
+
 "$rust_bin" config generate standalone --listen 127.0.0.1 --port "$rust_port" \
     --target "127.0.0.1:$https_port" --server-name localhost \
     > "$work/base.json" 2> "$work/gen.log"
@@ -92,25 +169,209 @@ jq -n --arg uuid "$uuid" --arg pk "$rust_pub" --arg sid "$sid" \
     '{log:{loglevel:"warning"},inbounds:[{listen:"127.0.0.1",port:$cp,protocol:"socks",settings:{auth:"noauth",udp:false}}],outbounds:[{protocol:"vless",settings:{vnext:[{address:"127.0.0.1",port:$sp,users:[{id:$uuid,encryption:"none",flow:"xtls-rprx-vision"}]}]},streamSettings:{network:"tcp",security:"reality",realitySettings:{fingerprint:"chrome",serverName:"localhost",publicKey:$pk,shortId:$sid,spiderX:"/"}}}]}' \
     > "$work/rust-client.json"
 
-python3 -c "
+python3 - "$work" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
 chunk = bytes(range(256)) * 4096
-open('$work/payload-4.bin','wb').write(chunk * 4)"
+(root / "payload-1.bin").write_bytes(chunk)
+(root / "payload-4.bin").write_bytes(chunk * 4)
+PY
 openssl req -x509 -newkey rsa:2048 -nodes -keyout "$work/o.key" -out "$work/o.crt" \
     -days 1 -subj "/CN=localhost" >/dev/null 2>&1
 (cd scripts/bench-origin && go build -o "$work/bench-origin" .)
-"$work/bench-origin" --port "$https_port" --payload-dir "$work" \
-    --put-log "$work/https-put.jsonl" --tls-cert "$work/o.crt" --tls-key "$work/o.key" \
-    > "$work/https-origin.log" 2>&1 &
-pids+=("$!")
-"$work/bench-origin" --port "$http_port" --payload-dir "$work" \
-    --put-log "$work/http-put.jsonl" > "$work/http-origin.log" 2>&1 &
-pids+=("$!")
+start_logged "$work/https-origin.log" "$work/bench-origin" \
+    --port "$https_port" --payload-dir "$work" --put-log "$work/https-put.jsonl" \
+    --tls-cert "$work/o.crt" --tls-key "$work/o.key"
+https_origin_pid=$last_pid
+start_logged "$work/http-origin.log" "$work/bench-origin" \
+    --port "$http_port" --payload-dir "$work" --put-log "$work/http-put.jsonl"
+http_origin_pid=$last_pid
+wait_port "$https_port" "$https_origin_pid"
+wait_port "$http_port" "$http_origin_pid"
 
-"$rust_bin" serve --config "$work/rust.json" > "$work/rust.log" 2>&1 &
-pids+=("$!")
-server_pid=$!
-"$xray" run -config "$work/rust-client.json" > /dev/null 2>&1 &
-pids+=("$!")
+wait_log_event() {
+    local log=$1 event=$2
+    for _ in {1..500}; do
+        grep -Fq "$event" "$log" && return 0
+        sleep 0.02
+    done
+    echo "required event did not appear in $log: $event" >&2
+    return 1
+}
+
+make_xray_client() {
+    local server_port=$1 socks_port=$2 public_key=$3 client_uuid=$4 short_id=$5 output=$6
+    jq -n --arg uuid "$client_uuid" --arg pk "$public_key" --arg sid "$short_id" \
+        --argjson sp "$server_port" --argjson cp "$socks_port" \
+        '{log:{loglevel:"warning"},
+          inbounds:[{listen:"127.0.0.1",port:$cp,protocol:"socks",
+            settings:{auth:"noauth",udp:false}}],
+          outbounds:[{protocol:"vless",settings:{vnext:[{address:"127.0.0.1",
+            port:$sp,users:[{id:$uuid,encryption:"none",flow:"xtls-rprx-vision"}]}]},
+            streamSettings:{network:"tcp",security:"reality",realitySettings:{
+              fingerprint:"chrome",serverName:"localhost",publicKey:$pk,
+              shortId:$sid,spiderX:"/"}}}]}' >"$output"
+}
+
+verify_one_mib_download() {
+    local socks_port=$1 output=$2 expected=$3
+    clean_curl -sS --fail --socks5-hostname "127.0.0.1:$socks_port" \
+        --max-time 30 "http://127.0.0.1:$http_port/payload-1.bin" --output "$output"
+    [[ $(stat -c %s "$output") == 1048576 ]] \
+        || { echo "distributed gate download is not exactly 1 MiB: $output" >&2; return 1; }
+    local actual
+    actual=$(sha256sum "$output" | awk '{print $1}')
+    [[ $actual == "$expected" ]] \
+        || { echo "distributed gate payload SHA-256 mismatch: $output" >&2; return 1; }
+}
+
+# -------------------------------------------------------------------------
+# One-shot distributed correctness gates. These are deliberately outside the
+# timed resource loop: the soak evidence must prove both distributed paths at
+# least once without making their extra server processes part of the primary
+# server's leak baseline.
+# -------------------------------------------------------------------------
+distributed_payload_sha256=$(sha256sum "$work/payload-1.bin" | awk '{print $1}')
+
+# Handoff: make the cover target emit a TLS 1.3 NewSessionTicket, which makes
+# the authenticated rust-reality flight consume server application sequence
+# zero before Vision begins. A byte-exact download through the generated
+# LINE -> sealed HND1 transfer -> LANDING topology then proves the first
+# visible response resumed and decrypted at sequence one.
+handoff_cover_port=$(free_port)
+handoff_line_port=$(free_port)
+handoff_landing_port=$(free_port)
+handoff_socks_port=$(free_port)
+openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+    -subj '/CN=rust-reality Handoff soak CA' \
+    -addext 'basicConstraints=critical,CA:TRUE' \
+    -addext 'keyUsage=critical,keyCertSign,cRLSign' \
+    -keyout "$work/handoff-cover-ca.key" -out "$work/handoff-cover-ca.crt" \
+    >"$work/handoff-cover-ca.log" 2>&1
+openssl req -new -newkey rsa:2048 -nodes -sha256 -subj '/CN=localhost' \
+    -addext 'basicConstraints=critical,CA:FALSE' \
+    -addext 'keyUsage=critical,digitalSignature,keyEncipherment' \
+    -addext 'extendedKeyUsage=serverAuth' \
+    -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
+    -keyout "$work/handoff-cover.key" -out "$work/handoff-cover.csr" \
+    >"$work/handoff-cover-csr.log" 2>&1
+openssl x509 -req -sha256 -days 1 -in "$work/handoff-cover.csr" \
+    -CA "$work/handoff-cover-ca.crt" -CAkey "$work/handoff-cover-ca.key" \
+    -CAcreateserial -copy_extensions copy -out "$work/handoff-cover.crt" \
+    >"$work/handoff-cover-sign.log" 2>&1
+openssl verify -CAfile "$work/handoff-cover-ca.crt" -verify_hostname localhost \
+    "$work/handoff-cover.crt" >"$out_dir/handoff-cover-certificate-verify.log"
+start_logged "$out_dir/handoff-cover-trace.log" openssl s_server \
+    -accept "127.0.0.1:$handoff_cover_port" -www -ign_eof -tls1_3 \
+    -cert "$work/handoff-cover.crt" -key "$work/handoff-cover.key" \
+    -alpn 'h2,http/1.1' -trace -msg -state
+handoff_cover_pid=$last_pid
+wait_port "$handoff_cover_port" "$handoff_cover_pid"
+
+"$rust_bin" config generate handoff \
+    --listen 127.0.0.1 --port "$handoff_line_port" \
+    --server-address 127.0.0.1 \
+    --target "localhost:$handoff_cover_port" --server-name localhost \
+    --landing-address 127.0.0.1 --landing-port "$handoff_landing_port" \
+    --output-dir "$work/handoff" >"$work/handoff-generate.out" \
+    2>"$work/handoff-generate.log"
+jq --arg cache "$work/assets-handoff-line" \
+    '.log.level="debug" | .assets.cacheDirectory=$cache' \
+    "$work/handoff/line.json" >"$work/handoff-line.json"
+jq --arg cache "$work/assets-handoff-landing" \
+    '.log.level="debug" | .assets.cacheDirectory=$cache' \
+    "$work/handoff/landing.json" >"$work/handoff-landing.json"
+jq --argjson port "$handoff_socks_port" '.inbounds[0].port=$port' \
+    "$work/handoff/xray-client.json" >"$work/handoff-client.json"
+"$rust_bin" check --config "$work/handoff-line.json" >/dev/null
+"$rust_bin" check --config "$work/handoff-landing.json" >/dev/null
+start_logged "$out_dir/handoff-landing.log" \
+    "$rust_bin" serve --config "$work/handoff-landing.json"
+handoff_landing_pid=$last_pid
+wait_port "$handoff_landing_port" "$handoff_landing_pid"
+start_logged "$out_dir/handoff-line.log" env SSL_CERT_FILE="$work/handoff-cover-ca.crt" \
+    "$rust_bin" serve --config "$work/handoff-line.json"
+handoff_line_pid=$last_pid
+wait_port "$handoff_line_port" "$handoff_line_pid"
+start_logged "$out_dir/handoff-xray.log" "$xray" run -config "$work/handoff-client.json"
+handoff_xray_pid=$last_pid
+wait_port "$handoff_socks_port" "$handoff_xray_pid"
+verify_one_mib_download "$handoff_socks_port" "$work/handoff-download.bin" \
+    "$distributed_payload_sha256"
+wait_log_event "$out_dir/handoff-line.log" '"event":"connection_completed"'
+stop_pid "$handoff_xray_pid"
+stop_pid "$handoff_line_pid"
+stop_pid "$handoff_landing_pid"
+stop_pid "$handoff_cover_pid"
+handoff_nst_records=$(grep -Ec '^[[:space:]]*>>> .*NewSessionTicket' \
+    "$out_dir/handoff-cover-trace.log")
+(( handoff_nst_records >= 1 )) \
+    || { echo 'Handoff cover emitted no server-direction NewSessionTicket' >&2; exit 1; }
+
+# NXR: a separate generated LINE -> authenticated NXR -> LANDING topology
+# must carry the same one-MiB payload byte-exactly. No failure is masked.
+nxr_line_port=$(free_port)
+nxr_landing_port=$(free_port)
+nxr_socks_port=$(free_port)
+nxr_key=$("$rust_bin" node-keygen | jq -r .preSharedKey)
+"$rust_bin" config generate line --listen 127.0.0.1 --port "$nxr_line_port" \
+    --target "127.0.0.1:$https_port" --server-name localhost \
+    --nxr-address 127.0.0.1 --nxr-port "$nxr_landing_port" --nxr-key "$nxr_key" \
+    >"$work/nxr-line.raw.json" 2>"$work/nxr-line-generate.log"
+"$rust_bin" config generate landing --listen 127.0.0.1 --port "$nxr_landing_port" \
+    --nxr-key "$nxr_key" >"$work/nxr-landing.raw.json"
+jq --arg cache "$work/assets-nxr-line" \
+    '.log.level="debug" | .assets.cacheDirectory=$cache' \
+    "$work/nxr-line.raw.json" >"$work/nxr-line.json"
+jq --arg cache "$work/assets-nxr-landing" \
+    '.log.level="debug" | .assets.cacheDirectory=$cache' \
+    "$work/nxr-landing.raw.json" >"$work/nxr-landing.json"
+nxr_public_key=$(sed -n 's/^REALITY public key for the client: //p' \
+    "$work/nxr-line-generate.log")
+nxr_uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$work/nxr-line.raw.json")
+nxr_short_id=$(jq -r '.inbounds[0].settings.clients[0].shortIds[0]' \
+    "$work/nxr-line.raw.json")
+make_xray_client "$nxr_line_port" "$nxr_socks_port" "$nxr_public_key" \
+    "$nxr_uuid" "$nxr_short_id" "$work/nxr-client.json"
+"$rust_bin" check --config "$work/nxr-line.json" >/dev/null
+"$rust_bin" check --config "$work/nxr-landing.json" >/dev/null
+start_logged "$out_dir/nxr-landing.log" "$rust_bin" serve --config "$work/nxr-landing.json"
+nxr_landing_pid=$last_pid
+wait_port "$nxr_landing_port" "$nxr_landing_pid"
+start_logged "$out_dir/nxr-line.log" "$rust_bin" serve --config "$work/nxr-line.json"
+nxr_line_pid=$last_pid
+wait_port "$nxr_line_port" "$nxr_line_pid"
+start_logged "$out_dir/nxr-xray.log" "$xray" run -config "$work/nxr-client.json"
+nxr_xray_pid=$last_pid
+wait_port "$nxr_socks_port" "$nxr_xray_pid"
+verify_one_mib_download "$nxr_socks_port" "$work/nxr-download.bin" \
+    "$distributed_payload_sha256"
+wait_log_event "$out_dir/nxr-line.log" '"event":"connection_completed"'
+stop_pid "$nxr_xray_pid"
+stop_pid "$nxr_line_pid"
+stop_pid "$nxr_landing_pid"
+
+jq -n --arg payloadSha256 "$distributed_payload_sha256" \
+    --argjson handoffNstRecords "$handoff_nst_records" \
+    --arg handoffLineConfigSha256 "$(sha256sum "$work/handoff-line.json" | awk '{print $1}')" \
+    --arg handoffLandingConfigSha256 "$(sha256sum "$work/handoff-landing.json" | awk '{print $1}')" \
+    --arg nxrLineConfigSha256 "$(sha256sum "$work/nxr-line.json" | awk '{print $1}')" \
+    --arg nxrLandingConfigSha256 "$(sha256sum "$work/nxr-landing.json" | awk '{print $1}')" \
+    '{schemaVersion:1,payloadBytes:1048576,payloadSha256:$payloadSha256,
+      handoffSeq1:{attempts:1,successes:1,coverServerNewSessionTicketRecords:$handoffNstRecords,
+        evidence:{coverTrace:"handoff-cover-trace.log",lineLog:"handoff-line.log",
+          landingLog:"handoff-landing.log"},lineConfigSha256:$handoffLineConfigSha256,
+        landingConfigSha256:$handoffLandingConfigSha256},
+      nxrByteIntegrity:{attempts:1,successes:1,lineLog:"nxr-line.log",
+        landingLog:"nxr-landing.log",lineConfigSha256:$nxrLineConfigSha256,
+        landingConfigSha256:$nxrLandingConfigSha256},ok:true}' \
+    >"$out_dir/distributed-gates.json"
+
+start_logged "$work/rust.log" "$rust_bin" serve --config "$work/rust.json"
+server_pid=$last_pid
+start_logged /dev/null "$xray" run -config "$work/rust-client.json"
 sleep 1.5
 
 snapshot() {
@@ -128,11 +389,6 @@ print(json.dumps({
     "threads": int(fields["Threads"].split()[0]),
 }))
 PY
-}
-
-clean_curl() {
-    env -u ALL_PROXY -u all_proxy -u HTTP_PROXY -u http_proxy \
-        -u HTTPS_PROXY -u https_proxy -u NO_PROXY -u no_proxy curl "$@"
 }
 
 expected_payload_sha256=$(sha256sum "$work/payload-4.bin" | awk '{print $1}')
@@ -170,12 +426,22 @@ done
 sleep 5
 snapshot end
 
+final_rust_sha256=$(sha256sum "$rust_bin" | awk '{print $1}')
+final_xray_sha256=$(sha256sum "$xray" | awk '{print $1}')
+[[ $final_rust_sha256 == "$rust_sha256" ]] \
+    || { echo 'RUST_REALITY_BIN changed during soak' >&2; exit 1; }
+[[ $final_xray_sha256 == "$xray_sha256" ]] \
+    || { echo 'XRAY_BIN changed during soak' >&2; exit 1; }
+
 python3 - "$out_dir/resources.jsonl" "$failures" "$round" "$minimum_rounds" \
-    "$expected_payload_sha256" "$out_dir/soak-summary.json" <<'PY'
+    "$expected_payload_sha256" "$out_dir/distributed-gates.json" \
+    "$out_dir/soak-summary.json" <<'PY'
 import json, statistics, sys
 records = [json.loads(line) for line in open(sys.argv[1])]
 failures, rounds, minimum_rounds = map(int, sys.argv[2:5])
-payload_sha256, output = sys.argv[5:7]
+payload_sha256, distributed_path, output = sys.argv[5:8]
+with open(distributed_path) as handle:
+    distributed = json.load(handle)
 start, end = records[0], records[-1]
 # Slack: a few dozen FDs/threads and 32 MiB RSS cover allocator arenas and
 # parked runtime state; anything beyond that is a leak.
@@ -207,6 +473,12 @@ ok = (
     and rss_peak_growth_mib <= 64
     and rss_slope_mib_per_hour <= 2
     and all(r.get("serverAlive") for r in records)
+    and distributed.get("ok") is True
+    and distributed.get("handoffSeq1", {}).get("attempts") == 1
+    and distributed.get("handoffSeq1", {}).get("successes") == 1
+    and distributed.get("handoffSeq1", {}).get("coverServerNewSessionTicketRecords", 0) >= 1
+    and distributed.get("nxrByteIntegrity", {}).get("attempts") == 1
+    and distributed.get("nxrByteIntegrity", {}).get("successes") == 1
 )
 summary = {
     "rounds": rounds,
@@ -222,6 +494,7 @@ summary = {
     "threadPeakGrowth": thread_peak_growth,
     "rssPeakGrowthMiB": round(rss_peak_growth_mib, 1),
     "rssTailSlopeMiBPerHour": round(rss_slope_mib_per_hour, 3),
+    "distributedGates": distributed,
     "ok": ok,
 }
 with open(output, "x") as fh:
