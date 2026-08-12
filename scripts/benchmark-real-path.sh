@@ -14,6 +14,7 @@
 set -Eeuo pipefail
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$repository/scripts/benchmark-contract.sh"
 xray=${XRAY_BIN:-xray}
 rust_bin=${RUST_REALITY_BIN:-target/release/rust-reality}
 runs=${RUNS:-20}
@@ -21,16 +22,25 @@ bytes=${BYTES:-5000000}
 url=${URL:-https://speed.cloudflare.com/__down?bytes=$bytes}
 cover_target=${COVER_TARGET:-dl.google.com:443}
 cover_sni=${COVER_SNI:-dl.google.com}
-out_dir=${OUT_DIR:-diagnostics/final/real-path-$(date -u +%Y%m%dT%H%M%SZ)}
-out=${OUT:-$out_dir/real-path.json}
-temporary_root=${TMPDIR:-/tmp}
+rr_contract_init "$repository" benchmark-real-path diagnostics/final 16
+if [[ $RR_EXPLORATORY == 1 ]]; then
+    [[ $xray == /* ]] || xray=$(command -v "$xray")
+fi
+rr_register_binary rust-reality "$rust_bin" "${RUST_REALITY_SHA256:-}" rust \
+    "${EXPECTED_SOURCE_COMMIT:-}"
+rust_bin=${RR_BINARY_PATHS[rust-reality]}
+rr_register_binary xray "$xray" "${XRAY_SHA256:-}" xray
+xray=${RR_BINARY_PATHS[xray]}
+rr_write_contract_metadata
+out_dir=$RR_OUT_DIR
+out=$out_dir/real-path.json
+temporary_root=$RR_TMPDIR
 work=$(mktemp -d "$temporary_root/rust-reality-realpath.XXXXXX")
 pids=()
 
 cleanup() {
     for pid in "${pids[@]}"; do
-        kill "$pid" 2>/dev/null || true
-        wait "$pid" 2>/dev/null || true
+        rr_stop_registered_pid "$pid"
     done
     if [[ ${KEEP_WORK:-0} == 1 ]]; then
         printf 'real-path temporary directory retained: %s\n' "$work" >&2
@@ -59,14 +69,7 @@ if ! env -u ALL_PROXY -u all_proxy -u HTTP_PROXY -u http_proxy -u HTTPS_PROXY -u
     exit 3
 fi
 
-free_port() {
-    python3 - <<'PY'
-import socket
-with socket.socket() as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-}
+free_port() { rr_next_port; }
 
 wait_port() {
     python3 - "$1" <<'PY'
@@ -85,31 +88,15 @@ PY
 
 start_process() {
     "$@" &
-    pids+=("$!")
+    local pid=$! expected=
+    pids+=("$pid")
+    if [[ $1 == "$rust_bin" || $1 == "$xray" ]]; then expected=$1; fi
+    rr_register_pid "$pid" "$expected"
 }
 
 cd "$repository"
-[[ -x $rust_bin ]] || { echo "RUST_REALITY_BIN not executable: $rust_bin" >&2; exit 1; }
-command -v "$xray" >/dev/null 2>&1 || { echo "XRAY_BIN not executable: $xray" >&2; exit 1; }
-rust_bin=$(realpath "$rust_bin")
-xray=$(realpath "$(command -v "$xray")")
-rust_sha256=$(sha256sum "$rust_bin" | awk '{print $1}')
-xray_sha256=$(sha256sum "$xray" | awk '{print $1}')
-expected_rust_sha256=${RUST_REALITY_SHA256:-}
-expected_xray_sha256=${XRAY_SHA256:-}
-if [[ -n $expected_rust_sha256 && ${expected_rust_sha256,,} != "$rust_sha256" ]]; then
-    echo "RUST_REALITY_SHA256 mismatch: expected $expected_rust_sha256, got $rust_sha256" >&2
-    exit 1
-fi
-if [[ -n $expected_xray_sha256 && ${expected_xray_sha256,,} != "$xray_sha256" ]]; then
-    echo "XRAY_SHA256 mismatch: expected $expected_xray_sha256, got $xray_sha256" >&2
-    exit 1
-fi
-if [[ -z ${OUT:-} && -e $out_dir ]]; then
-    echo "OUT_DIR already exists: $out_dir" >&2
-    exit 1
-fi
-[[ ! -e $out ]] || { echo "output already exists: $out" >&2; exit 1; }
+rust_sha256=${RR_BINARY_SHA256[rust-reality]}
+xray_sha256=${RR_BINARY_SHA256[xray]}
 
 rust_port=$(free_port)
 xray_port=$(free_port)
@@ -263,3 +250,4 @@ print(json.dumps(summary["failures"] and {"failures": summary["failures"]} or su
 print(f"failures={summary['failures']} runs={runs} -> {out}")
 sys.exit(1 if failed else 0)
 PY
+rr_finalize_contract

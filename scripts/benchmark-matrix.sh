@@ -76,6 +76,7 @@
 set -Eeuo pipefail
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$repository/scripts/benchmark-contract.sh"
 cd "$repository"
 
 baseline_bin=${RUST_REALITY_BASELINE_BIN:-../artifacts/rust-reality-baseline-717e69b}
@@ -95,26 +96,31 @@ cells_filter=${CELLS:-}
 skip_filter=${SKIP:-}
 rust_log_level=${RUST_LOG_LEVEL:-warn}
 abba_start=${ABBA_START:-baseline}
-out_dir=${OUT_DIR:-benchmarks/final/matrix-$(date -u +%Y%m%dT%H%M%SZ)}
+rr_contract_init "$repository" benchmark-matrix benchmarks/final 32
+rr_register_binary baseline "$baseline_bin" "${RUST_REALITY_BASELINE_SHA256:-}" rust \
+    "${EXPECTED_BASELINE_SOURCE_COMMIT:-${RUST_REALITY_BASELINE_COMMIT:-}}"
+baseline_bin=${RR_BINARY_PATHS[baseline]}
+rr_register_binary candidate "$rust_bin" "${RUST_REALITY_SHA256:-}" rust \
+    "${EXPECTED_SOURCE_COMMIT:-${RUST_REALITY_COMMIT:-}}"
+rust_bin=${RR_BINARY_PATHS[candidate]}
+if [[ $RR_EXPLORATORY == 1 && $xray != /* ]]; then xray=$(command -v "$xray"); fi
+rr_register_binary xray "$xray" "${XRAY_SHA256:-}" xray
+xray=${RR_BINARY_PATHS[xray]}
+rr_write_contract_metadata
+out_dir=$RR_OUT_DIR
 [[ $abba_start == baseline || $abba_start == final ]] || {
     echo "ABBA_START must be baseline or final" >&2
     exit 2
 }
-[[ ! -e $out_dir ]] || {
-    echo "OUT_DIR already exists; refusing to overwrite evidence: $out_dir" >&2
-    exit 2
-}
 # Disk-backed default: /tmp may be a small tmpfs that cannot hold multi-GiB
 # payload files. TMPDIR is still honored when set.
-temporary_root=${TMPDIR:-$repository/benchmarks}
-mkdir -p "$temporary_root"
+temporary_root=$RR_TMPDIR
 work=$(mktemp -d "$temporary_root/rust-reality-matrix.XXXXXX")
 pids=()
 
 cleanup() {
     for pid in "${pids[@]:-}"; do
-        kill "$pid" 2>/dev/null || true
-        wait "$pid" 2>/dev/null || true
+        rr_stop_registered_pid "$pid"
     done
     if [[ ${KEEP_WORK:-0} == 1 ]]; then
         printf 'benchmark temporary directory retained: %s\n' "$work" >&2
@@ -130,16 +136,6 @@ for program in curl jq openssl python3 sha256sum; do
         exit 1
     fi
 done
-for binary in "$baseline_bin" "$xray"; do
-    if [[ ! -x $binary ]]; then
-        echo "required benchmark binary is unavailable: $binary" >&2
-        exit 1
-    fi
-done
-if [[ ! -x $rust_bin ]]; then
-    cargo build --release --locked
-fi
-
 sha256_file() {
     sha256sum -- "$1" | awk '{print $1}'
 }
@@ -147,7 +143,7 @@ sha256_file() {
 baseline_binary_sha256=$(sha256_file "$baseline_bin")
 rust_binary_sha256=$(sha256_file "$rust_bin")
 xray_binary_sha256=$(sha256_file "$xray")
-require_pinned_binaries=${REQUIRE_PINNED_BINARIES:-0}
+require_pinned_binaries=${REQUIRE_PINNED_BINARIES:-$((1 - RR_EXPLORATORY))}
 if [[ $require_pinned_binaries != 0 && $require_pinned_binaries != 1 ]]; then
     echo "REQUIRE_PINNED_BINARIES must be 0 or 1" >&2
     exit 1
@@ -204,14 +200,7 @@ for word in $payloads $concurrencies $large_concurrencies; do
     fi
 done
 
-free_port() {
-    python3 - <<'PY'
-import socket
-with socket.socket() as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-}
+free_port() { rr_next_port; }
 
 wait_port() {
     local port=$1
@@ -233,7 +222,12 @@ PY
 
 start_process() {
     "$@" &
-    pids+=("$!")
+    local pid=$! expected=
+    pids+=("$pid")
+    if [[ $1 == "$baseline_bin" || $1 == "$rust_bin" || $1 == "$xray" ]]; then
+        expected=$1
+    fi
+    rr_register_pid "$pid" "$expected"
 }
 
 # --------------------------------------------------------------------------
@@ -1577,3 +1571,4 @@ jq -e '
     echo "matrix contains incomplete, invalid, or corrupt samples" >&2
     exit 1
 }
+rr_finalize_contract

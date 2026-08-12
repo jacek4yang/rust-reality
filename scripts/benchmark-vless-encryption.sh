@@ -5,10 +5,11 @@
 # CPU/GiB, and fresh-connection setup after a warm-up makes 0-RTT available.
 #
 # Env: XRAY_BIN (xray), SAMPLES (5), CONCURRENCY (4), PAYLOAD_MIB (64),
-#      SETUP_CONNECTIONS (128), SETUP_CONCURRENCY (8), OUT_FILE, KEEP_WORK (0).
+#      SETUP_CONNECTIONS (128), SETUP_CONCURRENCY (8), OUT_DIR, KEEP_WORK (0).
 set -Eeuo pipefail
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$repository/scripts/benchmark-contract.sh"
 xray=${XRAY_BIN:-xray}
 samples=${SAMPLES:-5}
 concurrency=${CONCURRENCY:-4}
@@ -19,14 +20,21 @@ xray_log_level=${XRAY_LOG_LEVEL:-warning}
 transfer_timeout=${TRANSFER_TIMEOUT:-120}
 cover_target=${COVER_TARGET:-dl.google.com:443}
 cover_sni=${COVER_SNI:-dl.google.com}
-temporary_root=${TMPDIR:-/tmp}
+rr_contract_init "$repository" benchmark-vless-encryption benchmarks/final 16
+if [[ $RR_EXPLORATORY == 1 ]]; then
+    [[ $xray == /* ]] || xray=$(command -v "$xray")
+fi
+rr_register_binary xray "$xray" "${XRAY_SHA256:-}" xray
+xray=${RR_BINARY_PATHS[xray]}
+rr_write_contract_metadata
+out_dir=$RR_OUT_DIR
+temporary_root=$RR_TMPDIR
 work=$(mktemp -d "$temporary_root/rust-reality-vless-encryption.XXXXXX")
 pids=()
 
 cleanup() {
     for pid in "${pids[@]}"; do
-        kill "$pid" 2>/dev/null || true
-        wait "$pid" 2>/dev/null || true
+        rr_stop_registered_pid "$pid"
     done
     if [[ ${KEEP_WORK:-0} == 1 ]]; then
         printf 'benchmark temporary directory retained: %s\n' "$work" >&2
@@ -51,14 +59,7 @@ if (( samples > 100 || concurrency > 64 || payload_mib > 1024 || setup_connectio
     exit 1
 fi
 
-free_port() {
-    python3 - <<'PY'
-import socket
-with socket.socket() as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-}
+free_port() { rr_next_port; }
 
 wait_port() {
     python3 - "$1" <<'PY'
@@ -77,7 +78,11 @@ PY
 
 start_process() {
     "$@" &
-    pids+=("$!")
+    started_pid=$!
+    pids+=("$started_pid")
+    local expected=
+    [[ $1 == "$xray" ]] && expected=$xray
+    rr_register_pid "$started_pid" "$expected"
 }
 
 cd "$repository"
@@ -130,10 +135,14 @@ context.load_cert_chain(f"{directory}/origin.crt", f"{directory}/origin.key")
 server.socket = context.wrap_socket(server.socket, server_side=True)
 server.serve_forever()
 PY
-pids+=("$!")
+origin_tls_pid=$!
+pids+=("$origin_tls_pid")
+rr_register_pid "$origin_tls_pid"
 python3 -m http.server "$http_port" --bind 127.0.0.1 --directory "$work" \
     >"$work/http.log" 2>&1 &
-pids+=("$!")
+origin_http_pid=$!
+pids+=("$origin_http_pid")
+rr_register_pid "$origin_http_pid"
 wait_port "$https_port"
 wait_port "$http_port"
 
@@ -203,20 +212,18 @@ make_server "$encrypted_server_port" "$decryption" "$work/server-encrypted.json"
 make_client "$none_server_port" "$none_socks_port" none "$work/client-none.json"
 make_client "$encrypted_server_port" "$encrypted_socks_port" "$encryption" "$work/client-encrypted.json"
 
-"$xray" run -config "$work/server-none.json" >"$work/server-none.log" 2>&1 &
-pids+=("$!"); none_server_pid=$!
-"$xray" run -config "$work/server-encrypted.json" >"$work/server-encrypted.log" 2>&1 &
-pids+=("$!"); encrypted_server_pid=$!
+start_process "$xray" run -config "$work/server-none.json" >"$work/server-none.log" 2>&1
+none_server_pid=$started_pid
+start_process "$xray" run -config "$work/server-encrypted.json" >"$work/server-encrypted.log" 2>&1
+encrypted_server_pid=$started_pid
 wait_port "$none_server_port"
 wait_port "$encrypted_server_port"
-"$xray" run -config "$work/client-none.json" >"$work/client-none.log" 2>&1 &
-pids+=("$!")
-"$xray" run -config "$work/client-encrypted.json" >"$work/client-encrypted.log" 2>&1 &
-pids+=("$!")
+start_process "$xray" run -config "$work/client-none.json" >"$work/client-none.log" 2>&1
+start_process "$xray" run -config "$work/client-encrypted.json" >"$work/client-encrypted.log" 2>&1
 wait_port "$none_socks_port"
 wait_port "$encrypted_socks_port"
 
-report=${OUT_FILE:-$work/report.json}
+report=$out_dir/report.json
 python3 - \
     "$samples" "$concurrency" "$payload_mib" "$setup_connections" "$setup_concurrency" \
     "$none_socks_port" "$encrypted_socks_port" "$https_port" "$http_port" \
@@ -366,8 +373,5 @@ report = {
 print(json.dumps(report, indent=2, sort_keys=True))
 PY
 
-if [[ -n ${OUT_FILE:-} ]]; then
-    printf 'VLESS Encryption benchmark written to %s\n' "$report" >&2
-else
-    cat "$report"
-fi
+rr_finalize_contract
+printf 'VLESS Encryption benchmark written to %s\n' "$report"
