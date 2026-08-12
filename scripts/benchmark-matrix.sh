@@ -6,9 +6,9 @@
 #   final:    $RUST_REALITY_BIN          (default target/release/rust-reality)
 #   xray:     $XRAY_BIN                  (default ../artifacts/xray-reference)
 # Every server is fronted by an unmodified Xray SOCKS5 client (one per server
-# port), identical to scripts/benchmark-xray.sh. rust servers run with debug
-# log level so per-direction backend statistics and the tunnel-bypass guard can
-# be collected from connection_accepted / connection_completed events.
+# port), identical to scripts/benchmark-xray.sh. Authoritative measurements
+# default to warn-level logging so diagnostic serialization is not charged to
+# the data path. Debug mode additionally collects per-direction backend events.
 #
 # Scenarios (each forms one set of matrix cells):
 #   framed-download  plain-HTTP loopback origin; Vision stays framed
@@ -92,7 +92,7 @@ integrity_mib=${INTEGRITY_MIB:-2048}
 seed=${SEED:-0x5252}
 cells_filter=${CELLS:-}
 skip_filter=${SKIP:-}
-rust_log_level=${RUST_LOG_LEVEL:-debug}
+rust_log_level=${RUST_LOG_LEVEL:-warn}
 out_dir=${OUT_DIR:-benchmarks/final/matrix-$(date -u +%Y%m%dT%H%M%SZ)}
 [[ ! -e $out_dir ]] || {
     echo "OUT_DIR already exists; refusing to overwrite evidence: $out_dir" >&2
@@ -1031,7 +1031,7 @@ def verify_uploads(put_schemes, mib, expected_puts):
 
 
 def rust_events_for(impl_name, scenario):
-    if IMPLEMENTATIONS[impl_name]["kind"] != "rust":
+    if cfg["rust_log_level"] != "debug" or IMPLEMENTATIONS[impl_name]["kind"] != "rust":
         return None
     which = "fallback" if scenario == "fallback" else "tunnel"
     return log_trackers[impl_name][which].events()
@@ -1079,8 +1079,9 @@ def record_sample(impl_name, scenario, mib, concurrency, sample_index):
         problems.append(str(error))
         requests = expected_connections
         put_schemes = []
-    # Give the servers a moment to flush per-connection events, then check the
-    # bypass guard and per-direction backend stats from the rust debug log.
+    # Debug-only diagnostic runs also collect backend events. Authoritative
+    # warn-level runs rely on the explicit SOCKS endpoint, stripped proxy
+    # environment, byte counts, upload hashes, and origin error counters.
     time.sleep(0.25)
     events = rust_events_for(impl_name, scenario)
     if events is not None:
@@ -1188,8 +1189,28 @@ run_started = time.perf_counter()
 
 for scenario, mib, concurrency in cells:
     key = cell_key(scenario, mib, concurrency)
-    order = [impl for _ in range(samples_for(mib)) for impl in IMPL_ORDER]
-    random.Random(f"{seed}:{key}").shuffle(order)
+    sample_count = samples_for(mib)
+    # Baseline/candidate measurements use balanced A-B-B-A blocks, with the
+    # direction reversed on alternating blocks. One Xray sample is interleaved
+    # after each A/B pair so comparator drift is visible without breaking the
+    # release-candidate ABBA ordering.
+    abba = []
+    for block in range(sample_count // 2):
+        abba.extend(
+            ["baseline", "final", "final", "baseline"]
+            if block % 2 == 0
+            else ["final", "baseline", "baseline", "final"]
+        )
+    if sample_count % 2:
+        abba.extend(
+            ["baseline", "final"]
+            if (sample_count // 2) % 2 == 0
+            else ["final", "baseline"]
+        )
+    order = []
+    for offset in range(0, len(abba), 2):
+        order.extend(abba[offset:offset + 2])
+        order.append("xray")
     counters = {impl: 0 for impl in IMPL_ORDER}
     records = []
     stats_before = snapshot_origin_stats()
@@ -1454,8 +1475,8 @@ summary = {
     "failures": failures,
     "limitations": [
         "single-host loopback includes the same Xray client and loopback origins in every path",
-        "the tunnel-bypass guard only covers the rust implementations (their debug logs); "
-        "xray cells rely on byte-count verification",
+        "debug runs add a rust event-log tunnel guard; authoritative warn-level runs rely on "
+        "explicit SOCKS endpoints, stripped proxy environment, byte/hash checks, and origin stats",
         "Xray's default private-target block is explicitly allowed only for the loopback origin",
         "this does not model Internet RTT, packet loss, bandwidth shaping, or multi-core saturation",
         "results are measurements of this host and are not a universal performance claim",
@@ -1535,3 +1556,17 @@ print(
 PY
 
 python3 "$work/driver.py" "$work/driver-config.json"
+jq -e '
+  .totals.cells > 0
+  and .totals.invalidSamples == 0
+  and (.failures | length) == 0
+  and all(.cells[];
+    all(.implementations[];
+      .samples == .validSamples and .invalidSamples == 0
+    )
+  )
+  and all(.integrity[]; .invalid == false and .sha256.match == true)
+' "$out_dir/summary.json" >/dev/null || {
+    echo "matrix contains incomplete, invalid, or corrupt samples" >&2
+    exit 1
+}
