@@ -4,7 +4,13 @@ readonly REPOSITORY="$({ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."; pwd; })"
 readonly TEST_NAME='protocol::reality::tls13::target_read::tests::tcp_record_delay_matrix_covers_fifth_probe_timing'
 readonly EXPECTED=${EXPECTED_SOURCE_COMMIT:?EXPECTED_SOURCE_COMMIT is required}
 readonly DESTINATION=${OUT_DIR:?OUT_DIR is required}
-readonly LOCK=${HOST_EXCLUSIVE_LOCK:-"$REPOSITORY/../.coord/v1.5.0/locks/host-exclusive.lock"}
+readonly GIT_COMMON_DIR="$(git -C "$REPOSITORY" rev-parse --path-format=absolute --git-common-dir)"
+readonly PROJECT_ROOT="$(dirname -- "$(dirname -- "$GIT_COMMON_DIR")")"
+# This helper is the sole host-exclusive owner for its targeted Cargo run.
+# The later TLS benchmark only consumes evidence.json and must not wrap this
+# helper in another flock. Non-blocking acquisition fails closed if an outer
+# job already owns the formal host lock; there is deliberately no env bypass.
+readonly LOCK="$PROJECT_ROOT/.coord/v1.5.0/locks/host-exclusive.lock"
 [[ $EXPECTED =~ ^[0-9a-f]{40}$ ]] || { echo 'EXPECTED_SOURCE_COMMIT must be a full lowercase SHA' >&2; exit 2; }
 [[ $DESTINATION == /* && ! -e $DESTINATION ]] || { echo 'OUT_DIR must be an absent absolute path' >&2; exit 2; }
 mkdir -p -- "$(dirname -- "$LOCK")" "$DESTINATION"

@@ -993,6 +993,7 @@ def sha(path):
 
 fixture = json.loads(pathlib.Path(fixture_path).read_text(encoding="utf-8"))
 events = []
+cover_events = []
 for line in pathlib.Path(candidate_log_path).read_text(encoding="utf-8").splitlines():
     try:
         event = json.loads(line)
@@ -1000,9 +1001,15 @@ for line in pathlib.Path(candidate_log_path).read_text(encoding="utf-8").splitli
         continue
     if event.get("event") == "connection_completed":
         events.append(event)
+    if event.get("event") == "cover_flight_selected":
+        cover_events.append(event)
 if len(events) != 1:
     raise SystemExit(f"{case_id}: expected one connection_completed, got {len(events)}")
+if len(cover_events) != 1:
+    raise SystemExit(f"{case_id}: expected one cover_flight_selected, got {len(cover_events)}")
 completed = events[0]
+selected = cover_events[0]
+expected_plan = fixture["expectedCandidatePlan"]
 payload_sha = sha(payload_path)
 expected_payload_sha = sha(expected_payload_path)
 ok = (
@@ -1010,6 +1017,12 @@ ok = (
     and fixture.get("expectedClassification") == probe_case
     and completed.get("uplink_bytes", 0) > 0
     and completed.get("downlink_bytes", 0) > 0
+    and selected.get("emit_ccs") == fixture.get("emitCcs")
+    and selected.get("layout") == expected_plan.get("layout")
+    and selected.get("wire_lens") == expected_plan.get("encryptedRecordWireLengths")
+    and selected.get("nst_wire_len") == expected_plan.get("nstWireLength")
+    and selected.get("retained_prefix_bytes") == expected_plan.get("retainedPrefixBytes")
+    and selected.get("retained_prefix_sha256") == expected_plan.get("retainedPrefixSha256")
     and payload_sha == expected_payload_sha
 )
 evidence = {
@@ -1023,6 +1036,7 @@ evidence = {
     "candidate": {"sha256": candidate_sha, "sourceCommit": candidate_commit},
     "fixture": fixture,
     "candidateConnectionCompleted": completed,
+    "candidateCoverFlightSelected": selected,
     "candidateLog": {"sha256": sha(candidate_log_path)},
     "payload": {
         "bytes": pathlib.Path(payload_path).stat().st_size,
@@ -1040,7 +1054,13 @@ PY
             .payload.byteExact == true and
             .candidate.sha256 == $sha and .candidate.sourceCommit == $commit and
             .candidateConnectionCompleted.uplink_bytes > 0 and
-            .candidateConnectionCompleted.downlink_bytes > 0' \
+            .candidateConnectionCompleted.downlink_bytes > 0 and
+            .candidateCoverFlightSelected.layout == "positional" and
+            .candidateCoverFlightSelected.emit_ccs == .fixture.emitCcs and
+            .candidateCoverFlightSelected.wire_lens == .fixture.expectedCandidatePlan.encryptedRecordWireLengths and
+            .candidateCoverFlightSelected.nst_wire_len == .fixture.expectedCandidatePlan.nstWireLength and
+            .candidateCoverFlightSelected.retained_prefix_bytes == .fixture.expectedCandidatePlan.retainedPrefixBytes and
+            .candidateCoverFlightSelected.retained_prefix_sha256 == .fixture.expectedCandidatePlan.retainedPrefixSha256' \
             --arg sha "$rust_actual_sha256" \
             --arg commit "${RR_BINARY_SOURCE_COMMITS[rust-reality]}" \
             "$case_dir/evidence.json" >/dev/null ||
