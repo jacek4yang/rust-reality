@@ -64,6 +64,7 @@ fi
 rr_contract_init "$repository" validate-profiles benchmarks/profile-validation 128
 rr_register_harness_file "$repository/scripts/profile-driver.py"
 rr_register_harness_file "$repository/scripts/profile-summarize.py"
+rr_register_harness_tree "$repository/scripts/bench-origin"
 rr_register_binary rust-reality "$rust_bin" "$expected_binary_sha256" rust \
     "$expected_source_commit"
 rust_bin=${RR_BINARY_PATHS[rust-reality]}
@@ -361,6 +362,8 @@ if [[ ! -s $asset_cache/geoip.dat || ! -s $asset_cache/geosite.dat ]]; then
     curl -fLsS --retry 3 -o "$asset_cache/geosite.dat" \
         "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat"
 fi
+geoip_sha256=$(sha256sum -- "$asset_cache/geoip.dat" | awk '{print $1}')
+geosite_sha256=$(sha256sum -- "$asset_cache/geosite.dat" | awk '{print $1}')
 
 # --- environment metadata ----------------------------------------------------
 commit=$expected_source_commit
@@ -373,6 +376,8 @@ jq -n \
     --arg binary_embedded_commit "$embedded_commit" \
     --arg output_root "$out_root" \
     --arg asset_cache_dir "$asset_cache" \
+    --arg geoip_sha256 "$geoip_sha256" \
+    --arg geosite_sha256 "$geosite_sha256" \
     --arg xray "$("$xray" version 2>/dev/null | head -1)" \
     --arg kernel "$(uname -r)" \
     --arg host "$(nproc) CPUs, $(awk '/MemTotal/{print int($2/1024)" MiB"}' /proc/meminfo)" \
@@ -381,6 +386,10 @@ jq -n \
       binary: $binary, binarySha256: $binary_sha256,
       binaryEmbeddedCommit: $binary_embedded_commit,
       outputRoot: $output_root, assetCacheDirectory: $asset_cache_dir,
+      geoAssets: {
+        geoip: {path: ($asset_cache_dir + "/geoip.dat"), sha256: $geoip_sha256},
+        geosite: {path: ($asset_cache_dir + "/geosite.dat"), sha256: $geosite_sha256}
+      },
       xray: $xray, kernel: $kernel, host: $host, dateUtc: $date,
       note: "server CPU via /proc/pid/stat utime+stime (perf stat unusable on this host)"}' \
     > "$out_root/environment.json"
