@@ -16,6 +16,9 @@ declare -Ag RR_BINARY_IDENTITIES=()
 declare -Ag RR_PID_STARTS=()
 declare -ag RR_HARNESS_FILES=()
 declare -Ag RR_HARNESS_SHA256=()
+declare -ag RR_HARNESS_TREES=()
+declare -Ag RR_HARNESS_TREE_MANIFEST_SHA256=()
+declare -Ag RR_HARNESS_TREE_FILE_COUNTS=()
 RR_CONTRACT_FINALIZED=0
 RR_CONTRACT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
 RR_CONTRACT_SHA256=$(sha256sum -- "$RR_CONTRACT_PATH" | awk '{print $1}')
@@ -95,6 +98,22 @@ rr_contract_init() {
     [[ $RR_EXPLORATORY == 0 || $RR_EXPLORATORY == 1 ]] ||
         rr_contract_die "EXPLORATORY must be 0 or 1" || return
 
+    RR_HARNESS_COMMIT=$(git -C "$RR_REPOSITORY" rev-parse --verify 'HEAD^{commit}' \
+        2>/dev/null || true)
+    RR_HARNESS_TRACKED_DIRTY=1
+    if [[ $RR_HARNESS_COMMIT =~ ^[0-9a-f]{40}$ ]] &&
+        git -C "$RR_REPOSITORY" diff --quiet --ignore-submodules=none -- &&
+        git -C "$RR_REPOSITORY" diff --cached --quiet --ignore-submodules=none --; then
+        RR_HARNESS_TRACKED_DIRTY=0
+    fi
+    if [[ $RR_EXPLORATORY == 0 ]]; then
+        [[ $RR_HARNESS_COMMIT =~ ^[0-9a-f]{40}$ ]] ||
+            rr_contract_die "repository HEAD is not a valid commit" || return
+        (( RR_HARNESS_TRACKED_DIRTY == 0 )) ||
+            rr_contract_die "repository has tracked or staged changes" || return
+    fi
+    RR_HARNESS_COMMIT=${RR_HARNESS_COMMIT:-unavailable}
+
     RR_RUN_ID=${RUN_ID:-}
     if [[ -z $RR_RUN_ID ]]; then
         if [[ $RR_EXPLORATORY == 0 ]]; then
@@ -169,7 +188,6 @@ rr_contract_init() {
     printf '%s\n' "$RR_PORT_BASE" >"$RR_PORT_STATE"
     chmod 600 "$RR_PORT_STATE"
     RR_SCRIPT_SHA256=$(sha256sum -- "$RR_SCRIPT" | awk '{print $1}')
-    RR_HARNESS_COMMIT=$(git -C "$RR_REPOSITORY" rev-parse HEAD 2>/dev/null || printf unavailable)
 }
 
 rr_next_port() {
@@ -262,13 +280,72 @@ rr_register_binary() {
 }
 
 rr_register_harness_file() {
-    local path=$1 canonical sha
+    local path=$1 canonical sha relative
     [[ $path == /* && -f $path && ! -L $path ]] ||
         rr_contract_die "harness file must be an absolute regular non-symlink: $path" || return
     canonical=$(readlink -f -- "$path")
+    [[ -z ${RR_HARNESS_SHA256[$canonical]:-} ]] ||
+        rr_contract_die "duplicate harness file: $canonical" || return
+    if [[ $RR_EXPLORATORY == 0 ]]; then
+        case $canonical in
+            "$RR_REPOSITORY"/*) relative=${canonical#"$RR_REPOSITORY"/} ;;
+            *) rr_contract_die "formal harness file is outside the repository: $canonical" || return ;;
+        esac
+        git -C "$RR_REPOSITORY" ls-files --error-unmatch -- "$relative" >/dev/null 2>&1 ||
+            rr_contract_die "formal harness file is not tracked at HEAD: $canonical" || return
+    fi
     sha=$(sha256sum -- "$canonical" | awk '{print $1}')
     RR_HARNESS_FILES+=("$canonical")
     RR_HARNESS_SHA256[$canonical]=$sha
+}
+
+rr_harness_tree_snapshot() {
+    python3 - "$1" <<'PY'
+import hashlib
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+files = []
+for path in root.rglob("*"):
+    if path.is_symlink():
+        raise SystemExit(f"symlink in harness source tree: {path}")
+    if path.is_file():
+        files.append(path.relative_to(root).as_posix())
+files.sort()
+if not files:
+    raise SystemExit("empty harness source tree")
+digest = hashlib.sha256()
+for relative in files:
+    digest.update(relative.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(hashlib.sha256((root / relative).read_bytes()).digest())
+print(digest.hexdigest(), len(files))
+PY
+}
+
+rr_register_harness_tree() {
+    local path=$1 canonical snapshot manifest_sha file_count file
+    local -a files=()
+    [[ $path == /* && -d $path && ! -L $path ]] ||
+        rr_contract_die "harness source tree must be an absolute non-symlink directory: $path" || return
+    canonical=$(readlink -f -- "$path")
+    [[ -z ${RR_HARNESS_TREE_MANIFEST_SHA256[$canonical]:-} ]] ||
+        rr_contract_die "duplicate harness source tree: $canonical" || return
+    snapshot=$(rr_harness_tree_snapshot "$canonical") ||
+        rr_contract_die "could not snapshot harness source tree: $canonical" || return
+    read -r manifest_sha file_count <<<"$snapshot"
+    [[ $manifest_sha =~ ^[0-9a-f]{64}$ && $file_count =~ ^[1-9][0-9]*$ ]] ||
+        rr_contract_die "invalid harness source manifest: $canonical" || return
+    mapfile -d '' -t files < <(find -P "$canonical" -type f -print0 | sort -z)
+    (( ${#files[@]} == file_count )) ||
+        rr_contract_die "harness source tree changed while registering: $canonical" || return
+    for file in "${files[@]}"; do
+        rr_register_harness_file "$file" || return
+    done
+    RR_HARNESS_TREES+=("$canonical")
+    RR_HARNESS_TREE_MANIFEST_SHA256[$canonical]=$manifest_sha
+    RR_HARNESS_TREE_FILE_COUNTS[$canonical]=$file_count
 }
 
 rr_assert_pid_exe() {
@@ -353,11 +430,17 @@ rr_contract_binary_json() {
 }
 
 rr_write_contract_metadata() {
-    local phase=${1:-preflight} binary_json harness_json path
+    local phase=${1:-preflight} binary_json harness_json tree_json path
     binary_json=$(rr_contract_binary_json)
     harness_json=$(for path in "${RR_HARNESS_FILES[@]}"; do
         jq -cn --arg path "$path" --arg sha "${RR_HARNESS_SHA256[$path]}" \
             '{path:$path,sha256:$sha}'
+    done | jq -s .)
+    tree_json=$(for path in "${RR_HARNESS_TREES[@]}"; do
+        jq -cn --arg path "$path" \
+            --arg sha "${RR_HARNESS_TREE_MANIFEST_SHA256[$path]}" \
+            --argjson count "${RR_HARNESS_TREE_FILE_COUNTS[$path]}" \
+            '{path:$path,manifestSha256:$sha,fileCount:$count}'
     done | jq -s .)
     jq -n --arg run_id "$RR_RUN_ID" --arg phase "$phase" \
         --argjson exploratory "$RR_EXPLORATORY" \
@@ -366,18 +449,29 @@ rr_write_contract_metadata() {
         --arg script "$RR_SCRIPT" --arg script_sha "$RR_SCRIPT_SHA256" \
         --arg contract "$RR_CONTRACT_PATH" --arg contract_sha "$RR_CONTRACT_SHA256" \
         --arg harness_commit "$RR_HARNESS_COMMIT" --argjson binaries "$binary_json" \
-        --argjson harness_files "$harness_json" \
+        --argjson harness_dirty "$RR_HARNESS_TRACKED_DIRTY" \
+        --argjson harness_files "$harness_json" --argjson harness_trees "$tree_json" \
         --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         '{schemaVersion:1,runId:$run_id,phase:$phase,exploratory:($exploratory == 1),
           outDir:$out_dir,tmpDir:$tmpdir,portBlock:{base:$port_base,width:$port_width},
-          script:{path:$script,sha256:$script_sha,harnessCommit:$harness_commit},
+          script:{path:$script,sha256:$script_sha,harnessCommit:$harness_commit,
+                  trackedDirty:($harness_dirty == 1)},
           contract:{path:$contract,sha256:$contract_sha},
-          harnessFiles:$harness_files,binaries:$binaries,recordedUtc:$date}' \
+          harnessFiles:$harness_files,harnessSourceTrees:$harness_trees,
+          binaries:$binaries,recordedUtc:$date}' \
         >"$RR_OUT_DIR/run-contract.json"
 }
 
 rr_verify_registered_files() {
-    local label actual path
+    local label actual path snapshot manifest_sha file_count
+    if [[ $RR_EXPLORATORY == 0 ]]; then
+        actual=$(git -C "$RR_REPOSITORY" rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)
+        [[ $actual == "$RR_HARNESS_COMMIT" ]] ||
+            rr_contract_die "repository HEAD changed during run" || return
+        git -C "$RR_REPOSITORY" diff --quiet --ignore-submodules=none -- &&
+            git -C "$RR_REPOSITORY" diff --cached --quiet --ignore-submodules=none -- ||
+            rr_contract_die "repository acquired tracked or staged changes during run" || return
+    fi
     actual=$(sha256sum -- "$RR_SCRIPT" | awk '{print $1}')
     [[ $actual == "$RR_SCRIPT_SHA256" ]] ||
         rr_contract_die "script changed during run" || return
@@ -388,6 +482,14 @@ rr_verify_registered_files() {
         actual=$(sha256sum -- "$path" | awk '{print $1}')
         [[ $actual == "${RR_HARNESS_SHA256[$path]}" ]] ||
             rr_contract_die "harness file changed during run: $path" || return
+    done
+    for path in "${RR_HARNESS_TREES[@]}"; do
+        snapshot=$(rr_harness_tree_snapshot "$path") ||
+            rr_contract_die "could not re-snapshot harness source tree: $path" || return
+        read -r manifest_sha file_count <<<"$snapshot"
+        [[ $manifest_sha == "${RR_HARNESS_TREE_MANIFEST_SHA256[$path]}" &&
+            $file_count == "${RR_HARNESS_TREE_FILE_COUNTS[$path]}" ]] ||
+            rr_contract_die "harness source manifest changed during run: $path" || return
     done
     for label in "${RR_BINARY_LABELS[@]}"; do
         actual=$(sha256sum -- "${RR_BINARY_PATHS[$label]}" | awk '{print $1}')

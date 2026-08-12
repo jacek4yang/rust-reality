@@ -106,6 +106,7 @@ rust_bin=${RR_BINARY_PATHS[candidate]}
 if [[ $RR_EXPLORATORY == 1 && $xray != /* ]]; then xray=$(command -v "$xray"); fi
 rr_register_binary xray "$xray" "${XRAY_SHA256:-}" xray
 xray=${RR_BINARY_PATHS[xray]}
+rr_register_harness_tree "$repository/scripts/bench-origin"
 rr_write_contract_metadata
 out_dir=$RR_OUT_DIR
 [[ $abba_start == baseline || $abba_start == final ]] || {

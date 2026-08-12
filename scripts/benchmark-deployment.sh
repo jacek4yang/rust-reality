@@ -94,6 +94,7 @@ rust_bin=${RR_BINARY_PATHS[rust-reality]}
 if [[ $RR_EXPLORATORY == 1 && $xray != /* ]]; then xray=$(command -v "$xray"); fi
 rr_register_binary xray "$xray" "${XRAY_SHA256:-}" xray
 xray=${RR_BINARY_PATHS[xray]}
+rr_register_harness_tree "$repository/scripts/bench-origin"
 rr_write_contract_metadata
 out_dir=$RR_OUT_DIR
 smoke=${SMOKE:-0}
@@ -955,15 +956,31 @@ section_rtt() {
         done
     done
 
-    python3 - "$state/profiles.jsonl" "$out_dir/summary-netem.json" <<'PY'
+    python3 - "$state/profiles.jsonl" "$out_dir/summary-netem.json" \
+        "$rtts" "$losses" "$concurrencies" "$samples" <<'PY'
 import json
 from pathlib import Path
 import sys
 
+def words(value):
+    return value.split()
+
+expected_rtts = [int(value) for value in words(sys.argv[3])]
+expected_losses = [float(value) for value in words(sys.argv[4])]
+expected_concurrencies = [int(value) for value in words(sys.argv[5])]
+expected_samples = int(sys.argv[6])
+expected_keys = {(rtt, loss) for rtt in expected_rtts for loss in expected_losses}
 profiles = []
+seen_keys = set()
 for line in Path(sys.argv[1]).read_text().splitlines():
     profile = json.loads(line)
     errors = []
+    key = (profile.get("targetRttMs"), profile.get("perDirectionLossPercent"))
+    if key not in expected_keys:
+        errors.append(f"unexpected or malformed profile: {key}")
+    if key in seen_keys:
+        errors.append(f"duplicate profile: {key}")
+    seen_keys.add(key)
     raw_counts = {}
     raw_results = {}
     for kind, raw_path in profile["raw"].items():
@@ -975,18 +992,39 @@ for line in Path(sys.argv[1]).read_text().splitlines():
             errors.append(f"{kind}: {error}")
         raw_counts[kind] = len(rows)
         raw_results[kind] = rows
-        if not rows:
-            errors.append(f"{kind}: no raw records")
-        if any(row.get("failed", 0) or not row.get("connections") for row in rows):
+        if len(rows) != expected_samples * len(expected_concurrencies):
+            errors.append(f"{kind}: expected {expected_samples * len(expected_concurrencies)} raw records, got {len(rows)}")
+        counts = {concurrency: 0 for concurrency in expected_concurrencies}
+        sample_indexes = {concurrency: [] for concurrency in expected_concurrencies}
+        for row in rows:
+            concurrency = row.get("concurrency")
+            if concurrency not in counts:
+                errors.append(f"{kind}: unexpected concurrency {concurrency}")
+            else:
+                counts[concurrency] += 1
+                sample_indexes[concurrency].append(row.get("sampleIndex"))
+        for concurrency, count in counts.items():
+            if count != expected_samples:
+                errors.append(f"{kind}: c{concurrency} expected {expected_samples} samples, got {count}")
+            if sorted(sample_indexes[concurrency]) != list(range(expected_samples)):
+                errors.append(f"{kind}: c{concurrency} sample indexes are incomplete or duplicated")
+        if any(row.get("failed", 0) != 0 or row.get("connections", 0) <= 0 for row in rows):
             errors.append(f"{kind}: failed connections")
     profile["rawRecordCounts"] = raw_counts
     profile["rawResults"] = raw_results
     profile["verdict"] = "PASS" if not errors else "FAIL"
     profile["errors"] = errors
     profiles.append(profile)
-passed = bool(profiles) and all(row["verdict"] == "PASS" for row in profiles)
+missing = sorted(expected_keys - seen_keys)
+unexpected = sorted(seen_keys - expected_keys)
+passed = (len(profiles) == len(expected_keys) and not missing and not unexpected
+          and all(row["verdict"] == "PASS" for row in profiles))
 Path(sys.argv[2]).write_text(json.dumps({"verdict": "PASS" if passed else "FAIL",
     "networkModel": "tc netem delay and loss applied independently per veth direction",
+    "expectedProfileCount": len(expected_keys), "actualProfileCount": len(profiles),
+    "expectedSamplesPerLeg": expected_samples * len(expected_concurrencies),
+    "expectedConcurrencies": expected_concurrencies,
+    "missingProfiles": missing, "unexpectedProfiles": unexpected,
     "profiles": profiles}, indent=2) + "\n")
 if not passed:
     raise SystemExit("one or more required netem profiles failed")
