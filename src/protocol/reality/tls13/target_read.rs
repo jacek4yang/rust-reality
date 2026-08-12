@@ -770,7 +770,16 @@ impl CoverFlightIo for FuzzFlightReader<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::{io, pin::Pin, task::Poll, time::Duration};
+    use std::{
+        io,
+        io::Write as _,
+        net::{TcpListener as StdTcpListener, TcpStream as StdTcpStream},
+        pin::Pin,
+        sync::mpsc,
+        task::Poll,
+        thread,
+        time::Duration,
+    };
 
     use tokio::{
         io::{AsyncRead, AsyncWriteExt, DuplexStream, ReadBuf},
@@ -823,6 +832,54 @@ mod tests {
     impl CoverFlightIo for DuplexStream {
         fn try_read_now(&mut self, _output: &mut [u8]) -> io::Result<usize> {
             Err(io::Error::from(io::ErrorKind::WouldBlock))
+        }
+    }
+
+    /// Real TCP reader whose blocking reads stop on fixture record boundaries.
+    /// `try_read_now` remains the production `TcpStream::try_read` operation.
+    struct RecordBoundaryTcpReader {
+        stream: TcpStream,
+        position: usize,
+        boundaries: Vec<usize>,
+    }
+
+    impl AsyncRead for RecordBoundaryTcpReader {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            context: &mut std::task::Context<'_>,
+            output: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            let boundary = self
+                .boundaries
+                .iter()
+                .copied()
+                .find(|boundary| *boundary > self.position)
+                .unwrap_or(usize::MAX);
+            let limit = boundary
+                .saturating_sub(self.position)
+                .min(output.remaining())
+                .min(4 * 1024);
+            if limit == 0 {
+                return Poll::Ready(Ok(()));
+            }
+            let mut scratch = [0_u8; 4 * 1024];
+            let mut read_buffer = ReadBuf::new(&mut scratch[..limit]);
+            match Pin::new(&mut self.stream).poll_read(context, &mut read_buffer) {
+                Poll::Ready(Ok(())) => {
+                    let read = read_buffer.filled().len();
+                    output.put_slice(read_buffer.filled());
+                    self.position += read;
+                    Poll::Ready(Ok(()))
+                }
+                Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+                Poll::Pending => Poll::Pending,
+            }
+        }
+    }
+
+    impl CoverFlightIo for RecordBoundaryTcpReader {
+        fn try_read_now(&mut self, output: &mut [u8]) -> io::Result<usize> {
+            self.stream.try_read(output)
         }
     }
 
@@ -1074,6 +1131,140 @@ mod tests {
         );
         assert_eq!(prefix, input);
         assert_eq!(reader.position, input.len());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tcp_record_delay_matrix_covers_fifth_probe_timing() {
+        const DELAYS_MS: [u64; 5] = [0, 20, 50, 100, 200];
+        const CASES: [&str; 3] = [
+            "already-buffered",
+            "single-probe-present",
+            "absent-would-block",
+        ];
+
+        for delay_ms in DELAYS_MS {
+            for case in CASES {
+                let client = client();
+                let server_hello = target_record(&[0x55; 32]);
+                let ccs = [20, 3, 3, 0, 1, 1].to_vec();
+                let encrypted: Vec<Vec<u8>> = [32_usize, 48, 64, 80]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, body_len)| opaque_record(23, body_len, index as u8))
+                    .collect();
+                let ticket = opaque_record(23, 24, 0xf5);
+                let emit_ccs = case != "single-probe-present";
+                let mut records = vec![server_hello.clone()];
+                if emit_ccs {
+                    records.push(ccs.clone());
+                }
+                records.extend(encrypted.iter().cloned());
+                if case != "absent-would-block" {
+                    records.push(ticket.clone());
+                }
+                let prefix_without_ticket: Vec<u8> = records
+                    .iter()
+                    .take(records.len() - usize::from(case != "absent-would-block"))
+                    .flatten()
+                    .copied()
+                    .collect();
+
+                let listener = StdTcpListener::bind("127.0.0.1:0")
+                    .expect("record-delay fixture listener must bind");
+                let address = listener
+                    .local_addr()
+                    .expect("record-delay fixture must have an address");
+                let (sent_tx, sent_rx) = mpsc::sync_channel(1);
+                let (done_tx, done_rx) = mpsc::sync_channel(1);
+                let server = thread::spawn(move || {
+                    let (mut stream, _) = listener
+                        .accept()
+                        .expect("record-delay fixture connection must arrive");
+                    for (index, record) in records.iter().enumerate() {
+                        if index > 0 {
+                            thread::sleep(Duration::from_millis(delay_ms));
+                        }
+                        stream
+                            .write_all(record)
+                            .expect("complete TLS record must be sent in one fixture write");
+                    }
+                    sent_tx
+                        .send(())
+                        .expect("reader must await the complete scheduled flight");
+                    done_rx
+                        .recv_timeout(Duration::from_secs(2))
+                        .expect("reader must complete before fixture closes");
+                });
+                let stream = StdTcpStream::connect(address)
+                    .expect("record-delay fixture TCP connection must open");
+                stream
+                    .set_nonblocking(true)
+                    .expect("Tokio TCP stream requires nonblocking mode");
+                sent_rx
+                    .recv_timeout(Duration::from_secs(3))
+                    .expect("record-delay fixture must send within its bound");
+                let stream =
+                    TcpStream::from_std(stream).expect("fixture std stream must convert to Tokio");
+
+                let mut position = 0;
+                let mut boundaries = Vec::new();
+                let records_before_ticket = 1 + usize::from(emit_ccs) + encrypted.len();
+                for record in std::iter::once(&server_hello)
+                    .chain(emit_ccs.then_some(&ccs))
+                    .chain(encrypted.iter())
+                {
+                    position += record.len();
+                    boundaries.push(position);
+                }
+                if case == "already-buffered" {
+                    *boundaries
+                        .get_mut(records_before_ticket - 1)
+                        .expect("fourth encrypted boundary must exist") += 5;
+                }
+                let mut reader = RecordBoundaryTcpReader {
+                    stream,
+                    position: 0,
+                    boundaries,
+                };
+                let read = read_target_server_flight(&mut reader, &client, Duration::from_secs(2))
+                    .await
+                    .expect("record-delay matrix flight must parse");
+                let (_, plan, prefix) = read.into_parts();
+                let expected_ticket_len = (case != "absent-would-block").then_some(ticket.len());
+                assert_eq!(
+                    plan,
+                    CoverHandshakePlan {
+                        emit_ccs,
+                        shape: CoverHandshakeRecordShape::PositionalRecords {
+                            wire_lens: [37, 53, 69, 85],
+                            nst_wire_len: expected_ticket_len,
+                        },
+                    },
+                    "delay={delay_ms}ms case={case}"
+                );
+                let expected_prefix = match case {
+                    "already-buffered" => {
+                        let mut expected = prefix_without_ticket.clone();
+                        expected.extend_from_slice(&ticket[..5]);
+                        expected
+                    }
+                    "single-probe-present" => {
+                        let mut expected = prefix_without_ticket.clone();
+                        expected.extend_from_slice(&ticket);
+                        expected
+                    }
+                    "absent-would-block" => prefix_without_ticket.clone(),
+                    _ => unreachable!(),
+                };
+                assert_eq!(prefix, expected_prefix, "delay={delay_ms}ms case={case}");
+                done_tx
+                    .send(())
+                    .expect("fixture server must still be waiting");
+                server
+                    .join()
+                    .expect("record-delay fixture server must finish");
+            }
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
