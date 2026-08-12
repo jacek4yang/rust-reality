@@ -13,7 +13,7 @@ use std::{
     io,
     net::{IpAddr, Ipv4Addr},
     str::FromStr,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -24,85 +24,69 @@ use rust_reality::{
         generate_landing_config, generate_minimal_config,
     },
     protocol::vless::{Address, Destination},
-    runtime::ResourcePressure,
+    runtime::{PressureGauge, ResourcePressure},
     server::{
         outbound::{OutboundConnectOutcome, OutboundRegistry},
-        production::ProductionServer,
+        production::{ProductionServer, ProductionServerError},
     },
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
+    sync::oneshot,
+    task::JoinHandle,
     time,
 };
 
 const CHILD_ENV: &str = "RR_PRESSURE_TEST_CHILD";
+const LISTENER_START_ATTEMPTS: usize = 8;
+const LISTENER_READY_TIMEOUT: Duration = Duration::from_secs(5);
+
+type ServerTask = JoinHandle<Result<(), ProductionServerError>>;
+
+struct RunningLandingServer {
+    port: u16,
+    gauge: PressureGauge,
+    shutdown_sender: oneshot::Sender<()>,
+    task: ServerTask,
+}
+
+impl RunningLandingServer {
+    async fn shutdown(self) {
+        self.shutdown_sender.send(()).expect("shutdown must send");
+        self.task
+            .await
+            .expect("server task must join")
+            .expect("server must stop cleanly");
+    }
+}
+
+#[derive(Debug)]
+enum ListenerStartFailure {
+    AddressInUse(String),
+    Fatal(String),
+    TimedOut(String),
+}
 
 #[tokio::test(flavor = "current_thread")]
 async fn a_critical_pause_keeps_established_traffic_and_resumes() {
-    let port = unused_loopback_port();
     let key = BASE64_URL_SAFE_NO_PAD.encode([0x5a; 32]);
-    let config = generate_landing_config(GenerateLandingConfigInput {
-        listen: IpAddr::V4(Ipv4Addr::LOCALHOST),
-        port,
-        pre_shared_key: rust_reality::config::SecretString::new(key.clone()),
-    })
-    .expect("landing configuration must generate");
-    let server = ProductionServer::from_config(&config).expect("server must compile");
-    let gauge = server.pressure_gauge();
+    let (destination, echo_task) = spawn_echo_target().await;
+    let mut server = start_landing_server(&key, &destination, &[], Duration::ZERO).await;
+    let port = server.port;
+    let gauge = server.gauge.clone();
     assert_eq!(gauge.state(), ResourcePressure::Normal);
+    let registry = landing_registry(port, &key);
 
-    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
-    let server_task = tokio::spawn(server.run_until(async move {
-        shutdown_receiver
-            .await
-            .map_err(|_| io::Error::other("test shutdown sender dropped"))
-    }));
-
-    let target = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .await
-        .expect("target must bind");
-    let target_port = target.local_addr().expect("target address").port();
-    let echo_task = tokio::spawn(async move {
-        loop {
-            let Ok((mut stream, _)) = target.accept().await else {
-                continue;
-            };
-            tokio::spawn(async move {
-                let mut buffer = [0_u8; 16_384];
-                loop {
-                    match stream.read(&mut buffer).await {
-                        Ok(0) | Err(_) => break,
-                        Ok(read) => {
-                            if stream.write_all(&buffer[..read]).await.is_err() {
-                                break;
-                            }
-                        }
-                    }
-                }
-            });
-        }
-    });
-
-    let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), target_port);
-    let registry = Arc::new(OutboundRegistry::new(
-        &[rust_reality::config::OutboundConfig::Nxr {
-            tag: "landing".to_owned(),
-            settings: rust_reality::config::NxrSettings {
-                address: Ipv4Addr::LOCALHOST.to_string(),
-                port,
-                pre_shared_key: rust_reality::config::SecretString::new(key),
-            },
-        }],
-        &DirectBarrierConfig::default(),
-        Duration::from_secs(1),
-        rust_reality::runtime::FdBudget::new(4_096),
-    ));
-
-    // One established session before any pressure. The warmup exchange
-    // matters: the NXR dial returns after writing the auth request, so only a
-    // completed round trip proves the server authenticated and is relaying.
-    let established = connect_with_retry(&registry, &destination, Duration::from_secs(5)).await;
+    // The listener-ready probe above is deliberately outside this timer. This
+    // five-second bound measures admission by an already-running server only.
+    let established = connect_with_retry(
+        &registry,
+        &destination,
+        Duration::from_secs(5),
+        &mut server.task,
+    )
+    .await;
     let (mut established_stream, _permit) = established.into_parts();
     ping_pong(&mut established_stream, b"warmup")
         .await
@@ -138,7 +122,13 @@ async fn a_critical_pause_keeps_established_traffic_and_resumes() {
 
     // The hysteresis exit resumes admission automatically.
     gauge.set(ResourcePressure::Normal);
-    let resumed = connect_with_retry(&registry, &destination, Duration::from_secs(10)).await;
+    let resumed = connect_with_retry(
+        &registry,
+        &destination,
+        Duration::from_secs(10),
+        &mut server.task,
+    )
+    .await;
     let (mut resumed_stream, _permit) = resumed.into_parts();
     ping_pong(&mut resumed_stream, b"resumed")
         .await
@@ -149,31 +139,263 @@ async fn a_critical_pause_keeps_established_traffic_and_resumes() {
     drop(probe_stream);
     drop(established_stream);
     drop(resumed_stream);
-    shutdown_sender.send(()).expect("shutdown must send");
     echo_task.abort();
-    server_task
+    server.shutdown().await;
+}
+
+fn landing_registry(port: u16, key: &str) -> Arc<OutboundRegistry> {
+    Arc::new(OutboundRegistry::new(
+        &[rust_reality::config::OutboundConfig::Nxr {
+            tag: "landing".to_owned(),
+            settings: rust_reality::config::NxrSettings {
+                address: Ipv4Addr::LOCALHOST.to_string(),
+                port,
+                pre_shared_key: rust_reality::config::SecretString::new(key.to_owned()),
+            },
+        }],
+        &DirectBarrierConfig::default(),
+        Duration::from_secs(1),
+        rust_reality::runtime::FdBudget::new(4_096),
+    ))
+}
+
+/// Exercises both bounded recovery paths deterministically: the first candidate
+/// is still reserved by this process, and the replacement server is deliberately
+/// not scheduled for 300 ms. Startup must report the bind collision, choose a new
+/// port, and wait for an actual TCP listener before returning.
+#[tokio::test(flavor = "current_thread")]
+async fn listener_ready_retries_an_occupied_port_and_delayed_server() {
+    let occupied = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .expect("the collision listener must bind");
+    let occupied_port = occupied.local_addr().expect("collision address").port();
+    let key = BASE64_URL_SAFE_NO_PAD.encode([0x6b; 32]);
+    let (destination, echo_task) = spawn_echo_target().await;
+
+    let server = start_landing_server(
+        &key,
+        &destination,
+        &[occupied_port],
+        Duration::from_millis(300),
+    )
+    .await;
+    assert_ne!(
+        server.port, occupied_port,
+        "an AddrInUse startup must rebuild on a fresh port"
+    );
+
+    drop(occupied);
+    echo_task.abort();
+    server.shutdown().await;
+}
+
+async fn start_landing_server(
+    key: &str,
+    destination: &Destination,
+    preferred_ports: &[u16],
+    scheduling_delay: Duration,
+) -> RunningLandingServer {
+    let mut last_retryable_failure = None;
+    for attempt in 0..LISTENER_START_ATTEMPTS {
+        let port = preferred_ports
+            .get(attempt)
+            .copied()
+            .unwrap_or_else(unused_loopback_port);
+        let config = generate_landing_config(GenerateLandingConfigInput {
+            listen: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port,
+            pre_shared_key: rust_reality::config::SecretString::new(key.to_owned()),
+        })
+        .expect("landing configuration must generate");
+        let server = ProductionServer::from_config(&config).expect("server must compile");
+        let gauge = server.pressure_gauge();
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+        let mut task = tokio::spawn(async move {
+            if !scheduling_delay.is_zero() {
+                time::sleep(scheduling_delay).await;
+            }
+            server
+                .run_until(async move {
+                    shutdown_receiver
+                        .await
+                        .map_err(|_| io::Error::other("test shutdown sender dropped"))
+                })
+                .await
+        });
+
+        match wait_for_listener(port, key, destination, &mut task, LISTENER_READY_TIMEOUT).await {
+            Ok(()) => {
+                return RunningLandingServer {
+                    port,
+                    gauge,
+                    shutdown_sender,
+                    task,
+                };
+            }
+            Err(ListenerStartFailure::AddressInUse(error)) => {
+                last_retryable_failure = Some(error);
+            }
+            Err(ListenerStartFailure::TimedOut(error)) => {
+                stop_start_attempt(shutdown_sender, &mut task).await;
+                last_retryable_failure = Some(error);
+            }
+            Err(ListenerStartFailure::Fatal(error)) => {
+                panic!("landing listener failed before readiness on attempt {attempt}: {error}");
+            }
+        }
+    }
+
+    panic!(
+        "landing listener did not become ready after {LISTENER_START_ATTEMPTS} attempts; last failure: {}",
+        last_retryable_failure.as_deref().unwrap_or("unavailable")
+    );
+}
+
+async fn wait_for_listener(
+    port: u16,
+    key: &str,
+    destination: &Destination,
+    server_task: &mut ServerTask,
+    within: Duration,
+) -> Result<(), ListenerStartFailure> {
+    let registry = landing_registry(port, key);
+    let connect_until_ready = async {
+        loop {
+            let probe = time::timeout(Duration::from_millis(250), async {
+                let outcome = registry
+                    .connect("landing", destination)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let OutboundConnectOutcome::Connected(connection) = outcome else {
+                    return Err("readiness outbound was unexpectedly blackholed".to_owned());
+                };
+                let (mut stream, _permit) = connection.into_parts();
+                ping_pong(&mut stream, b"listener-ready")
+                    .await
+                    .map_err(|error| error.to_string())
+            })
+            .await;
+            if matches!(probe, Ok(Ok(()))) {
+                return;
+            }
+            time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+
+    tokio::select! {
+        outcome = server_task => match outcome {
+            Ok(Err(error)) => {
+                let detail = format!("{error} ({error:?})");
+                if matches!(
+                    &error,
+                    ProductionServerError::Bind { source, .. }
+                        if source.kind() == io::ErrorKind::AddrInUse
+                ) {
+                    Err(ListenerStartFailure::AddressInUse(detail))
+                } else {
+                    Err(ListenerStartFailure::Fatal(detail))
+                }
+            }
+            Ok(Ok(())) => Err(ListenerStartFailure::Fatal(
+                "server exited cleanly before listener readiness".to_owned(),
+            )),
+            Err(error) => Err(ListenerStartFailure::Fatal(format!(
+                "server task failed before listener readiness: {error}"
+            ))),
+        },
+        result = time::timeout(within, connect_until_ready) => match result {
+            Ok(()) => Ok(()),
+            Err(error) => Err(ListenerStartFailure::TimedOut(format!(
+                "listener {port} was not reachable within {within:?}: {error}"
+            ))),
+        },
+    }
+}
+
+async fn spawn_echo_target() -> (Destination, JoinHandle<()>) {
+    let target = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
-        .expect("server task must join")
-        .expect("server must stop cleanly");
+        .expect("target must bind");
+    let target_port = target.local_addr().expect("target address").port();
+    let task = tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = target.accept().await else {
+                continue;
+            };
+            tokio::spawn(async move {
+                let mut buffer = [0_u8; 16_384];
+                loop {
+                    match stream.read(&mut buffer).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(read) => {
+                            if stream.write_all(&buffer[..read]).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+    (
+        Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), target_port),
+        task,
+    )
+}
+
+async fn stop_start_attempt(shutdown_sender: oneshot::Sender<()>, task: &mut ServerTask) {
+    let _ = shutdown_sender.send(());
+    if time::timeout(Duration::from_secs(1), &mut *task)
+        .await
+        .is_err()
+    {
+        task.abort();
+        let _ = task.await;
+    }
 }
 
 async fn connect_with_retry(
     registry: &OutboundRegistry,
     destination: &Destination,
     within: Duration,
+    server_task: &mut ServerTask,
 ) -> rust_reality::server::outbound::OutboundConnection {
-    time::timeout(within, async {
+    let last_error = Arc::new(Mutex::new("no connection attempt completed".to_owned()));
+    let connect_last_error = Arc::clone(&last_error);
+    let connect = time::timeout(within, async move {
         loop {
             match registry.connect("landing", destination).await {
-                Ok(OutboundConnectOutcome::Connected(connection)) => break connection,
-                Ok(OutboundConnectOutcome::Blackholed) | Err(_) => {
+                Ok(OutboundConnectOutcome::Connected(connection)) => return connection,
+                Ok(OutboundConnectOutcome::Blackholed) => {
+                    *connect_last_error.lock().expect("last error lock") =
+                        "outbound was unexpectedly blackholed".to_owned();
+                    time::sleep(Duration::from_millis(10)).await;
+                }
+                Err(error) => {
+                    *connect_last_error.lock().expect("last error lock") = error.to_string();
                     time::sleep(Duration::from_millis(10)).await;
                 }
             }
         }
-    })
-    .await
-    .expect("the listener must admit the connection within the bound")
+    });
+
+    tokio::select! {
+        outcome = server_task => match outcome {
+            Ok(Ok(())) => panic!("server exited cleanly while awaiting an admitted connection"),
+            Ok(Err(error)) => panic!(
+                "server failed while awaiting an admitted connection: {error} ({error:?})"
+            ),
+            Err(error) => panic!("server task failed while awaiting an admitted connection: {error}"),
+        },
+        result = connect => match result {
+            Ok(connection) => connection,
+            Err(error) => {
+                let last_error = last_error.lock().expect("last error lock");
+                panic!(
+                    "listener did not admit the connection within {within:?}: {error}; last error: {last_error}"
+                );
+            }
+        },
+    }
 }
 
 async fn ping_pong(stream: &mut tokio::net::TcpStream, payload: &[u8]) -> io::Result<()> {
