@@ -26,8 +26,11 @@ def tls_record(content_type: int, payload: bytes) -> bytes:
     return bytes((content_type, 3, 3)) + len(payload).to_bytes(2, "big") + payload
 
 
-def server_hello_record() -> bytes:
-    session_id = bytes(range(32))
+def server_hello_record(
+    session_id: bytes = bytes(range(32)), cipher: bytes = b"\x13\x01"
+) -> bytes:
+    if len(session_id) > 32 or len(cipher) != 2:
+        raise ValueError("invalid ServerHello echo parameters")
     key_share = b"\x00\x1d\x00\x20" + bytes((index ^ 0x5A) for index in range(32))
     extensions = b"\x00\x2b\x00\x02\x03\x04" + b"\x00\x33" + len(
         key_share
@@ -37,7 +40,8 @@ def server_hello_record() -> bytes:
         + bytes((index ^ 0xA5) for index in range(32))
         + bytes((len(session_id),))
         + session_id
-        + b"\x13\x01\x00"
+        + cipher
+        + b"\x00"
         + len(extensions).to_bytes(2, "big")
         + extensions
     )
@@ -45,8 +49,12 @@ def server_hello_record() -> bytes:
     return tls_record(22, message)
 
 
-def fixture_records(ccs_present: bool) -> list[tuple[str, bytes]]:
-    records = [("server-hello", server_hello_record())]
+def fixture_records(
+    ccs_present: bool,
+    session_id: bytes = bytes(range(32)),
+    cipher: bytes = b"\x13\x01",
+) -> list[tuple[str, bytes]]:
+    records = [("server-hello", server_hello_record(session_id, cipher))]
     if ccs_present:
         records.append(("change-cipher-spec", tls_record(20, b"\x01")))
     for position, body_len in enumerate((32, 48, 64, 80), start=1):
@@ -58,6 +66,136 @@ def fixture_records(ccs_present: bool) -> list[tuple[str, bytes]]:
         )
     records.append(("fifth-ticket", tls_record(23, b"\xF5" * 24)))
     return records
+
+
+def receive_client_hello(connection: socket.socket) -> tuple[bytes, bytes, bytes]:
+    header = read_exact(connection, 5, [])
+    if header[0] != 22 or header[1:3] != b"\x03\x01":
+        raise ValueError("fixture expected one TLS ClientHello record")
+    body_length = int.from_bytes(header[3:5], "big")
+    if body_length <= 0 or body_length + 5 > MAX_RECORD_WIRE_BYTES:
+        raise ValueError("ClientHello record length is outside the fixture bound")
+    body = read_exact(connection, body_length, [])
+    if len(body) < 44 or body[0] != 1:
+        raise ValueError("fixture received a malformed ClientHello")
+    if int.from_bytes(body[1:4], "big") + 4 != len(body):
+        raise ValueError("fixture requires exactly one complete ClientHello")
+    cursor = 4 + 2 + 32
+    session_id_length = body[cursor]
+    cursor += 1
+    if session_id_length > 32 or cursor + session_id_length + 2 > len(body):
+        raise ValueError("ClientHello legacy session id is malformed")
+    session_id = body[cursor : cursor + session_id_length]
+    cursor += session_id_length
+    suites_length = int.from_bytes(body[cursor : cursor + 2], "big")
+    cursor += 2
+    if suites_length < 2 or suites_length % 2 or cursor + suites_length > len(body):
+        raise ValueError("ClientHello cipher suites are malformed")
+    suites = [body[index : index + 2] for index in range(cursor, cursor + suites_length, 2)]
+    cipher = next(
+        (suite for suite in (b"\x13\x01", b"\x13\x02", b"\x13\x03") if suite in suites),
+        None,
+    )
+    if cipher is None:
+        raise ValueError("ClientHello offered no supported TLS 1.3 cipher")
+    return header + body, session_id, cipher
+
+
+def serve_cover(arguments: argparse.Namespace) -> None:
+    if arguments.delay_ms not in DELAYS_MS:
+        raise ValueError("unsupported fixture record delay")
+    if arguments.max_accepted != 1:
+        raise ValueError("serve-cover requires --max-accepted 1")
+    started_ns = time.monotonic_ns()
+    send_events: list[dict] = []
+    with socket.create_server(("127.0.0.1", arguments.listen_port)) as listener:
+        listener.settimeout(arguments.absolute_timeout_seconds)
+        actual_port = listener.getsockname()[1]
+        print(
+            json.dumps({"event": "READY", "listenPort": actual_port, "pid": os.getpid()}),
+            flush=True,
+        )
+        connection, peer = listener.accept()
+        with connection:
+            connection.settimeout(arguments.absolute_timeout_seconds)
+            client_hello, session_id, cipher = receive_client_hello(connection)
+            records = fixture_records(arguments.emit_ccs, session_id, cipher)
+            before_ticket = records[:-1]
+            write_id = 0
+            for index, (role, record) in enumerate(before_ticket):
+                if index:
+                    time.sleep(arguments.delay_ms / 1000)
+                payload = record
+                if role == "encrypted-4" and arguments.probe_case == "already-buffered":
+                    payload += records[-1][1]
+                sent_at = time.monotonic_ns()
+                connection.sendall(payload)
+                send_events.append(
+                    {"role": role, "wireLength": len(record), "writeId": write_id, "sentAtNs": sent_at}
+                )
+                if len(payload) != len(record):
+                    send_events.append(
+                        {"role": "fifth-ticket", "wireLength": len(records[-1][1]), "writeId": write_id, "sentAtNs": sent_at}
+                    )
+                write_id += 1
+            if arguments.probe_case == "single-probe-present":
+                time.sleep(0.001)
+                ticket = records[-1][1]
+                sent_at = time.monotonic_ns()
+                connection.sendall(ticket)
+                send_events.append(
+                    {"role": "fifth-ticket", "wireLength": len(ticket), "writeId": write_id, "sentAtNs": sent_at}
+                )
+            try:
+                while connection.recv(512):
+                    pass
+            except (ConnectionResetError, socket.timeout):
+                pass
+
+    retained = b"".join(record for _role, record in before_ticket)
+    if arguments.probe_case == "already-buffered":
+        retained += records[-1][1][:5]
+    result = {
+        "schemaVersion": 1,
+        "mode": "serve-cover",
+        "status": "PASS",
+        "pid": os.getpid(),
+        "peer": peer[0],
+        "listenPort": actual_port,
+        "delayMs": arguments.delay_ms,
+        "expectedClassification": arguments.probe_case,
+        "emitCcs": arguments.emit_ccs,
+        "clientHello": {
+            "bytes": len(client_hello),
+            "sha256": hashlib.sha256(client_hello).hexdigest(),
+            "legacySessionIdBytes": len(session_id),
+        },
+        "expectedCandidatePlan": {
+            "layout": "positional",
+            "encryptedRecordWireLengths": [
+                len(record) for role, record in records if role.startswith("encrypted-")
+            ],
+            "nstWireLength": (
+                len(records[-1][1]) if arguments.probe_case != "absent-would-block" else None
+            ),
+            "retainedPrefixBytes": len(retained),
+            "retainedPrefixSha256": hashlib.sha256(retained).hexdigest(),
+        },
+        "records": [
+            {
+                **event,
+                "sentOffsetMs": round((event["sentAtNs"] - started_ns) / 1_000_000, 3),
+            }
+            for event in send_events
+        ],
+        "absoluteTimeoutSeconds": arguments.absolute_timeout_seconds,
+        "maxAccepted": arguments.max_accepted,
+    }
+    arguments.output.parent.mkdir(parents=True, exist_ok=True)
+    with arguments.output.open("x", encoding="utf-8") as handle:
+        json.dump(result, handle, indent=2)
+        handle.write("\n")
+    print(json.dumps({"event": "COMPLETE", "status": "PASS"}), flush=True)
 
 
 def read_exact(connection: socket.socket, length: int, events: list[dict]) -> bytes:
@@ -377,11 +515,22 @@ def build_parser() -> argparse.ArgumentParser:
             argparse.Namespace(listen_port=0, output=arguments.output)
         )
     )
+    cover = subparsers.add_parser("serve-cover")
+    cover.add_argument("--listen-port", type=int, required=True)
+    cover.add_argument("--delay-ms", type=int, choices=DELAYS_MS, required=True)
+    cover.add_argument("--probe-case", choices=PROBE_CASES, required=True)
+    cover.add_argument("--emit-ccs", type=int, choices=(0, 1), required=True)
+    cover.add_argument("--max-accepted", type=int, default=1)
+    cover.add_argument("--absolute-timeout-seconds", type=float, default=10.0)
+    cover.add_argument("--output", type=Path, required=True)
+    cover.set_defaults(function=serve_cover)
     return parser
 
 
 def main() -> None:
     arguments = build_parser().parse_args()
+    if hasattr(arguments, "emit_ccs"):
+        arguments.emit_ccs = bool(arguments.emit_ccs)
     arguments.function(arguments)
 
 
