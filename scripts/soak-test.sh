@@ -22,6 +22,7 @@ round_sleep=${ROUND_SLEEP:-5}
 minimum_rounds=${MIN_ROUNDS:-$duration_min}
 require_release_qualified=${REQUIRE_RELEASE_QUALIFIED:-0}
 distributed_interval_seconds=${DISTRIBUTED_INTERVAL_SECONDS:-1800}
+max_distributed_attempts=145
 run_id=${RUN_ID:-${RR_RUN_ID:-soak-$(date -u +%Y%m%dT%H%M%SZ)-$$}}
 port_base=${PORT_BASE:-}
 expected_rust_sha256=${RUST_REALITY_SHA256:-}
@@ -99,10 +100,21 @@ done
     || { echo "REQUIRE_RELEASE_QUALIFIED must be 0 or 1" >&2; exit 2; }
 [[ $distributed_interval_seconds =~ ^[1-9][0-9]*$ ]] \
     || { echo "DISTRIBUTED_INTERVAL_SECONDS must be positive" >&2; exit 2; }
-if (( require_release_qualified == 1 && distributed_interval_seconds > 1800 )); then
-    echo "release soak DISTRIBUTED_INTERVAL_SECONDS must be <= 1800" >&2
+if (( require_release_qualified == 1 \
+    && (distributed_interval_seconds < 300 || distributed_interval_seconds > 1800) )); then
+    echo "release soak DISTRIBUTED_INTERVAL_SECONDS must be in 300..1800" >&2
     exit 2
 fi
+planned_distributed_attempts=$((
+    2 + (duration_min * 60 - 1) / distributed_interval_seconds
+))
+if (( planned_distributed_attempts > max_distributed_attempts )); then
+    echo "distributed attempt count $planned_distributed_attempts exceeds hard limit $max_distributed_attempts" >&2
+    exit 2
+fi
+planned_distributed_payload_bytes=$((
+    (planned_distributed_attempts * 2 + 2) * 1048576
+))
 [[ $run_id =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
     || { echo "RUN_ID is invalid: $run_id" >&2; exit 2; }
 if [[ -n $port_base ]]; then
@@ -129,9 +141,6 @@ fi
 mkdir -p "$(dirname "$out_dir")"
 mkdir "$out_dir"
 mkdir "$out_dir/distributed"
-planned_distributed_attempts=$((
-    2 + (duration_min * 60 - 1) / distributed_interval_seconds
-))
 proxy_max_accepted=$((planned_distributed_attempts + 16))
 allocate_ports() {
     python3 - "$port_base" <<'PY'
@@ -168,11 +177,15 @@ jq -n --arg runId "$run_id" --arg rustBin "$rust_bin" --arg rustSha256 "$rust_sh
     --argjson durationMinutes "$duration_min" \
     --argjson distributedIntervalSeconds "$distributed_interval_seconds" \
     --argjson plannedDistributedAttempts "$planned_distributed_attempts" \
+    --argjson maxDistributedAttempts "$max_distributed_attempts" \
+    --argjson plannedDistributedPayloadBytes "$planned_distributed_payload_bytes" \
     --argjson requireReleaseQualified "$require_release_qualified" \
     --argjson portBlock "$port_block_json" \
     '{schemaVersion:2,runId:$runId,startedAt:$startedAt,durationMinutes:$durationMinutes,
       distributedIntervalSeconds:$distributedIntervalSeconds,
       plannedDistributedAttempts:$plannedDistributedAttempts,
+      maxDistributedAttempts:$maxDistributedAttempts,
+      plannedDistributedPayloadBytes:$plannedDistributedPayloadBytes,
       requireReleaseQualified:$requireReleaseQualified,
       ports:{address:"127.0.0.1",block:$portBlock},
       rustReality:{path:$rustBin,sha256:$rustSha256},
@@ -790,14 +803,16 @@ final_xray_sha256=$(sha256sum "$xray" | awk '{print $1}')
 
 python3 - "$out_dir/resources.jsonl" "$failures" "$round" "$minimum_rounds" \
     "$duration_min" "$require_release_qualified" "$expected_payload_sha256" \
-    "$out_dir/distributed-gates.json" \
+    "$max_distributed_attempts" "$out_dir/distributed-gates.json" \
     "$out_dir/soak-summary.json" <<'PY'
 import json, statistics, sys
 records = [json.loads(line) for line in open(sys.argv[1])]
 failures, rounds, minimum_rounds = map(int, sys.argv[2:5])
 duration_minutes = int(sys.argv[5])
 require_release_qualified = bool(int(sys.argv[6]))
-payload_sha256, distributed_path, output = sys.argv[7:10]
+payload_sha256 = sys.argv[7]
+max_distributed_attempts = int(sys.argv[8])
+distributed_path, output = sys.argv[9:11]
 with open(distributed_path) as handle:
     distributed = json.load(handle)
 start, end = records[0], records[-1]
@@ -820,6 +835,12 @@ def resource_stats(values):
         ) / denominator
     else:
         slope = 0.0
+    sampled_rss_peak_growth_mib = (
+        max(value["vmRssKiB"] for value in values) - first["vmRssKiB"]
+    ) / 1024
+    rss_hwm_growth_mib = (
+        max(value["vmHwmKiB"] for value in values) - first["vmHwmKiB"]
+    ) / 1024
     return {
         "start": first,
         "end": last,
@@ -828,10 +849,10 @@ def resource_stats(values):
         "rssGrowthMiB": round((last["vmRssKiB"] - first["vmRssKiB"]) / 1024, 1),
         "fdPeakGrowth": max(value["fds"] for value in values) - first["fds"],
         "threadPeakGrowth": max(value["threads"] for value in values) - first["threads"],
-        "rssPeakGrowthMiB": round(
-            (max(value["vmRssKiB"] for value in values) - first["vmRssKiB"]) / 1024,
-            1,
-        ),
+        # VmHWM persists process-lifetime transient peaks that can disappear
+        # before the next sampled VmRSS snapshot. This is the gated RSS peak.
+        "rssPeakGrowthMiB": round(rss_hwm_growth_mib, 1),
+        "rssSampledPeakGrowthMiB": round(sampled_rss_peak_growth_mib, 1),
         "rssTailSlopeMiBPerHour": round(slope, 3),
     }
 
@@ -893,7 +914,9 @@ release_qualified = (
     and elapsed_seconds >= 720 * 60
     and slope_gate_applied
     and distributed.get("intervalSeconds", 1801) <= 1800
+    and distributed.get("intervalSeconds", 0) >= 300
     and distributed_attempts >= 25
+    and distributed_attempts <= max_distributed_attempts
     and distributed.get("handoffSeq1", {}).get("attempts", 0) >= 25
     and distributed.get("handoffSeq1", {}).get("successes", 0) >= 25
     and distributed.get("handoffSeq1", {}).get("failures") == 0
@@ -910,10 +933,12 @@ summary = {
     "threadGrowth": aggregate_resources["threadGrowth"],
     "rssGrowthMiB": aggregate_resources["rssGrowthMiB"],
     "minimumRounds": minimum_rounds,
+    "maxDistributedAttempts": max_distributed_attempts,
     "payloadSha256": payload_sha256,
     "fdPeakGrowth": aggregate_resources["fdPeakGrowth"],
     "threadPeakGrowth": aggregate_resources["threadPeakGrowth"],
     "rssPeakGrowthMiB": aggregate_resources["rssPeakGrowthMiB"],
+    "rssSampledPeakGrowthMiB": aggregate_resources["rssSampledPeakGrowthMiB"],
     "rssTailSlopeMiBPerHour": aggregate_resources["rssTailSlopeMiBPerHour"],
     "resourceAggregate": aggregate_resources,
     "resourceByProcess": resources_by_process,
