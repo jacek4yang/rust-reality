@@ -614,7 +614,8 @@ mod tests {
     use x25519_dalek::{PublicKey, StaticSecret};
 
     use super::{
-        HandoffLandingError, HandoffLandingHandler, HandoffLine, HandoffLineError, unix_seconds,
+        HandoffLandingError, HandoffLandingHandler, HandoffLine, HandoffLineError, resume_tls,
+        unix_seconds,
     };
     use crate::{
         config::{
@@ -628,8 +629,8 @@ mod tests {
                 seal_transfer,
             },
             reality::tls13::{
-                CipherSuite, ContentType, EstablishedTls, Tls13KeySchedule, Tls13RecordLayer,
-                TlsApplicationIo, TrafficKeys, read_tls_record,
+                CipherSuite, ContentType, EstablishedTls, ExportedRecordState, Tls13KeySchedule,
+                Tls13RecordLayer, TlsApplicationIo, TrafficKeys, read_tls_record,
             },
             vless::{
                 Address, Command, Destination, UserId, VERSION, VISION_FLOW, VisionCommand,
@@ -684,18 +685,58 @@ mod tests {
     }
 
     fn test_state(destination: Destination) -> ContinuationState {
+        test_state_with_server_sequence(destination, 0)
+    }
+
+    fn test_state_with_server_sequence(
+        destination: Destination,
+        server_sequence: u64,
+    ) -> ContinuationState {
         ContinuationState::new(
             CipherSuite::ChaCha20Poly1305Sha256,
             TrafficKeys::from_raw_parts(&[0x11; 32], [0x21; 12]).expect("client keys"),
             1,
             TrafficKeys::from_raw_parts(&[0x12; 32], [0x22; 12]).expect("server keys"),
-            0,
+            server_sequence,
             [0x33; 16],
             destination,
             Vec::new(),
             Vec::new(),
         )
         .expect("test state must be valid")
+    }
+
+    #[test]
+    fn landing_resume_preserves_server_sequence_one() {
+        let suite = CipherSuite::ChaCha20Poly1305Sha256;
+        let state = test_state_with_server_sequence(
+            Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 443),
+            1,
+        );
+        let mut resumed = resume_tls(&state).expect("sequence-one state must resume");
+        assert_eq!(resumed.client_records_mut().records_used(), 1);
+        assert_eq!(resumed.server_records_mut().records_used(), 1);
+
+        let mut wire = Vec::new();
+        resumed
+            .server_records_mut()
+            .seal_into(ContentType::ApplicationData, b"next", 0, &mut wire)
+            .expect("resumed server must seal at sequence one");
+        assert_eq!(resumed.server_records_mut().records_used(), 2);
+
+        let peer_state = ExportedRecordState::from_parts(
+            suite,
+            TrafficKeys::from_raw_parts(&[0x12; 32], [0x22; 12]).expect("peer server keys"),
+            1,
+        )
+        .expect("peer state must build");
+        let mut peer = Tls13RecordLayer::from_exported_state(peer_state).expect("peer must resume");
+        let opened = peer
+            .open_in_place(&mut wire)
+            .expect("peer must authenticate the next sequence-one record");
+        assert_eq!(opened.content_type(), ContentType::ApplicationData);
+        assert_eq!(opened.plaintext(), b"next");
+        assert_eq!(peer.records_used(), 2);
     }
 
     fn tls_states() -> (EstablishedTls, Tls13RecordLayer, Tls13RecordLayer) {

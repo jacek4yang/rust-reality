@@ -280,6 +280,22 @@ on the Handoff inbound to the tag of that `socks5` or `nxr` outbound; a
 authentication. The tag must never reference a `handoff` outbound: landings
 cannot be chained.
 
+### 4. Upgrade and rollback order for v1.5
+
+Handoff keeps the `HND1` wire protocol and continuation-state versions at v1.
+A v1.5 landing accepts both server record sequence 0 (the existing boundary)
+and sequence 1 (one empty cover-shaped application record was emitted before
+the transfer). A v1.4 landing accepts only sequence 0, so a v1.5 line paired
+with a v1.4 landing is unsupported: sessions whose cover shape consumes the
+first server application sequence fail closed.
+
+For a rolling upgrade, upgrade and verify every LANDING first, then upgrade
+the LINE nodes. A v1.4 LINE remains compatible with a v1.5 LANDING during this
+window. For rollback, downgrade every LINE first so no new sequence-1 transfer
+can be created, stop admitting new Handoff sessions and drain the active
+sessions on the LANDINGs, then downgrade the LANDINGs. Never restart or
+downgrade a LANDING underneath active transferred sessions.
+
 ## GeoIP and GeoSite
 
 Only HTTPS source URLs are required. Defaults point to community-compatible
