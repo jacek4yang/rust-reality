@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Shared fail-closed contract for authoritative performance and interop runs.
-# Source this file; do not execute it directly.
+# Source this file; do not execute it directly. Formal runs hold the repository
+# sibling `.coord/v1.5.0/locks/host-exclusive.lock` from rr_contract_init until
+# process exit. RR_HOST_EXCLUSIVE_LOCK may select another absolute path. A job
+# runner that already owns that exact lock must export RR_HOST_EXCLUSIVE_FD;
+# the FD target, inode, and non-blocking flock ownership are all revalidated.
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
     echo "formal-run-contract.sh must be sourced" >&2
@@ -20,6 +24,10 @@ declare -ag RR_HARNESS_TREES=()
 declare -Ag RR_HARNESS_TREE_MANIFEST_SHA256=()
 declare -Ag RR_HARNESS_TREE_FILE_COUNTS=()
 RR_CONTRACT_FINALIZED=0
+RR_HOST_EXCLUSIVE_LOCK_PATH=
+RR_HOST_EXCLUSIVE_FD_ACTIVE=
+RR_HOST_EXCLUSIVE_LOCK_INHERITED=false
+RR_HOST_EXCLUSIVE_LOCK_DEVICE_INODE=
 RR_CONTRACT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
 RR_CONTRACT_SHA256=$(sha256sum -- "$RR_CONTRACT_PATH" | awk '{print $1}')
 
@@ -80,6 +88,65 @@ finally:
 PY
 }
 
+rr_contract_lock_target() {
+    local fd=$1 target observed_identity path_identity
+    [[ $fd =~ ^[0-9]+$ ]] && (( fd >= 3 )) || return 1
+    [[ -e /proc/$$/fd/$fd ]] || return 1
+    target=$(readlink -- "/proc/$$/fd/$fd" 2>/dev/null) || return 1
+    [[ $target == "$RR_HOST_EXCLUSIVE_LOCK_PATH" ]] || return 1
+    observed_identity=$(stat -Lc '%d:%i' -- "/proc/$$/fd/$fd" 2>/dev/null) || return 1
+    [[ $observed_identity == "$RR_HOST_EXCLUSIVE_LOCK_DEVICE_INODE" ]] || return 1
+    [[ -f $RR_HOST_EXCLUSIVE_LOCK_PATH && ! -L $RR_HOST_EXCLUSIVE_LOCK_PATH ]] || return 1
+    path_identity=$(stat -Lc '%d:%i' -- "$RR_HOST_EXCLUSIVE_LOCK_PATH" 2>/dev/null) || return 1
+    [[ $path_identity == "$RR_HOST_EXCLUSIVE_LOCK_DEVICE_INODE" ]]
+}
+
+rr_contract_acquire_host_lock() {
+    local repository_parent lock_input inherited_fd
+    repository_parent=$(dirname -- "$RR_REPOSITORY")
+    lock_input=${RR_HOST_EXCLUSIVE_LOCK:-"$repository_parent/.coord/v1.5.0/locks/host-exclusive.lock"}
+    [[ $lock_input == /* ]] ||
+        rr_contract_die "RR_HOST_EXCLUSIVE_LOCK must be absolute" || return
+    mkdir -p -- "$(dirname -- "$lock_input")" ||
+        rr_contract_die "could not create host-exclusive lock directory" || return
+    [[ ! -L $lock_input ]] ||
+        rr_contract_die "host-exclusive lock must not be a symlink" || return
+    : >>"$lock_input" ||
+        rr_contract_die "could not create host-exclusive lock file" || return
+    [[ -f $lock_input && ! -L $lock_input ]] ||
+        rr_contract_die "host-exclusive lock must be a regular non-symlink" || return
+    RR_HOST_EXCLUSIVE_LOCK_PATH=$(readlink -f -- "$lock_input")
+    RR_HOST_EXCLUSIVE_LOCK_DEVICE_INODE=$(stat -Lc '%d:%i' -- "$lock_input")
+
+    inherited_fd=${RR_HOST_EXCLUSIVE_FD:-}
+    if [[ -n $inherited_fd ]]; then
+        rr_contract_lock_target "$inherited_fd" ||
+            rr_contract_die "RR_HOST_EXCLUSIVE_FD does not identify the exact host-exclusive lock" || return
+        flock -n "$inherited_fd" ||
+            rr_contract_die "inherited host-exclusive lock is not available" || return
+        RR_HOST_EXCLUSIVE_FD_ACTIVE=$inherited_fd
+        RR_HOST_EXCLUSIVE_LOCK_INHERITED=true
+    else
+        exec {RR_HOST_EXCLUSIVE_FD_ACTIVE}>"$RR_HOST_EXCLUSIVE_LOCK_PATH" ||
+            rr_contract_die "could not open host-exclusive lock" || return
+        rr_contract_lock_target "$RR_HOST_EXCLUSIVE_FD_ACTIVE" ||
+            rr_contract_die "opened host-exclusive FD has the wrong identity" || return
+        flock -n "$RR_HOST_EXCLUSIVE_FD_ACTIVE" ||
+            rr_contract_die "host-exclusive lock is already held" || return
+        RR_HOST_EXCLUSIVE_LOCK_INHERITED=false
+    fi
+}
+
+rr_contract_verify_host_lock() {
+    (( RR_EXPLORATORY == 1 )) && return 0
+    [[ -n $RR_HOST_EXCLUSIVE_FD_ACTIVE ]] ||
+        rr_contract_die "formal run has no host-exclusive lock FD" || return 1
+    rr_contract_lock_target "$RR_HOST_EXCLUSIVE_FD_ACTIVE" ||
+        rr_contract_die "host-exclusive lock FD identity changed during run" || return 1
+    flock -n "$RR_HOST_EXCLUSIVE_FD_ACTIVE" ||
+        rr_contract_die "host-exclusive lock is no longer held" || return 1
+}
+
 # rr_contract_init REPOSITORY SCRIPT_NAME DEFAULT_OUTPUT_PARENT PORT_BLOCK_WIDTH
 rr_contract_init() {
     local repository=$1 script_name=$2 default_output_parent=$3 port_width=$4
@@ -107,10 +174,13 @@ rr_contract_init() {
         RR_HARNESS_TRACKED_DIRTY=0
     fi
     if [[ $RR_EXPLORATORY == 0 ]]; then
+        command -v flock >/dev/null ||
+            rr_contract_die "flock is required for a formal run" || return
         [[ $RR_HARNESS_COMMIT =~ ^[0-9a-f]{40}$ ]] ||
             rr_contract_die "repository HEAD is not a valid commit" || return
         (( RR_HARNESS_TRACKED_DIRTY == 0 )) ||
             rr_contract_die "repository has tracked or staged changes" || return
+        rr_contract_acquire_host_lock || return
     fi
     RR_HARNESS_COMMIT=${RR_HARNESS_COMMIT:-unavailable}
 
@@ -244,7 +314,13 @@ rr_register_binary() {
     expected_sha=${expected_sha:-$actual_sha}
     build_id=$(readelf -n -- "$canonical" 2>/dev/null |
         awk '/Build ID:/ {print $3; exit}' || true)
-    build_id=${build_id:-unavailable}
+    if [[ -n $build_id && $build_id =~ ^([0-9a-fA-F]{2})+$ ]]; then
+        build_id=${build_id,,}
+    elif [[ $RR_EXPLORATORY == 0 ]]; then
+        rr_contract_die "$label has no valid hexadecimal GNU Build ID" || return
+    else
+        build_id=unavailable
+    fi
 
     case $kind in
         rust)
@@ -431,6 +507,7 @@ rr_contract_binary_json() {
 
 rr_write_contract_metadata() {
     local phase=${1:-preflight} binary_json harness_json tree_json path
+    rr_contract_verify_host_lock || return
     binary_json=$(rr_contract_binary_json)
     harness_json=$(for path in "${RR_HARNESS_FILES[@]}"; do
         jq -cn --arg path "$path" --arg sha "${RR_HARNESS_SHA256[$path]}" \
@@ -449,6 +526,10 @@ rr_write_contract_metadata() {
         --arg script "$RR_SCRIPT" --arg script_sha "$RR_SCRIPT_SHA256" \
         --arg contract "$RR_CONTRACT_PATH" --arg contract_sha "$RR_CONTRACT_SHA256" \
         --arg harness_commit "$RR_HARNESS_COMMIT" --argjson binaries "$binary_json" \
+        --arg host_lock_path "$RR_HOST_EXCLUSIVE_LOCK_PATH" \
+        --arg host_lock_fd "$RR_HOST_EXCLUSIVE_FD_ACTIVE" \
+        --arg host_lock_identity "$RR_HOST_EXCLUSIVE_LOCK_DEVICE_INODE" \
+        --argjson host_lock_inherited "$RR_HOST_EXCLUSIVE_LOCK_INHERITED" \
         --argjson harness_dirty "$RR_HARNESS_TRACKED_DIRTY" \
         --argjson harness_files "$harness_json" --argjson harness_trees "$tree_json" \
         --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -457,6 +538,11 @@ rr_write_contract_metadata() {
           script:{path:$script,sha256:$script_sha,harnessCommit:$harness_commit,
                   trackedDirty:($harness_dirty == 1)},
           contract:{path:$contract,sha256:$contract_sha},
+          hostExclusiveLock:{path:$host_lock_path,
+            fd:(if $host_lock_fd == "" then null else ($host_lock_fd | tonumber) end),
+            deviceInode:(if $host_lock_identity == "" then null else $host_lock_identity end),
+            inherited:$host_lock_inherited,
+            required:($exploratory == 0)},
           harnessFiles:$harness_files,harnessSourceTrees:$harness_trees,
           binaries:$binaries,recordedUtc:$date}' \
         >"$RR_OUT_DIR/run-contract.json"
@@ -465,6 +551,7 @@ rr_write_contract_metadata() {
 rr_verify_registered_files() {
     local label actual path snapshot manifest_sha file_count
     if [[ $RR_EXPLORATORY == 0 ]]; then
+        rr_contract_verify_host_lock || return 1
         actual=$(git -C "$RR_REPOSITORY" rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)
         [[ $actual == "$RR_HARNESS_COMMIT" ]] ||
             rr_contract_die "repository HEAD changed during run" || return 1
