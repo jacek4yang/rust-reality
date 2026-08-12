@@ -3,6 +3,7 @@
 # relay policy.  Measurements are made in alternating balanced ABBA blocks;
 # every slot owns a fresh server, port, log, perf output and raw sample file.
 set -Eeuo pipefail
+export LC_ALL=C
 
 readonly REPOSITORY="$({ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."; pwd; })"
 run_id=${RUN_ID:-}
@@ -15,6 +16,7 @@ baseline_sha_expected=${RUST_REALITY_BASELINE_SHA256:-}
 candidate_sha_expected=${RUST_REALITY_SHA256:-}
 baseline_commit=${RUST_REALITY_BASELINE_COMMIT:-}
 candidate_commit=${RUST_REALITY_COMMIT:-}
+baseline_identity=${RUST_REALITY_BASELINE_IDENTITY:-}
 blocks=${BLOCKS:-3}
 samples=${SAMPLES:-3}
 concurrencies=${CONCURRENCIES:-1 4 32}
@@ -27,6 +29,57 @@ measure_mode=${MEASURE_MODE:-perf}
 self_test=${SELF_TEST:-0}
 
 die() { printf 'benchmark-fallback-ab: %s\n' "$*" >&2; exit 2; }
+validate_perf_csv() {
+    python3 - "$1" "$2" <<'PY'
+import csv, json, math, sys
+
+source, output = sys.argv[1:]
+expected = {"task-clock", "instructions", "context-switches"}
+events = {}
+with open(source, newline="", encoding="utf-8") as handle:
+    for row in csv.reader(handle):
+        if len(row) < 5:
+            continue
+        event = row[2].strip()
+        if event not in expected:
+            continue
+        if event in events:
+            raise SystemExit(f"duplicate perf event: {event}")
+        raw_value = row[0].strip()
+        if raw_value.startswith("<"):
+            raise SystemExit(f"perf event was not counted: {event}: {raw_value}")
+        try:
+            value = float(raw_value)
+            enabled_ns = float(row[3].strip())
+            running_percent = float(row[4].strip().rstrip("%"))
+        except ValueError as error:
+            raise SystemExit(f"malformed perf event {event}: {row}") from error
+        if not all(math.isfinite(item) for item in (value, enabled_ns, running_percent)):
+            raise SystemExit(f"non-finite perf event: {event}")
+        if value < 0 or enabled_ns <= 0 or not 95.0 <= running_percent <= 100.01:
+            raise SystemExit(
+                f"invalid perf event {event}: value={value}, enabled={enabled_ns}, "
+                f"running={running_percent}%"
+            )
+        unit = row[1].strip()
+        if event == "task-clock" and unit not in {"msec", "ms"}:
+            raise SystemExit(f"unexpected task-clock unit: {unit!r}")
+        events[event] = {
+            "value": value,
+            "unit": unit,
+            "enabledNanoseconds": enabled_ns,
+            "runningPercent": running_percent,
+        }
+missing = expected - events.keys()
+if missing:
+    raise SystemExit("missing perf events: " + ", ".join(sorted(missing)))
+with open(output, "x", encoding="utf-8") as handle:
+    json.dump({"schemaVersion": 1, "events": events,
+               "taskClockMilliseconds": events["task-clock"]["value"]},
+              handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
+}
 block_order() {
     local index=$1
     if ((index % 2 == 1)); then
@@ -42,12 +95,33 @@ if [[ $self_test == 1 ]]; then
     [[ $(block_order 3 | paste -sd '') == ABBA ]]
     abba_start=candidate
     [[ $(block_order 1 | paste -sd '') == BAAB ]]
+    test_directory=$(mktemp -d)
+    trap 'rm -rf -- "$test_directory"' EXIT
+    printf '%s\n' \
+        '12.500,msec,task-clock,100000000,100.00,,' \
+        '12345,,instructions,100000000,100.00,,' \
+        '10,,context-switches,100000000,100.00,,' >"$test_directory/valid.csv"
+    validate_perf_csv "$test_directory/valid.csv" "$test_directory/valid.json"
+    python3 - "$test_directory/valid.json" <<'PY'
+import json, sys
+record = json.load(open(sys.argv[1], encoding="utf-8"))
+assert record["taskClockMilliseconds"] == 12.5
+assert set(record["events"]) == {"task-clock", "instructions", "context-switches"}
+PY
+    printf '%s\n' \
+        '12.500,msec,task-clock,100000000,94.99,,' \
+        '12345,,instructions,100000000,100.00,,' \
+        '10,,context-switches,100000000,100.00,,' >"$test_directory/invalid.csv"
+    if validate_perf_csv "$test_directory/invalid.csv" "$test_directory/invalid.json" \
+        >/dev/null 2>&1; then
+        die 'low-running perf self-test unexpectedly passed'
+    fi
     printf 'benchmark-fallback-ab self-test: PASS\n'
     exit 0
 fi
 
 [[ $run_id =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die 'RUN_ID is required and must be one safe component'
-for name in OUT_DIR TMPDIR RUST_REALITY_BASELINE_BIN RUST_REALITY_BIN; do
+for name in OUT_DIR TMPDIR RUST_REALITY_BASELINE_BIN RUST_REALITY_BIN RUST_REALITY_BASELINE_IDENTITY; do
     value=${!name:-}; [[ $value == /* ]] || die "$name must be an absolute path"
 done
 [[ ! -e $out_dir && ! -L $out_dir ]] || die "OUT_DIR already exists: $out_dir"
@@ -65,9 +139,8 @@ for value in $concurrencies; do [[ $value =~ ^[1-9][0-9]*$ ]] || die "invalid co
 for name in RUST_REALITY_BASELINE_SHA256 RUST_REALITY_SHA256; do
     value=${!name:-}; [[ $value =~ ^[0-9a-fA-F]{64}$ ]] || die "$name must be a 64-digit SHA-256"
 done
-for name in RUST_REALITY_BASELINE_COMMIT RUST_REALITY_COMMIT; do
-    value=${!name:-}; [[ $value =~ ^[0-9a-fA-F]{7,40}$ ]] || die "$name must identify a commit"
-done
+[[ $baseline_commit =~ ^[0-9a-fA-F]{40}$ ]] || die 'RUST_REALITY_BASELINE_COMMIT must be a full commit ID'
+[[ $candidate_commit =~ ^[0-9a-fA-F]{7,40}$ ]] || die 'RUST_REALITY_COMMIT must identify a commit'
 for program in curl git go jq perf python3 readelf realpath sha256sum stat sudo; do
     command -v "$program" >/dev/null 2>&1 || die "required program unavailable: $program"
 done
@@ -76,15 +149,25 @@ case "$(realpath "$temporary_root")/" in "$REPOSITORY"/*) die 'TMPDIR must be ou
 [[ $measure_mode != perf ]] || sudo -n true >/dev/null 2>&1 || die 'passwordless sudo is required for perf'
 for binary in "$baseline_bin" "$candidate_bin"; do [[ -x $binary ]] || die "binary is not executable: $binary"; done
 baseline_bin=$(realpath "$baseline_bin"); candidate_bin=$(realpath "$candidate_bin")
+[[ -f $baseline_identity && ! -L $baseline_identity ]] || die 'RUST_REALITY_BASELINE_IDENTITY must be a regular non-symlink file'
+baseline_identity=$(realpath "$baseline_identity")
 baseline_sha=$(sha256sum "$baseline_bin" | awk '{print $1}'); candidate_sha=$(sha256sum "$candidate_bin" | awk '{print $1}')
 [[ ${baseline_sha_expected,,} == "$baseline_sha" ]] || die 'baseline SHA-256 mismatch'
 [[ ${candidate_sha_expected,,} == "$candidate_sha" ]] || die 'candidate SHA-256 mismatch'
 baseline_build_id=$(readelf -n "$baseline_bin" | awk '/Build ID:/ {print $3; exit}')
 candidate_build_id=$(readelf -n "$candidate_bin" | awk '/Build ID:/ {print $3; exit}')
 [[ -n $baseline_build_id && -n $candidate_build_id ]] || die 'both binaries need a GNU Build ID'
+baseline_commit=${baseline_commit,,}
+jq -e --arg commit "$baseline_commit" --arg sha "$baseline_sha" '
+    (.sourceCommit | ascii_downcase) == $commit
+    and (.binarySha256 | ascii_downcase) == $sha
+    and .sha256sumsVerified == true
+' "$baseline_identity" >/dev/null || die 'baseline identity does not bind the requested commit and binary SHA-256'
+baseline_identity_sha=$(sha256sum "$baseline_identity" | awk '{print $1}')
 repository_head=$(git -C "$REPOSITORY" rev-parse --verify HEAD)
 repository_dirty=false
 [[ -z $(git -C "$REPOSITORY" status --porcelain=v1 --untracked-files=normal) ]] || repository_dirty=true
+[[ $repository_dirty == false ]] || die 'formal benchmark requires a clean repository'
 candidate_commit=$(git -C "$REPOSITORY" rev-parse --verify "$candidate_commit^{commit}") || die 'RUST_REALITY_COMMIT is not present in the repository'
 [[ ${candidate_commit,,} == ${repository_head,,} ]] || die 'RUST_REALITY_COMMIT must match the harness repository HEAD'
 grep -aFq -- "$candidate_commit" "$candidate_bin" || die 'candidate ELF does not embed RUST_REALITY_COMMIT'
@@ -208,11 +291,11 @@ for block in range(1,blocks+1):
 json.dump({'schemaVersion':1,'method':'alternating balanced ABBA blocks','slots':rows},open(path,'x'),indent=2)
 PY
 jq -n --arg runId "$run_id" --arg startedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --arg baselineBin "$baseline_bin" --arg baselineSha "$baseline_sha" --arg baselineBuildId "$baseline_build_id" --arg baselineCommit "$baseline_commit" \
+    --arg baselineBin "$baseline_bin" --arg baselineSha "$baseline_sha" --arg baselineBuildId "$baseline_build_id" --arg baselineCommit "$baseline_commit" --arg baselineIdentity "$baseline_identity" --arg baselineIdentitySha "$baseline_identity_sha" \
     --arg candidateBin "$candidate_bin" --arg candidateSha "$candidate_sha" --arg candidateBuildId "$candidate_build_id" --arg candidateCommit "$candidate_commit" \
     --arg repositoryHead "$repository_head" --argjson repositoryDirty "$repository_dirty" --arg payloadSha "$payload_sha" --arg concurrencies "$concurrencies" --argjson blocks "$blocks" --argjson samples "$samples" --argjson payloadMiB "$payload_mib" \
     --argjson portBase "$port_base" --argjson portCount "$port_count" --argjson splice "$splice" --argjson pool "$pipe_pool" --argjson bufferKiB "$buffer_kib" --arg measureMode "$measure_mode" \
-    '{schemaVersion:2,runId:$runId,startedAt:$startedAt,repository:{head:$repositoryHead,dirty:$repositoryDirty},method:"balanced block ABBA",blocks:$blocks,samplesPerSlot:$samples,concurrencies:$concurrencies,payloadMiB:$payloadMiB,payloadSha256:$payloadSha,measureMode:$measureMode,ports:{address:"127.0.0.1",base:$portBase,count:$portCount},relay:{splice:$splice,pipePool:$pool,bufferKiB:$bufferKiB},baseline:{path:$baselineBin,sha256:$baselineSha,buildId:$baselineBuildId,commit:$baselineCommit},candidate:{path:$candidateBin,sha256:$candidateSha,buildId:$candidateBuildId,commit:$candidateCommit}}' >"$out_dir/environment.json"
+    '{schemaVersion:2,runId:$runId,startedAt:$startedAt,repository:{head:$repositoryHead,dirty:$repositoryDirty},method:"balanced block ABBA",blocks:$blocks,samplesPerSlot:$samples,concurrencies:$concurrencies,payloadMiB:$payloadMiB,payloadSha256:$payloadSha,measureMode:$measureMode,ports:{address:"127.0.0.1",base:$portBase,count:$portCount},relay:{splice:$splice,pipePool:$pool,bufferKiB:$bufferKiB},baseline:{path:$baselineBin,sha256:$baselineSha,buildId:$baselineBuildId,commit:$baselineCommit,identity:{path:$baselineIdentity,sha256:$baselineIdentitySha}},candidate:{path:$candidateBin,sha256:$candidateSha,buildId:$candidateBuildId,commit:$candidateCommit}}' >"$out_dir/environment.json"
 
 while IFS=$'\t' read -r block position implementation server_port; do
     slot=$(printf 'block-%02d-slot-%02d-%s' "$block" "$position" "$implementation"); slot_dir="$out_dir/slots/$slot"; mkdir -p "$slot_dir"
@@ -232,12 +315,13 @@ while IFS=$'\t' read -r block position implementation server_port; do
     rm -f -- "$slot_dir/integrity.bin"
     python3 "$work/driver.py" 0 "$payload_mib" "$server_port" "$concurrencies" "$slot_dir/warmup.json" "$implementation" "$block" "$position"
     if [[ $measure_mode == perf ]]; then
-        sudo -n perf stat -e task-clock,instructions,context-switches -p "$server_pid" -o "$slot_dir/perf.txt" -- \
+        sudo -n perf stat --no-big-num -x, -e task-clock,instructions,context-switches -p "$server_pid" -o "$slot_dir/perf.csv" -- \
             python3 "$work/driver.py" "$samples" "$payload_mib" "$server_port" "$concurrencies" "$slot_dir/samples.json" "$implementation" "$block" "$position"
+        validate_perf_csv "$slot_dir/perf.csv" "$slot_dir/perf.json"
     else
         python3 "$work/driver.py" "$samples" "$payload_mib" "$server_port" "$concurrencies" "$slot_dir/samples.json" "$implementation" "$block" "$position"
     fi
-    [[ -s $slot_dir/perf.txt ]] || die "missing perf evidence in $slot"
+    [[ -s $slot_dir/perf.json ]] || die "missing validated perf evidence in $slot"
     jq -n --arg implementation "$implementation" --arg binary "$binary" --arg sha "$binary_sha" --arg buildId "$binary_build_id" \
         --argjson block "$block" --argjson position "$position" --argjson serverPid "$server_pid" --argjson serverPort "$server_port" --arg integritySha "$payload_sha" \
         '{block:$block,position:$position,implementation:$implementation,binary:{path:$binary,sha256:$sha,buildId:$buildId},process:{serverPid:$serverPid},ports:{server:$serverPort},integrity:{sha256:$integritySha,match:true}}' >"$slot_dir/identity.json"
@@ -248,10 +332,11 @@ done < <(jq -r '.slots[]|[.block,.position,.implementation,.serverPort]|@tsv' "$
 python3 - "$out_dir" "$blocks" "$samples" "$payload_mib" "$concurrencies" <<'PY'
 import json,pathlib,random,statistics,sys
 root=pathlib.Path(sys.argv[1]); blocks,samples,mib=int(sys.argv[2]),int(sys.argv[3]),int(sys.argv[4]); cs=[int(x) for x in sys.argv[5].split()]
-order=json.load(open(root/'order.json'))['slots']; dirs=sorted((root/'slots').iterdir()); rows=[]; identities=[]
+order=json.load(open(root/'order.json'))['slots']; dirs=sorted((root/'slots').iterdir()); rows=[]; identities=[]; perf_rows=[]
 if len(dirs)!=blocks*4: raise SystemExit('missing ABBA slots')
 for slot in dirs:
     ident=json.load(open(slot/'identity.json')); identities.append(ident); current=json.load(open(slot/'samples.json'))
+    perf=json.load(open(slot/'perf.json')); perf_rows.append({**ident,**perf})
     if not ident['integrity']['match'] or len(current)!=samples*len(cs): raise SystemExit(f'incomplete slot: {slot}')
     expected=mib*1024*1024
     if any(r['failed'] or r['requests']!=r['concurrency'] or any(v!=expected for v in r['bytesObserved']) for r in current): raise SystemExit(f'corrupt sample: {slot}')
@@ -273,7 +358,19 @@ for conc in cs:
         ratio=values['candidate']/values['baseline']; ratios.append(ratio); details.append({**values,'candidateVsBaseline':ratio})
     rng=random.Random(0x464200+conc); boot=sorted(statistics.median(rng.choices(ratios,k=len(ratios))) for _ in range(20000))
     cells[str(conc)]={'blocks':details,'medianCandidateVsBaseline':statistics.median(ratios),'bootstrap95':[boot[500],boot[19499]]}
-summary={'schemaVersion':2,'status':'COMPLETE','method':'alternating balanced ABBA blocks; block bootstrap','slotCount':len(dirs),'rawSampleCount':len(rows),'cells':cells,'failures':0}
+transferred_gib=samples*sum(cs)*mib/1024
+if transferred_gib <= 0: raise SystemExit('invalid measured transfer volume')
+cpu_blocks=[]; cpu_ratios=[]
+for block in range(1,blocks+1):
+    values={}
+    for impl in ('baseline','candidate'):
+        observed=[r['taskClockMilliseconds']/1000/transferred_gib for r in perf_rows if r['block']==block and r['implementation']==impl]
+        if len(observed)!=2: raise SystemExit('unbalanced perf block')
+        values[impl]=statistics.median(observed)
+    ratio=values['candidate']/values['baseline']; cpu_ratios.append(ratio); cpu_blocks.append({**values,'candidateVsBaseline':ratio})
+rng=random.Random(0x4642C0); cpu_boot=sorted(statistics.median(rng.choices(cpu_ratios,k=len(cpu_ratios))) for _ in range(20000))
+cpu_summary={'unit':'secondsPerGiB','blocks':cpu_blocks,'medianCandidateVsBaseline':statistics.median(cpu_ratios),'bootstrap95':[cpu_boot[500],cpu_boot[19499]]}
+summary={'schemaVersion':2,'status':'COMPLETE','performanceVerdict':'NOT_EVALUATED','method':'alternating balanced ABBA blocks; block bootstrap','slotCount':len(dirs),'rawSampleCount':len(rows),'cells':cells,'serverCpuPerGiB':cpu_summary,'failures':0}
 json.dump(summary,open(root/'summary.json','x'),indent=2); print(json.dumps(summary))
 PY
 [[ $(sha256sum "$baseline_bin" | awk '{print $1}') == "$baseline_sha" ]] || die 'baseline changed during run'
