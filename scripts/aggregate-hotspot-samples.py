@@ -262,13 +262,43 @@ def self_test() -> None:
             "# binary_build_id=abcdef01\n"
             "# raw_symbol=raw_symbol\n"
             "# dso_basename=rust-reality\n"
-            "10 0x1 raw_symbol+0x0 (/tmp/rust-reality)\n"
-            "30 0x3 raw_symbol+0x3 (/tmp/rust-reality)\n",
+            "1000 0x1 raw_symbol+0x0 (/tmp/rust-reality)\n"
+            "3000 0x3 raw_symbol+0x3 (/tmp/rust-reality)\n",
             encoding="utf-8",
         )
         report = aggregate(bundle, 0.0)
         assert report["totals"]["mappedRows"] == 2
         assert report["instructions"][0]["offset"] == "0x2"
+        for name in (
+            "instruction-hotspots.json",
+            "instruction-hotspots.tsv",
+            "instruction-hotspots.txt",
+        ):
+            (bundle / name).unlink()
+        with (bundle / "perf-symbol-samples.txt").open("a", encoding="utf-8") as handle:
+            handle.write("1 0x5 raw_symbol+0x5 (/tmp/rust-reality)\n")
+        try:
+            aggregate(bundle, 0.0)
+        except SystemExit as error:
+            assert "pass --unmapped-period-explanation" in str(error)
+        else:
+            raise AssertionError("sub-1% unmapped period passed without explanation")
+        explained = aggregate(bundle, 0.99, "terminal sample is outside IDA range")
+        assert explained["mappingGate"]["unmappedPeriodExplanation"]
+        for name in (
+            "instruction-hotspots.json",
+            "instruction-hotspots.tsv",
+            "instruction-hotspots.txt",
+        ):
+            (bundle / name).unlink()
+        with (bundle / "perf-symbol-samples.txt").open("a", encoding="utf-8") as handle:
+            handle.write("100 0x6 raw_symbol+0x6 (/tmp/rust-reality)\n")
+        try:
+            aggregate(bundle, 0.99, "two terminal samples")
+        except SystemExit as error:
+            assert "hard gate" in str(error)
+        else:
+            raise AssertionError("at-least-1% unmapped period passed the hard gate")
     print("aggregate-hotspot-samples self-test: PASS")
 
 
