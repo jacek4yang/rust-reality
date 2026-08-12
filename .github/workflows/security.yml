@@ -64,9 +64,8 @@ jobs:
 
   sanitizers:
     name: Address and leak sanitizer
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -76,14 +75,16 @@ jobs:
         env:
           RUSTFLAGS: -Zsanitizer=address
           RUSTDOCFLAGS: -Zsanitizer=address
-          ASAN_OPTIONS: detect_leaks=1
-        run: cargo +nightly test -Zbuild-std --all-features --target x86_64-unknown-linux-gnu
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          LSAN_OPTIONS: exitcode=23
+        run: >-
+          cargo +nightly test -Zbuild-std --workspace --all-features --locked
+          --target x86_64-unknown-linux-gnu
 
   thread-sanitizer:
-    name: Replay-cache race sanitizer
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: Replay, Handoff, and transport race sanitizer
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -93,6 +94,13 @@ jobs:
         env:
           RUSTFLAGS: -Zsanitizer=thread
           TSAN_OPTIONS: halt_on_error=1
-        run: >-
-          cargo +nightly test -Zbuild-std --all-features --target x86_64-unknown-linux-gnu
-          protocol::reality::replay::tests::concurrent_duplicate_race_has_one_winner
+        run: |
+          cargo +nightly test -Zbuild-std --all-features --locked \
+            --target x86_64-unknown-linux-gnu \
+            protocol::reality::replay::tests::concurrent_duplicate_race_has_one_winner
+          cargo +nightly test -Zbuild-std --all-features --locked \
+            --target x86_64-unknown-linux-gnu \
+            server::handoff::tests -- --test-threads=1
+          cargo +nightly test -Zbuild-std --all-features --locked \
+            --target x86_64-unknown-linux-gnu \
+            server::vision::tests -- --test-threads=1
