@@ -1,295 +1,373 @@
 #!/usr/bin/env bash
-# Connection setup-rate A/B: measures accept -> REALITY handshake -> VLESS ->
-# routing -> outbound connect -> first payload byte, as connections/sec,
-# per-connection latency distribution, and server CPU per connection.
-#
-# Each connection is a fresh SOCKS5 -> tunnel -> HTTP/1.0 request for a tiny
-# payload, so setup dominates. Server CPU is captured with perf stat on the
-# server process; an Xray leg provides the reference.
-#
-# Env: RUST_REALITY_BIN, XRAY_BIN, SAMPLES (3), CONCURRENCIES ("1 8 32"),
-#      CONNS (96 per sample per concurrency), OUT_DIR. STRACE_OUT optionally
-#      enables a separate, non-authoritative syscall-attribution round while
-#      keeping RUST_REALITY_BIN pinned to the exact ELF under test.
+# Formal connection-setup A/B benchmark.  A is the pinned baseline ELF and B
+# is the pinned candidate ELF.  Every block is A-B-B-A or B-A-A-B, each slot
+# owns fresh server/client processes and evidence, and no process or target/
+# artifact is reused between slots.
 set -Eeuo pipefail
 
-repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-rust_bin=${RUST_REALITY_BIN:-target/release/rust-reality}
-xray=${XRAY_BIN:-../artifacts/xray-reference}
+readonly REPOSITORY="$({ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."; pwd; })"
+run_id=${RUN_ID:-}
+out_dir=${OUT_DIR:-}
+temporary_root=${TMPDIR:-}
+port_base=${PORT_BASE:-}
+baseline_bin=${RUST_REALITY_BASELINE_BIN:-}
+candidate_bin=${RUST_REALITY_BIN:-}
+xray_bin=${XRAY_BIN:-}
+baseline_sha_expected=${RUST_REALITY_BASELINE_SHA256:-}
+candidate_sha_expected=${RUST_REALITY_SHA256:-}
+xray_sha_expected=${XRAY_SHA256:-}
+baseline_commit=${RUST_REALITY_BASELINE_COMMIT:-}
+candidate_commit=${RUST_REALITY_COMMIT:-}
+blocks=${BLOCKS:-3}
 samples=${SAMPLES:-3}
 concurrencies=${CONCURRENCIES:-1 8 32}
-conns=${CONNS:-96}
-out_dir=${OUT_DIR:-benchmarks/final/setup-rate-$(date -u +%Y%m%dT%H%M%SZ)}
-strace_out=${STRACE_OUT:-}
-work=$(readlink -f "$(mktemp -d "$repository/benchmarks/setup-rate.XXXXXX")")
-pids=()
-traced_server_pid=
+connections=${CONNS:-96}
+abba_start=${ABBA_START:-baseline}
+measure_mode=${MEASURE_MODE:-perf}
+self_test=${SELF_TEST:-0}
 
-cleanup() {
-    if [[ $traced_server_pid =~ ^[1-9][0-9]*$ ]] && kill -0 "$traced_server_pid" 2>/dev/null; then
-        kill -TERM "$traced_server_pid" 2>/dev/null || true
-        for _ in {1..100}; do
-            kill -0 "$traced_server_pid" 2>/dev/null || break
-            sleep 0.02
-        done
-        if kill -0 "$traced_server_pid" 2>/dev/null; then
-            kill -KILL "$traced_server_pid" 2>/dev/null || true
-        fi
+die() { printf 'benchmark-setup-rate: %s\n' "$*" >&2; exit 2; }
+
+block_order() {
+    local index=$1
+    if ((index % 2 == 1)); then
+        [[ $abba_start == baseline ]] && printf '%s\n' A B B A || printf '%s\n' B A A B
+    else
+        [[ $abba_start == baseline ]] && printf '%s\n' B A A B || printf '%s\n' A B B A
     fi
-    for pid in "${pids[@]}"; do
-        kill "$pid" 2>/dev/null || true
-        wait "$pid" 2>/dev/null || true
-    done
-    rm -rf -- "$work"
 }
-trap cleanup EXIT
 
-for program in curl jq openssl python3 go readelf sha256sum; do
-    command -v "$program" >/dev/null || { echo "missing: $program" >&2; exit 1; }
+if [[ $self_test == 1 ]]; then
+    run_id=self-test out_dir=/abs/out temporary_root=/abs/tmp port_base=20000
+    blocks=3 abba_start=baseline
+    [[ $(block_order 1 | paste -sd '') == ABBA ]]
+    [[ $(block_order 2 | paste -sd '') == BAAB ]]
+    [[ $(block_order 3 | paste -sd '') == ABBA ]]
+    blocks=4 abba_start=candidate
+    [[ $(block_order 1 | paste -sd '') == BAAB ]]
+    [[ $(block_order 2 | paste -sd '') == ABBA ]]
+    printf 'benchmark-setup-rate self-test: PASS\n'
+    exit 0
+fi
+
+[[ $run_id =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die 'RUN_ID is required and must be one safe component'
+for name in OUT_DIR TMPDIR RUST_REALITY_BASELINE_BIN RUST_REALITY_BIN XRAY_BIN; do
+    value=${!name:-}
+    [[ $value == /* ]] || die "$name must be an absolute path"
 done
-if [[ -n $strace_out ]]; then
-    command -v strace >/dev/null || { echo "missing: strace" >&2; exit 1; }
-    [[ $strace_out = /* ]] || { echo "STRACE_OUT must be absolute" >&2; exit 1; }
-    [[ ! -e $strace_out ]] || { echo "STRACE_OUT already exists: $strace_out" >&2; exit 1; }
-fi
-sudo -n true || { echo "passwordless sudo required for perf stat" >&2; exit 1; }
+[[ ! -e $out_dir && ! -L $out_dir ]] || die "OUT_DIR already exists: $out_dir"
+[[ -d $temporary_root && ! -L $temporary_root ]] || die 'TMPDIR must be an existing, non-symlink directory'
+[[ $port_base =~ ^[0-9]+$ ]] || die 'PORT_BASE is required'
+[[ $blocks =~ ^[1-9][0-9]*$ ]] && ((blocks >= 3 && blocks <= 20)) || die 'BLOCKS must be in 3..20'
+[[ $samples =~ ^[1-9][0-9]*$ ]] || die 'SAMPLES must be positive'
+[[ $connections =~ ^[1-9][0-9]*$ ]] || die 'CONNS must be positive'
+[[ $abba_start == baseline || $abba_start == candidate ]] || die 'ABBA_START must be baseline or candidate'
+[[ $measure_mode == perf || $measure_mode == strace ]] || die 'MEASURE_MODE must be perf or strace'
+for value in $concurrencies; do
+    [[ $value =~ ^[1-9][0-9]*$ ]] || die "invalid concurrency: $value"
+done
+for name in RUST_REALITY_BASELINE_SHA256 RUST_REALITY_SHA256 XRAY_SHA256; do
+    value=${!name:-}
+    [[ $value =~ ^[0-9a-fA-F]{64}$ ]] || die "$name must be a 64-digit SHA-256"
+done
+for name in RUST_REALITY_BASELINE_COMMIT RUST_REALITY_COMMIT; do
+    value=${!name:-}
+    [[ $value =~ ^[0-9a-fA-F]{7,40}$ ]] || die "$name must identify a commit"
+done
+for program in git go jq openssl perf python3 readelf realpath sha256sum sudo; do
+    command -v "$program" >/dev/null 2>&1 || die "required program unavailable: $program"
+done
+case "$(realpath -m "$out_dir")/" in "$REPOSITORY"/*) die 'OUT_DIR must be outside the Git worktree' ;; esac
+case "$(realpath "$temporary_root")/" in "$REPOSITORY"/*) die 'TMPDIR must be outside the Git worktree' ;; esac
+[[ $measure_mode != strace ]] || command -v strace >/dev/null 2>&1 || die 'strace is unavailable'
+sudo -n true >/dev/null 2>&1 || die 'passwordless sudo is required'
+for binary in "$baseline_bin" "$candidate_bin" "$xray_bin"; do
+    [[ -x $binary ]] || die "binary is not executable: $binary"
+done
+baseline_bin=$(realpath "$baseline_bin")
+candidate_bin=$(realpath "$candidate_bin")
+xray_bin=$(realpath "$xray_bin")
+baseline_sha=$(sha256sum "$baseline_bin" | awk '{print $1}')
+candidate_sha=$(sha256sum "$candidate_bin" | awk '{print $1}')
+xray_sha=$(sha256sum "$xray_bin" | awk '{print $1}')
+[[ ${baseline_sha_expected,,} == $baseline_sha ]] || die 'baseline SHA-256 mismatch'
+[[ ${candidate_sha_expected,,} == $candidate_sha ]] || die 'candidate SHA-256 mismatch'
+[[ ${xray_sha_expected,,} == $xray_sha ]] || die 'Xray SHA-256 mismatch'
+baseline_build_id=$(readelf -n "$baseline_bin" | awk '/Build ID:/ {print $3; exit}')
+candidate_build_id=$(readelf -n "$candidate_bin" | awk '/Build ID:/ {print $3; exit}')
+xray_build_id=$(readelf -n "$xray_bin" | awk '/Build ID:/ {print $3; exit}')
+[[ -n $baseline_build_id && -n $candidate_build_id && -n $xray_build_id ]] || die 'every binary must have a GNU Build ID'
+repository_head=$(git -C "$REPOSITORY" rev-parse --verify HEAD)
+repository_dirty=false
+[[ -z $(git -C "$REPOSITORY" status --porcelain=v1 --untracked-files=normal) ]] || repository_dirty=true
+candidate_commit=$(git -C "$REPOSITORY" rev-parse --verify "$candidate_commit^{commit}") || die 'RUST_REALITY_COMMIT is not present in the repository'
+[[ ${candidate_commit,,} == ${repository_head,,} ]] || die 'RUST_REALITY_COMMIT must match the harness repository HEAD'
+grep -aFq -- "$candidate_commit" "$candidate_bin" || die 'candidate ELF does not embed RUST_REALITY_COMMIT'
 
-cd "$repository"
-[[ -x $rust_bin ]] || { echo "RUST_REALITY_BIN not executable: $rust_bin" >&2; exit 1; }
-command -v "$xray" >/dev/null 2>&1 || { echo "XRAY_BIN not executable: $xray" >&2; exit 1; }
-rust_bin=$(realpath "$rust_bin")
-xray=$(realpath "$(command -v "$xray")")
-rust_sha256=$(sha256sum "$rust_bin" | awk '{print $1}')
-xray_sha256=$(sha256sum "$xray" | awk '{print $1}')
-expected_rust_sha256=${RUST_REALITY_SHA256:-}
-expected_xray_sha256=${XRAY_SHA256:-}
-if [[ -n $expected_rust_sha256 && ${expected_rust_sha256,,} != "$rust_sha256" ]]; then
-    echo "RUST_REALITY_SHA256 mismatch: expected $expected_rust_sha256, got $rust_sha256" >&2
-    exit 1
-fi
-if [[ -n $expected_xray_sha256 && ${expected_xray_sha256,,} != "$xray_sha256" ]]; then
-    echo "XRAY_SHA256 mismatch: expected $expected_xray_sha256, got $xray_sha256" >&2
-    exit 1
-fi
-rust_build_id=$(readelf -n "$rust_bin" | awk '/Build ID:/ {print $3; exit}')
-xray_build_id=$(readelf -n "$xray" | awk '/Build ID:/ {print $3; exit}')
-[[ ! -e $out_dir ]] || { echo "OUT_DIR already exists: $out_dir" >&2; exit 1; }
-mkdir -p "$(dirname "$out_dir")"
-mkdir "$out_dir"
-jq -n --arg rustBin "$rust_bin" --arg rustSha256 "$rust_sha256" \
-    --arg rustBuildId "$rust_build_id" --arg xrayBin "$xray" \
-    --arg xraySha256 "$xray_sha256" --arg xrayBuildId "$xray_build_id" \
-    --arg startedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --arg concurrencies "$concurrencies" --argjson samples "$samples" \
-    --argjson connectionsPerSample "$conns" --arg straceOut "$strace_out" \
-    '{schemaVersion:1,startedAt:$startedAt,samples:$samples,
-      connectionsPerSample:$connectionsPerSample,concurrencies:$concurrencies,
-      attribution:{straceOut:(if $straceOut == "" then null else $straceOut end)},
-      rustReality:{path:$rustBin,sha256:$rustSha256,buildId:$rustBuildId},
-      xray:{path:$xrayBin,sha256:$xraySha256,buildId:$xrayBuildId}}' \
-    >"$out_dir/environment.json"
+slot_count=$((blocks * 4))
+port_count=$((2 + slot_count * 2))
+((port_base >= 1024 && port_base + port_count - 1 <= 65535)) || die 'PORT_BASE does not leave a large enough port block'
+python3 - "$port_base" "$port_count" <<'PY'
+import socket, sys
+base, count = map(int, sys.argv[1:])
+sockets = []
+try:
+    for port in range(base, base + count):
+        sock = socket.socket()
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+        sock.bind(("127.0.0.1", port))
+        sockets.append(sock)
+finally:
+    for sock in sockets:
+        sock.close()
+PY
 
-free_port() {
-    python3 - <<'PY'
-import socket
-with socket.socket() as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
+mkdir -m 700 -p "$(dirname "$out_dir")"
+mkdir -m 700 "$out_dir"
+work=$(mktemp -d "$temporary_root/rust-reality-setup-rate.XXXXXX")
+declare -a tracked_pids=() tracked_starts=() tracked_names=()
+last_pid=
+
+pid_start_time() {
+    python3 - "$1" <<'PY'
+from pathlib import Path
+import sys
+raw = Path(f"/proc/{sys.argv[1]}/stat").read_text()
+end = raw.rfind(")")
+print(raw[end + 2:].split()[19])
 PY
 }
+pid_owned() {
+    local pid=$1 expected=$2 observed
+    [[ -r /proc/$pid/stat ]] || return 1
+    observed=$(pid_start_time "$pid" 2>/dev/null) || return 1
+    [[ $observed == "$expected" ]]
+}
+track_last() {
+    local name=$1 pid=$2 start
+    start=$(pid_start_time "$pid") || die "$name exited before registration"
+    tracked_names+=("$name"); tracked_pids+=("$pid"); tracked_starts+=("$start")
+    last_pid=$pid
+}
+stop_tracked() {
+    local pid=$1 index
+    for index in "${!tracked_pids[@]}"; do
+        [[ ${tracked_pids[index]} == "$pid" ]] || continue
+        if pid_owned "$pid" "${tracked_starts[index]}"; then
+            kill -TERM "$pid" 2>/dev/null || true
+            for _ in {1..50}; do pid_owned "$pid" "${tracked_starts[index]}" || break; sleep 0.02; done
+            pid_owned "$pid" "${tracked_starts[index]}" && kill -KILL "$pid" 2>/dev/null || true
+        fi
+        wait "$pid" 2>/dev/null || true
+        tracked_pids[index]=
+        return
+    done
+}
+cleanup() {
+    local status=$? index pid
+    trap - EXIT INT TERM
+    set +e
+    for ((index=${#tracked_pids[@]} - 1; index >= 0; index--)); do
+        pid=${tracked_pids[index]}
+        [[ -n $pid ]] && stop_tracked "$pid"
+    done
+    if [[ -d $work && $work == "$temporary_root"/rust-reality-setup-rate.* ]]; then rm -rf -- "$work"; fi
+    exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 wait_port() {
-    python3 - "$1" <<'PY'
-import socket, sys, time
-port = int(sys.argv[1])
+    local port=$1 pid=$2 start
+    start=$(pid_start_time "$pid") || return 1
+    python3 - "$port" "$pid" "$start" <<'PY'
+import os, socket, sys, time
+port, pid, expected = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
 deadline = time.monotonic() + 10
 while time.monotonic() < deadline:
+    try:
+        raw = open(f"/proc/{pid}/stat").read(); observed = raw[raw.rfind(")") + 2:].split()[19]
+    except OSError:
+        raise SystemExit("registered process exited")
+    if observed != expected: raise SystemExit("PID identity changed")
     with socket.socket() as sock:
-        sock.settimeout(0.1)
-        if sock.connect_ex(("127.0.0.1", port)) == 0:
-            raise SystemExit(0)
-    time.sleep(0.02)
+        sock.settimeout(.1)
+        if sock.connect_ex(("127.0.0.1", port)) == 0: raise SystemExit(0)
+    time.sleep(.02)
 raise SystemExit(f"port {port} did not become ready")
 PY
 }
 
-http_port=$(free_port)
-https_port=$(free_port)
-python3 -c "open('$work/payload.bin','wb').write(bytes(range(256)))"
-openssl req -x509 -newkey rsa:2048 -nodes -keyout "$work/o.key" -out "$work/o.crt" \
-    -days 1 -subj "/CN=localhost" >/dev/null 2>&1
-(cd scripts/bench-origin && go build -o "$work/bench-origin" .)
-"$work/bench-origin" --port "$http_port" --payload-dir "$work" \
-    --put-log "$work/put.jsonl" > "$work/origin.log" 2>&1 &
-pids+=("$!")
-"$work/bench-origin" --port "$https_port" --payload-dir "$work" \
-    --put-log "$work/https-put.jsonl" --tls-cert "$work/o.crt" --tls-key "$work/o.key" \
-    > "$work/https-origin.log" 2>&1 &
-pids+=("$!")
-wait_port "$http_port"
-wait_port "$https_port"
-
-rust_port=$(free_port); xray_port=$(free_port)
-rust_socks=$(free_port); xray_socks=$(free_port)
-
-"$rust_bin" config generate standalone --listen 127.0.0.1 --port "$rust_port" \
-    --target "127.0.0.1:$https_port" --server-name localhost \
-    > "$work/rust.raw.json" 2> "$work/gen.log"
-rust_pub=$(sed -n 's/^REALITY public key for the client: //p' "$work/gen.log")
-uuid=$(jq -r '.inbounds[0].settings.clients[0].id' "$work/rust.raw.json")
-sid=$(jq -r '.inbounds[0].settings.clients[0].shortIds[0]' "$work/rust.raw.json")
-"$xray" x25519 > "$work/keys"
-xpriv=$(sed -n 's/^PrivateKey: //p' "$work/keys")
-xpub=$(sed -n 's/^Password (PublicKey): //p' "$work/keys")
-jq --arg c "$work/assets" '.log.level="warn" | .assets.cacheDirectory=$c' \
-    "$work/rust.raw.json" > "$work/rust.json"
-
-jq -n --arg uuid "$uuid" --arg pk "$xpriv" --arg sid "$sid" --argjson port "$xray_port" --arg target "127.0.0.1:$https_port" \
-    '{log:{loglevel:"warning"},inbounds:[{listen:"127.0.0.1",port:$port,protocol:"vless",settings:{clients:[{id:$uuid,flow:"xtls-rprx-vision"}],decryption:"none"},streamSettings:{network:"tcp",security:"reality",realitySettings:{show:false,target:$target,xver:0,serverNames:["localhost"],privateKey:$pk,shortIds:[$sid]}}}],outbounds:[{tag:"direct",protocol:"freedom",settings:{finalRules:[{action:"allow"}]}}]}' \
-    > "$work/xray-server.json"
-
-make_client() {
-    jq -n --arg uuid "$uuid" --arg pk "$3" --arg sid "$sid" \
-        --argjson sp "$1" --argjson cp "$2" \
-        '{log:{loglevel:"warning"},inbounds:[{listen:"127.0.0.1",port:$cp,protocol:"socks",settings:{auth:"noauth",udp:false}}],outbounds:[{protocol:"vless",settings:{vnext:[{address:"127.0.0.1",port:$sp,users:[{id:$uuid,encryption:"none",flow:"xtls-rprx-vision"}]}]},streamSettings:{network:"tcp",security:"reality",realitySettings:{fingerprint:"chrome",serverName:"localhost",publicKey:$pk,shortId:$sid,spiderX:"/"}}}]}' > "$4"
-}
-make_client "$rust_port" "$rust_socks" "$rust_pub" "$work/rust-client.json"
-make_client "$xray_port" "$xray_socks" "$xpub" "$work/xray-client.json"
-
-if [[ -n $strace_out ]]; then
-    [[ $(realpath -m "$(dirname "$strace_out")") == $(realpath "$out_dir") ]] || {
-        echo "STRACE_OUT must be a direct child of OUT_DIR" >&2
-        exit 1
-    }
-    strace --kill-on-exit -f -qq -c -e trace=recvfrom,recvmsg,read \
-        -o "$strace_out" "$rust_bin" serve --config "$work/rust.json" \
-        > "$work/rust.log" 2>&1 &
-    pids+=("$!"); strace_pid=$!
-    rust_pid=
-    for _ in {1..250}; do
-        if [[ -r /proc/$strace_pid/task/$strace_pid/children ]]; then
-            for child in $(</proc/$strace_pid/task/$strace_pid/children); do
-                if [[ $(readlink -f "/proc/$child/exe" 2>/dev/null || true) == "$rust_bin" ]]; then
-                    rust_pid=$child
-                    break 2
-                fi
-            done
-        fi
-        sleep 0.02
-    done
-    [[ $rust_pid =~ ^[1-9][0-9]*$ ]] || {
-        echo "could not identify the straced rust-reality child" >&2
-        exit 1
-    }
-    [[ $(sha256sum "/proc/$rust_pid/exe" | awk '{print $1}') == "$rust_sha256" ]] || {
-        echo "straced server ELF identity mismatch" >&2
-        exit 1
-    }
-    traced_server_pid=$rust_pid
-else
-    "$rust_bin" serve --config "$work/rust.json" > "$work/rust.log" 2>&1 &
-    pids+=("$!"); rust_pid=$!
-fi
-"$xray" run -config "$work/xray-server.json" > "$work/xray-server.log" 2>&1 &
-pids+=("$!"); xray_pid=$!
-"$xray" run -config "$work/rust-client.json" > /dev/null 2>&1 &
-pids+=("$!")
-"$xray" run -config "$work/xray-client.json" > /dev/null 2>&1 &
-pids+=("$!")
-wait_port "$rust_socks"; wait_port "$xray_socks"
-
-run_leg() {
-    local label=$1 socks_port=$2 server_pid=$3
-    sudo -n perf stat -e task-clock,instructions,context-switches -p "$server_pid" \
-        -o "$out_dir/perf-$label.txt" -- \
-        python3 - "$samples" "$conns" "$socks_port" "$http_port" "$label" \
-                  "$concurrencies" "$out_dir/samples-$label.json" <<'PY'
-import concurrent.futures
-import json
-import os
-import statistics
-import subprocess
-import sys
-import time
-
-samples, conns, socks_port, http_port, label = (
-    int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), sys.argv[5])
-concurrencies = [int(c) for c in sys.argv[6].split()]
-samples_out = sys.argv[7]
-url = f"http://127.0.0.1:{http_port}/payload.bin"
-curl_env = {k: v for k, v in os.environ.items()
-            if k.lower() not in ("all_proxy", "http_proxy", "https_proxy", "no_proxy")}
-
-def one_connection(_):
-    # Raw SOCKS5 + HTTP/1.0 on a plain socket: no subprocess, so the
-    # measurement is connection setup, not curl startup.
-    import socket
+cat >"$work/driver.py" <<'PY'
+import concurrent.futures, json, socket, sys, time
+samples, conns, socks, origin = map(int, sys.argv[1:5])
+concurrencies = [int(x) for x in sys.argv[5].split()]
+output, implementation, block, position = sys.argv[6], sys.argv[7], int(sys.argv[8]), int(sys.argv[9])
+def exact(sock, n):
+    out = b""
+    while len(out) < n:
+        part = sock.recv(n-len(out))
+        if not part: raise OSError("short SOCKS reply")
+        out += part
+    return out
+def one(_):
     started = time.perf_counter()
     try:
-        with socket.create_connection(("127.0.0.1", socks_port), timeout=30) as sock:
-            target = f"127.0.0.1:{http_port}"
-            request = (
-                b"\x05\x01\x00"  # greeting: no auth
-            )
-            sock.sendall(request)
-            if sock.recv(2) != b"\x05\x00":
-                return None
-            host, port = target.rsplit(":", 1)
-            ip = bytes(int(x) for x in host.split("."))
-            sock.sendall(b"\x05\x01\x00\x01" + ip + int(port).to_bytes(2, "big"))
-            reply = sock.recv(10)
-            if len(reply) < 10 or reply[1] != 0:
-                return None
-            sock.sendall(f"GET /payload.bin HTTP/1.0\r\nHost: {target}\r\n\r\n".encode())
-            first = sock.recv(4096)
-            if not first:
-                return None
+        with socket.create_connection(("127.0.0.1", socks), timeout=30) as sock:
+            sock.sendall(b"\x05\x01\x00")
+            if exact(sock, 2) != b"\x05\x00": return None
+            sock.sendall(b"\x05\x01\x00\x01\x7f\x00\x00\x01" + origin.to_bytes(2, "big"))
+            reply = exact(sock, 10)
+            if reply[1] != 0: return None
+            sock.sendall(f"GET /payload.bin HTTP/1.0\r\nHost: 127.0.0.1:{origin}\r\n\r\n".encode())
+            if not sock.recv(4096): return None
         return time.perf_counter() - started
-    except OSError:
-        return None
-
-out = []
+    except OSError: return None
+if samples == 0:
+    for _ in range(3):
+        if one(0) is None: raise SystemExit("warm-up failed")
+    with open(output,"x") as handle: json.dump([],handle)
+    raise SystemExit(0)
+rows=[]
 for conc in concurrencies:
-    one_connection(0)  # warm the client and server paths
     for sample in range(samples):
-        wall0 = time.perf_counter()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=conc) as ex:
-            latencies = [x for x in ex.map(one_connection, range(conns))]
-        wall = time.perf_counter() - wall0
-        good = [x for x in latencies if x is not None]
-        if not good:
-            continue
-        ordered = sorted(good)
-        p = lambda f: ordered[min(len(ordered)-1, int(len(ordered)*f))]
-        out.append({
-            "implementation": label, "concurrency": conc, "sampleIndex": sample,
-            "wallSeconds": wall, "connections": len(good), "failed": len(latencies)-len(good),
-            "connectionsPerSecond": len(good) / wall,
-            "p50Seconds": p(0.50), "p95Seconds": p(0.95), "p99Seconds": p(0.99),
-        })
-with open(samples_out, "w") as fh:
-    json.dump(out, fh)
-for conc in concurrencies:
-    cells = [x for x in out if x["concurrency"] == conc]
-    if cells:
-        print(f"{label} c{conc}: " + "; ".join(
-            f"{x['connectionsPerSecond']:.0f} conn/s (p50 {x['p50Seconds']*1000:.0f}ms, "
-            f"p99 {x['p99Seconds']*1000:.0f}ms, fail {x['failed']})" for x in cells))
+        wall0=time.perf_counter()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=conc) as pool:
+            values=list(pool.map(one, range(conns)))
+        good=sorted(x for x in values if x is not None); wall=time.perf_counter()-wall0
+        row={"block":block,"position":position,"implementation":implementation,
+             "concurrency":conc,"sampleIndex":sample,"connections":len(good),
+             "failed":len(values)-len(good),"wallSeconds":wall}
+        if good:
+            row.update(connectionsPerSecond=len(good)/wall,p50Seconds=good[len(good)//2],
+                       p95Seconds=good[min(len(good)-1,int(len(good)*.95))],
+                       p99Seconds=good[min(len(good)-1,int(len(good)*.99))])
+        rows.append(row)
+with open(output,"x") as handle: json.dump(rows,handle,indent=2)
+if len(rows)!=samples*len(concurrencies) or any(r["failed"] or r["connections"]!=conns for r in rows):
+    raise SystemExit("incomplete setup samples")
 PY
-    jq -e --argjson samples "$samples" --argjson conns "$conns" \
-        --arg concurrencies "$concurrencies" '
-        ($concurrencies | split(" ") | map(select(length > 0) | tonumber)) as $cs
-        | length == ($samples * ($cs | length))
-        and all(.[];
-            .connections == $conns
-            and .failed == 0
-            and (.concurrency as $c | $cs | index($c) != null)
-        )
-    ' "$out_dir/samples-$label.json" >/dev/null || {
-        echo "$label setup samples are incomplete or contain failures" >&2
-        return 1
-    }
-}
 
-run_leg rust "$rust_socks" "$rust_pid"
-run_leg xray "$xray_socks" "$xray_pid"
+cd "$REPOSITORY"
+printf '%s' "$(printf 'x%.0s' {1..256})" >"$work/payload.bin"
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=localhost \
+    -keyout "$work/origin.key" -out "$work/origin.crt" >/dev/null 2>&1
+(cd scripts/bench-origin && go build -o "$work/bench-origin" .)
+http_port=$port_base; https_port=$((port_base + 1))
+"$work/bench-origin" --port "$http_port" --payload-dir "$work" --put-log "$work/http-put.jsonl" \
+    >"$out_dir/origin-http.log" 2>&1 & track_last origin-http "$!"; http_pid=$last_pid
+"$work/bench-origin" --port "$https_port" --payload-dir "$work" --put-log "$work/https-put.jsonl" \
+    --tls-cert "$work/origin.crt" --tls-key "$work/origin.key" >"$out_dir/origin-https.log" 2>&1 &
+track_last origin-https "$!"; https_pid=$last_pid
+wait_port "$http_port" "$http_pid"; wait_port "$https_port" "$https_pid"
+
+python3 - "$out_dir/order.json" "$blocks" "$abba_start" "$port_base" <<'PY'
+import json, sys
+path, blocks, start, base = sys.argv[1], int(sys.argv[2]), sys.argv[3], int(sys.argv[4])
+rows=[]
+for block in range(1,blocks+1):
+    baseline_first=(block%2==1)==(start=="baseline")
+    order=["baseline","candidate","candidate","baseline"] if baseline_first else ["candidate","baseline","baseline","candidate"]
+    for position,implementation in enumerate(order,1):
+        ordinal=(block-1)*4+(position-1)
+        rows.append({"block":block,"position":position,"implementation":implementation,
+                     "serverPort":base+2+ordinal*2,"socksPort":base+3+ordinal*2})
+json.dump({"schemaVersion":1,"method":"alternating balanced ABBA blocks","slots":rows},open(path,"x"),indent=2)
+PY
+
+jq -n --arg runId "$run_id" --arg startedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg baselineBin "$baseline_bin" --arg baselineSha "$baseline_sha" --arg baselineBuildId "$baseline_build_id" --arg baselineCommit "$baseline_commit" \
+    --arg candidateBin "$candidate_bin" --arg candidateSha "$candidate_sha" --arg candidateBuildId "$candidate_build_id" --arg candidateCommit "$candidate_commit" \
+    --arg xrayBin "$xray_bin" --arg xraySha "$xray_sha" --arg xrayBuildId "$xray_build_id" \
+    --arg repositoryHead "$repository_head" --argjson repositoryDirty "$repository_dirty" --arg mode "$measure_mode" --arg concurrencies "$concurrencies" --argjson blocks "$blocks" --argjson samples "$samples" --argjson conns "$connections" \
+    --argjson portBase "$port_base" --argjson portCount "$port_count" \
+    '{schemaVersion:2,runId:$runId,startedAt:$startedAt,repository:{head:$repositoryHead,dirty:$repositoryDirty},method:"balanced block ABBA",blocks:$blocks,samplesPerSlot:$samples,connectionsPerSample:$conns,concurrencies:$concurrencies,measureMode:$mode,ports:{address:"127.0.0.1",base:$portBase,count:$portCount},baseline:{path:$baselineBin,sha256:$baselineSha,buildId:$baselineBuildId,commit:$baselineCommit},candidate:{path:$candidateBin,sha256:$candidateSha,buildId:$candidateBuildId,commit:$candidateCommit},xray:{path:$xrayBin,sha256:$xraySha,buildId:$xrayBuildId}}' >"$out_dir/environment.json"
+
+slot_index=0
+while IFS=$'\t' read -r block position implementation server_port socks_port; do
+    slot_index=$((slot_index + 1))
+    slot=$(printf 'block-%02d-slot-%02d-%s' "$block" "$position" "$implementation")
+    slot_dir="$out_dir/slots/$slot"; mkdir -p "$slot_dir"
+    if [[ $implementation == baseline ]]; then binary=$baseline_bin; binary_sha=$baseline_sha; binary_build_id=$baseline_build_id; else binary=$candidate_bin; binary_sha=$candidate_sha; binary_build_id=$candidate_build_id; fi
+    "$binary" config generate standalone --listen 127.0.0.1 --port "$server_port" \
+        --target "127.0.0.1:$https_port" --server-name localhost >"$work/$slot.raw.json" 2>"$slot_dir/generate.log"
+    public_key=$(sed -n 's/^REALITY public key for the client: //p' "$slot_dir/generate.log")
+    uuid=$(jq -er '.inbounds[0].settings.clients[0].id' "$work/$slot.raw.json")
+    short_id=$(jq -er '.inbounds[0].settings.clients[0].shortIds[0]' "$work/$slot.raw.json")
+    jq --arg cache "$work/assets-$slot" '.log.level="warn"|.assets.cacheDirectory=$cache' "$work/$slot.raw.json" >"$work/$slot.server.json"
+    jq -n --arg uuid "$uuid" --arg pk "$public_key" --arg sid "$short_id" --argjson server "$server_port" --argjson socks "$socks_port" \
+        '{log:{loglevel:"warning"},inbounds:[{listen:"127.0.0.1",port:$socks,protocol:"socks",settings:{auth:"noauth",udp:false}}],outbounds:[{protocol:"vless",settings:{vnext:[{address:"127.0.0.1",port:$server,users:[{id:$uuid,encryption:"none",flow:"xtls-rprx-vision"}]}]},streamSettings:{network:"tcp",security:"reality",realitySettings:{fingerprint:"chrome",serverName:"localhost",publicKey:$pk,shortId:$sid,spiderX:"/"}}}]}' >"$work/$slot.client.json"
+    if [[ $measure_mode == strace ]]; then
+        strace --kill-on-exit -f -qq -c -e trace=recvfrom,recvmsg,read -o "$slot_dir/strace.txt" \
+            "$binary" serve --config "$work/$slot.server.json" >"$slot_dir/server.log" 2>&1 &
+        track_last "$slot-strace" "$!"; wrapper_pid=$last_pid; server_pid=
+        for _ in {1..250}; do
+            for child in $(cat "/proc/$wrapper_pid/task/$wrapper_pid/children" 2>/dev/null || true); do
+                if [[ $(readlink -f "/proc/$child/exe" 2>/dev/null || true) == "$binary" ]]; then server_pid=$child; break 2; fi
+            done
+            sleep .02
+        done
+        [[ $server_pid =~ ^[1-9][0-9]*$ ]] || die "cannot identify straced server in $slot"
+    else
+        "$binary" serve --config "$work/$slot.server.json" >"$slot_dir/server.log" 2>&1 &
+        track_last "$slot-server" "$!"; server_pid=$last_pid; wrapper_pid=
+    fi
+    [[ $(sha256sum "/proc/$server_pid/exe" | awk '{print $1}') == "$binary_sha" ]] || die "server ELF mismatch in $slot"
+    "$xray_bin" run -config "$work/$slot.client.json" >"$slot_dir/client.log" 2>&1 &
+    track_last "$slot-client" "$!"; client_pid=$last_pid
+    wait_port "$server_port" "$server_pid"; wait_port "$socks_port" "$client_pid"
+    python3 "$work/driver.py" 0 "$connections" "$socks_port" "$http_port" "$concurrencies" "$slot_dir/warmup.json" "$implementation" "$block" "$position"
+    if [[ $measure_mode == perf ]]; then
+        sudo -n perf stat -e task-clock,instructions,context-switches -p "$server_pid" -o "$slot_dir/perf.txt" -- \
+            python3 "$work/driver.py" "$samples" "$connections" "$socks_port" "$http_port" "$concurrencies" "$slot_dir/samples.json" "$implementation" "$block" "$position"
+    else
+        python3 "$work/driver.py" "$samples" "$connections" "$socks_port" "$http_port" "$concurrencies" "$slot_dir/samples.json" "$implementation" "$block" "$position"
+    fi
+    jq -n --arg implementation "$implementation" --arg binary "$binary" --arg sha "$binary_sha" --arg buildId "$binary_build_id" \
+        --argjson block "$block" --argjson position "$position" --argjson serverPid "$server_pid" --argjson serverPort "$server_port" --argjson socksPort "$socks_port" \
+        '{block:$block,position:$position,implementation:$implementation,binary:{path:$binary,sha256:$sha,buildId:$buildId},process:{serverPid:$serverPid},ports:{server:$serverPort,socks:$socksPort}}' >"$slot_dir/identity.json"
+    stop_tracked "$client_pid"
+    [[ -z $wrapper_pid ]] && stop_tracked "$server_pid" || stop_tracked "$wrapper_pid"
+    if [[ $measure_mode == perf ]]; then [[ -s $slot_dir/perf.txt ]] || die "missing perf evidence in $slot"; else [[ -s $slot_dir/strace.txt ]] || die "missing strace evidence in $slot"; fi
+    [[ $(sha256sum "$binary" | awk '{print $1}') == "$binary_sha" ]] || die "$implementation binary changed after $slot"
+    [[ $(sha256sum "$xray_bin" | awk '{print $1}') == "$xray_sha" ]] || die "Xray changed after $slot"
+done < <(jq -r '.slots[]|[.block,.position,.implementation,.serverPort,.socksPort]|@tsv' "$out_dir/order.json")
+
+python3 - "$out_dir" "$blocks" "$samples" "$connections" "$concurrencies" <<'PY'
+import json, pathlib, random, statistics, sys
+root=pathlib.Path(sys.argv[1]); blocks,samples,connections=int(sys.argv[2]),int(sys.argv[3]),int(sys.argv[4]); concurrencies=[int(x) for x in sys.argv[5].split()]
+order=json.load(open(root/'order.json'))['slots']; slot_dirs=sorted((root/'slots').iterdir())
+if len(order)!=blocks*4 or len(slot_dirs)!=blocks*4: raise SystemExit('missing ABBA slots')
+all_rows=[]; slots=[]
+for slot in slot_dirs:
+    identity=json.load(open(slot/'identity.json')); rows=json.load(open(slot/'samples.json'))
+    if len(rows)!=samples*len(concurrencies): raise SystemExit(f'missing samples: {slot}')
+    if any(r['failed'] or r['connections']!=connections for r in rows): raise SystemExit(f'failed setup sample: {slot}')
+    all_rows.extend(rows); slots.append(identity)
+expected={(row['block'],row['position']):(row['implementation'],row['serverPort'],row['socksPort']) for row in order}
+observed={(row['block'],row['position']):(row['implementation'],row['ports']['server'],row['ports']['socks']) for row in slots}
+if observed != expected: raise SystemExit('slot identity/order does not match order manifest')
+with open(root/'raw-samples.jsonl','x') as out:
+    for row in all_rows: out.write(json.dumps(row,sort_keys=True)+'\n')
+cells={}
+for conc in concurrencies:
+    ratios=[]; block_rows=[]
+    for block in range(1,blocks+1):
+        values={}
+        for impl in ('baseline','candidate'):
+            observed=[r['connectionsPerSecond'] for r in all_rows if r['block']==block and r['implementation']==impl and r['concurrency']==conc]
+            if len(observed)!=2*samples: raise SystemExit('unbalanced block')
+            values[impl]=statistics.median(observed)
+        ratio=values['candidate']/values['baseline']; ratios.append(ratio); block_rows.append({**values,'candidateVsBaseline':ratio})
+    rng=random.Random(0x525200+conc); boot=sorted(statistics.median(rng.choices(ratios,k=len(ratios))) for _ in range(20000))
+    cells[str(conc)]={'blocks':block_rows,'medianCandidateVsBaseline':statistics.median(ratios),'bootstrap95':[boot[500],boot[19499]]}
+summary={'schemaVersion':2,'status':'COMPLETE','method':'alternating balanced ABBA blocks; block bootstrap','slotCount':len(slots),'rawSampleCount':len(all_rows),'cells':cells,'failures':0}
+json.dump(summary,open(root/'summary.json','x'),indent=2); print(json.dumps(summary))
+PY
+
+[[ $(sha256sum "$baseline_bin" | awk '{print $1}') == "$baseline_sha" ]] || die 'baseline changed during run'
+[[ $(sha256sum "$candidate_bin" | awk '{print $1}') == "$candidate_sha" ]] || die 'candidate changed during run'
+[[ $(sha256sum "$xray_bin" | awk '{print $1}') == "$xray_sha" ]] || die 'Xray changed during run'
+jq -e --argjson slots "$slot_count" '.status=="COMPLETE" and .slotCount==$slots and .failures==0' "$out_dir/summary.json" >/dev/null || die 'aggregate gate failed'
+printf 'setup ABBA complete: %s\n' "$out_dir"
