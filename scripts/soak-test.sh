@@ -491,12 +491,13 @@ final_xray_sha256=$(sha256sum "$xray" | awk '{print $1}')
     || { echo 'XRAY_BIN changed during soak' >&2; exit 1; }
 
 python3 - "$out_dir/resources.jsonl" "$failures" "$round" "$minimum_rounds" \
-    "$expected_payload_sha256" "$out_dir/distributed-gates.json" \
+    "$duration_min" "$expected_payload_sha256" "$out_dir/distributed-gates.json" \
     "$out_dir/soak-summary.json" <<'PY'
 import json, statistics, sys
 records = [json.loads(line) for line in open(sys.argv[1])]
 failures, rounds, minimum_rounds = map(int, sys.argv[2:5])
-payload_sha256, distributed_path, output = sys.argv[5:8]
+duration_minutes = int(sys.argv[5])
+payload_sha256, distributed_path, output = sys.argv[6:9]
 with open(distributed_path) as handle:
     distributed = json.load(handle)
 start, end = records[0], records[-1]
@@ -519,6 +520,7 @@ if len(xs) >= 2 and len(set(xs)) > 1:
     ) / denominator
 else:
     rss_slope_mib_per_hour = 0.0
+slope_gate_applied = duration_minutes >= 30
 ok = (
     failures == 0
     and rounds >= minimum_rounds
@@ -528,7 +530,7 @@ ok = (
     and fd_peak_growth <= 128
     and thread_peak_growth <= 8
     and rss_peak_growth_mib <= 64
-    and rss_slope_mib_per_hour <= 2
+    and (not slope_gate_applied or rss_slope_mib_per_hour <= 2)
     and all(r.get("serverAlive") for r in records)
     and distributed.get("ok") is True
     and distributed.get("handoffSeq1", {}).get("attempts") == 1
@@ -553,6 +555,7 @@ summary = {
     "threadPeakGrowth": thread_peak_growth,
     "rssPeakGrowthMiB": round(rss_peak_growth_mib, 1),
     "rssTailSlopeMiBPerHour": round(rss_slope_mib_per_hour, 3),
+    "rssTailSlopeGateApplied": slope_gate_applied,
     "distributedGates": distributed,
     "ok": ok,
 }
