@@ -324,15 +324,17 @@ pid_matches_registration() {
 }
 
 register_pid() {
-    local start_time
+    local expected_exe=${2:-} start_time
     start_time=$(pid_start_time "$1") || die "could not register child PID $1"
     active_pids["$1"]=$start_time
+    rr_register_pid "$1" "$expected_exe"
 }
 
 register_group() {
-    local start_time
+    local expected_exe=${2:-} start_time
     start_time=$(pid_start_time "$1") || die "could not register process group $1"
     active_process_groups["$1"]=$start_time
+    rr_register_pid "$1" "$expected_exe"
 }
 
 cleanup() {
@@ -375,6 +377,7 @@ finish() {
         write_run_status 2>/dev/null || true
     fi
     cleanup
+    rr_contract_verify_on_exit "$status" || status=1
     exit "$status"
 }
 trap finish EXIT
@@ -530,7 +533,7 @@ start_tcpdump() {
     "${tcpdump_command[@]}" --immediate-mode -i lo -U -s 0 -w "$destination" \
         "tcp port $port" >"$log" 2>&1 &
     started_tcpdump_pid=$!
-    register_pid "$started_tcpdump_pid"
+    register_pid "$started_tcpdump_pid" "$(command -v "${tcpdump_command[0]}")"
     active_capture_paths["$started_tcpdump_pid"]=$destination
     wait_log "$log" 'listening on'
 }
@@ -538,14 +541,25 @@ start_tcpdump() {
 start_traced_group() {
     local prefix=$1 stdout_path=$2 stderr_path=$3
     shift 3
+    local expected_exe expected_command=$1 index=0
     if [[ $strace_status == available ]]; then
+        expected_exe=$(command -v strace)
         setsid strace -ff -ttt -yy -s 1 -e trace=write,writev,sendto,sendmsg \
             -o "$prefix" "$@" >"$stdout_path" 2>"$stderr_path" &
     else
+        if [[ ${expected_command##*/} == env ]]; then
+            local -a launched=("$@")
+            index=1
+            while [[ ${launched[$index]:-} == -u ]]; do
+                ((index += 2))
+            done
+            expected_command=${launched[$index]}
+        fi
+        expected_exe=$(command -v "$expected_command")
         setsid "$@" >"$stdout_path" 2>"$stderr_path" &
     fi
     started_group_pid=$!
-    register_group "$started_group_pid"
+    register_group "$started_group_pid" "$expected_exe"
 }
 
 proxy_free_env=(env -u ALL_PROXY -u all_proxy -u HTTP_PROXY -u http_proxy
@@ -570,7 +584,7 @@ printf 'tls-shape\n' >"$work/health.txt"
 "${proxy_free_env[@]}" python3 -m http.server "$origin_port" --bind 127.0.0.1 \
     --directory "$work" >"$work/origin.log" 2>&1 &
 origin_pid=$!
-register_pid "$origin_pid"
+register_pid "$origin_pid" "$(command -v python3)"
 wait_port "$origin_port"
 
 "$rust_binary" config generate standalone --listen 127.0.0.1 --port "$rust_port" \
@@ -606,24 +620,24 @@ jq -n --slurpfile rust "$work/rust.raw.json" --argjson port "$xray_server_port" 
 "${proxy_free_env[@]}" "$rust_binary" serve --config "$work/rust.json" \
     >"$work/rust-initial.log" 2>&1 &
 rust_initial_pid=$!
-register_pid "$rust_initial_pid"
+register_pid "$rust_initial_pid" "$rust_binary"
 wait_port "$rust_port"
 "$reference_server" "$cover_port" "$reference_certificate" "$reference_private_key" \
     "$ciphersuites" "$tls_groups" "$alpn" "$middlebox" "$max_fragment" \
     "$split_fragment" "$padding" "$tcp_nodelay" \
     >"$work/cover-initial.stdout" 2>"$work/cover-initial.stderr" &
 cover_initial_pid=$!
-register_pid "$cover_initial_pid"
+register_pid "$cover_initial_pid" "$reference_server"
 wait_log "$work/cover-initial.stderr" '^READY '
 python3 "$HELPER" proxy --listen-port "$proxy_port" --upstream-port "$rust_port" \
     --output "$output_dir/clienthello.bin" >"$work/proxy.log" 2>"$work/proxy.stderr" &
 proxy_pid=$!
-register_pid "$proxy_pid"
+register_pid "$proxy_pid" "$(command -v python3)"
 wait_log "$work/proxy.log" '^READY '
 "${proxy_free_env[@]}" "$xray_binary" run -config "$work/xray-client.json" \
     >"$work/xray-client.log" 2>&1 &
 xray_client_pid=$!
-register_pid "$xray_client_pid"
+register_pid "$xray_client_pid" "$xray_binary"
 wait_port "$socks_port"
 "${proxy_free_env[@]}" curl --fail --silent --show-error \
     --socks5-hostname "127.0.0.1:$socks_port" --max-time 10 \
@@ -758,7 +772,7 @@ run_rust_sample() {
         "$middlebox" "$max_fragment" "$split_fragment" "$padding" "$tcp_nodelay" \
         >"$work/cover-$stem.stdout" 2>"$work/cover-$stem.stderr" &
     local cover_pid=$!
-    register_pid "$cover_pid"
+    register_pid "$cover_pid" "$reference_server"
     wait_log "$work/cover-$stem.stderr" '^READY '
     python3 "$HELPER" replay --port "$rust_port" \
         --client-hello "$output_dir/clienthello.bin" \
@@ -789,7 +803,7 @@ run_xray_sample() {
         "$middlebox" "$max_fragment" "$split_fragment" "$padding" "$tcp_nodelay" \
         >"$work/cover-xray.stdout" 2>"$work/cover-xray.stderr" &
     local cover_pid=$!
-    register_pid "$cover_pid"
+    register_pid "$cover_pid" "$reference_server"
     wait_log "$work/cover-xray.stderr" '^READY '
     python3 "$HELPER" replay --port "$xray_server_port" \
         --client-hello "$output_dir/clienthello.bin" \

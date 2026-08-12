@@ -38,6 +38,7 @@ work=$(mktemp -d "$temporary_root/rust-reality-vision-direct.XXXXXX")
 pids=()
 
 cleanup() {
+    local exit_status=$?
     for pid in "${pids[@]}"; do
         rr_stop_registered_pid "$pid"
     done
@@ -46,6 +47,7 @@ cleanup() {
     elif [[ -d "$work" && "$work" == "$temporary_root"/rust-reality-vision-direct.* ]]; then
         rm -rf -- "$work"
     fi
+    rr_contract_verify_on_exit "$exit_status"
 }
 trap cleanup EXIT
 
@@ -254,7 +256,7 @@ pids+=("$https_pid")
 rr_register_pid "$https_pid"
 wait_port "$https_port"
 
-python3 - "$samples" "$concurrency" "$payload_mib" "$rust_socks" "$xray_socks" "$https_port" "$xray" "$cover_target" "$cover_sni" "$work/rust.log" <<'PY' >"$out_dir/report.json"
+python3 - "$samples" "$concurrency" "$payload_mib" "$rust_socks" "$xray_socks" "$https_port" "$xray" "$cover_target" "$cover_sni" "$work/rust.log" "${RR_BINARY_SOURCE_COMMITS[rust-reality]}" <<'PY' >"$out_dir/report.json"
 import concurrent.futures
 import json
 import math
@@ -275,6 +277,7 @@ xray = sys.argv[7]
 cover_target = sys.argv[8]
 cover_sni = sys.argv[9]
 rust_log = sys.argv[10]
+rust_source_commit = sys.argv[11]
 expected = payload_mib * 1024 * 1024
 url = f"https://127.0.0.1:{https_port}/payload.bin"
 
@@ -418,9 +421,7 @@ report = {
             ),
             "unknown",
         ),
-        "rustRealityCommit": subprocess.run(
-            ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
-        ).stdout.strip(),
+        "rustRealityCommit": rust_source_commit,
         "rustVersion": subprocess.run(
             ["rustc", "--version"], check=True, capture_output=True, text=True
         ).stdout.strip(),

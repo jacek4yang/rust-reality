@@ -39,6 +39,7 @@ work=$(mktemp -d "$temporary_root/rust-reality-realpath.XXXXXX")
 pids=()
 
 cleanup() {
+    local exit_status=$?
     for pid in "${pids[@]}"; do
         rr_stop_registered_pid "$pid"
     done
@@ -47,6 +48,7 @@ cleanup() {
     elif [[ -d "$work" && "$work" == "$temporary_root"/rust-reality-realpath.* ]]; then
         rm -rf -- "$work"
     fi
+    rr_contract_verify_on_exit "$exit_status"
 }
 trap cleanup EXIT
 

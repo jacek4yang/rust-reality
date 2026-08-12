@@ -219,9 +219,7 @@ cleanup() {
     elif [[ -d $work && $work == "$RR_TMPDIR"/rust-reality-profile-validation.* ]]; then
         rm -rf -- "$work"
     fi
-    if (( binary_identity_verified == 1 )); then
-        verify_binary_sha256 "when profile validation exited" || exit_status=1
-    fi
+    rr_contract_verify_on_exit "$exit_status" || exit_status=1
     return "$exit_status"
 }
 trap cleanup EXIT
