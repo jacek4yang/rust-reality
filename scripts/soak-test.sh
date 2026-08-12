@@ -25,23 +25,46 @@ out_dir=${OUT_DIR:-diagnostics/final/soak-$(date -u +%Y%m%dT%H%M%SZ)}
 work=$(readlink -f "$(mktemp -d "$repository/benchmarks/soak.XXXXXX")")
 pids=()
 declare -A active_pids=()
+declare -A active_starts=()
 last_pid=
 
+pid_start_time() {
+    python3 - "$1" <<'PY'
+from pathlib import Path
+import sys
+
+raw = Path(f"/proc/{sys.argv[1]}/stat").read_text()
+end = raw.rfind(")")
+if end < 0:
+    raise SystemExit(1)
+print(raw[end + 2:].split()[19])
+PY
+}
+
+pid_is_owned() {
+    local pid=$1 expected=$2 observed
+    [[ -r /proc/$pid/stat ]] || return 1
+    observed=$(pid_start_time "$pid" 2>/dev/null) || return 1
+    [[ $observed == "$expected" ]]
+}
+
 stop_pid() {
-    local pid=${1:-}
+    local pid=${1:-} expected=
     [[ -n $pid ]] || return 0
-    if kill -0 "$pid" 2>/dev/null; then
+    expected=${active_starts[$pid]:-}
+    if [[ -n $expected ]] && pid_is_owned "$pid" "$expected"; then
         kill -TERM "$pid" 2>/dev/null || true
         for _ in {1..50}; do
-            kill -0 "$pid" 2>/dev/null || break
+            pid_is_owned "$pid" "$expected" || break
             sleep 0.02
         done
-        if kill -0 "$pid" 2>/dev/null; then
+        if pid_is_owned "$pid" "$expected"; then
             kill -KILL "$pid" 2>/dev/null || true
         fi
     fi
     wait "$pid" 2>/dev/null || true
     unset "active_pids[$pid]"
+    unset "active_starts[$pid]"
 }
 
 cleanup() {
@@ -149,6 +172,10 @@ start_logged() {
     last_pid=$!
     pids+=("$last_pid")
     active_pids["$last_pid"]=1
+    active_starts["$last_pid"]=$(pid_start_time "$last_pid") || {
+        echo "cannot identify started process PID $last_pid" >&2
+        return 1
+    }
 }
 
 clean_curl() {
@@ -235,9 +262,10 @@ verify_one_mib_download() {
 # -------------------------------------------------------------------------
 distributed_payload_sha256=$(sha256sum "$work/payload-1.bin" | awk '{print $1}')
 
-# Handoff: make the cover target emit a TLS 1.3 NewSessionTicket, which makes
-# the authenticated rust-reality flight consume server application sequence
-# zero before Vision begins. A byte-exact download through the generated
+# Handoff: split the cover target's Certificate over enough TLS records to
+# create a fifth positional encrypted record.  Cover Flight maps that fifth
+# position to its fake NewSessionTicket ApplicationData, consuming server
+# application sequence zero before Vision begins. A byte-exact download through the generated
 # LINE -> sealed HND1 transfer -> LANDING topology then proves the first
 # visible response resumed and decrypted at sequence one.
 handoff_cover_port=$(free_port)
@@ -266,7 +294,7 @@ openssl verify -CAfile "$work/handoff-cover-ca.crt" -verify_hostname localhost \
 start_logged "$out_dir/handoff-cover-trace.log" openssl s_server \
     -accept "127.0.0.1:$handoff_cover_port" -www -ign_eof -tls1_3 \
     -cert "$work/handoff-cover.crt" -key "$work/handoff-cover.key" \
-    -alpn 'h2,http/1.1' -trace -msg -state
+    -alpn 'h2,http/1.1' -max_send_frag 512 -trace -msg -state
 handoff_cover_pid=$last_pid
 wait_port "$handoff_cover_port" "$handoff_cover_pid"
 
@@ -305,10 +333,35 @@ stop_pid "$handoff_xray_pid"
 stop_pid "$handoff_line_pid"
 stop_pid "$handoff_landing_pid"
 stop_pid "$handoff_cover_pid"
-handoff_nst_records=$(grep -Ec '^[[:space:]]*>>> .*NewSessionTicket' \
-    "$out_dir/handoff-cover-trace.log")
-(( handoff_nst_records >= 1 )) \
-    || { echo 'Handoff cover emitted no server-direction NewSessionTicket' >&2; exit 1; }
+handoff_encrypted_handshake_records=$(python3 - \
+    "$out_dir/handoff-cover-trace.log" <<'PY'
+from pathlib import Path
+import sys
+
+lines = Path(sys.argv[1]).read_text(errors="replace").splitlines()
+count = 0
+for index, line in enumerate(lines):
+    if not line.lstrip().startswith(">>> TLS 1.2, RecordHeader"):
+        continue
+    boundary = len(lines)
+    for cursor in range(index + 1, len(lines)):
+        if lines[cursor].lstrip().startswith(">>> TLS 1.2, RecordHeader"):
+            boundary = cursor
+            break
+    block = [item.strip() for item in lines[index + 1:boundary]]
+    if not any(item.startswith("17 03 03") for item in block):
+        continue
+    for cursor, item in enumerate(block[:-1]):
+        if item.startswith(">>> TLS 1.2, InnerContent") and block[cursor + 1] == "16":
+            count += 1
+            break
+print(count)
+PY
+)
+(( handoff_encrypted_handshake_records >= 5 )) || {
+    echo "Handoff cover emitted only $handoff_encrypted_handshake_records encrypted handshake records; need at least five" >&2
+    exit 1
+}
 
 # NXR: a separate generated LINE -> authenticated NXR -> LANDING topology
 # must carry the same one-MiB payload byte-exactly. No failure is masked.
@@ -354,13 +407,14 @@ stop_pid "$nxr_line_pid"
 stop_pid "$nxr_landing_pid"
 
 jq -n --arg payloadSha256 "$distributed_payload_sha256" \
-    --argjson handoffNstRecords "$handoff_nst_records" \
+    --argjson handoffEncryptedRecords "$handoff_encrypted_handshake_records" \
     --arg handoffLineConfigSha256 "$(sha256sum "$work/handoff-line.json" | awk '{print $1}')" \
     --arg handoffLandingConfigSha256 "$(sha256sum "$work/handoff-landing.json" | awk '{print $1}')" \
     --arg nxrLineConfigSha256 "$(sha256sum "$work/nxr-line.json" | awk '{print $1}')" \
     --arg nxrLandingConfigSha256 "$(sha256sum "$work/nxr-landing.json" | awk '{print $1}')" \
     '{schemaVersion:1,payloadBytes:1048576,payloadSha256:$payloadSha256,
-      handoffSeq1:{attempts:1,successes:1,coverServerNewSessionTicketRecords:$handoffNstRecords,
+      handoffSeq1:{attempts:1,successes:1,fakeNstExpected:true,
+        coverServerEncryptedHandshakeRecords:$handoffEncryptedRecords,
         evidence:{coverTrace:"handoff-cover-trace.log",lineLog:"handoff-line.log",
           landingLog:"handoff-landing.log"},lineConfigSha256:$handoffLineConfigSha256,
         landingConfigSha256:$handoffLandingConfigSha256},
@@ -476,7 +530,8 @@ ok = (
     and distributed.get("ok") is True
     and distributed.get("handoffSeq1", {}).get("attempts") == 1
     and distributed.get("handoffSeq1", {}).get("successes") == 1
-    and distributed.get("handoffSeq1", {}).get("coverServerNewSessionTicketRecords", 0) >= 1
+    and distributed.get("handoffSeq1", {}).get("fakeNstExpected") is True
+    and distributed.get("handoffSeq1", {}).get("coverServerEncryptedHandshakeRecords", 0) >= 5
     and distributed.get("nxrByteIntegrity", {}).get("attempts") == 1
     and distributed.get("nxrByteIntegrity", {}).get("successes") == 1
 )
