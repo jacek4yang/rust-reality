@@ -96,12 +96,18 @@ finally:
 PY
 }
 
-rr_contract_keeper_is_exact() {
-    local current_start actual_exe
+rr_contract_keeper_pid_is_exact() {
+    local current_start
     [[ $RR_HOST_EXCLUSIVE_KEEPER_PID =~ ^[1-9][0-9]*$ &&
         $RR_HOST_EXCLUSIVE_KEEPER_STARTTIME =~ ^[1-9][0-9]*$ ]] || return 1
     current_start=$(rr_pid_starttime "$RR_HOST_EXCLUSIVE_KEEPER_PID" 2>/dev/null) || return 1
-    [[ $current_start == "$RR_HOST_EXCLUSIVE_KEEPER_STARTTIME" ]] || return 1
+    [[ $current_start == "$RR_HOST_EXCLUSIVE_KEEPER_STARTTIME" ]]
+}
+
+rr_contract_keeper_is_exact() {
+    local actual_exe
+    rr_contract_keeper_pid_is_exact || return 1
+    [[ -n $RR_HOST_EXCLUSIVE_KEEPER_EXE ]] || return 1
     actual_exe=$(readlink -f -- "/proc/$RR_HOST_EXCLUSIVE_KEEPER_PID/exe" 2>/dev/null) || return 1
     [[ $actual_exe == "$RR_HOST_EXCLUSIVE_KEEPER_EXE" ]]
 }
@@ -128,7 +134,7 @@ rr_contract_keeper_lock_target() {
 rr_contract_acquire_host_lock() {
     local repository_parent lock_input lock_parent_input lock_parent lock_basename
     local state_dir ready_file error_file parent_start keeper_pid keeper_start
-    local attempt ready_identity ready_fd
+    local attempt keeper_launcher ready_identity ready_fd ready_exe
     [[ -z ${RR_HOST_EXCLUSIVE_FD+x} ]] ||
         rr_contract_die "RR_HOST_EXCLUSIVE_FD is unsupported; formal scripts own a dedicated keeper" || return
     [[ $RR_HOST_EXCLUSIVE_LOCK_MODE != dedicatedKeeper ]] ||
@@ -155,7 +161,7 @@ rr_contract_acquire_host_lock() {
 
     RR_HOST_EXCLUSIVE_KEEPER_HELPER="$RR_REPOSITORY/scripts/host-exclusive-lock-keeper.py"
     rr_register_harness_file "$RR_HOST_EXCLUSIVE_KEEPER_HELPER" || return
-    RR_HOST_EXCLUSIVE_KEEPER_EXE=$(readlink -f -- "$(command -v python3)") ||
+    keeper_launcher=$(readlink -f -- "${RR_HOST_LOCK_PYTHON3_TEST_ONLY:-$(command -v python3)}") ||
         rr_contract_die "could not resolve python3 for host lock keeper" || return
     parent_start=$(rr_pid_starttime "$$") ||
         rr_contract_die "could not identify host lock keeper parent" || return
@@ -167,7 +173,7 @@ rr_contract_acquire_host_lock() {
     chmod 700 -- "$state_dir"
     ready_file="$state_dir/ready.json"
     error_file="$state_dir/stderr"
-    "$RR_HOST_EXCLUSIVE_KEEPER_EXE" "$RR_HOST_EXCLUSIVE_KEEPER_HELPER" \
+    "$keeper_launcher" "$RR_HOST_EXCLUSIVE_KEEPER_HELPER" \
         --lock "$RR_HOST_EXCLUSIVE_LOCK_PATH" --parent-pid "$$" \
         --parent-starttime "$parent_start" --ready "$ready_file" \
         </dev/null >/dev/null 2>"$error_file" &
@@ -190,7 +196,7 @@ rr_contract_acquire_host_lock() {
 
     for attempt in $(seq 1 100); do
         [[ -f $ready_file && ! -L $ready_file ]] && break
-        rr_contract_keeper_is_exact || break
+        rr_contract_keeper_pid_is_exact || break
         sleep 0.05
     done
     if [[ ! -f $ready_file || -L $ready_file ]]; then
@@ -208,6 +214,7 @@ rr_contract_acquire_host_lock() {
          .lockPath == $lock and .parentPid == $parent_pid and
          .parentStarttime == $parent_start and .keeperPid == $keeper_pid and
          .keeperStarttime == $keeper_start and
+         (.keeperExe | type == "string" and startswith("/")) and
          (.lockDevice | type == "number") and (.lockInode | type == "number") and
          (.lockFd | type == "number" and . >= 3) and
          (.lockDeviceInode | type == "string")' "$ready_file" >/dev/null; then
@@ -218,8 +225,16 @@ rr_contract_acquire_host_lock() {
     fi
     ready_identity=$(jq -er '.lockDeviceInode' "$ready_file")
     ready_fd=$(jq -er '.lockFd | tostring' "$ready_file")
+    ready_exe=$(jq -er '.keeperExe' "$ready_file")
+    [[ $(readlink -f -- "$ready_exe" 2>/dev/null) == "$ready_exe" ]] || {
+        rr_contract_stop_host_lock_keeper
+        rm -f -- "$ready_file" "$error_file"
+        rmdir -- "$state_dir" 2>/dev/null || true
+        rr_contract_die "host-exclusive lock keeper returned a non-canonical interpreter" || return
+    }
     RR_HOST_EXCLUSIVE_LOCK_DEVICE_INODE=$ready_identity
     RR_HOST_EXCLUSIVE_KEEPER_LOCK_FD=$ready_fd
+    RR_HOST_EXCLUSIVE_KEEPER_EXE=$ready_exe
     RR_HOST_EXCLUSIVE_LOCK_MODE=dedicatedKeeper
     rm -f -- "$ready_file" "$error_file"
     rmdir -- "$state_dir" || {
@@ -241,20 +256,31 @@ rr_contract_verify_host_lock() {
 }
 
 rr_contract_stop_host_lock_keeper() {
-    local attempt
+    local attempt current_start
     [[ -n $RR_HOST_EXCLUSIVE_KEEPER_PID ]] || return 0
-    if rr_contract_keeper_is_exact; then
-        kill -TERM "$RR_HOST_EXCLUSIVE_KEEPER_PID" 2>/dev/null || true
+    [[ $RR_HOST_EXCLUSIVE_KEEPER_STARTTIME =~ ^[1-9][0-9]*$ ]] || {
+        rr_contract_die "host-exclusive lock keeper has no registered starttime"
+        return 1
+    }
+    current_start=$(rr_pid_starttime "$RR_HOST_EXCLUSIVE_KEEPER_PID" 2>/dev/null || true)
+    if [[ -z $current_start ]]; then
+        wait "$RR_HOST_EXCLUSIVE_KEEPER_PID" 2>/dev/null || true
+        return 0
     fi
+    [[ $current_start == "$RR_HOST_EXCLUSIVE_KEEPER_STARTTIME" ]] || {
+        rr_contract_die "host-exclusive lock keeper PID/starttime changed before cleanup"
+        return 1
+    }
+    kill -TERM "$RR_HOST_EXCLUSIVE_KEEPER_PID" 2>/dev/null || true
     for attempt in $(seq 1 50); do
-        rr_contract_keeper_is_exact || break
+        rr_contract_keeper_pid_is_exact || break
         sleep 0.02
     done
-    if rr_contract_keeper_is_exact; then
+    if rr_contract_keeper_pid_is_exact; then
         kill -KILL "$RR_HOST_EXCLUSIVE_KEEPER_PID" 2>/dev/null || true
     fi
     wait "$RR_HOST_EXCLUSIVE_KEEPER_PID" 2>/dev/null || true
-    rr_contract_keeper_is_exact && {
+    rr_contract_keeper_pid_is_exact && {
         rr_contract_die "could not stop exact host-exclusive lock keeper"
         return 1
     }

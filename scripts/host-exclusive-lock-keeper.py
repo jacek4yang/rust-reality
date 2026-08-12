@@ -50,16 +50,32 @@ def request_stop(_signum: int, _frame: object) -> None:
 
 
 def write_ready(path: Path, payload: dict[str, object]) -> None:
+    temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
-    fd = os.open(path, flags, 0o600)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(temporary, flags, 0o600)
     try:
-        data = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
-        offset = 0
-        while offset < len(data):
-            offset += os.write(fd, data[offset:])
-        os.fsync(fd)
+        try:
+            data = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
+            offset = 0
+            while offset < len(data):
+                offset += os.write(fd, data[offset:])
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.link(temporary, path, follow_symlinks=False)
+        temporary.unlink()
+        directory_fd = os.open(path.parent, os.O_RDONLY | os.O_CLOEXEC)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     finally:
-        os.close(fd)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def parse_args() -> argparse.Namespace:
@@ -112,6 +128,7 @@ def main() -> int:
 
         keeper_pid = os.getpid()
         keeper_starttime = proc_starttime(keeper_pid)
+        keeper_exe = str(Path("/proc/self/exe").resolve(strict=True))
         write_ready(
             args.ready,
             {
@@ -124,6 +141,7 @@ def main() -> int:
                 "lockFd": lock_fd,
                 "keeperPid": keeper_pid,
                 "keeperStarttime": keeper_starttime,
+                "keeperExe": keeper_exe,
                 "parentPid": args.parent_pid,
                 "parentStarttime": args.parent_starttime,
             },
