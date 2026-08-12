@@ -58,8 +58,8 @@
 #
 # Env: RUST_REALITY_BIN (server under test, default target/release/rust-reality),
 #      XRAY_BIN (default ../artifacts/xray-reference),
-#      SECTIONS ("routing cost nxr longflow"; add "rtt" — it also needs
-#      REQUIRE_NETEM=1), OUT_DIR, SMOKE (0; 1 = tiny-scale harness self-test),
+#      SECTIONS (formal default: "routing cost nxr rtt longflow"; exploratory
+#      default omits rtt), OUT_DIR, SMOKE (0; 1 = tiny-scale harness self-test),
 #      SAMPLES (3), CONNS (96), CONCURRENCIES ("8 32"), TPUT_SAMPLES (3),
 #      TPUT_CELLS ("32:1 32:32 512:32"), LONGFLOW_MIB (512),
 #      RTTS ("0 20 50 100 200"), LOSSES ("0 0.1 1", applied per direction),
@@ -77,6 +77,7 @@ set -Eeuo pipefail
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$repository/scripts/benchmark-contract.sh"
+netem_summarizer="$repository/scripts/validate-deployment-netem.py"
 cd "$repository"
 
 # --------------------------------------------------------------------------
@@ -86,7 +87,7 @@ unset ALL_PROXY HTTP_PROXY HTTPS_PROXY NO_PROXY all_proxy http_proxy https_proxy
 
 rust_bin=${RUST_REALITY_BIN:-target/release/rust-reality}
 xray=${XRAY_BIN:-../artifacts/xray-reference}
-sections=${SECTIONS:-routing cost nxr longflow}
+sections=${SECTIONS:-}
 rr_contract_init "$repository" benchmark-deployment benchmarks/final 128
 rr_register_binary rust-reality "$rust_bin" "${RUST_REALITY_SHA256:-}" rust \
     "${EXPECTED_SOURCE_COMMIT:-}"
@@ -95,6 +96,7 @@ if [[ $RR_EXPLORATORY == 1 && $xray != /* ]]; then xray=$(command -v "$xray"); f
 rr_register_binary xray "$xray" "${XRAY_SHA256:-}" xray
 xray=${RR_BINARY_PATHS[xray]}
 rr_register_harness_tree "$repository/scripts/bench-origin"
+rr_register_harness_file "$netem_summarizer"
 rr_write_contract_metadata
 out_dir=$RR_OUT_DIR
 smoke=${SMOKE:-0}
@@ -106,7 +108,7 @@ tput_cells=${TPUT_CELLS:-32:1 32:32 512:32}
 longflow_mib=${LONGFLOW_MIB:-512}
 rtts=${RTTS:-0 20 50 100 200}
 losses=${LOSSES:-0 0.1 1}
-require_netem=${REQUIRE_NETEM:-0}
+require_netem=${REQUIRE_NETEM:-}
 driver="$repository/scripts/deployment_driver.py"
 rr_register_harness_file "$driver"
 rr_write_contract_metadata
@@ -121,6 +123,66 @@ if [[ $smoke == 1 ]]; then
     rtts="20"
     losses="0"
 fi
+
+if [[ $RR_EXPLORATORY == 0 ]]; then
+    sections=${sections:-routing cost nxr rtt longflow}
+    require_netem=${require_netem:-1}
+    [[ $smoke == 0 ]] || {
+        echo "formal deployment evidence cannot use SMOKE=1" >&2
+        exit 2
+    }
+    [[ $require_netem == 1 ]] || {
+        echo "formal deployment evidence requires REQUIRE_NETEM=1" >&2
+        exit 2
+    }
+    python3 - "$sections" "$samples" "$conns" "$concurrencies" \
+        "$tput_samples" "$tput_cells" "$longflow_mib" "$rtts" "$losses" <<'PY'
+import sys
+
+sections = sys.argv[1].split()
+if sections != ["routing", "cost", "nxr", "rtt", "longflow"]:
+    raise SystemExit(
+        "formal SECTIONS must be exactly: routing cost nxr rtt longflow"
+    )
+try:
+    samples = int(sys.argv[2])
+    connections = int(sys.argv[3])
+    concurrencies = [int(value) for value in sys.argv[4].split()]
+    throughput_samples = int(sys.argv[5])
+    throughput_cells = [
+        tuple(int(part) for part in value.split(":"))
+        for value in sys.argv[6].split()
+    ]
+    longflow_mib = int(sys.argv[7])
+    rtts = sys.argv[8].split()
+    losses = sys.argv[9].split()
+    parsed_rtts = [int(value) for value in rtts]
+    parsed_losses = [float(value) for value in losses]
+except ValueError as error:
+    raise SystemExit(f"invalid formal deployment dimension: {error}")
+if samples < 3 or connections < 96:
+    raise SystemExit("formal SAMPLES must be >=3 and CONNS must be >=96")
+if concurrencies != [8, 32]:
+    raise SystemExit("formal CONCURRENCIES must be exactly: 8 32")
+if throughput_samples < 3:
+    raise SystemExit("formal TPUT_SAMPLES must be >=3")
+if throughput_cells != [(32, 1), (32, 32), (512, 32)]:
+    raise SystemExit("formal TPUT_CELLS must be exactly: 32:1 32:32 512:32")
+if longflow_mib < 512:
+    raise SystemExit("formal LONGFLOW_MIB must be >=512")
+if len(parsed_rtts) != 5 or set(parsed_rtts) != {0, 20, 50, 100, 200}:
+    raise SystemExit("formal RTTS must contain exactly 0 20 50 100 200")
+if len(parsed_losses) != 3 or set(parsed_losses) != {0.0, 0.1, 1.0}:
+    raise SystemExit("formal LOSSES must contain exactly 0 0.1 1")
+PY
+else
+    sections=${sections:-routing cost nxr longflow}
+    require_netem=${require_netem:-0}
+fi
+[[ $require_netem == 0 || $require_netem == 1 ]] || {
+    echo "REQUIRE_NETEM must be 0 or 1" >&2
+    exit 2
+}
 
 temporary_root=$RR_TMPDIR
 work=$(mktemp -d "$temporary_root/rust-reality-deployment.XXXXXX")
@@ -963,79 +1025,12 @@ section_rtt() {
         done
     done
 
-    python3 - "$state/profiles.jsonl" "$out_dir/summary-netem.json" \
-        "$rtts" "$losses" "$concurrencies" "$samples" <<'PY'
-import json
-from pathlib import Path
-import sys
-
-def words(value):
-    return value.split()
-
-expected_rtts = [int(value) for value in words(sys.argv[3])]
-expected_losses = [float(value) for value in words(sys.argv[4])]
-expected_concurrencies = [int(value) for value in words(sys.argv[5])]
-expected_samples = int(sys.argv[6])
-expected_keys = {(rtt, loss) for rtt in expected_rtts for loss in expected_losses}
-profiles = []
-seen_keys = set()
-for line in Path(sys.argv[1]).read_text().splitlines():
-    profile = json.loads(line)
-    errors = []
-    key = (profile.get("targetRttMs"), profile.get("perDirectionLossPercent"))
-    if key not in expected_keys:
-        errors.append(f"unexpected or malformed profile: {key}")
-    if key in seen_keys:
-        errors.append(f"duplicate profile: {key}")
-    seen_keys.add(key)
-    raw_counts = {}
-    raw_results = {}
-    for kind, raw_path in profile["raw"].items():
-        path = Path(raw_path)
-        try:
-            rows = [json.loads(value) for value in path.read_text().splitlines() if value]
-        except (OSError, json.JSONDecodeError) as error:
-            rows = []
-            errors.append(f"{kind}: {error}")
-        raw_counts[kind] = len(rows)
-        raw_results[kind] = rows
-        if len(rows) != expected_samples * len(expected_concurrencies):
-            errors.append(f"{kind}: expected {expected_samples * len(expected_concurrencies)} raw records, got {len(rows)}")
-        counts = {concurrency: 0 for concurrency in expected_concurrencies}
-        sample_indexes = {concurrency: [] for concurrency in expected_concurrencies}
-        for row in rows:
-            concurrency = row.get("concurrency")
-            if concurrency not in counts:
-                errors.append(f"{kind}: unexpected concurrency {concurrency}")
-            else:
-                counts[concurrency] += 1
-                sample_indexes[concurrency].append(row.get("sampleIndex"))
-        for concurrency, count in counts.items():
-            if count != expected_samples:
-                errors.append(f"{kind}: c{concurrency} expected {expected_samples} samples, got {count}")
-            if sorted(sample_indexes[concurrency]) != list(range(expected_samples)):
-                errors.append(f"{kind}: c{concurrency} sample indexes are incomplete or duplicated")
-        if any(row.get("failed", 0) != 0 or row.get("connections", 0) <= 0 for row in rows):
-            errors.append(f"{kind}: failed connections")
-    profile["rawRecordCounts"] = raw_counts
-    profile["rawResults"] = raw_results
-    profile["verdict"] = "PASS" if not errors else "FAIL"
-    profile["errors"] = errors
-    profiles.append(profile)
-missing = sorted(expected_keys - seen_keys)
-unexpected = sorted(seen_keys - expected_keys)
-passed = (len(profiles) == len(expected_keys) and not missing and not unexpected
-          and all(row["verdict"] == "PASS" for row in profiles))
-Path(sys.argv[2]).write_text(json.dumps({"verdict": "PASS" if passed else "FAIL",
-    "networkModel": "tc netem delay and loss applied independently per veth direction",
-    "expectedProfileCount": len(expected_keys), "actualProfileCount": len(profiles),
-    "expectedSamplesPerLeg": expected_samples * len(expected_concurrencies),
-    "expectedConcurrencies": expected_concurrencies,
-    "missingProfiles": missing, "unexpectedProfiles": unexpected,
-    "profiles": profiles}, indent=2) + "\n")
-if not passed:
-    raise SystemExit("one or more required netem profiles failed")
-PY
+    python3 "$netem_summarizer" \
+        --profiles "$state/profiles.jsonl" \
+        --output "$out_dir/summary-netem.json" \
+        --rtts "$rtts" --losses "$losses" \
+        --concurrencies "$concurrencies" \
+        --samples "$samples" --connections "$conns"
 
     echo "=== after: tc qdisc show (before teardown)" | tee -a "$state/netstate.txt"
     sudo -n "$tc" qdisc show | tee -a "$state/netstate.txt"
@@ -1152,17 +1147,36 @@ for section in $sections; do
 done
 
 verdict=0
-python3 "$driver" summarize --out-dir "$out_dir" || verdict=1
+summarize_args=(summarize --out-dir "$out_dir")
+if [[ $RR_EXPLORATORY == 0 ]]; then
+    summarize_args+=(--formal-plan --samples "$samples" --connections "$conns"
+        --concurrencies "$concurrencies" --throughput-samples "$tput_samples"
+        --throughput-cells "$tput_cells" --rtts "$rtts" --losses "$losses")
+fi
+python3 "$driver" "${summarize_args[@]}" || verdict=1
 if [[ $require_netem == 1 && ! -s $out_dir/summary-netem.json ]]; then
     echo "REQUIRE_NETEM=1 but no complete netem profile summary was produced" >&2
-    jq '.overallVerdict="FAIL" |
+    jq '.overallVerdict="FAIL" | .gateVerdict="FAIL" |
+        .dataQualityVerdict="FAIL" |
         .failedSections=((.failedSections // []) + ["netemProfiles"] | unique)' \
         "$out_dir/summary.json" >"$work/summary.failed.json"
     mv -- "$work/summary.failed.json" "$out_dir/summary.json"
     verdict=1
 fi
+if [[ $require_netem == 1 ]] && ! jq -e '
+    .verdict == "PASS"
+    and .dataQualityVerdict == "PASS"
+    and .performanceVerdict == "NOT_EVALUATED"
+    and .actualProfileCount == .expectedProfileCount
+    and .actualRawRecordCount == .expectedRawRecordCount
+    and (.missingProfiles | length) == 0
+    and (.unexpectedProfiles | length) == 0
+' "$out_dir/summary-netem.json" >/dev/null; then
+    echo "netem summary is incomplete or has an invalid Cartesian product" >&2
+    verdict=1
+fi
 if (( verdict == 0 )); then
     rr_finalize_contract || verdict=1
 fi
-log "done; results in $out_dir (overall verdict: $(jq -r .overallVerdict "$out_dir/summary.json"))"
+log "done; results in $out_dir (correctness/data gate: $(jq -r .gateVerdict "$out_dir/summary.json"); performance: NOT_EVALUATED)"
 exit "$verdict"

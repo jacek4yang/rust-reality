@@ -626,8 +626,10 @@ def cmd_setup_rate(args):
 
     concurrencies = [int(c) for c in args.concurrencies.split()]
     out = []
+    warmups_ok = True
     for conc in concurrencies:
-        one_connection(0)  # warm client and server paths
+        if one_connection(0) is None:  # warm client and server paths
+            warmups_ok = False
         for sample in range(args.samples):
             wall0 = time.perf_counter()
             with concurrent.futures.ThreadPoolExecutor(max_workers=conc) as ex:
@@ -662,7 +664,18 @@ def cmd_setup_rate(args):
                 f"fail {x['failed']})" for x in cells))
         else:
             print(f"{args.label} c{conc}: ALL CONNECTIONS FAILED")
-    return 0
+    complete = (
+        warmups_ok
+        and len(out) == len(concurrencies) * args.samples
+        and all(
+            row.get("failed") == 0
+            and row.get("connections") == args.conns
+            and row.get("connectionsPerSecond", 0) > 0
+            and row.get("p99Seconds", 0) > 0
+            for row in out
+        )
+    )
+    return 0 if complete else 1
 
 
 # ---------------------------------------------------------------------------
@@ -740,7 +753,21 @@ def cmd_throughput(args):
                   f"({len(cells)} samples, integrity {integ})")
         else:
             print(f"{args.label} c{conc}: ALL TRANSFERS FAILED")
-    return 0
+    complete = (
+        len(out) == len(concurrencies) * args.samples
+        and all(
+            not row.get("error")
+            and row.get("throughputMiBPerSecond", 0) > 0
+            and row.get("perRequestSeconds")
+            for row in out
+        )
+    )
+    if args.expected_sha256:
+        for conc in concurrencies:
+            first = [row for row in out
+                     if row.get("concurrency") == conc and row.get("sampleIndex") == 0]
+            complete = complete and len(first) == 1 and first[0].get("integrity") == "pass"
+    return 0 if complete else 1
 
 
 # ---------------------------------------------------------------------------
@@ -846,7 +873,11 @@ def cmd_summarize(args):
     """Aggregate every samples file in the output directory into summary.json."""
     import glob
     out_dir = args.out_dir
-    summary = {"generatedAtUtc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    summary = {
+        "status": "COMPLETE",
+        "performanceVerdict": "NOT_EVALUATED",
+        "generatedAtUtc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
 
     def median_or_none(values):
         return statistics.median(values) if values else None
@@ -911,6 +942,7 @@ def cmd_summarize(args):
     summary["throughput"] = throughput
 
     verdicts = {}
+    data_quality_failures = []
     for name, key in (("summary-routing.json", "routingCorrectness"),
                       ("summary-longflow.json", "longFlowRelay"),
                       ("summary-netem.json", "netemProfiles")):
@@ -920,24 +952,147 @@ def cmd_summarize(args):
                 report = json.load(fh)
             summary[key] = report
             verdicts[key] = report.get("verdict")
+    if args.formal_plan:
+        concurrencies = [int(value) for value in args.concurrencies.split()]
+        rtts = [int(value) for value in args.rtts.split()]
+        loss_tokens = args.losses.split()
+        losses = [float(value) for value in loss_tokens]
+        throughput_cells = [
+            tuple(int(part) for part in value.split(":"))
+            for value in args.throughput_cells.split()
+        ]
+        summary["formalPlan"] = {
+            "sections": ["routing", "cost", "nxr", "rtt", "longflow"],
+            "samples": args.samples,
+            "connectionsPerSample": args.connections,
+            "concurrencies": concurrencies,
+            "throughputSamples": args.throughput_samples,
+            "throughputCells": [
+                {"payloadMiB": mib, "concurrency": concurrency}
+                for mib, concurrency in throughput_cells
+            ],
+            "rttsMs": rtts,
+            "perDirectionLossPercent": losses,
+        }
+
+        for required_verdict in (
+                "routingCorrectness", "longFlowRelay", "netemProfiles"):
+            if required_verdict not in verdicts:
+                verdicts[required_verdict] = "MISSING"
+                data_quality_failures.append(f"missing:{required_verdict}")
+
+        expected_setup = {
+            "cost-simple", "cost-medium", "cost-complex",
+            "cost-complex-ipifnonmatch", "cost-complex-ipondemand",
+            "topo-a", "topo-b", "topo-c", "topo-d",
+        }
+        expected_setup.update(
+            f"rtt{rtt}-loss{loss.replace('.', 'p')}-{leg}"
+            for rtt in rtts for loss in loss_tokens for leg in ("nxr", "socks")
+        )
+        if set(setup) != expected_setup:
+            data_quality_failures.append("formal:setup-label-set")
+        expected_concurrency_keys = {f"c{value}" for value in concurrencies}
+        expected_connections_per_label = (
+            len(concurrencies) * args.samples * args.connections
+        )
+        for label in expected_setup & set(setup):
+            entry = setup[label]
+            if set(entry["byConcurrency"]) != expected_concurrency_keys:
+                data_quality_failures.append(f"formal:setup-concurrencies:{label}")
+            if entry.get("totalConnections") != expected_connections_per_label:
+                data_quality_failures.append(f"formal:setup-connections:{label}")
+            for concurrency in expected_concurrency_keys & set(entry["byConcurrency"]):
+                if entry["byConcurrency"][concurrency].get("samples") != args.samples:
+                    data_quality_failures.append(
+                        f"formal:setup-samples:{label}:{concurrency}"
+                    )
+
+        actual_throughput_cells = {
+            (label, mib, concurrency)
+            for label, by_mib in throughput.items()
+            for mib, by_concurrency in by_mib.items()
+            for concurrency in by_concurrency
+        }
+        expected_throughput_cells = {
+            (f"topo-{topology}", f"{mib}mib", f"c{concurrency}")
+            for topology in "abcd"
+            for mib, concurrency in throughput_cells
+        }
+        if actual_throughput_cells != expected_throughput_cells:
+            data_quality_failures.append("formal:throughput-cell-set")
+        for label, mib, concurrency in expected_throughput_cells & actual_throughput_cells:
+            cell = throughput[label][mib][concurrency]
+            if (cell.get("samples") != args.throughput_samples
+                    or cell.get("errors") != 0
+                    or cell.get("integrity") != "pass"):
+                data_quality_failures.append(
+                    f"formal:throughput-samples:{label}:{mib}:{concurrency}"
+                )
+
+        routing = summary.get("routingCorrectness", {})
+        if not (routing.get("cases") == 26 and routing.get("passed") == 26
+                and routing.get("failed") == 0 and routing.get("verdict") == "PASS"):
+            data_quality_failures.append("formal:routing-cardinality")
+        netem = summary.get("netemProfiles", {})
+        expected_profiles = len(rtts) * len(losses)
+        expected_raw = (
+            expected_profiles * 2 * len(concurrencies) * args.samples
+        )
+        expected_dimensions = netem.get("expectedDimensions", {})
+        if not (
+            netem.get("verdict") == "PASS"
+            and netem.get("dataQualityVerdict") == "PASS"
+            and netem.get("expectedProfileCount") == expected_profiles
+            and netem.get("actualProfileCount") == expected_profiles
+            and netem.get("expectedRawRecordCount") == expected_raw
+            and netem.get("actualRawRecordCount") == expected_raw
+            and expected_dimensions.get("connectionsPerSample") == args.connections
+            and expected_dimensions.get("samplesPerConcurrency") == args.samples
+            and expected_dimensions.get("concurrencies") == concurrencies
+        ):
+            data_quality_failures.append("formal:netem-cardinality")
+
     failed = [k for k, v in verdicts.items() if v != "PASS"]
+    for label, entry in setup.items():
+        for concurrency, cell in entry["byConcurrency"].items():
+            if (cell["samples"] <= 0 or cell["failedConnections"] != 0
+                    or cell["medianConnectionsPerSecond"] is None
+                    or cell["medianP99Ms"] is None):
+                data_quality_failures.append(f"setup:{label}:{concurrency}")
+    for label, by_mib in throughput.items():
+        for mib, by_concurrency in by_mib.items():
+            for concurrency, cell in by_concurrency.items():
+                if (cell["samples"] <= 0 or cell["errors"] != 0
+                        or cell["medianMiBPerSecond"] is None
+                        or cell["integrity"] == "fail"):
+                    data_quality_failures.append(
+                        f"throughput:{label}:{mib}:{concurrency}")
     if integrity_failures:
         failed.append("byteIntegrity")
     summary["integrityFailures"] = integrity_failures
     summary["transferErrors"] = transfer_errors[:20]
-    if failed:
-        summary["overallVerdict"] = "FAIL"
-        summary["failedSections"] = failed
-    elif transfer_errors:
-        summary["overallVerdict"] = "DEGRADED"
-    else:
-        summary["overallVerdict"] = "PASS"
+    summary["dataQualityFailures"] = sorted(set(data_quality_failures))
+    summary["correctnessVerdict"] = "FAIL" if failed else "PASS"
+    summary["dataQualityVerdict"] = (
+        "FAIL" if data_quality_failures or transfer_errors or integrity_failures else "PASS"
+    )
+    gate_passed = (
+        summary["correctnessVerdict"] == "PASS"
+        and summary["dataQualityVerdict"] == "PASS"
+    )
+    summary["gateVerdict"] = "PASS" if gate_passed else "FAIL"
+    # `overallVerdict` deliberately cannot say PASS: this harness collects
+    # performance measurements but does not make the cross-run CI decision.
+    summary["overallVerdict"] = "NOT_EVALUATED" if gate_passed else "FAIL"
+    summary["failedSections"] = sorted(set(failed + data_quality_failures))
     with open(os.path.join(out_dir, "summary.json"), "w") as fh:
         json.dump(summary, fh, indent=2)
         fh.write("\n")
-    print(f"overall verdict: {summary['overallVerdict']}"
+    print(f"correctness/data gate: {summary['gateVerdict']}; "
+          f"performance: {summary['performanceVerdict']}"
           + (f" failed={failed}" if failed else ""))
-    return 0 if summary["overallVerdict"] == "PASS" else 1
+    return 0 if gate_passed else 1
 
 
 # ---------------------------------------------------------------------------
@@ -1013,6 +1168,14 @@ def main():
 
     p = sub.add_parser("summarize", help="aggregate output dir into summary.json")
     p.add_argument("--out-dir", required=True)
+    p.add_argument("--formal-plan", action="store_true")
+    p.add_argument("--samples", type=int)
+    p.add_argument("--connections", type=int)
+    p.add_argument("--concurrencies")
+    p.add_argument("--throughput-samples", type=int)
+    p.add_argument("--throughput-cells")
+    p.add_argument("--rtts")
+    p.add_argument("--losses")
 
     args = parser.parse_args()
     if args.command == "socks-server":

@@ -352,6 +352,8 @@ enc = summary["vless-encryption"]
 report = {
     "schemaVersion": 1,
     "harness": "benchmark-vless-encryption",
+    "status": "COMPLETE",
+    "performanceVerdict": "NOT_EVALUATED",
     "environment": {"kernel": platform.release(), "machine": platform.machine(),
                     "cpuCount": os.cpu_count(),
                     "xrayVersion": subprocess.run([xray, "version"], check=True,

@@ -414,6 +414,8 @@ ratio = (
 report = {
     "schemaVersion": 1,
     "harness": "benchmark-vision-direct",
+    "status": "COMPLETE",
+    "performanceVerdict": "NOT_EVALUATED",
     "environment": {
         "kernel": platform.release(),
         "machine": platform.machine(),

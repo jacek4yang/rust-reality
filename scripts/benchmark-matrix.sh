@@ -1435,6 +1435,8 @@ for key, cell in cell_results.items():
 summary = {
     "schemaVersion": 1,
     "harness": "benchmark-matrix",
+    "status": "COMPLETE",
+    "performanceVerdict": "NOT_EVALUATED",
     "seed": seed_text,
     "commit": commit,
     "identity": {

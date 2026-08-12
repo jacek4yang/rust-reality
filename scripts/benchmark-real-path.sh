@@ -240,6 +240,8 @@ for name in ports:
 report = {
     "schemaVersion": 1,
     "harness": "benchmark-real-path",
+    "status": "COMPLETE",
+    "performanceVerdict": "NOT_EVALUATED",
     "binaries": {
         "rustReality": {"path": rust_bin, "sha256": rust_sha256},
         "xray": {"path": xray_bin, "sha256": xray_sha256},

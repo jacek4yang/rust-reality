@@ -1118,7 +1118,8 @@ python3 "$HELPER" summarize --identity "$output_dir/identity.json" \
 jq --slurpfile record_delay "$output_dir/record-delay-gate.json" \
     --slurpfile record_delay_e2e "$output_dir/record-delay-e2e-summary.json" \
     --slurpfile reader_test "$reader_test_evidence" \
-    '. + {recordDelayGate:$record_delay[0],recordDelayCandidateE2e:$record_delay_e2e[0],recordDelayProductionReaderTest:$reader_test[0]}' "$output_dir/summary.json" \
+    '. + {recordDelayGate:$record_delay[0],recordDelayCandidateE2e:$record_delay_e2e[0],recordDelayProductionReaderTest:$reader_test[0]} |
+     .status="COMPLETE" | .performanceVerdict="NOT_EVALUATED"' "$output_dir/summary.json" \
     >"$output_dir/summary.json.tmp"
 mv -f -- "$output_dir/summary.json.tmp" "$output_dir/summary.json"
 
