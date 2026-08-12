@@ -22,12 +22,14 @@
 #      RUST_REALITY_BIN (default: this repository's target/release/rust-reality;
 #      the script never builds it — run `cargo build --release` yourself first,
 #      ideally via scripts/build-release.sh so the binary embeds the git commit),
+#      RUST_REALITY_SHA256 (REQUIRED exact SHA-256 of RUST_REALITY_BIN),
+#      EXPECTED_SOURCE_COMMIT (REQUIRED full commit embedded by build-release),
 #      XRAY_BIN (REQUIRED, no default: path to an xray-core client binary),
 #      OUT_ROOT (default: a unique UTC/PID run directory; an existing path or
 #      symlink is always rejected), ASSET_CACHE_DIR (default: the repository's
 #      reusable benchmarks/profile-validation/.asset-cache), KEEP_WORK (0),
-#      FORCE (0), IDENTITY_STRICT (1: a positively
-#      detected binary/HEAD commit mismatch aborts the run; 0 only warns).
+#      FORCE (0), IDENTITY_CHECK_ONLY (0; explicit preflight only, never profile
+#      evidence). Formal runs are always fail-closed on identity and immutability.
 # The one-time geo-asset fetch needs outbound network access; if your
 # environment requires a proxy, export the standard *_PROXY variables for
 # curl before running, or pre-populate the asset cache by hand (see below).
@@ -37,6 +39,8 @@ repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repository"
 
 rust_bin=${RUST_REALITY_BIN:-$repository/target/release/rust-reality}
+expected_binary_sha256=${RUST_REALITY_SHA256:-}
+expected_source_commit=${EXPECTED_SOURCE_COMMIT:-}
 xray=${XRAY_BIN:-}
 out_root_input=${OUT_ROOT:-benchmarks/profile-validation/$(date -u +%Y%m%dT%H%M%SZ)-$$}
 asset_cache_input=${ASSET_CACHE_DIR:-benchmarks/profile-validation/.asset-cache}
@@ -49,6 +53,7 @@ samples_churn=${SAMPLES_CHURN:-3}
 samples_download=${SAMPLES_DOWNLOAD:-2}
 hold=${HOLD:-8}
 settle=${SETTLE:-3}
+identity_check_only=${IDENTITY_CHECK_ONLY:-0}
 uid=$(id -u)
 gid=$(id -g)
 
@@ -65,6 +70,7 @@ declare -A unit_runner_pids=()
 declare -A planned_class_names=()
 pid_snapshot_start=""
 pid_snapshot_state=""
+binary_identity_verified=0
 
 CLEANENV=(env -u ALL_PROXY -u all_proxy -u HTTP_PROXY -u http_proxy
           -u HTTPS_PROXY -u https_proxy -u NO_PROXY -u no_proxy -u CARGO_HTTP_PROXY)
@@ -155,6 +161,7 @@ terminate_registered_pid() {
 }
 
 cleanup() {
+    local exit_status=$?
     set +e
     local pid unit live scoped_server=${server_pid:-}
     for pid in "${sampler_pids[@]:-}" "${client_pids[@]:-}"; do
@@ -195,10 +202,14 @@ cleanup() {
     elif [[ -d $work && $work == "$repository"/benchmarks/profile-validation.* ]]; then
         rm -rf -- "$work"
     fi
+    if (( binary_identity_verified == 1 )); then
+        verify_binary_sha256 "when profile validation exited" || exit_status=1
+    fi
+    return "$exit_status"
 }
 trap cleanup EXIT
 
-for program in curl jq python3 go setpriv systemctl; do
+for program in curl jq python3 go setpriv sha256sum systemctl; do
     command -v "$program" >/dev/null || { echo "missing: $program" >&2; exit 1; }
 done
 sudo -n true || { echo "passwordless sudo required for systemd-run scopes" >&2; exit 1; }
@@ -208,12 +219,59 @@ sudo -n true || { echo "passwordless sudo required for systemd-run scopes" >&2; 
     echo "embeds the git commit for the identity check), or set RUST_REALITY_BIN." >&2
     exit 1
 }
+[[ $expected_binary_sha256 =~ ^[0-9a-f]{64}$ ]] || {
+    echo "RUST_REALITY_SHA256 is required and must be exactly 64 lowercase hexadecimal characters" >&2
+    exit 1
+}
+[[ $expected_source_commit =~ ^[0-9a-f]{40}$ ]] || {
+    echo "EXPECTED_SOURCE_COMMIT is required and must be exactly 40 lowercase hexadecimal characters" >&2
+    exit 1
+}
+[[ $identity_check_only == 0 || $identity_check_only == 1 ]] || {
+    echo "IDENTITY_CHECK_ONLY must be 0 or 1" >&2
+    exit 1
+}
 [[ -n $xray ]] || {
     echo "XRAY_BIN is required (no default): path to an xray-core client binary," >&2
     echo "e.g. from https://github.com/XTLS/Xray-core/releases." >&2
     exit 1
 }
 [[ -x $xray ]] || { echo "xray client binary missing or not executable: $xray" >&2; exit 1; }
+
+verify_binary_sha256() {
+    local phase=$1 actual
+    actual=$(sha256sum -- "$rust_bin" | awk '{print $1}')
+    if [[ $actual != "$expected_binary_sha256" ]]; then
+        echo "binary SHA-256 mismatch $phase: expected $expected_binary_sha256, got $actual" >&2
+        return 1
+    fi
+    binary_sha256=$actual
+}
+
+# The measured executable is the authority for source identity. Release builds
+# expose their embedded RUST_REALITY_GIT_COMMIT in the read-only benchmark JSON;
+# never infer identity from repository HEAD or by searching arbitrary ELF bytes.
+verify_binary_sha256 "before profile validation"
+identity_json=$("$rust_bin" benchmark --duration-ms 90 --warmup-ms 1) || {
+    echo "measured binary could not report benchmark identity JSON" >&2
+    exit 1
+}
+embedded_commit=$(jq -er '.environment.gitCommit
+    | select(type == "string" and test("^[0-9a-f]{40}$"))' <<< "$identity_json") || {
+    echo "measured binary did not report a valid environment.gitCommit" >&2
+    exit 1
+}
+if [[ $embedded_commit != "$expected_source_commit" ]]; then
+    echo "binary source commit mismatch: expected $expected_source_commit, got $embedded_commit" >&2
+    exit 1
+fi
+binary_identity_verified=1
+if [[ $identity_check_only == 1 ]]; then
+    binary_identity_verified=0
+    verify_binary_sha256 "after identity-only preflight"
+    echo "identity-only preflight passed; no profile evidence was produced" >&2
+    exit 0
+fi
 
 absolute_from_repository() {
     python3 - "$repository" "$1" <<'PY'
@@ -297,49 +355,23 @@ if [[ ! -s $asset_cache/geoip.dat || ! -s $asset_cache/geosite.dat ]]; then
 fi
 
 # --- environment metadata ----------------------------------------------------
-commit=$(git rev-parse HEAD)
-binary_sha256=$(sha256sum "$rust_bin" | awk '{print $1}')
-
-# Binary identity: binaries built via scripts/build-release.sh embed the git
-# commit (RUST_REALITY_GIT_COMMIT, surfaced as git_commit in the benchmark
-# report). Confirm the measured binary matches the recorded HEAD so the
-# evidence cannot silently mix a stale binary with a newer tree.
-embedded_commit=""
-if grep -qF -- "$commit" "$rust_bin" 2>/dev/null; then
-    embedded_commit=$commit
-fi
-# No fallback extraction: a binary built with plain `cargo build --release`
-# does not embed the commit (only scripts/build-release.sh sets
-# RUST_REALITY_GIT_COMMIT), and harvesting any standalone 40-hex string can
-# match unrelated rodata constants, which would false-fail a correct binary.
-# Note: after docs-only commits the embedded commit lags HEAD by design;
-# rebuild (or set IDENTITY_STRICT=0) in that case.
-identity_note=""
-if [[ -z $embedded_commit ]]; then
-    identity_note="no git commit embedded in the binary; identity not verified (build with scripts/build-release.sh to embed RUST_REALITY_GIT_COMMIT)"
-    echo "warning: $identity_note" >&2
-elif [[ $embedded_commit != "$commit" ]]; then
-    identity_note="embedded commit $embedded_commit does not match recorded HEAD $commit"
-    echo "warning: binary/HEAD identity mismatch: $identity_note" >&2
-    if [[ ${IDENTITY_STRICT:-1} == 1 ]]; then
-        echo "refusing to measure a stale binary; rebuild from this tree, or set IDENTITY_STRICT=0 to only warn" >&2
-        exit 1
-    fi
-fi
+commit=$expected_source_commit
+harness_commit=$(git rev-parse HEAD)
 jq -n \
     --arg commit "$commit" \
+    --arg harness_commit "$harness_commit" \
     --arg binary "$rust_bin" \
     --arg binary_sha256 "$binary_sha256" \
     --arg binary_embedded_commit "$embedded_commit" \
-    --arg identity_note "$identity_note" \
     --arg output_root "$out_root" \
     --arg asset_cache_dir "$asset_cache" \
     --arg xray "$("$xray" version 2>/dev/null | head -1)" \
     --arg kernel "$(uname -r)" \
     --arg host "$(nproc) CPUs, $(awk '/MemTotal/{print int($2/1024)" MiB"}' /proc/meminfo)" \
     --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{commit: $commit, binary: $binary, binarySha256: $binary_sha256,
-      binaryEmbeddedCommit: $binary_embedded_commit, identityNote: $identity_note,
+    '{commit: $commit, harnessCommit: $harness_commit,
+      binary: $binary, binarySha256: $binary_sha256,
+      binaryEmbeddedCommit: $binary_embedded_commit,
       outputRoot: $output_root, assetCacheDirectory: $asset_cache_dir,
       xray: $xray, kernel: $kernel, host: $host, dateUtc: $date,
       note: "server CPU via /proc/pid/stat utime+stime (perf stat unusable on this host)"}' \
@@ -828,4 +860,6 @@ if not passed:
     raise SystemExit("profile validation aggregate failed: " + ", ".join(failed))
 PY
 
+binary_identity_verified=0
+verify_binary_sha256 "after profile validation"
 echo "all classes done; evidence under $out_root" >&2
