@@ -7,6 +7,7 @@ readonly REPOSITORY="$({ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."; pwd; })"
 source "$REPOSITORY/scripts/benchmark-contract.sh"
 readonly HELPER="$REPOSITORY/scripts/tls-shape-helper.py"
 readonly RECORD_DELAY_FIXTURE="$REPOSITORY/scripts/tls-record-delay-fixture.py"
+readonly READER_EVIDENCE_HELPER="$REPOSITORY/scripts/record-delay-reader-test-evidence.sh"
 readonly REFERENCE_SOURCE="$REPOSITORY/scripts/tls-shape-reference.c"
 
 reference_server=
@@ -33,6 +34,7 @@ samples=3
 base_port=${PORT_BASE:-39460}
 xray_server_comparator=1
 output_dir=${OUT_DIR:-}
+reader_test_evidence=${READER_TEST_EVIDENCE:-}
 strace_mode=auto
 tcpdump_mode=auto
 self_test=0
@@ -80,6 +82,7 @@ Options:
                                 Xray still generates the authenticated ClientHello.
   --output-dir PATH             Must be outside the Git worktree. Default:
                                 ../artifacts/tls-shape/CASE-UTC_TIMESTAMP
+  --reader-test-evidence PATH  Single-probe production reader cargo evidence
   --strace auto|required|off    Process-write capture (default: auto)
   --tcpdump auto|required|off   Raw loopback PCAP capture (default: auto)
   --help                        Show this help
@@ -150,6 +153,7 @@ while (($#)); do
         --xray-server-comparator)
             need_argument "$@"; xray_server_comparator=$2; shift 2 ;;
         --output-dir) need_argument "$@"; output_dir=$2; shift 2 ;;
+        --reader-test-evidence) need_argument "$@"; reader_test_evidence=$2; shift 2 ;;
         --strace) need_argument "$@"; strace_mode=$2; shift 2 ;;
         --tcpdump) need_argument "$@"; tcpdump_mode=$2; shift 2 ;;
         --self-test) self_test=1; shift ;;
@@ -213,6 +217,7 @@ done
 [[ -n $rust_sha256 ]] || die '--rust-sha256 is required'
 [[ -n $xray_binary ]] || die '--xray-binary is required'
 [[ -n $xray_sha256 ]] || die '--xray-sha256 is required'
+[[ -n $reader_test_evidence ]] || die '--reader-test-evidence is required'
 baseline_present=false
 if [[ -n $baseline_rust_binary || -n $baseline_rust_sha256 ]]; then
     [[ -n $baseline_rust_binary && -n $baseline_rust_sha256 ]] ||
@@ -237,7 +242,8 @@ done
 [[ $tcpdump_mode =~ ^(auto|required|off)$ ]] || die 'invalid --tcpdump mode'
 
 for path in "$reference_server" "$reference_certificate" "$reference_private_key" \
-    "$rust_binary" "$xray_binary" "$HELPER" "$RECORD_DELAY_FIXTURE"; do
+    "$rust_binary" "$xray_binary" "$HELPER" "$RECORD_DELAY_FIXTURE" \
+    "$READER_EVIDENCE_HELPER" "$reader_test_evidence"; do
     [[ -f $path ]] || die "file does not exist: $path"
 done
 [[ -x $reference_server ]] || die "reference server is not executable: $reference_server"
@@ -255,6 +261,7 @@ reference_certificate=$(realpath "$reference_certificate")
 reference_private_key=$(realpath "$reference_private_key")
 rust_binary=$(realpath "$rust_binary")
 xray_binary=$(realpath "$xray_binary")
+reader_test_evidence=$(realpath "$reader_test_evidence")
 if [[ $baseline_present == true ]]; then
     baseline_rust_binary=$(realpath "$baseline_rust_binary")
 fi
@@ -280,6 +287,7 @@ PORT_BASE=$base_port
 rr_contract_init "$REPOSITORY" benchmark-tls-shape ../artifacts/tls-shape 16
 rr_register_harness_file "$HELPER"
 rr_register_harness_file "$RECORD_DELAY_FIXTURE"
+rr_register_harness_file "$READER_EVIDENCE_HELPER"
 rr_register_harness_file "$REFERENCE_SOURCE"
 rr_register_binary openssl-reference "$reference_server" "$reference_sha256" generic
 reference_server=${RR_BINARY_PATHS[openssl-reference]}
@@ -293,6 +301,18 @@ if [[ $baseline_present == true ]]; then
         "$baseline_rust_sha256" rust "${EXPECTED_BASELINE_SOURCE_COMMIT:-}"
     baseline_rust_binary=${RR_BINARY_PATHS[baseline-rust-reality]}
 fi
+reader_output=$(jq -er '.output.path' "$reader_test_evidence")
+[[ $reader_output == /* && -f $reader_output ]] ||
+    die 'reader-test evidence output is not an existing absolute file'
+reader_output_sha=$(sha256sum "$reader_output" | awk '{print $1}')
+jq -e --arg commit "${RR_BINARY_SOURCE_COMMITS[rust-reality]}" \
+    --arg test 'protocol::reality::tls13::target_read::tests::tcp_record_delay_matrix_covers_fifth_probe_timing' \
+    --arg output_sha "$reader_output_sha" \
+    '.ok == true and .cargoExitCode == 0 and
+     .repositoryHead == $commit and .expectedSourceCommit == $commit and
+     .testName == $test and .output.sha256 == $output_sha' \
+    "$reader_test_evidence" >/dev/null ||
+    die 'single-probe-present production reader evidence is invalid'
 rr_write_contract_metadata
 output_dir=$RR_OUT_DIR
 base_port=$RR_PORT_BASE
@@ -1073,7 +1093,8 @@ python3 "$HELPER" summarize --identity "$output_dir/identity.json" \
     --output "$output_dir/summary.json"
 jq --slurpfile record_delay "$output_dir/record-delay-gate.json" \
     --slurpfile record_delay_e2e "$output_dir/record-delay-e2e-summary.json" \
-    '. + {recordDelayGate:$record_delay[0],recordDelayCandidateE2e:$record_delay_e2e[0]}' "$output_dir/summary.json" \
+    --slurpfile reader_test "$reader_test_evidence" \
+    '. + {recordDelayGate:$record_delay[0],recordDelayCandidateE2e:$record_delay_e2e[0],recordDelayProductionReaderTest:$reader_test[0]}' "$output_dir/summary.json" \
     >"$output_dir/summary.json.tmp"
 mv -f -- "$output_dir/summary.json.tmp" "$output_dir/summary.json"
 
