@@ -299,76 +299,10 @@ start_logged "$out_dir/handoff-cover-trace.log" openssl s_server \
     -alpn 'h2,http/1.1' -trace -msg -state
 handoff_cover_upstream_pid=$last_pid
 wait_port "$handoff_cover_upstream_port" "$handoff_cover_upstream_pid"
-start_logged "$out_dir/handoff-cover-shape-proxy.log" python3 -u - \
-    "$handoff_cover_port" "$handoff_cover_upstream_port" <<'PY'
-import json
-import socket
-import sys
-import threading
-
-listen_port = int(sys.argv[1])
-upstream_port = int(sys.argv[2])
-fake_fifth = b"\x17\x03\x03\x00\x86" + bytes(134)
-
-
-def read_exact(sock, length):
-    output = bytearray()
-    while len(output) < length:
-        chunk = sock.recv(length - len(output))
-        if not chunk:
-            raise EOFError("TLS record truncated")
-        output.extend(chunk)
-    return bytes(output)
-
-
-def read_record(sock):
-    header = read_exact(sock, 5)
-    length = int.from_bytes(header[3:5], "big")
-    if length == 0 or length > 16640:
-        raise ValueError(f"invalid TLS record length: {length}")
-    return header + read_exact(sock, length)
-
-
-def handle(client):
-    try:
-        client.settimeout(2)
-        client_hello = read_record(client)
-        with socket.create_connection(("127.0.0.1", upstream_port), timeout=2) as upstream:
-            upstream.settimeout(5)
-            upstream.sendall(client_hello)
-            response = []
-            encrypted_wire_lengths = []
-            while len(encrypted_wire_lengths) < 4:
-                record = read_record(upstream)
-                response.append(record)
-                if record[0] == 0x17:
-                    encrypted_wire_lengths.append(len(record))
-                if len(response) > 8:
-                    raise ValueError("cover emitted too many records before its fourth encrypted record")
-            client.sendall(b"".join(response) + fake_fifth)
-            print(json.dumps({
-                "event": "flight_shaped",
-                "upstreamEncryptedWireLengths": encrypted_wire_lengths,
-                "appendedWireLength": len(fake_fifth),
-                "singleWriteBytes": sum(map(len, response)) + len(fake_fifth),
-            }, separators=(",", ":")), flush=True)
-    except (EOFError, TimeoutError, ConnectionError, OSError, ValueError) as error:
-        print(json.dumps({
-            "event": "connection_ignored",
-            "error": type(error).__name__,
-        }, separators=(",", ":")), flush=True)
-    finally:
-        client.close()
-
-
-with socket.socket() as listener:
-    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    listener.bind(("127.0.0.1", listen_port))
-    listener.listen(16)
-    while True:
-        connection, _ = listener.accept()
-        threading.Thread(target=handle, args=(connection,), daemon=True).start()
-PY
+start_logged "$out_dir/handoff-cover-shape-proxy.log" python3 -u \
+    "$repository/scripts/cover-flight-shape-proxy.py" \
+    --listen-port "$handoff_cover_port" \
+    --upstream-port "$handoff_cover_upstream_port"
 handoff_cover_proxy_pid=$last_pid
 wait_port "$handoff_cover_port" "$handoff_cover_proxy_pid"
 
