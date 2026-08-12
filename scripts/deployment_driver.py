@@ -912,7 +912,8 @@ def cmd_summarize(args):
 
     verdicts = {}
     for name, key in (("summary-routing.json", "routingCorrectness"),
-                      ("summary-longflow.json", "longFlowRelay")):
+                      ("summary-longflow.json", "longFlowRelay"),
+                      ("summary-netem.json", "netemProfiles")):
         path = os.path.join(out_dir, name)
         if os.path.exists(path):
             with open(path) as fh:
