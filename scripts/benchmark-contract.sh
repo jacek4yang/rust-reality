@@ -2,9 +2,11 @@
 # Shared fail-closed contract for authoritative performance and interop runs.
 # Source this file; do not execute it directly. Formal runs hold the repository
 # sibling `.coord/v1.5.0/locks/host-exclusive.lock` from rr_contract_init until
-# process exit. RR_HOST_EXCLUSIVE_LOCK may select another absolute path. A job
-# runner that already owns that exact lock must export RR_HOST_EXCLUSIVE_FD;
-# the FD target, inode, and non-blocking flock ownership are all revalidated.
+# process exit. RR_HOST_EXCLUSIVE_LOCK may select another absolute path. Formal
+# scripts are the sole lock owners: an outer systemd/tmux runner must not take
+# this lock first. A dedicated keeper holds the only lock FD so benchmark child
+# processes cannot extend lock lifetime by inheriting it. Non-contract build
+# gates may still use their own outer lock discipline.
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
     echo "formal-run-contract.sh must be sourced" >&2
@@ -25,9 +27,15 @@ declare -Ag RR_HARNESS_TREE_MANIFEST_SHA256=()
 declare -Ag RR_HARNESS_TREE_FILE_COUNTS=()
 RR_CONTRACT_FINALIZED=0
 RR_HOST_EXCLUSIVE_LOCK_PATH=
-RR_HOST_EXCLUSIVE_FD_ACTIVE=
-RR_HOST_EXCLUSIVE_LOCK_INHERITED=false
 RR_HOST_EXCLUSIVE_LOCK_DEVICE_INODE=
+RR_HOST_EXCLUSIVE_LOCK_MODE=notRequired
+RR_HOST_EXCLUSIVE_KEEPER_PID=
+RR_HOST_EXCLUSIVE_KEEPER_STARTTIME=
+RR_HOST_EXCLUSIVE_KEEPER_PARENT_PID=
+RR_HOST_EXCLUSIVE_KEEPER_PARENT_STARTTIME=
+RR_HOST_EXCLUSIVE_KEEPER_LOCK_FD=
+RR_HOST_EXCLUSIVE_KEEPER_EXE=
+RR_HOST_EXCLUSIVE_KEEPER_HELPER=
 RR_CONTRACT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
 RR_CONTRACT_SHA256=$(sha256sum -- "$RR_CONTRACT_PATH" | awk '{print $1}')
 
@@ -88,63 +96,214 @@ finally:
 PY
 }
 
-rr_contract_lock_target() {
-    local fd=$1 target observed_identity path_identity
-    [[ $fd =~ ^[0-9]+$ ]] && (( fd >= 3 )) || return 1
-    [[ -e /proc/$$/fd/$fd ]] || return 1
-    target=$(readlink -- "/proc/$$/fd/$fd" 2>/dev/null) || return 1
+rr_contract_keeper_is_exact() {
+    local current_start actual_exe
+    [[ $RR_HOST_EXCLUSIVE_KEEPER_PID =~ ^[1-9][0-9]*$ &&
+        $RR_HOST_EXCLUSIVE_KEEPER_STARTTIME =~ ^[1-9][0-9]*$ ]] || return 1
+    current_start=$(rr_pid_starttime "$RR_HOST_EXCLUSIVE_KEEPER_PID" 2>/dev/null) || return 1
+    [[ $current_start == "$RR_HOST_EXCLUSIVE_KEEPER_STARTTIME" ]] || return 1
+    actual_exe=$(readlink -f -- "/proc/$RR_HOST_EXCLUSIVE_KEEPER_PID/exe" 2>/dev/null) || return 1
+    [[ $actual_exe == "$RR_HOST_EXCLUSIVE_KEEPER_EXE" ]]
+}
+
+rr_contract_keeper_lock_target() {
+    local target observed_identity path_identity
+    rr_contract_keeper_is_exact || return 1
+    [[ $RR_HOST_EXCLUSIVE_KEEPER_LOCK_FD =~ ^[0-9]+$ ]] || return 1
+    (( RR_HOST_EXCLUSIVE_KEEPER_LOCK_FD >= 3 )) || return 1
+    [[ -e /proc/$RR_HOST_EXCLUSIVE_KEEPER_PID/fd/$RR_HOST_EXCLUSIVE_KEEPER_LOCK_FD ]] || return 1
+    target=$(readlink -- "/proc/$RR_HOST_EXCLUSIVE_KEEPER_PID/fd/$RR_HOST_EXCLUSIVE_KEEPER_LOCK_FD" \
+        2>/dev/null) || return 1
     [[ $target == "$RR_HOST_EXCLUSIVE_LOCK_PATH" ]] || return 1
-    observed_identity=$(stat -Lc '%d:%i' -- "/proc/$$/fd/$fd" 2>/dev/null) || return 1
+    observed_identity=$(stat -Lc '%d:%i' -- \
+        "/proc/$RR_HOST_EXCLUSIVE_KEEPER_PID/fd/$RR_HOST_EXCLUSIVE_KEEPER_LOCK_FD" \
+        2>/dev/null) || return 1
     [[ $observed_identity == "$RR_HOST_EXCLUSIVE_LOCK_DEVICE_INODE" ]] || return 1
     [[ -f $RR_HOST_EXCLUSIVE_LOCK_PATH && ! -L $RR_HOST_EXCLUSIVE_LOCK_PATH ]] || return 1
     path_identity=$(stat -Lc '%d:%i' -- "$RR_HOST_EXCLUSIVE_LOCK_PATH" 2>/dev/null) || return 1
-    [[ $path_identity == "$RR_HOST_EXCLUSIVE_LOCK_DEVICE_INODE" ]]
+    [[ $path_identity == "$RR_HOST_EXCLUSIVE_LOCK_DEVICE_INODE" ]] || return 1
+    rr_contract_keeper_is_exact
 }
 
 rr_contract_acquire_host_lock() {
-    local repository_parent lock_input inherited_fd
+    local repository_parent lock_input lock_parent_input lock_parent lock_basename
+    local state_dir ready_file error_file parent_start keeper_pid keeper_start
+    local attempt ready_identity ready_fd
+    [[ -z ${RR_HOST_EXCLUSIVE_FD+x} ]] ||
+        rr_contract_die "RR_HOST_EXCLUSIVE_FD is unsupported; formal scripts own a dedicated keeper" || return
+    [[ $RR_HOST_EXCLUSIVE_LOCK_MODE != dedicatedKeeper ]] ||
+        rr_contract_die "host-exclusive lock keeper is already registered" || return
     repository_parent=$(dirname -- "$RR_REPOSITORY")
     lock_input=${RR_HOST_EXCLUSIVE_LOCK:-"$repository_parent/.coord/v1.5.0/locks/host-exclusive.lock"}
     [[ $lock_input == /* ]] ||
         rr_contract_die "RR_HOST_EXCLUSIVE_LOCK must be absolute" || return
-    mkdir -p -- "$(dirname -- "$lock_input")" ||
+    lock_parent_input=$(dirname -- "$lock_input")
+    mkdir -p -- "$lock_parent_input" ||
         rr_contract_die "could not create host-exclusive lock directory" || return
+    [[ -d $lock_parent_input && ! -L $lock_parent_input ]] ||
+        rr_contract_die "host-exclusive lock directory must be a non-symlink directory" || return
+    lock_parent=$(readlink -f -- "$lock_parent_input") ||
+        rr_contract_die "could not canonicalize host-exclusive lock directory" || return
+    lock_basename=$(basename -- "$lock_input")
+    [[ $lock_input == "$lock_parent/$lock_basename" ]] ||
+        rr_contract_die "host-exclusive lock path must be canonical and contain no symlink components" || return
     [[ ! -L $lock_input ]] ||
         rr_contract_die "host-exclusive lock must not be a symlink" || return
-    : >>"$lock_input" ||
-        rr_contract_die "could not create host-exclusive lock file" || return
-    [[ -f $lock_input && ! -L $lock_input ]] ||
+    [[ ! -e $lock_input || -f $lock_input ]] ||
         rr_contract_die "host-exclusive lock must be a regular non-symlink" || return
-    RR_HOST_EXCLUSIVE_LOCK_PATH=$(readlink -f -- "$lock_input")
-    RR_HOST_EXCLUSIVE_LOCK_DEVICE_INODE=$(stat -Lc '%d:%i' -- "$lock_input")
+    RR_HOST_EXCLUSIVE_LOCK_PATH=$lock_input
 
-    inherited_fd=${RR_HOST_EXCLUSIVE_FD:-}
-    if [[ -n $inherited_fd ]]; then
-        rr_contract_lock_target "$inherited_fd" ||
-            rr_contract_die "RR_HOST_EXCLUSIVE_FD does not identify the exact host-exclusive lock" || return
-        flock -n "$inherited_fd" ||
-            rr_contract_die "inherited host-exclusive lock is not available" || return
-        RR_HOST_EXCLUSIVE_FD_ACTIVE=$inherited_fd
-        RR_HOST_EXCLUSIVE_LOCK_INHERITED=true
-    else
-        exec {RR_HOST_EXCLUSIVE_FD_ACTIVE}>"$RR_HOST_EXCLUSIVE_LOCK_PATH" ||
-            rr_contract_die "could not open host-exclusive lock" || return
-        rr_contract_lock_target "$RR_HOST_EXCLUSIVE_FD_ACTIVE" ||
-            rr_contract_die "opened host-exclusive FD has the wrong identity" || return
-        flock -n "$RR_HOST_EXCLUSIVE_FD_ACTIVE" ||
-            rr_contract_die "host-exclusive lock is already held" || return
-        RR_HOST_EXCLUSIVE_LOCK_INHERITED=false
+    RR_HOST_EXCLUSIVE_KEEPER_HELPER="$RR_REPOSITORY/scripts/host-exclusive-lock-keeper.py"
+    rr_register_harness_file "$RR_HOST_EXCLUSIVE_KEEPER_HELPER" || return
+    RR_HOST_EXCLUSIVE_KEEPER_EXE=$(readlink -f -- "$(command -v python3)") ||
+        rr_contract_die "could not resolve python3 for host lock keeper" || return
+    parent_start=$(rr_pid_starttime "$$") ||
+        rr_contract_die "could not identify host lock keeper parent" || return
+    RR_HOST_EXCLUSIVE_KEEPER_PARENT_PID=$$
+    RR_HOST_EXCLUSIVE_KEEPER_PARENT_STARTTIME=$parent_start
+
+    state_dir=$(mktemp -d "$lock_parent/.host-lock-keeper.$$.XXXXXXXX") ||
+        rr_contract_die "could not create private host lock keeper state" || return
+    chmod 700 -- "$state_dir"
+    ready_file="$state_dir/ready.json"
+    error_file="$state_dir/stderr"
+    "$RR_HOST_EXCLUSIVE_KEEPER_EXE" "$RR_HOST_EXCLUSIVE_KEEPER_HELPER" \
+        --lock "$RR_HOST_EXCLUSIVE_LOCK_PATH" --parent-pid "$$" \
+        --parent-starttime "$parent_start" --ready "$ready_file" \
+        </dev/null >/dev/null 2>"$error_file" &
+    keeper_pid=$!
+    RR_HOST_EXCLUSIVE_KEEPER_PID=$keeper_pid
+    for attempt in $(seq 1 50); do
+        keeper_start=$(rr_pid_starttime "$keeper_pid" 2>/dev/null || true)
+        [[ -n $keeper_start ]] && break
+        kill -0 "$keeper_pid" 2>/dev/null || break
+        sleep 0.01
+    done
+    RR_HOST_EXCLUSIVE_KEEPER_STARTTIME=$keeper_start
+    if [[ -z $keeper_start ]]; then
+        wait "$keeper_pid" 2>/dev/null || true
+        [[ ! -s $error_file ]] || sed -n '1,8p' "$error_file" >&2
+        rm -f -- "$ready_file" "$error_file"
+        rmdir -- "$state_dir" 2>/dev/null || true
+        rr_contract_die "host-exclusive lock keeper exited before identity registration" || return
     fi
+
+    for attempt in $(seq 1 100); do
+        [[ -f $ready_file && ! -L $ready_file ]] && break
+        rr_contract_keeper_is_exact || break
+        sleep 0.05
+    done
+    if [[ ! -f $ready_file || -L $ready_file ]]; then
+        rr_contract_stop_host_lock_keeper
+        [[ ! -s $error_file ]] || sed -n '1,8p' "$error_file" >&2
+        rm -f -- "$ready_file" "$error_file"
+        rmdir -- "$state_dir" 2>/dev/null || true
+        rr_contract_die "host-exclusive lock keeper did not become ready" || return
+    fi
+
+    if ! jq -e --arg lock "$RR_HOST_EXCLUSIVE_LOCK_PATH" \
+        --arg parent_start "$parent_start" --arg keeper_start "$keeper_start" \
+        --argjson parent_pid "$$" --argjson keeper_pid "$keeper_pid" \
+        '.schemaVersion == 1 and .mode == "dedicatedKeeper" and
+         .lockPath == $lock and .parentPid == $parent_pid and
+         .parentStarttime == $parent_start and .keeperPid == $keeper_pid and
+         .keeperStarttime == $keeper_start and
+         (.lockDevice | type == "number") and (.lockInode | type == "number") and
+         (.lockFd | type == "number" and . >= 3) and
+         (.lockDeviceInode | type == "string")' "$ready_file" >/dev/null; then
+        rr_contract_stop_host_lock_keeper
+        rm -f -- "$ready_file" "$error_file"
+        rmdir -- "$state_dir" 2>/dev/null || true
+        rr_contract_die "host-exclusive lock keeper returned an invalid identity" || return
+    fi
+    ready_identity=$(jq -er '.lockDeviceInode' "$ready_file")
+    ready_fd=$(jq -er '.lockFd | tostring' "$ready_file")
+    RR_HOST_EXCLUSIVE_LOCK_DEVICE_INODE=$ready_identity
+    RR_HOST_EXCLUSIVE_KEEPER_LOCK_FD=$ready_fd
+    RR_HOST_EXCLUSIVE_LOCK_MODE=dedicatedKeeper
+    rm -f -- "$ready_file" "$error_file"
+    rmdir -- "$state_dir" || {
+        rr_contract_stop_host_lock_keeper
+        rr_contract_die "could not remove private host lock keeper state" || return
+    }
+    rr_contract_keeper_lock_target || {
+        rr_contract_stop_host_lock_keeper
+        rr_contract_die "host-exclusive lock keeper FD has the wrong identity" || return
+    }
 }
 
 rr_contract_verify_host_lock() {
     (( RR_EXPLORATORY == 1 )) && return 0
-    [[ -n $RR_HOST_EXCLUSIVE_FD_ACTIVE ]] ||
-        rr_contract_die "formal run has no host-exclusive lock FD" || return 1
-    rr_contract_lock_target "$RR_HOST_EXCLUSIVE_FD_ACTIVE" ||
-        rr_contract_die "host-exclusive lock FD identity changed during run" || return 1
-    flock -n "$RR_HOST_EXCLUSIVE_FD_ACTIVE" ||
-        rr_contract_die "host-exclusive lock is no longer held" || return 1
+    [[ $RR_HOST_EXCLUSIVE_LOCK_MODE == dedicatedKeeper ]] ||
+        rr_contract_die "formal run has no dedicated host-exclusive lock keeper" || return 1
+    rr_contract_keeper_lock_target ||
+        rr_contract_die "host-exclusive lock keeper identity changed during run" || return 1
+}
+
+rr_contract_stop_host_lock_keeper() {
+    local attempt
+    [[ -n $RR_HOST_EXCLUSIVE_KEEPER_PID ]] || return 0
+    if rr_contract_keeper_is_exact; then
+        kill -TERM "$RR_HOST_EXCLUSIVE_KEEPER_PID" 2>/dev/null || true
+    fi
+    for attempt in $(seq 1 50); do
+        rr_contract_keeper_is_exact || break
+        sleep 0.02
+    done
+    if rr_contract_keeper_is_exact; then
+        kill -KILL "$RR_HOST_EXCLUSIVE_KEEPER_PID" 2>/dev/null || true
+    fi
+    wait "$RR_HOST_EXCLUSIVE_KEEPER_PID" 2>/dev/null || true
+    rr_contract_keeper_is_exact && {
+        rr_contract_die "could not stop exact host-exclusive lock keeper"
+        return 1
+    }
+    return 0
+}
+
+# Standalone formal harness API. This deliberately performs only lock ownership;
+# callers remain responsible for their own immutable-input and output contracts.
+# It is safe to use after sourcing this file without calling rr_contract_init.
+rr_host_lock_acquire() {
+    local repository=${1:?repository is required} explicit_lock=${2:-}
+    RR_REPOSITORY=$(readlink -f -- "$repository") ||
+        rr_contract_die "could not canonicalize host lock repository" || return
+    [[ -d $RR_REPOSITORY ]] ||
+        rr_contract_die "host lock repository is not a directory" || return
+    RR_EXPLORATORY=0
+    if [[ -n $explicit_lock ]]; then
+        [[ $explicit_lock == /* ]] ||
+            rr_contract_die "standalone host lock path must be absolute" || return
+        RR_HOST_EXCLUSIVE_LOCK=$explicit_lock
+    fi
+    rr_contract_acquire_host_lock
+}
+
+rr_host_lock_verify() {
+    rr_contract_verify_host_lock
+}
+
+rr_host_lock_stop() {
+    rr_contract_stop_host_lock_keeper
+}
+
+rr_host_lock_metadata_json() {
+    local helper_sha=
+    rr_contract_verify_host_lock || return
+    [[ -z $RR_HOST_EXCLUSIVE_KEEPER_HELPER ]] ||
+        helper_sha=${RR_HARNESS_SHA256[$RR_HOST_EXCLUSIVE_KEEPER_HELPER]:-}
+    jq -n --arg path "$RR_HOST_EXCLUSIVE_LOCK_PATH" \
+        --arg identity "$RR_HOST_EXCLUSIVE_LOCK_DEVICE_INODE" \
+        --arg mode "$RR_HOST_EXCLUSIVE_LOCK_MODE" \
+        --arg keeper_pid "$RR_HOST_EXCLUSIVE_KEEPER_PID" \
+        --arg keeper_start "$RR_HOST_EXCLUSIVE_KEEPER_STARTTIME" \
+        --arg parent_pid "$RR_HOST_EXCLUSIVE_KEEPER_PARENT_PID" \
+        --arg parent_start "$RR_HOST_EXCLUSIVE_KEEPER_PARENT_STARTTIME" \
+        --arg helper "$RR_HOST_EXCLUSIVE_KEEPER_HELPER" --arg helper_sha "$helper_sha" \
+        '{path:$path,deviceInode:$identity,mode:$mode,
+          keeperPid:($keeper_pid | tonumber),keeperStarttime:$keeper_start,
+          parentPid:($parent_pid | tonumber),parentStarttime:$parent_start,
+          keeperHelper:{path:$helper,sha256:$helper_sha},required:true}'
 }
 
 # rr_contract_init REPOSITORY SCRIPT_NAME DEFAULT_OUTPUT_PARENT PORT_BLOCK_WIDTH
@@ -153,7 +312,7 @@ rr_contract_init() {
     local output_input temporary_input filesystem_type
 
     local program
-    for program in git jq python3 readelf readlink sha256sum stat; do
+    for program in git jq mktemp python3 readelf readlink sha256sum stat; do
         command -v "$program" >/dev/null ||
             rr_contract_die "required identity tool is unavailable: $program" || return
     done
@@ -164,6 +323,8 @@ rr_contract_init() {
     RR_EXPLORATORY=${EXPLORATORY:-0}
     [[ $RR_EXPLORATORY == 0 || $RR_EXPLORATORY == 1 ]] ||
         rr_contract_die "EXPLORATORY must be 0 or 1" || return
+    [[ -z ${RR_HOST_EXCLUSIVE_FD+x} ]] ||
+        rr_contract_die "RR_HOST_EXCLUSIVE_FD is unsupported; formal scripts own a dedicated keeper" || return
 
     RR_HARNESS_COMMIT=$(git -C "$RR_REPOSITORY" rev-parse --verify 'HEAD^{commit}' \
         2>/dev/null || true)
@@ -506,9 +667,17 @@ rr_contract_binary_json() {
 }
 
 rr_write_contract_metadata() {
-    local phase=${1:-preflight} binary_json harness_json tree_json path
+    local phase=${1:-preflight} binary_json harness_json tree_json host_lock_json path
     rr_contract_verify_host_lock || return
     binary_json=$(rr_contract_binary_json)
+    if [[ $RR_EXPLORATORY == 0 ]]; then
+        host_lock_json=$(rr_host_lock_metadata_json) || return
+    else
+        host_lock_json='{"path":"","deviceInode":"","mode":"notRequired",
+          "keeperPid":null,"keeperStarttime":null,"parentPid":null,
+          "parentStarttime":null,"keeperHelper":{"path":"","sha256":""},
+          "required":false}'
+    fi
     harness_json=$(for path in "${RR_HARNESS_FILES[@]}"; do
         jq -cn --arg path "$path" --arg sha "${RR_HARNESS_SHA256[$path]}" \
             '{path:$path,sha256:$sha}'
@@ -526,10 +695,7 @@ rr_write_contract_metadata() {
         --arg script "$RR_SCRIPT" --arg script_sha "$RR_SCRIPT_SHA256" \
         --arg contract "$RR_CONTRACT_PATH" --arg contract_sha "$RR_CONTRACT_SHA256" \
         --arg harness_commit "$RR_HARNESS_COMMIT" --argjson binaries "$binary_json" \
-        --arg host_lock_path "$RR_HOST_EXCLUSIVE_LOCK_PATH" \
-        --arg host_lock_fd "$RR_HOST_EXCLUSIVE_FD_ACTIVE" \
-        --arg host_lock_identity "$RR_HOST_EXCLUSIVE_LOCK_DEVICE_INODE" \
-        --argjson host_lock_inherited "$RR_HOST_EXCLUSIVE_LOCK_INHERITED" \
+        --argjson host_lock "$host_lock_json" \
         --argjson harness_dirty "$RR_HARNESS_TRACKED_DIRTY" \
         --argjson harness_files "$harness_json" --argjson harness_trees "$tree_json" \
         --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -538,11 +704,7 @@ rr_write_contract_metadata() {
           script:{path:$script,sha256:$script_sha,harnessCommit:$harness_commit,
                   trackedDirty:($harness_dirty == 1)},
           contract:{path:$contract,sha256:$contract_sha},
-          hostExclusiveLock:{path:$host_lock_path,
-            fd:(if $host_lock_fd == "" then null else ($host_lock_fd | tonumber) end),
-            deviceInode:(if $host_lock_identity == "" then null else $host_lock_identity end),
-            inherited:$host_lock_inherited,
-            required:($exploratory == 0)},
+          hostExclusiveLock:$host_lock,
           harnessFiles:$harness_files,harnessSourceTrees:$harness_trees,
           binaries:$binaries,recordedUtc:$date}' \
         >"$RR_OUT_DIR/run-contract.json"
@@ -596,10 +758,11 @@ rr_finalize_contract() {
 # inputs at actual shell exit: preserve an existing failure, otherwise upgrade
 # a successful run when verification fails.
 rr_contract_verify_on_exit() {
-    local original_status=$1 verify_status=0
+    local original_status=$1 verify_status=0 keeper_status=0
     rr_verify_registered_files || verify_status=1
+    rr_contract_stop_host_lock_keeper || keeper_status=1
     if (( original_status != 0 )); then
         return "$original_status"
     fi
-    return "$verify_status"
+    (( verify_status == 0 && keeper_status == 0 ))
 }
