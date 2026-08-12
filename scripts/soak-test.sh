@@ -262,12 +262,14 @@ verify_one_mib_download() {
 # -------------------------------------------------------------------------
 distributed_payload_sha256=$(sha256sum "$work/payload-1.bin" | awk '{print $1}')
 
-# Handoff: split the cover target's Certificate over enough TLS records to
-# create a fifth positional encrypted record.  Cover Flight maps that fifth
-# position to its fake NewSessionTicket ApplicationData, consuming server
-# application sequence zero before Vision begins. A byte-exact download through the generated
+# Handoff: keep the cover's four standard TLS 1.3 handshake records intact,
+# then use a loopback wire shim to append one opaque fifth ApplicationData
+# record in the same write. Cover Flight maps that fifth position to its fake
+# NewSessionTicket ApplicationData, consuming server application sequence zero
+# before Vision begins. A byte-exact download through the generated
 # LINE -> sealed HND1 transfer -> LANDING topology then proves the first
 # visible response resumed and decrypted at sequence one.
+handoff_cover_upstream_port=$(free_port)
 handoff_cover_port=$(free_port)
 handoff_line_port=$(free_port)
 handoff_landing_port=$(free_port)
@@ -292,11 +294,83 @@ openssl x509 -req -sha256 -days 1 -in "$work/handoff-cover.csr" \
 openssl verify -CAfile "$work/handoff-cover-ca.crt" -verify_hostname localhost \
     "$work/handoff-cover.crt" >"$out_dir/handoff-cover-certificate-verify.log"
 start_logged "$out_dir/handoff-cover-trace.log" openssl s_server \
-    -accept "127.0.0.1:$handoff_cover_port" -www -ign_eof -tls1_3 \
+    -accept "127.0.0.1:$handoff_cover_upstream_port" -www -ign_eof -tls1_3 \
     -cert "$work/handoff-cover.crt" -key "$work/handoff-cover.key" \
-    -alpn 'h2,http/1.1' -max_send_frag 512 -trace -msg -state
-handoff_cover_pid=$last_pid
-wait_port "$handoff_cover_port" "$handoff_cover_pid"
+    -alpn 'h2,http/1.1' -trace -msg -state
+handoff_cover_upstream_pid=$last_pid
+wait_port "$handoff_cover_upstream_port" "$handoff_cover_upstream_pid"
+start_logged "$out_dir/handoff-cover-shape-proxy.log" python3 -u - \
+    "$handoff_cover_port" "$handoff_cover_upstream_port" <<'PY'
+import json
+import socket
+import sys
+import threading
+
+listen_port = int(sys.argv[1])
+upstream_port = int(sys.argv[2])
+fake_fifth = b"\x17\x03\x03\x00\x86" + bytes(134)
+
+
+def read_exact(sock, length):
+    output = bytearray()
+    while len(output) < length:
+        chunk = sock.recv(length - len(output))
+        if not chunk:
+            raise EOFError("TLS record truncated")
+        output.extend(chunk)
+    return bytes(output)
+
+
+def read_record(sock):
+    header = read_exact(sock, 5)
+    length = int.from_bytes(header[3:5], "big")
+    if length == 0 or length > 16640:
+        raise ValueError(f"invalid TLS record length: {length}")
+    return header + read_exact(sock, length)
+
+
+def handle(client):
+    try:
+        client.settimeout(2)
+        client_hello = read_record(client)
+        with socket.create_connection(("127.0.0.1", upstream_port), timeout=2) as upstream:
+            upstream.settimeout(5)
+            upstream.sendall(client_hello)
+            response = []
+            encrypted_wire_lengths = []
+            while len(encrypted_wire_lengths) < 4:
+                record = read_record(upstream)
+                response.append(record)
+                if record[0] == 0x17:
+                    encrypted_wire_lengths.append(len(record))
+                if len(response) > 8:
+                    raise ValueError("cover emitted too many records before its fourth encrypted record")
+            client.sendall(b"".join(response) + fake_fifth)
+            print(json.dumps({
+                "event": "flight_shaped",
+                "upstreamEncryptedWireLengths": encrypted_wire_lengths,
+                "appendedWireLength": len(fake_fifth),
+                "singleWriteBytes": sum(map(len, response)) + len(fake_fifth),
+            }, separators=(",", ":")), flush=True)
+    except (EOFError, TimeoutError, ConnectionError, OSError, ValueError) as error:
+        print(json.dumps({
+            "event": "connection_ignored",
+            "error": type(error).__name__,
+        }, separators=(",", ":")), flush=True)
+    finally:
+        client.close()
+
+
+with socket.socket() as listener:
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", listen_port))
+    listener.listen(16)
+    while True:
+        connection, _ = listener.accept()
+        threading.Thread(target=handle, args=(connection,), daemon=True).start()
+PY
+handoff_cover_proxy_pid=$last_pid
+wait_port "$handoff_cover_port" "$handoff_cover_proxy_pid"
 
 "$rust_bin" config generate handoff \
     --listen 127.0.0.1 --port "$handoff_line_port" \
@@ -332,34 +406,29 @@ wait_log_event "$out_dir/handoff-line.log" '"event":"connection_completed"'
 stop_pid "$handoff_xray_pid"
 stop_pid "$handoff_line_pid"
 stop_pid "$handoff_landing_pid"
-stop_pid "$handoff_cover_pid"
-handoff_encrypted_handshake_records=$(python3 - \
-    "$out_dir/handoff-cover-trace.log" <<'PY'
+stop_pid "$handoff_cover_proxy_pid"
+stop_pid "$handoff_cover_upstream_pid"
+handoff_shape_events=$(python3 - \
+    "$out_dir/handoff-cover-shape-proxy.log" <<'PY'
+import json
 from pathlib import Path
 import sys
 
-lines = Path(sys.argv[1]).read_text(errors="replace").splitlines()
 count = 0
-for index, line in enumerate(lines):
-    if not line.lstrip().startswith(">>> TLS 1.2, RecordHeader"):
+for line in Path(sys.argv[1]).read_text(errors="replace").splitlines():
+    try:
+        event = json.loads(line)
+    except json.JSONDecodeError:
         continue
-    boundary = len(lines)
-    for cursor in range(index + 1, len(lines)):
-        if lines[cursor].lstrip().startswith(">>> TLS 1.2, RecordHeader"):
-            boundary = cursor
-            break
-    block = [item.strip() for item in lines[index + 1:boundary]]
-    if not any(item.startswith("17 03 03") for item in block):
-        continue
-    for cursor, item in enumerate(block[:-1]):
-        if item.startswith(">>> TLS 1.2, InnerContent") and block[cursor + 1] == "16":
-            count += 1
-            break
+    if (event.get("event") == "flight_shaped"
+            and len(event.get("upstreamEncryptedWireLengths", [])) == 4
+            and event.get("appendedWireLength") == 139):
+        count += 1
 print(count)
 PY
 )
-(( handoff_encrypted_handshake_records >= 5 )) || {
-    echo "Handoff cover emitted only $handoff_encrypted_handshake_records encrypted handshake records; need at least five" >&2
+(( handoff_shape_events >= 1 )) || {
+    echo "Handoff cover shim did not append a fifth 139-byte record" >&2
     exit 1
 }
 
@@ -407,15 +476,15 @@ stop_pid "$nxr_line_pid"
 stop_pid "$nxr_landing_pid"
 
 jq -n --arg payloadSha256 "$distributed_payload_sha256" \
-    --argjson handoffEncryptedRecords "$handoff_encrypted_handshake_records" \
+    --argjson handoffShapeEvents "$handoff_shape_events" \
     --arg handoffLineConfigSha256 "$(sha256sum "$work/handoff-line.json" | awk '{print $1}')" \
     --arg handoffLandingConfigSha256 "$(sha256sum "$work/handoff-landing.json" | awk '{print $1}')" \
     --arg nxrLineConfigSha256 "$(sha256sum "$work/nxr-line.json" | awk '{print $1}')" \
     --arg nxrLandingConfigSha256 "$(sha256sum "$work/nxr-landing.json" | awk '{print $1}')" \
     '{schemaVersion:1,payloadBytes:1048576,payloadSha256:$payloadSha256,
       handoffSeq1:{attempts:1,successes:1,fakeNstExpected:true,
-        coverServerEncryptedHandshakeRecords:$handoffEncryptedRecords,
-        evidence:{coverTrace:"handoff-cover-trace.log",lineLog:"handoff-line.log",
+        coverShapeEvents:$handoffShapeEvents,appendedWireLength:139,
+        evidence:{coverTrace:"handoff-cover-trace.log",shapeProxyLog:"handoff-cover-shape-proxy.log",lineLog:"handoff-line.log",
           landingLog:"handoff-landing.log"},lineConfigSha256:$handoffLineConfigSha256,
         landingConfigSha256:$handoffLandingConfigSha256},
       nxrByteIntegrity:{attempts:1,successes:1,lineLog:"nxr-line.log",
@@ -531,7 +600,8 @@ ok = (
     and distributed.get("handoffSeq1", {}).get("attempts") == 1
     and distributed.get("handoffSeq1", {}).get("successes") == 1
     and distributed.get("handoffSeq1", {}).get("fakeNstExpected") is True
-    and distributed.get("handoffSeq1", {}).get("coverServerEncryptedHandshakeRecords", 0) >= 5
+    and distributed.get("handoffSeq1", {}).get("coverShapeEvents", 0) >= 1
+    and distributed.get("handoffSeq1", {}).get("appendedWireLength") == 139
     and distributed.get("nxrByteIntegrity", {}).get("attempts") == 1
     and distributed.get("nxrByteIntegrity", {}).get("successes") == 1
 )
