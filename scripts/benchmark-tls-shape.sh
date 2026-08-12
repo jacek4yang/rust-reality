@@ -628,6 +628,14 @@ jq -n --slurpfile rust "$work/rust.raw.json" \
     ($public_key | rtrimstr("\n")) as $client_public_key |
     {log:{loglevel:"warning"},inbounds:[{listen:"127.0.0.1",port:$socks_port,protocol:"socks",settings:{auth:"noauth",udp:false}}],outbounds:[{protocol:"vless",settings:{vnext:[{address:"127.0.0.1",port:$server_port,users:[{id:$uuid,encryption:"none",flow:"xtls-rprx-vision"}]}]},streamSettings:{network:"tcp",security:"reality",realitySettings:{fingerprint:"chrome",serverName:"localhost",publicKey:$client_public_key,shortId:$short_id,spiderX:"/"}}}]}' \
     >"$work/xray-client.json"
+jq --arg target "127.0.0.1:$record_delay_port" \
+    --arg cache "$work/assets-record-delay" \
+    '.log.level="debug" | .assets.cacheDirectory=$cache |
+     .inbounds[0].streamSettings.realitySettings.target=$target' \
+    "$work/rust.raw.json" >"$work/rust-record-delay.json"
+jq --argjson server_port "$rust_port" \
+    '.outbounds[0].settings.vnext[0].port=$server_port' \
+    "$work/xray-client.json" >"$work/xray-record-delay.json"
 jq -n --slurpfile rust "$work/rust.raw.json" --argjson port "$xray_server_port" \
     --arg target "127.0.0.1:$cover_port" \
     '($rust[0].inbounds[0].settings.clients[0].id) as $uuid |
@@ -896,6 +904,156 @@ jq -e '.ok == true and .caseCount == 15 and
     "$output_dir/record-delay-gate.json" >/dev/null ||
     die 'TLS record-delay/NST-probe gate failed'
 
+mkdir "$output_dir/record-delay-e2e"
+e2e_case_files=()
+for delay_ms in 0 20 50 100 200; do
+    for probe_case in already-buffered absent-would-block; do
+        case_id=$(printf 'delay-%03d-%s' "$delay_ms" "$probe_case")
+        case_dir="$output_dir/record-delay-e2e/$case_id"
+        mkdir "$case_dir"
+        e2e_case_files+=("$case_dir/evidence.json")
+        emit_ccs=1
+        python3 "$RECORD_DELAY_FIXTURE" serve-cover \
+            --listen-port "$record_delay_port" --delay-ms "$delay_ms" \
+            --probe-case "$probe_case" --emit-ccs "$emit_ccs" \
+            --max-accepted 1 --absolute-timeout-seconds 15 \
+            --output "$case_dir/fixture.json" \
+            >"$case_dir/fixture.log" 2>&1 &
+        fixture_pid=$!
+        register_pid "$fixture_pid" "$(command -v python3)"
+        wait_log "$case_dir/fixture.log" '"event": "READY"'
+
+        "${proxy_free_env[@]}" "$rust_binary" serve \
+            --config "$work/rust-record-delay.json" \
+            >"$case_dir/candidate.log" 2>&1 &
+        candidate_pid=$!
+        register_pid "$candidate_pid" "$rust_binary"
+        wait_log "$case_dir/candidate.log" 'listener_started'
+        "${proxy_free_env[@]}" "$xray_binary" run \
+            -config "$work/xray-record-delay.json" \
+            >"$case_dir/xray.log" 2>&1 &
+        delay_xray_pid=$!
+        register_pid "$delay_xray_pid" "$xray_binary"
+        wait_port "$socks_port"
+        "${proxy_free_env[@]}" curl --fail --silent --show-error \
+            --socks5-hostname "127.0.0.1:$socks_port" --max-time 15 \
+            "http://127.0.0.1:$origin_port/health.txt" \
+            --output "$case_dir/payload.bin"
+        cmp -s "$work/health.txt" "$case_dir/payload.bin" ||
+            die "record-delay E2E payload differed: $case_id"
+        wait_log "$case_dir/candidate.log" 'connection_completed'
+        stop_pid "$delay_xray_pid"
+        stop_pid "$candidate_pid"
+        wait "$fixture_pid"
+        unset 'active_pids[$fixture_pid]'
+
+        python3 - "$case_id" "$delay_ms" "$probe_case" \
+            "$case_dir/fixture.json" "$case_dir/candidate.log" \
+            "$case_dir/payload.bin" "$work/health.txt" \
+            "$rust_actual_sha256" "${RR_BINARY_SOURCE_COMMITS[rust-reality]}" \
+            "$case_dir/evidence.json" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+(
+    case_id,
+    delay_text,
+    probe_case,
+    fixture_path,
+    candidate_log_path,
+    payload_path,
+    expected_payload_path,
+    candidate_sha,
+    candidate_commit,
+    output_path,
+) = sys.argv[1:]
+
+def sha(path):
+    return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
+
+fixture = json.loads(pathlib.Path(fixture_path).read_text(encoding="utf-8"))
+events = []
+for line in pathlib.Path(candidate_log_path).read_text(encoding="utf-8").splitlines():
+    try:
+        event = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if event.get("event") == "connection_completed":
+        events.append(event)
+if len(events) != 1:
+    raise SystemExit(f"{case_id}: expected one connection_completed, got {len(events)}")
+completed = events[0]
+payload_sha = sha(payload_path)
+expected_payload_sha = sha(expected_payload_path)
+ok = (
+    fixture.get("status") == "PASS"
+    and fixture.get("expectedClassification") == probe_case
+    and completed.get("uplink_bytes", 0) > 0
+    and completed.get("downlink_bytes", 0) > 0
+    and payload_sha == expected_payload_sha
+)
+evidence = {
+    "schemaVersion": 1,
+    "gate": "tls-record-delay-real-candidate-xray-e2e",
+    "case": case_id,
+    "status": "PASS" if ok else "FAIL",
+    "delayMs": int(delay_text),
+    "classification": probe_case,
+    "topology": "Xray client -> pinned rust-reality candidate -> record-aware cover; candidate -> exact HTTP origin",
+    "candidate": {"sha256": candidate_sha, "sourceCommit": candidate_commit},
+    "fixture": fixture,
+    "candidateConnectionCompleted": completed,
+    "candidateLog": {"sha256": sha(candidate_log_path)},
+    "payload": {
+        "bytes": pathlib.Path(payload_path).stat().st_size,
+        "sha256": payload_sha,
+        "expectedSha256": expected_payload_sha,
+        "byteExact": payload_sha == expected_payload_sha,
+    },
+    "ok": ok,
+}
+pathlib.Path(output_path).write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+if not ok:
+    raise SystemExit(f"{case_id}: real candidate E2E gate failed")
+PY
+        jq -e '.ok == true and .status == "PASS" and
+            .payload.byteExact == true and
+            .candidate.sha256 == $sha and .candidate.sourceCommit == $commit and
+            .candidateConnectionCompleted.uplink_bytes > 0 and
+            .candidateConnectionCompleted.downlink_bytes > 0' \
+            --arg sha "$rust_actual_sha256" \
+            --arg commit "${RR_BINARY_SOURCE_COMMITS[rust-reality]}" \
+            "$case_dir/evidence.json" >/dev/null ||
+            die "record-delay real candidate E2E evidence failed: $case_id"
+    done
+done
+python3 - "$output_dir/record-delay-e2e-summary.json" "${e2e_case_files[@]}" <<'PY'
+import json
+import pathlib
+import sys
+
+cases = [json.loads(pathlib.Path(path).read_text(encoding="utf-8")) for path in sys.argv[2:]]
+result = {
+    "schemaVersion": 1,
+    "gate": "tls-record-delay-real-candidate-xray-e2e",
+    "caseCount": len(cases),
+    "delaysMs": sorted({case["delayMs"] for case in cases}),
+    "classifications": sorted({case["classification"] for case in cases}),
+    "cases": cases,
+    "ok": len(cases) == 10 and all(case["ok"] for case in cases),
+}
+pathlib.Path(sys.argv[1]).write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+if not result["ok"]:
+    raise SystemExit("real candidate E2E summary failed")
+PY
+jq -e '.ok == true and .caseCount == 10 and
+    .delaysMs == [0,20,50,100,200] and
+    .classifications == ["absent-would-block","already-buffered"]' \
+    "$output_dir/record-delay-e2e-summary.json" >/dev/null ||
+    die 'record-delay real candidate/Xray E2E summary failed'
+
 run_phase=summarize
 write_run_status
 summary_baseline_arguments=()
@@ -914,7 +1072,8 @@ python3 "$HELPER" summarize --identity "$output_dir/identity.json" \
     "${summary_xray_arguments[@]}" \
     --output "$output_dir/summary.json"
 jq --slurpfile record_delay "$output_dir/record-delay-gate.json" \
-    '. + {recordDelayGate:$record_delay[0]}' "$output_dir/summary.json" \
+    --slurpfile record_delay_e2e "$output_dir/record-delay-e2e-summary.json" \
+    '. + {recordDelayGate:$record_delay[0],recordDelayCandidateE2e:$record_delay_e2e[0]}' "$output_dir/summary.json" \
     >"$output_dir/summary.json.tmp"
 mv -f -- "$output_dir/summary.json.tmp" "$output_dir/summary.json"
 
