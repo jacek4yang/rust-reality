@@ -79,10 +79,13 @@ package_binary() {
     install -m 0644 "$REPO_ROOT/LICENSE-MIT" "$staging_directory/LICENSE-MIT"
     install -m 0644 "$REPO_ROOT/LICENSE-APACHE" "$staging_directory/LICENSE-APACHE"
     install -m 0644 "$REPO_ROOT/CHANGELOG.md" "$staging_directory/CHANGELOG.md"
-    install -d -m 0755 "$staging_directory/deploy" "$staging_directory/docs"
+    install -d -m 0755 "$staging_directory/deploy" \
+        "$staging_directory/docs" "$staging_directory/docs/decisions"
     install -m 0644 "$REPO_ROOT/deploy/rust-reality.service" \
         "$staging_directory/deploy/rust-reality.service"
     install -m 0644 "$REPO_ROOT"/docs/*.md "$staging_directory/docs/"
+    install -m 0644 "$REPO_ROOT"/docs/decisions/*.md \
+        "$staging_directory/docs/decisions/"
 
     tar \
         --sort=name \
