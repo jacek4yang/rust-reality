@@ -51,6 +51,32 @@ rust-reality --version
 ./scripts/build-release.sh
 ```
 
+### 发布后的双档 Xray 验收
+
+发布成功并不等于互操作验收完成。请在已发布 tag 的全新 checkout 中重新下载并
+校验四个 Release 资产，把两个二进制解压到各自独立的 mode-0700 目录，然后分别
+对下载得到的准确制品运行一次 Xray 门禁：
+
+```shell
+install -d -m 0700 release-smoke/portable release-smoke/x86-64-v3
+tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz \
+  -C release-smoke/portable
+tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz \
+  -C release-smoke/x86-64-v3
+
+RUST_REALITY_BIN="$PWD/release-smoke/portable/rust-reality" \
+  XRAY_BIN=/absolute/path/to/xray \
+  ./scripts/test-xray-interop.sh
+RUST_REALITY_BIN="$PWD/release-smoke/x86-64-v3/rust-reality" \
+  XRAY_BIN=/absolute/path/to/xray \
+  ./scripts/test-xray-interop.sh
+```
+
+每轮都会使用全新配置，证明准确的 1 MiB 传输、ML-DSA-65 一致性，以及未经修改
+Xray 的 REALITY + Vision 互操作。应在支持 x86-64-v3、外部 DNS/TCP 正常的主机
+执行；默认伪装目标不适用时用 `COVER_TARGET`/`COVER_SNI` 选择已探测的目标。任一
+档失败都属于 release no-go；不得以本地重建二进制替代下载到的制品。
+
 ## 创建服务账号和目录
 
 ```shell

@@ -17,23 +17,29 @@ readonly X86_64_V3_RUSTFLAGS="-C target-cpu=x86-64-v3"
 export RUST_REALITY_GIT_COMMIT="$GIT_COMMIT"
 export SOURCE_DATE_EPOCH
 
-build_release_tier() {
+test_and_build_release_tier() {
     local label=$1
     local target_directory=$2
     local rustflags=$3
+
+    printf 'testing %s release in %s\n' "$label" "$target_directory"
+    env -u CARGO_ENCODED_RUSTFLAGS \
+        CARGO_TARGET_DIR="$target_directory" \
+        RUSTFLAGS="$rustflags" \
+        cargo test --workspace --release --locked
 
     printf 'building %s release in %s\n' "$label" "$target_directory"
     env -u CARGO_ENCODED_RUSTFLAGS \
         CARGO_TARGET_DIR="$target_directory" \
         RUSTFLAGS="$rustflags" \
-        cargo build --release --locked
+        cargo build --workspace --release --locked
 }
 
-build_release_tier \
+test_and_build_release_tier \
     portable \
     "$PORTABLE_TARGET_DIRECTORY" \
     "$PORTABLE_RUSTFLAGS"
-build_release_tier \
+test_and_build_release_tier \
     x86-64-v3 \
     "$X86_64_V3_TARGET_DIRECTORY" \
     "$X86_64_V3_RUSTFLAGS"

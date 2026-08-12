@@ -56,6 +56,35 @@ To build instead, use the pinned toolchain and locked dependency graph:
 ./scripts/build-release.sh
 ```
 
+### Post-publication dual-tier Xray acceptance
+
+Publishing is not the final interoperability check. From a clean checkout of
+the published tag, download and verify the four release assets again, extract
+the two binaries into separate mode-0700 directories, and run the Xray gate
+once per exact downloaded tier:
+
+```shell
+install -d -m 0700 release-smoke/portable release-smoke/x86-64-v3
+tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz \
+  -C release-smoke/portable
+tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz \
+  -C release-smoke/x86-64-v3
+
+RUST_REALITY_BIN="$PWD/release-smoke/portable/rust-reality" \
+  XRAY_BIN=/absolute/path/to/xray \
+  ./scripts/test-xray-interop.sh
+RUST_REALITY_BIN="$PWD/release-smoke/x86-64-v3/rust-reality" \
+  XRAY_BIN=/absolute/path/to/xray \
+  ./scripts/test-xray-interop.sh
+```
+
+Each invocation uses a fresh configuration and proves an exact 1 MiB transfer,
+ML-DSA-65 agreement, and unmodified-Xray REALITY + Vision interoperability.
+Run it on an x86-64-v3 host with working external DNS/TCP and a cover target
+selected through `COVER_TARGET`/`COVER_SNI` if the defaults are unsuitable. A
+failure in either tier is a release no-go; do not substitute a locally rebuilt
+binary for the downloaded asset.
+
 ## Create the service account and directories
 
 ```shell
