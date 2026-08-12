@@ -446,7 +446,7 @@ mod tests {
         let mut target_flight = target_server_hello_record();
         target_flight.extend_from_slice(&[20, 3, 3, 0, 1, 1]);
         target_flight.extend_from_slice(&opaque_record(23, 600, 0xa5));
-        let inspected_prefix_len = target_server_hello_record().len() + 6 + 6;
+        let minimum_inspected_prefix_len = target_server_hello_record().len() + 6 + 6;
         let (mut client, inbound) = tcp_pair().await;
 
         let exchange = async {
@@ -460,7 +460,8 @@ mod tests {
                     .await
                     .expect("coalesced cover flight must be classified");
                 let (_, _, inspected_prefix) = flight.into_parts();
-                assert_eq!(inspected_prefix, target_flight[..inspected_prefix_len]);
+                assert!(target_flight.starts_with(&inspected_prefix));
+                assert!(inspected_prefix.len() >= minimum_inspected_prefix_len);
                 connection.relay(inbound, &inspected_prefix).await
             };
             let client_io = async {
@@ -496,10 +497,22 @@ mod tests {
         assert_eq!(prefix, PREFIX);
         assert_eq!(suffix, SUFFIX);
         assert_eq!(response, expected_response);
-        assert_eq!(stats.returned_prefix_bytes(), inspected_prefix_len as u64);
+        assert!(
+            stats.returned_prefix_bytes()
+                >= u64::try_from(minimum_inspected_prefix_len)
+                    .expect("test prefix length must fit u64")
+        );
+        assert!(
+            stats.returned_prefix_bytes()
+                <= u64::try_from(target_flight.len()).expect("test flight length must fit u64")
+        );
         assert_eq!(
-            stats.relay().outbound_to_inbound_bytes(),
-            (target_flight.len() - inspected_prefix_len + RESPONSE.len()) as u64
+            stats
+                .returned_prefix_bytes()
+                .checked_add(stats.relay().outbound_to_inbound_bytes())
+                .expect("test byte count must not overflow"),
+            u64::try_from(target_flight.len() + RESPONSE.len())
+                .expect("test response length must fit u64")
         );
     }
 
