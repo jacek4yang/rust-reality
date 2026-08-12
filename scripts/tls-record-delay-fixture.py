@@ -57,7 +57,11 @@ def fixture_records(
     records = [("server-hello", server_hello_record(session_id, cipher))]
     if ccs_present:
         records.append(("change-cipher-spec", tls_record(20, b"\x01")))
-    for position, body_len in enumerate((32, 48, 64, 80), start=1):
+    # Wire lengths [37, 838, 286, 58] are large enough for the four real
+    # generated handshake messages (EncryptedExtensions, Certificate,
+    # CertificateVerify, Finished); smaller parser-only shapes make a real
+    # candidate correctly fall back instead of completing authentication.
+    for position, body_len in enumerate((32, 833, 281, 53), start=1):
         records.append(
             (
                 f"encrypted-{position}",
