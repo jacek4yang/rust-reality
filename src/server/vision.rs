@@ -548,6 +548,7 @@ fn session_stats(uplink: DirectionStats, downlink: DirectionStats) -> VisionRela
         downlink_backend: downlink.backend.or(pair_backend),
         uplink_handoff_delay_us: uplink.handoff_delay_us,
         downlink_handoff_delay_us: downlink.handoff_delay_us,
+        handoff_server_sequence: None,
         pipe_capacity_downgraded: handed_off.and_then(RelayOutcome::pipe_downgrade).is_some()
             || uplink.pipe_downgrade
             || downlink.pipe_downgrade,
