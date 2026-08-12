@@ -29,6 +29,7 @@ padding=0
 tcp_nodelay=0
 samples=3
 base_port=39460
+xray_server_comparator=1
 output_dir=
 strace_mode=auto
 tcpdump_mode=auto
@@ -68,6 +69,10 @@ Options:
   --tcp-nodelay 0|1             Reference TCP_NODELAY (default: 0)
   --samples N                   Repetitions, 1..10 (default: 3)
   --base-port N                 Seven consecutive loopback ports (default: 39460)
+  --xray-server-comparator 0|1 Compare the replayed flight with Xray's server
+                                (default: 1). Set to 0 only when the captured
+                                ClientHello shape is unsupported by that server;
+                                Xray still generates the authenticated ClientHello.
   --output-dir PATH             Must be outside the Git worktree. Default:
                                 ../artifacts/tls-shape/CASE-UTC_TIMESTAMP
   --strace auto|required|off    Process-write capture (default: auto)
@@ -137,6 +142,8 @@ while (($#)); do
         --tcp-nodelay) need_argument "$@"; tcp_nodelay=$2; shift 2 ;;
         --samples) need_argument "$@"; samples=$2; shift 2 ;;
         --base-port) need_argument "$@"; base_port=$2; shift 2 ;;
+        --xray-server-comparator)
+            need_argument "$@"; xray_server_comparator=$2; shift 2 ;;
         --output-dir) need_argument "$@"; output_dir=$2; shift 2 ;;
         --strace) need_argument "$@"; strace_mode=$2; shift 2 ;;
         --tcpdump) need_argument "$@"; tcpdump_mode=$2; shift 2 ;;
@@ -198,11 +205,12 @@ if [[ -n $baseline_rust_binary || -n $baseline_rust_sha256 ]]; then
 fi
 
 for value in "$middlebox" "$max_fragment" "$split_fragment" "$padding" \
-    "$tcp_nodelay" "$samples" "$base_port"; do
+    "$tcp_nodelay" "$samples" "$base_port" "$xray_server_comparator"; do
     [[ $value =~ ^[0-9]+$ ]] || die "numeric option is not an unsigned integer: $value"
 done
 ((middlebox <= 1)) || die '--middlebox must be 0 or 1'
 ((tcp_nodelay <= 1)) || die '--tcp-nodelay must be 0 or 1'
+((xray_server_comparator <= 1)) || die '--xray-server-comparator must be 0 or 1'
 ((max_fragment <= 16384)) || die '--max-fragment exceeds 16384'
 ((split_fragment <= 16384)) || die '--split-fragment exceeds 16384'
 ((padding <= 16384)) || die '--padding exceeds 16384'
@@ -668,6 +676,7 @@ jq -n --slurpfile reference_self_identity "$work/reference-self-identity.json" \
     --arg baseline_rust_sha256 "$baseline_rust_actual_sha256" \
     --arg baseline_rust_version "$baseline_rust_version" \
     --arg xray_sha256 "$xray_actual_sha256" --arg xray_version "$xray_version" \
+    --argjson xray_server_comparator "$xray_server_comparator" \
     --arg ciphersuites "$ciphersuites" --arg tls_groups "$tls_groups" \
     --arg alpn "$alpn" --argjson middlebox "$middlebox" \
     --argjson max_fragment "$max_fragment" --argjson split_fragment "$split_fragment" \
@@ -682,7 +691,7 @@ jq -n --slurpfile reference_self_identity "$work/reference-self-identity.json" \
     --arg ephemeral_rust_config_sha256 "$ephemeral_rust_config_sha256" \
     --arg harness_sha256 "$harness_sha256" --arg helper_sha256 "$helper_sha256" \
     --arg reference_source_sha256 "$reference_source_sha256" \
-    '{repository:{head:$repository_head,describe:$repository_describe,dirty:$repository_dirty,role:"capture harness worktree; not proof of binary source provenance"},captureHost:{rustc:$capture_host_rustc,cc:$capture_host_cc,kernel:$kernel,cpu:$cpu},case:$case_name,reference:{path:$reference_path,sha256:$reference_sha256,requestedVersionLabel:$reference_version_label,selfIdentity:$reference_self_identity[0],selfIdentitySha256:$reference_self_identity_sha256,buildId:$reference_build_id,certificateFileSha256:$certificate_sha256},baselineRustReality:(if $baseline_present then {path:$baseline_rust_path,sha256:$baseline_rust_sha256,version:$baseline_rust_version,logging:"warn",sourceProvenance:"UNVERIFIED_BY_HARNESS"} else null end),rustReality:{role:"candidate",path:$rust_path,sha256:$rust_sha256,version:$rust_version,logging:"warn",sourceProvenance:"UNVERIFIED_BY_HARNESS"},xray:{path:$xray_path,sha256:$xray_sha256,version:$xray_version,logging:"warning",sourceProvenance:"UNVERIFIED_BY_HARNESS"},referenceOptions:{tlsVersion:"1.3-only",ciphersuites:$ciphersuites,groups:$tls_groups,alpn:$alpn,middlebox:$middlebox,maxFragment:$max_fragment,splitFragment:$split_fragment,padding:$padding,tcpNodelay:$tcp_nodelay},topology:{network:"loopback",packetCaptureInterface:"lo",ports:{cover:$cover_port,rustRealitySequentialComparators:$rust_port,captureProxy:$proxy_port,socks:$socks_port,origin:$origin_port,opensslReference:$reference_port,xrayServer:$xray_server_port}},clientHello:{source:"stock Xray chrome/uTLS",sha256:$client_hello_sha256,sharedAcrossAllComparators:true,ephemeralServerConfigSha256:$ephemeral_rust_config_sha256,ephemeralServerConfigRetained:false},tools:{strace:$strace_status,tcpdump:$tcpdump_status},harness:{entrypointSha256:$harness_sha256,helperSha256:$helper_sha256,referenceSourceSha256:$reference_source_sha256},rawCaptureNotice:"Raw ClientHello, wire, strace, and PCAP data; keep outside Git."}' \
+    '{repository:{head:$repository_head,describe:$repository_describe,dirty:$repository_dirty,role:"capture harness worktree; not proof of binary source provenance"},captureHost:{rustc:$capture_host_rustc,cc:$capture_host_cc,kernel:$kernel,cpu:$cpu},case:$case_name,reference:{path:$reference_path,sha256:$reference_sha256,requestedVersionLabel:$reference_version_label,selfIdentity:$reference_self_identity[0],selfIdentitySha256:$reference_self_identity_sha256,buildId:$reference_build_id,certificateFileSha256:$certificate_sha256},baselineRustReality:(if $baseline_present then {path:$baseline_rust_path,sha256:$baseline_rust_sha256,version:$baseline_rust_version,logging:"warn",sourceProvenance:"UNVERIFIED_BY_HARNESS"} else null end),rustReality:{role:"candidate",path:$rust_path,sha256:$rust_sha256,version:$rust_version,logging:"warn",sourceProvenance:"UNVERIFIED_BY_HARNESS"},xray:{path:$xray_path,sha256:$xray_sha256,version:$xray_version,logging:"warning",sourceProvenance:"UNVERIFIED_BY_HARNESS",serverComparatorEnabled:($xray_server_comparator == 1)},referenceOptions:{tlsVersion:"1.3-only",ciphersuites:$ciphersuites,groups:$tls_groups,alpn:$alpn,middlebox:$middlebox,maxFragment:$max_fragment,splitFragment:$split_fragment,padding:$padding,tcpNodelay:$tcp_nodelay},topology:{network:"loopback",packetCaptureInterface:"lo",ports:{cover:$cover_port,rustRealitySequentialComparators:$rust_port,captureProxy:$proxy_port,socks:$socks_port,origin:$origin_port,opensslReference:$reference_port,xrayServer:(if $xray_server_comparator == 1 then $xray_server_port else null end)}},clientHello:{source:"stock Xray chrome/uTLS",sha256:$client_hello_sha256,sharedAcrossAllComparators:true,ephemeralServerConfigSha256:$ephemeral_rust_config_sha256,ephemeralServerConfigRetained:false},tools:{strace:$strace_status,tcpdump:$tcpdump_status},harness:{entrypointSha256:$harness_sha256,helperSha256:$helper_sha256,referenceSourceSha256:$reference_source_sha256},rawCaptureNotice:"Raw ClientHello, wire, strace, and PCAP data; keep outside Git."}' \
     >"$output_dir/identity.json"
 
 run_reference_sample() {
@@ -789,9 +798,11 @@ for sample in $(seq 1 "$samples"); do
     run_phase=sample-rust-reality
     write_run_status
     run_rust_sample "$sample_dir" rust "$rust_binary"
-    run_phase=sample-xray
-    write_run_status
-    run_xray_sample "$sample_dir"
+    if ((xray_server_comparator)); then
+        run_phase=sample-xray
+        write_run_status
+        run_xray_sample "$sample_dir"
+    fi
     run_sample=
     run_sample_dir=
 done
@@ -818,11 +829,16 @@ summary_baseline_arguments=()
 if [[ $baseline_present == true ]]; then
     summary_baseline_arguments=(--baseline-rust-present)
 fi
+summary_xray_arguments=()
+if ((! xray_server_comparator)); then
+    summary_xray_arguments=(--xray-server-comparator-disabled)
+fi
 python3 "$HELPER" summarize --identity "$output_dir/identity.json" \
     --samples-root "$output_dir/samples" --sample-count "$samples" \
     --reference-port "$direct_reference_port" --rust-port "$rust_port" \
     --xray-port "$xray_server_port" --strace-status "$strace_status" \
     --tcpdump-status "$tcpdump_status" "${summary_baseline_arguments[@]}" \
+    "${summary_xray_arguments[@]}" \
     --output "$output_dir/summary.json"
 
 run_state=COMPLETE
