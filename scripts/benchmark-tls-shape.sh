@@ -6,6 +6,7 @@ set -Eeuo pipefail
 readonly REPOSITORY="$({ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."; pwd; })"
 source "$REPOSITORY/scripts/benchmark-contract.sh"
 readonly HELPER="$REPOSITORY/scripts/tls-shape-helper.py"
+readonly RECORD_DELAY_FIXTURE="$REPOSITORY/scripts/tls-record-delay-fixture.py"
 readonly REFERENCE_SOURCE="$REPOSITORY/scripts/tls-shape-reference.c"
 
 reference_server=
@@ -159,6 +160,17 @@ done
 
 if ((self_test)); then
     python3 "$HELPER" self-test
+    self_test_record_delay_directory=$(mktemp -d)
+    self_test_record_delay_output=$self_test_record_delay_directory/result.json
+    python3 "$RECORD_DELAY_FIXTURE" self-test \
+        --output "$self_test_record_delay_output"
+    jq -e '.ok == true and .caseCount == 15 and
+        .delaysMs == [0,20,50,100,200] and
+        .probeClassifications == ["already-buffered","single-probe-present","absent-would-block"] and
+        ([.cases[].prefix.byteExact] | all)' \
+        "$self_test_record_delay_output" >/dev/null
+    rm -rf -- "$self_test_record_delay_directory"
+    printf 'TLS record-delay/NST-probe socket matrix: PASS\n'
     if command -v cc >/dev/null 2>&1 && command -v pkg-config >/dev/null 2>&1 &&
         pkg-config --exists openssl; then
         self_test_directory=$(mktemp -d)
@@ -225,7 +237,7 @@ done
 [[ $tcpdump_mode =~ ^(auto|required|off)$ ]] || die 'invalid --tcpdump mode'
 
 for path in "$reference_server" "$reference_certificate" "$reference_private_key" \
-    "$rust_binary" "$xray_binary" "$HELPER"; do
+    "$rust_binary" "$xray_binary" "$HELPER" "$RECORD_DELAY_FIXTURE"; do
     [[ -f $path ]] || die "file does not exist: $path"
 done
 [[ -x $reference_server ]] || die "reference server is not executable: $reference_server"
@@ -267,6 +279,7 @@ OUT_DIR=$output_dir
 PORT_BASE=$base_port
 rr_contract_init "$REPOSITORY" benchmark-tls-shape ../artifacts/tls-shape 16
 rr_register_harness_file "$HELPER"
+rr_register_harness_file "$RECORD_DELAY_FIXTURE"
 rr_register_harness_file "$REFERENCE_SOURCE"
 rr_register_binary openssl-reference "$reference_server" "$reference_sha256" generic
 reference_server=${RR_BINARY_PATHS[openssl-reference]}
@@ -423,9 +436,11 @@ readonly socks_port=$((base_port + 3))
 readonly origin_port=$((base_port + 4))
 readonly direct_reference_port=$((base_port + 5))
 readonly xray_server_port=$((base_port + 6))
+readonly record_delay_port=$((base_port + 7))
 
 python3 - "$cover_port" "$rust_port" "$proxy_port" "$socks_port" \
-    "$origin_port" "$direct_reference_port" "$xray_server_port" <<'PY'
+    "$origin_port" "$direct_reference_port" "$xray_server_port" \
+    "$record_delay_port" <<'PY'
 import socket
 import sys
 
@@ -685,6 +700,7 @@ fi
 [[ -n $reference_build_id ]] || reference_build_id=unavailable
 harness_sha256=$(sha256sum "$0" | awk '{print $1}')
 helper_sha256=$(sha256sum "$HELPER" | awk '{print $1}')
+record_delay_fixture_sha256=$(sha256sum "$RECORD_DELAY_FIXTURE" | awk '{print $1}')
 reference_source_sha256=$(sha256sum "$REFERENCE_SOURCE" | awk '{print $1}')
 
 jq -n --slurpfile reference_self_identity "$work/reference-self-identity.json" \
@@ -722,12 +738,14 @@ jq -n --slurpfile reference_self_identity "$work/reference-self-identity.json" \
     --argjson origin_port "$origin_port" \
     --argjson reference_port "$direct_reference_port" \
     --argjson xray_server_port "$xray_server_port" \
+    --argjson record_delay_port "$record_delay_port" \
     --arg strace_status "$strace_status" --arg tcpdump_status "$tcpdump_status" \
     --arg client_hello_sha256 "$client_hello_sha256" \
     --arg ephemeral_rust_config_sha256 "$ephemeral_rust_config_sha256" \
     --arg harness_sha256 "$harness_sha256" --arg helper_sha256 "$helper_sha256" \
+    --arg record_delay_fixture_sha256 "$record_delay_fixture_sha256" \
     --arg reference_source_sha256 "$reference_source_sha256" \
-    '{repository:{head:$repository_head,describe:$repository_describe,dirty:$repository_dirty,role:"capture harness worktree; binary provenance is read from each executable"},captureHost:{rustc:$capture_host_rustc,cc:$capture_host_cc,kernel:$kernel,cpu:$cpu},case:$case_name,reference:{path:$reference_path,sha256:$reference_sha256,requestedVersionLabel:$reference_version_label,selfIdentity:$reference_self_identity[0],selfIdentitySha256:$reference_self_identity_sha256,buildId:$reference_build_id,certificateFileSha256:$certificate_sha256},baselineRustReality:(if $baseline_present then {path:$baseline_rust_path,sha256:$baseline_rust_sha256,version:$baseline_rust_version,logging:"warn",sourceCommit:$baseline_source_commit,buildId:$baseline_build_id} else null end),rustReality:{role:"candidate",path:$rust_path,sha256:$rust_sha256,version:$rust_version,logging:"warn",sourceCommit:$rust_source_commit,buildId:$rust_build_id},xray:{path:$xray_path,sha256:$xray_sha256,version:$xray_version,logging:"warning",buildId:$xray_build_id,serverComparatorEnabled:($xray_server_comparator == 1)},referenceOptions:{tlsVersion:"1.3-only",ciphersuites:$ciphersuites,groups:$tls_groups,alpn:$alpn,middlebox:$middlebox,maxFragment:$max_fragment,splitFragment:$split_fragment,padding:$padding,tcpNodelay:$tcp_nodelay},topology:{network:"loopback",packetCaptureInterface:"lo",ports:{cover:$cover_port,rustRealitySequentialComparators:$rust_port,captureProxy:$proxy_port,socks:$socks_port,origin:$origin_port,opensslReference:$reference_port,xrayServer:(if $xray_server_comparator == 1 then $xray_server_port else null end)}},clientHello:{source:"stock Xray chrome/uTLS",sha256:$client_hello_sha256,sharedAcrossAllComparators:true,ephemeralServerConfigSha256:$ephemeral_rust_config_sha256,ephemeralServerConfigRetained:false},tools:{strace:$strace_status,tcpdump:$tcpdump_status},harness:{entrypointSha256:$harness_sha256,helperSha256:$helper_sha256,referenceSourceSha256:$reference_source_sha256},rawCaptureNotice:"Raw ClientHello, wire, strace, and PCAP data; keep outside Git."}' \
+    '{repository:{head:$repository_head,describe:$repository_describe,dirty:$repository_dirty,role:"capture harness worktree; binary provenance is read from each executable"},captureHost:{rustc:$capture_host_rustc,cc:$capture_host_cc,kernel:$kernel,cpu:$cpu},case:$case_name,reference:{path:$reference_path,sha256:$reference_sha256,requestedVersionLabel:$reference_version_label,selfIdentity:$reference_self_identity[0],selfIdentitySha256:$reference_self_identity_sha256,buildId:$reference_build_id,certificateFileSha256:$certificate_sha256},baselineRustReality:(if $baseline_present then {path:$baseline_rust_path,sha256:$baseline_rust_sha256,version:$baseline_rust_version,logging:"warn",sourceCommit:$baseline_source_commit,buildId:$baseline_build_id} else null end),rustReality:{role:"candidate",path:$rust_path,sha256:$rust_sha256,version:$rust_version,logging:"warn",sourceCommit:$rust_source_commit,buildId:$rust_build_id},xray:{path:$xray_path,sha256:$xray_sha256,version:$xray_version,logging:"warning",buildId:$xray_build_id,serverComparatorEnabled:($xray_server_comparator == 1)},referenceOptions:{tlsVersion:"1.3-only",ciphersuites:$ciphersuites,groups:$tls_groups,alpn:$alpn,middlebox:$middlebox,maxFragment:$max_fragment,splitFragment:$split_fragment,padding:$padding,tcpNodelay:$tcp_nodelay},topology:{network:"loopback",packetCaptureInterface:"lo",ports:{cover:$cover_port,rustRealitySequentialComparators:$rust_port,captureProxy:$proxy_port,socks:$socks_port,origin:$origin_port,opensslReference:$reference_port,xrayServer:(if $xray_server_comparator == 1 then $xray_server_port else null end),tlsRecordDelayFixture:$record_delay_port}},clientHello:{source:"stock Xray chrome/uTLS",sha256:$client_hello_sha256,sharedAcrossAllComparators:true,ephemeralServerConfigSha256:$ephemeral_rust_config_sha256,ephemeralServerConfigRetained:false},tools:{strace:$strace_status,tcpdump:$tcpdump_status},harness:{entrypointSha256:$harness_sha256,helperSha256:$helper_sha256,recordDelayFixtureSha256:$record_delay_fixture_sha256,referenceSourceSha256:$reference_source_sha256},rawCaptureNotice:"Raw ClientHello, wire, strace, and optional PCAP data; keep outside Git."}' \
     >"$output_dir/identity.json"
 
 run_reference_sample() {
@@ -854,10 +872,25 @@ if [[ $baseline_present == true ]]; then
 fi
 verify_sha256 harness-entrypoint "$0" "$harness_sha256"
 verify_sha256 harness-helper "$HELPER" "$helper_sha256"
+verify_sha256 record-delay-fixture "$RECORD_DELAY_FIXTURE" \
+    "$record_delay_fixture_sha256"
 verify_sha256 reference-source "$REFERENCE_SOURCE" "$reference_source_sha256"
 "$reference_server" --identity >"$work/reference-self-identity.final.json"
 verify_sha256 reference-self-identity "$work/reference-self-identity.final.json" \
     "$reference_self_identity_sha256"
+
+run_phase=record-delay-gate
+write_run_status
+python3 "$RECORD_DELAY_FIXTURE" matrix --listen-port "$record_delay_port" \
+    --output "$output_dir/record-delay-gate.json"
+jq -e '.ok == true and .caseCount == 15 and
+    .delaysMs == [0,20,50,100,200] and
+    .probeClassifications == ["already-buffered","single-probe-present","absent-would-block"] and
+    ([.cases[].prefix.byteExact] | all) and
+    ([.cases[] | select(.observedClassification == "already-buffered") | .probeReads] | all(. == 0)) and
+    ([.cases[] | select(.observedClassification != "already-buffered") | .probeReads] | all(. == 1))' \
+    "$output_dir/record-delay-gate.json" >/dev/null ||
+    die 'TLS record-delay/NST-probe gate failed'
 
 run_phase=summarize
 write_run_status
@@ -876,6 +909,10 @@ python3 "$HELPER" summarize --identity "$output_dir/identity.json" \
     --tcpdump-status "$tcpdump_status" "${summary_baseline_arguments[@]}" \
     "${summary_xray_arguments[@]}" \
     --output "$output_dir/summary.json"
+jq --slurpfile record_delay "$output_dir/record-delay-gate.json" \
+    '. + {recordDelayGate:$record_delay[0]}' "$output_dir/summary.json" \
+    >"$output_dir/summary.json.tmp"
+mv -f -- "$output_dir/summary.json.tmp" "$output_dir/summary.json"
 
 rr_finalize_contract
 run_state=COMPLETE
