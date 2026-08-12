@@ -355,17 +355,17 @@ where
     }
 
     let mut wire_lens = [first_wire_len, 0, 0, 0];
-    for index in 0..4 {
+    for (index, wire_len) in wire_lens.iter_mut().enumerate() {
         if index > 0 {
-            wire_lens[index] = match flight.encrypted_header().await {
+            *wire_len = match flight.encrypted_header().await {
                 Ok(wire_len) => wire_len,
                 Err(kind) => return Err(failure(kind, flight.into_prefix())),
             };
         }
-        if let Err(kind) = flight.fill(wire_lens[index]).await {
+        if let Err(kind) = flight.fill(*wire_len).await {
             return Err(failure(kind, flight.into_prefix()));
         }
-        flight.consume(wire_lens[index]);
+        flight.consume(*wire_len);
     }
 
     let nst_wire_len = match flight.probe_session_ticket().await {
