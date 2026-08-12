@@ -7,6 +7,7 @@ set -Eeuo pipefail
 export LC_ALL=C
 
 readonly REPOSITORY="$({ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."; pwd; })"
+source "$REPOSITORY/scripts/benchmark-contract.sh"
 run_id=${RUN_ID:-}
 out_dir=${OUT_DIR:-}
 temporary_root=${TMPDIR:-}
@@ -71,6 +72,10 @@ verify_harness_inputs() {
     current_identity_sha=$(sha256sum "$baseline_identity" | awk '{print $1}')
     [[ $current_identity_sha == "$baseline_identity_sha" ]] ||
         die 'baseline identity sidecar changed during run'
+    [[ $(sha256sum "$host_contract_path" | awk '{print $1}') == "$host_contract_sha" ]] ||
+        die 'host lock contract changed during run'
+    [[ $(sha256sum "$host_helper_path" | awk '{print $1}') == "$host_helper_sha" ]] ||
+        die 'host lock keeper helper changed during run'
 }
 
 validate_perf_csv() {
@@ -170,6 +175,34 @@ PY
     printf 'benchmark-setup-rate self-test: PASS\n'
     exit 0
 fi
+
+host_lock_active=0
+host_lock_only_cleanup() {
+    local status=$? lock_status=0
+    trap - EXIT INT TERM
+    set +e
+    if (( host_lock_active )); then
+        rr_host_lock_verify || lock_status=1
+        rr_host_lock_stop || lock_status=1
+        host_lock_active=0
+    fi
+    (( status == 0 && lock_status != 0 )) && status=2
+    exit "$status"
+}
+if ! rr_host_lock_acquire "$REPOSITORY" "${RR_HOST_EXCLUSIVE_LOCK:-}"; then
+    rr_host_lock_stop >/dev/null 2>&1 || true
+    die 'could not acquire the formal host-exclusive lock'
+fi
+host_lock_active=1
+trap host_lock_only_cleanup EXIT
+host_lock_evidence=$(rr_host_lock_evidence_begin) ||
+    die 'could not record host lock preflight evidence'
+host_contract_path=$RR_CONTRACT_PATH
+host_contract_sha=$RR_CONTRACT_SHA256
+host_helper_path=$RR_HOST_EXCLUSIVE_KEEPER_HELPER
+host_helper_sha=${RR_HARNESS_SHA256[$host_helper_path]:-}
+[[ $host_contract_sha =~ ^[0-9a-f]{64}$ && $host_helper_sha =~ ^[0-9a-f]{64}$ ]] ||
+    die 'host lock contract/helper identity is incomplete'
 
 [[ $run_id =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die 'RUN_ID is required and must be one safe component'
 for name in OUT_DIR TMPDIR RUST_REALITY_BASELINE_BIN RUST_REALITY_BIN XRAY_BIN RUST_REALITY_BASELINE_IDENTITY; do
@@ -301,14 +334,35 @@ stop_tracked() {
     done
 }
 cleanup() {
-    local status=$? index pid
+    local status=$? index pid lock_status=0 publication_status=0
     trap - EXIT INT TERM
     set +e
     for ((index=${#tracked_pids[@]} - 1; index >= 0; index--)); do
         pid=${tracked_pids[index]}
         [[ -n $pid ]] && stop_tracked "$pid"
     done
+    if (( host_lock_active )); then
+        (( status != 0 )) || rr_host_lock_verify || lock_status=1
+        rr_host_lock_stop || lock_status=1
+        host_lock_active=0
+    fi
+    if (( status == 0 && lock_status == 0 )); then
+        [[ -f $out_dir/.environment.complete.json && ! -L $out_dir/.environment.complete.json ]] ||
+            publication_status=1
+        if (( publication_status == 0 )); then
+            mv -- "$out_dir/.environment.complete.json" "$out_dir/environment.json" ||
+                publication_status=1
+        fi
+        if (( publication_status == 0 )); then
+            rr_write_success_marker "$out_dir/completion.json" \
+                "$out_dir/environment.json" "$run_id" benchmark-setup-rate ||
+                publication_status=1
+        fi
+        (( publication_status != 0 )) || printf 'setup ABBA complete: %s\n' "$out_dir"
+    fi
+    rm -f -- "$out_dir/.environment.complete.json"
     if [[ -d $work && $work == "$temporary_root"/rust-reality-setup-rate.* ]]; then rm -rf -- "$work"; fi
+    (( status == 0 && (lock_status != 0 || publication_status != 0) )) && status=2
     exit "$status"
 }
 trap cleanup EXIT
@@ -428,10 +482,11 @@ jq -n --arg runId "$run_id" --arg startedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg baselineBin "$baseline_bin" --arg baselineSha "$baseline_sha" --arg baselineBuildId "$baseline_build_id" --arg baselineCommit "$baseline_commit" --arg baselineIdentity "$baseline_identity" --arg baselineIdentitySha "$baseline_identity_sha" \
     --arg candidateBin "$candidate_bin" --arg candidateSha "$candidate_sha" --arg candidateBuildId "$candidate_build_id" --arg candidateCommit "$candidate_commit" \
     --arg scriptPath "$script_path" --arg scriptSha "$script_sha" --arg benchOriginTree "$bench_origin_tree" --arg benchOriginManifest "$bench_origin_manifest_sha" --argjson benchOriginFiles "$bench_origin_file_count" \
+    --arg contractPath "$host_contract_path" --arg contractSha "$host_contract_sha" --arg helperPath "$host_helper_path" --arg helperSha "$host_helper_sha" --argjson hostLock "$host_lock_evidence" \
     --arg xrayBin "$xray_bin" --arg xraySha "$xray_sha" --arg xrayBuildId "$xray_build_id" \
     --arg repositoryHead "$repository_head" --argjson repositoryDirty "$repository_dirty" --arg mode "$measure_mode" --arg concurrencies "$concurrencies" --argjson blocks "$blocks" --argjson samples "$samples" --argjson conns "$connections" \
     --argjson portBase "$port_base" --argjson portCount "$port_count" \
-    '{schemaVersion:2,runId:$runId,startedAt:$startedAt,repository:{head:$repositoryHead,dirty:$repositoryDirty},method:"balanced block ABBA",blocks:$blocks,samplesPerSlot:$samples,connectionsPerSample:$conns,concurrencies:$concurrencies,measureMode:$mode,ports:{address:"127.0.0.1",base:$portBase,count:$portCount},baseline:{path:$baselineBin,sha256:$baselineSha,buildId:$baselineBuildId,commit:$baselineCommit,identity:{path:$baselineIdentity,sha256:$baselineIdentitySha}},candidate:{path:$candidateBin,sha256:$candidateSha,buildId:$candidateBuildId,commit:$candidateCommit},harness:{entrypoint:{path:$scriptPath,sha256:$scriptSha},benchOrigin:{path:$benchOriginTree,manifestSha256:$benchOriginManifest,fileCount:$benchOriginFiles}},xray:{path:$xrayBin,sha256:$xraySha,buildId:$xrayBuildId}}' >"$out_dir/environment.json"
+    '{schemaVersion:2,runId:$runId,startedAt:$startedAt,repository:{head:$repositoryHead,dirty:$repositoryDirty},method:"balanced block ABBA",blocks:$blocks,samplesPerSlot:$samples,connectionsPerSample:$conns,concurrencies:$concurrencies,measureMode:$mode,ports:{address:"127.0.0.1",base:$portBase,count:$portCount},baseline:{path:$baselineBin,sha256:$baselineSha,buildId:$baselineBuildId,commit:$baselineCommit,identity:{path:$baselineIdentity,sha256:$baselineIdentitySha}},candidate:{path:$candidateBin,sha256:$candidateSha,buildId:$candidateBuildId,commit:$candidateCommit},harness:{entrypoint:{path:$scriptPath,sha256:$scriptSha},contract:{path:$contractPath,sha256:$contractSha},keeperHelper:{path:$helperPath,sha256:$helperSha},benchOrigin:{path:$benchOriginTree,manifestSha256:$benchOriginManifest,fileCount:$benchOriginFiles}},hostExclusiveLock:$hostLock,xray:{path:$xrayBin,sha256:$xraySha,buildId:$xrayBuildId}}' >"$out_dir/environment.json"
 
 slot_index=0
 while IFS=$'\t' read -r block position implementation server_port socks_port; do
@@ -537,4 +592,8 @@ PY
 [[ $(sha256sum "$xray_bin" | awk '{print $1}') == "$xray_sha" ]] || die 'Xray changed during run'
 verify_harness_inputs
 jq -e --argjson slots "$slot_count" '.status=="COMPLETE" and .slotCount==$slots and .failures==0' "$out_dir/summary.json" >/dev/null || die 'aggregate gate failed'
-printf 'setup ABBA complete: %s\n' "$out_dir"
+host_lock_evidence=$(rr_host_lock_evidence_complete "$host_lock_evidence") ||
+    die 'host-exclusive lock identity changed before completion'
+jq --argjson hostLock "$host_lock_evidence" '.hostExclusiveLock=$hostLock' \
+    "$out_dir/environment.json" >"$out_dir/.environment.complete.json"
+rr_host_lock_verify || die 'host-exclusive lock failed final verification'

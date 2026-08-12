@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -15,6 +16,8 @@ ROOT = Path(__file__).resolve().parent
 EVALUATOR = ROOT / "evaluate-release-performance.py"
 NETEM = ROOT / "validate-deployment-netem.py"
 DEPLOYMENT_DRIVER = ROOT / "deployment_driver.py"
+HOST_LOCK_CONTRACT = ROOT / "benchmark-contract.sh"
+HOST_LOCK_HELPER = ROOT / "host-exclusive-lock-keeper.py"
 CANDIDATE = {"commit": "c" * 40, "sha256": "c" * 64}
 BASELINE = {"commit": "b" * 40, "sha256": "b" * 64}
 
@@ -32,6 +35,44 @@ def write_jsonl(path: Path, rows: list[dict]) -> None:
 
 def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def lock_metadata(root: Path, ordinal: int) -> dict:
+    lock = root / "host-exclusive.lock"
+    lock.touch(exist_ok=True)
+    identity = f"{lock.stat().st_dev}:{lock.stat().st_ino}"
+    base = {
+        "protocolVersion": 1,
+        "path": str(lock.resolve()),
+        "deviceInode": identity,
+        "mode": "dedicatedKeeper",
+        "keeperPid": 1001 + ordinal * 10,
+        "keeperStarttime": str(10001 + ordinal * 100),
+        "keeperExe": str(Path(sys.executable).resolve()),
+        "parentPid": 1000 + ordinal * 10,
+        "parentStarttime": str(10000 + ordinal * 100),
+        "keeperHelper": {
+            "path": str(HOST_LOCK_HELPER.resolve()),
+            "sha256": sha(HOST_LOCK_HELPER),
+        },
+        "required": True,
+    }
+    return {**base, "preflight": dict(base), "postflight": dict(base)}
+
+
+def write_success_marker(
+    run: Path, evidence_name: str, marker_name: str, run_id: str, collector: str,
+) -> None:
+    evidence = run / evidence_name
+    write_json(run / marker_name, {
+        "schemaVersion": 1,
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "runId": run_id,
+        "collector": collector,
+        "evidence": {"path": str(evidence.resolve()), "sha256": sha(evidence)},
+        "recordedUtc": "2026-08-13T00:00:00Z",
+    })
 
 
 def order_rows() -> list[dict]:
@@ -93,8 +134,11 @@ def pair_fixture(root: Path, kind: str, candidate_factor: float = 1.02) -> dict:
             ],
         },
     }
+    run_id = f"{kind}-run"
+    host_lock = lock_metadata(root, 1 if setup else 2)
     environment = {
         "schemaVersion": 2,
+        "runId": run_id,
         "repository": {"head": CANDIDATE["commit"], "dirty": False},
         "blocks": 3,
         "samplesPerSlot": 1,
@@ -103,14 +147,29 @@ def pair_fixture(root: Path, kind: str, candidate_factor: float = 1.02) -> dict:
         "concurrencies": "1",
         "baseline": {**BASELINE, "buildId": "b1"},
         "candidate": {**CANDIDATE, "buildId": "c1"},
+        "harness": {
+            "contract": {
+                "path": str(HOST_LOCK_CONTRACT.resolve()),
+                "sha256": sha(HOST_LOCK_CONTRACT),
+            },
+            "keeperHelper": host_lock["keeperHelper"],
+        },
+        "hostExclusiveLock": host_lock,
     }
     write_json(run / "summary.json", summary)
     write_json(run / "environment.json", environment)
     write_json(run / "order.json", {"slots": order})
     write_jsonl(run / "raw-samples.jsonl", rows)
+    write_success_marker(
+        run, "environment.json", "completion.json", run_id,
+        "benchmark-setup-rate" if setup else "benchmark-fallback-ab",
+    )
     files = {
         name: sha(run / name)
-        for name in ("summary.json", "environment.json", "order.json", "raw-samples.jsonl")
+        for name in (
+            "summary.json", "environment.json", "order.json", "raw-samples.jsonl",
+            "completion.json",
+        )
     }
     return {"name": "setup" if setup else "fallback", "kind": kind,
             "runDir": str(run), "files": files}
@@ -152,15 +211,24 @@ def matrix_fixture(root: Path, candidate_factor: float = 1.02) -> dict:
         },
     }
     contract = {
+        "runId": "matrix-run",
         "phase": "complete",
         "exploratory": False,
         "script": {"harnessCommit": CANDIDATE["commit"]},
+        "contract": {
+            "path": str(HOST_LOCK_CONTRACT.resolve()),
+            "sha256": sha(HOST_LOCK_CONTRACT),
+        },
         "binaries": [
             {"label": "candidate", **CANDIDATE, "sourceCommit": CANDIDATE["commit"],
              "buildId": "c1"},
             {"label": "baseline", **BASELINE, "sourceCommit": BASELINE["commit"],
              "buildId": "b1"},
         ],
+        "hostExclusiveLock": {
+            key: value for key, value in lock_metadata(root, 3).items()
+            if key not in {"preflight", "postflight"}
+        },
     }
     factors = {
         "baseline": (1.0, 0.1),
@@ -188,9 +256,15 @@ def matrix_fixture(root: Path, candidate_factor: float = 1.02) -> dict:
     write_json(run / "summary.json", summary)
     write_json(run / "run-contract.json", contract)
     write_jsonl(run / "samples.jsonl", rows)
+    write_success_marker(
+        run, "run-contract.json", "run-completion.json", "matrix-run",
+        "benchmark-matrix",
+    )
     files = {
         name: sha(run / name)
-        for name in ("summary.json", "run-contract.json", "samples.jsonl")
+        for name in (
+            "summary.json", "run-contract.json", "samples.jsonl", "run-completion.json"
+        )
     }
     return {"name": "matrix", "kind": "matrix", "runDir": str(run), "files": files}
 
@@ -220,6 +294,157 @@ def invoke(script: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def bash_command(source: str, *arguments: str) -> list[str]:
+    return ["bash", "-c", source, "host-lock-test", *arguments]
+
+
+def test_host_lock_keeper(root: Path) -> None:
+    repository = str(ROOT.parent.resolve())
+    contract = str(HOST_LOCK_CONTRACT.resolve())
+    lock = str((root / "keeper-host-exclusive.lock").resolve())
+    holder_script = r'''
+set -Eeuo pipefail
+source "$1"
+rr_host_lock_acquire "$2" "$3"
+trap 'rr_host_lock_stop >/dev/null 2>&1 || true' EXIT
+rr_host_lock_verify
+echo READY
+read -r _
+rr_host_lock_stop
+trap - EXIT
+'''
+    contender_script = r'''
+set -Eeuo pipefail
+source "$1"
+if rr_host_lock_acquire "$2" "$3" >/dev/null 2>&1; then
+    rr_host_lock_verify
+    rr_host_lock_stop
+    exit 0
+fi
+rr_host_lock_stop >/dev/null 2>&1 || true
+exit 23
+'''
+    holder = subprocess.Popen(
+        bash_command(holder_script, contract, repository, lock),
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout is not None and holder.stdout.readline().strip() == "READY"
+        contender = subprocess.run(
+            bash_command(contender_script, contract, repository, lock),
+            capture_output=True, text=True, check=False, timeout=10,
+        )
+        assert contender.returncode == 23, (contender.stdout, contender.stderr)
+        assert holder.stdin is not None
+        holder.stdin.write("stop\n")
+        holder.stdin.flush()
+        stdout, stderr = holder.communicate(timeout=10)
+        assert holder.returncode == 0, (stdout, stderr)
+        after = subprocess.run(
+            bash_command(contender_script, contract, repository, lock),
+            capture_output=True, text=True, check=False, timeout=10,
+        )
+        assert after.returncode == 0, (after.stdout, after.stderr)
+    finally:
+        if holder.poll() is None:
+            holder.terminate()
+            holder.wait(timeout=10)
+
+    background_script = r'''
+set -Eeuo pipefail
+source "$1"
+rr_host_lock_acquire "$2" "$3"
+sleep 30 &
+child=$!
+trap 'kill -TERM "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true; rr_host_lock_stop >/dev/null 2>&1 || true' EXIT
+rr_host_lock_stop
+kill -0 "$child"
+echo "RELEASED $child"
+read -r _
+kill -TERM "$child" 2>/dev/null || true
+wait "$child" 2>/dev/null || true
+trap - EXIT
+'''
+    background = subprocess.Popen(
+        bash_command(background_script, contract, repository, lock),
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert background.stdout is not None
+        released = background.stdout.readline().strip().split()
+        assert len(released) == 2 and released[0] == "RELEASED"
+        after = subprocess.run(
+            bash_command(contender_script, contract, repository, lock),
+            capture_output=True, text=True, check=False, timeout=10,
+        )
+        assert after.returncode == 0, (after.stdout, after.stderr)
+        assert background.stdin is not None
+        background.stdin.write("stop\n")
+        background.stdin.flush()
+        stdout, stderr = background.communicate(timeout=10)
+        assert background.returncode == 0, (stdout, stderr)
+    finally:
+        if background.poll() is None:
+            background.terminate()
+            background.wait(timeout=10)
+
+    marker_root = root / "success-marker"
+    marker_root.mkdir()
+    evidence = marker_root / "evidence.json"
+    write_json(evidence, {"status": "COMPLETE"})
+    marker = marker_root / "completion.json"
+    marker_script = r'''
+set -Eeuo pipefail
+source "$1"
+rr_write_success_marker "$2" "$3" marker-run marker-test
+if rr_write_success_marker "$2" "$3" marker-run marker-test >/dev/null 2>&1; then
+    exit 31
+fi
+'''
+    result = subprocess.run(
+        bash_command(
+            marker_script, contract, str(marker.resolve()), str(evidence.resolve())
+        ), capture_output=True, text=True, check=False, timeout=10,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    marker_record = json.loads(marker.read_text())
+    assert marker_record["exitCode"] == 0
+    assert marker_record["evidence"]["sha256"] == sha(evidence)
+
+
+def test_collector_early_failure_releases_lock(root: Path) -> None:
+    repository = str(ROOT.parent.resolve())
+    contract = str(HOST_LOCK_CONTRACT.resolve())
+    lock = str((root / "collector-failure.lock").resolve())
+    contender_script = r'''
+set -Eeuo pipefail
+source "$1"
+rr_host_lock_acquire "$2" "$3"
+rr_host_lock_verify
+rr_host_lock_stop
+'''
+    environment = os.environ.copy()
+    for name in (
+        "RUN_ID", "OUT_DIR", "TMPDIR", "PORT_BASE", "SELF_TEST",
+        "RR_HOST_EXCLUSIVE_FD", "RR_HOST_LOCK_PYTHON3_TEST_ONLY",
+    ):
+        environment.pop(name, None)
+    environment["RR_HOST_EXCLUSIVE_LOCK"] = lock
+    for collector in (ROOT / "benchmark-setup-rate.sh", ROOT / "benchmark-fallback-ab.sh"):
+        failed = subprocess.run(
+            ["bash", str(collector)], capture_output=True, text=True, check=False,
+            timeout=15, env=environment,
+        )
+        assert failed.returncode != 0, (collector, failed.stdout, failed.stderr)
+        after = subprocess.run(
+            bash_command(contender_script, contract, repository, lock),
+            capture_output=True, text=True, check=False, timeout=15,
+        )
+        assert after.returncode == 0, (collector, after.stdout, after.stderr)
+
+
 def test_evaluator(root: Path) -> None:
     passing = root / "pass"
     passing.mkdir()
@@ -228,7 +453,11 @@ def test_evaluator(root: Path) -> None:
     result = invoke(EVALUATOR, "--manifest", str(passing_manifest),
                     "--output", str(passing_output))
     assert result.returncode == 0, (result.stdout, result.stderr)
-    assert json.loads(passing_output.read_text())["overallPerformanceVerdict"] == "PASS"
+    passing_report = json.loads(passing_output.read_text())
+    assert passing_report["overallPerformanceVerdict"] == "PASS"
+    assert len({
+        row["hostExclusiveLock"]["keeperPid"] for row in passing_report["inputs"]
+    }) == 3
 
     regression = root / "regression"
     regression.mkdir()
@@ -257,6 +486,61 @@ def test_evaluator(root: Path) -> None:
                     "--output", str(missing_output))
     assert result.returncode == 2, (result.stdout, result.stderr)
     assert json.loads(missing_output.read_text())["overallPerformanceVerdict"] == "INVALID"
+
+    missing_lock = root / "missing-lock"
+    missing_lock.mkdir()
+    missing_lock_manifest, workloads = manifest(missing_lock)
+    setup = Path(workloads[0]["runDir"])
+    environment = json.loads((setup / "environment.json").read_text())
+    del environment["hostExclusiveLock"]
+    write_json(setup / "environment.json", environment)
+    completion = json.loads((setup / "completion.json").read_text())
+    completion["evidence"]["sha256"] = sha(setup / "environment.json")
+    write_json(setup / "completion.json", completion)
+    document = json.loads(missing_lock_manifest.read_text())
+    document["workloads"][0]["files"]["environment.json"] = sha(
+        setup / "environment.json"
+    )
+    document["workloads"][0]["files"]["completion.json"] = sha(
+        setup / "completion.json"
+    )
+    write_json(missing_lock_manifest, document)
+    missing_lock_output = missing_lock / "result.json"
+    result = invoke(EVALUATOR, "--manifest", str(missing_lock_manifest),
+                    "--output", str(missing_lock_output))
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert json.loads(missing_lock_output.read_text())["overallPerformanceVerdict"] == "INVALID"
+
+    failed_exit = root / "failed-exit"
+    failed_exit.mkdir()
+    failed_exit_manifest, workloads = manifest(failed_exit)
+    fallback = Path(workloads[1]["runDir"])
+    completion = json.loads((fallback / "completion.json").read_text())
+    completion["exitCode"] = 2
+    write_json(fallback / "completion.json", completion)
+    document = json.loads(failed_exit_manifest.read_text())
+    document["workloads"][1]["files"]["completion.json"] = sha(
+        fallback / "completion.json"
+    )
+    write_json(failed_exit_manifest, document)
+    failed_exit_output = failed_exit / "result.json"
+    result = invoke(EVALUATOR, "--manifest", str(failed_exit_manifest),
+                    "--output", str(failed_exit_output))
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert json.loads(failed_exit_output.read_text())["overallPerformanceVerdict"] == "INVALID"
+
+    missing_completion = root / "missing-completion"
+    missing_completion.mkdir()
+    missing_completion_manifest, workloads = manifest(missing_completion)
+    matrix = Path(workloads[2]["runDir"])
+    (matrix / "run-completion.json").unlink()
+    missing_completion_output = missing_completion / "result.json"
+    result = invoke(EVALUATOR, "--manifest", str(missing_completion_manifest),
+                    "--output", str(missing_completion_output))
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert json.loads(missing_completion_output.read_text())[
+        "overallPerformanceVerdict"
+    ] == "INVALID"
 
     reordered = root / "reordered"
     reordered.mkdir()
@@ -433,6 +717,8 @@ def main() -> None:
         test_evaluator(root)
         test_netem(root)
         test_deployment_summary(root)
+        test_host_lock_keeper(root)
+        test_collector_early_failure_releases_lock(root)
     print("release performance evaluator synthetic gates: PASS")
 
 

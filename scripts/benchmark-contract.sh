@@ -36,6 +36,7 @@ RR_HOST_EXCLUSIVE_KEEPER_PARENT_STARTTIME=
 RR_HOST_EXCLUSIVE_KEEPER_LOCK_FD=
 RR_HOST_EXCLUSIVE_KEEPER_EXE=
 RR_HOST_EXCLUSIVE_KEEPER_HELPER=
+readonly RR_HOST_LOCK_PROTOCOL_VERSION=1
 RR_CONTRACT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
 RR_CONTRACT_SHA256=$(sha256sum -- "$RR_CONTRACT_PATH" | awk '{print $1}')
 
@@ -132,15 +133,20 @@ rr_contract_keeper_lock_target() {
 }
 
 rr_contract_acquire_host_lock() {
-    local repository_parent lock_input lock_parent_input lock_parent lock_basename
+    local common_git_dir coordination_root lock_input lock_parent_input lock_parent lock_basename
     local state_dir ready_file error_file parent_start keeper_pid keeper_start
     local attempt keeper_launcher ready_identity ready_fd ready_exe
     [[ -z ${RR_HOST_EXCLUSIVE_FD+x} ]] ||
         rr_contract_die "RR_HOST_EXCLUSIVE_FD is unsupported; formal scripts own a dedicated keeper" || return
     [[ $RR_HOST_EXCLUSIVE_LOCK_MODE != dedicatedKeeper ]] ||
         rr_contract_die "host-exclusive lock keeper is already registered" || return
-    repository_parent=$(dirname -- "$RR_REPOSITORY")
-    lock_input=${RR_HOST_EXCLUSIVE_LOCK:-"$repository_parent/.coord/v1.5.0/locks/host-exclusive.lock"}
+    common_git_dir=$(git -C "$RR_REPOSITORY" rev-parse --path-format=absolute \
+        --git-common-dir 2>/dev/null) ||
+        rr_contract_die "could not resolve the repository common Git directory" || return
+    common_git_dir=$(readlink -f -- "$common_git_dir") ||
+        rr_contract_die "could not canonicalize the repository common Git directory" || return
+    coordination_root=$(dirname -- "$(dirname -- "$common_git_dir")")
+    lock_input=${RR_HOST_EXCLUSIVE_LOCK:-"$coordination_root/.coord/v1.5.0/locks/host-exclusive.lock"}
     [[ $lock_input == /* ]] ||
         rr_contract_die "RR_HOST_EXCLUSIVE_LOCK must be absolute" || return
     lock_parent_input=$(dirname -- "$lock_input")
@@ -318,18 +324,82 @@ rr_host_lock_metadata_json() {
     rr_contract_verify_host_lock || return
     [[ -z $RR_HOST_EXCLUSIVE_KEEPER_HELPER ]] ||
         helper_sha=${RR_HARNESS_SHA256[$RR_HOST_EXCLUSIVE_KEEPER_HELPER]:-}
-    jq -n --arg path "$RR_HOST_EXCLUSIVE_LOCK_PATH" \
+    jq -n --argjson protocol_version "$RR_HOST_LOCK_PROTOCOL_VERSION" \
+        --arg path "$RR_HOST_EXCLUSIVE_LOCK_PATH" \
         --arg identity "$RR_HOST_EXCLUSIVE_LOCK_DEVICE_INODE" \
         --arg mode "$RR_HOST_EXCLUSIVE_LOCK_MODE" \
         --arg keeper_pid "$RR_HOST_EXCLUSIVE_KEEPER_PID" \
         --arg keeper_start "$RR_HOST_EXCLUSIVE_KEEPER_STARTTIME" \
+        --arg keeper_exe "$RR_HOST_EXCLUSIVE_KEEPER_EXE" \
         --arg parent_pid "$RR_HOST_EXCLUSIVE_KEEPER_PARENT_PID" \
         --arg parent_start "$RR_HOST_EXCLUSIVE_KEEPER_PARENT_STARTTIME" \
         --arg helper "$RR_HOST_EXCLUSIVE_KEEPER_HELPER" --arg helper_sha "$helper_sha" \
-        '{path:$path,deviceInode:$identity,mode:$mode,
+        '{protocolVersion:$protocol_version,path:$path,deviceInode:$identity,mode:$mode,
           keeperPid:($keeper_pid | tonumber),keeperStarttime:$keeper_start,
+          keeperExe:$keeper_exe,
           parentPid:($parent_pid | tonumber),parentStarttime:$parent_start,
           keeperHelper:{path:$helper,sha256:$helper_sha},required:true}'
+}
+
+rr_host_lock_evidence_begin() {
+    local preflight
+    preflight=$(rr_host_lock_metadata_json) || return
+    jq -cn --argjson preflight "$preflight" \
+        '$preflight + {preflight:$preflight,postflight:null}'
+}
+
+rr_host_lock_evidence_complete() {
+    local evidence=${1:?preflight lock evidence is required} postflight
+    postflight=$(rr_host_lock_metadata_json) || return
+    jq -ecn --argjson evidence "$evidence" --argjson postflight "$postflight" '
+        def identity:
+          {protocolVersion,path,deviceInode,mode,keeperPid,keeperStarttime,keeperExe,
+           parentPid,parentStarttime,keeperHelper,required};
+        ($evidence.postflight == null)
+        and (($evidence | del(.preflight,.postflight)) == $evidence.preflight)
+        and (($evidence.preflight | identity) == ($postflight | identity))
+        | if . then $evidence + {postflight:$postflight} else error(
+            "host-exclusive lock identity changed between preflight and postflight") end
+    '
+}
+
+rr_write_success_marker() {
+    local marker=${1:?marker path is required} evidence=${2:?evidence path is required}
+    local run_id=${3:?run ID is required} collector=${4:?collector is required}
+    local parent temporary evidence_sha
+    [[ $marker == /* && $evidence == /* ]] ||
+        rr_contract_die "success marker and evidence paths must be absolute" || return
+    [[ -f $evidence && ! -L $evidence ]] ||
+        rr_contract_die "success marker evidence must be a regular non-symlink" || return
+    [[ ! -e $marker && ! -L $marker ]] ||
+        rr_contract_die "success marker already exists: $marker" || return
+    parent=$(dirname -- "$marker")
+    [[ $parent == "$(dirname -- "$evidence")" && -d $parent && ! -L $parent ]] ||
+        rr_contract_die "success marker and evidence must share one non-symlink directory" || return
+    evidence_sha=$(sha256sum -- "$evidence" | awk '{print $1}')
+    temporary=$(mktemp "$parent/.success-marker.$$.XXXXXXXX") ||
+        rr_contract_die "could not allocate success marker temporary file" || return
+    if ! jq -n --arg run_id "$run_id" --arg collector "$collector" \
+        --arg evidence "$evidence" --arg evidence_sha "$evidence_sha" \
+        --arg recorded "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{schemaVersion:1,status:"COMPLETE",exitCode:0,runId:$run_id,
+          collector:$collector,evidence:{path:$evidence,sha256:$evidence_sha},
+          recordedUtc:$recorded}' >"$temporary"; then
+        rm -f -- "$temporary"
+        rr_contract_die "could not serialize success marker" || return
+    fi
+    chmod 600 -- "$temporary" || {
+        rm -f -- "$temporary"
+        rr_contract_die "could not protect success marker temporary file" || return
+    }
+    if ! ln -- "$temporary" "$marker"; then
+        rm -f -- "$temporary"
+        rr_contract_die "could not atomically publish success marker" || return
+    fi
+    rm -f -- "$temporary" || {
+        rm -f -- "$marker"
+        rr_contract_die "could not remove success marker temporary file" || return
+    }
 }
 
 # rr_contract_init REPOSITORY SCRIPT_NAME DEFAULT_OUTPUT_PARENT PORT_BLOCK_WIDTH
@@ -699,9 +769,9 @@ rr_write_contract_metadata() {
     if [[ $RR_EXPLORATORY == 0 ]]; then
         host_lock_json=$(rr_host_lock_metadata_json) || return
     else
-        host_lock_json='{"path":"","deviceInode":"","mode":"notRequired",
+        host_lock_json='{"protocolVersion":1,"path":"","deviceInode":"","mode":"notRequired",
           "keeperPid":null,"keeperStarttime":null,"parentPid":null,
-          "parentStarttime":null,"keeperHelper":{"path":"","sha256":""},
+          "parentStarttime":null,"keeperExe":"","keeperHelper":{"path":"","sha256":""},
           "required":false}'
     fi
     harness_json=$(for path in "${RR_HARNESS_FILES[@]}"; do
@@ -784,11 +854,20 @@ rr_finalize_contract() {
 # inputs at actual shell exit: preserve an existing failure, otherwise upgrade
 # a successful run when verification fails.
 rr_contract_verify_on_exit() {
-    local original_status=$1 verify_status=0 keeper_status=0
+    local original_status=$1 verify_status=0 keeper_status=0 marker_status=0
     rr_verify_registered_files || verify_status=1
     rr_contract_stop_host_lock_keeper || keeper_status=1
     if (( original_status != 0 )); then
         return "$original_status"
     fi
-    (( verify_status == 0 && keeper_status == 0 ))
+    if (( RR_EXPLORATORY == 0 )); then
+        if (( RR_CONTRACT_FINALIZED != 1 || verify_status != 0 || keeper_status != 0 )); then
+            marker_status=1
+        else
+            rr_write_success_marker "$RR_OUT_DIR/run-completion.json" \
+                "$RR_OUT_DIR/run-contract.json" "$RR_RUN_ID" "$RR_SCRIPT_NAME" ||
+                marker_status=1
+        fi
+    fi
+    (( verify_status == 0 && keeper_status == 0 && marker_status == 0 ))
 }

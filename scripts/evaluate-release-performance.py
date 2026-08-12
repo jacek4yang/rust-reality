@@ -23,15 +23,21 @@ from typing import Any, Iterable
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 BUILD_ID = re.compile(r"^[0-9a-f]+$")
+DEVICE_INODE = re.compile(r"^[1-9][0-9]*:[1-9][0-9]*$")
+HOST_LOCK_PROTOCOL_VERSION = 1
 REQUIRED_KINDS = {"setup-abba", "fallback-abba", "matrix"}
 FILES_BY_KIND = {
     "setup-abba": {
-        "summary.json", "environment.json", "order.json", "raw-samples.jsonl"
+        "summary.json", "environment.json", "order.json", "raw-samples.jsonl",
+        "completion.json",
     },
     "fallback-abba": {
-        "summary.json", "environment.json", "order.json", "raw-samples.jsonl"
+        "summary.json", "environment.json", "order.json", "raw-samples.jsonl",
+        "completion.json",
     },
-    "matrix": {"summary.json", "samples.jsonl", "run-contract.json"},
+    "matrix": {
+        "summary.json", "samples.jsonl", "run-contract.json", "run-completion.json"
+    },
 }
 
 
@@ -77,6 +83,29 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
         require(isinstance(value, dict), f"{path}:{line_number}: row is not an object")
         rows.append(value)
     return rows
+
+
+def verify_success_marker(
+    marker: dict[str, Any], evidence_path: Path, run_id: Any, collector: str,
+    context: str,
+) -> None:
+    require(marker.get("schemaVersion") == 1 and marker.get("status") == "COMPLETE",
+            f"{context}: success marker is not COMPLETE schema 1")
+    exit_code = marker.get("exitCode")
+    require(isinstance(exit_code, int) and not isinstance(exit_code, bool)
+            and exit_code == 0, f"{context}: collector exit code is not zero")
+    require(isinstance(run_id, str) and run_id
+            and marker.get("runId") == run_id,
+            f"{context}: success marker run ID mismatch")
+    require(marker.get("collector") == collector,
+            f"{context}: success marker collector mismatch")
+    evidence = marker.get("evidence")
+    require(isinstance(evidence, dict), f"{context}: marker evidence identity missing")
+    expected_path = str(evidence_path.resolve())
+    require(evidence.get("path") == expected_path,
+            f"{context}: marker evidence path mismatch")
+    require(evidence.get("sha256") == sha256_file(evidence_path),
+            f"{context}: marker evidence SHA-256 mismatch")
 
 
 def positive_number(value: Any, context: str) -> float:
@@ -159,6 +188,115 @@ def identity(value: Any, context: str) -> dict[str, str]:
     return {"commit": commit, "sha256": sha}
 
 
+def verify_host_lock_metadata(value: Any, context: str) -> dict[str, Any]:
+    require(isinstance(value, dict), f"{context}: host lock metadata missing")
+    require(value.get("protocolVersion") == HOST_LOCK_PROTOCOL_VERSION,
+            f"{context}: host lock protocol version mismatch")
+    require(value.get("required") is True and value.get("mode") == "dedicatedKeeper",
+            f"{context}: dedicated host lock was not required/held")
+    path_text = value.get("path")
+    require(isinstance(path_text, str) and path_text.startswith("/"),
+            f"{context}: host lock path is not absolute")
+    path = Path(path_text)
+    require(path.is_file() and not path.is_symlink() and str(path.resolve()) == path_text,
+            f"{context}: host lock path is not a canonical regular file")
+    recorded_device_inode = value.get("deviceInode")
+    require(isinstance(recorded_device_inode, str)
+            and DEVICE_INODE.fullmatch(recorded_device_inode),
+            f"{context}: host lock device/inode is invalid")
+    observed = path.stat()
+    require(recorded_device_inode == f"{observed.st_dev}:{observed.st_ino}",
+            f"{context}: host lock device/inode no longer matches its path")
+    for field in ("keeperPid", "parentPid"):
+        require(isinstance(value.get(field), int) and value[field] > 1,
+                f"{context}: {field} is invalid")
+    for field in ("keeperStarttime", "parentStarttime"):
+        observed_start = value.get(field)
+        require(isinstance(observed_start, str) and observed_start.isdecimal()
+                and int(observed_start) > 0, f"{context}: {field} is invalid")
+    keeper_exe = value.get("keeperExe")
+    require(isinstance(keeper_exe, str) and keeper_exe.startswith("/"),
+            f"{context}: keeper executable path is invalid")
+    keeper_exe_path = Path(keeper_exe)
+    require(keeper_exe_path.is_file()
+            and str(keeper_exe_path.resolve()) == keeper_exe,
+            f"{context}: keeper executable path is not canonical")
+    helper = value.get("keeperHelper")
+    require(isinstance(helper, dict), f"{context}: keeper helper identity missing")
+    helper_path = helper.get("path")
+    helper_sha = helper.get("sha256")
+    require(isinstance(helper_path, str) and helper_path.startswith("/"),
+            f"{context}: keeper helper path is not absolute")
+    require(isinstance(helper_sha, str) and HEX64.fullmatch(helper_sha),
+            f"{context}: keeper helper SHA-256 is invalid")
+    helper_file = Path(helper_path)
+    require(helper_file.is_file() and not helper_file.is_symlink()
+            and str(helper_file.resolve()) == helper_path,
+            f"{context}: keeper helper path is invalid")
+    require(sha256_file(helper_file) == helper_sha,
+            f"{context}: keeper helper SHA-256 no longer matches")
+    return {
+        "protocolVersion": value["protocolVersion"],
+        "path": path_text,
+        "deviceInode": recorded_device_inode,
+        "mode": value["mode"],
+        "keeperPid": value["keeperPid"],
+        "keeperStarttime": value["keeperStarttime"],
+        "keeperExe": keeper_exe,
+        "parentPid": value["parentPid"],
+        "parentStarttime": value["parentStarttime"],
+        "keeperHelper": {"path": helper_path, "sha256": helper_sha},
+        "required": True,
+    }
+
+
+def verify_contract_identity(value: Any, context: str) -> dict[str, str]:
+    require(isinstance(value, dict)
+            and isinstance(value.get("path"), str)
+            and value["path"].startswith("/")
+            and isinstance(value.get("sha256"), str)
+            and HEX64.fullmatch(value["sha256"]),
+            f"{context}: lock contract identity missing")
+    path = Path(value["path"])
+    require(path.is_file() and not path.is_symlink()
+            and str(path.resolve()) == value["path"]
+            and sha256_file(path) == value["sha256"],
+            f"{context}: lock contract path/SHA-256 mismatch")
+    return {"path": value["path"], "sha256": value["sha256"]}
+
+
+def verify_pair_host_lock(environment: dict[str, Any], context: str) -> dict[str, Any]:
+    evidence = environment.get("hostExclusiveLock")
+    current = verify_host_lock_metadata(evidence, context)
+    require(isinstance(evidence.get("preflight"), dict)
+            and isinstance(evidence.get("postflight"), dict),
+            f"{context}: host lock preflight/postflight evidence missing")
+    preflight = verify_host_lock_metadata(evidence["preflight"], f"{context} preflight")
+    postflight = verify_host_lock_metadata(evidence["postflight"], f"{context} postflight")
+    require(current == preflight == postflight,
+            f"{context}: host lock identity changed during collection")
+    harness = environment.get("harness")
+    require(isinstance(harness, dict), f"{context}: harness identity missing")
+    contract = verify_contract_identity(harness.get("contract"), context)
+    helper = harness.get("keeperHelper")
+    require(helper == current["keeperHelper"],
+            f"{context}: harness keeper identity disagrees with lock evidence")
+    current["contract"] = contract
+    return current
+
+
+def coordination_identity(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "protocolVersion": value["protocolVersion"],
+        "path": value["path"],
+        "deviceInode": value["deviceInode"],
+        "mode": value["mode"],
+        "keeperExe": value["keeperExe"],
+        "keeperHelperSha256": value["keeperHelper"]["sha256"],
+        "contractSha256": value["contract"]["sha256"],
+    }
+
+
 def verify_files(entry: dict[str, Any], kind: str) -> tuple[Path, dict[str, str]]:
     raw_run_dir = entry.get("runDir")
     require(isinstance(raw_run_dir, str) and raw_run_dir.startswith("/"),
@@ -186,7 +324,7 @@ def verify_files(entry: dict[str, Any], kind: str) -> tuple[Path, dict[str, str]
 def verify_pair_environment(
     environment: dict[str, Any], candidate: dict[str, str], baseline: dict[str, str],
     context: str,
-) -> None:
+) -> dict[str, Any]:
     repository = environment.get("repository")
     require(isinstance(repository, dict) and repository.get("dirty") is False,
             f"{context}: repository was dirty")
@@ -200,6 +338,7 @@ def verify_pair_environment(
         require(isinstance(observed.get("buildId"), str)
                 and BUILD_ID.fullmatch(observed["buildId"]),
                 f"{context}: {label} Build ID missing")
+    return verify_pair_host_lock(environment, context)
 
 
 def verify_order(order: dict[str, Any], blocks: int) -> list[dict[str, Any]]:
@@ -275,13 +414,19 @@ def evaluate_pair_run(
     run_dir, hashes = verify_files(entry, kind)
     summary = load_json(run_dir / "summary.json")
     environment = load_json(run_dir / "environment.json")
+    completion = load_json(run_dir / "completion.json")
     order = load_json(run_dir / "order.json")
     rows = load_jsonl(run_dir / "raw-samples.jsonl")
+    verify_success_marker(
+        completion, run_dir / "environment.json", environment.get("runId"),
+        "benchmark-setup-rate" if kind == "setup-abba" else "benchmark-fallback-ab",
+        kind,
+    )
     require(summary.get("status") == "COMPLETE", f"{kind}: status is not COMPLETE")
     require(summary.get("performanceVerdict") == "NOT_EVALUATED",
             f"{kind}: collector claimed a performance verdict")
     require(summary.get("failures") == 0, f"{kind}: collector recorded failures")
-    verify_pair_environment(environment, candidate, baseline, kind)
+    host_lock = verify_pair_environment(environment, candidate, baseline, kind)
     blocks = environment.get("blocks")
     samples = environment.get("samplesPerSlot")
     require(isinstance(blocks, int) and blocks >= 3, f"{kind}: need at least 3 blocks")
@@ -389,13 +534,14 @@ def evaluate_pair_run(
         "status": summary["status"],
         "dataQualityVerdict": "PASS",
         "collectorPerformanceVerdict": summary["performanceVerdict"],
+        "hostExclusiveLock": host_lock,
     }
 
 
 def verify_matrix_identity(
     summary: dict[str, Any], contract: dict[str, Any], candidate: dict[str, str],
     baseline: dict[str, str],
-) -> None:
+) -> dict[str, Any]:
     require(summary.get("status") == "COMPLETE", "matrix: status is not COMPLETE")
     require(summary.get("performanceVerdict") == "NOT_EVALUATED",
             "matrix: collector claimed a performance verdict")
@@ -427,6 +573,9 @@ def verify_matrix_identity(
                 f"matrix: contract {label} commit mismatch")
         require(isinstance(row.get("buildId"), str) and BUILD_ID.fullmatch(row["buildId"]),
                 f"matrix: contract {label} Build ID missing")
+    host_lock = verify_host_lock_metadata(contract.get("hostExclusiveLock"), "matrix")
+    host_lock["contract"] = verify_contract_identity(contract.get("contract"), "matrix")
+    return host_lock
 
 
 def evaluate_matrix(
@@ -437,8 +586,13 @@ def evaluate_matrix(
     run_dir, hashes = verify_files(entry, kind)
     summary = load_json(run_dir / "summary.json")
     contract = load_json(run_dir / "run-contract.json")
+    completion = load_json(run_dir / "run-completion.json")
     rows = load_jsonl(run_dir / "samples.jsonl")
-    verify_matrix_identity(summary, contract, candidate, baseline)
+    verify_success_marker(
+        completion, run_dir / "run-contract.json", contract.get("runId"),
+        "benchmark-matrix", "matrix",
+    )
+    host_lock = verify_matrix_identity(summary, contract, candidate, baseline)
     cells = summary.get("cells")
     require(isinstance(cells, dict) and cells, "matrix: no protected cells")
     raw_cell_keys = {
@@ -553,6 +707,7 @@ def evaluate_matrix(
         "name": workload, "kind": kind, "runDir": str(run_dir), "files": hashes,
         "status": summary["status"], "dataQualityVerdict": "PASS",
         "collectorPerformanceVerdict": summary["performanceVerdict"],
+        "hostExclusiveLock": host_lock,
     }
 
 
@@ -589,6 +744,11 @@ def evaluate(manifest: dict[str, Any]) -> dict[str, Any]:
             )
         metrics.extend(current_metrics)
         inputs.append(current_input)
+    coordination = [
+        coordination_identity(current["hostExclusiveLock"]) for current in inputs
+    ]
+    require(all(value == coordination[0] for value in coordination[1:]),
+            "workloads used different host-exclusive lock protocols/identities")
     require(metrics, "no protected metrics were produced")
     regressions = [row["id"] for row in metrics if not row["pass"]]
     improvements = [
