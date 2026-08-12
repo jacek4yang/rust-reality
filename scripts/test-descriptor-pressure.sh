@@ -17,24 +17,24 @@
 set -Eeuo pipefail
 
 readonly REPOSITORY="$({ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."; pwd; })"
-run_id=${RUN_ID:-descriptor-pressure-$(date -u +%Y%m%dT%H%M%SZ)-$$}
+source "$REPOSITORY/scripts/benchmark-contract.sh"
 rust_bin=${RUST_REALITY_BIN:-}
 xray_bin=${XRAY_BIN:-}
+openssl_bin=${OPENSSL_BIN:-}
+if [[ ${EXPLORATORY:-0} == 1 && -z $openssl_bin ]]; then
+    openssl_bin=$(command -v openssl 2>/dev/null || true)
+fi
+expected_source_commit=${EXPECTED_SOURCE_COMMIT:-}
 nofile_limit=${NOFILE_LIMIT:-192}
 max_held=${MAX_HELD_CONNECTIONS:-96}
 storm_connections=${STORM_CONNECTIONS:-12}
 launcher=${RLIMIT_LAUNCHER:-systemd-user}
-out_dir=${OUT_DIR:-diagnostics/final/descriptor-pressure-$(date -u +%Y%m%dT%H%M%SZ)-$$}
-temporary_root=${TMPDIR:-/tmp}
 
 die() {
     printf 'descriptor-pressure gate: %s\n' "$*" >&2
     exit 2
 }
 
-[[ -n $rust_bin ]] || die 'RUST_REALITY_BIN is required; this gate never builds'
-[[ -n $xray_bin ]] || die 'XRAY_BIN is required; this gate never downloads Xray'
-[[ $run_id =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die 'RUN_ID is invalid'
 [[ $nofile_limit =~ ^[1-9][0-9]*$ ]] || die 'NOFILE_LIMIT must be a positive integer'
 [[ $max_held =~ ^[1-9][0-9]*$ ]] || die 'MAX_HELD_CONNECTIONS must be positive'
 [[ $storm_connections =~ ^[1-9][0-9]*$ ]] || die 'STORM_CONNECTIONS must be positive'
@@ -46,29 +46,28 @@ die() {
 [[ $launcher == systemd-user || $launcher == ulimit ]] ||
     die 'RLIMIT_LAUNCHER must be systemd-user or ulimit'
 
-for program in jq openssl python3 readlink sha256sum; do
+for program in jq python3 readlink sha256sum; do
     command -v "$program" >/dev/null 2>&1 || die "required program unavailable: $program"
 done
-[[ -x $rust_bin ]] || die "rust-reality binary is not executable: $rust_bin"
-[[ -x $xray_bin ]] || die "Xray binary is not executable: $xray_bin"
-rust_bin=$(readlink -f -- "$rust_bin")
-xray_bin=$(readlink -f -- "$xray_bin")
-readonly rust_bin xray_bin
-rust_sha256=$(sha256sum -- "$rust_bin" | awk '{print $1}')
-xray_sha256=$(sha256sum -- "$xray_bin" | awk '{print $1}')
-readonly rust_sha256 xray_sha256
-if [[ -n ${RUST_REALITY_SHA256:-} && ${RUST_REALITY_SHA256,,} != "$rust_sha256" ]]; then
-    die "RUST_REALITY_SHA256 mismatch: expected ${RUST_REALITY_SHA256,,}, got $rust_sha256"
-fi
-if [[ -n ${XRAY_SHA256:-} && ${XRAY_SHA256,,} != "$xray_sha256" ]]; then
-    die "XRAY_SHA256 mismatch: expected ${XRAY_SHA256,,}, got $xray_sha256"
-fi
-
-[[ ! -e $out_dir ]] || die "OUT_DIR already exists; refusing to overwrite: $out_dir"
-mkdir -p -- "$(dirname -- "$out_dir")"
-mkdir -- "$out_dir"
-out_dir=$(readlink -f -- "$out_dir")
-temporary_root=$(readlink -f -- "$temporary_root")
+rr_contract_init "$REPOSITORY" test-descriptor-pressure diagnostics/final 8
+rr_register_binary rust-reality "$rust_bin" "${RUST_REALITY_SHA256:-}" rust \
+    "$expected_source_commit"
+rr_register_binary xray "$xray_bin" "${XRAY_SHA256:-}" xray
+rr_register_binary openssl "$openssl_bin" "${OPENSSL_SHA256:-}" generic
+run_id=$RR_RUN_ID
+out_dir=$RR_OUT_DIR
+temporary_root=$RR_TMPDIR
+rust_bin=${RR_BINARY_PATHS[rust-reality]}
+xray_bin=${RR_BINARY_PATHS[xray]}
+openssl_bin=${RR_BINARY_PATHS[openssl]}
+rust_sha256=${RR_BINARY_SHA256[rust-reality]}
+xray_sha256=${RR_BINARY_SHA256[xray]}
+openssl_sha256=${RR_BINARY_SHA256[openssl]}
+openssl_identity=$("$openssl_bin" version -a)
+RR_BINARY_IDENTITIES[openssl]=${openssl_identity%%$'\n'*}
+rr_write_contract_metadata
+readonly run_id out_dir temporary_root rust_bin xray_bin openssl_bin
+readonly rust_sha256 xray_sha256 openssl_sha256 openssl_identity
 work=$(mktemp -d "$temporary_root/rust-reality-fd-pressure.XXXXXX")
 readonly out_dir temporary_root work
 
@@ -95,12 +94,18 @@ PY
 }
 
 track_pid() {
-    local name=$1 pid=$2 start
+    local name=$1 pid=$2 expected_exe=${3:-} expected_sha=${4:-} start actual_sha
     [[ $pid =~ ^[1-9][0-9]*$ ]] || die "invalid PID for $name: $pid"
     start=$(pid_start_time "$pid") || die "cannot identify $name PID $pid"
     tracked_names+=("$name")
     tracked_pids+=("$pid")
     tracked_starts+=("$start")
+    rr_register_pid "$pid" "$expected_exe"
+    if [[ -n $expected_sha ]]; then
+        actual_sha=$(sha256sum -- "/proc/$pid/exe" | awk '{print $1}')
+        [[ $actual_sha == "$expected_sha" ]] ||
+            die "$name PID $pid executable SHA-256 mismatch"
+    fi
 }
 
 pid_is_owned() {
@@ -122,7 +127,7 @@ terminate_owned_pid() {
 }
 
 cleanup() {
-    local status=$? index
+    local status=$? final_status index
     trap - EXIT INT TERM
     set +e
     if [[ -n $server_pid && -n $server_start ]]; then
@@ -132,8 +137,7 @@ cleanup() {
         systemctl --user stop "$unit" >/dev/null 2>&1 || true
     fi
     for ((index=${#tracked_pids[@]} - 1; index >= 0; index--)); do
-        terminate_owned_pid "${tracked_pids[index]}" "${tracked_starts[index]}"
-        wait "${tracked_pids[index]}" 2>/dev/null || true
+        rr_stop_registered_pid "${tracked_pids[index]}"
     done
     if [[ -d $work && $work == "$temporary_root"/rust-reality-fd-pressure.* ]]; then
         rm -rf -- "$work"
@@ -145,26 +149,13 @@ cleanup() {
             tail -20 "$out_dir/server.log" >&2
         fi
     fi
-    exit "$status"
+    rr_contract_verify_on_exit "$status"
+    final_status=$?
+    exit "$final_status"
 }
-trap cleanup EXIT INT TERM
-
-allocate_ports() {
-    python3 - <<'PY'
-import socket
-sockets = []
-try:
-    for _ in range(4):
-        sock = socket.socket()
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
-        sock.bind(("127.0.0.1", 0))
-        sockets.append(sock)
-    print(*(sock.getsockname()[1] for sock in sockets))
-finally:
-    for sock in sockets:
-        sock.close()
-PY
-}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 wait_port() {
     local port=$1 name=$2
@@ -184,35 +175,38 @@ raise SystemExit(f"{name} port {port} did not become ready")
 PY
 }
 
-read -r server_port socks_port cover_port echo_port < <(allocate_ports)
+server_port=$(rr_next_port)
+socks_port=$(rr_next_port)
+cover_port=$(rr_next_port)
+echo_port=$(rr_next_port)
 readonly server_port socks_port cover_port echo_port
 
 # A small local TLS 1.3 cover target; no external network or shared cache is used.
 # Keep its private CA isolated to the rust-reality child.  A CA-signed leaf is
 # intentional: the cover probe performs normal hostname and chain validation.
-openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+"$openssl_bin" req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
     -subj '/CN=rust-reality descriptor gate CA' \
     -addext 'basicConstraints=critical,CA:TRUE' \
     -addext 'keyUsage=critical,keyCertSign,cRLSign' \
     -keyout "$work/ca.key" -out "$work/ca.crt" >/dev/null 2>&1
-openssl req -new -newkey rsa:2048 -nodes -sha256 \
+"$openssl_bin" req -new -newkey rsa:2048 -nodes -sha256 \
     -subj '/CN=localhost' \
     -addext 'basicConstraints=critical,CA:FALSE' \
     -addext 'keyUsage=critical,digitalSignature,keyEncipherment' \
     -addext 'extendedKeyUsage=serverAuth' \
     -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
     -keyout "$work/cover.key" -out "$work/cover.csr" >/dev/null 2>&1
-openssl x509 -req -sha256 -days 1 \
+"$openssl_bin" x509 -req -sha256 -days 1 \
     -in "$work/cover.csr" -CA "$work/ca.crt" -CAkey "$work/ca.key" \
     -CAcreateserial -copy_extensions copy -out "$work/cover.crt" >/dev/null 2>&1
-openssl verify -CAfile "$work/ca.crt" -verify_hostname localhost \
+"$openssl_bin" verify -CAfile "$work/ca.crt" -verify_hostname localhost \
     "$work/cover.crt" >"$out_dir/certificate-verify.log" 2>&1
-openssl s_server -quiet -tls1_3 -no_middlebox \
+"$openssl_bin" s_server -quiet -tls1_3 -no_middlebox \
     -accept "127.0.0.1:$cover_port" -alpn 'h2,http/1.1' \
     -key "$work/cover.key" -cert "$work/cover.crt" -CAfile "$work/ca.crt" \
     >"$out_dir/cover.log" 2>&1 &
 cover_pid=$!
-track_pid cover "$cover_pid"
+track_pid cover "$cover_pid" "$openssl_bin" "$openssl_sha256"
 wait_port "$cover_port" cover
 
 # A process-owned threaded echo origin. The ready file is created only after bind.
@@ -241,7 +235,7 @@ with Server(("127.0.0.1", port), Handler) as server:
     server.serve_forever(poll_interval=0.1)
 PY
 echo_pid=$!
-track_pid echo "$echo_pid"
+track_pid echo "$echo_pid" "$(command -v python3)"
 for _ in $(seq 1 150); do
     [[ -s $work/echo.ready ]] && break
     sleep 0.1
@@ -308,7 +302,7 @@ if [[ $launcher == systemd-user ]]; then
         ' _ "$nofile_limit" "$pidfile" "$rust_bin" "$work/server.json" "$work/ca.crt" \
         >"$out_dir/server.log" 2>&1 &
     runner_pid=$!
-    track_pid systemd-run "$runner_pid"
+    track_pid systemd-run "$runner_pid" "$(command -v systemd-run)"
     unit_started=true
 else
     bash -c '
@@ -336,6 +330,9 @@ server_exe=$(readlink -f -- "/proc/$server_pid/exe")
 [[ $server_exe == "$rust_bin" ]] || die "server executable mismatch: $server_exe"
 server_process_sha256=$(sha256sum -- "/proc/$server_pid/exe" | awk '{print $1}')
 [[ $server_process_sha256 == "$rust_sha256" ]] || die 'running server binary SHA-256 changed'
+if [[ -z ${RR_PID_STARTS[$server_pid]:-} ]]; then
+    rr_register_pid "$server_pid" "$rust_bin"
+fi
 read -r observed_soft observed_hard < <(
     awk '$1 == "Max" && $2 == "open" && $3 == "files" {print $4, $5}' \
         "/proc/$server_pid/limits"
@@ -353,7 +350,7 @@ wait_port "$server_port" rust-reality
 env -i PATH=/usr/local/bin:/usr/bin:/bin \
     "$xray_bin" run -config "$work/xray.json" >"$out_dir/xray.log" 2>&1 &
 xray_pid=$!
-track_pid xray "$xray_pid"
+track_pid xray "$xray_pid" "$xray_bin" "$xray_sha256"
 wait_port "$socks_port" Xray
 sleep 0.5
 pid_is_owned "$server_pid" "$server_start" || die 'server exited before pressure test'
@@ -572,6 +569,17 @@ finally:
 PY
 
 pid_is_owned "$server_pid" "$server_start" || die 'server did not survive the completed gate'
+[[ $(sha256sum -- "/proc/$server_pid/exe" | awk '{print $1}') == "$rust_sha256" ]] ||
+    die 'running server binary SHA-256 changed after pressure test'
+rr_pid_is_registered "$server_pid" || die 'server PID identity changed after pressure test'
+rr_pid_is_registered "$xray_pid" || die 'Xray PID identity changed after pressure test'
+rr_pid_is_registered "$cover_pid" || die 'OpenSSL cover PID identity changed after pressure test'
+[[ $(sha256sum -- "/proc/$xray_pid/exe" | awk '{print $1}') == "$xray_sha256" ]] ||
+    die 'running Xray binary SHA-256 changed after pressure test'
+[[ $(sha256sum -- "/proc/$cover_pid/exe" | awk '{print $1}') == "$openssl_sha256" ]] ||
+    die 'running OpenSSL binary SHA-256 changed after pressure test'
+server_config_sha256=$(sha256sum -- "$work/server.json" | awk '{print $1}')
+xray_config_sha256=$(sha256sum -- "$work/xray.json" | awk '{print $1}')
 jq -e '.ok == true and .stormFailures > 0 and .recoverySha256 == .expectedRecoverySha256' \
     "$out_dir/pressure-result.json" >/dev/null || die 'pressure result did not satisfy the gate'
 
@@ -583,6 +591,10 @@ jq -n \
     --arg launcher "$launcher" \
     --arg rustBinary "$rust_bin" --arg rustSha256 "$rust_sha256" \
     --arg xrayBinary "$xray_bin" --arg xraySha256 "$xray_sha256" \
+    --arg opensslBinary "$openssl_bin" --arg opensslSha256 "$openssl_sha256" \
+    --arg opensslIdentity "$openssl_identity" \
+    --arg serverConfigSha256 "$server_config_sha256" \
+    --arg xrayConfigSha256 "$xray_config_sha256" \
     --argjson nofileLimit "$nofile_limit" \
     --argjson serverPort "$server_port" --argjson socksPort "$socks_port" \
     --argjson coverPort "$cover_port" --argjson echoPort "$echo_port" \
@@ -597,12 +609,18 @@ jq -n \
       nofile: {soft: $nofileLimit, hard: $nofileLimit},
       binaries: {
         rustReality: {path: $rustBinary, sha256: $rustSha256},
-        xray: {path: $xrayBinary, sha256: $xraySha256}
+        xray: {path: $xrayBinary, sha256: $xraySha256},
+        openssl: {path: $opensslBinary, sha256: $opensslSha256,
+                  identity: $opensslIdentity}
       },
+      configSha256: {server: $serverConfigSha256, xray: $xrayConfigSha256},
       ports: {server: $serverPort, socks: $socksPort, cover: $coverPort, echo: $echoPort},
       result: $result[0]
     }
 ' >"$out_dir/gate-summary.json"
+[[ $("$openssl_bin" version -a) == "$openssl_identity" ]] ||
+    die 'OpenSSL identity changed during the run'
+rr_finalize_contract
 (
     cd -- "$out_dir"
     sha256sum cover.log echo.log server.log xray.log pressure-result.json gate-summary.json \

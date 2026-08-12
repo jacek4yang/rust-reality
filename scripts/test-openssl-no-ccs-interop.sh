@@ -2,36 +2,24 @@
 # Canonical local interoperability gate for a TLS 1.3 cover target that omits
 # the server middlebox-compatibility CCS.
 #
-# Required absolute paths: RUST_REALITY_BIN, XRAY_BIN, OPENSSL_BIN, OUT_DIR.
-# RUN_ID is also required. Optional identity pins: RUST_REALITY_SHA256,
-# XRAY_SHA256. The script never builds either measured binary.
+# Formal runs require benchmark-contract inputs plus immutable Rust, Xray, and
+# OpenSSL binaries. Set EXPLORATORY=1 only for local non-authoritative use.
 set -Eeuo pipefail
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-run_id=${RUN_ID:-}
+source "$repository/scripts/benchmark-contract.sh"
 rust_bin=${RUST_REALITY_BIN:-}
 xray_bin=${XRAY_BIN:-}
 openssl_bin=${OPENSSL_BIN:-}
-out_dir=${OUT_DIR:-}
 expected_rust_sha256=${RUST_REALITY_SHA256:-}
 expected_xray_sha256=${XRAY_SHA256:-}
+expected_openssl_sha256=${OPENSSL_SHA256:-}
+expected_source_commit=${EXPECTED_SOURCE_COMMIT:-}
 
 die() {
     printf '%s\n' "$*" >&2
     exit 1
 }
-
-[[ -n $run_id ]] || die 'RUN_ID is required'
-[[ $run_id =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
-    || die 'RUN_ID must contain only ASCII letters, digits, dot, underscore, or dash'
-for name in RUST_REALITY_BIN XRAY_BIN OPENSSL_BIN OUT_DIR; do
-    value=${!name:-}
-    [[ $value == /* ]] || die "$name must be an absolute path"
-done
-[[ -x $rust_bin ]] || die "RUST_REALITY_BIN is not executable: $rust_bin"
-[[ -x $xray_bin ]] || die "XRAY_BIN is not executable: $xray_bin"
-[[ -x $openssl_bin ]] || die "OPENSSL_BIN is not executable: $openssl_bin"
-[[ ! -e $out_dir && ! -L $out_dir ]] || die "OUT_DIR already exists: $out_dir"
 
 for program in curl jq python3 sha256sum stat; do
     command -v "$program" >/dev/null 2>&1 || die "required program is unavailable: $program"
@@ -41,31 +29,28 @@ done
 # into the rust-reality server child only.
 unset SSL_CERT_FILE
 
-validate_expected_sha256() {
-    local label=$1 expected=$2 actual=$3
-    [[ -z $expected || $expected =~ ^[[:xdigit:]]{64}$ ]] \
-        || die "$label expected SHA-256 is not 64 hexadecimal characters"
-    if [[ -n $expected && ${expected,,} != "$actual" ]]; then
-        die "$label SHA-256 mismatch: expected $expected, got $actual"
-    fi
-}
+rr_contract_init "$repository" test-openssl-no-ccs-interop diagnostics/final 8
+rr_register_binary rust-reality "$rust_bin" "$expected_rust_sha256" rust \
+    "$expected_source_commit"
+rr_register_binary xray "$xray_bin" "$expected_xray_sha256" xray
+rr_register_binary openssl "$openssl_bin" "$expected_openssl_sha256" generic
+run_id=$RR_RUN_ID
+out_dir=$RR_OUT_DIR
+temporary_root=$RR_TMPDIR
+rust_bin=${RR_BINARY_PATHS[rust-reality]}
+xray_bin=${RR_BINARY_PATHS[xray]}
+openssl_bin=${RR_BINARY_PATHS[openssl]}
+rust_sha256=${RR_BINARY_SHA256[rust-reality]}
+xray_sha256=${RR_BINARY_SHA256[xray]}
+openssl_sha256=${RR_BINARY_SHA256[openssl]}
 
-rust_bin=$(readlink -f -- "$rust_bin")
-xray_bin=$(readlink -f -- "$xray_bin")
-openssl_bin=$(readlink -f -- "$openssl_bin")
-rust_sha256=$(sha256sum "$rust_bin" | awk '{print $1}')
-xray_sha256=$(sha256sum "$xray_bin" | awk '{print $1}')
-openssl_sha256=$(sha256sum "$openssl_bin" | awk '{print $1}')
-validate_expected_sha256 RUST_REALITY_BIN "$expected_rust_sha256" "$rust_sha256"
-validate_expected_sha256 XRAY_BIN "$expected_xray_sha256" "$xray_sha256"
-
-openssl_version=$("$openssl_bin" version)
+openssl_identity=$("$openssl_bin" version -a)
+openssl_version=${openssl_identity%%$'\n'*}
 [[ $openssl_version == 'OpenSSL 3.5.6 '* ]] \
     || die "OPENSSL_BIN must be the validated OpenSSL 3.5.6 build, got: $openssl_version"
+RR_BINARY_IDENTITIES[openssl]=$openssl_version
+rr_write_contract_metadata
 
-mkdir -m 700 -- "$out_dir"
-temporary_root=${TMPDIR:-/tmp}
-[[ $temporary_root == /* ]] || die 'TMPDIR must be an absolute path'
 work=$(mktemp -d "$temporary_root/rust-reality-openssl-no-ccs.XXXXXX")
 rust_pid=
 xray_pid=
@@ -75,22 +60,23 @@ http_pid=
 stop_pid() {
     local pid=${1:-}
     [[ -n $pid ]] || return 0
-    if kill -0 "$pid" 2>/dev/null; then
-        kill -TERM "$pid" 2>/dev/null || true
-        for _ in {1..50}; do
-            kill -0 "$pid" 2>/dev/null || break
-            sleep 0.02
-        done
-        if kill -0 "$pid" 2>/dev/null; then
-            kill -KILL "$pid" 2>/dev/null || true
-        fi
+    rr_stop_registered_pid "$pid"
+}
+
+register_pid() {
+    local pid=$1 expected_exe=$2 expected_sha=${3:-} actual_sha
+    rr_register_pid "$pid" "$expected_exe"
+    if [[ -n $expected_sha ]]; then
+        actual_sha=$(sha256sum -- "/proc/$pid/exe" | awk '{print $1}')
+        [[ $actual_sha == "$expected_sha" ]] ||
+            die "PID $pid executable SHA-256 mismatch"
     fi
-    wait "$pid" 2>/dev/null || true
 }
 
 cleanup() {
-    local status=$?
+    local status=$? final_status
     trap - EXIT INT TERM
+    set +e
     stop_pid "$xray_pid"
     stop_pid "$rust_pid"
     stop_pid "$openssl_pid"
@@ -98,28 +84,13 @@ cleanup() {
     if [[ -d $work && $work == "$temporary_root"/rust-reality-openssl-no-ccs.* ]]; then
         rm -rf -- "$work"
     fi
-    exit "$status"
+    rr_contract_verify_on_exit "$status"
+    final_status=$?
+    exit "$final_status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-
-free_ports() {
-    python3 - <<'PY'
-import socket
-
-sockets = []
-try:
-    for _ in range(4):
-        sock = socket.socket()
-        sock.bind(("127.0.0.1", 0))
-        sockets.append(sock)
-    print(*(sock.getsockname()[1] for sock in sockets))
-finally:
-    for sock in sockets:
-        sock.close()
-PY
-}
 
 wait_port() {
     local port=$1 pid=$2
@@ -150,7 +121,10 @@ clean_curl() {
         -u HTTPS_PROXY -u https_proxy -u NO_PROXY -u no_proxy curl "$@"
 }
 
-read -r cover_port server_port socks_port http_port < <(free_ports)
+cover_port=$(rr_next_port)
+server_port=$(rr_next_port)
+socks_port=$(rr_next_port)
+http_port=$(rr_next_port)
 
 # Use a dedicated self-signed CA and a SAN-bearing server leaf. The CA is
 # exposed only to the rust-reality child through SSL_CERT_FILE below.
@@ -185,6 +159,7 @@ grep -Fq 'IP Address:127.0.0.1' "$out_dir/certificate-san.txt" \
     -tls1_3 -no_middlebox -alpn 'h2,http/1.1' -trace -msg -state \
     >"$out_dir/openssl-trace.log" 2>&1 &
 openssl_pid=$!
+register_pid "$openssl_pid" "$openssl_bin" "$openssl_sha256"
 wait_port "$cover_port" "$openssl_pid"
 
 cd "$repository"
@@ -206,6 +181,7 @@ jq --arg cache "$work/assets" \
 env SSL_CERT_FILE="$work/ca.crt" "$rust_bin" serve --config "$work/server.json" \
     >"$out_dir/rust-reality.log" 2>&1 &
 rust_pid=$!
+register_pid "$rust_pid" "$rust_bin" "$rust_sha256"
 wait_port "$server_port" "$rust_pid"
 
 jq -n \
@@ -223,6 +199,7 @@ jq -n \
     }' >"$work/xray.json"
 "$xray_bin" run -config "$work/xray.json" >"$out_dir/xray.log" 2>&1 &
 xray_pid=$!
+register_pid "$xray_pid" "$xray_bin" "$xray_sha256"
 wait_port "$socks_port" "$xray_pid"
 
 python3 - "$work/payload.bin" <<'PY'
@@ -236,6 +213,7 @@ PY
     exec python3 -m http.server "$http_port" --bind 127.0.0.1
 ) >"$out_dir/http-origin.log" 2>&1 &
 http_pid=$!
+register_pid "$http_pid" "$(command -v python3)"
 wait_port "$http_port" "$http_pid"
 
 clean_curl --fail --silent --show-error \
@@ -268,15 +246,30 @@ fi
 
 final_rust_sha256=$(sha256sum "$rust_bin" | awk '{print $1}')
 final_xray_sha256=$(sha256sum "$xray_bin" | awk '{print $1}')
+final_openssl_sha256=$(sha256sum "$openssl_bin" | awk '{print $1}')
 [[ $final_rust_sha256 == "$rust_sha256" ]] || die 'RUST_REALITY_BIN changed during the run'
 [[ $final_xray_sha256 == "$xray_sha256" ]] || die 'XRAY_BIN changed during the run'
+[[ $final_openssl_sha256 == "$openssl_sha256" ]] || die 'OPENSSL_BIN changed during the run'
+[[ $("$openssl_bin" version -a) == "$openssl_identity" ]] ||
+    die 'OpenSSL identity changed during the run'
+rr_pid_is_registered "$rust_pid" || die 'rust-reality PID identity changed during the run'
+rr_pid_is_registered "$xray_pid" || die 'Xray PID identity changed during the run'
+[[ $(sha256sum -- "/proc/$rust_pid/exe" | awk '{print $1}') == "$rust_sha256" ]] ||
+    die 'running rust-reality executable changed during the run'
+[[ $(sha256sum -- "/proc/$xray_pid/exe" | awk '{print $1}') == "$xray_sha256" ]] ||
+    die 'running Xray executable changed during the run'
+server_config_sha256=$(sha256sum "$work/server.json" | awk '{print $1}')
+xray_config_sha256=$(sha256sum "$work/xray.json" | awk '{print $1}')
 
 jq -n \
     --arg run_id "$run_id" --arg completed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg rust_bin "$rust_bin" --arg rust_sha256 "$rust_sha256" \
     --arg xray_bin "$xray_bin" --arg xray_sha256 "$xray_sha256" \
     --arg openssl_bin "$openssl_bin" --arg openssl_sha256 "$openssl_sha256" \
-    --arg openssl_version "$openssl_version" --arg payload_sha256 "$download_sha256" \
+    --arg openssl_version "$openssl_version" --arg openssl_identity "$openssl_identity" \
+    --arg server_config_sha256 "$server_config_sha256" \
+    --arg xray_config_sha256 "$xray_config_sha256" \
+    --arg payload_sha256 "$download_sha256" \
     --arg mldsa_sha256 "$mldsa_sha256" --argjson cover_port "$cover_port" \
     --argjson server_port "$server_port" --argjson socks_port "$socks_port" \
     --argjson http_port "$http_port" \
@@ -284,7 +277,9 @@ jq -n \
       rustReality:{path:$rust_bin,sha256:$rust_sha256,immutableDuringRun:true},
       xray:{path:$xray_bin,sha256:$xray_sha256,immutableDuringRun:true},
       openssl:{path:$openssl_bin,sha256:$openssl_sha256,version:$openssl_version,
+        identity:$openssl_identity,
         tls:"1.3",middlebox:false,alpn:["h2","http/1.1"]},
+      configSha256:{server:$server_config_sha256,xray:$xray_config_sha256},
       topology:{address:"127.0.0.1",ports:{cover:$cover_port,reality:$server_port,
         socks:$socks_port,origin:$http_port}},
       certificate:{authority:"ephemeral self-signed CA",leafSan:["DNS:localhost","IP:127.0.0.1"],
@@ -293,6 +288,8 @@ jq -n \
         payloadBytes:1048576,payloadSha256:$payload_sha256,
         mldsa65VerifySha256:$mldsa_sha256},trace:"openssl-trace.log",ok:true}' \
     >"$out_dir/summary.json"
+
+rr_finalize_contract
 
 printf 'run_id=%s\n' "$run_id"
 printf 'result=PASS\n'
