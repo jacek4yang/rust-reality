@@ -13,8 +13,9 @@ use crate::{
             RealityAuthConfigError, RealityAuthenticator, ReplayCache, ReplayError,
             read_client_hello,
             tls13::{
-                CertificateIdentity, ClientFinishedReadError, HandshakeMessageError, ServerFlight,
-                TlsApplicationIo, build_server_flight_with_shape, read_client_finished,
+                CertificateIdentity, ClientFinishedReadError, CoverHandshakePlan,
+                CoverHandshakeRecordShape, HandshakeMessageError, ServerFlight, TlsApplicationIo,
+                build_server_flight_with_shape, read_client_finished,
             },
         },
         vless::UserId,
@@ -123,6 +124,21 @@ pub struct RealityEstablished {
     inbound_tag: Arc<str>,
     client_random: [u8; 32],
     authenticated_user_id: UserId,
+    cover_flight: Option<SelectedCoverFlight>,
+}
+
+struct SelectedCoverFlight {
+    plan: CoverHandshakePlan,
+    retained_prefix: Vec<u8>,
+}
+
+/// Non-secret cover-flight selection data used only for debug evidence.
+pub(crate) struct CoverFlightEvidence {
+    pub(crate) emit_ccs: bool,
+    pub(crate) layout: &'static str,
+    pub(crate) wire_lens: Vec<usize>,
+    pub(crate) nst_wire_len: Option<usize>,
+    pub(crate) retained_prefix: Vec<u8>,
 }
 
 impl RealityEstablished {
@@ -142,6 +158,27 @@ impl RealityEstablished {
         &self.client_random
     }
 
+    /// Removes non-secret cover evidence for a debug log event.
+    pub(crate) fn take_cover_flight_evidence(&mut self) -> Option<CoverFlightEvidence> {
+        let selected = self.cover_flight.take()?;
+        let (layout, wire_lens, nst_wire_len) = match selected.plan.shape {
+            CoverHandshakeRecordShape::Coalesced { wire_len } => {
+                ("coalesced", vec![wire_len], None)
+            }
+            CoverHandshakeRecordShape::PositionalRecords {
+                wire_lens,
+                nst_wire_len,
+            } => ("positional", wire_lens.to_vec(), nst_wire_len),
+        };
+        Some(CoverFlightEvidence {
+            emit_ccs: selected.plan.emit_ccs,
+            layout,
+            wire_lens,
+            nst_wire_len,
+            retained_prefix: selected.retained_prefix,
+        })
+    }
+
     /// Separates authenticated TLS I/O, authorization, and routing identity.
     #[must_use]
     pub fn into_parts(self) -> (TlsApplicationIo<TcpStream>, Arc<str>, UserId) {
@@ -158,6 +195,7 @@ impl RealityEstablished {
             inbound_tag: Arc::from("test-reality"),
             client_random: [0; 32],
             authenticated_user_id,
+            cover_flight: None,
         }
     }
 }
@@ -336,7 +374,6 @@ impl RealityAcceptor {
         };
         drop(crypto_permit);
         drop(cover);
-        drop(target_prefix);
         write_server_flight(&mut stream, &flight, handshake_deadline).await?;
         let established = read_client_finished(
             &mut stream,
@@ -356,6 +393,10 @@ impl RealityAcceptor {
                 inbound_tag: Arc::clone(&self.inbound_tag),
                 client_random,
                 authenticated_user_id: authenticated.user_id(),
+                cover_flight: Some(SelectedCoverFlight {
+                    plan: record_shape,
+                    retained_prefix: target_prefix,
+                }),
             },
         )))
     }

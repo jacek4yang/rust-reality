@@ -97,6 +97,22 @@ pub enum LogEvent {
         /// Remote address.
         peer: SocketAddr,
     },
+    /// The non-secret cover-derived TLS record plan selected for an authenticated session.
+    CoverFlightSelected {
+        /// Whether the generated flight includes compatibility ChangeCipherSpec.
+        emit_ccs: bool,
+        /// Fixed layout category: `coalesced` or `positional`.
+        layout: &'static str,
+        /// Generated encrypted-record wire lengths in order.
+        wire_lens: Vec<usize>,
+        /// Optional fifth fake-ticket ApplicationData wire length.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        nst_wire_len: Option<usize>,
+        /// Bytes retained while classifying the cover flight.
+        retained_prefix_bytes: usize,
+        /// SHA-256 of those retained bytes; never payload bytes themselves.
+        retained_prefix_sha256: String,
+    },
     /// A connection completed. Emitted only at debug level.
     ConnectionClosed {
         /// Remote address.
@@ -319,6 +335,7 @@ impl LogEvent {
             | Self::MachineReport { .. } => LogLevel::Info,
             Self::ConnectionAccepted { .. }
             | Self::ConnectionClosed { .. }
+            | Self::CoverFlightSelected { .. }
             | Self::ConnectionCompleted { .. } => LogLevel::Debug,
             Self::ConnectionRejected { .. }
             | Self::AdmissionLimited { .. }
@@ -451,6 +468,12 @@ impl Logger {
                 .map_err(|_| LogWriteError::Unavailable)?
                 .write(&encoded),
         }
+    }
+
+    /// Returns whether debug-only evidence will reach the configured sink.
+    #[must_use]
+    pub const fn debug_enabled(&self) -> bool {
+        level_rank(LogLevel::Debug) <= level_rank(self.minimum_level)
     }
 }
 
@@ -632,6 +655,35 @@ mod tests {
         let contents = fs::read_to_string(&path).expect("active log must be readable");
         assert!(contents.contains("server_starting"));
         assert!(!contents.contains("connection_accepted"));
+        cleanup(&directory);
+    }
+
+    #[test]
+    fn cover_flight_evidence_is_debug_only_and_secret_free() {
+        let directory = test_directory();
+        let path = directory.join("events.log");
+        let logger = file_logger(&path, LogLevel::Debug, 64 * 1024, 2, 128 * 1024);
+        assert!(logger.debug_enabled());
+        logger
+            .emit(&LogEvent::CoverFlightSelected {
+                emit_ccs: true,
+                layout: "positional",
+                wire_lens: vec![37, 53, 69, 85],
+                nst_wire_len: Some(29),
+                retained_prefix_bytes: 382,
+                retained_prefix_sha256: "00".repeat(32),
+            })
+            .expect("cover evidence must serialize");
+
+        let contents = fs::read_to_string(&path).expect("active log must be readable");
+        let record: serde_json::Value =
+            serde_json::from_str(contents.trim()).expect("event must be JSON");
+        assert_eq!(record["event"], "cover_flight_selected");
+        assert_eq!(record["emit_ccs"], true);
+        assert_eq!(record["wire_lens"], serde_json::json!([37, 53, 69, 85]));
+        assert_eq!(record["nst_wire_len"], 29);
+        assert_eq!(record["retained_prefix_bytes"], 382);
+        assert_eq!(record["retained_prefix_sha256"], "00".repeat(32));
         cleanup(&directory);
     }
 
