@@ -190,6 +190,8 @@ netns_teardown() {
 
 cleanup() {
     local exit_status=$?
+    trap - EXIT INT TERM
+    set +e
     netns_teardown
     for pid in "${pids[@]:-}"; do
         rr_stop_registered_pid "$pid"
@@ -199,7 +201,10 @@ cleanup() {
     else
         rm -rf -- "$work"
     fi
+    local final_rc
     rr_contract_verify_on_exit "$exit_status"
+    final_rc=$?
+    exit "$final_rc"
 }
 trap cleanup EXIT INT TERM
 

@@ -399,6 +399,7 @@ cleanup() {
 finish() {
     local status=$?
     trap - EXIT
+    set +e
     if ((status != 0)); then
         run_state=FAILED
         if [[ -n $run_sample_dir && -d $run_sample_dir ]]; then
@@ -410,11 +411,8 @@ finish() {
         write_run_status 2>/dev/null || true
     fi
     cleanup
-    if rr_contract_verify_on_exit "$status"; then
-        status=0
-    else
-        status=$?
-    fi
+    rr_contract_verify_on_exit "$status"
+    status=$?
     exit "$status"
 }
 trap finish EXIT

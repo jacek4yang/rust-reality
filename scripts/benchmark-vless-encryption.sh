@@ -34,6 +34,8 @@ pids=()
 
 cleanup() {
     local exit_status=$?
+    trap - EXIT
+    set +e
     for pid in "${pids[@]}"; do
         rr_stop_registered_pid "$pid"
     done
@@ -42,7 +44,10 @@ cleanup() {
     elif [[ -d $work && $work == "$temporary_root"/rust-reality-vless-encryption.* ]]; then
         rm -rf -- "$work"
     fi
+    local final_rc
     rr_contract_verify_on_exit "$exit_status"
+    final_rc=$?
+    exit "$final_rc"
 }
 trap cleanup EXIT
 

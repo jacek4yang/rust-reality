@@ -27,6 +27,8 @@ http_pid=
 
 cleanup() {
     local exit_status=$?
+    trap - EXIT
+    set +e
     for pid in "$xray_pid" "$rust_pid" "$http_pid"; do
         if [[ -n "$pid" ]]; then
             rr_stop_registered_pid "$pid"
@@ -35,7 +37,10 @@ cleanup() {
     if [[ -d "$work" && "$work" == "$temporary_root"/rust-reality-xray.* ]]; then
         rm -rf -- "$work"
     fi
+    local final_rc
     rr_contract_verify_on_exit "$exit_status"
+    final_rc=$?
+    exit "$final_rc"
 }
 trap cleanup EXIT
 

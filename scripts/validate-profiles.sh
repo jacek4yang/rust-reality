@@ -227,11 +227,8 @@ cleanup() {
         rm -rf -- "$work"
     fi
     local final_rc
-    if rr_contract_verify_on_exit "$exit_status"; then
-        final_rc=0
-    else
-        final_rc=$?
-    fi
+    rr_contract_verify_on_exit "$exit_status"
+    final_rc=$?
     exit "$final_rc"
 }
 trap cleanup EXIT

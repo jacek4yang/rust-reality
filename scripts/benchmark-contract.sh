@@ -467,34 +467,34 @@ rr_verify_registered_files() {
     if [[ $RR_EXPLORATORY == 0 ]]; then
         actual=$(git -C "$RR_REPOSITORY" rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)
         [[ $actual == "$RR_HARNESS_COMMIT" ]] ||
-            rr_contract_die "repository HEAD changed during run" || return
+            rr_contract_die "repository HEAD changed during run" || return 1
         git -C "$RR_REPOSITORY" diff --quiet --ignore-submodules=none -- &&
             git -C "$RR_REPOSITORY" diff --cached --quiet --ignore-submodules=none -- ||
-            rr_contract_die "repository acquired tracked or staged changes during run" || return
+            rr_contract_die "repository acquired tracked or staged changes during run" || return 1
     fi
     actual=$(sha256sum -- "$RR_SCRIPT" | awk '{print $1}')
     [[ $actual == "$RR_SCRIPT_SHA256" ]] ||
-        rr_contract_die "script changed during run" || return
+        rr_contract_die "script changed during run" || return 1
     actual=$(sha256sum -- "$RR_CONTRACT_PATH" | awk '{print $1}')
     [[ $actual == "$RR_CONTRACT_SHA256" ]] ||
-        rr_contract_die "benchmark contract changed during run" || return
+        rr_contract_die "benchmark contract changed during run" || return 1
     for path in "${RR_HARNESS_FILES[@]}"; do
         actual=$(sha256sum -- "$path" | awk '{print $1}')
         [[ $actual == "${RR_HARNESS_SHA256[$path]}" ]] ||
-            rr_contract_die "harness file changed during run: $path" || return
+            rr_contract_die "harness file changed during run: $path" || return 1
     done
     for path in "${RR_HARNESS_TREES[@]}"; do
         snapshot=$(rr_harness_tree_snapshot "$path") ||
-            rr_contract_die "could not re-snapshot harness source tree: $path" || return
+            rr_contract_die "could not re-snapshot harness source tree: $path" || return 1
         read -r manifest_sha file_count <<<"$snapshot"
         [[ $manifest_sha == "${RR_HARNESS_TREE_MANIFEST_SHA256[$path]}" &&
             $file_count == "${RR_HARNESS_TREE_FILE_COUNTS[$path]}" ]] ||
-            rr_contract_die "harness source manifest changed during run: $path" || return
+            rr_contract_die "harness source manifest changed during run: $path" || return 1
     done
     for label in "${RR_BINARY_LABELS[@]}"; do
         actual=$(sha256sum -- "${RR_BINARY_PATHS[$label]}" | awk '{print $1}')
         [[ $actual == "${RR_BINARY_SHA256[$label]}" ]] ||
-            rr_contract_die "$label binary changed during run" || return
+            rr_contract_die "$label binary changed during run" || return 1
     done
 }
 
