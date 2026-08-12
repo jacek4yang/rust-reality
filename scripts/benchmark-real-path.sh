@@ -9,7 +9,8 @@
 #
 # Requires: xray (XRAY_BIN), curl, jq, python3, and direct Internet egress.
 # Optional env: RUNS (20), BYTES (25000000), URL (Cloudflare speed endpoint),
-#               RUST_REALITY_BIN, OUT (output JSON file).
+#               RUST_REALITY_BIN, OUT_DIR (unique result directory),
+#               OUT (legacy explicit output JSON file).
 set -Eeuo pipefail
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -20,7 +21,8 @@ bytes=${BYTES:-5000000}
 url=${URL:-https://speed.cloudflare.com/__down?bytes=$bytes}
 cover_target=${COVER_TARGET:-dl.google.com:443}
 cover_sni=${COVER_SNI:-dl.google.com}
-out=${OUT:-diagnostics/final/real-path.json}
+out_dir=${OUT_DIR:-diagnostics/final/real-path-$(date -u +%Y%m%dT%H%M%SZ)}
+out=${OUT:-$out_dir/real-path.json}
 temporary_root=${TMPDIR:-/tmp}
 work=$(mktemp -d "$temporary_root/rust-reality-realpath.XXXXXX")
 pids=()
@@ -38,7 +40,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for program in "$xray" curl jq python3; do
+for program in curl jq python3 sha256sum; do
     if ! command -v "$program" >/dev/null 2>&1; then
         echo "required program is unavailable: $program" >&2
         exit 1
@@ -87,6 +89,27 @@ start_process() {
 }
 
 cd "$repository"
+[[ -x $rust_bin ]] || { echo "RUST_REALITY_BIN not executable: $rust_bin" >&2; exit 1; }
+command -v "$xray" >/dev/null 2>&1 || { echo "XRAY_BIN not executable: $xray" >&2; exit 1; }
+rust_bin=$(realpath "$rust_bin")
+xray=$(realpath "$(command -v "$xray")")
+rust_sha256=$(sha256sum "$rust_bin" | awk '{print $1}')
+xray_sha256=$(sha256sum "$xray" | awk '{print $1}')
+expected_rust_sha256=${RUST_REALITY_SHA256:-}
+expected_xray_sha256=${XRAY_SHA256:-}
+if [[ -n $expected_rust_sha256 && ${expected_rust_sha256,,} != "$rust_sha256" ]]; then
+    echo "RUST_REALITY_SHA256 mismatch: expected $expected_rust_sha256, got $rust_sha256" >&2
+    exit 1
+fi
+if [[ -n $expected_xray_sha256 && ${expected_xray_sha256,,} != "$xray_sha256" ]]; then
+    echo "XRAY_SHA256 mismatch: expected $expected_xray_sha256, got $xray_sha256" >&2
+    exit 1
+fi
+if [[ -z ${OUT:-} && -e $out_dir ]]; then
+    echo "OUT_DIR already exists: $out_dir" >&2
+    exit 1
+fi
+[[ ! -e $out ]] || { echo "output already exists: $out" >&2; exit 1; }
 
 rust_port=$(free_port)
 xray_port=$(free_port)
@@ -150,7 +173,8 @@ wait_port "$rust_socks"
 wait_port "$xray_socks"
 
 mkdir -p "$(dirname "$out")"
-python3 - "$runs" "$bytes" "$url" "$rust_socks" "$xray_socks" "$rust_port" "$out" <<'PY'
+python3 - "$runs" "$bytes" "$url" "$rust_socks" "$xray_socks" "$rust_port" \
+    "$out" "$rust_bin" "$rust_sha256" "$xray" "$xray_sha256" <<'PY'
 import json
 import os
 import subprocess
@@ -163,6 +187,7 @@ url = sys.argv[3]
 ports = {"rust-reality": int(sys.argv[4]), "xray": int(sys.argv[5])}
 rust_server_port = int(sys.argv[6])
 out = sys.argv[7]
+rust_bin, rust_sha256, xray_bin, xray_sha256 = sys.argv[8:12]
 
 curl_env = {
     key: value
@@ -221,6 +246,10 @@ for name in ports:
 report = {
     "schemaVersion": 1,
     "harness": "benchmark-real-path",
+    "binaries": {
+        "rustReality": {"path": rust_bin, "sha256": rust_sha256},
+        "xray": {"path": xray_bin, "sha256": xray_sha256},
+    },
     "url": url.split("?")[0],
     "expectedBytes": expected,
     "rustServerPort": rust_server_port,

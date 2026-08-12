@@ -86,6 +86,10 @@ rust_bin=${RUST_REALITY_BIN:-target/release/rust-reality}
 xray=${XRAY_BIN:-../artifacts/xray-reference}
 sections=${SECTIONS:-routing cost nxr longflow}
 out_dir=${OUT_DIR:-benchmarks/final/deployment-$(date -u +%Y%m%dT%H%M%SZ)}
+[[ ! -e $out_dir ]] || {
+    echo "OUT_DIR already exists; refusing to overwrite evidence: $out_dir" >&2
+    exit 2
+}
 smoke=${SMOKE:-0}
 samples=${SAMPLES:-3}
 conns=${CONNS:-96}

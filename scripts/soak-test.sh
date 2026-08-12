@@ -16,7 +16,7 @@ rust_bin=${RUST_REALITY_BIN:-target/release/rust-reality}
 xray=${XRAY_BIN:-../artifacts/xray-reference}
 duration_min=${DURATION_MIN:-30}
 round_sleep=${ROUND_SLEEP:-5}
-out_dir=${OUT_DIR:-diagnostics/final/soak}
+out_dir=${OUT_DIR:-diagnostics/final/soak-$(date -u +%Y%m%dT%H%M%SZ)}
 work=$(readlink -f "$(mktemp -d "$repository/benchmarks/soak.XXXXXX")")
 pids=()
 
@@ -30,9 +30,47 @@ cleanup() {
 trap cleanup EXIT
 
 cd "$repository"
-mkdir -p "$out_dir"
+for program in curl jq openssl python3 sha256sum; do
+    command -v "$program" >/dev/null || { echo "missing: $program" >&2; exit 1; }
+done
+[[ -x $rust_bin ]] || { echo "RUST_REALITY_BIN not executable: $rust_bin" >&2; exit 1; }
+rust_bin=$(realpath "$rust_bin")
+rust_sha256=$(sha256sum "$rust_bin" | awk '{print $1}')
+xray_sha256=
+if command -v "$xray" >/dev/null 2>&1; then
+    xray=$(realpath "$(command -v "$xray")")
+    xray_sha256=$(sha256sum "$xray" | awk '{print $1}')
+fi
 
-rust_port=28101; rust_socks=28103; https_port=28105; http_port=28106
+[[ ! -e $out_dir ]] || { echo "OUT_DIR already exists: $out_dir" >&2; exit 1; }
+mkdir -p "$(dirname "$out_dir")"
+mkdir "$out_dir"
+jq -n --arg rustBin "$rust_bin" --arg rustSha256 "$rust_sha256" \
+    --arg xrayBin "$xray" --arg xraySha256 "$xray_sha256" \
+    --arg startedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --argjson durationMinutes "$duration_min" \
+    '{schemaVersion:1,startedAt:$startedAt,durationMinutes:$durationMinutes,
+      rustReality:{path:$rustBin,sha256:$rustSha256},
+      xray:(if $xraySha256 == "" then null else {path:$xrayBin,sha256:$xraySha256} end)}' \
+    >"$out_dir/environment.json"
+
+allocate_ports() {
+    python3 - <<'PY'
+import socket
+sockets = []
+try:
+    for _ in range(4):
+        sock = socket.socket()
+        sockets.append(sock)
+        sock.bind(("127.0.0.1", 0))
+    print(*(sock.getsockname()[1] for sock in sockets))
+finally:
+    for sock in sockets:
+        sock.close()
+PY
+}
+
+read -r rust_port rust_socks https_port http_port < <(allocate_ports)
 
 "$rust_bin" config generate standalone --listen 127.0.0.1 --port "$rust_port" \
     --target "127.0.0.1:$https_port" --server-name localhost \

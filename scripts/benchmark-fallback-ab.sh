@@ -16,6 +16,10 @@ samples=${SAMPLES:-7}
 concurrencies=${CONCURRENCIES:-1 4 32}
 payload_mib=${PAYLOAD_MIB:-32}
 out_dir=${OUT_DIR:-benchmarks/final/fallback-ab-$(date -u +%Y%m%dT%H%M%SZ)}
+[[ ! -e $out_dir ]] || {
+    echo "OUT_DIR already exists; refusing to overwrite evidence: $out_dir" >&2
+    exit 1
+}
 work=$(mktemp -d "$repository/benchmarks/fallback-ab.XXXXXX")
 pids=()
 

@@ -30,13 +30,44 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for program in curl jq python3 go; do
+for program in curl jq openssl python3 go readelf sha256sum; do
     command -v "$program" >/dev/null || { echo "missing: $program" >&2; exit 1; }
 done
 sudo -n true || { echo "passwordless sudo required for perf stat" >&2; exit 1; }
 
 cd "$repository"
-mkdir -p "$out_dir"
+[[ -x $rust_bin ]] || { echo "RUST_REALITY_BIN not executable: $rust_bin" >&2; exit 1; }
+command -v "$xray" >/dev/null 2>&1 || { echo "XRAY_BIN not executable: $xray" >&2; exit 1; }
+rust_bin=$(realpath "$rust_bin")
+xray=$(realpath "$(command -v "$xray")")
+rust_sha256=$(sha256sum "$rust_bin" | awk '{print $1}')
+xray_sha256=$(sha256sum "$xray" | awk '{print $1}')
+expected_rust_sha256=${RUST_REALITY_SHA256:-}
+expected_xray_sha256=${XRAY_SHA256:-}
+if [[ -n $expected_rust_sha256 && ${expected_rust_sha256,,} != "$rust_sha256" ]]; then
+    echo "RUST_REALITY_SHA256 mismatch: expected $expected_rust_sha256, got $rust_sha256" >&2
+    exit 1
+fi
+if [[ -n $expected_xray_sha256 && ${expected_xray_sha256,,} != "$xray_sha256" ]]; then
+    echo "XRAY_SHA256 mismatch: expected $expected_xray_sha256, got $xray_sha256" >&2
+    exit 1
+fi
+rust_build_id=$(readelf -n "$rust_bin" | awk '/Build ID:/ {print $3; exit}')
+xray_build_id=$(readelf -n "$xray" | awk '/Build ID:/ {print $3; exit}')
+[[ ! -e $out_dir ]] || { echo "OUT_DIR already exists: $out_dir" >&2; exit 1; }
+mkdir -p "$(dirname "$out_dir")"
+mkdir "$out_dir"
+jq -n --arg rustBin "$rust_bin" --arg rustSha256 "$rust_sha256" \
+    --arg rustBuildId "$rust_build_id" --arg xrayBin "$xray" \
+    --arg xraySha256 "$xray_sha256" --arg xrayBuildId "$xray_build_id" \
+    --arg startedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg concurrencies "$concurrencies" --argjson samples "$samples" \
+    --argjson connectionsPerSample "$conns" \
+    '{schemaVersion:1,startedAt:$startedAt,samples:$samples,
+      connectionsPerSample:$connectionsPerSample,concurrencies:$concurrencies,
+      rustReality:{path:$rustBin,sha256:$rustSha256,buildId:$rustBuildId},
+      xray:{path:$xrayBin,sha256:$xraySha256,buildId:$xrayBuildId}}' \
+    >"$out_dir/environment.json"
 
 free_port() {
     python3 - <<'PY'

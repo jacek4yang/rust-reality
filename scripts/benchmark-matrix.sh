@@ -94,6 +94,10 @@ cells_filter=${CELLS:-}
 skip_filter=${SKIP:-}
 rust_log_level=${RUST_LOG_LEVEL:-debug}
 out_dir=${OUT_DIR:-benchmarks/final/matrix-$(date -u +%Y%m%dT%H%M%SZ)}
+[[ ! -e $out_dir ]] || {
+    echo "OUT_DIR already exists; refusing to overwrite evidence: $out_dir" >&2
+    exit 2
+}
 # Disk-backed default: /tmp may be a small tmpfs that cannot hold multi-GiB
 # payload files. TMPDIR is still honored when set.
 temporary_root=${TMPDIR:-$repository/benchmarks}
