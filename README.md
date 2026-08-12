@@ -102,7 +102,12 @@ protocol stack itself.
 
 ## Supported scope
 
-Supported release target: Linux x86_64 with a modern kernel. The public
+Supported release target: Linux x86_64 with a modern kernel. Releases retain
+the portable `x86_64-unknown-linux-gnu` archive and also provide an opt-in
+`x86_64-v3` archive. The latter requires an x86-64-v3 CPU and has no runtime
+fallback; use the portable archive when CPU support is unknown.
+
+The public
 inbound does not support plain VLESS, TLS-only VLESS, WebSocket, QUIC, UDP
 proxying, or non-Vision flow. NXR is not a public protocol and does not
 encrypt payload after its one-time authenticated request. The public protocol
@@ -112,15 +117,20 @@ policy, cover target, and resource limits for their own VPS.
 
 ## Quick start
 
-Download the archive, manifest, and checksums from the
+Download the two archives, manifest, and checksums from the
 [latest release](https://github.com/jacek4yang/rust-reality/releases/latest),
 then verify all assets before installation:
 
 ```shell
 sha256sum --check SHA256SUMS
-tar -xzf rust-reality-v1.4.0-x86_64-unknown-linux-gnu.tar.gz
+# Portable package (recommended when CPU support is unknown):
+tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
+# Or, on an x86-64-v3 CPU:
+# tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 ```
+
+`release-manifest.json` schema v2 records both CPU tiers and their requirements.
 
 Probe a proposed REALITY cover endpoint and generate a standalone server:
 

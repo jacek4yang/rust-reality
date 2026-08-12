@@ -59,10 +59,10 @@ jobs:
       - name: Run repository quality gates
         run: ./scripts/check.sh
 
-      - name: Build release binary
+      - name: Build portable and x86-64-v3 release binaries
         run: ./scripts/build-release.sh
 
-      - name: Package deterministic release assets
+      - name: Package deterministic dual-tier release assets
         run: ./scripts/package-release.sh "$GITHUB_REF_NAME" "$RELEASE_TARGET"
 
       - name: Preserve verified release assets

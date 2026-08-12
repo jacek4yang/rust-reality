@@ -94,14 +94,23 @@ relay。生命周期、热路径拓扑、描述符预算模型和可观测事件
 
 ## 快速开始
 
+Release 保留 portable `x86_64-unknown-linux-gnu` 压缩包，并额外提供可选的
+`x86_64-v3` 压缩包。后者要求 CPU 支持 x86-64-v3，且没有运行时回退；不确定
+机器能力时应选择 portable 包。
+
 从[最新 Release](https://github.com/jacek4yang/rust-reality/releases/latest)
-下载压缩包、manifest 和校验文件，安装前验证全部资产：
+下载两个压缩包、manifest 和校验文件，安装前验证全部资产：
 
 ```shell
 sha256sum --check SHA256SUMS
-tar -xzf rust-reality-v1.4.0-x86_64-unknown-linux-gnu.tar.gz
+# portable 包（不确定 CPU 能力时推荐）：
+tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
+# 或在 x86-64-v3 CPU 上使用：
+# tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 ```
+
+`release-manifest.json` schema v2 会记录两个 CPU 档位及其运行要求。
 
 探测 REALITY 伪装目标并生成单机配置：
 

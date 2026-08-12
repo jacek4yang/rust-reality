@@ -23,25 +23,31 @@ For machine sizing, resource profiles, and performance diagnosis, see
 
 ## Install an official release
 
-Download these three assets from the same
+Download these four assets from the same
 [GitHub Release](https://github.com/jacek4yang/rust-reality/releases):
 
 - `rust-reality-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz`
+- `rust-reality-vX.Y.Z-x86_64-v3-unknown-linux-gnu.tar.gz`
 - `release-manifest.json`
 - `SHA256SUMS`
 
-Verify both listed files before extraction:
+Verify every file listed in `SHA256SUMS` before extraction:
 
 ```shell
 sha256sum --check SHA256SUMS
+# Portable package (recommended when CPU support is unknown):
 tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
+# Or, on an x86-64-v3 CPU:
+# tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 rust-reality --version
 ```
 
-`release-manifest.json` records the version, tag, exact source commit, target
-triple, source timestamp, archive name, and archive SHA-256. Do not combine an
-archive, manifest, or checksum from different releases.
+`release-manifest.json` schema v2 records the version, tag, exact source
+commit, target triple, source timestamp, both archive names and SHA-256 values,
+and each archive's CPU requirement. The x86-64-v3 package has no runtime
+fallback. Do not combine an archive, manifest, or checksum from different
+releases.
 
 To build instead, use the pinned toolchain and locked dependency graph:
 
@@ -363,7 +369,7 @@ SIGTERM stops new accepts and permits a bounded graceful shutdown. The unit's
 
 ## Upgrade and rollback
 
-1. Download and verify all three assets for the new tag.
+1. Download and verify all release assets for the new tag.
 2. Keep the current binary and configuration as root-only rollback files.
 3. Run the new binary's `check` and `self-test` against a copy of production
    configuration.

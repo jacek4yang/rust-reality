@@ -21,23 +21,28 @@ NXR 落地机。
 ## 安装官方 Release
 
 从同一个 [GitHub Release](https://github.com/jacek4yang/rust-reality/releases)
-下载三个资产：
+下载四个资产：
 
 - `rust-reality-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz`
+- `rust-reality-vX.Y.Z-x86_64-v3-unknown-linux-gnu.tar.gz`
 - `release-manifest.json`
 - `SHA256SUMS`
 
-解压前验证列出的两个文件：
+解压前验证 `SHA256SUMS` 中列出的全部文件：
 
 ```shell
 sha256sum --check SHA256SUMS
+# portable 包（不确定 CPU 能力时推荐）：
 tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
+# 或在 x86-64-v3 CPU 上使用：
+# tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 rust-reality --version
 ```
 
-`release-manifest.json` 记录版本、tag、精确源码 commit、target triple、源码时间戳、
-压缩包名和 SHA-256。不要混用不同 Release 的压缩包、manifest 或 checksum。
+`release-manifest.json` schema v2 记录版本、tag、精确源码 commit、target triple、
+源码时间戳、两个压缩包的名称和 SHA-256，以及各压缩包的 CPU 要求。x86-64-v3
+包没有运行时回退。不要混用不同 Release 的压缩包、manifest 或 checksum。
 
 需要自行构建时使用固定工具链和锁定依赖图：
 
@@ -324,7 +329,7 @@ SIGTERM 停止新 accept 并执行有界优雅退出；unit 的 40 秒停止超�
 
 ## 升级与回滚
 
-1. 下载并验证新 tag 的全部三个资产。
+1. 下载并验证新 tag 的全部 Release 资产。
 2. 以 root-only 文件保留当前二进制和配置。
 3. 使用新二进制对生产配置副本执行 `check` 和 `self-test`。
 4. 原子安装新二进制并重启。

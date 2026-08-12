@@ -31,6 +31,7 @@ for script in scripts/*.sh; do
 done
 
 run python3 scripts/check-docs.py
+run scripts/test-package-release.sh
 run cargo fmt --all --check
 run cargo clippy --all-targets --all-features --locked -- -D warnings
 run cargo deny --all-features check bans licenses sources
