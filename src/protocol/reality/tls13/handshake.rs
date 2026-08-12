@@ -8,11 +8,11 @@ use zeroize::Zeroizing;
 use crate::protocol::reality::{AuthKey, ClientHello, X25519_GROUP, X25519_MLKEM768_GROUP};
 
 use super::{
-    CertificateIdentity, CipherSuite, ContentType, CoverHandshakeRecordShape, ExportedRecordState,
-    FinishedVerifyData, HandshakeMessageError, ServerHelloError, ServerHelloTemplate,
-    Tls13KeySchedule, Tls13KeyScheduleError, Tls13RecordError, Tls13RecordLayer,
-    certificate_message, change_cipher_spec_record, encrypted_extensions, finished_message,
-    plaintext_handshake_record, record::UNPADDED_RECORD_WIRE_OVERHEAD,
+    CertificateIdentity, CipherSuite, ContentType, CoverHandshakePlan, CoverHandshakeRecordShape,
+    ExportedRecordState, FinishedVerifyData, HandshakeMessageError, ServerHelloError,
+    ServerHelloTemplate, Tls13KeySchedule, Tls13KeyScheduleError, Tls13RecordError,
+    Tls13RecordLayer, certificate_message, change_cipher_spec_record, encrypted_extensions,
+    finished_message, plaintext_handshake_record, record::UNPADDED_RECORD_WIRE_OVERHEAD,
 };
 
 const FINISHED_HANDSHAKE_TYPE: u8 = 20;
@@ -203,13 +203,12 @@ impl ServerFlight {
             .expect("server flight retains its ServerHello prefix")
     }
 
-    /// Returns the fixed middlebox-compatibility record.
+    /// Returns the middlebox-compatibility record when the flight plan emitted one.
     #[must_use]
-    pub fn change_cipher_spec(&self) -> &[u8; 6] {
+    pub fn change_cipher_spec(&self) -> Option<&[u8; 6]> {
         self.wire
             .get(self.server_hello_end..self.encrypted_handshake_start)
             .and_then(|record| record.try_into().ok())
-            .expect("server flight retains its fixed compatibility record")
     }
 
     /// Returns the encrypted record sequence containing EE through Finished.
@@ -222,8 +221,9 @@ impl ServerFlight {
 
     /// Compatibility alias for [`Self::encrypted_handshake_records`].
     ///
-    /// Depending on the cover-derived shape, the returned suffix may contain
-    /// one coalesced record or four positional records.
+    /// Depending on the cover-derived plan, the returned suffix may contain
+    /// one coalesced record or four positional records optionally followed by
+    /// one fake NewSessionTicket record.
     #[must_use]
     pub fn encrypted_handshake_record(&self) -> &[u8] {
         self.encrypted_handshake_records()
@@ -312,7 +312,7 @@ pub(crate) fn build_server_flight_with_shape(
     target: ServerHelloTemplate,
     identity: &CertificateIdentity,
     selected_alpn: Option<&[u8]>,
-    shape: CoverHandshakeRecordShape,
+    plan: CoverHandshakePlan,
 ) -> Result<ServerFlight, RealityHandshakeError> {
     build_server_flight_inner(
         client,
@@ -320,7 +320,7 @@ pub(crate) fn build_server_flight_with_shape(
         target,
         identity,
         selected_alpn,
-        Some(shape),
+        Some(plan),
     )
 }
 
@@ -330,7 +330,7 @@ fn build_server_flight_inner(
     target: ServerHelloTemplate,
     identity: &CertificateIdentity,
     selected_alpn: Option<&[u8]>,
-    shape: Option<CoverHandshakeRecordShape>,
+    plan: Option<CoverHandshakePlan>,
 ) -> Result<ServerFlight, RealityHandshakeError> {
     if let Some(protocol) = selected_alpn
         && !client.alpn_protocols().any(|offered| offered == protocol)
@@ -396,6 +396,10 @@ fn build_server_flight_inner(
         certificate_verify.as_slice(),
         server_finished.as_slice(),
     ];
+    let (emit_ccs, shape) = match plan {
+        Some(plan) => (plan.emit_ccs, Some(plan.shape)),
+        None => (true, None),
+    };
     let (encrypted_wire_len, largest_record_len) = match shape {
         None => {
             let wire_len = unpadded_record_wire_len(flight_plaintext.len())?;
@@ -405,7 +409,10 @@ fn build_server_flight_inner(
             shaped_record_padding(flight_plaintext.len(), wire_len)?;
             (wire_len, wire_len)
         }
-        Some(CoverHandshakeRecordShape::PositionalRecords { wire_lens }) => {
+        Some(CoverHandshakeRecordShape::PositionalRecords {
+            wire_lens,
+            nst_wire_len,
+        }) => {
             let mut total = 0_usize;
             let mut largest = 0_usize;
             for (message, wire_len) in handshake_messages.iter().zip(wire_lens) {
@@ -414,6 +421,13 @@ fn build_server_flight_inner(
                     .checked_add(wire_len)
                     .ok_or(RealityHandshakeError::BufferAllocation)?;
                 largest = largest.max(wire_len);
+            }
+            if let Some(nst_wire_len) = nst_wire_len {
+                shaped_record_padding(0, nst_wire_len)?;
+                total = total
+                    .checked_add(nst_wire_len)
+                    .ok_or(RealityHandshakeError::BufferAllocation)?;
+                largest = largest.max(nst_wire_len);
             }
             (total, largest)
         }
