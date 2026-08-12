@@ -23,8 +23,19 @@ out_dir=${OUT_DIR:-benchmarks/final/setup-rate-$(date -u +%Y%m%dT%H%M%SZ)}
 strace_out=${STRACE_OUT:-}
 work=$(readlink -f "$(mktemp -d "$repository/benchmarks/setup-rate.XXXXXX")")
 pids=()
+traced_server_pid=
 
 cleanup() {
+    if [[ $traced_server_pid =~ ^[1-9][0-9]*$ ]] && kill -0 "$traced_server_pid" 2>/dev/null; then
+        kill -TERM "$traced_server_pid" 2>/dev/null || true
+        for _ in {1..100}; do
+            kill -0 "$traced_server_pid" 2>/dev/null || break
+            sleep 0.02
+        done
+        if kill -0 "$traced_server_pid" 2>/dev/null; then
+            kill -KILL "$traced_server_pid" 2>/dev/null || true
+        fi
+    fi
     for pid in "${pids[@]}"; do
         kill "$pid" 2>/dev/null || true
         wait "$pid" 2>/dev/null || true
@@ -174,6 +185,7 @@ if [[ -n $strace_out ]]; then
         echo "straced server ELF identity mismatch" >&2
         exit 1
     }
+    traced_server_pid=$rust_pid
 else
     "$rust_bin" serve --config "$work/rust.json" > "$work/rust.log" 2>&1 &
     pids+=("$!"); rust_pid=$!
