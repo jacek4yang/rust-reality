@@ -158,6 +158,25 @@ ratio reversed from 0.9511 to 1.1390 between rounds, confirming order/host
 noise. These results are retained as no-difference evidence: they neither
 establish a protected-path regression nor justify a performance-win headline.
 
+The formal tier comparison is
+`20260812T130000Z-matrix-v3-04285e63-r01`: x86-64-v3 (`final`) versus portable
+(`baseline`) from the same source/features, with six balanced ABBA blocks. It
+retained 219 samples, zero invalid samples, and three matching 64 MiB integrity
+hashes (portable, v3, and Xray guard).
+
+| path | v3/portable throughput median (95% CI) | v3/portable worst latency median (95% CI) |
+|---|---:|---:|
+| bidirectional | 1.0306 (0.9240–1.1118) | 0.9935 (0.8477–1.0862) |
+| Direct download | 1.0145 (0.9820–1.0498) | 0.9906 (0.9417–1.0372) |
+| Direct upload | 0.9682 (0.8462–1.1066) | 0.9970 (0.8829–1.1871) |
+| fallback | 0.9981 (0.9280–1.0613) | 0.9795 (0.8752–1.0169) |
+| framed download | 1.0091 (0.9826–1.0278) | 1.0150 (0.9996–1.0162) |
+| framed upload | 1.0058 (0.9865–1.0229) | 0.9751 (0.9556–1.0074) |
+
+All twelve intervals contain 1, so this run supplies no statistically reliable
+v3 advantage. The portable tier remains independently protected: v3 evidence
+cannot cancel or mask a portable regression.
+
 The v1.5 interoperability matrix also exercised Xray 26.7.28 against
 Microsoft, Google, and Fastly public covers plus local OpenSSL 3.5.6 without
 CCS. Each case passed exact 1 MiB SHA-256 and ML-DSA-65 compatibility. It is a

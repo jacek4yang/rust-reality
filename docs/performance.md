@@ -43,6 +43,29 @@ a statistically significant protected-path regression nor a throughput win.
 The same source is released as portable and x86-64-v3 artifacts, but CPU-tier
 identity alone is not treated as performance evidence.
 
+The formal x86-64-v3-versus-portable run
+`20260812T130000Z-matrix-v3-04285e63-r01` used the same source commit and
+features, immutable tier-specific binaries, six balanced ABBA blocks, and warn
+logging. It retained 219 samples with zero invalid samples; portable, v3, and
+the Xray guard each passed a separate exact 64 MiB SHA-256 transfer. Ratios
+below are **v3 / portable** (higher throughput is better; lower worst-request
+latency is better):
+
+| path | throughput median (95% bootstrap) | worst latency median (95% bootstrap) |
+|---|---:|---:|
+| bidirectional | 1.0306 (0.9240–1.1118) | 0.9935 (0.8477–1.0862) |
+| Direct download | 1.0145 (0.9820–1.0498) | 0.9906 (0.9417–1.0372) |
+| Direct upload | 0.9682 (0.8462–1.1066) | 0.9970 (0.8829–1.1871) |
+| fallback | 0.9981 (0.9280–1.0613) | 0.9795 (0.8752–1.0169) |
+| framed download | 1.0091 (0.9826–1.0278) | 1.0150 (0.9996–1.0162) |
+| framed upload | 1.0058 (0.9865–1.0229) | 0.9751 (0.9556–1.0074) |
+
+Every throughput and worst-request-latency interval contains 1. The run
+therefore establishes no statistically reliable v3 advantage on this host.
+The opt-in tier remains a separately identified build for capable CPUs; it is
+not a reason to relax any portable regression gate, and a future v3 result can
+never mask a portable regression.
+
 Interoperability gates passed against Xray 26.7.28 with Microsoft, Google, and
 Fastly public covers and against a local OpenSSL 3.5.6 cover without CCS. Each
 case verified an exact 1 MiB SHA-256 transfer and ML-DSA-65 key compatibility.
