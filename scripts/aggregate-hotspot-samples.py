@@ -14,7 +14,7 @@ def fail(message: str) -> "NoReturn":
     raise SystemExit(message)
 
 
-def parse_sample_headers(lines) -> dict[str, str]:
+def parse_sample_headers(lines: list[str]) -> dict[str, str]:
     headers = {}
     for line in lines:
         if not line.startswith("# ") or "=" not in line:
@@ -24,7 +24,11 @@ def parse_sample_headers(lines) -> dict[str, str]:
     return headers
 
 
-def aggregate(bundle: Path, max_unmapped_period_percent: float) -> dict:
+def aggregate(
+    bundle: Path,
+    max_unmapped_period_percent: float,
+    unmapped_period_explanation: str | None = None,
+) -> dict:
     summary_path = bundle / "ida" / "summary.json"
     disassembly_path = bundle / "ida" / "disassembly.json"
     samples_path = bundle / "perf-symbol-samples.txt"
@@ -43,8 +47,8 @@ def aggregate(bundle: Path, max_unmapped_period_percent: float) -> dict:
 
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     raw_instructions = json.loads(disassembly_path.read_text(encoding="utf-8"))
-    with samples_path.open(encoding="utf-8") as sample_handle:
-        headers = parse_sample_headers(sample_handle)
+    sample_lines = samples_path.read_text(encoding="utf-8").splitlines()
+    headers = parse_sample_headers(sample_lines)
     for key in ("binary_sha256", "binary_build_id", "raw_symbol", "dso_basename"):
         if not headers.get(key):
             fail(f"sample file is missing identity header: {key}")
@@ -101,56 +105,60 @@ def aggregate(bundle: Path, max_unmapped_period_percent: float) -> dict:
     expected_symbol = headers["raw_symbol"]
     expected_dso = headers["dso_basename"]
 
-    with samples_path.open(encoding="utf-8") as sample_handle:
-        for line_number, raw_line in enumerate(sample_handle, start=1):
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split(maxsplit=3)
-            if len(parts) != 4:
-                fail(f"invalid perf sample at {samples_path}:{line_number}: {line}")
-            try:
-                period = int(parts[0], 10)
-            except ValueError as error:
-                fail(f"invalid period at {samples_path}:{line_number}: {error}")
-            if period <= 0:
-                fail(f"non-positive period at {samples_path}:{line_number}")
-            match = offset_pattern.search(parts[2])
-            symbol = parts[2][: match.start()] if match else ""
-            dso = Path(parts[3].strip().strip("()[]")).name
-            if match is None or symbol != expected_symbol or dso != expected_dso:
-                fail(f"sample identity mismatch at {samples_path}:{line_number}")
+    for line_number, raw_line in enumerate(sample_lines, start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(maxsplit=3)
+        if len(parts) != 4:
+            fail(f"invalid perf sample at {samples_path}:{line_number}: {line}")
+        try:
+            period = int(parts[0], 10)
+        except ValueError as error:
+            fail(f"invalid period at {samples_path}:{line_number}: {error}")
+        if period <= 0:
+            fail(f"non-positive period at {samples_path}:{line_number}")
+        match = offset_pattern.search(parts[2])
+        symbol = parts[2][: match.start()] if match else ""
+        dso = Path(parts[3].strip().strip("()[]")).name
+        if match is None or symbol != expected_symbol or dso != expected_dso:
+            fail(f"sample identity mismatch at {samples_path}:{line_number}")
 
-            sampled_address = function_start + int(match.group(1), 16)
-            totals["sampleRows"] += 1
-            totals["periodSum"] += period
-            index = bisect.bisect_right(starts, sampled_address) - 1
-            mapped = False
-            if index >= 0:
-                instruction = instructions[index]
-                instruction_end = instruction["addressValue"] + instruction["size"]
-                mapped = (
-                    function_start <= sampled_address < function_end
-                    and instruction["addressValue"] <= sampled_address < instruction_end
-                )
-            if mapped:
-                instruction["sampleCount"] += 1
-                instruction["periodSum"] += period
-                totals["mappedRows"] += 1
-                totals["mappedPeriod"] += period
-            else:
-                totals["unmappedRows"] += 1
-                totals["unmappedPeriod"] += period
+        sampled_address = function_start + int(match.group(1), 16)
+        totals["sampleRows"] += 1
+        totals["periodSum"] += period
+        index = bisect.bisect_right(starts, sampled_address) - 1
+        mapped = False
+        if index >= 0:
+            instruction = instructions[index]
+            instruction_end = instruction["addressValue"] + instruction["size"]
+            mapped = (
+                function_start <= sampled_address < function_end
+                and instruction["addressValue"] <= sampled_address < instruction_end
+            )
+        if mapped:
+            instruction["sampleCount"] += 1
+            instruction["periodSum"] += period
+            totals["mappedRows"] += 1
+            totals["mappedPeriod"] += period
+        else:
+            totals["unmappedRows"] += 1
+            totals["unmappedPeriod"] += period
 
     if totals["sampleRows"] == 0 or totals["mappedRows"] == 0:
         fail("perf sample file contains no mapped samples")
     unmapped_percent = totals["unmappedPeriod"] * 100.0 / totals["periodSum"]
     totals["unmappedPeriodPercent"] = unmapped_percent
-    if unmapped_percent > max_unmapped_period_percent:
+    if unmapped_percent >= 1.0:
         fail(
-            f"unmapped perf period {unmapped_percent:.6f}% exceeds "
-            f"{max_unmapped_period_percent:.6f}% gate"
+            f"unmapped perf period {unmapped_percent:.6f}% is not below the 1% hard gate"
         )
+    if unmapped_percent > max_unmapped_period_percent:
+        if not unmapped_period_explanation or not unmapped_period_explanation.strip():
+            fail(
+                f"unmapped perf period {unmapped_percent:.6f}% exceeds the zero-default "
+                "gate; pass --unmapped-period-explanation for a reviewed sub-1% exception"
+            )
 
     sampled = []
     for instruction in instructions:
@@ -174,7 +182,11 @@ def aggregate(bundle: Path, max_unmapped_period_percent: float) -> dict:
     report = {
         "schemaVersion": 1,
         "identity": headers,
-        "mappingGate": {"maxUnmappedPeriodPercent": max_unmapped_period_percent},
+        "mappingGate": {
+            "maxUnmappedPeriodPercent": max_unmapped_period_percent,
+            "hardMaximumPercentExclusive": 1.0,
+            "unmappedPeriodExplanation": unmapped_period_explanation,
+        },
         "function": {
             "name": function["name"],
             "start": function["start"],
@@ -263,7 +275,8 @@ def self_test() -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("bundle", nargs="?")
-    parser.add_argument("--max-unmapped-period-percent", type=float, default=1.0)
+    parser.add_argument("--max-unmapped-period-percent", type=float, default=0.0)
+    parser.add_argument("--unmapped-period-explanation")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
@@ -271,9 +284,15 @@ def main() -> int:
         return 0
     if not args.bundle:
         parser.error("bundle is required unless --self-test is used")
-    if not 0.0 <= args.max_unmapped_period_percent <= 100.0:
-        parser.error("mapping threshold must be in 0..100")
-    report = aggregate(Path(args.bundle).resolve(), args.max_unmapped_period_percent)
+    if not 0.0 <= args.max_unmapped_period_percent < 1.0:
+        parser.error("mapping threshold must be in [0, 1)")
+    if args.unmapped_period_explanation and args.max_unmapped_period_percent == 0:
+        parser.error("an unmapped-period explanation requires a non-zero sub-1% threshold")
+    report = aggregate(
+        Path(args.bundle).resolve(),
+        args.max_unmapped_period_percent,
+        args.unmapped_period_explanation,
+    )
     print(
         f"mapped {report['totals']['mappedRows']}/{report['totals']['sampleRows']} "
         f"samples; unmapped period {report['totals']['unmappedPeriodPercent']:.6f}%"

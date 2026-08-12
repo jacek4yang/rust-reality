@@ -214,11 +214,36 @@ write_metadata RUNNING
 
 profile_pid=
 owned_pid=
+owned_starttime=
+pid_starttime() {
+    python3 - "$1" <<'PY'
+from pathlib import Path
+import sys
+raw = Path(f"/proc/{sys.argv[1]}/stat").read_text()
+end = raw.rfind(")")
+if end < 0:
+    raise SystemExit(1)
+print(raw[end + 2:].split()[19])
+PY
+}
+pid_is_owned() {
+    local observed
+    [[ -n $owned_pid && -n $owned_starttime && -r /proc/$owned_pid/stat ]] || return 1
+    observed=$(pid_starttime "$owned_pid" 2>/dev/null) || return 1
+    [[ $observed == "$owned_starttime" ]]
+}
 cleanup() {
-    if [[ -n $owned_pid ]]; then
-        kill "$owned_pid" 2>/dev/null || true
-        wait "$owned_pid" 2>/dev/null || true
+    if pid_is_owned; then
+        kill -TERM "$owned_pid" 2>/dev/null || true
+        for _ in {1..50}; do
+            pid_is_owned || break
+            sleep 0.02
+        done
+        if pid_is_owned; then
+            kill -KILL "$owned_pid" 2>/dev/null || true
+        fi
     fi
+    [[ -n $owned_pid ]] && wait "$owned_pid" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
@@ -227,8 +252,9 @@ if [[ $mode == built-in ]]; then
         >"$benchmark_json" 2>"$benchmark_stderr" &
     profile_pid=$!
     owned_pid=$profile_pid
+    owned_starttime=$(pid_starttime "$owned_pid") || die 'cannot identify built-in benchmark PID'
     sleep 0.5
-    kill -0 "$profile_pid" 2>/dev/null || {
+    pid_is_owned || {
         wait "$profile_pid" || true
         die "built-in benchmark exited before perf attached; see $benchmark_stderr"
     }
@@ -256,6 +282,7 @@ if [[ $mode == built-in ]]; then
 fi
 profile_pid=
 owned_pid=
+owned_starttime=
 trap - EXIT INT TERM
 
 if [[ -f $perf_data ]]; then
