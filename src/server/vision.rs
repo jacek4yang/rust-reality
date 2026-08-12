@@ -328,11 +328,11 @@ impl VisionHandler {
             )
             .await
             .map_err(VisionSessionError::Outbound)?;
-        // The session-handoff boundary: routing has selected the outbound, the
-        // downlink TLS direction is still at sequence zero with nothing
-        // written, and no Vision encoder or decoder exists yet. A handoff
-        // outbound transfers the session to the landing node here and this
-        // node never touches its TLS or Vision state again.
+        // The session-handoff boundary: routing has selected the outbound, no
+        // client-visible response has been written, and no Vision encoder or
+        // decoder exists yet. The downlink TLS sequence is zero normally or
+        // one after a cover-shaped empty ApplicationData record. A handoff
+        // outbound transfers that exact state to the landing node here.
         let outcome = match outcome {
             SessionOutboundOutcome::Handoff(line) => {
                 return self
@@ -553,8 +553,9 @@ fn session_stats(uplink: DirectionStats, downlink: DirectionStats) -> VisionRela
 /// consumed from the kernel, so the client-visible record stream continues
 /// exactly at the boundary. `prefetched_plaintext` enters the fresh Vision
 /// decoder before any decrypted record, mirroring the freshly accepted path.
-/// The response header and opening Vision frame are the first sealed server
-/// record, which the transfer channel guarantees sits at sequence zero.
+/// The response header and opening Vision frame are the first client-visible
+/// server record. The transfer channel preserves whether it is sealed at
+/// sequence zero or, after a cover-shaped empty ApplicationData record, one.
 pub(crate) async fn run_resumed_session(
     client_reader: TlsApplicationReader<OwnedReadHalf>,
     client_writer: TlsApplicationWriter<OwnedWriteHalf>,

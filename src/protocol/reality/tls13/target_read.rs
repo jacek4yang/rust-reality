@@ -627,7 +627,8 @@ const fn failure(
 ///
 /// This entry point only exists for the dedicated libFuzzer build. A fixed,
 /// valid ClientHello keeps mutations focused on the server flight, while the
-/// first input byte controls fragmentation and non-blocking NST visibility.
+/// first input byte selects raw or valid-prefix mode, fragmentation, and
+/// non-blocking NST visibility.
 #[cfg(feature = "fuzzing")]
 pub fn fuzz_cover_flight(input: &[u8]) {
     use std::sync::OnceLock;
@@ -648,8 +649,19 @@ pub fn fuzz_cover_flight(input: &[u8]) {
         ))
         .expect("fixed fuzz ClientHello must parse")
     });
-    let Some((&control, bytes)) = input.split_first() else {
+    let Some((&control, mutated_bytes)) = input.split_first() else {
         return;
+    };
+    let generated;
+    let bytes = if control & 0x40 == 0 {
+        generated = {
+            let mut prefix = fuzz_target_server_hello();
+            prefix.extend_from_slice(mutated_bytes);
+            prefix
+        };
+        generated.as_slice()
+    } else {
+        mutated_bytes
     };
     let runtime = RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_current_thread()
@@ -660,7 +672,7 @@ pub fn fuzz_cover_flight(input: &[u8]) {
     let mut reader = FuzzFlightReader {
         bytes,
         position: 0,
-        chunk_size: usize::from(control & 0x7f) + 1,
+        chunk_size: usize::from(control & 0x1f) + 1,
         probe_would_block: control & 0x80 != 0,
     };
     let _ = runtime.block_on(read_target_server_flight(
@@ -668,6 +680,55 @@ pub fn fuzz_cover_flight(input: &[u8]) {
         client,
         Duration::from_millis(1),
     ));
+}
+
+#[cfg(feature = "fuzzing")]
+fn fuzz_target_server_hello() -> Vec<u8> {
+    fn extension(output: &mut Vec<u8>, extension_type: u16, value: &[u8]) {
+        output.extend_from_slice(&extension_type.to_be_bytes());
+        output.extend_from_slice(
+            &u16::try_from(value.len())
+                .expect("fixed fuzz extension must fit")
+                .to_be_bytes(),
+        );
+        output.extend_from_slice(value);
+    }
+
+    let mut body = Vec::new();
+    body.extend_from_slice(&0x0303_u16.to_be_bytes());
+    body.extend_from_slice(&[0x33; 32]);
+    body.push(32);
+    body.extend_from_slice(&[0x11; 32]);
+    body.extend_from_slice(&0x1301_u16.to_be_bytes());
+    body.push(0);
+
+    let mut extensions = Vec::new();
+    extension(&mut extensions, 0x002b, &0x0304_u16.to_be_bytes());
+    let mut share = Vec::new();
+    share.extend_from_slice(&0x001d_u16.to_be_bytes());
+    share.extend_from_slice(&32_u16.to_be_bytes());
+    share.extend_from_slice(&[0x55; 32]);
+    extension(&mut extensions, 0x0033, &share);
+    body.extend_from_slice(
+        &u16::try_from(extensions.len())
+            .expect("fixed fuzz extensions must fit")
+            .to_be_bytes(),
+    );
+    body.extend_from_slice(&extensions);
+
+    let mut message = vec![2];
+    let message_len = u32::try_from(body.len()).expect("fixed fuzz ServerHello must fit");
+    message.extend_from_slice(&message_len.to_be_bytes()[1..]);
+    message.extend_from_slice(&body);
+
+    let mut record = vec![22, 3, 3];
+    record.extend_from_slice(
+        &u16::try_from(message.len())
+            .expect("fixed fuzz record must fit")
+            .to_be_bytes(),
+    );
+    record.extend_from_slice(&message);
+    record
 }
 
 #[cfg(feature = "fuzzing")]

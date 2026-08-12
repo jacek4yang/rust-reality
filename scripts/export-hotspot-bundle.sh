@@ -12,6 +12,8 @@ label=
 address=
 idalib_python=${IDALIB_PYTHON:-}
 timeout_seconds=${IDALIB_TIMEOUT_SECONDS:-300}
+readonly MAX_TIMEOUT_SECONDS=1800
+readonly MAX_PERF_DATA_BYTES=$((1024 * 1024 * 1024))
 
 usage() {
     cat <<'EOF'
@@ -57,8 +59,9 @@ done
 [[ $address =~ ^0[xX][0-9a-fA-F]+$ ]] || die '--address must be hexadecimal'
 [[ -n $idalib_python ]] || die '--idalib-python is required'
 [[ $timeout_seconds =~ ^[1-9][0-9]*$ ]] || die 'invalid --timeout-seconds'
+((timeout_seconds <= MAX_TIMEOUT_SECONDS)) || die '--timeout-seconds exceeds 1800'
 
-for program in addr2line llvm-objdump perf python3 readelf sha256sum timeout; do
+for program in addr2line llvm-objdump perf python3 readelf sha256sum stat timeout; do
     command -v "$program" >/dev/null 2>&1 || die "required tool unavailable: $program"
 done
 [[ -x $binary ]] || die "binary is not executable: $binary"
@@ -66,6 +69,8 @@ done
 [[ -x $idalib_python ]] || die "IDALib Python is not executable: $idalib_python"
 binary=$(realpath "$binary")
 perf_data=$(realpath "$perf_data")
+perf_data_bytes=$(stat -c %s -- "$perf_data")
+((perf_data_bytes <= MAX_PERF_DATA_BYTES)) || die 'perf data exceeds 1 GiB safety limit'
 out_dir=$(realpath "$out_dir")
 run_dir="$out_dir/$run_id"
 [[ -d $run_dir ]] || die "profile run does not exist: $run_dir"
@@ -122,26 +127,27 @@ import sys
 from pathlib import Path
 
 events, output, raw_symbol, dso_basename, sha256, build_id = sys.argv[1:]
-rows = []
 prefix = raw_symbol + "+0x"
-for line in Path(events).read_text(encoding="utf-8").splitlines():
-    parts = line.strip().split(maxsplit=3)
-    if len(parts) != 4 or not parts[2].startswith(prefix):
-        continue
-    dso = Path(parts[3].strip().strip("()[]")).name
-    if dso != dso_basename:
-        continue
-    rows.append(line.strip())
-if not rows:
-    raise SystemExit(f"no perf samples resolved to {raw_symbol} in {dso_basename}")
+row_count = 0
 with open(output, "x", encoding="utf-8") as handle:
     handle.write(f"# binary_sha256={sha256}\n")
     handle.write(f"# binary_build_id={build_id}\n")
     handle.write(f"# raw_symbol={raw_symbol}\n")
     handle.write(f"# dso_basename={dso_basename}\n")
     handle.write("# fields=period ip raw_symbol+offset dso\n")
-    handle.write("\n".join(rows) + "\n")
-print(f"resolved sample rows: {len(rows)}")
+    with open(events, encoding="utf-8") as source:
+        for line in source:
+            parts = line.strip().split(maxsplit=3)
+            if len(parts) != 4 or not parts[2].startswith(prefix):
+                continue
+            dso = Path(parts[3].strip().strip("()[]")).name
+            if dso != dso_basename:
+                continue
+            handle.write(line.strip() + "\n")
+            row_count += 1
+if row_count == 0:
+    raise SystemExit(f"no perf samples resolved to {raw_symbol} in {dso_basename}")
+print(f"resolved sample rows: {row_count}")
 PY
 
 python3 - "$hotspot_dir/metadata.json" "$label" "$address" "$binary" \

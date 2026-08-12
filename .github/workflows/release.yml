@@ -65,6 +65,9 @@ jobs:
       - name: Package deterministic dual-tier release assets
         run: ./scripts/package-release.sh "$GITHUB_REF_NAME" "$RELEASE_TARGET"
 
+      - name: Smoke-test both packaged CPU tiers
+        run: ./scripts/smoke-release-assets.sh "$GITHUB_REF_NAME" "$RELEASE_TARGET"
+
       - name: Preserve verified release assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

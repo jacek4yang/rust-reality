@@ -17,6 +17,11 @@ warmup_ms=${WARMUP_MS:-1000}
 event=${PERF_EVENT:-cycles:u}
 frequency=${PERF_FREQUENCY:-999}
 call_graph=${PERF_CALL_GRAPH:-fp}
+readonly MAX_RECORD_SECONDS=300
+readonly MAX_DURATION_MS=600000
+readonly MAX_WARMUP_MS=600000
+readonly MAX_FREQUENCY=9999
+readonly MAX_DWARF_BYTES=65528
 
 usage() {
     cat <<'EOF'
@@ -87,6 +92,14 @@ done
 [[ $frequency =~ ^[1-9][0-9]*$ ]] || die '--frequency must be positive'
 [[ $call_graph =~ ^(fp|lbr|dwarf(,[1-9][0-9]*)?)$ ]] ||
     die '--call-graph must be fp, lbr, or dwarf[,BYTES]'
+((record_seconds <= MAX_RECORD_SECONDS)) || die '--record-seconds exceeds 300'
+((duration_ms <= MAX_DURATION_MS)) || die '--duration-ms exceeds 600000'
+((warmup_ms <= MAX_WARMUP_MS)) || die '--warmup-ms exceeds 600000'
+((frequency <= MAX_FREQUENCY)) || die '--frequency exceeds 9999'
+if [[ $call_graph == dwarf,* ]]; then
+    dwarf_bytes=${call_graph#dwarf,}
+    ((dwarf_bytes <= MAX_DWARF_BYTES)) || die 'DWARF stack bytes exceed 65528'
+fi
 if [[ -n $expected_binary_sha256 ]]; then
     [[ $expected_binary_sha256 =~ ^[0-9a-fA-F]{64}$ ]] ||
         die '--binary-sha256 is malformed'

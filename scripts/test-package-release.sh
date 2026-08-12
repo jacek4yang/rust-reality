@@ -77,7 +77,11 @@ for artifact in artifacts:
     assert artifact["requirements"]["runtimeDispatch"] is False
 assert artifacts[0]["requirements"]["isaLevel"] == "x86-64"
 assert artifacts[1]["requirements"]["isaLevel"] == "x86-64-v3"
-assert "avx2" in artifacts[1]["requirements"]["requiredCpuFeatures"]
+assert artifacts[1]["requirements"]["requiredCpuFeatures"] == [
+    "avx", "avx2", "bmi1", "bmi2", "cx16", "f16c", "fma", "lahf_lm", "lzcnt",
+    "movbe", "popcnt", "sse3", "sse4_1", "sse4_2", "ssse3", "xsave",
+]
+assert artifacts[1]["requirements"]["requiresOsAvxState"] is True
 
 for archive_name, expected_binary in (
     (portable_name, b"#!/usr/bin/env sh\nprintf portable\n"),

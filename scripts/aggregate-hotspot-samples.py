@@ -14,7 +14,7 @@ def fail(message: str) -> "NoReturn":
     raise SystemExit(message)
 
 
-def parse_sample_headers(lines: list[str]) -> dict[str, str]:
+def parse_sample_headers(lines) -> dict[str, str]:
     headers = {}
     for line in lines:
         if not line.startswith("# ") or "=" not in line:
@@ -43,8 +43,8 @@ def aggregate(bundle: Path, max_unmapped_period_percent: float) -> dict:
 
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     raw_instructions = json.loads(disassembly_path.read_text(encoding="utf-8"))
-    sample_lines = samples_path.read_text(encoding="utf-8").splitlines()
-    headers = parse_sample_headers(sample_lines)
+    with samples_path.open(encoding="utf-8") as sample_handle:
+        headers = parse_sample_headers(sample_handle)
     for key in ("binary_sha256", "binary_build_id", "raw_symbol", "dso_basename"):
         if not headers.get(key):
             fail(f"sample file is missing identity header: {key}")
@@ -101,45 +101,46 @@ def aggregate(bundle: Path, max_unmapped_period_percent: float) -> dict:
     expected_symbol = headers["raw_symbol"]
     expected_dso = headers["dso_basename"]
 
-    for line_number, raw_line in enumerate(sample_lines, start=1):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = line.split(maxsplit=3)
-        if len(parts) != 4:
-            fail(f"invalid perf sample at {samples_path}:{line_number}: {line}")
-        try:
-            period = int(parts[0], 10)
-        except ValueError as error:
-            fail(f"invalid period at {samples_path}:{line_number}: {error}")
-        if period <= 0:
-            fail(f"non-positive period at {samples_path}:{line_number}")
-        match = offset_pattern.search(parts[2])
-        symbol = parts[2][: match.start()] if match else ""
-        dso = Path(parts[3].strip().strip("()[]")).name
-        if match is None or symbol != expected_symbol or dso != expected_dso:
-            fail(f"sample identity mismatch at {samples_path}:{line_number}")
+    with samples_path.open(encoding="utf-8") as sample_handle:
+        for line_number, raw_line in enumerate(sample_handle, start=1):
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(maxsplit=3)
+            if len(parts) != 4:
+                fail(f"invalid perf sample at {samples_path}:{line_number}: {line}")
+            try:
+                period = int(parts[0], 10)
+            except ValueError as error:
+                fail(f"invalid period at {samples_path}:{line_number}: {error}")
+            if period <= 0:
+                fail(f"non-positive period at {samples_path}:{line_number}")
+            match = offset_pattern.search(parts[2])
+            symbol = parts[2][: match.start()] if match else ""
+            dso = Path(parts[3].strip().strip("()[]")).name
+            if match is None or symbol != expected_symbol or dso != expected_dso:
+                fail(f"sample identity mismatch at {samples_path}:{line_number}")
 
-        sampled_address = function_start + int(match.group(1), 16)
-        totals["sampleRows"] += 1
-        totals["periodSum"] += period
-        index = bisect.bisect_right(starts, sampled_address) - 1
-        mapped = False
-        if index >= 0:
-            instruction = instructions[index]
-            instruction_end = instruction["addressValue"] + instruction["size"]
-            mapped = (
-                function_start <= sampled_address < function_end
-                and instruction["addressValue"] <= sampled_address < instruction_end
-            )
-        if mapped:
-            instruction["sampleCount"] += 1
-            instruction["periodSum"] += period
-            totals["mappedRows"] += 1
-            totals["mappedPeriod"] += period
-        else:
-            totals["unmappedRows"] += 1
-            totals["unmappedPeriod"] += period
+            sampled_address = function_start + int(match.group(1), 16)
+            totals["sampleRows"] += 1
+            totals["periodSum"] += period
+            index = bisect.bisect_right(starts, sampled_address) - 1
+            mapped = False
+            if index >= 0:
+                instruction = instructions[index]
+                instruction_end = instruction["addressValue"] + instruction["size"]
+                mapped = (
+                    function_start <= sampled_address < function_end
+                    and instruction["addressValue"] <= sampled_address < instruction_end
+                )
+            if mapped:
+                instruction["sampleCount"] += 1
+                instruction["periodSum"] += period
+                totals["mappedRows"] += 1
+                totals["mappedPeriod"] += period
+            else:
+                totals["unmappedRows"] += 1
+                totals["unmappedPeriod"] += period
 
     if totals["sampleRows"] == 0 or totals["mappedRows"] == 0:
         fail("perf sample file contains no mapped samples")

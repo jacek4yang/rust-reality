@@ -376,8 +376,9 @@ impl HandoffLandingHandler {
     /// before destination DNS or connect. On success the transferred pending
     /// ciphertext is fed to the resumed record layer first, the prefetched
     /// payload enters a fresh Vision decoder first, and the response header
-    /// plus opening Vision frame is the first sealed server record (sequence
-    /// zero) — the exact ordering the session boundary requires.
+    /// plus opening Vision frame is the first client-visible server record,
+    /// sealed at the transferred sequence zero or one — the exact ordering
+    /// the session boundary requires.
     ///
     /// # Errors
     ///
