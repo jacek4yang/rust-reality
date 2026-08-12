@@ -1151,7 +1151,8 @@ summarize_args=(summarize --out-dir "$out_dir")
 if [[ $RR_EXPLORATORY == 0 ]]; then
     summarize_args+=(--formal-plan --samples "$samples" --connections "$conns"
         --concurrencies "$concurrencies" --throughput-samples "$tput_samples"
-        --throughput-cells "$tput_cells" --rtts "$rtts" --losses "$losses")
+        --throughput-cells "$tput_cells" --longflow-mib "$longflow_mib"
+        --rtts "$rtts" --losses "$losses")
 fi
 python3 "$driver" "${summarize_args[@]}" || verdict=1
 if [[ $require_netem == 1 && ! -s $out_dir/summary-netem.json ]]; then

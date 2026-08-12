@@ -971,6 +971,7 @@ def cmd_summarize(args):
                 {"payloadMiB": mib, "concurrency": concurrency}
                 for mib, concurrency in throughput_cells
             ],
+            "longflowMiB": args.longflow_mib,
             "rttsMs": rtts,
             "perDirectionLossPercent": losses,
         }
@@ -1014,14 +1015,16 @@ def cmd_summarize(args):
             for mib, by_concurrency in by_mib.items()
             for concurrency in by_concurrency
         }
-        expected_throughput_cells = {
+        expected_topology_cells = {
             (f"topo-{topology}", f"{mib}mib", f"c{concurrency}")
             for topology in "abcd"
             for mib, concurrency in throughput_cells
         }
+        longflow_cell = ("longflow", f"{args.longflow_mib}mib", "c1")
+        expected_throughput_cells = expected_topology_cells | {longflow_cell}
         if actual_throughput_cells != expected_throughput_cells:
             data_quality_failures.append("formal:throughput-cell-set")
-        for label, mib, concurrency in expected_throughput_cells & actual_throughput_cells:
+        for label, mib, concurrency in expected_topology_cells & actual_throughput_cells:
             cell = throughput[label][mib][concurrency]
             if (cell.get("samples") != args.throughput_samples
                     or cell.get("errors") != 0
@@ -1029,6 +1032,12 @@ def cmd_summarize(args):
                 data_quality_failures.append(
                     f"formal:throughput-samples:{label}:{mib}:{concurrency}"
                 )
+        if longflow_cell in actual_throughput_cells:
+            label, mib, concurrency = longflow_cell
+            cell = throughput[label][mib][concurrency]
+            if (cell.get("samples") != 1 or cell.get("errors") != 0
+                    or cell.get("integrity") != "pass"):
+                data_quality_failures.append("formal:longflow-throughput")
 
         routing = summary.get("routingCorrectness", {})
         if not (routing.get("cases") == 26 and routing.get("passed") == 26
@@ -1174,6 +1183,7 @@ def main():
     p.add_argument("--concurrencies")
     p.add_argument("--throughput-samples", type=int)
     p.add_argument("--throughput-cells")
+    p.add_argument("--longflow-mib", type=int)
     p.add_argument("--rtts")
     p.add_argument("--losses")
 

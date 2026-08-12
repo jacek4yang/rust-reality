@@ -370,6 +370,11 @@ def deployment_summary_fixture(root: Path) -> None:
             write_jsonl(
                 root / f"tput-topo-{topology}-{mib}mib-c{concurrency}.jsonl", rows
             )
+    write_jsonl(root / "tput-longflow-512mib-c1.jsonl", [{
+        "sampleIndex": 0,
+        "throughputMiBPerSecond": 100.0,
+        "integrity": "pass",
+    }])
     write_json(root / "summary-routing.json", {
         "cases": 26, "passed": 26, "failed": 0, "verdict": "PASS",
     })
@@ -404,6 +409,7 @@ def test_deployment_summary(root: Path) -> None:
         "--samples", "3", "--connections", "96",
         "--concurrencies", "8 32", "--throughput-samples", "3",
         "--throughput-cells", "32:1 32:32 512:32",
+        "--longflow-mib", "512",
         "--rtts", "0 20 50 100 200", "--losses", "0 0.1 1",
     )
     result = invoke(DEPLOYMENT_DRIVER, *arguments)
