@@ -93,6 +93,7 @@ def summarize_ladder(cells, tag=None):
     prev_events = {k: 0 for k in PRESSURE_KEYS}
     prev_failed = 0
     oom_kills = 0
+    oom_status_known = True
     abort_reason = None
     complete = False
     max_established = 0
@@ -107,6 +108,7 @@ def summarize_ladder(cells, tag=None):
         new_pressure = 0
         new_failed = 0
         oom = 0
+        level_oom_known = True
         alive = True
         state = None
         rss = fds = current = 0
@@ -119,7 +121,12 @@ def summarize_ladder(cells, tag=None):
             failed_total = row.get("connectionsFailedTotal") or 0
             new_failed += max(0, failed_total - prev_failed)
             prev_failed = max(prev_failed, failed_total)
-            oom = max(oom, row.get("cgroupOomKills") or 0)
+            row_oom = row.get("cgroupOomKills")
+            if row_oom is None:
+                level_oom_known = False
+                oom_status_known = False
+            else:
+                oom = max(oom, row_oom)
             alive = alive and row.get("serverAlive", False)
             state = row.get("latestPressureState") or state
             rss = max(rss, row.get("serverRssBytes") or 0)
@@ -140,11 +147,12 @@ def summarize_ladder(cells, tag=None):
             "serverRssBytes": rss,
             "serverFdCount": fds,
             "cgroupMemoryCurrent": current,
-            "cgroupOomKills": oom,
+            "cgroupOomKills": oom if level_oom_known else None,
+            "cgroupOomStatusKnown": level_oom_known,
             "serverAlive": alive,
         }
         levels.append(entry)
-        clean = (established >= level * 0.98 and new_pressure == 0
+        clean = (level_oom_known and established >= level * 0.98 and new_pressure == 0
                  and new_failed == 0 and oom == 0 and alive)
         if clean:
             max_clean = max(max_clean, level)
@@ -155,7 +163,8 @@ def summarize_ladder(cells, tag=None):
         "maxCleanLevel": max_clean,
         "maxEstablishedSessions": max_established,
         "firstPressureLevel": first_pressure,
-        "oomKills": oom_kills,
+        "oomKills": oom_kills if oom_status_known else None,
+        "oomStatusKnown": oom_status_known,
         "completed": complete,
         "abortReason": abort_reason,
     }
@@ -211,10 +220,11 @@ def main():
     download_ok = bool(
         dl1 and dl32 and not dl1["errors"] and not dl32["errors"]
         and dl1["sizeMismatches"] == 0 and dl32["sizeMismatches"] == 0)
-    oom_kills = max(
-        [ladder["oomKills"] if ladder else 0,
-         ladder_tuned["oomKills"] if ladder_tuned else 0]
-        + [f.get("cgroupOomKills") or 0 for f in finals])
+    oom_values = [ladder["oomKills"] if ladder else None,
+                  ladder_tuned["oomKills"] if ladder_tuned else None]
+    oom_values.extend(f.get("cgroupOomKills") for f in finals)
+    oom_status_known = bool(oom_values) and all(value is not None for value in oom_values)
+    oom_kills = max(oom_values) if oom_status_known else None
     ladder_ok = bool(
         ladder
         and ladder["completed"]
@@ -227,7 +237,8 @@ def main():
         and ladder_tuned["abortReason"] is None
         and ladder_tuned["maxCleanLevel"] > 0
     )
-    passed = churn_ok and download_ok and oom_kills == 0 and ladder_ok and tuned_ladder_ok
+    passed = (churn_ok and download_ok and oom_status_known and oom_kills == 0
+              and ladder_ok and tuned_ladder_ok)
 
     ladder_fd_max = 0
     ladder_peak_max = 0
@@ -262,6 +273,7 @@ def main():
             "serverRssMax": max_rss,
             "serverFdMax": max(max_fd, ladder_fd_max),
             "cgroupOomKills": oom_kills,
+            "cgroupOomStatusKnown": oom_status_known,
         },
     }
 
