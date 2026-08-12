@@ -333,11 +333,15 @@ run_sample_dir=
 run_started_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 write_run_status() {
+    local exit_code=${1:-null}
     local temporary_status="$output_dir/.run-status.$$"
     jq -n --arg state "$run_state" --arg phase "$run_phase" \
         --arg sample "$run_sample" --arg started_at "$run_started_utc" \
+        --argjson exit_code "$exit_code" \
         --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        '{state:$state,phase:$phase,sample:(if $sample == "" then null else $sample end),startedAt:$started_at,updatedAt:$updated_at}' \
+        '{state:$state,phase:$phase,
+          sample:(if $sample == "" then null else $sample end),
+          exitCode:$exit_code,startedAt:$started_at,updatedAt:$updated_at}' \
         >"$temporary_status"
     mv -f -- "$temporary_status" "$output_dir/run-status.json"
 }
@@ -397,25 +401,27 @@ cleanup() {
 }
 
 finish() {
-    local status=$?
-    trap - EXIT
+    local original_status=$? final_status
+    trap - EXIT INT TERM
     set +e
-    if ((status != 0)); then
+    cleanup
+    rr_contract_verify_on_exit "$original_status"
+    final_status=$?
+    if ((final_status != 0)); then
         run_state=FAILED
         if [[ -n $run_sample_dir && -d $run_sample_dir ]]; then
             jq -n --arg status INVALID --arg phase "$run_phase" \
-                --arg sample "$run_sample" --argjson exit_code "$status" \
+                --arg sample "$run_sample" --argjson exit_code "$final_status" \
                 '{status:$status,phase:$phase,sample:$sample,exitCode:$exit_code}' \
                 >"$run_sample_dir/invalid.json" 2>/dev/null || true
         fi
-        write_run_status 2>/dev/null || true
+        write_run_status "$final_status" 2>/dev/null || true
     fi
-    cleanup
-    rr_contract_verify_on_exit "$status"
-    status=$?
-    exit "$status"
+    exit "$final_status"
 }
 trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 write_run_status
 
 strace_status=disabled
