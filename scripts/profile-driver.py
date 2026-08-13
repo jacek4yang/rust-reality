@@ -308,6 +308,8 @@ def cmd_ladder(args):
             if pid_alive(args.server_pid) else None,
             "cgroupMemoryCurrent": cgroup_int(args.cgroup, "memory.current"),
             "cgroupMemoryPeak": cgroup_int(args.cgroup, "memory.peak"),
+            "cgroupMemorySwapCurrent": cgroup_int(
+                args.cgroup, "memory.swap.current"),
             "cgroupOomKills": oom_delta,
             "logEvents": counts,
             "latestPressureState": pressure_state,
@@ -333,11 +335,20 @@ def cmd_ladder(args):
             record = sample(level, opened, total_failed)
             emit(record)
             oom = record["cgroupOomKills"]
+            swap_current = record["cgroupMemorySwapCurrent"]
             if not record["serverAlive"]:
                 abort_reason = "server process died"
                 break
             if oom is None:
                 abort_reason = "cgroup oom_kill status unavailable"
+                break
+            if swap_current is None:
+                abort_reason = "cgroup memory.swap.current unavailable"
+                break
+            if swap_current != 0:
+                abort_reason = (
+                    f"cgroup memory.swap.current is non-zero ({swap_current})"
+                )
                 break
             if oom > 0:
                 abort_reason = "cgroup oom_kill"

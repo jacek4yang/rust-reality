@@ -2,7 +2,8 @@
 # validate-profiles.sh — machine-profile validation harness for rust-reality.
 #
 # Simulates machine classes with cgroup v2 scopes (systemd-run --scope with
-# CPUQuota + MemoryMax) and measures the server's real capacity per class:
+# CPUQuota + MemoryMax + MemorySwapMax=0) and measures the server's real
+# capacity per class:
 # startup budget derivation, idle/assets RSS, setup churn, sustained 512 MiB
 # throughput, and an idle-connection ladder looking for pressure events or
 # cgroup OOM kills. The server never runs as root: the scope is created with
@@ -12,7 +13,7 @@
 # Output (untracked evidence, do not commit):
 #   benchmarks/profile-validation/<class>/cells.jsonl   one record per cell
 #   benchmarks/profile-validation/<class>/server-*.log  structured server logs
-#   benchmarks/profile-validation/<class>/samples-*.tsv 1 Hz RSS/FD/cgroup series
+#   benchmarks/profile-validation/<class>/samples-*.tsv 1 Hz RSS/FD/memory/swap
 #   benchmarks/profile-validation/<class>/summary.json + summary.md
 #   benchmarks/profile-validation/environment.json
 #
@@ -82,10 +83,13 @@ class_summary_statuses=()
 declare -A pid_start_times=()
 declare -A unit_cgroups=()
 declare -A unit_runner_pids=()
+declare -A unit_cpu_percent=()
+declare -A unit_memory_max=()
 declare -A planned_class_names=()
 pid_snapshot_start=""
 pid_snapshot_state=""
 binary_identity_verified=0
+cgroup_evidence=""
 
 CLEANENV=(env -u ALL_PROXY -u all_proxy -u HTTP_PROXY -u http_proxy
           -u HTTPS_PROXY -u https_proxy -u NO_PROXY -u no_proxy -u CARGO_HTTP_PROXY)
@@ -233,7 +237,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for program in curl jq python3 go setpriv sha256sum systemctl; do
+for program in curl jq numfmt python3 go setpriv sha256sum systemctl; do
     command -v "$program" >/dev/null || { echo "missing: $program" >&2; exit 1; }
 done
 sudo -n true || { echo "passwordless sudo required for systemd-run scopes" >&2; exit 1; }
@@ -318,6 +322,15 @@ for spec in $classes; do
     mem=${rest#*:}
     if [[ $rest == "$spec" || $mem == "$rest" || -z $cpu || -z $mem ]]; then
         echo "invalid class specification (expected name:cpu:memory): $spec" >&2
+        exit 1
+    fi
+    if [[ ! $cpu =~ ^[1-9][0-9]*$ ]]; then
+        echo "invalid CPU quota percentage in class specification: $spec" >&2
+        exit 1
+    fi
+    if ! mem_bytes=$(LC_ALL=C numfmt --from=iec "$mem" 2>/dev/null) \
+        || [[ ! $mem_bytes =~ ^[1-9][0-9]*$ ]]; then
+        echo "invalid finite memory maximum in class specification: $spec" >&2
         exit 1
     fi
     if [[ -z $only || $class == "$only" ]]; then
@@ -496,6 +509,81 @@ make_xray_client() {
 server_pid=""
 cgroup_dir=""
 
+# verify_cgroup_limits <unit> <control-group> <cpu-percent> <memory-text>
+#
+# The cgroup files are authoritative.  Merely asking systemd for a property is
+# not release evidence: a missing controller, inherited bound, or manager bug
+# must fail before the first workload sample is collected.
+verify_cgroup_limits() {
+    local unit=$1 cg=$2 cpu=$3 mem=$4
+    local cpu_max cpu_quota cpu_period extra memory_max swap_max swap_current expected_memory
+    expected_memory=$(LC_ALL=C numfmt --from=iec "$mem") || {
+        echo "could not convert requested MemoryMax=$mem for $unit" >&2
+        return 1
+    }
+    [[ $expected_memory =~ ^[1-9][0-9]*$ ]] || {
+        echo "requested MemoryMax=$mem is not a finite positive byte count" >&2
+        return 1
+    }
+    IFS= read -r cpu_max < "$cg/cpu.max" || {
+        echo "could not read authoritative cpu.max for $unit" >&2
+        return 1
+    }
+    read -r cpu_quota cpu_period extra <<< "$cpu_max"
+    [[ $cpu_quota =~ ^[1-9][0-9]*$ && $cpu_period =~ ^[1-9][0-9]*$ \
+        && -z ${extra:-} ]] || {
+        echo "invalid or unbounded cpu.max for $unit: $cpu_max" >&2
+        return 1
+    }
+    (( cpu_quota * 100 == cpu * cpu_period )) || {
+        echo "cpu.max mismatch for $unit: requested ${cpu}%, observed $cpu_max" >&2
+        return 1
+    }
+    IFS= read -r memory_max < "$cg/memory.max" || {
+        echo "could not read authoritative memory.max for $unit" >&2
+        return 1
+    }
+    [[ $memory_max == "$expected_memory" ]] || {
+        echo "memory.max mismatch for $unit: requested $expected_memory, observed $memory_max" >&2
+        return 1
+    }
+    IFS= read -r swap_max < "$cg/memory.swap.max" || {
+        echo "could not read authoritative memory.swap.max for $unit" >&2
+        return 1
+    }
+    [[ $swap_max == 0 ]] || {
+        echo "memory.swap.max mismatch for $unit: requested 0, observed $swap_max" >&2
+        return 1
+    }
+    IFS= read -r swap_current < "$cg/memory.swap.current" || {
+        echo "could not read authoritative memory.swap.current for $unit" >&2
+        return 1
+    }
+    [[ $swap_current == 0 ]] || {
+        echo "scope $unit already has non-zero memory.swap.current=$swap_current" >&2
+        return 1
+    }
+    cgroup_evidence=$(jq -nc \
+        --arg unit "$unit" --arg control_group "${cg#/sys/fs/cgroup}" \
+        --arg requested_memory "$mem" --arg cpu_max "$cpu_max" \
+        --argjson requested_cpu_percent "$cpu" \
+        --argjson requested_memory_bytes "$expected_memory" \
+        --argjson cpu_quota_us "$cpu_quota" --argjson cpu_period_us "$cpu_period" \
+        --argjson memory_max_bytes "$memory_max" \
+        --argjson memory_swap_max_bytes "$swap_max" \
+        --argjson memory_swap_current_bytes "$swap_current" \
+        '{schemaVersion:1, unit:$unit, controlGroup:$control_group,
+          requested:{cpuQuotaPercent:$requested_cpu_percent,
+                     memoryMax:$requested_memory,
+                     memoryMaxBytes:$requested_memory_bytes,
+                     memorySwapMaxBytes:0},
+          actual:{cpuMax:$cpu_max,cpuQuotaUs:$cpu_quota_us,
+                  cpuPeriodUs:$cpu_period_us,memoryMaxBytes:$memory_max_bytes,
+                  memorySwapMaxBytes:$memory_swap_max_bytes,
+                  memorySwapCurrentBytes:$memory_swap_current_bytes},
+          matchesRequested:true}')
+}
+
 # start_scoped_server <class> <run> <cpuquota_percent> <memmax> <config> <logfile>
 start_scoped_server() {
     local class=$1 run=$2 cpu=$3 mem=$4 config=$5 logfile=$6
@@ -507,7 +595,7 @@ start_scoped_server() {
         return 1
     fi
     sudo -n systemd-run --scope --collect -q --unit="$unit" \
-        -p "CPUQuota=${cpu}%" -p "MemoryMax=${mem}" \
+        -p "CPUQuota=${cpu}%" -p "MemoryMax=${mem}" -p MemorySwapMax=0 \
         -- setpriv --reuid="$uid" --regid="$gid" --clear-groups \
            env -i PATH=/usr/local/bin:/usr/bin:/bin \
            "$rust_bin" serve --config "$config" >"$logfile" 2>&1 &
@@ -516,6 +604,7 @@ start_scoped_server() {
     register_pid "$runner_pid"
     server_pid=""
     cgroup_dir=""
+    cgroup_evidence=""
     local deadline=$((SECONDS + 15)) cg p
     while (( SECONDS < deadline )); do
         cg=$(systemctl show -p ControlGroup --value "$unit" 2>/dev/null) || continue
@@ -545,14 +634,23 @@ start_scoped_server() {
     done
     [[ -n $server_pid ]] || { echo "server did not appear in scope $unit" >&2; return 1; }
     register_pid "$server_pid" "$rust_bin"
+    unit_cpu_percent[$unit]=$cpu
+    unit_memory_max[$unit]=$mem
+    verify_cgroup_limits "$unit" "$cgroup_dir" "$cpu" "$mem"
 }
 
 # stop_scoped_server
 stop_scoped_server() {
-    local unit=${active_units[-1]} runner_pid
+    local unit=${active_units[-1]} runner_pid cpu mem
     runner_pid=${unit_runner_pids[$unit]:-}
+    cpu=${unit_cpu_percent[$unit]:-}
+    mem=${unit_memory_max[$unit]:-}
     [[ -n $runner_pid ]] || {
         echo "scope $unit has no registered systemd-run PID" >&2
+        return 1
+    }
+    [[ -n $cpu && -n $mem ]] || {
+        echo "scope $unit has no registered resource-limit request" >&2
         return 1
     }
     if [[ ${runner_pids[-1]:-} != "$runner_pid" ]]; then
@@ -560,6 +658,9 @@ stop_scoped_server() {
         return 1
     fi
     local stopped_server=$server_pid
+    # Detect an external or accidental limit change after the workload instead
+    # of trusting the preflight snapshot for the whole scope lifetime.
+    verify_cgroup_limits "$unit" "$cgroup_dir" "$cpu" "$mem" || return 1
     # The exact unit name is accepted only while its ControlGroup still equals
     # the value observed at creation.  A recycled name can therefore never be
     # stopped by this harness.
@@ -573,7 +674,8 @@ stop_scoped_server() {
     forget_pid "$stopped_server"
     terminate_registered_pid "$runner_pid"
     runner_pids=("${runner_pids[@]:0:${#runner_pids[@]}-1}")
-    unset 'unit_cgroups[$unit]' 'unit_runner_pids[$unit]'
+    unset 'unit_cgroups[$unit]' 'unit_runner_pids[$unit]' \
+        'unit_cpu_percent[$unit]' 'unit_memory_max[$unit]'
     active_units=("${active_units[@]:0:${#active_units[@]}-1}")
     server_pid=""
     cgroup_dir=""
@@ -586,8 +688,10 @@ start_sampler() {
         while pid_is_registered "$pid"; do
             rss=$(awk '/VmRSS:/{print $2*1024}' "/proc/$pid/status" 2>/dev/null || echo 0)
             fds=$(ls "/proc/$pid/fd" 2>/dev/null | wc -l)
-            cur=$(cat "$cg/memory.current" 2>/dev/null || echo 0)
-            printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "${rss:-0}" "${fds:-0}" "${cur:-0}"
+            cur=$(cat "$cg/memory.current" 2>/dev/null || echo null)
+            swap=$(cat "$cg/memory.swap.current" 2>/dev/null || echo null)
+            printf '%s\t%s\t%s\t%s\t%s\n' \
+                "$(date +%s)" "${rss:-0}" "${fds:-0}" "${cur:-null}" "${swap:-null}"
             sleep 1
         done
     ) > "$outfile" &
@@ -615,26 +719,30 @@ emit_cell() {
 
 # sample_now — prints a JSON object with the live process/cgroup numbers
 sample_now() {
-    local rss fds cur peak oom
+    local rss fds cur peak swap oom
     rss=$(awk '/VmRSS:/{print $2*1024}' "/proc/$server_pid/status" 2>/dev/null || echo null)
     fds=$(ls "/proc/$server_pid/fd" 2>/dev/null | wc -l)
     cur=$(cat "$cgroup_dir/memory.current" 2>/dev/null || echo null)
     peak=$(cat "$cgroup_dir/memory.peak" 2>/dev/null || echo null)
+    swap=$(cat "$cgroup_dir/memory.swap.current" 2>/dev/null || echo null)
     oom=$(awk '/^oom_kill /{print $2}' "$cgroup_dir/memory.events" 2>/dev/null || echo null)
     jq -n --argjson rss "${rss:-null}" --argjson fds "${fds:-0}" \
-        --argjson cur "${cur:-null}" --argjson peak "${peak:-null}" --argjson oom "${oom:-null}" \
+        --argjson cur "${cur:-null}" --argjson peak "${peak:-null}" \
+        --argjson swap "${swap:-null}" --argjson oom "${oom:-null}" \
         '{serverRssBytes: $rss, serverFdCount: $fds, cgroupMemoryCurrent: $cur,
-          cgroupMemoryPeak: $peak, cgroupOomKills: $oom}'
+          cgroupMemoryPeak: $peak, cgroupMemorySwapCurrent: $swap,
+          cgroupOomKills: $oom}'
 }
 
 # startup_cell <logfile> — extracts the one-shot startup reports from the log
 startup_cell() {
-    jq -sc '
+    jq --argjson cgroup_evidence "$cgroup_evidence" -sc '
         def pick($e): map(select(.event == $e)) | last;
         {
           machineReport: pick("machine_report"),
           descriptorBudgetReport: pick("descriptor_budget_report"),
           relayBackendReport: pick("relay_backend_report"),
+          cgroupEvidence: $cgroup_evidence,
           configurationPublished: (pick("configuration_published") != null)
         }' "$1"
 }
@@ -652,6 +760,8 @@ run_driver() {
 
 run_class() {
     local class=$1 cpu=$2 mem=$3 mode=$4
+    local mem_bytes
+    mem_bytes=$(LC_ALL=C numfmt --from=iec "$mem")
     local classdir="$out_root/$class"
     mkdir -p "$classdir"
     if [[ ${SKIP_A:-0} != 1 || ${SKIP_B:-0} != 1 ]]; then
@@ -668,7 +778,7 @@ run_class() {
             *)    ladder_levels="100,500,1000,2000,4000,8000" ;;
         esac
     fi
-    echo "== class $class (CPUQuota=${cpu}% MemoryMax=$mem mode=$mode, ladder $ladder_levels)" >&2
+    echo "== class $class (CPUQuota=${cpu}% MemoryMax=$mem MemorySwapMax=0 mode=$mode, ladder $ladder_levels)" >&2
 
     # ----- run A: no-geo config, startup + idle only -----
     if [[ ${SKIP_A:-0} != 1 ]]; then
@@ -798,7 +908,8 @@ PY
 
     local summary_status=0
     if "${CLEANENV[@]}" python3 scripts/profile-summarize.py "$classdir" \
-        --class "$class" --mode "$mode" --cpu-quota "$cpu" --mem-max "$mem"
+        --class "$class" --mode "$mode" --cpu-quota "$cpu" --mem-max "$mem" \
+        --mem-max-bytes "$mem_bytes" --mem-swap-max 0
     then
         summary_status=0
     else

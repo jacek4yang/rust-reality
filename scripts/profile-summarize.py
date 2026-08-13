@@ -5,7 +5,8 @@ Reads <classdir>/cells.jsonl and samples-*.tsv, writes summary.json and
 summary.md into the same directory. Usage:
 
     profile-summarize.py <classdir> --class 1c1g --mode dedicated \
-        --cpu-quota 100 --mem-max 1G
+        --cpu-quota 100 --mem-max 1G --mem-max-bytes 1073741824 \
+        --mem-swap-max 0
 """
 import argparse
 import glob
@@ -32,6 +33,71 @@ def median(values):
 
 def mib(nbytes):
     return round(nbytes / 1024 / 1024, 1) if nbytes is not None else None
+
+
+def positive_int(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def nonnegative_int(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def cpu_quota_matches(quota, period, requested_percent):
+    return (positive_int(quota) and positive_int(period)
+            and quota * 100 == requested_percent * period)
+
+
+def summarize_resource_boundaries(startups, requested_cpu_percent,
+                                  requested_memory_bytes,
+                                  requested_swap_bytes):
+    scopes = []
+    for startup in startups:
+        machine = startup.get("machineReport") or {}
+        evidence = startup.get("cgroupEvidence") or {}
+        requested = evidence.get("requested") or {}
+        actual = evidence.get("actual") or {}
+        machine_matches = bool(
+            machine.get("memory_source") == "cgroup_v2"
+            and machine.get("memory_max") == requested_memory_bytes
+            and machine.get("memory_total") == requested_memory_bytes
+            and cpu_quota_matches(machine.get("cpu_quota_us"),
+                                  machine.get("cpu_period_us"),
+                                  requested_cpu_percent)
+        )
+        evidence_matches = bool(
+            evidence.get("schemaVersion") == 1
+            and evidence.get("matchesRequested") is True
+            and isinstance(evidence.get("unit"), str) and evidence.get("unit")
+            and isinstance(evidence.get("controlGroup"), str)
+            and evidence.get("controlGroup", "").startswith("/")
+            and requested.get("cpuQuotaPercent") == requested_cpu_percent
+            and requested.get("memoryMaxBytes") == requested_memory_bytes
+            and requested.get("memorySwapMaxBytes") == requested_swap_bytes
+            and cpu_quota_matches(actual.get("cpuQuotaUs"),
+                                  actual.get("cpuPeriodUs"),
+                                  requested_cpu_percent)
+            and actual.get("memoryMaxBytes") == requested_memory_bytes
+            and actual.get("memorySwapMaxBytes") == requested_swap_bytes
+            and actual.get("memorySwapCurrentBytes") == 0
+        )
+        scopes.append({
+            "run": startup.get("run"),
+            "machineReportMatches": machine_matches,
+            "cgroupEvidenceMatches": evidence_matches,
+            "pass": machine_matches and evidence_matches,
+            "evidence": evidence,
+        })
+    return {
+        "pass": bool(scopes) and all(scope["pass"] for scope in scopes),
+        "expected": {
+            "cpuQuotaPercent": requested_cpu_percent,
+            "memoryMaxBytes": requested_memory_bytes,
+            "memorySwapMaxBytes": requested_swap_bytes,
+        },
+        "scopeCount": len(scopes),
+        "scopes": scopes,
+    }
 
 
 def summarize_churn(cells, concurrency):
@@ -171,18 +237,38 @@ def summarize_ladder(cells, tag=None):
 
 
 def peaks_from_samples(classdir):
-    max_rss = max_fd = max_cur = 0
+    max_rss = max_fd = max_cur = max_swap = 0
+    rows = invalid_rows = 0
     for path in glob.glob(os.path.join(classdir, "samples-*.tsv")):
         with open(path, encoding="utf-8") as handle:
             for line in handle:
                 parts = line.split()
-                if len(parts) != 4:
+                if len(parts) != 5:
+                    invalid_rows += 1
                     continue
-                _, rss, fds, cur = parts
-                max_rss = max(max_rss, int(rss or 0))
-                max_fd = max(max_fd, int(fds or 0))
-                max_cur = max(max_cur, int(cur or 0))
-    return max_rss, max_fd, max_cur
+                _, rss, fds, cur, swap = parts
+                try:
+                    parsed = [int(value) for value in (rss, fds, cur, swap)]
+                except ValueError:
+                    invalid_rows += 1
+                    continue
+                if any(value < 0 for value in parsed):
+                    invalid_rows += 1
+                    continue
+                rss_value, fd_value, cur_value, swap_value = parsed
+                rows += 1
+                max_rss = max(max_rss, rss_value)
+                max_fd = max(max_fd, fd_value)
+                max_cur = max(max_cur, cur_value)
+                max_swap = max(max_swap, swap_value)
+    return {
+        "serverRssMax": max_rss,
+        "serverFdMax": max_fd,
+        "cgroupMemoryCurrentMax": max_cur,
+        "cgroupMemorySwapCurrentMax": max_swap,
+        "rows": rows,
+        "invalidRows": invalid_rows,
+    }
 
 
 def main():
@@ -190,9 +276,14 @@ def main():
     parser.add_argument("classdir")
     parser.add_argument("--class", dest="klass", required=True)
     parser.add_argument("--mode", required=True)
-    parser.add_argument("--cpu-quota", required=True)
+    parser.add_argument("--cpu-quota", required=True, type=int)
     parser.add_argument("--mem-max", required=True)
+    parser.add_argument("--mem-max-bytes", required=True, type=int)
+    parser.add_argument("--mem-swap-max", required=True, type=int)
     args = parser.parse_args()
+
+    if args.cpu_quota <= 0 or args.mem_max_bytes <= 0 or args.mem_swap_max != 0:
+        parser.error("resource limits must be positive with --mem-swap-max exactly 0")
 
     cells = load_cells(os.path.join(args.classdir, "cells.jsonl"))
 
@@ -213,7 +304,39 @@ def main():
     churn32 = summarize_churn(cells, 32)
     dl1 = summarize_download(cells, 1)
     dl32 = summarize_download(cells, 32)
-    max_rss, max_fd, max_cur = peaks_from_samples(args.classdir)
+    sample_peaks = peaks_from_samples(args.classdir)
+    max_rss = sample_peaks["serverRssMax"]
+    max_fd = sample_peaks["serverFdMax"]
+    max_cur = sample_peaks["cgroupMemoryCurrentMax"]
+
+    startups = [cell for cell in cells if cell.get("cell") == "startup"]
+    resource_boundaries = summarize_resource_boundaries(
+        startups, args.cpu_quota, args.mem_max_bytes, args.mem_swap_max)
+    swap_cell_values = []
+    for cell in cells:
+        if cell.get("cell") == "startup":
+            swap_cell_values.append((cell.get("idle") or {}).get(
+                "cgroupMemorySwapCurrent"))
+        elif cell.get("cell") in ("ladder", "cgroup_final"):
+            swap_cell_values.append(cell.get("cgroupMemorySwapCurrent"))
+    swap_cells_known = bool(swap_cell_values) and all(
+        nonnegative_int(value) for value in swap_cell_values)
+    swap_evidence = {
+        "pass": bool(
+            resource_boundaries["pass"]
+            and sample_peaks["rows"] > 0
+            and sample_peaks["invalidRows"] == 0
+            and sample_peaks["cgroupMemorySwapCurrentMax"] == 0
+            and swap_cells_known
+            and max(swap_cell_values, default=-1) == 0
+        ),
+        "cellStatusKnown": swap_cells_known,
+        "cellSamples": len(swap_cell_values),
+        "cellMaxBytes": max(swap_cell_values) if swap_cells_known else None,
+        "seriesRows": sample_peaks["rows"],
+        "seriesInvalidRows": sample_peaks["invalidRows"],
+        "seriesMaxBytes": sample_peaks["cgroupMemorySwapCurrentMax"],
+    }
 
     churn_ok = bool(churn8 and churn32
                     and churn8["failedTotal"] == 0 and churn32["failedTotal"] == 0)
@@ -238,7 +361,8 @@ def main():
         and ladder_tuned["maxCleanLevel"] > 0
     )
     passed = (churn_ok and download_ok and oom_status_known and oom_kills == 0
-              and ladder_ok and tuned_ladder_ok)
+              and ladder_ok and tuned_ladder_ok and resource_boundaries["pass"]
+              and swap_evidence["pass"])
 
     ladder_fd_max = 0
     ladder_peak_max = 0
@@ -253,8 +377,12 @@ def main():
     summary = {
         "class": args.klass,
         "resourceMode": args.mode,
-        "cgroupLimits": {"cpuQuotaPercent": int(args.cpu_quota),
-                         "memoryMax": args.mem_max},
+        "cgroupLimits": {"cpuQuotaPercent": args.cpu_quota,
+                         "memoryMax": args.mem_max,
+                         "memoryMaxBytes": args.mem_max_bytes,
+                         "memorySwapMaxBytes": args.mem_swap_max},
+        "resourceBoundaryEvidence": resource_boundaries,
+        "swapEvidence": swap_evidence,
         "pass": passed,
         "derivedBudgets": {
             "machineReport": machine,
@@ -270,6 +398,8 @@ def main():
         "peaks": {
             "cgroupMemoryPeak": cgroup_memory_peak,
             "cgroupMemoryCurrentMax": max_cur,
+            "cgroupMemorySwapCurrentMax": sample_peaks[
+                "cgroupMemorySwapCurrentMax"],
             "serverRssMax": max_rss,
             "serverFdMax": max(max_fd, ladder_fd_max),
             "cgroupOomKills": oom_kills,
@@ -292,7 +422,8 @@ def main():
 
     md = []
     md.append(f"# {args.klass} (resourceMode={args.mode}, "
-              f"CPUQuota={args.cpu_quota}%, MemoryMax={args.mem_max})")
+              f"CPUQuota={args.cpu_quota}%, MemoryMax={args.mem_max}, "
+              f"MemorySwapMax={args.mem_swap_max})")
     md.append("")
     if machine:
         md.append("Derived budgets (machine_report / descriptor_budget_report):")
@@ -358,6 +489,12 @@ def main():
         md.append(f"| tuned ladder completed | {ladder_tuned['completed']} "
                   f"({ladder_tuned['abortReason'] or 'no abort'}) |")
     md.append(f"| oom_kills | {oom_kills} |")
+    md.append(f"| cgroup resource-boundary evidence | "
+              f"{resource_boundaries['pass']} "
+              f"({resource_boundaries['scopeCount']} scopes) |")
+    md.append(f"| swap.current evidence | {swap_evidence['pass']} "
+              f"(cells max {mib(swap_evidence['cellMaxBytes'])} MiB, "
+              f"series max {mib(swap_evidence['seriesMaxBytes'])} MiB) |")
     md.append(f"| peak cgroup memory.current | {mib(max_cur)} MiB "
               f"(memory.peak {mib(cgroup_memory_peak)} MiB) |")
     md.append(f"| peak server RSS | {mib(max_rss)} MiB |")
