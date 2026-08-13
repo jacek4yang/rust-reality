@@ -143,6 +143,19 @@ frequency and temperature metadata are retained. Perf attribution and syscall
 tracing run in separate rounds and never lend their instrumented elapsed time
 to an uninstrumented performance claim.
 
+The matrix also controls Linux's per-user pipe-page soft limit. All six
+resident data-plane endpoints retain splice pipes across cells, so ordinary
+ABBA traffic ordering alone cannot balance a process that filled its pipe
+pool first. On the 4-core release host, the default 16,384-page limit made
+the first Rust implementation keep 256 KiB pipes while the second received
+downgraded pipes; reversing `ABBA_START` reversed an apparent 20–25% Direct
+regression. Raising the soft limit to the harness-calculated 49,152 pages
+made both implementations retain full-size pipes and converge. Formal runs
+therefore compute a bound from maximum concurrency, apply it with non-
+interactive privilege, record original/effective values, and restore the
+exact original value on success, failure, or signal. A mismatched external
+change or failed restoration invalidates the run.
+
 Three warmed setup blocks measured candidate/baseline medians of -0.38% at c1
 (95% bootstrap interval -0.465% to +0.170%), +0.26% at c8 (-3.368% to
 +2.497%), and +0.53% at c32 (-1.257% to +1.557%). Normalized task-clock and

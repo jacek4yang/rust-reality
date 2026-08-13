@@ -62,7 +62,9 @@
 # hashes), REQUIRE_PINNED_BINARIES=1 (require all three expected hashes),
 # RUST_REALITY_BUILD_PROFILE and RUST_REALITY_BUILD_FEATURES (recorded build
 # identity; default "unknown-prebuilt"), ABBA_START (baseline|final; default
-# baseline, reverse on a second formal round to balance cross-run drift).
+# baseline, reverse on a second formal round to balance cross-run drift),
+# MANAGE_PIPE_USER_PAGES_SOFT (formal default 1, exploratory default 0), and
+# PIPE_USER_PAGES_SOFT_TARGET (optional explicit minimum page budget).
 #
 # Output in OUT_DIR: samples.jsonl (one record per individual sample),
 # summary.json (per-cell p50/p95/p99 + ratios), environment.json.
@@ -96,6 +98,7 @@ cells_filter=${CELLS:-}
 skip_filter=${SKIP:-}
 rust_log_level=${RUST_LOG_LEVEL:-warn}
 abba_start=${ABBA_START:-baseline}
+manage_pipe_user_pages_soft=${MANAGE_PIPE_USER_PAGES_SOFT:-$((1 - ${EXPLORATORY:-0}))}
 rr_contract_init "$repository" benchmark-matrix benchmarks/final 32
 rr_register_binary baseline "$baseline_bin" "${RUST_REALITY_BASELINE_SHA256:-}" rust \
     "${EXPECTED_BASELINE_SOURCE_COMMIT:-${RUST_REALITY_BASELINE_COMMIT:-}}"
@@ -118,6 +121,31 @@ out_dir=$RR_OUT_DIR
 temporary_root=$RR_TMPDIR
 work=$(mktemp -d "$temporary_root/rust-reality-matrix.XXXXXX")
 pids=()
+pipe_policy_changed=0
+pipe_policy_original=
+pipe_policy_effective=
+pipe_policy_target=
+pipe_policy_required=
+pipe_policy_page_size=
+
+restore_pipe_user_pages_soft() {
+    (( pipe_policy_changed == 1 )) || return 0
+    local current
+    current=$(< /proc/sys/fs/pipe-user-pages-soft) || return 1
+    if [[ $current != "$pipe_policy_effective" ]]; then
+        printf 'refusing to overwrite externally changed fs.pipe-user-pages-soft: expected %s, found %s\n' \
+            "$pipe_policy_effective" "$current" >&2
+        return 1
+    fi
+    printf '%s\n' "$pipe_policy_original" \
+        | sudo -n tee /proc/sys/fs/pipe-user-pages-soft >/dev/null || return 1
+    current=$(< /proc/sys/fs/pipe-user-pages-soft) || return 1
+    if [[ $current != "$pipe_policy_original" ]]; then
+        printf 'failed to restore fs.pipe-user-pages-soft: expected %s, found %s\n' \
+            "$pipe_policy_original" "$current" >&2
+        return 1
+    fi
+}
 
 cleanup() {
     local exit_status=$?
@@ -131,7 +159,11 @@ cleanup() {
     elif [[ -d "$work" && "$work" == "$temporary_root"/rust-reality-matrix.* ]]; then
         rm -rf -- "$work"
     fi
-    local final_rc
+    local pipe_restore_status=0 final_rc
+    restore_pipe_user_pages_soft || pipe_restore_status=$?
+    if (( exit_status == 0 && pipe_restore_status != 0 )); then
+        exit_status=1
+    fi
     rr_contract_verify_on_exit "$exit_status"
     final_rc=$?
     exit "$final_rc"
@@ -207,6 +239,65 @@ for word in $payloads $concurrencies $large_concurrencies; do
         exit 1
     fi
 done
+
+if [[ $manage_pipe_user_pages_soft != 0 && $manage_pipe_user_pages_soft != 1 ]]; then
+    echo "MANAGE_PIPE_USER_PAGES_SOFT must be 0 or 1" >&2
+    exit 2
+fi
+pipe_policy_page_size=$(getconf PAGESIZE)
+[[ $pipe_policy_page_size =~ ^[1-9][0-9]*$ ]] || {
+    echo "getconf PAGESIZE did not return a positive integer" >&2
+    exit 1
+}
+max_concurrency=0
+for value in $concurrencies $large_concurrencies; do
+    (( value > max_concurrency )) && max_concurrency=$value
+done
+# Six concurrently resident data-plane endpoints can retain splice pipes:
+# baseline/final/Xray server endpoints and their three Xray clients. Each
+# connection owns two 256-KiB direction pipes. Double that exact working set
+# so unrelated user processes and allocator rounding cannot push the later
+# A/B implementation over Linux's per-user pipe-page soft cliff.
+pages_per_pipe=$(( (256 * 1024 + pipe_policy_page_size - 1) / pipe_policy_page_size ))
+pipe_policy_required=$(( 6 * 2 * max_concurrency * pages_per_pipe * 2 ))
+pipe_policy_target=${PIPE_USER_PAGES_SOFT_TARGET:-$pipe_policy_required}
+[[ $pipe_policy_target =~ ^[1-9][0-9]*$ ]] || {
+    echo "PIPE_USER_PAGES_SOFT_TARGET must be a positive integer" >&2
+    exit 2
+}
+if (( pipe_policy_target < pipe_policy_required )); then
+    printf 'PIPE_USER_PAGES_SOFT_TARGET=%s is below the calculated minimum %s\n' \
+        "$pipe_policy_target" "$pipe_policy_required" >&2
+    exit 2
+fi
+pipe_policy_original=$(< /proc/sys/fs/pipe-user-pages-soft)
+[[ $pipe_policy_original =~ ^[0-9]+$ ]] || {
+    echo "fs.pipe-user-pages-soft did not contain an integer" >&2
+    exit 1
+}
+pipe_policy_effective=$pipe_policy_original
+if (( pipe_policy_original < pipe_policy_target )); then
+    if (( manage_pipe_user_pages_soft == 1 )); then
+        sudo -n true >/dev/null
+        pipe_policy_effective=$pipe_policy_target
+        pipe_policy_changed=1
+        printf '%s\n' "$pipe_policy_target" \
+            | sudo -n tee /proc/sys/fs/pipe-user-pages-soft >/dev/null
+        applied_pipe_policy=$(< /proc/sys/fs/pipe-user-pages-soft)
+        [[ $applied_pipe_policy == "$pipe_policy_target" ]] || {
+            printf 'failed to apply fs.pipe-user-pages-soft: expected %s, found %s\n' \
+                "$pipe_policy_target" "$applied_pipe_policy" >&2
+            exit 1
+        }
+    elif (( RR_EXPLORATORY == 0 )); then
+        printf 'formal matrix requires fs.pipe-user-pages-soft >= %s, found %s\n' \
+            "$pipe_policy_target" "$pipe_policy_original" >&2
+        exit 1
+    else
+        printf 'warning: exploratory matrix pipe-page budget is insufficient (%s < %s); results may reflect first-mover pipe-pool bias\n' \
+            "$pipe_policy_original" "$pipe_policy_target" >&2
+    fi
+fi
 
 free_port() { rr_next_port; }
 
@@ -611,6 +702,13 @@ jq -n \
     --arg rust_log_level "$rust_log_level" \
     --arg abba_start "$abba_start" \
     --argjson binaries_pinned "$require_pinned_binaries" \
+    --argjson pipe_policy_managed "$manage_pipe_user_pages_soft" \
+    --argjson pipe_policy_changed "$pipe_policy_changed" \
+    --argjson pipe_policy_original "$pipe_policy_original" \
+    --argjson pipe_policy_effective "$pipe_policy_effective" \
+    --argjson pipe_policy_target "$pipe_policy_target" \
+    --argjson pipe_policy_required "$pipe_policy_required" \
+    --argjson pipe_policy_page_size "$pipe_policy_page_size" \
     --arg cover_target "$cover_target" \
     --arg cover_sni "$cover_sni" \
     --arg nic_interface "$nic_interface" \
@@ -658,6 +756,15 @@ jq -n \
       rust_log_level: $rust_log_level,
       abba_start: $abba_start,
       binaries_pinned: ($binaries_pinned == 1),
+      pipe_page_policy: {
+        managed: ($pipe_policy_managed == 1),
+        changed: ($pipe_policy_changed == 1),
+        original_soft_pages: $pipe_policy_original,
+        effective_soft_pages: $pipe_policy_effective,
+        target_soft_pages: $pipe_policy_target,
+        calculated_required_pages: $pipe_policy_required,
+        page_size_bytes: $pipe_policy_page_size
+      },
       cover_target: $cover_target,
       cover_sni: $cover_sni,
       nic_interface: $nic_interface,
@@ -1460,6 +1567,7 @@ summary = {
         "releaseProfile": cfg["build_profile"],
         "featureSet": cfg["build_features"],
         "logging": cfg["rust_log_level"],
+        "pipePagePolicy": cfg["pipe_page_policy"],
     },
     "startedUtc": started_utc,
     "wallSeconds": time.perf_counter() - run_started,
@@ -1552,6 +1660,7 @@ environment = {
     "logging": cfg["rust_log_level"],
     "nic": {"interface": cfg["nic_interface"], "speed": cfg["nic_speed"]},
     "rlimitNofile": {"soft": soft_limit, "hard": hard_limit},
+    "pipePagePolicy": cfg["pipe_page_policy"],
     "realityCover": {"target": cfg["cover_target"], "serverName": cfg["cover_sni"]},
     "originImplementation": cfg["origin_impl"],
     "seed": seed_text,
