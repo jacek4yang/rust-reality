@@ -77,7 +77,7 @@ def write_success_marker(
     })
 
 
-def order_rows(blocks: int = 3) -> list[dict]:
+def order_rows(blocks: int = 12) -> list[dict]:
     rows = []
     orders = (
         ("baseline", "candidate", "candidate", "baseline"),
@@ -96,7 +96,7 @@ def order_rows(blocks: int = 3) -> list[dict]:
 
 
 def pair_fixture(
-    root: Path, kind: str, candidate_factor: float = 1.02, blocks: int = 3,
+    root: Path, kind: str, candidate_factor: float = 1.02, blocks: int = 12,
 ) -> dict:
     run = root / kind
     run.mkdir()
@@ -181,7 +181,7 @@ def pair_fixture(
 
 
 def matrix_fixture(
-    root: Path, candidate_factor: float = 1.02, blocks: int = 3,
+    root: Path, candidate_factor: float = 1.02, blocks: int = 12,
 ) -> dict:
     run = root / "matrix"
     run.mkdir()
@@ -282,7 +282,7 @@ def matrix_fixture(
 
 
 def manifest(
-    root: Path, candidate_factor: float = 1.02, blocks: int = 3,
+    root: Path, candidate_factor: float = 1.02, blocks: int = 12,
 ) -> tuple[Path, list[dict]]:
     workloads = [
         pair_fixture(root, "setup-abba", candidate_factor, blocks),
@@ -472,9 +472,12 @@ def test_evaluator(root: Path) -> None:
     assert len({
         row["hostExclusiveLock"]["keeperPid"] for row in passing_report["inputs"]
     }) == 3
-    assert passing_report["method"]["hypothesisFamilySize"] == 16
+    assert passing_report["method"]["hypothesisFamilySize"] == 8
+    assert passing_report["method"]["hypothesisFamilies"] == {
+        "regression": 8, "improvement": 8,
+    }
     assert not any(row["significant"] for row in passing_report["protectedMetrics"])
-    assert not any(
+    assert all(
         row["improvementSignificant"] for row in passing_report["protectedMetrics"]
     )
     deterministic_output = passing / "result-deterministic.json"
@@ -485,21 +488,14 @@ def test_evaluator(root: Path) -> None:
 
     three_same_direction = root / "three-same-direction"
     three_same_direction.mkdir()
-    three_manifest, _ = manifest(three_same_direction, 0.80)
+    three_manifest, _ = manifest(three_same_direction, 0.80, blocks=3)
     three_output = three_same_direction / "result.json"
     result = invoke(EVALUATOR, "--manifest", str(three_manifest),
                     "--output", str(three_output))
-    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert result.returncode == 2, (result.stdout, result.stderr)
     report = json.loads(three_output.read_text())
-    assert report["overallPerformanceVerdict"] == "PASS"
-    assert not report["regressions"]
-    throughput = next(
-        row for row in report["protectedMetrics"]
-        if row["id"] == "setup:c1:throughput"
-    )
-    assert throughput["rawPValue"] == 0.125
-    assert throughput["bootstrap95"][1] < 1.0
-    assert throughput["significant"] is False
+    assert report["overallPerformanceVerdict"] == "INVALID"
+    assert "requires 12..16 complete ABBA blocks" in report["errors"][0]
 
     regression = root / "regression-twelve-blocks"
     regression.mkdir()
@@ -614,7 +610,8 @@ def test_exact_statistics() -> None:
     evaluator = runpy.run_path(str(EVALUATOR))
     exact = evaluator["exact_sign_flip_pvalues"]
     holm = evaluator["holm_adjusted_pvalues"]
-    regression, improvement = exact([-1.0] * 3)
+    floating_regression = [-math.log(2.0), -math.log(3.0), -math.log(5.0)]
+    regression, improvement = exact(floating_regression)
     assert regression == 1.0 / 8.0
     assert improvement == 1.0
     regression, improvement = exact([-1.0] * 12)
@@ -628,6 +625,14 @@ def test_exact_statistics() -> None:
     assert math.isclose(adjusted["a"], 0.03)
     assert math.isclose(adjusted["b"], 0.06)
     assert math.isclose(adjusted["c"], 0.06)
+
+    formal_family = holm([
+        (f"metric-{index:03d}", 1.0 / 4096.0) for index in range(110)
+    ])
+    assert len(formal_family) == 110
+    assert all(math.isclose(value, 110.0 / 4096.0)
+               for value in formal_family.values())
+    assert all(value <= 0.05 for value in formal_family.values())
 
 
 def netem_fixture(root: Path, omit_last: bool = False) -> tuple[Path, list[Path]]:

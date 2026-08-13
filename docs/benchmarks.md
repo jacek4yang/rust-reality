@@ -147,12 +147,15 @@ The final release evaluator does not use bootstrap intervals as significance
 tests. For each protected metric it takes the mean of the paired block log
 ratios (oriented so positive is better) and enumerates every within-block
 candidate/baseline sign flip under the sharp label-exchangeability null. The
-one-sided regression and improvement hypotheses for all protected metrics form
-one global family; Holm adjustment at family-wise alpha 0.05 decides every
-regression or improvement classification. The deterministic 95% block
-bootstrap remains only an effect interval. In particular, three blocks all in
-one direction have a smallest possible raw one-sided p-value of 1/8 and cannot
-be declared significant.
+one-sided regression hypotheses across all protected metrics form one global
+family, and the improvement hypotheses form a separate global family. Holm
+adjustment at family-wise alpha 0.05 within each family decides every
+regression or improvement classification; release failure depends only on the
+regression family. The deterministic 95% block bootstrap remains only an
+effect interval. Every formal metric must contain 12 through 16 complete ABBA
+blocks or the evidence is invalid. Three blocks all in one direction have a
+smallest possible raw one-sided p-value of 1/8, but are rejected before formal
+evaluation because they have insufficient power.
 
 The matrix also controls Linux's per-user pipe-page soft limit. All six
 resident data-plane endpoints retain splice pipes across cells, so ordinary

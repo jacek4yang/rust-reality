@@ -26,6 +26,7 @@ BUILD_ID = re.compile(r"^[0-9a-f]+$")
 DEVICE_INODE = re.compile(r"^[1-9][0-9]*:[1-9][0-9]*$")
 HOST_LOCK_PROTOCOL_VERSION = 1
 FAMILY_WISE_ALPHA = 0.05
+MIN_EXACT_BLOCKS = 12
 MAX_EXACT_BLOCKS = 16
 REQUIRED_KINDS = {"setup-abba", "fallback-abba", "matrix"}
 FILES_BY_KIND = {
@@ -148,21 +149,24 @@ def exact_sign_flip_pvalues(oriented_log_ratios: list[float]) -> tuple[float, fl
     candidate is better.
     """
     count = len(oriented_log_ratios)
-    require(count >= 3, "exact sign-flip test needs at least three blocks")
+    require(count >= 1, "exact sign-flip test needs at least one block")
     require(count <= MAX_EXACT_BLOCKS,
             f"exact sign-flip test supports at most {MAX_EXACT_BLOCKS} blocks")
     require(all(math.isfinite(value) for value in oriented_log_ratios),
             "exact sign-flip test received a non-finite log ratio")
-    observed = sum(oriented_log_ratios)
-    permutation_sums = [0.0]
-    for value in oriented_log_ratios:
-        permutation_sums = (
-            [current - value for current in permutation_sums]
-            + [current + value for current in permutation_sums]
+    observed = math.fsum(oriented_log_ratios)
+    denominator = 1 << count
+    regression_count = 0
+    improvement_count = 0
+    for assignment in range(denominator):
+        permuted = math.fsum(
+            value if assignment & (1 << index) else -value
+            for index, value in enumerate(oriented_log_ratios)
         )
-    denominator = len(permutation_sums)
-    regression = sum(value <= observed for value in permutation_sums) / denominator
-    improvement = sum(value >= observed for value in permutation_sums) / denominator
+        regression_count += permuted <= observed
+        improvement_count += permuted >= observed
+    regression = regression_count / denominator
+    improvement = improvement_count / denominator
     return regression, improvement
 
 
@@ -194,6 +198,9 @@ def metric(
     iterations: int,
 ) -> dict[str, Any]:
     require(direction in {"higher-is-better", "lower-is-better"}, "bad direction")
+    require(MIN_EXACT_BLOCKS <= len(ratios) <= MAX_EXACT_BLOCKS,
+            f"{metric_id}: exact gate requires {MIN_EXACT_BLOCKS}.."
+            f"{MAX_EXACT_BLOCKS} complete ABBA blocks")
     for index, ratio in enumerate(ratios):
         positive_number(ratio, f"{metric_id} block ratio {index}")
     interval = bootstrap_interval(ratios, iterations, metric_id)
@@ -212,7 +219,7 @@ def metric(
         "blockCount": len(ratios),
         "medianCandidateVsBaseline": point,
         "bootstrap95": interval,
-        "meanLogCandidateBenefit": statistics.mean(oriented_logs),
+        "meanLogCandidateBenefit": math.fsum(oriented_logs) / len(oriented_logs),
         "rawPValue": regression_p,
         "holmAdjustedPValue": None,
         "significant": None,
@@ -225,19 +232,18 @@ def metric(
 
 
 def apply_global_holm(metrics: list[dict[str, Any]]) -> None:
-    """Classify metrics after correcting every directional protected test."""
-    hypotheses = []
+    """Classify metrics using separate global directional Holm families."""
+    regression_adjusted = holm_adjusted_pvalues([
+        (row["id"], row["rawPValue"]) for row in metrics
+    ])
+    improvement_adjusted = holm_adjusted_pvalues([
+        (row["id"], row["improvementRawPValue"]) for row in metrics
+    ])
     for row in metrics:
-        hypotheses.extend((
-            (f"{row['id']}::regression", row["rawPValue"]),
-            (f"{row['id']}::improvement", row["improvementRawPValue"]),
-        ))
-    adjusted = holm_adjusted_pvalues(hypotheses)
-    for row in metrics:
-        regression_adjusted = adjusted[f"{row['id']}::regression"]
-        improvement_adjusted = adjusted[f"{row['id']}::improvement"]
-        regression = regression_adjusted <= FAMILY_WISE_ALPHA
-        improvement = improvement_adjusted <= FAMILY_WISE_ALPHA
+        regression_p = regression_adjusted[row["id"]]
+        improvement_p = improvement_adjusted[row["id"]]
+        regression = regression_p <= FAMILY_WISE_ALPHA
+        improvement = improvement_p <= FAMILY_WISE_ALPHA
         require(not (regression and improvement),
                 f"{row['id']}: both directional hypotheses are significant")
         point = row["medianCandidateVsBaseline"]
@@ -246,9 +252,9 @@ def apply_global_holm(metrics: list[dict[str, Any]]) -> None:
             else point <= 1.0 / 1.01
         )
         row.update({
-            "holmAdjustedPValue": regression_adjusted,
+            "holmAdjustedPValue": regression_p,
             "significant": regression,
-            "improvementHolmAdjustedPValue": improvement_adjusted,
+            "improvementHolmAdjustedPValue": improvement_p,
             "improvementSignificant": improvement,
             "classification": (
                 "REGRESSION" if regression else
@@ -510,7 +516,10 @@ def evaluate_pair_run(
     host_lock = verify_pair_environment(environment, candidate, baseline, kind)
     blocks = environment.get("blocks")
     samples = environment.get("samplesPerSlot")
-    require(isinstance(blocks, int) and blocks >= 3, f"{kind}: need at least 3 blocks")
+    require(isinstance(blocks, int)
+            and MIN_EXACT_BLOCKS <= blocks <= MAX_EXACT_BLOCKS,
+            f"{kind}: formal gate requires {MIN_EXACT_BLOCKS}.."
+            f"{MAX_EXACT_BLOCKS} complete ABBA blocks")
     require(isinstance(samples, int) and samples >= 1, f"{kind}: samples invalid")
     raw_concurrencies = environment.get("concurrencies")
     if isinstance(raw_concurrencies, str):
@@ -689,8 +698,11 @@ def evaluate_matrix(
     for key, cell in sorted(cells.items()):
         require(isinstance(cell, dict), f"matrix cell {key} invalid")
         count = cell.get("samplesPerImplementation")
-        require(isinstance(count, int) and count >= 6 and count % 2 == 0,
-                f"matrix cell {key}: need at least three complete ABBA blocks")
+        require(isinstance(count, int)
+                and MIN_EXACT_BLOCKS * 2 <= count <= MAX_EXACT_BLOCKS * 2
+                and count % 2 == 0,
+                f"matrix cell {key}: formal gate requires {MIN_EXACT_BLOCKS}.."
+                f"{MAX_EXACT_BLOCKS} complete ABBA blocks")
         interleave = cell.get("interleaveOrder")
         require(isinstance(interleave, list), f"matrix cell {key}: order missing")
         require(
@@ -851,11 +863,17 @@ def evaluate(manifest: dict[str, Any]) -> dict[str, Any]:
             ),
             "test": "exact one-sided paired sign-flip permutation",
             "multipleTesting": (
-                "global Holm correction across regression and improvement hypotheses "
-                "for every protected metric"
+                "separate global Holm corrections for the regression and improvement "
+                "hypothesis families across every protected metric"
             ),
             "familyWiseAlpha": FAMILY_WISE_ALPHA,
-            "hypothesisFamilySize": len(metrics) * 2,
+            "minimumCompleteBlocksPerMetric": MIN_EXACT_BLOCKS,
+            "maximumCompleteBlocksPerMetric": MAX_EXACT_BLOCKS,
+            "hypothesisFamilySize": len(metrics),
+            "hypothesisFamilies": {
+                "regression": len(metrics),
+                "improvement": len(metrics),
+            },
             "effectEstimate": "median block ratio",
             "effectInterval": "deterministic 95% block bootstrap (reporting only)",
             "bootstrapIterations": iterations,
