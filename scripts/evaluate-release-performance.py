@@ -25,6 +25,8 @@ HEX64 = re.compile(r"^[0-9a-f]{64}$")
 BUILD_ID = re.compile(r"^[0-9a-f]+$")
 DEVICE_INODE = re.compile(r"^[1-9][0-9]*:[1-9][0-9]*$")
 HOST_LOCK_PROTOCOL_VERSION = 1
+FAMILY_WISE_ALPHA = 0.05
+MAX_EXACT_BLOCKS = 16
 REQUIRED_KINDS = {"setup-abba", "fallback-abba", "matrix"}
 FILES_BY_KIND = {
     "setup-abba": {
@@ -136,6 +138,52 @@ def bootstrap_interval(ratios: list[float], iterations: int, seed_text: str) -> 
     return [medians[iterations // 40], medians[(iterations * 39) // 40 - 1]]
 
 
+def exact_sign_flip_pvalues(oriented_log_ratios: list[float]) -> tuple[float, float]:
+    """Return exact one-sided regression/improvement p-values.
+
+    Under the sharp null, candidate and baseline labels are exchangeable
+    within every completed ABBA block.  Swapping a block's labels negates its
+    log ratio, so all 2**n sign assignments are equally likely.  The test
+    statistic is the mean oriented log ratio, where positive means that the
+    candidate is better.
+    """
+    count = len(oriented_log_ratios)
+    require(count >= 3, "exact sign-flip test needs at least three blocks")
+    require(count <= MAX_EXACT_BLOCKS,
+            f"exact sign-flip test supports at most {MAX_EXACT_BLOCKS} blocks")
+    require(all(math.isfinite(value) for value in oriented_log_ratios),
+            "exact sign-flip test received a non-finite log ratio")
+    observed = sum(oriented_log_ratios)
+    permutation_sums = [0.0]
+    for value in oriented_log_ratios:
+        permutation_sums = (
+            [current - value for current in permutation_sums]
+            + [current + value for current in permutation_sums]
+        )
+    denominator = len(permutation_sums)
+    regression = sum(value <= observed for value in permutation_sums) / denominator
+    improvement = sum(value >= observed for value in permutation_sums) / denominator
+    return regression, improvement
+
+
+def holm_adjusted_pvalues(pvalues: list[tuple[str, float]]) -> dict[str, float]:
+    """Adjust one global hypothesis family with Holm's step-down method."""
+    require(bool(pvalues), "Holm correction family is empty")
+    require(len({name for name, _ in pvalues}) == len(pvalues),
+            "Holm correction hypothesis IDs are not unique")
+    for name, value in pvalues:
+        require(math.isfinite(value) and 0.0 <= value <= 1.0,
+                f"{name}: invalid raw p-value")
+    ordered = sorted(pvalues, key=lambda item: (item[1], item[0]))
+    family_size = len(ordered)
+    adjusted: dict[str, float] = {}
+    running_max = 0.0
+    for rank, (name, value) in enumerate(ordered):
+        running_max = max(running_max, min(1.0, (family_size - rank) * value))
+        adjusted[name] = running_max
+    return adjusted
+
+
 def metric(
     metric_id: str,
     workload: str,
@@ -150,20 +198,10 @@ def metric(
         positive_number(ratio, f"{metric_id} block ratio {index}")
     interval = bootstrap_interval(ratios, iterations, metric_id)
     point = statistics.median(ratios)
-    if direction == "higher-is-better":
-        regression = interval[1] < 1.0
-        improvement = interval[0] > 1.0
-        keep_improvement = point >= 1.01 and improvement
-    else:
-        regression = interval[0] > 1.0
-        improvement = interval[1] < 1.0
-        keep_improvement = point <= 1.0 / 1.01 and improvement
-    classification = (
-        "REGRESSION" if regression else
-        "KEEP_IMPROVEMENT" if keep_improvement else
-        "SMALL_IMPROVEMENT" if improvement else
-        "NO_SIGNIFICANT_CHANGE"
-    )
+    raw_log_ratios = [math.log(ratio) for ratio in ratios]
+    orientation = 1.0 if direction == "higher-is-better" else -1.0
+    oriented_logs = [orientation * value for value in raw_log_ratios]
+    regression_p, improvement_p = exact_sign_flip_pvalues(oriented_logs)
     return {
         "id": metric_id,
         "workload": workload,
@@ -174,9 +212,52 @@ def metric(
         "blockCount": len(ratios),
         "medianCandidateVsBaseline": point,
         "bootstrap95": interval,
-        "classification": classification,
-        "pass": not regression,
+        "meanLogCandidateBenefit": statistics.mean(oriented_logs),
+        "rawPValue": regression_p,
+        "holmAdjustedPValue": None,
+        "significant": None,
+        "improvementRawPValue": improvement_p,
+        "improvementHolmAdjustedPValue": None,
+        "improvementSignificant": None,
+        "classification": "PENDING_MULTIPLE_TESTING_CORRECTION",
+        "pass": None,
     }
+
+
+def apply_global_holm(metrics: list[dict[str, Any]]) -> None:
+    """Classify metrics after correcting every directional protected test."""
+    hypotheses = []
+    for row in metrics:
+        hypotheses.extend((
+            (f"{row['id']}::regression", row["rawPValue"]),
+            (f"{row['id']}::improvement", row["improvementRawPValue"]),
+        ))
+    adjusted = holm_adjusted_pvalues(hypotheses)
+    for row in metrics:
+        regression_adjusted = adjusted[f"{row['id']}::regression"]
+        improvement_adjusted = adjusted[f"{row['id']}::improvement"]
+        regression = regression_adjusted <= FAMILY_WISE_ALPHA
+        improvement = improvement_adjusted <= FAMILY_WISE_ALPHA
+        require(not (regression and improvement),
+                f"{row['id']}: both directional hypotheses are significant")
+        point = row["medianCandidateVsBaseline"]
+        keep_improvement = improvement and (
+            point >= 1.01 if row["direction"] == "higher-is-better"
+            else point <= 1.0 / 1.01
+        )
+        row.update({
+            "holmAdjustedPValue": regression_adjusted,
+            "significant": regression,
+            "improvementHolmAdjustedPValue": improvement_adjusted,
+            "improvementSignificant": improvement,
+            "classification": (
+                "REGRESSION" if regression else
+                "KEEP_IMPROVEMENT" if keep_improvement else
+                "SMALL_IMPROVEMENT" if improvement else
+                "NO_SIGNIFICANT_CHANGE"
+            ),
+            "pass": not regression,
+        })
 
 
 def identity(value: Any, context: str) -> dict[str, str]:
@@ -750,6 +831,7 @@ def evaluate(manifest: dict[str, Any]) -> dict[str, Any]:
     require(all(value == coordination[0] for value in coordination[1:]),
             "workloads used different host-exclusive lock protocols/identities")
     require(metrics, "no protected metrics were produced")
+    apply_global_holm(metrics)
     regressions = [row["id"] for row in metrics if not row["pass"]]
     improvements = [
         row["id"] for row in metrics
@@ -763,11 +845,30 @@ def evaluate(manifest: dict[str, Any]) -> dict[str, Any]:
         "baseline": baseline,
         "method": {
             "design": "warmed alternating ABBA blocks",
-            "statistic": "median block ratio",
-            "confidence": "deterministic 95% block bootstrap",
+            "testStatistic": "mean oriented block log ratio",
+            "nullHypothesis": (
+                "candidate and baseline labels are exchangeable within each ABBA block"
+            ),
+            "test": "exact one-sided paired sign-flip permutation",
+            "multipleTesting": (
+                "global Holm correction across regression and improvement hypotheses "
+                "for every protected metric"
+            ),
+            "familyWiseAlpha": FAMILY_WISE_ALPHA,
+            "hypothesisFamilySize": len(metrics) * 2,
+            "effectEstimate": "median block ratio",
+            "effectInterval": "deterministic 95% block bootstrap (reporting only)",
+            "bootstrapIterations": iterations,
+            "statistic": "mean oriented block log ratio",
+            "confidence": "deterministic 95% block bootstrap (reporting only)",
             "iterations": iterations,
             "regressionRule": (
-                "FAIL only when the 95% interval excludes 1.0 in the regression direction"
+                "FAIL only when the global Holm-adjusted one-sided regression p-value "
+                "is at most 0.05"
+            ),
+            "improvementRule": (
+                "classify improvement only when its global Holm-adjusted one-sided "
+                "p-value is at most 0.05; KEEP also requires at least 1% median benefit"
             ),
         },
         "inputs": inputs,

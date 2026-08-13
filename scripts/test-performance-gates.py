@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -75,13 +77,14 @@ def write_success_marker(
     })
 
 
-def order_rows() -> list[dict]:
+def order_rows(blocks: int = 3) -> list[dict]:
     rows = []
-    for block, sequence in enumerate(
-        (("baseline", "candidate", "candidate", "baseline"),
-         ("candidate", "baseline", "baseline", "candidate"),
-         ("baseline", "candidate", "candidate", "baseline")), 1
-    ):
+    orders = (
+        ("baseline", "candidate", "candidate", "baseline"),
+        ("candidate", "baseline", "baseline", "candidate"),
+    )
+    for block in range(1, blocks + 1):
+        sequence = orders[(block - 1) % len(orders)]
         for position, implementation in enumerate(sequence, 1):
             rows.append({
                 "block": block,
@@ -92,12 +95,14 @@ def order_rows() -> list[dict]:
     return rows
 
 
-def pair_fixture(root: Path, kind: str, candidate_factor: float = 1.02) -> dict:
+def pair_fixture(
+    root: Path, kind: str, candidate_factor: float = 1.02, blocks: int = 3,
+) -> dict:
     run = root / kind
     run.mkdir()
     setup = kind == "setup-abba"
     throughput_field = "connectionsPerSecond" if setup else "throughputMiBPerSecond"
-    order = order_rows()
+    order = order_rows(blocks)
     rows = []
     for slot in order:
         candidate = slot["implementation"] == "candidate"
@@ -130,7 +135,7 @@ def pair_fixture(root: Path, kind: str, candidate_factor: float = 1.02) -> dict:
             "unit": cpu_unit,
             "blocks": [
                 {"baseline": 1.0, "candidate": 0.98, "candidateVsBaseline": 0.98}
-                for _ in range(3)
+                for _ in range(blocks)
             ],
         },
     }
@@ -140,7 +145,7 @@ def pair_fixture(root: Path, kind: str, candidate_factor: float = 1.02) -> dict:
         "schemaVersion": 2,
         "runId": run_id,
         "repository": {"head": CANDIDATE["commit"], "dirty": False},
-        "blocks": 3,
+        "blocks": blocks,
         "samplesPerSlot": 1,
         "connectionsPerSample": 4,
         "payloadMiB": 1,
@@ -175,10 +180,21 @@ def pair_fixture(root: Path, kind: str, candidate_factor: float = 1.02) -> dict:
             "runDir": str(run), "files": files}
 
 
-def matrix_fixture(root: Path, candidate_factor: float = 1.02) -> dict:
+def matrix_fixture(
+    root: Path, candidate_factor: float = 1.02, blocks: int = 3,
+) -> dict:
     run = root / "matrix"
     run.mkdir()
     key = "direct-download:1:1"
+    interleave = []
+    paired_orders = (
+        ("baseline", "final", "final", "baseline"),
+        ("final", "baseline", "baseline", "final"),
+    )
+    for block in range(blocks):
+        paired = paired_orders[block % len(paired_orders)]
+        interleave.extend((paired[0], paired[1], "xray",
+                           paired[2], paired[3], "xray"))
     summary = {
         "schemaVersion": 1,
         "harness": "benchmark-matrix",
@@ -201,12 +217,8 @@ def matrix_fixture(root: Path, candidate_factor: float = 1.02) -> dict:
                 "direction": "download",
                 "payloadMiB": 1,
                 "concurrency": 1,
-                "samplesPerImplementation": 6,
-                "interleaveOrder": [
-                    "baseline", "final", "xray", "final", "baseline", "xray",
-                    "final", "baseline", "xray", "baseline", "final", "xray",
-                    "baseline", "final", "xray", "final", "baseline", "xray",
-                ],
+                "samplesPerImplementation": blocks * 2,
+                "interleaveOrder": interleave,
             }
         },
     }
@@ -269,11 +281,13 @@ def matrix_fixture(root: Path, candidate_factor: float = 1.02) -> dict:
     return {"name": "matrix", "kind": "matrix", "runDir": str(run), "files": files}
 
 
-def manifest(root: Path, candidate_factor: float = 1.02) -> tuple[Path, list[dict]]:
+def manifest(
+    root: Path, candidate_factor: float = 1.02, blocks: int = 3,
+) -> tuple[Path, list[dict]]:
     workloads = [
-        pair_fixture(root, "setup-abba", candidate_factor),
-        pair_fixture(root, "fallback-abba", candidate_factor),
-        matrix_fixture(root, candidate_factor),
+        pair_fixture(root, "setup-abba", candidate_factor, blocks),
+        pair_fixture(root, "fallback-abba", candidate_factor, blocks),
+        matrix_fixture(root, candidate_factor, blocks),
     ]
     path = root / "manifest.json"
     write_json(path, {
@@ -458,10 +472,38 @@ def test_evaluator(root: Path) -> None:
     assert len({
         row["hostExclusiveLock"]["keeperPid"] for row in passing_report["inputs"]
     }) == 3
+    assert passing_report["method"]["hypothesisFamilySize"] == 16
+    assert not any(row["significant"] for row in passing_report["protectedMetrics"])
+    assert not any(
+        row["improvementSignificant"] for row in passing_report["protectedMetrics"]
+    )
+    deterministic_output = passing / "result-deterministic.json"
+    result = invoke(EVALUATOR, "--manifest", str(passing_manifest),
+                    "--output", str(deterministic_output))
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert passing_output.read_bytes() == deterministic_output.read_bytes()
 
-    regression = root / "regression"
+    three_same_direction = root / "three-same-direction"
+    three_same_direction.mkdir()
+    three_manifest, _ = manifest(three_same_direction, 0.80)
+    three_output = three_same_direction / "result.json"
+    result = invoke(EVALUATOR, "--manifest", str(three_manifest),
+                    "--output", str(three_output))
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    report = json.loads(three_output.read_text())
+    assert report["overallPerformanceVerdict"] == "PASS"
+    assert not report["regressions"]
+    throughput = next(
+        row for row in report["protectedMetrics"]
+        if row["id"] == "setup:c1:throughput"
+    )
+    assert throughput["rawPValue"] == 0.125
+    assert throughput["bootstrap95"][1] < 1.0
+    assert throughput["significant"] is False
+
+    regression = root / "regression-twelve-blocks"
     regression.mkdir()
-    regression_manifest, _ = manifest(regression, 0.80)
+    regression_manifest, _ = manifest(regression, 0.80, blocks=12)
     regression_output = regression / "result.json"
     result = invoke(EVALUATOR, "--manifest", str(regression_manifest),
                     "--output", str(regression_output))
@@ -469,6 +511,13 @@ def test_evaluator(root: Path) -> None:
     report = json.loads(regression_output.read_text())
     assert report["overallPerformanceVerdict"] == "FAIL"
     assert report["regressions"]
+    throughput = next(
+        row for row in report["protectedMetrics"]
+        if row["id"] == "setup:c1:throughput"
+    )
+    assert throughput["rawPValue"] == 1.0 / 4096.0
+    assert throughput["holmAdjustedPValue"] <= 0.05
+    assert throughput["significant"] is True
 
     missing = root / "missing"
     missing.mkdir()
@@ -559,6 +608,26 @@ def test_evaluator(root: Path) -> None:
                     "--output", str(reordered_output))
     assert result.returncode == 2, (result.stdout, result.stderr)
     assert json.loads(reordered_output.read_text())["overallPerformanceVerdict"] == "INVALID"
+
+
+def test_exact_statistics() -> None:
+    evaluator = runpy.run_path(str(EVALUATOR))
+    exact = evaluator["exact_sign_flip_pvalues"]
+    holm = evaluator["holm_adjusted_pvalues"]
+    regression, improvement = exact([-1.0] * 3)
+    assert regression == 1.0 / 8.0
+    assert improvement == 1.0
+    regression, improvement = exact([-1.0] * 12)
+    assert regression == 1.0 / 4096.0
+    assert improvement == 1.0
+
+    hypotheses = [("a", 0.01), ("b", 0.04), ("c", 0.03)]
+    adjusted = holm(hypotheses)
+    reversed_adjusted = holm(list(reversed(hypotheses)))
+    assert adjusted == reversed_adjusted
+    assert math.isclose(adjusted["a"], 0.03)
+    assert math.isclose(adjusted["b"], 0.06)
+    assert math.isclose(adjusted["c"], 0.06)
 
 
 def netem_fixture(root: Path, omit_last: bool = False) -> tuple[Path, list[Path]]:
@@ -756,6 +825,7 @@ def test_matrix_pipe_budget_model() -> None:
 
 
 def main() -> None:
+    test_exact_statistics()
     with tempfile.TemporaryDirectory(prefix="rust-reality-performance-gate-") as value:
         root = Path(value).resolve()
         test_evaluator(root)

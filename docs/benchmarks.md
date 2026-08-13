@@ -143,6 +143,17 @@ frequency and temperature metadata are retained. Perf attribution and syscall
 tracing run in separate rounds and never lend their instrumented elapsed time
 to an uninstrumented performance claim.
 
+The final release evaluator does not use bootstrap intervals as significance
+tests. For each protected metric it takes the mean of the paired block log
+ratios (oriented so positive is better) and enumerates every within-block
+candidate/baseline sign flip under the sharp label-exchangeability null. The
+one-sided regression and improvement hypotheses for all protected metrics form
+one global family; Holm adjustment at family-wise alpha 0.05 decides every
+regression or improvement classification. The deterministic 95% block
+bootstrap remains only an effect interval. In particular, three blocks all in
+one direction have a smallest possible raw one-sided p-value of 1/8 and cannot
+be declared significant.
+
 The matrix also controls Linux's per-user pipe-page soft limit. All six
 resident data-plane endpoints retain splice pipes across cells, so ordinary
 ABBA traffic ordering alone cannot balance a process that filled its pipe
