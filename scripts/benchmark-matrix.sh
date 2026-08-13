@@ -253,13 +253,20 @@ max_concurrency=0
 for value in $concurrencies $large_concurrencies; do
     (( value > max_concurrency )) && max_concurrency=$value
 done
-# Six concurrently resident data-plane endpoints can retain splice pipes:
-# baseline/final/Xray server endpoints and their three Xray clients. Each
-# connection owns two 256-KiB direction pipes. Double that exact working set
-# so unrelated user processes and allocator rounding cannot push the later
-# A/B implementation over Linux's per-user pipe-page soft cliff.
-pages_per_pipe=$(( (256 * 1024 + pipe_policy_page_size - 1) / pipe_policy_page_size ))
-pipe_policy_required=$(( 6 * 2 * max_concurrency * pages_per_pipe * 2 ))
+# Pipe pools survive individual cells, so model both resident endpoint groups.
+# The bidi cell runs download and upload concurrently: its advertised c32 is
+# 64 tunnel connections per implementation. Fallback reaches c32 separately.
+# Tunnel residents are two Rust servers and four Xray processes (one server and
+# three clients); fallback adds two Rust servers and one Xray server. Rust asks
+# for 256-KiB pipes while Go/Xray internal/poll asks for 1-MiB pipes. Double the
+# exact combined peak so allocator rounding, GC timing, and unrelated processes
+# cannot push the later A/B implementation over Linux's pipe-page soft cliff.
+rust_pages_per_pipe=$(( (256 * 1024 + pipe_policy_page_size - 1) / pipe_policy_page_size ))
+xray_pages_per_pipe=$(( (1024 * 1024 + pipe_policy_page_size - 1) / pipe_policy_page_size ))
+pipe_policy_tunnel_peak=$(( (2 * rust_pages_per_pipe + 4 * xray_pages_per_pipe) * 2 * (2 * max_concurrency) ))
+pipe_policy_fallback_peak=$(( (2 * rust_pages_per_pipe + xray_pages_per_pipe) * 2 * max_concurrency ))
+pipe_policy_peak=$(( pipe_policy_tunnel_peak + pipe_policy_fallback_peak ))
+pipe_policy_required=$(( pipe_policy_peak * 2 ))
 pipe_policy_target=${PIPE_USER_PAGES_SOFT_TARGET:-$pipe_policy_required}
 [[ $pipe_policy_target =~ ^[1-9][0-9]*$ ]] || {
     echo "PIPE_USER_PAGES_SOFT_TARGET must be a positive integer" >&2
@@ -708,6 +715,11 @@ jq -n \
     --argjson pipe_policy_effective "$pipe_policy_effective" \
     --argjson pipe_policy_target "$pipe_policy_target" \
     --argjson pipe_policy_required "$pipe_policy_required" \
+    --argjson pipe_policy_peak "$pipe_policy_peak" \
+    --argjson pipe_policy_tunnel_peak "$pipe_policy_tunnel_peak" \
+    --argjson pipe_policy_fallback_peak "$pipe_policy_fallback_peak" \
+    --argjson rust_pages_per_pipe "$rust_pages_per_pipe" \
+    --argjson xray_pages_per_pipe "$xray_pages_per_pipe" \
     --argjson pipe_policy_page_size "$pipe_policy_page_size" \
     --arg cover_target "$cover_target" \
     --arg cover_sni "$cover_sni" \
@@ -763,6 +775,17 @@ jq -n \
         effective_soft_pages: $pipe_policy_effective,
         target_soft_pages: $pipe_policy_target,
         calculated_required_pages: $pipe_policy_required,
+        calculated_peak_pages: $pipe_policy_peak,
+        calculated_tunnel_peak_pages: $pipe_policy_tunnel_peak,
+        calculated_fallback_peak_pages: $pipe_policy_fallback_peak,
+        safety_factor: 2,
+        tunnel_rust_endpoint_count: 2,
+        tunnel_xray_endpoint_count: 4,
+        fallback_rust_endpoint_count: 2,
+        fallback_xray_endpoint_count: 1,
+        bidirectional_connection_multiplier: 2,
+        rust_pages_per_pipe: $rust_pages_per_pipe,
+        xray_pages_per_pipe: $xray_pages_per_pipe,
         page_size_bytes: $pipe_policy_page_size
       },
       cover_target: $cover_target,

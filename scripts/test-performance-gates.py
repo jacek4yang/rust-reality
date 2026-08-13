@@ -711,6 +711,50 @@ def test_deployment_summary(root: Path) -> None:
     assert "formal:setup-label-set" in report["dataQualityFailures"]
 
 
+def test_matrix_pipe_budget_model() -> None:
+    script = (ROOT / "benchmark-matrix.sh").read_text(encoding="utf-8")
+    variables = (
+        "rust_pages_per_pipe",
+        "xray_pages_per_pipe",
+        "pipe_policy_tunnel_peak",
+        "pipe_policy_fallback_peak",
+        "pipe_policy_peak",
+        "pipe_policy_required",
+    )
+    assignments = []
+    for variable in variables:
+        matches = [
+            line for line in script.splitlines()
+            if line.startswith(f"{variable}=$((")
+        ]
+        assert len(matches) == 1, (variable, matches)
+        assignments.extend(matches)
+
+    command = "\n".join((
+        "set -eu",
+        "pipe_policy_page_size=4096",
+        "max_concurrency=32",
+        *assignments,
+        'printf "%s %s %s %s\\n" "$pipe_policy_tunnel_peak" '
+        '"$pipe_policy_fallback_peak" "$pipe_policy_peak" '
+        '"$pipe_policy_required"',
+    ))
+    result = subprocess.run(
+        ["bash", "-c", command], text=True, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    tunnel, fallback, peak, required = map(int, result.stdout.split())
+    assert tunnel == 147_456
+    assert fallback == 24_576
+    assert peak == 172_032
+    assert required == 344_064
+
+    assert "calculated_peak_pages: $pipe_policy_peak" in script
+    assert "calculated_tunnel_peak_pages: $pipe_policy_tunnel_peak" in script
+    assert "calculated_fallback_peak_pages: $pipe_policy_fallback_peak" in script
+    assert "bidirectional_connection_multiplier: 2" in script
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="rust-reality-performance-gate-") as value:
         root = Path(value).resolve()
@@ -719,6 +763,7 @@ def main() -> None:
         test_deployment_summary(root)
         test_host_lock_keeper(root)
         test_collector_early_failure_releases_lock(root)
+        test_matrix_pipe_budget_model()
     print("release performance evaluator synthetic gates: PASS")
 
 
