@@ -45,57 +45,100 @@ def nonnegative_int(value):
 
 def cpu_quota_matches(quota, period, requested_percent):
     return (positive_int(quota) and positive_int(period)
+            and positive_int(requested_percent)
             and quota * 100 == requested_percent * period)
+
+
+EXPECTED_RUNS = ("nogeo", "geo", "tuned")
 
 
 def summarize_resource_boundaries(startups, requested_cpu_percent,
                                   requested_memory_bytes,
                                   requested_swap_bytes):
     scopes = []
+    run_counts = {run: 0 for run in EXPECTED_RUNS}
+    units = []
+    control_groups = []
     for startup in startups:
+        run = startup.get("run")
+        if run in run_counts:
+            run_counts[run] += 1
         machine = startup.get("machineReport") or {}
         evidence = startup.get("cgroupEvidence") or {}
         requested = evidence.get("requested") or {}
         actual = evidence.get("actual") or {}
+        unit = evidence.get("unit")
+        control_group = evidence.get("controlGroup")
+        unit_matches_control_group = bool(
+            isinstance(unit, str) and unit
+            and isinstance(control_group, str) and control_group.startswith("/")
+            and control_group.rsplit("/", 1)[-1] == unit
+        )
+        if isinstance(unit, str) and unit:
+            units.append(unit)
+        if isinstance(control_group, str) and control_group:
+            control_groups.append(control_group)
         machine_matches = bool(
             machine.get("memory_source") == "cgroup_v2"
+            and positive_int(machine.get("memory_max"))
             and machine.get("memory_max") == requested_memory_bytes
+            and positive_int(machine.get("memory_total"))
             and machine.get("memory_total") == requested_memory_bytes
             and cpu_quota_matches(machine.get("cpu_quota_us"),
                                   machine.get("cpu_period_us"),
                                   requested_cpu_percent)
         )
         evidence_matches = bool(
-            evidence.get("schemaVersion") == 1
+            positive_int(evidence.get("schemaVersion"))
+            and evidence.get("schemaVersion") == 1
             and evidence.get("matchesRequested") is True
-            and isinstance(evidence.get("unit"), str) and evidence.get("unit")
-            and isinstance(evidence.get("controlGroup"), str)
-            and evidence.get("controlGroup", "").startswith("/")
+            and run in EXPECTED_RUNS
+            and unit_matches_control_group
+            and positive_int(requested.get("cpuQuotaPercent"))
             and requested.get("cpuQuotaPercent") == requested_cpu_percent
+            and positive_int(requested.get("memoryMaxBytes"))
             and requested.get("memoryMaxBytes") == requested_memory_bytes
+            and nonnegative_int(requested.get("memorySwapMaxBytes"))
             and requested.get("memorySwapMaxBytes") == requested_swap_bytes
             and cpu_quota_matches(actual.get("cpuQuotaUs"),
                                   actual.get("cpuPeriodUs"),
                                   requested_cpu_percent)
+            and positive_int(actual.get("memoryMaxBytes"))
             and actual.get("memoryMaxBytes") == requested_memory_bytes
+            and nonnegative_int(actual.get("memorySwapMaxBytes"))
             and actual.get("memorySwapMaxBytes") == requested_swap_bytes
+            and nonnegative_int(actual.get("memorySwapCurrentBytes"))
             and actual.get("memorySwapCurrentBytes") == 0
         )
         scopes.append({
-            "run": startup.get("run"),
+            "run": run,
             "machineReportMatches": machine_matches,
             "cgroupEvidenceMatches": evidence_matches,
             "pass": machine_matches and evidence_matches,
             "evidence": evidence,
         })
+    expected_run_set = set(EXPECTED_RUNS)
+    observed_run_set = {startup.get("run") for startup in startups}
+    runs_match = (observed_run_set == expected_run_set
+                  and all(run_counts[run] == 1 for run in EXPECTED_RUNS)
+                  and len(startups) == len(EXPECTED_RUNS))
+    scopes_unique = (len(units) == len(EXPECTED_RUNS)
+                     and len(set(units)) == len(EXPECTED_RUNS)
+                     and len(control_groups) == len(EXPECTED_RUNS)
+                     and len(set(control_groups)) == len(EXPECTED_RUNS))
+    structure_pass = runs_match and scopes_unique
     return {
-        "pass": bool(scopes) and all(scope["pass"] for scope in scopes),
+        "pass": structure_pass and all(scope["pass"] for scope in scopes),
         "expected": {
             "cpuQuotaPercent": requested_cpu_percent,
             "memoryMaxBytes": requested_memory_bytes,
             "memorySwapMaxBytes": requested_swap_bytes,
+            "runs": list(EXPECTED_RUNS),
         },
         "scopeCount": len(scopes),
+        "runCounts": run_counts,
+        "runsMatch": runs_match,
+        "scopesUnique": scopes_unique,
         "scopes": scopes,
     }
 
@@ -188,7 +231,7 @@ def summarize_ladder(cells, tag=None):
             new_failed += max(0, failed_total - prev_failed)
             prev_failed = max(prev_failed, failed_total)
             row_oom = row.get("cgroupOomKills")
-            if row_oom is None:
+            if not nonnegative_int(row_oom):
                 level_oom_known = False
                 oom_status_known = False
             else:
@@ -239,35 +282,72 @@ def summarize_ladder(cells, tag=None):
 def peaks_from_samples(classdir):
     max_rss = max_fd = max_cur = max_swap = 0
     rows = invalid_rows = 0
-    for path in glob.glob(os.path.join(classdir, "samples-*.tsv")):
+    expected_paths = {
+        os.path.join(classdir, f"samples-{run}.tsv"): run
+        for run in EXPECTED_RUNS
+    }
+    observed_paths = set(glob.glob(os.path.join(classdir, "samples-*.tsv")))
+    unexpected_files = sorted(observed_paths - set(expected_paths))
+    by_run = {}
+    for path, run in expected_paths.items():
+        run_rows = run_invalid_rows = run_max_swap = 0
+        if not os.path.isfile(path):
+            by_run[run] = {
+                "path": path,
+                "exists": False,
+                "rows": 0,
+                "invalidRows": 0,
+                "swapMaxBytes": None,
+                "pass": False,
+            }
+            continue
         with open(path, encoding="utf-8") as handle:
             for line in handle:
                 parts = line.split()
                 if len(parts) != 5:
                     invalid_rows += 1
+                    run_invalid_rows += 1
                     continue
-                _, rss, fds, cur, swap = parts
+                timestamp, rss, fds, cur, swap = parts
                 try:
-                    parsed = [int(value) for value in (rss, fds, cur, swap)]
+                    parsed = [int(value) for value in
+                              (timestamp, rss, fds, cur, swap)]
                 except ValueError:
                     invalid_rows += 1
+                    run_invalid_rows += 1
                     continue
                 if any(value < 0 for value in parsed):
                     invalid_rows += 1
+                    run_invalid_rows += 1
                     continue
-                rss_value, fd_value, cur_value, swap_value = parsed
+                _, rss_value, fd_value, cur_value, swap_value = parsed
                 rows += 1
+                run_rows += 1
                 max_rss = max(max_rss, rss_value)
                 max_fd = max(max_fd, fd_value)
                 max_cur = max(max_cur, cur_value)
                 max_swap = max(max_swap, swap_value)
+                run_max_swap = max(run_max_swap, swap_value)
+        by_run[run] = {
+            "path": path,
+            "exists": True,
+            "rows": run_rows,
+            "invalidRows": run_invalid_rows,
+            "swapMaxBytes": run_max_swap if run_rows else None,
+            "pass": (run_rows > 0 and run_invalid_rows == 0
+                     and run_max_swap == 0),
+        }
     return {
+        "pass": (not unexpected_files
+                 and all(series["pass"] for series in by_run.values())),
         "serverRssMax": max_rss,
         "serverFdMax": max_fd,
         "cgroupMemoryCurrentMax": max_cur,
         "cgroupMemorySwapCurrentMax": max_swap,
         "rows": rows,
         "invalidRows": invalid_rows,
+        "byRun": by_run,
+        "unexpectedFiles": unexpected_files,
     }
 
 
@@ -324,8 +404,7 @@ def main():
     swap_evidence = {
         "pass": bool(
             resource_boundaries["pass"]
-            and sample_peaks["rows"] > 0
-            and sample_peaks["invalidRows"] == 0
+            and sample_peaks["pass"]
             and sample_peaks["cgroupMemorySwapCurrentMax"] == 0
             and swap_cells_known
             and max(swap_cell_values, default=-1) == 0
@@ -336,6 +415,8 @@ def main():
         "seriesRows": sample_peaks["rows"],
         "seriesInvalidRows": sample_peaks["invalidRows"],
         "seriesMaxBytes": sample_peaks["cgroupMemorySwapCurrentMax"],
+        "seriesByRun": sample_peaks["byRun"],
+        "seriesUnexpectedFiles": sample_peaks["unexpectedFiles"],
     }
 
     churn_ok = bool(churn8 and churn32
@@ -346,7 +427,8 @@ def main():
     oom_values = [ladder["oomKills"] if ladder else None,
                   ladder_tuned["oomKills"] if ladder_tuned else None]
     oom_values.extend(f.get("cgroupOomKills") for f in finals)
-    oom_status_known = bool(oom_values) and all(value is not None for value in oom_values)
+    oom_status_known = bool(oom_values) and all(
+        nonnegative_int(value) for value in oom_values)
     oom_kills = max(oom_values) if oom_status_known else None
     ladder_ok = bool(
         ladder

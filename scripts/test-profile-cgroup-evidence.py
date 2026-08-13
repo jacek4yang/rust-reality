@@ -110,13 +110,17 @@ def passing_cells():
 
 
 class ProfileCgroupEvidenceTests(unittest.TestCase):
-    def summarize(self, cells, sample="1\t16777216\t15\t20971520\t0\n"):
+    def summarize(self, cells, sample="1\t16777216\t15\t20971520\t0\n",
+                  missing_sample=None):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with (root / "cells.jsonl").open("w", encoding="utf-8") as handle:
                 for cell in cells:
                     handle.write(json.dumps(cell) + "\n")
-            (root / "samples-geo.tsv").write_text(sample, encoding="utf-8")
+            for run in ("nogeo", "geo", "tuned"):
+                if run != missing_sample:
+                    (root / f"samples-{run}.tsv").write_text(
+                        sample, encoding="utf-8")
             result = subprocess.run(
                 [sys.executable, str(SUMMARIZER), str(root),
                  "--class", "1c1g", "--mode", "dedicated",
@@ -165,6 +169,44 @@ class ProfileCgroupEvidenceTests(unittest.TestCase):
     def test_legacy_series_without_swap_column_is_rejected(self):
         self.assert_rejected(
             passing_cells(), sample="1\t16777216\t15\t20971520\n")
+
+    def test_missing_tuned_startup_is_rejected(self):
+        cells = [cell for cell in passing_cells()
+                 if not (cell.get("cell") == "startup"
+                         and cell.get("run") == "tuned")]
+        self.assert_rejected(cells)
+
+    def test_reused_or_unbound_scope_is_rejected(self):
+        cells = copy.deepcopy(passing_cells())
+        for cell in cells:
+            if cell.get("cell") == "startup":
+                cell["cgroupEvidence"]["unit"] = "rrprof-reused.scope"
+                cell["cgroupEvidence"]["controlGroup"] = "/unrelated"
+        self.assert_rejected(cells)
+
+    def test_boolean_zero_resource_values_are_rejected(self):
+        cells = copy.deepcopy(passing_cells())
+        for cell in cells:
+            if cell.get("cell") == "startup":
+                requested = cell["cgroupEvidence"]["requested"]
+                actual = cell["cgroupEvidence"]["actual"]
+                requested["memorySwapMaxBytes"] = False
+                actual["memorySwapMaxBytes"] = False
+                actual["memorySwapCurrentBytes"] = False
+        self.assert_rejected(cells)
+
+    def test_boolean_schema_version_is_rejected(self):
+        cells = copy.deepcopy(passing_cells())
+        cells[0]["cgroupEvidence"]["schemaVersion"] = True
+        self.assert_rejected(cells)
+
+    def test_missing_run_sample_series_is_rejected(self):
+        result, summary = self.summarize(
+            passing_cells(), missing_sample="tuned")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIs(summary["pass"], False)
+        self.assertIs(summary["swapEvidence"]["seriesByRun"]["tuned"]["pass"],
+                      False)
 
 
 if __name__ == "__main__":
