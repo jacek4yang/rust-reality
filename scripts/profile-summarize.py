@@ -52,7 +52,8 @@ def cpu_quota_matches(quota, period, requested_percent):
 EXPECTED_RUNS = ("nogeo", "geo", "tuned")
 
 
-def summarize_resource_boundaries(startups, requested_cpu_percent,
+def summarize_resource_boundaries(startups, resource_mode,
+                                  requested_cpu_percent,
                                   requested_memory_bytes,
                                   requested_swap_bytes):
     scopes = []
@@ -64,6 +65,7 @@ def summarize_resource_boundaries(startups, requested_cpu_percent,
         if run in run_counts:
             run_counts[run] += 1
         machine = startup.get("machineReport") or {}
+        machine_present = bool(machine)
         evidence = startup.get("cgroupEvidence") or {}
         requested = evidence.get("requested") or {}
         actual = evidence.get("actual") or {}
@@ -78,7 +80,7 @@ def summarize_resource_boundaries(startups, requested_cpu_percent,
             units.append(unit)
         if isinstance(control_group, str) and control_group:
             control_groups.append(control_group)
-        machine_matches = bool(
+        machine_values_match = bool(
             machine.get("memory_source") == "cgroup_v2"
             and positive_int(machine.get("memory_max"))
             and machine.get("memory_max") == requested_memory_bytes
@@ -88,6 +90,9 @@ def summarize_resource_boundaries(startups, requested_cpu_percent,
                                   machine.get("cpu_period_us"),
                                   requested_cpu_percent)
         )
+        machine_report_required = resource_mode == "dedicated"
+        machine_matches = (machine_values_match if machine_report_required
+                           else not machine_present)
         evidence_matches = bool(
             positive_int(evidence.get("schemaVersion"))
             and evidence.get("schemaVersion") == 1
@@ -112,6 +117,8 @@ def summarize_resource_boundaries(startups, requested_cpu_percent,
         )
         scopes.append({
             "run": run,
+            "machineReportRequired": machine_report_required,
+            "machineReportPresent": machine_present,
             "machineReportMatches": machine_matches,
             "cgroupEvidenceMatches": evidence_matches,
             "pass": machine_matches and evidence_matches,
@@ -130,6 +137,8 @@ def summarize_resource_boundaries(startups, requested_cpu_percent,
     return {
         "pass": structure_pass and all(scope["pass"] for scope in scopes),
         "expected": {
+            "resourceMode": resource_mode,
+            "machineReportRequired": resource_mode == "dedicated",
             "cpuQuotaPercent": requested_cpu_percent,
             "memoryMaxBytes": requested_memory_bytes,
             "memorySwapMaxBytes": requested_swap_bytes,
@@ -355,7 +364,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("classdir")
     parser.add_argument("--class", dest="klass", required=True)
-    parser.add_argument("--mode", required=True)
+    parser.add_argument("--mode", required=True,
+                        choices=("dedicated", "standard"))
     parser.add_argument("--cpu-quota", required=True, type=int)
     parser.add_argument("--mem-max", required=True)
     parser.add_argument("--mem-max-bytes", required=True, type=int)
@@ -391,7 +401,8 @@ def main():
 
     startups = [cell for cell in cells if cell.get("cell") == "startup"]
     resource_boundaries = summarize_resource_boundaries(
-        startups, args.cpu_quota, args.mem_max_bytes, args.mem_swap_max)
+        startups, args.mode, args.cpu_quota, args.mem_max_bytes,
+        args.mem_swap_max)
     swap_cell_values = []
     for cell in cells:
         if cell.get("cell") == "startup":

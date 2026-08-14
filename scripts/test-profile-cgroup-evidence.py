@@ -111,7 +111,7 @@ def passing_cells():
 
 class ProfileCgroupEvidenceTests(unittest.TestCase):
     def summarize(self, cells, sample="1\t16777216\t15\t20971520\t0\n",
-                  missing_sample=None):
+                  missing_sample=None, mode="dedicated"):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with (root / "cells.jsonl").open("w", encoding="utf-8") as handle:
@@ -123,7 +123,7 @@ class ProfileCgroupEvidenceTests(unittest.TestCase):
                         sample, encoding="utf-8")
             result = subprocess.run(
                 [sys.executable, str(SUMMARIZER), str(root),
-                 "--class", "1c1g", "--mode", "dedicated",
+                 "--class", "1c1g", "--mode", mode,
                  "--cpu-quota", "100", "--mem-max", "1G",
                  "--mem-max-bytes", str(MEMORY_BYTES),
                  "--mem-swap-max", "0"],
@@ -156,6 +156,32 @@ class ProfileCgroupEvidenceTests(unittest.TestCase):
         cells = copy.deepcopy(passing_cells())
         cells[1]["machineReport"]["cpu_quota_us"] = 200_000
         self.assert_rejected(cells)
+
+    def test_dedicated_without_machine_report_is_rejected(self):
+        cells = copy.deepcopy(passing_cells())
+        for cell in cells:
+            if cell.get("cell") == "startup":
+                cell["machineReport"] = None
+        self.assert_rejected(cells)
+
+    def test_standard_without_machine_report_uses_direct_cgroup_evidence(self):
+        cells = copy.deepcopy(passing_cells())
+        for cell in cells:
+            if cell.get("cell") == "startup":
+                cell["machineReport"] = None
+        result, summary = self.summarize(cells, mode="standard")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIs(summary["pass"], True)
+        boundaries = summary["resourceBoundaryEvidence"]
+        self.assertIs(boundaries["pass"], True)
+        self.assertIs(boundaries["expected"]["machineReportRequired"], False)
+        self.assertTrue(all(not scope["machineReportPresent"]
+                            for scope in boundaries["scopes"]))
+
+    def test_standard_with_unexpected_machine_report_is_rejected(self):
+        result, summary = self.summarize(passing_cells(), mode="standard")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIs(summary["pass"], False)
 
     def test_nonzero_cell_swap_is_rejected(self):
         cells = copy.deepcopy(passing_cells())
