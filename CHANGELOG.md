@@ -23,6 +23,9 @@ All notable user-facing changes to this project are documented in this file.
 
 ### Changed
 
+- If an asset server begins an HTTP 200 response but its body later times out
+  or fails in transport, rust-reality now falls back to the existing bounded,
+  parse-validated cache. Oversized responses remain a fail-closed error.
 - Cover flight inspection is bounded to a 66,642-byte retained prefix. Reads
   are incremental and deadline-bound; optional fifth-record detection uses
   buffered bytes first and then at most one nonblocking probe. Every inspected
