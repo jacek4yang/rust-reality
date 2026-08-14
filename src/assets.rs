@@ -363,7 +363,7 @@ impl AssetFetcher {
                 return cached_candidate(
                     &data_path,
                     maximum,
-                    AssetDownloadFailure::from_ureq(&error),
+                    CacheFallback::Allowed(AssetDownloadFailure::from_ureq(&error)),
                 );
             }
         };
@@ -385,7 +385,12 @@ impl AssetFetcher {
                 {
                     Ok(bytes) => bytes,
                     Err(error) => {
-                        return body_read_error_candidate(&data_path, maximum, error);
+                        let fallback = if matches!(&error, ureq::Error::BodyExceedsLimit(_)) {
+                            CacheFallback::DisabledTooLarge
+                        } else {
+                            CacheFallback::Allowed(AssetDownloadFailure::from_ureq(&error))
+                        };
+                        return cached_candidate(&data_path, maximum, fallback);
                     }
                 };
                 if bytes.len() > maximum {
@@ -410,11 +415,15 @@ impl AssetFetcher {
                 }
                 .with_shared_bytes())
             }
-            304 => cached_candidate(&data_path, maximum, AssetDownloadFailure::CacheUnavailable),
+            304 => cached_candidate(
+                &data_path,
+                maximum,
+                CacheFallback::Allowed(AssetDownloadFailure::CacheUnavailable),
+            ),
             status => cached_candidate(
                 &data_path,
                 maximum,
-                AssetDownloadFailure::HttpStatus(status),
+                CacheFallback::Allowed(AssetDownloadFailure::HttpStatus(status)),
             ),
         }
     }
@@ -438,30 +447,26 @@ impl AssetCandidate {
     }
 }
 
+enum CacheFallback {
+    Allowed(AssetDownloadFailure),
+    DisabledTooLarge,
+}
+
+#[inline(never)]
 fn cached_candidate(
     path: &Path,
     maximum: usize,
-    failure: AssetDownloadFailure,
+    fallback: CacheFallback,
 ) -> Result<AssetCandidate, AssetLoadError> {
-    read_bounded(path, maximum)
-        .map(AssetCandidate::Cached)
-        .map_err(|_| AssetLoadError::Download(failure))
-}
-
-#[cold]
-#[inline(never)]
-fn body_read_error_candidate(
-    path: &Path,
-    maximum: usize,
-    error: ureq::Error,
-) -> Result<AssetCandidate, AssetLoadError> {
-    if matches!(&error, ureq::Error::BodyExceedsLimit(_)) {
-        return Err(AssetLoadError::TooLarge {
+    match fallback {
+        CacheFallback::Allowed(failure) => read_bounded(path, maximum)
+            .map(AssetCandidate::Cached)
+            .map_err(|_| AssetLoadError::Download(failure)),
+        CacheFallback::DisabledTooLarge => Err(AssetLoadError::TooLarge {
             path: path.to_path_buf(),
             maximum,
-        });
+        }),
     }
-    cached_candidate(path, maximum, AssetDownloadFailure::from_ureq(&error))
 }
 
 fn parse_candidate<T>(
