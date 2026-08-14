@@ -385,17 +385,7 @@ impl AssetFetcher {
                 {
                     Ok(bytes) => bytes,
                     Err(error) => {
-                        if matches!(error, ureq::Error::BodyExceedsLimit(_)) {
-                            return Err(AssetLoadError::TooLarge {
-                                path: data_path.clone(),
-                                maximum,
-                            });
-                        }
-                        return cached_candidate(
-                            &data_path,
-                            maximum,
-                            AssetDownloadFailure::from_ureq(&error),
-                        );
+                        return body_read_error_candidate(&data_path, maximum, error);
                     }
                 };
                 if bytes.len() > maximum {
@@ -456,6 +446,22 @@ fn cached_candidate(
     read_bounded(path, maximum)
         .map(AssetCandidate::Cached)
         .map_err(|_| AssetLoadError::Download(failure))
+}
+
+#[cold]
+#[inline(never)]
+fn body_read_error_candidate(
+    path: &Path,
+    maximum: usize,
+    error: ureq::Error,
+) -> Result<AssetCandidate, AssetLoadError> {
+    if matches!(&error, ureq::Error::BodyExceedsLimit(_)) {
+        return Err(AssetLoadError::TooLarge {
+            path: path.to_path_buf(),
+            maximum,
+        });
+    }
+    cached_candidate(path, maximum, AssetDownloadFailure::from_ureq(&error))
 }
 
 fn parse_candidate<T>(
@@ -1253,7 +1259,7 @@ mod tests {
         time::Duration,
     };
 
-    use super::{AssetMatcher, AssetSnapshot, AssetSource, AssetStore};
+    use super::{AssetLoadError, AssetMatcher, AssetSnapshot, AssetSource, AssetStore};
     use crate::config::Config;
 
     #[test]
@@ -1388,6 +1394,59 @@ mod tests {
             .expect("a timed-out response body must fall back to the validated cache");
 
         assert!(snapshot.matches_domain(&AssetSource::GeoSite, "test", "api.example.com"));
+        server.join().expect("asset test server must complete");
+        fs::remove_dir_all(directory).expect("temporary asset cache must be removed");
+    }
+
+    #[test]
+    fn oversized_response_body_does_not_fall_back_to_validated_cache() {
+        let listener =
+            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("asset test listener must bind");
+        let address = listener.local_addr().expect("listener address must exist");
+        let maximum = 1024_usize;
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("asset request must arrive");
+            let mut request = [0_u8; 4096];
+            stream.read(&mut request).expect("asset request must read");
+            let body = vec![0_u8; maximum + 2];
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream
+                .write_all(headers.as_bytes())
+                .and_then(|()| stream.write_all(&body))
+                .expect("oversized asset response must write");
+        });
+
+        let suffix = format!("{}-body-too-large", std::process::id());
+        let directory = std::env::temp_dir().join(format!("rust-reality-assets-{suffix}"));
+        fs::create_dir(&directory).expect("temporary asset cache must be created");
+        fs::write(directory.join("geosite.dat"), geosite_list())
+            .expect("cached geosite must be written");
+        let mut config: Config = serde_json::from_str(crate::config::test_config_json())
+            .expect("fixture config must parse");
+        config.assets.geosite = format!("http://{address}/geosite.dat");
+        config.assets.cache_directory = directory.clone();
+        config.assets.max_bytes = u64::try_from(maximum).expect("maximum must fit u64");
+        config.routing.global_rules[0].domain = vec!["geosite:test".to_owned()];
+        config.routing.global_rules[0].ip.clear();
+
+        let error = match AssetSnapshot::load(&config) {
+            Ok(_) => panic!("an oversized body must fail instead of using cached assets"),
+            Err(error) => error,
+        };
+        match error {
+            AssetLoadError::TooLarge {
+                path,
+                maximum: observed,
+            } => {
+                assert_eq!(path, directory.join("geosite.dat"));
+                assert_eq!(observed, maximum);
+            }
+            other => panic!("oversized body returned the wrong error: {other}"),
+        }
+
         server.join().expect("asset test server must complete");
         fs::remove_dir_all(directory).expect("temporary asset cache must be removed");
     }
