@@ -357,74 +357,71 @@ impl AssetFetcher {
             }
         }
 
-        let response = match request.call() {
-            Ok(response) => response,
-            Err(error) => {
-                return cached_candidate(
-                    &data_path,
-                    maximum,
-                    CacheFallback::Allowed(AssetDownloadFailure::from_ureq(&error)),
-                );
-            }
-        };
-        match response.status().as_u16() {
-            200 => {
-                let etag = response_header(&response, ETAG);
-                let last_modified = response_header(&response, LAST_MODIFIED);
-                let body_limit = maximum
-                    .checked_add(1)
-                    .ok_or(AssetLoadError::SizeLimitUnsupported)?;
-                let bytes = match response
-                    .into_body()
-                    .with_config()
-                    .limit(
-                        u64::try_from(body_limit)
-                            .map_err(|_| AssetLoadError::SizeLimitUnsupported)?,
-                    )
-                    .read_to_vec()
-                {
-                    Ok(bytes) => bytes,
-                    Err(error) => {
-                        let fallback = if matches!(&error, ureq::Error::BodyExceedsLimit(_)) {
-                            CacheFallback::DisabledTooLarge
-                        } else {
-                            CacheFallback::Allowed(AssetDownloadFailure::from_ureq(&error))
-                        };
-                        return cached_candidate(&data_path, maximum, fallback);
+        let downloaded = match request.call() {
+            Ok(response) => match response.status().as_u16() {
+                200 => (|| {
+                    let etag = response_header(&response, ETAG);
+                    let last_modified = response_header(&response, LAST_MODIFIED);
+                    let body_limit = maximum
+                        .checked_add(1)
+                        .ok_or(AssetLoadError::SizeLimitUnsupported)?;
+                    let bytes = response
+                        .into_body()
+                        .with_config()
+                        .limit(
+                            u64::try_from(body_limit)
+                                .map_err(|_| AssetLoadError::SizeLimitUnsupported)?,
+                        )
+                        .read_to_vec()
+                        .map_err(|error| {
+                            if matches!(&error, ureq::Error::BodyExceedsLimit(_)) {
+                                AssetLoadError::TooLarge {
+                                    path: data_path.clone(),
+                                    maximum,
+                                }
+                            } else {
+                                AssetLoadError::Download(AssetDownloadFailure::from_ureq(&error))
+                            }
+                        })?;
+                    if bytes.len() > maximum {
+                        return Err(AssetLoadError::TooLarge {
+                            path: data_path.clone(),
+                            maximum,
+                        });
                     }
-                };
-                if bytes.len() > maximum {
-                    return Err(AssetLoadError::TooLarge {
-                        path: data_path,
-                        maximum,
-                    });
-                }
-                Ok(AssetCandidate::Downloaded {
-                    bytes: Arc::from(bytes),
-                    fallback_path: data_path.clone(),
-                    update: CacheUpdate {
-                        data_path,
-                        metadata_path,
-                        bytes: Arc::from([]),
-                        metadata: CacheMetadata {
-                            source: url.to_owned(),
-                            etag,
-                            last_modified,
-                        },
+                    Ok((bytes, etag, last_modified))
+                })(),
+                304 => Err(AssetLoadError::Download(
+                    AssetDownloadFailure::CacheUnavailable,
+                )),
+                status => Err(AssetLoadError::Download(AssetDownloadFailure::HttpStatus(
+                    status,
+                ))),
+            },
+            Err(error) => Err(AssetLoadError::Download(AssetDownloadFailure::from_ureq(
+                &error,
+            ))),
+        };
+        match downloaded {
+            Ok((bytes, etag, last_modified)) => Ok(AssetCandidate::Downloaded {
+                bytes: Arc::from(bytes),
+                fallback_path: data_path.clone(),
+                update: CacheUpdate {
+                    data_path,
+                    metadata_path,
+                    bytes: Arc::from([]),
+                    metadata: CacheMetadata {
+                        source: url.to_owned(),
+                        etag,
+                        last_modified,
                     },
-                }
-                .with_shared_bytes())
+                },
             }
-            304 => cached_candidate(
-                &data_path,
-                maximum,
-                CacheFallback::Allowed(AssetDownloadFailure::CacheUnavailable),
-            ),
-            status => cached_candidate(
-                &data_path,
-                maximum,
-                CacheFallback::Allowed(AssetDownloadFailure::HttpStatus(status)),
-            ),
+            .with_shared_bytes()),
+            Err(AssetLoadError::Download(failure)) => {
+                cached_candidate(&data_path, maximum, failure)
+            }
+            Err(error) => Err(error),
         }
     }
 }
@@ -447,26 +444,14 @@ impl AssetCandidate {
     }
 }
 
-enum CacheFallback {
-    Allowed(AssetDownloadFailure),
-    DisabledTooLarge,
-}
-
-#[inline(never)]
 fn cached_candidate(
     path: &Path,
     maximum: usize,
-    fallback: CacheFallback,
+    failure: AssetDownloadFailure,
 ) -> Result<AssetCandidate, AssetLoadError> {
-    match fallback {
-        CacheFallback::Allowed(failure) => read_bounded(path, maximum)
-            .map(AssetCandidate::Cached)
-            .map_err(|_| AssetLoadError::Download(failure)),
-        CacheFallback::DisabledTooLarge => Err(AssetLoadError::TooLarge {
-            path: path.to_path_buf(),
-            maximum,
-        }),
-    }
+    read_bounded(path, maximum)
+        .map(AssetCandidate::Cached)
+        .map_err(|_| AssetLoadError::Download(failure))
 }
 
 fn parse_candidate<T>(
@@ -1450,6 +1435,59 @@ mod tests {
                 assert_eq!(observed, maximum);
             }
             other => panic!("oversized body returned the wrong error: {other}"),
+        }
+
+        server.join().expect("asset test server must complete");
+        fs::remove_dir_all(directory).expect("temporary asset cache must be removed");
+    }
+
+    #[test]
+    fn maximum_plus_one_response_body_does_not_fall_back_to_validated_cache() {
+        let listener =
+            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("asset test listener must bind");
+        let address = listener.local_addr().expect("listener address must exist");
+        let maximum = 1024_usize;
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("asset request must arrive");
+            let mut request = [0_u8; 4096];
+            stream.read(&mut request).expect("asset request must read");
+            let body = vec![0_u8; maximum + 1];
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream
+                .write_all(headers.as_bytes())
+                .and_then(|()| stream.write_all(&body))
+                .expect("maximum-plus-one asset response must write");
+        });
+
+        let suffix = format!("{}-body-maximum-plus-one", std::process::id());
+        let directory = std::env::temp_dir().join(format!("rust-reality-assets-{suffix}"));
+        fs::create_dir(&directory).expect("temporary asset cache must be created");
+        fs::write(directory.join("geosite.dat"), geosite_list())
+            .expect("cached geosite must be written");
+        let mut config: Config = serde_json::from_str(crate::config::test_config_json())
+            .expect("fixture config must parse");
+        config.assets.geosite = format!("http://{address}/geosite.dat");
+        config.assets.cache_directory = directory.clone();
+        config.assets.max_bytes = u64::try_from(maximum).expect("maximum must fit u64");
+        config.routing.global_rules[0].domain = vec!["geosite:test".to_owned()];
+        config.routing.global_rules[0].ip.clear();
+
+        let error = match AssetSnapshot::load(&config) {
+            Ok(_) => panic!("a maximum-plus-one body must fail instead of using cached assets"),
+            Err(error) => error,
+        };
+        match error {
+            AssetLoadError::TooLarge {
+                path,
+                maximum: observed,
+            } => {
+                assert_eq!(path, directory.join("geosite.dat"));
+                assert_eq!(observed, maximum);
+            }
+            other => panic!("maximum-plus-one body returned the wrong error: {other}"),
         }
 
         server.join().expect("asset test server must complete");
