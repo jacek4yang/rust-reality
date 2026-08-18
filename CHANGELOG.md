@@ -20,11 +20,32 @@ All notable user-facing changes to this project are documented in this file.
   and an optional fifth post-Finished record. When that fifth record is
   present, rust-reality emits an empty TLS 1.3 ApplicationData record as a
   bounded cover-shaped fake NST; it carries no ticket or resumption state.
-- Official Linux x86_64 releases contain two independently identified assets:
-  the portable `x86_64-unknown-linux-gnu` archive and an opt-in
-  `x86_64-v3-unknown-linux-gnu` archive. `release-manifest.json` schema v2
-  records each tier's requirements and SHA-256; `SHA256SUMS` covers both
-  archives and the manifest.
+- A shared process-wide DNS resolver fronts every connector-side lookup
+  (routing `domainStrategy`, direct dials, REALITY cover targets, and
+  SOCKS5/NXR/Handoff server names). `dns.servers` selects exactly `["system"]`
+  (getaddrinfo; singleflight coalescing and admission governance only — no
+  dynamic caching, because the system resolver exposes no TTLs) or a list of
+  upstream DNS servers (IP literal, `ip:port`, `[v6]:port`, or a hostname
+  bootstrapped through the system resolver; real TTLs over UDP with TCP
+  fallback). The new `dns.cache` bounds the shared cache
+  (`maxEntries`/`minTtlSeconds`/`maxTtlSeconds`/`negativeTtlSeconds`/
+  `staticTtlSeconds`); configured static peers are cached in every mode. All
+  upstream flights hold `DnsLookup` admission permits. The resolver is
+  installed once at startup; changing `dns.servers`, `dns.timeoutMs`, or
+  `dns.cache` requires a restart.
+- Official Linux releases now ship three per-tier archives:
+  `rust-reality-v1.5.0-linux-x86_64-generic.tar.gz` (baseline x86-64, the
+  recommended asset), `rust-reality-v1.5.0-linux-x86_64-v3.tar.gz` (opt-in;
+  requires the x86-64-v3 microarchitecture level), and
+  `rust-reality-v1.5.0-linux-aarch64-generic.tar.gz` (ARMv8.0 baseline with
+  neon, built and smoke-tested natively on ARM runners). An aarch64-crypto
+  tier was evaluated and deliberately dropped: ring already dispatches AES/SHA
+  hardware support via HWCAP at runtime, so the tier's advantage was
+  unverifiable. `release-manifest.json` schema v3 records per-tier compiler,
+  cargo features, target CPU/features, native-measurement status, and minimum
+  CPU requirements; `SHA256SUMS` covers all archives and the manifest. The
+  pipeline builds, smokes, and aggregates every tier before publishing — a
+  failed tier fails the release instead of publishing a partial matrix.
 - The benchmark and forensic scripts accept explicit run IDs, immutable binary
   paths and hashes, unique output/temp directories, and isolated perf/IDA
   inputs. Authoritative comparisons use balanced ABBA blocks and fail closed
@@ -57,6 +78,37 @@ All notable user-facing changes to this project are documented in this file.
   the existing wire encoding. A v1.5 LANDING accepts server sequence 0 or 1
   and rejects sequence 2 or greater before record-layer restoration, avoiding
   AEAD nonce reuse.
+- Rule lists of 64 or more entries now build adaptive matcher indices
+  (about 53 bytes per rule) instead of evaluating every matcher linearly.
+  First-match semantics are unchanged and small rule sets keep the linear
+  path; measured P95 decision latency fell 31–57% at 1,000 rules and 31–55%
+  at 10,000 rules. See docs/performance.md.
+
+### Fixed
+
+- Sessions against a cover that negotiates no ALPN now establish correctly:
+  the generated EncryptedExtensions ALPN is shaped to the cover's observed
+  record slot. Previously such sessions silently fell back to the cover.
+  `probe-dest` remains bounded to the ServerHello. Covers that do offer ALPN
+  should still negotiate it; ALPN-less covers are legitimately supported.
+
+### Migration from 1.4
+
+v1.5.0 intentionally rejects the v1.4 listener shape; run `check` before
+restart. The mapping is mechanical:
+
+| v1.4 | v1.5.0 |
+| --- | --- |
+| `"listen": "0.0.0.0"` (or any concrete IPv4) | `"listen": { "mode": "ipv4Only", "ipv4": "<address>" }` for identical single-family behavior, or `{ "mode": "auto" }` to serve both families |
+| `"listen": "::"` (or any concrete IPv6) | `"listen": { "mode": "ipv6Only", "ipv6": "<address>" }`, or `{ "mode": "auto" }` |
+| `network.addressFamily` (unreleased v1.5 development snapshots only) | `network.dial.mode` (`auto`, `preferIpv4`, `preferIpv6`, `ipv4Only`, `ipv6Only`) |
+
+Unspecified fields in the `listen` object default to the wildcard addresses
+(`0.0.0.0` / `::`), so only the address a mode uses needs to be named.
+`network.dial` is optional and defaults to `auto`; it controls only locally
+resolved outbound dials and never the listeners. There is no
+backward-compatible fallback: obsolete fields and scalar listeners fail
+strict decoding as unknown or invalid values.
 
 ### Compatibility and operations
 
@@ -64,6 +116,14 @@ All notable user-facing changes to this project are documented in this file.
   public covers. A local OpenSSL 3.5.6 cover that omits compatibility CCS also
   passed. Each gate verified an exact 1 MiB SHA-256 payload and ML-DSA-65 key
   compatibility; these are interoperability results, not throughput claims.
+- Real global IPv6 and real IPv6 Internet egress were validated end to end
+  (`scripts/validate-ipv6-e2e.sh`): 29 pass, 0 fail, 1 skip — the skip is the
+  external-ingress case, for which no outside IPv6 source was available on the
+  validation host. Coverage includes all listener modes, Xray client sessions
+  over every address-family combination (mixed A/AAAA, DNS-selected family,
+  IPv6 literals, bracketed covers), byte-exact 64 MiB upload, download, and
+  full-duplex transfers, 100 ms/1% netem impairment, route loss and recovery,
+  and fast family-refusal fallback (0.086 s).
 - Rolling Handoff upgrades are LANDING-first, then LINE: a v1.4 LINE can use a
   v1.5 LANDING. Rollback is LINE-first, followed by admission stop and active
   session drain before LANDING downgrade. A v1.5 LINE that exports sequence 1

@@ -8,25 +8,31 @@ continue to [deployment.md](deployment.md).
 
 ## 1. Download and verify the release
 
-Download both archives, the manifest, and checksums from the
+Download the archive for your platform, the manifest, and checksums from the
 [latest release](https://github.com/jacek4yang/rust-reality/releases/latest),
 then verify all assets before installation:
 
 ```shell
 sha256sum --check SHA256SUMS
-# Portable package (recommended when CPU support is unknown):
-tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
+# Generic x86-64 package (recommended when CPU support is unknown):
+tar -xzf rust-reality-v<version>-linux-x86_64-generic.tar.gz
 # Or, on an x86-64-v3 CPU:
-# tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz
+# tar -xzf rust-reality-v<version>-linux-x86_64-v3.tar.gz
+# On ARM64 (ARMv8.0 with neon or later):
+# tar -xzf rust-reality-v<version>-linux-aarch64-generic.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 rust-reality --version
 ```
 
-`release-manifest.json` schema v2 records the version, tag, exact source
-commit, target triple, source timestamp, both archive names and SHA-256 values,
-and each archive's CPU requirement. The portable package targets baseline
-x86-64. The optimized package requires x86-64-v3 and has no runtime fallback.
-Do not combine assets from different releases.
+`release-manifest.json` schema v3 records the version, tag, exact source
+commit, target triples, source timestamp, compiler, cargo features, and each
+tier's archive name, SHA-256, target CPU/features, native-measurement status,
+and minimum CPU requirements. The generic x86-64 package targets baseline
+x86-64. The v3 package requires the x86-64-v3 microarchitecture level and has
+no runtime fallback; on the validation host it showed no measured advantage
+(the record AEAD dispatches to AES hardware at runtime in every tier), so use
+it only when you know the CPU qualifies. The aarch64 package requires ARMv8.0
+with neon. Do not combine assets from different releases.
 
 ## 2. Probe a cover target
 

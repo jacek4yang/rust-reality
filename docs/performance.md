@@ -10,7 +10,9 @@ numbers were measured on the validation host: Intel Core i3-8100 (4C/4T @
 client. Loopback shares the host CPUs between server, client, and origin;
 these numbers describe implementation cost, never Internet throughput. The
 frozen v1.0.0 release comparison matrix is published in
-[benchmarks.md](benchmarks.md).
+[benchmarks.md](benchmarks.md). v1.5.0 evidence is in the two sections
+immediately below and keeps the v1.0.0 tables unchanged as historical release
+measurements.
 
 ## v1.5 cover-flight and release evidence
 
@@ -70,6 +72,38 @@ Interoperability gates passed against Xray 26.7.28 with Microsoft, Google, and
 Fastly public covers and against a local OpenSSL 3.5.6 cover without CCS. Each
 case verified an exact 1 MiB SHA-256 transfer and ML-DSA-65 key compatibility.
 These gates establish wire correctness, not throughput.
+
+## v1.5.0 DNS, routing, and IPv6 evidence
+
+Same validation host and methodology caveats as above (Intel i3-8100, Linux
+6.12, loopback/same-host; implementation cost, never Internet throughput).
+
+- **Shared DNS resolver.** With an upstream server list, 128 concurrent
+  identical lookups coalesced into 2 upstream queries instead of 315, and the
+  warm-path p50 fell from 12.9 ms to sub-microsecond; the cold path cost
+  +2.1%. System mode (`dns.servers: ["system"]`) applies the same
+  singleflight coalescing and `DnsLookup` admission governance but caches no
+  dynamic answers, because getaddrinfo exposes no TTLs.
+- **Routing candidate indices.** Rule lists of 64 or more entries compile an
+  adaptive index (measured footprint ≈53 bytes per rule) with exact
+  first-match semantics. Measured P95 decision latency fell 31–57% at 1,000
+  rules and 31–55% at 10,000 rules; small rule sets are unchanged on the
+  linear path.
+- **Real IPv6 validation.** `scripts/validate-ipv6-e2e.sh` ran end to end
+  over real global IPv6 with real IPv6 Internet egress: 29 pass, 0 fail,
+  1 skip. The skip is the external-ingress case — no outside IPv6 source was
+  available on the validation host, so inbound IPv6 from the public Internet
+  is asserted only by the listener-bind and same-host evidence, not by an
+  external client. Coverage includes all listener modes, Xray client
+  sessions over every address-family combination (mixed A/AAAA,
+  DNS-selected family, IPv6 literals, bracketed covers), byte-exact 64 MiB
+  upload, download, and full-duplex transfers, 100 ms/1% netem impairment,
+  route loss and recovery, and fast family-refusal fallback (0.086 s).
+- **v3 versus generic.** The formal tier A/B above (all twelve intervals
+  contain 1) is the complete v3 evidence: the opt-in tier has no measured
+  advantage, because ring performs its own AES runtime dispatch in every
+  tier. It exists so operators who already require x86-64-v3 get an
+  explicitly identified build, not a faster one.
 
 ## v1.3 control-plane and setup-path structures
 

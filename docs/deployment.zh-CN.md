@@ -2,8 +2,8 @@
 
 [English](deployment.md) | 简体中文
 
-本指南使用官方 Linux x86_64 Release 部署单机公网节点、线路机，或受防火墙限制的
-NXR 落地机。
+本指南使用官方 Linux Release（x86_64 或 aarch64）部署单机公网节点、线路机，
+或受防火墙限制的 NXR 落地机。
 
 ## 环境要求
 
@@ -21,10 +21,11 @@ NXR 落地机。
 ## 安装官方 Release
 
 从同一个 [GitHub Release](https://github.com/jacek4yang/rust-reality/releases)
-下载四个资产：
+下载五个资产：
 
-- `rust-reality-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz`
-- `rust-reality-vX.Y.Z-x86_64-v3-unknown-linux-gnu.tar.gz`
+- `rust-reality-vX.Y.Z-linux-x86_64-generic.tar.gz`
+- `rust-reality-vX.Y.Z-linux-x86_64-v3.tar.gz`
+- `rust-reality-vX.Y.Z-linux-aarch64-generic.tar.gz`
 - `release-manifest.json`
 - `SHA256SUMS`
 
@@ -32,17 +33,23 @@ NXR 落地机。
 
 ```shell
 sha256sum --check SHA256SUMS
-# portable 包（不确定 CPU 能力时推荐）：
-tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
+# x86-64 通用包（不确定 CPU 能力时推荐）：
+tar -xzf rust-reality-v<version>-linux-x86_64-generic.tar.gz
 # 或在 x86-64-v3 CPU 上使用：
-# tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz
+# tar -xzf rust-reality-v<version>-linux-x86_64-v3.tar.gz
+# 在 ARM64（ARMv8.0 含 neon 或更高）上使用：
+# tar -xzf rust-reality-v<version>-linux-aarch64-generic.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 rust-reality --version
 ```
 
-`release-manifest.json` schema v2 记录版本、tag、精确源码 commit、target triple、
-源码时间戳、两个压缩包的名称和 SHA-256，以及各压缩包的 CPU 要求。x86-64-v3
-包没有运行时回退。不要混用不同 Release 的压缩包、manifest 或 checksum。
+`release-manifest.json` schema v3 记录版本、tag、精确源码 commit、target triple、
+源码时间戳、编译器、cargo features，以及每个档位的压缩包名称、SHA-256、目标
+CPU/特性、是否在本机实测，以及最低 CPU 要求。最低要求：`linux-x86_64-generic`
+运行于基线 x86-64；`linux-x86_64-v3` 要求 x86-64-v3 微架构级别，且没有运行时
+回退；`linux-aarch64-generic` 要求 ARMv8.0 含 neon。v3 档是可选项，在验证主机
+上没有实测优势（ring 在每个档位都于运行时做 AES 硬件调度），只有确认 CPU 满足
+条件时才应选择它。不要混用不同 Release 的压缩包、manifest 或 checksum。
 
 需要自行构建时使用固定工具链和锁定依赖图：
 
@@ -51,20 +58,20 @@ rust-reality --version
 ./scripts/build-release.sh
 ```
 
-### 发布后的双档 Xray 验收
+### 发布后的逐档 Xray 验收
 
 发布成功并不等于互操作验收完成。请在已发布 tag 的全新 checkout 中重新下载并
-校验四个 Release 资产，把两个二进制解压到各自独立的 mode-0700 目录，然后分别
-对下载得到的准确制品运行一次 Xray 门禁：
+校验 Release 资产，把每个架构的二进制解压到各自独立的 mode-0700 目录，然后
+在匹配的硬件上分别对下载得到的准确制品运行一次 Xray 门禁：
 
 ```shell
-install -d -m 0700 release-smoke/portable release-smoke/x86-64-v3
-tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz \
-  -C release-smoke/portable
-tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz \
+install -d -m 0700 release-smoke/generic release-smoke/x86-64-v3
+tar -xzf rust-reality-v<version>-linux-x86_64-generic.tar.gz \
+  -C release-smoke/generic
+tar -xzf rust-reality-v<version>-linux-x86_64-v3.tar.gz \
   -C release-smoke/x86-64-v3
 
-RUST_REALITY_BIN="$PWD/release-smoke/portable/rust-reality" \
+RUST_REALITY_BIN="$PWD/release-smoke/generic/rust-reality" \
   XRAY_BIN=/absolute/path/to/xray \
   ./scripts/test-xray-interop.sh
 RUST_REALITY_BIN="$PWD/release-smoke/x86-64-v3/rust-reality" \
@@ -74,7 +81,8 @@ RUST_REALITY_BIN="$PWD/release-smoke/x86-64-v3/rust-reality" \
 
 每轮都会使用全新配置，证明准确的 1 MiB 传输、ML-DSA-65 一致性，以及未经修改
 Xray 的 REALITY + Vision 互操作。应在支持 x86-64-v3、外部 DNS/TCP 正常的主机
-执行；默认伪装目标不适用时用 `COVER_TARGET`/`COVER_SNI` 选择已探测的目标。任一
+执行；默认伪装目标不适用时用 `COVER_TARGET`/`COVER_SNI` 选择已探测的目标。在
+ARM64 主机上，对 `linux-aarch64-generic` 二进制运行同一门禁。任一
 档失败都属于 release no-go；不得以本地重建二进制替代下载到的制品。
 
 ## 创建服务账号和目录
@@ -117,6 +125,10 @@ rust-reality probe-dest \
 ```
 
 目标可用性和行为属于外部依赖。持续握手失败或更换目标后应重新探测。
+
+提供 ALPN 的伪装目标应当协商 ALPN。没有 ALPN 的伪装目标是受支持的——
+v1.5 会把生成的 EncryptedExtensions ALPN 塑形成目标实际观测到的记录槽位——
+但有 ALPN 的目标应优先，因为已认证会话此时能与目标的扩展形状完全一致。
 
 `serverNames` 后续可以加入证书风格模式，例如 `*.lmu.edu`；客户端仍必须发送
 `www.lmu.edu` 这样的具体单标签名称。为了让 `self-test` 验证该模式，配置的
@@ -347,7 +359,8 @@ unit 使用专用账号，只保留 `CAP_NET_BIND_SERVICE`，保护主机文件�
 
 每次启动都要核对 `outbound_network_initialized`，并为每个入站核对一条
 `listener_topology_active`。前者记录缓存的 IPv4/IPv6 路由可用性及初始出站主族，
-后者记录真正服务流量的套接字。`listen.mode: auto` 仅在
+后者记录实际绑定成功的套接字——它反映的是绑定结果，而不是地址族可达性：
+IPv6 套接字绑定成功并不证明公网 IPv6 出入方向可用。`listen.mode: auto` 仅在
 `listener_family_unavailable` 报告真实地址族/协议能力错误时允许缺少一族；端口占用、
 权限和具体地址错误仍然致命。`dualStack` 绝不降级。
 
@@ -368,6 +381,11 @@ sudo systemctl reload rust-reality
 SIGTERM 停止新 accept 并执行有界优雅退出；unit 的 40 秒停止超时覆盖程序 30 秒限制。
 
 ## 升级与回滚
+
+从 1.4 升级必须迁移配置：标量形式 `"listen": "<ip>"` 和
+`network.addressFamily` 都会被拒绝。新旧字段映射表见
+[CHANGELOG 1.5.0 迁移说明](../CHANGELOG.md)；重启前先用新二进制对迁移后的
+配置副本执行 `check`。
 
 1. 下载并验证新 tag 的全部 Release 资产。
 2. 以 root-only 文件保留当前二进制和配置。

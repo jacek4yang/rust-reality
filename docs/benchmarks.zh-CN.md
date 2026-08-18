@@ -202,6 +202,25 @@ v1.5 互操作矩阵还用 Xray 26.7.28 覆盖 Microsoft、Google、Fastly 三�
 cover 以及不发送 CCS 的本地 OpenSSL 3.5.6；每种情况都通过精确 1 MiB
 SHA-256 和 ML-DSA-65 兼容校验。它是协议门禁，不携带计时结论。
 
+### v1.5.0 DNS、路由与 IPv6 证据
+
+主机级别和注意事项同本文其余部分（i3-8100、Linux 6.12、loopback/同机；
+仅描述实现成本）。
+
+- **DNS 合并（共享解析器，上游服务器模式）：** 128 个并发相同查询只产生
+  2 次上游请求（原为 315 次）；热路径 p50 从 12.9 ms 降到微秒以下；冷路径
+  成本 +2.1%。system 模式的合并与治理完全相同，但不缓存动态应答
+  （getaddrinfo 不提供 TTL）。
+- **路由索引：** 在实测的 64 条规则交叉点，编译后的候选索引每条约占 53
+  字节，并保持精确的有序 first-match 语义。P95 决策时延在 1,000 条规则时
+  下降 31–57%，在 10,000 条时下降 31–55%；低于阈值的列表保持线性路径。
+- **IPv6：** `scripts/validate-ipv6-e2e.sh` 在真实全球 IPv6 与真实 IPv6
+  互联网出方向上运行，结果为 29 通过 / 0 失败 / 1 跳过；跳过项是外部
+  入方向用例（验证主机上没有外部 IPv6 来源），因此公网入方向 IPv6 没有
+  外部 attest。已覆盖：监听模式、全部客户端/服务端地址族组合、逐字节
+  精确的 64 MiB 上行/下行/全双工、100 ms/1% netem、路由丢失/恢复，以及
+  0.086 s 的地址族拒绝回退。
+
 ## v1.2.0 分布式与 WAN 仿真证据（LAB-NETEM）
 
 v1.2 周期在命名空间/veth 装置上用 `tc netem` 表征了分布式拓扑（LAB-NETEM；
@@ -255,6 +274,31 @@ HTTPS URL。全部生成的配置和密钥保留在有界临时目录中，退�
 和已认证 Direct 边界检测。
 
 这是兼容性门禁，不是基准：它的一次互联网请求不携带吞吐信号。
+
+### 低描述符上限恢复门禁
+
+`scripts/test-descriptor-pressure.sh` 是描述符耗尽的 fail-closed 回归门禁。它在
+一个软/硬 `RLIMIT_NOFILE` 相等且都很低的用户 systemd scope 中运行现有二进制，
+然后保持真实的 Xray -> REALITY -> Vision -> 本地回显会话，直到服务端的派生
+FD 预算耗尽。门禁要求以下全部证据：
+
+- 运行中的可执行文件哈希、PID、PID 启动时间、cgroup 成员身份和两个继承的
+  限制都与请求的测试身份一致；
+- `descriptor_budget_report` 反映该低限制，且 `descriptor_pressure_changed`
+  达到 `high`；
+- 精确的服务端进程存活，且在压力前建立的连接继续通过回显完整性检查；
+- 有界风暴中至少一个新连接被拒绝或停滞；
+- 保持的会话关闭后，压力回到 `normal`，且一次新的 64 KiB 回显流的
+  SHA-256 匹配。
+
+该脚本绝不构建或下载二进制，绝不按进程名清理，并拒绝覆盖已有的证据目录：
+
+```shell
+RUST_REALITY_BIN=/absolute/path/to/rust-reality \
+XRAY_BIN=/absolute/path/to/xray \
+OUT_DIR=diagnostics/final/descriptor-pressure-run-01 \
+scripts/test-descriptor-pressure.sh
+```
 
 ## 限制
 

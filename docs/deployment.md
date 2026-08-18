@@ -2,8 +2,9 @@
 
 English | [简体中文](deployment.zh-CN.md)
 
-This guide deploys an official Linux x86_64 release as either a standalone
-public node, a public line node, or a firewall-restricted NXR landing node.
+This guide deploys an official Linux release (x86_64 or aarch64) as either a
+standalone public node, a public line node, or a firewall-restricted NXR
+landing node.
 
 ## Requirements
 
@@ -23,11 +24,12 @@ For machine sizing, resource profiles, and performance diagnosis, see
 
 ## Install an official release
 
-Download these four assets from the same
+Download these five assets from the same
 [GitHub Release](https://github.com/jacek4yang/rust-reality/releases):
 
-- `rust-reality-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz`
-- `rust-reality-vX.Y.Z-x86_64-v3-unknown-linux-gnu.tar.gz`
+- `rust-reality-vX.Y.Z-linux-x86_64-generic.tar.gz`
+- `rust-reality-vX.Y.Z-linux-x86_64-v3.tar.gz`
+- `rust-reality-vX.Y.Z-linux-aarch64-generic.tar.gz`
 - `release-manifest.json`
 - `SHA256SUMS`
 
@@ -35,19 +37,26 @@ Verify every file listed in `SHA256SUMS` before extraction:
 
 ```shell
 sha256sum --check SHA256SUMS
-# Portable package (recommended when CPU support is unknown):
-tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
+# Generic x86-64 package (recommended when CPU support is unknown):
+tar -xzf rust-reality-v<version>-linux-x86_64-generic.tar.gz
 # Or, on an x86-64-v3 CPU:
-# tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz
+# tar -xzf rust-reality-v<version>-linux-x86_64-v3.tar.gz
+# On ARM64 (ARMv8.0 with neon or later):
+# tar -xzf rust-reality-v<version>-linux-aarch64-generic.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 rust-reality --version
 ```
 
-`release-manifest.json` schema v2 records the version, tag, exact source
-commit, target triple, source timestamp, both archive names and SHA-256 values,
-and each archive's CPU requirement. The x86-64-v3 package has no runtime
-fallback. Do not combine an archive, manifest, or checksum from different
-releases.
+`release-manifest.json` schema v3 records the version, tag, exact source
+commit, target triples, source timestamp, compiler, cargo features, and each
+tier's archive name, SHA-256, target CPU/features, native-measurement status,
+and minimum CPU requirements. Minimums: `linux-x86_64-generic` runs on
+baseline x86-64; `linux-x86_64-v3` requires the x86-64-v3 microarchitecture
+level and has no runtime fallback; `linux-aarch64-generic` requires ARMv8.0
+with neon. The v3 tier is opt-in with no measured advantage on the validation
+host (ring dispatches AES hardware support at runtime in every tier), so pick
+it only when you already know the CPU qualifies. Do not combine an archive,
+manifest, or checksum from different releases.
 
 To build instead, use the pinned toolchain and locked dependency graph:
 
@@ -56,21 +65,21 @@ To build instead, use the pinned toolchain and locked dependency graph:
 ./scripts/build-release.sh
 ```
 
-### Post-publication dual-tier Xray acceptance
+### Post-publication per-tier Xray acceptance
 
 Publishing is not the final interoperability check. From a clean checkout of
-the published tag, download and verify the four release assets again, extract
-the two binaries into separate mode-0700 directories, and run the Xray gate
-once per exact downloaded tier:
+the published tag, download and verify the release assets again, extract each
+architecture's binaries into separate mode-0700 directories, and run the Xray
+gate once per exact downloaded tier on matching hardware:
 
 ```shell
-install -d -m 0700 release-smoke/portable release-smoke/x86-64-v3
-tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz \
-  -C release-smoke/portable
-tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz \
+install -d -m 0700 release-smoke/generic release-smoke/x86-64-v3
+tar -xzf rust-reality-v<version>-linux-x86_64-generic.tar.gz \
+  -C release-smoke/generic
+tar -xzf rust-reality-v<version>-linux-x86_64-v3.tar.gz \
   -C release-smoke/x86-64-v3
 
-RUST_REALITY_BIN="$PWD/release-smoke/portable/rust-reality" \
+RUST_REALITY_BIN="$PWD/release-smoke/generic/rust-reality" \
   XRAY_BIN=/absolute/path/to/xray \
   ./scripts/test-xray-interop.sh
 RUST_REALITY_BIN="$PWD/release-smoke/x86-64-v3/rust-reality" \
@@ -81,8 +90,9 @@ RUST_REALITY_BIN="$PWD/release-smoke/x86-64-v3/rust-reality" \
 Each invocation uses a fresh configuration and proves an exact 1 MiB transfer,
 ML-DSA-65 agreement, and unmodified-Xray REALITY + Vision interoperability.
 Run it on an x86-64-v3 host with working external DNS/TCP and a cover target
-selected through `COVER_TARGET`/`COVER_SNI` if the defaults are unsuitable. A
-failure in either tier is a release no-go; do not substitute a locally rebuilt
+selected through `COVER_TARGET`/`COVER_SNI` if the defaults are unsuitable. On
+an ARM64 host, run the same gate against the `linux-aarch64-generic` binary.
+A failure in any tier is a release no-go; do not substitute a locally rebuilt
 binary for the downloaded asset.
 
 ## Create the service account and directories
@@ -128,6 +138,12 @@ rust-reality probe-dest \
 
 Target availability and behavior are external dependencies. Re-run the probe
 after persistent handshake failures or target changes.
+
+A cover that offers ALPN should negotiate it. Covers without ALPN are
+legitimately supported — v1.5 shapes the generated EncryptedExtensions ALPN to
+the cover's observed record slot — but prefer covers that present ALPN when
+they have one, because the authenticated session then matches the cover's
+extension shape exactly.
 
 `serverNames` may later contain a certificate-style pattern such as
 `*.lmu.edu`. Clients must still send a concrete one-label name such as
@@ -389,7 +405,9 @@ logging is required, configure `path`, `maxBytes`, `maxFiles`, and
 On every start, verify `outbound_network_initialized` and one
 `listener_topology_active` event per inbound. The former records the cached
 IPv4/IPv6 route availability and initial outbound primary. The latter records
-the sockets actually serving traffic. In `listen.mode: auto`, a missing family
+the sockets actually bound — it reflects bind results, not family
+reachability: a bound IPv6 socket does not prove public IPv6 egress or
+ingress works. In `listen.mode: auto`, a missing family
 is acceptable only when `listener_family_unavailable` reports a genuine
 family/protocol capability error. Address-in-use, permission, and concrete
 address errors remain fatal. `dualStack` never degrades.
@@ -415,6 +433,12 @@ SIGTERM stops new accepts and permits a bounded graceful shutdown. The unit's
 40-second stop timeout covers the program's 30-second graceful limit.
 
 ## Upgrade and rollback
+
+Upgrading from 1.4 requires configuration migration: scalar
+`"listen": "<ip>"` values and `network.addressFamily` are rejected. The
+old-to-new mapping table is in the
+[CHANGELOG 1.5.0 migration notes](../CHANGELOG.md); run the new binary's
+`check` against a migrated copy before restarting.
 
 1. Download and verify all release assets for the new tag.
 2. Keep the current binary and configuration as root-only rollback files.

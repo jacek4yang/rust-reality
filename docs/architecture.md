@@ -142,6 +142,56 @@ runs in relay reads, writes, framing, crypto, or splice. Per-inbound listener
 topology is independent and fixed at startup; dual-family modes bind one IPv4
 socket and one pre-bind `IPV6_V6ONLY` IPv6 socket.
 
+## Shared DNS resolution
+
+One process-lifetime resolver (`src/server/dns.rs`) fronts every
+connector-side lookup: routing `domainStrategy` decisions, direct outbound
+dials, REALITY cover targets, and SOCKS5/NXR/Handoff server names. Numeric
+literals never enter it. Two backends sit behind one front end:
+
+- **system** (default, `dns.servers: ["system"]`): the operating-system
+  resolver (getaddrinfo) on the bounded blocking pool. Because getaddrinfo
+  exposes no TTLs, dynamic answers are never cached in this mode — only
+  singleflight coalescing, the absolute timeout, and admission governance
+  apply.
+- **upstream list**: the built-in DNS protocol resolver (hickory, plain UDP
+  with TCP fallback) against the configured servers, bootstrapping hostname
+  entries once through the system resolver at startup. Cached positive and
+  negative answers carry real upstream TTLs clamped to `dns.cache`
+  (`minTtlSeconds`/`maxTtlSeconds`; negatives are cached only when an SOA TTL
+  backs them, ceiling `negativeTtlSeconds`). Mixing `system` with upstream
+  servers is rejected at validation.
+
+Configured static peers — the REALITY cover target and fixed
+SOCKS5/NXR/Handoff endpoints — are cached for `staticTtlSeconds` in **every**
+mode, including system; the operator owns that staleness trade-off, and static
+negative results are never cached. The whole cache is bounded by
+`maxEntries`, counting positive, negative, and in-flight entries.
+
+Identical concurrent lookups coalesce into one upstream flight whose waiters
+share the result, and every flight holds a `DnsLookup` admission permit from
+the resource governor, so connector-side resolution is bounded like every
+other resource. Metrics are plain atomic counters. The resolver is installed
+once at startup (first-wins); a reload generation keeps the installed
+resolver, so any `dns` change requires a restart. Measured effect on the
+validation host: 128 concurrent identical lookups produced 2 upstream queries
+instead of 315, and the warm p50 fell from 12.9 ms to sub-microsecond; see
+[performance.md](performance.md).
+
+## Routing decision structures
+
+Routing keeps exact ordered first-match semantics at every scale. For a rule
+list (global or per user group) of 64 or more rules — the measured crossover
+from `benches/routing.rs` — the compiled policy builds an adaptive candidate
+index at roughly 53 bytes per rule: exact and suffix domain matchers map
+normalized values to their rule positions, and one Aho-Corasick pass over the
+destination domain covers every keyword matcher. Rules whose domain group is
+not fully indexable (no domain conditions, or a regex/asset/empty-keyword
+matcher) stay on an always-evaluated list, and index hits are still checked in
+rule order, so the decision is byte-identical to the linear scan that smaller
+lists continue to use. The measured latency effect is recorded in
+[performance.md](performance.md).
+
 ## Hot-path topology
 
 Per-connection steady cost: 2 tasks, no per-record allocation, one timer

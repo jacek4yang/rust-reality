@@ -8,22 +8,26 @@
 ## 1. 下载并验证 Release
 
 从[最新 Release](https://github.com/jacek4yang/rust-reality/releases/latest)
-下载两个压缩包、manifest 和校验文件，安装前验证全部资产：
+下载适合你平台的压缩包、manifest 和校验文件，安装前验证全部资产：
 
 ```shell
 sha256sum --check SHA256SUMS
-# portable 包（不确定 CPU 能力时推荐）：
-tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
+# x86-64 通用包（不确定 CPU 能力时推荐）：
+tar -xzf rust-reality-v<version>-linux-x86_64-generic.tar.gz
 # 或在 x86-64-v3 CPU 上使用：
-# tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz
+# tar -xzf rust-reality-v<version>-linux-x86_64-v3.tar.gz
+# 在 ARM64（ARMv8.0 含 neon 或更高）上使用：
+# tar -xzf rust-reality-v<version>-linux-aarch64-generic.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 rust-reality --version
 ```
 
-`release-manifest.json` schema v2 记录版本、标签、确切源码 commit、目标三元组、
-源码时间戳、两个压缩包的名称和 SHA-256，以及各压缩包的 CPU 要求。portable
-包面向基线 x86-64；优化包要求 x86-64-v3，且没有运行时回退。不要混用不同
-Release 的资产。
+`release-manifest.json` schema v3 记录版本、标签、确切源码 commit、目标三元组、
+源码时间戳、编译器、cargo features，以及每个档位的压缩包名称、SHA-256、目标
+CPU/特性、是否在本机实测，以及最低 CPU 要求。x86-64 通用包面向基线 x86-64；
+v3 包要求 x86-64-v3 微架构级别，没有运行时回退，且在验证主机上没有实测优势
+（记录 AEAD 在每个档位都于运行时调度到 AES 硬件），只有确认 CPU 满足条件时才
+应选择。aarch64 包要求 ARMv8.0 含 neon。不要混用不同 Release 的资产。
 
 ## 2. 探测伪装目标
 
