@@ -14,16 +14,17 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   NEXTEST_PROFILE: ci
-  RELEASE_TARGET: x86_64-unknown-linux-gnu
 
 jobs:
-  build:
-    name: Verify, build, and package
+  verify:
+    name: Verify release identity and quality gates
     if: github.repository == 'jacek4yang/rust-reality'
     runs-on: ubuntu-22.04
     timeout-minutes: 90
     permissions:
       contents: read
+    outputs:
+      matrix: ${{ steps.release-matrix.outputs.matrix }}
 
     steps:
       - name: Check out tagged source
@@ -53,22 +54,92 @@ jobs:
       - name: Verify release identity
         run: |
           git fetch --force --no-tags origin main:refs/remotes/origin/main
-          test "$(rustc -vV | sed -n 's/^host: //p')" = "$RELEASE_TARGET"
           ./scripts/verify-release-tag.sh "$GITHUB_REF_NAME"
 
       - name: Run repository quality gates
         run: ./scripts/check.sh
 
-      - name: Build portable and x86-64-v3 release binaries
-        run: ./scripts/build-release.sh
+      - name: Export release matrix
+        id: release-matrix
+        run: ./scripts/release-matrix.sh --github-matrix >> "$GITHUB_OUTPUT"
 
-      - name: Package deterministic dual-tier release assets
-        run: ./scripts/package-release.sh "$GITHUB_REF_NAME" "$RELEASE_TARGET"
+  build:
+    name: Build, package, and smoke ${{ matrix.tier }}
+    needs: verify
+    if: github.repository == 'jacek4yang/rust-reality'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.verify.outputs.matrix) }}
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
 
-      - name: Smoke-test both packaged CPU tiers
-        run: ./scripts/smoke-release-assets.sh "$GITHUB_REF_NAME" "$RELEASE_TARGET"
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Preserve verified release assets
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - name: Verify native build host
+        # Every matrix tier runs on a matching native runner
+        # (ubuntu-22.04-arm for aarch64), so smoke below is real hardware
+        # evidence and the manifest records measuredNatively: true.
+        run: |
+          test "$(rustc -vV | sed -n 's/^host: //p')" = "${{ matrix.target }}"
+          test "${{ matrix.measured-natively }}" = true
+
+      - name: Build tier release
+        run: ./scripts/build-release.sh "${{ matrix.tier }}"
+
+      - name: Package tier asset
+        run: ./scripts/package-release.sh "$GITHUB_REF_NAME" "${{ matrix.tier }}" dist
+
+      - name: Smoke-test packaged tier asset
+        run: ./scripts/smoke-release-assets.sh "$GITHUB_REF_NAME" "${{ matrix.tier }}" dist
+
+      - name: Preserve verified tier asset
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-assets-${{ github.ref_name }}-${{ matrix.tier }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  aggregate:
+    name: Aggregate full-matrix release assets
+    needs: build
+    if: github.repository == 'jacek4yang/rust-reality'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Restore all tier assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-assets-${{ github.ref_name }}-*
+          path: dist/
+          merge-multiple: true
+
+      - name: Build combined manifest and checksums
+        # Requires every tier of scripts/release-matrix.sh; a failed or
+        # missing required tier fails the release here, so partial
+        # publishes are impossible.
+        run: ./scripts/aggregate-release.sh "$GITHUB_REF_NAME" dist
+
+      - name: Preserve aggregated release assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-assets-${{ github.ref_name }}
@@ -78,7 +149,7 @@ jobs:
 
   publish:
     name: Publish immutable GitHub Release
-    needs: build
+    needs: aggregate
     if: github.repository == 'jacek4yang/rust-reality'
     runs-on: ubuntu-22.04
     timeout-minutes: 10
