@@ -2,7 +2,7 @@
 
 All notable user-facing changes to this project are documented in this file.
 
-## [1.5.0] - Unreleased
+## [1.5.0] - 2026-08-19
 
 ### Added
 
@@ -152,6 +152,36 @@ strict decoding as unknown or invalid values.
   reversed from 0.9511 to 1.1390 between rounds, confirming order/host noise;
   the evidence establishes no statistically significant protected-path
   change, not a performance victory.
+
+- Final release-gate comparison (candidate `47a7151` vs the post-integration
+  baseline `572c077`, same-host i3-8100, all runs serialized): formal setup
+  ABBA across concurrency 1/8/32/128 (576 samples) showed connection-rate
+  ratios 0.991-1.005 with all Holm-adjusted p=1.0; the formal concurrency-1
+  throughput matrix (867 samples) reported no significant change in any cell
+  (ratios 0.967-1.026), and concurrency-32 exploratory ABBA bulk ratios were
+  0.973-1.048; CPU/GiB ratios were 0.992-1.065 with every interval crossing
+  1.0; 10-minute soaks showed flat descriptors, threads, and RSS. The
+  evaluator passed all 40 protected metrics. The two commits added after the
+  gated candidate (reload-time DNS drift rejection; CI aggregate allowlist)
+  do not touch the measured paths.
+
+### Known limitations
+
+- External IPv6 ingress from a second host was not tested (no external source
+  was available); host-global and real Internet egress were validated instead.
+- Static and dynamic DNS answers share one cache namespace, so a static-peer
+  entry can briefly extend the effective staleness of a same-named dynamic
+  answer and vice versa; negative answers are never cached for static peers.
+- If a DNS flight leader were to die without publishing (no such path exists
+  today), its name would wait out the absolute timeout before recovering.
+- Upstream DNS (`dns.servers`) is plain UDP/TCP without DNSSEC validation;
+  point it at a trusted resolver. Spoofed answers are bounded by clamped TTLs.
+- Routing-strategy resolution (IpIfNonMatch/IpOnDemand) intentionally uses
+  the system resolver so rule-checked addresses are exactly the dialed
+  addresses; the configured upstream applies to the connector paths.
+- The x86_64-v3 asset shows no measured advantage over the generic asset on
+  the validation host (crypto is runtime-dispatched by ring regardless); it
+  is an opt-in tier, and aarch64 performance was not natively measurable.
 
 ## [1.4.0] - 2026-08-11
 

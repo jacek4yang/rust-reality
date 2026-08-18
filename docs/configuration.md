@@ -94,11 +94,14 @@ are operator-provided; only the two primary Geo URLs are downloaded directly.
 
 ## `dns`
 
-Every connector-side name resolution — routing `domainStrategy` lookups,
-direct outbound dials, REALITY cover targets, and SOCKS5/NXR/Handoff server
-names — goes through one shared process-wide resolver. Each resolution holds a
-`DnsLookup` admission permit (`policy.resourceGovernor.maxDnsLookups`), and
-identical concurrent lookups coalesce into one upstream flight.
+Every connector-side name resolution — direct outbound dials, REALITY cover
+targets, and SOCKS5/NXR/Handoff server names — goes through one shared
+process-wide resolver. Each resolution holds a `DnsLookup` admission permit
+(`policy.resourceGovernor.maxDnsLookups`), and identical concurrent lookups
+coalesce into one upstream flight. Routing-strategy lookups
+(`domainStrategy: IPIfNonMatch`/`IPOnDemand`) deliberately use the system
+resolver instead, so the addresses checked by IP rules are exactly the
+addresses dialed.
 
 | Field | Required | Default | Meaning and constraints |
 | --- | --- | --- | --- |
@@ -122,9 +125,14 @@ At most 64 unique addresses are retained for one routed domain. A direct
 outbound reuses the exact resolved snapshot used by GeoIP/IP rules, avoiding a
 second inconsistent lookup.
 
-The resolver is installed once at startup and is process-lifetime: changing
-`dns.servers`, `dns.timeoutMs`, or `dns.cache` requires a restart, because a
-reload generation keeps the resolver installed by the first generation.
+The resolver is installed once at startup and is process-lifetime: a reload
+that changes `dns.servers`, `dns.timeoutMs`, or `dns.cache` is rejected
+(`DnsPolicyChanged`), because no reload generation can swap the installed
+resolver.
+
+Upstream DNS uses plain UDP/TCP without DNSSEC validation, so point
+`dns.servers` at a resolver you trust; a spoofed answer is bounded by the
+clamped TTL bounds above.
 
 ## `network`
 

@@ -86,11 +86,12 @@ rust-reality config format --config config.json > config.formatted.json
 
 ## `dns`
 
-所有 connector 侧的域名解析——路由 `domainStrategy` 查询、direct 出站
-拨号、REALITY 伪装目标，以及 SOCKS5/NXR/Handoff 服务器名——都经过一个
-共享的进程级解析器。每次解析持有一个 `DnsLookup` 准入许可
-（`policy.resourceGovernor.maxDnsLookups`），完全相同的并发查询会合并为
-一次上游请求（singleflight）。
+所有 connector 侧的域名解析——direct 出站拨号、REALITY 伪装目标，以及
+SOCKS5/NXR/Handoff 服务器名——都经过一个共享的进程级解析器。每次解析
+持有一个 `DnsLookup` 准入许可（`policy.resourceGovernor.maxDnsLookups`），
+完全相同的并发查询会合并为一次上游请求（singleflight）。路由策略查询
+（`domainStrategy: IPIfNonMatch`/`IPOnDemand`）则刻意使用系统解析器，
+使 IP 规则检查的地址与实际拨号的地址完全一致。
 
 | 字段 | 必填 | 默认值 | 含义与约束 |
 | --- | --- | --- | --- |
@@ -111,9 +112,12 @@ singleflight 合并和准入治理生效。使用真实 DNS 服务器时，每�
 一个域名最多保留 64 个唯一地址。direct 出站复用 IP/GeoIP 路由决策使用的
 同一地址快照，避免第二次解析得到不一致结果。
 
-解析器在启动时安装一次，属于进程生命周期：修改 `dns.servers`、
-`dns.timeoutMs` 或 `dns.cache` 都需要重启，因为热更新生成会继续使用
-第一代安装的解析器。
+解析器在启动时安装一次，属于进程生命周期：热更新时若 `dns.servers`、
+`dns.timeoutMs` 或 `dns.cache` 发生变化会被拒绝（`DnsPolicyChanged`），
+因为任何热更新生成都无法替换已安装的解析器。
+
+上游 DNS 使用不带 DNSSEC 校验的明文 UDP/TCP，因此 `dns.servers` 必须指向
+你信任的解析器；被伪造的应答最多按上述钳制后的 TTL 存续。
 
 ## `network`
 
