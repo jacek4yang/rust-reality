@@ -304,10 +304,7 @@ impl DestinationConnector {
         }
     }
 
-    fn collect_ips(
-        ips: &[IpAddr],
-        port: u16,
-    ) -> Result<Vec<SocketAddr>, DestinationConnectError> {
+    fn collect_ips(ips: &[IpAddr], port: u16) -> Result<Vec<SocketAddr>, DestinationConnectError> {
         let mut addresses = Vec::new();
         addresses
             .try_reserve_exact(ips.len().min(MAX_PRE_RESOLVED_IPS))

@@ -189,7 +189,10 @@ const MAX_DNS_TTL_SECONDS: u32 = 86_400;
 
 fn validate_dns_servers(dns: &crate::config::DnsConfig) -> Result<(), ConfigError> {
     if dns.servers.is_empty() {
-        return fail("dns.servers", "must name the system resolver or upstream servers");
+        return fail(
+            "dns.servers",
+            "must name the system resolver or upstream servers",
+        );
     }
     let system = dns
         .servers

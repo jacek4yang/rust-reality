@@ -37,9 +37,7 @@ use std::{
 
 use hickory_resolver::{
     Resolver, TokioResolver,
-    config::{
-        ConnectionConfig, LookupIpStrategy, NameServerConfig, ResolverConfig, ResolverOpts,
-    },
+    config::{ConnectionConfig, LookupIpStrategy, NameServerConfig, ResolverConfig, ResolverOpts},
     net::{DnsError as HickoryDnsError, NetError, runtime::TokioRuntimeProvider},
     proto::{op::ResponseCode, rr::RData},
 };
@@ -287,7 +285,9 @@ fn classify_net_error(error: NetError) -> UpstreamError {
         NetError::Timeout => UpstreamError::Failed(Arc::from("upstream DNS query timed out")),
         NetError::Dns(HickoryDnsError::NoRecordsFound(no_records)) => UpstreamError::NotFound {
             nxdomain: no_records.response_code == ResponseCode::NXDomain,
-            negative_ttl: no_records.negative_ttl.map(|ttl| Duration::from_secs(u64::from(ttl))),
+            negative_ttl: no_records
+                .negative_ttl
+                .map(|ttl| Duration::from_secs(u64::from(ttl))),
         },
         other => UpstreamError::Failed(Arc::from(other.to_string())),
     }
@@ -419,11 +419,7 @@ impl DnsResolver {
     /// Dynamic answers carry no TTL and are never cached; coalescing,
     /// governance, the absolute timeout, and the static-peer cache apply.
     #[must_use]
-    pub fn system(
-        governor: ResourceGovernor,
-        timeout: Duration,
-        cache: &DnsCacheConfig,
-    ) -> Self {
+    pub fn system(governor: ResourceGovernor, timeout: Duration, cache: &DnsCacheConfig) -> Self {
         Self::with_backend(Box::new(SystemBackend), governor, timeout, cache)
     }
 
@@ -474,7 +470,10 @@ impl DnsResolver {
                 DnsServerSpec::Address(address) => servers.push(name_server_config(address)),
                 DnsServerSpec::Host { host, port } => {
                     let bootstrapped = bootstrap_host(&host).map_err(|reason| {
-                        DnsResolverConfigError::Bootstrap { host: host.clone(), reason }
+                        DnsResolverConfigError::Bootstrap {
+                            host: host.clone(),
+                            reason,
+                        }
                     })?;
                     for ip in bootstrapped {
                         servers.push(name_server_config(SocketAddr::new(ip, port)));
@@ -581,7 +580,9 @@ impl DnsResolver {
                             .governor
                             .try_acquire(AdmissionKind::DnsLookup)
                             .map_err(|_| {
-                                self.inner.metrics.bump(&self.inner.metrics.admission_denied);
+                                self.inner
+                                    .metrics
+                                    .bump(&self.inner.metrics.admission_denied);
                                 DnsError::Limit
                             })?;
                         // The entry bound applies before an in-flight slot is
@@ -660,9 +661,7 @@ impl DnsResolver {
                     });
                     (slot, Err(DnsError::NotFound { nxdomain }))
                 }
-                Ok(Err(UpstreamError::TooManyAddresses)) => {
-                    (None, Err(DnsError::TooManyAddresses))
-                }
+                Ok(Err(UpstreamError::TooManyAddresses)) => (None, Err(DnsError::TooManyAddresses)),
                 Ok(Err(UpstreamError::Allocation)) => (None, Err(DnsError::Allocation)),
                 Ok(Err(UpstreamError::Failed(message))) => {
                     inner.metrics.bump(&inner.metrics.upstream_failures);
@@ -738,7 +737,11 @@ fn filter_family(ips: &Arc<[IpAddr]>, family: IpFamily) -> Result<Arc<[IpAddr]>,
     if family == IpFamily::Any {
         return Ok(Arc::clone(ips));
     }
-    let filtered: Vec<IpAddr> = ips.iter().copied().filter(|ip| family.admits(*ip)).collect();
+    let filtered: Vec<IpAddr> = ips
+        .iter()
+        .copied()
+        .filter(|ip| family.admits(*ip))
+        .collect();
     if filtered.is_empty() {
         return Err(DnsError::NoAddresses);
     }
@@ -746,10 +749,7 @@ fn filter_family(ips: &Arc<[IpAddr]>, family: IpFamily) -> Result<Arc<[IpAddr]>,
 }
 
 fn insert_bounded(inner: &ResolverInner, key: Box<str>, slot: Slot, now: Instant) {
-    let mut slots = inner
-        .slots
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
+    let mut slots = inner.slots.lock().unwrap_or_else(PoisonError::into_inner);
     // Replacing our own in-flight entry never grows the table.
     if slots.len() >= inner.bounds.max_entries && !slots.contains_key(&key) {
         evict_pressure(inner, &mut slots, now);
@@ -823,7 +823,10 @@ pub fn parse_server_spec(spec: &str) -> Result<DnsServerSpec, DnsServerSpecError
                 .parse::<u16>()
                 .map_err(|_| DnsServerSpecError::new(spec, "port must be a number"))?;
             if port == 0 {
-                return Err(DnsServerSpecError::new(spec, "port must be greater than zero"));
+                return Err(DnsServerSpecError::new(
+                    spec,
+                    "port must be greater than zero",
+                ));
             }
             (host, port)
         }
@@ -876,7 +879,11 @@ impl DnsServerSpecError {
 
 impl fmt::Display for DnsServerSpecError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "invalid DNS server {:?}: {}", self.spec, self.reason)
+        write!(
+            formatter,
+            "invalid DNS server {:?}: {}",
+            self.spec, self.reason
+        )
     }
 }
 
@@ -1003,8 +1010,8 @@ mod tests {
     use tokio::time;
 
     use super::{
-        DnsBackend, DnsCacheConfig, DnsError, DnsResolver, DnsServerSpec, IpFamily,
-        UpstreamAnswer, UpstreamError, parse_server_spec,
+        DnsBackend, DnsCacheConfig, DnsError, DnsResolver, DnsServerSpec, IpFamily, UpstreamAnswer,
+        UpstreamError, parse_server_spec,
     };
     use crate::config::ResourceGovernorConfig;
     use crate::runtime::ResourceGovernor;
@@ -1059,7 +1066,9 @@ mod tests {
             name: &'a str,
             permit: crate::runtime::AdmissionPermit,
         ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<UpstreamAnswer, UpstreamError>> + Send + 'a>,
+            Box<
+                dyn std::future::Future<Output = Result<UpstreamAnswer, UpstreamError>> + Send + 'a,
+            >,
         > {
             Box::pin(async move {
                 let _name = name;
@@ -1118,7 +1127,9 @@ mod tests {
             name: &'a str,
             permit: crate::runtime::AdmissionPermit,
         ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<UpstreamAnswer, UpstreamError>> + Send + 'a>,
+            Box<
+                dyn std::future::Future<Output = Result<UpstreamAnswer, UpstreamError>> + Send + 'a,
+            >,
         > {
             self.0.lookup(name, permit)
         }
@@ -1149,7 +1160,10 @@ mod tests {
         );
         assert_eq!(
             parse_server_spec("1.1.1.1:5353"),
-            Ok(DnsServerSpec::Address(SocketAddr::from(([1, 1, 1, 1], 5353))))
+            Ok(DnsServerSpec::Address(SocketAddr::from((
+                [1, 1, 1, 1],
+                5353
+            ))))
         );
         assert_eq!(
             parse_server_spec("[2606:4700:4700::1111]:853"),
@@ -1190,7 +1204,11 @@ mod tests {
         let mut tasks = tokio::task::JoinSet::new();
         for _ in 0..32 {
             let resolver = harness.resolver.clone();
-            tasks.spawn(async move { resolver.resolve("coalesce.test", IpFamily::Any, Duration::from_secs(5)).await });
+            tasks.spawn(async move {
+                resolver
+                    .resolve("coalesce.test", IpFamily::Any, Duration::from_secs(5))
+                    .await
+            });
         }
         let mut successes = 0;
         while let Some(outcome) = tasks.join_next().await {
@@ -1444,7 +1462,10 @@ mod tests {
             .expect_err("the single permit is held by the first flight");
         assert!(matches!(error, DnsError::Limit));
         assert_eq!(harness.resolver.metrics().admission_denied, 1);
-        first.await.expect("first flight must finish").expect("first resolution must succeed");
+        first
+            .await
+            .expect("first flight must finish")
+            .expect("first resolution must succeed");
     }
 
     #[tokio::test]
@@ -1460,7 +1481,11 @@ mod tests {
         // The flight task's own timeout fires concurrently with the waiter's;
         // give it a moment to publish and clear the slot.
         time::sleep(Duration::from_millis(60)).await;
-        assert_eq!(harness.resolver.cache_len(), 0, "a timed-out flight leaves no slot");
+        assert_eq!(
+            harness.resolver.cache_len(),
+            0,
+            "a timed-out flight leaves no slot"
+        );
 
         // The resolver recovers once the backend answers promptly again.
         harness.backend.set_outcome(MockOutcome::Answer {
@@ -1570,6 +1595,24 @@ mod tests {
             .await
             .expect("mixed answers filter to IPv6");
         assert_eq!(addresses.as_ref(), &[v6(1)]);
+    }
+
+    #[tokio::test]
+    async fn upstream_failures_are_never_cached() {
+        let backend = MockBackend::answering(vec![], None);
+        backend.set_outcome(MockOutcome::Failed);
+        let harness = build(backend, &cache_config(), Duration::from_secs(5), 64);
+        for _ in 0..2 {
+            let error = harness
+                .resolver
+                .resolve("failing.test", IpFamily::Any, Duration::from_secs(5))
+                .await
+                .expect_err("an upstream failure must surface");
+            assert!(matches!(error, DnsError::Failed(_)));
+        }
+        assert_eq!(harness.backend.calls(), 2);
+        assert_eq!(harness.resolver.metrics().upstream_failures, 2);
+        assert_eq!(harness.resolver.cache_len(), 0);
     }
 
     #[tokio::test]

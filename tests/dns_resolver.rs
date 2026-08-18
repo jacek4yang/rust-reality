@@ -14,8 +14,8 @@ use std::{
 
 use rust_reality::config::{DnsCacheConfig, DnsConfig, ResourceGovernorConfig};
 use rust_reality::runtime::ResourceGovernor;
-use rust_reality::server::dns::{DnsError, DnsResolver, IpFamily, install_shared};
 use rust_reality::server::connector::DestinationConnector;
+use rust_reality::server::dns::{DnsError, DnsResolver, IpFamily, install_shared};
 use tokio::{
     net::{TcpListener, UdpSocket},
     task::JoinHandle,
@@ -50,11 +50,10 @@ impl Scenario {
     fn answers(a: &[u8], aaaa: &[[u8; 16]], ttl: u32) -> Self {
         Self {
             response: Response::Answers {
-                a: a.iter().map(|last| Ipv4Addr::new(192, 0, 2, *last)).collect(),
-                aaaa: aaaa
-                    .iter()
-                    .map(|octets| Ipv6Addr::from(*octets))
+                a: a.iter()
+                    .map(|last| Ipv4Addr::new(192, 0, 2, *last))
                     .collect(),
+                aaaa: aaaa.iter().map(|octets| Ipv6Addr::from(*octets)).collect(),
                 ttl,
             },
             delay: Duration::ZERO,
@@ -110,8 +109,7 @@ impl FakeDns {
                     if !scenario.delay.is_zero() {
                         time::sleep(scenario.delay).await;
                     }
-                    let Some(response) = build_response(&packet, &query, &scenario.response)
-                    else {
+                    let Some(response) = build_response(&packet, &query, &scenario.response) else {
                         continue; // Drop: never answer.
                     };
                     let _ignored = socket.send_to(&response, peer).await;
@@ -166,7 +164,11 @@ fn parse_query(packet: &[u8]) -> Option<ParsedQuery> {
         if length & 0xC0 != 0 || offset + length > packet.len() {
             return None; // no compression in queries we accept
         }
-        labels.push(std::str::from_utf8(&packet[offset..offset + length]).ok()?.to_owned());
+        labels.push(
+            std::str::from_utf8(&packet[offset..offset + length])
+                .ok()?
+                .to_owned(),
+        );
         offset += length;
     }
     let qtype = u16::from_be_bytes([*packet.get(offset)?, *packet.get(offset + 1)?]);
@@ -186,30 +188,32 @@ const TYPE_AAAA: u16 = 28;
 const TYPE_SOA: u16 = 6;
 const CLASS_IN: u16 = 1;
 
+/// One answer record: type, TTL, rdata.
+type AnswerRecord = (u16, u32, Vec<u8>);
+
 fn build_response(packet: &[u8], query: &ParsedQuery, response: &Response) -> Option<Vec<u8>> {
-    let (rcode, answers, negative_ttl): (u8, Vec<(u16, u32, Vec<u8>)>, Option<u32>) =
-        match response {
-            Response::Drop => return None,
-            Response::ServFail => (2, Vec::new(), None),
-            Response::NxDomain { negative_ttl } => (3, Vec::new(), Some(*negative_ttl)),
-            Response::Answers { a, aaaa, ttl } => {
-                let records = match query.qtype {
-                    TYPE_A => a
-                        .iter()
-                        .map(|ip| (TYPE_A, *ttl, ip.octets().to_vec()))
-                        .collect(),
-                    TYPE_AAAA => aaaa
-                        .iter()
-                        .map(|ip| (TYPE_AAAA, *ttl, ip.octets().to_vec()))
-                        .collect(),
-                    _ => Vec::new(),
-                };
-                // A positive scenario with no records of the asked type is a
-                // NODATA answer: NOERROR, empty answers, SOA authority.
-                let nodata = records.is_empty();
-                (0, records, nodata.then_some(*ttl))
-            }
-        };
+    let (rcode, answers, negative_ttl): (u8, Vec<AnswerRecord>, Option<u32>) = match response {
+        Response::Drop => return None,
+        Response::ServFail => (2, Vec::new(), None),
+        Response::NxDomain { negative_ttl } => (3, Vec::new(), Some(*negative_ttl)),
+        Response::Answers { a, aaaa, ttl } => {
+            let records = match query.qtype {
+                TYPE_A => a
+                    .iter()
+                    .map(|ip| (TYPE_A, *ttl, ip.octets().to_vec()))
+                    .collect(),
+                TYPE_AAAA => aaaa
+                    .iter()
+                    .map(|ip| (TYPE_AAAA, *ttl, ip.octets().to_vec()))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            // A positive scenario with no records of the asked type is a
+            // NODATA answer: NOERROR, empty answers, SOA authority.
+            let nodata = records.is_empty();
+            (0, records, nodata.then_some(*ttl))
+        }
+    };
     let mut out = Vec::with_capacity(64);
     out.extend_from_slice(&packet[..query.question_end]); // id, flags, counts, question
     let recursion_desired = u16::from_be_bytes([packet[2], packet[3]]) & 0x0100;
@@ -285,7 +289,10 @@ const BUDGET: Duration = Duration::from_secs(5);
 async fn resolves_a_only_aaaa_only_and_mixed_names() {
     let server = FakeDns::start().await;
     server.set("a-only.test", Scenario::answers(&[1], &[], 300));
-    server.set("aaaa-only.test", Scenario::answers(&[], &[v6_octets(1)], 300));
+    server.set(
+        "aaaa-only.test",
+        Scenario::answers(&[], &[v6_octets(1)], 300),
+    );
     server.set(
         "mixed.test",
         Scenario::answers(&[1, 2, 3], &[v6_octets(1), v6_octets(2)], 300),
