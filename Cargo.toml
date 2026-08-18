@@ -125,6 +125,10 @@ harness = false
 name = "dual_stack"
 harness = false
 
+[[bench]]
+name = "routing"
+harness = false
+
 [profile.release]
 codegen-units = 1
 lto = "thin"
