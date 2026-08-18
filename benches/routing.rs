@@ -489,8 +489,9 @@ fn run_percentiles() {
             let percentile = |p: usize| samples[(samples.len() * p / 100).min(samples.len() - 1)];
             let mean = samples.iter().sum::<u64>() / samples.len() as u64;
             println!(
-                "{{\"rules\":{size},\"case\":\"{}\",\"samples\":{iterations},\"p50_ns\":{},\"p95_ns\":{},\"p99_ns\":{},\"mean_ns\":{mean}}}",
+                "{{\"rules\":{size},\"case\":\"{}\",\"samples\":{iterations},\"index_bytes\":{},\"p50_ns\":{},\"p95_ns\":{},\"p99_ns\":{},\"mean_ns\":{mean}}}",
                 case.name(),
+                fixture.table.index_memory_bytes(),
                 percentile(50),
                 percentile(95),
                 percentile(99),
