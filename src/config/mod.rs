@@ -15,13 +15,13 @@ pub use generate::{
 };
 pub use io::{ConfigLoadError, MAX_CONFIG_BYTES, format_config, load_config};
 pub use model::{
-    AssetsConfig, BlackholeSettings, Config, DialConfig, DialMode, DirectBarrierConfig, DnsConfig,
-    DnsStrategy, FileLogConfig, GlobalRule, HandoffInboundConfig, HandoffInboundSettings,
-    HandoffSettings, InboundConfig, ListenConfig, ListenMode, LogConfig, LogLevel, LogOutput,
-    Network, NetworkConfig, NxrInboundConfig, NxrInboundSettings, NxrSettings, OutboundConfig,
-    PolicyConfig, PortMatcher, RealityConfig, RelayPolicy, ResourceGovernorConfig, ResourceMode,
-    RouteRule, RoutingConfig, RuntimeConfig, SecretString, Socks5Settings, StreamSettings,
-    UserPolicy, VlessClient, VlessInboundConfig, VlessInboundSettings,
+    AssetsConfig, BlackholeSettings, Config, DialConfig, DialMode, DirectBarrierConfig,
+    DnsCacheConfig, DnsConfig, DnsStrategy, FileLogConfig, GlobalRule, HandoffInboundConfig,
+    HandoffInboundSettings, HandoffSettings, InboundConfig, ListenConfig, ListenMode, LogConfig,
+    LogLevel, LogOutput, Network, NetworkConfig, NxrInboundConfig, NxrInboundSettings, NxrSettings,
+    OutboundConfig, PolicyConfig, PortMatcher, RealityConfig, RelayPolicy, ResourceGovernorConfig,
+    ResourceMode, RouteRule, RoutingConfig, RuntimeConfig, SecretString, Socks5Settings,
+    StreamSettings, UserPolicy, VlessClient, VlessInboundConfig, VlessInboundSettings,
 };
 pub use schema::{config_schema, format_config_schema};
 pub use validate::{ConfigError, validate_config};
