@@ -6,48 +6,76 @@ readonly REPO_ROOT="$(
     pwd
 )"
 
+# shellcheck source=scripts/release-matrix.sh
+source "$REPO_ROOT/scripts/release-matrix.sh"
+
+if (( $# < 1 || $# > 2 )); then
+    printf 'usage: %s TIER [--build-only]\n' "$0" >&2
+    printf 'tiers: %s\n' "$(release_matrix_tiers | tr '\n' ' ')" >&2
+    exit 2
+fi
+
+readonly TIER="$1"
+readonly BUILD_ONLY="${2:-}"
+if [[ -n $BUILD_ONLY && $BUILD_ONLY != "--build-only" ]]; then
+    printf 'unknown option: %s\n' "$BUILD_ONLY" >&2
+    exit 2
+fi
+
+readonly TARGET="$(release_matrix_field "$TIER" target)"
+readonly TARGET_CPU="$(release_matrix_field "$TIER" target-cpu)"
+readonly TARGET_FEATURES="$(release_matrix_field "$TIER" target-features)"
+readonly TARGET_DIRECTORY="$REPO_ROOT/$(release_matrix_target_dir "$TIER")"
+
+RUSTFLAGS="-C target-cpu=$TARGET_CPU"
+if [[ -n $TARGET_FEATURES ]]; then
+    RUSTFLAGS="$RUSTFLAGS -C target-feature=$TARGET_FEATURES"
+fi
+readonly RUSTFLAGS
+
+readonly HOST_TARGET="$(rustc -vV | sed -n 's/^host: //p')"
+CARGO_TARGET_ARGS=()
+if [[ $TARGET != "$HOST_TARGET" ]]; then
+    # Cross builds are supported but must be explicit: the linker comes from
+    # CARGO_TARGET_*_LINKER / .cargo config, never from target-cpu=native.
+    CARGO_TARGET_ARGS=(--target "$TARGET")
+    if [[ -z $BUILD_ONLY ]]; then
+        printf '%s\n' \
+            "cross tier $TIER ($TARGET on $HOST_TARGET) requires --build-only" \
+            >&2
+        exit 2
+    fi
+fi
+
 cd "$REPO_ROOT"
 
 readonly GIT_COMMIT="$(git rev-parse --verify HEAD)"
 readonly SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
-readonly PORTABLE_TARGET_DIRECTORY="$REPO_ROOT/target"
-readonly X86_64_V3_TARGET_DIRECTORY="$REPO_ROOT/target/x86-64-v3"
-readonly PORTABLE_RUSTFLAGS="-C target-cpu=x86-64"
-readonly X86_64_V3_RUSTFLAGS="-C target-cpu=x86-64-v3"
 export RUST_REALITY_GIT_COMMIT="$GIT_COMMIT"
 export SOURCE_DATE_EPOCH
 
-test_and_build_release_tier() {
-    local label=$1
-    local target_directory=$2
-    local rustflags=$3
+build_command=(
+    env -u CARGO_ENCODED_RUSTFLAGS
+    CARGO_TARGET_DIR="$TARGET_DIRECTORY"
+    RUSTFLAGS="$RUSTFLAGS"
+    cargo
+)
 
-    printf 'testing %s release in %s\n' "$label" "$target_directory"
-    env -u CARGO_ENCODED_RUSTFLAGS \
-        CARGO_TARGET_DIR="$target_directory" \
-        RUSTFLAGS="$rustflags" \
-        cargo test --workspace --release --locked
+if [[ -z $BUILD_ONLY ]]; then
+    printf 'testing %s release in %s\n' "$TIER" "$TARGET_DIRECTORY"
+    "${build_command[@]}" test --workspace --release --locked \
+        "${CARGO_TARGET_ARGS[@]}"
+fi
 
-    printf 'building %s release in %s\n' "$label" "$target_directory"
-    env -u CARGO_ENCODED_RUSTFLAGS \
-        CARGO_TARGET_DIR="$target_directory" \
-        RUSTFLAGS="$rustflags" \
-        cargo build --workspace --release --locked
-}
+printf 'building %s release in %s\n' "$TIER" "$TARGET_DIRECTORY"
+"${build_command[@]}" build --workspace --release --locked \
+    "${CARGO_TARGET_ARGS[@]}"
 
-test_and_build_release_tier \
-    portable \
-    "$PORTABLE_TARGET_DIRECTORY" \
-    "$PORTABLE_RUSTFLAGS"
-test_and_build_release_tier \
-    x86-64-v3 \
-    "$X86_64_V3_TARGET_DIRECTORY" \
-    "$X86_64_V3_RUSTFLAGS"
+if ((${#CARGO_TARGET_ARGS[@]})); then
+    readonly BINARY="$TARGET_DIRECTORY/$TARGET/release/rust-reality"
+else
+    readonly BINARY="$TARGET_DIRECTORY/release/rust-reality"
+fi
 
-readonly PORTABLE_BINARY="$PORTABLE_TARGET_DIRECTORY/release/rust-reality"
-readonly X86_64_V3_BINARY="$X86_64_V3_TARGET_DIRECTORY/release/rust-reality"
-
-printf 'portable: '
-sha256sum "$PORTABLE_BINARY"
-printf 'x86-64-v3: '
-sha256sum "$X86_64_V3_BINARY"
+printf '%s: ' "$TIER"
+sha256sum "$BINARY"

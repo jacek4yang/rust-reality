@@ -2,17 +2,30 @@
 set -Eeuo pipefail
 
 if (( $# < 2 || $# > 3 )); then
-    printf 'usage: %s vMAJOR.MINOR.PATCH TARGET [ASSET_DIRECTORY]\n' "$0" >&2
+    printf 'usage: %s vMAJOR.MINOR.PATCH TIER [ASSET_DIRECTORY]\n' "$0" >&2
     exit 2
 fi
 
+REPO_ROOT="$(
+    cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+    pwd
+)"
+readonly REPO_ROOT
+
+# shellcheck source=scripts/release-matrix.sh
+source "$REPO_ROOT/scripts/release-matrix.sh"
+
 readonly RELEASE_TAG=$1
-readonly RELEASE_TARGET=$2
+readonly TIER=$2
 readonly ASSET_DIRECTORY=${3:-dist}
 readonly VERSION=${RELEASE_TAG#v}
-readonly PORTABLE_ARCHIVE="rust-reality-${RELEASE_TAG}-${RELEASE_TARGET}.tar.gz"
-readonly V3_TARGET_LABEL="${RELEASE_TARGET/x86_64/x86_64-v3}"
-readonly V3_ARCHIVE="rust-reality-${RELEASE_TAG}-${V3_TARGET_LABEL}.tar.gz"
+readonly ARCHIVE="rust-reality-${RELEASE_TAG}-${TIER}.tar.gz"
+# Optional execution wrapper for emulated smoke runs, e.g.
+# RUST_REALITY_SMOKE_RUNNER="qemu-aarch64 -L /usr/aarch64-linux-gnu".
+# Emulation validates startup and functionality ONLY; it is never native
+# performance evidence and must be paired with measuredNatively: false.
+# shellcheck disable=SC2206
+smoke_runner=(${RUST_REALITY_SMOKE_RUNNER:-})
 temporary_root=${TMPDIR:-/tmp}
 cover_target=${RUST_REALITY_SMOKE_COVER_TARGET:-}
 cover_server_name=${RUST_REALITY_SMOKE_SERVER_NAME:-}
@@ -25,10 +38,7 @@ umask 077
     printf 'invalid release tag: %s\n' "$RELEASE_TAG" >&2
     exit 2
 }
-[[ $RELEASE_TARGET == x86_64-* ]] || {
-    printf 'dual-tier smoke requires an x86_64 target: %s\n' "$RELEASE_TARGET" >&2
-    exit 2
-}
+release_matrix_field "$TIER" target >/dev/null
 if [[ -n $cover_target || -n $cover_server_name ]]; then
     [[ -n $cover_target && -n $cover_server_name ]] || {
         printf '%s\n' \
@@ -44,17 +54,16 @@ for program in grep mktemp openssl python3 readlink sha256sum tar; do
     }
 done
 
-for file in SHA256SUMS release-manifest.json "$PORTABLE_ARCHIVE" "$V3_ARCHIVE"; do
-    [[ -f $ASSET_DIRECTORY/$file ]] || {
-        printf 'missing release asset: %s\n' "$ASSET_DIRECTORY/$file" >&2
-        exit 1
-    }
-done
-
-(
-    cd "$ASSET_DIRECTORY"
-    sha256sum --check SHA256SUMS
-)
+[[ -f $ASSET_DIRECTORY/$ARCHIVE ]] || {
+    printf 'missing release asset: %s\n' "$ASSET_DIRECTORY/$ARCHIVE" >&2
+    exit 1
+}
+if [[ -f $ASSET_DIRECTORY/SHA256SUMS ]]; then
+    (
+        cd "$ASSET_DIRECTORY"
+        sha256sum --check --ignore-missing SHA256SUMS
+    )
+fi
 
 temporary_root=$(readlink -f -- "$temporary_root")
 readonly temporary_root
@@ -169,7 +178,7 @@ PY
     read -r cover_port <"$ready_file"
     [[ $cover_port =~ ^[1-9][0-9]{0,4}$ ]] && (( cover_port <= 65535 )) || {
         printf 'loopback TLS cover returned an invalid port: %s\n' "$cover_port" >&2
-        return 1
+        exit 1
     }
     cover_target="127.0.0.1:$cover_port"
     cover_server_name=localhost
@@ -195,9 +204,9 @@ smoke_tier() {
         printf '%s archive has no executable rust-reality\n' "$tier" >&2
         return 1
     }
-    "$binary" --version | grep -Fx "rust-reality $VERSION"
-    "$binary" --help >/dev/null
-    "$binary" schema >"$directory/schema.json"
+    "${smoke_runner[@]}" "$binary" --version | grep -Fx "rust-reality $VERSION"
+    "${smoke_runner[@]}" "$binary" --help >/dev/null
+    "${smoke_runner[@]}" "$binary" schema >"$directory/schema.json"
     python3 - "$directory/schema.json" <<'PY'
 import json
 import sys
@@ -206,15 +215,15 @@ with open(sys.argv[1], encoding="utf-8") as stream:
     json.load(stream)
 PY
     mkdir -m 700 -- "$config_directory"
-    "$binary" config generate standalone \
+    "${smoke_runner[@]}" "$binary" config generate standalone \
         --listen 127.0.0.1 \
         --port "$listen_port" \
         --target "$cover_target" \
         --server-name "$cover_server_name" \
         >"$config" 2>"$config_directory/client-values.txt"
-    "$binary" check --config "$config" \
+    "${smoke_runner[@]}" "$binary" check --config "$config" \
         >"$config_directory/check.txt"
-    "$binary" self-test --config "$config" \
+    "${smoke_runner[@]}" "$binary" self-test --config "$config" \
         >"$config_directory/self-test.json"
     python3 - \
         "$config_directory/self-test.json" \
@@ -238,8 +247,13 @@ PY
     printf '%s packaged binary smoke: PASS\n' "$tier"
 }
 
-smoke_tier portable "$PORTABLE_ARCHIVE" 19443
-# Executing the binary is the authoritative CPU+OS AVX-state gate. A host that
-# cannot run x86-64-v3 must fail the release instead of publishing an untested
-# optimized artifact.
-smoke_tier x86-64-v3 "$V3_ARCHIVE" 19444
+if ((${#smoke_runner[@]})); then
+    printf '%s\n' \
+        "NOTE: smoking $TIER through an emulator ($RUST_REALITY_SMOKE_RUNNER);" \
+        'this validates functionality only, never native performance.' >&2
+fi
+
+# Executing the binary is the authoritative CPU+OS feature gate. A host that
+# cannot run a tier (e.g. no AVX2 / no OS AVX state for x86-64-v3) must fail
+# the release instead of publishing an untested optimized artifact.
+smoke_tier "$TIER" "$ARCHIVE" 19443
