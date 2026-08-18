@@ -54,6 +54,10 @@ jobs:
       - name: Verify release identity
         run: |
           git fetch --force --no-tags origin main:refs/remotes/origin/main
+          # actions/checkout resolves the pushed tag ref to its commit, so the
+          # local refs/tags entry may point at the commit object; fetch the
+          # real tag object before checking that the tag is annotated.
+          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
           ./scripts/verify-release-tag.sh "$GITHUB_REF_NAME"
 
       - name: Run repository quality gates
