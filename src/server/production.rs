@@ -14,6 +14,8 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
+use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
 use tokio::{
     sync::{mpsc, watch},
     task::{JoinError, JoinSet},
@@ -1362,7 +1364,27 @@ async fn run_connection(
         match &state.handler {
             ConnectionHandler::Public { reality, vision } => {
                 match reality.accept(stream, peer).await? {
-                    RealityAcceptOutcome::Established(established) => {
+                    RealityAcceptOutcome::Established(mut established) => {
+                        if logger.debug_enabled()
+                            && let Some(evidence) = established.take_cover_flight_evidence()
+                        {
+                            let digest = Sha256::digest(&evidence.retained_prefix);
+                            let mut retained_prefix_sha256 = String::with_capacity(64);
+                            for byte in digest {
+                                let _ = write!(&mut retained_prefix_sha256, "{byte:02x}");
+                            }
+                            emit(
+                                logger,
+                                &LogEvent::CoverFlightSelected {
+                                    emit_ccs: evidence.emit_ccs,
+                                    layout: evidence.layout,
+                                    wire_lens: evidence.wire_lens,
+                                    nst_wire_len: evidence.nst_wire_len,
+                                    retained_prefix_bytes: evidence.retained_prefix.len(),
+                                    retained_prefix_sha256,
+                                },
+                            );
+                        }
                         let stats = vision.handle(*established).await?;
                         completion = Some(stats);
                     }
@@ -1399,6 +1421,7 @@ async fn run_connection(
                         downlink_backend: stats.downlink_backend().map(RelayBackend::as_str),
                         uplink_handoff_delay_us: stats.uplink_handoff_delay_us(),
                         downlink_handoff_delay_us: stats.downlink_handoff_delay_us(),
+                        handoff_server_sequence: stats.handoff_server_sequence(),
                         pipe_capacity_downgraded: stats.pipe_capacity_downgraded(),
                     },
                 );

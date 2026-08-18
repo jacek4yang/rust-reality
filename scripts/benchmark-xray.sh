@@ -2,26 +2,45 @@
 set -Eeuo pipefail
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$repository/scripts/benchmark-contract.sh"
 xray=${XRAY_BIN:-xray}
+rust_bin=${RUST_REALITY_BIN:-target/release/rust-reality}
 cover_target=${COVER_TARGET:-dl.google.com:443}
 cover_sni=${COVER_SNI:-dl.google.com}
 samples=${SAMPLES:-9}
 concurrency=${CONCURRENCY:-4}
 payload_mib=${PAYLOAD_MIB:-64}
-temporary_root=${TMPDIR:-/tmp}
+rr_contract_init "$repository" benchmark-xray benchmarks/final 16
+if [[ $RR_EXPLORATORY == 1 ]]; then
+    [[ $xray == /* ]] || xray=$(command -v "$xray")
+fi
+rr_register_binary rust-reality "$rust_bin" "${RUST_REALITY_SHA256:-}" rust \
+    "${EXPECTED_SOURCE_COMMIT:-}"
+rust_bin=${RR_BINARY_PATHS[rust-reality]}
+rr_register_binary xray "$xray" "${XRAY_SHA256:-}" xray
+xray=${RR_BINARY_PATHS[xray]}
+rr_write_contract_metadata
+out_dir=$RR_OUT_DIR
+temporary_root=$RR_TMPDIR
 work=$(mktemp -d "$temporary_root/rust-reality-benchmark.XXXXXX")
 pids=()
 
 cleanup() {
+    local exit_status=$?
+    trap - EXIT
+    set +e
     for pid in "${pids[@]}"; do
-        kill "$pid" 2>/dev/null || true
-        wait "$pid" 2>/dev/null || true
+        rr_stop_registered_pid "$pid"
     done
     if [[ ${KEEP_WORK:-0} == 1 ]]; then
         printf 'benchmark temporary directory retained: %s\n' "$work" >&2
     elif [[ -d "$work" && "$work" == "$temporary_root"/rust-reality-benchmark.* ]]; then
         rm -rf -- "$work"
     fi
+    local final_rc
+    rr_contract_verify_on_exit "$exit_status"
+    final_rc=$?
+    exit "$final_rc"
 }
 trap cleanup EXIT
 
@@ -40,14 +59,7 @@ if (( samples > 100 || concurrency > 64 || payload_mib > 1024 )); then
     exit 1
 fi
 
-free_port() {
-    python3 - <<'PY'
-import socket
-with socket.socket() as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-}
+free_port() { rr_next_port; }
 
 wait_port() {
     local port=$1
@@ -69,14 +81,15 @@ PY
 
 start_process() {
     "$@" &
-    pids+=("$!")
+    local pid=$! expected=
+    pids+=("$pid")
+    if [[ $1 == "$rust_bin" || $1 == "$xray" ]]; then
+        expected=$1
+    fi
+    rr_register_pid "$pid" "$expected"
 }
 
 cd "$repository"
-rust_bin=${RUST_REALITY_BIN:-target/release/rust-reality}
-if [[ ! -x $rust_bin ]]; then
-    cargo build --release --locked
-fi
 
 rust_port=$(free_port)
 xray_port=$(free_port)
@@ -212,7 +225,7 @@ start_process python3 -m http.server "$http_port" --bind 127.0.0.1 \
     --directory "$work" >"$work/http.log" 2>&1
 wait_port "$http_port"
 
-python3 - "$samples" "$concurrency" "$payload_mib" "$rust_socks" "$xray_socks" "$http_port" "$xray" "$cover_target" "$cover_sni" <<'PY'
+python3 - "$samples" "$concurrency" "$payload_mib" "$rust_socks" "$xray_socks" "$http_port" "$xray" "$cover_target" "$cover_sni" "${RR_BINARY_SOURCE_COMMITS[rust-reality]}" <<'PY' >"$out_dir/report.json"
 import concurrent.futures
 import json
 import math
@@ -232,6 +245,7 @@ http_port = int(sys.argv[6])
 xray = sys.argv[7]
 cover_target = sys.argv[8]
 cover_sni = sys.argv[9]
+rust_source_commit = sys.argv[10]
 expected = payload_mib * 1024 * 1024
 url = f"http://127.0.0.1:{http_port}/payload.bin"
 
@@ -314,6 +328,9 @@ ratio = (
 )
 report = {
     "schemaVersion": 1,
+    "harness": "benchmark-xray",
+    "status": "COMPLETE",
+    "performanceVerdict": "NOT_EVALUATED",
     "environment": {
         "kernel": platform.release(),
         "machine": platform.machine(),
@@ -326,9 +343,7 @@ report = {
             ),
             "unknown",
         ),
-        "rustRealityCommit": subprocess.run(
-            ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
-        ).stdout.strip(),
+        "rustRealityCommit": rust_source_commit,
         "rustVersion": subprocess.run(
             ["rustc", "--version"], check=True, capture_output=True, text=True
         ).stdout.strip(),
@@ -359,3 +374,6 @@ report = {
 }
 print(json.dumps(report, indent=2, sort_keys=True))
 PY
+
+rr_finalize_contract
+printf 'benchmark report: %s\n' "$out_dir/report.json"

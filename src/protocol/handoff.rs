@@ -88,6 +88,12 @@ const AEAD_NONCE_LEN: usize = 12;
 const REPLAY_SHARDS: usize = 16;
 const MAX_DOMAIN_LEN: usize = 253;
 
+/// At the handoff boundary the server direction is either untouched, or has
+/// emitted exactly one empty application-data record while matching the cover
+/// target's post-handshake shape. Larger values cannot arise before LINE
+/// transfers ownership and therefore fail closed.
+const MAX_SERVER_SEQUENCE_AT_HANDOFF: u64 = 1;
+
 /// Reader read-ahead cap: four TLS record slots, mirroring the
 /// `TlsApplicationReader` socket buffer (`4 * MAX_TLS_RECORD_WIRE_LEN`).
 const MAX_PENDING_CIPHERTEXT_LEN: usize = 4 * (5 + 16_384 + 1 + TAG_LEN);
@@ -686,7 +692,7 @@ pub fn seal_transfer(
 /// Validation order is load-bearing: header structure, timestamp window,
 /// nonce reserve, per-candidate ephemeral DH plus HKDF, AEAD open, and only
 /// then the internal cross-checks (blob `state_version`, known suite,
-/// server-direction sequence zero, header/blob user-id agreement). The
+/// server-direction sequence zero or one, header/blob user-id agreement). The
 /// timestamp check and the single nonce reserve stay hoisted ahead of every
 /// candidate trial: the nonce is reserved exactly once, so a forgery burns
 /// one replay slot no matter how many candidates the landing accepts, and a
@@ -776,7 +782,9 @@ pub fn open_transfer(
     }
 
     let state = decode_blob(&blob)?;
-    if state.server_sequence() != 0 || state.user_id() != &header.user_id {
+    if state.server_sequence() > MAX_SERVER_SEQUENCE_AT_HANDOFF
+        || state.user_id() != &header.user_id
+    {
         return Err(HandoffError::State);
     }
     Ok(OpenedTransfer {
@@ -1170,14 +1178,15 @@ pub fn fuzz_decode_blob(blob: &[u8]) -> Result<ContinuationState, HandoffError> 
 mod tests {
     use std::time::Duration;
 
+    use sha2::{Digest as _, Sha256};
     use x25519_dalek::{PublicKey, StaticSecret};
 
     use super::{
         CONTINUATION_STATE_VERSION, ContinuationState, HANDOFF_PROTOCOL_VERSION, HEADER_LEN,
         HandoffError, HandoffLandingKeys, HandoffPsk, HandoffReplayCache, MAX_BLOB_LEN,
         MAX_MESSAGE_LEN, MAX_PENDING_CIPHERTEXT_LEN, MAX_PREFETCHED_PLAINTEXT_LEN,
-        MAX_PREVIOUS_KEYS, MonotonicInstant, NONCE_LEN, message_len_from_header, open_transfer,
-        seal_transfer,
+        MAX_PREVIOUS_KEYS, MonotonicInstant, NONCE_LEN, decode_blob, encode_blob,
+        message_len_from_header, open_transfer, seal_transfer,
     };
     use crate::protocol::reality::tls13::{CipherSuite, TrafficKeys};
     use crate::protocol::vless::{Address, Destination};
@@ -1192,12 +1201,20 @@ mod tests {
     }
 
     fn test_state(pending: Vec<u8>, prefetched: Vec<u8>) -> ContinuationState {
+        test_state_with_server_sequence(pending, prefetched, 0)
+    }
+
+    fn test_state_with_server_sequence(
+        pending: Vec<u8>,
+        prefetched: Vec<u8>,
+        server_sequence: u64,
+    ) -> ContinuationState {
         ContinuationState::new(
             CipherSuite::ChaCha20Poly1305Sha256,
             TrafficKeys::from_raw_parts(&[0x11; 32], [0x21; 12]).expect("client keys"),
             0x0102_0304_0506_0708,
             TrafficKeys::from_raw_parts(&[0x12; 32], [0x22; 12]).expect("server keys"),
-            0,
+            server_sequence,
             [0x33; 16],
             Destination::new(Address::Domain("example.com".to_owned()), 443),
             pending,
@@ -1418,6 +1435,31 @@ mod tests {
         }
         assert_eq!(HANDOFF_PROTOCOL_VERSION, 1);
         assert_eq!(CONTINUATION_STATE_VERSION, 1);
+    }
+
+    #[test]
+    fn v1_blob_vector_remains_byte_compatible() {
+        let state = test_state(Vec::new(), Vec::new());
+        let mut blob = Vec::new();
+        encode_blob(&state, &mut blob).expect("v1 state must encode");
+
+        // SHA-256 of the v1 blob containing the fixed keys, sequences, user,
+        // example.com:443 destination, and empty pending buffers from
+        // `test_state`. This pins every encoded byte while keeping the test
+        // vector compact and independent of the decoder.
+        let digest: [u8; 32] = Sha256::digest(&blob).into();
+        assert_eq!(blob.len(), 149);
+        assert_eq!(
+            digest,
+            [
+                0x40, 0xa7, 0x62, 0xd4, 0x67, 0x8d, 0x13, 0xfc, 0x3d, 0x44, 0x33, 0x03, 0xc6, 0x41,
+                0xc4, 0x17, 0x02, 0x12, 0xdc, 0xe9, 0xe5, 0x1c, 0x12, 0xe2, 0x98, 0xd9, 0x4a, 0x65,
+                0xf8, 0x45, 0xe2, 0x93,
+            ]
+        );
+
+        let decoded = decode_blob(&blob).expect("the pinned v1 blob must still decode");
+        assert_states_equal(&decoded, &state);
     }
 
     #[test]
@@ -1647,22 +1689,24 @@ mod tests {
     }
 
     #[test]
-    fn nonzero_server_sequence_fails_the_cross_check() {
+    fn server_sequences_zero_and_one_open_but_two_fails_the_cross_check() {
         let (landing_secret, landing_public) = landing_key_pair(0x82);
         let psk = HandoffPsk::new([0x55; 32]);
-        let mut state = test_state(Vec::new(), Vec::new());
-        state = ContinuationState::new(
-            state.suite(),
-            TrafficKeys::from_raw_parts(&[0x11; 32], [0x21; 12]).expect("client keys"),
-            state.client_sequence(),
-            TrafficKeys::from_raw_parts(&[0x12; 32], [0x22; 12]).expect("server keys"),
-            1,
-            *state.user_id(),
-            state.destination().clone(),
-            Vec::new(),
-            Vec::new(),
-        )
-        .expect("state with a used server direction must build");
+        for server_sequence in [0, 1] {
+            let state = test_state_with_server_sequence(Vec::new(), Vec::new(), server_sequence);
+            let message = seal(&state, &psk, &landing_public);
+            let opened = open_transfer(
+                &message,
+                &HandoffLandingKeys::single(psk.clone(), landing_secret.clone()),
+                &test_cache(),
+                NOW,
+                WINDOW,
+            )
+            .expect("server sequence zero or one must open");
+            assert_states_equal(opened.state(), &state);
+        }
+
+        let state = test_state_with_server_sequence(Vec::new(), Vec::new(), 2);
         let message = seal(&state, &psk, &landing_public);
         assert_eq!(
             open_error(&message, &psk, &landing_secret, &test_cache(), NOW),

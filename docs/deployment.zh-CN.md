@@ -21,23 +21,28 @@ NXR 落地机。
 ## 安装官方 Release
 
 从同一个 [GitHub Release](https://github.com/jacek4yang/rust-reality/releases)
-下载三个资产：
+下载四个资产：
 
 - `rust-reality-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz`
+- `rust-reality-vX.Y.Z-x86_64-v3-unknown-linux-gnu.tar.gz`
 - `release-manifest.json`
 - `SHA256SUMS`
 
-解压前验证列出的两个文件：
+解压前验证 `SHA256SUMS` 中列出的全部文件：
 
 ```shell
 sha256sum --check SHA256SUMS
+# portable 包（不确定 CPU 能力时推荐）：
 tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
+# 或在 x86-64-v3 CPU 上使用：
+# tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 rust-reality --version
 ```
 
-`release-manifest.json` 记录版本、tag、精确源码 commit、target triple、源码时间戳、
-压缩包名和 SHA-256。不要混用不同 Release 的压缩包、manifest 或 checksum。
+`release-manifest.json` schema v2 记录版本、tag、精确源码 commit、target triple、
+源码时间戳、两个压缩包的名称和 SHA-256，以及各压缩包的 CPU 要求。x86-64-v3
+包没有运行时回退。不要混用不同 Release 的压缩包、manifest 或 checksum。
 
 需要自行构建时使用固定工具链和锁定依赖图：
 
@@ -45,6 +50,32 @@ rust-reality --version
 ./scripts/check.sh
 ./scripts/build-release.sh
 ```
+
+### 发布后的双档 Xray 验收
+
+发布成功并不等于互操作验收完成。请在已发布 tag 的全新 checkout 中重新下载并
+校验四个 Release 资产，把两个二进制解压到各自独立的 mode-0700 目录，然后分别
+对下载得到的准确制品运行一次 Xray 门禁：
+
+```shell
+install -d -m 0700 release-smoke/portable release-smoke/x86-64-v3
+tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz \
+  -C release-smoke/portable
+tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz \
+  -C release-smoke/x86-64-v3
+
+RUST_REALITY_BIN="$PWD/release-smoke/portable/rust-reality" \
+  XRAY_BIN=/absolute/path/to/xray \
+  ./scripts/test-xray-interop.sh
+RUST_REALITY_BIN="$PWD/release-smoke/x86-64-v3/rust-reality" \
+  XRAY_BIN=/absolute/path/to/xray \
+  ./scripts/test-xray-interop.sh
+```
+
+每轮都会使用全新配置，证明准确的 1 MiB 传输、ML-DSA-65 一致性，以及未经修改
+Xray 的 REALITY + Vision 互操作。应在支持 x86-64-v3、外部 DNS/TCP 正常的主机
+执行；默认伪装目标不适用时用 `COVER_TARGET`/`COVER_SNI` 选择已探测的目标。任一
+档失败都属于 release no-go；不得以本地重建二进制替代下载到的制品。
 
 ## 创建服务账号和目录
 
@@ -70,6 +101,11 @@ sudo install -d -o rust-reality -g rust-reality -m 0750 \
 ## 单机公网节点
 
 ### 1. 选择并探测伪装目标
+
+v1.5 接受带或不带 compatibility CCS 的 TLS 1.3 伪装 flight，并可表达四条
+位置化加密握手记录及可选的第五条 Finished 后记录。必须探测实际生产目标和
+SNI；另一个主机探测成功不代表本目标可用。不支持、截断、超界或内部不一致的
+flight 会 fail closed 到逐字节精确 fallback，没有削弱这些检查的运行时开关。
 
 SNI 必须是目标实际服务的 DNS 名，目标必须协商兼容的 TLS 1.3 ServerHello。
 从真实 VPS 执行：
@@ -255,6 +291,21 @@ UUID 和 REALITY 公钥打印到标准错误；Handoff PSK 和私钥只存在于
 tag，则每个已认证的转移会话都会被丢弃。该 tag 绝不能引用 `handoff` 出站：
 落地机不允许串联。
 
+### 4. v1.5 升级与回滚顺序
+
+Handoff 的 `HND1` 线协议和 continuation-state 版本仍保持 v1。v1.5 落地机
+同时接受服务端记录序号 0（原有边界）和序号 1（转移前已发送一个用于匹配伪装
+形状的空应用记录）。v1.4 落地机只接受序号 0，因此不支持 v1.5 线路机搭配
+v1.4 落地机：伪装形状消耗首个服务端应用序号的会话会静默失败。
+
+滚动升级时，必须先升级并验证所有 LANDING，再升级 LINE；在此窗口中，v1.4
+LINE 可以继续连接 v1.5 LANDING。回滚时，必须先降级所有 LINE，确保不再产生
+新的序号 1 转移；随后停止接纳新的 Handoff 会话并排空 LANDING 上的活跃会话，
+最后再降级 LANDING。不得在仍有活跃转移会话时重启或降级 LANDING。
+
+记录序号安全边界与混合版本依据见
+[ADR 0005](decisions/0005-handoff-server-record-sequences.md)。
+
 ## GeoIP 与 GeoSite
 
 只需要 HTTPS URL。默认值已指向社区兼容文件，多数部署可完全省略 `assets`，
@@ -318,7 +369,7 @@ SIGTERM 停止新 accept 并执行有界优雅退出；unit 的 40 秒停止超�
 
 ## 升级与回滚
 
-1. 下载并验证新 tag 的全部三个资产。
+1. 下载并验证新 tag 的全部 Release 资产。
 2. 以 root-only 文件保留当前二进制和配置。
 3. 使用新二进制对生产配置副本执行 `check` 和 `self-test`。
 4. 原子安装新二进制并重启。

@@ -44,8 +44,11 @@ pub(crate) use record_read::{MAX_TLS13_CIPHERTEXT_LEN, TLS_RECORD_HEADER_LEN, bu
 pub use server_hello::{
     ServerHelloError, ServerHelloTemplate, change_cipher_spec_record, plaintext_handshake_record,
 };
+#[cfg(feature = "fuzzing")]
+pub use target_read::fuzz_cover_flight;
 pub(crate) use target_read::{
-    CoverHandshakeRecordShape, TargetServerFlightRead, read_target_server_flight,
+    CoverHandshakePlan, CoverHandshakeRecordShape, TargetServerFlightRead,
+    read_target_server_flight,
 };
 pub use target_read::{
     TargetServerHelloRead, TargetServerHelloReadError, TargetServerHelloReadErrorKind,

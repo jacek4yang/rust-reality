@@ -9,10 +9,12 @@
 #
 # Requires: xray (XRAY_BIN), curl, jq, python3, and direct Internet egress.
 # Optional env: RUNS (20), BYTES (25000000), URL (Cloudflare speed endpoint),
-#               RUST_REALITY_BIN, OUT (output JSON file).
+#               RUST_REALITY_BIN, OUT_DIR (unique result directory),
+#               OUT (legacy explicit output JSON file).
 set -Eeuo pipefail
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$repository/scripts/benchmark-contract.sh"
 xray=${XRAY_BIN:-xray}
 rust_bin=${RUST_REALITY_BIN:-target/release/rust-reality}
 runs=${RUNS:-20}
@@ -20,25 +22,42 @@ bytes=${BYTES:-5000000}
 url=${URL:-https://speed.cloudflare.com/__down?bytes=$bytes}
 cover_target=${COVER_TARGET:-dl.google.com:443}
 cover_sni=${COVER_SNI:-dl.google.com}
-out=${OUT:-diagnostics/final/real-path.json}
-temporary_root=${TMPDIR:-/tmp}
+rr_contract_init "$repository" benchmark-real-path diagnostics/final 16
+if [[ $RR_EXPLORATORY == 1 ]]; then
+    [[ $xray == /* ]] || xray=$(command -v "$xray")
+fi
+rr_register_binary rust-reality "$rust_bin" "${RUST_REALITY_SHA256:-}" rust \
+    "${EXPECTED_SOURCE_COMMIT:-}"
+rust_bin=${RR_BINARY_PATHS[rust-reality]}
+rr_register_binary xray "$xray" "${XRAY_SHA256:-}" xray
+xray=${RR_BINARY_PATHS[xray]}
+rr_write_contract_metadata
+out_dir=$RR_OUT_DIR
+out=$out_dir/real-path.json
+temporary_root=$RR_TMPDIR
 work=$(mktemp -d "$temporary_root/rust-reality-realpath.XXXXXX")
 pids=()
 
 cleanup() {
+    local exit_status=$?
+    trap - EXIT
+    set +e
     for pid in "${pids[@]}"; do
-        kill "$pid" 2>/dev/null || true
-        wait "$pid" 2>/dev/null || true
+        rr_stop_registered_pid "$pid"
     done
     if [[ ${KEEP_WORK:-0} == 1 ]]; then
         printf 'real-path temporary directory retained: %s\n' "$work" >&2
     elif [[ -d "$work" && "$work" == "$temporary_root"/rust-reality-realpath.* ]]; then
         rm -rf -- "$work"
     fi
+    local final_rc
+    rr_contract_verify_on_exit "$exit_status"
+    final_rc=$?
+    exit "$final_rc"
 }
 trap cleanup EXIT
 
-for program in "$xray" curl jq python3; do
+for program in curl jq python3 sha256sum; do
     if ! command -v "$program" >/dev/null 2>&1; then
         echo "required program is unavailable: $program" >&2
         exit 1
@@ -57,14 +76,7 @@ if ! env -u ALL_PROXY -u all_proxy -u HTTP_PROXY -u http_proxy -u HTTPS_PROXY -u
     exit 3
 fi
 
-free_port() {
-    python3 - <<'PY'
-import socket
-with socket.socket() as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-}
+free_port() { rr_next_port; }
 
 wait_port() {
     python3 - "$1" <<'PY'
@@ -83,10 +95,15 @@ PY
 
 start_process() {
     "$@" &
-    pids+=("$!")
+    local pid=$! expected=
+    pids+=("$pid")
+    if [[ $1 == "$rust_bin" || $1 == "$xray" ]]; then expected=$1; fi
+    rr_register_pid "$pid" "$expected"
 }
 
 cd "$repository"
+rust_sha256=${RR_BINARY_SHA256[rust-reality]}
+xray_sha256=${RR_BINARY_SHA256[xray]}
 
 rust_port=$(free_port)
 xray_port=$(free_port)
@@ -150,7 +167,8 @@ wait_port "$rust_socks"
 wait_port "$xray_socks"
 
 mkdir -p "$(dirname "$out")"
-python3 - "$runs" "$bytes" "$url" "$rust_socks" "$xray_socks" "$rust_port" "$out" <<'PY'
+python3 - "$runs" "$bytes" "$url" "$rust_socks" "$xray_socks" "$rust_port" \
+    "$out" "$rust_bin" "$rust_sha256" "$xray" "$xray_sha256" <<'PY'
 import json
 import os
 import subprocess
@@ -163,6 +181,7 @@ url = sys.argv[3]
 ports = {"rust-reality": int(sys.argv[4]), "xray": int(sys.argv[5])}
 rust_server_port = int(sys.argv[6])
 out = sys.argv[7]
+rust_bin, rust_sha256, xray_bin, xray_sha256 = sys.argv[8:12]
 
 curl_env = {
     key: value
@@ -221,6 +240,12 @@ for name in ports:
 report = {
     "schemaVersion": 1,
     "harness": "benchmark-real-path",
+    "status": "COMPLETE",
+    "performanceVerdict": "NOT_EVALUATED",
+    "binaries": {
+        "rustReality": {"path": rust_bin, "sha256": rust_sha256},
+        "xray": {"path": xray_bin, "sha256": xray_sha256},
+    },
     "url": url.split("?")[0],
     "expectedBytes": expected,
     "rustServerPort": rust_server_port,
@@ -234,3 +259,4 @@ print(json.dumps(summary["failures"] and {"failures": summary["failures"]} or su
 print(f"failures={summary['failures']} runs={runs} -> {out}")
 sys.exit(1 if failed else 0)
 PY
+rr_finalize_contract

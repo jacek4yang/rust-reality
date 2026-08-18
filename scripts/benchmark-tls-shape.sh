@@ -4,7 +4,10 @@
 set -Eeuo pipefail
 
 readonly REPOSITORY="$({ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."; pwd; })"
+source "$REPOSITORY/scripts/benchmark-contract.sh"
 readonly HELPER="$REPOSITORY/scripts/tls-shape-helper.py"
+readonly RECORD_DELAY_FIXTURE="$REPOSITORY/scripts/tls-record-delay-fixture.py"
+readonly READER_EVIDENCE_HELPER="$REPOSITORY/scripts/record-delay-reader-test-evidence.sh"
 readonly REFERENCE_SOURCE="$REPOSITORY/scripts/tls-shape-reference.c"
 
 reference_server=
@@ -28,8 +31,10 @@ split_fragment=0
 padding=0
 tcp_nodelay=0
 samples=3
-base_port=39460
-output_dir=
+base_port=${PORT_BASE:-39460}
+xray_server_comparator=1
+output_dir=${OUT_DIR:-}
+reader_test_evidence=${READER_TEST_EVIDENCE:-}
 strace_mode=auto
 tcpdump_mode=auto
 self_test=0
@@ -53,6 +58,9 @@ tls-shape-reference.c. --openssl-reference-version is a human-readable expected
 label; the linked OpenSSL compile/runtime identity is read from the executable.
 When the optional baseline is supplied, baseline and candidate run sequentially
 with the same generated config and exact captured authenticated ClientHello.
+Formal runs additionally require RUN_ID, absolute OUT_DIR and disk-backed
+TMPDIR, EXPECTED_SOURCE_COMMIT, and read-only absolute binary paths. An
+optional Rust baseline also requires EXPECTED_BASELINE_SOURCE_COMMIT.
 
 Options:
   --case NAME                    Result label (default: openssl-reference-shape)
@@ -68,8 +76,13 @@ Options:
   --tcp-nodelay 0|1             Reference TCP_NODELAY (default: 0)
   --samples N                   Repetitions, 1..10 (default: 3)
   --base-port N                 Seven consecutive loopback ports (default: 39460)
+  --xray-server-comparator 0|1 Compare the replayed flight with Xray's server
+                                (default: 1). Set to 0 only when the captured
+                                ClientHello shape is unsupported by that server;
+                                Xray still generates the authenticated ClientHello.
   --output-dir PATH             Must be outside the Git worktree. Default:
                                 ../artifacts/tls-shape/CASE-UTC_TIMESTAMP
+  --reader-test-evidence PATH  Single-probe production reader cargo evidence
   --strace auto|required|off    Process-write capture (default: auto)
   --tcpdump auto|required|off   Raw loopback PCAP capture (default: auto)
   --help                        Show this help
@@ -137,7 +150,10 @@ while (($#)); do
         --tcp-nodelay) need_argument "$@"; tcp_nodelay=$2; shift 2 ;;
         --samples) need_argument "$@"; samples=$2; shift 2 ;;
         --base-port) need_argument "$@"; base_port=$2; shift 2 ;;
+        --xray-server-comparator)
+            need_argument "$@"; xray_server_comparator=$2; shift 2 ;;
         --output-dir) need_argument "$@"; output_dir=$2; shift 2 ;;
+        --reader-test-evidence) need_argument "$@"; reader_test_evidence=$2; shift 2 ;;
         --strace) need_argument "$@"; strace_mode=$2; shift 2 ;;
         --tcpdump) need_argument "$@"; tcpdump_mode=$2; shift 2 ;;
         --self-test) self_test=1; shift ;;
@@ -148,6 +164,17 @@ done
 
 if ((self_test)); then
     python3 "$HELPER" self-test
+    self_test_record_delay_directory=$(mktemp -d)
+    self_test_record_delay_output=$self_test_record_delay_directory/result.json
+    python3 "$RECORD_DELAY_FIXTURE" self-test \
+        --output "$self_test_record_delay_output"
+    jq -e '.ok == true and .caseCount == 15 and
+        .delaysMs == [0,20,50,100,200] and
+        .probeClassifications == ["already-buffered","single-probe-present","absent-would-block"] and
+        ([.cases[].prefix.byteExact] | all)' \
+        "$self_test_record_delay_output" >/dev/null
+    rm -rf -- "$self_test_record_delay_directory"
+    printf 'TLS record-delay/NST-probe socket matrix: PASS\n'
     if command -v cc >/dev/null 2>&1 && command -v pkg-config >/dev/null 2>&1 &&
         pkg-config --exists openssl; then
         self_test_directory=$(mktemp -d)
@@ -190,6 +217,7 @@ done
 [[ -n $rust_sha256 ]] || die '--rust-sha256 is required'
 [[ -n $xray_binary ]] || die '--xray-binary is required'
 [[ -n $xray_sha256 ]] || die '--xray-sha256 is required'
+[[ -n $reader_test_evidence ]] || die '--reader-test-evidence is required'
 baseline_present=false
 if [[ -n $baseline_rust_binary || -n $baseline_rust_sha256 ]]; then
     [[ -n $baseline_rust_binary && -n $baseline_rust_sha256 ]] ||
@@ -198,11 +226,12 @@ if [[ -n $baseline_rust_binary || -n $baseline_rust_sha256 ]]; then
 fi
 
 for value in "$middlebox" "$max_fragment" "$split_fragment" "$padding" \
-    "$tcp_nodelay" "$samples" "$base_port"; do
+    "$tcp_nodelay" "$samples" "$base_port" "$xray_server_comparator"; do
     [[ $value =~ ^[0-9]+$ ]] || die "numeric option is not an unsigned integer: $value"
 done
 ((middlebox <= 1)) || die '--middlebox must be 0 or 1'
 ((tcp_nodelay <= 1)) || die '--tcp-nodelay must be 0 or 1'
+((xray_server_comparator <= 1)) || die '--xray-server-comparator must be 0 or 1'
 ((max_fragment <= 16384)) || die '--max-fragment exceeds 16384'
 ((split_fragment <= 16384)) || die '--split-fragment exceeds 16384'
 ((padding <= 16384)) || die '--padding exceeds 16384'
@@ -213,7 +242,8 @@ done
 [[ $tcpdump_mode =~ ^(auto|required|off)$ ]] || die 'invalid --tcpdump mode'
 
 for path in "$reference_server" "$reference_certificate" "$reference_private_key" \
-    "$rust_binary" "$xray_binary" "$HELPER"; do
+    "$rust_binary" "$xray_binary" "$HELPER" "$RECORD_DELAY_FIXTURE" \
+    "$READER_EVIDENCE_HELPER" "$reader_test_evidence"; do
     [[ -f $path ]] || die "file does not exist: $path"
 done
 [[ -x $reference_server ]] || die "reference server is not executable: $reference_server"
@@ -231,6 +261,7 @@ reference_certificate=$(realpath "$reference_certificate")
 reference_private_key=$(realpath "$reference_private_key")
 rust_binary=$(realpath "$rust_binary")
 xray_binary=$(realpath "$xray_binary")
+reader_test_evidence=$(realpath "$reader_test_evidence")
 if [[ $baseline_present == true ]]; then
     baseline_rust_binary=$(realpath "$baseline_rust_binary")
 fi
@@ -251,20 +282,47 @@ if [[ $baseline_present == true ]]; then
         "$baseline_rust_sha256"
 fi
 
-if [[ -z $output_dir ]]; then
-    output_dir="$REPOSITORY/../artifacts/tls-shape/${case_name}-$(date -u +%Y%m%dT%H%M%SZ)"
+OUT_DIR=$output_dir
+PORT_BASE=$base_port
+rr_contract_init "$REPOSITORY" benchmark-tls-shape ../artifacts/tls-shape 16
+rr_register_harness_file "$HELPER"
+rr_register_harness_file "$RECORD_DELAY_FIXTURE"
+rr_register_harness_file "$READER_EVIDENCE_HELPER"
+rr_register_harness_file "$REFERENCE_SOURCE"
+rr_register_binary openssl-reference "$reference_server" "$reference_sha256" generic
+reference_server=${RR_BINARY_PATHS[openssl-reference]}
+rr_register_binary rust-reality "$rust_binary" "$rust_sha256" rust \
+    "${EXPECTED_SOURCE_COMMIT:-}"
+rust_binary=${RR_BINARY_PATHS[rust-reality]}
+rr_register_binary xray "$xray_binary" "$xray_sha256" xray
+xray_binary=${RR_BINARY_PATHS[xray]}
+if [[ $baseline_present == true ]]; then
+    rr_register_binary baseline-rust-reality "$baseline_rust_binary" \
+        "$baseline_rust_sha256" rust "${EXPECTED_BASELINE_SOURCE_COMMIT:-}"
+    baseline_rust_binary=${RR_BINARY_PATHS[baseline-rust-reality]}
 fi
-mkdir -p "$(dirname -- "$output_dir")"
-output_parent=$(realpath "$(dirname -- "$output_dir")")
-output_dir="$output_parent/$(basename -- "$output_dir")"
+reader_output=$(jq -er '.output.path' "$reader_test_evidence")
+[[ $reader_output == /* && -f $reader_output ]] ||
+    die 'reader-test evidence output is not an existing absolute file'
+reader_output_sha=$(sha256sum "$reader_output" | awk '{print $1}')
+jq -e --arg commit "${RR_BINARY_SOURCE_COMMITS[rust-reality]}" \
+    --arg test 'protocol::reality::tls13::target_read::tests::tcp_record_delay_matrix_covers_fifth_probe_timing' \
+    --arg output_sha "$reader_output_sha" \
+    '.ok == true and .cargoExitCode == 0 and
+     .repositoryHead == $commit and .expectedSourceCommit == $commit and
+     .testName == $test and .output.sha256 == $output_sha' \
+    "$reader_test_evidence" >/dev/null ||
+    die 'single-probe-present production reader evidence is invalid'
+rr_write_contract_metadata
+output_dir=$RR_OUT_DIR
+base_port=$RR_PORT_BASE
 case "$output_dir/" in
     "$REPOSITORY"/*) die '--output-dir must be outside the Git worktree' ;;
 esac
-[[ ! -e $output_dir ]] || die "output directory already exists: $output_dir"
-mkdir -m 700 "$output_dir"
+chmod 700 "$output_dir"
 
 umask 077
-work=$(mktemp -d "${TMPDIR:-/tmp}/rust-reality-tls-shape.XXXXXX")
+work=$(mktemp -d "$RR_TMPDIR/rust-reality-tls-shape.XXXXXX")
 declare -A active_pids=()
 declare -A active_process_groups=()
 declare -A active_capture_paths=()
@@ -275,11 +333,15 @@ run_sample_dir=
 run_started_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 write_run_status() {
+    local exit_code=${1:-null}
     local temporary_status="$output_dir/.run-status.$$"
     jq -n --arg state "$run_state" --arg phase "$run_phase" \
         --arg sample "$run_sample" --arg started_at "$run_started_utc" \
+        --argjson exit_code "$exit_code" \
         --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        '{state:$state,phase:$phase,sample:(if $sample == "" then null else $sample end),startedAt:$started_at,updatedAt:$updated_at}' \
+        '{state:$state,phase:$phase,
+          sample:(if $sample == "" then null else $sample end),
+          exitCode:$exit_code,startedAt:$started_at,updatedAt:$updated_at}' \
         >"$temporary_status"
     mv -f -- "$temporary_status" "$output_dir/run-status.json"
 }
@@ -299,15 +361,17 @@ pid_matches_registration() {
 }
 
 register_pid() {
-    local start_time
+    local expected_exe=${2:-} start_time
     start_time=$(pid_start_time "$1") || die "could not register child PID $1"
     active_pids["$1"]=$start_time
+    rr_register_pid "$1" "$expected_exe"
 }
 
 register_group() {
-    local start_time
+    local expected_exe=${2:-} start_time
     start_time=$(pid_start_time "$1") || die "could not register process group $1"
     active_process_groups["$1"]=$start_time
+    rr_register_pid "$1" "$expected_exe"
 }
 
 cleanup() {
@@ -337,22 +401,27 @@ cleanup() {
 }
 
 finish() {
-    local status=$?
-    trap - EXIT
-    if ((status != 0)); then
+    local original_status=$? final_status
+    trap - EXIT INT TERM
+    set +e
+    cleanup
+    rr_contract_verify_on_exit "$original_status"
+    final_status=$?
+    if ((final_status != 0)); then
         run_state=FAILED
         if [[ -n $run_sample_dir && -d $run_sample_dir ]]; then
             jq -n --arg status INVALID --arg phase "$run_phase" \
-                --arg sample "$run_sample" --argjson exit_code "$status" \
+                --arg sample "$run_sample" --argjson exit_code "$final_status" \
                 '{status:$status,phase:$phase,sample:$sample,exitCode:$exit_code}' \
                 >"$run_sample_dir/invalid.json" 2>/dev/null || true
         fi
-        write_run_status 2>/dev/null || true
+        write_run_status "$final_status" 2>/dev/null || true
     fi
-    cleanup
-    exit "$status"
+    exit "$final_status"
 }
 trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 write_run_status
 
 strace_status=disabled
@@ -395,9 +464,11 @@ readonly socks_port=$((base_port + 3))
 readonly origin_port=$((base_port + 4))
 readonly direct_reference_port=$((base_port + 5))
 readonly xray_server_port=$((base_port + 6))
+readonly record_delay_port=$((base_port + 7))
 
 python3 - "$cover_port" "$rust_port" "$proxy_port" "$socks_port" \
-    "$origin_port" "$direct_reference_port" "$xray_server_port" <<'PY'
+    "$origin_port" "$direct_reference_port" "$xray_server_port" \
+    "$record_delay_port" <<'PY'
 import socket
 import sys
 
@@ -505,7 +576,7 @@ start_tcpdump() {
     "${tcpdump_command[@]}" --immediate-mode -i lo -U -s 0 -w "$destination" \
         "tcp port $port" >"$log" 2>&1 &
     started_tcpdump_pid=$!
-    register_pid "$started_tcpdump_pid"
+    register_pid "$started_tcpdump_pid" "$(command -v "${tcpdump_command[0]}")"
     active_capture_paths["$started_tcpdump_pid"]=$destination
     wait_log "$log" 'listening on'
 }
@@ -513,14 +584,25 @@ start_tcpdump() {
 start_traced_group() {
     local prefix=$1 stdout_path=$2 stderr_path=$3
     shift 3
+    local expected_exe expected_command=$1 index=0
     if [[ $strace_status == available ]]; then
+        expected_exe=$(command -v strace)
         setsid strace -ff -ttt -yy -s 1 -e trace=write,writev,sendto,sendmsg \
             -o "$prefix" "$@" >"$stdout_path" 2>"$stderr_path" &
     else
+        if [[ ${expected_command##*/} == env ]]; then
+            local -a launched=("$@")
+            index=1
+            while [[ ${launched[$index]:-} == -u ]]; do
+                ((index += 2))
+            done
+            expected_command=${launched[$index]}
+        fi
+        expected_exe=$(command -v "$expected_command")
         setsid "$@" >"$stdout_path" 2>"$stderr_path" &
     fi
     started_group_pid=$!
-    register_group "$started_group_pid"
+    register_group "$started_group_pid" "$expected_exe"
 }
 
 proxy_free_env=(env -u ALL_PROXY -u all_proxy -u HTTP_PROXY -u http_proxy
@@ -545,7 +627,7 @@ printf 'tls-shape\n' >"$work/health.txt"
 "${proxy_free_env[@]}" python3 -m http.server "$origin_port" --bind 127.0.0.1 \
     --directory "$work" >"$work/origin.log" 2>&1 &
 origin_pid=$!
-register_pid "$origin_pid"
+register_pid "$origin_pid" "$(command -v python3)"
 wait_port "$origin_port"
 
 "$rust_binary" config generate standalone --listen 127.0.0.1 --port "$rust_port" \
@@ -570,6 +652,14 @@ jq -n --slurpfile rust "$work/rust.raw.json" \
     ($public_key | rtrimstr("\n")) as $client_public_key |
     {log:{loglevel:"warning"},inbounds:[{listen:"127.0.0.1",port:$socks_port,protocol:"socks",settings:{auth:"noauth",udp:false}}],outbounds:[{protocol:"vless",settings:{vnext:[{address:"127.0.0.1",port:$server_port,users:[{id:$uuid,encryption:"none",flow:"xtls-rprx-vision"}]}]},streamSettings:{network:"tcp",security:"reality",realitySettings:{fingerprint:"chrome",serverName:"localhost",publicKey:$client_public_key,shortId:$short_id,spiderX:"/"}}}]}' \
     >"$work/xray-client.json"
+jq --arg target "127.0.0.1:$record_delay_port" \
+    --arg cache "$work/assets-record-delay" \
+    '.log.level="debug" | .assets.cacheDirectory=$cache |
+     .inbounds[0].streamSettings.realitySettings.target=$target' \
+    "$work/rust.raw.json" >"$work/rust-record-delay.json"
+jq --argjson server_port "$rust_port" \
+    '.outbounds[0].settings.vnext[0].port=$server_port' \
+    "$work/xray-client.json" >"$work/xray-record-delay.json"
 jq -n --slurpfile rust "$work/rust.raw.json" --argjson port "$xray_server_port" \
     --arg target "127.0.0.1:$cover_port" \
     '($rust[0].inbounds[0].settings.clients[0].id) as $uuid |
@@ -581,24 +671,24 @@ jq -n --slurpfile rust "$work/rust.raw.json" --argjson port "$xray_server_port" 
 "${proxy_free_env[@]}" "$rust_binary" serve --config "$work/rust.json" \
     >"$work/rust-initial.log" 2>&1 &
 rust_initial_pid=$!
-register_pid "$rust_initial_pid"
+register_pid "$rust_initial_pid" "$rust_binary"
 wait_port "$rust_port"
 "$reference_server" "$cover_port" "$reference_certificate" "$reference_private_key" \
     "$ciphersuites" "$tls_groups" "$alpn" "$middlebox" "$max_fragment" \
     "$split_fragment" "$padding" "$tcp_nodelay" \
     >"$work/cover-initial.stdout" 2>"$work/cover-initial.stderr" &
 cover_initial_pid=$!
-register_pid "$cover_initial_pid"
+register_pid "$cover_initial_pid" "$reference_server"
 wait_log "$work/cover-initial.stderr" '^READY '
 python3 "$HELPER" proxy --listen-port "$proxy_port" --upstream-port "$rust_port" \
     --output "$output_dir/clienthello.bin" >"$work/proxy.log" 2>"$work/proxy.stderr" &
 proxy_pid=$!
-register_pid "$proxy_pid"
+register_pid "$proxy_pid" "$(command -v python3)"
 wait_log "$work/proxy.log" '^READY '
 "${proxy_free_env[@]}" "$xray_binary" run -config "$work/xray-client.json" \
     >"$work/xray-client.log" 2>&1 &
 xray_client_pid=$!
-register_pid "$xray_client_pid"
+register_pid "$xray_client_pid" "$xray_binary"
 wait_port "$socks_port"
 "${proxy_free_env[@]}" curl --fail --silent --show-error \
     --socks5-hostname "127.0.0.1:$socks_port" --max-time 10 \
@@ -646,6 +736,7 @@ fi
 [[ -n $reference_build_id ]] || reference_build_id=unavailable
 harness_sha256=$(sha256sum "$0" | awk '{print $1}')
 helper_sha256=$(sha256sum "$HELPER" | awk '{print $1}')
+record_delay_fixture_sha256=$(sha256sum "$RECORD_DELAY_FIXTURE" | awk '{print $1}')
 reference_source_sha256=$(sha256sum "$REFERENCE_SOURCE" | awk '{print $1}')
 
 jq -n --slurpfile reference_self_identity "$work/reference-self-identity.json" \
@@ -662,12 +753,18 @@ jq -n --slurpfile reference_self_identity "$work/reference-self-identity.json" \
     --arg reference_self_identity_sha256 "$reference_self_identity_sha256" \
     --arg certificate_sha256 "$certificate_sha256" \
     --arg rust_path "$rust_binary" --arg rust_sha256 "$rust_actual_sha256" \
+    --arg rust_source_commit "${RR_BINARY_SOURCE_COMMITS[rust-reality]}" \
+    --arg rust_build_id "${RR_BINARY_BUILD_IDS[rust-reality]}" \
     --arg rust_version "$rust_version" --arg xray_path "$xray_binary" \
     --argjson baseline_present "$baseline_present" \
     --arg baseline_rust_path "$baseline_rust_binary" \
     --arg baseline_rust_sha256 "$baseline_rust_actual_sha256" \
     --arg baseline_rust_version "$baseline_rust_version" \
+    --arg baseline_source_commit "${RR_BINARY_SOURCE_COMMITS[baseline-rust-reality]:-}" \
+    --arg baseline_build_id "${RR_BINARY_BUILD_IDS[baseline-rust-reality]:-}" \
     --arg xray_sha256 "$xray_actual_sha256" --arg xray_version "$xray_version" \
+    --arg xray_build_id "${RR_BINARY_BUILD_IDS[xray]}" \
+    --argjson xray_server_comparator "$xray_server_comparator" \
     --arg ciphersuites "$ciphersuites" --arg tls_groups "$tls_groups" \
     --arg alpn "$alpn" --argjson middlebox "$middlebox" \
     --argjson max_fragment "$max_fragment" --argjson split_fragment "$split_fragment" \
@@ -677,12 +774,14 @@ jq -n --slurpfile reference_self_identity "$work/reference-self-identity.json" \
     --argjson origin_port "$origin_port" \
     --argjson reference_port "$direct_reference_port" \
     --argjson xray_server_port "$xray_server_port" \
+    --argjson record_delay_port "$record_delay_port" \
     --arg strace_status "$strace_status" --arg tcpdump_status "$tcpdump_status" \
     --arg client_hello_sha256 "$client_hello_sha256" \
     --arg ephemeral_rust_config_sha256 "$ephemeral_rust_config_sha256" \
     --arg harness_sha256 "$harness_sha256" --arg helper_sha256 "$helper_sha256" \
+    --arg record_delay_fixture_sha256 "$record_delay_fixture_sha256" \
     --arg reference_source_sha256 "$reference_source_sha256" \
-    '{repository:{head:$repository_head,describe:$repository_describe,dirty:$repository_dirty,role:"capture harness worktree; not proof of binary source provenance"},captureHost:{rustc:$capture_host_rustc,cc:$capture_host_cc,kernel:$kernel,cpu:$cpu},case:$case_name,reference:{path:$reference_path,sha256:$reference_sha256,requestedVersionLabel:$reference_version_label,selfIdentity:$reference_self_identity[0],selfIdentitySha256:$reference_self_identity_sha256,buildId:$reference_build_id,certificateFileSha256:$certificate_sha256},baselineRustReality:(if $baseline_present then {path:$baseline_rust_path,sha256:$baseline_rust_sha256,version:$baseline_rust_version,logging:"warn",sourceProvenance:"UNVERIFIED_BY_HARNESS"} else null end),rustReality:{role:"candidate",path:$rust_path,sha256:$rust_sha256,version:$rust_version,logging:"warn",sourceProvenance:"UNVERIFIED_BY_HARNESS"},xray:{path:$xray_path,sha256:$xray_sha256,version:$xray_version,logging:"warning",sourceProvenance:"UNVERIFIED_BY_HARNESS"},referenceOptions:{tlsVersion:"1.3-only",ciphersuites:$ciphersuites,groups:$tls_groups,alpn:$alpn,middlebox:$middlebox,maxFragment:$max_fragment,splitFragment:$split_fragment,padding:$padding,tcpNodelay:$tcp_nodelay},topology:{network:"loopback",packetCaptureInterface:"lo",ports:{cover:$cover_port,rustRealitySequentialComparators:$rust_port,captureProxy:$proxy_port,socks:$socks_port,origin:$origin_port,opensslReference:$reference_port,xrayServer:$xray_server_port}},clientHello:{source:"stock Xray chrome/uTLS",sha256:$client_hello_sha256,sharedAcrossAllComparators:true,ephemeralServerConfigSha256:$ephemeral_rust_config_sha256,ephemeralServerConfigRetained:false},tools:{strace:$strace_status,tcpdump:$tcpdump_status},harness:{entrypointSha256:$harness_sha256,helperSha256:$helper_sha256,referenceSourceSha256:$reference_source_sha256},rawCaptureNotice:"Raw ClientHello, wire, strace, and PCAP data; keep outside Git."}' \
+    '{repository:{head:$repository_head,describe:$repository_describe,dirty:$repository_dirty,role:"capture harness worktree; binary provenance is read from each executable"},captureHost:{rustc:$capture_host_rustc,cc:$capture_host_cc,kernel:$kernel,cpu:$cpu},case:$case_name,reference:{path:$reference_path,sha256:$reference_sha256,requestedVersionLabel:$reference_version_label,selfIdentity:$reference_self_identity[0],selfIdentitySha256:$reference_self_identity_sha256,buildId:$reference_build_id,certificateFileSha256:$certificate_sha256},baselineRustReality:(if $baseline_present then {path:$baseline_rust_path,sha256:$baseline_rust_sha256,version:$baseline_rust_version,logging:"warn",sourceCommit:$baseline_source_commit,buildId:$baseline_build_id} else null end),rustReality:{role:"candidate",path:$rust_path,sha256:$rust_sha256,version:$rust_version,logging:"warn",sourceCommit:$rust_source_commit,buildId:$rust_build_id},xray:{path:$xray_path,sha256:$xray_sha256,version:$xray_version,logging:"warning",buildId:$xray_build_id,serverComparatorEnabled:($xray_server_comparator == 1)},referenceOptions:{tlsVersion:"1.3-only",ciphersuites:$ciphersuites,groups:$tls_groups,alpn:$alpn,middlebox:$middlebox,maxFragment:$max_fragment,splitFragment:$split_fragment,padding:$padding,tcpNodelay:$tcp_nodelay},topology:{network:"loopback",packetCaptureInterface:"lo",ports:{cover:$cover_port,rustRealitySequentialComparators:$rust_port,captureProxy:$proxy_port,socks:$socks_port,origin:$origin_port,opensslReference:$reference_port,xrayServer:(if $xray_server_comparator == 1 then $xray_server_port else null end),tlsRecordDelayFixture:$record_delay_port}},clientHello:{source:"stock Xray chrome/uTLS",sha256:$client_hello_sha256,sharedAcrossAllComparators:true,ephemeralServerConfigSha256:$ephemeral_rust_config_sha256,ephemeralServerConfigRetained:false},tools:{strace:$strace_status,tcpdump:$tcpdump_status},harness:{entrypointSha256:$harness_sha256,helperSha256:$helper_sha256,recordDelayFixtureSha256:$record_delay_fixture_sha256,referenceSourceSha256:$reference_source_sha256},rawCaptureNotice:"Raw ClientHello, wire, strace, and optional PCAP data; keep outside Git."}' \
     >"$output_dir/identity.json"
 
 run_reference_sample() {
@@ -727,7 +826,7 @@ run_rust_sample() {
         "$middlebox" "$max_fragment" "$split_fragment" "$padding" "$tcp_nodelay" \
         >"$work/cover-$stem.stdout" 2>"$work/cover-$stem.stderr" &
     local cover_pid=$!
-    register_pid "$cover_pid"
+    register_pid "$cover_pid" "$reference_server"
     wait_log "$work/cover-$stem.stderr" '^READY '
     python3 "$HELPER" replay --port "$rust_port" \
         --client-hello "$output_dir/clienthello.bin" \
@@ -758,7 +857,7 @@ run_xray_sample() {
         "$middlebox" "$max_fragment" "$split_fragment" "$padding" "$tcp_nodelay" \
         >"$work/cover-xray.stdout" 2>"$work/cover-xray.stderr" &
     local cover_pid=$!
-    register_pid "$cover_pid"
+    register_pid "$cover_pid" "$reference_server"
     wait_log "$work/cover-xray.stderr" '^READY '
     python3 "$HELPER" replay --port "$xray_server_port" \
         --client-hello "$output_dir/clienthello.bin" \
@@ -789,9 +888,11 @@ for sample in $(seq 1 "$samples"); do
     run_phase=sample-rust-reality
     write_run_status
     run_rust_sample "$sample_dir" rust "$rust_binary"
-    run_phase=sample-xray
-    write_run_status
-    run_xray_sample "$sample_dir"
+    if ((xray_server_comparator)); then
+        run_phase=sample-xray
+        write_run_status
+        run_xray_sample "$sample_dir"
+    fi
     run_sample=
     run_sample_dir=
 done
@@ -807,10 +908,195 @@ if [[ $baseline_present == true ]]; then
 fi
 verify_sha256 harness-entrypoint "$0" "$harness_sha256"
 verify_sha256 harness-helper "$HELPER" "$helper_sha256"
+verify_sha256 record-delay-fixture "$RECORD_DELAY_FIXTURE" \
+    "$record_delay_fixture_sha256"
 verify_sha256 reference-source "$REFERENCE_SOURCE" "$reference_source_sha256"
 "$reference_server" --identity >"$work/reference-self-identity.final.json"
 verify_sha256 reference-self-identity "$work/reference-self-identity.final.json" \
     "$reference_self_identity_sha256"
+
+run_phase=record-delay-gate
+write_run_status
+python3 "$RECORD_DELAY_FIXTURE" matrix --listen-port "$record_delay_port" \
+    --output "$output_dir/record-delay-gate.json"
+jq -e '.ok == true and .caseCount == 15 and
+    .delaysMs == [0,20,50,100,200] and
+    .probeClassifications == ["already-buffered","single-probe-present","absent-would-block"] and
+    ([.cases[].prefix.byteExact] | all) and
+    ([.cases[] | select(.observedClassification == "already-buffered") | .probeReads] | all(. == 0)) and
+    ([.cases[] | select(.observedClassification != "already-buffered") | .probeReads] | all(. == 1))' \
+    "$output_dir/record-delay-gate.json" >/dev/null ||
+    die 'TLS record-delay/NST-probe gate failed'
+
+mkdir "$output_dir/record-delay-e2e"
+e2e_case_files=()
+for delay_ms in 0 20 50 100 200; do
+    for probe_case in already-buffered absent-would-block; do
+        case_id=$(printf 'delay-%03d-%s' "$delay_ms" "$probe_case")
+        case_dir="$output_dir/record-delay-e2e/$case_id"
+        mkdir "$case_dir"
+        e2e_case_files+=("$case_dir/evidence.json")
+        emit_ccs=1
+        python3 "$RECORD_DELAY_FIXTURE" serve-cover \
+            --listen-port "$record_delay_port" --delay-ms "$delay_ms" \
+            --probe-case "$probe_case" --emit-ccs "$emit_ccs" \
+            --max-accepted 1 --absolute-timeout-seconds 15 \
+            --output "$case_dir/fixture.json" \
+            >"$case_dir/fixture.log" 2>&1 &
+        fixture_pid=$!
+        register_pid "$fixture_pid" "$(command -v python3)"
+        wait_log "$case_dir/fixture.log" '"event": "READY"'
+
+        "${proxy_free_env[@]}" "$rust_binary" serve \
+            --config "$work/rust-record-delay.json" \
+            >"$case_dir/candidate.log" 2>&1 &
+        candidate_pid=$!
+        register_pid "$candidate_pid" "$rust_binary"
+        wait_log "$case_dir/candidate.log" 'listener_started'
+        "${proxy_free_env[@]}" "$xray_binary" run \
+            -config "$work/xray-record-delay.json" \
+            >"$case_dir/xray.log" 2>&1 &
+        delay_xray_pid=$!
+        register_pid "$delay_xray_pid" "$xray_binary"
+        wait_port "$socks_port"
+        "${proxy_free_env[@]}" curl --fail --silent --show-error \
+            --socks5-hostname "127.0.0.1:$socks_port" --max-time 15 \
+            "http://127.0.0.1:$origin_port/health.txt" \
+            --output "$case_dir/payload.bin"
+        cmp -s "$work/health.txt" "$case_dir/payload.bin" ||
+            die "record-delay E2E payload differed: $case_id"
+        wait_log "$case_dir/candidate.log" 'connection_completed'
+        stop_pid "$delay_xray_pid"
+        stop_pid "$candidate_pid"
+        wait "$fixture_pid"
+        unset 'active_pids[$fixture_pid]'
+
+        python3 - "$case_id" "$delay_ms" "$probe_case" \
+            "$case_dir/fixture.json" "$case_dir/candidate.log" \
+            "$case_dir/payload.bin" "$work/health.txt" \
+            "$rust_actual_sha256" "${RR_BINARY_SOURCE_COMMITS[rust-reality]}" \
+            "$case_dir/evidence.json" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+(
+    case_id,
+    delay_text,
+    probe_case,
+    fixture_path,
+    candidate_log_path,
+    payload_path,
+    expected_payload_path,
+    candidate_sha,
+    candidate_commit,
+    output_path,
+) = sys.argv[1:]
+
+def sha(path):
+    return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
+
+fixture = json.loads(pathlib.Path(fixture_path).read_text(encoding="utf-8"))
+events = []
+cover_events = []
+for line in pathlib.Path(candidate_log_path).read_text(encoding="utf-8").splitlines():
+    try:
+        event = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if event.get("event") == "connection_completed":
+        events.append(event)
+    if event.get("event") == "cover_flight_selected":
+        cover_events.append(event)
+if len(events) != 1:
+    raise SystemExit(f"{case_id}: expected one connection_completed, got {len(events)}")
+if len(cover_events) != 1:
+    raise SystemExit(f"{case_id}: expected one cover_flight_selected, got {len(cover_events)}")
+completed = events[0]
+selected = cover_events[0]
+expected_plan = fixture["expectedCandidatePlan"]
+payload_sha = sha(payload_path)
+expected_payload_sha = sha(expected_payload_path)
+ok = (
+    fixture.get("status") == "PASS"
+    and fixture.get("expectedClassification") == probe_case
+    and completed.get("uplink_bytes", 0) > 0
+    and completed.get("downlink_bytes", 0) > 0
+    and selected.get("emit_ccs") == fixture.get("emitCcs")
+    and selected.get("layout") == expected_plan.get("layout")
+    and selected.get("wire_lens") == expected_plan.get("encryptedRecordWireLengths")
+    and selected.get("nst_wire_len") == expected_plan.get("nstWireLength")
+    and selected.get("retained_prefix_bytes") == expected_plan.get("retainedPrefixBytes")
+    and selected.get("retained_prefix_sha256") == expected_plan.get("retainedPrefixSha256")
+    and payload_sha == expected_payload_sha
+)
+evidence = {
+    "schemaVersion": 1,
+    "gate": "tls-record-delay-real-candidate-xray-e2e",
+    "case": case_id,
+    "status": "PASS" if ok else "FAIL",
+    "delayMs": int(delay_text),
+    "classification": probe_case,
+    "topology": "Xray client -> pinned rust-reality candidate -> record-aware cover; candidate -> exact HTTP origin",
+    "candidate": {"sha256": candidate_sha, "sourceCommit": candidate_commit},
+    "fixture": fixture,
+    "candidateConnectionCompleted": completed,
+    "candidateCoverFlightSelected": selected,
+    "candidateLog": {"sha256": sha(candidate_log_path)},
+    "payload": {
+        "bytes": pathlib.Path(payload_path).stat().st_size,
+        "sha256": payload_sha,
+        "expectedSha256": expected_payload_sha,
+        "byteExact": payload_sha == expected_payload_sha,
+    },
+    "ok": ok,
+}
+pathlib.Path(output_path).write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+if not ok:
+    raise SystemExit(f"{case_id}: real candidate E2E gate failed")
+PY
+        jq -e '.ok == true and .status == "PASS" and
+            .payload.byteExact == true and
+            .candidate.sha256 == $sha and .candidate.sourceCommit == $commit and
+            .candidateConnectionCompleted.uplink_bytes > 0 and
+            .candidateConnectionCompleted.downlink_bytes > 0 and
+            .candidateCoverFlightSelected.layout == "positional" and
+            .candidateCoverFlightSelected.emit_ccs == .fixture.emitCcs and
+            .candidateCoverFlightSelected.wire_lens == .fixture.expectedCandidatePlan.encryptedRecordWireLengths and
+            .candidateCoverFlightSelected.nst_wire_len == .fixture.expectedCandidatePlan.nstWireLength and
+            .candidateCoverFlightSelected.retained_prefix_bytes == .fixture.expectedCandidatePlan.retainedPrefixBytes and
+            .candidateCoverFlightSelected.retained_prefix_sha256 == .fixture.expectedCandidatePlan.retainedPrefixSha256' \
+            --arg sha "$rust_actual_sha256" \
+            --arg commit "${RR_BINARY_SOURCE_COMMITS[rust-reality]}" \
+            "$case_dir/evidence.json" >/dev/null ||
+            die "record-delay real candidate E2E evidence failed: $case_id"
+    done
+done
+python3 - "$output_dir/record-delay-e2e-summary.json" "${e2e_case_files[@]}" <<'PY'
+import json
+import pathlib
+import sys
+
+cases = [json.loads(pathlib.Path(path).read_text(encoding="utf-8")) for path in sys.argv[2:]]
+result = {
+    "schemaVersion": 1,
+    "gate": "tls-record-delay-real-candidate-xray-e2e",
+    "caseCount": len(cases),
+    "delaysMs": sorted({case["delayMs"] for case in cases}),
+    "classifications": sorted({case["classification"] for case in cases}),
+    "cases": cases,
+    "ok": len(cases) == 10 and all(case["ok"] for case in cases),
+}
+pathlib.Path(sys.argv[1]).write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+if not result["ok"]:
+    raise SystemExit("real candidate E2E summary failed")
+PY
+jq -e '.ok == true and .caseCount == 10 and
+    .delaysMs == [0,20,50,100,200] and
+    .classifications == ["absent-would-block","already-buffered"]' \
+    "$output_dir/record-delay-e2e-summary.json" >/dev/null ||
+    die 'record-delay real candidate/Xray E2E summary failed'
 
 run_phase=summarize
 write_run_status
@@ -818,13 +1104,26 @@ summary_baseline_arguments=()
 if [[ $baseline_present == true ]]; then
     summary_baseline_arguments=(--baseline-rust-present)
 fi
+summary_xray_arguments=()
+if ((! xray_server_comparator)); then
+    summary_xray_arguments=(--xray-server-comparator-disabled)
+fi
 python3 "$HELPER" summarize --identity "$output_dir/identity.json" \
     --samples-root "$output_dir/samples" --sample-count "$samples" \
     --reference-port "$direct_reference_port" --rust-port "$rust_port" \
     --xray-port "$xray_server_port" --strace-status "$strace_status" \
     --tcpdump-status "$tcpdump_status" "${summary_baseline_arguments[@]}" \
+    "${summary_xray_arguments[@]}" \
     --output "$output_dir/summary.json"
+jq --slurpfile record_delay "$output_dir/record-delay-gate.json" \
+    --slurpfile record_delay_e2e "$output_dir/record-delay-e2e-summary.json" \
+    --slurpfile reader_test "$reader_test_evidence" \
+    '. + {recordDelayGate:$record_delay[0],recordDelayCandidateE2e:$record_delay_e2e[0],recordDelayProductionReaderTest:$reader_test[0]} |
+     .status="COMPLETE" | .performanceVerdict="NOT_EVALUATED"' "$output_dir/summary.json" \
+    >"$output_dir/summary.json.tmp"
+mv -f -- "$output_dir/summary.json.tmp" "$output_dir/summary.json"
 
+rr_finalize_contract
 run_state=COMPLETE
 run_phase=complete
 write_run_status

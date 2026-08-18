@@ -40,6 +40,17 @@ if [[ "$TAG_VERSION" != "$PACKAGE_VERSION" ]]; then
     exit 1
 fi
 
+if ! TAG_OBJECT_TYPE="$(git cat-file -t "refs/tags/$RELEASE_TAG" 2>/dev/null)"; then
+    printf 'release tag object does not exist: %s\n' "$RELEASE_TAG" >&2
+    exit 1
+fi
+readonly TAG_OBJECT_TYPE
+if [[ "$TAG_OBJECT_TYPE" != tag ]]; then
+    printf 'release tag %s must be annotated, but refs/tags/%s is a %s object\n' \
+        "$RELEASE_TAG" "$RELEASE_TAG" "$TAG_OBJECT_TYPE" >&2
+    exit 1
+fi
+
 TAG_COMMIT="$(git rev-parse --verify "${RELEASE_TAG}^{commit}")"
 HEAD_COMMIT="$(git rev-parse --verify HEAD)"
 readonly TAG_COMMIT HEAD_COMMIT

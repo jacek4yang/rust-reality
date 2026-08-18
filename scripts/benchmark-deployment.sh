@@ -58,11 +58,12 @@
 #
 # Env: RUST_REALITY_BIN (server under test, default target/release/rust-reality),
 #      XRAY_BIN (default ../artifacts/xray-reference),
-#      SECTIONS ("routing cost nxr longflow"; add "rtt" — it also needs
-#      REQUIRE_NETEM=1), OUT_DIR, SMOKE (0; 1 = tiny-scale harness self-test),
+#      SECTIONS (formal default: "routing cost nxr rtt longflow"; exploratory
+#      default omits rtt), OUT_DIR, SMOKE (0; 1 = tiny-scale harness self-test),
 #      SAMPLES (3), CONNS (96), CONCURRENCIES ("8 32"), TPUT_SAMPLES (3),
 #      TPUT_CELLS ("32:1 32:32 512:32"), LONGFLOW_MIB (512),
-#      RTTS ("0 20 50 100"), KEEP_WORK (0), REQUIRE_NETEM (0), TMPDIR
+#      RTTS ("0 20 50 100 200"), LOSSES ("0 0.1 1", applied per direction),
+#      KEEP_WORK (0), REQUIRE_NETEM (0), TMPDIR
 #      (optional external work root for generated payloads and secrets).
 #
 # Exit status: 0 when the run completed and every verdict is PASS, 1 when any
@@ -75,6 +76,8 @@
 set -Eeuo pipefail
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$repository/scripts/benchmark-contract.sh"
+netem_summarizer="$repository/scripts/validate-deployment-netem.py"
 cd "$repository"
 
 # --------------------------------------------------------------------------
@@ -84,8 +87,18 @@ unset ALL_PROXY HTTP_PROXY HTTPS_PROXY NO_PROXY all_proxy http_proxy https_proxy
 
 rust_bin=${RUST_REALITY_BIN:-target/release/rust-reality}
 xray=${XRAY_BIN:-../artifacts/xray-reference}
-sections=${SECTIONS:-routing cost nxr longflow}
-out_dir=${OUT_DIR:-benchmarks/final/deployment-$(date -u +%Y%m%dT%H%M%SZ)}
+sections=${SECTIONS:-}
+rr_contract_init "$repository" benchmark-deployment benchmarks/final 128
+rr_register_binary rust-reality "$rust_bin" "${RUST_REALITY_SHA256:-}" rust \
+    "${EXPECTED_SOURCE_COMMIT:-}"
+rust_bin=${RR_BINARY_PATHS[rust-reality]}
+if [[ $RR_EXPLORATORY == 1 && $xray != /* ]]; then xray=$(command -v "$xray"); fi
+rr_register_binary xray "$xray" "${XRAY_SHA256:-}" xray
+xray=${RR_BINARY_PATHS[xray]}
+rr_register_harness_tree "$repository/scripts/bench-origin"
+rr_register_harness_file "$netem_summarizer"
+rr_write_contract_metadata
+out_dir=$RR_OUT_DIR
 smoke=${SMOKE:-0}
 samples=${SAMPLES:-3}
 conns=${CONNS:-96}
@@ -93,9 +106,12 @@ concurrencies=${CONCURRENCIES:-8 32}
 tput_samples=${TPUT_SAMPLES:-3}
 tput_cells=${TPUT_CELLS:-32:1 32:32 512:32}
 longflow_mib=${LONGFLOW_MIB:-512}
-rtts=${RTTS:-0 20 50 100}
-require_netem=${REQUIRE_NETEM:-0}
+rtts=${RTTS:-0 20 50 100 200}
+losses=${LOSSES:-0 0.1 1}
+require_netem=${REQUIRE_NETEM:-}
 driver="$repository/scripts/deployment_driver.py"
+rr_register_harness_file "$driver"
+rr_write_contract_metadata
 
 if [[ $smoke == 1 ]]; then
     samples=1
@@ -105,65 +121,163 @@ if [[ $smoke == 1 ]]; then
     tput_cells="1:2"
     longflow_mib=1
     rtts="20"
+    losses="0"
 fi
 
-temporary_root=${TMPDIR:-$repository/benchmarks}
+if [[ $RR_EXPLORATORY == 0 ]]; then
+    sections=${sections:-routing cost nxr rtt longflow}
+    require_netem=${require_netem:-1}
+    [[ $smoke == 0 ]] || {
+        echo "formal deployment evidence cannot use SMOKE=1" >&2
+        exit 2
+    }
+    [[ $require_netem == 1 ]] || {
+        echo "formal deployment evidence requires REQUIRE_NETEM=1" >&2
+        exit 2
+    }
+    python3 - "$sections" "$samples" "$conns" "$concurrencies" \
+        "$tput_samples" "$tput_cells" "$longflow_mib" "$rtts" "$losses" <<'PY'
+import sys
+
+sections = sys.argv[1].split()
+if sections != ["routing", "cost", "nxr", "rtt", "longflow"]:
+    raise SystemExit(
+        "formal SECTIONS must be exactly: routing cost nxr rtt longflow"
+    )
+try:
+    samples = int(sys.argv[2])
+    connections = int(sys.argv[3])
+    concurrencies = [int(value) for value in sys.argv[4].split()]
+    throughput_samples = int(sys.argv[5])
+    throughput_cells = [
+        tuple(int(part) for part in value.split(":"))
+        for value in sys.argv[6].split()
+    ]
+    longflow_mib = int(sys.argv[7])
+    rtts = sys.argv[8].split()
+    losses = sys.argv[9].split()
+    parsed_rtts = [int(value) for value in rtts]
+    parsed_losses = [float(value) for value in losses]
+except ValueError as error:
+    raise SystemExit(f"invalid formal deployment dimension: {error}")
+if samples < 3 or connections < 96:
+    raise SystemExit("formal SAMPLES must be >=3 and CONNS must be >=96")
+if concurrencies != [8, 32]:
+    raise SystemExit("formal CONCURRENCIES must be exactly: 8 32")
+if throughput_samples < 3:
+    raise SystemExit("formal TPUT_SAMPLES must be >=3")
+if throughput_cells != [(32, 1), (32, 32), (512, 32)]:
+    raise SystemExit("formal TPUT_CELLS must be exactly: 32:1 32:32 512:32")
+if longflow_mib < 512:
+    raise SystemExit("formal LONGFLOW_MIB must be >=512")
+if len(parsed_rtts) != 5 or set(parsed_rtts) != {0, 20, 50, 100, 200}:
+    raise SystemExit("formal RTTS must contain exactly 0 20 50 100 200")
+if len(parsed_losses) != 3 or set(parsed_losses) != {0.0, 0.1, 1.0}:
+    raise SystemExit("formal LOSSES must contain exactly 0 0.1 1")
+PY
+else
+    sections=${sections:-routing cost nxr longflow}
+    require_netem=${require_netem:-0}
+fi
+[[ $require_netem == 0 || $require_netem == 1 ]] || {
+    echo "REQUIRE_NETEM must be 0 or 1" >&2
+    exit 2
+}
+
+temporary_root=$RR_TMPDIR
 work=$(mktemp -d "$temporary_root/rust-reality-deployment.XXXXXX")
 pids=()
 ns_pidfiles=()
 netns_name=""
+host_veth=""
+ns_veth=""
+netns_created=0
+host_veth_created=0
+netns_identity=""
+host_veth_ifindex=""
 
 log() { printf '[deployment %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
+
+current_netns_identity() {
+    sudo -n stat -Lc '%d:%i' -- "/run/netns/$1" 2>/dev/null
+}
+
+current_link_ifindex() {
+    cat -- "/sys/class/net/$1/ifindex" 2>/dev/null
+}
 
 # --------------------------------------------------------------------------
 # Cleanup: every spawned process, then network state, then the work dir.
 # --------------------------------------------------------------------------
 netns_teardown() {
-    if [[ -n $netns_name ]]; then
-        log "netns: tearing down $netns_name (veth pair is destroyed with it)"
+    local current
+    if (( netns_created == 1 )); then
+        log "netns: tearing down owned namespace $netns_name"
         for pidfile in "${ns_pidfiles[@]:-}"; do
-            [[ -f $pidfile ]] && kill "$(cat "$pidfile")" 2>/dev/null || true
+            [[ -f $pidfile ]] && rr_stop_registered_pid "$(cat "$pidfile")"
         done
-        sudo -n ip netns del "$netns_name" 2>/dev/null || true
-        sudo -n ip link del veth-rd0 2>/dev/null || true
-        netns_name=""
-        log "netns: teardown done; remaining namespaces: $(sudo -n ip netns list 2>/dev/null)"
+        current=$(current_netns_identity "$netns_name" || true)
+        if [[ -n $netns_identity && $current == "$netns_identity" ]]; then
+            sudo -n ip netns del "$netns_name"
+            netns_created=0
+        elif [[ -z $current ]]; then
+            log "netns: owned namespace $netns_name is already absent"
+            netns_created=0
+        else
+            log "netns: REFUSING to delete $netns_name: identity changed (expected $netns_identity, got $current)"
+        fi
     fi
+
+    if (( host_veth_created == 1 )); then
+        current=$(current_link_ifindex "$host_veth" || true)
+        if [[ -n $host_veth_ifindex && $current == "$host_veth_ifindex" ]]; then
+            sudo -n ip link del "$host_veth"
+            host_veth_created=0
+        elif [[ -z $current ]]; then
+            log "netns: owned link $host_veth is already absent"
+            host_veth_created=0
+        else
+            log "netns: REFUSING to delete $host_veth: ifindex changed (expected $host_veth_ifindex, got $current)"
+        fi
+    fi
+    if (( netns_created == 0 && host_veth_created == 0 )); then
+        netns_name=""
+        host_veth=""
+        ns_veth=""
+        netns_identity=""
+        host_veth_ifindex=""
+    fi
+    log "netns: teardown done; remaining namespaces: $(sudo -n ip netns list 2>/dev/null)"
 }
 
 cleanup() {
+    local exit_status=$?
+    trap - EXIT INT TERM
+    set +e
     netns_teardown
     for pid in "${pids[@]:-}"; do
-        kill "$pid" 2>/dev/null || true
-        wait "$pid" 2>/dev/null || true
+        rr_stop_registered_pid "$pid"
     done
     if [[ ${KEEP_WORK:-0} == 1 ]]; then
         log "work dir retained: $work"
     else
         rm -rf -- "$work"
     fi
+    local final_rc
+    rr_contract_verify_on_exit "$exit_status"
+    final_rc=$?
+    exit "$final_rc"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 for program in curl jq python3 go openssl sha256sum; do
     command -v "$program" >/dev/null || { echo "missing: $program" >&2; exit 2; }
 done
-[[ -x $rust_bin ]] || { echo "RUST_REALITY_BIN not executable: $rust_bin" >&2; exit 2; }
-[[ -x $xray ]] || { echo "XRAY_BIN not executable: $xray" >&2; exit 2; }
-rust_bin=$(readlink -f "$rust_bin")
-xray=$(readlink -f "$xray")
-
-mkdir -p "$out_dir"
 log "servers log at warn level (longflow landing at debug, by design); out: $out_dir"
 
-free_port() {
-    python3 - <<'PY'
-import socket
-with socket.socket() as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-}
+free_port() { rr_next_port; }
 
 wait_port() {
     python3 - "$1" "$2" "${3:-10}" <<'PY'
@@ -184,7 +298,10 @@ PY
 start_logged() {
     local logfile=$1; shift
     "$@" > "$logfile" 2>&1 &
-    pids+=("$!")
+    local pid=$! expected=
+    pids+=("$pid")
+    if [[ $1 == "$rust_bin" || $1 == "$xray" ]]; then expected=$1; fi
+    rr_register_pid "$pid" "$expected"
 }
 
 # --------------------------------------------------------------------------
@@ -515,8 +632,7 @@ PY
     else
         log "section routing: FAIL (see routing-correctness.jsonl)"
     fi
-    kill "$server_pid" 2>/dev/null || true
-    wait "$server_pid" 2>/dev/null || true
+    rr_stop_registered_pid "$server_pid"
 }
 
 # ==========================================================================
@@ -562,8 +678,7 @@ section_cost() {
                 --samples "$samples" --conns "$conns" \
                 --concurrencies "$concurrencies" \
                 --out "$out_dir/setup-cost-$name.jsonl"
-        kill "$server_pid" 2>/dev/null || true
-        wait "$server_pid" 2>/dev/null || true
+        rr_stop_registered_pid "$server_pid"
     done
 }
 
@@ -729,7 +844,11 @@ section_rtt() {
         command -v "$tool" >/dev/null || { echo "rtt section needs: $tool" >&2; return 1; }
     done
     sudo -n true || { echo "rtt section needs passwordless sudo (netns/tc only)" >&2; return 1; }
-    netns_name="rrdeploy-gate"
+    local net_suffix
+    net_suffix=$(printf '%s' "$RR_RUN_ID" | sha256sum | cut -c1-8)
+    netns_name="rrd-$net_suffix"
+    host_veth="rdh$net_suffix"
+    ns_veth="rdn$net_suffix"
     if sudo -n ip netns list | grep -qx "$netns_name"; then
         echo "netns $netns_name already exists; refusing to touch it" >&2
         return 1
@@ -745,13 +864,19 @@ section_rtt() {
 
     log "netns: ip netns add $netns_name"
     sudo -n ip netns add "$netns_name"
-    log "netns: veth pair veth-rd0 (host, 10.203.0.1/30) <-> veth-rd1 ($netns_name, 10.203.0.2/30)"
-    sudo -n ip link add veth-rd0 type veth peer name veth-rd1
-    sudo -n ip link set veth-rd1 netns "$netns_name"
-    sudo -n ip addr add 10.203.0.1/30 dev veth-rd0
-    sudo -n ip link set veth-rd0 up
-    sudo -n ip netns exec "$netns_name" ip addr add 10.203.0.2/30 dev veth-rd1
-    sudo -n ip netns exec "$netns_name" ip link set veth-rd1 up
+    netns_created=1
+    netns_identity=$(current_netns_identity "$netns_name")
+    [[ -n $netns_identity ]] || { echo "could not capture namespace identity" >&2; return 1; }
+    log "netns: veth pair $host_veth (host, 10.203.0.1/30) <-> $ns_veth ($netns_name, 10.203.0.2/30)"
+    sudo -n ip link add "$host_veth" type veth peer name "$ns_veth"
+    host_veth_created=1
+    host_veth_ifindex=$(current_link_ifindex "$host_veth")
+    [[ $host_veth_ifindex =~ ^[1-9][0-9]*$ ]] || { echo "could not capture veth ifindex" >&2; return 1; }
+    sudo -n ip link set "$ns_veth" netns "$netns_name"
+    sudo -n ip addr add 10.203.0.1/30 dev "$host_veth"
+    sudo -n ip link set "$host_veth" up
+    sudo -n ip netns exec "$netns_name" ip addr add 10.203.0.2/30 dev "$ns_veth"
+    sudo -n ip netns exec "$netns_name" ip link set "$ns_veth" up
     sudo -n ip netns exec "$netns_name" ip link set lo up
 
     # start_ns_process <pidfile> <logfile> <command...>: the sudo/netns entry
@@ -759,12 +884,27 @@ section_rtt() {
     # runs as root.
     start_ns_process() {
         local pidfile=$1 logfile=$2; shift 2
+        local command_path=$1 outer_pid inner_pid expected= attempt
         sudo -n ip netns exec "$netns_name" \
             setpriv --reuid "$(id -u)" --regid "$(id -g)" --clear-groups \
             bash -c 'echo $$ > "$1"; shift; exec "$@"' _ "$pidfile" "$@" \
             > "$logfile" 2>&1 &
-        pids+=("$!")
+        outer_pid=$!
+        pids+=("$outer_pid")
+        rr_register_pid "$outer_pid"
         ns_pidfiles+=("$pidfile")
+        for attempt in $(seq 1 100); do
+            [[ -s $pidfile ]] && break
+            sleep 0.01
+        done
+        [[ -s $pidfile ]] || {
+            echo "namespace child did not publish its exact PID: $pidfile" >&2
+            return 1
+        }
+        inner_pid=$(cat "$pidfile")
+        [[ $command_path == "$rust_bin" ]] && expected=$rust_bin
+        rr_register_pid "$inner_pid" "$expected"
+        pids+=("$inner_pid")
     }
 
     # wait_ns_port <port>: probe the namespace loopback from inside (the host
@@ -845,26 +985,52 @@ section_rtt() {
     start_client "$port_line_c" "$pub_c" "$uuid_c" "$sid_c" rtt-c
     local socks_c=$CLIENT_SOCKS
 
-    local rtt half observed
+    local rtt half observed loss loss_name profile
+    : >"$state/profiles.jsonl"
     for rtt in $rtts; do
         half=$((rtt / 2))
-        log "netns: tc qdisc replace dev veth-rd0/veth-rd1 root netem delay ${half}ms (target RTT ${rtt}ms)"
-        sudo -n "$tc" qdisc replace dev veth-rd0 root netem delay "${half}ms"
-        sudo -n ip netns exec "$netns_name" "$tc" qdisc replace dev veth-rd1 root netem delay "${half}ms"
-        observed=$(ping -n -c 3 -i 0.2 -w 5 10.203.0.2 | awk -F'/' '/^rtt/ {print $5}')
-        log "netns: measured RTT ${observed:-?} ms (target ${rtt} ms)"
-        echo "rtt=$rtt half_delay_ms=$half observed_rtt_ms=$observed" >> "$state/rtts.txt"
-        python3 "$driver" setup-rate --path /payload-0.bin --label "rtt${rtt}-nxr" \
-            --socks-port "$socks_b" --host 127.0.0.1 --port "$ns_origin_port" \
-            --samples "$samples" --conns "$conns" \
-            --concurrencies "$concurrencies" \
-            --out "$out_dir/setup-rtt${rtt}-nxr.jsonl"
-        python3 "$driver" setup-rate --path /payload-0.bin --label "rtt${rtt}-socks" \
-            --socks-port "$socks_c" --host 127.0.0.1 --port "$ns_origin_port" \
-            --samples "$samples" --conns "$conns" \
-            --concurrencies "$concurrencies" \
-            --out "$out_dir/setup-rtt${rtt}-socks.jsonl"
+        for loss in $losses; do
+            [[ $loss =~ ^([0-9]+)(\.[0-9]+)?$ ]] || {
+                echo "LOSSES contains an invalid percentage: $loss" >&2
+                return 1
+            }
+            loss_name=${loss//./p}
+            profile="rtt${rtt}-loss${loss_name}"
+            log "netns: tc netem delay ${half}ms loss ${loss}% per direction (target RTT ${rtt}ms)"
+            sudo -n "$tc" qdisc replace dev "$host_veth" root netem \
+                delay "${half}ms" loss "${loss}%"
+            sudo -n ip netns exec "$netns_name" "$tc" qdisc replace dev "$ns_veth" \
+                root netem delay "${half}ms" loss "${loss}%"
+            observed=$(ping -n -c 5 -i 0.2 -w 8 10.203.0.2 |
+                awk -F'/' '/^rtt/ {print $5}')
+            log "netns: measured RTT ${observed:-?} ms for $profile"
+            printf 'rtt=%s half_delay_ms=%s per_direction_loss_percent=%s observed_rtt_ms=%s\n' \
+                "$rtt" "$half" "$loss" "${observed:-}" >> "$state/rtts.txt"
+            local nxr_raw="$out_dir/setup-${profile}-nxr.jsonl"
+            local socks_raw="$out_dir/setup-${profile}-socks.jsonl"
+            python3 "$driver" setup-rate --path /payload-0.bin --label "${profile}-nxr" \
+                --socks-port "$socks_b" --host 127.0.0.1 --port "$ns_origin_port" \
+                --samples "$samples" --conns "$conns" \
+                --concurrencies "$concurrencies" --out "$nxr_raw"
+            python3 "$driver" setup-rate --path /payload-0.bin --label "${profile}-socks" \
+                --socks-port "$socks_c" --host 127.0.0.1 --port "$ns_origin_port" \
+                --samples "$samples" --conns "$conns" \
+                --concurrencies "$concurrencies" --out "$socks_raw"
+            jq -cn --arg profile "$profile" --argjson rtt "$rtt" \
+                --arg loss "$loss" --arg observed "${observed:-}" \
+                --arg nxr "$nxr_raw" --arg socks "$socks_raw" \
+                '{profile:$profile,targetRttMs:$rtt,perDirectionLossPercent:($loss|tonumber),
+                  observedRttMs:(if $observed == "" then null else ($observed|tonumber) end),
+                  raw:{nxr:$nxr,socks:$socks}}' >>"$state/profiles.jsonl"
+        done
     done
+
+    python3 "$netem_summarizer" \
+        --profiles "$state/profiles.jsonl" \
+        --output "$out_dir/summary-netem.json" \
+        --rtts "$rtts" --losses "$losses" \
+        --concurrencies "$concurrencies" \
+        --samples "$samples" --connections "$conns"
 
     echo "=== after: tc qdisc show (before teardown)" | tee -a "$state/netstate.txt"
     sudo -n "$tc" qdisc show | tee -a "$state/netstate.txt"
@@ -924,8 +1090,7 @@ section_longflow() {
         --expected-sha256 "$(payload_sha "$longflow_mib")" \
         --out "$out_dir/tput-longflow-${longflow_mib}mib-c1.jsonl"
     sleep 1  # let the landing flush its events
-    kill "$pid_landing" 2>/dev/null || true
-    wait "$pid_landing" 2>/dev/null || true
+    rr_stop_registered_pid "$pid_landing"
 
     if python3 "$driver" relay-evidence \
         --log "$work/server-lf-landing.log" \
@@ -982,6 +1147,37 @@ for section in $sections; do
 done
 
 verdict=0
-python3 "$driver" summarize --out-dir "$out_dir" || verdict=1
-log "done; results in $out_dir (overall verdict: $(jq -r .overallVerdict "$out_dir/summary.json"))"
+summarize_args=(summarize --out-dir "$out_dir")
+if [[ $RR_EXPLORATORY == 0 ]]; then
+    summarize_args+=(--formal-plan --samples "$samples" --connections "$conns"
+        --concurrencies "$concurrencies" --throughput-samples "$tput_samples"
+        --throughput-cells "$tput_cells" --longflow-mib "$longflow_mib"
+        --rtts "$rtts" --losses "$losses")
+fi
+python3 "$driver" "${summarize_args[@]}" || verdict=1
+if [[ $require_netem == 1 && ! -s $out_dir/summary-netem.json ]]; then
+    echo "REQUIRE_NETEM=1 but no complete netem profile summary was produced" >&2
+    jq '.overallVerdict="FAIL" | .gateVerdict="FAIL" |
+        .dataQualityVerdict="FAIL" |
+        .failedSections=((.failedSections // []) + ["netemProfiles"] | unique)' \
+        "$out_dir/summary.json" >"$work/summary.failed.json"
+    mv -- "$work/summary.failed.json" "$out_dir/summary.json"
+    verdict=1
+fi
+if [[ $require_netem == 1 ]] && ! jq -e '
+    .verdict == "PASS"
+    and .dataQualityVerdict == "PASS"
+    and .performanceVerdict == "NOT_EVALUATED"
+    and .actualProfileCount == .expectedProfileCount
+    and .actualRawRecordCount == .expectedRawRecordCount
+    and (.missingProfiles | length) == 0
+    and (.unexpectedProfiles | length) == 0
+' "$out_dir/summary-netem.json" >/dev/null; then
+    echo "netem summary is incomplete or has an invalid Cartesian product" >&2
+    verdict=1
+fi
+if (( verdict == 0 )); then
+    rr_finalize_contract || verdict=1
+fi
+log "done; results in $out_dir (correctness/data gate: $(jq -r .gateVerdict "$out_dir/summary.json"); performance: NOT_EVALUATED)"
 exit "$verdict"

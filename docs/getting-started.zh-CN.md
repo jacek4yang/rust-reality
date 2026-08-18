@@ -8,17 +8,22 @@
 ## 1. 下载并验证 Release
 
 从[最新 Release](https://github.com/jacek4yang/rust-reality/releases/latest)
-下载压缩包、manifest 和校验文件，安装前验证全部资产：
+下载两个压缩包、manifest 和校验文件，安装前验证全部资产：
 
 ```shell
 sha256sum --check SHA256SUMS
+# portable 包（不确定 CPU 能力时推荐）：
 tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
+# 或在 x86-64-v3 CPU 上使用：
+# tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 rust-reality --version
 ```
 
-`release-manifest.json` 记录版本、标签、确切源码 commit、目标三元组、源码
-时间戳、压缩包名称和压缩包 SHA-256。不要混用不同 Release 的资产。
+`release-manifest.json` schema v2 记录版本、标签、确切源码 commit、目标三元组、
+源码时间戳、两个压缩包的名称和 SHA-256，以及各压缩包的 CPU 要求。portable
+包面向基线 x86-64；优化包要求 x86-64-v3，且没有运行时回退。不要混用不同
+Release 的资产。
 
 ## 2. 探测伪装目标
 

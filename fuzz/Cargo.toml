@@ -47,5 +47,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "cover_flight"
+path = "fuzz_targets/cover_flight.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 members = ["."]

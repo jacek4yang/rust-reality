@@ -21,7 +21,7 @@ jobs:
     name: Verify, build, and package
     if: github.repository == 'jacek4yang/rust-reality'
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 90
     permissions:
       contents: read
 
@@ -59,11 +59,14 @@ jobs:
       - name: Run repository quality gates
         run: ./scripts/check.sh
 
-      - name: Build release binary
+      - name: Build portable and x86-64-v3 release binaries
         run: ./scripts/build-release.sh
 
-      - name: Package deterministic release assets
+      - name: Package deterministic dual-tier release assets
         run: ./scripts/package-release.sh "$GITHUB_REF_NAME" "$RELEASE_TARGET"
+
+      - name: Smoke-test both packaged CPU tiers
+        run: ./scripts/smoke-release-assets.sh "$GITHUB_REF_NAME" "$RELEASE_TARGET"
 
       - name: Preserve verified release assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -101,21 +104,38 @@ jobs:
           readonly verification_directory
           trap 'rm -rf -- "$verification_directory"' EXIT
 
-          if release_is_draft="$(
-              gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft \
+          if release_state="$(
+              gh release view "$GITHUB_REF_NAME" \
+                  --json isDraft,isPrerelease \
+                  --jq '[.isDraft, .isPrerelease] | @tsv' \
                   2>/dev/null
           )"; then
+            IFS=$'\t' read -r release_is_draft release_is_prerelease \
+                <<<"$release_state"
+            [[ "$release_is_draft" == true || "$release_is_draft" == false ]]
+            if [[ "$release_is_prerelease" != false ]]; then
+              printf 'refusing to publish over prerelease %s\n' \
+                  "$GITHUB_REF_NAME" >&2
+              exit 1
+            fi
             if [[ "$release_is_draft" == false ]]; then
               gh release download "$GITHUB_REF_NAME" \
                   --dir "$verification_directory"
               diff --brief --recursive \
                   "$asset_directory" "$verification_directory"
+              published_state="$(
+                  gh release view "$GITHUB_REF_NAME" \
+                      --json isDraft,isPrerelease \
+                      --jq '[.isDraft, .isPrerelease] | @tsv'
+              )"
+              [[ "$published_state" == $'false\tfalse' ]]
               printf 'published assets already match %s\n' "$GITHUB_REF_NAME"
               exit 0
             fi
           else
             gh release create "$GITHUB_REF_NAME" \
               --draft \
+              --prerelease=false \
               --generate-notes \
               --title "rust-reality $GITHUB_REF_NAME" \
               --verify-tag
@@ -126,4 +146,11 @@ jobs:
               --dir "$verification_directory"
           diff --brief --recursive \
               "$asset_directory" "$verification_directory"
-          gh release edit "$GITHUB_REF_NAME" --draft=false
+          gh release edit "$GITHUB_REF_NAME" \
+              --draft=false --prerelease=false
+          published_state="$(
+              gh release view "$GITHUB_REF_NAME" \
+                  --json isDraft,isPrerelease \
+                  --jq '[.isDraft, .isPrerelease] | @tsv'
+          )"
+          [[ "$published_state" == $'false\tfalse' ]]
