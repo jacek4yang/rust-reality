@@ -429,12 +429,21 @@ const fn default_asset_max_bytes() -> u64 {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DnsConfig {
-    /// Resolver addresses or URLs in priority order.
+    /// Upstream resolvers in priority order.
+    ///
+    /// Exactly `["system"]` selects the operating system resolver (getaddrinfo).
+    /// Any other list selects the built-in DNS protocol resolver; each entry is
+    /// an IP literal (`1.1.1.1`, `[2606:4700:4700::1111]:53`) or a hostname
+    /// resolved once through the system resolver at startup, with an optional
+    /// `:port` (default 53). Plain UDP with TCP fallback is used.
     #[serde(default = "default_dns_servers")]
     pub servers: Vec<String>,
     /// Absolute timeout for one resolution attempt.
     #[serde(default = "default_dns_timeout_ms")]
     pub timeout_ms: u64,
+    /// Shared resolution cache bounds.
+    #[serde(default)]
+    pub cache: DnsCacheConfig,
 }
 
 impl Default for DnsConfig {
@@ -442,6 +451,7 @@ impl Default for DnsConfig {
         Self {
             servers: default_dns_servers(),
             timeout_ms: default_dns_timeout_ms(),
+            cache: DnsCacheConfig::default(),
         }
     }
 }
@@ -452,6 +462,70 @@ fn default_dns_servers() -> Vec<String> {
 
 const fn default_dns_timeout_ms() -> u64 {
     5_000
+}
+
+/// Bounds for the shared DNS resolution cache.
+///
+/// Dynamic answers are cached only when their TTL is backed by the upstream
+/// resolver: with `dns.servers = ["system"]` the system resolver exposes no
+/// TTLs, so only singleflight coalescing applies and nothing is cached. With
+/// real DNS servers every cached positive or negative answer carries the
+/// upstream TTL clamped to these bounds. Static configured peers (REALITY
+/// cover target, fixed SOCKS5/NXR/Handoff endpoints) are the explicit
+/// exception: the operator owns their staleness through `staticTtlSeconds`,
+/// so they are cached in every resolver mode.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DnsCacheConfig {
+    /// Maximum number of cached names, counting positive, negative, and
+    /// in-flight entries. Memory stays bounded at this many entries.
+    #[serde(default = "default_dns_cache_max_entries")]
+    pub max_entries: u32,
+    /// Floor clamp applied to upstream positive TTLs.
+    #[serde(default = "default_dns_cache_min_ttl_seconds")]
+    pub min_ttl_seconds: u32,
+    /// Ceiling clamp applied to upstream positive TTLs.
+    #[serde(default = "default_dns_cache_max_ttl_seconds")]
+    pub max_ttl_seconds: u32,
+    /// Ceiling clamp applied to upstream negative (SOA) TTLs. NXDOMAIN and
+    /// NODATA answers without an SOA TTL are never cached.
+    #[serde(default = "default_dns_cache_negative_ttl_seconds")]
+    pub negative_ttl_seconds: u32,
+    /// Cache duration for static configured peers, in every resolver mode.
+    #[serde(default = "default_dns_cache_static_ttl_seconds")]
+    pub static_ttl_seconds: u32,
+}
+
+impl Default for DnsCacheConfig {
+    fn default() -> Self {
+        Self {
+            max_entries: default_dns_cache_max_entries(),
+            min_ttl_seconds: default_dns_cache_min_ttl_seconds(),
+            max_ttl_seconds: default_dns_cache_max_ttl_seconds(),
+            negative_ttl_seconds: default_dns_cache_negative_ttl_seconds(),
+            static_ttl_seconds: default_dns_cache_static_ttl_seconds(),
+        }
+    }
+}
+
+const fn default_dns_cache_max_entries() -> u32 {
+    1_024
+}
+
+const fn default_dns_cache_min_ttl_seconds() -> u32 {
+    5
+}
+
+const fn default_dns_cache_max_ttl_seconds() -> u32 {
+    3_600
+}
+
+const fn default_dns_cache_negative_ttl_seconds() -> u32 {
+    60
+}
+
+const fn default_dns_cache_static_ttl_seconds() -> u32 {
+    300
 }
 
 /// Xray-compatible DNS resolution modes.

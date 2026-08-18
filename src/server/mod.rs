@@ -2,6 +2,7 @@
 
 pub mod connector;
 pub mod direct;
+pub mod dns;
 pub mod fallback;
 pub mod handoff;
 pub mod nxr;

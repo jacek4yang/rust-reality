@@ -6,7 +6,7 @@ use std::{
 };
 
 use tokio::{
-    net::{TcpStream, lookup_host},
+    net::TcpStream,
     task::JoinSet,
     time::{self, Instant},
 };
@@ -27,6 +27,21 @@ pub(crate) fn literal_socket_addr(host: &str, port: u16) -> Option<SocketAddr> {
     host.parse::<IpAddr>()
         .ok()
         .map(|ip| SocketAddr::new(ip, port))
+}
+
+/// Splits a `host:port` target, tolerating bracketed IPv6 literals. Bare IPv6
+/// literals without a port are not valid targets and return `None`.
+fn split_target(target: &str) -> Option<(&str, u16)> {
+    let (host, port) = target.rsplit_once(':')?;
+    let port = port.parse().ok()?;
+    let host = host
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .unwrap_or(host);
+    if host.is_empty() {
+        return None;
+    }
+    Some((host, port))
 }
 
 /// Connects to a combined `host:port` target, skipping the blocking resolver
@@ -206,8 +221,20 @@ impl DestinationConnector {
                 .map(|ip| SocketAddr::new(ip, destination.port()))
                 .collect()),
             Address::Domain(domain) => {
-                self.host_addresses(domain, destination.port(), deadline)
+                if let Some(address) = literal_socket_addr(domain, destination.port()) {
+                    return Ok(vec![address]);
+                }
+                // Client-requested destinations resolve as dynamic values:
+                // cached only when the upstream answer carries a real TTL.
+                let ips = super::dns::shared()
+                    .resolve(
+                        domain,
+                        super::dns::IpFamily::Any,
+                        deadline.saturating_duration_since(Instant::now()),
+                    )
                     .await
+                    .map_err(|error| self.map_dns_error(error))?;
+                Self::collect_ips(&ips, destination.port())
             }
         }
     }
@@ -221,13 +248,17 @@ impl DestinationConnector {
         if let Some(address) = literal_socket_addr(host, port) {
             return Ok(vec![address]);
         }
-        let resolved = time::timeout_at(deadline, lookup_host((host, port)))
+        // `connect_host` dials only operator-configured fixed peers, so this
+        // resolution is cached as a static value in every resolver mode.
+        let ips = super::dns::shared()
+            .resolve_static(
+                host,
+                super::dns::IpFamily::Any,
+                deadline.saturating_duration_since(Instant::now()),
+            )
             .await
-            .map_err(|_| DestinationConnectError::TimedOut {
-                timeout: self.connect_timeout,
-            })?
-            .map_err(DestinationConnectError::Io)?;
-        Self::collect_resolved(resolved)
+            .map_err(|error| self.map_dns_error(error))?;
+        Self::collect_ips(&ips, port)
     }
 
     async fn target_addresses(
@@ -238,24 +269,48 @@ impl DestinationConnector {
         if let Ok(address) = target.parse::<SocketAddr>() {
             return Ok(vec![address]);
         }
-        let resolved = time::timeout_at(deadline, lookup_host(target))
+        let Some((host, port)) = split_target(target) else {
+            return Err(DestinationConnectError::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("target {target:?} is not a host:port endpoint"),
+            )));
+        };
+        if let Some(address) = literal_socket_addr(host, port) {
+            return Ok(vec![address]);
+        }
+        // `connect_target` dials only operator-configured targets (the REALITY
+        // cover destination), so this resolution is cached as a static value.
+        let ips = super::dns::shared()
+            .resolve_static(
+                host,
+                super::dns::IpFamily::Any,
+                deadline.saturating_duration_since(Instant::now()),
+            )
             .await
-            .map_err(|_| DestinationConnectError::TimedOut {
-                timeout: self.connect_timeout,
-            })?
-            .map_err(DestinationConnectError::Io)?;
-        Self::collect_resolved(resolved)
+            .map_err(|error| self.map_dns_error(error))?;
+        Self::collect_ips(&ips, port)
     }
 
-    fn collect_resolved<I>(resolved: I) -> Result<Vec<SocketAddr>, DestinationConnectError>
-    where
-        I: IntoIterator<Item = SocketAddr>,
-    {
+    fn map_dns_error(&self, error: super::dns::DnsError) -> DestinationConnectError {
+        match error {
+            super::dns::DnsError::Timeout => DestinationConnectError::TimedOut {
+                timeout: self.connect_timeout,
+            },
+            super::dns::DnsError::TooManyAddresses => {
+                DestinationConnectError::TooManyResolvedAddresses
+            }
+            super::dns::DnsError::Allocation => DestinationConnectError::Allocation,
+            other => DestinationConnectError::Io(io::Error::other(other)),
+        }
+    }
+
+    fn collect_ips(ips: &[IpAddr], port: u16) -> Result<Vec<SocketAddr>, DestinationConnectError> {
         let mut addresses = Vec::new();
         addresses
-            .try_reserve_exact(MAX_PRE_RESOLVED_IPS)
+            .try_reserve_exact(ips.len().min(MAX_PRE_RESOLVED_IPS))
             .map_err(|_| DestinationConnectError::Allocation)?;
-        for address in resolved {
+        for ip in ips {
+            let address = SocketAddr::new(*ip, port);
             if addresses.contains(&address) {
                 continue;
             }

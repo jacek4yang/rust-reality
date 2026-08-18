@@ -177,13 +177,77 @@ fn validate_assets_and_dns(config: &Config) -> Result<(), ConfigError> {
     if !(1024..=512 * 1024 * 1024).contains(&config.assets.max_bytes) {
         return fail("assets.maxBytes", "must be between 1024 and 536870912");
     }
-    if config.dns.servers != ["system"] {
+    validate_dns_servers(&config.dns)?;
+    validate_timeout("dns.timeoutMs", config.dns.timeout_ms)?;
+    validate_dns_cache(&config.dns.cache)
+}
+
+/// Upper bound for every DNS cache entry count and TTL field.
+const MAX_DNS_CACHE_ENTRIES: u32 = 65_536;
+/// Upper bound for DNS cache TTL fields (one day).
+const MAX_DNS_TTL_SECONDS: u32 = 86_400;
+
+fn validate_dns_servers(dns: &crate::config::DnsConfig) -> Result<(), ConfigError> {
+    if dns.servers.is_empty() {
         return fail(
             "dns.servers",
-            "currently supports exactly one system resolver; custom resolvers must not be ignored",
+            "must name the system resolver or upstream servers",
         );
     }
-    validate_timeout("dns.timeoutMs", config.dns.timeout_ms)
+    let system = dns
+        .servers
+        .iter()
+        .filter(|server| server.as_str() == "system")
+        .count();
+    if system > 0 && dns.servers.len() > 1 {
+        return fail(
+            "dns.servers",
+            "the system resolver must not be mixed with upstream DNS servers",
+        );
+    }
+    if system == 1 {
+        return Ok(());
+    }
+    for (index, server) in dns.servers.iter().enumerate() {
+        crate::server::dns::parse_server_spec(server).map_err(|reason| {
+            ConfigError::new(format!("dns.servers[{index}]"), reason.to_string())
+        })?;
+    }
+    Ok(())
+}
+
+fn validate_dns_cache(cache: &crate::config::DnsCacheConfig) -> Result<(), ConfigError> {
+    if !(1..=MAX_DNS_CACHE_ENTRIES).contains(&cache.max_entries) {
+        return fail(
+            "dns.cache.maxEntries",
+            format!("must be between 1 and {MAX_DNS_CACHE_ENTRIES}"),
+        );
+    }
+    if cache.max_ttl_seconds == 0 || cache.max_ttl_seconds > MAX_DNS_TTL_SECONDS {
+        return fail(
+            "dns.cache.maxTtlSeconds",
+            format!("must be between 1 and {MAX_DNS_TTL_SECONDS}"),
+        );
+    }
+    if cache.min_ttl_seconds > cache.max_ttl_seconds {
+        return fail(
+            "dns.cache.minTtlSeconds",
+            "must not exceed dns.cache.maxTtlSeconds",
+        );
+    }
+    if cache.negative_ttl_seconds > MAX_DNS_TTL_SECONDS {
+        return fail(
+            "dns.cache.negativeTtlSeconds",
+            format!("must not exceed {MAX_DNS_TTL_SECONDS}"),
+        );
+    }
+    if cache.static_ttl_seconds == 0 || cache.static_ttl_seconds > MAX_DNS_TTL_SECONDS {
+        return fail(
+            "dns.cache.staticTtlSeconds",
+            format!("must be between 1 and {MAX_DNS_TTL_SECONDS}"),
+        );
+    }
+    Ok(())
 }
 
 fn validate_asset_url(path: &str, value: &str) -> Result<(), ConfigError> {
@@ -2288,15 +2352,73 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unimplemented_custom_dns_resolvers() {
+    fn accepts_custom_dns_resolvers_with_valid_syntax() {
         let mut config = valid_config();
-        config.dns.servers = vec!["1.1.1.1".to_owned()];
+        config.dns.servers = vec!["1.1.1.1".to_owned(), "[2606:4700:4700::1111]:53".to_owned()];
+        validate_config(&config).expect("IP literal resolvers must validate");
+
+        config.dns.servers = vec!["dns.example.com:853".to_owned()];
+        validate_config(&config).expect("hostname resolver with port must validate");
+    }
+
+    #[test]
+    fn rejects_mixed_system_and_custom_dns_resolvers() {
+        let mut config = valid_config();
+        config.dns.servers = vec!["system".to_owned(), "1.1.1.1".to_owned()];
 
         assert_eq!(
             validate_config(&config)
-                .expect_err("custom DNS must not be silently ignored")
+                .expect_err("system must not mix with upstream servers")
                 .path(),
             "dns.servers"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_dns_server_entries() {
+        for servers in [
+            vec![String::new()],
+            vec!["1.1.1.1:99999".to_owned()],
+            vec!["-bad-.example.com".to_owned()],
+            vec!["example.com:noport".to_owned()],
+        ] {
+            let mut config = valid_config();
+            config.dns.servers = servers;
+            assert!(
+                validate_config(&config).is_err(),
+                "invalid dns.servers must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_incoherent_dns_cache_bounds() {
+        let mut config = valid_config();
+        config.dns.cache.max_entries = 0;
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("zero-entry cache must be rejected")
+                .path(),
+            "dns.cache.maxEntries"
+        );
+
+        let mut config = valid_config();
+        config.dns.cache.min_ttl_seconds = 600;
+        config.dns.cache.max_ttl_seconds = 60;
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("min TTL above max TTL must be rejected")
+                .path(),
+            "dns.cache.minTtlSeconds"
+        );
+
+        let mut config = valid_config();
+        config.dns.cache.static_ttl_seconds = 0;
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("zero static TTL must be rejected")
+                .path(),
+            "dns.cache.staticTtlSeconds"
         );
     }
 
