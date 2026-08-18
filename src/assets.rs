@@ -1357,7 +1357,8 @@ mod tests {
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("asset request must arrive");
             let mut request = [0_u8; 4096];
-            stream.read(&mut request).expect("asset request must read");
+            let length = stream.read(&mut request).expect("asset request must read");
+            assert!(length > 0, "asset request must not be empty");
             let headers = format!(
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 body.len()
@@ -1399,7 +1400,8 @@ mod tests {
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("asset request must arrive");
             let mut request = [0_u8; 4096];
-            stream.read(&mut request).expect("asset request must read");
+            let length = stream.read(&mut request).expect("asset request must read");
+            assert!(length > 0, "asset request must not be empty");
             let body = vec![0_u8; maximum + 2];
             let headers = format!(
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -1452,7 +1454,8 @@ mod tests {
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("asset request must arrive");
             let mut request = [0_u8; 4096];
-            stream.read(&mut request).expect("asset request must read");
+            let length = stream.read(&mut request).expect("asset request must read");
+            assert!(length > 0, "asset request must not be empty");
             let body = vec![0_u8; maximum + 1];
             let headers = format!(
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -1617,7 +1620,8 @@ mod tests {
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("asset request must arrive");
             let mut request = [0_u8; 4096];
-            stream.read(&mut request).expect("asset request must read");
+            let length = stream.read(&mut request).expect("asset request must read");
+            assert!(length > 0, "asset request must not be empty");
             stream
                 .write_all(response.as_bytes())
                 .expect("asset response must write");
