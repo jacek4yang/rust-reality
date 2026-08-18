@@ -45,6 +45,14 @@ impl<V> AdaptiveUserMap<V> {
             Self::Hashed(entries) => entries.len(),
         }
     }
+
+    /// Visits every stored value once (repeat users share one policy value).
+    pub(crate) fn for_each_value(&self, mut visit: impl FnMut(&V)) {
+        match self {
+            Self::Sorted(entries) => entries.iter().for_each(|(_, value)| visit(value)),
+            Self::Hashed(entries) => entries.values().for_each(visit),
+        }
+    }
 }
 
 impl<V> Default for AdaptiveUserMap<V> {

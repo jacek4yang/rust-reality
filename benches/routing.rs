@@ -99,7 +99,11 @@ impl AssetMatcher for BenchAssets {
             .is_some_and(|(_, networks)| {
                 let address = u32::from(address);
                 networks.iter().any(|(network, prefix)| {
-                    let mask = if *prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
+                    let mask = if *prefix == 0 {
+                        0
+                    } else {
+                        u32::MAX << (32 - prefix)
+                    };
                     address & mask == *network
                 })
             })
@@ -210,13 +214,13 @@ fn generated_rule(index: usize) -> GlobalRule {
         }
         _ => rule.ip = vec![format!("geoip:gi{}", index % 4)],
     }
-    if index % 7 == 0 {
+    if index.is_multiple_of(7) {
         rule.port = vec![PortMatcher("8000-9000".to_owned())];
     }
-    if index % 11 == 0 {
+    if index.is_multiple_of(11) {
         rule.network = vec![Network::Tcp];
     }
-    if index % 13 == 0 {
+    if index.is_multiple_of(13) {
         rule.inbound_tag = vec!["other-in".to_owned()];
     }
     rule
@@ -274,7 +278,7 @@ fn secondary_policy() -> UserPolicy {
         .collect();
     UserPolicy {
         name: "secondary".to_owned(),
-        user_ids: vec!["22222222-2222-4222-8222-222222222222".to_owned()],
+        user_ids: vec!["22222222-2222-2222-2222-222222222222".to_owned()],
         default_outbound: "direct".to_owned(),
         rules,
     }
@@ -373,7 +377,10 @@ fn fixture(size: usize, case: Case) -> Fixture {
         }
         Case::UserPolicy => {
             user_id = SECONDARY_USER;
-            Destination::new(Address::Domain("secondary-probe.target.bench".to_owned()), 443)
+            Destination::new(
+                Address::Domain("secondary-probe.target.bench".to_owned()),
+                443,
+            )
         }
     };
     let config = RoutingConfig {
@@ -382,7 +389,7 @@ fn fixture(size: usize, case: Case) -> Fixture {
         users: vec![
             UserPolicy {
                 name: "primary".to_owned(),
-                user_ids: vec!["11111111-1111-4111-8111-111111111111".to_owned()],
+                user_ids: vec!["11111111-1111-1111-1111-111111111111".to_owned()],
                 default_outbound: "direct".to_owned(),
                 rules,
             },
