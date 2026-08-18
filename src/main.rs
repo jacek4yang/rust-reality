@@ -29,7 +29,7 @@ use rust_reality::{
         generate_node_key, generate_uuid, generate_x25519_key_pair,
     },
     server::{
-        probe::{DestinationProbeError, probe_destination, probe_destination_pattern},
+        probe::{DestinationProbeError, probe_destination},
         production::{ProductionServer, ProductionServerError},
         routing::{RoutingCompileError, RoutingTable},
     },
@@ -451,16 +451,19 @@ fn run_self_test(arguments: ConfigPath) -> Result<(), CliError> {
     let probe_timeout = Duration::from_millis(config.policy.resource_governor.connect_timeout_ms);
     let reality_destinations = runtime.block_on(async {
         let mut reports = Vec::new();
+        let network_environment = rust_reality::network::NetworkEnvironment::detect();
         for inbound in &config.inbounds {
             let Some(inbound) = inbound.as_vless() else {
                 continue;
             };
             for server_name in &inbound.stream_settings.reality_settings.server_names {
                 reports.push(
-                    probe_destination_pattern(
+                    rust_reality::server::probe::probe_destination_pattern_with_network(
                         &inbound.stream_settings.reality_settings.target,
                         server_name,
                         probe_timeout,
+                        &config.network,
+                        network_environment.clone(),
                     )
                     .await?,
                 );

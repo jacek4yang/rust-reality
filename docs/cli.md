@@ -109,7 +109,7 @@ policy.
 
 | Option | Required | Default | Meaning |
 | --- | --- | --- | --- |
-| `--listen <IP>` | no | `0.0.0.0` | Public bind address. |
+| `--listen <IP>` | no | `0.0.0.0` | Public bind address; an unspecified value generates inbound `listen.mode: auto` with separate IPv4 and IPv6 sockets. |
 | `--port <PORT>` | no | `443` | Public TCP port, `1..=65535`. |
 | `--target <HOST:PORT>` | yes | — | REALITY cover target. |
 | `--server-name <DNS_NAME>` | yes | — | Client SNI and allowed server name. |
@@ -147,7 +147,7 @@ VLESS, REALITY, Vision, or TLS state.
 
 | Option | Required | Default | Meaning |
 | --- | --- | --- | --- |
-| `--listen <IP>` | no | `0.0.0.0` | Internal bind address. |
+| `--listen <IP>` | no | `0.0.0.0` | Internal bind address; the generated `auto` policy expands an unspecified address to separate IPv4 and IPv6 sockets. |
 | `--port <PORT>` | no | `7443` | Internal NXR TCP port. |
 | `--nxr-key <BASE64>` | yes | — | Same PSK used by the line node's NXR outbound. |
 

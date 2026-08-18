@@ -19,7 +19,8 @@ use tokio::{
 use zeroize::Zeroizing;
 
 use crate::{
-    config::NxrInboundConfig,
+    config::{NetworkConfig, NxrInboundConfig},
+    network::NetworkEnvironment,
     protocol::{
         nxr::{
             NxrKey, NxrProtocolError, REQUEST_HEADER_LEN, decode_authenticated_request,
@@ -301,6 +302,8 @@ impl NxrLandingHandler {
         replay: NxrReplayCache,
         relay: TcpRelay,
         liveness: Duration,
+        network: &NetworkConfig,
+        network_environment: NetworkEnvironment,
     ) -> Result<Self, NxrLandingConfigError> {
         let decoded = Zeroizing::new(
             BASE64_URL_SAFE_NO_PAD
@@ -311,7 +314,7 @@ impl NxrLandingHandler {
             .as_slice()
             .try_into()
             .map_err(|_| NxrLandingConfigError::Key)?;
-        Ok(Self::new(
+        let mut handler = Self::new(
             NxrAuthenticator::new(
                 NxrKey::new(key),
                 replay,
@@ -321,12 +324,18 @@ impl NxrLandingHandler {
             Duration::from_millis(inbound.settings.authentication_timeout_ms),
             relay,
             liveness,
-        ))
+        );
+        handler.connector = DestinationConnector::with_environment(
+            Duration::from_millis(inbound.settings.connect_timeout_ms),
+            network.clone(),
+            network_environment,
+        );
+        Ok(handler)
     }
 
     /// Creates a landing handler from already compiled policy.
     #[must_use]
-    pub const fn new(
+    pub fn new(
         authenticator: NxrAuthenticator,
         connect_timeout: Duration,
         authentication_timeout: Duration,
@@ -355,12 +364,15 @@ impl NxrLandingHandler {
         let destination = self.authenticator.authenticate(&request, now)?;
         // The descriptor unit is reserved before connect(2) and outlives the
         // relay: the outbound socket closes before its unit is released.
-        let _fd_permit = self
-            .relay
-            .fd_budget()
-            .try_acquire(crate::runtime::UNITS_OUTBOUND_SOCKET)
-            .ok_or(NxrLandingError::DescriptorBudget)?;
-        let outbound = self.connector.connect(&destination).await?;
+        let connected = self
+            .connector
+            .connect_resolved_accounted(&destination, &[], self.relay.fd_budget())
+            .await
+            .map_err(|error| match error {
+                DestinationConnectError::DescriptorBudget => NxrLandingError::DescriptorBudget,
+                error => NxrLandingError::Destination(error),
+            })?;
+        let (outbound, _fd_permit) = connected.into_parts();
         // The landing handler owns both complete sockets, so every backend,
         // including those that must duplicate or register a descriptor, is
         // eligible for this path. The liveness bound keeps a stalled peer from

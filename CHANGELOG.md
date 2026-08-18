@@ -2,6 +2,39 @@
 
 All notable user-facing changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Per-inbound `listen` topology with `auto`, `dualStack`, `ipv4Only`, and
+  `ipv6Only`; IPv4 and IPv6 use independent sockets and IPv6 is explicitly
+  `IPV6_V6ONLY` before bind.
+- A bounded process-wide outbound startup snapshot and two-family runtime
+  health state with route refresh, classified failure evidence, hysteresis,
+  expiry, and recovery trials.
+- Bounded Happy-Eyeballs-style dialing for locally resolved peers: one DNS
+  snapshot, one absolute deadline, at most two live candidates, one FD permit
+  per live socket, and drained losing tasks.
+
+### Changed
+
+- Replaced the combined `network.addressFamily` model with independent
+  `inbounds[].listen` and `network.dial` configuration. This is intentionally
+  not backward compatible; obsolete fields and scalar listeners are rejected.
+- `listen.mode: auto` degrades only genuine family/protocol unavailability and
+  logs exact active/unavailable families. Address conflicts, permission
+  failures, and invalid concrete addresses remain fatal; `dualStack` requires
+  both families.
+- Outbound `auto` derives its stable initial ordering from local route/source
+  capability and system address-selection behavior. Refusal, reset, generic
+  timeout, one destination failure, and cancelled race losers no longer create
+  global hard-family penalties.
+- Same-host release validation against `main` found Direct relay throughput
+  changes between -1.46% and +0.56% across upload, download, and full-duplex at
+  concurrency 1 and 32. Setup CPU/connection was +0.55%; numeric IPv4 setup was
+  unchanged, numeric IPv6 was +1.12%, and immediate IPv6-refusal fallback was
+  30.9% faster than the original pull-request head.
+
 ## [1.4.0] - 2026-08-11
 
 ### Added

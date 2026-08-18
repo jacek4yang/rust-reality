@@ -92,6 +92,37 @@ pub enum LogEvent {
         /// Bound address.
         address: SocketAddr,
     },
+    /// One family of an `auto` listener was unavailable at startup.
+    ListenerFamilyUnavailable {
+        /// Validated inbound tag.
+        tag: String,
+        /// Stable family name.
+        family: &'static str,
+        /// Address whose bind failed.
+        address: SocketAddr,
+        /// Raw operating-system error number, when present.
+        errno: Option<i32>,
+    },
+    /// Final active/unavailable family set for one logical listener.
+    ListenerTopologyActive {
+        /// Validated inbound tag.
+        tag: String,
+        /// Families with active sockets.
+        active_families: Vec<&'static str>,
+        /// Degradable families that were unavailable.
+        unavailable_families: Vec<&'static str>,
+    },
+    /// Immutable process-wide outbound startup decision.
+    OutboundNetworkInitialized {
+        /// Configured dialing mode.
+        mode: &'static str,
+        /// Initial process-wide primary family.
+        primary_family: &'static str,
+        /// Kernel route/source evidence for IPv4.
+        ipv4_available: bool,
+        /// Kernel route/source evidence for IPv6.
+        ipv6_available: bool,
+    },
     /// A connection was accepted. Emitted only at debug level.
     ConnectionAccepted {
         /// Remote address.
@@ -307,6 +338,8 @@ impl LogEvent {
             Self::ServerStarting
             | Self::ConfigurationPublished { .. }
             | Self::ListenerStarted { .. }
+            | Self::ListenerTopologyActive { .. }
+            | Self::OutboundNetworkInitialized { .. }
             | Self::RelayBackendReport { .. }
             | Self::DescriptorBudgetReport { .. }
             | Self::MachineReport { .. } => LogLevel::Info,
@@ -316,6 +349,7 @@ impl LogEvent {
             Self::ConnectionRejected { .. }
             | Self::AdmissionLimited { .. }
             | Self::ConfigurationRejected { .. }
+            | Self::ListenerFamilyUnavailable { .. }
             | Self::HandoffRotationWindowOpen { .. }
             | Self::DescriptorPressureChanged { .. }
             | Self::ResourcePressureChanged { .. }

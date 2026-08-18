@@ -7,7 +7,8 @@ use std::{
 };
 
 use crate::{
-    config::{ResourceGovernorConfig, VlessInboundConfig},
+    config::{NetworkConfig, ResourceGovernorConfig, VlessInboundConfig},
+    network::NetworkEnvironment,
     protocol::{
         reality::{
             RealityAuthConfigError, RealityAuthenticator, ReplayCache, ReplayError,
@@ -194,6 +195,8 @@ impl RealityAcceptor {
         policy: &ResourceGovernorConfig,
         replay: ReplayCache,
         relay: crate::transport::TcpRelay,
+        network: &NetworkConfig,
+        network_environment: NetworkEnvironment,
     ) -> Result<Self, RealityAcceptorConfigError> {
         let reality = &inbound.stream_settings.reality_settings;
         let authenticator = RealityAuthenticator::from_inbound(inbound)
@@ -205,11 +208,13 @@ impl RealityAcceptor {
             authenticator,
             replay,
             identity,
-            fallback: RealityFallback::new(
+            fallback: RealityFallback::with_environment(
                 reality.target.as_str(),
                 governor.clone(),
                 policy,
                 relay,
+                network,
+                network_environment,
             ),
             governor,
             inbound_tag: Arc::from(inbound.tag.as_str()),
@@ -484,6 +489,8 @@ mod tests {
                 crate::runtime::FdBudget::new(4_096),
             )
             .expect("test relay must build"),
+            &config.network,
+            crate::network::NetworkEnvironment::detect(),
         )
         .expect("validated inbound must compile");
         let (mut client, server, peer_addr) = tcp_pair().await;
@@ -556,6 +563,8 @@ mod tests {
                 crate::runtime::FdBudget::new(4_096),
             )
             .expect("test relay must build"),
+            &config.network,
+            crate::network::NetworkEnvironment::detect(),
         )
         .expect("validated inbound must compile");
         let (mut client, server, peer_addr) = tcp_pair().await;

@@ -435,9 +435,9 @@ assembly. Neither replaces watching the first minutes of real traffic.
 
 | Hot-reloadable (`systemctl reload`) | Restart required |
 | --- | --- |
-| logging, assets, DNS timeout | listener topology (addresses, ports, inbound count) |
+| logging, assets, DNS timeout | listener topology (`mode`, addresses, ports, inbound count) |
 | VLESS users / REALITY state | `runtime` (including `resourceMode`) |
-| outbounds / routing | `policy.resourceGovernor` |
+| outbounds / routing | `network.dial`, `policy.resourceGovernor` |
 | NXR keys and timeouts — only when replay capacity is unchanged | `policy.directBarrier`, `policy.relay` |
 | | NXR `maxNonceEntries` / `nonceRetentionSeconds` |
 
@@ -843,6 +843,9 @@ and file). The operational set (VERIFIED names):
 | Event | Meaning | Normal? | Relevant config | Next measurement |
 | --- | --- | --- | --- | --- |
 | `server_starting` | Process startup began | once per start | — | — |
+| `outbound_network_initialized` | Cached route availability and initial outbound primary | once per start | `network.dial` | Do detected families match the host route table? |
+| `listener_topology_active` | Exact active/unavailable families for one inbound | once per inbound per start | `inbounds[].listen` | Is `auto` degradation expected? |
+| `listener_family_unavailable` | `auto` could not bind one genuinely unavailable family | only on single-family hosts | `inbounds[].listen` | Confirm errno and the active family. |
 | `listener_started` | Inbound bound and ready (`tag`, `address`) | once per listener per start | `inbounds` | — |
 | `machine_report` | Detected CPU/memory/FD view (dedicated mode) | once per start | `runtime.resourceMode` | `available_cpus`, `memory_total`, `memory_source` match the VPS? (§5) |
 | `descriptor_budget_report` | Derived FD budget | once per start | `LimitNOFILE` | `fd_effective_budget`, `fd_clamped` (§6) |
@@ -1249,14 +1252,14 @@ an illustration for one 4C8G host with a database, not a recipe:
 CPUQuota=300%        # 3 of 4 cores: co-tenant inventory showed the DB using ≈1
 MemoryHigh=3500M     # throttling tripwire below the hard cap
 MemoryMax=4G         # 8G total − measured DB working set ≈3G − OS margin
-LimitNOFILE=1048576  # covers 2 FDs × planned sessions plus reserves (§6)
+LimitNOFILE=1048576  # covers 3 setup FDs × planned sessions plus reserves (§6)
 ```
 
 `CPUQuota` comes from cores you can actually spare (28.1 + 28.2);
 `MemoryMax` from `MemAvailable` minus the co-tenants' measured working
 sets; `MemoryHigh` sits below it so the kernel throttles before it kills;
-`LimitNOFILE` covers ≈2 descriptors per planned session plus the fixed
-reserves. `CPUWeight` (default 100) only matters under contention — raise
+`LimitNOFILE` covers the 3-descriptor dual-family setup peak per planned
+session (2 after setup) plus the fixed reserves. `CPUWeight` (default 100) only matters under contention — raise
 it if the proxy must win CPU fights with the co-tenants.
 
 ### 28.5 Calibrate the saturation knee

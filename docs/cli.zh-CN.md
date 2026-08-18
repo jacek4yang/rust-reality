@@ -98,7 +98,7 @@ rust-reality config generate standalone \
 
 | 选项 | 必填 | 默认值 | 含义 |
 | --- | --- | --- | --- |
-| `--listen <IP>` | 否 | `0.0.0.0` | 公网绑定地址。 |
+| `--listen <IP>` | 否 | `0.0.0.0` | 公网绑定地址；未指定值会生成入站 `listen.mode: auto` 及独立 IPv4/IPv6 套接字。 |
 | `--port <PORT>` | 否 | `443` | 公网 TCP 端口，`1..=65535`。 |
 | `--target <HOST:PORT>` | 是 | — | REALITY 伪装目标。 |
 | `--server-name <DNS_NAME>` | 是 | — | 客户端 SNI 和允许的服务名。 |
@@ -134,7 +134,7 @@ rust-reality config generate landing \
 
 | 选项 | 必填 | 默认值 | 含义 |
 | --- | --- | --- | --- |
-| `--listen <IP>` | 否 | `0.0.0.0` | 内部绑定地址。 |
+| `--listen <IP>` | 否 | `0.0.0.0` | 内部绑定地址；生成的 `auto` 策略会把未指定地址展开成独立 IPv4/IPv6 套接字。 |
 | `--port <PORT>` | 否 | `7443` | 内部 NXR TCP 端口。 |
 | `--nxr-key <BASE64>` | 是 | — | 与线路机 NXR 出站相同的 PSK。 |
 

@@ -123,8 +123,9 @@ rust-reality self-test --config config.tuned.json
 rust-reality serve --config config.tuned.json
 ```
 
-生成的 JSON 已包含 UUID、REALITY 私钥、归该 UUID 独占的两个 short ID 和
-direct 路由策略。供客户端
+生成的 JSON 已包含 UUID、REALITY 私钥、归该 UUID 独占的两个 short ID、入站
+`listen.mode: auto`、出站 `network.dial.mode: auto` 和 direct 路由策略。入站使用
+独立 IPv4/IPv6 套接字，出站由进程级自适应状态选择地址族。供客户端
 使用的 REALITY 公钥写入标准错误，使服务器私密配置可以单独保存。两个输出都应
 妥善保护；示例目标必须替换成从实际部署机器执行 `probe-dest` 能通过的目标。
 完整步骤（含线路机/落地机 NXR 拓扑）见

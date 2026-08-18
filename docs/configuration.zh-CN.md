@@ -26,6 +26,7 @@ rust-reality config format --config config.json > config.formatted.json
   "log": {},
   "assets": {},
   "dns": {},
+  "network": {},
   "inbounds": [],
   "outbounds": [],
   "routing": {},
@@ -39,6 +40,7 @@ rust-reality config format --config config.json > config.formatted.json
 | `log` | 否 | stderr/info | 日志目标、级别和有界文件保留。 |
 | `assets` | 否 | 社区 GeoIP/GeoSite URL 和有界缓存默认值 | 路由资产来源与刷新策略。 |
 | `dns` | 否 | 系统解析器、5000 ms | IP 辅助路由使用的 DNS 行为。 |
+| `network` | 否 | 自治双栈 | 监听地址族、本地地址族选择、健康记忆和回退时序。 |
 | `inbounds` | 是 | — | 至少一个强类型 `vless` 或内部 `nxr`、`handoff` 监听。 |
 | `outbounds` | 是 | — | 至少一个 `direct`、`blackhole`、`socks5`、`nxr` 或 `handoff` 传输。 |
 | `routing` | 是 | — | 全局规则和显式 UUID 分组策略。 |
@@ -88,11 +90,59 @@ rust-reality config format --config config.json > config.formatted.json
 一个域名最多保留 64 个唯一地址。direct 出站复用 IP/GeoIP 路由决策使用的同一地址
 快照，避免第二次解析得到不一致结果。
 
+## `network`
+
+```json
+{
+  "dial": {
+    "mode": "auto",
+    "fallbackDelayMs": 250,
+    "routeRefreshSeconds": 30,
+    "hardFailurePenaltySeconds": 30,
+    "latencyMemorySeconds": 300
+  }
+}
+```
+
+| 字段 | 必填 | 默认值/允许值 | 含义与约束 |
+| --- | --- | --- | --- |
+| `network.dial.mode` | 否 | `auto`；`auto`、`preferIpv4`、`preferIpv6`、`ipv4Only`、`ipv6Only` | 控制本进程解析并拨号的端点地址族；不控制入站监听。 |
+| `network.dial.fallbackDelayMs` | 否 | `250` | 启动首个备用地址族尝试前的延迟，`0..=5000`；首选族立即失败时不等待。 |
+| `network.dial.routeRefreshSeconds` | 否 | `30` | 本地内核路由/源地址刷新周期，`1..=3600`。 |
+| `network.dial.hardFailurePenaltySeconds` | 否 | `30` | 连续强地址族失败后的降级时间及有界恢复探测间隔，`1..=3600`。 |
+| `network.dial.latencyMemorySeconds` | 否 | `300` | 每地址族成功建连延迟 EWMA 的记忆时间，`1..=86400`。 |
+
+启动时，`auto` 只做一次本地内核路由/源地址选择并缓存为进程级快照。仅一个地址族
+可用时选它为主；两个都可用时，以系统解析器/地址选择顺序建立稳定的初始偏好，绝不
+无证据硬编码 IPv4 或 IPv6。检测不发送数据包，也不会访问公共探测主机。
+`preferIpv4`/`preferIpv6` 启用两族并在可用时选择指定族；`ipv4Only`/`ipv6Only`
+是严格模式，连数字字面量在内的另一族结果都会被过滤。
+
+周期路由刷新与真实连接结果只更新两个固定原子健康记录。连续两次
+`EAFNOSUPPORT`、`EPROTONOSUPPORT`、`ENETUNREACH`、`EHOSTUNREACH`、
+`EADDRNOTAVAIL` 或 `ENODEV` 才触发临时惩罚。`ECONNREFUSED` 与
+`ECONNRESET` 证明该族路径可达，并清除待定强失败；普通超时或单个不可达目标不会
+污染全局健康。备用族获胜而首选尝试仍挂起只算弱证据，连续三次才切换主族。路由恢复
+或惩罚到期后允许有界恢复尝试，两次成功后恢复配置/启动偏好。
+
+混合 A/AAAA 结果会去重并交错排列。最多同时进行两个 connect；所有尝试共用一个绝对
+截止时间；首个成功者获胜；返回前会取消并回收落败任务和套接字。每个活动候选都持有
+一个 FD 预算单位；第二个单位不可用时会串行回退，绝不突破预算。SOCKS5/NXR/Handoff
+服务器名称使用此策略解析；有意交给远端代理的原始目标保持不变。
+
 ## `inbounds`
 
-`inbounds` 不得为空。每个监听的 `tag` 唯一，两个条目不能绑定相同
+`inbounds` 不得为空。每个监听的 `tag` 唯一，两个条目展开后不能绑定相同
 `(listen, port)`。tag 长度 1–64，只能包含 ASCII 字母、数字、点、横线和下划线。
 `port` 范围 `1..=65535`。
+
+每个 `listen` 都是包含 `mode`、`ipv4`、`ipv6` 的对象。`auto` 尝试两个独立
+套接字，至少一个绑定成功即可启动；只有地址族/协议不可用（`EAFNOSUPPORT`、
+`EPROTONOSUPPORT`，或未指定通配地址上的 `EADDRNOTAVAIL`）可降级。
+`EADDRINUSE`、`EACCES`、无效具体地址以及其他绑定错误均为致命。
+`dualStack` 强制两族都成功；`ipv4Only`/`ipv6Only` 只绑定指定地址。IPv6 套接字
+始终在 bind 前设置 `IPV6_V6ONLY=1`，不依赖 `net.ipv6.bindv6only`。启动日志会
+准确列出活动与不可用地址族；拓扑到重启前固定。监听或出站拨号策略变更都需要重启。
 
 ### 公网 VLESS + REALITY + Vision 入站
 
@@ -100,7 +150,7 @@ rust-reality config format --config config.json > config.formatted.json
 {
   "protocol": "vless",
   "tag": "public-reality",
-  "listen": "0.0.0.0",
+  "listen": { "mode": "auto", "ipv4": "0.0.0.0", "ipv6": "::" },
   "port": 443,
   "settings": {
     "clients": [
@@ -129,17 +179,11 @@ rust-reality config format --config config.json > config.formatted.json
 以上占位符故意不能直接使用。请通过 `config generate standalone`、
 `config generate line` 或 `config generate handoff` 生成真实状态。
 
-**v1.2 → v1.3 迁移：**把 `streamSettings.realitySettings.shortIds` 移进其
-所属的 `settings.clients[]` 对象，并改名为 `shortIds`，然后删除旧字段。单客户端
-可原样移动整个数组；多客户端必须拆分或重新生成，使每个 UUID 至少有一个，且
-任何 short ID 都不出现在两个 UUID 下。每台客户端设备改用其 UUID 所拥有的一个
-值。v1.3 会刻意拒绝含糊的旧共享列表，不会替认证凭据猜测归属关系。
-
 | 字段 | 必填 | 默认值/固定值 | 含义与约束 |
 | --- | --- | --- | --- |
 | `protocol` | 是 | 固定 `vless` | 选择唯一公网协议。 |
 | `tag` | 是 | — | 唯一监听/路由 tag。 |
-| `listen` | 是 | — | IPv4 或 IPv6 绑定地址。 |
+| `listen` | 是 | — | 含 `mode`（`auto`、`dualStack`、`ipv4Only`、`ipv6Only`）及 `ipv4`/`ipv6` 地址的对象。 |
 | `port` | 是 | — | 非零 TCP 端口。 |
 | `settings.clients` | 是 | — | 非空授权客户端数组；UUID 在所有公网入站中全局唯一。 |
 | `settings.clients[].id` | 是 | — | 带横线的规范 UUID；身份比较时十六进制大小写不敏感。 |
@@ -174,7 +218,7 @@ rust-reality config format --config config.json > config.formatted.json
 {
   "protocol": "nxr",
   "tag": "internal-nxr",
-  "listen": "0.0.0.0",
+  "listen": { "mode": "auto", "ipv4": "0.0.0.0", "ipv6": "::" },
   "port": 7443,
   "settings": {
     "preSharedKey": "GENERATED-NXR-KEY",
@@ -191,7 +235,7 @@ rust-reality config format --config config.json > config.formatted.json
 | --- | --- | --- | --- |
 | `protocol` | 是 | 固定 `nxr` | 选择内部落地协议。 |
 | `tag` | 是 | — | 唯一监听/运维 tag。 |
-| `listen` | 是 | — | 内部绑定地址，必须由主机/云防火墙限制。 |
+| `listen` | 是 | — | 独立的入站监听拓扑；内部地址必须由主机/云防火墙限制。 |
 | `port` | 是 | — | 非零原始 NXR TCP 端口。 |
 | `settings.preSharedKey` | 是 | — | 独立 URL-safe 无填充 base64，解码为恰好 32 字节。 |
 | `settings.maxTimeDifferenceSeconds` | 否 | `30` | 接受的绝对墙上时钟差，`1..=300`。 |
@@ -209,7 +253,7 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 {
   "protocol": "handoff",
   "tag": "internal-handoff",
-  "listen": "0.0.0.0",
+  "listen": { "mode": "auto", "ipv4": "0.0.0.0", "ipv6": "::" },
   "port": 7443,
   "settings": {
     "preSharedKey": "GENERATED-HANDOFF-KEY",
@@ -227,7 +271,7 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 | --- | --- | --- | --- |
 | `protocol` | 是 | 固定 `handoff` | 选择内部会话转移协议。 |
 | `tag` | 是 | — | 唯一监听/运维 tag。 |
-| `listen` | 是 | — | 内部绑定地址，必须由主机/云防火墙限制。 |
+| `listen` | 是 | — | 独立的入站监听拓扑；内部地址必须由主机/云防火墙限制。 |
 | `port` | 是 | — | 非零原始 Handoff TCP 端口。 |
 | `settings.preSharedKey` | 是 | — | 独立 URL-safe 无填充 base64，解码为恰好 32 字节；与线路机 handoff 出站共享的成对 PSK。 |
 | `settings.privateKey` | 是 | — | 独立的静态 X25519 私钥，URL-safe 无填充 base64，解码为恰好 32 字节；其公钥即线路出站的 `landingPublicKey`。 |
@@ -675,7 +719,8 @@ generation，已有连接继续使用其获取的 generation。
 
 必须重启：
 
-- 添加/删除监听、修改绑定地址/端口，或改变某地址的协议；
+- 添加/删除监听、修改 `listen.mode`、任一绑定地址、端口或协议；
+- 任意 `network.dial` 修改，因为启动快照与共享健康状态属于进程生命周期；
 - 任意 `runtime` 修改，因为资源模式影响进程生命周期的描述符预算和内存监控器；
 - 任意 `policy.resourceGovernor` 修改，因为 REALITY 重放 admission/状态属于进程生命周期；
 - 任意 `policy.directBarrier` 修改，因为直连拨号 authority 属于进程生命周期；

@@ -30,6 +30,7 @@ Top-level shape:
   "log": {},
   "assets": {},
   "dns": {},
+  "network": {},
   "inbounds": [],
   "outbounds": [],
   "routing": {},
@@ -43,6 +44,7 @@ Top-level shape:
 | `log` | no | stderr/info | Logging sink, severity, and bounded file retention. |
 | `assets` | no | community GeoIP/GeoSite URLs and bounded cache defaults | Routing asset sources and refresh policy. |
 | `dns` | no | system resolver, 5000 ms | DNS behavior used by IP-assisted routing. |
+| `network` | no | autonomous dual stack | Listener families, local family selection, health memory, and fallback timing. |
 | `inbounds` | yes | — | At least one strictly typed `vless` or internal `nxr` or `handoff` listener. |
 | `outbounds` | yes | — | At least one `direct`, `blackhole`, `socks5`, `nxr`, or `handoff` transport. |
 | `routing` | yes | — | Global rules and explicit per-UUID policy groups. |
@@ -96,11 +98,72 @@ At most 64 unique addresses are retained for one routed domain. A direct
 outbound reuses the exact resolved snapshot used by GeoIP/IP rules, avoiding a
 second inconsistent lookup.
 
+## `network`
+
+```json
+{
+  "dial": {
+    "mode": "auto",
+    "fallbackDelayMs": 250,
+    "routeRefreshSeconds": 30,
+    "hardFailurePenaltySeconds": 30,
+    "latencyMemorySeconds": 300
+  }
+}
+```
+
+| Field | Required | Default / allowed | Meaning and constraints |
+| --- | --- | --- | --- |
+| `network.dial.mode` | no | `auto`; `auto`, `preferIpv4`, `preferIpv6`, `ipv4Only`, `ipv6Only` | Families enabled for endpoints resolved and dialed locally. It never controls inbound listeners. |
+| `network.dial.fallbackDelayMs` | no | `250` | Delay before the first alternate-family attempt, `0..=5000`. Zero starts both immediately. An immediate preferred-family error launches the alternate without waiting. |
+| `network.dial.routeRefreshSeconds` | no | `30` | Interval for local kernel route/source-address refresh, `1..=3600`. |
+| `network.dial.hardFailurePenaltySeconds` | no | `30` | Deprioritization and bounded recovery-probe interval after repeated strong family failures, `1..=3600`. |
+| `network.dial.latencyMemorySeconds` | no | `300` | Lifetime of the bounded per-family successful-setup latency EWMA, `1..=86400`. |
+
+At startup `auto` performs one local kernel route/source-selection check and
+caches a process-wide snapshot. One usable family becomes primary. When both
+are usable, the system resolver/address-selection order establishes the stable
+initial preference; neither family is hard-coded. The check sends no packet
+and is not a public-connectivity probe. `preferIpv4` and `preferIpv6` enable
+both families but choose the named family when it is usable. `ipv4Only` and
+`ipv6Only` are strict: other-family results are filtered, including numeric
+literals.
+
+Periodic route refresh and real connection results update two fixed atomic
+family records. Two consecutive `EAFNOSUPPORT`, `EPROTONOSUPPORT`,
+`ENETUNREACH`, `EHOSTUNREACH`, `EADDRNOTAVAIL`, or `ENODEV` failures trigger
+a temporary family penalty. `ECONNREFUSED` and `ECONNRESET` prove the family
+path was reachable and clear pending hard-failure evidence. A generic timeout
+or one unreachable destination does not poison global family health. An
+alternate win while the first attempt remains pending is weak evidence only;
+three consecutive observations are required to change primary. Route return
+or penalty expiry permits bounded recovery trials, and two successes restore
+the configured/startup preference.
+
+Mixed A/AAAA results are de-duplicated and interleaved. At most two connects
+are live, all attempts share one absolute deadline, the first success wins,
+and losing tasks/sockets are cancelled and drained before return. Every live
+candidate owns an FD-budget unit; if a second unit is unavailable, fallback is
+serialized instead of exceeding the budget. SOCKS5/NXR/Handoff server names
+are resolved through this policy, while the original destination carried to a
+remote proxy remains unchanged.
+
 ## `inbounds`
 
 `inbounds` must be non-empty. Every listener has a unique `tag`, and no two
-entries may bind the same `(listen, port)`. A tag is 1–64 ASCII letters, digits,
+entries may expand to the same `(listen, port)`. A tag is 1–64 ASCII letters, digits,
 dots, dashes, or underscores. `port` is `1..=65535`.
+
+Every `listen` is an object with `mode`, `ipv4`, and `ipv6`. `auto` attempts
+both independent sockets and starts if at least one binds; only family/protocol
+unavailability (`EAFNOSUPPORT`, `EPROTONOSUPPORT`, or `EADDRNOTAVAIL` on an
+unspecified wildcard) is degradable. `EADDRINUSE`, `EACCES`, invalid concrete
+addresses, and every other bind error are fatal. `dualStack` requires both
+sockets. `ipv4Only` and `ipv6Only` bind exactly the named address. Every IPv6
+socket has `IPV6_V6ONLY=1` applied before bind, so behavior never depends on
+`net.ipv6.bindv6only`. Startup logs the exact active and unavailable families;
+the topology stays fixed until restart. Any listener or outbound dial-policy
+change requires restart.
 
 ### Public VLESS + REALITY + Vision inbound
 
@@ -108,7 +171,7 @@ dots, dashes, or underscores. `port` is `1..=65535`.
 {
   "protocol": "vless",
   "tag": "public-reality",
-  "listen": "0.0.0.0",
+  "listen": { "mode": "auto", "ipv4": "0.0.0.0", "ipv6": "::" },
   "port": 443,
   "settings": {
     "clients": [
@@ -138,19 +201,11 @@ The placeholder values above are intentionally not usable. Generate real state
 with `config generate standalone`, `config generate line`, or `config generate
 handoff`.
 
-**v1.2 → v1.3 migration:** move `streamSettings.realitySettings.shortIds`
-into the owning `settings.clients[]` object as `shortIds`, then remove the old
-field. For a single client, move the whole array unchanged. For multiple
-clients, partition or generate values so every UUID has at least one and no
-short ID appears under two UUIDs. Update each client device to use one value
-owned by its UUID. v1.3 deliberately rejects the ambiguous old shared list;
-it does not guess ownership for authentication credentials.
-
 | Field | Required | Default / fixed value | Meaning and constraints |
 | --- | --- | --- | --- |
 | `protocol` | yes | fixed `vless` | Selects the only public protocol. |
 | `tag` | yes | — | Unique listener/routing tag. |
-| `listen` | yes | — | IPv4 or IPv6 bind address. |
+| `listen` | yes | — | Object containing `mode` (`auto`, `dualStack`, `ipv4Only`, or `ipv6Only`) and the configured `ipv4`/`ipv6` addresses. |
 | `port` | yes | — | TCP bind port, non-zero. |
 | `settings.clients` | yes | — | Non-empty authorized-client array. UUIDs are globally unique across public inbounds. |
 | `settings.clients[].id` | yes | — | Canonical hyphenated UUID; hex is case-insensitive for identity. |
@@ -186,7 +241,7 @@ add an audited wildcard only when multiple real certificate names are required.
 {
   "protocol": "nxr",
   "tag": "internal-nxr",
-  "listen": "0.0.0.0",
+  "listen": { "mode": "auto", "ipv4": "0.0.0.0", "ipv6": "::" },
   "port": 7443,
   "settings": {
     "preSharedKey": "GENERATED-NXR-KEY",
@@ -203,7 +258,7 @@ add an audited wildcard only when multiple real certificate names are required.
 | --- | --- | --- | --- |
 | `protocol` | yes | fixed `nxr` | Selects the internal landing protocol. |
 | `tag` | yes | — | Unique listener/operational tag. |
-| `listen` | yes | — | Internal bind address; restrict at the host/provider firewall. |
+| `listen` | yes | — | Independent inbound listener topology; restrict internal addresses at the host/provider firewall. |
 | `port` | yes | — | Raw NXR TCP port, non-zero. |
 | `settings.preSharedKey` | yes | — | Independent URL-safe unpadded base64 value decoding to exactly 32 bytes. |
 | `settings.maxTimeDifferenceSeconds` | no | `30` | Accepted absolute wall-clock skew, `1..=300`. |
@@ -222,7 +277,7 @@ post-authentication encryption and must not be exposed to the Internet.
 {
   "protocol": "handoff",
   "tag": "internal-handoff",
-  "listen": "0.0.0.0",
+  "listen": { "mode": "auto", "ipv4": "0.0.0.0", "ipv6": "::" },
   "port": 7443,
   "settings": {
     "preSharedKey": "GENERATED-HANDOFF-KEY",
@@ -240,7 +295,7 @@ post-authentication encryption and must not be exposed to the Internet.
 | --- | --- | --- | --- |
 | `protocol` | yes | fixed `handoff` | Selects the internal session-transfer protocol. |
 | `tag` | yes | — | Unique listener/operational tag. |
-| `listen` | yes | — | Internal bind address; restrict at the host/provider firewall. |
+| `listen` | yes | — | Independent inbound listener topology; restrict internal addresses at the host/provider firewall. |
 | `port` | yes | — | Raw Handoff TCP port, non-zero. |
 | `settings.preSharedKey` | yes | — | Independent URL-safe unpadded base64 value decoding to exactly 32 bytes; the pair PSK shared with the line node's handoff outbound. |
 | `settings.privateKey` | yes | — | Independent static X25519 private key, URL-safe unpadded base64 decoding to exactly 32 bytes; its public half is the line outbound's `landingPublicKey`. |
@@ -732,8 +787,10 @@ Hot-updateable with compatible topology:
 
 Restart required:
 
-- adding/removing a listener, changing bind address/port, or changing protocol
-  at an address;
+- adding/removing a listener, changing `listen.mode`, either bind address,
+  port, or protocol;
+- any `network.dial` change, because the startup snapshot and shared health
+  state are process-lifetime;
 - any `runtime` change, because the resource mode shapes the process-lifetime
   descriptor budget and memory monitor;
 - any `policy.resourceGovernor` change, because REALITY replay admission/state

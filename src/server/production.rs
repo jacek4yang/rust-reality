@@ -23,10 +23,11 @@ use tokio::{
 use crate::{
     assets::{AssetLoadError, AssetSnapshot},
     config::{
-        Config, ConfigError, ConfigLoadError, InboundConfig, ResourceMode, load_config,
+        Config, ConfigError, ConfigLoadError, InboundConfig, ListenMode, ResourceMode, load_config,
         validate_config,
     },
     logging::{AdmissionResource, BackendStatus, LogEvent, LogWriteError, Logger, RejectionReason},
+    network::{AddressFamily, ConnectionPlanner, NetworkEnvironment},
     protocol::{handoff::HandoffReplayCache, reality::ReplayCache},
     runtime::{
         AdmissionDenied, AdmissionKind, AdmissionPermit, DirectBarrier, FdBudget, FdBudgetError,
@@ -70,18 +71,26 @@ const MEMORY_SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 /// settings because replacing either without a process restart can create a bind
 /// outage or weaken replay retention.
 pub struct ProductionServer {
-    addresses: Vec<SocketAddr>,
+    listeners: Vec<ListenerPlan>,
     runtime: Arc<RuntimeStore>,
     config_path: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug)]
+struct ListenerPlan {
+    tag: String,
+    mode: ListenMode,
+    addresses: Vec<SocketAddr>,
 }
 
 /// Computes the configured worst-case simultaneous descriptor demand.
 ///
 /// Every term is a configured bound, and the sum is deliberately pessimistic:
-/// it assumes every connection simultaneously holds an inbound socket, an
-/// outbound socket, that every splice relay is armed at once, and that the
-/// pipe pool retains its full keep count of drained pipes afterwards. The
-/// number is used only to decide whether to warn about clamping; it never
+/// it assumes every connection simultaneously holds an inbound socket and two
+/// racing outbound candidates, that every splice relay is armed at once, and
+/// that the pipe pool retains its full keep count of drained pipes afterwards.
+/// The winning candidate retains the same unit as the established outbound.
+/// The number is used only to decide whether to warn about clamping; it never
 /// raises the admission budget.
 fn theoretical_fd_peak(config: &Config) -> u64 {
     let connections = u64::from(config.policy.resource_governor.max_connections);
@@ -96,7 +105,7 @@ fn theoretical_fd_peak(config: &Config) -> u64 {
         0
     };
     connections
-        .saturating_mul(2)
+        .saturating_mul(3)
         .saturating_add(splice)
         .saturating_add(pool_retention)
 }
@@ -129,7 +138,17 @@ struct MemoryWatch {
 /// failed raise is logged through the machine report and the derivation
 /// continues with the effective soft limit.
 fn derive_fd_budget(config: &Config) -> Result<ResourceStartup, FdBudgetError> {
-    let listeners = u64::try_from(config.inbounds.len()).unwrap_or(u64::MAX);
+    let listeners = config
+        .inbounds
+        .iter()
+        .map(|inbound| listener_addresses(inbound).len())
+        .try_fold(0_u64, |total, count| {
+            u64::try_from(count)
+                .ok()
+                .and_then(|count| total.checked_add(count))
+                .ok_or(())
+        })
+        .unwrap_or(u64::MAX);
     let reserve = FixedFdReserve::new(listeners);
     let dedicated = config.runtime.resource_mode == ResourceMode::Dedicated;
     let mut machine = if dedicated {
@@ -259,6 +278,7 @@ impl ProductionServer {
                 &config.policy.direct_barrier,
                 pressure.clone(),
             ),
+            network_environment: NetworkEnvironment::from_config(&config.network.dial),
         };
         let replay = ReplayCache::new(
             authorities.governor.clone(),
@@ -280,9 +300,27 @@ impl ProductionServer {
             &pressure,
             &authorities,
         )?;
-        let mut addresses: Vec<_> = initial.connections.keys().copied().collect();
-        addresses.sort_unstable();
+        let listeners = initial
+            .config
+            .inbounds
+            .iter()
+            .map(|inbound| ListenerPlan {
+                tag: inbound.tag().to_owned(),
+                mode: inbound.listen().mode,
+                addresses: listener_addresses(inbound),
+            })
+            .collect();
         emit(&initial.logger, &LogEvent::ServerStarting);
+        let network = authorities.network_environment.startup_snapshot();
+        emit(
+            &initial.logger,
+            &LogEvent::OutboundNetworkInitialized {
+                mode: network.mode.as_str(),
+                primary_family: network.initial_primary.as_str(),
+                ipv4_available: network.ipv4_available,
+                ipv6_available: network.ipv6_available,
+            },
+        );
         if initial.config.runtime.resource_mode == ResourceMode::Dedicated {
             emit(
                 &initial.logger,
@@ -332,7 +370,7 @@ impl ProductionServer {
             },
         );
         Ok(Self {
-            addresses,
+            listeners,
             runtime: Arc::new(RuntimeStore {
                 current: ArcSwap::from(Arc::new(initial)),
                 replay,
@@ -392,7 +430,8 @@ impl ProductionServer {
     }
 
     /// Runs until an injected shutdown future completes, without installing
-    /// process signals or scheduled network refreshes.
+    /// process signals or scheduled asset/configuration reloads. The normal
+    /// low-cost process-wide route refresh remains active.
     ///
     /// # Errors
     ///
@@ -416,20 +455,65 @@ impl ProductionServer {
     where
         F: Future<Output = Result<(), io::Error>> + Send,
     {
-        let mut bound = Vec::with_capacity(self.addresses.len());
-        for address in &self.addresses {
-            let acceptor = TcpAcceptor::bind(*address).await.map_err(|source| {
-                ProductionServerError::Bind {
-                    address: *address,
-                    source,
+        let initial = self.runtime.load();
+        let listener_capacity = self
+            .listeners
+            .iter()
+            .map(|listener| listener.addresses.len())
+            .sum();
+        let mut bound = Vec::with_capacity(listener_capacity);
+        for listener in &self.listeners {
+            let mut active_families = Vec::with_capacity(listener.addresses.len());
+            let mut unavailable_families = Vec::with_capacity(listener.addresses.len());
+            let mut last_degradable = None;
+            for address in &listener.addresses {
+                match TcpAcceptor::bind(*address).await {
+                    Ok(acceptor) => {
+                        active_families.push(AddressFamily::of(address.ip()).as_str());
+                        bound.push((acceptor, *address));
+                    }
+                    Err(source)
+                        if listener.mode == ListenMode::Auto
+                            && is_degradable_listener_bind_error(*address, &source) =>
+                    {
+                        let family = AddressFamily::of(address.ip()).as_str();
+                        unavailable_families.push(family);
+                        emit(
+                            &initial.logger,
+                            &LogEvent::ListenerFamilyUnavailable {
+                                tag: listener.tag.clone(),
+                                family,
+                                address: *address,
+                                errno: source.raw_os_error(),
+                            },
+                        );
+                        last_degradable = Some((*address, source));
+                    }
+                    Err(source) => {
+                        return Err(ProductionServerError::Bind {
+                            address: *address,
+                            source,
+                        });
+                    }
                 }
-            })?;
-            bound.push((acceptor, *address));
+            }
+            if active_families.is_empty() {
+                let (address, source) = last_degradable
+                    .expect("an empty auto listener must have a degradable bind error");
+                return Err(ProductionServerError::Bind { address, source });
+            }
+            emit(
+                &initial.logger,
+                &LogEvent::ListenerTopologyActive {
+                    tag: listener.tag.clone(),
+                    active_families,
+                    unavailable_families,
+                },
+            );
         }
 
         let (shutdown_sender, shutdown_receiver) = watch::channel(false);
         let mut listener_tasks = JoinSet::new();
-        let initial = self.runtime.load();
         for (acceptor, address) in bound {
             let local_address = acceptor
                 .local_addr()
@@ -452,8 +536,6 @@ impl ProductionServer {
                 shutdown_receiver.clone(),
             ));
         }
-        drop(initial);
-
         let monitor_task = self.runtime.memory.clone().map(|watch| {
             tokio::spawn(run_resource_monitor(
                 Arc::clone(&self.runtime),
@@ -461,6 +543,12 @@ impl ProductionServer {
                 shutdown_receiver.clone(),
             ))
         });
+        let network_refresh_task = tokio::spawn(run_network_refresh(
+            self.runtime.authorities.network_environment.clone(),
+            Duration::from_secs(initial.config.network.dial.route_refresh_seconds),
+            shutdown_receiver.clone(),
+        ));
+        drop(initial);
 
         tokio::pin!(shutdown);
         let refresh_deadline = Instant::now() + self.runtime.reload_interval();
@@ -514,6 +602,7 @@ impl ProductionServer {
         if let Some(task) = monitor_task {
             task.abort();
         }
+        network_refresh_task.abort();
         let _ignored = shutdown_sender.send(true);
         while let Some(completed) = listener_tasks.join_next().await {
             match completed {
@@ -558,6 +647,7 @@ struct RuntimeStore {
 struct ProcessAuthorities {
     governor: ResourceGovernor,
     direct_barrier: DirectBarrier,
+    network_environment: NetworkEnvironment,
 }
 
 impl RuntimeStore {
@@ -640,13 +730,19 @@ impl RuntimeSnapshot {
             pressure,
             authorities.direct_barrier.clone(),
             authorities.governor.clone(),
+            authorities.network_environment.clone(),
         )?;
         let mut connections = HashMap::new();
+        let listener_count = config
+            .inbounds
+            .iter()
+            .map(|inbound| listener_addresses(inbound).len())
+            .sum();
         connections
-            .try_reserve(config.inbounds.len())
+            .try_reserve(listener_count)
             .map_err(|_| RuntimeUpdateError::Unavailable)?;
         for inbound in &config.inbounds {
-            let address = SocketAddr::new(inbound.listen(), inbound.port());
+            let address = canonical_listener_address(inbound);
             let handler = match inbound {
                 InboundConfig::Vless(inbound) => ConnectionHandler::Public {
                     reality: Box::new(RealityAcceptor::from_inbound_with_replay(
@@ -655,6 +751,8 @@ impl RuntimeSnapshot {
                         &config.policy.resource_governor,
                         replay.clone(),
                         tcp_relay.clone(),
+                        &config.network,
+                        authorities.network_environment.clone(),
                     )?),
                     vision: vision.clone(),
                 },
@@ -669,6 +767,8 @@ impl RuntimeSnapshot {
                         replay,
                         tcp_relay.clone(),
                         Duration::from_millis(config.policy.resource_governor.fallback_timeout_ms),
+                        &config.network,
+                        authorities.network_environment.clone(),
                     )?)
                 }
                 InboundConfig::Handoff(inbound) => {
@@ -701,21 +801,23 @@ impl RuntimeSnapshot {
                         tcp_relay.clone(),
                         Duration::from_millis(config.policy.resource_governor.fallback_timeout_ms),
                         vision.outbounds(),
+                        &config.network,
+                        authorities.network_environment.clone(),
                     )?)
                 }
             };
-            if connections
-                .insert(
-                    address,
-                    Arc::new(ConnectionRuntime {
-                        tag: Arc::from(inbound.tag()),
-                        governor: authorities.governor.clone(),
-                        handler,
-                    }),
-                )
-                .is_some()
-            {
-                return Err(RuntimeUpdateError::DuplicateListener(address));
+            let runtime = Arc::new(ConnectionRuntime {
+                tag: Arc::from(inbound.tag()),
+                governor: authorities.governor.clone(),
+                handler,
+            });
+            for bound_address in listener_addresses(inbound) {
+                if connections
+                    .insert(bound_address, Arc::clone(&runtime))
+                    .is_some()
+                {
+                    return Err(RuntimeUpdateError::DuplicateListener(bound_address));
+                }
             }
         }
         Ok(Self {
@@ -749,6 +851,9 @@ fn ensure_hot_compatible(
     if listener_topology(candidate) != listener_topology(&current.config) {
         return Err(RuntimeUpdateError::ListenerTopologyChanged);
     }
+    if candidate.network.dial != current.config.network.dial {
+        return Err(RuntimeUpdateError::NetworkDialPolicyChanged);
+    }
     if candidate.runtime != current.config.runtime {
         return Err(RuntimeUpdateError::ResourceModeChanged);
     }
@@ -777,29 +882,60 @@ enum ListenerProtocol {
     Handoff,
 }
 
-fn listener_topology(config: &Config) -> HashMap<SocketAddr, ListenerProtocol> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ListenerTopology {
+    protocol: ListenerProtocol,
+    mode: ListenMode,
+}
+
+fn listener_topology(config: &Config) -> HashMap<SocketAddr, ListenerTopology> {
     config
         .inbounds
         .iter()
-        .map(|inbound| {
+        .flat_map(|inbound| {
             let protocol = match inbound {
                 InboundConfig::Vless(_) => ListenerProtocol::Vless,
                 InboundConfig::Nxr(_) => ListenerProtocol::Nxr,
                 InboundConfig::Handoff(_) => ListenerProtocol::Handoff,
             };
-            (SocketAddr::new(inbound.listen(), inbound.port()), protocol)
+            let topology = ListenerTopology {
+                protocol,
+                mode: inbound.listen().mode,
+            };
+            listener_addresses(inbound)
+                .into_iter()
+                .map(move |address| (address, topology))
         })
         .collect()
+}
+
+fn listener_addresses(inbound: &InboundConfig) -> Vec<SocketAddr> {
+    ConnectionPlanner::listener_addresses(inbound.listen(), inbound.port())
+}
+
+fn canonical_listener_address(inbound: &InboundConfig) -> SocketAddr {
+    listener_addresses(inbound)[0]
+}
+
+fn is_degradable_listener_bind_error(address: SocketAddr, error: &io::Error) -> bool {
+    match error.raw_os_error() {
+        // The kernel cannot create a socket for this protocol family.
+        Some(93 | 97) => true,
+        // An unspecified family wildcard may be unavailable on this host.
+        // The same errno for a concrete address is invalid configuration.
+        Some(99) => address.ip().is_unspecified(),
+        _ => false,
+    }
 }
 
 fn nxr_replay_policy(config: &Config) -> HashMap<SocketAddr, (u32, u64)> {
     config
         .inbounds
         .iter()
-        .filter_map(|inbound| match inbound {
+        .filter_map(|inbound_config| match inbound_config {
             InboundConfig::Vless(_) | InboundConfig::Handoff(_) => None,
             InboundConfig::Nxr(inbound) => Some((
-                SocketAddr::new(inbound.listen, inbound.port),
+                canonical_listener_address(inbound_config),
                 (
                     inbound.settings.max_nonce_entries,
                     inbound.settings.nonce_retention_seconds,
@@ -813,10 +949,10 @@ fn handoff_replay_policy(config: &Config) -> HashMap<SocketAddr, (u32, u64)> {
     config
         .inbounds
         .iter()
-        .filter_map(|inbound| match inbound {
+        .filter_map(|inbound_config| match inbound_config {
             InboundConfig::Vless(_) | InboundConfig::Nxr(_) => None,
             InboundConfig::Handoff(inbound) => Some((
-                SocketAddr::new(inbound.listen, inbound.port),
+                canonical_listener_address(inbound_config),
                 (
                     inbound.settings.max_nonce_entries,
                     inbound.settings.nonce_retention_seconds,
@@ -830,9 +966,9 @@ fn compile_handoff_replays(
     config: &Config,
 ) -> Result<HashMap<SocketAddr, HandoffReplayCache>, RuntimeUpdateError> {
     let mut replays = HashMap::new();
-    for inbound in &config.inbounds {
-        if let InboundConfig::Handoff(inbound) = inbound {
-            let address = SocketAddr::new(inbound.listen, inbound.port);
+    for inbound_config in &config.inbounds {
+        if let InboundConfig::Handoff(inbound) = inbound_config {
+            let address = canonical_listener_address(inbound_config);
             let replay = HandoffReplayCache::new(
                 usize::try_from(inbound.settings.max_nonce_entries)
                     .map_err(|_| HandoffLandingConfigError::Capacity)
@@ -853,9 +989,9 @@ fn compile_nxr_replays(
     config: &Config,
 ) -> Result<HashMap<SocketAddr, NxrReplayCache>, RuntimeUpdateError> {
     let mut replays = HashMap::new();
-    for inbound in &config.inbounds {
-        if let InboundConfig::Nxr(inbound) = inbound {
-            let address = SocketAddr::new(inbound.listen, inbound.port);
+    for inbound_config in &config.inbounds {
+        if let InboundConfig::Nxr(inbound) = inbound_config {
+            let address = canonical_listener_address(inbound_config);
             let replay = NxrReplayCache::from_inbound(inbound)?;
             if replays.insert(address, replay).is_some() {
                 return Err(RuntimeUpdateError::DuplicateListener(address));
@@ -1103,6 +1239,23 @@ async fn run_resource_monitor(
                     memory_critical_enter: watch.plan.critical_enter(),
                 },
             );
+        }
+    }
+}
+
+async fn run_network_refresh(
+    environment: NetworkEnvironment,
+    interval: Duration,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    loop {
+        tokio::select! {
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    break;
+                }
+            }
+            () = time::sleep(interval) => environment.refresh_routes(),
         }
     }
 }
@@ -1492,6 +1645,7 @@ pub enum RuntimeUpdateError {
     MissingNxrReplay(SocketAddr),
     MissingHandoffReplay(SocketAddr),
     ListenerTopologyChanged,
+    NetworkDialPolicyChanged,
     ResourceModeChanged,
     ReplayPolicyChanged,
     DirectBarrierPolicyChanged,
@@ -1529,6 +1683,9 @@ impl fmt::Display for RuntimeUpdateError {
             }
             Self::ListenerTopologyChanged => {
                 formatter.write_str("listener addresses require a process restart")
+            }
+            Self::NetworkDialPolicyChanged => {
+                formatter.write_str("network dial policy requires a process restart")
             }
             Self::ResourceModeChanged => {
                 formatter.write_str("the runtime resource mode requires a process restart")
@@ -1571,6 +1728,7 @@ impl Error for RuntimeUpdateError {
             | Self::MissingNxrReplay(_)
             | Self::MissingHandoffReplay(_)
             | Self::ListenerTopologyChanged
+            | Self::NetworkDialPolicyChanged
             | Self::ResourceModeChanged
             | Self::ReplayPolicyChanged
             | Self::DirectBarrierPolicyChanged
@@ -1714,7 +1872,7 @@ fn backend_statuses(report: &BackendReport) -> Vec<BackendStatus> {
 mod tests {
     use std::{
         io,
-        net::{IpAddr, Ipv4Addr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
         str::FromStr,
         sync::Arc,
         time::Duration,
@@ -1728,11 +1886,15 @@ mod tests {
         time,
     };
 
-    use super::{ProductionServer, RuntimeUpdateError, theoretical_fd_peak};
+    use super::{
+        ProductionServer, RuntimeUpdateError, is_degradable_listener_bind_error,
+        theoretical_fd_peak,
+    };
     use crate::{
         config::{
-            DirectBarrierConfig, GenerateConfigInput, InboundConfig, NxrInboundConfig,
-            NxrInboundSettings, NxrSettings, OutboundConfig, SecretString, generate_minimal_config,
+            DialMode, DirectBarrierConfig, GenerateConfigInput, InboundConfig, ListenMode,
+            NxrInboundConfig, NxrInboundSettings, NxrSettings, OutboundConfig, SecretString,
+            generate_minimal_config,
         },
         protocol::vless::{Address, Destination, VISION_FLOW},
         server::outbound::{OutboundConnectOutcome, OutboundRegistry},
@@ -1755,6 +1917,86 @@ mod tests {
     }
 
     #[test]
+    fn wildcard_auto_inbound_compiles_two_independent_family_listeners() {
+        let generated = generate_minimal_config(GenerateConfigInput {
+            listen: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            port: 8443,
+            target: "www.example.com:443".to_owned(),
+            server_name: "www.example.com".to_owned(),
+        })
+        .expect("configuration must generate");
+        let server = ProductionServer::from_config(generated.config())
+            .expect("dual-stack server must compile");
+        assert_eq!(
+            server.listeners[0].addresses,
+            [
+                SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 8443),
+                SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 8443),
+            ],
+            "the old single-IpAddr topology silently omitted IPv6 ingress"
+        );
+    }
+
+    fn simulate_listener_startup(
+        mode: ListenMode,
+        outcomes: &[(SocketAddr, Option<i32>)],
+    ) -> Result<Vec<SocketAddr>, SocketAddr> {
+        let mut active = Vec::new();
+        for (address, errno) in outcomes {
+            let Some(errno) = errno else {
+                active.push(*address);
+                continue;
+            };
+            let error = io::Error::from_raw_os_error(*errno);
+            if mode != ListenMode::Auto || !is_degradable_listener_bind_error(*address, &error) {
+                return Err(*address);
+            }
+        }
+        if active.is_empty() {
+            Err(outcomes[0].0)
+        } else {
+            Ok(active)
+        }
+    }
+
+    #[test]
+    fn auto_listener_starts_on_simulated_single_family_hosts() {
+        let ipv4 = SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 443);
+        let ipv6 = SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 443);
+        assert_eq!(
+            simulate_listener_startup(ListenMode::Auto, &[(ipv4, None), (ipv6, Some(97))]),
+            Ok(vec![ipv4])
+        );
+        assert_eq!(
+            simulate_listener_startup(ListenMode::Auto, &[(ipv4, Some(97)), (ipv6, None)]),
+            Ok(vec![ipv6])
+        );
+    }
+
+    #[test]
+    fn dual_stack_requires_both_families_and_auto_never_swallows_real_bind_errors() {
+        let ipv4 = SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 443);
+        let ipv6 = SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 443);
+        assert_eq!(
+            simulate_listener_startup(ListenMode::DualStack, &[(ipv4, None), (ipv6, Some(97))]),
+            Err(ipv6)
+        );
+        for errno in [13, 22, 98] {
+            assert_eq!(
+                simulate_listener_startup(ListenMode::Auto, &[(ipv4, None), (ipv6, Some(errno))]),
+                Err(ipv6),
+                "errno {errno} must remain fatal"
+            );
+        }
+        let concrete = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 443);
+        assert_eq!(
+            simulate_listener_startup(ListenMode::Auto, &[(ipv4, None), (concrete, Some(99))]),
+            Err(concrete),
+            "EADDRNOTAVAIL on a configured address is invalid configuration"
+        );
+    }
+
+    #[test]
     fn the_theoretical_peak_includes_pipe_pool_retention() {
         let generated = generated_config(8443);
         let mut config = generated.config().clone();
@@ -1762,12 +2004,12 @@ mod tests {
         config.policy.relay.pipe_pool = true;
         config.policy.relay.max_splice_relays = 4;
         config.policy.relay.max_pooled_pipes = 8;
-        let connections = u64::from(config.policy.resource_governor.max_connections) * 2;
+        let connections = u64::from(config.policy.resource_governor.max_connections) * 3;
 
         assert_eq!(
             theoretical_fd_peak(&config),
             connections + 4 * 4 + 8 * 2,
-            "armed splice relays and the pipes the pool retains are both demand"
+            "two live dial candidates, armed splice relays, and retained pipes are demand"
         );
 
         config.policy.relay.pipe_pool = false;
@@ -1811,7 +2053,7 @@ mod tests {
         let mut config = generated.config().clone();
         config.inbounds.push(InboundConfig::Nxr(NxrInboundConfig {
             tag: "landing-internal".to_owned(),
-            listen: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            listen: IpAddr::V4(Ipv4Addr::LOCALHOST).into(),
             port: landing_port,
             settings: NxrInboundSettings {
                 pre_shared_key: SecretString::new(encoded_key.clone()),
@@ -1935,6 +2177,31 @@ mod tests {
         assert!(Arc::ptr_eq(&previous, &server.runtime.load()));
     }
 
+    #[test]
+    fn listener_topology_and_dial_policy_changes_require_restart() {
+        let generated = generated_config(8443);
+        let server =
+            ProductionServer::from_config(generated.config()).expect("server must compile");
+
+        let mut listener_change = generated.config().clone();
+        listener_change.inbounds[0]
+            .as_vless_mut()
+            .expect("generated listener must be VLESS")
+            .listen
+            .mode = ListenMode::Auto;
+        assert!(matches!(
+            server.runtime.publish(listener_change),
+            Err(RuntimeUpdateError::ListenerTopologyChanged)
+        ));
+
+        let mut dial_change = generated.config().clone();
+        dial_change.network.dial.mode = DialMode::PreferIpv6;
+        assert!(matches!(
+            server.runtime.publish(dial_change),
+            Err(RuntimeUpdateError::NetworkDialPolicyChanged)
+        ));
+    }
+
     const ROTATION_PSK_A: [u8; 32] = [0x5a; 32];
     const ROTATION_PSK_B: [u8; 32] = [0x5b; 32];
     const ROTATION_SECRET_A: [u8; 32] = [0x77; 32];
@@ -1953,7 +2220,7 @@ mod tests {
         config.inbounds.push(InboundConfig::Handoff(
             crate::config::HandoffInboundConfig {
                 tag: "handoff-landing".to_owned(),
-                listen: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                listen: IpAddr::V4(Ipv4Addr::LOCALHOST).into(),
                 port,
                 settings: crate::config::HandoffInboundSettings {
                     pre_shared_key: encode(active_psk),

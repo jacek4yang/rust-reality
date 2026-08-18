@@ -40,8 +40,9 @@ rust-reality config generate standalone \
   > config.json 2> client-values.txt
 ```
 
-生成的 JSON 包含 UUID、REALITY 私钥、归该 UUID 独占的两个 short ID 和 direct
-路由策略。客户端所需
+生成的 JSON 包含 UUID、REALITY 私钥、归该 UUID 独占的两个 short ID、入站
+`listen.mode: auto`、出站 `network.dial.mode: auto` 和 direct 路由策略。默认监听
+绑定相互独立的 IPv4 与 IPv6 套接字；本地解析的出站对端使用共享自适应策略。客户端所需
 的值（包括 REALITY 公钥）写入标准错误，使服务器私密配置可以单独保存。两个
 输出都应妥善保护；示例目标必须替换成从实际部署机器执行 `probe-dest` 能通过
 的目标。

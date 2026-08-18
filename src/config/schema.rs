@@ -30,11 +30,21 @@ mod tests {
         assert!(schema.contains("inbounds"));
         assert!(schema.contains("routing"));
         assert!(!schema.contains("metrics"));
-        assert!(!schema.contains("health"));
+        assert!(!schema.contains("\"health\""));
         assert!(!schema.contains("observability"));
         assert!(schema.contains("preSharedKey"));
         assert!(!schema.contains("minConnections"));
         assert!(!schema.contains("maxStreamsPerConnection"));
         assert!(!schema.contains("dedicatedAfterBytes"));
+        assert!(schema.contains("\"dial\""));
+        assert!(schema.contains("hardFailurePenaltySeconds"));
+        assert!(schema.contains("latencyMemorySeconds"));
+        assert!(schema.contains("dualStack"));
+        assert!(!schema.contains("addressFamily"));
+        assert!(!schema.contains("familyPenaltySeconds"));
+        assert!(!schema.contains("healthMemorySeconds"));
+        for policy in ["auto", "preferIpv4", "preferIpv6", "ipv4Only", "ipv6Only"] {
+            assert!(schema.contains(policy), "missing dial mode {policy}");
+        }
     }
 }

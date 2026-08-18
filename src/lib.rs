@@ -6,6 +6,7 @@ pub mod benchmark;
 pub mod config;
 pub mod crypto;
 pub mod logging;
+pub mod network;
 pub mod protocol;
 pub mod runtime;
 pub mod server;
