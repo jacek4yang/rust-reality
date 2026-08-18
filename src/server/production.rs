@@ -864,6 +864,12 @@ fn ensure_hot_compatible(
     if candidate.network.dial != current.config.network.dial {
         return Err(RuntimeUpdateError::NetworkDialPolicyChanged);
     }
+    // The shared DNS resolver is a process-lifetime first-wins install, so a
+    // reload can never swap it; reject DNS drift instead of silently keeping
+    // the old resolver.
+    if candidate.dns != current.config.dns {
+        return Err(RuntimeUpdateError::DnsPolicyChanged);
+    }
     if candidate.runtime != current.config.runtime {
         return Err(RuntimeUpdateError::ResourceModeChanged);
     }
@@ -1677,6 +1683,7 @@ pub enum RuntimeUpdateError {
     MissingHandoffReplay(SocketAddr),
     ListenerTopologyChanged,
     NetworkDialPolicyChanged,
+    DnsPolicyChanged,
     ResourceModeChanged,
     ReplayPolicyChanged,
     DirectBarrierPolicyChanged,
@@ -1717,6 +1724,9 @@ impl fmt::Display for RuntimeUpdateError {
             }
             Self::NetworkDialPolicyChanged => {
                 formatter.write_str("network dial policy requires a process restart")
+            }
+            Self::DnsPolicyChanged => {
+                formatter.write_str("DNS resolver policy requires a process restart")
             }
             Self::ResourceModeChanged => {
                 formatter.write_str("the runtime resource mode requires a process restart")
@@ -1760,6 +1770,7 @@ impl Error for RuntimeUpdateError {
             | Self::MissingHandoffReplay(_)
             | Self::ListenerTopologyChanged
             | Self::NetworkDialPolicyChanged
+            | Self::DnsPolicyChanged
             | Self::ResourceModeChanged
             | Self::ReplayPolicyChanged
             | Self::DirectBarrierPolicyChanged
@@ -2234,6 +2245,13 @@ mod tests {
         assert!(matches!(
             server.runtime.publish(dial_change),
             Err(RuntimeUpdateError::NetworkDialPolicyChanged)
+        ));
+
+        let mut dns_change = generated.config().clone();
+        dns_change.dns.timeout_ms += 1;
+        assert!(matches!(
+            server.runtime.publish(dns_change),
+            Err(RuntimeUpdateError::DnsPolicyChanged)
         ));
     }
 
