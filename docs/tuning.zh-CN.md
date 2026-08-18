@@ -387,9 +387,9 @@ rust-reality self-test --config config.json
 
 | 可热更新（`systemctl reload`） | 需要重启 |
 | --- | --- |
-| 日志、资产、DNS 超时 | 监听拓扑（地址、端口、入站数量） |
+| 日志、资产、DNS 超时 | 监听拓扑（`mode`、地址、端口、入站数量） |
 | VLESS 用户 / REALITY 状态 | `runtime`（含 `resourceMode`） |
-| outbounds / 路由 | `policy.resourceGovernor` |
+| outbounds / 路由 | `network.dial`、`policy.resourceGovernor` |
 | NXR 密钥和超时——仅当重放容量不变时 | `policy.directBarrier`、`policy.relay` |
 | | NXR `maxNonceEntries` / `nonceRetentionSeconds` |
 
@@ -760,6 +760,9 @@ rust-reality 在所有输出位置（stderr、journald、文件）都发出结�
 | 事件 | 含义 | 正常吗 | 相关配置 | 下一步测量 |
 | --- | --- | --- | --- | --- |
 | `server_starting` | 进程启动开始 | 每次启动一次 | — | — |
+| `outbound_network_initialized` | 缓存的路由可用性与初始出站主族 | 每次启动一次 | `network.dial` | 探测地址族与主机路由表一致吗？ |
+| `listener_topology_active` | 某入站准确的活动/不可用地址族 | 每入站每次启动一次 | `inbounds[].listen` | `auto` 降级符合预期吗？ |
+| `listener_family_unavailable` | `auto` 无法绑定一个确实不可用的地址族 | 仅单族主机 | `inbounds[].listen` | 核对 errno 与活动族。 |
 | `listener_started` | 入站已绑定就绪（`tag`、`address`） | 每次启动每个监听器一次 | `inbounds` | — |
 | `machine_report` | 探测到的 CPU/内存/FD 视图（dedicated 模式） | 每次启动一次 | `runtime.resourceMode` | `available_cpus`、`memory_total`、`memory_source` 与 VPS 一致吗？（§5） |
 | `descriptor_budget_report` | 推导的 FD 预算 | 每次启动一次 | `LimitNOFILE` | `fd_effective_budget`、`fd_clamped`（§6） |

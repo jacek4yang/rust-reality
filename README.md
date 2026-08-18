@@ -143,9 +143,10 @@ rust-reality serve --config config.tuned.json
 ```
 
 The generated JSON contains a UUID, private REALITY key, two UUID-owned short
-IDs, an autonomous `network.addressFamily: auto` policy, and a direct-routing
-policy. Its unspecified listen address creates independent IPv4 and IPv6
-sockets. The client-facing REALITY public key is written to
+IDs, an inbound `listen.mode: auto`, an outbound `network.dial.mode: auto`, and
+a direct-routing policy. The listener creates independent IPv4 and IPv6
+sockets while outbound family selection uses one adaptive process-wide state.
+The client-facing REALITY public key is written to
 standard error so the private server configuration can be captured separately.
 Protect both outputs and replace the example target with a destination that
 passes `probe-dest` from the deployment host. The full walkthrough, including

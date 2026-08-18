@@ -294,6 +294,12 @@ unit 使用专用账号，只保留 `CAP_NET_BIND_SERVICE`，保护主机文件�
 正常部署优先使用 `log.output: "stderr"` 或 `"journald"`。文件日志必须配置
 `path`、`maxBytes`、`maxFiles` 和 `maxTotalBytes`，全部都会强制执行。
 
+每次启动都要核对 `outbound_network_initialized`，并为每个入站核对一条
+`listener_topology_active`。前者记录缓存的 IPv4/IPv6 路由可用性及初始出站主族，
+后者记录真正服务流量的套接字。`listen.mode: auto` 仅在
+`listener_family_unavailable` 报告真实地址族/协议能力错误时允许缺少一族；端口占用、
+权限和具体地址错误仍然致命。`dualStack` 绝不降级。
+
 ## 热更新、重启与优雅退出
 
 先验证再请求原子热更新：
@@ -334,6 +340,8 @@ sudo systemctl restart rust-reality
 - `check`：JSON 语法、未知字段、引用或限制失败。
 - `self-test`：资产 URL/缓存、DNS、路由标签或伪装目标失败。
 - 绑定失败：端口被占用、缺少端口 capability、地址错误或重复监听。
+- 地址族异常：对比 `outbound_network_initialized` 与 `listener_topology_active`；
+  出站路由选择和入站监听拓扑有意相互独立。
 - Xray 握手失败：UUID、flow、SNI、公钥、short ID、客户端时钟或伪装目标行为变化。
 - NXR 失败：防火墙/源 IP、PSK、时钟误差、重放容量或落地机可达性。
 - 路由异常：first-match 顺序、用户分配、domain strategy、缺少资产标签，或全局规则先于用户规则。

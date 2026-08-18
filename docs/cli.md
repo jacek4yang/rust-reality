@@ -109,7 +109,7 @@ policy.
 
 | Option | Required | Default | Meaning |
 | --- | --- | --- | --- |
-| `--listen <IP>` | no | `0.0.0.0` | Public bind address; the generated `network.addressFamily: auto` expands an unspecified address to separate IPv4 and IPv6 sockets. |
+| `--listen <IP>` | no | `0.0.0.0` | Public bind address; an unspecified value generates inbound `listen.mode: auto` with separate IPv4 and IPv6 sockets. |
 | `--port <PORT>` | no | `443` | Public TCP port, `1..=65535`. |
 | `--target <HOST:PORT>` | yes | — | REALITY cover target. |
 | `--server-name <DNS_NAME>` | yes | — | Client SNI and allowed server name. |

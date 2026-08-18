@@ -64,7 +64,7 @@ impl DestinationConnector {
     ) -> Self {
         Self {
             connect_timeout,
-            planner: ConnectionPlanner::new(config, environment),
+            planner: ConnectionPlanner::new(config.dial, environment),
         }
     }
 
@@ -364,20 +364,54 @@ where
                 Ok((value, permit))
             }
             Ok(Err(error)) => {
-                planner.environment().record_failure(
+                planner.environment().record_connect_error(
                     AddressFamily::of(address.ip()),
                     &error,
-                    planner.family_penalty(),
+                    planner.hard_failure_penalty(),
                 );
                 Err(DestinationConnectError::Io(error))
             }
-            Err(_) => {
-                planner
-                    .environment()
-                    .record_timeout(AddressFamily::of(address.ip()), planner.family_penalty());
-                Err(DestinationConnectError::TimedOut { timeout })
-            }
+            Err(_) => Err(DestinationConnectError::TimedOut { timeout }),
         };
+    }
+    let first_family = AddressFamily::of(addresses[0].ip());
+    if addresses
+        .iter()
+        .all(|address| AddressFamily::of(address.ip()) == first_family)
+    {
+        let mut recycled = None;
+        let mut last_error = None;
+        for address in addresses {
+            let permit = match fd_budget.as_ref() {
+                Some(budget) => Some(
+                    recycled
+                        .take()
+                        .or_else(|| budget.try_acquire(UNITS_OUTBOUND_SOCKET))
+                        .ok_or(DestinationConnectError::DescriptorBudget)?,
+                ),
+                None => None,
+            };
+            let started = Instant::now();
+            match time::timeout_at(deadline, connector.clone()(address)).await {
+                Ok(Ok(value)) => {
+                    planner.record_success(first_family, started.elapsed());
+                    return Ok((value, permit));
+                }
+                Ok(Err(error)) => {
+                    planner.environment().record_connect_error(
+                        first_family,
+                        &error,
+                        planner.hard_failure_penalty(),
+                    );
+                    last_error = Some(error);
+                    recycled = permit;
+                }
+                Err(_) => return Err(DestinationConnectError::TimedOut { timeout }),
+            }
+        }
+        return Err(DestinationConnectError::Io(
+            last_error.expect("a non-empty single-family plan must attempt an address"),
+        ));
     }
 
     let mut tasks = JoinSet::new();
@@ -430,12 +464,6 @@ where
 
         tokio::select! {
             () = time::sleep_until(deadline) => {
-                for address in &active {
-                    planner.environment().record_timeout(
-                        AddressFamily::of(address.ip()),
-                        planner.family_penalty(),
-                    );
-                }
                 abort_and_drain(&mut tasks).await;
                 return Err(DestinationConnectError::TimedOut { timeout });
             }
@@ -462,9 +490,9 @@ where
                         for address in &active {
                             let family = AddressFamily::of(address.ip());
                             if family != winning_family {
-                                planner.environment().record_timeout(
+                                planner.environment().record_alternate_success(
+                                    winning_family,
                                     family,
-                                    planner.family_penalty(),
                                 );
                             }
                         }
@@ -472,10 +500,10 @@ where
                         return Ok((value, result.permit));
                     }
                     Err(error) => {
-                        planner.environment().record_failure(
+                        planner.environment().record_connect_error(
                             AddressFamily::of(result.address.ip()),
                             &error,
-                            planner.family_penalty(),
+                            planner.hard_failure_penalty(),
                         );
                         last_error = Some(error);
                         if let Some(permit) = result.permit {
@@ -545,7 +573,7 @@ impl fmt::Display for DestinationConnectError {
             }
             Self::Allocation => formatter.write_str("resolved address allocation failed"),
             Self::NoAddressesForPolicy => {
-                formatter.write_str("no resolved address is enabled by network.addressFamily")
+                formatter.write_str("no resolved address is enabled by network.dial.mode")
             }
             Self::TooManyResolvedAddresses => {
                 formatter.write_str("pre-resolved destination address count exceeds 64")
@@ -596,18 +624,21 @@ mod tests {
             Arc,
             atomic::{AtomicUsize, Ordering},
         },
-        time::Duration,
+        time::{Duration, Instant as WallClock},
     };
 
-    use tokio::{net::TcpListener, time::Instant};
+    use tokio::{
+        net::TcpListener,
+        time::{self, Instant},
+    };
 
     use super::{
         DestinationConnectError, DestinationConnector, connect_target, literal_socket_addr,
         race_with,
     };
     use crate::{
-        config::{AddressFamilyPolicy, NetworkConfig},
-        network::{ConnectionPlanner, NetworkEnvironment},
+        config::{DialConfig, DialMode, NetworkConfig},
+        network::{AddressFamily, ConnectionPlanner, NetworkEnvironment},
         protocol::vless::{Address, Destination},
         runtime::FdBudget,
     };
@@ -747,10 +778,17 @@ mod tests {
         let connector = DestinationConnector::with_environment(
             Duration::from_secs(1),
             NetworkConfig {
-                address_family: AddressFamilyPolicy::Ipv6Only,
-                ..NetworkConfig::default()
+                dial: DialConfig {
+                    mode: DialMode::Ipv6Only,
+                    ..DialConfig::default()
+                },
             },
-            NetworkEnvironment::with_routes(false, true),
+            NetworkEnvironment::with_routes_and_primary(
+                DialMode::Ipv6Only,
+                false,
+                true,
+                AddressFamily::Ipv6,
+            ),
         );
         let stream = connector
             .connect(&destination)
@@ -760,43 +798,126 @@ mod tests {
         assert_eq!(stream.local_addr().expect("read local address"), peer);
     }
 
-    fn test_planner(policy: AddressFamilyPolicy, delay_ms: u64) -> ConnectionPlanner {
+    fn test_planner(mode: DialMode, delay_ms: u64) -> ConnectionPlanner {
+        let primary = if mode.preferred_family_is_ipv4() == Some(true) {
+            AddressFamily::Ipv4
+        } else {
+            AddressFamily::Ipv6
+        };
         ConnectionPlanner::new(
-            NetworkConfig {
-                address_family: policy,
+            DialConfig {
+                mode,
                 fallback_delay_ms: delay_ms,
-                ..NetworkConfig::default()
+                ..DialConfig::default()
             },
-            NetworkEnvironment::with_routes(true, true),
+            NetworkEnvironment::with_routes_and_primary(mode, true, true, primary),
         )
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn preferred_family_failure_falls_back_and_updates_health() {
-        let planner = test_planner(AddressFamilyPolicy::PreferIpv6, 5);
+        let planner = test_planner(DialMode::PreferIpv6, 5);
         let addresses = vec![
             SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 443),
             SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 443),
         ];
-        let (winner, permit) = race_with(
-            planner.clone(),
-            addresses.clone(),
-            Instant::now() + Duration::from_secs(1),
-            Duration::from_secs(1),
-            None,
-            |address| async move {
-                if address.is_ipv6() {
-                    Err(io::Error::from_raw_os_error(101))
-                } else {
-                    Ok(address)
-                }
-            },
-        )
-        .await
-        .expect("alternate family should win");
-        assert!(winner.is_ipv4());
-        assert!(permit.is_none());
+        for _ in 0..2 {
+            let (winner, permit) = race_with(
+                planner.clone(),
+                addresses.clone(),
+                Instant::now() + Duration::from_secs(1),
+                Duration::from_secs(1),
+                None,
+                |address| async move {
+                    if address.is_ipv6() {
+                        Err(io::Error::from_raw_os_error(101))
+                    } else {
+                        Ok(address)
+                    }
+                },
+            )
+            .await
+            .expect("alternate family should win");
+            assert!(winner.is_ipv4());
+            assert!(permit.is_none());
+        }
         assert!(planner.plan(&addresses)[0].is_ipv4());
+    }
+
+    fn percentile(samples: &mut [Duration], percentile: usize) -> Duration {
+        samples.sort_unstable();
+        samples[(samples.len() - 1) * percentile / 100]
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn missing_route_fallback_bypasses_the_normal_delay() {
+        let addresses = vec![
+            SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 443),
+            SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 443),
+        ];
+        let mut samples = Vec::with_capacity(101);
+        for _ in 0..101 {
+            let started = WallClock::now();
+            let (winner, _) = race_with(
+                test_planner(DialMode::PreferIpv6, 250),
+                addresses.clone(),
+                Instant::now() + Duration::from_secs(1),
+                Duration::from_secs(1),
+                None,
+                |address| async move {
+                    if address.is_ipv6() {
+                        Err(io::Error::from_raw_os_error(101))
+                    } else {
+                        Ok(address)
+                    }
+                },
+            )
+            .await
+            .expect("an immediate missing-route error should launch IPv4 at once");
+            assert!(winner.is_ipv4());
+            samples.push(started.elapsed());
+        }
+        let p50 = percentile(&mut samples, 50);
+        let p95 = percentile(&mut samples, 95);
+        let p99 = percentile(&mut samples, 99);
+        eprintln!("missing-route fallback p50={p50:?} p95={p95:?} p99={p99:?}");
+        assert!(p99 < Duration::from_millis(50));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn slow_preferred_family_falls_back_after_the_configured_delay() {
+        let addresses = vec![
+            SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 443),
+            SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 443),
+        ];
+        let fallback_delay = Duration::from_millis(5);
+        let mut samples = Vec::with_capacity(101);
+        for _ in 0..101 {
+            let started = WallClock::now();
+            let (winner, _) = race_with(
+                test_planner(DialMode::PreferIpv6, 5),
+                addresses.clone(),
+                Instant::now() + Duration::from_secs(1),
+                Duration::from_secs(1),
+                None,
+                |address| async move {
+                    if address.is_ipv6() {
+                        time::sleep(Duration::from_secs(1)).await;
+                    }
+                    Ok(address)
+                },
+            )
+            .await
+            .expect("the alternate family should win after the fallback delay");
+            assert!(winner.is_ipv4());
+            samples.push(started.elapsed());
+        }
+        let p50 = percentile(&mut samples, 50);
+        let p95 = percentile(&mut samples, 95);
+        let p99 = percentile(&mut samples, 99);
+        eprintln!("slow-family fallback p50={p50:?} p95={p95:?} p99={p99:?}");
+        assert!(p50 >= fallback_delay);
+        assert!(p99 < Duration::from_millis(100));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -804,7 +925,7 @@ mod tests {
         let timeout = Duration::from_millis(30);
         let started = Instant::now();
         let result = race_with(
-            test_planner(AddressFamilyPolicy::PreferIpv6, 5),
+            test_planner(DialMode::PreferIpv6, 5),
             vec![
                 SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 443),
                 SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 443),
@@ -825,6 +946,46 @@ mod tests {
         assert!(started.elapsed() < Duration::from_millis(150));
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn single_family_candidates_never_spawn_a_race() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let maximum = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed_active = Arc::clone(&active);
+        let observed_maximum = Arc::clone(&maximum);
+        let observed_calls = Arc::clone(&calls);
+        let addresses = vec![
+            SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 443),
+            SocketAddr::new(Ipv4Addr::new(127, 0, 0, 2).into(), 443),
+        ];
+        let (winner, _) = race_with(
+            test_planner(DialMode::Ipv4Only, 1),
+            addresses.clone(),
+            Instant::now() + Duration::from_secs(1),
+            Duration::from_secs(1),
+            None,
+            move |address| {
+                let active = Arc::clone(&active);
+                let maximum = Arc::clone(&maximum);
+                let calls = Arc::clone(&calls);
+                async move {
+                    calls.fetch_add(1, Ordering::AcqRel);
+                    let current = active.fetch_add(1, Ordering::AcqRel) + 1;
+                    maximum.fetch_max(current, Ordering::AcqRel);
+                    let _guard = ActiveAttempt(active);
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    Ok(address)
+                }
+            },
+        )
+        .await
+        .expect("first same-family candidate should win without a race");
+        assert_eq!(winner, addresses[0]);
+        assert_eq!(observed_calls.load(Ordering::Acquire), 1);
+        assert_eq!(observed_maximum.load(Ordering::Acquire), 1);
+        assert_eq!(observed_active.load(Ordering::Acquire), 0);
+    }
+
     struct ActiveAttempt(Arc<AtomicUsize>);
 
     impl Drop for ActiveAttempt {
@@ -839,7 +1000,7 @@ mod tests {
         let observed = Arc::clone(&active);
         let budget = FdBudget::new(2);
         let (winner, permit) = race_with(
-            test_planner(AddressFamilyPolicy::PreferIpv6, 5),
+            test_planner(DialMode::PreferIpv6, 5),
             vec![
                 SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 443),
                 SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 443),

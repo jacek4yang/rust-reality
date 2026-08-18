@@ -10,9 +10,8 @@ use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 use zeroize::Zeroizing;
 
 use super::{
-    AddressFamilyPolicy, Config, GlobalRule, HandoffInboundConfig, InboundConfig, LogOutput,
-    Network, NxrInboundConfig, OutboundConfig, PortMatcher, RelayPolicy, SecretString,
-    VlessInboundConfig,
+    Config, GlobalRule, HandoffInboundConfig, InboundConfig, LogOutput, Network, NxrInboundConfig,
+    OutboundConfig, PortMatcher, RelayPolicy, SecretString, VlessInboundConfig,
 };
 use crate::{network::ConnectionPlanner, server_name::is_server_name_pattern};
 
@@ -101,17 +100,27 @@ pub fn validate_config(config: &Config) -> Result<(), ConfigError> {
 }
 
 fn validate_network(config: &Config) -> Result<(), ConfigError> {
-    if config.network.fallback_delay_ms > 5_000 {
-        return fail("network.fallbackDelayMs", "must be at most 5000");
+    let dial = &config.network.dial;
+    if dial.fallback_delay_ms > 5_000 {
+        return fail("network.dial.fallbackDelayMs", "must be at most 5000");
     }
-    if !(1..=3_600).contains(&config.network.route_refresh_seconds) {
-        return fail("network.routeRefreshSeconds", "must be between 1 and 3600");
+    if !(1..=3_600).contains(&dial.route_refresh_seconds) {
+        return fail(
+            "network.dial.routeRefreshSeconds",
+            "must be between 1 and 3600",
+        );
     }
-    if !(1..=3_600).contains(&config.network.family_penalty_seconds) {
-        return fail("network.familyPenaltySeconds", "must be between 1 and 3600");
+    if !(1..=3_600).contains(&dial.hard_failure_penalty_seconds) {
+        return fail(
+            "network.dial.hardFailurePenaltySeconds",
+            "must be between 1 and 3600",
+        );
     }
-    if !(1..=86_400).contains(&config.network.health_memory_seconds) {
-        return fail("network.healthMemorySeconds", "must be between 1 and 86400");
+    if !(1..=86_400).contains(&dial.latency_memory_seconds) {
+        return fail(
+            "network.dial.latencyMemorySeconds",
+            "must be between 1 and 86400",
+        );
     }
     Ok(())
 }
@@ -207,23 +216,7 @@ fn validate_inbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
         if inbound.port() == 0 {
             return fail(format!("{path}.port"), "must be greater than zero");
         }
-        let listen = inbound.listen();
-        if !listen.is_unspecified()
-            && ((listen.is_ipv4()
-                && config.network.address_family == AddressFamilyPolicy::Ipv6Only)
-                || (listen.is_ipv6()
-                    && config.network.address_family == AddressFamilyPolicy::Ipv4Only))
-        {
-            return fail(
-                format!("{path}.listen"),
-                "explicit listen address is disabled by network.addressFamily",
-            );
-        }
-        for address in ConnectionPlanner::listener_addresses(
-            listen,
-            inbound.port(),
-            config.network.address_family,
-        ) {
+        for address in ConnectionPlanner::listener_addresses(inbound.listen(), inbound.port()) {
             if !listeners.insert(address) {
                 return fail(
                     format!("{path}.port"),
@@ -1245,8 +1238,8 @@ mod tests {
     use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 
     use crate::config::{
-        AddressFamilyPolicy, Config, LogOutput, NxrInboundConfig, NxrInboundSettings, NxrSettings,
-        OutboundConfig, SecretString, validate_config,
+        Config, DialMode, ListenConfig, ListenMode, LogOutput, NxrInboundConfig,
+        NxrInboundSettings, NxrSettings, OutboundConfig, SecretString, validate_config,
     };
 
     use super::ConfigError;
@@ -1353,13 +1346,19 @@ mod tests {
         config.inbounds[0]
             .as_vless_mut()
             .expect("fixture must be VLESS")
-            .listen = IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
+            .listen = ListenConfig {
+            mode: ListenMode::DualStack,
+            ..ListenConfig::default()
+        };
         let mut duplicate = config.inbounds[0].clone();
         let duplicate_vless = duplicate
             .as_vless_mut()
             .expect("fixture must contain VLESS");
         duplicate_vless.tag = "duplicate-inbound".to_owned();
-        duplicate_vless.listen = IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED);
+        duplicate_vless.listen = ListenConfig {
+            mode: ListenMode::Ipv6Only,
+            ..ListenConfig::default()
+        };
         duplicate_vless.settings.clients[0].id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee".to_owned();
         config.inbounds.push(duplicate);
 
@@ -1368,59 +1367,59 @@ mod tests {
     }
 
     #[test]
-    fn rejects_explicit_listener_disabled_by_family_policy() {
+    fn validates_listener_topology_independently_from_dial_mode() {
         let mut config = valid_config();
         config.inbounds[0]
             .as_vless_mut()
             .expect("fixture must be VLESS")
-            .listen = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
-        config.network.address_family = AddressFamilyPolicy::Ipv6Only;
-        let error = validate_config(&config).expect_err("IPv4 listen must be disabled");
-        assert_eq!(error.path(), "inbounds[0].listen");
+            .listen = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST).into();
+        config.network.dial.mode = DialMode::Ipv6Only;
+        validate_config(&config).expect("IPv4 listen and IPv6-only dialing are independent");
 
         config.inbounds[0]
             .as_vless_mut()
             .expect("fixture must be VLESS")
-            .listen = IpAddr::V6(std::net::Ipv6Addr::LOCALHOST);
-        validate_config(&config).expect("matching IPv6 listener must validate");
+            .listen = IpAddr::V6(std::net::Ipv6Addr::LOCALHOST).into();
+        config.network.dial.mode = DialMode::Ipv4Only;
+        validate_config(&config).expect("IPv6 listen and IPv4-only dialing are independent");
     }
 
     #[test]
     fn rejects_network_timing_values_outside_their_bounds() {
         let mut config = valid_config();
-        config.network.fallback_delay_ms = 5_001;
+        config.network.dial.fallback_delay_ms = 5_001;
         assert_eq!(
             validate_config(&config)
                 .expect_err("fallback bound must hold")
                 .path(),
-            "network.fallbackDelayMs"
+            "network.dial.fallbackDelayMs"
         );
 
         let mut config = valid_config();
-        config.network.route_refresh_seconds = 0;
+        config.network.dial.route_refresh_seconds = 0;
         assert_eq!(
             validate_config(&config)
                 .expect_err("route lifetime must be positive")
                 .path(),
-            "network.routeRefreshSeconds"
+            "network.dial.routeRefreshSeconds"
         );
 
         let mut config = valid_config();
-        config.network.family_penalty_seconds = 3_601;
+        config.network.dial.hard_failure_penalty_seconds = 3_601;
         assert_eq!(
             validate_config(&config)
                 .expect_err("penalty bound must hold")
                 .path(),
-            "network.familyPenaltySeconds"
+            "network.dial.hardFailurePenaltySeconds"
         );
 
         let mut config = valid_config();
-        config.network.health_memory_seconds = 0;
+        config.network.dial.latency_memory_seconds = 0;
         assert_eq!(
             validate_config(&config)
                 .expect_err("health lifetime must be positive")
                 .path(),
-            "network.healthMemorySeconds"
+            "network.dial.latencyMemorySeconds"
         );
     }
 
@@ -1548,7 +1547,7 @@ mod tests {
             .inbounds
             .push(crate::config::InboundConfig::Nxr(NxrInboundConfig {
                 tag: "landing-internal".to_owned(),
-                listen: "127.0.0.1".parse().expect("address must parse"),
+                listen: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST).into(),
                 port: 9443,
                 settings: NxrInboundSettings {
                     pre_shared_key: key,
@@ -1570,7 +1569,7 @@ mod tests {
             .inbounds
             .push(crate::config::InboundConfig::Nxr(NxrInboundConfig {
                 tag: "landing-internal".to_owned(),
-                listen: "127.0.0.1".parse().expect("address must parse"),
+                listen: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST).into(),
                 port: 9443,
                 settings: NxrInboundSettings {
                     pre_shared_key: SecretString::new(
@@ -1599,7 +1598,7 @@ mod tests {
         config.inbounds.push(crate::config::InboundConfig::Handoff(
             crate::config::HandoffInboundConfig {
                 tag: "handoff-landing".to_owned(),
-                listen: "127.0.0.1".parse().expect("address must parse"),
+                listen: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST).into(),
                 port: 9444,
                 settings: crate::config::HandoffInboundSettings {
                     pre_shared_key: key.clone(),
@@ -1634,7 +1633,7 @@ mod tests {
         let key = SecretString::new("WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo");
         crate::config::InboundConfig::Handoff(crate::config::HandoffInboundConfig {
             tag: "handoff-landing".to_owned(),
-            listen: "127.0.0.1".parse().expect("address must parse"),
+            listen: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST).into(),
             port: 9444,
             settings: crate::config::HandoffInboundSettings {
                 pre_shared_key: key.clone(),
@@ -1812,7 +1811,7 @@ mod tests {
         config.inbounds.push(crate::config::InboundConfig::Handoff(
             crate::config::HandoffInboundConfig {
                 tag: "handoff-landing".to_owned(),
-                listen: "127.0.0.1".parse().expect("address must parse"),
+                listen: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST).into(),
                 port: 9444,
                 settings: crate::config::HandoffInboundSettings {
                     pre_shared_key: key.clone(),
@@ -1846,7 +1845,7 @@ mod tests {
             .inbounds
             .push(crate::config::InboundConfig::Nxr(NxrInboundConfig {
                 tag: "landing-internal".to_owned(),
-                listen: "127.0.0.1".parse().expect("address must parse"),
+                listen: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST).into(),
                 port: 9443,
                 settings: NxrInboundSettings {
                     pre_shared_key: shared.clone(),
@@ -1860,7 +1859,7 @@ mod tests {
         config.inbounds.push(crate::config::InboundConfig::Handoff(
             crate::config::HandoffInboundConfig {
                 tag: "handoff-landing".to_owned(),
-                listen: "127.0.0.1".parse().expect("address must parse"),
+                listen: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST).into(),
                 port: 9444,
                 settings: crate::config::HandoffInboundSettings {
                     pre_shared_key: shared.clone(),
@@ -1920,7 +1919,7 @@ mod tests {
         config.inbounds.push(crate::config::InboundConfig::Handoff(
             crate::config::HandoffInboundConfig {
                 tag: "handoff-landing".to_owned(),
-                listen: "127.0.0.1".parse().expect("address must parse"),
+                listen: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST).into(),
                 port: 9444,
                 settings: crate::config::HandoffInboundSettings {
                     pre_shared_key: SecretString::new(
@@ -1982,7 +1981,7 @@ mod tests {
         let active = encode([0x5a; 32]);
         crate::config::InboundConfig::Handoff(crate::config::HandoffInboundConfig {
             tag: "handoff-landing".to_owned(),
-            listen: "127.0.0.1".parse().expect("address must parse"),
+            listen: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST).into(),
             port: 9444,
             settings: crate::config::HandoffInboundSettings {
                 pre_shared_key: active.clone(),
@@ -2120,7 +2119,7 @@ mod tests {
             .inbounds
             .push(crate::config::InboundConfig::Nxr(NxrInboundConfig {
                 tag: "landing-internal".to_owned(),
-                listen: "127.0.0.1".parse().expect("address must parse"),
+                listen: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST).into(),
                 port: 9443,
                 settings: NxrInboundSettings {
                     pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode([0x5b; 32])),

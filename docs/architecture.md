@@ -108,13 +108,13 @@ canonical samples live in [benchmarks.md](benchmarks.md).
 ## Autonomous dual-stack setup path
 
 ```text
-NetworkEnvironment (2 fixed atomic family records)
-        ↓ route/source availability + expiring passive health
-AddressFamilyPolicy (auto / prefer / only)
-        ↓ filter, de-duplicate, interleave
-ConnectionPlanner (one absolute deadline, at most 2 live candidates)
-        ↓ one FD permit per candidate
-Dialer (first success wins; abort + drain losers)
+StartupNetworkSnapshot (local route/source capability + stable ordering)
+        ↓
+RuntimeFamilyHealth (2 fixed atomic family records + hysteresis/recovery)
+        ↓
+ConnectionPlanner (filter, de-duplicate, interleave; at most 2 live)
+        ↓
+DestinationConnector (one deadline + FD permit/candidate; drain losers)
 ```
 
 The same process-lifetime environment is shared by Direct, REALITY target and
@@ -124,11 +124,14 @@ triggering a second lookup. A destination intentionally forwarded through a
 remote proxy is never locally resolved. Numeric literals enter the planner
 directly.
 
-Environment work is connection-setup-only: fixed atomic loads in ordinary
-plans, a cached kernel-only route/source refresh, and passive updates after
-connect completion. It never runs in relay reads, writes, framing, crypto, or
-splice. Listener expansion likewise happens once at compilation; dual-stack
-wildcards bind one IPv4 socket and one pre-bind `IPV6_V6ONLY` IPv6 socket.
+Startup route/source selection is cached once. Runtime work is
+connection-setup-only: fixed atomic loads in ordinary plans, periodic
+kernel-only refresh, and classified passive updates after connect completion.
+Strong family failures require hysteresis; refusals, resets, destination-only
+timeouts, and cancelled race losers do not create hard penalties. It never
+runs in relay reads, writes, framing, crypto, or splice. Per-inbound listener
+topology is independent and fixed at startup; dual-family modes bind one IPv4
+socket and one pre-bind `IPV6_V6ONLY` IPv6 socket.
 
 ## Hot-path topology
 

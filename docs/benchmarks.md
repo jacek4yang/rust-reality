@@ -105,6 +105,47 @@ warn-level logging both sides), medians of 7:
   REALITY + Vision, not raw VLESS Encryption; complete interpretation and
   revisit gates are in ADR 0003.
 
+## Dual-stack change validation (2026-08-18)
+
+The dual-stack correction was measured on an Intel Core i3-8100, Linux
+6.12.100+deb13-amd64, rustc 1.96.0, using default-feature release builds pinned
+to `main` (`ed8fea0`), the original PR head (`b322024`), and the corrected code
+snapshot (binary SHA-256 prefix `1ffe66c8`). The original head includes an
+unrelated unpublished v1.5 ancestor chain, so it is used only for the connector
+mechanism comparison, not as the relay baseline.
+
+Criterion connector medians (100 samples) were 42.54 us for numeric IPv4,
+45.03 us for numeric IPv6, 51.37 us for healthy mixed-family setup, and
+48.26 us when an immediate IPv6 refusal fell through to IPv4. Versus the
+original PR head, numeric IPv4 changed -0.06%, numeric IPv6 +1.12%, planning
++0.44%, and immediate-error fallback improved 30.9% (69.82 to 48.26 us). The
+immediate-error case therefore does not wait for the configured 250 ms delay.
+In a 101-iteration connector-path timing test with injected, deterministic
+family outcomes, simulated `ENETUNREACH` under a 250 ms policy measured
+P50/P95/P99 50.17/53.86/185.61 us; a stalled preferred attempt under a 5 ms
+policy measured 6.26/6.43/6.43 ms. These injected cases validate scheduler and
+fallback overhead without sending probes or relying on a public IPv6 route.
+
+The established-relay benchmark used 32 MiB flows, seven retained samples per
+run, and an A-B-A order around `main`; the corrected result is the geometric
+mean of the two bracketing run medians. MiB/s:
+
+| direction | c1 main | c1 corrected | delta | c32 main | c32 corrected | delta |
+|---|---:|---:|---:|---:|---:|---:|
+| upload | 2720.0 | 2725.8 | +0.21% | 2657.2 | 2672.1 | +0.56% |
+| download | 2604.5 | 2591.2 | -0.51% | 2574.3 | 2581.8 | +0.29% |
+| full duplex | 2536.5 | 2499.4 | -1.46% | 2510.2 | 2505.6 | -0.18% |
+
+The end-to-end setup harness retained five 128-connection samples per cell
+with zero failures. Corrected versus `main`: c1 was 268.35 versus 269.38
+connections/s with median P50/P95/P99 3.68/3.91/4.23 ms versus
+3.67/3.94/4.24 ms; c32 was 878.24 versus 880.96 connections/s with
+29.65/53.43/76.98 ms versus 30.59/56.10/65.13 ms. The c32 P99 varied between
+runs while P50/P95 improved. `perf stat` over the same 1,280 successful
+connections measured 0.666 versus 0.663 ms task-clock per connection (+0.55%)
+and +0.15% instructions per connection. Family planning, health, and refresh
+remain outside established relay read/write loops.
+
 The robustness evidence is intentionally separate from throughput numbers:
 each of the five bounded fuzz targets runs 20,000 cases, and the parser
 property gate covers every maximum-request prefix plus three byte mutations at

@@ -98,7 +98,7 @@ rust-reality config generate standalone \
 
 | 选项 | 必填 | 默认值 | 含义 |
 | --- | --- | --- | --- |
-| `--listen <IP>` | 否 | `0.0.0.0` | 公网绑定地址；生成的 `network.addressFamily: auto` 会把未指定地址展开成独立 IPv4/IPv6 套接字。 |
+| `--listen <IP>` | 否 | `0.0.0.0` | 公网绑定地址；未指定值会生成入站 `listen.mode: auto` 及独立 IPv4/IPv6 套接字。 |
 | `--port <PORT>` | 否 | `443` | 公网 TCP 端口，`1..=65535`。 |
 | `--target <HOST:PORT>` | 是 | — | REALITY 伪装目标。 |
 | `--server-name <DNS_NAME>` | 是 | — | 客户端 SNI 和允许的服务名。 |

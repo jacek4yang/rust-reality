@@ -242,7 +242,7 @@ pub fn generate_minimal_config(
         network: NetworkConfig::default(),
         inbounds: vec![InboundConfig::Vless(VlessInboundConfig {
             tag: "public-reality".to_owned(),
-            listen: input.listen,
+            listen: input.listen.into(),
             port: input.port,
             settings: VlessInboundSettings {
                 clients: vec![VlessClient {
@@ -371,7 +371,7 @@ pub fn generate_landing_config(
         network: NetworkConfig::default(),
         inbounds: vec![InboundConfig::Nxr(NxrInboundConfig {
             tag: "internal-nxr".to_owned(),
-            listen: input.listen,
+            listen: input.listen.into(),
             port: input.port,
             settings: NxrInboundSettings {
                 pre_shared_key: input.pre_shared_key,
@@ -629,7 +629,7 @@ fn handoff_landing_config(
         network: NetworkConfig::default(),
         inbounds: vec![InboundConfig::Handoff(HandoffInboundConfig {
             tag: "internal-handoff".to_owned(),
-            listen: IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+            listen: IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED).into(),
             port,
             settings: HandoffInboundSettings {
                 pre_shared_key,
@@ -682,7 +682,7 @@ fn public_inbound_with_clients(
 ) -> InboundConfig {
     InboundConfig::Vless(VlessInboundConfig {
         tag: "public-reality".to_owned(),
-        listen: input.listen,
+        listen: input.listen.into(),
         port: input.port,
         settings: VlessInboundSettings {
             clients,
@@ -756,7 +756,11 @@ mod tests {
 
         assert!(json.contains("xtls-rprx-vision"));
         assert!(json.contains("\"security\": \"reality\""));
-        assert!(json.contains("\"addressFamily\": \"auto\""));
+        assert!(json.contains("\"dial\""));
+        assert!(json.contains("\"mode\": \"auto\""));
+        assert!(json.contains("\"ipv4\": \"0.0.0.0\""));
+        assert!(json.contains("\"ipv6\": \"::\""));
+        assert!(!json.contains("addressFamily"));
         assert_eq!(generated.reality_public_key().len(), 43);
         let public = generated.config().inbounds[0]
             .as_vless()

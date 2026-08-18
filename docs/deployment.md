@@ -325,6 +325,14 @@ For normal installations use `log.output: "stderr"` or `"journald"`. If file
 logging is required, configure `path`, `maxBytes`, `maxFiles`, and
 `maxTotalBytes`; all are enforced.
 
+On every start, verify `outbound_network_initialized` and one
+`listener_topology_active` event per inbound. The former records the cached
+IPv4/IPv6 route availability and initial outbound primary. The latter records
+the sockets actually serving traffic. In `listen.mode: auto`, a missing family
+is acceptable only when `listener_family_unavailable` reports a genuine
+family/protocol capability error. Address-in-use, permission, and concrete
+address errors remain fatal. `dualStack` never degrades.
+
 ## Reload, restart, and graceful shutdown
 
 Validate first, then request atomic reload:
@@ -373,6 +381,9 @@ to the older version.
 - `self-test`: asset URL/cache, DNS, routing label, or cover-target failure.
 - Bind failure: another process, missing port capability, wrong address, or
   duplicate listener.
+- Family surprise: compare `outbound_network_initialized` with
+  `listener_topology_active`; outbound route selection and inbound topology are
+  intentionally independent.
 - Xray handshake failure: UUID, flow, SNI, public key, short ID, client clock,
   or changed cover behavior.
 - NXR failure: firewall/source IP, PSK mismatch, clock skew, replay capacity, or

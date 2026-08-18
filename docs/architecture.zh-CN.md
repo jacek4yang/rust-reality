@@ -87,23 +87,24 @@ admission 架构和运行时可观测性。设计背后的实测证据见
 ## 自治双栈建连路径
 
 ```text
-NetworkEnvironment（两个固定原子地址族记录）
-        ↓ 路由/源地址可用性 + 可过期被动健康状态
-AddressFamilyPolicy（auto / prefer / only）
-        ↓ 过滤、去重、交错
-ConnectionPlanner（一个绝对截止时间，最多两个活动候选）
-        ↓ 每候选一个 FD permit
-Dialer（首个成功者获胜；取消并回收落败者）
+StartupNetworkSnapshot（本地路由/源地址能力 + 稳定顺序）
+        ↓
+RuntimeFamilyHealth（两个固定原子地址族记录 + 滞后/恢复）
+        ↓
+ConnectionPlanner（过滤、去重、交错；最多两个活动候选）
+        ↓
+DestinationConnector（一个截止时间 + 每候选 FD permit；回收落败者）
 ```
 
 Direct、REALITY target/fallback、SOCKS5/NXR/Handoff 服务器拨号、landing 直接
 egress、probe 和 self-test 共享同一进程生命周期环境。路由 DNS 快照原样进入 planner，
 不会触发第二次查询；有意交给远端代理的目标不会在本地解析；数字字面量直接进入 planner。
 
-环境工作只发生在连接建立阶段：普通计划执行固定原子读取，按缓存周期执行仅限内核的
-路由/源地址刷新，并在 connect 完成后被动更新。relay 读写、framing、crypto 和 splice
-都不会触碰它。监听展开同样只在编译时执行一次；双栈通配分别绑定一个 IPv4 套接字和
-一个 bind 前设置 `IPV6_V6ONLY` 的 IPv6 套接字。
+启动路由/源地址选择只计算并缓存一次。运行期工作只发生在连接建立阶段：普通计划执行
+固定原子读取，周期执行仅限内核的刷新，并在 connect 完成后按错误类别被动更新。强地址
+族失败需通过滞后门槛；拒绝、重置、单目标超时和被取消的竞速落败者不会产生硬惩罚。
+relay 读写、framing、crypto 和 splice 都不会触碰它。每个入站的监听拓扑独立并在启动后
+固定；双族模式分别绑定 IPv4 套接字和 bind 前设置 `IPV6_V6ONLY` 的 IPv6 套接字。
 
 ## 热路径拓扑
 

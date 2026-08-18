@@ -15,13 +15,13 @@ pub use generate::{
 };
 pub use io::{ConfigLoadError, MAX_CONFIG_BYTES, format_config, load_config};
 pub use model::{
-    AddressFamilyPolicy, AssetsConfig, BlackholeSettings, Config, DirectBarrierConfig, DnsConfig,
+    AssetsConfig, BlackholeSettings, Config, DialConfig, DialMode, DirectBarrierConfig, DnsConfig,
     DnsStrategy, FileLogConfig, GlobalRule, HandoffInboundConfig, HandoffInboundSettings,
-    HandoffSettings, InboundConfig, LogConfig, LogLevel, LogOutput, Network, NetworkConfig,
-    NxrInboundConfig, NxrInboundSettings, NxrSettings, OutboundConfig, PolicyConfig, PortMatcher,
-    RealityConfig, RelayPolicy, ResourceGovernorConfig, ResourceMode, RouteRule, RoutingConfig,
-    RuntimeConfig, SecretString, Socks5Settings, StreamSettings, UserPolicy, VlessClient,
-    VlessInboundConfig, VlessInboundSettings,
+    HandoffSettings, InboundConfig, ListenConfig, ListenMode, LogConfig, LogLevel, LogOutput,
+    Network, NetworkConfig, NxrInboundConfig, NxrInboundSettings, NxrSettings, OutboundConfig,
+    PolicyConfig, PortMatcher, RealityConfig, RelayPolicy, ResourceGovernorConfig, ResourceMode,
+    RouteRule, RoutingConfig, RuntimeConfig, SecretString, Socks5Settings, StreamSettings,
+    UserPolicy, VlessClient, VlessInboundConfig, VlessInboundSettings,
 };
 pub use schema::{config_schema, format_config_schema};
 pub use validate::{ConfigError, validate_config};
@@ -41,16 +41,18 @@ pub(crate) fn test_config_json() -> &'static str {
     "timeoutMs": 5000
   },
   "network": {
-    "addressFamily": "auto",
-    "fallbackDelayMs": 250,
-    "routeRefreshSeconds": 30,
-    "familyPenaltySeconds": 30,
-    "healthMemorySeconds": 300
+    "dial": {
+      "mode": "auto",
+      "fallbackDelayMs": 250,
+      "routeRefreshSeconds": 30,
+      "hardFailurePenaltySeconds": 30,
+      "latencyMemorySeconds": 300
+    }
   },
   "inbounds": [{
     "protocol": "vless",
     "tag": "public-reality",
-    "listen": "0.0.0.0",
+    "listen": { "mode": "auto", "ipv4": "0.0.0.0", "ipv6": "::" },
     "port": 443,
     "settings": {
       "clients": [{

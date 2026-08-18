@@ -102,36 +102,43 @@ second inconsistent lookup.
 
 ```json
 {
-  "addressFamily": "auto",
-  "fallbackDelayMs": 250,
-  "routeRefreshSeconds": 30,
-  "familyPenaltySeconds": 30,
-  "healthMemorySeconds": 300
+  "dial": {
+    "mode": "auto",
+    "fallbackDelayMs": 250,
+    "routeRefreshSeconds": 30,
+    "hardFailurePenaltySeconds": 30,
+    "latencyMemorySeconds": 300
+  }
 }
 ```
 
 | Field | Required | Default / allowed | Meaning and constraints |
 | --- | --- | --- | --- |
-| `network.addressFamily` | no | `auto`; `auto`, `preferIpv4`, `preferIpv6`, `ipv4Only`, `ipv6Only` | Families enabled for wildcard listeners and every proxy endpoint resolved locally. `auto` is recommended. |
-| `network.fallbackDelayMs` | no | `250` | Delay before the first alternate-family attempt, `0..=5000`. Zero starts both immediately. |
-| `network.routeRefreshSeconds` | no | `30` | Lifetime of cached kernel route/source-address evidence, `1..=3600`. |
-| `network.familyPenaltySeconds` | no | `30` | Deprioritization after `ENETUNREACH`, `EHOSTUNREACH`, `EADDRNOTAVAIL`, an overall timeout, or a slower losing family attempt, `1..=3600`. |
-| `network.healthMemorySeconds` | no | `300` | Lifetime of the bounded per-family connection-latency EWMA, `1..=86400`. |
+| `network.dial.mode` | no | `auto`; `auto`, `preferIpv4`, `preferIpv6`, `ipv4Only`, `ipv6Only` | Families enabled for endpoints resolved and dialed locally. It never controls inbound listeners. |
+| `network.dial.fallbackDelayMs` | no | `250` | Delay before the first alternate-family attempt, `0..=5000`. Zero starts both immediately. An immediate preferred-family error launches the alternate without waiting. |
+| `network.dial.routeRefreshSeconds` | no | `30` | Interval for local kernel route/source-address refresh, `1..=3600`. |
+| `network.dial.hardFailurePenaltySeconds` | no | `30` | Deprioritization and bounded recovery-probe interval after repeated strong family failures, `1..=3600`. |
+| `network.dial.latencyMemorySeconds` | no | `300` | Lifetime of the bounded per-family successful-setup latency EWMA, `1..=86400`. |
 
-`auto` enables both families. It prefers an unpenalized family, then one with
-a usable route and source address, then recent successful setup
-latency; with no evidence it probes IPv6 first and starts IPv4 after the
-fallback delay. Route detection uses a local UDP route/source-selection
-operation and sends no packet. It is not treated as proof of Internet
-connectivity: real TCP successes, family-level failures, timeouts, and latency
-update two fixed lock-free health records. Penalties and latency expire, so a
-repaired family is tried again without restart or telemetry.
+At startup `auto` performs one local kernel route/source-selection check and
+caches a process-wide snapshot. One usable family becomes primary. When both
+are usable, the system resolver/address-selection order establishes the stable
+initial preference; neither family is hard-coded. The check sends no packet
+and is not a public-connectivity probe. `preferIpv4` and `preferIpv6` enable
+both families but choose the named family when it is usable. `ipv4Only` and
+`ipv6Only` are strict: other-family results are filtered, including numeric
+literals.
 
-`preferIpv4` and `preferIpv6` enable both families and set the initial
-preference, but active route/health evidence may temporarily choose the other
-family. `ipv4Only` and `ipv6Only` filter DNS results and create only that
-family's wildcard listener. Numeric literals bypass DNS but are still rejected
-when their family is disabled.
+Periodic route refresh and real connection results update two fixed atomic
+family records. Two consecutive `EAFNOSUPPORT`, `EPROTONOSUPPORT`,
+`ENETUNREACH`, `EHOSTUNREACH`, `EADDRNOTAVAIL`, or `ENODEV` failures trigger
+a temporary family penalty. `ECONNREFUSED` and `ECONNRESET` prove the family
+path was reachable and clear pending hard-failure evidence. A generic timeout
+or one unreachable destination does not poison global family health. An
+alternate win while the first attempt remains pending is weak evidence only;
+three consecutive observations are required to change primary. Route return
+or penalty expiry permits bounded recovery trials, and two successes restore
+the configured/startup preference.
 
 Mixed A/AAAA results are de-duplicated and interleaved. At most two connects
 are live, all attempts share one absolute deadline, the first success wins,
@@ -147,14 +154,16 @@ remote proxy remains unchanged.
 entries may expand to the same `(listen, port)`. A tag is 1–64 ASCII letters, digits,
 dots, dashes, or underscores. `port` is `1..=65535`.
 
-An unspecified `listen` (`0.0.0.0` or `::`) is a family-neutral wildcard:
-`auto` and both `prefer*` modes create separate `0.0.0.0` and `::` sockets;
-the `*Only` modes create one. Every IPv6 socket has `IPV6_V6ONLY=1` applied
-before bind, so behavior never depends on `net.ipv6.bindv6only`. A concrete
-address such as `127.0.0.1` or `::1` creates exactly one socket and must be
-allowed by `network.addressFamily`. Listener topology and address-family
-changes that add or remove a socket require restart; compatible preference and
-health-timing changes reload atomically.
+Every `listen` is an object with `mode`, `ipv4`, and `ipv6`. `auto` attempts
+both independent sockets and starts if at least one binds; only family/protocol
+unavailability (`EAFNOSUPPORT`, `EPROTONOSUPPORT`, or `EADDRNOTAVAIL` on an
+unspecified wildcard) is degradable. `EADDRINUSE`, `EACCES`, invalid concrete
+addresses, and every other bind error are fatal. `dualStack` requires both
+sockets. `ipv4Only` and `ipv6Only` bind exactly the named address. Every IPv6
+socket has `IPV6_V6ONLY=1` applied before bind, so behavior never depends on
+`net.ipv6.bindv6only`. Startup logs the exact active and unavailable families;
+the topology stays fixed until restart. Any listener or outbound dial-policy
+change requires restart.
 
 ### Public VLESS + REALITY + Vision inbound
 
@@ -162,7 +171,7 @@ health-timing changes reload atomically.
 {
   "protocol": "vless",
   "tag": "public-reality",
-  "listen": "0.0.0.0",
+  "listen": { "mode": "auto", "ipv4": "0.0.0.0", "ipv6": "::" },
   "port": 443,
   "settings": {
     "clients": [
@@ -196,7 +205,7 @@ handoff`.
 | --- | --- | --- | --- |
 | `protocol` | yes | fixed `vless` | Selects the only public protocol. |
 | `tag` | yes | — | Unique listener/routing tag. |
-| `listen` | yes | — | Concrete IPv4/IPv6 address, or a family-neutral unspecified wildcard expanded by `network.addressFamily`. |
+| `listen` | yes | — | Object containing `mode` (`auto`, `dualStack`, `ipv4Only`, or `ipv6Only`) and the configured `ipv4`/`ipv6` addresses. |
 | `port` | yes | — | TCP bind port, non-zero. |
 | `settings.clients` | yes | — | Non-empty authorized-client array. UUIDs are globally unique across public inbounds. |
 | `settings.clients[].id` | yes | — | Canonical hyphenated UUID; hex is case-insensitive for identity. |
@@ -232,7 +241,7 @@ add an audited wildcard only when multiple real certificate names are required.
 {
   "protocol": "nxr",
   "tag": "internal-nxr",
-  "listen": "0.0.0.0",
+  "listen": { "mode": "auto", "ipv4": "0.0.0.0", "ipv6": "::" },
   "port": 7443,
   "settings": {
     "preSharedKey": "GENERATED-NXR-KEY",
@@ -249,7 +258,7 @@ add an audited wildcard only when multiple real certificate names are required.
 | --- | --- | --- | --- |
 | `protocol` | yes | fixed `nxr` | Selects the internal landing protocol. |
 | `tag` | yes | — | Unique listener/operational tag. |
-| `listen` | yes | — | Internal concrete address or policy-expanded wildcard; restrict it at the host/provider firewall. |
+| `listen` | yes | — | Independent inbound listener topology; restrict internal addresses at the host/provider firewall. |
 | `port` | yes | — | Raw NXR TCP port, non-zero. |
 | `settings.preSharedKey` | yes | — | Independent URL-safe unpadded base64 value decoding to exactly 32 bytes. |
 | `settings.maxTimeDifferenceSeconds` | no | `30` | Accepted absolute wall-clock skew, `1..=300`. |
@@ -268,7 +277,7 @@ post-authentication encryption and must not be exposed to the Internet.
 {
   "protocol": "handoff",
   "tag": "internal-handoff",
-  "listen": "0.0.0.0",
+  "listen": { "mode": "auto", "ipv4": "0.0.0.0", "ipv6": "::" },
   "port": 7443,
   "settings": {
     "preSharedKey": "GENERATED-HANDOFF-KEY",
@@ -286,7 +295,7 @@ post-authentication encryption and must not be exposed to the Internet.
 | --- | --- | --- | --- |
 | `protocol` | yes | fixed `handoff` | Selects the internal session-transfer protocol. |
 | `tag` | yes | — | Unique listener/operational tag. |
-| `listen` | yes | — | Internal concrete address or policy-expanded wildcard; restrict it at the host/provider firewall. |
+| `listen` | yes | — | Independent inbound listener topology; restrict internal addresses at the host/provider firewall. |
 | `port` | yes | — | Raw Handoff TCP port, non-zero. |
 | `settings.preSharedKey` | yes | — | Independent URL-safe unpadded base64 value decoding to exactly 32 bytes; the pair PSK shared with the line node's handoff outbound. |
 | `settings.privateKey` | yes | — | Independent static X25519 private key, URL-safe unpadded base64 decoding to exactly 32 bytes; its public half is the line outbound's `landingPublicKey`. |
@@ -778,8 +787,10 @@ Hot-updateable with compatible topology:
 
 Restart required:
 
-- adding/removing a listener, changing bind address/port, or changing protocol
-  at an address;
+- adding/removing a listener, changing `listen.mode`, either bind address,
+  port, or protocol;
+- any `network.dial` change, because the startup snapshot and shared health
+  state are process-lifetime;
 - any `runtime` change, because the resource mode shapes the process-lifetime
   descriptor budget and memory monitor;
 - any `policy.resourceGovernor` change, because REALITY replay admission/state

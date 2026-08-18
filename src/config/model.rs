@@ -1,4 +1,8 @@
-use std::{fmt, net::IpAddr, path::PathBuf};
+use std::{
+    fmt,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    path::PathBuf,
+};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -17,7 +21,7 @@ pub struct Config {
     /// Name-resolution behavior.
     #[serde(default)]
     pub dns: DnsConfig,
-    /// Process-wide IP-family selection and fallback behavior.
+    /// Process-wide locally resolved outbound dialing behavior.
     #[serde(default)]
     pub network: NetworkConfig,
     /// Protected inbound listeners.
@@ -34,19 +38,25 @@ pub struct Config {
     pub runtime: RuntimeConfig,
 }
 
-/// Process-wide IP-family policy and bounded connection-planning controls.
-///
-/// The policy applies to wildcard listeners and to every proxy endpoint
-/// resolved and dialed locally. Destinations intentionally forwarded to a
-/// SOCKS5, NXR, or Handoff peer retain their original address and are not
-/// resolved locally.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+/// Process-wide network behavior.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct NetworkConfig {
-    /// Enabled families and their initial preference. `auto` additionally
-    /// considers local route usability and bounded passive health state.
+    /// Strategy for proxy endpoints resolved and dialed by this process.
     #[serde(default)]
-    pub address_family: AddressFamilyPolicy,
+    pub dial: DialConfig,
+}
+
+/// Bounded locally resolved outbound dialing controls.
+///
+/// Destinations intentionally delegated to a SOCKS5, NXR, or Handoff peer
+/// retain their original address and do not use this policy.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DialConfig {
+    /// Enabled families and the initial process-wide preference.
+    #[serde(default)]
+    pub mode: DialMode,
     /// Delay before the first alternate-family connection attempt.
     #[serde(default = "default_fallback_delay_ms")]
     pub fallback_delay_ms: u64,
@@ -54,21 +64,21 @@ pub struct NetworkConfig {
     #[serde(default = "default_route_refresh_seconds")]
     pub route_refresh_seconds: u64,
     /// Time a family-level reachability error deprioritizes that family.
-    #[serde(default = "default_family_penalty_seconds")]
-    pub family_penalty_seconds: u64,
+    #[serde(default = "default_hard_failure_penalty_seconds")]
+    pub hard_failure_penalty_seconds: u64,
     /// Lifetime of learned family latency before it expires.
-    #[serde(default = "default_health_memory_seconds")]
-    pub health_memory_seconds: u64,
+    #[serde(default = "default_latency_memory_seconds")]
+    pub latency_memory_seconds: u64,
 }
 
-impl Default for NetworkConfig {
+impl Default for DialConfig {
     fn default() -> Self {
         Self {
-            address_family: AddressFamilyPolicy::Auto,
+            mode: DialMode::Auto,
             fallback_delay_ms: default_fallback_delay_ms(),
             route_refresh_seconds: default_route_refresh_seconds(),
-            family_penalty_seconds: default_family_penalty_seconds(),
-            health_memory_seconds: default_health_memory_seconds(),
+            hard_failure_penalty_seconds: default_hard_failure_penalty_seconds(),
+            latency_memory_seconds: default_latency_memory_seconds(),
         }
     }
 }
@@ -81,32 +91,44 @@ const fn default_route_refresh_seconds() -> u64 {
     30
 }
 
-const fn default_family_penalty_seconds() -> u64 {
+const fn default_hard_failure_penalty_seconds() -> u64 {
     30
 }
 
-const fn default_health_memory_seconds() -> u64 {
+const fn default_latency_memory_seconds() -> u64 {
     300
 }
 
-/// IP families enabled for listeners and locally resolved connection setup.
+/// IP families enabled for locally resolved connection setup.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub enum AddressFamilyPolicy {
-    /// Enable both families and adapt preference to route and connection health.
+pub enum DialMode {
+    /// Enable both families and use the stable process-wide network decision.
     #[default]
     Auto,
     /// Enable both families, initially preferring IPv4 unless it is unhealthy.
     PreferIpv4,
     /// Enable both families, initially preferring IPv6 unless it is unhealthy.
     PreferIpv6,
-    /// Bind and dial IPv4 only.
+    /// Dial IPv4 only.
     Ipv4Only,
-    /// Bind and dial IPv6 only.
+    /// Dial IPv6 only.
     Ipv6Only,
 }
 
-impl AddressFamilyPolicy {
+impl DialMode {
+    /// Returns the stable configuration/log name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::PreferIpv4 => "preferIpv4",
+            Self::PreferIpv6 => "preferIpv6",
+            Self::Ipv4Only => "ipv4Only",
+            Self::Ipv6Only => "ipv6Only",
+        }
+    }
+
     /// Returns whether IPv4 is enabled.
     #[must_use]
     pub const fn allows_ipv4(self) -> bool {
@@ -118,6 +140,83 @@ impl AddressFamilyPolicy {
     pub const fn allows_ipv6(self) -> bool {
         !matches!(self, Self::Ipv4Only)
     }
+
+    /// Returns the configured family preference, when explicit.
+    #[must_use]
+    pub const fn preferred_family_is_ipv4(self) -> Option<bool> {
+        match self {
+            Self::PreferIpv4 | Self::Ipv4Only => Some(true),
+            Self::PreferIpv6 | Self::Ipv6Only => Some(false),
+            Self::Auto => None,
+        }
+    }
+}
+
+/// Listener topology for one logical inbound.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ListenConfig {
+    /// Startup binding requirements for this inbound.
+    #[serde(default)]
+    pub mode: ListenMode,
+    /// IPv4 address used by `auto`, `dualStack`, and `ipv4Only`.
+    #[serde(default = "default_listen_ipv4")]
+    pub ipv4: Ipv4Addr,
+    /// IPv6 address used by `auto`, `dualStack`, and `ipv6Only`.
+    #[serde(default = "default_listen_ipv6")]
+    pub ipv6: Ipv6Addr,
+}
+
+impl Default for ListenConfig {
+    fn default() -> Self {
+        Self {
+            mode: ListenMode::Auto,
+            ipv4: default_listen_ipv4(),
+            ipv6: default_listen_ipv6(),
+        }
+    }
+}
+
+impl From<IpAddr> for ListenConfig {
+    fn from(address: IpAddr) -> Self {
+        match address {
+            IpAddr::V4(address) if address.is_unspecified() => Self::default(),
+            IpAddr::V6(address) if address.is_unspecified() => Self::default(),
+            IpAddr::V4(address) => Self {
+                mode: ListenMode::Ipv4Only,
+                ipv4: address,
+                ipv6: default_listen_ipv6(),
+            },
+            IpAddr::V6(address) => Self {
+                mode: ListenMode::Ipv6Only,
+                ipv4: default_listen_ipv4(),
+                ipv6: address,
+            },
+        }
+    }
+}
+
+const fn default_listen_ipv4() -> Ipv4Addr {
+    Ipv4Addr::UNSPECIFIED
+}
+
+const fn default_listen_ipv6() -> Ipv6Addr {
+    Ipv6Addr::UNSPECIFIED
+}
+
+/// Startup requirements for one logical inbound listener.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ListenMode {
+    /// Try both families and continue when at least one family is available.
+    #[default]
+    Auto,
+    /// Require both independent family sockets.
+    DualStack,
+    /// Bind only IPv4.
+    Ipv4Only,
+    /// Bind only IPv6.
+    Ipv6Only,
 }
 
 /// Process-level resource posture.
@@ -397,13 +496,13 @@ impl InboundConfig {
         }
     }
 
-    /// Returns the configured bind address.
+    /// Returns the configured listener topology.
     #[must_use]
-    pub const fn listen(&self) -> IpAddr {
+    pub const fn listen(&self) -> &ListenConfig {
         match self {
-            Self::Vless(inbound) => inbound.listen,
-            Self::Nxr(inbound) => inbound.listen,
-            Self::Handoff(inbound) => inbound.listen,
+            Self::Vless(inbound) => &inbound.listen,
+            Self::Nxr(inbound) => &inbound.listen,
+            Self::Handoff(inbound) => &inbound.listen,
         }
     }
 
@@ -442,8 +541,8 @@ impl InboundConfig {
 pub struct VlessInboundConfig {
     /// Unique routing tag.
     pub tag: String,
-    /// Address to bind.
-    pub listen: IpAddr,
+    /// Per-inbound listener topology and family requirements.
+    pub listen: ListenConfig,
     /// TCP port to bind.
     pub port: u16,
     /// Authorized VLESS users.
@@ -458,8 +557,8 @@ pub struct VlessInboundConfig {
 pub struct NxrInboundConfig {
     /// Unique routing and operational tag.
     pub tag: String,
-    /// Firewall-restricted address to bind.
-    pub listen: IpAddr,
+    /// Firewall-restricted listener topology and family requirements.
+    pub listen: ListenConfig,
     /// Raw NXR TCP port to bind.
     pub port: u16,
     /// Independent per-flow authentication and replay policy.
@@ -515,8 +614,8 @@ const fn default_nxr_connect_timeout_ms() -> u64 {
 pub struct HandoffInboundConfig {
     /// Unique routing and operational tag.
     pub tag: String,
-    /// Firewall-restricted address to bind.
-    pub listen: IpAddr,
+    /// Firewall-restricted listener topology and family requirements.
+    pub listen: ListenConfig,
     /// Raw Handoff TCP port to bind.
     pub port: u16,
     /// Independent per-transfer authentication and replay policy.

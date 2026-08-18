@@ -44,8 +44,9 @@ rust-reality config generate standalone \
 ```
 
 The generated JSON contains a UUID, a private REALITY key, two short IDs owned
-by that UUID, `network.addressFamily: auto`, and a direct-routing policy. The
-default unspecified listen address binds independent IPv4 and IPv6 sockets.
+by that UUID, inbound `listen.mode: auto`, outbound `network.dial.mode: auto`,
+and a direct-routing policy. The default listener binds independent IPv4 and
+IPv6 sockets; locally resolved outbound peers use the shared adaptive policy.
 The client-facing values (including the REALITY public
 key) are written to standard error so the private server configuration can be
 captured separately. Protect both outputs, and replace the example target with

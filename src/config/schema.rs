@@ -36,11 +36,15 @@ mod tests {
         assert!(!schema.contains("minConnections"));
         assert!(!schema.contains("maxStreamsPerConnection"));
         assert!(!schema.contains("dedicatedAfterBytes"));
+        assert!(schema.contains("\"dial\""));
+        assert!(schema.contains("hardFailurePenaltySeconds"));
+        assert!(schema.contains("latencyMemorySeconds"));
+        assert!(schema.contains("dualStack"));
+        assert!(!schema.contains("addressFamily"));
+        assert!(!schema.contains("familyPenaltySeconds"));
+        assert!(!schema.contains("healthMemorySeconds"));
         for policy in ["auto", "preferIpv4", "preferIpv6", "ipv4Only", "ipv6Only"] {
-            assert!(
-                schema.contains(policy),
-                "missing address-family mode {policy}"
-            );
+            assert!(schema.contains(policy), "missing dial mode {policy}");
         }
     }
 }

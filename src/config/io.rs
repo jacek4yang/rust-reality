@@ -168,6 +168,47 @@ mod tests {
     }
 
     #[test]
+    fn rejects_removed_combined_address_family_and_scalar_listener() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(test_config_json()).expect("fixture must parse");
+        value["network"] = serde_json::json!({ "addressFamily": "auto" });
+        let json = serde_json::to_vec(&value).expect("obsolete network shape must encode");
+        assert!(matches!(
+            decode_config(Path::new("obsolete-network.json"), &json),
+            Err(ConfigLoadError::Decode { .. })
+        ));
+
+        let mut value: serde_json::Value =
+            serde_json::from_str(test_config_json()).expect("fixture must parse");
+        value["inbounds"][0]["listen"] = "0.0.0.0".into();
+        let json = serde_json::to_vec(&value).expect("obsolete listener shape must encode");
+        assert!(matches!(
+            decode_config(Path::new("obsolete-listen.json"), &json),
+            Err(ConfigLoadError::Decode { .. })
+        ));
+    }
+
+    #[test]
+    fn accepts_every_listener_and_dial_mode() {
+        for dial_mode in ["auto", "preferIpv4", "preferIpv6", "ipv4Only", "ipv6Only"] {
+            let mut value: serde_json::Value =
+                serde_json::from_str(test_config_json()).expect("fixture must parse");
+            value["network"]["dial"]["mode"] = dial_mode.into();
+            let json = serde_json::to_vec(&value).expect("dial mode must encode");
+            decode_config(Path::new("dial-mode.json"), &json)
+                .unwrap_or_else(|error| panic!("dial mode {dial_mode} must decode: {error}"));
+        }
+        for listen_mode in ["auto", "dualStack", "ipv4Only", "ipv6Only"] {
+            let mut value: serde_json::Value =
+                serde_json::from_str(test_config_json()).expect("fixture must parse");
+            value["inbounds"][0]["listen"]["mode"] = listen_mode.into();
+            let json = serde_json::to_vec(&value).expect("listen mode must encode");
+            decode_config(Path::new("listen-mode.json"), &json)
+                .unwrap_or_else(|error| panic!("listener mode {listen_mode} must decode: {error}"));
+        }
+    }
+
+    #[test]
     fn rejects_ambiguous_pre_v13_shared_short_ids() {
         let mut value: serde_json::Value =
             serde_json::from_str(test_config_json()).expect("fixture must parse");
