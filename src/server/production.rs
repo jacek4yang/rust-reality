@@ -46,6 +46,7 @@ use crate::{
 };
 
 use super::{
+    dns::{DnsResolver, DnsResolverConfigError},
     handoff::{HandoffLandingConfigError, HandoffLandingError, HandoffLandingHandler},
     nxr::{NxrLandingConfigError, NxrLandingError, NxrLandingHandler, NxrReplayCache},
     reality::{
@@ -282,6 +283,13 @@ impl ProductionServer {
             ),
             network_environment: NetworkEnvironment::from_config(&config.network.dial),
         };
+        // Process-lifetime shared resolver: the configured DNS backend and the
+        // admission governor apply to every connector-side lookup. First-wins
+        // keeps reload generations on the one installed resolver.
+        let _ = super::dns::install_shared(
+            DnsResolver::from_config(&config.dns, authorities.governor.clone())
+                .map_err(ProductionServerError::Dns)?,
+        );
         let replay = ReplayCache::new(
             authorities.governor.clone(),
             &config.policy.resource_governor,
@@ -1827,6 +1835,8 @@ pub enum ProductionServerError {
     /// a startup failure with a concrete recommendation rather than an
     /// `accept4` failure under load.
     DescriptorBudget(FdBudgetError),
+    /// The configured DNS resolver could not be constructed at startup.
+    Dns(DnsResolverConfigError),
     Runtime(RuntimeUpdateError),
     Bind {
         address: SocketAddr,
@@ -1844,6 +1854,7 @@ impl fmt::Display for ProductionServerError {
         match self {
             Self::Runtime(source) => source.fmt(formatter),
             Self::DescriptorBudget(source) => source.fmt(formatter),
+            Self::Dns(source) => source.fmt(formatter),
             Self::Bind { address, .. } => write!(formatter, "failed to bind listener {address}"),
             Self::ListenerAddress(_) => formatter.write_str("failed to read listener address"),
             Self::Accept(_) => formatter.write_str("listener accept failed"),
@@ -1864,6 +1875,7 @@ impl Error for ProductionServerError {
             | Self::Signal(source) => Some(source),
             Self::Task(source) => Some(source),
             Self::DescriptorBudget(source) => Some(source),
+            Self::Dns(source) => Some(source),
             Self::ListenerStopped => None,
         }
     }
