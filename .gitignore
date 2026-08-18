@@ -18,6 +18,7 @@
 
 # Temporary test output
 /test-output/
+/scripts/__pycache__/
 /fuzz/artifacts/
 /fuzz/corpus/
 /benchmarks/rust-reality-matrix.*/
@@ -28,6 +29,7 @@
 /artifacts/
 
 # Editor files
+__pycache__/
 *.swp
 *.swo
 /.idea/

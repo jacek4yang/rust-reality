@@ -615,6 +615,12 @@ def summarize(arguments: argparse.Namespace) -> None:
     identity_has_baseline = identity.get("baselineRustReality") is not None
     if identity_has_baseline != arguments.baseline_rust_present:
         raise ValueError("baseline flag does not match the pinned run identity")
+    identity_xray_comparator = identity.get("xray", {}).get(
+        "serverComparatorEnabled", True
+    )
+    xray_comparator_enabled = not arguments.xray_server_comparator_disabled
+    if identity_xray_comparator != xray_comparator_enabled:
+        raise ValueError("Xray comparator flag does not match the pinned run identity")
     implementation_specs = [
         ("opensslReference", "reference", arguments.reference_port),
     ]
@@ -622,16 +628,16 @@ def summarize(arguments: argparse.Namespace) -> None:
         implementation_specs.append(
             ("baselineRustReality", "baseline-rust", arguments.rust_port)
         )
-    implementation_specs.extend(
-        (
-            ("rustReality", "rust", arguments.rust_port),
-            ("xray", "xray", arguments.xray_port),
-        )
-    )
+    implementation_specs.append(("rustReality", "rust", arguments.rust_port))
+    if xray_comparator_enabled:
+        implementation_specs.append(("xray", "xray", arguments.xray_port))
     comparison_specs = [
         ("rustRealityVsOpenSslReference", "opensslReference", "rustReality"),
-        ("xrayVsOpenSslReference", "opensslReference", "xray"),
     ]
+    if xray_comparator_enabled:
+        comparison_specs.append(
+            ("xrayVsOpenSslReference", "opensslReference", "xray")
+        )
     if arguments.baseline_rust_present:
         comparison_specs.extend(
             (
@@ -893,6 +899,9 @@ def build_parser() -> argparse.ArgumentParser:
     summary_parser.add_argument("--rust-port", type=int, required=True)
     summary_parser.add_argument("--xray-port", type=int, required=True)
     summary_parser.add_argument("--baseline-rust-present", action="store_true")
+    summary_parser.add_argument(
+        "--xray-server-comparator-disabled", action="store_true"
+    )
     summary_parser.add_argument(
         "--strace-status",
         choices=("available", "unavailable", "disabled"),

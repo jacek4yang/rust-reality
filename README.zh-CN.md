@@ -31,9 +31,10 @@
 - framed 记录打包、稳态每条记录零分配、每条数据路径零可避免的用户态拷贝。
 - 默认使用 ring（源自 BoringSSL）的 AES-128-GCM 记录 AEAD；纯 Rust 的
   RustCrypto 回退构建只差一个参数，并持续测试。
-- 已认证服务端 flight 保留伪装目标派生的 ServerHello，并跟随目标实测的合并/
-  四记录 post-ServerHello 形状。v1.4 仅在文档列出的记录/写入维度上与 OpenSSL
-  参考对齐，不声称与参考流量完全相同。
+- 已认证服务端 flight 保留伪装目标派生的 ServerHello，并跟随可选 CCS、实测的
+  四位置/合并握手形状以及可选第五条 Finished 后形状；后者以不携带恢复状态的
+  空 ApplicationData 假 NST 表示。检查前缀最多保留 66,642 字节，fallback
+  仍逐字节精确。
 - 一切皆有界：连接、握手、fallback、密码学工作、重放状态、缓冲区、DNS 结果、
   描述符和 splice 资源——压力下迟滞降级而不是崩溃。
 - 支持具体和单标签通配的 REALITY server name、按 UUID 的路由分组、UUID 独占
@@ -73,6 +74,13 @@ loopback 单元受时延约束，基本持平（0.94–1.04×）。完整 36 单
 [docs/performance.zh-CN.md](docs/performance.zh-CN.md) 和
 [docs/benchmarks.zh-CN.md](docs/benchmarks.zh-CN.md)。
 
+v1.5 对 v1.4 的同机平衡 ABBA 没有发现统计显著的 setup 或受保护路径吞吐/时延
+变化：两轮完整矩阵的所有已报告 95% 区间都跨越“无差异”。单独的系统调用
+trace 测得候选每个 setup
+连接少 4.0013 次 cover `recvfrom`。这些是有边界的实现成本观察，不是吞吐胜利
+声明；精确区间见
+[docs/performance.zh-CN.md](docs/performance.zh-CN.md#v15-cover-flight-与发布证据)。
+
 ## 架构
 
 单个 Tokio 多线程运行时；每连接一个任务，认证后拆成两个独立的方向任务。
@@ -94,14 +102,23 @@ relay。生命周期、热路径拓扑、描述符预算模型和可观测事件
 
 ## 快速开始
 
+Release 保留 portable `x86_64-unknown-linux-gnu` 压缩包，并额外提供可选的
+`x86_64-v3` 压缩包。后者要求 CPU 支持 x86-64-v3，且没有运行时回退；不确定
+机器能力时应选择 portable 包。
+
 从[最新 Release](https://github.com/jacek4yang/rust-reality/releases/latest)
-下载压缩包、manifest 和校验文件，安装前验证全部资产：
+下载两个压缩包、manifest 和校验文件，安装前验证全部资产：
 
 ```shell
 sha256sum --check SHA256SUMS
-tar -xzf rust-reality-v1.4.0-x86_64-unknown-linux-gnu.tar.gz
+# portable 包（不确定 CPU 能力时推荐）：
+tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
+# 或在 x86-64-v3 CPU 上使用：
+# tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 ```
+
+`release-manifest.json` schema v2 会记录两个 CPU 档位及其运行要求。
 
 探测 REALITY 伪装目标并生成单机配置：
 

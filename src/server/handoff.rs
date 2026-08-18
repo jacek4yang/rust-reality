@@ -398,8 +398,9 @@ impl HandoffLandingHandler {
     /// before destination DNS or connect. On success the transferred pending
     /// ciphertext is fed to the resumed record layer first, the prefetched
     /// payload enters a fresh Vision decoder first, and the response header
-    /// plus opening Vision frame is the first sealed server record (sequence
-    /// zero) — the exact ordering the session boundary requires.
+    /// plus opening Vision frame is the first client-visible server record,
+    /// sealed at the transferred sequence zero or one — the exact ordering
+    /// the session boundary requires.
     ///
     /// # Errors
     ///
@@ -643,7 +644,8 @@ mod tests {
     use x25519_dalek::{PublicKey, StaticSecret};
 
     use super::{
-        HandoffLandingError, HandoffLandingHandler, HandoffLine, HandoffLineError, unix_seconds,
+        HandoffLandingError, HandoffLandingHandler, HandoffLine, HandoffLineError, resume_tls,
+        unix_seconds,
     };
     use crate::{
         config::{
@@ -657,8 +659,8 @@ mod tests {
                 seal_transfer,
             },
             reality::tls13::{
-                CipherSuite, ContentType, EstablishedTls, Tls13KeySchedule, Tls13RecordLayer,
-                TlsApplicationIo, TrafficKeys, read_tls_record,
+                CipherSuite, ContentType, EstablishedTls, ExportedRecordState, Tls13KeySchedule,
+                Tls13RecordLayer, TlsApplicationIo, TrafficKeys, read_tls_record,
             },
             vless::{
                 Address, Command, Destination, UserId, VERSION, VISION_FLOW, VisionCommand,
@@ -713,18 +715,58 @@ mod tests {
     }
 
     fn test_state(destination: Destination) -> ContinuationState {
+        test_state_with_server_sequence(destination, 0)
+    }
+
+    fn test_state_with_server_sequence(
+        destination: Destination,
+        server_sequence: u64,
+    ) -> ContinuationState {
         ContinuationState::new(
             CipherSuite::ChaCha20Poly1305Sha256,
             TrafficKeys::from_raw_parts(&[0x11; 32], [0x21; 12]).expect("client keys"),
             1,
             TrafficKeys::from_raw_parts(&[0x12; 32], [0x22; 12]).expect("server keys"),
-            0,
+            server_sequence,
             [0x33; 16],
             destination,
             Vec::new(),
             Vec::new(),
         )
         .expect("test state must be valid")
+    }
+
+    #[test]
+    fn landing_resume_preserves_server_sequence_one() {
+        let suite = CipherSuite::ChaCha20Poly1305Sha256;
+        let state = test_state_with_server_sequence(
+            Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 443),
+            1,
+        );
+        let mut resumed = resume_tls(&state).expect("sequence-one state must resume");
+        assert_eq!(resumed.client_records_mut().records_used(), 1);
+        assert_eq!(resumed.server_records_mut().records_used(), 1);
+
+        let mut wire = Vec::new();
+        resumed
+            .server_records_mut()
+            .seal_into(ContentType::ApplicationData, b"next", 0, &mut wire)
+            .expect("resumed server must seal at sequence one");
+        assert_eq!(resumed.server_records_mut().records_used(), 2);
+
+        let peer_state = ExportedRecordState::from_parts(
+            suite,
+            TrafficKeys::from_raw_parts(&[0x12; 32], [0x22; 12]).expect("peer server keys"),
+            1,
+        )
+        .expect("peer state must build");
+        let mut peer = Tls13RecordLayer::from_exported_state(peer_state).expect("peer must resume");
+        let opened = peer
+            .open_in_place(&mut wire)
+            .expect("peer must authenticate the next sequence-one record");
+        assert_eq!(opened.content_type(), ContentType::ApplicationData);
+        assert_eq!(opened.plaintext(), b"next");
+        assert_eq!(peer.records_used(), 2);
     }
 
     fn tls_states() -> (EstablishedTls, Tls13RecordLayer, Tls13RecordLayer) {
@@ -761,6 +803,34 @@ mod tests {
             layer(),
             server_layer(),
         )
+    }
+
+    fn tls_states_after_cover_shaped_fake_ticket()
+    -> (EstablishedTls, Tls13RecordLayer, Tls13RecordLayer) {
+        let (mut established, client_write_records, mut client_read_records) = tls_states();
+        assert_eq!(established.server_records_mut().records_used(), 0);
+        assert_eq!(client_read_records.records_used(), 0);
+
+        // The cover-shaped fake NewSessionTicket is an empty application-data
+        // record under the server application key. It consumes sequence zero
+        // before authenticated Vision traffic begins, exactly as production
+        // `build_server_flight_with_shape` does.
+        let mut fake_ticket = Vec::new();
+        established
+            .server_records_mut()
+            .seal_into(ContentType::ApplicationData, b"", 117, &mut fake_ticket)
+            .expect("cover-shaped fake ticket must seal at sequence zero");
+        // 5-byte record header + 1-byte inner type + 117-byte padding + 16-byte tag.
+        assert_eq!(fake_ticket.len(), 139);
+        let opened = client_read_records
+            .open_in_place(&mut fake_ticket)
+            .expect("client must authenticate the cover-shaped fake ticket");
+        assert_eq!(opened.content_type(), ContentType::ApplicationData);
+        assert!(opened.plaintext().is_empty());
+        assert_eq!(established.server_records_mut().records_used(), 1);
+        assert_eq!(client_read_records.records_used(), 1);
+
+        (established, client_write_records, client_read_records)
     }
 
     fn vision_request(destination_port: u16, payload: &[u8]) -> Vec<u8> {
@@ -940,6 +1010,15 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn line_to_landing_moves_a_full_vision_session_byte_exactly() {
+        run_line_to_landing_full_vision_session(false).await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn line_to_landing_resumes_after_cover_shaped_server_sequence_one() {
+        run_line_to_landing_full_vision_session(true).await;
+    }
+
+    async fn run_line_to_landing_full_vision_session(consume_cover_shaped_fake_ticket: bool) {
         let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("destination must bind");
@@ -955,7 +1034,21 @@ mod tests {
         let landing_handler = test_landing_handler();
         let line_handler = handoff_vision_handler(landing_address);
         let (mut client, server) = tcp_pair().await;
-        let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
+        let (established_tls, mut client_write_records, mut client_read_records) =
+            if consume_cover_shaped_fake_ticket {
+                tls_states_after_cover_shaped_fake_ticket()
+            } else {
+                tls_states()
+            };
+        let expected_first_visible_server_sequence = if consume_cover_shaped_fake_ticket {
+            1
+        } else {
+            0
+        };
+        assert_eq!(
+            client_read_records.records_used(),
+            expected_first_visible_server_sequence
+        );
         let established = RealityEstablished::from_test_parts(
             TlsApplicationIo::new(server, established_tls),
             USER,
@@ -1008,6 +1101,11 @@ mod tests {
                         ContentType::ApplicationData => {
                             let plaintext = opened.plaintext();
                             let vision = if response_header {
+                                assert_eq!(
+                                    client_read_records.records_used(),
+                                    expected_first_visible_server_sequence + 1,
+                                    "the first visible response must decrypt at the exported server sequence",
+                                );
                                 response_header = false;
                                 if plaintext.get(..2) != Some([VERSION, 0].as_slice()) {
                                     return Err(io::Error::other("invalid VLESS response header"));

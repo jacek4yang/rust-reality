@@ -2,27 +2,45 @@
 set -euo pipefail
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$repository/scripts/benchmark-contract.sh"
 xray=${XRAY_BIN:-xray}
 rust_bin=${RUST_REALITY_BIN:-}
 cover_target=${COVER_TARGET:-www.microsoft.com:443}
 cover_sni=${COVER_SNI:-www.microsoft.com}
 internet_url=${INTERNET_URL:-https://www.bing.com/}
-temporary_root=${TMPDIR:-/tmp}
+rr_contract_init "$repository" test-xray-interop diagnostics/final 16
+if [[ $RR_EXPLORATORY == 1 ]]; then
+    [[ $xray == /* ]] || xray=$(command -v "$xray")
+fi
+rr_register_binary rust-reality "$rust_bin" "${RUST_REALITY_SHA256:-}" rust \
+    "${EXPECTED_SOURCE_COMMIT:-}"
+rust_bin=${RR_BINARY_PATHS[rust-reality]}
+rr_register_binary xray "$xray" "${XRAY_SHA256:-}" xray
+xray=${RR_BINARY_PATHS[xray]}
+rr_write_contract_metadata
+out_dir=$RR_OUT_DIR
+temporary_root=$RR_TMPDIR
 work=$(mktemp -d "$temporary_root/rust-reality-xray.XXXXXX")
 rust_pid=
 xray_pid=
 http_pid=
 
 cleanup() {
+    local exit_status=$?
+    trap - EXIT
+    set +e
     for pid in "$xray_pid" "$rust_pid" "$http_pid"; do
         if [[ -n "$pid" ]]; then
-            kill "$pid" 2>/dev/null || true
-            wait "$pid" 2>/dev/null || true
+            rr_stop_registered_pid "$pid"
         fi
     done
     if [[ -d "$work" && "$work" == "$temporary_root"/rust-reality-xray.* ]]; then
         rm -rf -- "$work"
     fi
+    local final_rc
+    rr_contract_verify_on_exit "$exit_status"
+    final_rc=$?
+    exit "$final_rc"
 }
 trap cleanup EXIT
 
@@ -34,19 +52,7 @@ for program in "$xray" curl jq python3 sha256sum; do
         exit 1
     fi
 done
-if [[ -z $rust_bin ]] && ! command -v cargo >/dev/null 2>&1; then
-    echo "required program is unavailable: cargo" >&2
-    exit 1
-fi
-
-free_port() {
-    python3 - <<'PY'
-import socket
-with socket.socket() as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-}
+free_port() { rr_next_port; }
 
 wait_port() {
     local port=$1
@@ -67,12 +73,6 @@ PY
 }
 
 cd "$repository"
-if [[ -z $rust_bin ]]; then
-    cargo build --release --locked
-    rust_bin=target/release/rust-reality
-fi
-[[ -x $rust_bin ]] || { echo "rust-reality binary is not executable: $rust_bin" >&2; exit 1; }
-rust_bin=$(readlink -f "$rust_bin")
 
 server_port=$(free_port)
 socks_port=$(free_port)
@@ -96,6 +96,7 @@ jq --arg cache "$work/assets" \
 "$rust_bin" serve --config "$work/server.json" \
     >"$work/rust.log" 2>&1 &
 rust_pid=$!
+rr_register_pid "$rust_pid" "$rust_bin"
 wait_port "$server_port"
 
 jq -n \
@@ -138,6 +139,7 @@ jq -n \
 
 "$xray" run -config "$work/xray.json" >"$work/xray.log" 2>&1 &
 xray_pid=$!
+rr_register_pid "$xray_pid" "$xray"
 wait_port "$socks_port"
 
 python3 - "$work" <<'PY'
@@ -150,6 +152,7 @@ PY
     python3 -m http.server "$http_port" --bind 127.0.0.1 >"$work/http.log" 2>&1
 ) &
 http_pid=$!
+rr_register_pid "$http_pid"
 wait_port "$http_port"
 
 set +e
@@ -196,8 +199,12 @@ if [[ -z "$xray_verify" || "$rust_verify" != "$xray_verify" ]]; then
 fi
 mldsa_sha=$(printf %s "$rust_verify" | sha256sum | awk '{print $1}')
 
-echo "xray_version=$($xray version | head -1)"
-echo "local_bytes=$(stat -c %s "$work/download.bin")"
-echo "local_sha256=$download_sha"
-echo "mldsa65_verify_sha256=$mldsa_sha"
-echo "internet=$internet_result"
+jq -n --arg xray_version "$($xray version | head -1)" \
+    --argjson local_bytes "$(stat -c %s "$work/download.bin")" \
+    --arg local_sha256 "$download_sha" --arg mldsa65_verify_sha256 "$mldsa_sha" \
+    --arg internet "$internet_result" \
+    '{pass:true,xrayVersion:$xray_version,localBytes:$local_bytes,
+      localSha256:$local_sha256,mldsa65VerifySha256:$mldsa65_verify_sha256,
+      internet:$internet}' >"$out_dir/report.json"
+rr_finalize_contract
+printf 'Xray interoperability report: %s\n' "$out_dir/report.json"

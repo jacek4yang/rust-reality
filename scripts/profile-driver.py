@@ -96,8 +96,11 @@ def cgroup_oom_kills(cgroup):
     for line in events.splitlines():
         key, _, value = line.partition(" ")
         if key == "oom_kill":
-            return int(value)
-    return 0
+            try:
+                return int(value)
+            except ValueError:
+                return None
+    return None
 
 
 def log_marker_counts(path):
@@ -251,7 +254,7 @@ def cmd_ladder(args):
     import asyncio
 
     levels = [int(x) for x in args.levels.split(",") if x]
-    baseline_oom = cgroup_oom_kills(args.cgroup) or 0
+    baseline_oom = cgroup_oom_kills(args.cgroup)
     base_fds = proc_fd_count(args.server_pid) or 0
     held = []          # asyncio StreamWriter objects kept open
     total_failed = 0
@@ -287,6 +290,9 @@ def cmd_ladder(args):
     def sample(level, opened, failed):
         counts, pressure_state = log_marker_counts(args.server_log)
         fds = proc_fd_count(args.server_pid)
+        current_oom = cgroup_oom_kills(args.cgroup)
+        oom_delta = (None if baseline_oom is None or current_oom is None
+                     else current_oom - baseline_oom)
         established = max(0, (fds - base_fds) // 2) if fds is not None else None
         return {
             "cell": "ladder",
@@ -302,7 +308,9 @@ def cmd_ladder(args):
             if pid_alive(args.server_pid) else None,
             "cgroupMemoryCurrent": cgroup_int(args.cgroup, "memory.current"),
             "cgroupMemoryPeak": cgroup_int(args.cgroup, "memory.peak"),
-            "cgroupOomKills": (cgroup_oom_kills(args.cgroup) or 0) - baseline_oom,
+            "cgroupMemorySwapCurrent": cgroup_int(
+                args.cgroup, "memory.swap.current"),
+            "cgroupOomKills": oom_delta,
             "logEvents": counts,
             "latestPressureState": pressure_state,
         }
@@ -326,9 +334,21 @@ def cmd_ladder(args):
             await asyncio.sleep(args.settle)
             record = sample(level, opened, total_failed)
             emit(record)
-            oom = record["cgroupOomKills"] or 0
+            oom = record["cgroupOomKills"]
+            swap_current = record["cgroupMemorySwapCurrent"]
             if not record["serverAlive"]:
                 abort_reason = "server process died"
+                break
+            if oom is None:
+                abort_reason = "cgroup oom_kill status unavailable"
+                break
+            if swap_current is None:
+                abort_reason = "cgroup memory.swap.current unavailable"
+                break
+            if swap_current != 0:
+                abort_reason = (
+                    f"cgroup memory.swap.current is non-zero ({swap_current})"
+                )
                 break
             if oom > 0:
                 abort_reason = "cgroup oom_kill"

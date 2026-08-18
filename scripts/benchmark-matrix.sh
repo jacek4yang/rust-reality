@@ -6,9 +6,9 @@
 #   final:    $RUST_REALITY_BIN          (default target/release/rust-reality)
 #   xray:     $XRAY_BIN                  (default ../artifacts/xray-reference)
 # Every server is fronted by an unmodified Xray SOCKS5 client (one per server
-# port), identical to scripts/benchmark-xray.sh. rust servers run with debug
-# log level so per-direction backend statistics and the tunnel-bypass guard can
-# be collected from connection_accepted / connection_completed events.
+# port), identical to scripts/benchmark-xray.sh. Authoritative measurements
+# default to warn-level logging so diagnostic serialization is not charged to
+# the data path. Debug mode additionally collects per-direction backend events.
 #
 # Scenarios (each forms one set of matrix cells):
 #   framed-download  plain-HTTP loopback origin; Vision stays framed
@@ -61,7 +61,10 @@
 # RUST_REALITY_BASELINE_SHA256/RUST_REALITY_SHA256/XRAY_SHA256 (expected binary
 # hashes), REQUIRE_PINNED_BINARIES=1 (require all three expected hashes),
 # RUST_REALITY_BUILD_PROFILE and RUST_REALITY_BUILD_FEATURES (recorded build
-# identity; default "unknown-prebuilt").
+# identity; default "unknown-prebuilt"), ABBA_START (baseline|final; default
+# baseline, reverse on a second formal round to balance cross-run drift),
+# MANAGE_PIPE_USER_PAGES_SOFT (formal default 1, exploratory default 0), and
+# PIPE_USER_PAGES_SOFT_TARGET (optional explicit minimum page budget).
 #
 # Output in OUT_DIR: samples.jsonl (one record per individual sample),
 # summary.json (per-cell p50/p95/p99 + ratios), environment.json.
@@ -75,6 +78,7 @@
 set -Eeuo pipefail
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$repository/scripts/benchmark-contract.sh"
 cd "$repository"
 
 baseline_bin=${RUST_REALITY_BASELINE_BIN:-../artifacts/rust-reality-baseline-717e69b}
@@ -92,25 +96,77 @@ integrity_mib=${INTEGRITY_MIB:-2048}
 seed=${SEED:-0x5252}
 cells_filter=${CELLS:-}
 skip_filter=${SKIP:-}
-rust_log_level=${RUST_LOG_LEVEL:-debug}
-out_dir=${OUT_DIR:-benchmarks/final/matrix-$(date -u +%Y%m%dT%H%M%SZ)}
+rust_log_level=${RUST_LOG_LEVEL:-warn}
+abba_start=${ABBA_START:-baseline}
+manage_pipe_user_pages_soft=${MANAGE_PIPE_USER_PAGES_SOFT:-$((1 - ${EXPLORATORY:-0}))}
+rr_contract_init "$repository" benchmark-matrix benchmarks/final 32
+rr_register_binary baseline "$baseline_bin" "${RUST_REALITY_BASELINE_SHA256:-}" rust \
+    "${EXPECTED_BASELINE_SOURCE_COMMIT:-${RUST_REALITY_BASELINE_COMMIT:-}}"
+baseline_bin=${RR_BINARY_PATHS[baseline]}
+rr_register_binary candidate "$rust_bin" "${RUST_REALITY_SHA256:-}" rust \
+    "${EXPECTED_SOURCE_COMMIT:-${RUST_REALITY_COMMIT:-}}"
+rust_bin=${RR_BINARY_PATHS[candidate]}
+if [[ $RR_EXPLORATORY == 1 && $xray != /* ]]; then xray=$(command -v "$xray"); fi
+rr_register_binary xray "$xray" "${XRAY_SHA256:-}" xray
+xray=${RR_BINARY_PATHS[xray]}
+rr_register_harness_tree "$repository/scripts/bench-origin"
+rr_write_contract_metadata
+out_dir=$RR_OUT_DIR
+[[ $abba_start == baseline || $abba_start == final ]] || {
+    echo "ABBA_START must be baseline or final" >&2
+    exit 2
+}
 # Disk-backed default: /tmp may be a small tmpfs that cannot hold multi-GiB
 # payload files. TMPDIR is still honored when set.
-temporary_root=${TMPDIR:-$repository/benchmarks}
-mkdir -p "$temporary_root"
+temporary_root=$RR_TMPDIR
 work=$(mktemp -d "$temporary_root/rust-reality-matrix.XXXXXX")
 pids=()
+pipe_policy_changed=0
+pipe_policy_original=
+pipe_policy_effective=
+pipe_policy_target=
+pipe_policy_required=
+pipe_policy_page_size=
+
+restore_pipe_user_pages_soft() {
+    (( pipe_policy_changed == 1 )) || return 0
+    local current
+    current=$(< /proc/sys/fs/pipe-user-pages-soft) || return 1
+    if [[ $current != "$pipe_policy_effective" ]]; then
+        printf 'refusing to overwrite externally changed fs.pipe-user-pages-soft: expected %s, found %s\n' \
+            "$pipe_policy_effective" "$current" >&2
+        return 1
+    fi
+    printf '%s\n' "$pipe_policy_original" \
+        | sudo -n tee /proc/sys/fs/pipe-user-pages-soft >/dev/null || return 1
+    current=$(< /proc/sys/fs/pipe-user-pages-soft) || return 1
+    if [[ $current != "$pipe_policy_original" ]]; then
+        printf 'failed to restore fs.pipe-user-pages-soft: expected %s, found %s\n' \
+            "$pipe_policy_original" "$current" >&2
+        return 1
+    fi
+}
 
 cleanup() {
+    local exit_status=$?
+    trap - EXIT
+    set +e
     for pid in "${pids[@]:-}"; do
-        kill "$pid" 2>/dev/null || true
-        wait "$pid" 2>/dev/null || true
+        rr_stop_registered_pid "$pid"
     done
     if [[ ${KEEP_WORK:-0} == 1 ]]; then
         printf 'benchmark temporary directory retained: %s\n' "$work" >&2
     elif [[ -d "$work" && "$work" == "$temporary_root"/rust-reality-matrix.* ]]; then
         rm -rf -- "$work"
     fi
+    local pipe_restore_status=0 final_rc
+    restore_pipe_user_pages_soft || pipe_restore_status=$?
+    if (( exit_status == 0 && pipe_restore_status != 0 )); then
+        exit_status=1
+    fi
+    rr_contract_verify_on_exit "$exit_status"
+    final_rc=$?
+    exit "$final_rc"
 }
 trap cleanup EXIT
 
@@ -120,16 +176,6 @@ for program in curl jq openssl python3 sha256sum; do
         exit 1
     fi
 done
-for binary in "$baseline_bin" "$xray"; do
-    if [[ ! -x $binary ]]; then
-        echo "required benchmark binary is unavailable: $binary" >&2
-        exit 1
-    fi
-done
-if [[ ! -x $rust_bin ]]; then
-    cargo build --release --locked
-fi
-
 sha256_file() {
     sha256sum -- "$1" | awk '{print $1}'
 }
@@ -137,7 +183,7 @@ sha256_file() {
 baseline_binary_sha256=$(sha256_file "$baseline_bin")
 rust_binary_sha256=$(sha256_file "$rust_bin")
 xray_binary_sha256=$(sha256_file "$xray")
-require_pinned_binaries=${REQUIRE_PINNED_BINARIES:-0}
+require_pinned_binaries=${REQUIRE_PINNED_BINARIES:-$((1 - RR_EXPLORATORY))}
 if [[ $require_pinned_binaries != 0 && $require_pinned_binaries != 1 ]]; then
     echo "REQUIRE_PINNED_BINARIES must be 0 or 1" >&2
     exit 1
@@ -194,14 +240,73 @@ for word in $payloads $concurrencies $large_concurrencies; do
     fi
 done
 
-free_port() {
-    python3 - <<'PY'
-import socket
-with socket.socket() as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
+if [[ $manage_pipe_user_pages_soft != 0 && $manage_pipe_user_pages_soft != 1 ]]; then
+    echo "MANAGE_PIPE_USER_PAGES_SOFT must be 0 or 1" >&2
+    exit 2
+fi
+pipe_policy_page_size=$(getconf PAGESIZE)
+[[ $pipe_policy_page_size =~ ^[1-9][0-9]*$ ]] || {
+    echo "getconf PAGESIZE did not return a positive integer" >&2
+    exit 1
 }
+max_concurrency=0
+for value in $concurrencies $large_concurrencies; do
+    (( value > max_concurrency )) && max_concurrency=$value
+done
+# Pipe pools survive individual cells, so model both resident endpoint groups.
+# The bidi cell runs download and upload concurrently: its advertised c32 is
+# 64 tunnel connections per implementation. Fallback reaches c32 separately.
+# Tunnel residents are two Rust servers and four Xray processes (one server and
+# three clients); fallback adds two Rust servers and one Xray server. Rust asks
+# for 256-KiB pipes while Go/Xray internal/poll asks for 1-MiB pipes. Double the
+# exact combined peak so allocator rounding, GC timing, and unrelated processes
+# cannot push the later A/B implementation over Linux's pipe-page soft cliff.
+rust_pages_per_pipe=$(( (256 * 1024 + pipe_policy_page_size - 1) / pipe_policy_page_size ))
+xray_pages_per_pipe=$(( (1024 * 1024 + pipe_policy_page_size - 1) / pipe_policy_page_size ))
+pipe_policy_tunnel_peak=$(( (2 * rust_pages_per_pipe + 4 * xray_pages_per_pipe) * 2 * (2 * max_concurrency) ))
+pipe_policy_fallback_peak=$(( (2 * rust_pages_per_pipe + xray_pages_per_pipe) * 2 * max_concurrency ))
+pipe_policy_peak=$(( pipe_policy_tunnel_peak + pipe_policy_fallback_peak ))
+pipe_policy_required=$(( pipe_policy_peak * 2 ))
+pipe_policy_target=${PIPE_USER_PAGES_SOFT_TARGET:-$pipe_policy_required}
+[[ $pipe_policy_target =~ ^[1-9][0-9]*$ ]] || {
+    echo "PIPE_USER_PAGES_SOFT_TARGET must be a positive integer" >&2
+    exit 2
+}
+if (( pipe_policy_target < pipe_policy_required )); then
+    printf 'PIPE_USER_PAGES_SOFT_TARGET=%s is below the calculated minimum %s\n' \
+        "$pipe_policy_target" "$pipe_policy_required" >&2
+    exit 2
+fi
+pipe_policy_original=$(< /proc/sys/fs/pipe-user-pages-soft)
+[[ $pipe_policy_original =~ ^[0-9]+$ ]] || {
+    echo "fs.pipe-user-pages-soft did not contain an integer" >&2
+    exit 1
+}
+pipe_policy_effective=$pipe_policy_original
+if (( pipe_policy_original < pipe_policy_target )); then
+    if (( manage_pipe_user_pages_soft == 1 )); then
+        sudo -n true >/dev/null
+        pipe_policy_effective=$pipe_policy_target
+        pipe_policy_changed=1
+        printf '%s\n' "$pipe_policy_target" \
+            | sudo -n tee /proc/sys/fs/pipe-user-pages-soft >/dev/null
+        applied_pipe_policy=$(< /proc/sys/fs/pipe-user-pages-soft)
+        [[ $applied_pipe_policy == "$pipe_policy_target" ]] || {
+            printf 'failed to apply fs.pipe-user-pages-soft: expected %s, found %s\n' \
+                "$pipe_policy_target" "$applied_pipe_policy" >&2
+            exit 1
+        }
+    elif (( RR_EXPLORATORY == 0 )); then
+        printf 'formal matrix requires fs.pipe-user-pages-soft >= %s, found %s\n' \
+            "$pipe_policy_target" "$pipe_policy_original" >&2
+        exit 1
+    else
+        printf 'warning: exploratory matrix pipe-page budget is insufficient (%s < %s); results may reflect first-mover pipe-pool bias\n' \
+            "$pipe_policy_original" "$pipe_policy_target" >&2
+    fi
+fi
+
+free_port() { rr_next_port; }
 
 wait_port() {
     local port=$1
@@ -223,7 +328,12 @@ PY
 
 start_process() {
     "$@" &
-    pids+=("$!")
+    local pid=$! expected=
+    pids+=("$pid")
+    if [[ $1 == "$baseline_bin" || $1 == "$rust_bin" || $1 == "$xray" ]]; then
+        expected=$1
+    fi
+    rr_register_pid "$pid" "$expected"
 }
 
 # --------------------------------------------------------------------------
@@ -597,7 +707,20 @@ jq -n \
     --arg build_profile "$build_profile" \
     --arg build_features "$build_features" \
     --arg rust_log_level "$rust_log_level" \
+    --arg abba_start "$abba_start" \
     --argjson binaries_pinned "$require_pinned_binaries" \
+    --argjson pipe_policy_managed "$manage_pipe_user_pages_soft" \
+    --argjson pipe_policy_changed "$pipe_policy_changed" \
+    --argjson pipe_policy_original "$pipe_policy_original" \
+    --argjson pipe_policy_effective "$pipe_policy_effective" \
+    --argjson pipe_policy_target "$pipe_policy_target" \
+    --argjson pipe_policy_required "$pipe_policy_required" \
+    --argjson pipe_policy_peak "$pipe_policy_peak" \
+    --argjson pipe_policy_tunnel_peak "$pipe_policy_tunnel_peak" \
+    --argjson pipe_policy_fallback_peak "$pipe_policy_fallback_peak" \
+    --argjson rust_pages_per_pipe "$rust_pages_per_pipe" \
+    --argjson xray_pages_per_pipe "$xray_pages_per_pipe" \
+    --argjson pipe_policy_page_size "$pipe_policy_page_size" \
     --arg cover_target "$cover_target" \
     --arg cover_sni "$cover_sni" \
     --arg nic_interface "$nic_interface" \
@@ -643,7 +766,28 @@ jq -n \
       build_profile: $build_profile,
       build_features: $build_features,
       rust_log_level: $rust_log_level,
+      abba_start: $abba_start,
       binaries_pinned: ($binaries_pinned == 1),
+      pipe_page_policy: {
+        managed: ($pipe_policy_managed == 1),
+        changed: ($pipe_policy_changed == 1),
+        original_soft_pages: $pipe_policy_original,
+        effective_soft_pages: $pipe_policy_effective,
+        target_soft_pages: $pipe_policy_target,
+        calculated_required_pages: $pipe_policy_required,
+        calculated_peak_pages: $pipe_policy_peak,
+        calculated_tunnel_peak_pages: $pipe_policy_tunnel_peak,
+        calculated_fallback_peak_pages: $pipe_policy_fallback_peak,
+        safety_factor: 2,
+        tunnel_rust_endpoint_count: 2,
+        tunnel_xray_endpoint_count: 4,
+        fallback_rust_endpoint_count: 2,
+        fallback_xray_endpoint_count: 1,
+        bidirectional_connection_multiplier: 2,
+        rust_pages_per_pipe: $rust_pages_per_pipe,
+        xray_pages_per_pipe: $xray_pages_per_pipe,
+        page_size_bytes: $pipe_policy_page_size
+      },
       cover_target: $cover_target,
       cover_sni: $cover_sni,
       nic_interface: $nic_interface,
@@ -702,6 +846,7 @@ large_payload_mib = cfg["large_payload_mib"]
 integrity_mib = cfg["integrity_mib"]
 cells_filter = [p for p in cfg["cells"].replace(",", " ").split() if p]
 skip_filter = [p for p in cfg["skip"].replace(",", " ").split() if p]
+abba_start = cfg["abba_start"]
 
 SCENARIOS = [
     "framed-download",
@@ -1027,7 +1172,7 @@ def verify_uploads(put_schemes, mib, expected_puts):
 
 
 def rust_events_for(impl_name, scenario):
-    if IMPLEMENTATIONS[impl_name]["kind"] != "rust":
+    if cfg["rust_log_level"] != "debug" or IMPLEMENTATIONS[impl_name]["kind"] != "rust":
         return None
     which = "fallback" if scenario == "fallback" else "tunnel"
     return log_trackers[impl_name][which].events()
@@ -1075,8 +1220,9 @@ def record_sample(impl_name, scenario, mib, concurrency, sample_index):
         problems.append(str(error))
         requests = expected_connections
         put_schemes = []
-    # Give the servers a moment to flush per-connection events, then check the
-    # bypass guard and per-direction backend stats from the rust debug log.
+    # Debug-only diagnostic runs also collect backend events. Authoritative
+    # warn-level runs rely on the explicit SOCKS endpoint, stripped proxy
+    # environment, byte counts, upload hashes, and origin error counters.
     time.sleep(0.25)
     events = rust_events_for(impl_name, scenario)
     if events is not None:
@@ -1184,8 +1330,25 @@ run_started = time.perf_counter()
 
 for scenario, mib, concurrency in cells:
     key = cell_key(scenario, mib, concurrency)
-    order = [impl for _ in range(samples_for(mib)) for impl in IMPL_ORDER]
-    random.Random(f"{seed}:{key}").shuffle(order)
+    sample_count = samples_for(mib)
+    # Baseline/candidate measurements use balanced A-B-B-A blocks, with the
+    # direction reversed on alternating blocks. One Xray sample is interleaved
+    # after each A/B pair so comparator drift is visible without breaking the
+    # release-candidate ABBA ordering.
+    abba = []
+    def block_order(block):
+        baseline_first = (block % 2 == 0) == (abba_start == "baseline")
+        first, second = ("baseline", "final") if baseline_first else ("final", "baseline")
+        return [first, second, second, first]
+
+    for block in range(sample_count // 2):
+        abba.extend(block_order(block))
+    if sample_count % 2:
+        abba.extend(block_order(sample_count // 2)[:2])
+    order = []
+    for offset in range(0, len(abba), 2):
+        order.extend(abba[offset:offset + 2])
+        order.append("xray")
     counters = {impl: 0 for impl in IMPL_ORDER}
     records = []
     stats_before = snapshot_origin_stats()
@@ -1402,6 +1565,8 @@ for key, cell in cell_results.items():
 summary = {
     "schemaVersion": 1,
     "harness": "benchmark-matrix",
+    "status": "COMPLETE",
+    "performanceVerdict": "NOT_EVALUATED",
     "seed": seed_text,
     "commit": commit,
     "identity": {
@@ -1425,6 +1590,7 @@ summary = {
         "releaseProfile": cfg["build_profile"],
         "featureSet": cfg["build_features"],
         "logging": cfg["rust_log_level"],
+        "pipePagePolicy": cfg["pipe_page_policy"],
     },
     "startedUtc": started_utc,
     "wallSeconds": time.perf_counter() - run_started,
@@ -1439,6 +1605,7 @@ summary = {
         "cellsFilter": cells_filter,
         "skipFilter": skip_filter,
         "integrityMiB": integrity_mib,
+        "abbaStart": abba_start,
     },
     "totals": {
         "cells": len(cell_results),
@@ -1450,8 +1617,8 @@ summary = {
     "failures": failures,
     "limitations": [
         "single-host loopback includes the same Xray client and loopback origins in every path",
-        "the tunnel-bypass guard only covers the rust implementations (their debug logs); "
-        "xray cells rely on byte-count verification",
+        "debug runs add a rust event-log tunnel guard; authoritative warn-level runs rely on "
+        "explicit SOCKS endpoints, stripped proxy environment, byte/hash checks, and origin stats",
         "Xray's default private-target block is explicitly allowed only for the loopback origin",
         "this does not model Internet RTT, packet loss, bandwidth shaping, or multi-core saturation",
         "results are measurements of this host and are not a universal performance claim",
@@ -1516,6 +1683,7 @@ environment = {
     "logging": cfg["rust_log_level"],
     "nic": {"interface": cfg["nic_interface"], "speed": cfg["nic_speed"]},
     "rlimitNofile": {"soft": soft_limit, "hard": hard_limit},
+    "pipePagePolicy": cfg["pipe_page_policy"],
     "realityCover": {"target": cfg["cover_target"], "serverName": cfg["cover_sni"]},
     "originImplementation": cfg["origin_impl"],
     "seed": seed_text,
@@ -1531,3 +1699,18 @@ print(
 PY
 
 python3 "$work/driver.py" "$work/driver-config.json"
+jq -e '
+  .totals.cells > 0
+  and .totals.invalidSamples == 0
+  and (.failures | length) == 0
+  and all(.cells[];
+    all(.implementations[];
+      .samples == .validSamples and .invalidSamples == 0
+    )
+  )
+  and all(.integrity[]; .invalid == false and .sha256.match == true)
+' "$out_dir/summary.json" >/dev/null || {
+    echo "matrix contains incomplete, invalid, or corrupt samples" >&2
+    exit 1
+}
+rr_finalize_contract

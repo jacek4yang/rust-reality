@@ -27,6 +27,8 @@ def main():
             summaries.append(json.load(handle))
     if not summaries:
         raise SystemExit(f"no summary.json files under {root}")
+    failed = [summary.get("class", "unknown") for summary in summaries
+              if summary.get("pass") is not True]
 
     lines = []
     lines.append("# rust-reality machine-profile validation")
@@ -90,6 +92,8 @@ def main():
     with open(out, "w", encoding="utf-8") as handle:
         handle.write("\n".join(lines))
     print(f"wrote {out}")
+    if failed:
+        raise SystemExit("profile report contains failed classes: " + ", ".join(failed))
 
 
 if __name__ == "__main__":

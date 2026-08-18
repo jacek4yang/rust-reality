@@ -72,6 +72,7 @@ pub struct VisionRelayStats {
     downlink_backend: Option<RelayBackend>,
     uplink_handoff_delay_us: u64,
     downlink_handoff_delay_us: u64,
+    handoff_server_sequence: Option<u64>,
     pipe_capacity_downgraded: bool,
 }
 
@@ -140,6 +141,13 @@ impl VisionRelayStats {
     #[must_use]
     pub const fn downlink_handoff_delay_us(self) -> u64 {
         self.downlink_handoff_delay_us
+    }
+
+    /// Returns the server record sequence exported to LANDING, when this
+    /// session used the distributed Handoff path.
+    #[must_use]
+    pub const fn handoff_server_sequence(self) -> Option<u64> {
+        self.handoff_server_sequence
     }
 
     /// Returns whether a raw-relay backend was granted less pipe capacity
@@ -339,11 +347,11 @@ impl VisionHandler {
             )
             .await
             .map_err(VisionSessionError::Outbound)?;
-        // The session-handoff boundary: routing has selected the outbound, the
-        // downlink TLS direction is still at sequence zero with nothing
-        // written, and no Vision encoder or decoder exists yet. A handoff
-        // outbound transfers the session to the landing node here and this
-        // node never touches its TLS or Vision state again.
+        // The session-handoff boundary: routing has selected the outbound, no
+        // client-visible response has been written, and no Vision encoder or
+        // decoder exists yet. The downlink TLS sequence is zero normally or
+        // one after a cover-shaped empty ApplicationData record. A handoff
+        // outbound transfers that exact state to the landing node here.
         let outcome = match outcome {
             SessionOutboundOutcome::Handoff(line) => {
                 return self
@@ -512,6 +520,7 @@ impl VisionHandler {
             uplink_bytes: outcome.inbound_to_outbound(),
             downlink_bytes: outcome.outbound_to_inbound(),
             relay_backend: Some(outcome.backend()),
+            handoff_server_sequence: Some(server_sequence),
             pipe_capacity_downgraded: outcome.pipe_downgrade().is_some(),
             ..VisionRelayStats::default()
         })
@@ -550,6 +559,7 @@ fn session_stats(uplink: DirectionStats, downlink: DirectionStats) -> VisionRela
         downlink_backend: downlink.backend.or(pair_backend),
         uplink_handoff_delay_us: uplink.handoff_delay_us,
         downlink_handoff_delay_us: downlink.handoff_delay_us,
+        handoff_server_sequence: None,
         pipe_capacity_downgraded: handed_off.and_then(RelayOutcome::pipe_downgrade).is_some()
             || uplink.pipe_downgrade
             || downlink.pipe_downgrade,
@@ -564,8 +574,9 @@ fn session_stats(uplink: DirectionStats, downlink: DirectionStats) -> VisionRela
 /// consumed from the kernel, so the client-visible record stream continues
 /// exactly at the boundary. `prefetched_plaintext` enters the fresh Vision
 /// decoder before any decrypted record, mirroring the freshly accepted path.
-/// The response header and opening Vision frame are the first sealed server
-/// record, which the transfer channel guarantees sits at sequence zero.
+/// The response header and opening Vision frame are the first client-visible
+/// server record. The transfer channel preserves whether it is sealed at
+/// sequence zero or, after a cover-shaped empty ApplicationData record, one.
 pub(crate) async fn run_resumed_session(
     client_reader: TlsApplicationReader<OwnedReadHalf>,
     client_writer: TlsApplicationWriter<OwnedWriteHalf>,

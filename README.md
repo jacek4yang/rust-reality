@@ -36,9 +36,10 @@ Xray-compatible client
 - ring (BoringSSL-derived) AES-128-GCM record AEAD by default; a pure-Rust
   RustCrypto fallback build is one flag away and continuously tested.
 - The authenticated server flight preserves the cover-derived ServerHello and
-  follows the cover's measured coalesced/four-record post-ServerHello shape.
-  The v1.4 result is OpenSSL-reference-aligned on documented record/write
-  dimensions—not a claim of indistinguishability.
+  follows optional CCS, the measured four-position/coalesced handshake shape,
+  and an optional fifth post-Finished shape. The latter is represented by an
+  empty ApplicationData fake NST with no resumption state. Inspection is
+  bounded to 66,642 retained bytes and remains byte-exact on fallback.
 - Bounded everything: connections, handshakes, fallbacks, crypto work, replay
   state, buffers, DNS results, descriptors, and splice resources — with
   pressure hysteresis instead of collapse.
@@ -86,6 +87,15 @@ forensic report, and everything needed to reproduce them are in
 [docs/performance.md](docs/performance.md) and
 [docs/benchmarks.md](docs/benchmarks.md).
 
+For v1.5, a balanced same-host ABBA comparison against v1.4 found no
+statistically significant setup or protected-path throughput/latency change:
+all reported 95% intervals in two complete matrix rounds crossed no difference.
+The candidate did remove
+4.0013 cover `recvfrom` calls per setup connection in a separate syscall
+trace. These are bounded implementation-cost observations, not a claimed
+throughput win; the exact intervals are in
+[docs/performance.md](docs/performance.md#v15-cover-flight-and-release-evidence).
+
 ## Architecture
 
 One Tokio multi-thread runtime; one task per connection, splitting into two
@@ -102,7 +112,12 @@ protocol stack itself.
 
 ## Supported scope
 
-Supported release target: Linux x86_64 with a modern kernel. The public
+Supported release target: Linux x86_64 with a modern kernel. Releases retain
+the portable `x86_64-unknown-linux-gnu` archive and also provide an opt-in
+`x86_64-v3` archive. The latter requires an x86-64-v3 CPU and has no runtime
+fallback; use the portable archive when CPU support is unknown.
+
+The public
 inbound does not support plain VLESS, TLS-only VLESS, WebSocket, QUIC, UDP
 proxying, or non-Vision flow. NXR is not a public protocol and does not
 encrypt payload after its one-time authenticated request. The public protocol
@@ -112,15 +127,20 @@ policy, cover target, and resource limits for their own VPS.
 
 ## Quick start
 
-Download the archive, manifest, and checksums from the
+Download the two archives, manifest, and checksums from the
 [latest release](https://github.com/jacek4yang/rust-reality/releases/latest),
 then verify all assets before installation:
 
 ```shell
 sha256sum --check SHA256SUMS
-tar -xzf rust-reality-v1.4.0-x86_64-unknown-linux-gnu.tar.gz
+# Portable package (recommended when CPU support is unknown):
+tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
+# Or, on an x86-64-v3 CPU:
+# tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 ```
+
+`release-manifest.json` schema v2 records both CPU tiers and their requirements.
 
 Probe a proposed REALITY cover endpoint and generate a standalone server:
 

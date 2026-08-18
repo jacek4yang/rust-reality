@@ -607,13 +607,16 @@ impl<'input> Reader<'input> {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "fuzzing"))]
 pub(crate) mod fixtures {
+    #[cfg(test)]
+    use super::X25519_GROUP;
     use super::{
         EXT_ALPN, EXT_KEY_SHARE, EXT_SERVER_NAME, EXT_SUPPORTED_VERSIONS,
-        HANDSHAKE_TYPE_CLIENT_HELLO, X25519_GROUP,
+        HANDSHAKE_TYPE_CLIENT_HELLO,
     };
 
+    #[cfg(test)]
     pub(crate) fn client_hello(
         random: [u8; 32],
         session_id: &[u8],
@@ -680,6 +683,7 @@ pub(crate) mod fixtures {
         message
     }
 
+    #[cfg(test)]
     pub(crate) fn record(message: &[u8]) -> Vec<u8> {
         let mut output = vec![0x16, 0x03, 0x01];
         push_u16_length(&mut output, message);

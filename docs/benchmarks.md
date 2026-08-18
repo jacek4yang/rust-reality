@@ -147,7 +147,7 @@ and +0.15% instructions per connection. Family planning, health, and refresh
 remain outside established relay read/write loops.
 
 The robustness evidence is intentionally separate from throughput numbers:
-each of the five bounded fuzz targets runs 20,000 cases, and the parser
+each of the six bounded fuzz targets runs 20,000 cases, and the parser
 property gate covers every maximum-request prefix plus three byte mutations at
 every position. Local restricted-shell runs disable only LSan's ptrace-
 unsupported leak detector; CI's scheduled sanitizer jobs retain leak detection
@@ -174,6 +174,81 @@ and run the full suite, while TSan covers the replay duplicate race.
 5. **Guard the origin.** Origins are compiled (Go), streamed, and report
    their own errors; cells whose origin reports errors are marked invalid
    rather than read as proxy results.
+
+## v1.5 balanced ABBA evidence
+
+The v1.5 release comparison uses immutable candidate and v1.4 binaries. Every
+authoritative setup or data-path comparison is arranged in balanced ABBA
+blocks after reproducible warmup; raw samples, failures, binary SHA-256,
+frequency and temperature metadata are retained. Perf attribution and syscall
+tracing run in separate rounds and never lend their instrumented elapsed time
+to an uninstrumented performance claim.
+
+The final release evaluator does not use bootstrap intervals as significance
+tests. For each protected metric it takes the mean of the paired block log
+ratios (oriented so positive is better) and enumerates every within-block
+candidate/baseline sign flip under the sharp label-exchangeability null. The
+one-sided regression hypotheses across all protected metrics form one global
+family, and the improvement hypotheses form a separate global family. Holm
+adjustment at family-wise alpha 0.05 within each family decides every
+regression or improvement classification; release failure depends only on the
+regression family. The deterministic 95% block bootstrap remains only an
+effect interval. Every formal metric must contain 12 through 16 complete ABBA
+blocks or the evidence is invalid. Three blocks all in one direction have a
+smallest possible raw one-sided p-value of 1/8, but are rejected before formal
+evaluation because they have insufficient power.
+
+The matrix also controls Linux's per-user pipe-page soft limit. All six
+resident data-plane endpoints retain splice pipes across cells, so ordinary
+ABBA traffic ordering alone cannot balance a process that filled its pipe
+pool first. On the 4-core release host, the default 16,384-page limit made
+the first Rust implementation keep 256 KiB pipes while the second received
+downgraded pipes; reversing `ABBA_START` reversed an apparent 20–25% Direct
+regression. Raising the soft limit to the harness-calculated 49,152 pages
+made both implementations retain full-size pipes and converge. Formal runs
+therefore compute a bound from maximum concurrency, apply it with non-
+interactive privilege, record original/effective values, and restore the
+exact original value on success, failure, or signal. A mismatched external
+change or failed restoration invalidates the run.
+
+Three warmed setup blocks measured candidate/baseline medians of -0.38% at c1
+(95% bootstrap interval -0.465% to +0.170%), +0.26% at c8 (-3.368% to
++2.497%), and +0.53% at c32 (-1.257% to +1.557%). Normalized task-clock and
+instructions changed by -0.768% and -0.190%; context switches changed by
++1.042%, approximately +0.058 per connection. A separate current syscall
+trace measured 4.0013 fewer candidate `recvfrom` calls per connection.
+
+Two six-path matrix rounds exercised bidirectional, Direct download/upload,
+fallback, and framed download/upload with exact payload hashes. Each retained
+219 samples with zero invalid samples. Every workload's throughput and latency
+95% block-bootstrap interval crossed no difference. Direct upload's median
+ratio reversed from 0.9511 to 1.1390 between rounds, confirming order/host
+noise. These results are retained as no-difference evidence: they neither
+establish a protected-path regression nor justify a performance-win headline.
+
+The formal tier comparison is
+`20260812T130000Z-matrix-v3-04285e63-r01`: x86-64-v3 (`final`) versus portable
+(`baseline`) from the same source/features, with six balanced ABBA blocks. It
+retained 219 samples, zero invalid samples, and three matching 64 MiB integrity
+hashes (portable, v3, and Xray guard).
+
+| path | v3/portable throughput median (95% CI) | v3/portable worst latency median (95% CI) |
+|---|---:|---:|
+| bidirectional | 1.0306 (0.9240–1.1118) | 0.9935 (0.8477–1.0862) |
+| Direct download | 1.0145 (0.9820–1.0498) | 0.9906 (0.9417–1.0372) |
+| Direct upload | 0.9682 (0.8462–1.1066) | 0.9970 (0.8829–1.1871) |
+| fallback | 0.9981 (0.9280–1.0613) | 0.9795 (0.8752–1.0169) |
+| framed download | 1.0091 (0.9826–1.0278) | 1.0150 (0.9996–1.0162) |
+| framed upload | 1.0058 (0.9865–1.0229) | 0.9751 (0.9556–1.0074) |
+
+All twelve intervals contain 1, so this run supplies no statistically reliable
+v3 advantage. The portable tier remains independently protected: v3 evidence
+cannot cancel or mask a portable regression.
+
+The v1.5 interoperability matrix also exercised Xray 26.7.28 against
+Microsoft, Google, and Fastly public covers plus local OpenSSL 3.5.6 without
+CCS. Each case passed exact 1 MiB SHA-256 and ML-DSA-65 compatibility. It is a
+protocol gate and carries no timing claim.
 
 ## v1.2.0 distributed and WAN-emulation evidence (LAB-NETEM)
 
@@ -241,6 +316,34 @@ authenticated Direct-boundary detection for both transfers.
 
 This is a compatibility gate, not a benchmark: its one Internet request
 carries no throughput signal.
+
+### Low descriptor-limit recovery gate
+
+`scripts/test-descriptor-pressure.sh` is the fail-closed regression gate for
+descriptor exhaustion. It runs an existing binary in a user systemd scope with
+equal low soft and hard `RLIMIT_NOFILE` values, then holds real
+Xray -> REALITY -> Vision -> local-echo sessions until the server's derived FD
+budget is exhausted. The gate requires all of the following evidence:
+
+- the running executable hash, PID, PID start time, cgroup membership, and both
+  inherited limits match the requested test identity;
+- `descriptor_budget_report` reflects the low limit and
+  `descriptor_pressure_changed` reaches `high`;
+- the exact server process survives and a connection established before
+  pressure continues to pass an echo integrity check;
+- at least one new connection in the bounded storm is refused or stalls; and
+- after held sessions close, pressure returns to `normal` and a fresh 64 KiB
+  echo flow matches its SHA-256.
+
+The script never builds or downloads binaries, never uses process-name cleanup,
+and refuses to overwrite its evidence directory:
+
+```shell
+RUST_REALITY_BIN=/absolute/path/to/rust-reality \
+XRAY_BIN=/absolute/path/to/xray \
+OUT_DIR=diagnostics/final/descriptor-pressure-run-01 \
+scripts/test-descriptor-pressure.sh
+```
 
 ## Limitations
 

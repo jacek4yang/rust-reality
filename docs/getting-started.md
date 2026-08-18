@@ -8,20 +8,25 @@ continue to [deployment.md](deployment.md).
 
 ## 1. Download and verify the release
 
-Download the archive, manifest, and checksums from the
+Download both archives, the manifest, and checksums from the
 [latest release](https://github.com/jacek4yang/rust-reality/releases/latest),
 then verify all assets before installation:
 
 ```shell
 sha256sum --check SHA256SUMS
+# Portable package (recommended when CPU support is unknown):
 tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
+# Or, on an x86-64-v3 CPU:
+# tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 rust-reality --version
 ```
 
-`release-manifest.json` records the version, tag, exact source commit, target
-triple, source timestamp, archive name, and archive SHA-256. Do not combine
-assets from different releases.
+`release-manifest.json` schema v2 records the version, tag, exact source
+commit, target triple, source timestamp, both archive names and SHA-256 values,
+and each archive's CPU requirement. The portable package targets baseline
+x86-64. The optimized package requires x86-64-v3 and has no runtime fallback.
+Do not combine assets from different releases.
 
 ## 2. Probe a cover target
 

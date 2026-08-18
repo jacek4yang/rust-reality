@@ -23,25 +23,31 @@ For machine sizing, resource profiles, and performance diagnosis, see
 
 ## Install an official release
 
-Download these three assets from the same
+Download these four assets from the same
 [GitHub Release](https://github.com/jacek4yang/rust-reality/releases):
 
 - `rust-reality-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz`
+- `rust-reality-vX.Y.Z-x86_64-v3-unknown-linux-gnu.tar.gz`
 - `release-manifest.json`
 - `SHA256SUMS`
 
-Verify both listed files before extraction:
+Verify every file listed in `SHA256SUMS` before extraction:
 
 ```shell
 sha256sum --check SHA256SUMS
+# Portable package (recommended when CPU support is unknown):
 tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
+# Or, on an x86-64-v3 CPU:
+# tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 rust-reality --version
 ```
 
-`release-manifest.json` records the version, tag, exact source commit, target
-triple, source timestamp, archive name, and archive SHA-256. Do not combine an
-archive, manifest, or checksum from different releases.
+`release-manifest.json` schema v2 records the version, tag, exact source
+commit, target triple, source timestamp, both archive names and SHA-256 values,
+and each archive's CPU requirement. The x86-64-v3 package has no runtime
+fallback. Do not combine an archive, manifest, or checksum from different
+releases.
 
 To build instead, use the pinned toolchain and locked dependency graph:
 
@@ -49,6 +55,35 @@ To build instead, use the pinned toolchain and locked dependency graph:
 ./scripts/check.sh
 ./scripts/build-release.sh
 ```
+
+### Post-publication dual-tier Xray acceptance
+
+Publishing is not the final interoperability check. From a clean checkout of
+the published tag, download and verify the four release assets again, extract
+the two binaries into separate mode-0700 directories, and run the Xray gate
+once per exact downloaded tier:
+
+```shell
+install -d -m 0700 release-smoke/portable release-smoke/x86-64-v3
+tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz \
+  -C release-smoke/portable
+tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz \
+  -C release-smoke/x86-64-v3
+
+RUST_REALITY_BIN="$PWD/release-smoke/portable/rust-reality" \
+  XRAY_BIN=/absolute/path/to/xray \
+  ./scripts/test-xray-interop.sh
+RUST_REALITY_BIN="$PWD/release-smoke/x86-64-v3/rust-reality" \
+  XRAY_BIN=/absolute/path/to/xray \
+  ./scripts/test-xray-interop.sh
+```
+
+Each invocation uses a fresh configuration and proves an exact 1 MiB transfer,
+ML-DSA-65 agreement, and unmodified-Xray REALITY + Vision interoperability.
+Run it on an x86-64-v3 host with working external DNS/TCP and a cover target
+selected through `COVER_TARGET`/`COVER_SNI` if the defaults are unsuitable. A
+failure in either tier is a release no-go; do not substitute a locally rebuilt
+binary for the downloaded asset.
 
 ## Create the service account and directories
 
@@ -74,6 +109,13 @@ Recommended layout:
 ## Standalone public node
 
 ### 1. Select and probe the cover target
+
+v1.5 accepts TLS 1.3 cover flights with or without compatibility CCS and can
+model four positional encrypted handshake records plus an optional fifth
+post-Finished record. Probe the exact production target and SNI: a successful
+probe of another host is not evidence for this one. Any unsupported,
+truncated, oversized, or inconsistent flight fails closed into byte-exact
+fallback; there is no operator switch that weakens these checks.
 
 The SNI must be a DNS name served by the target and the target must negotiate a
 compatible TLS 1.3 ServerHello. Test from the real VPS:
@@ -280,6 +322,25 @@ on the Handoff inbound to the tag of that `socks5` or `nxr` outbound; a
 authentication. The tag must never reference a `handoff` outbound: landings
 cannot be chained.
 
+### 4. Upgrade and rollback order for v1.5
+
+Handoff keeps the `HND1` wire protocol and continuation-state versions at v1.
+A v1.5 landing accepts both server record sequence 0 (the existing boundary)
+and sequence 1 (one empty cover-shaped application record was emitted before
+the transfer). A v1.4 landing accepts only sequence 0, so a v1.5 line paired
+with a v1.4 landing is unsupported: sessions whose cover shape consumes the
+first server application sequence fail closed.
+
+For a rolling upgrade, upgrade and verify every LANDING first, then upgrade
+the LINE nodes. A v1.4 LINE remains compatible with a v1.5 LANDING during this
+window. For rollback, downgrade every LINE first so no new sequence-1 transfer
+can be created, stop admitting new Handoff sessions and drain the active
+sessions on the LANDINGs, then downgrade the LANDINGs. Never restart or
+downgrade a LANDING underneath active transferred sessions.
+
+The record-sequence safety boundary and mixed-version rationale are recorded in
+[ADR 0005](decisions/0005-handoff-server-record-sequences.md).
+
 ## GeoIP and GeoSite
 
 Only HTTPS source URLs are required. Defaults point to community-compatible
@@ -355,7 +416,7 @@ SIGTERM stops new accepts and permits a bounded graceful shutdown. The unit's
 
 ## Upgrade and rollback
 
-1. Download and verify all three assets for the new tag.
+1. Download and verify all release assets for the new tag.
 2. Keep the current binary and configuration as root-only rollback files.
 3. Run the new binary's `check` and `self-test` against a copy of production
    configuration.

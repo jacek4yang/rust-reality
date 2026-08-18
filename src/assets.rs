@@ -357,69 +357,71 @@ impl AssetFetcher {
             }
         }
 
-        let response = match request.call() {
-            Ok(response) => response,
-            Err(error) => {
-                return cached_candidate(
-                    &data_path,
-                    maximum,
-                    AssetDownloadFailure::from_ureq(&error),
-                );
-            }
-        };
-        match response.status().as_u16() {
-            200 => {
-                let etag = response_header(&response, ETAG);
-                let last_modified = response_header(&response, LAST_MODIFIED);
-                let body_limit = maximum
-                    .checked_add(1)
-                    .ok_or(AssetLoadError::SizeLimitUnsupported)?;
-                let bytes = response
-                    .into_body()
-                    .with_config()
-                    .limit(
-                        u64::try_from(body_limit)
-                            .map_err(|_| AssetLoadError::SizeLimitUnsupported)?,
-                    )
-                    .read_to_vec()
-                    .map_err(|error| {
-                        if matches!(error, ureq::Error::BodyExceedsLimit(_)) {
-                            AssetLoadError::TooLarge {
-                                path: data_path.clone(),
-                                maximum,
+        let downloaded = match request.call() {
+            Ok(response) => match response.status().as_u16() {
+                200 => (|| {
+                    let etag = response_header(&response, ETAG);
+                    let last_modified = response_header(&response, LAST_MODIFIED);
+                    let body_limit = maximum
+                        .checked_add(1)
+                        .ok_or(AssetLoadError::SizeLimitUnsupported)?;
+                    let bytes = response
+                        .into_body()
+                        .with_config()
+                        .limit(
+                            u64::try_from(body_limit)
+                                .map_err(|_| AssetLoadError::SizeLimitUnsupported)?,
+                        )
+                        .read_to_vec()
+                        .map_err(|error| {
+                            if matches!(&error, ureq::Error::BodyExceedsLimit(_)) {
+                                AssetLoadError::TooLarge {
+                                    path: data_path.clone(),
+                                    maximum,
+                                }
+                            } else {
+                                AssetLoadError::Download(AssetDownloadFailure::from_ureq(&error))
                             }
-                        } else {
-                            AssetLoadError::Download(AssetDownloadFailure::from_ureq(&error))
-                        }
-                    })?;
-                if bytes.len() > maximum {
-                    return Err(AssetLoadError::TooLarge {
-                        path: data_path,
-                        maximum,
-                    });
-                }
-                Ok(AssetCandidate::Downloaded {
-                    bytes: Arc::from(bytes),
-                    fallback_path: data_path.clone(),
-                    update: CacheUpdate {
-                        data_path,
-                        metadata_path,
-                        bytes: Arc::from([]),
-                        metadata: CacheMetadata {
-                            source: url.to_owned(),
-                            etag,
-                            last_modified,
-                        },
+                        })?;
+                    if bytes.len() > maximum {
+                        return Err(AssetLoadError::TooLarge {
+                            path: data_path.clone(),
+                            maximum,
+                        });
+                    }
+                    Ok((bytes, etag, last_modified))
+                })(),
+                304 => Err(AssetLoadError::Download(
+                    AssetDownloadFailure::CacheUnavailable,
+                )),
+                status => Err(AssetLoadError::Download(AssetDownloadFailure::HttpStatus(
+                    status,
+                ))),
+            },
+            Err(error) => Err(AssetLoadError::Download(AssetDownloadFailure::from_ureq(
+                &error,
+            ))),
+        };
+        match downloaded {
+            Ok((bytes, etag, last_modified)) => Ok(AssetCandidate::Downloaded {
+                bytes: Arc::from(bytes),
+                fallback_path: data_path.clone(),
+                update: CacheUpdate {
+                    data_path,
+                    metadata_path,
+                    bytes: Arc::from([]),
+                    metadata: CacheMetadata {
+                        source: url.to_owned(),
+                        etag,
+                        last_modified,
                     },
-                }
-                .with_shared_bytes())
+                },
             }
-            304 => cached_candidate(&data_path, maximum, AssetDownloadFailure::CacheUnavailable),
-            status => cached_candidate(
-                &data_path,
-                maximum,
-                AssetDownloadFailure::HttpStatus(status),
-            ),
+            .with_shared_bytes()),
+            Err(AssetLoadError::Download(failure)) => {
+                cached_candidate(&data_path, maximum, failure)
+            }
+            Err(error) => Err(error),
         }
     }
 }
@@ -1241,12 +1243,15 @@ mod tests {
     use std::{
         fs,
         io::{Read, Write},
-        net::{Ipv4Addr, Ipv6Addr, TcpListener},
+        net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener},
         sync::Arc,
         thread,
+        time::Duration,
     };
 
-    use super::{AssetMatcher, AssetSnapshot, AssetSource, AssetStore};
+    use super::{
+        AssetDownloadFailure, AssetLoadError, AssetMatcher, AssetSnapshot, AssetSource, AssetStore,
+    };
     use crate::config::Config;
 
     #[test]
@@ -1344,6 +1349,233 @@ mod tests {
     }
 
     #[test]
+    fn response_body_timeout_falls_back_to_validated_cache() {
+        let listener =
+            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("asset test listener must bind");
+        let address = listener.local_addr().expect("listener address must exist");
+        let body = geosite_list();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("asset request must arrive");
+            let mut request = [0_u8; 4096];
+            let length = stream.read(&mut request).expect("asset request must read");
+            assert!(length > 0, "asset request must not be empty");
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream
+                .write_all(headers.as_bytes())
+                .and_then(|()| stream.write_all(&body[..1]))
+                .expect("partial asset response must write");
+            thread::sleep(Duration::from_millis(1_500));
+        });
+
+        let suffix = format!("{}-body-timeout", std::process::id());
+        let directory = std::env::temp_dir().join(format!("rust-reality-assets-{suffix}"));
+        fs::create_dir(&directory).expect("temporary asset cache must be created");
+        fs::write(directory.join("geosite.dat"), geosite_list())
+            .expect("cached geosite must be written");
+        let mut config: Config = serde_json::from_str(crate::config::test_config_json())
+            .expect("fixture config must parse");
+        config.assets.geosite = format!("http://{address}/geosite.dat");
+        config.assets.cache_directory = directory.clone();
+        config.assets.request_timeout_seconds = 1;
+        config.routing.global_rules[0].domain = vec!["geosite:test".to_owned()];
+        config.routing.global_rules[0].ip.clear();
+
+        let snapshot = AssetSnapshot::load(&config)
+            .expect("a timed-out response body must fall back to the validated cache");
+
+        assert!(snapshot.matches_domain(&AssetSource::GeoSite, "test", "api.example.com"));
+        server.join().expect("asset test server must complete");
+        fs::remove_dir_all(directory).expect("temporary asset cache must be removed");
+    }
+
+    #[test]
+    fn oversized_response_body_does_not_fall_back_to_validated_cache() {
+        let listener =
+            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("asset test listener must bind");
+        let address = listener.local_addr().expect("listener address must exist");
+        let maximum = 1024_usize;
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("asset request must arrive");
+            let mut request = [0_u8; 4096];
+            let length = stream.read(&mut request).expect("asset request must read");
+            assert!(length > 0, "asset request must not be empty");
+            let body = vec![0_u8; maximum + 2];
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream
+                .write_all(headers.as_bytes())
+                .and_then(|()| stream.write_all(&body))
+                .expect("oversized asset response must write");
+        });
+
+        let suffix = format!("{}-body-too-large", std::process::id());
+        let directory = std::env::temp_dir().join(format!("rust-reality-assets-{suffix}"));
+        fs::create_dir(&directory).expect("temporary asset cache must be created");
+        fs::write(directory.join("geosite.dat"), geosite_list())
+            .expect("cached geosite must be written");
+        let mut config: Config = serde_json::from_str(crate::config::test_config_json())
+            .expect("fixture config must parse");
+        config.assets.geosite = format!("http://{address}/geosite.dat");
+        config.assets.cache_directory = directory.clone();
+        config.assets.max_bytes = u64::try_from(maximum).expect("maximum must fit u64");
+        config.routing.global_rules[0].domain = vec!["geosite:test".to_owned()];
+        config.routing.global_rules[0].ip.clear();
+
+        let error = match AssetSnapshot::load(&config) {
+            Ok(_) => panic!("an oversized body must fail instead of using cached assets"),
+            Err(error) => error,
+        };
+        match error {
+            AssetLoadError::TooLarge {
+                path,
+                maximum: observed,
+            } => {
+                assert_eq!(path, directory.join("geosite.dat"));
+                assert_eq!(observed, maximum);
+            }
+            other => panic!("oversized body returned the wrong error: {other}"),
+        }
+
+        server.join().expect("asset test server must complete");
+        fs::remove_dir_all(directory).expect("temporary asset cache must be removed");
+    }
+
+    #[test]
+    fn maximum_plus_one_response_body_does_not_fall_back_to_validated_cache() {
+        let listener =
+            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("asset test listener must bind");
+        let address = listener.local_addr().expect("listener address must exist");
+        let maximum = 1024_usize;
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("asset request must arrive");
+            let mut request = [0_u8; 4096];
+            let length = stream.read(&mut request).expect("asset request must read");
+            assert!(length > 0, "asset request must not be empty");
+            let body = vec![0_u8; maximum + 1];
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream
+                .write_all(headers.as_bytes())
+                .and_then(|()| stream.write_all(&body))
+                .expect("maximum-plus-one asset response must write");
+        });
+
+        let suffix = format!("{}-body-maximum-plus-one", std::process::id());
+        let directory = std::env::temp_dir().join(format!("rust-reality-assets-{suffix}"));
+        fs::create_dir(&directory).expect("temporary asset cache must be created");
+        fs::write(directory.join("geosite.dat"), geosite_list())
+            .expect("cached geosite must be written");
+        let mut config: Config = serde_json::from_str(crate::config::test_config_json())
+            .expect("fixture config must parse");
+        config.assets.geosite = format!("http://{address}/geosite.dat");
+        config.assets.cache_directory = directory.clone();
+        config.assets.max_bytes = u64::try_from(maximum).expect("maximum must fit u64");
+        config.routing.global_rules[0].domain = vec!["geosite:test".to_owned()];
+        config.routing.global_rules[0].ip.clear();
+
+        let error = match AssetSnapshot::load(&config) {
+            Ok(_) => panic!("a maximum-plus-one body must fail instead of using cached assets"),
+            Err(error) => error,
+        };
+        match error {
+            AssetLoadError::TooLarge {
+                path,
+                maximum: observed,
+            } => {
+                assert_eq!(path, directory.join("geosite.dat"));
+                assert_eq!(observed, maximum);
+            }
+            other => panic!("maximum-plus-one body returned the wrong error: {other}"),
+        }
+
+        server.join().expect("asset test server must complete");
+        fs::remove_dir_all(directory).expect("temporary asset cache must be removed");
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn unsupported_maximum_does_not_fall_back_to_validated_cache() {
+        let (address, server) = one_response_server("200 OK");
+        let (config, directory) = remote_geosite_fixture(address, "unsupported-maximum", u64::MAX);
+        fs::write(directory.join("geosite.dat"), geosite_list())
+            .expect("cached geosite must be written");
+
+        let error = match AssetSnapshot::load(&config) {
+            Ok(_) => panic!("an unsupported maximum must fail instead of using cached assets"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, AssetLoadError::SizeLimitUnsupported));
+
+        server.join().expect("asset test server must complete");
+        fs::remove_dir_all(directory).expect("temporary asset cache must be removed");
+    }
+
+    #[test]
+    fn http_error_falls_back_to_validated_cache() {
+        let (address, server) = one_response_server("503 Service Unavailable");
+        let (config, directory) = remote_geosite_fixture(address, "status-cache", 1024);
+        fs::write(directory.join("geosite.dat"), geosite_list())
+            .expect("cached geosite must be written");
+
+        let snapshot = AssetSnapshot::load(&config)
+            .expect("an HTTP error must fall back to the validated cache");
+        assert!(snapshot.matches_domain(&AssetSource::GeoSite, "test", "api.example.com"));
+
+        server.join().expect("asset test server must complete");
+        fs::remove_dir_all(directory).expect("temporary asset cache must be removed");
+    }
+
+    #[test]
+    fn http_error_with_missing_cache_preserves_download_failure() {
+        let (address, server) = one_response_server("503 Service Unavailable");
+        let (config, directory) = remote_geosite_fixture(address, "status-missing-cache", 1024);
+
+        let error = match AssetSnapshot::load(&config) {
+            Ok(_) => panic!("an HTTP error without cache must fail"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            AssetLoadError::Download(AssetDownloadFailure::HttpStatus(503))
+        ));
+
+        server.join().expect("asset test server must complete");
+        fs::remove_dir_all(directory).expect("temporary asset cache must be removed");
+    }
+
+    #[test]
+    fn http_error_with_oversized_cache_preserves_download_failure() {
+        let maximum = 1024_u64;
+        let (address, server) = one_response_server("503 Service Unavailable");
+        let (config, directory) =
+            remote_geosite_fixture(address, "status-oversized-cache", maximum);
+        fs::write(
+            directory.join("geosite.dat"),
+            vec![0_u8; usize::try_from(maximum).expect("maximum must fit usize") + 1],
+        )
+        .expect("oversized cached geosite must be written");
+
+        let error = match AssetSnapshot::load(&config) {
+            Ok(_) => panic!("an HTTP error with oversized cache must fail"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            AssetLoadError::Download(AssetDownloadFailure::HttpStatus(503))
+        ));
+
+        server.join().expect("asset test server must complete");
+        fs::remove_dir_all(directory).expect("temporary asset cache must be removed");
+    }
+
+    #[test]
     #[ignore = "downloads the current community release from GitHub"]
     fn loads_live_community_geoip_and_geosite_release() {
         let suffix = format!("{}-live", std::process::id());
@@ -1377,6 +1609,44 @@ mod tests {
                 > 1024
         );
         fs::remove_dir_all(directory).expect("temporary asset cache must be removed");
+    }
+
+    fn one_response_server(status: &str) -> (SocketAddr, thread::JoinHandle<()>) {
+        let listener =
+            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("asset test listener must bind");
+        let address = listener.local_addr().expect("listener address must exist");
+        let response =
+            format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("asset request must arrive");
+            let mut request = [0_u8; 4096];
+            let length = stream.read(&mut request).expect("asset request must read");
+            assert!(length > 0, "asset request must not be empty");
+            stream
+                .write_all(response.as_bytes())
+                .expect("asset response must write");
+        });
+        (address, server)
+    }
+
+    fn remote_geosite_fixture(
+        address: SocketAddr,
+        suffix: &str,
+        maximum: u64,
+    ) -> (Config, std::path::PathBuf) {
+        let directory = std::env::temp_dir().join(format!(
+            "rust-reality-assets-{}-{suffix}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("temporary asset cache must be created");
+        let mut config: Config = serde_json::from_str(crate::config::test_config_json())
+            .expect("fixture config must parse");
+        config.assets.geosite = format!("http://{address}/geosite.dat");
+        config.assets.cache_directory = directory.clone();
+        config.assets.max_bytes = maximum;
+        config.routing.global_rules[0].domain = vec!["geosite:test".to_owned()];
+        config.routing.global_rules[0].ip.clear();
+        (config, directory)
     }
 
     fn fixture() -> (Config, std::path::PathBuf) {

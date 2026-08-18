@@ -2,7 +2,8 @@
 # validate-profiles.sh — machine-profile validation harness for rust-reality.
 #
 # Simulates machine classes with cgroup v2 scopes (systemd-run --scope with
-# CPUQuota + MemoryMax) and measures the server's real capacity per class:
+# CPUQuota + MemoryMax + MemorySwapMax=0) and measures the server's real
+# capacity per class:
 # startup budget derivation, idle/assets RSS, setup churn, sustained 512 MiB
 # throughput, and an idle-connection ladder looking for pressure events or
 # cgroup OOM kills. The server never runs as root: the scope is created with
@@ -12,7 +13,7 @@
 # Output (untracked evidence, do not commit):
 #   benchmarks/profile-validation/<class>/cells.jsonl   one record per cell
 #   benchmarks/profile-validation/<class>/server-*.log  structured server logs
-#   benchmarks/profile-validation/<class>/samples-*.tsv 1 Hz RSS/FD/cgroup series
+#   benchmarks/profile-validation/<class>/samples-*.tsv 1 Hz RSS/FD/memory/swap
 #   benchmarks/profile-validation/<class>/summary.json + summary.md
 #   benchmarks/profile-validation/environment.json
 #
@@ -22,62 +23,221 @@
 #      RUST_REALITY_BIN (default: this repository's target/release/rust-reality;
 #      the script never builds it — run `cargo build --release` yourself first,
 #      ideally via scripts/build-release.sh so the binary embeds the git commit),
+#      RUST_REALITY_SHA256 (REQUIRED exact SHA-256 of RUST_REALITY_BIN),
+#      EXPECTED_SOURCE_COMMIT (REQUIRED full commit embedded by build-release),
 #      XRAY_BIN (REQUIRED, no default: path to an xray-core client binary),
-#      OUT_ROOT, KEEP_WORK (0), FORCE (0), IDENTITY_STRICT (1: a positively
-#      detected binary/HEAD commit mismatch aborts the run; 0 only warns).
+#      XRAY_SHA256 (REQUIRED exact SHA-256 of XRAY_BIN), RUN_ID, absolute
+#      unique OUT_DIR, disk-backed TMPDIR, and PORT_BASE are REQUIRED for a
+#      formal run. ASSET_CACHE_DIR (default: the repository's
+#      reusable benchmarks/profile-validation/.asset-cache), KEEP_WORK (0),
+#      FORCE (0), IDENTITY_CHECK_ONLY (0; explicit preflight only, never profile
+#      evidence). Formal runs are always fail-closed on identity and immutability.
 # The one-time geo-asset fetch needs outbound network access; if your
 # environment requires a proxy, export the standard *_PROXY variables for
 # curl before running, or pre-populate the asset cache by hand (see below).
 set -Eeuo pipefail
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$repository/scripts/benchmark-contract.sh"
 cd "$repository"
 
 rust_bin=${RUST_REALITY_BIN:-$repository/target/release/rust-reality}
+expected_binary_sha256=${RUST_REALITY_SHA256:-}
+expected_source_commit=${EXPECTED_SOURCE_COMMIT:-}
 xray=${XRAY_BIN:-}
-out_root=${OUT_ROOT:-benchmarks/profile-validation}
-asset_cache="$repository/$out_root/.asset-cache"
+asset_cache_input=${ASSET_CACHE_DIR:-benchmarks/profile-validation/.asset-cache}
 classes=${CLASSES:-"1c1g:100:1G 1c2g:100:2G 2c2g:200:2G 2c4g:200:4G 4c4g:400:4G 4c8g:400:8G"}
 only=${ONLY:-}
 standard_comparison=${STANDARD_COMPARISON:-1}
+comparison_name=${COMPARISON_NAME:-1c1g-standard}
 conns=${CONNS:-96}
 samples_churn=${SAMPLES_CHURN:-3}
 samples_download=${SAMPLES_DOWNLOAD:-2}
 hold=${HOLD:-8}
 settle=${SETTLE:-3}
+identity_check_only=${IDENTITY_CHECK_ONLY:-0}
 uid=$(id -u)
 gid=$(id -g)
 
-work=$(mktemp -d "$repository/benchmarks/profile-validation.XXXXXX")
+if [[ ${EXPLORATORY:-0} == 1 && -z ${OUT_DIR:-} && -n ${OUT_ROOT:-} ]]; then
+    OUT_DIR=$OUT_ROOT
+fi
+rr_contract_init "$repository" validate-profiles benchmarks/profile-validation 128
+rr_register_harness_file "$repository/scripts/profile-driver.py"
+rr_register_harness_file "$repository/scripts/profile-summarize.py"
+rr_register_harness_tree "$repository/scripts/bench-origin"
+rr_register_binary rust-reality "$rust_bin" "$expected_binary_sha256" rust \
+    "$expected_source_commit"
+rust_bin=${RR_BINARY_PATHS[rust-reality]}
+rr_register_binary xray "$xray" "${XRAY_SHA256:-}" xray
+xray=${RR_BINARY_PATHS[xray]}
+rr_write_contract_metadata
+out_root=$RR_OUT_DIR
+work=$(mktemp -d "$RR_TMPDIR/rust-reality-profile-validation.XXXXXX")
 runner_pids=()
 client_pids=()
 sampler_pids=()
 active_units=()
+class_summaries=()
+class_summary_statuses=()
+declare -A pid_start_times=()
+declare -A unit_cgroups=()
+declare -A unit_runner_pids=()
+declare -A unit_cpu_percent=()
+declare -A unit_memory_max=()
+declare -A planned_class_names=()
+pid_snapshot_start=""
+pid_snapshot_state=""
+binary_identity_verified=0
+cgroup_evidence=""
 
 CLEANENV=(env -u ALL_PROXY -u all_proxy -u HTTP_PROXY -u http_proxy
           -u HTTPS_PROXY -u https_proxy -u NO_PROXY -u no_proxy -u CARGO_HTTP_PROXY)
 
+pid_snapshot() {
+    local stat rest
+    local -a fields
+    IFS= read -r stat < "/proc/$1/stat" || return 1
+    # comm is parenthesized and may itself contain spaces or ')' characters.
+    # Remove through the final ") "; the remainder starts at state (field 3).
+    rest=${stat##*) }
+    read -r -a fields <<< "$rest"
+    (( ${#fields[@]} > 19 )) || return 1
+    pid_snapshot_start=${fields[19]}
+    pid_snapshot_state=${fields[0]}
+}
+
+register_pid() {
+    local pid=$1 expected_exe=${2:-} start
+    rr_register_pid "$pid" "$expected_exe" || {
+        echo "background process $pid exited or changed identity before registration" >&2
+        return 1
+    }
+    start=${RR_PID_STARTS[$pid]:-}
+    [[ -n $start ]] || {
+        echo "contract did not retain starttime for PID $pid" >&2
+        return 1
+    }
+    pid_start_times[$pid]=$start
+}
+
+pid_is_registered() {
+    local pid=$1 expected=${pid_start_times[$1]:-} actual state
+    [[ -n $expected ]] || return 1
+    pid_snapshot "$pid" || return 1
+    actual=$pid_snapshot_start
+    state=$pid_snapshot_state
+    [[ $actual == "$expected" && $state != Z ]]
+}
+
+signal_registered_pid() {
+    local signal=$1 pid=$2 expected=${pid_start_times[$2]:-} actual state
+    [[ -n $expected ]] || return 0
+    pid_snapshot "$pid" || return 0
+    actual=$pid_snapshot_start
+    state=$pid_snapshot_state
+    if [[ $actual != "$expected" ]]; then
+        echo "refusing to signal PID $pid: /proc starttime no longer matches" >&2
+        return 0
+    fi
+    [[ $state == Z ]] || kill "-$signal" "$pid" 2>/dev/null || true
+}
+
+forget_pid() {
+    unset 'pid_start_times[$1]'
+    unset 'RR_PID_STARTS[$1]'
+}
+
+unit_is_registered() {
+    local unit=$1 expected=${unit_cgroups[$1]:-} runner actual actual_id
+    runner=${unit_runner_pids[$unit]:-}
+    [[ -n $expected && -n $runner ]] || return 1
+    pid_is_registered "$runner" || return 1
+    actual_id=$(systemctl show -p Id --value "$unit" 2>/dev/null) || return 1
+    actual=$(systemctl show -p ControlGroup --value "$unit" 2>/dev/null) || return 1
+    [[ $actual_id == "$unit" && -n $actual && $actual == "$expected" \
+        && -d /sys/fs/cgroup$actual ]]
+}
+
+stop_registered_unit() {
+    local unit=$1
+    if unit_is_registered "$unit"; then
+        if ! sudo -n systemctl stop "$unit" >/dev/null 2>&1; then
+            echo "failed to stop registered unit $unit" >&2
+            return 1
+        fi
+    elif [[ -n ${unit_cgroups[$unit]:-} ]]; then
+        echo "refusing to stop unit $unit: registered cgroup no longer matches" >&2
+        return 1
+    fi
+}
+
+terminate_registered_pid() {
+    local pid=$1
+    signal_registered_pid TERM "$pid"
+    for _ in $(seq 1 50); do
+        pid_is_registered "$pid" || break
+        sleep 0.1
+    done
+    signal_registered_pid KILL "$pid"
+    wait "$pid" 2>/dev/null || true
+    forget_pid "$pid"
+}
+
 cleanup() {
+    local exit_status=$?
+    # The shared EXIT handler must become the sole owner of the final status.
+    # Remove it before the explicit exit below so a verification failure can
+    # upgrade success to failure without recursively invoking cleanup.
+    trap - EXIT
     set +e
-    for pid in "${sampler_pids[@]:-}"; do kill "$pid" 2>/dev/null; done
-    for pid in "${client_pids[@]:-}" "${runner_pids[@]:-}"; do
-        kill "$pid" 2>/dev/null
+    local pid unit live scoped_server=${server_pid:-}
+    for pid in "${sampler_pids[@]:-}" "${client_pids[@]:-}"; do
+        [[ -n $pid ]] && signal_registered_pid TERM "$pid"
     done
+    # Stop scopes while the exact registered cgroup still exists; only then
+    # terminate the systemd-run client processes that created them.
     for unit in "${active_units[@]:-}"; do
-        sudo -n systemctl stop "$unit" >/dev/null 2>&1
+        [[ -n $unit ]] && stop_registered_unit "$unit"
     done
-    for pid in "${client_pids[@]:-}" "${runner_pids[@]:-}"; do
-        wait "$pid" 2>/dev/null
+    [[ -n $scoped_server ]] && signal_registered_pid TERM "$scoped_server"
+    for pid in "${runner_pids[@]:-}"; do
+        [[ -n $pid ]] && signal_registered_pid TERM "$pid"
     done
+    # Give every registered child the same bounded grace period.  Identity is
+    # rechecked on every poll so PID reuse can never redirect a later signal.
+    for _ in $(seq 1 50); do
+        live=0
+        for pid in "${sampler_pids[@]:-}" "${client_pids[@]:-}" "${runner_pids[@]:-}"; do
+            [[ -n $pid ]] && pid_is_registered "$pid" && live=1
+        done
+        [[ -n $scoped_server ]] && pid_is_registered "$scoped_server" && live=1
+        (( live == 0 )) && break
+        sleep 0.1
+    done
+    for pid in "${sampler_pids[@]:-}" "${client_pids[@]:-}" "${runner_pids[@]:-}"; do
+        [[ -n $pid ]] && signal_registered_pid KILL "$pid"
+    done
+    [[ -n $scoped_server ]] && signal_registered_pid KILL "$scoped_server"
+    for pid in "${sampler_pids[@]:-}" "${client_pids[@]:-}" "${runner_pids[@]:-}"; do
+        [[ -n $pid ]] || continue
+        wait "$pid" 2>/dev/null || true
+        forget_pid "$pid"
+    done
+    [[ -n $scoped_server ]] && forget_pid "$scoped_server"
     if [[ ${KEEP_WORK:-0} == 1 ]]; then
         printf 'work directory retained: %s\n' "$work" >&2
-    elif [[ -d $work && $work == "$repository"/benchmarks/profile-validation.* ]]; then
+    elif [[ -d $work && $work == "$RR_TMPDIR"/rust-reality-profile-validation.* ]]; then
         rm -rf -- "$work"
     fi
+    local final_rc
+    rr_contract_verify_on_exit "$exit_status"
+    final_rc=$?
+    exit "$final_rc"
 }
 trap cleanup EXIT
 
-for program in curl jq python3 go setpriv systemctl; do
+for program in curl jq numfmt python3 go setpriv sha256sum systemctl; do
     command -v "$program" >/dev/null || { echo "missing: $program" >&2; exit 1; }
 done
 sudo -n true || { echo "passwordless sudo required for systemd-run scopes" >&2; exit 1; }
@@ -87,6 +247,18 @@ sudo -n true || { echo "passwordless sudo required for systemd-run scopes" >&2; 
     echo "embeds the git commit for the identity check), or set RUST_REALITY_BIN." >&2
     exit 1
 }
+[[ $expected_binary_sha256 =~ ^[0-9a-f]{64}$ ]] || {
+    echo "RUST_REALITY_SHA256 is required and must be exactly 64 lowercase hexadecimal characters" >&2
+    exit 1
+}
+[[ $expected_source_commit =~ ^[0-9a-f]{40}$ ]] || {
+    echo "EXPECTED_SOURCE_COMMIT is required and must be exactly 40 lowercase hexadecimal characters" >&2
+    exit 1
+}
+[[ $identity_check_only == 0 || $identity_check_only == 1 ]] || {
+    echo "IDENTITY_CHECK_ONLY must be 0 or 1" >&2
+    exit 1
+}
 [[ -n $xray ]] || {
     echo "XRAY_BIN is required (no default): path to an xray-core client binary," >&2
     echo "e.g. from https://github.com/XTLS/Xray-core/releases." >&2
@@ -94,6 +266,89 @@ sudo -n true || { echo "passwordless sudo required for systemd-run scopes" >&2; 
 }
 [[ -x $xray ]] || { echo "xray client binary missing or not executable: $xray" >&2; exit 1; }
 
+verify_binary_sha256() {
+    local phase=$1 actual
+    actual=$(sha256sum -- "$rust_bin" | awk '{print $1}')
+    if [[ $actual != "$expected_binary_sha256" ]]; then
+        echo "binary SHA-256 mismatch $phase: expected $expected_binary_sha256, got $actual" >&2
+        return 1
+    fi
+    binary_sha256=$actual
+}
+
+# The measured executable is the authority for source identity. Release builds
+# expose their embedded RUST_REALITY_GIT_COMMIT in the read-only benchmark JSON;
+# never infer identity from repository HEAD or by searching arbitrary ELF bytes.
+verify_binary_sha256 "before profile validation"
+embedded_commit=${RR_BINARY_SOURCE_COMMITS[rust-reality]}
+binary_identity_verified=1
+if [[ $identity_check_only == 1 ]]; then
+    binary_identity_verified=0
+    verify_binary_sha256 "after identity-only preflight"
+    rr_finalize_contract
+    echo "identity-only preflight passed; no profile evidence was produced" >&2
+    exit 0
+fi
+
+absolute_from_repository() {
+    python3 - "$repository" "$1" <<'PY'
+import os
+import sys
+
+root, value = sys.argv[1:]
+if not os.path.isabs(value):
+    value = os.path.join(root, value)
+print(os.path.abspath(value))
+PY
+}
+
+register_planned_class() {
+    local class=$1
+    if [[ ! $class =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ || $class == . || $class == .. ]]; then
+        echo "class output name is not a safe basename: $class" >&2
+        return 1
+    fi
+    if [[ -n ${planned_class_names[$class]:-} ]]; then
+        echo "duplicate class output name: $class" >&2
+        return 1
+    fi
+    planned_class_names[$class]=1
+}
+
+for spec in $classes; do
+    class=${spec%%:*}
+    rest=${spec#*:}
+    cpu=${rest%%:*}
+    mem=${rest#*:}
+    if [[ $rest == "$spec" || $mem == "$rest" || -z $cpu || -z $mem ]]; then
+        echo "invalid class specification (expected name:cpu:memory): $spec" >&2
+        exit 1
+    fi
+    if [[ ! $cpu =~ ^[1-9][0-9]*$ ]]; then
+        echo "invalid CPU quota percentage in class specification: $spec" >&2
+        exit 1
+    fi
+    if ! mem_bytes=$(LC_ALL=C numfmt --from=iec "$mem" 2>/dev/null) \
+        || [[ ! $mem_bytes =~ ^[1-9][0-9]*$ ]]; then
+        echo "invalid finite memory maximum in class specification: $spec" >&2
+        exit 1
+    fi
+    if [[ -z $only || $class == "$only" ]]; then
+        register_planned_class "$class"
+    fi
+    if [[ $standard_comparison == 1 && $class == 1c1g \
+        && ( -z $only || $comparison_name == "$only" ) ]]; then
+        register_planned_class "$comparison_name"
+    fi
+done
+
+asset_cache=$(absolute_from_repository "$asset_cache_input")
+case "$asset_cache/" in
+    "$out_root/"*)
+        echo "ASSET_CACHE_DIR must be outside OUT_ROOT so cached assets cannot be overwritten" >&2
+        exit 1
+        ;;
+esac
 stray=$(pgrep -af 'release/rust-reality serve|xray.* run|bench-origin --port' || true)
 if [[ -n $stray && ${FORCE:-0} != 1 ]]; then
     echo "stray benchmark processes found (refusing to run in a polluted window):" >&2
@@ -101,7 +356,7 @@ if [[ -n $stray && ${FORCE:-0} != 1 ]]; then
     exit 1
 fi
 
-mkdir -p "$out_root" "$asset_cache"
+mkdir -p -- "$asset_cache"
 
 # --- one-time asset cache population (proxy env used only here) -------------
 # The geo assets are fetched once and then reused from the cache on every run.
@@ -117,61 +372,39 @@ if [[ ! -s $asset_cache/geoip.dat || ! -s $asset_cache/geosite.dat ]]; then
     curl -fLsS --retry 3 -o "$asset_cache/geosite.dat" \
         "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat"
 fi
+geoip_sha256=$(sha256sum -- "$asset_cache/geoip.dat" | awk '{print $1}')
+geosite_sha256=$(sha256sum -- "$asset_cache/geosite.dat" | awk '{print $1}')
 
 # --- environment metadata ----------------------------------------------------
-commit=$(git rev-parse HEAD)
-binary_sha256=$(sha256sum "$rust_bin" | awk '{print $1}')
-
-# Binary identity: binaries built via scripts/build-release.sh embed the git
-# commit (RUST_REALITY_GIT_COMMIT, surfaced as git_commit in the benchmark
-# report). Confirm the measured binary matches the recorded HEAD so the
-# evidence cannot silently mix a stale binary with a newer tree.
-embedded_commit=""
-if grep -qF -- "$commit" "$rust_bin" 2>/dev/null; then
-    embedded_commit=$commit
-fi
-# No fallback extraction: a binary built with plain `cargo build --release`
-# does not embed the commit (only scripts/build-release.sh sets
-# RUST_REALITY_GIT_COMMIT), and harvesting any standalone 40-hex string can
-# match unrelated rodata constants, which would false-fail a correct binary.
-# Note: after docs-only commits the embedded commit lags HEAD by design;
-# rebuild (or set IDENTITY_STRICT=0) in that case.
-identity_note=""
-if [[ -z $embedded_commit ]]; then
-    identity_note="no git commit embedded in the binary; identity not verified (build with scripts/build-release.sh to embed RUST_REALITY_GIT_COMMIT)"
-    echo "warning: $identity_note" >&2
-elif [[ $embedded_commit != "$commit" ]]; then
-    identity_note="embedded commit $embedded_commit does not match recorded HEAD $commit"
-    echo "warning: binary/HEAD identity mismatch: $identity_note" >&2
-    if [[ ${IDENTITY_STRICT:-1} == 1 ]]; then
-        echo "refusing to measure a stale binary; rebuild from this tree, or set IDENTITY_STRICT=0 to only warn" >&2
-        exit 1
-    fi
-fi
+commit=$expected_source_commit
+harness_commit=$(git rev-parse HEAD)
 jq -n \
     --arg commit "$commit" \
+    --arg harness_commit "$harness_commit" \
     --arg binary "$rust_bin" \
     --arg binary_sha256 "$binary_sha256" \
     --arg binary_embedded_commit "$embedded_commit" \
-    --arg identity_note "$identity_note" \
+    --arg output_root "$out_root" \
+    --arg asset_cache_dir "$asset_cache" \
+    --arg geoip_sha256 "$geoip_sha256" \
+    --arg geosite_sha256 "$geosite_sha256" \
     --arg xray "$("$xray" version 2>/dev/null | head -1)" \
     --arg kernel "$(uname -r)" \
     --arg host "$(nproc) CPUs, $(awk '/MemTotal/{print int($2/1024)" MiB"}' /proc/meminfo)" \
     --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{commit: $commit, binary: $binary, binarySha256: $binary_sha256,
-      binaryEmbeddedCommit: $binary_embedded_commit, identityNote: $identity_note,
+    '{commit: $commit, harnessCommit: $harness_commit,
+      binary: $binary, binarySha256: $binary_sha256,
+      binaryEmbeddedCommit: $binary_embedded_commit,
+      outputRoot: $output_root, assetCacheDirectory: $asset_cache_dir,
+      geoAssets: {
+        geoip: {path: ($asset_cache_dir + "/geoip.dat"), sha256: $geoip_sha256},
+        geosite: {path: ($asset_cache_dir + "/geosite.dat"), sha256: $geosite_sha256}
+      },
       xray: $xray, kernel: $kernel, host: $host, dateUtc: $date,
       note: "server CPU via /proc/pid/stat utime+stime (perf stat unusable on this host)"}' \
     > "$out_root/environment.json"
 
-free_port() {
-    python3 - <<'PY'
-import socket
-with socket.socket() as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-}
+free_port() { rr_next_port; }
 
 wait_port() {
     python3 - "$1" "$2" <<'PY'
@@ -206,7 +439,9 @@ http_port=$(free_port)
 https_port=$(free_port)
 "${CLEANENV[@]}" "$work/bench-origin" --port "$http_port" --payload-dir "$work" \
     --put-log "$work/put.jsonl" >"$work/origin.log" 2>&1 &
-client_pids+=("$!")
+origin_pid=$!
+client_pids+=("$origin_pid")
+register_pid "$origin_pid"
 # TLS 1.3 origin acts as the REALITY cover target: the server mirrors the
 # cover's certificate chain, so the cover must speak TLS (a plain-HTTP cover
 # makes every authenticated handshake fall back and fail).
@@ -215,7 +450,9 @@ openssl req -x509 -newkey rsa:2048 -nodes -keyout "$work/origin.key" \
 "${CLEANENV[@]}" "$work/bench-origin" --port "$https_port" --payload-dir "$work" \
     --put-log "$work/https-put.jsonl" --tls-cert "$work/origin.crt" --tls-key "$work/origin.key" \
     >"$work/https-origin.log" 2>&1 &
-client_pids+=("$!")
+tls_origin_pid=$!
+client_pids+=("$tls_origin_pid")
+register_pid "$tls_origin_pid"
 wait_port "$http_port" 10
 wait_port "$https_port" 10
 origin_url="http://127.0.0.1:$http_port/payload-512.bin"
@@ -272,23 +509,119 @@ make_xray_client() {
 server_pid=""
 cgroup_dir=""
 
+# verify_cgroup_limits <unit> <control-group> <cpu-percent> <memory-text>
+#
+# The cgroup files are authoritative.  Merely asking systemd for a property is
+# not release evidence: a missing controller, inherited bound, or manager bug
+# must fail before the first workload sample is collected.
+verify_cgroup_limits() {
+    local unit=$1 cg=$2 cpu=$3 mem=$4
+    local cpu_max cpu_quota cpu_period extra memory_max swap_max swap_current expected_memory
+    expected_memory=$(LC_ALL=C numfmt --from=iec "$mem") || {
+        echo "could not convert requested MemoryMax=$mem for $unit" >&2
+        return 1
+    }
+    [[ $expected_memory =~ ^[1-9][0-9]*$ ]] || {
+        echo "requested MemoryMax=$mem is not a finite positive byte count" >&2
+        return 1
+    }
+    IFS= read -r cpu_max < "$cg/cpu.max" || {
+        echo "could not read authoritative cpu.max for $unit" >&2
+        return 1
+    }
+    read -r cpu_quota cpu_period extra <<< "$cpu_max"
+    [[ $cpu_quota =~ ^[1-9][0-9]*$ && $cpu_period =~ ^[1-9][0-9]*$ \
+        && -z ${extra:-} ]] || {
+        echo "invalid or unbounded cpu.max for $unit: $cpu_max" >&2
+        return 1
+    }
+    (( cpu_quota * 100 == cpu * cpu_period )) || {
+        echo "cpu.max mismatch for $unit: requested ${cpu}%, observed $cpu_max" >&2
+        return 1
+    }
+    IFS= read -r memory_max < "$cg/memory.max" || {
+        echo "could not read authoritative memory.max for $unit" >&2
+        return 1
+    }
+    [[ $memory_max == "$expected_memory" ]] || {
+        echo "memory.max mismatch for $unit: requested $expected_memory, observed $memory_max" >&2
+        return 1
+    }
+    IFS= read -r swap_max < "$cg/memory.swap.max" || {
+        echo "could not read authoritative memory.swap.max for $unit" >&2
+        return 1
+    }
+    [[ $swap_max == 0 ]] || {
+        echo "memory.swap.max mismatch for $unit: requested 0, observed $swap_max" >&2
+        return 1
+    }
+    IFS= read -r swap_current < "$cg/memory.swap.current" || {
+        echo "could not read authoritative memory.swap.current for $unit" >&2
+        return 1
+    }
+    [[ $swap_current == 0 ]] || {
+        echo "scope $unit already has non-zero memory.swap.current=$swap_current" >&2
+        return 1
+    }
+    cgroup_evidence=$(jq -nc \
+        --arg unit "$unit" --arg control_group "${cg#/sys/fs/cgroup}" \
+        --arg requested_memory "$mem" --arg cpu_max "$cpu_max" \
+        --argjson requested_cpu_percent "$cpu" \
+        --argjson requested_memory_bytes "$expected_memory" \
+        --argjson cpu_quota_us "$cpu_quota" --argjson cpu_period_us "$cpu_period" \
+        --argjson memory_max_bytes "$memory_max" \
+        --argjson memory_swap_max_bytes "$swap_max" \
+        --argjson memory_swap_current_bytes "$swap_current" \
+        '{schemaVersion:1, unit:$unit, controlGroup:$control_group,
+          requested:{cpuQuotaPercent:$requested_cpu_percent,
+                     memoryMax:$requested_memory,
+                     memoryMaxBytes:$requested_memory_bytes,
+                     memorySwapMaxBytes:0},
+          actual:{cpuMax:$cpu_max,cpuQuotaUs:$cpu_quota_us,
+                  cpuPeriodUs:$cpu_period_us,memoryMaxBytes:$memory_max_bytes,
+                  memorySwapMaxBytes:$memory_swap_max_bytes,
+                  memorySwapCurrentBytes:$memory_swap_current_bytes},
+          matchesRequested:true}')
+}
+
 # start_scoped_server <class> <run> <cpuquota_percent> <memmax> <config> <logfile>
 start_scoped_server() {
     local class=$1 run=$2 cpu=$3 mem=$4 config=$5 logfile=$6
     local unit="rrprof-${class}-${run}-$$.scope"
+    local runner_pid load_state
+    load_state=$(systemctl show -p LoadState --value "$unit" 2>/dev/null || true)
+    if [[ -n $load_state && $load_state != not-found ]]; then
+        echo "refusing to reuse pre-existing scope name $unit (LoadState=$load_state)" >&2
+        return 1
+    fi
     sudo -n systemd-run --scope --collect -q --unit="$unit" \
-        -p "CPUQuota=${cpu}%" -p "MemoryMax=${mem}" \
+        -p "CPUQuota=${cpu}%" -p "MemoryMax=${mem}" -p MemorySwapMax=0 \
         -- setpriv --reuid="$uid" --regid="$gid" --clear-groups \
            env -i PATH=/usr/local/bin:/usr/bin:/bin \
            "$rust_bin" serve --config "$config" >"$logfile" 2>&1 &
-    runner_pids+=("$!")
-    active_units+=("$unit")
+    runner_pid=$!
+    runner_pids+=("$runner_pid")
+    register_pid "$runner_pid"
     server_pid=""
     cgroup_dir=""
+    cgroup_evidence=""
     local deadline=$((SECONDS + 15)) cg p
     while (( SECONDS < deadline )); do
         cg=$(systemctl show -p ControlGroup --value "$unit" 2>/dev/null) || continue
         [[ -n $cg && -d /sys/fs/cgroup$cg ]] || { sleep 0.1; continue; }
+        if [[ -z ${unit_cgroups[$unit]:-} ]]; then
+            unit_cgroups[$unit]=$cg
+            unit_runner_pids[$unit]=$runner_pid
+            if ! unit_is_registered "$unit"; then
+                unset 'unit_cgroups[$unit]' 'unit_runner_pids[$unit]'
+                echo "scope $unit failed exact unit/cgroup/runner registration" >&2
+                return 1
+            fi
+            active_units+=("$unit")
+        elif [[ ${unit_cgroups[$unit]} != "$cg" ]]; then
+            echo "scope $unit changed cgroup while starting" >&2
+            return 1
+        fi
         for p in $(cat "/sys/fs/cgroup$cg/cgroup.procs" 2>/dev/null); do
             if [[ $(cat "/proc/$p/comm" 2>/dev/null) == rust-reality ]]; then
                 server_pid=$p
@@ -300,42 +633,83 @@ start_scoped_server() {
         sleep 0.1
     done
     [[ -n $server_pid ]] || { echo "server did not appear in scope $unit" >&2; return 1; }
+    register_pid "$server_pid" "$rust_bin"
+    unit_cpu_percent[$unit]=$cpu
+    unit_memory_max[$unit]=$mem
+    verify_cgroup_limits "$unit" "$cgroup_dir" "$cpu" "$mem"
 }
 
 # stop_scoped_server
 stop_scoped_server() {
-    local unit=${active_units[-1]}
-    kill "$server_pid" 2>/dev/null || true
+    local unit=${active_units[-1]} runner_pid cpu mem
+    runner_pid=${unit_runner_pids[$unit]:-}
+    cpu=${unit_cpu_percent[$unit]:-}
+    mem=${unit_memory_max[$unit]:-}
+    [[ -n $runner_pid ]] || {
+        echo "scope $unit has no registered systemd-run PID" >&2
+        return 1
+    }
+    [[ -n $cpu && -n $mem ]] || {
+        echo "scope $unit has no registered resource-limit request" >&2
+        return 1
+    }
+    if [[ ${runner_pids[-1]:-} != "$runner_pid" ]]; then
+        echo "runner PID stack mismatch while stopping $unit" >&2
+        return 1
+    fi
+    local stopped_server=$server_pid
+    # Detect an external or accidental limit change after the workload instead
+    # of trusting the preflight snapshot for the whole scope lifetime.
+    verify_cgroup_limits "$unit" "$cgroup_dir" "$cpu" "$mem" || return 1
+    # The exact unit name is accepted only while its ControlGroup still equals
+    # the value observed at creation.  A recycled name can therefore never be
+    # stopped by this harness.
+    stop_registered_unit "$unit" || return 1
+    signal_registered_pid TERM "$stopped_server"
     for _ in $(seq 1 50); do
-        kill -0 "$server_pid" 2>/dev/null || break
+        pid_is_registered "$stopped_server" || break
         sleep 0.1
     done
-    kill -9 "$server_pid" 2>/dev/null || true
-    sudo -n systemctl stop "$unit" >/dev/null 2>&1 || true
+    signal_registered_pid KILL "$stopped_server"
+    forget_pid "$stopped_server"
+    terminate_registered_pid "$runner_pid"
+    runner_pids=("${runner_pids[@]:0:${#runner_pids[@]}-1}")
+    unset 'unit_cgroups[$unit]' 'unit_runner_pids[$unit]' \
+        'unit_cpu_percent[$unit]' 'unit_memory_max[$unit]'
     active_units=("${active_units[@]:0:${#active_units[@]}-1}")
     server_pid=""
+    cgroup_dir=""
 }
 
 # start_sampler <tag> <outfile>
 start_sampler() {
     local tag=$1 outfile=$2 pid=$server_pid cg=$cgroup_dir
     (
-        while kill -0 "$pid" 2>/dev/null; do
+        while pid_is_registered "$pid"; do
             rss=$(awk '/VmRSS:/{print $2*1024}' "/proc/$pid/status" 2>/dev/null || echo 0)
             fds=$(ls "/proc/$pid/fd" 2>/dev/null | wc -l)
-            cur=$(cat "$cg/memory.current" 2>/dev/null || echo 0)
-            printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "${rss:-0}" "${fds:-0}" "${cur:-0}"
+            cur=$(cat "$cg/memory.current" 2>/dev/null || echo null)
+            swap=$(cat "$cg/memory.swap.current" 2>/dev/null || echo null)
+            printf '%s\t%s\t%s\t%s\t%s\n' \
+                "$(date +%s)" "${rss:-0}" "${fds:-0}" "${cur:-null}" "${swap:-null}"
             sleep 1
         done
     ) > "$outfile" &
-    sampler_pids+=("$!")
+    local sampler_pid=$!
+    sampler_pids+=("$sampler_pid")
+    register_pid "$sampler_pid"
 }
 
 stop_sampler() {
     local pid=${sampler_pids[-1]}
-    kill "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
+    terminate_registered_pid "$pid"
     sampler_pids=("${sampler_pids[@]:0:${#sampler_pids[@]}-1}")
+}
+
+stop_last_client() {
+    local pid=${client_pids[-1]}
+    terminate_registered_pid "$pid"
+    client_pids=("${client_pids[@]:0:${#client_pids[@]}-1}")
 }
 
 # emit_cell <classdir> <json>  — appends one record to cells.jsonl
@@ -345,26 +719,30 @@ emit_cell() {
 
 # sample_now — prints a JSON object with the live process/cgroup numbers
 sample_now() {
-    local rss fds cur peak oom
+    local rss fds cur peak swap oom
     rss=$(awk '/VmRSS:/{print $2*1024}' "/proc/$server_pid/status" 2>/dev/null || echo null)
     fds=$(ls "/proc/$server_pid/fd" 2>/dev/null | wc -l)
     cur=$(cat "$cgroup_dir/memory.current" 2>/dev/null || echo null)
     peak=$(cat "$cgroup_dir/memory.peak" 2>/dev/null || echo null)
+    swap=$(cat "$cgroup_dir/memory.swap.current" 2>/dev/null || echo null)
     oom=$(awk '/^oom_kill /{print $2}' "$cgroup_dir/memory.events" 2>/dev/null || echo null)
     jq -n --argjson rss "${rss:-null}" --argjson fds "${fds:-0}" \
-        --argjson cur "${cur:-null}" --argjson peak "${peak:-null}" --argjson oom "${oom:-null}" \
+        --argjson cur "${cur:-null}" --argjson peak "${peak:-null}" \
+        --argjson swap "${swap:-null}" --argjson oom "${oom:-null}" \
         '{serverRssBytes: $rss, serverFdCount: $fds, cgroupMemoryCurrent: $cur,
-          cgroupMemoryPeak: $peak, cgroupOomKills: $oom}'
+          cgroupMemoryPeak: $peak, cgroupMemorySwapCurrent: $swap,
+          cgroupOomKills: $oom}'
 }
 
 # startup_cell <logfile> — extracts the one-shot startup reports from the log
 startup_cell() {
-    jq -sc '
+    jq --argjson cgroup_evidence "$cgroup_evidence" -sc '
         def pick($e): map(select(.event == $e)) | last;
         {
           machineReport: pick("machine_report"),
           descriptorBudgetReport: pick("descriptor_budget_report"),
           relayBackendReport: pick("relay_backend_report"),
+          cgroupEvidence: $cgroup_evidence,
           configurationPublished: (pick("configuration_published") != null)
         }' "$1"
 }
@@ -382,6 +760,8 @@ run_driver() {
 
 run_class() {
     local class=$1 cpu=$2 mem=$3 mode=$4
+    local mem_bytes
+    mem_bytes=$(LC_ALL=C numfmt --from=iec "$mem")
     local classdir="$out_root/$class"
     mkdir -p "$classdir"
     if [[ ${SKIP_A:-0} != 1 || ${SKIP_B:-0} != 1 ]]; then
@@ -398,7 +778,7 @@ run_class() {
             *)    ladder_levels="100,500,1000,2000,4000,8000" ;;
         esac
     fi
-    echo "== class $class (CPUQuota=${cpu}% MemoryMax=$mem mode=$mode, ladder $ladder_levels)" >&2
+    echo "== class $class (CPUQuota=${cpu}% MemoryMax=$mem MemorySwapMax=0 mode=$mode, ladder $ladder_levels)" >&2
 
     # ----- run A: no-geo config, startup + idle only -----
     if [[ ${SKIP_A:-0} != 1 ]]; then
@@ -429,7 +809,9 @@ run_class() {
     wait_port "$port_b" 120
     "${CLEANENV[@]}" "$xray" run -config "$work/$class-b.xray.json" \
         > "$classdir/xray-client.log" 2>&1 &
-    client_pids+=("$!")
+    local xray_pid=$!
+    client_pids+=("$xray_pid")
+    register_pid "$xray_pid" "$xray"
     wait_port "$socks_b" 30
     # Fail fast when the tunnel path is broken instead of recording garbage cells.
     if ! "${CLEANENV[@]}" python3 - "$socks_b" "$http_port" <<'PY'
@@ -476,9 +858,7 @@ PY
         '{cell: "cgroup_final", run: "geo"} + $sample')"
     stop_sampler
     stop_scoped_server
-    kill "${client_pids[-1]}" 2>/dev/null || true
-    wait "${client_pids[-1]}" 2>/dev/null || true
-    client_pids=("${client_pids[@]:0:${#client_pids[@]}-1}")
+    stop_last_client
     fi
 
     # ----- run C: tuned policy, capacity ladder only -----
@@ -507,7 +887,9 @@ PY
         wait_port "$port_c" 120
         "${CLEANENV[@]}" "$xray" run -config "$work/$class-c.xray.json" \
             > "$classdir/xray-client-tuned.log" 2>&1 &
-        client_pids+=("$!")
+        local xray_tuned_pid=$!
+        client_pids+=("$xray_tuned_pid")
+        register_pid "$xray_tuned_pid" "$xray"
         wait_port "$socks_c" 30
         start_sampler tuned "$classdir/samples-tuned.tsv"
         sleep 2
@@ -521,13 +903,23 @@ PY
             '{cell: "cgroup_final", run: "tuned"} + $sample')"
         stop_sampler
         stop_scoped_server
-        kill "${client_pids[-1]}" 2>/dev/null || true
-        wait "${client_pids[-1]}" 2>/dev/null || true
-        client_pids=("${client_pids[@]:0:${#client_pids[@]}-1}")
+        stop_last_client
     fi
 
-    "${CLEANENV[@]}" python3 scripts/profile-summarize.py "$classdir" \
-        --class "$class" --mode "$mode" --cpu-quota "$cpu" --mem-max "$mem"
+    local summary_status=0
+    if "${CLEANENV[@]}" python3 scripts/profile-summarize.py "$classdir" \
+        --class "$class" --mode "$mode" --cpu-quota "$cpu" --mem-max "$mem" \
+        --mem-max-bytes "$mem_bytes" --mem-swap-max 0
+    then
+        summary_status=0
+    else
+        summary_status=$?
+    fi
+    if (( summary_status != 0 )); then
+        echo "== class $class failed its summary gate; continuing for aggregate evidence" >&2
+    fi
+    class_summaries+=("$classdir/summary.json")
+    class_summary_statuses+=("$summary_status")
     echo "== class $class done -> $classdir/summary.json" >&2
 }
 
@@ -541,11 +933,52 @@ for spec in $classes; do
     else
         run_class "$class" "$cpu" "$mem" dedicated
     fi
-    comparison_name=${COMPARISON_NAME:-1c1g-standard}
     if [[ $standard_comparison == 1 && $class == 1c1g \
         && ( -z $only || $comparison_name == "$only" ) ]]; then
         run_class "$comparison_name" "$cpu" "$mem" standard
     fi
 done
 
+aggregate_args=()
+for index in "${!class_summaries[@]}"; do
+    aggregate_args+=("${class_summaries[$index]}" "${class_summary_statuses[$index]}")
+done
+python3 - "$out_root/summary.json" "${aggregate_args[@]}" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+output = Path(sys.argv[1])
+values = sys.argv[2:]
+if len(values) % 2:
+    raise SystemExit("internal error: summary path/status arguments are unbalanced")
+rows = []
+for raw_path, raw_status in zip(values[::2], values[1::2]):
+    path = Path(raw_path)
+    try:
+        status = int(raw_status)
+    except ValueError:
+        status = -1
+    try:
+        summary = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        rows.append({"path": str(path), "class": None, "pass": False,
+                     "summarizerExitStatus": status, "error": str(error)})
+        continue
+    rows.append({"path": str(path), "class": summary.get("class"),
+                 "summarizerExitStatus": status,
+                 "pass": status == 0 and summary.get("pass") is True})
+
+passed = bool(rows) and all(row["pass"] for row in rows)
+output.write_text(json.dumps({"pass": passed, "classes": rows}, indent=2) + "\n")
+if not passed:
+    failed = [row.get("class") or row["path"] for row in rows if not row["pass"]]
+    if not rows:
+        failed = ["no selected classes produced a summary"]
+    raise SystemExit("profile validation aggregate failed: " + ", ".join(failed))
+PY
+
+binary_identity_verified=0
+verify_binary_sha256 "after profile validation"
+rr_finalize_contract
 echo "all classes done; evidence under $out_root" >&2

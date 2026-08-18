@@ -5,13 +5,15 @@ Reads <classdir>/cells.jsonl and samples-*.tsv, writes summary.json and
 summary.md into the same directory. Usage:
 
     profile-summarize.py <classdir> --class 1c1g --mode dedicated \
-        --cpu-quota 100 --mem-max 1G
+        --cpu-quota 100 --mem-max 1G --mem-max-bytes 1073741824 \
+        --mem-swap-max 0
 """
 import argparse
 import glob
 import json
 import os
 import statistics
+import sys
 
 
 def load_cells(path):
@@ -31,6 +33,123 @@ def median(values):
 
 def mib(nbytes):
     return round(nbytes / 1024 / 1024, 1) if nbytes is not None else None
+
+
+def positive_int(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def nonnegative_int(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def cpu_quota_matches(quota, period, requested_percent):
+    return (positive_int(quota) and positive_int(period)
+            and positive_int(requested_percent)
+            and quota * 100 == requested_percent * period)
+
+
+EXPECTED_RUNS = ("nogeo", "geo", "tuned")
+
+
+def summarize_resource_boundaries(startups, resource_mode,
+                                  requested_cpu_percent,
+                                  requested_memory_bytes,
+                                  requested_swap_bytes):
+    scopes = []
+    run_counts = {run: 0 for run in EXPECTED_RUNS}
+    units = []
+    control_groups = []
+    for startup in startups:
+        run = startup.get("run")
+        if run in run_counts:
+            run_counts[run] += 1
+        machine = startup.get("machineReport") or {}
+        machine_present = bool(machine)
+        evidence = startup.get("cgroupEvidence") or {}
+        requested = evidence.get("requested") or {}
+        actual = evidence.get("actual") or {}
+        unit = evidence.get("unit")
+        control_group = evidence.get("controlGroup")
+        unit_matches_control_group = bool(
+            isinstance(unit, str) and unit
+            and isinstance(control_group, str) and control_group.startswith("/")
+            and control_group.rsplit("/", 1)[-1] == unit
+        )
+        if isinstance(unit, str) and unit:
+            units.append(unit)
+        if isinstance(control_group, str) and control_group:
+            control_groups.append(control_group)
+        machine_values_match = bool(
+            machine.get("memory_source") == "cgroup_v2"
+            and positive_int(machine.get("memory_max"))
+            and machine.get("memory_max") == requested_memory_bytes
+            and positive_int(machine.get("memory_total"))
+            and machine.get("memory_total") == requested_memory_bytes
+            and cpu_quota_matches(machine.get("cpu_quota_us"),
+                                  machine.get("cpu_period_us"),
+                                  requested_cpu_percent)
+        )
+        machine_report_required = resource_mode == "dedicated"
+        machine_matches = (machine_values_match if machine_report_required
+                           else not machine_present)
+        evidence_matches = bool(
+            positive_int(evidence.get("schemaVersion"))
+            and evidence.get("schemaVersion") == 1
+            and evidence.get("matchesRequested") is True
+            and run in EXPECTED_RUNS
+            and unit_matches_control_group
+            and positive_int(requested.get("cpuQuotaPercent"))
+            and requested.get("cpuQuotaPercent") == requested_cpu_percent
+            and positive_int(requested.get("memoryMaxBytes"))
+            and requested.get("memoryMaxBytes") == requested_memory_bytes
+            and nonnegative_int(requested.get("memorySwapMaxBytes"))
+            and requested.get("memorySwapMaxBytes") == requested_swap_bytes
+            and cpu_quota_matches(actual.get("cpuQuotaUs"),
+                                  actual.get("cpuPeriodUs"),
+                                  requested_cpu_percent)
+            and positive_int(actual.get("memoryMaxBytes"))
+            and actual.get("memoryMaxBytes") == requested_memory_bytes
+            and nonnegative_int(actual.get("memorySwapMaxBytes"))
+            and actual.get("memorySwapMaxBytes") == requested_swap_bytes
+            and nonnegative_int(actual.get("memorySwapCurrentBytes"))
+            and actual.get("memorySwapCurrentBytes") == 0
+        )
+        scopes.append({
+            "run": run,
+            "machineReportRequired": machine_report_required,
+            "machineReportPresent": machine_present,
+            "machineReportMatches": machine_matches,
+            "cgroupEvidenceMatches": evidence_matches,
+            "pass": machine_matches and evidence_matches,
+            "evidence": evidence,
+        })
+    expected_run_set = set(EXPECTED_RUNS)
+    observed_run_set = {startup.get("run") for startup in startups}
+    runs_match = (observed_run_set == expected_run_set
+                  and all(run_counts[run] == 1 for run in EXPECTED_RUNS)
+                  and len(startups) == len(EXPECTED_RUNS))
+    scopes_unique = (len(units) == len(EXPECTED_RUNS)
+                     and len(set(units)) == len(EXPECTED_RUNS)
+                     and len(control_groups) == len(EXPECTED_RUNS)
+                     and len(set(control_groups)) == len(EXPECTED_RUNS))
+    structure_pass = runs_match and scopes_unique
+    return {
+        "pass": structure_pass and all(scope["pass"] for scope in scopes),
+        "expected": {
+            "resourceMode": resource_mode,
+            "machineReportRequired": resource_mode == "dedicated",
+            "cpuQuotaPercent": requested_cpu_percent,
+            "memoryMaxBytes": requested_memory_bytes,
+            "memorySwapMaxBytes": requested_swap_bytes,
+            "runs": list(EXPECTED_RUNS),
+        },
+        "scopeCount": len(scopes),
+        "runCounts": run_counts,
+        "runsMatch": runs_match,
+        "scopesUnique": scopes_unique,
+        "scopes": scopes,
+    }
 
 
 def summarize_churn(cells, concurrency):
@@ -92,6 +211,7 @@ def summarize_ladder(cells, tag=None):
     prev_events = {k: 0 for k in PRESSURE_KEYS}
     prev_failed = 0
     oom_kills = 0
+    oom_status_known = True
     abort_reason = None
     complete = False
     max_established = 0
@@ -106,6 +226,7 @@ def summarize_ladder(cells, tag=None):
         new_pressure = 0
         new_failed = 0
         oom = 0
+        level_oom_known = True
         alive = True
         state = None
         rss = fds = current = 0
@@ -118,7 +239,12 @@ def summarize_ladder(cells, tag=None):
             failed_total = row.get("connectionsFailedTotal") or 0
             new_failed += max(0, failed_total - prev_failed)
             prev_failed = max(prev_failed, failed_total)
-            oom = max(oom, row.get("cgroupOomKills") or 0)
+            row_oom = row.get("cgroupOomKills")
+            if not nonnegative_int(row_oom):
+                level_oom_known = False
+                oom_status_known = False
+            else:
+                oom = max(oom, row_oom)
             alive = alive and row.get("serverAlive", False)
             state = row.get("latestPressureState") or state
             rss = max(rss, row.get("serverRssBytes") or 0)
@@ -139,11 +265,12 @@ def summarize_ladder(cells, tag=None):
             "serverRssBytes": rss,
             "serverFdCount": fds,
             "cgroupMemoryCurrent": current,
-            "cgroupOomKills": oom,
+            "cgroupOomKills": oom if level_oom_known else None,
+            "cgroupOomStatusKnown": level_oom_known,
             "serverAlive": alive,
         }
         levels.append(entry)
-        clean = (established >= level * 0.98 and new_pressure == 0
+        clean = (level_oom_known and established >= level * 0.98 and new_pressure == 0
                  and new_failed == 0 and oom == 0 and alive)
         if clean:
             max_clean = max(max_clean, level)
@@ -154,35 +281,99 @@ def summarize_ladder(cells, tag=None):
         "maxCleanLevel": max_clean,
         "maxEstablishedSessions": max_established,
         "firstPressureLevel": first_pressure,
-        "oomKills": oom_kills,
+        "oomKills": oom_kills if oom_status_known else None,
+        "oomStatusKnown": oom_status_known,
         "completed": complete,
         "abortReason": abort_reason,
     }
 
 
 def peaks_from_samples(classdir):
-    max_rss = max_fd = max_cur = 0
-    for path in glob.glob(os.path.join(classdir, "samples-*.tsv")):
+    max_rss = max_fd = max_cur = max_swap = 0
+    rows = invalid_rows = 0
+    expected_paths = {
+        os.path.join(classdir, f"samples-{run}.tsv"): run
+        for run in EXPECTED_RUNS
+    }
+    observed_paths = set(glob.glob(os.path.join(classdir, "samples-*.tsv")))
+    unexpected_files = sorted(observed_paths - set(expected_paths))
+    by_run = {}
+    for path, run in expected_paths.items():
+        run_rows = run_invalid_rows = run_max_swap = 0
+        if not os.path.isfile(path):
+            by_run[run] = {
+                "path": path,
+                "exists": False,
+                "rows": 0,
+                "invalidRows": 0,
+                "swapMaxBytes": None,
+                "pass": False,
+            }
+            continue
         with open(path, encoding="utf-8") as handle:
             for line in handle:
                 parts = line.split()
-                if len(parts) != 4:
+                if len(parts) != 5:
+                    invalid_rows += 1
+                    run_invalid_rows += 1
                     continue
-                _, rss, fds, cur = parts
-                max_rss = max(max_rss, int(rss or 0))
-                max_fd = max(max_fd, int(fds or 0))
-                max_cur = max(max_cur, int(cur or 0))
-    return max_rss, max_fd, max_cur
+                timestamp, rss, fds, cur, swap = parts
+                try:
+                    parsed = [int(value) for value in
+                              (timestamp, rss, fds, cur, swap)]
+                except ValueError:
+                    invalid_rows += 1
+                    run_invalid_rows += 1
+                    continue
+                if any(value < 0 for value in parsed):
+                    invalid_rows += 1
+                    run_invalid_rows += 1
+                    continue
+                _, rss_value, fd_value, cur_value, swap_value = parsed
+                rows += 1
+                run_rows += 1
+                max_rss = max(max_rss, rss_value)
+                max_fd = max(max_fd, fd_value)
+                max_cur = max(max_cur, cur_value)
+                max_swap = max(max_swap, swap_value)
+                run_max_swap = max(run_max_swap, swap_value)
+        by_run[run] = {
+            "path": path,
+            "exists": True,
+            "rows": run_rows,
+            "invalidRows": run_invalid_rows,
+            "swapMaxBytes": run_max_swap if run_rows else None,
+            "pass": (run_rows > 0 and run_invalid_rows == 0
+                     and run_max_swap == 0),
+        }
+    return {
+        "pass": (not unexpected_files
+                 and all(series["pass"] for series in by_run.values())),
+        "serverRssMax": max_rss,
+        "serverFdMax": max_fd,
+        "cgroupMemoryCurrentMax": max_cur,
+        "cgroupMemorySwapCurrentMax": max_swap,
+        "rows": rows,
+        "invalidRows": invalid_rows,
+        "byRun": by_run,
+        "unexpectedFiles": unexpected_files,
+    }
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("classdir")
     parser.add_argument("--class", dest="klass", required=True)
-    parser.add_argument("--mode", required=True)
-    parser.add_argument("--cpu-quota", required=True)
+    parser.add_argument("--mode", required=True,
+                        choices=("dedicated", "standard"))
+    parser.add_argument("--cpu-quota", required=True, type=int)
     parser.add_argument("--mem-max", required=True)
+    parser.add_argument("--mem-max-bytes", required=True, type=int)
+    parser.add_argument("--mem-swap-max", required=True, type=int)
     args = parser.parse_args()
+
+    if args.cpu_quota <= 0 or args.mem_max_bytes <= 0 or args.mem_swap_max != 0:
+        parser.error("resource limits must be positive with --mem-swap-max exactly 0")
 
     cells = load_cells(os.path.join(args.classdir, "cells.jsonl"))
 
@@ -203,19 +394,68 @@ def main():
     churn32 = summarize_churn(cells, 32)
     dl1 = summarize_download(cells, 1)
     dl32 = summarize_download(cells, 32)
-    max_rss, max_fd, max_cur = peaks_from_samples(args.classdir)
+    sample_peaks = peaks_from_samples(args.classdir)
+    max_rss = sample_peaks["serverRssMax"]
+    max_fd = sample_peaks["serverFdMax"]
+    max_cur = sample_peaks["cgroupMemoryCurrentMax"]
+
+    startups = [cell for cell in cells if cell.get("cell") == "startup"]
+    resource_boundaries = summarize_resource_boundaries(
+        startups, args.mode, args.cpu_quota, args.mem_max_bytes,
+        args.mem_swap_max)
+    swap_cell_values = []
+    for cell in cells:
+        if cell.get("cell") == "startup":
+            swap_cell_values.append((cell.get("idle") or {}).get(
+                "cgroupMemorySwapCurrent"))
+        elif cell.get("cell") in ("ladder", "cgroup_final"):
+            swap_cell_values.append(cell.get("cgroupMemorySwapCurrent"))
+    swap_cells_known = bool(swap_cell_values) and all(
+        nonnegative_int(value) for value in swap_cell_values)
+    swap_evidence = {
+        "pass": bool(
+            resource_boundaries["pass"]
+            and sample_peaks["pass"]
+            and sample_peaks["cgroupMemorySwapCurrentMax"] == 0
+            and swap_cells_known
+            and max(swap_cell_values, default=-1) == 0
+        ),
+        "cellStatusKnown": swap_cells_known,
+        "cellSamples": len(swap_cell_values),
+        "cellMaxBytes": max(swap_cell_values) if swap_cells_known else None,
+        "seriesRows": sample_peaks["rows"],
+        "seriesInvalidRows": sample_peaks["invalidRows"],
+        "seriesMaxBytes": sample_peaks["cgroupMemorySwapCurrentMax"],
+        "seriesByRun": sample_peaks["byRun"],
+        "seriesUnexpectedFiles": sample_peaks["unexpectedFiles"],
+    }
 
     churn_ok = bool(churn8 and churn32
                     and churn8["failedTotal"] == 0 and churn32["failedTotal"] == 0)
     download_ok = bool(
         dl1 and dl32 and not dl1["errors"] and not dl32["errors"]
         and dl1["sizeMismatches"] == 0 and dl32["sizeMismatches"] == 0)
-    oom_kills = max(
-        [ladder["oomKills"] if ladder else 0,
-         ladder_tuned["oomKills"] if ladder_tuned else 0]
-        + [f.get("cgroupOomKills") or 0 for f in finals])
-    passed = churn_ok and download_ok and oom_kills == 0 and (
-        ladder is None or ladder["maxCleanLevel"] > 0)
+    oom_values = [ladder["oomKills"] if ladder else None,
+                  ladder_tuned["oomKills"] if ladder_tuned else None]
+    oom_values.extend(f.get("cgroupOomKills") for f in finals)
+    oom_status_known = bool(oom_values) and all(
+        nonnegative_int(value) for value in oom_values)
+    oom_kills = max(oom_values) if oom_status_known else None
+    ladder_ok = bool(
+        ladder
+        and ladder["completed"]
+        and ladder["abortReason"] is None
+        and ladder["maxCleanLevel"] > 0
+    )
+    tuned_ladder_ok = bool(
+        ladder_tuned
+        and ladder_tuned["completed"]
+        and ladder_tuned["abortReason"] is None
+        and ladder_tuned["maxCleanLevel"] > 0
+    )
+    passed = (churn_ok and download_ok and oom_status_known and oom_kills == 0
+              and ladder_ok and tuned_ladder_ok and resource_boundaries["pass"]
+              and swap_evidence["pass"])
 
     ladder_fd_max = 0
     ladder_peak_max = 0
@@ -230,8 +470,12 @@ def main():
     summary = {
         "class": args.klass,
         "resourceMode": args.mode,
-        "cgroupLimits": {"cpuQuotaPercent": int(args.cpu_quota),
-                         "memoryMax": args.mem_max},
+        "cgroupLimits": {"cpuQuotaPercent": args.cpu_quota,
+                         "memoryMax": args.mem_max,
+                         "memoryMaxBytes": args.mem_max_bytes,
+                         "memorySwapMaxBytes": args.mem_swap_max},
+        "resourceBoundaryEvidence": resource_boundaries,
+        "swapEvidence": swap_evidence,
         "pass": passed,
         "derivedBudgets": {
             "machineReport": machine,
@@ -247,9 +491,12 @@ def main():
         "peaks": {
             "cgroupMemoryPeak": cgroup_memory_peak,
             "cgroupMemoryCurrentMax": max_cur,
+            "cgroupMemorySwapCurrentMax": sample_peaks[
+                "cgroupMemorySwapCurrentMax"],
             "serverRssMax": max_rss,
             "serverFdMax": max(max_fd, ladder_fd_max),
             "cgroupOomKills": oom_kills,
+            "cgroupOomStatusKnown": oom_status_known,
         },
     }
 
@@ -268,7 +515,8 @@ def main():
 
     md = []
     md.append(f"# {args.klass} (resourceMode={args.mode}, "
-              f"CPUQuota={args.cpu_quota}%, MemoryMax={args.mem_max})")
+              f"CPUQuota={args.cpu_quota}%, MemoryMax={args.mem_max}, "
+              f"MemorySwapMax={args.mem_swap_max})")
     md.append("")
     if machine:
         md.append("Derived budgets (machine_report / descriptor_budget_report):")
@@ -334,6 +582,12 @@ def main():
         md.append(f"| tuned ladder completed | {ladder_tuned['completed']} "
                   f"({ladder_tuned['abortReason'] or 'no abort'}) |")
     md.append(f"| oom_kills | {oom_kills} |")
+    md.append(f"| cgroup resource-boundary evidence | "
+              f"{resource_boundaries['pass']} "
+              f"({resource_boundaries['scopeCount']} scopes) |")
+    md.append(f"| swap.current evidence | {swap_evidence['pass']} "
+              f"(cells max {mib(swap_evidence['cellMaxBytes'])} MiB, "
+              f"series max {mib(swap_evidence['seriesMaxBytes'])} MiB) |")
     md.append(f"| peak cgroup memory.current | {mib(max_cur)} MiB "
               f"(memory.peak {mib(cgroup_memory_peak)} MiB) |")
     md.append(f"| peak server RSS | {mib(max_rss)} MiB |")
@@ -359,6 +613,9 @@ def main():
 
     with open(os.path.join(args.classdir, "summary.md"), "w", encoding="utf-8") as fh:
         fh.write("\n".join(md))
+
+    if not passed:
+        raise SystemExit("profile validation failed; inspect summary.json")
 
 
 if __name__ == "__main__":
