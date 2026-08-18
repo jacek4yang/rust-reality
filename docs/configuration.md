@@ -43,13 +43,18 @@ Top-level shape:
 | --- | --- | --- | --- |
 | `log` | no | stderr/info | Logging sink, severity, and bounded file retention. |
 | `assets` | no | community GeoIP/GeoSite URLs and bounded cache defaults | Routing asset sources and refresh policy. |
-| `dns` | no | system resolver, 5000 ms | DNS behavior used by IP-assisted routing. |
-| `network` | no | autonomous dual stack | Listener families, local family selection, health memory, and fallback timing. |
+| `dns` | no | system resolver, 5000 ms | Shared resolver, cache, and timeout policy for every connector-side lookup. |
+| `network` | no | autonomous dual stack | Outbound family selection, health memory, and fallback timing. Listener families are per-inbound `listen`. |
 | `inbounds` | yes | — | At least one strictly typed `vless` or internal `nxr` or `handoff` listener. |
 | `outbounds` | yes | — | At least one `direct`, `blackhole`, `socks5`, `nxr`, or `handoff` transport. |
 | `routing` | yes | — | Global rules and explicit per-UUID policy groups. |
 | `policy` | no | bounded production defaults | Admission, direct-dial, buffer, and Linux relay policy. |
 | `runtime` | no | `standard` | Process resource posture. |
+
+Upgrading a 1.4 configuration requires migration: the scalar
+`"listen": "<ip>"` form and `network.addressFamily` are rejected. The complete
+old-to-new mapping table is in the
+[CHANGELOG 1.5.0 migration notes](../CHANGELOG.md).
 
 ## `log`
 
@@ -89,14 +94,37 @@ are operator-provided; only the two primary Geo URLs are downloaded directly.
 
 ## `dns`
 
+Every connector-side name resolution — routing `domainStrategy` lookups,
+direct outbound dials, REALITY cover targets, and SOCKS5/NXR/Handoff server
+names — goes through one shared process-wide resolver. Each resolution holds a
+`DnsLookup` admission permit (`policy.resourceGovernor.maxDnsLookups`), and
+identical concurrent lookups coalesce into one upstream flight.
+
 | Field | Required | Default | Meaning and constraints |
 | --- | --- | --- | --- |
-| `dns.servers` | no | `["system"]` | Currently must be exactly `["system"]`; custom UDP/TCP/DoH resolvers are rejected instead of ignored. |
-| `dns.timeoutMs` | no | `5000` | Absolute routing lookup deadline, `1..=600000`. |
+| `dns.servers` | no | `["system"]` | Exactly `["system"]` selects the operating-system resolver (getaddrinfo). Any other list selects the built-in DNS protocol resolver (UDP with TCP fallback): entries are an IP literal, `ip:port`, `[v6]:port`, or a hostname bootstrapped once through the system resolver at startup; the default port is 53. Mixing `system` with upstream servers is rejected. |
+| `dns.timeoutMs` | no | `5000` | Absolute deadline for one resolution attempt, `1..=600000`. |
+| `dns.cache.maxEntries` | no | `1024` | Ceiling on cached names, counting positive, negative, and in-flight entries, `1..=65536`. |
+| `dns.cache.minTtlSeconds` | no | `5` | Floor clamp applied to upstream positive TTLs; must not exceed `maxTtlSeconds`. |
+| `dns.cache.maxTtlSeconds` | no | `3600` | Ceiling clamp applied to upstream positive TTLs, `1..=86400`. |
+| `dns.cache.negativeTtlSeconds` | no | `60` | Ceiling clamp applied to upstream negative (SOA) TTLs, `0..=86400`. NXDOMAIN/NODATA answers without an SOA TTL are never cached. |
+| `dns.cache.staticTtlSeconds` | no | `300` | Cache duration for configured static peers (REALITY cover target, fixed SOCKS5/NXR/Handoff endpoints) in every resolver mode, `1..=86400`. |
+
+System mode does not cache dynamic answers: getaddrinfo exposes no TTLs, so
+only singleflight coalescing and admission governance apply. With real DNS
+servers, every cached positive or negative answer carries the upstream TTL
+clamped to the bounds above. Configured static peers are the explicit
+exception: they are cached in every resolver mode, the operator owns their
+staleness through `staticTtlSeconds`, and static negative results are never
+cached.
 
 At most 64 unique addresses are retained for one routed domain. A direct
 outbound reuses the exact resolved snapshot used by GeoIP/IP rules, avoiding a
 second inconsistent lookup.
+
+The resolver is installed once at startup and is process-lifetime: changing
+`dns.servers`, `dns.timeoutMs`, or `dns.cache` requires a restart, because a
+reload generation keeps the resolver installed by the first generation.
 
 ## `network`
 
@@ -613,7 +641,7 @@ defaults visible.
 | `maxCryptoOperations` | yes | `128` | Greater than zero and no more than `maxHandshakes`; expensive crypto admission. |
 | `maxReplayEntries` | yes | `65536` | Greater than zero; pending plus committed REALITY replay entries. |
 | `replayRetentionMs` | no | `120000` | Retention after verified ClientFinished, `1..=600000`. |
-| `maxDnsLookups` | no | `64` | Concurrent blocking DNS lookups in the bounded resolver pool. |
+| `maxDnsLookups` | no | `64` | Concurrent resolutions admitted to the shared DNS resolver, across both the system getaddrinfo pool and upstream server flights. |
 | `clientHelloTimeoutMs` | yes | `3000` | ClientHello read deadline, `1..=600000`, no more than handshake timeout. |
 | `handshakeTimeoutMs` | yes | `10000` | Authenticated handshake deadline, `1..=600000`. |
 | `connectTimeoutMs` | yes | `10000` | Cover/outbound connect deadline, `1..=600000`, no more than fallback timeout. |
@@ -777,7 +805,6 @@ Hot-updateable with compatible topology:
 
 - logging;
 - asset URLs/cache contents/refresh settings;
-- DNS timeout;
 - VLESS users and REALITY authentication/cover state;
 - outbound definitions, routing groups, and rules;
 - NXR key, clock window, and I/O timeouts when replay capacity/retention stay
@@ -791,6 +818,9 @@ Restart required:
   port, or protocol;
 - any `network.dial` change, because the startup snapshot and shared health
   state are process-lifetime;
+- any `dns` change (`servers`, `timeoutMs`, or `cache`), because the shared
+  resolver — including its timeout and cache bounds — is installed once at
+  startup and remains process-lifetime;
 - any `runtime` change, because the resource mode shapes the process-lifetime
   descriptor budget and memory monitor;
 - any `policy.resourceGovernor` change, because REALITY replay admission/state

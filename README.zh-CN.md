@@ -50,6 +50,11 @@
 
 ## 与 Xray-core 的性能对比
 
+下面的头条表格是冻结的 **v1.0.0** 发布对比，作为该版本的规范同机矩阵保留；
+v1.5.0 的性能证据（无差异 ABBA 结果、DNS 合并、路由索引和 v3 档 A/B）在下文
+概述，详见
+[docs/performance.zh-CN.md](docs/performance.zh-CN.md)。
+
 对比对象：Xray-core 26.7.28（提交 `5ca6f4b`，go1.26.0），即互操作测试所用的
 同一二进制。主机：Intel i3-8100（4C/4T），Linux 6.12.94，loopback，Go origin，
 每单元 5 次采样；所有单元均经字节校验，并对每个实现做 2 GiB SHA-256 完整性
@@ -80,6 +85,8 @@ trace 测得候选每个 setup
 连接少 4.0013 次 cover `recvfrom`。这些是有边界的实现成本观察，不是吞吐胜利
 声明；精确区间见
 [docs/performance.zh-CN.md](docs/performance.zh-CN.md#v15-cover-flight-与发布证据)。
+v1.5.0 的共享 DNS 合并结果、≥64 条规则的路由索引测量，以及真实 IPv6 验证
+范围都记录在同一文档中。
 
 ## 架构
 
@@ -94,7 +101,12 @@ relay。生命周期、热路径拓扑、描述符预算模型和可观测事件
 
 ## 支持范围
 
-正式发布目标：采用现代内核的 Linux x86_64。公网入站不支持纯 VLESS、仅 TLS
+正式发布目标：采用现代内核的 Linux x86_64 和 Linux aarch64。Release 提供三个
+压缩包：`linux-x86_64-generic`（基线 x86-64，推荐资产）、`linux-x86_64-v3`
+（可选；要求 x86-64-v3 微架构级别，无运行时回退，在验证主机上没有实测优势——
+记录 AEAD 在每个档位都于运行时调度到 AES 硬件），以及
+`linux-aarch64-generic`（ARMv8.0 含 neon，在 ARM runner 上原生构建并通过冒烟
+测试）。不确定机器能力时应选择通用包。公网入站不支持纯 VLESS、仅 TLS
 的 VLESS、WebSocket、QUIC、UDP 代理或非 Vision flow。NXR 不是公网协议，一次
 认证请求完成后也不会加密后续载荷。公网协议带有使用未经修改的 Xray-core
 26.7.28 客户端的端到端互操作门禁；部署者仍须根据自己的 VPS 审查威胁模型、
@@ -102,23 +114,22 @@ relay。生命周期、热路径拓扑、描述符预算模型和可观测事件
 
 ## 快速开始
 
-Release 保留 portable `x86_64-unknown-linux-gnu` 压缩包，并额外提供可选的
-`x86_64-v3` 压缩包。后者要求 CPU 支持 x86-64-v3，且没有运行时回退；不确定
-机器能力时应选择 portable 包。
-
 从[最新 Release](https://github.com/jacek4yang/rust-reality/releases/latest)
-下载两个压缩包、manifest 和校验文件，安装前验证全部资产：
+下载适合你平台的压缩包、manifest 和校验文件，安装前验证全部资产：
 
 ```shell
 sha256sum --check SHA256SUMS
-# portable 包（不确定 CPU 能力时推荐）：
-tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
+# x86-64 通用包（不确定 CPU 能力时推荐）：
+tar -xzf rust-reality-v<version>-linux-x86_64-generic.tar.gz
 # 或在 x86-64-v3 CPU 上使用：
-# tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz
+# tar -xzf rust-reality-v<version>-linux-x86_64-v3.tar.gz
+# 在 ARM64（ARMv8.0 含 neon 或更高）上使用：
+# tar -xzf rust-reality-v<version>-linux-aarch64-generic.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 ```
 
-`release-manifest.json` schema v2 会记录两个 CPU 档位及其运行要求。
+`release-manifest.json` schema v3 记录每个档位的编译器、cargo features、目标
+CPU/特性、是否在本机实测，以及最低 CPU 要求。
 
 探测 REALITY 伪装目标并生成单机配置：
 

@@ -59,6 +59,12 @@ Xray-compatible client
 
 ## Performance vs Xray-core
 
+The headline table below is the frozen **v1.0.0** release comparison, kept as
+the canonical same-host matrix for that release; v1.5.0 performance evidence
+(the no-difference ABBA result, DNS coalescing, routing indices, and the
+v3-tier A/B) is summarized further down and detailed in
+[docs/performance.md](docs/performance.md).
+
 Comparator: Xray-core 26.7.28 (commit `5ca6f4b`, go1.26.0), the same
 binary that gates interoperability. Host: Intel i3-8100 (4C/4T), Linux
 6.12.94, loopback, Go origin, 5 samples per cell; every cell
@@ -95,6 +101,9 @@ The candidate did remove
 trace. These are bounded implementation-cost observations, not a claimed
 throughput win; the exact intervals are in
 [docs/performance.md](docs/performance.md#v15-cover-flight-and-release-evidence).
+The v1.5.0 shared-DNS coalescing results, the ≥64-rule routing index
+measurements, and the real-IPv6 validation scope are recorded in the same
+document.
 
 ## Architecture
 
@@ -112,10 +121,14 @@ protocol stack itself.
 
 ## Supported scope
 
-Supported release target: Linux x86_64 with a modern kernel. Releases retain
-the portable `x86_64-unknown-linux-gnu` archive and also provide an opt-in
-`x86_64-v3` archive. The latter requires an x86-64-v3 CPU and has no runtime
-fallback; use the portable archive when CPU support is unknown.
+Supported release targets: Linux x86_64 and Linux aarch64 with a modern
+kernel. Releases ship three archives: `linux-x86_64-generic` (baseline
+x86-64, the recommended asset), `linux-x86_64-v3` (opt-in; requires the
+x86-64-v3 microarchitecture level, no runtime fallback, and no measured
+advantage on the validation host — the record AEAD dispatches to AES hardware
+at runtime in every tier), and `linux-aarch64-generic` (ARMv8.0 with neon,
+built and smoke-tested natively on ARM runners). Use the generic archive when
+CPU support is unknown.
 
 The public
 inbound does not support plain VLESS, TLS-only VLESS, WebSocket, QUIC, UDP
@@ -127,20 +140,24 @@ policy, cover target, and resource limits for their own VPS.
 
 ## Quick start
 
-Download the two archives, manifest, and checksums from the
+Download the archive for your platform, the manifest, and checksums from the
 [latest release](https://github.com/jacek4yang/rust-reality/releases/latest),
 then verify all assets before installation:
 
 ```shell
 sha256sum --check SHA256SUMS
-# Portable package (recommended when CPU support is unknown):
-tar -xzf rust-reality-v<version>-x86_64-unknown-linux-gnu.tar.gz
+# Generic x86-64 package (recommended when CPU support is unknown):
+tar -xzf rust-reality-v<version>-linux-x86_64-generic.tar.gz
 # Or, on an x86-64-v3 CPU:
-# tar -xzf rust-reality-v<version>-x86_64-v3-unknown-linux-gnu.tar.gz
+# tar -xzf rust-reality-v<version>-linux-x86_64-v3.tar.gz
+# On ARM64 (ARMv8.0 with neon or later):
+# tar -xzf rust-reality-v<version>-linux-aarch64-generic.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 ```
 
-`release-manifest.json` schema v2 records both CPU tiers and their requirements.
+`release-manifest.json` schema v3 records every tier's compiler, cargo
+features, target CPU/features, native-measurement status, and minimum CPU
+requirements.
 
 Probe a proposed REALITY cover endpoint and generate a standalone server:
 

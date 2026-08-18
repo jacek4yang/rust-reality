@@ -250,6 +250,28 @@ Microsoft, Google, and Fastly public covers plus local OpenSSL 3.5.6 without
 CCS. Each case passed exact 1 MiB SHA-256 and ML-DSA-65 compatibility. It is a
 protocol gate and carries no timing claim.
 
+### v1.5.0 DNS, routing, and IPv6 evidence
+
+Same host class and caveats as the rest of this document (i3-8100, Linux
+6.12, loopback/same-host; implementation cost only).
+
+- **DNS coalescing (shared resolver, upstream-server mode):** 128 concurrent
+  identical lookups produced 2 upstream queries instead of 315; warm p50 fell
+  from 12.9 ms to sub-microsecond; the cold path cost +2.1%. System mode
+  coalesces and governs identically but caches no dynamic answers (no TTLs
+  from getaddrinfo).
+- **Routing indices:** at the measured 64-rule crossover the compiled
+  candidate index costs ≈53 bytes per rule and preserves exact ordered
+  first-match semantics. P95 decision latency fell 31–57% at 1,000 rules and
+  31–55% at 10,000 rules; lists below the threshold keep the linear path.
+- **IPv6:** `scripts/validate-ipv6-e2e.sh` over real global IPv6 and real
+  IPv6 Internet egress finished 29 pass / 0 fail / 1 skip; the skip is the
+  external-ingress case (no outside IPv6 source on the validation host), so
+  public-Internet inbound IPv6 is not externally attested. Covered: listener
+  modes, all client/server family combinations, byte-exact 64 MiB
+  up/down/full-duplex, 100 ms/1% netem, route loss/recovery, and 0.086 s
+  family-refusal fallback.
+
 ## v1.2.0 distributed and WAN-emulation evidence (LAB-NETEM)
 
 The v1.2 cycle characterized the distributed topologies on a namespace/veth

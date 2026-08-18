@@ -113,6 +113,44 @@ egress、probe 和 self-test 共享同一进程生命周期环境。路由 DNS �
 relay 读写、framing、crypto 和 splice 都不会触碰它。每个入站的监听拓扑独立并在启动后
 固定；双族模式分别绑定 IPv4 套接字和 bind 前设置 `IPV6_V6ONLY` 的 IPv6 套接字。
 
+## 共享 DNS 解析
+
+一个进程生命周期的解析器（`src/server/dns.rs`）挡在所有 connector 侧查询之前：
+路由 `domainStrategy` 决策、direct 出站拨号、REALITY 伪装目标，以及
+SOCKS5/NXR/Handoff 服务器名。数字字面量不会进入它。两种后端共用一个前端：
+
+- **system**（默认，`dns.servers: ["system"]`）：操作系统解析器（getaddrinfo），
+  运行在有界阻塞池上。因为 getaddrinfo 不提供 TTL，该模式绝不缓存动态应答——
+  只有 singleflight 合并、绝对超时和准入治理生效。
+- **上游列表**：内置 DNS 协议解析器（hickory，UDP 加 TCP 回退）面向配置的服务器；
+  主机名条目在启动时经系统解析器引导解析一次。缓存的阳性和阴性应答携带按
+  `dns.cache` 钳制后的真实上游 TTL（`minTtlSeconds`/`maxTtlSeconds`；阴性应答只有
+  在 SOA TTL 支持时才缓存，上限 `negativeTtlSeconds`）。`system` 与上游服务器混用
+  会在校验时拒绝。
+
+已配置的静态对端——REALITY 伪装目标和固定的 SOCKS5/NXR/Handoff 端点——在
+**任意**模式（包括 system）下都按 `staticTtlSeconds` 缓存；该过期风险由运维者
+承担，静态阴性结果绝不缓存。整个缓存以 `maxEntries` 为界，计入阳性、阴性和
+在途条目。
+
+完全相同的并发查询合并为一次上游请求，等待方共享结果；每次请求持有资源治理器
+的一个 `DnsLookup` 准入许可，因此 connector 侧解析与其他资源一样有界。指标只是
+普通原子计数器。解析器在启动时安装一次（first-wins）；热更新生成继续使用已安装
+的解析器，所以任何 `dns` 修改都需要重启。验证主机上的实测效果：128 个并发相同
+查询只产生 2 次上游请求（原为 315 次），热路径 p50 从 12.9 ms 降到微秒以下；
+见 [performance.zh-CN.md](performance.zh-CN.md)。
+
+## 路由决策结构
+
+路由在任何规模下都保持精确的有序 first-match 语义。当规则列表（全局或按用户组）
+达到 64 条——`benches/routing.rs` 实测的交叉点——编译后的策略会构建自适应候选
+索引，每条约 53 字节：精确和后缀域名匹配器把归一化值映射到规则位置，一次
+Aho-Corasick 扫描覆盖目标域名的全部 keyword 匹配器。域名组无法完全索引的规则
+（没有域名条件，或含 regex/资产/空 keyword 匹配器）保留在每次都评估的列表中，
+索引命中仍按规则顺序检查，因此决策与线性扫描逐字节一致；规模不足的规则列表继续
+使用普通线性路径。实测时延效果见
+[performance.zh-CN.md](performance.zh-CN.md)。
+
 ## 热路径拓扑
 
 每连接稳态成本：2 个任务，每条记录零分配，每个进度步一次定时器注册，热路径

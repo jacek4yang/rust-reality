@@ -39,13 +39,17 @@ rust-reality config format --config config.json > config.formatted.json
 | --- | --- | --- | --- |
 | `log` | 否 | stderr/info | 日志目标、级别和有界文件保留。 |
 | `assets` | 否 | 社区 GeoIP/GeoSite URL 和有界缓存默认值 | 路由资产来源与刷新策略。 |
-| `dns` | 否 | 系统解析器、5000 ms | IP 辅助路由使用的 DNS 行为。 |
-| `network` | 否 | 自治双栈 | 监听地址族、本地地址族选择、健康记忆和回退时序。 |
+| `dns` | 否 | 系统解析器、5000 ms | 所有 connector 侧查询共用的共享解析器、缓存与超时策略。 |
+| `network` | 否 | 自治双栈 | 出站地址族选择、健康记忆和回退时序。监听地址族由入站的 `listen` 决定。 |
 | `inbounds` | 是 | — | 至少一个强类型 `vless` 或内部 `nxr`、`handoff` 监听。 |
 | `outbounds` | 是 | — | 至少一个 `direct`、`blackhole`、`socks5`、`nxr` 或 `handoff` 传输。 |
 | `routing` | 是 | — | 全局规则和显式 UUID 分组策略。 |
 | `policy` | 否 | 有界生产默认值 | admission、direct 拨号、缓冲和 Linux relay 策略。 |
 | `runtime` | 否 | `standard` | 进程资源姿态。 |
+
+从 1.4 升级配置必须迁移：标量形式 `"listen": "<ip>"` 和
+`network.addressFamily` 都会被拒绝。完整的新旧字段映射表见
+[CHANGELOG 1.5.0 迁移说明](../CHANGELOG.md)。
 
 ## `log`
 
@@ -82,13 +86,34 @@ rust-reality config format --config config.json > config.formatted.json
 
 ## `dns`
 
+所有 connector 侧的域名解析——路由 `domainStrategy` 查询、direct 出站
+拨号、REALITY 伪装目标，以及 SOCKS5/NXR/Handoff 服务器名——都经过一个
+共享的进程级解析器。每次解析持有一个 `DnsLookup` 准入许可
+（`policy.resourceGovernor.maxDnsLookups`），完全相同的并发查询会合并为
+一次上游请求（singleflight）。
+
 | 字段 | 必填 | 默认值 | 含义与约束 |
 | --- | --- | --- | --- |
-| `dns.servers` | 否 | `["system"]` | 当前必须严格等于 `["system"]`；自定义 UDP/TCP/DoH 会被拒绝而不是静默忽略。 |
-| `dns.timeoutMs` | 否 | `5000` | 路由解析绝对超时，`1..=600000`。 |
+| `dns.servers` | 否 | `["system"]` | 严格等于 `["system"]` 时选择操作系统解析器（getaddrinfo）。任何其他列表选择内置 DNS 协议解析器（UDP，TCP 回退）：条目可以是 IP 字面量、`ip:port`、`[v6]:port`，或启动时经系统解析器引导解析一次的主机名；默认端口 53。不允许把 `system` 与上游服务器混用，混用会被拒绝。 |
+| `dns.timeoutMs` | 否 | `5000` | 单次解析的绝对超时，`1..=600000`。 |
+| `dns.cache.maxEntries` | 否 | `1024` | 缓存域名数上限（计入阳性、阴性和在途条目），`1..=65536`。 |
+| `dns.cache.minTtlSeconds` | 否 | `5` | 对上游阳性 TTL 施加的下限钳制；不得超过 `maxTtlSeconds`。 |
+| `dns.cache.maxTtlSeconds` | 否 | `3600` | 对上游阳性 TTL 施加的上限钳制，`1..=86400`。 |
+| `dns.cache.negativeTtlSeconds` | 否 | `60` | 对上游阴性（SOA）TTL 施加的上限钳制，`0..=86400`。没有 SOA TTL 的 NXDOMAIN/NODATA 应答绝不缓存。 |
+| `dns.cache.staticTtlSeconds` | 否 | `300` | 已配置静态对端（REALITY 伪装目标、固定的 SOCKS5/NXR/Handoff 端点）在任意解析器模式下的缓存时长，`1..=86400`。 |
 
-一个域名最多保留 64 个唯一地址。direct 出站复用 IP/GeoIP 路由决策使用的同一地址
-快照，避免第二次解析得到不一致结果。
+system 模式不缓存动态应答：getaddrinfo 不提供 TTL，因此只有
+singleflight 合并和准入治理生效。使用真实 DNS 服务器时，每条缓存的
+阳性或阴性应答都携带按上述边界钳制后的上游 TTL。已配置静态对端是
+明确的例外：它们在任意解析器模式下都会被缓存，其过期风险由运维者
+通过 `staticTtlSeconds` 自行承担；静态阴性结果绝不缓存。
+
+一个域名最多保留 64 个唯一地址。direct 出站复用 IP/GeoIP 路由决策使用的
+同一地址快照，避免第二次解析得到不一致结果。
+
+解析器在启动时安装一次，属于进程生命周期：修改 `dns.servers`、
+`dns.timeoutMs` 或 `dns.cache` 都需要重启，因为热更新生成会继续使用
+第一代安装的解析器。
 
 ## `network`
 
@@ -568,7 +593,7 @@ connectTimeoutMs` 并留有余量：首个密封记录只有在转移被读取�
 | `maxCryptoOperations` | 是 | `128` | 大于零且不超过 `maxHandshakes`；昂贵密码学工作 admission。 |
 | `maxReplayEntries` | 是 | `65536` | 大于零；pending 加 committed REALITY 重放条目。 |
 | `replayRetentionMs` | 否 | `120000` | 验证 ClientFinished 后的保留时间，`1..=600000`。 |
-| `maxDnsLookups` | 否 | `64` | 有界解析池中并发阻塞 DNS 查找数。 |
+| `maxDnsLookups` | 否 | `64` | 共享 DNS 解析器准入的并发解析数，覆盖系统 getaddrinfo 池和上游服务器请求。 |
 | `clientHelloTimeoutMs` | 是 | `3000` | ClientHello 读取截止时间，`1..=600000`，不超过握手超时。 |
 | `handshakeTimeoutMs` | 是 | `10000` | 认证握手截止时间，`1..=600000`。 |
 | `connectTimeoutMs` | 是 | `10000` | 伪装/出站连接截止时间，`1..=600000`，不超过 fallback 超时。 |
@@ -711,7 +736,6 @@ generation，已有连接继续使用其获取的 generation。
 
 - 日志；
 - 资产 URL、缓存内容和刷新设置；
-- DNS 超时；
 - VLESS 用户及 REALITY 认证/伪装状态；
 - 出站定义、路由组和规则；
 - 在重放容量/保留时间不变时，NXR 密钥、时钟窗口和 I/O 超时；
@@ -721,6 +745,8 @@ generation，已有连接继续使用其获取的 generation。
 
 - 添加/删除监听、修改 `listen.mode`、任一绑定地址、端口或协议；
 - 任意 `network.dial` 修改，因为启动快照与共享健康状态属于进程生命周期；
+- 任意 `dns` 修改（`servers`、`timeoutMs` 或 `cache`），因为共享解析器——
+  包括其超时与缓存边界——在启动时安装一次，属于进程生命周期；
 - 任意 `runtime` 修改，因为资源模式影响进程生命周期的描述符预算和内存监控器；
 - 任意 `policy.resourceGovernor` 修改，因为 REALITY 重放 admission/状态属于进程生命周期；
 - 任意 `policy.directBarrier` 修改，因为直连拨号 authority 属于进程生命周期；
