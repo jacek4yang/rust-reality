@@ -550,9 +550,10 @@ where
 /// normalized destination domain. Index hits reproduce exactly what the
 /// ordered scan's `Full`/`Suffix`/`Keyword` matchers would report, because all
 /// three comparisons are plain byte equality after one-time ASCII lowercasing.
-/// Rules with no indexable domain matcher (no domain conditions, or only
-/// regex/asset/empty-keyword conditions) live in `always` and are evaluated
-/// directly every request.
+/// Rules whose domain group is not fully covered by the index (no domain
+/// conditions, or at least one regex/asset/empty-keyword matcher) also live in
+/// `always` and are evaluated directly every request, so a residual matcher
+/// hit is never lost when the indexed matchers miss.
 #[derive(Clone)]
 struct RuleIndex {
     full: HashMap<Box<str>, Box<[u32]>>,
@@ -600,7 +601,11 @@ impl RuleIndex {
                     _ => {}
                 }
             }
-            if !indexed {
+            // A rule is skipped when no index hits only if its domain group is
+            // fully covered by the index; anything with a non-indexable
+            // matcher (or no domain matchers at all) must be evaluated
+            // directly every request, in original order.
+            if !indexed || !rule.residual_domains.is_empty() {
                 always.push(position);
             }
         }
@@ -1698,7 +1703,7 @@ mod tests {
                 port,
             ),
             2 => {
-                let domain = match rng.below(10) {
+                let domain = match rng.below(13) {
                     0 => format!("host{}.full.test", rng.below(40)),
                     1 => format!("Host{}.Full.Test", rng.below(40)),
                     2 => format!("WWW.HOST{}.FULL.TEST", rng.below(40)),
@@ -1708,6 +1713,9 @@ mod tests {
                     6 => format!("www.l{}.stub", rng.below(8)),
                     7 => "trailing.dot.test.".to_owned(),
                     8 => String::new(),
+                    9 => format!("api{}.edge.test", rng.below(5)),
+                    10 => format!("service{}.internal", rng.below(5)),
+                    11 => format!("cdn{}.test", rng.below(10)),
                     _ => format!("unrelated-{}.test", rng.below(1000)),
                 };
                 Destination::new(Address::Domain(domain), port)
@@ -1768,14 +1776,18 @@ mod tests {
         user.default_decision()
     }
 
-    fn compile_random(rng: &mut XorShift, global_count: usize, user_count: usize) -> RoutingTable {
-        let global_rules = (0..global_count)
-            .map(|index| random_rule(rng, index))
-            .collect();
+    fn compile_random(rng: &mut XorShift, user_count: usize) -> RoutingTable {
         let rules = (0..user_count)
             .map(|index| random_rule(rng, 1000 + index))
             .collect();
-        let second_rules = (0..user_count.min(70))
+        compile_random_with_rules(rng, rules)
+    }
+
+    fn compile_random_with_rules(rng: &mut XorShift, rules: Vec<GlobalRule>) -> RoutingTable {
+        let global_rules = (0..rng.below(9))
+            .map(|index| random_rule(rng, index))
+            .collect();
+        let second_rules = (0..70)
             .map(|index| random_rule(rng, 2000 + index))
             .collect();
         RoutingTable::compile(
@@ -1806,6 +1818,55 @@ mod tests {
     }
 
     #[test]
+    fn mixed_indexable_residual_rule_matches_through_the_residual() {
+        let table =
+            RoutingTable::compile(
+                &RoutingConfig {
+                    domain_strategy: DnsStrategy::AsIs,
+                    global_rules: Vec::new(),
+                    users: vec![UserPolicy {
+                        name: "primary".to_owned(),
+                        user_ids: vec![USER.to_owned()],
+                        default_outbound: "fallback".to_owned(),
+                        rules: (0..70)
+                            .map(|index| GlobalRule {
+                                name: format!("r{index}"),
+                                outbound: format!("out-{index}"),
+                                domain: if index == 40 {
+                                    vec!["full:unrelated.test".to_owned(), "geosite:l3".to_owned()]
+                                } else {
+                                    vec![format!("full:h{index}.test")]
+                                },
+                                ip: Vec::new(),
+                                port: Vec::new(),
+                                network: Vec::new(),
+                                inbound_tag: Vec::new(),
+                            })
+                            .collect(),
+                    }],
+                },
+                Arc::new(StubAssets),
+                crate::runtime::ResourceGovernor::new(
+                    &crate::config::ResourceGovernorConfig::default(),
+                ),
+            )
+            .expect("compiles");
+        let destination = Destination::new(Address::Domain("l3.stub".to_owned()), 443);
+        let context = RouteContext {
+            user_id: USER_ID,
+            inbound_tag: "in-a",
+            destination: &destination,
+            resolved_ips: &[],
+        };
+        let decision = table.select(&context).expect("routes");
+        assert_eq!(
+            decision.outbound(),
+            "out-40",
+            "a rule mixing indexable and residual domain matchers must match via the residual"
+        );
+    }
+
+    #[test]
     fn indexed_and_linear_selection_agree_with_naive_scan() {
         let second_id = UserId::new([0xff; 16]);
         // Sizes straddle INDEXED_RULE_LIMIT so both representations run.
@@ -1817,8 +1878,7 @@ mod tests {
             (5, 3 * INDEXED_RULE_LIMIT),
         ] {
             let mut rng = XorShift(seed.wrapping_mul(0x9E37_79B9).wrapping_add(7));
-            let global_count = rng.below(9);
-            let table = compile_random(&mut rng, global_count, user_count);
+            let table = compile_random(&mut rng, user_count);
             if user_count >= INDEXED_RULE_LIMIT {
                 assert!(
                     table.users.get(&USER_ID).unwrap().index.is_some(),
@@ -1843,8 +1903,8 @@ mod tests {
                 assert_eq!(
                     decision_parts(&actual),
                     decision_parts(&expected),
-                    "seed {seed} rules {global_count}+{user_count} destination {destination:?} \
-                     tag {inbound_tag} resolved {resolved:?}"
+                    "seed {seed} rules {user_count} destination {destination:?} tag {inbound_tag} \
+                     resolved {resolved:?}"
                 );
             }
             // The unknown-UUID authorization invariant holds on both paths.
@@ -1859,6 +1919,58 @@ mod tests {
                 table.select(&context),
                 Err(RouteResolutionError::UnknownUser)
             ));
+        }
+
+        // Every rule mixes one indexable and one residual domain matcher with
+        // no other condition groups, so index coverage and `always` coverage
+        // alone decide first-match order.
+        let mut rng = XorShift(42);
+        let mixed_rules: Vec<GlobalRule> = (0..(INDEXED_RULE_LIMIT + 20))
+            .map(|index| GlobalRule {
+                name: format!("mixed-{index}"),
+                outbound: format!("mixed-out-{index}"),
+                domain: vec![
+                    random_domain_matcher(&mut rng),
+                    [
+                        "regexp:^api\\.",
+                        "regexp:\\.internal$",
+                        "geosite:l3",
+                        "keyword:",
+                    ][rng.below(4)]
+                    .to_owned(),
+                ],
+                ip: Vec::new(),
+                port: Vec::new(),
+                network: Vec::new(),
+                inbound_tag: Vec::new(),
+            })
+            .collect();
+        let table = compile_random_with_rules(&mut rng, mixed_rules);
+        for _ in 0..120 {
+            let domain = match rng.below(6) {
+                0 => "l3.stub".to_owned(),
+                1 => "www.l3.stub".to_owned(),
+                2 => format!("api{}.edge.test", rng.below(5)),
+                3 => format!("service{}.internal", rng.below(5)),
+                4 => format!("host{}.full.test", rng.below(40)),
+                _ => format!("unrelated-{}.test", rng.below(1000)),
+            };
+            let destination = Destination::new(Address::Domain(domain), 443);
+            let context = RouteContext {
+                user_id: USER_ID,
+                inbound_tag: "in-a",
+                destination: &destination,
+                resolved_ips: &[],
+            };
+            let expected = naive_select(&table, &context);
+            let actual = table
+                .select(&context)
+                .expect("randomized known user must route");
+            assert_eq!(
+                decision_parts(&actual),
+                decision_parts(&expected),
+                "mixed-rules destination {destination:?}"
+            );
         }
     }
 
@@ -1899,8 +2011,7 @@ mod tests {
         // two-pass differential fully offline while exercising pass 2.
         for (seed, user_count) in [(11_u64, INDEXED_RULE_LIMIT + 5), (12, 20), (13, 150)] {
             let mut rng = XorShift(seed.wrapping_mul(0x2545_F491).wrapping_add(3));
-            let global_count = rng.below(5);
-            let table = compile_random(&mut rng, global_count, user_count);
+            let table = compile_random(&mut rng, user_count);
             for _ in 0..30 {
                 let destination = if rng.chance(50) {
                     Destination::new(
