@@ -542,6 +542,53 @@ where
     Ok(resolved)
 }
 
+/// Multiply-rotate hasher (FxHash) for the index maps. Keys come from the
+/// operator's configuration, not from the wire, so collision resistance
+/// against chosen keys is not required; attackers only ever probe lookups.
+#[derive(Clone, Default)]
+struct DomainBuildHasher;
+
+impl std::hash::BuildHasher for DomainBuildHasher {
+    type Hasher = DomainHasher;
+
+    fn build_hasher(&self) -> DomainHasher {
+        DomainHasher(0)
+    }
+}
+
+struct DomainHasher(u64);
+
+impl DomainHasher {
+    const SEED: u64 = 0x51_7c_c1_b7_27_22_0a_95;
+
+    fn add(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(Self::SEED);
+    }
+}
+
+impl std::hash::Hasher for DomainHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        let mut chunks = bytes.chunks_exact(8);
+        for chunk in &mut chunks {
+            self.add(u64::from_le_bytes(chunk.try_into().unwrap_or_default()));
+        }
+        let remainder = chunks.remainder();
+        if !remainder.is_empty() {
+            let mut word = [0_u8; 8];
+            word[..remainder.len()].copy_from_slice(remainder);
+            self.add(u64::from_le_bytes(word));
+        }
+    }
+
+    fn write_u8(&mut self, byte: u8) {
+        self.add(u64::from(byte));
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
 /// Compiled candidate index for one rule list at or above
 /// [`INDEXED_RULE_LIMIT`].
 ///
@@ -556,8 +603,8 @@ where
 /// hit is never lost when the indexed matchers miss.
 #[derive(Clone)]
 struct RuleIndex {
-    full: HashMap<Box<str>, Box<[u32]>>,
-    suffix: HashMap<Box<str>, Box<[u32]>>,
+    full: HashMap<Box<str>, Box<[u32]>, DomainBuildHasher>,
+    suffix: HashMap<Box<str>, Box<[u32]>, DomainBuildHasher>,
     keywords: Option<AhoCorasick>,
     keyword_rules: Box<[Box<[u32]>]>,
     keyword_pattern_bytes: usize,
@@ -620,11 +667,11 @@ impl RuleIndex {
             full: full
                 .into_iter()
                 .map(|(key, positions)| (Box::from(key), positions.into_boxed_slice()))
-                .collect(),
+                .collect::<HashMap<_, _, DomainBuildHasher>>(),
             suffix: suffix
                 .into_iter()
                 .map(|(key, positions)| (Box::from(key), positions.into_boxed_slice()))
-                .collect(),
+                .collect::<HashMap<_, _, DomainBuildHasher>>(),
             keywords,
             keyword_rules: keyword_rules
                 .into_iter()
@@ -668,7 +715,7 @@ impl RuleIndex {
     }
 
     fn memory_bytes(&self) -> usize {
-        let map_bytes = |map: &HashMap<Box<str>, Box<[u32]>>| {
+        let map_bytes = |map: &HashMap<Box<str>, Box<[u32]>, DomainBuildHasher>| {
             map.iter()
                 .map(|(key, positions)| key.len() + positions.len() * 4 + 64)
                 .sum::<usize>()
@@ -967,11 +1014,23 @@ impl DomainMatcher {
         match self {
             Self::Full(value) => domain == value.as_ref(),
             Self::Suffix(value) => domain_suffix_matches(domain, value),
-            Self::Keyword(value) => value.is_empty() || domain.contains(value.as_ref()),
+            Self::Keyword(value) => keyword_matches(domain, value),
             Self::Regex(regex) => regex.is_match(domain),
             Self::Asset { source, label } => assets.matches_domain(source, label, domain),
         }
     }
+}
+
+/// Substring match over normalized (lowercase) inputs. A plain window scan
+/// beats `str::contains` here: domains are short and `TwoWaySearcher`
+/// construction dominates at these sizes. The candidate index handles keyword
+/// matching at scale via one Aho-Corasick pass per request.
+fn keyword_matches(domain: &str, needle: &str) -> bool {
+    needle.is_empty()
+        || domain
+            .as_bytes()
+            .windows(needle.len())
+            .any(|window| window == needle.as_bytes())
 }
 
 /// Label-boundary suffix match over normalized (lowercase) inputs.
