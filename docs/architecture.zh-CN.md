@@ -84,6 +84,27 @@ admission 架构和运行时可观测性。设计背后的实测证据见
    `BrokenPipe` 或 `ConnectionReset`（良性的对端拆除竞态）会带着累计统计
    干净地关闭该方向，而不是把会话作为协议拒绝处理。
 
+## 自治双栈建连路径
+
+```text
+NetworkEnvironment（两个固定原子地址族记录）
+        ↓ 路由/源地址可用性 + 可过期被动健康状态
+AddressFamilyPolicy（auto / prefer / only）
+        ↓ 过滤、去重、交错
+ConnectionPlanner（一个绝对截止时间，最多两个活动候选）
+        ↓ 每候选一个 FD permit
+Dialer（首个成功者获胜；取消并回收落败者）
+```
+
+Direct、REALITY target/fallback、SOCKS5/NXR/Handoff 服务器拨号、landing 直接
+egress、probe 和 self-test 共享同一进程生命周期环境。路由 DNS 快照原样进入 planner，
+不会触发第二次查询；有意交给远端代理的目标不会在本地解析；数字字面量直接进入 planner。
+
+环境工作只发生在连接建立阶段：普通计划执行固定原子读取，按缓存周期执行仅限内核的
+路由/源地址刷新，并在 connect 完成后被动更新。relay 读写、framing、crypto 和 splice
+都不会触碰它。监听展开同样只在编译时执行一次；双栈通配分别绑定一个 IPv4 套接字和
+一个 bind 前设置 `IPV6_V6ONLY` 的 IPv6 套接字。
+
 ## 热路径拓扑
 
 每连接稳态成本：2 个任务，每条记录零分配，每个进度步一次定时器注册，热路径
@@ -96,7 +117,7 @@ admission 架构和运行时可观测性。设计背后的实测证据见
 | fallback | 连接任务 | 前缀 vec（有界） | fallback CAS、FD CAS ×2、connect | connect、前缀写，然后 relay | 仅前缀写 |
 | VLESS 请求 | 连接任务 | 初始 533 B；仅为同记录载荷增长；接受后域名拥有一次 | 0 | TLS 记录 | Addons/域名/预取均借用解析 |
 | 路由 | 连接任务 | 无 DNS 命中路径 0 | 一次 UUID 查找；组策略由 Arc 共享 | 可选有界 DNS（spawn_blocking，信号量槽持有到操作结束） | 0 |
-| 出站连接 | 连接任务 | 0 | 一次 tag 查找；FD 单元 CAS；无锁速率 + 并发 CAS | connect | 0 |
+| 出站连接 | 连接任务 | 一个有界地址计划；数字/单地址族跳过 DNS 与任务生成 | 一次 tag 查找；每候选一次 FD CAS；无锁速率 + 并发 CAS | connect | 0 |
 | Vision framed 上行 | 方向任务 | socket 缓冲区一次（只增） | 循环内 0 | 每次补充 1 读（≤64 KiB）、每记录 1 写 | AEAD 原地 open；Vision 借用解码（0） |
 | Vision framed 下行 | 方向任务 | socket 缓冲区一次 | 循环内 0 | 每次补充 1 读、每组打包记录 1 写 | AEAD 原地 seal；Vision 帧打包 |
 | Direct 转换 | 两个任务 | 0 | 2 个原子量 + 1 个互斥锁（一次） | 0 | 待排空数据写入 |
@@ -175,8 +196,9 @@ effective_dynamic_fd_budget = soft_rlimit - fixed_fd_reserve - safety_headroom
 `FdBudget` 是严格上界许可计数器：快路径一次 relaxed load 加一次
 `compare_exchange_weak`，无互斥锁；许可经 `Drop` 单路径释放；释放使用受检
 减法，双重释放会被记录而不是被悄悄吞掉；压力下的等待是有界 `Notify` 唤醒，
-绝不是轮询。保守单元成本：入站 socket 1、出站 socket 1、存活连接器候选 1、
-双向 splice relay 4。
+绝不是轮询。保守单元成本：入站 socket 1、每个存活出站候选 1（获胜者建立后继续
+持有同一单位）、双向 splice relay 4。因此每会话 setup 峰值为 3 FD，建连完成后
+TCP 峰值为 2。
 
 压力在容量的 15/16 进入、13/16 退出；迟滞间隙避免一批释放后下一次 accept 又
 重新进入压力。压力日志按跳变记录。进程绝不为准入轮询 `/proc/self/fd`。

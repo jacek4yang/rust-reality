@@ -27,6 +27,7 @@ use crate::{
         validate_config,
     },
     logging::{AdmissionResource, BackendStatus, LogEvent, LogWriteError, Logger, RejectionReason},
+    network::{ConnectionPlanner, NetworkEnvironment},
     protocol::{handoff::HandoffReplayCache, reality::ReplayCache},
     runtime::{
         AdmissionDenied, AdmissionKind, AdmissionPermit, DirectBarrier, FdBudget, FdBudgetError,
@@ -78,10 +79,11 @@ pub struct ProductionServer {
 /// Computes the configured worst-case simultaneous descriptor demand.
 ///
 /// Every term is a configured bound, and the sum is deliberately pessimistic:
-/// it assumes every connection simultaneously holds an inbound socket, an
-/// outbound socket, that every splice relay is armed at once, and that the
-/// pipe pool retains its full keep count of drained pipes afterwards. The
-/// number is used only to decide whether to warn about clamping; it never
+/// it assumes every connection simultaneously holds an inbound socket and two
+/// racing outbound candidates, that every splice relay is armed at once, and
+/// that the pipe pool retains its full keep count of drained pipes afterwards.
+/// The winning candidate retains the same unit as the established outbound.
+/// The number is used only to decide whether to warn about clamping; it never
 /// raises the admission budget.
 fn theoretical_fd_peak(config: &Config) -> u64 {
     let connections = u64::from(config.policy.resource_governor.max_connections);
@@ -96,7 +98,7 @@ fn theoretical_fd_peak(config: &Config) -> u64 {
         0
     };
     connections
-        .saturating_mul(2)
+        .saturating_mul(3)
         .saturating_add(splice)
         .saturating_add(pool_retention)
 }
@@ -129,7 +131,17 @@ struct MemoryWatch {
 /// failed raise is logged through the machine report and the derivation
 /// continues with the effective soft limit.
 fn derive_fd_budget(config: &Config) -> Result<ResourceStartup, FdBudgetError> {
-    let listeners = u64::try_from(config.inbounds.len()).unwrap_or(u64::MAX);
+    let listeners = config
+        .inbounds
+        .iter()
+        .map(|inbound| listener_addresses(config, inbound).len())
+        .try_fold(0_u64, |total, count| {
+            u64::try_from(count)
+                .ok()
+                .and_then(|count| total.checked_add(count))
+                .ok_or(())
+        })
+        .unwrap_or(u64::MAX);
     let reserve = FixedFdReserve::new(listeners);
     let dedicated = config.runtime.resource_mode == ResourceMode::Dedicated;
     let mut machine = if dedicated {
@@ -259,6 +271,7 @@ impl ProductionServer {
                 &config.policy.direct_barrier,
                 pressure.clone(),
             ),
+            network_environment: NetworkEnvironment::detect(),
         };
         let replay = ReplayCache::new(
             authorities.governor.clone(),
@@ -558,6 +571,7 @@ struct RuntimeStore {
 struct ProcessAuthorities {
     governor: ResourceGovernor,
     direct_barrier: DirectBarrier,
+    network_environment: NetworkEnvironment,
 }
 
 impl RuntimeStore {
@@ -640,10 +654,16 @@ impl RuntimeSnapshot {
             pressure,
             authorities.direct_barrier.clone(),
             authorities.governor.clone(),
+            authorities.network_environment.clone(),
         )?;
         let mut connections = HashMap::new();
+        let listener_count = config
+            .inbounds
+            .iter()
+            .map(|inbound| listener_addresses(&config, inbound).len())
+            .sum();
         connections
-            .try_reserve(config.inbounds.len())
+            .try_reserve(listener_count)
             .map_err(|_| RuntimeUpdateError::Unavailable)?;
         for inbound in &config.inbounds {
             let address = SocketAddr::new(inbound.listen(), inbound.port());
@@ -655,6 +675,8 @@ impl RuntimeSnapshot {
                         &config.policy.resource_governor,
                         replay.clone(),
                         tcp_relay.clone(),
+                        &config.network,
+                        authorities.network_environment.clone(),
                     )?),
                     vision: vision.clone(),
                 },
@@ -669,6 +691,8 @@ impl RuntimeSnapshot {
                         replay,
                         tcp_relay.clone(),
                         Duration::from_millis(config.policy.resource_governor.fallback_timeout_ms),
+                        &config.network,
+                        authorities.network_environment.clone(),
                     )?)
                 }
                 InboundConfig::Handoff(inbound) => {
@@ -701,21 +725,23 @@ impl RuntimeSnapshot {
                         tcp_relay.clone(),
                         Duration::from_millis(config.policy.resource_governor.fallback_timeout_ms),
                         vision.outbounds(),
+                        &config.network,
+                        authorities.network_environment.clone(),
                     )?)
                 }
             };
-            if connections
-                .insert(
-                    address,
-                    Arc::new(ConnectionRuntime {
-                        tag: Arc::from(inbound.tag()),
-                        governor: authorities.governor.clone(),
-                        handler,
-                    }),
-                )
-                .is_some()
-            {
-                return Err(RuntimeUpdateError::DuplicateListener(address));
+            let runtime = Arc::new(ConnectionRuntime {
+                tag: Arc::from(inbound.tag()),
+                governor: authorities.governor.clone(),
+                handler,
+            });
+            for bound_address in listener_addresses(&config, inbound) {
+                if connections
+                    .insert(bound_address, Arc::clone(&runtime))
+                    .is_some()
+                {
+                    return Err(RuntimeUpdateError::DuplicateListener(bound_address));
+                }
             }
         }
         Ok(Self {
@@ -781,15 +807,25 @@ fn listener_topology(config: &Config) -> HashMap<SocketAddr, ListenerProtocol> {
     config
         .inbounds
         .iter()
-        .map(|inbound| {
+        .flat_map(|inbound| {
             let protocol = match inbound {
                 InboundConfig::Vless(_) => ListenerProtocol::Vless,
                 InboundConfig::Nxr(_) => ListenerProtocol::Nxr,
                 InboundConfig::Handoff(_) => ListenerProtocol::Handoff,
             };
-            (SocketAddr::new(inbound.listen(), inbound.port()), protocol)
+            listener_addresses(config, inbound)
+                .into_iter()
+                .map(move |address| (address, protocol))
         })
         .collect()
+}
+
+fn listener_addresses(config: &Config, inbound: &InboundConfig) -> Vec<SocketAddr> {
+    ConnectionPlanner::listener_addresses(
+        inbound.listen(),
+        inbound.port(),
+        config.network.address_family,
+    )
 }
 
 fn nxr_replay_policy(config: &Config) -> HashMap<SocketAddr, (u32, u64)> {
@@ -1714,7 +1750,7 @@ fn backend_statuses(report: &BackendReport) -> Vec<BackendStatus> {
 mod tests {
     use std::{
         io,
-        net::{IpAddr, Ipv4Addr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
         str::FromStr,
         sync::Arc,
         time::Duration,
@@ -1755,6 +1791,27 @@ mod tests {
     }
 
     #[test]
+    fn wildcard_auto_inbound_compiles_two_independent_family_listeners() {
+        let generated = generate_minimal_config(GenerateConfigInput {
+            listen: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            port: 8443,
+            target: "www.example.com:443".to_owned(),
+            server_name: "www.example.com".to_owned(),
+        })
+        .expect("configuration must generate");
+        let server = ProductionServer::from_config(generated.config())
+            .expect("dual-stack server must compile");
+        assert_eq!(
+            server.addresses,
+            [
+                SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 8443),
+                SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 8443),
+            ],
+            "the old single-IpAddr topology silently omitted IPv6 ingress"
+        );
+    }
+
+    #[test]
     fn the_theoretical_peak_includes_pipe_pool_retention() {
         let generated = generated_config(8443);
         let mut config = generated.config().clone();
@@ -1762,12 +1819,12 @@ mod tests {
         config.policy.relay.pipe_pool = true;
         config.policy.relay.max_splice_relays = 4;
         config.policy.relay.max_pooled_pipes = 8;
-        let connections = u64::from(config.policy.resource_governor.max_connections) * 2;
+        let connections = u64::from(config.policy.resource_governor.max_connections) * 3;
 
         assert_eq!(
             theoretical_fd_peak(&config),
             connections + 4 * 4 + 8 * 2,
-            "armed splice relays and the pipes the pool retains are both demand"
+            "two live dial candidates, armed splice relays, and retained pipes are demand"
         );
 
         config.policy.relay.pipe_pool = false;

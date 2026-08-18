@@ -32,7 +32,7 @@ harnesses; the design-level evidence behind the numbers lives in
 | Harness | Purpose |
 |---|---|
 | `rust-reality benchmark` (built-in) | Bounded, machine-readable in-process protocol measurements (VLESS decode, Vision framing, NXR auth). |
-| `cargo bench` (criterion) | Regression analysis for VLESS decoding, Vision framing, relay backends, adaptive short-ID/identity/tag lookup, REALITY digest hashing, replay expiry/reservation, and direct admission contention, with baselines and plots. |
+| `cargo bench` (criterion) | Regression analysis for VLESS decoding, Vision framing, relay backends, dual-stack planning/setup/fallback, adaptive short-ID/identity/tag lookup, REALITY digest hashing, replay expiry/reservation, and direct admission contention, with baselines and plots. |
 | `scripts/benchmark-matrix.sh` | Full A/B/C loopback matrix (baseline/final/Xray) over direction × payload × concurrency. |
 | `scripts/benchmark-fallback-ab.sh` | Clean fallback A/B against Xray: warn-level logging both sides, direct-to-listener. |
 | `scripts/benchmark-setup-rate.sh` | Connection setup-rate model (accept → first Vision transition). |

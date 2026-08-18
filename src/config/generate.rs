@@ -5,9 +5,9 @@ use serde_json::json;
 use super::{
     AssetsConfig, BlackholeSettings, Config, ConfigError, DnsConfig, DnsStrategy,
     HandoffInboundConfig, HandoffInboundSettings, HandoffSettings, InboundConfig, LogConfig,
-    Network, NxrInboundConfig, NxrInboundSettings, NxrSettings, OutboundConfig, PolicyConfig,
-    RealityConfig, RoutingConfig, RuntimeConfig, SecretString, StreamSettings, UserPolicy,
-    VlessClient, VlessInboundConfig, VlessInboundSettings, validate_config,
+    Network, NetworkConfig, NxrInboundConfig, NxrInboundSettings, NxrSettings, OutboundConfig,
+    PolicyConfig, RealityConfig, RoutingConfig, RuntimeConfig, SecretString, StreamSettings,
+    UserPolicy, VlessClient, VlessInboundConfig, VlessInboundSettings, validate_config,
 };
 use crate::crypto::{
     KeyGenerationError, generate_node_key, generate_short_id, generate_uuid,
@@ -239,6 +239,7 @@ pub fn generate_minimal_config(
         log: LogConfig::default(),
         assets: AssetsConfig::default(),
         dns: DnsConfig::default(),
+        network: NetworkConfig::default(),
         inbounds: vec![InboundConfig::Vless(VlessInboundConfig {
             tag: "public-reality".to_owned(),
             listen: input.listen,
@@ -307,6 +308,7 @@ pub fn generate_line_config(
         log: LogConfig::default(),
         assets: AssetsConfig::default(),
         dns: DnsConfig::default(),
+        network: NetworkConfig::default(),
         inbounds: vec![public_inbound(
             &input.public,
             uuid.clone(),
@@ -366,6 +368,7 @@ pub fn generate_landing_config(
         log: LogConfig::default(),
         assets: AssetsConfig::default(),
         dns: DnsConfig::default(),
+        network: NetworkConfig::default(),
         inbounds: vec![InboundConfig::Nxr(NxrInboundConfig {
             tag: "internal-nxr".to_owned(),
             listen: input.listen,
@@ -521,6 +524,7 @@ pub fn generate_multi_handoff_configs(
         log: LogConfig::default(),
         assets: AssetsConfig::default(),
         dns: DnsConfig::default(),
+        network: NetworkConfig::default(),
         inbounds: vec![public_inbound_with_clients(
             &input.public,
             clients,
@@ -622,6 +626,7 @@ fn handoff_landing_config(
         log: LogConfig::default(),
         assets: AssetsConfig::default(),
         dns: DnsConfig::default(),
+        network: NetworkConfig::default(),
         inbounds: vec![InboundConfig::Handoff(HandoffInboundConfig {
             tag: "internal-handoff".to_owned(),
             listen: IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
@@ -751,6 +756,7 @@ mod tests {
 
         assert!(json.contains("xtls-rprx-vision"));
         assert!(json.contains("\"security\": \"reality\""));
+        assert!(json.contains("\"addressFamily\": \"auto\""));
         assert_eq!(generated.reality_public_key().len(), 43);
         let public = generated.config().inbounds[0]
             .as_vless()

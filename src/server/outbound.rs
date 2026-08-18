@@ -15,7 +15,8 @@ use tokio::{
 use zeroize::Zeroizing;
 
 use crate::{
-    config::{DirectBarrierConfig, NxrSettings, OutboundConfig, Socks5Settings},
+    config::{DirectBarrierConfig, NetworkConfig, NxrSettings, OutboundConfig, Socks5Settings},
+    network::NetworkEnvironment,
     protocol::{
         nxr::{NxrKey, NxrProtocolError, encode_request},
         vless::{Address, Destination},
@@ -24,7 +25,7 @@ use crate::{
 };
 
 use super::{
-    connector::{DestinationConnectError, DestinationConnector},
+    connector::{AccountedTcpStream, DestinationConnectError, DestinationConnector},
     handoff::HandoffLine,
 };
 
@@ -44,13 +45,13 @@ enum OutboundIndex {
 }
 
 impl OutboundIndex {
-    fn from_config(outbounds: &[OutboundConfig]) -> Self {
+    fn from_config(outbounds: &[OutboundConfig], connector: &DestinationConnector) -> Self {
         let mut entries = outbounds
             .iter()
             .map(|outbound| {
                 (
                     Box::<str>::from(outbound.tag()),
-                    CompiledOutbound::from(outbound),
+                    CompiledOutbound::from_config(outbound, connector),
                 )
             })
             .collect::<Vec<_>>();
@@ -95,6 +96,7 @@ pub struct OutboundRegistry {
     direct_barrier: DirectBarrier,
     connect_timeout: Duration,
     fd_budget: FdBudget,
+    connector: DestinationConnector,
 }
 
 impl OutboundRegistry {
@@ -111,6 +113,8 @@ impl OutboundRegistry {
             DirectBarrier::new(direct_barrier),
             connect_timeout,
             fd_budget,
+            NetworkConfig::default(),
+            NetworkEnvironment::detect(),
         )
     }
 
@@ -125,7 +129,34 @@ impl OutboundRegistry {
         connect_timeout: Duration,
         fd_budget: FdBudget,
     ) -> Self {
-        Self::build(outbounds, direct_barrier, connect_timeout, fd_budget)
+        Self::build(
+            outbounds,
+            direct_barrier,
+            connect_timeout,
+            fd_budget,
+            NetworkConfig::default(),
+            NetworkEnvironment::detect(),
+        )
+    }
+
+    /// Compiles outbounds over one process-lifetime adaptive network state.
+    #[must_use]
+    pub fn with_barrier_and_network(
+        outbounds: &[OutboundConfig],
+        direct_barrier: DirectBarrier,
+        connect_timeout: Duration,
+        fd_budget: FdBudget,
+        network: &NetworkConfig,
+        environment: NetworkEnvironment,
+    ) -> Self {
+        Self::build(
+            outbounds,
+            direct_barrier,
+            connect_timeout,
+            fd_budget,
+            network.clone(),
+            environment,
+        )
     }
 
     fn build(
@@ -133,25 +164,18 @@ impl OutboundRegistry {
         direct_barrier: DirectBarrier,
         connect_timeout: Duration,
         fd_budget: FdBudget,
+        network: NetworkConfig,
+        environment: NetworkEnvironment,
     ) -> Self {
+        let connector =
+            DestinationConnector::with_environment(connect_timeout, network, environment);
         Self {
-            outbounds: Arc::new(OutboundIndex::from_config(outbounds)),
+            outbounds: Arc::new(OutboundIndex::from_config(outbounds, &connector)),
             direct_barrier,
             connect_timeout,
             fd_budget,
+            connector,
         }
-    }
-
-    /// Reserves the one descriptor an outbound connection will hold.
-    ///
-    /// The permit is acquired before `connect(2)` and rides the returned
-    /// connection, so the descriptor is closed before its unit is released
-    /// and a denied budget fails the new session fast instead of discovering
-    /// EMFILE inside the relay.
-    fn acquire_descriptor(&self) -> Result<FdPermit, OutboundConnectError> {
-        self.fd_budget
-            .try_acquire(crate::runtime::UNITS_OUTBOUND_SOCKET)
-            .ok_or(OutboundConnectError::DescriptorBudget)
     }
 
     /// Connects the selected transport without ever logging credentials or keys.
@@ -215,15 +239,16 @@ impl OutboundRegistry {
     ) -> Result<OutboundConnectOutcome, OutboundConnectError> {
         match outbound {
             CompiledOutbound::Direct => {
-                let fd_permit = self.acquire_descriptor()?;
                 let permit = self
                     .direct_barrier
                     .try_acquire()
                     .map_err(OutboundConnectError::Admission)?;
-                let stream = DestinationConnector::new(self.connect_timeout)
-                    .connect_resolved(destination, resolved_ips)
+                let connected = self
+                    .connector
+                    .connect_resolved_accounted(destination, resolved_ips, &self.fd_budget)
                     .await
-                    .map_err(OutboundConnectError::Direct)?;
+                    .map_err(map_direct_error)?;
+                let (stream, fd_permit) = connected.into_parts();
                 // The barrier permit bounds the dial phase only: every error
                 // return above drops it implicitly, and a resolved connect
                 // releases it here before the session starts. The descriptor
@@ -242,16 +267,30 @@ impl OutboundRegistry {
                 Ok(OutboundConnectOutcome::Blackholed)
             }
             CompiledOutbound::Socks5(settings) => {
-                let fd_permit = self.acquire_descriptor()?;
-                let stream = connect_socks5(settings, destination, self.connect_timeout).await?;
+                let connected = connect_socks5(
+                    settings,
+                    destination,
+                    self.connect_timeout,
+                    &self.connector,
+                    &self.fd_budget,
+                )
+                .await?;
+                let (stream, fd_permit) = connected.into_parts();
                 Ok(OutboundConnectOutcome::Connected(OutboundConnection {
                     stream,
                     fd_permit,
                 }))
             }
             CompiledOutbound::Nxr(Some(settings)) => {
-                let fd_permit = self.acquire_descriptor()?;
-                let stream = connect_nxr(settings, destination, self.connect_timeout).await?;
+                let connected = connect_nxr(
+                    settings,
+                    destination,
+                    self.connect_timeout,
+                    &self.connector,
+                    &self.fd_budget,
+                )
+                .await?;
+                let (stream, fd_permit) = connected.into_parts();
                 Ok(OutboundConnectOutcome::Connected(OutboundConnection {
                     stream,
                     fd_permit,
@@ -290,8 +329,8 @@ enum CompiledOutbound {
     Handoff(Option<HandoffLine>),
 }
 
-impl From<&OutboundConfig> for CompiledOutbound {
-    fn from(outbound: &OutboundConfig) -> Self {
+impl CompiledOutbound {
+    fn from_config(outbound: &OutboundConfig, connector: &DestinationConnector) -> Self {
         match outbound {
             OutboundConfig::Direct { .. } => Self::Direct,
             OutboundConfig::Blackhole { settings, .. } => Self::Blackhole {
@@ -299,9 +338,9 @@ impl From<&OutboundConfig> for CompiledOutbound {
             },
             OutboundConfig::Socks5 { settings, .. } => Self::Socks5(settings.into()),
             OutboundConfig::Nxr { settings, .. } => Self::Nxr(CompiledNxr::new(settings)),
-            OutboundConfig::Handoff { settings, .. } => {
-                Self::Handoff(HandoffLine::from_settings(settings))
-            }
+            OutboundConfig::Handoff { settings, .. } => Self::Handoff(
+                HandoffLine::from_settings_with_connector(settings, connector.clone()),
+            ),
         }
     }
 }
@@ -469,6 +508,30 @@ impl Error for OutboundConnectError {
     }
 }
 
+fn map_direct_error(error: DestinationConnectError) -> OutboundConnectError {
+    if matches!(error, DestinationConnectError::DescriptorBudget) {
+        OutboundConnectError::DescriptorBudget
+    } else {
+        OutboundConnectError::Direct(error)
+    }
+}
+
+fn map_socks_connect_error(error: DestinationConnectError) -> OutboundConnectError {
+    match error {
+        DestinationConnectError::DescriptorBudget => OutboundConnectError::DescriptorBudget,
+        DestinationConnectError::TimedOut { .. } => OutboundConnectError::SocksTimeout,
+        error => OutboundConnectError::SocksConnect(error.into_io()),
+    }
+}
+
+fn map_nxr_connect_error(error: DestinationConnectError) -> OutboundConnectError {
+    match error {
+        DestinationConnectError::DescriptorBudget => OutboundConnectError::DescriptorBudget,
+        DestinationConnectError::TimedOut { .. } => OutboundConnectError::NxrTimeout,
+        error => OutboundConnectError::NxrConnect(error.into_io()),
+    }
+}
+
 /// A SOCKS5 server returned invalid negotiation data or a failure reply.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Socks5ProtocolError {
@@ -503,19 +566,20 @@ async fn connect_nxr(
     settings: &CompiledNxr,
     destination: &Destination,
     timeout: Duration,
-) -> Result<TcpStream, OutboundConnectError> {
+    connector: &DestinationConnector,
+    fd_budget: &FdBudget,
+) -> Result<AccountedTcpStream, OutboundConnectError> {
     let deadline = Instant::now()
         .checked_add(timeout)
         .ok_or(OutboundConnectError::NxrTimeout)?;
-    let mut stream = time::timeout_at(
+    let connected = time::timeout_at(
         deadline,
-        super::connector::connect_host(settings.address.as_ref(), settings.port),
+        connector.connect_host_accounted(settings.address.as_ref(), settings.port, fd_budget),
     )
     .await
     .map_err(|_| OutboundConnectError::NxrTimeout)?
-    .map_err(OutboundConnectError::NxrConnect)?;
-    crate::transport::TcpAcceptor::configure_stream(&stream)
-        .map_err(OutboundConnectError::NxrConnect)?;
+    .map_err(map_nxr_connect_error)?;
+    let (mut stream, fd_permit) = connected.into_parts();
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| OutboundConnectError::NxrClock)?
@@ -529,29 +593,30 @@ async fn connect_nxr(
         .await
         .map_err(|_| OutboundConnectError::NxrTimeout)?
         .map_err(OutboundConnectError::NxrConnect)?;
-    Ok(stream)
+    Ok(AccountedTcpStream::from_parts(stream, fd_permit))
 }
 
 async fn connect_socks5(
     settings: &CompiledSocks5,
     destination: &Destination,
     timeout: Duration,
-) -> Result<TcpStream, OutboundConnectError> {
+    connector: &DestinationConnector,
+    fd_budget: &FdBudget,
+) -> Result<AccountedTcpStream, OutboundConnectError> {
     let deadline = Instant::now()
         .checked_add(timeout)
         .ok_or(OutboundConnectError::SocksTimeout)?;
-    let mut stream = time::timeout_at(
+    let connected = time::timeout_at(
         deadline,
-        super::connector::connect_host(settings.address.as_ref(), settings.port),
+        connector.connect_host_accounted(settings.address.as_ref(), settings.port, fd_budget),
     )
     .await
     .map_err(|_| OutboundConnectError::SocksTimeout)?
-    .map_err(OutboundConnectError::SocksConnect)?;
-    crate::transport::TcpAcceptor::configure_stream(&stream)
-        .map_err(OutboundConnectError::SocksConnect)?;
+    .map_err(map_socks_connect_error)?;
+    let (mut stream, fd_permit) = connected.into_parts();
 
     negotiate_socks5(&mut stream, settings, destination, deadline).await?;
-    Ok(stream)
+    Ok(AccountedTcpStream::from_parts(stream, fd_permit))
 }
 
 async fn negotiate_socks5(
@@ -753,12 +818,13 @@ mod tests {
                 tag: format!("direct-{index}"),
             })
             .collect::<Vec<_>>();
-        let small = OutboundIndex::from_config(&configs[..SORTED_OUTBOUND_LIMIT]);
+        let connector = super::DestinationConnector::new(Duration::from_secs(1));
+        let small = OutboundIndex::from_config(&configs[..SORTED_OUTBOUND_LIMIT], &connector);
         assert!(matches!(small, OutboundIndex::Sorted(_)));
         assert!(small.contains("direct-2"));
         assert!(!small.contains("missing"));
 
-        let large = OutboundIndex::from_config(&configs);
+        let large = OutboundIndex::from_config(&configs, &connector);
         assert!(matches!(large, OutboundIndex::Hashed(_)));
         assert!(large.contains("direct-4"));
     }

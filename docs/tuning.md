@@ -1249,14 +1249,14 @@ an illustration for one 4C8G host with a database, not a recipe:
 CPUQuota=300%        # 3 of 4 cores: co-tenant inventory showed the DB using ≈1
 MemoryHigh=3500M     # throttling tripwire below the hard cap
 MemoryMax=4G         # 8G total − measured DB working set ≈3G − OS margin
-LimitNOFILE=1048576  # covers 2 FDs × planned sessions plus reserves (§6)
+LimitNOFILE=1048576  # covers 3 setup FDs × planned sessions plus reserves (§6)
 ```
 
 `CPUQuota` comes from cores you can actually spare (28.1 + 28.2);
 `MemoryMax` from `MemAvailable` minus the co-tenants' measured working
 sets; `MemoryHigh` sits below it so the kernel throttles before it kills;
-`LimitNOFILE` covers ≈2 descriptors per planned session plus the fixed
-reserves. `CPUWeight` (default 100) only matters under contention — raise
+`LimitNOFILE` covers the 3-descriptor dual-family setup peak per planned
+session (2 after setup) plus the fixed reserves. `CPUWeight` (default 100) only matters under contention — raise
 it if the proxy must win CPU fights with the co-tenants.
 
 ### 28.5 Calibrate the saturation knee

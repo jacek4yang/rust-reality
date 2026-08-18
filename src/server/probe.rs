@@ -3,13 +3,14 @@ use std::{error::Error, fmt, io, time::Duration};
 use serde::Serialize;
 use tokio::{
     io::AsyncWriteExt,
-    net::TcpStream,
     time::{self, Instant},
 };
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
 use crate::{
+    config::NetworkConfig,
+    network::NetworkEnvironment,
     protocol::reality::{
         ClientHello, ClientHelloError, SESSION_ID_LEN, X25519_GROUP,
         tls13::{CipherSuite, TargetServerHelloReadError, read_target_server_hello},
@@ -138,9 +139,27 @@ pub async fn probe_destination_pattern(
     server_name_pattern: &str,
     timeout: Duration,
 ) -> Result<DestinationProbeReport, DestinationProbeError> {
+    probe_destination_pattern_with_network(
+        target,
+        server_name_pattern,
+        timeout,
+        &NetworkConfig::default(),
+        NetworkEnvironment::detect(),
+    )
+    .await
+}
+
+/// Probes a configured target using the process IP-family policy and health.
+pub async fn probe_destination_pattern_with_network(
+    target: &str,
+    server_name_pattern: &str,
+    timeout: Duration,
+    network: &NetworkConfig,
+    environment: NetworkEnvironment,
+) -> Result<DestinationProbeReport, DestinationProbeError> {
     let server_name = concrete_probe_name(target, server_name_pattern)
         .ok_or(DestinationProbeError::WildcardServerNameTargetMismatch)?;
-    probe_destination(target, server_name, timeout).await
+    probe_destination_with_network(target, server_name, timeout, network, environment).await
 }
 
 /// Connects to a real target and verifies its first TLS 1.3 negotiation response.
@@ -157,19 +176,44 @@ pub async fn probe_destination(
     server_name: &str,
     timeout: Duration,
 ) -> Result<DestinationProbeReport, DestinationProbeError> {
+    probe_destination_with_network(
+        target,
+        server_name,
+        timeout,
+        &NetworkConfig::default(),
+        NetworkEnvironment::detect(),
+    )
+    .await
+}
+
+/// Probes one target using an explicit policy and shared health state.
+pub async fn probe_destination_with_network(
+    target: &str,
+    server_name: &str,
+    timeout: Duration,
+    network: &NetworkConfig,
+    environment: NetworkEnvironment,
+) -> Result<DestinationProbeReport, DestinationProbeError> {
     let probe = ProbeClientHello::build(server_name)?;
     let started = Instant::now();
     let deadline = started
         .checked_add(timeout)
         .ok_or(DestinationProbeError::ConnectTimeout)?;
-    let mut stream = time::timeout_at(deadline, TcpStream::connect(target))
+    let connector = super::connector::DestinationConnector::with_environment(
+        timeout,
+        network.clone(),
+        environment,
+    );
+    let mut stream = time::timeout_at(deadline, connector.connect_target(target))
         .await
         .map_err(|_| DestinationProbeError::ConnectTimeout)?
-        .map_err(DestinationProbeError::Connect)?;
+        .map_err(|error| match error {
+            super::connector::DestinationConnectError::TimedOut { .. } => {
+                DestinationProbeError::ConnectTimeout
+            }
+            error => DestinationProbeError::Connect(error.into_io()),
+        })?;
     let connected = Instant::now();
-    stream
-        .set_nodelay(true)
-        .map_err(DestinationProbeError::Connect)?;
     time::timeout_at(deadline, stream.write_all(&probe.record))
         .await
         .map_err(|_| DestinationProbeError::WriteTimeout)?

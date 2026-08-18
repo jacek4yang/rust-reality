@@ -7,7 +7,105 @@
 //! * `FIONREAD` reports userspace-visible queued input; the pipe pool uses it
 //!   to refuse recycling a pipe that still holds unread bytes.
 
-use std::{io, mem, os::fd::RawFd};
+use std::{
+    io, mem,
+    net::{SocketAddr, SocketAddrV6, TcpListener},
+    os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
+};
+
+/// Creates, configures, and binds a nonblocking IPv6 TCP listener with
+/// `IPV6_V6ONLY=1` set before `bind(2)`.
+///
+/// Setting the option before bind is essential: it makes a separate IPv4 and
+/// IPv6 wildcard socket deterministic regardless of the host's
+/// `net.ipv6.bindv6only` value.
+///
+/// # Errors
+///
+/// Returns the kernel error from `socket`, `setsockopt`, `bind`, or `listen`,
+/// or `InvalidInput` when `address` is not IPv6.
+pub fn bind_tcp_listener_v6only(address: SocketAddr) -> io::Result<TcpListener> {
+    let SocketAddr::V6(address) = address else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "IPv6 listener requires an IPv6 address",
+        ));
+    };
+    // SAFETY: `socket` has no pointer arguments. On success the returned raw
+    // descriptor is uniquely owned and is immediately wrapped in `OwnedFd`.
+    let raw = unsafe {
+        libc::socket(
+            libc::AF_INET6,
+            libc::SOCK_STREAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
+            libc::IPPROTO_TCP,
+        )
+    };
+    if raw < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `raw` is a fresh successful `socket` result and ownership is
+    // transferred exactly once to `OwnedFd`.
+    let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+    set_int_option(fd.as_raw_fd(), libc::SOL_SOCKET, libc::SO_REUSEADDR, 1)?;
+    set_int_option(fd.as_raw_fd(), libc::IPPROTO_IPV6, libc::IPV6_V6ONLY, 1)?;
+    bind_ipv6(fd.as_raw_fd(), &address)?;
+    // SAFETY: the descriptor is a bound `SOCK_STREAM`; `listen` takes no
+    // pointers and leaves ownership with `fd` on both success and failure.
+    if unsafe { libc::listen(fd.as_raw_fd(), libc::SOMAXCONN) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(TcpListener::from(fd))
+}
+
+fn bind_ipv6(fd: RawFd, address: &SocketAddrV6) -> io::Result<()> {
+    let raw = libc::sockaddr_in6 {
+        sin6_family: libc::sa_family_t::try_from(libc::AF_INET6).unwrap_or_default(),
+        sin6_port: address.port().to_be(),
+        sin6_flowinfo: address.flowinfo(),
+        sin6_addr: libc::in6_addr {
+            s6_addr: address.ip().octets(),
+        },
+        sin6_scope_id: address.scope_id(),
+    };
+    // SAFETY: `raw` is a live initialized `sockaddr_in6`; the pointer and
+    // exact structure size remain valid for the duration of `bind`.
+    let result = unsafe {
+        libc::bind(
+            fd,
+            (&raw as *const libc::sockaddr_in6).cast::<libc::sockaddr>(),
+            u32::try_from(mem::size_of::<libc::sockaddr_in6>()).unwrap_or(u32::MAX),
+        )
+    };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Reports `IPV6_V6ONLY` for a socket (test and diagnostic use).
+///
+/// # Errors
+///
+/// Returns the kernel error from `getsockopt(IPV6_V6ONLY)`.
+pub fn ipv6_only(fd: RawFd) -> io::Result<bool> {
+    let mut value: libc::c_int = 0;
+    let mut length = u32::try_from(mem::size_of::<libc::c_int>()).unwrap_or(4);
+    // SAFETY: `getsockopt` writes at most `sizeof(c_int)` bytes into the live
+    // `value`; `length` advertises exactly that capacity.
+    let result = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::IPPROTO_IPV6,
+            libc::IPV6_V6ONLY,
+            &raw mut value as *mut libc::c_void,
+            &raw mut length,
+        )
+    };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(value != 0)
+}
 
 /// Returns whether `SO_KEEPALIVE` is enabled on `fd` (test/diagnostic use).
 ///

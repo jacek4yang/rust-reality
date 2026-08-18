@@ -30,6 +30,7 @@ Top-level shape:
   "log": {},
   "assets": {},
   "dns": {},
+  "network": {},
   "inbounds": [],
   "outbounds": [],
   "routing": {},
@@ -43,6 +44,7 @@ Top-level shape:
 | `log` | no | stderr/info | Logging sink, severity, and bounded file retention. |
 | `assets` | no | community GeoIP/GeoSite URLs and bounded cache defaults | Routing asset sources and refresh policy. |
 | `dns` | no | system resolver, 5000 ms | DNS behavior used by IP-assisted routing. |
+| `network` | no | autonomous dual stack | Listener families, local family selection, health memory, and fallback timing. |
 | `inbounds` | yes | — | At least one strictly typed `vless` or internal `nxr` or `handoff` listener. |
 | `outbounds` | yes | — | At least one `direct`, `blackhole`, `socks5`, `nxr`, or `handoff` transport. |
 | `routing` | yes | — | Global rules and explicit per-UUID policy groups. |
@@ -96,11 +98,63 @@ At most 64 unique addresses are retained for one routed domain. A direct
 outbound reuses the exact resolved snapshot used by GeoIP/IP rules, avoiding a
 second inconsistent lookup.
 
+## `network`
+
+```json
+{
+  "addressFamily": "auto",
+  "fallbackDelayMs": 250,
+  "routeRefreshSeconds": 30,
+  "familyPenaltySeconds": 30,
+  "healthMemorySeconds": 300
+}
+```
+
+| Field | Required | Default / allowed | Meaning and constraints |
+| --- | --- | --- | --- |
+| `network.addressFamily` | no | `auto`; `auto`, `preferIpv4`, `preferIpv6`, `ipv4Only`, `ipv6Only` | Families enabled for wildcard listeners and every proxy endpoint resolved locally. `auto` is recommended. |
+| `network.fallbackDelayMs` | no | `250` | Delay before the first alternate-family attempt, `0..=5000`. Zero starts both immediately. |
+| `network.routeRefreshSeconds` | no | `30` | Lifetime of cached kernel route/source-address evidence, `1..=3600`. |
+| `network.familyPenaltySeconds` | no | `30` | Deprioritization after `ENETUNREACH`, `EHOSTUNREACH`, `EADDRNOTAVAIL`, an overall timeout, or a slower losing family attempt, `1..=3600`. |
+| `network.healthMemorySeconds` | no | `300` | Lifetime of the bounded per-family connection-latency EWMA, `1..=86400`. |
+
+`auto` enables both families. It prefers an unpenalized family, then one with
+a usable route and source address, then recent successful setup
+latency; with no evidence it probes IPv6 first and starts IPv4 after the
+fallback delay. Route detection uses a local UDP route/source-selection
+operation and sends no packet. It is not treated as proof of Internet
+connectivity: real TCP successes, family-level failures, timeouts, and latency
+update two fixed lock-free health records. Penalties and latency expire, so a
+repaired family is tried again without restart or telemetry.
+
+`preferIpv4` and `preferIpv6` enable both families and set the initial
+preference, but active route/health evidence may temporarily choose the other
+family. `ipv4Only` and `ipv6Only` filter DNS results and create only that
+family's wildcard listener. Numeric literals bypass DNS but are still rejected
+when their family is disabled.
+
+Mixed A/AAAA results are de-duplicated and interleaved. At most two connects
+are live, all attempts share one absolute deadline, the first success wins,
+and losing tasks/sockets are cancelled and drained before return. Every live
+candidate owns an FD-budget unit; if a second unit is unavailable, fallback is
+serialized instead of exceeding the budget. SOCKS5/NXR/Handoff server names
+are resolved through this policy, while the original destination carried to a
+remote proxy remains unchanged.
+
 ## `inbounds`
 
 `inbounds` must be non-empty. Every listener has a unique `tag`, and no two
-entries may bind the same `(listen, port)`. A tag is 1–64 ASCII letters, digits,
+entries may expand to the same `(listen, port)`. A tag is 1–64 ASCII letters, digits,
 dots, dashes, or underscores. `port` is `1..=65535`.
+
+An unspecified `listen` (`0.0.0.0` or `::`) is a family-neutral wildcard:
+`auto` and both `prefer*` modes create separate `0.0.0.0` and `::` sockets;
+the `*Only` modes create one. Every IPv6 socket has `IPV6_V6ONLY=1` applied
+before bind, so behavior never depends on `net.ipv6.bindv6only`. A concrete
+address such as `127.0.0.1` or `::1` creates exactly one socket and must be
+allowed by `network.addressFamily`. Listener topology and address-family
+changes that add or remove a socket require restart; compatible preference and
+health-timing changes reload atomically.
 
 ### Public VLESS + REALITY + Vision inbound
 
@@ -138,19 +192,11 @@ The placeholder values above are intentionally not usable. Generate real state
 with `config generate standalone`, `config generate line`, or `config generate
 handoff`.
 
-**v1.2 → v1.3 migration:** move `streamSettings.realitySettings.shortIds`
-into the owning `settings.clients[]` object as `shortIds`, then remove the old
-field. For a single client, move the whole array unchanged. For multiple
-clients, partition or generate values so every UUID has at least one and no
-short ID appears under two UUIDs. Update each client device to use one value
-owned by its UUID. v1.3 deliberately rejects the ambiguous old shared list;
-it does not guess ownership for authentication credentials.
-
 | Field | Required | Default / fixed value | Meaning and constraints |
 | --- | --- | --- | --- |
 | `protocol` | yes | fixed `vless` | Selects the only public protocol. |
 | `tag` | yes | — | Unique listener/routing tag. |
-| `listen` | yes | — | IPv4 or IPv6 bind address. |
+| `listen` | yes | — | Concrete IPv4/IPv6 address, or a family-neutral unspecified wildcard expanded by `network.addressFamily`. |
 | `port` | yes | — | TCP bind port, non-zero. |
 | `settings.clients` | yes | — | Non-empty authorized-client array. UUIDs are globally unique across public inbounds. |
 | `settings.clients[].id` | yes | — | Canonical hyphenated UUID; hex is case-insensitive for identity. |
@@ -203,7 +249,7 @@ add an audited wildcard only when multiple real certificate names are required.
 | --- | --- | --- | --- |
 | `protocol` | yes | fixed `nxr` | Selects the internal landing protocol. |
 | `tag` | yes | — | Unique listener/operational tag. |
-| `listen` | yes | — | Internal bind address; restrict at the host/provider firewall. |
+| `listen` | yes | — | Internal concrete address or policy-expanded wildcard; restrict it at the host/provider firewall. |
 | `port` | yes | — | Raw NXR TCP port, non-zero. |
 | `settings.preSharedKey` | yes | — | Independent URL-safe unpadded base64 value decoding to exactly 32 bytes. |
 | `settings.maxTimeDifferenceSeconds` | no | `30` | Accepted absolute wall-clock skew, `1..=300`. |
@@ -240,7 +286,7 @@ post-authentication encryption and must not be exposed to the Internet.
 | --- | --- | --- | --- |
 | `protocol` | yes | fixed `handoff` | Selects the internal session-transfer protocol. |
 | `tag` | yes | — | Unique listener/operational tag. |
-| `listen` | yes | — | Internal bind address; restrict at the host/provider firewall. |
+| `listen` | yes | — | Internal concrete address or policy-expanded wildcard; restrict it at the host/provider firewall. |
 | `port` | yes | — | Raw Handoff TCP port, non-zero. |
 | `settings.preSharedKey` | yes | — | Independent URL-safe unpadded base64 value decoding to exactly 32 bytes; the pair PSK shared with the line node's handoff outbound. |
 | `settings.privateKey` | yes | — | Independent static X25519 private key, URL-safe unpadded base64 decoding to exactly 32 bytes; its public half is the line outbound's `landingPublicKey`. |

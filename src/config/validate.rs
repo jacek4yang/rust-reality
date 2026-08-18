@@ -10,10 +10,11 @@ use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 use zeroize::Zeroizing;
 
 use super::{
-    Config, GlobalRule, HandoffInboundConfig, InboundConfig, LogOutput, Network, NxrInboundConfig,
-    OutboundConfig, PortMatcher, RelayPolicy, SecretString, VlessInboundConfig,
+    AddressFamilyPolicy, Config, GlobalRule, HandoffInboundConfig, InboundConfig, LogOutput,
+    Network, NxrInboundConfig, OutboundConfig, PortMatcher, RelayPolicy, SecretString,
+    VlessInboundConfig,
 };
-use crate::server_name::is_server_name_pattern;
+use crate::{network::ConnectionPlanner, server_name::is_server_name_pattern};
 
 const MIN_LOG_FILE_BYTES: u64 = 64 * 1024;
 const MAX_LOG_FILE_BYTES: u64 = 1024 * 1024 * 1024;
@@ -90,12 +91,29 @@ impl Error for ConfigError {}
 pub fn validate_config(config: &Config) -> Result<(), ConfigError> {
     validate_log(config)?;
     validate_assets_and_dns(config)?;
+    validate_network(config)?;
     let users = validate_inbounds(config)?;
     let outbounds = validate_outbounds(config)?;
     validate_routing(config, &users, &outbounds)?;
     validate_handoff_egress(config)?;
     validate_handoff_key_independence(config)?;
     validate_policy(config)
+}
+
+fn validate_network(config: &Config) -> Result<(), ConfigError> {
+    if config.network.fallback_delay_ms > 5_000 {
+        return fail("network.fallbackDelayMs", "must be at most 5000");
+    }
+    if !(1..=3_600).contains(&config.network.route_refresh_seconds) {
+        return fail("network.routeRefreshSeconds", "must be between 1 and 3600");
+    }
+    if !(1..=3_600).contains(&config.network.family_penalty_seconds) {
+        return fail("network.familyPenaltySeconds", "must be between 1 and 3600");
+    }
+    if !(1..=86_400).contains(&config.network.health_memory_seconds) {
+        return fail("network.healthMemorySeconds", "must be between 1 and 86400");
+    }
+    Ok(())
 }
 
 fn validate_log(config: &Config) -> Result<(), ConfigError> {
@@ -189,11 +207,29 @@ fn validate_inbounds(config: &Config) -> Result<HashSet<String>, ConfigError> {
         if inbound.port() == 0 {
             return fail(format!("{path}.port"), "must be greater than zero");
         }
-        if !listeners.insert((inbound.listen(), inbound.port())) {
+        let listen = inbound.listen();
+        if !listen.is_unspecified()
+            && ((listen.is_ipv4()
+                && config.network.address_family == AddressFamilyPolicy::Ipv6Only)
+                || (listen.is_ipv6()
+                    && config.network.address_family == AddressFamilyPolicy::Ipv4Only))
+        {
             return fail(
-                format!("{path}.port"),
-                "listen address and port are configured more than once",
+                format!("{path}.listen"),
+                "explicit listen address is disabled by network.addressFamily",
             );
+        }
+        for address in ConnectionPlanner::listener_addresses(
+            listen,
+            inbound.port(),
+            config.network.address_family,
+        ) {
+            if !listeners.insert(address) {
+                return fail(
+                    format!("{path}.port"),
+                    "expanded listen address and port are configured more than once",
+                );
+            }
         }
         match inbound {
             InboundConfig::Vless(inbound) => validate_vless_inbound(&path, inbound, &mut users)?,
@@ -1204,11 +1240,13 @@ fn fail<T>(path: impl Into<String>, message: impl Into<String>) -> Result<T, Con
 
 #[cfg(test)]
 mod tests {
+    use std::net::IpAddr;
+
     use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 
     use crate::config::{
-        Config, LogOutput, NxrInboundConfig, NxrInboundSettings, NxrSettings, OutboundConfig,
-        SecretString, validate_config,
+        AddressFamilyPolicy, Config, LogOutput, NxrInboundConfig, NxrInboundSettings, NxrSettings,
+        OutboundConfig, SecretString, validate_config,
     };
 
     use super::ConfigError;
@@ -1306,6 +1344,83 @@ mod tests {
                 .expect_err("duplicate socket binding must fail")
                 .path(),
             "inbounds[1].port"
+        );
+    }
+
+    #[test]
+    fn rejects_expanded_dual_stack_listener_collisions() {
+        let mut config = valid_config();
+        config.inbounds[0]
+            .as_vless_mut()
+            .expect("fixture must be VLESS")
+            .listen = IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
+        let mut duplicate = config.inbounds[0].clone();
+        let duplicate_vless = duplicate
+            .as_vless_mut()
+            .expect("fixture must contain VLESS");
+        duplicate_vless.tag = "duplicate-inbound".to_owned();
+        duplicate_vless.listen = IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED);
+        duplicate_vless.settings.clients[0].id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee".to_owned();
+        config.inbounds.push(duplicate);
+
+        let error = validate_config(&config).expect_err("expanded sockets must collide");
+        assert_eq!(error.path(), "inbounds[1].port");
+    }
+
+    #[test]
+    fn rejects_explicit_listener_disabled_by_family_policy() {
+        let mut config = valid_config();
+        config.inbounds[0]
+            .as_vless_mut()
+            .expect("fixture must be VLESS")
+            .listen = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+        config.network.address_family = AddressFamilyPolicy::Ipv6Only;
+        let error = validate_config(&config).expect_err("IPv4 listen must be disabled");
+        assert_eq!(error.path(), "inbounds[0].listen");
+
+        config.inbounds[0]
+            .as_vless_mut()
+            .expect("fixture must be VLESS")
+            .listen = IpAddr::V6(std::net::Ipv6Addr::LOCALHOST);
+        validate_config(&config).expect("matching IPv6 listener must validate");
+    }
+
+    #[test]
+    fn rejects_network_timing_values_outside_their_bounds() {
+        let mut config = valid_config();
+        config.network.fallback_delay_ms = 5_001;
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("fallback bound must hold")
+                .path(),
+            "network.fallbackDelayMs"
+        );
+
+        let mut config = valid_config();
+        config.network.route_refresh_seconds = 0;
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("route lifetime must be positive")
+                .path(),
+            "network.routeRefreshSeconds"
+        );
+
+        let mut config = valid_config();
+        config.network.family_penalty_seconds = 3_601;
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("penalty bound must hold")
+                .path(),
+            "network.familyPenaltySeconds"
+        );
+
+        let mut config = valid_config();
+        config.network.health_memory_seconds = 0;
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("health lifetime must be positive")
+                .path(),
+            "network.healthMemorySeconds"
         );
     }
 

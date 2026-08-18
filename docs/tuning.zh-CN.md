@@ -1117,13 +1117,13 @@ systemd-cgtop -b -n 1                          # 按 cgroup 的 CPU/内存快照
 CPUQuota=300%        # 4 核里的 3 核：租户盘点显示数据库约占 1 核
 MemoryHigh=3500M     # 硬顶之下的节流警戒线
 MemoryMax=4G         # 总共 8G − 实测数据库工作集 ≈3G − OS 余量
-LimitNOFILE=1048576  # 覆盖 2 FD × 计划会话数再加预留（§6）
+LimitNOFILE=1048576  # 覆盖 3 个 setup FD × 计划会话数再加预留（§6）
 ```
 
 `CPUQuota` 来自你实际能让出的核数（28.1 + 28.2）；`MemoryMax` 来自
 `MemAvailable` 减去同居租户的实测工作集；`MemoryHigh` 设在它之下，
-让内核先节流而不是先杀；`LimitNOFILE` 覆盖每个计划会话约 2 个描述符
-加固定预留。`CPUWeight`（默认 100）只在争抢时有意义——如果代理必须
+让内核先节流而不是先杀；`LimitNOFILE` 覆盖每个计划会话双地址族 setup 的
+3 个描述符峰值（setup 后为 2 个）加固定预留。`CPUWeight`（默认 100）只在争抢时有意义——如果代理必须
 在与同居租户的 CPU 争抢中获胜，就调大它。
 
 ### 28.5 标定饱和拐点

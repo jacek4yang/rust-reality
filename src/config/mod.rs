@@ -15,13 +15,13 @@ pub use generate::{
 };
 pub use io::{ConfigLoadError, MAX_CONFIG_BYTES, format_config, load_config};
 pub use model::{
-    AssetsConfig, BlackholeSettings, Config, DirectBarrierConfig, DnsConfig, DnsStrategy,
-    FileLogConfig, GlobalRule, HandoffInboundConfig, HandoffInboundSettings, HandoffSettings,
-    InboundConfig, LogConfig, LogLevel, LogOutput, Network, NxrInboundConfig, NxrInboundSettings,
-    NxrSettings, OutboundConfig, PolicyConfig, PortMatcher, RealityConfig, RelayPolicy,
-    ResourceGovernorConfig, ResourceMode, RouteRule, RoutingConfig, RuntimeConfig, SecretString,
-    Socks5Settings, StreamSettings, UserPolicy, VlessClient, VlessInboundConfig,
-    VlessInboundSettings,
+    AddressFamilyPolicy, AssetsConfig, BlackholeSettings, Config, DirectBarrierConfig, DnsConfig,
+    DnsStrategy, FileLogConfig, GlobalRule, HandoffInboundConfig, HandoffInboundSettings,
+    HandoffSettings, InboundConfig, LogConfig, LogLevel, LogOutput, Network, NetworkConfig,
+    NxrInboundConfig, NxrInboundSettings, NxrSettings, OutboundConfig, PolicyConfig, PortMatcher,
+    RealityConfig, RelayPolicy, ResourceGovernorConfig, ResourceMode, RouteRule, RoutingConfig,
+    RuntimeConfig, SecretString, Socks5Settings, StreamSettings, UserPolicy, VlessClient,
+    VlessInboundConfig, VlessInboundSettings,
 };
 pub use schema::{config_schema, format_config_schema};
 pub use validate::{ConfigError, validate_config};
@@ -39,6 +39,13 @@ pub(crate) fn test_config_json() -> &'static str {
   "dns": {
     "servers": ["system"],
     "timeoutMs": 5000
+  },
+  "network": {
+    "addressFamily": "auto",
+    "fallbackDelayMs": 250,
+    "routeRefreshSeconds": 30,
+    "familyPenaltySeconds": 30,
+    "healthMemorySeconds": 300
   },
   "inbounds": [{
     "protocol": "vless",

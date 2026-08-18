@@ -30,11 +30,17 @@ mod tests {
         assert!(schema.contains("inbounds"));
         assert!(schema.contains("routing"));
         assert!(!schema.contains("metrics"));
-        assert!(!schema.contains("health"));
+        assert!(!schema.contains("\"health\""));
         assert!(!schema.contains("observability"));
         assert!(schema.contains("preSharedKey"));
         assert!(!schema.contains("minConnections"));
         assert!(!schema.contains("maxStreamsPerConnection"));
         assert!(!schema.contains("dedicatedAfterBytes"));
+        for policy in ["auto", "preferIpv4", "preferIpv6", "ipv4Only", "ipv6Only"] {
+            assert!(
+                schema.contains(policy),
+                "missing address-family mode {policy}"
+            );
+        }
     }
 }

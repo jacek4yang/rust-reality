@@ -188,12 +188,18 @@ impl VisionHandler {
         pressure: &crate::runtime::PressureGauge,
         direct_barrier: crate::runtime::DirectBarrier,
         governor: crate::runtime::ResourceGovernor,
+        network_environment: crate::network::NetworkEnvironment,
     ) -> Result<Self, RoutingCompileError> {
         Self::build(
             config,
             assets,
             relay,
-            Some((pressure.clone(), direct_barrier, governor)),
+            Some((
+                pressure.clone(),
+                direct_barrier,
+                governor,
+                network_environment,
+            )),
         )
     }
 
@@ -205,26 +211,31 @@ impl VisionHandler {
             crate::runtime::PressureGauge,
             crate::runtime::DirectBarrier,
             crate::runtime::ResourceGovernor,
+            crate::network::NetworkEnvironment,
         )>,
     ) -> Result<Self, RoutingCompileError> {
         let governor = &config.policy.resource_governor;
         let connect_timeout = Duration::from_millis(governor.connect_timeout_ms);
         let (outbounds, dns_governor) = match authorities {
-            Some((_pressure, direct_barrier, dns_governor)) => (
-                OutboundRegistry::with_barrier(
+            Some((_pressure, direct_barrier, dns_governor, network_environment)) => (
+                OutboundRegistry::with_barrier_and_network(
                     &config.outbounds,
                     direct_barrier,
                     connect_timeout,
                     relay.fd_budget().clone(),
+                    &config.network,
+                    network_environment,
                 ),
                 dns_governor,
             ),
             None => (
-                OutboundRegistry::new(
+                OutboundRegistry::with_barrier_and_network(
                     &config.outbounds,
-                    &config.policy.direct_barrier,
+                    crate::runtime::DirectBarrier::new(&config.policy.direct_barrier),
                     connect_timeout,
                     relay.fd_budget().clone(),
+                    &config.network,
+                    crate::network::NetworkEnvironment::detect(),
                 ),
                 crate::runtime::ResourceGovernor::new(governor),
             ),

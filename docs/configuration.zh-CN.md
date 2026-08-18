@@ -26,6 +26,7 @@ rust-reality config format --config config.json > config.formatted.json
   "log": {},
   "assets": {},
   "dns": {},
+  "network": {},
   "inbounds": [],
   "outbounds": [],
   "routing": {},
@@ -39,6 +40,7 @@ rust-reality config format --config config.json > config.formatted.json
 | `log` | 否 | stderr/info | 日志目标、级别和有界文件保留。 |
 | `assets` | 否 | 社区 GeoIP/GeoSite URL 和有界缓存默认值 | 路由资产来源与刷新策略。 |
 | `dns` | 否 | 系统解析器、5000 ms | IP 辅助路由使用的 DNS 行为。 |
+| `network` | 否 | 自治双栈 | 监听地址族、本地地址族选择、健康记忆和回退时序。 |
 | `inbounds` | 是 | — | 至少一个强类型 `vless` 或内部 `nxr`、`handoff` 监听。 |
 | `outbounds` | 是 | — | 至少一个 `direct`、`blackhole`、`socks5`、`nxr` 或 `handoff` 传输。 |
 | `routing` | 是 | — | 全局规则和显式 UUID 分组策略。 |
@@ -88,11 +90,53 @@ rust-reality config format --config config.json > config.formatted.json
 一个域名最多保留 64 个唯一地址。direct 出站复用 IP/GeoIP 路由决策使用的同一地址
 快照，避免第二次解析得到不一致结果。
 
+## `network`
+
+```json
+{
+  "addressFamily": "auto",
+  "fallbackDelayMs": 250,
+  "routeRefreshSeconds": 30,
+  "familyPenaltySeconds": 30,
+  "healthMemorySeconds": 300
+}
+```
+
+| 字段 | 必填 | 默认值/允许值 | 含义与约束 |
+| --- | --- | --- | --- |
+| `network.addressFamily` | 否 | `auto`；`auto`、`preferIpv4`、`preferIpv6`、`ipv4Only`、`ipv6Only` | 控制通配监听和所有本地解析代理端点可用的地址族；推荐 `auto`。 |
+| `network.fallbackDelayMs` | 否 | `250` | 启动首个备用地址族尝试前的延迟，`0..=5000`；零表示立即同时启动。 |
+| `network.routeRefreshSeconds` | 否 | `30` | 内核路由/源地址证据的缓存寿命，`1..=3600`。 |
+| `network.familyPenaltySeconds` | 否 | `30` | 遇到 `ENETUNREACH`、`EHOSTUNREACH`、`EADDRNOTAVAIL`、总超时或较慢的落败地址族后降低其优先级的时间，`1..=3600`。 |
+| `network.healthMemorySeconds` | 否 | `300` | 每地址族连接延迟 EWMA 的记忆时间，`1..=86400`。 |
+
+`auto` 启用两个地址族：先考虑是否正受惩罚，再考虑可用路由和源地址，最后参考最近
+成功的建连延迟；没有证据时先尝试 IPv6，并在回退延迟后启动 IPv4。路由检测只执行
+本地 UDP 路由和源地址选择，不发送数据包；它不等同于“IPv6 地址存在就能访问 IPv6
+互联网”。真实 TCP 成功、地址族级失败、超时和延迟只更新两个固定、无锁的健康记录。
+惩罚与延迟记录都会过期，因此网络修复后无需重启或遥测即可恢复尝试。
+
+`preferIpv4` 和 `preferIpv6` 都启用双栈并设置初始偏好，但实时路由/健康证据可以暂时
+选择另一族。`ipv4Only` 和 `ipv6Only` 会过滤 DNS 结果，并只创建对应地址族的通配监听。
+数字 IP 字面量跳过 DNS，但其地址族被禁用时仍会拒绝。
+
+混合 A/AAAA 结果会去重并交错排列。最多同时进行两个 connect；所有尝试共用一个绝对
+截止时间；首个成功者获胜；返回前会取消并回收落败任务和套接字。每个活动候选都持有
+一个 FD 预算单位；第二个单位不可用时会串行回退，绝不突破预算。SOCKS5/NXR/Handoff
+服务器名称使用此策略解析；有意交给远端代理的原始目标保持不变。
+
 ## `inbounds`
 
-`inbounds` 不得为空。每个监听的 `tag` 唯一，两个条目不能绑定相同
+`inbounds` 不得为空。每个监听的 `tag` 唯一，两个条目展开后不能绑定相同
 `(listen, port)`。tag 长度 1–64，只能包含 ASCII 字母、数字、点、横线和下划线。
 `port` 范围 `1..=65535`。
+
+未指定地址（`0.0.0.0` 或 `::`）是与地址族无关的通配符：`auto` 和两个 `prefer*`
+模式会分别创建 `0.0.0.0` 与 `::` 套接字，`*Only` 模式只创建一个。所有 IPv6
+套接字都在 bind 前显式设置 `IPV6_V6ONLY=1`，因此行为不依赖
+`net.ipv6.bindv6only`。`127.0.0.1`、`::1` 等具体地址只创建一个套接字，且必须被
+`network.addressFamily` 允许。会增加或删除套接字的监听拓扑/地址族变更需要重启；
+兼容的偏好与健康时序变更可原子热重载。
 
 ### 公网 VLESS + REALITY + Vision 入站
 
@@ -129,17 +173,11 @@ rust-reality config format --config config.json > config.formatted.json
 以上占位符故意不能直接使用。请通过 `config generate standalone`、
 `config generate line` 或 `config generate handoff` 生成真实状态。
 
-**v1.2 → v1.3 迁移：**把 `streamSettings.realitySettings.shortIds` 移进其
-所属的 `settings.clients[]` 对象，并改名为 `shortIds`，然后删除旧字段。单客户端
-可原样移动整个数组；多客户端必须拆分或重新生成，使每个 UUID 至少有一个，且
-任何 short ID 都不出现在两个 UUID 下。每台客户端设备改用其 UUID 所拥有的一个
-值。v1.3 会刻意拒绝含糊的旧共享列表，不会替认证凭据猜测归属关系。
-
 | 字段 | 必填 | 默认值/固定值 | 含义与约束 |
 | --- | --- | --- | --- |
 | `protocol` | 是 | 固定 `vless` | 选择唯一公网协议。 |
 | `tag` | 是 | — | 唯一监听/路由 tag。 |
-| `listen` | 是 | — | IPv4 或 IPv6 绑定地址。 |
+| `listen` | 是 | — | 具体 IPv4/IPv6 地址，或由 `network.addressFamily` 展开的地址族无关未指定通配符。 |
 | `port` | 是 | — | 非零 TCP 端口。 |
 | `settings.clients` | 是 | — | 非空授权客户端数组；UUID 在所有公网入站中全局唯一。 |
 | `settings.clients[].id` | 是 | — | 带横线的规范 UUID；身份比较时十六进制大小写不敏感。 |
@@ -191,7 +229,7 @@ rust-reality config format --config config.json > config.formatted.json
 | --- | --- | --- | --- |
 | `protocol` | 是 | 固定 `nxr` | 选择内部落地协议。 |
 | `tag` | 是 | — | 唯一监听/运维 tag。 |
-| `listen` | 是 | — | 内部绑定地址，必须由主机/云防火墙限制。 |
+| `listen` | 是 | — | 内部具体地址或策略展开通配符，必须由主机/云防火墙限制。 |
 | `port` | 是 | — | 非零原始 NXR TCP 端口。 |
 | `settings.preSharedKey` | 是 | — | 独立 URL-safe 无填充 base64，解码为恰好 32 字节。 |
 | `settings.maxTimeDifferenceSeconds` | 否 | `30` | 接受的绝对墙上时钟差，`1..=300`。 |
@@ -227,7 +265,7 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 | --- | --- | --- | --- |
 | `protocol` | 是 | 固定 `handoff` | 选择内部会话转移协议。 |
 | `tag` | 是 | — | 唯一监听/运维 tag。 |
-| `listen` | 是 | — | 内部绑定地址，必须由主机/云防火墙限制。 |
+| `listen` | 是 | — | 内部具体地址或策略展开通配符，必须由主机/云防火墙限制。 |
 | `port` | 是 | — | 非零原始 Handoff TCP 端口。 |
 | `settings.preSharedKey` | 是 | — | 独立 URL-safe 无填充 base64，解码为恰好 32 字节；与线路机 handoff 出站共享的成对 PSK。 |
 | `settings.privateKey` | 是 | — | 独立的静态 X25519 私钥，URL-safe 无填充 base64，解码为恰好 32 字节；其公钥即线路出站的 `landingPublicKey`。 |

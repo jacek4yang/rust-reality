@@ -7,7 +7,8 @@ use tokio::{
 };
 
 use crate::{
-    config::ResourceGovernorConfig,
+    config::{NetworkConfig, ResourceGovernorConfig},
+    network::NetworkEnvironment,
     protocol::reality::{
         ClientHello,
         tls13::{
@@ -95,6 +96,7 @@ pub struct RealityFallback {
     relay: TcpRelay,
     connect_timeout: Duration,
     session_timeout: Duration,
+    connector: super::connector::DestinationConnector,
 }
 
 /// One admitted cover connection whose byte ownership can transition to fallback.
@@ -117,12 +119,37 @@ impl RealityFallback {
         config: &ResourceGovernorConfig,
         relay: TcpRelay,
     ) -> Self {
+        Self::with_environment(
+            target,
+            governor,
+            config,
+            relay,
+            &NetworkConfig::default(),
+            NetworkEnvironment::detect(),
+        )
+    }
+
+    /// Creates fallback state over the shared process network environment.
+    #[must_use]
+    pub fn with_environment(
+        target: impl Into<Arc<str>>,
+        governor: ResourceGovernor,
+        config: &ResourceGovernorConfig,
+        relay: TcpRelay,
+        network: &NetworkConfig,
+        environment: NetworkEnvironment,
+    ) -> Self {
         Self {
             target: target.into(),
             governor,
             relay,
             connect_timeout: Duration::from_millis(config.connect_timeout_ms),
             session_timeout: Duration::from_millis(config.fallback_timeout_ms),
+            connector: super::connector::DestinationConnector::with_environment(
+                Duration::from_millis(config.connect_timeout_ms),
+                network.clone(),
+                environment,
+            ),
         }
     }
 
@@ -194,17 +221,23 @@ impl RealityFallback {
         let connect_deadline = now
             .checked_add(self.connect_timeout)
             .map_or(deadline, |candidate| candidate.min(deadline));
-        let fd_permit = self
-            .relay
-            .fd_budget()
-            .try_acquire(crate::runtime::UNITS_OUTBOUND_SOCKET)
-            .ok_or(FallbackError::DescriptorBudget)?;
-        let connect = super::connector::connect_target(self.target.as_ref());
-        let mut stream = time::timeout_at(connect_deadline, connect)
-            .await
-            .map_err(|_| FallbackError::ConnectTimeout)?
-            .map_err(FallbackError::Io)?;
-        crate::transport::TcpAcceptor::configure_stream(&stream).map_err(FallbackError::Io)?;
+        let connected = time::timeout_at(
+            connect_deadline,
+            self.connector
+                .connect_target_accounted(self.target.as_ref(), self.relay.fd_budget()),
+        )
+        .await
+        .map_err(|_| FallbackError::ConnectTimeout)?
+        .map_err(|error| match error {
+            super::connector::DestinationConnectError::DescriptorBudget => {
+                FallbackError::DescriptorBudget
+            }
+            super::connector::DestinationConnectError::TimedOut { .. } => {
+                FallbackError::ConnectTimeout
+            }
+            error => FallbackError::Io(error.into_io()),
+        })?;
+        let (mut stream, fd_permit) = connected.into_parts();
         time::timeout_at(deadline, stream.write_all(consumed_prefix))
             .await
             .map_err(|_| FallbackError::SessionTimeout)?

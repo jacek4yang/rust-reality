@@ -27,7 +27,8 @@ use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
 use crate::{
-    config::{HandoffInboundConfig, HandoffSettings, SecretString},
+    config::{HandoffInboundConfig, HandoffSettings, NetworkConfig, SecretString},
+    network::NetworkEnvironment,
     protocol::{
         handoff::{
             ContinuationState, HEADER_LEN, HandoffError, HandoffLandingKeys, HandoffPsk,
@@ -39,7 +40,7 @@ use crate::{
         },
         vless::UserId,
     },
-    runtime::{FdBudget, FdPermit, UNITS_OUTBOUND_SOCKET},
+    runtime::{FdBudget, FdPermit},
     transport::{
         relay::RelayStats,
         tcp_relay::{TcpRelay, TcpRelayConfigError},
@@ -64,6 +65,7 @@ pub struct HandoffLine {
     landing_public: PublicKey,
     connect_timeout: Duration,
     first_byte_timeout: Duration,
+    connector: DestinationConnector,
 }
 
 impl HandoffLine {
@@ -73,6 +75,18 @@ impl HandoffLine {
     /// configuration has already excluded.
     #[must_use]
     pub fn from_settings(settings: &HandoffSettings) -> Option<Self> {
+        Self::from_settings_with_connector(
+            settings,
+            DestinationConnector::new(Duration::from_millis(settings.connect_timeout_ms)),
+        )
+    }
+
+    /// Compiles settings while sharing the process network environment.
+    #[must_use]
+    pub(crate) fn from_settings_with_connector(
+        settings: &HandoffSettings,
+        connector: DestinationConnector,
+    ) -> Option<Self> {
         let psk = Zeroizing::new(
             BASE64_URL_SAFE_NO_PAD
                 .decode(settings.pre_shared_key.expose())
@@ -90,6 +104,7 @@ impl HandoffLine {
             landing_public: PublicKey::from(public),
             connect_timeout: Duration::from_millis(settings.connect_timeout_ms),
             first_byte_timeout: Duration::from_millis(settings.first_byte_timeout_ms),
+            connector: connector.with_timeout(Duration::from_millis(settings.connect_timeout_ms)),
         })
     }
 
@@ -139,22 +154,22 @@ impl HandoffLine {
             &mut message,
         )
         .map_err(HandoffLineError::Transfer)?;
-        let fd_permit = fd_budget
-            .try_acquire(UNITS_OUTBOUND_SOCKET)
-            .ok_or(HandoffLineError::DescriptorBudget)?;
         let deadline = Instant::now()
             .checked_add(self.connect_timeout)
             .ok_or(HandoffLineError::Timeout)?;
-        let stream = time::timeout_at(
+        let connected = time::timeout_at(
             deadline,
-            super::connector::connect_host(self.address.as_ref(), self.port),
+            self.connector
+                .connect_host_accounted(self.address.as_ref(), self.port, fd_budget),
         )
         .await
         .map_err(|_| HandoffLineError::Timeout)?
-        .map_err(HandoffLineError::Connect)?;
-        crate::transport::TcpAcceptor::configure_stream(&stream)
-            .map_err(HandoffLineError::Connect)?;
-        let mut stream = stream;
+        .map_err(|error| match error {
+            DestinationConnectError::DescriptorBudget => HandoffLineError::DescriptorBudget,
+            DestinationConnectError::TimedOut { .. } => HandoffLineError::Timeout,
+            error => HandoffLineError::Connect(error.into_io()),
+        })?;
+        let (mut stream, fd_permit) = connected.into_parts();
         time::timeout_at(deadline, stream.write_all(&message))
             .await
             .map_err(|_| HandoffLineError::Timeout)?
@@ -296,6 +311,8 @@ impl HandoffLandingHandler {
         relay: TcpRelay,
         io_timeout: Duration,
         outbounds: &OutboundRegistry,
+        network: &NetworkConfig,
+        network_environment: NetworkEnvironment,
     ) -> Result<Self, HandoffLandingConfigError> {
         let settings = &inbound.settings;
         let psk = decode_key(&settings.pre_shared_key)?;
@@ -317,7 +334,7 @@ impl HandoffLandingHandler {
             previous_secrets,
         )
         .ok_or(HandoffLandingConfigError::Key)?;
-        let handler = Self::new(
+        let mut handler = Self::new(
             keys,
             replay,
             inbound.settings.max_time_difference_seconds,
@@ -325,6 +342,11 @@ impl HandoffLandingHandler {
             Duration::from_millis(inbound.settings.authentication_timeout_ms),
             relay,
             io_timeout,
+        );
+        handler.connector = DestinationConnector::with_environment(
+            Duration::from_millis(inbound.settings.connect_timeout_ms),
+            network.clone(),
+            network_environment,
         );
         Ok(match &inbound.settings.egress {
             Some(tag) => handler.with_egress(outbounds.clone(), tag),
@@ -349,7 +371,7 @@ impl HandoffLandingHandler {
         clippy::too_many_arguments,
         reason = "one parameter per compiled listener policy input"
     )]
-    pub const fn new(
+    pub fn new(
         keys: HandoffLandingKeys,
         replay: HandoffReplayCache,
         maximum_time_difference: u64,
@@ -411,8 +433,8 @@ impl HandoffLandingHandler {
         // The descriptor unit is reserved before connect(2) and outlives the
         // relay: the outbound socket closes before its unit is released. Both
         // permit slots are declared before the socket so either dial path
-        // keeps that drop order. An egress registry acquires its own unit, so
-        // the manual acquisition stays on the default direct path only.
+        // keeps that drop order. The egress registry and the default connector
+        // each acquire and return their own correctly accounted unit.
         let _fd_permit;
         let _egress_permit;
         let destination = match &self.egress {
@@ -429,12 +451,19 @@ impl HandoffLandingHandler {
                 Err(source) => return Err(HandoffLandingError::Egress(source)),
             },
             None => {
-                _fd_permit = self
-                    .relay
-                    .fd_budget()
-                    .try_acquire(UNITS_OUTBOUND_SOCKET)
-                    .ok_or(HandoffLandingError::DescriptorBudget)?;
-                self.connector.connect(&destination).await?
+                let connected = self
+                    .connector
+                    .connect_resolved_accounted(&destination, &[], self.relay.fd_budget())
+                    .await
+                    .map_err(|error| match error {
+                        DestinationConnectError::DescriptorBudget => {
+                            HandoffLandingError::DescriptorBudget
+                        }
+                        error => HandoffLandingError::Destination(error),
+                    })?;
+                let (stream, permit) = connected.into_parts();
+                _fd_permit = permit;
+                stream
             }
         };
         let (reader_half, writer_half) = inbound.into_split();

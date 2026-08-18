@@ -17,6 +17,9 @@ pub struct Config {
     /// Name-resolution behavior.
     #[serde(default)]
     pub dns: DnsConfig,
+    /// Process-wide IP-family selection and fallback behavior.
+    #[serde(default)]
+    pub network: NetworkConfig,
     /// Protected inbound listeners.
     pub inbounds: Vec<InboundConfig>,
     /// Available outbound transports.
@@ -29,6 +32,92 @@ pub struct Config {
     /// Process resource mode.
     #[serde(default)]
     pub runtime: RuntimeConfig,
+}
+
+/// Process-wide IP-family policy and bounded connection-planning controls.
+///
+/// The policy applies to wildcard listeners and to every proxy endpoint
+/// resolved and dialed locally. Destinations intentionally forwarded to a
+/// SOCKS5, NXR, or Handoff peer retain their original address and are not
+/// resolved locally.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct NetworkConfig {
+    /// Enabled families and their initial preference. `auto` additionally
+    /// considers local route usability and bounded passive health state.
+    #[serde(default)]
+    pub address_family: AddressFamilyPolicy,
+    /// Delay before the first alternate-family connection attempt.
+    #[serde(default = "default_fallback_delay_ms")]
+    pub fallback_delay_ms: u64,
+    /// Lifetime of the cached route/local-address observation.
+    #[serde(default = "default_route_refresh_seconds")]
+    pub route_refresh_seconds: u64,
+    /// Time a family-level reachability error deprioritizes that family.
+    #[serde(default = "default_family_penalty_seconds")]
+    pub family_penalty_seconds: u64,
+    /// Lifetime of learned family latency before it expires.
+    #[serde(default = "default_health_memory_seconds")]
+    pub health_memory_seconds: u64,
+}
+
+impl Default for NetworkConfig {
+    fn default() -> Self {
+        Self {
+            address_family: AddressFamilyPolicy::Auto,
+            fallback_delay_ms: default_fallback_delay_ms(),
+            route_refresh_seconds: default_route_refresh_seconds(),
+            family_penalty_seconds: default_family_penalty_seconds(),
+            health_memory_seconds: default_health_memory_seconds(),
+        }
+    }
+}
+
+const fn default_fallback_delay_ms() -> u64 {
+    250
+}
+
+const fn default_route_refresh_seconds() -> u64 {
+    30
+}
+
+const fn default_family_penalty_seconds() -> u64 {
+    30
+}
+
+const fn default_health_memory_seconds() -> u64 {
+    300
+}
+
+/// IP families enabled for listeners and locally resolved connection setup.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AddressFamilyPolicy {
+    /// Enable both families and adapt preference to route and connection health.
+    #[default]
+    Auto,
+    /// Enable both families, initially preferring IPv4 unless it is unhealthy.
+    PreferIpv4,
+    /// Enable both families, initially preferring IPv6 unless it is unhealthy.
+    PreferIpv6,
+    /// Bind and dial IPv4 only.
+    Ipv4Only,
+    /// Bind and dial IPv6 only.
+    Ipv6Only,
+}
+
+impl AddressFamilyPolicy {
+    /// Returns whether IPv4 is enabled.
+    #[must_use]
+    pub const fn allows_ipv4(self) -> bool {
+        !matches!(self, Self::Ipv6Only)
+    }
+
+    /// Returns whether IPv6 is enabled.
+    #[must_use]
+    pub const fn allows_ipv6(self) -> bool {
+        !matches!(self, Self::Ipv4Only)
+    }
 }
 
 /// Process-level resource posture.

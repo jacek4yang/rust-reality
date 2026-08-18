@@ -143,8 +143,9 @@ rust-reality serve --config config.tuned.json
 ```
 
 The generated JSON contains a UUID, private REALITY key, two UUID-owned short
-IDs, and a
-direct-routing policy. The client-facing REALITY public key is written to
+IDs, an autonomous `network.addressFamily: auto` policy, and a direct-routing
+policy. Its unspecified listen address creates independent IPv4 and IPv6
+sockets. The client-facing REALITY public key is written to
 standard error so the private server configuration can be captured separately.
 Protect both outputs and replace the example target with a destination that
 passes `probe-dest` from the deployment host. The full walkthrough, including
@@ -163,9 +164,7 @@ UUID's `routing.users[].rules` in order, then that user group's
 categories and alternative values inside a category are ORed. See the
 complete [configuration reference](docs/configuration.md) for every field,
 default, constraint, matcher syntax, reload behavior, and the dedicated
-resource mode. v1.2 configurations must move the former shared
-`realitySettings.shortIds` list under its owning `clients[]` entry before a
-v1.3 restart.
+resource mode.
 
 ## Deployment
 

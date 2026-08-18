@@ -264,9 +264,34 @@ impl TcpAcceptor {
     ///
     /// Returns the raw OS error when the address cannot be bound.
     pub async fn bind(address: SocketAddr) -> io::Result<Self> {
+        #[cfg(target_os = "linux")]
+        let listener = if address.is_ipv6() {
+            TcpListener::from_std(rr_linux::socket::bind_tcp_listener_v6only(address)?)?
+        } else {
+            TcpListener::bind(address).await?
+        };
+        #[cfg(not(target_os = "linux"))]
         let listener = TcpListener::bind(address).await?;
 
         Ok(Self { listener })
+    }
+
+    /// Returns whether an IPv6 listener has `IPV6_V6ONLY` enabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidInput` for an IPv4 listener or the raw socket-option
+    /// query error.
+    #[cfg(target_os = "linux")]
+    pub fn ipv6_only(&self) -> io::Result<bool> {
+        use std::os::fd::AsRawFd as _;
+        if !self.local_addr()?.is_ipv6() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "IPv4 listener has no IPV6_V6ONLY option",
+            ));
+        }
+        rr_linux::socket::ipv6_only(self.listener.as_raw_fd())
     }
 
     /// Returns the local address assigned to the listening socket.
@@ -410,7 +435,7 @@ impl Default for AcceptBackoff {
 mod tests {
     use std::{
         io,
-        net::{Ipv4Addr, SocketAddr},
+        net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     };
 
     use tokio::net::TcpStream;
@@ -431,6 +456,50 @@ mod tests {
 
         assert_eq!(actual_addr.ip(), requested_addr.ip());
         assert_ne!(actual_addr.port(), 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn ipv6_listener_is_explicitly_v6_only_before_bind() {
+        let acceptor = TcpAcceptor::bind(SocketAddr::from((Ipv6Addr::LOCALHOST, 0)))
+            .await
+            .expect("IPv6 loopback listener should bind");
+        assert!(
+            acceptor.ipv6_only().expect("read IPV6_V6ONLY"),
+            "listener behavior must not inherit net.ipv6.bindv6only"
+        );
+        let address = acceptor.local_addr().expect("read IPv6 listener address");
+        let connect = TcpStream::connect(address);
+        let accept = acceptor.accept();
+        let (connected, accepted) = tokio::join!(connect, accept);
+        let _client = connected.expect("IPv6 loopback must connect");
+        let (_server, peer) = accepted.expect("IPv6 loopback must be accepted");
+        assert!(peer.is_ipv6());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn separate_wildcard_sockets_accept_ipv4_and_ipv6_on_one_port() {
+        let ipv4 = TcpAcceptor::bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)))
+            .await
+            .expect("IPv4 wildcard should bind");
+        let port = ipv4.local_addr().expect("read IPv4 port").port();
+        let ipv6 = TcpAcceptor::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)))
+            .await
+            .expect("independent IPv6 wildcard should bind on the same port");
+        assert!(ipv6.ipv6_only().expect("read IPV6_V6ONLY"));
+
+        let v4_connect = TcpStream::connect((Ipv4Addr::LOCALHOST, port));
+        let v4_accept = ipv4.accept();
+        let (v4_client, v4_server) = tokio::join!(v4_connect, v4_accept);
+        let _v4_client = v4_client.expect("IPv4 ingress should connect");
+        assert!(v4_server.expect("IPv4 ingress should accept").1.is_ipv4());
+
+        let v6_connect = TcpStream::connect((Ipv6Addr::LOCALHOST, port));
+        let v6_accept = ipv6.accept();
+        let (v6_client, v6_server) = tokio::join!(v6_connect, v6_accept);
+        let _v6_client = v6_client.expect("IPv6 ingress should connect");
+        assert!(v6_server.expect("IPv6 ingress should accept").1.is_ipv6());
     }
 
     #[tokio::test(flavor = "current_thread")]

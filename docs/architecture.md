@@ -105,6 +105,31 @@ canonical samples live in [benchmarks.md](benchmarks.md).
    with its accumulated stats instead of failing the session as a protocol
    rejection.
 
+## Autonomous dual-stack setup path
+
+```text
+NetworkEnvironment (2 fixed atomic family records)
+        ↓ route/source availability + expiring passive health
+AddressFamilyPolicy (auto / prefer / only)
+        ↓ filter, de-duplicate, interleave
+ConnectionPlanner (one absolute deadline, at most 2 live candidates)
+        ↓ one FD permit per candidate
+Dialer (first success wins; abort + drain losers)
+```
+
+The same process-lifetime environment is shared by Direct, REALITY target and
+fallback, SOCKS5/NXR/Handoff server dials, landing direct egress, probes, and
+self-tests. Routing DNS snapshots flow into the planner unchanged instead of
+triggering a second lookup. A destination intentionally forwarded through a
+remote proxy is never locally resolved. Numeric literals enter the planner
+directly.
+
+Environment work is connection-setup-only: fixed atomic loads in ordinary
+plans, a cached kernel-only route/source refresh, and passive updates after
+connect completion. It never runs in relay reads, writes, framing, crypto, or
+splice. Listener expansion likewise happens once at compilation; dual-stack
+wildcards bind one IPv4 socket and one pre-bind `IPV6_V6ONLY` IPv6 socket.
+
 ## Hot-path topology
 
 Per-connection steady cost: 2 tasks, no per-record allocation, one timer
@@ -117,7 +142,7 @@ registration per progress step, no hot-path logging.
 | fallback | conn task | prefix vecs (bounded) | fallback CAS, FD CAS ×2, connect | connect, prefix write, then relay | prefix writes only |
 | VLESS request | conn task | 533 B initial buffer; grows only for coalesced payload; accepted domain owned once | 0 | TLS records | Addons/domain/prefetch parsed borrowed |
 | routing | conn task | 0 no-DNS hit path | one UUID lookup; group policy shared by Arc | optional bounded DNS (spawn_blocking, 1 semaphore slot held till op ends) | 0 |
-| outbound connect | conn task | 0 | one tag lookup; FD unit CAS; lock-free rate + concurrency CAS | connect | 0 |
+| outbound connect | conn task | one bounded address plan; numeric/single family skips DNS and task spawning | one tag lookup; 1 FD CAS/candidate; lock-free rate + concurrency CAS | connect | 0 |
 | Vision framed uplink | direction task | socket buffer once (grow-only) | 0 in loop | 1 read/refill (≤64 KiB), 1 write/record | AEAD open in place; borrowed Vision decode (0) |
 | Vision framed downlink | direction task | socket buffer once | 0 in loop | 1 read/refill, 1 write per packed record set | AEAD seal in place; Vision frames packed |
 | Direct transition | both tasks | 0 | 2 atomics + 1 mutex (once) | 0 | pending-drain write |
@@ -214,8 +239,9 @@ tighter constraint.
 through one path; release uses checked subtraction so a double-release bug is
 recorded rather than silently absorbed; waiting under pressure is a bounded
 `Notify` wakeup, never a poll loop. Conservative unit costs: 1 per inbound
-socket, 1 per outbound socket, 1 per live connector candidate, 4 per
-bidirectional splice relay.
+socket, 1 per live outbound candidate (the winner retains that same unit as
+the established outbound), and 4 per bidirectional splice relay. Thus the
+setup peak is 3 FDs per session and the established TCP peak is 2.
 
 Pressure is entered at 15/16 of capacity and left at 13/16; the hysteresis
 gap keeps a burst of releases from re-entering pressure on the next accept.

@@ -121,6 +121,10 @@ harness = false
 name = "admission"
 harness = false
 
+[[bench]]
+name = "dual_stack"
+harness = false
+
 [profile.release]
 codegen-units = 1
 lto = "thin"

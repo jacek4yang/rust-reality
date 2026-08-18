@@ -23,7 +23,7 @@
 | Harness | 用途 |
 |---|---|
 | `rust-reality benchmark`（内置） | 有界、机器可读的进程内协议测量（VLESS 解码、Vision framing、NXR 认证）。 |
-| `cargo bench`（criterion） | VLESS 解码、Vision framing、relay 后端、自适应 short-ID/身份/tag 查找、REALITY digest 哈希、重放过期/reserve 和 direct admission 争用的回归分析，带基线和图表。 |
+| `cargo bench`（criterion） | VLESS 解码、Vision framing、relay 后端、双栈规划/setup/fallback、自适应 short-ID/身份/tag 查找、REALITY digest 哈希、重放过期/reserve 和 direct admission 争用的回归分析，带基线和图表。 |
 | `scripts/benchmark-matrix.sh` | 完整 A/B/C loopback 矩阵（baseline/final/Xray），覆盖 方向 × 载荷 × 并发。 |
 | `scripts/benchmark-fallback-ab.sh` | 干净的 fallback A/B：两侧 warn 级日志，直连 listener。 |
 | `scripts/benchmark-setup-rate.sh` | 连接 setup 速率模型（accept → 第一次 Vision 转换）。 |
