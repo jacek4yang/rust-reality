@@ -332,6 +332,10 @@ fn build_server_flight_inner(
     selected_alpn: Option<&[u8]>,
     plan: Option<CoverHandshakePlan>,
 ) -> Result<ServerFlight, RealityHandshakeError> {
+    let selected_alpn = match plan {
+        Some(plan) => cover_compatible_alpn(client, selected_alpn, &plan),
+        None => selected_alpn,
+    };
     if let Some(protocol) = selected_alpn
         && !client.alpn_protocols().any(|offered| offered == protocol)
     {
@@ -512,6 +516,47 @@ fn build_server_flight_inner(
     })
 }
 
+/// Chooses the ALPN the generated EncryptedExtensions may claim under a
+/// cover-derived flight plan.
+///
+/// The cover's own EncryptedExtensions is encrypted under cover-held key
+/// material, so its ALPN selection is not directly readable; the first
+/// positional record slot is the only observable signal. A cover that
+/// negotiated no ALPN emits a minimal EncryptedExtensions record whose slot
+/// cannot hold an ALPN extension, so claiming the client's first protocol
+/// there fails the shaped padding and silently falls back to the cover. The
+/// generated EncryptedExtensions therefore claims the caller's protocol when
+/// it fits the observed slot, else the first client-offered protocol that
+/// fits, else none — exactly what a real no-ALPN cover emits. A coalesced
+/// shape has no per-message slot, so the caller's selection is kept and the
+/// whole-flight fit check stays authoritative.
+fn cover_compatible_alpn<'a>(
+    client: &'a ClientHello,
+    preferred: Option<&'a [u8]>,
+    plan: &CoverHandshakePlan,
+) -> Option<&'a [u8]> {
+    let CoverHandshakeRecordShape::PositionalRecords { wire_lens, .. } = plan.shape else {
+        return preferred;
+    };
+    let ee_slot = wire_lens[0];
+    preferred
+        .filter(|protocol| alpn_extension_fits_slot(protocol, ee_slot))
+        .or_else(|| {
+            client
+                .alpn_protocols()
+                .find(|protocol| alpn_extension_fits_slot(protocol, ee_slot))
+        })
+}
+
+/// Returns whether an EncryptedExtensions claiming `protocol` seals inside
+/// the observed cover EncryptedExtensions record slot.
+fn alpn_extension_fits_slot(protocol: &[u8], ee_slot_wire_len: usize) -> bool {
+    let Ok(message) = encrypted_extensions(Some(protocol)) else {
+        return false;
+    };
+    unpadded_record_wire_len(message.len()).is_ok_and(|wire_len| wire_len <= ee_slot_wire_len)
+}
+
 fn unpadded_record_wire_len(plaintext_len: usize) -> Result<usize, RealityHandshakeError> {
     plaintext_len
         .checked_add(UNPADDED_RECORD_WIRE_OVERHEAD)
@@ -669,7 +714,7 @@ mod tests {
             CertificateIdentity, CipherSuite, ContentType, CoverHandshakePlan,
             CoverHandshakeRecordShape, MAX_TLS_RECORD_WIRE_LEN, ServerHelloTemplate,
             Tls13KeySchedule, Tls13RecordLayer, TrafficKeys, change_cipher_spec_record,
-            finished_message, read_client_finished,
+            encrypted_extensions, finished_message, read_client_finished,
         },
     };
 
@@ -1119,6 +1164,97 @@ mod tests {
     }
 
     #[test]
+    fn no_alpn_cover_slot_drops_the_unaffordable_client_alpn() {
+        // A no-ALPN cover emits a minimal 28-wire-byte EncryptedExtensions
+        // record (6-byte message + inner type + AEAD tag + header); the
+        // chrome client's "h2" EE needs 37, so the generated EE must claim
+        // no ALPN — exactly what the cover itself emitted.
+        let ee = shaped_flight_ee_message(
+            &[b"h2", b"http/1.1"],
+            Some(b"h2"),
+            CoverHandshakeRecordShape::PositionalRecords {
+                wire_lens: [28, 838, 286, 58],
+                nst_wire_len: None,
+            },
+        );
+
+        assert_eq!(
+            ee,
+            encrypted_extensions(None).expect("empty EE must encode")
+        );
+    }
+
+    #[test]
+    fn alpn_less_client_with_no_alpn_cover_stays_alpn_less() {
+        let ee = shaped_flight_ee_message(
+            &[],
+            None,
+            CoverHandshakeRecordShape::PositionalRecords {
+                wire_lens: [28, 838, 286, 58],
+                nst_wire_len: None,
+            },
+        );
+
+        assert_eq!(
+            ee,
+            encrypted_extensions(None).expect("empty EE must encode")
+        );
+    }
+
+    #[test]
+    fn alpn_cover_slot_keeps_the_matching_client_alpn() {
+        for (slot, protocol) in [(37_usize, b"h2".as_slice()), (43, b"http/1.1")] {
+            let ee = shaped_flight_ee_message(
+                &[protocol],
+                Some(protocol),
+                CoverHandshakeRecordShape::PositionalRecords {
+                    wire_lens: [slot, 838, 286, 58],
+                    nst_wire_len: None,
+                },
+            );
+
+            assert_eq!(
+                ee,
+                encrypted_extensions(Some(protocol)).expect("ALPN EE must encode")
+            );
+        }
+    }
+
+    #[test]
+    fn undersized_cover_slot_falls_back_to_the_first_fitting_offered_alpn() {
+        // The client prefers http/1.1 (43 wire bytes), but the cover's
+        // 37-byte EE slot only fits "h2" — the shorter offered protocol the
+        // cover must have selected.
+        let ee = shaped_flight_ee_message(
+            &[b"http/1.1", b"h2"],
+            Some(b"http/1.1"),
+            CoverHandshakeRecordShape::PositionalRecords {
+                wire_lens: [37, 838, 286, 58],
+                nst_wire_len: None,
+            },
+        );
+
+        assert_eq!(
+            ee,
+            encrypted_extensions(Some(b"h2")).expect("h2 EE must encode")
+        );
+    }
+
+    #[test]
+    fn coalesced_cover_shape_keeps_the_caller_alpn_selection() {
+        let ee = shaped_flight_ee_message(
+            &[b"h2"],
+            Some(b"h2"),
+            CoverHandshakeRecordShape::Coalesced { wire_len: 605 },
+        );
+
+        assert_eq!(
+            ee,
+            encrypted_extensions(Some(b"h2")).expect("h2 EE must encode")
+        );
+    }
+
+    #[test]
     fn hybrid_share_combines_mlkem_then_x25519_like_xray() {
         let mut seed = Seed::default();
         seed.copy_from_slice(&[0x61; 64]);
@@ -1277,6 +1413,80 @@ mod tests {
             key_exchange,
         ))
         .expect("test ClientHello must parse")
+    }
+
+    /// Builds a cover-shaped flight and returns its generated
+    /// EncryptedExtensions message as the client would open it.
+    fn shaped_flight_ee_message(
+        offered_alpn: &[&[u8]],
+        selected_alpn: Option<&[u8]>,
+        shape: CoverHandshakeRecordShape,
+    ) -> Vec<u8> {
+        let client_secret = StaticSecret::from([0x31; 32]);
+        let client_public = PublicKey::from(&client_secret).to_bytes();
+        let client = ClientHello::parse_message(&fixtures::client_hello_with_key_share(
+            [0x44; 32],
+            &[0x11; SESSION_ID_LEN],
+            "www.example.com",
+            offered_alpn,
+            X25519_GROUP,
+            &client_public,
+        ))
+        .expect("test ClientHello must parse");
+        let target = ServerHelloTemplate::parse(&server_hello(X25519_GROUP, &[0x55; 32]), &client)
+            .expect("test target must parse");
+        let flight = build_server_flight_with_shape(
+            &client,
+            &AuthKey::from_test_bytes([0x99; 32]),
+            target,
+            &CertificateIdentity::from_seed([0x42; 32]),
+            selected_alpn,
+            cover_plan(shape),
+        )
+        .expect("cover-shaped flight must build");
+
+        let server_hello = &flight.server_hello_record()[5..];
+        let server_public: [u8; 32] = server_hello
+            .get(server_hello.len() - 32..)
+            .expect("test ServerHello ends with key share")
+            .try_into()
+            .expect("X25519 server share is fixed");
+        let shared = client_secret.diffie_hellman(&PublicKey::from(server_public));
+        let mut transcript = client.raw_message().to_vec();
+        transcript.extend_from_slice(server_hello);
+        let suite = CipherSuite::Aes128GcmSha256;
+        let schedule =
+            Tls13KeySchedule::new(suite, shared.as_bytes(), &suite.hash().digest(&transcript))
+                .expect("client schedule must derive");
+        let server_keys = schedule
+            .traffic_keys(schedule.server_handshake_secret())
+            .expect("server handshake keys must derive");
+        let mut server_records =
+            Tls13RecordLayer::new(suite, server_keys).expect("record state must initialize");
+
+        let wire = flight.encrypted_handshake_records();
+        let body_len = usize::from(u16::from_be_bytes(
+            wire.get(3..5)
+                .expect("first record header must be complete")
+                .try_into()
+                .expect("record header length is fixed"),
+        ));
+        let mut first_record = wire
+            .get(..5 + body_len)
+            .expect("first encrypted record must be complete")
+            .to_vec();
+        let opened = server_records
+            .open_in_place(&mut first_record)
+            .expect("first record must authenticate");
+        let plaintext = opened.plaintext();
+        assert_eq!(plaintext.first(), Some(&8));
+        let message_len = (usize::from(plaintext[1]) << 16)
+            | (usize::from(plaintext[2]) << 8)
+            | usize::from(plaintext[3]);
+        plaintext
+            .get(..4 + message_len)
+            .expect("EE message must be complete")
+            .to_vec()
     }
 
     fn open_handshake_records(

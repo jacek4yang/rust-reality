@@ -361,6 +361,9 @@ impl RealityAcceptor {
                 return transition_cover(stream, cover, &target_prefix, handshake_permit).await;
             }
         };
+        // The client's first protocol is only the preference: the flight
+        // builder downgrades it to what the cover's observed EE record slot
+        // can hold, emitting no ALPN for a cover that negotiated none.
         let selected_alpn = hello.alpn_protocols().next();
         let flight = match build_server_flight_with_shape(
             &hello,
