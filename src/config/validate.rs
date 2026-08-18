@@ -927,6 +927,14 @@ fn validate_rule(
     for (index, matcher) in rule.port.iter().enumerate() {
         validate_port_matcher(&format!("{path}.port[{index}]"), matcher)?;
     }
+    for (index, network) in rule.network.iter().enumerate() {
+        if *network != Network::Tcp {
+            return fail(
+                format!("{path}.network[{index}]"),
+                "only tcp flows exist, so a udp rule can never match; remove the rule",
+            );
+        }
+    }
     for (index, tag) in rule.inbound_tag.iter().enumerate() {
         if !inbound_tags.contains(tag.as_str()) {
             return fail(
@@ -2261,6 +2269,19 @@ mod tests {
                 .expect_err("asset traversal must fail")
                 .path(),
             "routing.globalRules[0].domain[0]"
+        );
+    }
+
+    #[test]
+    fn udp_routing_rules_are_rejected_because_they_can_never_match() {
+        let mut config = valid_config();
+        config.routing.global_rules[0].network = vec![crate::config::Network::Udp];
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("a udp-only rule must fail validation")
+                .path(),
+            "routing.globalRules[0].network[0]"
         );
     }
 
