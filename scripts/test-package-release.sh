@@ -317,6 +317,26 @@ test_aggregate_rejects_missing_tier() {
 }
 test_aggregate_rejects_missing_tier
 
+test_aggregate_rejects_unlisted_asset() {
+    local poisoned="$WORK_DIRECTORY/poisoned"
+    local error="$WORK_DIRECTORY/poisoned.error"
+    mkdir -p "$poisoned"
+    local tier
+    for tier in "${TIERS[@]}"; do
+        run_package "$poisoned" "$tier"
+    done
+    : >"$poisoned/rust-reality-v9.8.7-linux-x86_64-v4.tar.gz"
+    if "$REPO_ROOT/scripts/aggregate-release.sh" v9.8.7 "$poisoned" \
+        >"$WORK_DIRECTORY/poisoned.out" 2>"$error"; then
+        printf '%s\n' 'unlisted asset unexpectedly aggregated' >&2
+        return 1
+    fi
+    grep -F 'unexpected files in aggregate dist directory:' "$error" >/dev/null
+    [[ ! -e $poisoned/release-manifest.json ]]
+    [[ ! -e $poisoned/SHA256SUMS ]]
+}
+test_aggregate_rejects_unlisted_asset
+
 python3 - "$WORK_DIRECTORY/first" "$WORK_DIRECTORY/bin" "$REPO_ROOT" <<'PY'
 import hashlib
 import json

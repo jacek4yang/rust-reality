@@ -51,9 +51,15 @@ for tier in "${EXPECTED_TIERS[@]}"; do
 done
 
 unexpected="$(
-    find "$DIST_DIRECTORY" -mindepth 1 -maxdepth 1 -printf '%f\n' \
-        | grep -Ev '^rust-reality-[^-]+-[^.]+\.tar\.gz$|^[^.]+\.tier\.json$' \
-        || true
+    expected="$(
+        for tier in "${EXPECTED_TIERS[@]}"; do
+            printf 'rust-reality-%s-%s.tar.gz\n%s.tier.json\n' \
+                "$RELEASE_TAG" "$tier" "$tier"
+        done
+    )"
+    comm -23 \
+        <(find "$DIST_DIRECTORY" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort) \
+        <(printf '%s\n' "$expected" | sort)
 )"
 if [[ -n $unexpected ]]; then
     printf 'unexpected files in aggregate dist directory:\n%s\n' "$unexpected" >&2
