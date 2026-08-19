@@ -1329,7 +1329,7 @@ fn admit_accepted_connection(
             return;
         }
     };
-    emit(&logger, &LogEvent::ConnectionAccepted { peer });
+    emit_debug(&logger, || LogEvent::ConnectionAccepted { peer });
     connections.spawn(peer, async move {
         // Both permits move into the task and are released when it ends, on
         // every path including cancellation and abort.
@@ -1419,28 +1419,24 @@ async fn run_connection(
     match result {
         Ok(()) => {
             if let Some(stats) = completion {
-                emit(
-                    logger,
-                    &LogEvent::ConnectionCompleted {
-                        duration_ms: u64::try_from(started.elapsed().as_millis())
-                            .unwrap_or(u64::MAX),
-                        uplink_bytes: stats.uplink_bytes(),
-                        downlink_bytes: stats.downlink_bytes(),
-                        uplink_direct: stats.uplink_direct(),
-                        downlink_direct: stats.downlink_direct(),
-                        relay_backend: stats.relay_backend().map(RelayBackend::as_str),
-                        uplink_direct_at_bytes: stats.uplink_direct_at_bytes(),
-                        downlink_direct_at_bytes: stats.downlink_direct_at_bytes(),
-                        uplink_backend: stats.uplink_backend().map(RelayBackend::as_str),
-                        downlink_backend: stats.downlink_backend().map(RelayBackend::as_str),
-                        uplink_handoff_delay_us: stats.uplink_handoff_delay_us(),
-                        downlink_handoff_delay_us: stats.downlink_handoff_delay_us(),
-                        handoff_server_sequence: stats.handoff_server_sequence(),
-                        pipe_capacity_downgraded: stats.pipe_capacity_downgraded(),
-                    },
-                );
+                emit_debug(logger, || LogEvent::ConnectionCompleted {
+                    duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    uplink_bytes: stats.uplink_bytes(),
+                    downlink_bytes: stats.downlink_bytes(),
+                    uplink_direct: stats.uplink_direct(),
+                    downlink_direct: stats.downlink_direct(),
+                    relay_backend: stats.relay_backend().map(RelayBackend::as_str),
+                    uplink_direct_at_bytes: stats.uplink_direct_at_bytes(),
+                    downlink_direct_at_bytes: stats.downlink_direct_at_bytes(),
+                    uplink_backend: stats.uplink_backend().map(RelayBackend::as_str),
+                    downlink_backend: stats.downlink_backend().map(RelayBackend::as_str),
+                    uplink_handoff_delay_us: stats.uplink_handoff_delay_us(),
+                    downlink_handoff_delay_us: stats.downlink_handoff_delay_us(),
+                    handoff_server_sequence: stats.handoff_server_sequence(),
+                    pipe_capacity_downgraded: stats.pipe_capacity_downgraded(),
+                });
             }
-            emit(logger, &LogEvent::ConnectionClosed { peer });
+            emit_debug(logger, || LogEvent::ConnectionClosed { peer });
             Ok(())
         }
         Err(error) => {
@@ -1498,6 +1494,18 @@ fn reset_refresh(refresh: &mut std::pin::Pin<Box<Sleep>>, interval: Duration) {
 
 fn emit(logger: &Logger, event: &LogEvent) {
     let _ignored = logger.emit(event);
+}
+
+/// Emits one debug-only event, constructing it only when debug evidence can
+/// actually reach the configured sink.
+///
+/// Per-connection callers stay at zero cost when debug is disabled: no stats
+/// accessors run and no event is allocated, whereas the warn-level rejections
+/// stay eager because they are operator signal.
+fn emit_debug(logger: &Logger, event: impl FnOnce() -> LogEvent) {
+    if logger.debug_enabled() {
+        emit(logger, &event());
+    }
 }
 
 fn emit_rejected(runtime: &RuntimeStore, field: &'static str) {
@@ -2672,6 +2680,65 @@ mod tests {
         assert!(
             matches!(error, RuntimeUpdateError::DirectBarrierPolicyChanged),
             "expected DirectBarrierPolicyChanged, got {error}"
+        );
+    }
+
+    #[test]
+    fn disabled_debug_skips_event_construction() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        use crate::{
+            config::{LogConfig, LogLevel, LogOutput},
+            logging::{LogEvent, Logger},
+        };
+
+        let constructed = AtomicU64::new(0);
+        let attempt = |logger: &Logger| {
+            super::emit_debug(logger, || {
+                constructed.fetch_add(1, Ordering::Relaxed);
+                LogEvent::ConnectionAccepted {
+                    peer: SocketAddr::from((Ipv4Addr::LOCALHOST, 40_001)),
+                }
+            });
+        };
+
+        let info_logger = Logger::new(&LogConfig {
+            level: LogLevel::Info,
+            output: LogOutput::Stderr,
+            file: None,
+        })
+        .expect("stderr logger must initialize");
+        attempt(&info_logger);
+        assert_eq!(
+            constructed.load(Ordering::Relaxed),
+            0,
+            "a disabled level must not even construct the event"
+        );
+
+        let none_logger = Logger::new(&LogConfig {
+            level: LogLevel::Debug,
+            output: LogOutput::None,
+            file: None,
+        })
+        .expect("none logger must initialize");
+        attempt(&none_logger);
+        assert_eq!(
+            constructed.load(Ordering::Relaxed),
+            0,
+            "a none sink must report debug as disabled and skip construction"
+        );
+
+        let debug_logger = Logger::new(&LogConfig {
+            level: LogLevel::Debug,
+            output: LogOutput::Stderr,
+            file: None,
+        })
+        .expect("stderr logger must initialize");
+        attempt(&debug_logger);
+        assert_eq!(
+            constructed.load(Ordering::Relaxed),
+            1,
+            "an enabled debug level must construct exactly one event"
         );
     }
 

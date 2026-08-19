@@ -13,6 +13,18 @@ All notable user-facing changes to this project are documented in this file.
   change becomes visible only when the window expires, negative answers are
   never cached, and there is no stale-while-revalidate. Ignored with real
   DNS servers, where upstream TTLs govern.
+- `log.output: "none"` disables logging entirely: no file is created, nothing
+  is written to stderr or journald, and every event is dropped before
+  timestamping, JSON encoding, or any sink I/O. `log.file` remains forbidden
+  unless `log.output` is `file`.
+
+### Changed
+
+- Per-connection debug events (`connection_accepted`, `connection_completed`,
+  `connection_closed`) are now constructed only when debug output can actually
+  reach the configured sink. With `log.level` at `info` or higher, or with
+  `log.output: "none"`, the per-connection log path does no work at all;
+  warn-level rejection and admission events stay eager as operator signal.
 
 ### Fixed
 

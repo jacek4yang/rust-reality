@@ -130,7 +130,7 @@ fn validate_log(config: &Config) -> Result<(), ConfigError> {
         (LogOutput::File, None) => {
             return fail("log.file", "is required when log.output is file");
         }
-        (LogOutput::Stderr | LogOutput::Journald, Some(_)) => {
+        (LogOutput::Stderr | LogOutput::Journald | LogOutput::None, Some(_)) => {
             return fail("log.file", "is only allowed when log.output is file");
         }
         (LogOutput::File, Some(file)) => {
@@ -157,7 +157,7 @@ fn validate_log(config: &Config) -> Result<(), ConfigError> {
                 );
             }
         }
-        (LogOutput::Stderr | LogOutput::Journald, None) => {}
+        (LogOutput::Stderr | LogOutput::Journald | LogOutput::None, None) => {}
     }
     Ok(())
 }
@@ -1539,6 +1539,31 @@ mod tests {
             validate_config(&config).expect_err("file settings must be required"),
             ConfigError::new("log.file", "is required when log.output is file")
         );
+    }
+
+    #[test]
+    fn none_logging_forbids_file_settings() {
+        let mut config = valid_config();
+        config.log.output = LogOutput::None;
+        config.log.file = Some(crate::config::FileLogConfig {
+            path: "/tmp/rust-reality-unused.log".into(),
+            max_bytes: 64 * 1024,
+            max_files: 2,
+            max_total_bytes: 128 * 1024,
+        });
+
+        assert_eq!(
+            validate_config(&config).expect_err("file settings must be rejected"),
+            ConfigError::new("log.file", "is only allowed when log.output is file")
+        );
+    }
+
+    #[test]
+    fn none_logging_without_file_settings_is_valid() {
+        let mut config = valid_config();
+        config.log.output = LogOutput::None;
+
+        validate_config(&config).expect("none output must validate");
     }
 
     #[test]

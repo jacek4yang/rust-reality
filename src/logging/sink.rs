@@ -439,6 +439,7 @@ impl From<serde_json::Error> for LogWriteError {
 }
 
 enum Sink {
+    None,
     Stderr,
     File(Mutex<RotatingFile>),
 }
@@ -454,7 +455,8 @@ impl Logger {
     /// Opens the configured sink and enforces existing file retention immediately.
     ///
     /// `journald` intentionally writes to standard error so systemd owns framing,
-    /// metadata, rate limiting, and persistence policy.
+    /// metadata, rate limiting, and persistence policy. `none` opens nothing:
+    /// no file is created and no descriptor is written.
     ///
     /// # Errors
     ///
@@ -462,6 +464,7 @@ impl Logger {
     /// cannot be opened, or existing rotations cannot be brought within bounds.
     pub fn new(config: &LogConfig) -> Result<Self, LogWriteError> {
         let sink = match (config.output, config.file.as_ref()) {
+            (LogOutput::None, _) => Sink::None,
             (LogOutput::Stderr | LogOutput::Journald, _) => Sink::Stderr,
             (LogOutput::File, Some(file)) => Sink::File(Mutex::new(RotatingFile::open(file)?)),
             (LogOutput::File, None) => {
@@ -484,7 +487,9 @@ impl Logger {
     /// Returns an error if serialization or sink I/O fails. Callers should avoid
     /// turning a log failure into a data-path panic.
     pub fn emit(&self, event: &LogEvent) -> Result<(), LogWriteError> {
-        if level_rank(event.level()) > level_rank(self.minimum_level) {
+        if matches!(self.sink.as_ref(), Sink::None)
+            || level_rank(event.level()) > level_rank(self.minimum_level)
+        {
             return Ok(());
         }
 
@@ -496,6 +501,7 @@ impl Logger {
         let mut encoded = serde_json::to_vec(&record)?;
         encoded.push(b'\n');
         match self.sink.as_ref() {
+            Sink::None => Ok(()),
             Sink::Stderr => io::stderr().lock().write_all(&encoded).map_err(Into::into),
             Sink::File(file) => file
                 .lock()
@@ -506,8 +512,9 @@ impl Logger {
 
     /// Returns whether debug-only evidence will reach the configured sink.
     #[must_use]
-    pub const fn debug_enabled(&self) -> bool {
-        level_rank(LogLevel::Debug) <= level_rank(self.minimum_level)
+    pub fn debug_enabled(&self) -> bool {
+        !matches!(self.sink.as_ref(), Sink::None)
+            && level_rank(LogLevel::Debug) <= level_rank(self.minimum_level)
     }
 }
 
@@ -670,6 +677,56 @@ mod tests {
     use super::{LogEvent, Logger};
 
     static TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn none_output_drops_every_event_without_touching_storage() {
+        let directory = test_directory();
+        let path = directory.join("events.log");
+        // Validation forbids file settings with `none`; passing them anyway
+        // proves the sink itself never opens the path.
+        let logger = Logger::new(&LogConfig {
+            level: LogLevel::Debug,
+            output: LogOutput::None,
+            file: Some(FileLogConfig {
+                path: path.clone(),
+                max_bytes: 64 * 1024,
+                max_files: 2,
+                max_total_bytes: 128 * 1024,
+            }),
+        })
+        .expect("none logger must initialize without opening a sink");
+
+        assert!(!logger.debug_enabled());
+        logger
+            .emit(&LogEvent::ServerStarting)
+            .expect("dropped event must succeed");
+        logger
+            .emit(&LogEvent::ConnectionAccepted {
+                peer: SocketAddr::from((Ipv4Addr::LOCALHOST, 12_345)),
+            })
+            .expect("dropped event must succeed");
+        assert!(!path.exists());
+        cleanup(&directory);
+    }
+
+    #[test]
+    fn debug_enabled_reflects_level_for_real_sinks() {
+        let stderr_info = Logger::new(&LogConfig {
+            level: LogLevel::Info,
+            output: LogOutput::Stderr,
+            file: None,
+        })
+        .expect("stderr logger must initialize");
+        assert!(!stderr_info.debug_enabled());
+
+        let stderr_debug = Logger::new(&LogConfig {
+            level: LogLevel::Debug,
+            output: LogOutput::Stderr,
+            file: None,
+        })
+        .expect("stderr logger must initialize");
+        assert!(stderr_debug.debug_enabled());
+    }
 
     #[test]
     fn filters_debug_events_at_info_level() {
