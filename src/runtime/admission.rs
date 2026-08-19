@@ -8,9 +8,8 @@ use std::{
     time::Instant,
 };
 
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError};
-
 use crate::config::{DirectBarrierConfig, ResourceGovernorConfig};
+use crate::runtime::ceiling::{CeilingPermit, CeilingSemaphore};
 use crate::runtime::pressure::{PressureGauge, ResourcePressure};
 
 /// Independently bounded work categories in the unauthenticated and setup paths.
@@ -71,7 +70,7 @@ impl Error for AdmissionDenied {}
 /// An RAII permit that releases capacity even on timeout, cancellation, or early return.
 pub struct AdmissionPermit {
     kind: AdmissionKind,
-    _permit: OwnedSemaphorePermit,
+    _permit: CeilingPermit,
 }
 
 impl AdmissionPermit {
@@ -83,12 +82,12 @@ impl AdmissionPermit {
 }
 
 struct GovernorInner {
-    connections: Arc<Semaphore>,
-    handshakes: Arc<Semaphore>,
-    fallbacks: Arc<Semaphore>,
-    dns_lookups: Arc<Semaphore>,
-    crypto_operations: Arc<Semaphore>,
-    replay_entries: Arc<Semaphore>,
+    connections: CeilingSemaphore,
+    handshakes: CeilingSemaphore,
+    fallbacks: CeilingSemaphore,
+    dns_lookups: CeilingSemaphore,
+    crypto_operations: CeilingSemaphore,
+    replay_entries: CeilingSemaphore,
     pressure: Option<PressureGauge>,
 }
 
@@ -120,12 +119,12 @@ impl ResourceGovernor {
     fn pools(config: &ResourceGovernorConfig, pressure: Option<PressureGauge>) -> Self {
         Self {
             inner: Arc::new(GovernorInner {
-                connections: semaphore(config.max_connections),
-                handshakes: semaphore(config.max_handshakes),
-                fallbacks: semaphore(config.max_fallbacks),
-                dns_lookups: semaphore(config.max_dns_lookups),
-                crypto_operations: semaphore(config.max_crypto_operations),
-                replay_entries: semaphore(config.max_replay_entries),
+                connections: CeilingSemaphore::new(config.max_connections),
+                handshakes: CeilingSemaphore::new(config.max_handshakes),
+                fallbacks: CeilingSemaphore::new(config.max_fallbacks),
+                dns_lookups: CeilingSemaphore::new(config.max_dns_lookups),
+                crypto_operations: CeilingSemaphore::new(config.max_crypto_operations),
+                replay_entries: CeilingSemaphore::new(config.max_replay_entries),
                 pressure,
             }),
         }
@@ -143,67 +142,112 @@ impl ResourceGovernor {
         {
             return Err(AdmissionDenied::Pressure(kind));
         }
-        let semaphore = match kind {
+        let permit = self
+            .pool(kind)
+            .try_acquire()
+            .ok_or(AdmissionDenied::Limit(kind))?;
+        Ok(AdmissionPermit {
+            kind,
+            _permit: permit,
+        })
+    }
+
+    /// Returns the soft ceiling currently in effect for `kind`.
+    ///
+    /// Ceilings start at the configured limit and only move when a controller
+    /// adjusts them, so behavior is identical to a fixed pool until then.
+    #[must_use]
+    pub fn ceiling(&self, kind: AdmissionKind) -> u64 {
+        self.pool(kind).ceiling()
+    }
+
+    /// Adjusts the soft ceiling for `kind`, clamped to the configured limit.
+    ///
+    /// Lowering takes effect on subsequent acquires only; permits already
+    /// held are never revoked. This is the adaptive-controller knob from the
+    /// v1.6 design (§3.3); until a controller exists, nothing calls it and
+    /// admission behaves exactly as a fixed-size pool.
+    pub fn set_ceiling(&self, kind: AdmissionKind, ceiling: u64) {
+        self.pool(kind).set_ceiling(ceiling);
+    }
+
+    /// Returns the number of permits currently held for `kind`, for the
+    /// controller's published snapshot and pressure signals.
+    #[must_use]
+    pub fn in_flight(&self, kind: AdmissionKind) -> u64 {
+        self.pool(kind).in_flight()
+    }
+
+    fn pool(&self, kind: AdmissionKind) -> &CeilingSemaphore {
+        match kind {
             AdmissionKind::Connection => &self.inner.connections,
             AdmissionKind::Handshake => &self.inner.handshakes,
             AdmissionKind::Fallback => &self.inner.fallbacks,
             AdmissionKind::CryptoOperation => &self.inner.crypto_operations,
             AdmissionKind::ReplayEntry => &self.inner.replay_entries,
             AdmissionKind::DnsLookup => &self.inner.dns_lookups,
-        };
-        let permit = Arc::clone(semaphore)
-            .try_acquire_owned()
-            .map_err(|error| map_semaphore_error(error, kind))?;
-        Ok(AdmissionPermit {
-            kind,
-            _permit: permit,
-        })
-    }
-}
-
-fn semaphore(permits: u32) -> Arc<Semaphore> {
-    let permits = usize::try_from(permits).map_or(usize::MAX, |value| value);
-    Arc::new(Semaphore::new(permits))
-}
-
-const fn map_semaphore_error(error: TryAcquireError, kind: AdmissionKind) -> AdmissionDenied {
-    match error {
-        TryAcquireError::NoPermits => AdmissionDenied::Limit(kind),
-        TryAcquireError::Closed => AdmissionDenied::Unavailable,
+        }
     }
 }
 
 /// RAII direct-dial concurrency permit.
 pub struct DirectPermit {
-    _permit: OwnedSemaphorePermit,
+    _permit: CeilingPermit,
 }
 
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
 
+/// GCRA timing parameters for a dials-per-second rate: the conservative
+/// integral-nanosecond emission interval and the one-second burst allowance.
+fn rate_timing(rate: u64) -> (u64, u64) {
+    let interval_nanos = if rate == 0 {
+        0
+    } else {
+        NANOS_PER_SECOND.div_ceil(rate)
+    };
+    (interval_nanos, interval_nanos.saturating_mul(rate))
+}
+
 /// Lock-free GCRA gate with the same one-second burst allowance as the former
 /// token bucket. A conservative integral-nanosecond interval prevents the gate
-/// from ever exceeding the configured rate.
+/// from ever exceeding the configured rate. The interval and burst are atomic
+/// so the adaptive controller can retarget the rate at runtime (design §3.3).
 struct DialRateGate {
     origin: Instant,
-    interval_nanos: u64,
-    burst_nanos: u64,
+    rate_per_second: AtomicU64,
+    interval_nanos: AtomicU64,
+    burst_nanos: AtomicU64,
     next_nanos: AtomicU64,
 }
 
 impl DialRateGate {
     fn new(max_per_second: u32) -> Self {
-        let rate = u64::from(max_per_second);
-        let interval_nanos = if rate == 0 {
-            0
-        } else {
-            NANOS_PER_SECOND.div_ceil(rate)
-        };
+        let (interval_nanos, burst_nanos) = rate_timing(u64::from(max_per_second));
         Self {
             origin: Instant::now(),
-            interval_nanos,
-            burst_nanos: interval_nanos.saturating_mul(rate),
+            rate_per_second: AtomicU64::new(u64::from(max_per_second)),
+            interval_nanos: AtomicU64::new(interval_nanos),
+            burst_nanos: AtomicU64::new(burst_nanos),
             next_nanos: AtomicU64::new(0),
         }
+    }
+
+    /// Recomputes the GCRA timing for a new rate. The burst allowance is
+    /// stored before the interval so a racing `try_take` that sees the new
+    /// interval already sees the new burst; an attempt mid-change may still
+    /// pair the old interval with the new burst once, which is bounded by
+    /// both rates and harmless. The accumulated `next_nanos` history is kept,
+    /// so a rate change never grants a retroactive burst.
+    fn set_rate(&self, max_per_second: u32) {
+        let (interval_nanos, burst_nanos) = rate_timing(u64::from(max_per_second));
+        self.burst_nanos.store(burst_nanos, Ordering::Relaxed);
+        self.interval_nanos.store(interval_nanos, Ordering::Relaxed);
+        self.rate_per_second
+            .store(u64::from(max_per_second), Ordering::Relaxed);
+    }
+
+    fn rate(&self) -> u32 {
+        u32::try_from(self.rate_per_second.load(Ordering::Relaxed)).unwrap_or(u32::MAX)
     }
 
     fn try_take(&self) -> bool {
@@ -212,13 +256,14 @@ impl DialRateGate {
     }
 
     fn try_take_at(&self, now_nanos: u64) -> bool {
-        if self.interval_nanos == 0 {
+        let interval_nanos = self.interval_nanos.load(Ordering::Relaxed);
+        if interval_nanos == 0 {
             return false;
         }
-        let latest = now_nanos.saturating_add(self.burst_nanos);
+        let latest = now_nanos.saturating_add(self.burst_nanos.load(Ordering::Relaxed));
         let mut observed = self.next_nanos.load(Ordering::Relaxed);
         loop {
-            let Some(next) = observed.max(now_nanos).checked_add(self.interval_nanos) else {
+            let Some(next) = observed.max(now_nanos).checked_add(interval_nanos) else {
                 // Do not let saturation turn MAX -> MAX into an endlessly
                 // successful compare-exchange after the time domain is spent.
                 return false;
@@ -240,7 +285,7 @@ impl DialRateGate {
 }
 
 struct DirectBarrierInner {
-    concurrency: Arc<Semaphore>,
+    concurrency: CeilingSemaphore,
     rate: DialRateGate,
     pressure: Option<PressureGauge>,
 }
@@ -269,7 +314,7 @@ impl DirectBarrier {
     fn barrier(config: &DirectBarrierConfig, pressure: Option<PressureGauge>) -> Self {
         Self {
             inner: Arc::new(DirectBarrierInner {
-                concurrency: semaphore(config.max_concurrent),
+                concurrency: CeilingSemaphore::new(config.max_concurrent),
                 rate: DialRateGate::new(config.max_per_second),
                 pressure,
             }),
@@ -292,26 +337,57 @@ impl DirectBarrier {
         {
             return Err(AdmissionDenied::DirectPressure);
         }
-        let permit = Arc::clone(&self.inner.concurrency)
-            .try_acquire_owned()
-            .map_err(|error| match error {
-                TryAcquireError::NoPermits => AdmissionDenied::DirectConcurrency,
-                TryAcquireError::Closed => AdmissionDenied::Unavailable,
-            })?;
+        let permit = self
+            .inner
+            .concurrency
+            .try_acquire()
+            .ok_or(AdmissionDenied::DirectConcurrency)?;
         if !self.inner.rate.try_take() {
             return Err(AdmissionDenied::DirectRate);
         }
         Ok(DirectPermit { _permit: permit })
     }
+
+    /// Returns the soft ceiling on concurrent direct dials.
+    #[must_use]
+    pub fn concurrency_ceiling(&self) -> u64 {
+        self.inner.concurrency.ceiling()
+    }
+
+    /// Adjusts the soft ceiling on concurrent direct dials, clamped to the
+    /// configured limit. Lowering takes effect on subsequent dials only;
+    /// held dial permits are never revoked (design §3.3).
+    pub fn set_concurrency_ceiling(&self, ceiling: u64) {
+        self.inner.concurrency.set_ceiling(ceiling);
+    }
+
+    /// Returns the new-connection rate currently in effect, in dials per second.
+    #[must_use]
+    pub fn rate_per_second(&self) -> u32 {
+        self.inner.rate.rate()
+    }
+
+    /// Retargets the GCRA new-connection rate. The new rate governs
+    /// subsequent dials only; the gate's history is preserved, so no
+    /// retroactive burst is granted (design §3.3).
+    pub fn set_rate_per_second(&self, max_per_second: u32) {
+        self.inner.rate.set_rate(max_per_second);
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::Ordering;
+    use std::sync::{
+        Arc, Barrier,
+        atomic::{AtomicU64, Ordering},
+    };
 
     use crate::config::{DirectBarrierConfig, ResourceGovernorConfig};
 
-    use super::{AdmissionDenied, AdmissionKind, DialRateGate, DirectBarrier, ResourceGovernor};
+    use super::{
+        AdmissionDenied, AdmissionKind, DialRateGate, DirectBarrier, NANOS_PER_SECOND,
+        ResourceGovernor,
+    };
 
     #[test]
     fn governor_releases_permit_on_drop() {
@@ -348,6 +424,135 @@ mod tests {
     }
 
     #[test]
+    fn governor_ceilings_default_to_the_configured_limits() {
+        let config = ResourceGovernorConfig {
+            max_connections: 7,
+            max_handshakes: 3,
+            ..ResourceGovernorConfig::default()
+        };
+        let governor = ResourceGovernor::new(&config);
+
+        assert_eq!(governor.ceiling(AdmissionKind::Connection), 7);
+        assert_eq!(governor.ceiling(AdmissionKind::Handshake), 3);
+    }
+
+    #[test]
+    fn governor_denial_accounting_stays_exact_around_shrink_and_grow() {
+        let config = ResourceGovernorConfig {
+            max_connections: 4,
+            max_handshakes: 4,
+            ..ResourceGovernorConfig::default()
+        };
+        let governor = ResourceGovernor::new(&config);
+
+        let held: Vec<_> = (0..4)
+            .map(|_| {
+                governor
+                    .try_acquire(AdmissionKind::Connection)
+                    .expect("at the configured limit")
+            })
+            .collect();
+        for _ in 0..3 {
+            assert!(matches!(
+                governor.try_acquire(AdmissionKind::Connection),
+                Err(AdmissionDenied::Limit(AdmissionKind::Connection))
+            ));
+        }
+
+        governor.set_ceiling(AdmissionKind::Connection, 1);
+        assert_eq!(governor.ceiling(AdmissionKind::Connection), 1);
+        drop(held);
+        let one = governor
+            .try_acquire(AdmissionKind::Connection)
+            .expect("the lowered ceiling still admits up to itself");
+        assert!(matches!(
+            governor.try_acquire(AdmissionKind::Connection),
+            Err(AdmissionDenied::Limit(AdmissionKind::Connection))
+        ));
+        assert!(
+            governor.try_acquire(AdmissionKind::Handshake).is_ok(),
+            "shrinking one category leaves the others untouched"
+        );
+
+        governor.set_ceiling(AdmissionKind::Connection, u64::MAX);
+        assert_eq!(
+            governor.ceiling(AdmissionKind::Connection),
+            4,
+            "raising clamps to the configured limit"
+        );
+        drop(one);
+        let refilled: Vec<_> = (0..4)
+            .map(|_| {
+                governor
+                    .try_acquire(AdmissionKind::Connection)
+                    .expect("grown ceiling readmits up to the configured limit")
+            })
+            .collect();
+        assert!(matches!(
+            governor.try_acquire(AdmissionKind::Connection),
+            Err(AdmissionDenied::Limit(AdmissionKind::Connection))
+        ));
+        drop(refilled);
+    }
+
+    #[test]
+    fn governor_shrink_under_load_never_revokes_and_never_exceeds_the_bound() {
+        const MAX: u32 = 64;
+        const WORKERS: usize = 8;
+        const ROUNDS: usize = 2_000;
+        let config = ResourceGovernorConfig {
+            max_connections: MAX,
+            ..ResourceGovernorConfig::default()
+        };
+        let governor = ResourceGovernor::new(&config);
+        let held = Arc::new(AtomicU64::new(0));
+        let max_held = Arc::new(AtomicU64::new(0));
+        let start = Arc::new(Barrier::new(WORKERS + 2));
+
+        std::thread::scope(|scope| {
+            for _ in 0..WORKERS {
+                let governor = governor.clone();
+                let held = Arc::clone(&held);
+                let max_held = Arc::clone(&max_held);
+                let start = Arc::clone(&start);
+                scope.spawn(move || {
+                    start.wait();
+                    for _ in 0..ROUNDS {
+                        if let Ok(permit) = governor.try_acquire(AdmissionKind::Connection) {
+                            let now = held.fetch_add(1, Ordering::Relaxed) + 1;
+                            max_held.fetch_max(now, Ordering::Relaxed);
+                            held.fetch_sub(1, Ordering::Relaxed);
+                            drop(permit);
+                        }
+                    }
+                });
+            }
+            let shrinker = {
+                let governor = governor.clone();
+                let start = Arc::clone(&start);
+                scope.spawn(move || {
+                    start.wait();
+                    for ceiling in [48, 16, 0, u64::from(MAX)] {
+                        governor.set_ceiling(AdmissionKind::Connection, ceiling);
+                    }
+                })
+            };
+            start.wait();
+            shrinker.join().expect("shrinker must not panic");
+        });
+
+        let observed = max_held.load(Ordering::Relaxed);
+        assert!(
+            observed <= u64::from(MAX),
+            "held permits never exceed the configured limit: {observed}"
+        );
+        assert!(
+            governor.try_acquire(AdmissionKind::Connection).is_ok(),
+            "no waiter is stranded and the pool stays usable after shrink/grow"
+        );
+    }
+
+    #[test]
     fn direct_barrier_enforces_concurrency_then_rate() {
         let barrier = DirectBarrier::new(&DirectBarrierConfig {
             max_concurrent: 1,
@@ -367,13 +572,76 @@ mod tests {
     }
 
     #[test]
+    fn direct_barrier_adjusts_concurrency_ceiling_without_revoking_dials() {
+        let barrier = DirectBarrier::new(&DirectBarrierConfig {
+            max_concurrent: 2,
+            max_per_second: 1_000_000,
+        });
+        assert_eq!(barrier.concurrency_ceiling(), 2);
+        let first = barrier.try_acquire().expect("first dial admitted");
+        let second = barrier.try_acquire().expect("second dial admitted");
+
+        barrier.set_concurrency_ceiling(1);
+        assert_eq!(barrier.concurrency_ceiling(), 1);
+        assert!(matches!(
+            barrier.try_acquire(),
+            Err(AdmissionDenied::DirectConcurrency)
+        ));
+        drop(first);
+        assert!(
+            matches!(
+                barrier.try_acquire(),
+                Err(AdmissionDenied::DirectConcurrency)
+            ),
+            "one held dial still reaches the lowered ceiling"
+        );
+        drop(second);
+        let only = barrier.try_acquire().expect("drained dials readmit");
+        assert!(matches!(
+            barrier.try_acquire(),
+            Err(AdmissionDenied::DirectConcurrency)
+        ));
+        drop(only);
+
+        barrier.set_concurrency_ceiling(u64::MAX);
+        assert_eq!(
+            barrier.concurrency_ceiling(),
+            2,
+            "raising clamps to the configured limit"
+        );
+    }
+
+    #[test]
+    fn direct_barrier_retargets_the_rate_at_runtime() {
+        let barrier = DirectBarrier::new(&DirectBarrierConfig {
+            max_concurrent: 1,
+            max_per_second: 1_000_000,
+        });
+        assert_eq!(barrier.rate_per_second(), 1_000_000);
+
+        barrier.set_rate_per_second(0);
+        assert_eq!(barrier.rate_per_second(), 0);
+        assert!(matches!(
+            barrier.try_acquire(),
+            Err(AdmissionDenied::DirectRate)
+        ));
+
+        barrier.set_rate_per_second(1_000_000);
+        assert!(
+            barrier.try_acquire().is_ok(),
+            "restoring the rate readmits dials"
+        );
+    }
+
+    #[test]
     fn rate_gate_enforces_burst_and_refill_without_a_lock() {
         let gate = DialRateGate::new(4);
+        let interval_nanos = gate.interval_nanos.load(Ordering::Relaxed);
 
         assert!((0..4).all(|_| gate.try_take_at(0)));
         assert!(!gate.try_take_at(0));
-        assert!(gate.try_take_at(gate.interval_nanos));
-        assert!(!gate.try_take_at(gate.interval_nanos));
+        assert!(gate.try_take_at(interval_nanos));
+        assert!(!gate.try_take_at(interval_nanos));
     }
 
     #[test]
@@ -391,6 +659,52 @@ mod tests {
         });
 
         assert_eq!(accepted, RATE as usize);
+    }
+
+    #[test]
+    fn lowering_the_rate_denies_until_the_new_interval_allows() {
+        let gate = DialRateGate::new(1_000);
+        assert!(gate.try_take_at(0));
+        assert!(gate.try_take_at(0), "the burst allowance still admits");
+
+        gate.set_rate(1);
+        assert_eq!(gate.rate(), 1);
+        assert!(
+            !gate.try_take_at(0),
+            "the wider interval applies immediately"
+        );
+        assert!(
+            gate.try_take_at(2 * 1_000_000),
+            "admission resumes once the GCRA history plus the new interval elapses"
+        );
+    }
+
+    #[test]
+    fn raising_the_rate_applies_forward_without_a_retroactive_burst() {
+        let gate = DialRateGate::new(1);
+        assert!(gate.try_take_at(0));
+        assert!(!gate.try_take_at(0));
+
+        gate.set_rate(1_000);
+        assert_eq!(gate.rate(), 1_000);
+        assert!(
+            !gate.try_take_at(0),
+            "the accumulated GCRA history is kept across a rate change"
+        );
+        assert!(
+            gate.try_take_at(NANOS_PER_SECOND),
+            "the narrower interval governs subsequent slots"
+        );
+    }
+
+    #[test]
+    fn a_rate_of_zero_set_at_runtime_denies_everything() {
+        let gate = DialRateGate::new(100);
+        assert!(gate.try_take_at(0));
+
+        gate.set_rate(0);
+        assert_eq!(gate.rate(), 0);
+        assert!(!gate.try_take_at(u64::MAX / 2));
     }
 
     #[test]

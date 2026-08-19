@@ -1,6 +1,7 @@
 //! Runtime task supervision.
 
 mod admission;
+mod ceiling;
 mod fd_budget;
 mod fd_plan;
 mod pressure;
