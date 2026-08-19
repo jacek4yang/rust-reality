@@ -827,10 +827,17 @@ async fn relay_uplink_inner(
         timeout, handoff, ..
     } = *context;
     let mut decoder = VisionDecoder::new(user_id);
-    let mut plaintext = Vec::new();
-    // A raw-mode record can carry a full maximum-sized TLS plaintext; the
-    // staged output is reserved for that worst case exactly once.
-    plaintext
+    // Decoded uplink payloads are staged across records and leave in one
+    // destination write per batch: Xray's Vision client emits one 8 KiB
+    // frame per record, so an unbatched framed uplink costs one 8 KiB write
+    // syscall per record while the batched downlink writes four records per
+    // syscall. The staging buffer starts at one record payload and only a
+    // completely-full staging buffer — evidence of a bulk flow — grows the
+    // connection to the batched layout once, following the lazy-growth
+    // discipline of the downlink's batched record storage; idle or
+    // small-flow connections never pay the extra capacity.
+    let mut stage = Vec::new();
+    stage
         .try_reserve_exact(MAX_PLAINTEXT_LEN)
         .map_err(|_| VisionSessionError::AllocationFailed)?;
     let mut idle = IdleDeadline::new();
@@ -844,15 +851,9 @@ async fn relay_uplink_inner(
         && !initial.is_empty()
     {
         let mode = decoder
-            .decode(initial, &mut plaintext)
+            .decode_append(initial, &mut stage)
             .map_err(VisionSessionError::VisionDecode)?;
-        if !plaintext.is_empty() {
-            idle.reset(timeout).map_err(idle_failure)?;
-            idle.write_all(&mut destination, &plaintext)
-                .await
-                .map_err(idle_failure)?;
-            bytes = bytes.saturating_add(length_u64(plaintext.len()));
-        }
+        flush_uplink(&mut stage, &mut destination, &mut idle, timeout, &mut bytes).await?;
         if mode == VisionMode::Direct {
             // The direct path takes both halves: from here on the raw relay
             // owns abort semantics and its drop closes the descriptors, so
@@ -864,17 +865,19 @@ async fn relay_uplink_inner(
     drop(request_buffer);
 
     loop {
-        // Raw-mode records are relayed straight out of the reader's reusable
-        // record storage: the decoder borrows the payload from the record, so
-        // the steady-state uplink performs no per-record copy at all. The
-        // borrow of the record storage ends before the next read or the
-        // socket handoff.
+        // Flush before any read that could block: while a complete record is
+        // still buffered the loop keeps batching, and a sparse flow never
+        // waits behind staged bytes.
+        if !client.has_buffered_record() {
+            flush_uplink(&mut stage, &mut destination, &mut idle, timeout, &mut bytes).await?;
+        }
         let record = match client.read_application(timeout).await {
             Ok(record) => record,
             Err(TlsApplicationIoError::PeerAlert {
                 level: _,
                 description: 0,
             }) => {
+                flush_uplink(&mut stage, &mut destination, &mut idle, timeout, &mut bytes).await?;
                 idle.reset(timeout).map_err(idle_failure)?;
                 idle.shutdown(&mut destination)
                     .await
@@ -890,27 +893,65 @@ async fn relay_uplink_inner(
         if record.is_empty() {
             continue;
         }
+        if stage.len() + record.len() > stage.capacity() {
+            flush_uplink(&mut stage, &mut destination, &mut idle, timeout, &mut bytes).await?;
+            // A completely-full staging buffer is bulk-flow evidence: grow to
+            // the batched layout exactly once and never shrink back.
+            if stage.capacity() < UPLINK_STAGE_CAPACITY {
+                stage
+                    .try_reserve_exact(UPLINK_STAGE_CAPACITY - stage.capacity())
+                    .map_err(|_| VisionSessionError::AllocationFailed)?;
+            }
+        }
         let (mode, payload) = decoder
-            .decode_borrowed(record.plaintext(), &mut plaintext)
+            .decode_borrowed_append(record.plaintext(), &mut stage)
             .map_err(VisionSessionError::VisionDecode)?;
-        let content = match payload {
-            VisionPayload::Borrowed(bytes) => bytes,
-            VisionPayload::Staged => plaintext.as_slice(),
-        };
-        if !content.is_empty() {
-            idle.reset(timeout).map_err(idle_failure)?;
-            idle.write_all(&mut destination, content)
-                .await
-                .map_err(idle_failure)?;
-            bytes = bytes.saturating_add(length_u64(content.len()));
+        if let VisionPayload::Borrowed(content) = payload {
+            // Raw-mode records join the batch as well: one bounded copy per
+            // record replaces one destination write syscall per record. The
+            // borrow of the record storage ends before the next read or the
+            // socket handoff.
+            stage.extend_from_slice(content);
         }
         if mode == VisionMode::Direct {
-            // See the prefetched branch above: the raw relay owns the halves
-            // and their abort semantics from here on.
+            // The decoded bytes precede every raw byte finish_uplink_direct
+            // drains, so the staging buffer is flushed first; see the
+            // prefetched branch above for the guard handoff.
+            flush_uplink(&mut stage, &mut destination, &mut idle, timeout, &mut bytes).await?;
             guard.disarm();
             return finish_uplink_direct(client, destination, bytes, context).await;
         }
     }
+}
+
+/// Capacity of the uplink staging buffer after a bulk flow grows it.
+///
+/// Four maximum-sized record payloads per destination write, mirroring the
+/// downlink's four-slot batching (experiment D11).
+const UPLINK_STAGE_CAPACITY: usize = 4 * MAX_PLAINTEXT_LEN;
+
+/// Writes the staged uplink payloads to the destination in one operation.
+///
+/// Staged bytes are counted exactly once, when they are on the wire; the
+/// staging buffer keeps its capacity across flushes. An empty staging buffer
+/// costs no timer registration and no syscall.
+async fn flush_uplink(
+    stage: &mut Vec<u8>,
+    destination: &mut OwnedWriteHalf,
+    idle: &mut IdleDeadline,
+    timeout: Duration,
+    bytes: &mut u64,
+) -> Result<(), VisionSessionError> {
+    if stage.is_empty() {
+        return Ok(());
+    }
+    idle.reset(timeout).map_err(idle_failure)?;
+    idle.write_all(destination, stage.as_slice())
+        .await
+        .map_err(idle_failure)?;
+    *bytes = bytes.saturating_add(length_u64(stage.len()));
+    stage.clear();
+    Ok(())
 }
 
 /// Relays the raw uplink after an authenticated Direct boundary.
