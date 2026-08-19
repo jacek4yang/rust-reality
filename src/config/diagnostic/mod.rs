@@ -11,6 +11,8 @@
 //! network hot path never touches this module.
 
 mod classify;
+#[cfg(test)]
+mod golden;
 mod render;
 mod source_map;
 
