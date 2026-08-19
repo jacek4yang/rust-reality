@@ -277,20 +277,23 @@ done
 
 build_server_config() { # <rust|xray> <rule-count> <output>
     local impl=$1 count=$2 output=$3 rules
-    rules=$(python3 -c "import json; print(json.dumps([f'rule-{index}.routingbench' for index in range($count)]))")
+    # Large rule counts exceed the single-argument length limit, so the
+    # rule list travels through a file instead of --argjson.
+    local rules_file="$work/rules-$count.json"
+    python3 -c "import json,sys; json.dump([f'rule-{index}.routingbench' for index in range($count)], open(sys.argv[1],'w'))" "$rules_file"
     if [[ $impl == rust ]]; then
         jq --arg cache "$work/assets-rust" --arg dns "127.0.0.1:${dns_port[rust]}" \
-            --argjson port "${server_port[rust]}" --argjson rules "$rules" \
+            --argjson port "${server_port[rust]}" --slurpfile rules "$rules_file" \
             '.log.level="warn" | .assets.cacheDirectory=$cache
              | .inbounds[0].port=$port
              | .dns.servers=[$dns] | .routing.domainStrategy="AsIs"
-             | .routing.globalRules=[$rules | to_entries[]
+             | .routing.globalRules=[$rules[0] | to_entries[]
                  | {name:("r" + (.key|tostring)), outbound:"direct", domain:[.value]}]' \
             "$work/rust.base.json" >"$output"
     else
         jq -n --arg uuid "${uuid[xray]}" --arg pk "$xray_private_key" --arg sid "${short_id[xray]}" \
             --argjson port "${server_port[xray]}" --argjson dns "${dns_port[xray]}" \
-            --arg target "127.0.0.1:$https_port" --argjson rules "$rules" \
+            --arg target "127.0.0.1:$https_port" --slurpfile rules "$rules_file" \
             '{log:{loglevel:"warning"},
               dns:{servers:[{address:"127.0.0.1",port:$dns}],queryStrategy:"UseIPv4"},
               inbounds:[{listen:"127.0.0.1",port:$port,protocol:"vless",
@@ -301,7 +304,7 @@ build_server_config() { # <rust|xray> <rule-count> <output>
               outbounds:[{tag:"direct",protocol:"freedom",
                 settings:{domainStrategy:"UseIP",finalRules:[{action:"allow"}]}}],
               routing:{domainStrategy:"AsIs",
-                rules:[$rules | to_entries[] | {type:"field",domain:[.value],outboundTag:"direct"}]}}' \
+                rules:[$rules[0] | to_entries[] | {type:"field",domain:[.value],outboundTag:"direct"}]}}' \
             >"$output"
     fi
 }
