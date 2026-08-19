@@ -2,6 +2,7 @@
 
 mod generate;
 mod io;
+mod migrate;
 mod model;
 mod schema;
 mod validate;
@@ -16,6 +17,10 @@ pub use generate::{
 pub use io::{
     ConfigLoadError, ConfigLoadReport, MAX_CONFIG_BYTES, format_config, load_config,
     load_config_with_report,
+};
+pub use migrate::{
+    MigrateError, MigrateFrom, Migration, MigrationNote, MigrationNoteKind, migrate_config,
+    migrate_config_bytes,
 };
 pub use model::{
     AdvancedConfig, AssetsConfig, BlackholeSettings, Config, DialConfig, DialMode,

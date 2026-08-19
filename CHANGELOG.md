@@ -29,6 +29,21 @@ All notable user-facing changes to this project are documented in this file.
   `configuration_deprecation` event at startup and on each reload. The
   alias never serializes; `config format` rewrites files to the canonical
   location.
+- `config migrate --from 1.5 --config old.json --output new.json`: migrates
+  a v1.5 configuration to a minimal v1.6-native document.
+  `runtime.resourceMode` becomes `runtime.profile` (`standard` → `shared`,
+  `dedicated` → `dedicated`); `policy.*` moves to the identically named
+  `advanced.limits.*` fields; any surviving pinned limit forces
+  `runtime.tuning.mode: "fixed"` (byte-for-byte v1.5 behavior), while a
+  configuration without limits keeps the `tuning` defaults. Explicit values
+  equal to the built-in default are omitted where the schema allows and
+  reported `redundant`; an information-free `policy` object is reported
+  `discarded`; every translation, omission, and discard is printed to
+  stderr. The generated file is re-validated with the same validation
+  `check` runs plus a serialize/parse round-trip, and migration fails
+  rather than writing an invalid file. Re-running with `--from 1.6`
+  rejects a leftover top-level `policy` object with an error naming
+  `advanced.limits`.
 
 ### Changed
 

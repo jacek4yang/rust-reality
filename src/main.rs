@@ -21,9 +21,10 @@ use rust_reality::{
         ConfigLoadError, ConfigLoadReport, GenerateConfigError, GenerateConfigInput,
         GenerateHandoffConfigInput, GenerateLandingConfigInput, GenerateLineConfigInput,
         GenerateMultiHandoffConfigInput, GeneratedHandoffConfigs, GeneratedMultiHandoffConfigs,
-        HandoffLandingInput, SecretString, format_config, format_config_schema,
-        generate_handoff_configs, generate_landing_config, generate_line_config,
-        generate_minimal_config, generate_multi_handoff_configs, load_config_with_report,
+        HandoffLandingInput, MigrateError, MigrateFrom, SecretString, format_config,
+        format_config_schema, generate_handoff_configs, generate_landing_config,
+        generate_line_config, generate_minimal_config, generate_multi_handoff_configs,
+        load_config_with_report, migrate_config,
     },
     crypto::{
         KeyGenerationError, generate_mldsa65_key_pair, generate_mldsa65_key_pair_from_seed,
@@ -93,8 +94,23 @@ enum ConfigCommand {
     },
     /// Benchmark this host and write a validated automatically tuned copy.
     Autotune(AutotuneArgs),
+    /// Migrate a v1.5 configuration to the v1.6 model.
+    Migrate(MigrateArgs),
     /// Validate and print a canonical pretty JSON configuration.
     Format(ConfigPath),
+}
+
+#[derive(Debug, Args)]
+struct MigrateArgs {
+    /// Source model version: 1.5 or 1.6.
+    #[arg(long, value_name = "VERSION", value_parser = clap::builder::PossibleValuesParser::new(MigrateFrom::VALUES))]
+    from: String,
+    /// Existing configuration path; never modified.
+    #[arg(short, long, value_name = "PATH")]
+    config: PathBuf,
+    /// Migrated configuration path.
+    #[arg(short, long, value_name = "PATH")]
+    output: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -259,6 +275,7 @@ enum CliError {
     InvalidArgument(&'static str),
     Benchmark(BenchmarkError),
     Autotune(AutotuneError),
+    Migrate(MigrateError),
 }
 
 impl fmt::Display for CliError {
@@ -276,6 +293,7 @@ impl fmt::Display for CliError {
             Self::InvalidArgument(message) => formatter.write_str(message),
             Self::Benchmark(source) => source.fmt(formatter),
             Self::Autotune(source) => source.fmt(formatter),
+            Self::Migrate(source) => source.fmt(formatter),
         }
     }
 }
@@ -295,6 +313,7 @@ impl Error for CliError {
             Self::InvalidArgument(_) => None,
             Self::Benchmark(source) => Some(source),
             Self::Autotune(source) => Some(source),
+            Self::Migrate(source) => Some(source),
         }
     }
 }
@@ -362,6 +381,12 @@ impl From<BenchmarkError> for CliError {
 impl From<AutotuneError> for CliError {
     fn from(source: AutotuneError) -> Self {
         Self::Autotune(source)
+    }
+}
+
+impl From<MigrateError> for CliError {
+    fn from(source: MigrateError) -> Self {
+        Self::Migrate(source)
     }
 }
 
@@ -501,6 +526,7 @@ fn run_config(command: ConfigCommand) -> Result<(), CliError> {
     match command {
         ConfigCommand::Generate { role } => run_config_generate(role),
         ConfigCommand::Autotune(arguments) => run_config_autotune(arguments),
+        ConfigCommand::Migrate(arguments) => run_config_migrate(arguments),
         ConfigCommand::Format(arguments) => {
             let (config, report) = load_config_with_report(arguments.config)?;
             warn_policy_alias(&report);
@@ -552,6 +578,28 @@ fn run_config_autotune(arguments: AutotuneArgs) -> Result<(), CliError> {
         "tuned configuration: {}\nmeasurement report: {}\n",
         arguments.output.display(),
         report_path.display()
+    ))
+}
+
+fn run_config_migrate(arguments: MigrateArgs) -> Result<(), CliError> {
+    if arguments.config == arguments.output {
+        return Err(CliError::InvalidArgument(
+            "--output must differ from --config; migrate never overwrites its input",
+        ));
+    }
+    let from = MigrateFrom::parse(&arguments.from)
+        .ok_or(CliError::InvalidArgument("--from must be one of: 1.5, 1.6"))?;
+    let migration = migrate_config(from, &arguments.config)?;
+    {
+        let mut stderr = io::stderr().lock();
+        for note in migration.notes() {
+            let _ = writeln!(stderr, "migrate: {note}");
+        }
+    }
+    write_atomic(&arguments.output, migration.json().as_bytes())?;
+    write_stdout(format_args!(
+        "migrated configuration: {}\n",
+        arguments.output.display()
     ))
 }
 

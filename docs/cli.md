@@ -236,6 +236,31 @@ or timeout policy. Inspect the diff and report, run `check`, then deploy through
 the normal restart procedure. See the
 [tuning guide](tuning.md#automatic-measured-starting-policy).
 
+### `config migrate`
+
+```text
+rust-reality config migrate --from <1.5|1.6> \
+  --config <OLD.json> --output <NEW.json>
+```
+
+Migrates a v1.5 configuration to the v1.6 model and writes a validated,
+v1.6-native copy. It never edits the input; the output is owner-only (`0600`)
+and published by same-directory atomic rename. Every translation, omission,
+and discard is printed to stderr — nothing is silently dropped and no
+security-sensitive value is guessed. See the
+[migration mapping](configuration.md#migrating-a-v15-configuration).
+
+| Option | Required | Default | Meaning |
+| --- | --- | --- | --- |
+| `--from <VERSION>` | yes | — | Source model version: `1.5` or `1.6`. With `1.6`, a leftover top-level `policy` object is an error naming `advanced.limits`. |
+| `-c, --config <PATH>` | yes | — | Existing configuration; unknown fields, invalid values, and conflicting `policy`/`advanced.limits` placements fail exactly as `check` fails. |
+| `-o, --output <PATH>` | yes | — | Migrated configuration path; must differ from the input. |
+
+The generated document is re-validated with the same validation `check` runs
+and must survive a serialize/parse round-trip; migration fails rather than
+writing an invalid file. Run `check --config <NEW.json>` and inspect the
+stderr report before deploying.
+
 ### `config format`
 
 ```text
