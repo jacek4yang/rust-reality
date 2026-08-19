@@ -7,12 +7,21 @@
 //! by the same `DnsLookup` admission pool as the routing path.
 //!
 //! Two backends exist. The system backend (getaddrinfo) exposes no TTLs, so
-//! per release policy it never populates the dynamic caches; it still gains
-//! coalescing, governance, and the absolute timeout. The DNS protocol backend
-//! (hickory, plain UDP with TCP fallback against the configured servers)
-//! observes real TTLs and caches only TTL-backed answers. Static configured
-//! peers are the explicit exception in every mode: the operator owns their
-//! staleness through `dns.cache.staticTtlSeconds`.
+//! per release policy it never populates the dynamic caches (the optional
+//! `dns.cache.systemReuseMs` recent-completion window is the bounded
+//! exception); it still gains coalescing, governance, and the absolute
+//! timeout. The DNS protocol backend (hickory, plain UDP with TCP fallback
+//! against the configured servers) observes real TTLs and caches only
+//! TTL-backed answers. Static configured peers are the explicit exception in
+//! every mode: the operator owns their staleness through
+//! `dns.cache.staticTtlSeconds`.
+//!
+//! Cache identity is the (query class, normalized name) pair: a static entry
+//! and a dynamic entry for the same name are independent slots with
+//! independent lifetimes, so the static TTL can never extend a dynamic
+//! answer and a dynamic answer can never satisfy a static lookup. One global
+//! table keeps the configured entry bound exact; both entries count against
+//! it.
 //!
 //! Cancellation and accounting: every upstream query is a detached flight
 //! task holding one `DnsLookup` permit. Dropping a waiter never disturbs the
@@ -81,12 +90,27 @@ impl IpFamily {
 }
 
 /// Static configured peer or per-session dynamic destination.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+///
+/// The class is part of the cache identity: a static entry and a dynamic
+/// entry for the same normalized name are independent slots with independent
+/// lifetimes, so the operator-owned `static_ttl` can never extend a dynamic
+/// answer and a dynamic answer can never satisfy a static lookup.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum QueryClass {
     /// Client-requested destination: cached only with a TTL-backed answer.
     Dynamic,
     /// Operator-configured fixed peer: cached for `static_ttl` in every mode.
     Static,
+}
+
+/// Cache identity: the query class plus the normalized lookup name. Two
+/// classes resolving one name share nothing — neither cached entries nor
+/// in-flight flights — which keeps the split obviously correct at the cost
+/// of at most one duplicate upstream query per name.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct CacheKey {
+    class: QueryClass,
+    name: Box<str>,
 }
 
 /// A DNS resolution failure. Clonable so one coalesced flight can share its
@@ -403,7 +427,13 @@ struct ResolverInner {
     governor: ResourceGovernor,
     timeout: Duration,
     bounds: CacheBounds,
-    slots: std::sync::Mutex<HashMap<Box<str>, Slot>>,
+    /// Optional recent-completion reuse window for TTL-less system-backend
+    /// positive answers (`dns.cache.systemReuseMs`). `Some` only for the
+    /// system backend; this is not authoritative TTL caching.
+    system_reuse: Option<Duration>,
+    /// One global table keeps the entry bound global and exact; a name's
+    /// static and dynamic entries both count against `max_entries`.
+    slots: std::sync::Mutex<HashMap<CacheKey, Slot>>,
     metrics: DnsMetrics,
 }
 
@@ -416,11 +446,21 @@ pub struct DnsResolver {
 impl DnsResolver {
     /// Builds a resolver on the operating system resolver (getaddrinfo).
     ///
-    /// Dynamic answers carry no TTL and are never cached; coalescing,
-    /// governance, the absolute timeout, and the static-peer cache apply.
+    /// Dynamic answers carry no TTL and are never cached, unless the optional
+    /// `dns.cache.systemReuseMs` recent-completion window is configured —
+    /// that window reuses positive answers briefly and is not authoritative
+    /// TTL caching. Coalescing, governance, the absolute timeout, and the
+    /// static-peer cache apply either way.
     #[must_use]
     pub fn system(governor: ResourceGovernor, timeout: Duration, cache: &DnsCacheConfig) -> Self {
-        Self::with_backend(Box::new(SystemBackend), governor, timeout, cache)
+        let system_reuse = Duration::from_millis(cache.system_reuse_ms);
+        Self::with_backend(
+            Box::new(SystemBackend),
+            governor,
+            timeout,
+            cache,
+            (!system_reuse.is_zero()).then_some(system_reuse),
+        )
     }
 
     fn with_backend(
@@ -428,6 +468,7 @@ impl DnsResolver {
         governor: ResourceGovernor,
         timeout: Duration,
         cache: &DnsCacheConfig,
+        system_reuse: Option<Duration>,
     ) -> Self {
         Self {
             inner: Arc::new(ResolverInner {
@@ -435,6 +476,7 @@ impl DnsResolver {
                 governor,
                 timeout,
                 bounds: CacheBounds::new(cache),
+                system_reuse,
                 slots: std::sync::Mutex::new(HashMap::new()),
                 metrics: DnsMetrics::default(),
             }),
@@ -486,11 +528,14 @@ impl DnsResolver {
         }
         let backend = HickoryBackend::build(servers, timeout)
             .map_err(|error| DnsResolverConfigError::Backend(error.to_string()))?;
+        // Real upstream TTLs govern; the system recent-completion window
+        // does not apply to the DNS protocol backend.
         Ok(Self::with_backend(
             Box::new(backend),
             governor,
             timeout,
             &config.cache,
+            None,
         ))
     }
 
@@ -540,8 +585,11 @@ impl DnsResolver {
         class: QueryClass,
     ) -> Result<Arc<[IpAddr]>, DnsError> {
         self.inner.metrics.bump(&self.inner.metrics.requests);
-        let key = normalize_name(name)?;
-        if let Ok(ip) = key.parse::<IpAddr>() {
+        let key = CacheKey {
+            class,
+            name: normalize_name(name)?,
+        };
+        if let Ok(ip) = key.name.parse::<IpAddr>() {
             return filter_family(&Arc::from([ip]), family);
         }
         let effective = budget.min(self.inner.timeout);
@@ -553,7 +601,7 @@ impl DnsResolver {
             let mut receiver = {
                 let mut slots = self.locked_slots();
                 let now = Instant::now();
-                match slots.get(key.as_ref()) {
+                match slots.get(&key) {
                     Some(Slot::Positive { ips, expires }) if *expires > now => {
                         self.inner.metrics.bump(&self.inner.metrics.cache_hits);
                         return filter_family(ips, family);
@@ -570,7 +618,7 @@ impl DnsResolver {
                     }
                     Some(_) => {
                         // Expired entry: drop it and retry as a fresh lookup.
-                        slots.remove(key.as_ref());
+                        slots.remove(&key);
                         self.inner.metrics.bump(&self.inner.metrics.expirations);
                         continue;
                     }
@@ -619,7 +667,7 @@ impl DnsResolver {
         }
     }
 
-    fn locked_slots(&self) -> std::sync::MutexGuard<'_, HashMap<Box<str>, Slot>> {
+    fn locked_slots(&self) -> std::sync::MutexGuard<'_, HashMap<CacheKey, Slot>> {
         self.inner
             .slots
             .lock()
@@ -628,7 +676,7 @@ impl DnsResolver {
 
     fn spawn_flight(
         inner: Arc<ResolverInner>,
-        key: Box<str>,
+        key: CacheKey,
         sender: broadcast::Sender<FlightResult>,
         permit: AdmissionPermit,
         class: QueryClass,
@@ -636,7 +684,7 @@ impl DnsResolver {
     ) {
         tokio::spawn(async move {
             inner.metrics.bump(&inner.metrics.upstream_queries);
-            let result = time::timeout(timeout, inner.backend.lookup(&key, permit)).await;
+            let result = time::timeout(timeout, inner.backend.lookup(&key.name, permit)).await;
             let now = Instant::now();
             let (slot, outcome): (Option<Slot>, FlightResult) = match result {
                 Err(_) => {
@@ -673,9 +721,14 @@ impl DnsResolver {
                         QueryClass::Static => Some(inner.bounds.static_ttl),
                         // Dynamic answers enter the cache only with a real
                         // upstream TTL, clamped to the configured bounds.
+                        // TTL-less answers come from the system backend; the
+                        // optional recent-completion window reuses them for
+                        // a short bounded time — recent-completion reuse,
+                        // not authoritative TTL caching.
                         QueryClass::Dynamic => answer
                             .ttl
-                            .map(|ttl| ttl.clamp(inner.bounds.min_ttl, inner.bounds.max_ttl)),
+                            .map(|ttl| ttl.clamp(inner.bounds.min_ttl, inner.bounds.max_ttl))
+                            .or(inner.system_reuse),
                     }
                     .filter(|ttl| !ttl.is_zero());
                     let slot = ttl.map(|ttl| Slot::Positive {
@@ -748,7 +801,7 @@ fn filter_family(ips: &Arc<[IpAddr]>, family: IpFamily) -> Result<Arc<[IpAddr]>,
     Ok(Arc::from(filtered))
 }
 
-fn insert_bounded(inner: &ResolverInner, key: Box<str>, slot: Slot, now: Instant) {
+fn insert_bounded(inner: &ResolverInner, key: CacheKey, slot: Slot, now: Instant) {
     let mut slots = inner.slots.lock().unwrap_or_else(PoisonError::into_inner);
     // Replacing our own in-flight entry never grows the table.
     if slots.len() >= inner.bounds.max_entries && !slots.contains_key(&key) {
@@ -760,7 +813,7 @@ fn insert_bounded(inner: &ResolverInner, key: Box<str>, slot: Slot, now: Instant
 /// Makes room for a new entry: expired entries first, then the
 /// earliest-expiring cached entry. In-flight entries are never evicted;
 /// their waiters would otherwise lose the flight.
-fn evict_pressure(inner: &ResolverInner, slots: &mut HashMap<Box<str>, Slot>, now: Instant) {
+fn evict_pressure(inner: &ResolverInner, slots: &mut HashMap<CacheKey, Slot>, now: Instant) {
     let before = slots.len();
     slots.retain(|_, slot| !slot.is_expired(now));
     inner
@@ -1105,6 +1158,34 @@ mod tests {
         timeout: Duration,
         max_dns_lookups: u32,
     ) -> Harness {
+        build_inner(backend, cache, timeout, max_dns_lookups, None)
+    }
+
+    /// A harness behaving like the system backend: TTL-less answers, with the
+    /// recent-completion window taken from the cache config.
+    fn build_system(
+        backend: MockBackend,
+        cache: &DnsCacheConfig,
+        timeout: Duration,
+        max_dns_lookups: u32,
+    ) -> Harness {
+        let reuse = Duration::from_millis(cache.system_reuse_ms);
+        build_inner(
+            backend,
+            cache,
+            timeout,
+            max_dns_lookups,
+            (!reuse.is_zero()).then_some(reuse),
+        )
+    }
+
+    fn build_inner(
+        backend: MockBackend,
+        cache: &DnsCacheConfig,
+        timeout: Duration,
+        max_dns_lookups: u32,
+        system_reuse: Option<Duration>,
+    ) -> Harness {
         let backend = Arc::new(backend);
         let resolver = DnsResolver::with_backend(
             Box::new(ArcBackend(Arc::clone(&backend))),
@@ -1114,6 +1195,7 @@ mod tests {
             }),
             timeout,
             cache,
+            system_reuse,
         );
         Harness { resolver, backend }
     }
@@ -1559,6 +1641,366 @@ mod tests {
             .await
             .expect("b.test re-resolves after eviction");
         assert_eq!(harness.backend.calls(), calls_before + 1);
+    }
+
+    #[tokio::test]
+    async fn static_and_dynamic_entries_for_one_name_are_independent() {
+        // Dynamic first: the static lookup must not be satisfied by the
+        // dynamic entry, and afterwards each class is served by its own
+        // entry.
+        let harness = build(
+            MockBackend::answering(vec![v4(1)], Some(Duration::from_secs(30))),
+            &cache_config(),
+            Duration::from_secs(5),
+            64,
+        );
+        harness
+            .resolver
+            .resolve("shared.test", IpFamily::Any, Duration::from_secs(5))
+            .await
+            .expect("dynamic resolution");
+        harness
+            .resolver
+            .resolve_static("shared.test", IpFamily::Any, Duration::from_secs(5))
+            .await
+            .expect("static resolution goes upstream despite the dynamic entry");
+        assert_eq!(harness.backend.calls(), 2);
+        assert_eq!(harness.resolver.cache_len(), 2);
+        for _ in 0..2 {
+            harness
+                .resolver
+                .resolve("shared.test", IpFamily::Any, Duration::from_secs(5))
+                .await
+                .expect("warm dynamic resolution");
+            harness
+                .resolver
+                .resolve_static("shared.test", IpFamily::Any, Duration::from_secs(5))
+                .await
+                .expect("warm static resolution");
+        }
+        assert_eq!(harness.backend.calls(), 2, "each class hits its own entry");
+        assert_eq!(harness.resolver.metrics().cache_hits, 4);
+
+        // Static first: the dynamic lookup must not be satisfied by the
+        // static entry.
+        let harness = build(
+            MockBackend::answering(vec![v4(1)], Some(Duration::from_secs(30))),
+            &cache_config(),
+            Duration::from_secs(5),
+            64,
+        );
+        harness
+            .resolver
+            .resolve_static("shared.test", IpFamily::Any, Duration::from_secs(5))
+            .await
+            .expect("static resolution");
+        harness
+            .resolver
+            .resolve("shared.test", IpFamily::Any, Duration::from_secs(5))
+            .await
+            .expect("dynamic resolution goes upstream despite the static entry");
+        assert_eq!(harness.backend.calls(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_static_ttl_never_extends_a_dynamic_entry() {
+        // A TTL-less dynamic answer is uncached, and the static entry for the
+        // same name must not lend it a lifetime either.
+        let harness = build(
+            MockBackend::answering(vec![v4(1)], None),
+            &cache_config(),
+            Duration::from_secs(5),
+            64,
+        );
+        harness
+            .resolver
+            .resolve_static("peer.test", IpFamily::Any, Duration::from_secs(5))
+            .await
+            .expect("static resolution");
+        for _ in 0..2 {
+            harness
+                .resolver
+                .resolve("peer.test", IpFamily::Any, Duration::from_secs(5))
+                .await
+                .expect("dynamic resolution");
+        }
+        assert_eq!(
+            harness.backend.calls(),
+            3,
+            "one static flight plus two TTL-less dynamic flights"
+        );
+
+        // A short-TTL dynamic entry expires on its own clock even while the
+        // long-lived static entry for the same name is still valid.
+        let harness = build(
+            MockBackend::answering(vec![v4(1)], Some(Duration::from_millis(60))),
+            &cache_config(),
+            Duration::from_secs(5),
+            64,
+        );
+        harness
+            .resolver
+            .resolve("short.test", IpFamily::Any, Duration::from_secs(5))
+            .await
+            .expect("dynamic resolution");
+        harness
+            .resolver
+            .resolve_static("short.test", IpFamily::Any, Duration::from_secs(5))
+            .await
+            .expect("static resolution");
+        assert_eq!(harness.backend.calls(), 2);
+        time::sleep(Duration::from_millis(100)).await;
+        harness
+            .resolver
+            .resolve("short.test", IpFamily::Any, Duration::from_secs(5))
+            .await
+            .expect("the expired dynamic entry re-resolves");
+        assert_eq!(
+            harness.backend.calls(),
+            3,
+            "the static entry must not extend the dynamic lifetime"
+        );
+        harness
+            .resolver
+            .resolve_static("short.test", IpFamily::Any, Duration::from_secs(5))
+            .await
+            .expect("the static entry is still valid");
+        assert_eq!(harness.backend.calls(), 3);
+    }
+
+    #[tokio::test]
+    async fn cross_class_flights_for_one_name_are_independent() {
+        // A cold burst of static and dynamic lookups for the same name runs
+        // exactly two flights: one per class, each coalescing its waiters.
+        let harness = build(
+            MockBackend::answering(vec![v4(1)], Some(Duration::from_secs(30)))
+                .with_delay(Duration::from_millis(50)),
+            &cache_config(),
+            Duration::from_secs(5),
+            64,
+        );
+        let mut tasks = tokio::task::JoinSet::new();
+        for index in 0..32 {
+            let resolver = harness.resolver.clone();
+            tasks.spawn(async move {
+                if index % 2 == 0 {
+                    resolver
+                        .resolve("burst.test", IpFamily::Any, Duration::from_secs(5))
+                        .await
+                } else {
+                    resolver
+                        .resolve_static("burst.test", IpFamily::Any, Duration::from_secs(5))
+                        .await
+                }
+            });
+        }
+        while let Some(outcome) = tasks.join_next().await {
+            outcome
+                .expect("no task panics")
+                .expect("every waiter resolves");
+        }
+        assert_eq!(harness.backend.calls(), 2, "one flight per class");
+        assert_eq!(harness.resolver.metrics().upstream_queries, 2);
+        assert_eq!(harness.resolver.metrics().coalesced, 30);
+        // The completed flights serve an immediate same-class burst.
+        for _ in 0..32 {
+            harness
+                .resolver
+                .resolve("burst.test", IpFamily::Any, Duration::from_secs(5))
+                .await
+                .expect("post-flight dynamic burst hits the cache");
+            harness
+                .resolver
+                .resolve_static("burst.test", IpFamily::Any, Duration::from_secs(5))
+                .await
+                .expect("post-flight static burst hits the cache");
+        }
+        assert_eq!(harness.backend.calls(), 2);
+    }
+
+    #[tokio::test]
+    async fn one_permit_pool_governs_both_classes() {
+        // Admission is shared: a dynamic flight holding the only permit
+        // denies a static lookup of the same name (which must not join the
+        // dynamic flight either).
+        let harness = build(
+            MockBackend::answering(vec![v4(1)], None).with_delay(Duration::from_millis(200)),
+            &cache_config(),
+            Duration::from_secs(5),
+            1,
+        );
+        let first = {
+            let resolver = harness.resolver.clone();
+            tokio::spawn(async move {
+                resolver
+                    .resolve("pool.test", IpFamily::Any, Duration::from_secs(5))
+                    .await
+            })
+        };
+        time::sleep(Duration::from_millis(20)).await;
+        let error = harness
+            .resolver
+            .resolve_static("pool.test", IpFamily::Any, Duration::from_secs(5))
+            .await
+            .expect_err("the single permit is held by the dynamic flight");
+        assert!(matches!(error, DnsError::Limit));
+        first
+            .await
+            .expect("first flight must finish")
+            .expect("first resolution must succeed");
+        assert_eq!(harness.backend.calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn system_reuse_window_bounds_update_visibility() {
+        let cache = DnsCacheConfig {
+            system_reuse_ms: 80,
+            ..cache_config()
+        };
+        let harness = build_system(
+            MockBackend::answering(vec![v4(1)], None),
+            &cache,
+            Duration::from_secs(5),
+            64,
+        );
+        let addresses = harness
+            .resolver
+            .resolve("sys.test", IpFamily::Any, Duration::from_secs(5))
+            .await
+            .expect("first resolution");
+        assert_eq!(addresses.as_ref(), &[v4(1)]);
+        // The upstream answer changes inside the window: not yet visible.
+        harness.backend.set_outcome(MockOutcome::Answer {
+            ips: vec![v4(2)],
+            ttl: None,
+        });
+        let addresses = harness
+            .resolver
+            .resolve("sys.test", IpFamily::Any, Duration::from_secs(5))
+            .await
+            .expect("the window reuses the recent completion");
+        assert_eq!(addresses.as_ref(), &[v4(1)], "inside the window: stale");
+        assert_eq!(harness.backend.calls(), 1);
+        assert_eq!(harness.resolver.metrics().cache_hits, 1);
+        // After the window the updated answer becomes visible.
+        time::sleep(Duration::from_millis(120)).await;
+        let addresses = harness
+            .resolver
+            .resolve("sys.test", IpFamily::Any, Duration::from_secs(5))
+            .await
+            .expect("post-window resolution");
+        assert_eq!(addresses.as_ref(), &[v4(2)], "the window bounds staleness");
+        assert_eq!(harness.backend.calls(), 2);
+
+        // Window disabled (default): TTL-less answers are never reused.
+        let harness = build_system(
+            MockBackend::answering(vec![v4(1)], None),
+            &cache_config(),
+            Duration::from_secs(5),
+            64,
+        );
+        for _ in 0..2 {
+            harness
+                .resolver
+                .resolve("sys.test", IpFamily::Any, Duration::from_secs(5))
+                .await
+                .expect("resolution");
+        }
+        assert_eq!(harness.backend.calls(), 2);
+    }
+
+    #[tokio::test]
+    async fn system_reuse_never_caches_negative_answers() {
+        let cache = DnsCacheConfig {
+            system_reuse_ms: 5_000,
+            ..cache_config()
+        };
+        let backend = MockBackend::answering(vec![], None);
+        // The system backend reports negatives without an SOA TTL.
+        backend.set_outcome(MockOutcome::NotFound {
+            nxdomain: false,
+            negative_ttl: None,
+        });
+        let harness = build_system(backend, &cache, Duration::from_secs(5), 64);
+        for _ in 0..2 {
+            harness
+                .resolver
+                .resolve("absent.test", IpFamily::Any, Duration::from_secs(5))
+                .await
+                .expect_err("the negative answer fails");
+        }
+        assert_eq!(
+            harness.backend.calls(),
+            2,
+            "the reuse window covers positive answers only"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_entry_bound_counts_both_classes_of_one_name() {
+        let cache = DnsCacheConfig {
+            max_entries: 2,
+            ..cache_config()
+        };
+        let harness = build(
+            MockBackend::answering(vec![v4(1)], Some(Duration::from_secs(30))),
+            &cache,
+            Duration::from_secs(5),
+            64,
+        );
+        harness
+            .resolver
+            .resolve("one.test", IpFamily::Any, Duration::from_secs(5))
+            .await
+            .expect("dynamic resolution");
+        harness
+            .resolver
+            .resolve_static("one.test", IpFamily::Any, Duration::from_secs(5))
+            .await
+            .expect("static resolution");
+        assert_eq!(
+            harness.resolver.cache_len(),
+            2,
+            "both class entries count against the shared bound"
+        );
+        harness
+            .resolver
+            .resolve("two.test", IpFamily::Any, Duration::from_secs(5))
+            .await
+            .expect("a third entry forces eviction");
+        assert!(
+            harness.resolver.cache_len() <= 2,
+            "the shared bound holds under the split keying"
+        );
+        assert_eq!(harness.resolver.metrics().evictions, 1);
+    }
+
+    #[tokio::test]
+    async fn dropping_every_resolver_handle_mid_flight_completes_the_flight() {
+        // Shutdown while flights exist: the detached flight holds the inner
+        // state alive, finishes its upstream call, and publishes to no one.
+        let harness = build(
+            MockBackend::answering(vec![v4(1)], Some(Duration::from_secs(30)))
+                .with_delay(Duration::from_millis(60)),
+            &cache_config(),
+            Duration::from_secs(5),
+            64,
+        );
+        let waiter = {
+            let resolver = harness.resolver.clone();
+            tokio::spawn(async move {
+                resolver
+                    .resolve("orphan.test", IpFamily::Any, Duration::from_secs(5))
+                    .await
+            })
+        };
+        time::sleep(Duration::from_millis(20)).await;
+        drop(harness.resolver);
+        waiter.abort();
+        // Past the backend delay: the orphaned flight ran to completion
+        // without a panic or a hang.
+        time::sleep(Duration::from_millis(120)).await;
+        assert_eq!(harness.backend.calls(), 1);
     }
 
     #[tokio::test]

@@ -186,6 +186,9 @@ fn validate_assets_and_dns(config: &Config) -> Result<(), ConfigError> {
 const MAX_DNS_CACHE_ENTRIES: u32 = 65_536;
 /// Upper bound for DNS cache TTL fields (one day).
 const MAX_DNS_TTL_SECONDS: u32 = 86_400;
+/// Upper bound for the system recent-completion reuse window (one minute):
+/// it smooths getaddrinfo bursts, it is not a TTL substitute.
+const MAX_DNS_SYSTEM_REUSE_MS: u32 = 60_000;
 
 fn validate_dns_servers(dns: &crate::config::DnsConfig) -> Result<(), ConfigError> {
     if dns.servers.is_empty() {
@@ -245,6 +248,12 @@ fn validate_dns_cache(cache: &crate::config::DnsCacheConfig) -> Result<(), Confi
         return fail(
             "dns.cache.staticTtlSeconds",
             format!("must be between 1 and {MAX_DNS_TTL_SECONDS}"),
+        );
+    }
+    if cache.system_reuse_ms > u64::from(MAX_DNS_SYSTEM_REUSE_MS) {
+        return fail(
+            "dns.cache.systemReuseMs",
+            format!("must not exceed {MAX_DNS_SYSTEM_REUSE_MS}"),
         );
     }
     Ok(())
@@ -2440,6 +2449,22 @@ mod tests {
                 .expect_err("zero static TTL must be rejected")
                 .path(),
             "dns.cache.staticTtlSeconds"
+        );
+
+        let mut config = valid_config();
+        config.dns.cache.system_reuse_ms = 60_001;
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("an unbounded system reuse window must be rejected")
+                .path(),
+            "dns.cache.systemReuseMs"
+        );
+
+        let mut config = valid_config();
+        config.dns.cache.system_reuse_ms = 250;
+        assert!(
+            validate_config(&config).is_ok(),
+            "a bounded system reuse window is accepted"
         );
     }
 
