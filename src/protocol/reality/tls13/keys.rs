@@ -643,6 +643,25 @@ fn encode_hkdf_label(
     Ok(info)
 }
 
+/// Fuzz entry point: asserts the incremental transcript hash equals the
+/// one-shot digest over the concatenated updates.
+///
+/// The doc comment on [`TranscriptHasher`] promises snapshots are
+/// byte-identical to [`HashAlgorithm::digest`]; the fuzz target drives
+/// arbitrary chunkings through this function. Gated behind the `fuzzing`
+/// feature, which the `fuzz/` workspace enables on this crate.
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub fn fuzz_transcript_snapshot_matches(algorithm: HashAlgorithm, chunks: &[&[u8]]) -> bool {
+    let mut hasher = TranscriptHasher::new(algorithm);
+    let mut concatenated = Vec::new();
+    for chunk in chunks {
+        hasher.update(chunk);
+        concatenated.extend_from_slice(chunk);
+    }
+    hasher.snapshot() == algorithm.digest(&concatenated)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CipherSuite, HashAlgorithm, Tls13KeySchedule, TranscriptHash, TranscriptHasher};

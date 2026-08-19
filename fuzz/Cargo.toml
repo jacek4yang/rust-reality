@@ -8,7 +8,9 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
+arbitrary = { version = "1.4", features = ["derive"] }
 libfuzzer-sys = "0.4"
+serde_json = { version = "1.0", default-features = false, features = ["std"] }
 rust-reality = { path = "..", features = ["fuzzing"] }
 x25519-dalek = { version = "3.0.0", default-features = false, features = ["static_secrets"] }
 
@@ -50,6 +52,48 @@ bench = false
 [[bin]]
 name = "cover_flight"
 path = "fuzz_targets/cover_flight.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config_json"
+path = "fuzz_targets/config_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vision_transitions"
+path = "fuzz_targets/vision_transitions.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tls13_record"
+path = "fuzz_targets/tls13_record.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handoff_round_trip"
+path = "fuzz_targets/handoff_round_trip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "nxr_round_trip"
+path = "fuzz_targets/nxr_round_trip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transcript_diff"
+path = "fuzz_targets/transcript_diff.rs"
 test = false
 doc = false
 bench = false
