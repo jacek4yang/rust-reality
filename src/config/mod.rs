@@ -13,6 +13,9 @@ pub use generate::{
     generate_handoff_configs, generate_landing_config, generate_line_config,
     generate_minimal_config, generate_multi_handoff_configs,
 };
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub use io::fuzz_decode_config;
 pub use io::{ConfigLoadError, MAX_CONFIG_BYTES, format_config, load_config};
 pub use model::{
     AdvancedConfig, AssetsConfig, BlackholeSettings, Config, DialConfig, DialMode,
