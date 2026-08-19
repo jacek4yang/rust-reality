@@ -26,7 +26,7 @@ use crate::{
     assets::{AssetLoadError, AssetSnapshot},
     config::{
         Config, ConfigError, ConfigLoadError, InboundConfig, ListenMode, ResourceMode,
-        load_config_with_report, validate_config,
+        RuntimeConfig, RuntimeProfile, load_config_with_report, validate_config,
     },
     logging::{AdmissionResource, BackendStatus, LogEvent, LogWriteError, Logger, RejectionReason},
     network::{AddressFamily, ConnectionPlanner, NetworkEnvironment},
@@ -119,6 +119,7 @@ fn theoretical_fd_peak(config: &Config) -> u64 {
 struct ResourceStartup {
     plan: FdBudgetPlan,
     budget: FdBudget,
+    resource_mode: ResourceMode,
     machine: MachineReport,
     fd_effective_soft_limit: u64,
     fd_soft_raise_attempted: bool,
@@ -140,7 +141,9 @@ struct MemoryWatch {
 /// own soft `RLIMIT_NOFILE` to the hard limit — a process-local, privilege-
 /// free adjustment — and plans against the relaxed dedicated headroom. A
 /// failed raise is logged through the machine report and the derivation
-/// continues with the effective soft limit.
+/// continues with the effective soft limit. The effective mode comes from
+/// [`resolve_startup_resource_mode`]: an explicit `resourceMode` wins,
+/// otherwise the profile maps onto the mode.
 fn derive_fd_budget(config: &Config) -> Result<ResourceStartup, FdBudgetError> {
     let listeners = config
         .inbounds
@@ -154,12 +157,8 @@ fn derive_fd_budget(config: &Config) -> Result<ResourceStartup, FdBudgetError> {
         })
         .unwrap_or(u64::MAX);
     let reserve = FixedFdReserve::new(listeners);
-    let dedicated = config.runtime.resource_mode() == ResourceMode::Dedicated;
-    let mut machine = if dedicated {
-        MachineReport::detect()
-    } else {
-        MachineReport::conservative()
-    };
+    let (resource_mode, mut machine) = resolve_startup_resource_mode(&config.runtime);
+    let dedicated = resource_mode == ResourceMode::Dedicated;
     if !dedicated {
         let limit = read_descriptor_limit();
         machine.fd_soft_limit = limit.0;
@@ -212,12 +211,36 @@ fn derive_fd_budget(config: &Config) -> Result<ResourceStartup, FdBudgetError> {
     Ok(ResourceStartup {
         plan,
         budget,
+        resource_mode,
         fd_effective_soft_limit: effective_soft,
         fd_soft_raise_attempted: raise_attempted,
         fd_soft_limit_raised: raised,
         machine,
         memory,
     })
+}
+
+/// Resolves the effective startup resource mode and the machine view it was
+/// resolved against.
+///
+/// An explicit `resourceMode` is authoritative; otherwise the profile maps
+/// onto the mode ([`RuntimeConfig::resolve_resource_mode`]). The detected
+/// machine view is gathered only when the resolution or the dedicated-mode
+/// derivation can need it: an explicit `standard` mode and the `shared`
+/// profile both resolve to standard without looking at the machine, while
+/// `auto` needs the cgroup tenancy boundary to decide and every dedicated
+/// outcome budgets against the measured view.
+fn resolve_startup_resource_mode(runtime: &RuntimeConfig) -> (ResourceMode, MachineReport) {
+    let detect = match runtime.resource_mode {
+        Some(mode) => mode == ResourceMode::Dedicated,
+        None => runtime.profile != RuntimeProfile::Shared,
+    };
+    let machine = if detect {
+        MachineReport::detect()
+    } else {
+        MachineReport::conservative()
+    };
+    (runtime.resolve_resource_mode(&machine), machine)
 }
 
 /// Reads the process descriptor limit, falling back to a conservative default.
@@ -344,11 +367,11 @@ impl ProductionServer {
                 ipv6_available: network.ipv6_available,
             },
         );
-        if initial.config.runtime.resource_mode() == ResourceMode::Dedicated {
+        if startup.resource_mode == ResourceMode::Dedicated {
             emit(
                 &initial.logger,
                 &LogEvent::MachineReport {
-                    resource_mode: initial.config.runtime.resource_mode().as_str(),
+                    resource_mode: startup.resource_mode.as_str(),
                     fd_soft_limit: startup.machine.fd_soft_limit,
                     fd_hard_limit: startup.machine.fd_hard_limit,
                     fd_effective_soft_limit: startup.fd_effective_soft_limit,
@@ -684,6 +707,10 @@ impl RuntimeStore {
 
     fn reload_path(&self, path: &Path) -> Result<u64, RuntimeUpdateError> {
         let (config, report) = load_config_with_report(path)?;
+        let generation = self.publish(config)?;
+        // Report the deprecated alias only after the reload actually
+        // published, so a rejected candidate never claims a deprecation the
+        // running generation does not carry.
         if report.policy_alias_used {
             emit(
                 &self.load().logger,
@@ -693,7 +720,7 @@ impl RuntimeStore {
                 },
             );
         }
-        self.publish(config)
+        Ok(generation)
     }
 
     fn refresh(&self) -> Result<u64, RuntimeUpdateError> {
@@ -896,7 +923,17 @@ fn ensure_hot_compatible(
     if candidate.dns != current.config.dns {
         return Err(RuntimeUpdateError::DnsPolicyChanged);
     }
-    if candidate.runtime != current.config.runtime {
+    // The runtime posture is cold, but compare effective values rather than
+    // raw options: an explicit `resourceMode: standard` and a `policy`-alias-
+    // forced `tuning.mode: fixed` must not reject an equivalent hand-migrated
+    // config. Both modes resolve against one freshly detected machine view,
+    // so identical configs never disagree.
+    let machine = MachineReport::detect();
+    if !current
+        .config
+        .runtime
+        .hot_compatible_with(&candidate.runtime, &machine)
+    {
         return Err(RuntimeUpdateError::ResourceModeChanged);
     }
     if candidate.advanced.limits.resource_governor
@@ -1764,9 +1801,9 @@ impl fmt::Display for RuntimeUpdateError {
             Self::DnsPolicyChanged => {
                 formatter.write_str("DNS resolver policy requires a process restart")
             }
-            Self::ResourceModeChanged => {
-                formatter.write_str("the runtime resource mode requires a process restart")
-            }
+            Self::ResourceModeChanged => formatter.write_str(
+                "runtime profile, tuning, or resource-mode changes require a process restart",
+            ),
             Self::ReplayPolicyChanged => {
                 formatter.write_str("resource governor policy requires a process restart")
             }
@@ -2563,8 +2600,11 @@ mod tests {
     #[test]
     fn resource_mode_change_requires_restart() {
         let generated = generated_config(8443);
-        let server =
-            ProductionServer::from_config(generated.config()).expect("server must compile");
+        let mut current = generated.config().clone();
+        // Pin the starting mode: with an unset mode the `auto` profile
+        // resolves against the test machine, which is not deterministic.
+        current.runtime.resource_mode = Some(crate::config::ResourceMode::Standard);
+        let server = ProductionServer::from_config(&current).expect("server must compile");
         let previous = server.runtime.load();
         let mut replacement = generated.config().clone();
         replacement.runtime.resource_mode = Some(crate::config::ResourceMode::Dedicated);
@@ -2574,6 +2614,104 @@ mod tests {
             Err(RuntimeUpdateError::ResourceModeChanged)
         ));
         assert!(Arc::ptr_eq(&previous, &server.runtime.load()));
+    }
+
+    #[test]
+    fn profile_change_requires_restart() {
+        let generated = generated_config(8443);
+        let mut current = generated.config().clone();
+        current.runtime.profile = crate::config::RuntimeProfile::Shared;
+        let server = ProductionServer::from_config(&current).expect("server must compile");
+        let previous = server.runtime.load();
+        let mut replacement = generated.config().clone();
+        replacement.runtime.profile = crate::config::RuntimeProfile::Dedicated;
+
+        assert!(matches!(
+            server.runtime.publish(replacement),
+            Err(RuntimeUpdateError::ResourceModeChanged)
+        ));
+        assert!(Arc::ptr_eq(&previous, &server.runtime.load()));
+    }
+
+    #[test]
+    fn explicit_standard_resource_mode_is_reload_compatible_with_unset() {
+        let generated = generated_config(8443);
+        let mut current = generated.config().clone();
+        current.runtime.resource_mode = Some(crate::config::ResourceMode::Standard);
+        let server = ProductionServer::from_config(&current).expect("server must compile");
+
+        let replacement = generated.config().clone();
+        assert_eq!(replacement.runtime.resource_mode, None);
+        server
+            .runtime
+            .publish(replacement)
+            .expect("an explicit standard mode and an unset mode both resolve to standard");
+    }
+
+    #[test]
+    fn alias_forced_fixed_tuning_mode_is_reload_compatible_with_unset() {
+        let generated = generated_config(8443);
+        let mut current = generated.config().clone();
+        // What `Config::normalize` produces for a v1.5 config carrying the
+        // deprecated `policy` alias.
+        current.runtime.tuning.mode = Some(crate::config::TuningMode::Fixed);
+        let server = ProductionServer::from_config(&current).expect("server must compile");
+
+        let replacement = generated.config().clone();
+        assert_eq!(replacement.runtime.tuning.mode, None);
+        server
+            .runtime
+            .publish(replacement)
+            .expect("the hand-migrated config behaves identically to the alias config");
+    }
+
+    #[test]
+    fn startup_resource_mode_resolution_follows_the_profile() {
+        use crate::config::{ResourceMode, RuntimeProfile};
+        use crate::runtime::machine::MachineReport;
+
+        let runtime = |resource_mode, profile| crate::config::RuntimeConfig {
+            resource_mode,
+            profile,
+            tuning: crate::config::TuningConfig::default(),
+        };
+
+        // The shared profile resolves to standard without consulting the
+        // machine, so the conservative view comes back untouched.
+        let (mode, machine) =
+            super::resolve_startup_resource_mode(&runtime(None, RuntimeProfile::Shared));
+        assert_eq!(mode, ResourceMode::Standard);
+        assert_eq!(machine, MachineReport::conservative());
+
+        // The dedicated profile maps onto the dedicated mode.
+        let (mode, _) =
+            super::resolve_startup_resource_mode(&runtime(None, RuntimeProfile::Dedicated));
+        assert_eq!(mode, ResourceMode::Dedicated);
+
+        // Auto agrees with the detected tenancy boundary, whatever the test
+        // machine looks like.
+        let (mode, machine) =
+            super::resolve_startup_resource_mode(&runtime(None, RuntimeProfile::Auto));
+        let expected = if machine.tenancy_boundary_observable() {
+            ResourceMode::Dedicated
+        } else {
+            ResourceMode::Standard
+        };
+        assert_eq!(mode, expected);
+
+        // An explicit mode is authoritative over the profile and an explicit
+        // standard mode skips detection entirely.
+        let (mode, machine) = super::resolve_startup_resource_mode(&runtime(
+            Some(ResourceMode::Standard),
+            RuntimeProfile::Auto,
+        ));
+        assert_eq!(mode, ResourceMode::Standard);
+        assert_eq!(machine, MachineReport::conservative());
+        let (mode, _) = super::resolve_startup_resource_mode(&runtime(
+            Some(ResourceMode::Dedicated),
+            RuntimeProfile::Auto,
+        ));
+        assert_eq!(mode, ResourceMode::Dedicated);
     }
 
     fn generated_config(port: u16) -> crate::config::GeneratedConfig {

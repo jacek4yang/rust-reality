@@ -401,9 +401,10 @@ pub struct RuntimeConfig {
 impl RuntimeConfig {
     /// Returns the configured resource mode, or `standard` when unset.
     ///
-    /// The serve path keys off this value directly; profile-based
-    /// resolution ([`RuntimeConfig::resolve_resource_mode`]) is wired in by
-    /// the startup-derivation slice.
+    /// This is the explicit-mode view only: it ignores `profile`. The serve
+    /// path resolves the effective mode — profile mapping and `auto`
+    /// detection included — through
+    /// [`RuntimeConfig::resolve_resource_mode`].
     #[must_use]
     pub const fn resource_mode(&self) -> ResourceMode {
         match self.resource_mode {
@@ -439,6 +440,30 @@ impl RuntimeConfig {
                 }
             }
         }
+    }
+
+    /// Returns whether hot-reloading from `self` to `other` preserves the
+    /// cold runtime posture.
+    ///
+    /// The comparison keys off effective values rather than raw options, so
+    /// representations that behave identically do not reject a reload: an
+    /// explicit `resourceMode: standard` and an unset `resourceMode` both
+    /// resolve to `standard`, and a `policy`-alias-forced `tuning.mode:
+    /// fixed` and an unset mode compare equal through
+    /// [`TuningConfig::effective_mode`]. Both resource modes are resolved
+    /// against the same machine view, so a profile flip that changes the
+    /// resolved mode still rejects; `profile` and `objective` compare
+    /// directly.
+    #[must_use]
+    pub fn hot_compatible_with(
+        &self,
+        other: &Self,
+        machine: &crate::runtime::machine::MachineReport,
+    ) -> bool {
+        self.resolve_resource_mode(machine) == other.resolve_resource_mode(machine)
+            && self.profile == other.profile
+            && self.tuning.objective == other.tuning.objective
+            && self.tuning.effective_mode() == other.tuning.effective_mode()
     }
 }
 
@@ -560,6 +585,17 @@ impl TuningConfig {
             Some(mode) => mode,
             None => TuningMode::Startup,
         }
+    }
+
+    /// Returns the tuning mode as it behaves in this version.
+    ///
+    /// `startup` and `adaptive` resolve to the same fixed numbers as `fixed`
+    /// until the startup-derivation slice lands, so hot-reload compatibility
+    /// treats every mode as `fixed`. The derivation slice replaces this with
+    /// the strict [`TuningConfig::mode`] comparison.
+    #[must_use]
+    pub const fn effective_mode(&self) -> TuningMode {
+        TuningMode::Fixed
     }
 }
 
@@ -1601,10 +1637,87 @@ mod tests {
     }
 
     #[test]
+    fn hot_compatibility_compares_effective_values_not_raw_options() {
+        let machine = machine_with(None, None);
+        let explicit_standard = RuntimeConfig {
+            resource_mode: Some(ResourceMode::Standard),
+            profile: RuntimeProfile::Auto,
+            tuning: TuningConfig::default(),
+        };
+        let unset = RuntimeConfig::default();
+        assert!(
+            explicit_standard.hot_compatible_with(&unset, &machine),
+            "an explicit standard mode and an unset mode both resolve to standard"
+        );
+        assert!(unset.hot_compatible_with(&explicit_standard, &machine));
+
+        let alias_forced_fixed = RuntimeConfig {
+            resource_mode: None,
+            profile: RuntimeProfile::Auto,
+            tuning: TuningConfig {
+                mode: Some(TuningMode::Fixed),
+                objective: Objective::Balanced,
+            },
+        };
+        assert!(
+            alias_forced_fixed.hot_compatible_with(&unset, &machine),
+            "the alias-forced fixed mode and an unset mode behave identically"
+        );
+        assert!(unset.hot_compatible_with(&alias_forced_fixed, &machine));
+    }
+
+    #[test]
+    fn hot_compatibility_still_rejects_cold_drift() {
+        let machine = machine_with(None, None);
+        let shared = RuntimeConfig {
+            resource_mode: None,
+            profile: RuntimeProfile::Shared,
+            tuning: TuningConfig::default(),
+        };
+        let dedicated_profile = RuntimeConfig {
+            resource_mode: None,
+            profile: RuntimeProfile::Dedicated,
+            tuning: TuningConfig::default(),
+        };
+        assert!(
+            !shared.hot_compatible_with(&dedicated_profile, &machine),
+            "a profile flip that changes the resolved mode must reject"
+        );
+
+        let dedicated_mode = RuntimeConfig {
+            resource_mode: Some(ResourceMode::Dedicated),
+            profile: RuntimeProfile::Auto,
+            tuning: TuningConfig::default(),
+        };
+        assert!(
+            !shared.hot_compatible_with(&dedicated_mode, &machine),
+            "an explicit mode change must reject"
+        );
+
+        let other_objective = RuntimeConfig {
+            resource_mode: None,
+            profile: RuntimeProfile::Auto,
+            tuning: TuningConfig {
+                mode: None,
+                objective: Objective::Throughput,
+            },
+        };
+        assert!(
+            !RuntimeConfig::default().hot_compatible_with(&other_objective, &machine),
+            "objective drift must reject"
+        );
+    }
+
+    #[test]
     fn tuning_defaults_match_the_documented_model() {
         let tuning = TuningConfig::default();
         assert_eq!(tuning.mode(), TuningMode::Startup);
         assert_eq!(tuning.mode, None, "an unset mode must stay distinguishable");
+        assert_eq!(
+            tuning.effective_mode(),
+            TuningMode::Fixed,
+            "every mode behaves as fixed until the derivation slice lands"
+        );
         assert_eq!(tuning.objective, Objective::Balanced);
         assert_eq!(TuningMode::Fixed.as_str(), "fixed");
         assert_eq!(TuningMode::Startup.as_str(), "startup");
