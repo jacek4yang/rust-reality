@@ -32,7 +32,7 @@ Every load-bearing statement carries a confidence label:
 If you just rented a VPS and want a defensible starting point, use the
 tuned profile for your machine class:
 
-| Your VPS | `runtime.resourceMode` | Set `policy.resourceGovernor.maxConnections` to | Basis (MEASURED-LOCAL) |
+| Your VPS | `runtime.profile` | Set `advanced.limits.resourceGovernor.maxConnections` to | Basis (MEASURED-LOCAL) |
 | --- | --- | --- | --- |
 | 1 vCPU / 1 GiB ("1C1G") | `dedicated` | `8000` | 12000 sessions verified clean at ~694 MiB cgroup peak; shedding began ≈14000; 8000 ≈ 57% of the shed point |
 | 1–2 vCPU / 2 GiB | `dedicated` | `16000` | 24000 verified clean at 1.12 GiB cgroup peak; recommendation = 2/3 of verified |
@@ -54,8 +54,8 @@ derive every value for one specific host.
 Two rules before anything else:
 
 1. **The defaults are safe on every machine above, and the session ceiling
-   is `maxConnections`.** `policy.resourceGovernor.maxConnections` defaults
-   to 16384. `policy.directBarrier.maxConcurrent` (default 2048) bounds
+   is `maxConnections`.** `advanced.limits.resourceGovernor.maxConnections` defaults
+   to 16384. `advanced.limits.directBarrier.maxConcurrent` (default 2048) bounds
    concurrent Direct dial attempts only: the barrier permit is released as
    soon as the dial completes, so an established session consumes no barrier
    capacity. (v1.0.0 held the permit for the whole Direct session, so on a
@@ -64,7 +64,7 @@ Two rules before anything else:
    session capacity means raising `maxConnections`, then restarting: it is
    a restart-required setting (see §10).
 2. **A policy block, when present, must be complete.** The validator
-   rejects a `policy.resourceGovernor` object that contains only the keys
+   rejects a `advanced.limits.resourceGovernor` object that contains only the keys
    you changed (VERIFIED with `check`). Edit values inside the full block
    that `config generate` emits; do not paste a two-key fragment.
 
@@ -87,8 +87,8 @@ diff -u /etc/rust-reality/config.json /etc/rust-reality/config.tuned.json
 Add `--dedicated` only when the service exclusively owns the host or its
 cgroup. The command observes affinity/cgroup CPU, cgroup memory, inherited FD
 limits, protocol hot paths, scratch-filesystem throughput, and both directions
-of TCP loopback. It changes only `policy.resourceGovernor`,
-`policy.directBarrier`, and `policy.relay`; UUIDs and their short IDs, private
+of TCP loopback. It changes only `advanced.limits.resourceGovernor`,
+`advanced.limits.directBarrier`, and `advanced.limits.relay`; UUIDs and their short IDs, private
 keys, listeners, routing, logging, cover targets, and all timeout values remain
 equivalent after JSON decoding. The original file is never overwritten, both
 outputs are atomic owner-only files, and the report records every input and
@@ -142,9 +142,9 @@ min( admission ceiling,  FD budget,  memory budget,  CPU-for-your-SLO,  network 
 Whichever term is smallest wins, and raising any other term changes
 nothing. Concretely:
 
-- **Admission ceiling** — `policy.resourceGovernor.maxConnections` (default
+- **Admission ceiling** — `advanced.limits.resourceGovernor.maxConnections` (default
   16384) is the global accepted-session ceiling.
-  `policy.directBarrier.maxConcurrent` (default 2048) bounds only
+  `advanced.limits.directBarrier.maxConcurrent` (default 2048) bounds only
   *in-flight* Direct dial attempts: the permit is acquired on the
   direct-outbound path and released the moment the dial completes, so an
   established session consumes no barrier capacity, and sessions routed to
@@ -230,8 +230,9 @@ Notes on reading this table:
 
 ## 5. `standard` vs `dedicated` resource mode
 
-`runtime.resourceMode` (default `standard`) controls how the server sizes
-itself. Hot-reloadable: no — changing it requires a restart (§10).
+`runtime.profile` (`shared`/`dedicated`, or `auto` detection) controls how
+the server sizes itself. Hot-reloadable: no — changing it requires a
+restart (§10).
 
 **`standard`** is for a shared host: rust-reality is one tenant among
 several. It derives every budget from the inherited limits, conservatively:
@@ -352,7 +353,7 @@ validator formula ≤ `maxRelayMemoryBytes`.
 Two bounded anti-replay tables exist, and they fail in different,
 operationally important ways (VERIFIED against v1.0 source):
 
-- **REALITY (client-facing):** `policy.resourceGovernor.maxReplayEntries`
+- **REALITY (client-facing):** `advanced.limits.resourceGovernor.maxReplayEntries`
   (default 65536) and `replayRetentionMs` (default 120000). An entry
   records a seen handshake for the retention window so a replayed handshake
   is rejected.
@@ -436,9 +437,9 @@ assembly. Neither replaces watching the first minutes of real traffic.
 | Hot-reloadable (`systemctl reload`) | Restart required |
 | --- | --- |
 | logging, assets, DNS timeout | listener topology (`mode`, addresses, ports, inbound count) |
-| VLESS users / REALITY state | `runtime` (including `resourceMode`) |
-| outbounds / routing | `network.dial`, `policy.resourceGovernor` |
-| NXR keys and timeouts — only when replay capacity is unchanged | `policy.directBarrier`, `policy.relay` |
+| VLESS users / REALITY state | `runtime` (including `profile`) |
+| outbounds / routing | `network.dial`, `advanced.limits.resourceGovernor` |
+| NXR keys and timeouts — only when replay capacity is unchanged | `advanced.limits.directBarrier`, `advanced.limits.relay` |
 | | NXR `maxNonceEntries` / `nonceRetentionSeconds` |
 
 A hot reload that passes validation logs `configuration_published` with the
@@ -451,8 +452,7 @@ in a generated standalone config with `"runtime": {"profile": "dedicated",
 "tuning": {"mode": "fixed"}}`, passes `check --config`. Only
 `maxConnections` differs from the defaults; the rest is shown because every
 field marked "required when object present" must be supplied once its
-object appears. (`config migrate --from 1.5` rewrites an existing v1.5
-`policy` block into this shape automatically.)
+object appears.
 
 ```json
 "advanced": {
@@ -851,9 +851,9 @@ and file). The operational set (VERIFIED names):
 | `listener_topology_active` | Exact active/unavailable families for one inbound | once per inbound per start | `inbounds[].listen` | Is `auto` degradation expected? |
 | `listener_family_unavailable` | `auto` could not bind one genuinely unavailable family | only on single-family hosts | `inbounds[].listen` | Confirm errno and the active family. |
 | `listener_started` | Inbound bound and ready (`tag`, `address`) | once per listener per start | `inbounds` | — |
-| `machine_report` | Detected CPU/memory/FD view (dedicated mode) | once per start | `runtime.resourceMode` | `available_cpus`, `memory_total`, `memory_source` match the VPS? (§5) |
+| `machine_report` | Detected CPU/memory/FD view (dedicated mode) | once per start | `runtime.profile` | `available_cpus`, `memory_total`, `memory_source` match the VPS? (§5) |
 | `descriptor_budget_report` | Derived FD budget | once per start | `LimitNOFILE` | `fd_effective_budget`, `fd_clamped` (§6) |
-| `relay_backend_report` | Per-backend relay capability, one line each | once per start | `policy.relay` | a backend `available: false` explains relay CPU |
+| `relay_backend_report` | Per-backend relay capability, one line each | once per start | `advanced.limits.relay` | a backend `available: false` explains relay CPU |
 | `configuration_published` | Hot reload accepted (`generation`) | per reload | hot set (§10) | — |
 | `configuration_rejected` | Reload refused; old config still live (`field`) | only on bad edits | the JSON path named | fix and re-`check` |
 | `connection_accepted` | TCP accept (debug only) | high volume at debug | `log.level` | — |

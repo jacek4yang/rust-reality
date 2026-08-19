@@ -51,10 +51,6 @@ Top-level shape:
 | `advanced` | no | bounded production defaults | Expert escape hatch: `advanced.limits` holds the numeric admission, direct-dial, buffer, and Linux relay policy. |
 | `runtime` | no | `standard` posture, `auto` profile | Process resource posture, machine tenancy profile, and policy tuning mode. |
 
-The v1.5 top-level `policy` object is a deprecated alias for
-`advanced.limits`; it still parses, with the merge behavior described in
-[Deprecated alias: `policy`](#deprecated-alias-policy).
-
 Upgrading a 1.4 configuration requires migration: the scalar
 `"listen": "<ip>"` form and `network.addressFamily` are rejected. The complete
 old-to-new mapping table is in the
@@ -660,49 +656,6 @@ built-in default is operator-pinned and always wins, while every other field
 is derived from the detected machine at startup. See
 [Startup policy derivation](#startup-policy-derivation).
 
-### Deprecated alias: `policy`
-
-The v1.5 top-level `policy` object still parses and behaves identically.
-While loading, every `policy` field whose value differs from its default is
-merged into the same field of `advanced.limits`; setting one field in both
-places to different non-default values is a validation error naming both
-locations. When a `policy` object is present at all and
-`runtime.tuning.mode` is not explicitly set, the mode is forced to `fixed`,
-preserving v1.5 behavior byte-for-byte. The rewrite is never silent: `check`
-and `config format` print one warning, and `serve` logs one
-`configuration_deprecation` event at startup and on each reload. The alias
-never serializes — `config format` rewrites the file to the canonical
-location — and new configurations must use `advanced.limits`.
-
-### Migrating a v1.5 configuration
-
-`rust-reality config migrate --from 1.5 --config old.json --output new.json`
-rewrites a v1.5 file into a minimal v1.6-native document. The exact mapping:
-
-| v1.5 source | v1.6 result |
-| --- | --- |
-| `runtime.resourceMode: "standard"` | `runtime.profile: "shared"`; `resourceMode` is dropped |
-| `runtime.resourceMode: "dedicated"` | `runtime.profile: "dedicated"`; `resourceMode` is dropped |
-| `policy.resourceGovernor.*` | `advanced.limits.resourceGovernor.*` (field names identical) |
-| `policy.directBarrier.*` | `advanced.limits.directBarrier.*` |
-| `policy.relay.*` | `advanced.limits.relay.*` |
-| any surviving pinned limit | `runtime.tuning.mode: "fixed"` (v1.5 behavior, byte-for-byte) |
-| explicit field equal to its default | omitted when the schema allows, reported `redundant`; schema-required fields are kept and reported |
-| `policy` holding no non-default values | dropped, reported `discarded` |
-| no `policy` and no limits | `tuning` omitted; the `startup` default applies |
-
-Every translation, omission, and discard is printed to stderr; nothing is
-silently dropped and no security-sensitive value is guessed. Listeners,
-credentials, routing, outbounds, and DNS trust selection are carried over
-untouched. The generated file is re-validated with the same validation
-`check` runs, plus a serialize/parse round-trip; migration fails rather than
-writing an invalid file. A v1.5 file that never set `resourceMode` keeps the
-field absent — the v1.6 `auto` profile then applies, which resolves to
-`dedicated` only inside a fully bounded cgroup v2; pin
-`runtime.profile: "shared"` to keep the unconditional v1.5 `standard`
-posture. Re-running with `--from 1.6` rejects a leftover top-level `policy`
-object with an error naming `advanced.limits`.
-
 ### `advanced.limits.resourceGovernor`
 
 | Field | Required when object present | Whole-object default | Constraints / meaning |
@@ -791,9 +744,8 @@ Process-level resource posture. The whole object is optional.
 
 | Field | Required when object present | Default / allowed | Constraints / meaning |
 | --- | --- | --- | --- |
-| `runtime.resourceMode` | no | unset (effectively `standard`); `standard`, `dedicated` | `dedicated` declares single-tenant use of the machine or cgroup: raise the soft `RLIMIT_NOFILE` to the hard limit, derive the descriptor budget with the dedicated headroom, and run the bounded memory-pressure monitor. See [Dedicated resource mode](#dedicated-resource-mode). Cold setting; changing it requires a restart. When set, `resourceMode` is authoritative over `profile`. |
-| `runtime.profile` | no | `auto`; `auto`, `shared`, `dedicated` | Who owns this machine. `shared` maps onto `resourceMode: standard` and `dedicated` onto `resourceMode: dedicated`; declaring one together with a contradicting `resourceMode` is a validation error. `auto` defers to `resourceMode` when set and otherwise resolves to `dedicated` only when the cgroup v2 tenancy boundary is fully observable (a finite `cpu.max` quota and a finite `memory.max`); it never guesses dedicated on bare metal. |
-| `runtime.tuning.mode` | no | `startup`; `fixed`, `startup`, `adaptive` | How the numeric policy is produced. `fixed` takes the numbers from `advanced.limits` (or the built-in defaults) and never moves them — v1.5 behavior. `startup` derives every unpinned field once at startup from the detected machine. `adaptive` derives exactly like `startup` in this version; the controller that adjusts soft ceilings within the derived hard bounds is not shipped yet. A present deprecated `policy` object forces `fixed` unless the mode is explicitly set. See [Startup policy derivation](#startup-policy-derivation). |
+| `runtime.profile` | no | `auto`; `auto`, `shared`, `dedicated` | Who owns this machine. `shared` selects the standard resource posture and `dedicated` the dedicated posture (raise the soft `RLIMIT_NOFILE` to the hard limit, derive the descriptor budget with the dedicated headroom, and run the bounded memory-pressure monitor; see [Dedicated resource mode](#dedicated-resource-mode)). `auto` resolves to `dedicated` only when the cgroup v2 tenancy boundary is fully observable (a finite `cpu.max` quota and a finite `memory.max`); it never guesses dedicated on bare metal. Cold setting; changing it requires a restart. |
+| `runtime.tuning.mode` | no | `startup`; `fixed`, `startup`, `adaptive` | How the numeric policy is produced. `fixed` takes the numbers from `advanced.limits` (or the built-in defaults) and never moves them — v1.5 behavior. `startup` derives every unpinned field once at startup from the detected machine. `adaptive` derives exactly like `startup` in this version; the controller that adjusts soft ceilings within the derived hard bounds is not shipped yet. See [Startup policy derivation](#startup-policy-derivation). |
 | `runtime.tuning.objective` | no | `balanced`; `latency`, `balanced`, `throughput` | Shape of the derived numbers; consulted only by the derived tuning modes (`startup`, `adaptive`). |
 
 ### Startup policy derivation
@@ -866,7 +818,7 @@ single-thread runtime.
 
 ### Dedicated resource mode
 
-`{ "runtime": { "resourceMode": "dedicated" } }` declares that the process
+`{ "runtime": { "profile": "dedicated" } }` declares that the process
 owns the machine — or, under a container runtime, its cgroup — and budgets
 against measured machine resources instead of assuming nothing about
 co-tenants. The mode is a **cold setting**: it shapes the process-lifetime
@@ -964,7 +916,7 @@ Restart required:
 - any `dns` change (`servers`, `timeoutMs`, or `cache`), because the shared
   resolver — including its timeout and cache bounds — is installed once at
   startup and remains process-lifetime;
-- any `runtime` change (`resourceMode`, `profile`, or `tuning`), because the
+- any `runtime` change (`profile` or `tuning`), because the
   resource posture shapes the process-lifetime descriptor budget and memory
   monitor; the tuning mode compares strictly, so `fixed` ↔ `startup` ↔
   `adaptive` drift always requires a restart;

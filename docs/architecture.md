@@ -369,7 +369,7 @@ relay and Linux `splice` require no additional privilege.
 
 Static per-kind admission semaphores (connection, handshake, crypto,
 fallback) plus the lock-free FD budget with pressure hysteresis exist in
-every mode. `runtime.resourceMode: "dedicated"` adds machine-aware budgeting
+every mode. `runtime.profile: "dedicated"` adds machine-aware budgeting
 and a two-dimensional (FD + memory) pressure model; see the
 [configuration reference](configuration.md#dedicated-resource-mode).
 

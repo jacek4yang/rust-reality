@@ -230,35 +230,12 @@ rust-reality config autotune \
 | `--storage-mib <N>` | 否 | `32`，`1..=256` | 在 scratch 目录中写入、同步并读取的数据量。 |
 | `--network-mib <N>` | 否 | `32`，`1..=256` | TCP loopback 每个方向的传输量。 |
 | `--scratch-directory <DIR>` | 否 | 操作系统临时目录 | 有界存储探测要测量的文件系统。 |
-| `--dedicated` | 否 | 关闭 | 同时把副本切换为 `runtime.resourceMode: "dedicated"`；仅在 rust-reality 独占主机或 cgroup 时使用。 |
+| `--dedicated` | 否 | 关闭 | 同时把副本切换为 `runtime.profile: "dedicated"`；仅在 rust-reality 独占主机或 cgroup 时使用。 |
 
 自动调优只改变 resource governor、Direct 拨号和中继策略；不会替你选择安全
 协议、UUID/short ID 归属、伪装目标、路由或超时策略。审查 diff 与报告，执行
 `check`，再按正常重启流程部署。详见
 [调优指南](tuning.zh-CN.md#自动测量的起始策略)。
-
-### `config migrate`
-
-```text
-rust-reality config migrate --from <1.5|1.6> \
-  --config <OLD.json> --output <NEW.json>
-```
-
-把 v1.5 配置迁移到 v1.6 模型并写出经过验证的 v1.6 原生副本。输入文件
-不会被修改；输出文件为仅所有者可读（`0600`），通过同目录原子重命名
-发布。每一处翻译、省略和丢弃都会打印到 stderr —— 不会静默丢弃任何
-内容，也不会猜测任何安全敏感取值。映射表见
-[迁移映射](configuration.zh-CN.md#迁移-v15-配置)。
-
-| 选项 | 必填 | 默认 | 含义 |
-| --- | --- | --- | --- |
-| `--from <VERSION>` | 是 | — | 源模型版本：`1.5` 或 `1.6`。使用 `1.6` 时，残留的顶层 `policy` 对象是指向 `advanced.limits` 的错误。 |
-| `-c, --config <PATH>` | 是 | — | 现有配置；未知字段、非法取值以及冲突的 `policy`/`advanced.limits` 位置会像 `check` 一样失败。 |
-| `-o, --output <PATH>` | 是 | — | 迁移结果路径；必须与输入不同。 |
-
-生成的文档会按与 `check` 相同的验证重新校验，并且必须通过
-序列化/解析往返；迁移宁愿失败也不会写出无效文件。部署前请执行
-`check --config <NEW.json>` 并审查 stderr 报告。
 
 ### `config format`
 
