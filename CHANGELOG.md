@@ -2,7 +2,7 @@
 
 All notable user-facing changes to this project are documented in this file.
 
-## [Unreleased]
+## [1.5.1] - 2026-08-19
 
 ### Added
 
@@ -25,6 +25,18 @@ All notable user-facing changes to this project are documented in this file.
   reach the configured sink. With `log.level` at `info` or higher, or with
   `log.output: "none"`, the per-connection log path does no work at all;
   warn-level rejection and admission events stay eager as operator signal.
+- The REALITY server flight now hashes the TLS 1.3 handshake transcript
+  incrementally instead of re-hashing the whole growing transcript four
+  times. Transcript values and wire output are unchanged; measured on the
+  release gate host this removes the standalone transcript-digest cost from
+  the handshake profile (SHA-256 compress self-time 22.0% → 13.8% of setup
+  CPU) and reduces server CPU per connection by ≈6% (setup ABBA median
+  ratio 0.938, bootstrap95 [0.934, 0.941]).
+- The DNS cache contention design was re-measured before changing it: with
+  1–1024 concurrent same-name and distinct-name lookups the single bounded
+  mutex is not the bottleneck (same-name ≈ distinct-name wall time; CPU
+  scales with cores, not with spinning), so the lock is deliberately kept
+  and sharding was rejected on evidence.
 
 ### Fixed
 
@@ -35,6 +47,35 @@ All notable user-facing changes to this project are documented in this file.
   answer. Static and dynamic entries for one name now have independent
   lifetimes, both counting against `dns.cache.maxEntries`; static negative
   results remain uncached.
+
+### Release-gate evidence
+
+- Candidate `a6d6363` vs the published v1.5.0 release binary (`eda773b`),
+  same-host i3-8100, all runs serialized under the host-exclusive lock:
+  the formal evaluator passed all 40 protected metrics with zero
+  regressions; formal setup ABBA (576 samples) registered statistically
+  significant improvements in setup:c1:throughput and setup:server-cpu
+  (the transcript-hash change); the formal concurrency-1 throughput matrix
+  (867 samples, 0 invalid) reported no significant protected-path change;
+  10-minute soaks showed flat descriptors, threads, and RSS with zero
+  transfer failures. Exploratory concurrency-32 matrix and CPU/GiB legs
+  showed no meaningful regression. Xray reference pin: v26.7.28
+  (go1.26.0), unchanged from v1.5.0.
+
+### Known limitations
+
+- External IPv6 ingress from a second host was not tested (no external
+  source was available); host-global and real Internet egress were
+  validated instead (v1.5.0 evidence, unchanged behavior).
+- Upstream DNS (`dns.servers`) is plain UDP/TCP without DNSSEC validation;
+  point it at a trusted resolver. Spoofed answers are bounded by clamped
+  TTLs.
+- Routing-strategy resolution (IpIfNonMatch/IpOnDemand) intentionally uses
+  the system resolver so rule-checked addresses are exactly the dialed
+  addresses; the configured upstream applies to the connector paths.
+- The x86_64-v3 asset shows no measured advantage over the generic asset on
+  the validation host (crypto is runtime-dispatched regardless); it is an
+  opt-in tier, and aarch64 performance was not natively measurable.
 
 ## [1.5.0] - 2026-08-19
 
