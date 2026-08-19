@@ -410,7 +410,7 @@ while IFS=$'\t' read -r block position implementation server_port; do
     "$binary" config generate standalone --listen 127.0.0.1 --port "$server_port" --target "127.0.0.1:$origin_port" --server-name localhost \
         >"$work/$slot.raw.json" 2>"$slot_dir/generate.log"
     jq --arg cache "$work/assets-$slot" --argjson splice "$splice" --argjson pool "$pipe_pool" --argjson kib "$buffer_kib" \
-        '.log.level="warn"|.assets.cacheDirectory=$cache|.policy.relay.splice=$splice|.policy.relay.pipePool=$pool|.policy.relay.bufferBytes=($kib*1024)' \
+        '.log.level="warn"|.assets.cacheDirectory=$cache|.advanced.limits.relay.splice=$splice|.advanced.limits.relay.pipePool=$pool|.advanced.limits.relay.bufferBytes=($kib*1024)' \
         "$work/$slot.raw.json" >"$work/$slot.server.json"
     "$binary" serve --config "$work/$slot.server.json" >"$slot_dir/server.log" 2>&1 &
     track_last "$slot-server" "$!"; server_pid=$last_pid; wait_port "$server_port" "$server_pid"
