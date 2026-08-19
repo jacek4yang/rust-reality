@@ -1,10 +1,13 @@
 //! Strict JSON configuration loading and validation.
 
+mod diagnostic;
 mod generate;
 mod io;
 mod model;
 mod schema;
 mod validate;
+
+pub use diagnostic::Diagnostic;
 
 pub use generate::{
     GenerateConfigError, GenerateConfigInput, GenerateHandoffConfigInput,

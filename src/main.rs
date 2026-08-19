@@ -390,7 +390,18 @@ fn main() -> ExitCode {
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            let _ = writeln!(io::stderr().lock(), "error: {error}");
+            // Configuration decode/validation failures render as complete
+            // compiler-style diagnostics carrying their own `error:` header;
+            // every other failure is a single-line message that needs the
+            // prefix.
+            match error {
+                CliError::Config(source) if source.diagnostic().is_some() => {
+                    let _ = writeln!(io::stderr().lock(), "{source}");
+                }
+                _ => {
+                    let _ = writeln!(io::stderr().lock(), "error: {error}");
+                }
+            }
             ExitCode::FAILURE
         }
     }

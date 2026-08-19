@@ -30,6 +30,7 @@ readonly ALL_TARGETS=(
     tls13_record
     transcript_diff
     config_json
+    config_diagnostic
     nxr_round_trip
 )
 

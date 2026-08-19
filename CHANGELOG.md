@@ -79,6 +79,18 @@ Then run `rust-reality check --config config.json`.
   `runtime.tuning.objective` (`latency`/`balanced`/`throughput`), and the
   `advanced.limits` expert escape hatch holding the numeric resource/relay
   policy previously living under `policy`.
+- Compiler-grade configuration diagnostics: every load failure (`check`,
+  `serve` startup, and hot reload) renders a rustc-style block —
+  `file:line:column`, the offending source line with a caret span, the
+  logical configuration path, expected versus actual, and a remediation hint
+  — instead of a bare serde message. Strong typos suggest the intended field
+  (`profiel` → did you mean `profile`?); the removed `policy` and
+  `runtime.resourceMode` fields get targeted errors naming their v1.6
+  replacements; secret values (private keys, PSKs, UUIDs, short IDs,
+  passwords) are redacted from excerpts. Reload rejections keep the closed
+  `configuration_rejected` log event and additionally write the full
+  diagnostic to stderr for journal capture. Rendering is plain text with no
+  ANSI color and stays off the network hot path.
 
 ### Changed
 
