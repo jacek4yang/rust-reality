@@ -27,7 +27,7 @@
 如果你刚租好 VPS、想要一个站得住脚的起点，直接采用你机型档位对应的
 调优档位：
 
-| 你的 VPS | `runtime.resourceMode` | 把 `policy.resourceGovernor.maxConnections` 设为 | 依据（MEASURED-LOCAL） |
+| 你的 VPS | `runtime.profile` | 把 `advanced.limits.resourceGovernor.maxConnections` 设为 | 依据（MEASURED-LOCAL） |
 | --- | --- | --- | --- |
 | 1 vCPU / 1 GiB（"1C1G"） | `dedicated` | `8000` | 12000 会话验证干净，cgroup 峰值约 694 MiB；≈14000 开始弃载；8000 ≈ 弃载点的 57% |
 | 1–2 vCPU / 2 GiB | `dedicated` | `16000` | 24000 验证干净，cgroup 峰值 1.12 GiB；推荐值 = 验证值的 2/3 |
@@ -47,15 +47,15 @@ direct 出站。它们不是普适的生产容量：更强的论断需要先做�
 动手之前先记住两条规则：
 
 1. **默认值在上述所有机器上都是安全的，会话上限就是
-   `maxConnections`。** `policy.resourceGovernor.maxConnections` 默认
-   16384。`policy.directBarrier.maxConcurrent`（默认 2048）只限制并发
+   `maxConnections`。** `advanced.limits.resourceGovernor.maxConnections` 默认
+   16384。`advanced.limits.directBarrier.maxConcurrent`（默认 2048）只限制并发
    Direct 拨号尝试：许可在拨号完成时立即释放，已建立的会话不占用
    barrier 容量。（v1.0.0 会在整个 Direct 会话期间持有许可，所以在
    standalone/Direct 节点上，即使 `maxConnections` 为 16384，第 2049 个
    会话也会被快速拒绝——issue #26，已在 v1.0.0 之后修复。）提高真实
    会话容量只需调大 `maxConnections` 并重启（它是冷设置，见 §10）。
 2. **policy 块一旦写就必须写全。** 校验器会拒绝只包含你改过的几个键的
-   `policy.resourceGovernor` 对象（已用 `check` 确认，VERIFIED）。请在
+   `advanced.limits.resourceGovernor` 对象（已用 `check` 确认，VERIFIED）。请在
    `config generate` 生成的完整块内改值；不要粘贴只有两个键的片段。
 
 ### 自动测量的起始策略
@@ -75,8 +75,8 @@ diff -u /etc/rust-reality/config.json /etc/rust-reality/config.tuned.json
 
 仅当服务独占主机或所属 cgroup 时才加 `--dedicated`。该命令观察 affinity/cgroup
 CPU、cgroup 内存、继承的 FD 限额、协议热点、scratch 文件系统吞吐，以及 TCP
-loopback 双向性能。它只修改 `policy.resourceGovernor`、
-`policy.directBarrier` 和 `policy.relay`；UUID 及其 short ID、私钥、监听、
+loopback 双向性能。它只修改 `advanced.limits.resourceGovernor`、
+`advanced.limits.directBarrier` 和 `advanced.limits.relay`；UUID 及其 short ID、私钥、监听、
 路由、日志、伪装目标和全部超时值在 JSON 解码意义下保持一致。原文件永不
 覆盖，两个输出都是仅所有者可读写的原子文件，报告记录所有输入和最终选择
 （VERIFIED）。
@@ -126,9 +126,9 @@ min( admission ceiling,  FD budget,  memory budget,  CPU-for-your-SLO,  network 
 
 哪一项最小，哪一项说了算；调大其他任何项都不会改变结果。具体说：
 
-- **admission 上限** —— `policy.resourceGovernor.maxConnections`
+- **admission 上限** —— `advanced.limits.resourceGovernor.maxConnections`
   （默认 16384）是全局已接纳会话上限。
-  `policy.directBarrier.maxConcurrent`（默认 2048）只限制*正在进行中的*
+  `advanced.limits.directBarrier.maxConcurrent`（默认 2048）只限制*正在进行中的*
   Direct 拨号尝试：许可只在 direct 出站路径上获取，拨号完成即释放，
   已建立的会话不占用 barrier 容量；路由到 SOCKS5 或 NXR 出站的会话
   从不获取它（VERIFIED，`src/server/outbound.rs`）。（v1.0.0 会在整个
@@ -204,8 +204,8 @@ VERIFIED-CGROUP **起始档位，针对被测的 standalone/Direct 工作负载*
 
 ## 5. `standard` 与 `dedicated` 资源模式
 
-`runtime.resourceMode`（默认 `standard`）控制服务端如何给自己定预算。
-可热更新：否——修改需要重启（§10）。
+`runtime.profile`（`shared`/`dedicated`，或 `auto` 探测）控制服务端如何
+给自己定预算。可热更新：否——修改需要重启（§10）。
 
 **`standard`** 面向共享宿主机：rust-reality 是多个租户之一。它从继承
 到的限制保守地推导所有预算：描述符安全余量是 `RLIMIT_NOFILE` 的
@@ -315,7 +315,7 @@ memory ≈ 33 MiB (server + geo assets)
 存在两张有界的防重放表，但两者耗尽时的表现不同，这一点在运维上很重要
 （VERIFIED，对照 v1.0 源码）：
 
-- **REALITY（面向客户端）：** `policy.resourceGovernor.maxReplayEntries`
+- **REALITY（面向客户端）：** `advanced.limits.resourceGovernor.maxReplayEntries`
   （默认 65536）和 `replayRetentionMs`（默认 120000）。条目在保留窗口
   内记录一次已见过的握手，以便拒绝重放的握手。
 - **NXR（节点间）：** NXR 入站上的 `maxNonceEntries`（默认 65536）和
@@ -388,9 +388,9 @@ rust-reality self-test --config config.json
 | 可热更新（`systemctl reload`） | 需要重启 |
 | --- | --- |
 | 日志、资产、DNS 超时 | 监听拓扑（`mode`、地址、端口、入站数量） |
-| VLESS 用户 / REALITY 状态 | `runtime`（含 `resourceMode`） |
-| outbounds / 路由 | `network.dial`、`policy.resourceGovernor` |
-| NXR 密钥和超时——仅当重放容量不变时 | `policy.directBarrier`、`policy.relay` |
+| VLESS 用户 / REALITY 状态 | `runtime`（含 `profile`） |
+| outbounds / 路由 | `network.dial`、`advanced.limits.resourceGovernor` |
+| NXR 密钥和超时——仅当重放容量不变时 | `advanced.limits.directBarrier`、`advanced.limits.relay` |
 | | NXR `maxNonceEntries` / `nonceRetentionSeconds` |
 
 通过验证的热更新会记录带新 generation 的 `configuration_published`；
@@ -402,8 +402,7 @@ rust-reality self-test --config config.json
 配置（含 `"runtime": {"profile": "dedicated", "tuning": {"mode":
 "fixed"}}`）后能通过 `check --config`。与默认值不同的只有
 `maxConnections`；其余照列是因为每个标注"对象存在时必填"的字段在
-其对象出现时都必须提供。（`config migrate --from 1.5` 会把现有 v1.5
-的 `policy` 块自动改写为这个形态。）
+其对象出现时都必须提供。
 
 ```json
 "advanced": {
@@ -767,9 +766,9 @@ rust-reality 在所有输出位置（stderr、journald、文件）都发出结�
 | `listener_topology_active` | 某入站准确的活动/不可用地址族 | 每入站每次启动一次 | `inbounds[].listen` | `auto` 降级符合预期吗？ |
 | `listener_family_unavailable` | `auto` 无法绑定一个确实不可用的地址族 | 仅单族主机 | `inbounds[].listen` | 核对 errno 与活动族。 |
 | `listener_started` | 入站已绑定就绪（`tag`、`address`） | 每次启动每个监听器一次 | `inbounds` | — |
-| `machine_report` | 探测到的 CPU/内存/FD 视图（dedicated 模式） | 每次启动一次 | `runtime.resourceMode` | `available_cpus`、`memory_total`、`memory_source` 与 VPS 一致吗？（§5） |
+| `machine_report` | 探测到的 CPU/内存/FD 视图（dedicated 模式） | 每次启动一次 | `runtime.profile` | `available_cpus`、`memory_total`、`memory_source` 与 VPS 一致吗？（§5） |
 | `descriptor_budget_report` | 推导的 FD 预算 | 每次启动一次 | `LimitNOFILE` | `fd_effective_budget`、`fd_clamped`（§6） |
-| `relay_backend_report` | 各后端中继能力，每个后端一行 | 每次启动一次 | `policy.relay` | 某后端 `available: false` 可解释中继 CPU |
+| `relay_backend_report` | 各后端中继能力，每个后端一行 | 每次启动一次 | `advanced.limits.relay` | 某后端 `available: false` 可解释中继 CPU |
 | `configuration_published` | 热更新被接受（`generation`） | 每次 reload | 热更新集合（§10） | — |
 | `configuration_rejected` | reload 被拒；旧配置仍在运行（`field`） | 仅在改错时 | 被指名的 JSON 路径 | 修复后重新 `check` |
 | `connection_accepted` | TCP accept（仅 debug） | debug 下量大 | `log.level` | — |

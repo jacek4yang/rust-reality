@@ -296,7 +296,7 @@ accept 错误按原始 `errno` 分类：
 ## 资源治理
 
 每种类别的静态准入信号量（连接、握手、密码学、fallback）加上带压力迟滞的
-无锁 FD 预算在所有模式下都存在。`runtime.resourceMode: "dedicated"` 增加
+无锁 FD 预算在所有模式下都存在。`runtime.profile: "dedicated"` 增加
 机器感知预算和二维（FD + 内存）压力模型；见
 [配置参考](configuration.zh-CN.md#dedicated-resource-mode)。
 

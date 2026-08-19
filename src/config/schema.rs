@@ -44,16 +44,16 @@ mod tests {
         assert!(!schema.contains("familyPenaltySeconds"));
         assert!(!schema.contains("healthMemorySeconds"));
         // v1.6 configuration model: profile, tuning, and the advanced escape
-        // hatch are documented; the deprecated `policy` alias remains in the
-        // schema because it is still accepted input. Assert the enums at
-        // their schema paths — a bare `contains("auto")` would pass on any
-        // unrelated enum value anywhere in the schema.
+        // hatch are documented; the removed v1.5 `policy` alias must not
+        // appear. Assert the enums at their schema paths — a bare
+        // `contains("auto")` would pass on any unrelated enum value anywhere
+        // in the schema.
         assert!(schema.contains("\"advanced\""));
         assert!(schema.contains("\"limits\""));
         assert!(schema.contains("\"profile\""));
         assert!(schema.contains("\"tuning\""));
         assert!(schema.contains("\"objective\""));
-        assert!(schema.contains("\"policy\""));
+        assert!(!schema.contains("\"policy\""));
         let value: serde_json::Value =
             serde_json::from_str(&schema).expect("schema must be valid JSON");
         // Schemars renders a documented unit enum as `oneOf` of `const`

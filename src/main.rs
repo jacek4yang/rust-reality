@@ -18,13 +18,11 @@ use rust_reality::{
     autotune::{AutotuneError, AutotuneOptions, autotune_config},
     benchmark::{BenchmarkError, BenchmarkOptions, run_benchmarks},
     config::{
-        ConfigLoadError, ConfigLoadReport, GenerateConfigError, GenerateConfigInput,
-        GenerateHandoffConfigInput, GenerateLandingConfigInput, GenerateLineConfigInput,
-        GenerateMultiHandoffConfigInput, GeneratedHandoffConfigs, GeneratedMultiHandoffConfigs,
-        HandoffLandingInput, MigrateError, MigrateFrom, SecretString, format_config,
-        format_config_schema, generate_handoff_configs, generate_landing_config,
-        generate_line_config, generate_minimal_config, generate_multi_handoff_configs,
-        load_config_with_report, migrate_config,
+        ConfigLoadError, GenerateConfigError, GenerateConfigInput, GenerateHandoffConfigInput,
+        GenerateLandingConfigInput, GenerateLineConfigInput, GenerateMultiHandoffConfigInput,
+        GeneratedHandoffConfigs, GeneratedMultiHandoffConfigs, HandoffLandingInput, SecretString,
+        format_config, format_config_schema, generate_handoff_configs, generate_landing_config,
+        generate_line_config, generate_minimal_config, generate_multi_handoff_configs, load_config,
     },
     crypto::{
         KeyGenerationError, generate_mldsa65_key_pair, generate_mldsa65_key_pair_from_seed,
@@ -116,23 +114,8 @@ enum ConfigCommand {
     },
     /// Benchmark this host and write a validated automatically tuned copy.
     Autotune(AutotuneArgs),
-    /// Migrate a v1.5 configuration to the v1.6 model.
-    Migrate(MigrateArgs),
     /// Validate and print a canonical pretty JSON configuration.
     Format(ConfigPath),
-}
-
-#[derive(Debug, Args)]
-struct MigrateArgs {
-    /// Source model version: 1.5 or 1.6.
-    #[arg(long, value_name = "VERSION", value_parser = clap::builder::PossibleValuesParser::new(MigrateFrom::VALUES))]
-    from: String,
-    /// Existing configuration path; never modified.
-    #[arg(short, long, value_name = "PATH")]
-    config: PathBuf,
-    /// Migrated configuration path.
-    #[arg(short, long, value_name = "PATH")]
-    output: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -297,7 +280,6 @@ enum CliError {
     InvalidArgument(&'static str),
     Benchmark(BenchmarkError),
     Autotune(AutotuneError),
-    Migrate(MigrateError),
 }
 
 impl fmt::Display for CliError {
@@ -315,7 +297,6 @@ impl fmt::Display for CliError {
             Self::InvalidArgument(message) => formatter.write_str(message),
             Self::Benchmark(source) => source.fmt(formatter),
             Self::Autotune(source) => source.fmt(formatter),
-            Self::Migrate(source) => source.fmt(formatter),
         }
     }
 }
@@ -335,7 +316,6 @@ impl Error for CliError {
             Self::InvalidArgument(_) => None,
             Self::Benchmark(source) => Some(source),
             Self::Autotune(source) => Some(source),
-            Self::Migrate(source) => Some(source),
         }
     }
 }
@@ -406,12 +386,6 @@ impl From<AutotuneError> for CliError {
     }
 }
 
-impl From<MigrateError> for CliError {
-    fn from(source: MigrateError) -> Self {
-        Self::Migrate(source)
-    }
-}
-
 fn main() -> ExitCode {
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -425,8 +399,7 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<(), CliError> {
     match cli.command {
         Command::Check(arguments) => {
-            let (_config, report) = load_config_with_report(&arguments.config)?;
-            warn_policy_alias(&report);
+            let _config = load_config(&arguments.config)?;
             write_stdout(format_args!(
                 "configuration {} is valid\n",
                 arguments.config.display()
@@ -481,7 +454,7 @@ fn run_server(arguments: ConfigPath) -> Result<(), CliError> {
     // topology, build the runtime, then serve. Detection is one cheap pass
     // of /proc and rlimit reads — never a benchmark — so readiness is not
     // delayed, and the server reuses this report instead of detecting again.
-    let (config, report) = load_config_with_report(&arguments.config)?;
+    let config = load_config(&arguments.config)?;
     let machine = rust_reality::runtime::machine::MachineReport::detect();
     let resource_mode = config.runtime.resolve_resource_mode(&machine);
     let topology = rust_reality::runtime::plan::RuntimeTopology::for_mode(
@@ -499,12 +472,7 @@ fn run_server(arguments: ConfigPath) -> Result<(), CliError> {
         builder.max_blocking_threads(max_blocking_threads);
     }
     let runtime = builder.enable_all().build()?;
-    let server = ProductionServer::from_loaded(
-        config,
-        Some(arguments.config.clone()),
-        report.policy_alias_used,
-        machine,
-    )?;
+    let server = ProductionServer::from_loaded(config, Some(arguments.config.clone()), machine)?;
     let result = runtime.block_on(server.run());
     runtime.shutdown_timeout(Duration::from_secs(5));
     result?;
@@ -514,8 +482,7 @@ fn run_server(arguments: ConfigPath) -> Result<(), CliError> {
 fn run_runtime(command: RuntimeCommand) -> Result<(), CliError> {
     match command {
         RuntimeCommand::Explain(arguments) => {
-            let (config, report) = load_config_with_report(&arguments.config)?;
-            warn_policy_alias(&report);
+            let config = load_config(&arguments.config)?;
             let machine = rust_reality::runtime::machine::MachineReport::detect();
             let explanation = rust_reality::explain::explain_config(&config, &machine);
             if arguments.json {
@@ -530,8 +497,7 @@ fn run_runtime(command: RuntimeCommand) -> Result<(), CliError> {
 }
 
 fn run_self_test(arguments: ConfigPath) -> Result<(), CliError> {
-    let (config, report) = load_config_with_report(&arguments.config)?;
-    warn_policy_alias(&report);
+    let config = load_config(&arguments.config)?;
     let assets = Arc::new(AssetSnapshot::load(&config)?);
     let summary = assets.summary();
     RoutingTable::compile(
@@ -592,10 +558,8 @@ fn run_config(command: ConfigCommand) -> Result<(), CliError> {
     match command {
         ConfigCommand::Generate { role } => run_config_generate(role),
         ConfigCommand::Autotune(arguments) => run_config_autotune(arguments),
-        ConfigCommand::Migrate(arguments) => run_config_migrate(arguments),
         ConfigCommand::Format(arguments) => {
-            let (config, report) = load_config_with_report(arguments.config)?;
-            warn_policy_alias(&report);
+            let config = load_config(arguments.config)?;
             write_stdout(format_config(&config)?)
         }
     }
@@ -617,8 +581,7 @@ fn run_config_autotune(arguments: AutotuneArgs) -> Result<(), CliError> {
             "--report must differ from both --config and --output",
         ));
     }
-    let (source, report) = load_config_with_report(&arguments.config)?;
-    warn_policy_alias(&report);
+    let source = load_config(&arguments.config)?;
     let tuned = autotune_config(
         &source,
         &AutotuneOptions {
@@ -644,28 +607,6 @@ fn run_config_autotune(arguments: AutotuneArgs) -> Result<(), CliError> {
         "tuned configuration: {}\nmeasurement report: {}\n",
         arguments.output.display(),
         report_path.display()
-    ))
-}
-
-fn run_config_migrate(arguments: MigrateArgs) -> Result<(), CliError> {
-    if arguments.config == arguments.output {
-        return Err(CliError::InvalidArgument(
-            "--output must differ from --config; migrate never overwrites its input",
-        ));
-    }
-    let from = MigrateFrom::parse(&arguments.from)
-        .ok_or(CliError::InvalidArgument("--from must be one of: 1.5, 1.6"))?;
-    let migration = migrate_config(from, &arguments.config)?;
-    {
-        let mut stderr = io::stderr().lock();
-        for note in migration.notes() {
-            let _ = writeln!(stderr, "migrate: {note}");
-        }
-    }
-    write_atomic(&arguments.output, migration.json().as_bytes())?;
-    write_stdout(format_args!(
-        "migrated configuration: {}\n",
-        arguments.output.display()
     ))
 }
 
@@ -909,18 +850,6 @@ fn run_mldsa65(arguments: MlDsa65Args) -> Result<(), CliError> {
 
 fn write_stdout(output: impl fmt::Display) -> Result<(), CliError> {
     write!(io::stdout().lock(), "{output}").map_err(CliError::Io)
-}
-
-/// Reports a rewritten deprecated alias exactly once per load, never silently.
-fn warn_policy_alias(report: &ConfigLoadReport) {
-    if report.policy_alias_used {
-        let _ = writeln!(
-            io::stderr().lock(),
-            "warning: top-level \"policy\" is deprecated; its values were merged into \
-             \"advanced.limits\" and \"runtime.tuning.mode\" was forced to \"fixed\" unless \
-             explicitly set"
-        );
-    }
 }
 
 #[cfg(test)]

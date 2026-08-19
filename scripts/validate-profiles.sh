@@ -19,7 +19,7 @@
 #
 # Env: CLASSES, ONLY, LADDER_LEVELS_<CLASS> / LADDER_LEVELS, CONNS (96),
 #      SAMPLES_CHURN (3), SAMPLES_DOWNLOAD (2), HOLD (8), SETTLE (3),
-#      STANDARD_COMPARISON (1 adds a 1c1g run with resourceMode=standard),
+#      STANDARD_COMPARISON (1 adds a 1c1g run with profile=shared),
 #      RUST_REALITY_BIN (default: this repository's target/release/rust-reality;
 #      the script never builds it — run `cargo build --release` yourself first,
 #      ideally via scripts/build-release.sh so the binary embeds the git commit),
@@ -471,7 +471,7 @@ make_configs() {
         .log.level = "info"
         | .assets.cacheDirectory = $cache
         | .assets.requestTimeoutSeconds = 5
-        | .runtime.resourceMode = $mode
+        | .runtime.profile = (if $mode == "dedicated" then "dedicated" else "shared" end)
     ' "$prefix.raw.json" > "$prefix-nogeo.json"
     jq '.routing.globalRules = [{
             name: "geo-direct", outbound: "direct",
@@ -481,11 +481,11 @@ make_configs() {
     # ceilings (128 crypto ops / 1024 handshakes / 2048 session-lifetime
     # direct-barrier permits / 16384 connections) so the ladder reaches the
     # memory- or fd-limited breaking point instead of the policy defaults.
-    jq '.policy.resourceGovernor.maxConnections = 65536
-        | .policy.resourceGovernor.maxHandshakes = 8192
-        | .policy.resourceGovernor.maxCryptoOperations = 4096
-        | .policy.directBarrier.maxConcurrent = 65536
-        | .policy.directBarrier.maxPerSecond = 65536' \
+    jq '.advanced.limits.resourceGovernor.maxConnections = 65536
+        | .advanced.limits.resourceGovernor.maxHandshakes = 8192
+        | .advanced.limits.resourceGovernor.maxCryptoOperations = 4096
+        | .advanced.limits.directBarrier.maxConcurrent = 65536
+        | .advanced.limits.directBarrier.maxPerSecond = 65536' \
         "$prefix-geo.json" > "$prefix-tuned.json"
     {
         sed -n 's/^REALITY public key for the client: /PUBLIC_KEY=/p' "$prefix.generate.log"

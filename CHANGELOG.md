@@ -4,6 +4,48 @@ All notable user-facing changes to this project are documented in this file.
 
 ## [Unreleased]
 
+rust-reality is forward-only: there is no backward compatibility between
+releases. v1.5 configurations are rejected with strict unknown-field errors;
+apply the mapping below by hand, then run
+`rust-reality check --config config.json`. The complete operator migration
+procedure ships in the v1.6.0 release notes.
+
+### Breaking changes
+
+- The v1.5 top-level `policy` object is removed. It no longer parses; move
+  every value to the identically named `advanced.limits.*` fields. The
+  `configuration_deprecation` log event is removed with it.
+- `runtime.resourceMode` is removed. Use `runtime.profile`:
+  `standard` → `shared`, `dedicated` → `dedicated`; an unset field maps to
+  the `auto` profile, which resolves to `dedicated` only inside a fully
+  bounded cgroup v2 — pin `runtime.profile: "shared"` to keep the
+  unconditional v1.5 `standard` posture.
+- `config migrate` is removed. Migration is a manual edit against the table
+  below plus `check`; the binary carries no migration engine.
+- `config autotune --dedicated` now writes `runtime.profile: "dedicated"`
+  instead of `runtime.resourceMode: "dedicated"`. The measurement-report
+  schema is bumped to `schemaVersion: 2` and its `resourceMode` field is
+  renamed to `profile`.
+- Library API: `config::load_config_with_report` and
+  `config::ConfigLoadReport` are replaced by the single
+  `config::load_config`; `Config::normalize`, the `Config.policy` field,
+  `RuntimeConfig::resource_mode`, and the whole `config::migrate` module
+  are removed.
+
+### v1.5 → v1.6 configuration mapping
+
+| v1.5 | v1.6 |
+| --- | --- |
+| `policy.resourceGovernor.*` | `advanced.limits.resourceGovernor.*` (field names identical) |
+| `policy.directBarrier.*` | `advanced.limits.directBarrier.*` |
+| `policy.relay.*` | `advanced.limits.relay.*` |
+| `runtime.resourceMode: "standard"` | `runtime.profile: "shared"` |
+| `runtime.resourceMode: "dedicated"` | `runtime.profile: "dedicated"` |
+| no `runtime.resourceMode` | nothing; the `auto` profile applies (pin `"shared"` to keep the unconditional standard posture) |
+| any pinned limit | add `runtime.tuning.mode: "fixed"` to keep the exact v1.5 numbers; the `startup` default derives unpinned fields from the machine |
+
+Then run `rust-reality check --config config.json`.
+
 ### Added
 
 - Startup policy derivation (`runtime.tuning.mode: startup`, the default):
@@ -36,52 +78,20 @@ All notable user-facing changes to this project are documented in this file.
   `runtime.tuning.mode` (`fixed`/`startup`/`adaptive`),
   `runtime.tuning.objective` (`latency`/`balanced`/`throughput`), and the
   `advanced.limits` expert escape hatch holding the numeric resource/relay
-  policy previously living under `policy`. `shared`/`dedicated` profiles map
-  onto `resourceMode: standard`/`dedicated`; a profile contradicting an
-  explicit `resourceMode` is a validation error.
-- The v1.5 top-level `policy` object remains as a deprecated alias: its
-  non-default values merge field-by-field into `advanced.limits` (a field
-  set in both places to different non-default values is a validation
-  error), and a present `policy` object forces `runtime.tuning.mode` to
-  `fixed` unless explicitly set, so v1.5 configs parse and behave
-  byte-identically. The rewrite is never silent: `check` and
-  `config format` print one warning, and `serve` logs one
-  `configuration_deprecation` event at startup and on each reload. The
-  alias never serializes; `config format` rewrites files to the canonical
-  location.
-- `config migrate --from 1.5 --config old.json --output new.json`: migrates
-  a v1.5 configuration to a minimal v1.6-native document.
-  `runtime.resourceMode` becomes `runtime.profile` (`standard` → `shared`,
-  `dedicated` → `dedicated`); `policy.*` moves to the identically named
-  `advanced.limits.*` fields; any surviving pinned limit forces
-  `runtime.tuning.mode: "fixed"` (byte-for-byte v1.5 behavior), while a
-  configuration without limits keeps the `tuning` defaults. Explicit values
-  equal to the built-in default are omitted where the schema allows and
-  reported `redundant`; an information-free `policy` object is reported
-  `discarded`; every translation, omission, and discard is printed to
-  stderr. The generated file is re-validated with the same validation
-  `check` runs plus a serialize/parse round-trip, and migration fails
-  rather than writing an invalid file. Re-running with `--from 1.6`
-  rejects a leftover top-level `policy` object with an error naming
-  `advanced.limits`.
+  policy previously living under `policy`.
 
 ### Changed
 
 - Hot reload now compares the tuning mode strictly: `fixed`, `startup`, and
   `adaptive` produce different effective policies, so any drift between them
-  (including a `policy`-alias-forced `fixed` drifting to an unset `startup`
-  mode) is rejected and requires a restart. Reloads under a derived mode
+  is rejected and requires a restart. Reloads under a derived mode
   re-derive the candidate against the current machine view and reject when
   the derived numbers would differ, because the admission pools were sized
   at process start.
 - `config autotune` now writes the derived policy to `advanced.limits`
-  instead of the deprecated `policy` object; the report schema and exit
-  codes are unchanged.
+  instead of the v1.5 `policy` object.
 - Validation errors for numeric policy fields now report paths under
   `advanced.limits.*` (previously `policy.*`).
-- `runtime.resourceMode` is omitted from serialized output when unset
-  (previously always emitted as `"standard"`; the effective default is
-  unchanged).
 
 ## [1.5.1] - 2026-08-19
 

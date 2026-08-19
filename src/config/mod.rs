@@ -2,7 +2,6 @@
 
 mod generate;
 mod io;
-mod migrate;
 mod model;
 mod schema;
 mod validate;
@@ -14,14 +13,7 @@ pub use generate::{
     generate_handoff_configs, generate_landing_config, generate_line_config,
     generate_minimal_config, generate_multi_handoff_configs,
 };
-pub use io::{
-    ConfigLoadError, ConfigLoadReport, MAX_CONFIG_BYTES, format_config, load_config,
-    load_config_with_report,
-};
-pub use migrate::{
-    MigrateError, MigrateFrom, Migration, MigrationNote, MigrationNoteKind, migrate_config,
-    migrate_config_bytes,
-};
+pub use io::{ConfigLoadError, MAX_CONFIG_BYTES, format_config, load_config};
 pub use model::{
     AdvancedConfig, AssetsConfig, BlackholeSettings, Config, DialConfig, DialMode,
     DirectBarrierConfig, DnsCacheConfig, DnsConfig, DnsStrategy, FileLogConfig, GlobalRule,
@@ -99,7 +91,6 @@ pub(crate) fn test_config_json() -> &'static str {
       "defaultOutbound": "direct",
       "rules": []
     }]
-  },
-  "policy": {}
+  }
 }"#
 }

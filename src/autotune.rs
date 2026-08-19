@@ -21,7 +21,9 @@ use serde::Serialize;
 
 use crate::{
     benchmark::{BenchmarkError, BenchmarkOptions, BenchmarkReport, run_benchmarks},
-    config::{Config, ConfigError, Objective, PolicyConfig, ResourceMode, validate_config},
+    config::{
+        Config, ConfigError, Objective, PolicyConfig, ResourceMode, RuntimeProfile, validate_config,
+    },
     runtime::{
         machine::MachineReport,
         plan::{MachineCapabilities, Probes, SafetyLimits, StartupPlan},
@@ -100,8 +102,8 @@ pub struct AutotuneReport {
     pub schema_version: u8,
     /// Package version that made the decision.
     pub package_version: &'static str,
-    /// Effective resource mode in the emitted configuration.
-    pub resource_mode: &'static str,
+    /// Effective machine-tenancy profile in the emitted configuration.
+    pub profile: &'static str,
     /// Kernel, cgroup, descriptor, CPU, and memory observations.
     pub machine: AutotuneMachine,
     /// In-process protocol hot-path measurements.
@@ -246,25 +248,22 @@ pub fn autotune_config(
     let network = probe_loopback(options.network_bytes)?;
 
     let mut config = source.clone();
-    // Normalize first so a programmatic (unloaded) source with a deprecated
-    // `policy` alias still contributes its timeouts to the derivation.
-    let _alias_used = config.normalize()?;
     if options.dedicated {
-        config.runtime.resource_mode = Some(ResourceMode::Dedicated);
+        config.runtime.profile = RuntimeProfile::Dedicated;
     }
     config.advanced.limits = derive_policy(
         &machine,
         &protocol,
         &network,
         config.inbounds.len(),
-        config.runtime.resource_mode(),
+        config.runtime.resolve_resource_mode(&machine_report),
         &config.advanced.limits,
     );
     validate_config(&config)?;
     let report = AutotuneReport {
-        schema_version: 1,
+        schema_version: 2,
         package_version: env!("CARGO_PKG_VERSION"),
-        resource_mode: config.runtime.resource_mode().as_str(),
+        profile: config.runtime.profile.as_str(),
         machine,
         protocol,
         storage,
