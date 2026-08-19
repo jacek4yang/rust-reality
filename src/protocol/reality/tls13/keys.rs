@@ -225,6 +225,62 @@ impl fmt::Debug for TranscriptHash {
     }
 }
 
+/// Incremental hash state over the handshake transcript.
+///
+/// Each [`TranscriptHasher::snapshot`] finalizes a clone of the running
+/// state, so repeated transcript digests cost one pass over the messages
+/// instead of one from-scratch digest per snapshot. Snapshots are
+/// byte-identical to [`HashAlgorithm::digest`] over the concatenated updates.
+#[derive(Clone)]
+pub(crate) struct TranscriptHasher {
+    algorithm: HashAlgorithm,
+    state: TranscriptHasherState,
+}
+
+#[derive(Clone)]
+enum TranscriptHasherState {
+    Sha256(Sha256),
+    Sha384(Sha384),
+}
+
+impl TranscriptHasher {
+    /// Starts an empty transcript hash for `algorithm`.
+    #[must_use]
+    pub(crate) fn new(algorithm: HashAlgorithm) -> Self {
+        let state = match algorithm {
+            HashAlgorithm::Sha256 => TranscriptHasherState::Sha256(Sha256::new()),
+            HashAlgorithm::Sha384 => TranscriptHasherState::Sha384(Sha384::new()),
+        };
+        Self { algorithm, state }
+    }
+
+    /// Appends the next handshake message bytes to the transcript.
+    pub(crate) fn update(&mut self, message: &[u8]) {
+        match &mut self.state {
+            TranscriptHasherState::Sha256(state) => state.update(message),
+            TranscriptHasherState::Sha384(state) => state.update(message),
+        }
+    }
+
+    /// Finalizes a clone of the running state into a transcript snapshot.
+    #[must_use]
+    pub(crate) fn snapshot(&self) -> TranscriptHash {
+        let mut bytes = [0_u8; MAX_HASH_BYTES];
+        match &self.state {
+            TranscriptHasherState::Sha256(state) => {
+                bytes[..32].copy_from_slice(&state.clone().finalize());
+            }
+            TranscriptHasherState::Sha384(state) => {
+                bytes.copy_from_slice(&state.clone().finalize());
+            }
+        }
+        TranscriptHash {
+            algorithm: self.algorithm,
+            bytes,
+        }
+    }
+}
+
 #[derive(Eq, PartialEq, Zeroize, ZeroizeOnDrop)]
 struct Secret {
     #[zeroize(skip)]
@@ -589,7 +645,7 @@ fn encode_hkdf_label(
 
 #[cfg(test)]
 mod tests {
-    use super::{CipherSuite, HashAlgorithm, Tls13KeySchedule, TranscriptHash};
+    use super::{CipherSuite, HashAlgorithm, Tls13KeySchedule, TranscriptHash, TranscriptHasher};
 
     #[test]
     fn rfc8448_simple_handshake_schedule_matches() {
@@ -686,6 +742,31 @@ mod tests {
         );
         let right_hash = HashAlgorithm::Sha256.digest(b"ClientHelloServerHello");
         assert!(Tls13KeySchedule::new(CipherSuite::Aes128GcmSha256, &[], &right_hash).is_err());
+    }
+
+    #[test]
+    fn transcript_hasher_snapshots_match_one_shot_digests() {
+        let parts: [&[u8]; 4] = [
+            b"ClientHello",
+            b"ServerHello",
+            b"EncryptedExtensionsCertificate",
+            b"CertificateVerifyFinished",
+        ];
+        for algorithm in [HashAlgorithm::Sha256, HashAlgorithm::Sha384] {
+            let mut hasher = TranscriptHasher::new(algorithm);
+            let mut prefix = Vec::new();
+            for part in parts {
+                hasher.update(part);
+                prefix.extend_from_slice(part);
+                assert_eq!(hasher.snapshot(), algorithm.digest(&prefix));
+            }
+            // A snapshot must not disturb the running state.
+            let through_parts = hasher.snapshot();
+            hasher.update(b"extra");
+            prefix.extend_from_slice(b"extra");
+            assert_eq!(hasher.snapshot(), algorithm.digest(&prefix));
+            assert_ne!(through_parts, hasher.snapshot());
+        }
     }
 
     #[test]
