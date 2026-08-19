@@ -653,6 +653,13 @@ marked “required when object present” must be supplied; do not assume a
 partial object inherits every default. `config format` makes applied defaults
 visible.
 
+How these numbers become the effective policy depends on
+`runtime.tuning.mode`: under `fixed` they are used verbatim; under the
+derived modes (`startup`, `adaptive`) a field whose value differs from the
+built-in default is operator-pinned and always wins, while every other field
+is derived from the detected machine at startup. See
+[Startup policy derivation](#startup-policy-derivation).
+
 ### Deprecated alias: `policy`
 
 The v1.5 top-level `policy` object still parses and behaves identically.
@@ -786,8 +793,76 @@ Process-level resource posture. The whole object is optional.
 | --- | --- | --- | --- |
 | `runtime.resourceMode` | no | unset (effectively `standard`); `standard`, `dedicated` | `dedicated` declares single-tenant use of the machine or cgroup: raise the soft `RLIMIT_NOFILE` to the hard limit, derive the descriptor budget with the dedicated headroom, and run the bounded memory-pressure monitor. See [Dedicated resource mode](#dedicated-resource-mode). Cold setting; changing it requires a restart. When set, `resourceMode` is authoritative over `profile`. |
 | `runtime.profile` | no | `auto`; `auto`, `shared`, `dedicated` | Who owns this machine. `shared` maps onto `resourceMode: standard` and `dedicated` onto `resourceMode: dedicated`; declaring one together with a contradicting `resourceMode` is a validation error. `auto` defers to `resourceMode` when set and otherwise resolves to `dedicated` only when the cgroup v2 tenancy boundary is fully observable (a finite `cpu.max` quota and a finite `memory.max`); it never guesses dedicated on bare metal. |
-| `runtime.tuning.mode` | no | `startup`; `fixed`, `startup`, `adaptive` | How the numeric policy is produced. `fixed` takes the numbers from `advanced.limits` (or the built-in defaults) and never moves them — v1.5 behavior. `startup` and `adaptive` are the derived modes of the v1.6 tuning model; until the startup-derivation slice lands they resolve to the same fixed numbers as `fixed`. A present deprecated `policy` object forces `fixed` unless the mode is explicitly set. |
-| `runtime.tuning.objective` | no | `balanced`; `latency`, `balanced`, `throughput` | Shape of the derived numbers; consulted only by the derived tuning modes. |
+| `runtime.tuning.mode` | no | `startup`; `fixed`, `startup`, `adaptive` | How the numeric policy is produced. `fixed` takes the numbers from `advanced.limits` (or the built-in defaults) and never moves them — v1.5 behavior. `startup` derives every unpinned field once at startup from the detected machine. `adaptive` derives exactly like `startup` in this version; the controller that adjusts soft ceilings within the derived hard bounds is not shipped yet. A present deprecated `policy` object forces `fixed` unless the mode is explicitly set. See [Startup policy derivation](#startup-policy-derivation). |
+| `runtime.tuning.objective` | no | `balanced`; `latency`, `balanced`, `throughput` | Shape of the derived numbers; consulted only by the derived tuning modes (`startup`, `adaptive`). |
+
+### Startup policy derivation
+
+With `runtime.tuning.mode: startup` (the default) the serve path derives the
+numeric policy once at startup from the detected machine — the same formulas
+`config autotune` uses, but fully passive: no benchmark, storage, or loopback
+probe runs at startup, so readiness is never delayed. The inputs `autotune`
+measures fall back to their conservative tiers (the 32 KiB buffer tier, no
+measured setup capacity), so a derived plan never invents numbers the
+autotuner would not produce without measurements.
+
+Derivation is field-by-field. A field whose `advanced.limits` value differs
+from the built-in default is operator-pinned and always wins; every other
+field is derived. (Writing a value equal to the default is indistinguishable
+from not writing it.) All timeouts and `replayRetentionMs` are never
+derived — they are protocol security parameters carried from the
+configuration — and the unpinned `relay.splice`/`relay.pipePool` booleans
+follow the derived platform capability.
+
+The objective scales selected derived outputs after the balanced derivation,
+before the hard caps; the safety floors apply last, so `latency` can never
+under-provision and `throughput` never exceeds the machine-derived ceilings:
+
+| Field | `latency` | `balanced` | `throughput` |
+| --- | --- | --- | --- |
+| `resourceGovernor.maxConnections` | ×0.5 | ×1 | ×1.5 |
+| `resourceGovernor.maxHandshakes` | ×1 | ×1 | ×1 |
+| `resourceGovernor.maxFallbacks` | ×0.5 | ×1 | ×1 |
+| `resourceGovernor.maxCryptoOperations` | ×1 | ×1 | ×1 |
+| `resourceGovernor.maxReplayEntries` | follows `maxConnections` (×4) | | |
+| `resourceGovernor.maxDnsLookups` | ×1 | ×1 | ×1 |
+| `directBarrier.maxConcurrent` | ×0.5 | ×1 | ×1.5 |
+| `directBarrier.maxPerSecond` | ×0.5 | ×1 | ×2 |
+| `relay.bufferBytes` | one tier down | 32 KiB default tier | one tier up (max 64 KiB) |
+| `relay.maxPooledBuffers` | ×0.5 | ×1 | ×2 |
+| `relay.maxSpliceRelays` / `relay.maxPooledPipes` | ×1 | ×1 | ×2 |
+| `relay.maxRelayMemoryBytes` | ×0.75 | ×1 | ×1.5 (≤ memory/4) |
+
+Fields not listed — every timeout and `replayRetentionMs` — are carried from
+the configuration unchanged.
+
+The derived policy is validated exactly like `config autotune` output before
+any listener binds. One `runtime_plan_report` log event at startup records
+the resolved resource mode, the tuning mode and objective, and the effective
+runtime pool sizes. `rust-reality runtime explain --config …` prints the same
+plan offline: the detected machine, the resolved profile, the effective value
+of every field with its source (`derived`, `override`, or `default`), and the
+applied bounds.
+
+The effective policy is cold. A reload re-derives the candidate against the
+current machine view and rejects when the derived numbers would differ —
+including drift caused only by a changed cgroup boundary since startup —
+because the admission pools were sized at process start and cannot move.
+
+### Bootstrap runtime topology
+
+`serve` detects the machine and resolves the profile *before* building the
+Tokio runtime, so the runtime pools are sized from the same machine view the
+policy derivation uses. Under the `dedicated` posture the pools are sized
+explicitly: `worker_threads = effective_cpus().clamp(1, 64)` — cgroup-quota
+aware, and the multi-thread runtime is kept even at 1 vCPU — and
+`max_blocking_threads = (32 + 8 × effective_cpus).clamp(64, 512)`, the pool
+DNS and probe work sit on. The shared/standard posture keeps the tokio
+defaults (one worker per visible CPU, 512 blocking threads), exactly as v1.5
+built the runtime. Both sizes are cold: tokio cannot resize a live runtime,
+so they are fixed for the process lifetime. CLI-only commands keep a small
+single-thread runtime.
+
 
 ### Dedicated resource mode
 
@@ -891,7 +966,12 @@ Restart required:
   startup and remains process-lifetime;
 - any `runtime` change (`resourceMode`, `profile`, or `tuning`), because the
   resource posture shapes the process-lifetime descriptor budget and memory
-  monitor;
+  monitor; the tuning mode compares strictly, so `fixed` ↔ `startup` ↔
+  `adaptive` drift always requires a restart;
+- under a derived tuning mode (`startup`/`adaptive`), anything that would
+  change the derived numbers — an edited `advanced.limits` pin or a changed
+  machine boundary since startup — because the admission pools were sized at
+  process start;
 - any `advanced.limits.resourceGovernor` change, because REALITY replay
   admission/state is process-lifetime;
 - any `advanced.limits.directBarrier` change, because the direct-dial authority

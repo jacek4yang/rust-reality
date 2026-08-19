@@ -222,6 +222,27 @@ pub enum LogEvent {
         /// The soft limit that would avoid clamping.
         fd_recommended_soft_limit: u64,
     },
+    /// The bootstrap runtime plan, emitted exactly once at startup.
+    ///
+    /// Records the resolved resource mode, the tuning mode and objective, the
+    /// effective Tokio pool sizes (explicitly sized in the dedicated posture,
+    /// the tokio defaults otherwise), and whether the numeric policy was
+    /// derived from the detected machine. Every field is a fixed identifier
+    /// or a process-wide integer.
+    RuntimePlanReport {
+        /// The resolved resource mode.
+        resource_mode: &'static str,
+        /// The effective tuning mode.
+        tuning_mode: &'static str,
+        /// The configured tuning objective.
+        objective: &'static str,
+        /// The effective worker-thread count.
+        worker_threads: usize,
+        /// The effective blocking-pool size.
+        max_blocking_threads: usize,
+        /// Whether the numeric policy was machine-derived at startup.
+        policy_derived: bool,
+    },
     /// A descriptor-pressure state transition.
     ///
     /// Emitted only when the state changes, never per accept, so a sustained
@@ -377,6 +398,7 @@ impl LogEvent {
             | Self::OutboundNetworkInitialized { .. }
             | Self::RelayBackendReport { .. }
             | Self::DescriptorBudgetReport { .. }
+            | Self::RuntimePlanReport { .. }
             | Self::MachineReport { .. } => LogLevel::Info,
             Self::ConnectionAccepted { .. }
             | Self::ConnectionClosed { .. }

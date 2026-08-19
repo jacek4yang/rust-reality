@@ -445,15 +445,17 @@ impl RuntimeConfig {
     /// Returns whether hot-reloading from `self` to `other` preserves the
     /// cold runtime posture.
     ///
-    /// The comparison keys off effective values rather than raw options, so
-    /// representations that behave identically do not reject a reload: an
-    /// explicit `resourceMode: standard` and an unset `resourceMode` both
-    /// resolve to `standard`, and a `policy`-alias-forced `tuning.mode:
-    /// fixed` and an unset mode compare equal through
-    /// [`TuningConfig::effective_mode`]. Both resource modes are resolved
-    /// against the same machine view, so a profile flip that changes the
-    /// resolved mode still rejects; `profile` and `objective` compare
-    /// directly.
+    /// The resource-mode comparison keys off effective values rather than raw
+    /// options, so representations that behave identically do not reject a
+    /// reload: an explicit `resourceMode: standard` and an unset
+    /// `resourceMode` both resolve to `standard`. Both resource modes are
+    /// resolved against the same machine view, so a profile flip that changes
+    /// the resolved mode still rejects; `profile` and `objective` compare
+    /// directly. The tuning mode compares strictly through
+    /// [`TuningConfig::mode`]: `fixed`, `startup`, and `adaptive` produce
+    /// different effective policies, so any drift between them — including a
+    /// `policy`-alias-forced `fixed` drifting to an unset (`startup`) mode —
+    /// requires a process restart.
     #[must_use]
     pub fn hot_compatible_with(
         &self,
@@ -463,7 +465,7 @@ impl RuntimeConfig {
         self.resolve_resource_mode(machine) == other.resolve_resource_mode(machine)
             && self.profile == other.profile
             && self.tuning.objective == other.tuning.objective
-            && self.tuning.effective_mode() == other.tuning.effective_mode()
+            && self.tuning.mode() == other.tuning.mode()
     }
 }
 
@@ -513,9 +515,6 @@ pub enum TuningMode {
     Fixed,
     /// Derived once at startup from the detected machine; static for the
     /// process lifetime. Default.
-    ///
-    /// Until the startup-derivation slice lands, this resolves to the same
-    /// fixed numbers as `fixed`.
     #[default]
     Startup,
     /// Startup derivation plus a controller adjusting soft ceilings within
@@ -586,26 +585,15 @@ impl TuningConfig {
             None => TuningMode::Startup,
         }
     }
-
-    /// Returns the tuning mode as it behaves in this version.
-    ///
-    /// `startup` and `adaptive` resolve to the same fixed numbers as `fixed`
-    /// until the startup-derivation slice lands, so hot-reload compatibility
-    /// treats every mode as `fixed`. The derivation slice replaces this with
-    /// the strict [`TuningConfig::mode`] comparison.
-    #[must_use]
-    pub const fn effective_mode(&self) -> TuningMode {
-        TuningMode::Fixed
-    }
 }
 
 /// Expert escape hatch: the numeric resource and relay limits.
 ///
-/// Every field of `limits` carries the v1.5 default; any field present pins
-/// that field. In this version the limits are the complete effective policy
-/// (fixed mode); the machine-derived `startup` and `adaptive` tuning modes
-/// arrive with the startup-derivation slice and will treat absent fields as
-/// derivable.
+/// Every field of `limits` carries the v1.5 default; a field whose value
+/// differs from the default is operator-pinned. In `fixed` tuning mode the
+/// limits are the complete effective policy; the derived modes (`startup`,
+/// `adaptive`) derive every unpinned field from the detected machine at
+/// startup and keep pinned fields verbatim.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AdvancedConfig {
@@ -1650,7 +1638,37 @@ mod tests {
             "an explicit standard mode and an unset mode both resolve to standard"
         );
         assert!(unset.hot_compatible_with(&explicit_standard, &machine));
+    }
 
+    #[test]
+    fn hot_compatibility_compares_the_tuning_mode_strictly() {
+        let machine = machine_with(None, None);
+        let unset = RuntimeConfig::default();
+        for mode in [TuningMode::Fixed, TuningMode::Startup, TuningMode::Adaptive] {
+            let explicit = RuntimeConfig {
+                resource_mode: None,
+                profile: RuntimeProfile::Auto,
+                tuning: TuningConfig {
+                    mode: Some(mode),
+                    objective: Objective::Balanced,
+                },
+            };
+            if mode == TuningMode::Startup {
+                assert!(
+                    unset.hot_compatible_with(&explicit, &machine),
+                    "an explicit startup mode and an unset mode are the same mode"
+                );
+            } else {
+                assert!(
+                    !unset.hot_compatible_with(&explicit, &machine),
+                    "drift between startup and {mode:?} must reject: the modes derive differently"
+                );
+            }
+        }
+
+        // The `policy` alias forces `fixed` on load, so a hand-migrated
+        // config with an unset (startup) mode is a behavior change, never a
+        // reloadable no-op.
         let alias_forced_fixed = RuntimeConfig {
             resource_mode: None,
             profile: RuntimeProfile::Auto,
@@ -1659,11 +1677,8 @@ mod tests {
                 objective: Objective::Balanced,
             },
         };
-        assert!(
-            alias_forced_fixed.hot_compatible_with(&unset, &machine),
-            "the alias-forced fixed mode and an unset mode behave identically"
-        );
-        assert!(unset.hot_compatible_with(&alias_forced_fixed, &machine));
+        assert!(!alias_forced_fixed.hot_compatible_with(&unset, &machine));
+        assert!(!unset.hot_compatible_with(&alias_forced_fixed, &machine));
     }
 
     #[test]
@@ -1713,11 +1728,6 @@ mod tests {
         let tuning = TuningConfig::default();
         assert_eq!(tuning.mode(), TuningMode::Startup);
         assert_eq!(tuning.mode, None, "an unset mode must stay distinguishable");
-        assert_eq!(
-            tuning.effective_mode(),
-            TuningMode::Fixed,
-            "every mode behaves as fixed until the derivation slice lands"
-        );
         assert_eq!(tuning.objective, Objective::Balanced);
         assert_eq!(TuningMode::Fixed.as_str(), "fixed");
         assert_eq!(TuningMode::Startup.as_str(), "startup");

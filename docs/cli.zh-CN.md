@@ -83,6 +83,27 @@ REALITY 的 TLS 1.3 ServerHello。
 JSON 结果只证明该目标当时的兼容性，不能保证目标以后永远不改变行为。
 `probe-dest` 必须使用具体 DNS 名；通配符只是服务端匹配模式，不是合法 ClientHello SNI。
 
+### `runtime explain`
+
+```text
+rust-reality runtime explain --config <PATH> [--json]
+```
+
+在不启动服务器的情况下解释一份配置的运行时资源方案：检测机器（描述符限制、
+cgroup v2 CPU 与内存边界）、把 `runtime.profile` 解析为资源模式、选定启动时的
+Tokio 线程池尺寸，并完全按 `serve` 启动时的方式计算生效的数值策略。该命令完全
+离线：不绑定监听器、不运行基准，也不接触任何运行中的实例。
+
+人类可读输出列出机器视图、解析出的 profile 与调谐设置、启动拓扑、每个策略字段
+的生效值与来源（`derived`、`override` 或 `default`）、目标乘数和安全上下限，
+以及仅供参考的内核调优建议（进程绝不写 sysctl）。`--json` 以稳定模式
+（`schemaVersion: 1`）输出同一份报告，便于自动化。
+
+| 选项 | 必填 | 含义 |
+| --- | --- | --- |
+| `-c, --config <PATH>` | 是 | 严格 JSON 配置文件。 |
+| `--json` | 否 | 输出机器可读 JSON 报告，而不是人类可读摘要。 |
+
 ## 配置命令
 
 ### `config generate standalone`
