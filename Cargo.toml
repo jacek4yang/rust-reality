@@ -35,6 +35,11 @@ ring = { version = "0.17.14", default-features = false, optional = true }
 schemars = { version = "1.2.2", default-features = false, features = ["derive", "std"] }
 serde = { version = "1.0.229", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
+# Tracks the logical path (`inbounds[0].settings.clients[0].id`) of the value
+# that failed to deserialize, which the configuration diagnostics map back to
+# source spans. By the serde author; MIT OR Apache-2.0; depends on serde only;
+# used only on the cold configuration-load path.
+serde_path_to_error = { version = "0.1.20", default-features = false }
 # sha2 0.11 removed the `asm`/`asm-aarch64` crate features together with the
 # sha2-asm backend (RustCrypto/hashes #542); backend selection moved to
 # RUSTFLAGS cfgs (`sha2_256_backend`, `sha2_512_backend`). The default build

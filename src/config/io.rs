@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::{Config, ConfigError, validate_config};
+use super::{Config, ConfigError, diagnostic::Diagnostic, validate_config};
 
 /// Maximum accepted JSON configuration size.
 pub const MAX_CONFIG_BYTES: usize = 4 * 1024 * 1024;
@@ -30,34 +30,47 @@ pub enum ConfigLoadError {
     },
     /// JSON syntax or shape is invalid.
     Decode {
-        /// Configuration path.
-        path: PathBuf,
-        /// Parser failure. Its public display is deliberately reduced to location data.
+        /// Source-oriented rendering of the failure.
+        diagnostic: Box<Diagnostic>,
+        /// Parser failure, retained as the programmatic cause.
         source: serde_json::Error,
     },
     /// JSON decoded successfully but violates runtime invariants.
-    Invalid(ConfigError),
+    Invalid {
+        /// Source-oriented rendering of the failure.
+        diagnostic: Box<Diagnostic>,
+        /// Validation failure, retained as the programmatic cause.
+        source: ConfigError,
+    },
+}
+
+impl ConfigLoadError {
+    /// Returns the source-oriented diagnostic, when the failure carries one.
+    #[must_use]
+    pub fn diagnostic(&self) -> Option<&Diagnostic> {
+        match self {
+            Self::Decode { diagnostic, .. } | Self::Invalid { diagnostic, .. } => Some(diagnostic),
+            Self::Io { .. } | Self::TooLarge { .. } => None,
+        }
+    }
 }
 
 impl fmt::Display for ConfigLoadError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io { path, .. } => {
-                write!(formatter, "failed to read configuration {}", path.display())
-            }
+            Self::Io { path, source } => write!(
+                formatter,
+                "failed to read configuration {}: {source}",
+                path.display()
+            ),
             Self::TooLarge { path, bytes } => write!(
                 formatter,
                 "configuration {} is too large ({bytes} bytes; maximum {MAX_CONFIG_BYTES})",
                 path.display()
             ),
-            Self::Decode { path, source } => write!(
-                formatter,
-                "invalid JSON configuration {} at line {} column {}",
-                path.display(),
-                source.line(),
-                source.column()
-            ),
-            Self::Invalid(source) => source.fmt(formatter),
+            Self::Decode { diagnostic, .. } | Self::Invalid { diagnostic, .. } => {
+                diagnostic.fmt(formatter)
+            }
         }
     }
 }
@@ -67,7 +80,7 @@ impl Error for ConfigLoadError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::Decode { source, .. } => Some(source),
-            Self::Invalid(source) => Some(source),
+            Self::Invalid { source, .. } => Some(source),
             Self::TooLarge { .. } => None,
         }
     }
@@ -124,12 +137,32 @@ pub(super) fn read_config_bytes(path: &Path) -> Result<Vec<u8>, ConfigLoadError>
 }
 
 pub(super) fn decode_config(path: &Path, bytes: &[u8]) -> Result<Config, ConfigLoadError> {
-    let config: Config =
-        serde_json::from_slice(bytes).map_err(|source| ConfigLoadError::Decode {
-            path: path.to_owned(),
+    // The source text backs every excerpt and span. Lossy decoding is safe:
+    // offsets are always clamped to line and character boundaries, and valid
+    // configurations (the common error case: semantic failures) are UTF-8.
+    let text = String::from_utf8_lossy(bytes);
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+    let config: Config = match serde_path_to_error::deserialize(&mut deserializer) {
+        Ok(config) => config,
+        Err(tracked) => {
+            let serde_path = tracked.path().to_string();
+            let source = tracked.into_inner();
+            return Err(ConfigLoadError::Decode {
+                diagnostic: Box::new(Diagnostic::decode(path, &text, &serde_path, &source)),
+                source,
+            });
+        }
+    };
+    if let Err(source) = deserializer.end() {
+        return Err(ConfigLoadError::Decode {
+            diagnostic: Box::new(Diagnostic::decode(path, &text, "", &source)),
             source,
-        })?;
-    validate_config(&config).map_err(ConfigLoadError::Invalid)?;
+        });
+    }
+    validate_config(&config).map_err(|source| ConfigLoadError::Invalid {
+        diagnostic: Box::new(Diagnostic::validation(path, &text, &source)),
+        source,
+    })?;
     Ok(config)
 }
 
