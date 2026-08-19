@@ -61,8 +61,8 @@ old-to-new mapping table is in the
 | Field | Required | Default / allowed | Meaning and constraints |
 | --- | --- | --- | --- |
 | `log.level` | no | `info`; `error`, `warn`, `info`, `debug` | Minimum emitted severity. Debug logging still excludes configuration and keys. |
-| `log.output` | no | `stderr`; `stderr`, `journald`, `file` | `journald` writes stderr for systemd capture; `file` enables built-in rotation. |
-| `log.file` | only for `output: "file"` | absent | Forbidden for stderr/journald. Contains all fields below. |
+| `log.output` | no | `stderr`; `stderr`, `journald`, `file`, `none` | `journald` writes stderr for systemd capture; `file` enables built-in rotation; `none` drops every event before any encoding or I/O. |
+| `log.file` | only for `output: "file"` | absent | Forbidden for stderr/journald/none. Contains all fields below. |
 | `log.file.path` | yes | — | Non-empty active file path. Parent directory must be writable by the service account. |
 | `log.file.maxBytes` | yes | — | Rotate before one file exceeds `65536..=1073741824` bytes. |
 | `log.file.maxFiles` | yes | — | Maximum active plus rotated files, `1..=64`. |

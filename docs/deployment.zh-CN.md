@@ -356,6 +356,9 @@ unit 使用专用账号，只保留 `CAP_NET_BIND_SERVICE`，保护主机文件�
 
 正常部署优先使用 `log.output: "stderr"` 或 `"journald"`。文件日志必须配置
 `path`、`maxBytes`、`maxFiles` 和 `maxTotalBytes`，全部都会强制执行。
+`log.output: "none"` 会完全关闭日志——不创建文件、不写 stderr，所有事件在编码前
+即被丢弃——但同时也会屏蔽 warn 级的拒绝与准入信号，因此除非日志本身不可接受，
+否则应优先使用级别过滤而非 `none`。
 
 每次启动都要核对 `outbound_network_initialized`，并为每个入站核对一条
 `listener_topology_active`。前者记录缓存的 IPv4/IPv6 路由可用性及初始出站主族，

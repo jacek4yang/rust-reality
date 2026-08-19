@@ -56,8 +56,8 @@ rust-reality config format --config config.json > config.formatted.json
 | 字段 | 必填 | 默认值/允许值 | 含义与约束 |
 | --- | --- | --- | --- |
 | `log.level` | 否 | `info`；`error`、`warn`、`info`、`debug` | 最低输出级别。Debug 也不会包含配置和密钥。 |
-| `log.output` | 否 | `stderr`；`stderr`、`journald`、`file` | `journald` 仍写 stderr 供 systemd 捕获；`file` 启用内置轮转。 |
-| `log.file` | 仅 `output: "file"` | 不存在 | stderr/journald 时禁止；包含下列全部字段。 |
+| `log.output` | 否 | `stderr`；`stderr`、`journald`、`file`、`none` | `journald` 仍写 stderr 供 systemd 捕获；`file` 启用内置轮转；`none` 在任何编码或 I/O 之前丢弃全部事件。 |
+| `log.file` | 仅 `output: "file"` | 不存在 | stderr/journald/none 时禁止；包含下列全部字段。 |
 | `log.file.path` | 是 | — | 非空活动日志路径，父目录必须允许服务账号写入。 |
 | `log.file.maxBytes` | 是 | — | 单文件达到 `65536..=1073741824` 字节前轮转。 |
 | `log.file.maxFiles` | 是 | — | 活动文件加轮转文件最多 `1..=64` 个。 |

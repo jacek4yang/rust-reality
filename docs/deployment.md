@@ -400,7 +400,11 @@ hardening policy instead of blindly removing a restriction.
 
 For normal installations use `log.output: "stderr"` or `"journald"`. If file
 logging is required, configure `path`, `maxBytes`, `maxFiles`, and
-`maxTotalBytes`; all are enforced.
+`maxTotalBytes`; all are enforced. `log.output: "none"` disables logging
+entirely — no file is created, nothing is written to stderr, and every event
+is dropped before encoding — but it also silences warn-level rejection and
+admission signal, so prefer a level filter over `none` unless logging itself
+is unacceptable.
 
 On every start, verify `outbound_network_initialized` and one
 `listener_topology_active` event per inbound. The former records the cached

@@ -348,6 +348,8 @@ pub enum LogOutput {
     Journald,
     /// A size-bounded rotating file set.
     File,
+    /// No sink at all: every event is dropped before any encoding or I/O.
+    None,
 }
 
 /// File-log rotation and retention limits.
