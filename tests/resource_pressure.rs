@@ -20,7 +20,7 @@ use std::{
 use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 use rust_reality::{
     config::{
-        DirectBarrierConfig, GenerateConfigInput, GenerateLandingConfigInput, ResourceMode,
+        DirectBarrierConfig, GenerateConfigInput, GenerateLandingConfigInput,
         generate_landing_config, generate_minimal_config,
     },
     protocol::vless::{Address, Destination},
@@ -616,7 +616,7 @@ fn dedicated_mode_raises_the_soft_limit_in_a_child_process() {
         })
         .expect("configuration must generate");
         let mut config = generated.config().clone();
-        config.runtime.resource_mode = Some(ResourceMode::Dedicated);
+        config.runtime.profile = rust_reality::config::RuntimeProfile::Dedicated;
         ProductionServer::from_config(&config)
             .expect("a dedicated server must compile against the raised limit");
         return;

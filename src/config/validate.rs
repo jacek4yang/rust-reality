@@ -96,27 +96,7 @@ pub fn validate_config(config: &Config) -> Result<(), ConfigError> {
     validate_routing(config, &users, &outbounds)?;
     validate_handoff_egress(config)?;
     validate_handoff_key_independence(config)?;
-    validate_runtime(config)?;
     validate_policy(config)
-}
-
-/// Rejects contradictory tenancy declarations.
-///
-/// `resourceMode` is authoritative when set; a non-`auto` `profile` maps
-/// onto exactly one resource mode, so declaring both with different meanings
-/// can never be resolved honestly.
-fn validate_runtime(config: &Config) -> Result<(), ConfigError> {
-    if let (Some(mode), Some(profile_mode)) = (
-        config.runtime.resource_mode,
-        config.runtime.profile.resource_mode(),
-    ) && mode != profile_mode
-    {
-        return fail(
-            "runtime.profile",
-            "conflicts with runtime.resourceMode; the profile maps to a different resource mode",
-        );
-    }
-    Ok(())
 }
 
 fn validate_network(config: &Config) -> Result<(), ConfigError> {
@@ -2525,38 +2505,15 @@ mod tests {
     }
 
     #[test]
-    fn accepts_dedicated_resource_mode() {
+    fn rejects_removed_resource_mode_field() {
+        // The v1.5 `runtime.resourceMode` field was removed; it must fail
+        // decoding rather than being silently accepted.
         let mut config: serde_json::Value =
             serde_json::from_str(crate::config::test_config_json()).expect("fixture must decode");
         config["runtime"] = serde_json::json!({ "resourceMode": "dedicated" });
-        let config: Config = serde_json::from_value(config).expect("dedicated mode must decode");
-
-        assert_eq!(
-            config.runtime.resource_mode(),
-            crate::config::ResourceMode::Dedicated
-        );
-        validate_config(&config).expect("dedicated mode must validate");
-    }
-
-    #[test]
-    fn defaults_to_standard_resource_mode() {
-        let config = valid_config();
-        assert_eq!(
-            config.runtime.resource_mode(),
-            crate::config::ResourceMode::Standard
-        );
-        assert_eq!(config.runtime.resource_mode().as_str(), "standard");
-        validate_config(&config).expect("the default mode must validate");
-    }
-
-    #[test]
-    fn rejects_unknown_resource_mode_values() {
-        let mut config: serde_json::Value =
-            serde_json::from_str(crate::config::test_config_json()).expect("fixture must decode");
-        config["runtime"] = serde_json::json!({ "resourceMode": "exclusive" });
         assert!(
             serde_json::from_value::<Config>(config).is_err(),
-            "an unknown resourceMode must fail closed at decode time"
+            "the removed resourceMode field must fail closed at decode time"
         );
     }
 
@@ -2564,7 +2521,7 @@ mod tests {
     fn rejects_unknown_runtime_fields() {
         let mut config: serde_json::Value =
             serde_json::from_str(crate::config::test_config_json()).expect("fixture must decode");
-        config["runtime"] = serde_json::json!({ "resourceMode": "dedicated", "locality": {} });
+        config["runtime"] = serde_json::json!({ "profile": "dedicated", "locality": {} });
         assert!(
             serde_json::from_value::<Config>(config).is_err(),
             "deny_unknown_fields applies to the runtime section"
@@ -2572,30 +2529,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_profile_that_contradicts_the_resource_mode() {
-        for (resource_mode, profile) in [("dedicated", "shared"), ("standard", "dedicated")] {
-            let mut value: serde_json::Value =
-                serde_json::from_str(crate::config::test_config_json())
-                    .expect("fixture must decode");
-            value["runtime"] = serde_json::json!({
-                "resourceMode": resource_mode,
-                "profile": profile,
-            });
-            let json = serde_json::to_vec(&value).expect("config must encode");
-            let mut config: Config = serde_json::from_slice(&json).expect("config must decode");
-            config.normalize().expect("no alias is present");
-            let error = validate_config(&config)
-                .expect_err("a contradictory tenancy declaration must fail validation");
-            assert_eq!(error.path(), "runtime.profile");
-        }
-    }
-
-    #[test]
-    fn accepts_a_profile_that_matches_or_defers_to_the_resource_mode() {
+    fn accepts_every_profile_declaration() {
         for runtime in [
-            serde_json::json!({ "resourceMode": "dedicated", "profile": "dedicated" }),
-            serde_json::json!({ "resourceMode": "standard", "profile": "shared" }),
-            serde_json::json!({ "resourceMode": "dedicated", "profile": "auto" }),
+            serde_json::json!({ "profile": "auto" }),
             serde_json::json!({ "profile": "dedicated" }),
             serde_json::json!({ "profile": "shared" }),
         ] {
@@ -2604,10 +2540,9 @@ mod tests {
                     .expect("fixture must decode");
             value["runtime"] = runtime;
             let json = serde_json::to_vec(&value).expect("config must encode");
-            let mut config: Config = serde_json::from_slice(&json).expect("config must decode");
-            config.normalize().expect("no alias is present");
+            let config: Config = serde_json::from_slice(&json).expect("config must decode");
             validate_config(&config)
-                .unwrap_or_else(|error| panic!("consistent tenancy must validate: {error}"));
+                .unwrap_or_else(|error| panic!("a declared profile must validate: {error}"));
         }
     }
 }

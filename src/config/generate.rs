@@ -277,7 +277,6 @@ pub fn generate_minimal_config(
                 rules: Vec::new(),
             }],
         },
-        policy: None,
         advanced: AdvancedConfig::default(),
         runtime: RuntimeConfig::default(),
     };
@@ -343,7 +342,6 @@ pub fn generate_line_config(
                 rules: Vec::new(),
             }],
         },
-        policy: None,
         advanced: AdvancedConfig::default(),
         runtime: RuntimeConfig::default(),
     };
@@ -392,7 +390,6 @@ pub fn generate_landing_config(
             global_rules: Vec::new(),
             users: Vec::new(),
         },
-        policy: None,
         advanced: AdvancedConfig::default(),
         runtime: RuntimeConfig::default(),
     };
@@ -539,7 +536,6 @@ pub fn generate_multi_handoff_configs(
             global_rules: Vec::new(),
             users,
         },
-        policy: None,
         advanced: AdvancedConfig::default(),
         runtime: RuntimeConfig::default(),
     };
@@ -656,7 +652,6 @@ fn handoff_landing_config(
             global_rules: Vec::new(),
             users: Vec::new(),
         },
-        policy: None,
         advanced: AdvancedConfig::default(),
         runtime: RuntimeConfig::default(),
     }

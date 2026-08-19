@@ -620,8 +620,8 @@ pub struct PolicyResolution {
 /// (`startup`, and `adaptive` until the controller lands) run
 /// [`StartupPlan::derive`] against the detected machine and merge field by
 /// field: a field whose configured value differs from the built-in default
-/// is operator-pinned and always wins — the same presence rule the `policy`
-/// alias merge applies — and every other field takes the derived value.
+/// is operator-pinned and always wins, and every other field takes the
+/// derived value.
 /// Derivation is passive: no storage or network benchmark runs at startup,
 /// so readiness is never delayed; fields the design does not derive always
 /// carry the configured value (all timeouts), and the unpinned `splice`/
