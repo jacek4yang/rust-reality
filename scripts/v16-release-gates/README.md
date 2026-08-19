@@ -8,7 +8,7 @@ read-only at `artifacts/v1.6.0/baseline/extracted/rust-reality` and bound by
 `baseline-identity-149f126.json`).  The candidate is a **prebuilt read-only
 binary passed via `RR_CANDIDATE_BIN`** because the v1.6.0 candidate commit is
 not merged when this harness lands; its source commit defaults to the HEAD of
-`REPOSITORY` (the main checkout).  Xray comparator:
+`REPOSITORY` (`worktrees/v16-gates`, detached at the candidate commit).  Xray comparator:
 `artifacts/xray-reference-v26.7.28` (SHA-256 `23d228d7…04c5268`).
 
 `env-common.sh` exports everything the workload scripts need, including:
