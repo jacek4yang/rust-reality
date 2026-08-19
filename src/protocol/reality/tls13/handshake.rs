@@ -12,7 +12,8 @@ use super::{
     ExportedRecordState, FinishedVerifyData, HandshakeMessageError, ServerHelloError,
     ServerHelloTemplate, Tls13KeySchedule, Tls13KeyScheduleError, Tls13RecordError,
     Tls13RecordLayer, certificate_message, change_cipher_spec_record, encrypted_extensions,
-    finished_message, plaintext_handshake_record, record::UNPADDED_RECORD_WIRE_OVERHEAD,
+    finished_message, keys::TranscriptHasher, plaintext_handshake_record,
+    record::UNPADDED_RECORD_WIRE_OVERHEAD,
 };
 
 const FINISHED_HANDSHAKE_TYPE: u8 = 20;
@@ -360,7 +361,14 @@ fn build_server_flight_inner(
     transcript.extend_from_slice(client.raw_message());
     transcript.extend_from_slice(&server_hello_message);
 
-    let through_server_hello = suite.hash().digest(&transcript);
+    // Incremental transcript hash: each snapshot finalizes a clone of the
+    // running state instead of re-hashing the whole transcript (RFC 8446
+    // transcript-hash values are unchanged by construction).
+    let mut transcript_hasher = TranscriptHasher::new(suite.hash());
+    transcript_hasher.update(client.raw_message());
+    transcript_hasher.update(&server_hello_message);
+
+    let through_server_hello = transcript_hasher.snapshot();
     let schedule = Tls13KeySchedule::new(suite, agreement.shared_secret(), &through_server_hello)?;
     let server_handshake_keys = schedule.traffic_keys(schedule.server_handshake_secret())?;
     let client_handshake_keys = schedule.traffic_keys(schedule.client_handshake_secret())?;
@@ -370,20 +378,24 @@ fn build_server_flight_inner(
     let encrypted_extensions_message = encrypted_extensions(selected_alpn)?;
     let flight_plaintext_start = transcript.len();
     transcript.extend_from_slice(&encrypted_extensions_message);
+    transcript_hasher.update(&encrypted_extensions_message);
     let certificate_der = identity.forge_certificate(auth_key)?;
     let certificate = certificate_message(&certificate_der)?;
     transcript.extend_from_slice(&certificate);
+    transcript_hasher.update(&certificate);
     let certificate_verify =
-        identity.certificate_verify(suite.hash().digest(&transcript).as_bytes())?;
+        identity.certificate_verify(transcript_hasher.snapshot().as_bytes())?;
     transcript.extend_from_slice(&certificate_verify);
+    transcript_hasher.update(&certificate_verify);
     let server_finished_data = schedule.finished_verify_data(
         schedule.server_handshake_secret(),
-        &suite.hash().digest(&transcript),
+        &transcript_hasher.snapshot(),
     )?;
     let server_finished = finished_message(server_finished_data.as_bytes())?;
     transcript.extend_from_slice(&server_finished);
+    transcript_hasher.update(&server_finished);
 
-    let through_server_finished = suite.hash().digest(&transcript);
+    let through_server_finished = transcript_hasher.snapshot();
     let expected_client_finished = schedule
         .finished_verify_data(schedule.client_handshake_secret(), &through_server_finished)?;
     let application = schedule.application_traffic_secrets(&through_server_finished)?;
