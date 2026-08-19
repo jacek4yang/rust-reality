@@ -692,7 +692,7 @@ splice 永远不会跨越 REALITY/TLS 安全边界。传输开始前无法获得
 | 字段 | 对象存在时必填 | 默认值/允许值 | 含义与约束 |
 | --- | --- | --- | --- |
 | `runtime.resourceMode` | 否 | 未设置（实际为 `standard`）；`standard`、`dedicated` | `dedicated` 声明独占机器或 cgroup：把 `RLIMIT_NOFILE` 软限制提升到硬限制、按专用余量推导描述符预算，并运行有界内存压力监控器。见[专用资源模式](#dedicated-resource-mode)。冷设置，修改必须重启。设置后 `resourceMode` 优先于 `profile`。 |
-| `runtime.profile` | 否 | `auto`；`auto`、`shared`、`dedicated` | 声明谁拥有这台机器。`shared` 映射到 `resourceMode: standard`，`dedicated` 映射到 `resourceMode: dedicated`；与 `resourceMode` 矛盾的组合是验证错误。`auto` 在 `resourceMode` 已设置时服从它，否则在本版本中保持 `standard` 姿态；基于 cgroup 的独占检测随启动推导切片到来。 |
+| `runtime.profile` | 否 | `auto`；`auto`、`shared`、`dedicated` | 声明谁拥有这台机器。`shared` 映射到 `resourceMode: standard`，`dedicated` 映射到 `resourceMode: dedicated`；与 `resourceMode` 矛盾的组合是验证错误。`auto` 在 `resourceMode` 已设置时服从它，否则仅当 cgroup v2 租户边界完全可观测（`cpu.max` 配额有限且 `memory.max` 有限）时解析为 `dedicated`；在裸金属上绝不猜测为 dedicated。 |
 | `runtime.tuning.mode` | 否 | `startup`；`fixed`、`startup`、`adaptive` | 数值策略的产生方式。`fixed` 取自 `advanced.limits`（或内置默认值）且永不变动——即 v1.5 行为。`startup` 和 `adaptive` 是 v1.6 调谐模型的推导模式；在启动推导切片落地之前，它们解析为与 `fixed` 相同的固定数值。存在弃用的 `policy` 对象时，除非显式设置模式，否则强制为 `fixed`。 |
 | `runtime.tuning.objective` | 否 | `balanced`；`latency`、`balanced`、`throughput` | 推导数值的形态；只有推导调谐模式才会使用。 |
 

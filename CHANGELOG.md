@@ -16,7 +16,9 @@ All notable user-facing changes to this project are documented in this file.
   effective numbers still come from `advanced.limits` (or the built-in
   defaults) exactly as in v1.5 — `startup`/`adaptive` are accepted and
   validated but resolve to the fixed numbers until the startup-derivation
-  slice lands.
+  slice lands. While that derivation has not landed, behavior is
+  byte-identical to v1.5: `startup` and `adaptive` currently resolve to the
+  same fixed numbers as `fixed`.
 - The v1.5 top-level `policy` object remains as a deprecated alias: its
   non-default values merge field-by-field into `advanced.limits` (a field
   set in both places to different non-default values is a validation
