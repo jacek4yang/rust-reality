@@ -10,9 +10,50 @@ numbers were measured on the validation host: Intel Core i3-8100 (4C/4T @
 client. Loopback shares the host CPUs between server, client, and origin;
 these numbers describe implementation cost, never Internet throughput. The
 frozen v1.0.0 release comparison matrix is published in
-[benchmarks.md](benchmarks.md). v1.5.0 evidence is in the two sections
-immediately below and keeps the v1.0.0 tables unchanged as historical release
-measurements.
+[benchmarks.md](benchmarks.md). v1.5.1 and v1.5.0 evidence is in the
+sections immediately below and keeps the v1.0.0 tables unchanged as
+historical release measurements.
+
+## v1.5.1 release evidence
+
+v1.5.1 contains no data-plane redesign; it is a targeted cost-removal and
+correctness release measured against the published v1.5.0 release binary
+(`eda773b`) on the same host, with every run serialized under the
+host-exclusive lock. The formal evaluator passed all 40 protected metrics
+with zero regressions (`artifacts/v1.5.1/gates/evaluator-report.json`).
+
+- **Incremental handshake-transcript hashing.** The REALITY server flight
+  now hashes the TLS 1.3 handshake transcript incrementally instead of
+  re-hashing the whole growing transcript four times; transcript values
+  and wire output are unchanged. Measured on the release gate host:
+  SHA-256 compress self-time fell from 22.0% to 13.8% of setup CPU, and
+  server CPU per setup connection fell 6.7% (setup ABBA median ratio
+  0.933, bootstrap95 [0.930, 0.934]; 602 µs vs 646 µs aggregate
+  task-clock; classified as a statistically significant improvement by the
+  release evaluator).
+- **Lazy per-connection debug events and `log.output: "none"`.**
+  Per-connection debug events (`connection_accepted`,
+  `connection_completed`, `connection_closed`) are constructed only when
+  debug output can actually reach the configured sink; at `info` or
+  higher, or with `log.output: "none"`, the per-connection log path does
+  no work at all. Warn-level rejection and admission events stay eager as
+  operator signal. This is why the v1.5.1 Xray comparison runs both
+  servers at warn level with no logging asymmetry.
+- **DNS cache identity includes the query class.** A static configured
+  peer and a dynamic per-session destination with the same name previously
+  shared one cache slot, so a static lookup could be served by a dynamic
+  entry (or vice versa) and the static TTL could extend a dynamic answer.
+  Static and dynamic entries for one name now have independent lifetimes,
+  both counting against `dns.cache.maxEntries`; static negative results
+  remain uncached.
+- **DNS cache sharding rejected on evidence.** The single bounded cache
+  mutex was re-measured with 1–1024 concurrent same-name and distinct-name
+  lookups: same-name ≈ distinct-name wall time, and CPU scales with cores
+  rather than with spinning. The lock is not the bottleneck, so it is
+  deliberately kept unsharded.
+- **Xray comparison.** The v1.5.1 vs Xray 26.7.28 setup-rate, throughput,
+  DNS, routing-scale, and RSS measurements are collected in
+  [benchmarks.md](benchmarks.md#v151-release-comparison-evidence).
 
 ## v1.5 cover-flight and release evidence
 

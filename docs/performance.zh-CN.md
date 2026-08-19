@@ -8,8 +8,38 @@
 对编译的 Go 源站、未经修改的 Xray 26.7.28 客户端。loopback 让服务端、客户端
 和源站共享主机 CPU；这些数字描述的是实现成本，绝不是互联网吞吐。冻结的
 v1.0.0 发布对比矩阵见
-[benchmarks.zh-CN.md](benchmarks.zh-CN.md)。v1.5.0 的证据在下面紧随的两节中，
-v1.0.0 表格作为该版本的历史发布测量保持不变。
+[benchmarks.zh-CN.md](benchmarks.zh-CN.md)。v1.5.1 与 v1.5.0 的证据在下面紧随的
+章节中，v1.0.0 表格作为该版本的历史发布测量保持不变。
+
+## v1.5.1 发布证据
+
+v1.5.1 不含数据平面重设计；它是一次有针对性的成本削减与正确性修复发布，
+在同一台主机上与已发布的 v1.5.0 发布二进制（`eda773b`）对比测量，每次
+运行都在主机独占锁下串行。正式评估器 40 项受保护指标全部通过、零回归
+（`artifacts/v1.5.1/gates/evaluator-report.json`）。
+
+- **增量式握手 transcript 哈希。** REALITY 服务端 flight 现在对 TLS 1.3
+  握手 transcript 做增量哈希，不再对不断增长的完整 transcript 重复哈希
+  四次；transcript 值与线上输出不变。在发布门禁主机上测得：SHA-256
+  compress 自时间从 setup CPU 的 22.0% 降至 13.8%，每建连服务端 CPU 下降
+  6.7%（setup ABBA 中位比值 0.933，bootstrap95 [0.930, 0.934]；聚合
+  task-clock 602 µs 对 646 µs；被发布评估器判定为统计显著的改进）。
+- **惰性逐连接 debug 事件与 `log.output: "none"`。** 逐连接 debug 事件
+  （`connection_accepted`、`connection_completed`、`connection_closed`）
+  仅在 debug 输出能真正到达所配 sink 时才构造；在 `info` 或更高级别、或
+  `log.output: "none"` 时，逐连接日志路径完全不做工作。warn 级的拒绝与
+  准入事件保持即时构造，作为运维信号。因此 v1.5.1 对 Xray 的对比能让两侧
+  服务器都在 warn 级运行，不存在日志不对称。
+- **DNS 缓存标识包含查询类别。** 此前同名的静态配置对端与动态逐会话
+  目的地共享一个缓存槽，静态查询可能命中动态条目（反之亦然），静态 TTL
+  也可能延长动态答案。现在同一名字的静态与动态条目拥有相互独立的生命
+  周期，都计入 `dns.cache.maxEntries`；静态否定结果仍不缓存。
+- **DNS 缓存分片经证据否决。** 对单个有界缓存互斥锁重新测量了 1–1024
+  并发的同名与异名查询：同名与异名墙钟时间基本相同，CPU 随核数扩展而
+  非随自旋增长。该锁不是瓶颈，因此有意保留不分片。
+- **对 Xray 的对比。** v1.5.1 对 Xray 26.7.28 的建连速率、吞吐、DNS、
+  路由规模与 RSS 测量汇总于
+  [benchmarks.zh-CN.md](benchmarks.zh-CN.md#v151-发布对比证据)。
 
 ## v1.5 cover flight 与发布证据
 

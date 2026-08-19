@@ -59,51 +59,114 @@ Xray-compatible client
 
 ## Performance vs Xray-core
 
-The headline table below is the frozen **v1.0.0** release comparison, kept as
-the canonical same-host matrix for that release; v1.5.0 performance evidence
-(the no-difference ABBA result, DNS coalescing, routing indices, and the
-v3-tier A/B) is summarized further down and detailed in
-[docs/performance.md](docs/performance.md).
+Comparator: Xray-core 26.7.28 (commit `5ca6f4b`, go1.26.0, binary SHA-256
+`23d228d7…04c5268`) — the same binary that gates interoperability. Every
+v1.5.1 number below was measured on the release host (Intel i3-8100 4C/4T,
+Linux 6.12) with both servers at warn-level logging (rust-reality performs
+no per-connection log work at warn), the same unmodified Xray SOCKS5
+client in front of both servers, the same TLS 1.3 REALITY cover, loopback
+origins, byte-verified transfers, and balanced ABBA interleaving. These
+are controlled same-host results, not Internet speed guarantees. The full
+methodology and per-run artifact pointers are in
+[docs/benchmarks.md](docs/benchmarks.md); earlier per-release headline
+tables are kept there as historical evidence.
 
-Comparator: Xray-core 26.7.28 (commit `5ca6f4b`, go1.26.0), the same
-binary that gates interoperability. Host: Intel i3-8100 (4C/4T), Linux
-6.12.94, loopback, Go origin, 5 samples per cell; every cell
-byte-verified, plus 2 GiB SHA-256 integrity runs per implementation.
-Matrix cells run rust-reality at debug log level (required by the
-harness's tunnel-bypass guard) against Xray at warning — a handicap for
-rust-reality; the fallback and setup rows come from symmetric warn-level
-harnesses. These are controlled same-host results, not Internet speed
-guarantees.
+Connection setup (accept → first Vision transition; 288-sample ABBA):
 
-| Workload | rust-reality 1.0.0 | Xray-core | Ratio |
-|---|---:|---:|---:|
-| Direct download, 512 MiB ×32 | 1386 MiB/s | 516 MiB/s | **2.69×** |
-| Direct upload, 512 MiB ×32 | 1155 MiB/s | 1031 MiB/s | 1.12× |
-| Framed download, 512 MiB ×32 | 1580 MiB/s | 1388 MiB/s | 1.14× |
-| Framed upload, 512 MiB ×32 | 1442 MiB/s | 1383 MiB/s | 1.04× |
-| Bidirectional, 512 MiB ×32 | 1017 MiB/s | 633 MiB/s | 1.61× |
-| Fallback, 32 MiB ×32 (clean harness) | 3279 MiB/s | 3194 MiB/s | 1.03× |
-| Connection setup, c32 | 895 conn/s | 812 conn/s | 1.10× |
+| concurrency | rust-reality conn/s | Xray conn/s | ratio | p99 rust | p99 Xray |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 266.6 | 262.5 | 1.02× | 4.4 ms | 16.0 ms |
+| 8 | 756.3 | 710.0 | 1.07× | 18.6 ms | 32.5 ms |
+| 32 | 850.8 | 806.4 | 1.05× | 59.4 ms | 64.5 ms |
 
-Setup cost per connection is well under half of Xray's (0.65 ms vs 1.53 ms
-server CPU over the measured 864-connection window). Single-stream loopback cells are latency-bound and
-sit at parity (0.94–1.04×). The full 36-cell matrix, the deployment
-characterization (routing, NXR vs SOCKS5, RTT sensitivity), the hot-path
-forensic report, and everything needed to reproduce them are in
-[docs/performance.md](docs/performance.md) and
-[docs/benchmarks.md](docs/benchmarks.md).
+Bulk throughput, v1.5.1 vs Xray p50 ratio (512 MiB × concurrency 32, two
+rounds):
 
-For v1.5, a balanced same-host ABBA comparison against v1.4 found no
-statistically significant setup or protected-path throughput/latency change:
-all reported 95% intervals in two complete matrix rounds crossed no difference.
-The candidate did remove
-4.0013 cover `recvfrom` calls per setup connection in a separate syscall
-trace. These are bounded implementation-cost observations, not a claimed
-throughput win; the exact intervals are in
-[docs/performance.md](docs/performance.md#v15-cover-flight-and-release-evidence).
-The v1.5.0 shared-DNS coalescing results, the ≥64-rule routing index
-measurements, and the real-IPv6 validation scope are recorded in the same
-document.
+| path | ratio |
+|---|---:|
+| bidirectional | 1.29–1.33× |
+| Direct download | 1.48–1.59× |
+| framed download | 1.13–1.15× |
+| Direct upload | 1.07–1.11× |
+| framed upload | 1.02–1.03× |
+| fallback (camouflage relay) | 0.94–1.02× |
+
+Server-side DNS (loopback resolver; 8 rounds × 32 connections per phase):
+cold p50 11.0 ms vs 11.2 ms, warm p50 9.2 ms vs 10.2 ms with zero upstream
+queries on both sides, and a burst of 64 concurrent identical names
+finished in 73.8 ms vs 107.2 ms wall time.
+
+Routing decision cost by rule count (worst-case last-rule match, balanced
+ABBA per scale point):
+
+| rules | rust-reality conn/s | Xray conn/s | ratio | p50 rust | p50 Xray |
+|---:|---:|---:|---:|---:|---:|
+| 10 | 699 | 646 | 1.08× | 10.0 ms | 10.0 ms |
+| 100 | 703 | 659 | 1.07× | 9.8 ms | 10.8 ms |
+| 1,000 | 683 | 598 | 1.14× | 9.8 ms | 11.3 ms |
+| 10,000 | 690 | 321 | 2.15× | 9.7 ms | 22.3 ms |
+
+Memory: after a 10-minute mixed-workload soak the standalone server's
+resident set was 7.7 MiB (7.9 MiB peak) versus Xray's 38.0 MiB under the
+equivalent load shape.
+
+Versus v1.5.0: the incremental handshake-transcript hashing in v1.5.1
+lowered server CPU per setup connection by 6.7% (setup ABBA median ratio
+0.933, bootstrap95 [0.930, 0.934]; 602 µs vs 646 µs aggregate task-clock),
+and the formal release evaluator passed all 40 protected metrics with no
+regressions.
+
+Versus Xray: server CPU per setup connection was 609 µs vs 988 µs in the
+same perf-attributed setup benchmark — rust-reality completes a VLESS +
+REALITY + Vision setup with about 0.62× the server CPU.
+
+### Where rust-reality is faster
+
+- Bulk Direct download (1.48–1.59×) and bidirectional load (1.29–1.33×) at
+  concurrency 32 — the Vision Direct splice fast path.
+- Setup tail latency: p99 is up to 3.6× lower at c1 (4.4 ms vs 16.0 ms)
+  and stays lower through c32.
+- Routing at scale: the decision cost is flat from 10 to 10,000 rules
+  while Xray's degrades (2.15× connection-rate advantage at 10,000 rules).
+- Same-name DNS bursts (1.45× wall time) and resident memory (about 5×
+  lower RSS under the 10-minute soak).
+- Setup CPU cost: 0.62× the server CPU per connection (609 µs vs 988 µs
+  task-clock, perf-attributed).
+
+### Where performance is equivalent
+
+- The fallback (camouflage) relay: 0.94–1.02× across all measured cells.
+- Framed upload (1.02–1.03×) and single-stream or small-payload cells
+  (≈0.99–1.05×, latency-dominated on loopback).
+- Setup throughput at c1 (1.02×) and cold/warm DNS resolution latency
+  (within ~1 ms p50).
+
+### Operational differences
+
+- Starting Xray with 10,000 explicit domain rules takes ~50 seconds on
+  this host (matcher construction); rust-reality starts in ~1 second
+  because its routing indices are compiled at config load.
+- In the cold-DNS measurement rust-reality issued A and AAAA upstream
+  queries (512 upstream queries for 256 names) while the Xray
+  configuration issued A-only (256) — a configuration difference, not an
+  efficiency claim; the warm phases needed zero upstream queries on both
+  sides.
+
+### Limitations of the measurements
+
+- One host (4-core i3-8100), one kernel (Linux 6.12), loopback only;
+  concurrency-32 cells on four cores measure scheduler contention as much
+  as proxy cost. Numbers describe implementation cost, not Internet
+  throughput.
+- The concurrency-32 matrix rounds used exploratory sample sizes; only the
+  concurrency-1 matrix is a formal release gate.
+- Small-payload c1 cells are latency-dominated, and some are bimodal on
+  this host.
+- In the 32 MiB × c1 Direct upload cell Xray is faster (223 MiB/s vs
+  197 MiB/s in the formal matrix; the same ordering appeared in both
+  exploratory rounds).
+- The DNS phases used a loopback upstream (~0 ms RTT), so cold/warm
+  numbers isolate resolver and cache plumbing, not network latency.
 
 ## Architecture
 
