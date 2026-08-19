@@ -175,6 +175,171 @@ and run the full suite, while TSan covers the replay duplicate race.
    their own errors; cells whose origin reports errors are marked invalid
    rather than read as proxy results.
 
+## v1.5.1 release comparison evidence
+
+All v1.5.1 numbers were measured on the release host (Intel i3-8100 4C/4T,
+Linux 6.12.100+deb13-amd64, rustc 1.96.0) with every run serialized under
+the host-exclusive lock `/tmp/v151-bench.lock`. Identities: candidate
+`a6d6363` (binary SHA-256 `b3bff3f7…`), baseline the published v1.5.0
+release binary (`eda773b`, SHA-256 `344a9d8f…`), comparator Xray-core
+26.7.28 (`5ca6f4b`, go1.26.0, SHA-256 `23d228d7…04c5268`). Both servers
+ran at warn-level logging (rust-reality performs no per-connection log
+work at warn), the same unmodified Xray SOCKS5 client fronted both
+servers, the REALITY cover was TLS 1.3, origins were loopback, every
+transfer was byte-verified, and comparative runs used balanced ABBA
+interleaving. Evidence root: `artifacts/v1.5.1/` (`gates/` for the release
+gates, `readme-comparison/` for the Xray comparison legs).
+
+Release gates (`artifacts/v1.5.1/gates/evaluator-report.json`): the formal
+evaluator passed all 40 protected metrics with zero regressions and
+classified two statistically significant improvements —
+`setup:c1:throughput` (median 1.013, raw p = 0.0005) and
+`setup:server-cpu` (median ratio 0.933, bootstrap95 [0.930, 0.934]; 602 µs
+vs 646 µs aggregate task-clock per connection — the incremental
+transcript-hash change). The formal concurrency-1 matrix (867 samples,
+0 invalid) reported no significant protected-path change; 10-minute soaks
+showed flat descriptors, threads, and RSS with zero transfer failures.
+
+### Setup rate and latency vs Xray — `readme-comparison/g1-setup-xray/`
+
+288-sample balanced ABBA (accept → first Vision transition), Xray serving
+one leg:
+
+| concurrency | rust-reality conn/s | Xray conn/s | ratio | p50 rust | p50 Xray | p99 rust | p99 Xray |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 266.6 | 262.5 | 1.016× | 3.7 ms | 3.7 ms | 4.4 ms | 16.0 ms |
+| 8 | 756.3 | 710.0 | 1.065× | 9.6 ms | 10.2 ms | 18.6 ms | 32.5 ms |
+| 32 | 850.8 | 806.4 | 1.055× | 27.6 ms | 29.7 ms | 59.4 ms | 64.5 ms |
+
+Xray's server CPU per connection was not measured: perf attribution needed
+privileges the Xray leg did not have. (The v1.5.1-vs-v1.5.0 CPU/conn
+figure above comes from the privilege-enabled rust-only setup ABBA.)
+
+### Throughput vs Xray — `gates/matrix-formal-r01/`, `gates/matrix-r01/`, `gates/matrix-r02/`
+
+Candidate vs Xray p50 throughput ratio per cell. The concurrency-1 matrix
+is the formal gate; the two concurrency-32 rounds are exploratory.
+
+| path | bulk 512 MiB ×32 (r01, r02) | c1 cells (formal) |
+|---|---:|---:|
+| bidirectional | 1.29×, 1.33× | 1.01–1.03× |
+| Direct download | 1.59×, 1.48× | 1.00–1.01× |
+| Direct upload | 1.11×, 1.07× | 1.01× |
+| framed download | 1.13×, 1.15× | 1.00–1.04× |
+| framed upload | 1.02×, 1.04× | 1.02–1.05× |
+| fallback | 0.94×, 1.02× | 1.00–1.01× |
+
+Honest exception: in the 32 MiB × c1 Direct upload cell Xray is faster —
+223 MiB/s vs 197 MiB/s in the formal matrix, with the same ordering in
+both exploratory rounds (214 vs 169; 242 vs 212 MiB/s). Small-payload c1
+cells are latency-dominated and some are bimodal on this host.
+
+### DNS vs Xray — `readme-comparison/g3-dns/`
+
+Loopback fake resolver (TTL 300 s, ~0 ms RTT), identical Xray client,
+domain destinations resolved server-side; 8 rounds × 32 connections per
+phase:
+
+| phase | rust-reality | Xray |
+|---|---:|---:|
+| cold p50 (fresh unique names) | 10.95 ms | 11.16 ms |
+| warm p50 (cached names) | 9.21 ms | 10.18 ms |
+| burst, 64 identical names, wall | 73.8 ms | 107.2 ms |
+| burst upstream queries | 2 | 1 |
+
+Warm phases issued zero upstream queries on both sides. Configuration
+difference: rust-reality issued A and AAAA upstream queries in the cold
+phase (512 upstream queries for 256 names) while the Xray configuration
+issued A-only (256) — the cold numbers are not an efficiency claim.
+Upstream latency is ~0 (loopback UDP), so cold/warm numbers isolate
+resolver and cache plumbing, not network latency.
+
+### Routing rule scaling vs Xray — `readme-comparison/g5-routing/`
+
+Explicit first-match domain rules, all to a direct outbound; the target
+matches the LAST rule (worst-case full walk); DNS answer cached after
+warm-up so latency isolates rule evaluation; balanced ABBA per scale
+point, 320 connections per side:
+
+| rules | rust-reality conn/s | Xray conn/s | ratio | p50 rust | p50 Xray |
+|---:|---:|---:|---:|---:|---:|
+| 10 | 699 | 646 | 1.08× | 10.0 ms | 10.0 ms |
+| 100 | 703 | 659 | 1.07× | 9.8 ms | 10.8 ms |
+| 1,000 | 683 | 598 | 1.14× | 9.8 ms | 11.3 ms |
+| 10,000 | 690 | 321 | 2.15× | 9.7 ms | 22.3 ms |
+
+Operational difference: Xray's server needed ~50 s to start with 10,000
+explicit domain rules on this host (matcher construction; server log
+15:10:09 config read → 15:11:01 first accept), while rust-reality starts
+in ~1 s because its routing indices are compiled at config load.
+
+### Memory under soak — `gates/soak-candidate-r01/`, `readme-comparison/g2-xray-rss/`
+
+After the 10-minute mixed-workload soak the standalone rust-reality
+server's VmRSS was 7,840 KiB (7.7 MiB; 7.9 MiB sampled peak, HWM
+7.8 MiB). Under the equivalent load shape the Xray server's VmRSS was
+38,888 KiB (38.0 MiB; HWM 38.1 MiB). Both showed flat descriptor, thread,
+and RSS growth over the soak with zero transfer failures.
+
+### Limitations of the v1.5.1 measurements
+
+- One host (4-core i3-8100), one kernel, loopback only; concurrency-32
+  cells on four cores measure scheduler contention as much as proxy cost.
+- The concurrency-32 matrix rounds used exploratory sample sizes; only the
+  concurrency-1 matrix is a formal release gate.
+- Small-payload c1 cells are latency-dominated, and some are bimodal.
+- Xray CPU per setup connection was not measured (perf privileges).
+- The DNS phases used a loopback upstream (~0 ms RTT).
+- Results are measurements of this host and are not a universal
+  performance claim.
+
+## Historical README headline tables
+
+The tables below previously headed the README performance section. They
+are kept here as per-release historical evidence; the current README
+carries the v1.5.1 comparison above. Superseded numbers must not be read
+as current behavior.
+
+### v1.0.0 headline table (frozen at v1.0.0)
+
+Comparator: Xray-core 26.7.28 (commit `5ca6f4b`, go1.26.0). Host: Intel
+i3-8100 (4C/4T), Linux 6.12.94, loopback, Go origin, 5 samples per cell;
+every cell byte-verified, plus 2 GiB SHA-256 integrity runs per
+implementation. Matrix cells ran rust-reality at debug log level (required
+by the harness's tunnel-bypass guard) against Xray at warning — a handicap
+for rust-reality; the fallback and setup rows came from symmetric
+warn-level harnesses.
+
+| Workload | rust-reality 1.0.0 | Xray-core | Ratio |
+|---|---:|---:|---:|
+| Direct download, 512 MiB ×32 | 1386 MiB/s | 516 MiB/s | **2.69×** |
+| Direct upload, 512 MiB ×32 | 1155 MiB/s | 1031 MiB/s | 1.12× |
+| Framed download, 512 MiB ×32 | 1580 MiB/s | 1388 MiB/s | 1.14× |
+| Framed upload, 512 MiB ×32 | 1442 MiB/s | 1383 MiB/s | 1.04× |
+| Bidirectional, 512 MiB ×32 | 1017 MiB/s | 633 MiB/s | 1.61× |
+| Fallback, 32 MiB ×32 (clean harness) | 3279 MiB/s | 3194 MiB/s | 1.03× |
+| Connection setup, c32 | 895 conn/s | 812 conn/s | 1.10× |
+
+Setup cost per connection was well under half of Xray's (0.65 ms vs
+1.53 ms server CPU over the measured 864-connection window).
+Single-stream loopback cells were latency-bound and sat at parity
+(0.94–1.04×). The full 36-cell matrix is detailed under
+[performance.md](performance.md) §"Final release matrix (v1.0.0)".
+
+### v1.5.0 summary (frozen at v1.5.0)
+
+For v1.5, a balanced same-host ABBA comparison against v1.4 found no
+statistically significant setup or protected-path throughput/latency
+change: all reported 95% intervals in two complete matrix rounds crossed
+no difference. The candidate did remove 4.0013 cover `recvfrom` calls per
+setup connection in a separate syscall trace. These are bounded
+implementation-cost observations, not a claimed throughput win; the exact
+intervals are in
+[performance.md](performance.md#v15-cover-flight-and-release-evidence).
+The v1.5.0 shared-DNS coalescing results, the ≥64-rule routing index
+measurements, and the real-IPv6 validation scope are recorded in the same
+document.
+
 ## v1.5 balanced ABBA evidence
 
 The v1.5 release comparison uses immutable candidate and v1.4 binaries. Every

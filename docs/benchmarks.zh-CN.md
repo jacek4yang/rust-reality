@@ -144,6 +144,152 @@ ptrace 不支持的 LSan 泄漏检测；定时 CI 保留泄漏检测并运行完
 5. **守住源站。** 源站是编译的（Go）、流式传输并自报错误；源站报错的 cell 标记
    为无效，而不是当作代理结果解读。
 
+## v1.5.1 发布对比证据
+
+所有 v1.5.1 数字均在发布主机（Intel i3-8100 4C/4T，Linux
+6.12.100+deb13-amd64，rustc 1.96.0）上测得，每次运行都在主机独占锁
+`/tmp/v151-bench.lock` 下串行。身份：候选 `a6d6363`（二进制 SHA-256
+`b3bff3f7…`），基线为已发布的 v1.5.0 发布二进制（`eda773b`，SHA-256
+`344a9d8f…`），对比对象 Xray-core 26.7.28（`5ca6f4b`，go1.26.0，SHA-256
+`23d228d7…04c5268`）。两侧服务器均使用 warn 级日志（rust-reality 在
+warn 级不做任何逐连接日志工作），两台服务器前置同一个未修改的 Xray
+SOCKS5 客户端，REALITY cover 为 TLS 1.3，origin 在 loopback 上，每次
+传输逐字节校验，对比运行采用平衡 ABBA 交错。证据根目录：
+`artifacts/v1.5.1/`（`gates/` 为发布门禁，`readme-comparison/` 为对
+Xray 的对比测量）。
+
+发布门禁（`artifacts/v1.5.1/gates/evaluator-report.json`）：正式评估器
+40 项受保护指标全部通过、零回归，并判定两项统计显著的改进——
+`setup:c1:throughput`（中位 1.013，原始 p = 0.0005）与
+`setup:server-cpu`（中位比值 0.933，bootstrap95 [0.930, 0.934]；聚合
+task-clock 每连接 602 µs 对 646 µs——增量式 transcript 哈希改动）。
+正式并发 1 矩阵（867 个样本，0 个无效）报告受保护路径无显著变化；
+10 分钟 soak 的描述符、线程与 RSS 均平坦，零传输失败。
+
+### 建连速率与时延对比 Xray —— `readme-comparison/g1-setup-xray/`
+
+288 样本平衡 ABBA（accept → 首次 Vision 转换），Xray 担任其中一腿：
+
+| 并发 | rust-reality conn/s | Xray conn/s | 比值 | p50 rust | p50 Xray | p99 rust | p99 Xray |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 266.6 | 262.5 | 1.016× | 3.7 ms | 3.7 ms | 4.4 ms | 16.0 ms |
+| 8 | 756.3 | 710.0 | 1.065× | 9.6 ms | 10.2 ms | 18.6 ms | 32.5 ms |
+| 32 | 850.8 | 806.4 | 1.055× | 27.6 ms | 29.7 ms | 59.4 ms | 64.5 ms |
+
+Xray 的每连接服务端 CPU 未测量：perf 归因所需的权限在 Xray 腿上不可用。
+（上文 v1.5.1 对 v1.5.0 的 CPU/conn 数字来自有权限的纯 rust setup
+ABBA。）
+
+### 吞吐对比 Xray —— `gates/matrix-formal-r01/`、`gates/matrix-r01/`、`gates/matrix-r02/`
+
+候选对 Xray 的逐单元 p50 吞吐比值。并发 1 矩阵为正式门禁；两轮并发 32
+矩阵为探索性。
+
+| 路径 | 批量 512 MiB ×32（r01、r02） | c1 单元（正式） |
+|---|---:|---:|
+| 双向 | 1.29×、1.33× | 1.01–1.03× |
+| Direct 下载 | 1.59×、1.48× | 1.00–1.01× |
+| Direct 上传 | 1.11×、1.07× | 1.01× |
+| framed 下载 | 1.13×、1.15× | 1.00–1.04× |
+| framed 上传 | 1.02×、1.04× | 1.02–1.05× |
+| fallback | 0.94×、1.02× | 1.00–1.01× |
+
+如实说明的例外：在 32 MiB × c1 的 Direct 上传单元中 Xray 更快——正式
+矩阵 223 MiB/s 对 197 MiB/s，两轮探索性矩阵也是同一顺序（214 对 169；
+242 对 212 MiB/s）。小载荷 c1 单元受时延约束，部分在本机呈双峰分布。
+
+### DNS 对比 Xray —— `readme-comparison/g3-dns/`
+
+loopback 假解析器（TTL 300 s，RTT 约 0 ms），同一个 Xray 客户端，域名
+目的地在服务端解析；每阶段 8 轮 × 32 连接：
+
+| 阶段 | rust-reality | Xray |
+|---|---:|---:|
+| cold p50（全新唯一名字） | 10.95 ms | 11.16 ms |
+| warm p50（已缓存名字） | 9.21 ms | 10.18 ms |
+| burst，64 个并发同名，墙钟 | 73.8 ms | 107.2 ms |
+| burst 上游查询数 | 2 | 1 |
+
+warm 阶段两侧上游查询均为 0。配置差异：cold 阶段 rust-reality 发出 A 与
+AAAA 两类上游查询（256 个名字对应 512 次），而该 Xray 配置仅发 A 查询
+（256 次）——cold 数字不构成效率结论。上游时延约 0（loopback UDP），
+因此 cold/warm 数字隔离的是解析器与缓存机制成本，不含网络时延。
+
+### 路由规则规模对比 Xray —— `readme-comparison/g5-routing/`
+
+显式 first-match 域名规则，全部指向 direct 出站；目标名字命中最后一条
+规则（最坏情况完整遍历）；DNS 答案在热身后缓存，时延隔离规则求值；
+每个规模点平衡 ABBA，每侧 320 个连接：
+
+| 规则数 | rust-reality conn/s | Xray conn/s | 比值 | p50 rust | p50 Xray |
+|---:|---:|---:|---:|---:|---:|
+| 10 | 699 | 646 | 1.08× | 10.0 ms | 10.0 ms |
+| 100 | 703 | 659 | 1.07× | 9.8 ms | 10.8 ms |
+| 1,000 | 683 | 598 | 1.14× | 9.8 ms | 11.3 ms |
+| 10,000 | 690 | 321 | 2.15× | 9.7 ms | 22.3 ms |
+
+运维差异：Xray 服务器携带 10,000 条显式域名规则在本机启动约需 50 秒
+（matcher 构建；服务器日志 15:10:09 读取配置 → 15:11:01 首次 accept），
+而 rust-reality 约 1 秒启动，因为其路由索引在配置加载时编译。
+
+### soak 下的内存 —— `gates/soak-candidate-r01/`、`readme-comparison/g2-xray-rss/`
+
+10 分钟混合负载 soak 后，standalone rust-reality 服务器的 VmRSS 为
+7,840 KiB（7.7 MiB；采样峰值 7.9 MiB，HWM 7.8 MiB）。等价负载形态下
+Xray 服务器的 VmRSS 为 38,888 KiB（38.0 MiB；HWM 38.1 MiB）。两侧在
+soak 期间的描述符、线程与 RSS 增长均平坦，零传输失败。
+
+### v1.5.1 测量局限
+
+- 单一主机（4 核 i3-8100）、单一内核、仅 loopback；4 核上的并发 32
+  单元测的是调度争用与代理成本的混合。
+- 并发 32 的矩阵轮次使用探索性样本量；只有并发 1 的矩阵是正式发布
+  门禁。
+- 小载荷 c1 单元受时延约束，部分呈双峰分布。
+- Xray 每建连服务端 CPU 未测量（perf 权限）。
+- DNS 各阶段使用 loopback 上游（RTT 约 0 ms）。
+- 这些是本机测量结果，不是普遍性能结论。
+
+## 历史 README 头条表格
+
+下列表格此前位于 README 性能章节开头，现按版本作为历史证据保留；当前
+README 使用上文 v1.5.1 对比。已被取代的数字不得再读作当前行为。
+
+### v1.0.0 头条表格（冻结于 v1.0.0）
+
+对比对象：Xray-core 26.7.28（提交 `5ca6f4b`，go1.26.0）。主机：Intel
+i3-8100（4C/4T），Linux 6.12.94，loopback，Go origin，每单元 5 次采样；
+所有单元均经字节校验，并对每个实现做 2 GiB SHA-256 完整性运行。矩阵
+单元中 rust-reality 使用 debug 日志（测试架的防绕过护栏要求），Xray
+使用 warning——这对 rust-reality 不利；fallback 与建连速率两行来自
+日志级别对称（warn）的测试架。
+
+| 工作负载 | rust-reality 1.0.0 | Xray-core | 比值 |
+|---|---:|---:|---:|
+| Direct 下载，512 MiB ×32 | 1386 MiB/s | 516 MiB/s | **2.69×** |
+| Direct 上传，512 MiB ×32 | 1155 MiB/s | 1031 MiB/s | 1.12× |
+| Framed 下载，512 MiB ×32 | 1580 MiB/s | 1388 MiB/s | 1.14× |
+| Framed 上传，512 MiB ×32 | 1442 MiB/s | 1383 MiB/s | 1.04× |
+| 双向，512 MiB ×32 | 1017 MiB/s | 633 MiB/s | 1.61× |
+| Fallback，32 MiB ×32（干净测试架） | 3279 MiB/s | 3194 MiB/s | 1.03× |
+| 建连速率，c32 | 895 conn/s | 812 conn/s | 1.10× |
+
+每连接建连成本远低于 Xray 的一半（在 864 个连接的测量窗口内服务端
+CPU 为 0.65 ms 对 1.53 ms）。单流 loopback 单元受时延约束，基本持平
+（0.94–1.04×）。完整 36 单元矩阵详见
+[performance.zh-CN.md](performance.zh-CN.md) “最终发布矩阵（v1.0.0）”
+一节。
+
+### v1.5.0 摘要（冻结于 v1.5.0）
+
+v1.5 对 v1.4 的同机平衡 ABBA 没有发现统计显著的 setup 或受保护路径
+吞吐/时延变化：两轮完整矩阵的所有已报告 95% 区间都跨越“无差异”。
+单独的系统调用 trace 测得候选每个 setup 连接少 4.0013 次 cover
+`recvfrom`。这些是有边界的实现成本观察，不是吞吐胜利声明；精确区间见
+[performance.zh-CN.md](performance.zh-CN.md#v15-cover-flight-与发布证据)。
+v1.5.0 的共享 DNS 合并结果、≥64 条规则的路由索引测量，以及真实 IPv6
+验证范围都记录在同一文档中。
+
 ## v1.5 平衡 ABBA 证据
 
 v1.5 发布对比使用不可变候选与 v1.4 二进制。每项权威 setup 或数据路径比较都在
