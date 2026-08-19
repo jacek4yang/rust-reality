@@ -30,8 +30,8 @@ All notable user-facing changes to this project are documented in this file.
   times. Transcript values and wire output are unchanged; measured on the
   release gate host this removes the standalone transcript-digest cost from
   the handshake profile (SHA-256 compress self-time 22.0% → 13.8% of setup
-  CPU) and reduces server CPU per connection by ≈6% (setup ABBA median
-  ratio 0.938, bootstrap95 [0.934, 0.941]).
+  CPU) and reduces server CPU per connection by ≈6.7% (formal setup ABBA
+  median ratio 0.933, bootstrap95 [0.930, 0.934]).
 - The DNS cache contention design was re-measured before changing it: with
   1–1024 concurrent same-name and distinct-name lookups the single bounded
   mutex is not the bottleneck (same-name ≈ distinct-name wall time; CPU
