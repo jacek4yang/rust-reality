@@ -108,6 +108,24 @@ impl VisionDecoder {
         output: &mut Vec<u8>,
     ) -> Result<VisionMode, VisionDecodeError> {
         output.clear();
+        self.decode_append(input, output)
+    }
+
+    /// Decodes one input fragment, appending the payload to existing output.
+    ///
+    /// This is [`VisionDecoder::decode`] without the leading clear: a relay
+    /// that batches several records into one destination write decodes each
+    /// fragment straight into its staging storage. The output never grows
+    /// beyond its previous content plus the input fragment.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same protocol errors as [`VisionDecoder::decode`].
+    pub fn decode_append(
+        &mut self,
+        input: &[u8],
+        output: &mut Vec<u8>,
+    ) -> Result<VisionMode, VisionDecodeError> {
         if self.failed {
             return Err(VisionDecodeError::DecoderFailed);
         }
@@ -141,6 +159,29 @@ impl VisionDecoder {
             return Ok((self.mode, VisionPayload::Borrowed(input)));
         }
         let mode = self.decode(input, output)?;
+        Ok((mode, VisionPayload::Staged))
+    }
+
+    /// Batched-staging variant of [`VisionDecoder::decode_borrowed`].
+    ///
+    /// Identical to the borrowed decode except framed fragments append to the
+    /// caller's staging storage instead of clearing it first, so a relay can
+    /// accumulate the payloads of several records before one destination
+    /// write. Raw-mode fragments are still returned borrowed with the staging
+    /// storage untouched.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same protocol errors as [`VisionDecoder::decode`].
+    pub fn decode_borrowed_append<'input>(
+        &mut self,
+        input: &'input [u8],
+        output: &mut Vec<u8>,
+    ) -> Result<(VisionMode, VisionPayload<'input>), VisionDecodeError> {
+        if !self.failed && self.mode != VisionMode::Framed {
+            return Ok((self.mode, VisionPayload::Borrowed(input)));
+        }
+        let mode = self.decode_append(input, output)?;
         Ok((mode, VisionPayload::Staged))
     }
 
@@ -760,6 +801,70 @@ mod tests {
             .expect("following raw record must decode");
         assert_eq!(mode, VisionMode::Raw);
         assert_eq!(payload, super::VisionPayload::Borrowed(b"next".as_slice()));
+    }
+
+    #[test]
+    fn appending_decode_accumulates_fragments_without_clearing() {
+        let mut encoder = VisionEncoder::with_padding_seed(USER, &[0x5a; 44]);
+        let mut first = Vec::new();
+        encoder
+            .encode(b"first", VisionCommand::Continue, false, &mut first)
+            .expect("first frame must encode");
+        let mut second = Vec::new();
+        encoder
+            .encode(b"second", VisionCommand::End, false, &mut second)
+            .expect("second frame must encode");
+
+        let mut decoder = VisionDecoder::new(USER);
+        let mut staged = b"prefix".to_vec();
+        let mode = decoder
+            .decode_append(&first, &mut staged)
+            .expect("first fragment must decode");
+        assert_eq!(mode, VisionMode::Framed);
+        assert_eq!(staged, b"prefixfirst");
+        let mode = decoder
+            .decode_append(&second, &mut staged)
+            .expect("second fragment must decode");
+        assert_eq!(mode, VisionMode::Raw);
+        assert_eq!(staged, b"prefixfirstsecond");
+
+        // Once raw, the appending borrowed variant still returns the input
+        // verbatim and leaves the accumulated staging untouched.
+        let (mode, payload) = decoder
+            .decode_borrowed_append(b"raw", &mut staged)
+            .expect("raw record must decode");
+        assert_eq!(mode, VisionMode::Raw);
+        assert_eq!(payload, super::VisionPayload::Borrowed(b"raw".as_slice()));
+        assert_eq!(staged, b"prefixfirstsecond");
+    }
+
+    #[test]
+    fn appending_borrowed_decode_stages_framed_records_without_clearing() {
+        let mut encoder = VisionEncoder::with_padding_seed(USER, &[0x5a; 44]);
+        let mut frame = Vec::new();
+        encoder
+            .encode(b"content", VisionCommand::Continue, false, &mut frame)
+            .expect("frame must encode");
+
+        let mut decoder = VisionDecoder::new(USER);
+        let mut staged = Vec::new();
+        let (mode, payload) = decoder
+            .decode_borrowed_append(&frame, &mut staged)
+            .expect("framed record must decode");
+        assert_eq!(mode, VisionMode::Framed);
+        assert_eq!(payload, super::VisionPayload::Staged);
+        assert_eq!(staged, b"content");
+
+        // A decode that fails mid-stream poisons the decoder exactly like the
+        // clearing variants.
+        assert_eq!(
+            decoder.decode_append(&[9, 0, 0, 0, 0], &mut staged),
+            Err(VisionDecodeError::UnknownCommand(9))
+        );
+        assert_eq!(
+            decoder.decode_append(&[0x22], &mut staged),
+            Err(VisionDecodeError::DecoderFailed)
+        );
     }
 
     #[test]

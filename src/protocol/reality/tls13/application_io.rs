@@ -604,6 +604,31 @@ where
         Ok(())
     }
 
+    /// Returns whether the socket buffer already holds one complete record.
+    ///
+    /// A relay that batches several decoded records into one destination
+    /// write uses this to flush exactly when the next [`Self::read_application`]
+    /// would block on the socket: while a complete record is buffered the
+    /// loop keeps decoding into the batch, and the first record that would
+    /// require a refill flushes the batch first, so batching never adds
+    /// latency to a sparse flow. The check peeks only at the declared length;
+    /// the record itself is still validated and authenticated by the read.
+    #[must_use]
+    pub(crate) fn has_buffered_record(&self) -> bool {
+        let buffered = self.buffered_end - self.buffered_start;
+        if buffered < TLS_RECORD_HEADER_LEN {
+            return false;
+        }
+        let Some(header) = self
+            .socket_buffer
+            .get(self.buffered_start..self.buffered_start + TLS_RECORD_HEADER_LEN)
+        else {
+            return false;
+        };
+        let body_len = usize::from(u16::from_be_bytes([header[3], header[4]]));
+        buffered >= TLS_RECORD_HEADER_LEN + body_len
+    }
+
     /// Returns the address of the reusable record storage for allocation tests.
     ///
     /// The socket buffer is allocated on the first read and never moves
@@ -1321,6 +1346,39 @@ mod tests {
             reads.load(Ordering::Relaxed),
             1,
             "the buffered second record must not touch the socket"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn has_buffered_record_peeks_complete_records_only() {
+        let (established, mut client_write) = buffered_reader_states();
+        let stream = sealed_records(&mut client_write, &[b"first", b"second"]);
+        // Keep the complete first record plus a partial second record: the
+        // peek must not mistake the partial tail for a buffered record.
+        let first_wire_len = 5 + b"first".len() + 1 + 16;
+        let transport = CountingTransport {
+            input: stream[..first_wire_len + 7].to_vec(),
+            position: 0,
+            chunk: usize::MAX,
+            reads: Arc::new(AtomicUsize::new(0)),
+        };
+        let application = TlsApplicationIo::new(transport, established);
+        let (mut reader, _writer) = application.into_split();
+
+        assert!(
+            !reader.has_buffered_record(),
+            "an empty socket buffer holds no record"
+        );
+        {
+            let first = reader
+                .read_application(TIMEOUT)
+                .await
+                .expect("first record must authenticate");
+            assert_eq!(first.plaintext(), b"first");
+        }
+        assert!(
+            !reader.has_buffered_record(),
+            "a partial record tail is not a complete buffered record"
         );
     }
 
