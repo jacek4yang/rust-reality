@@ -447,46 +447,50 @@ validator-owned JSON path and keeps the old configuration running (VERIFIED
 events). After every reload, confirm which of the two you got.
 
 **Worked example — complete tuned policy for 1C1G.** This block, embedded
-in a generated standalone config with `"runtime": {"resourceMode":
-"dedicated"}`, passes `check --config` (VERIFIED against the v1.0.0
-validator). Only `maxConnections` and `maxConcurrent` differ from the
-defaults; the rest is shown because a partial policy object is rejected.
+in a generated standalone config with `"runtime": {"profile": "dedicated",
+"tuning": {"mode": "fixed"}}`, passes `check --config`. Only
+`maxConnections` differs from the defaults; the rest is shown because every
+field marked "required when object present" must be supplied once its
+object appears. (`config migrate --from 1.5` rewrites an existing v1.5
+`policy` block into this shape automatically.)
 
 ```json
-"policy": {
-  "resourceGovernor": {
-    "maxConnections": 8000,
-    "maxHandshakes": 1024,
-    "maxFallbacks": 512,
-    "maxCryptoOperations": 128,
-    "maxReplayEntries": 65536,
-    "maxDnsLookups": 64,
-    "replayRetentionMs": 120000,
-    "clientHelloTimeoutMs": 3000,
-    "handshakeTimeoutMs": 10000,
-    "connectTimeoutMs": 10000,
-    "fallbackTimeoutMs": 120000
-  },
-  "directBarrier": {
-    "maxConcurrent": 2048,
-    "maxPerSecond": 4096
-  },
-  "relay": {
-    "bufferBytes": 32768,
-    "maxPooledBuffers": 4096,
-    "maxSpliceRelays": 256,
-    "maxRelayMemoryBytes": 536870912,
-    "splice": true,
-    "pipePool": true,
-    "maxPooledPipes": 512
+"advanced": {
+  "limits": {
+    "resourceGovernor": {
+      "maxConnections": 8000,
+      "maxHandshakes": 1024,
+      "maxFallbacks": 512,
+      "maxCryptoOperations": 128,
+      "maxReplayEntries": 65536,
+      "maxDnsLookups": 64,
+      "replayRetentionMs": 120000,
+      "clientHelloTimeoutMs": 3000,
+      "handshakeTimeoutMs": 10000,
+      "connectTimeoutMs": 10000,
+      "fallbackTimeoutMs": 120000
+    },
+    "directBarrier": {
+      "maxConcurrent": 2048,
+      "maxPerSecond": 4096
+    },
+    "relay": {
+      "bufferBytes": 32768,
+      "maxPooledBuffers": 4096,
+      "maxSpliceRelays": 256,
+      "maxRelayMemoryBytes": 536870912,
+      "splice": true,
+      "pipePool": true,
+      "maxPooledPipes": 512
+    }
   }
 }
 ```
 
 Note the relay block is untouched: on 1 GiB the default pools still fit
 (§7 formula: 128 MiB + 256 MiB ≤ 512 MiB ceiling), because the memory
-budget is dominated by sessions, not pools. Then restart — `policy` is
-restart-required — and confirm `server_starting`, `machine_report`,
+budget is dominated by sessions, not pools. Then restart — `advanced.limits`
+is restart-required — and confirm `server_starting`, `machine_report`,
 `descriptor_budget_report`, and `listener_started` in the journal.
 
 ## 11. REALITY cover selection

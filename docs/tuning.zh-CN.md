@@ -398,46 +398,49 @@ rust-reality self-test --config config.json
 并继续运行旧配置（VERIFIED 事件）。每次 reload 之后，确认你得到的
 是哪一个。
 
-**完整示例——1C1G 的完整调优 policy。** 这个块嵌入生成的 standalone
-配置（含 `"runtime": {"resourceMode": "dedicated"}`）后能通过
-`check --config`（已对照 v1.0.0 校验器 VERIFIED）。与默认值不同的
-只有 `maxConnections`；其余照列是因为部分 policy
-对象会被拒绝。
+**完整示例——1C1G 的完整调优 limits。** 这个块嵌入生成的 standalone
+配置（含 `"runtime": {"profile": "dedicated", "tuning": {"mode":
+"fixed"}}`）后能通过 `check --config`。与默认值不同的只有
+`maxConnections`；其余照列是因为每个标注"对象存在时必填"的字段在
+其对象出现时都必须提供。（`config migrate --from 1.5` 会把现有 v1.5
+的 `policy` 块自动改写为这个形态。）
 
 ```json
-"policy": {
-  "resourceGovernor": {
-    "maxConnections": 8000,
-    "maxHandshakes": 1024,
-    "maxFallbacks": 512,
-    "maxCryptoOperations": 128,
-    "maxReplayEntries": 65536,
-    "maxDnsLookups": 64,
-    "replayRetentionMs": 120000,
-    "clientHelloTimeoutMs": 3000,
-    "handshakeTimeoutMs": 10000,
-    "connectTimeoutMs": 10000,
-    "fallbackTimeoutMs": 120000
-  },
-  "directBarrier": {
-    "maxConcurrent": 2048,
-    "maxPerSecond": 4096
-  },
-  "relay": {
-    "bufferBytes": 32768,
-    "maxPooledBuffers": 4096,
-    "maxSpliceRelays": 256,
-    "maxRelayMemoryBytes": 536870912,
-    "splice": true,
-    "pipePool": true,
-    "maxPooledPipes": 512
+"advanced": {
+  "limits": {
+    "resourceGovernor": {
+      "maxConnections": 8000,
+      "maxHandshakes": 1024,
+      "maxFallbacks": 512,
+      "maxCryptoOperations": 128,
+      "maxReplayEntries": 65536,
+      "maxDnsLookups": 64,
+      "replayRetentionMs": 120000,
+      "clientHelloTimeoutMs": 3000,
+      "handshakeTimeoutMs": 10000,
+      "connectTimeoutMs": 10000,
+      "fallbackTimeoutMs": 120000
+    },
+    "directBarrier": {
+      "maxConcurrent": 2048,
+      "maxPerSecond": 4096
+    },
+    "relay": {
+      "bufferBytes": 32768,
+      "maxPooledBuffers": 4096,
+      "maxSpliceRelays": 256,
+      "maxRelayMemoryBytes": 536870912,
+      "splice": true,
+      "pipePool": true,
+      "maxPooledPipes": 512
+    }
   }
 }
 ```
 
 注意 relay 块原样未动：1 GiB 上默认池仍然放得下（§7 公式：128 MiB +
 256 MiB ≤ 512 MiB 天花板），因为内存预算由会话主导而非池。然后重启
-——`policy` 需要重启——并在日志中确认 `server_starting`、
+——`advanced.limits` 需要重启——并在日志中确认 `server_starting`、
 `machine_report`、`descriptor_budget_report` 和 `listener_started`。
 
 ## 11. REALITY 伪装目标选择

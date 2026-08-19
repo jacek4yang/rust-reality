@@ -608,6 +608,33 @@ v1.5 的顶层 `policy` 对象仍可解析且行为完全一致。加载时，`p
 热更新时记录一条 `configuration_deprecation` 事件。该别名永不序列化——
 `config format` 会把文件改写为规范位置——新配置必须使用 `advanced.limits`。
 
+### 迁移 v1.5 配置
+
+`rust-reality config migrate --from 1.5 --config old.json --output new.json`
+把 v1.5 文件改写为最小化的 v1.6 原生文档。精确映射如下：
+
+| v1.5 来源 | v1.6 结果 |
+| --- | --- |
+| `runtime.resourceMode: "standard"` | `runtime.profile: "shared"`；丢弃 `resourceMode` |
+| `runtime.resourceMode: "dedicated"` | `runtime.profile: "dedicated"`；丢弃 `resourceMode` |
+| `policy.resourceGovernor.*` | `advanced.limits.resourceGovernor.*`（字段名相同） |
+| `policy.directBarrier.*` | `advanced.limits.directBarrier.*` |
+| `policy.relay.*` | `advanced.limits.relay.*` |
+| 任何存留的固定限制值 | `runtime.tuning.mode: "fixed"`（逐字节保留 v1.5 行为） |
+| 取值等于默认值的显式字段 | schema 允许时省略并报告 `redundant`；schema 必填字段保留并报告 |
+| 不含非默认值的 `policy` | 丢弃并报告 `discarded` |
+| 无 `policy` 且无限制值 | 省略 `tuning`；应用 `startup` 默认值 |
+
+每一处翻译、省略和丢弃都会打印到 stderr；不会静默丢弃任何内容，也
+不会猜测任何安全敏感取值。监听器、凭据、路由、出站和 DNS 信任选择原
+样保留。生成的文件会按与 `check` 相同的验证重新校验，并通过序列化/
+解析往返检查；迁移宁愿失败也不会写出无效文件。从未设置
+`resourceMode` 的 v1.5 文件在迁移后该字段仍然缺省——此时应用 v1.6 的
+`auto` profile，它仅在完全有界的 cgroup v2 内解析为 `dedicated`；若需
+无条件保持 v1.5 的 `standard` 姿态，请显式固定
+`runtime.profile: "shared"`。用 `--from 1.6` 重复执行时，残留的顶层
+`policy` 对象会以指明 `advanced.limits` 的错误被拒绝。
+
 ### `advanced.limits.resourceGovernor`
 
 | 字段 | 对象存在时必填 | 整体默认值 | 约束/含义 |

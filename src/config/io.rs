@@ -107,6 +107,12 @@ pub fn load_config_with_report(
     path: impl AsRef<Path>,
 ) -> Result<(Config, ConfigLoadReport), ConfigLoadError> {
     let path = path.as_ref();
+    let bytes = read_config_bytes(path)?;
+    decode_config(path, &bytes)
+}
+
+/// Reads one configuration file into memory, enforcing the hard size limit.
+pub(super) fn read_config_bytes(path: &Path) -> Result<Vec<u8>, ConfigLoadError> {
     let file = File::open(path).map_err(|source| ConfigLoadError::Io {
         path: path.to_owned(),
         source,
@@ -140,10 +146,13 @@ pub fn load_config_with_report(
         });
     }
 
-    decode_config(path, &bytes)
+    Ok(bytes)
 }
 
-fn decode_config(path: &Path, bytes: &[u8]) -> Result<(Config, ConfigLoadReport), ConfigLoadError> {
+pub(super) fn decode_config(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(Config, ConfigLoadReport), ConfigLoadError> {
     let mut config: Config =
         serde_json::from_slice(bytes).map_err(|source| ConfigLoadError::Decode {
             path: path.to_owned(),

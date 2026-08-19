@@ -667,6 +667,35 @@ and `config format` print one warning, and `serve` logs one
 never serializes — `config format` rewrites the file to the canonical
 location — and new configurations must use `advanced.limits`.
 
+### Migrating a v1.5 configuration
+
+`rust-reality config migrate --from 1.5 --config old.json --output new.json`
+rewrites a v1.5 file into a minimal v1.6-native document. The exact mapping:
+
+| v1.5 source | v1.6 result |
+| --- | --- |
+| `runtime.resourceMode: "standard"` | `runtime.profile: "shared"`; `resourceMode` is dropped |
+| `runtime.resourceMode: "dedicated"` | `runtime.profile: "dedicated"`; `resourceMode` is dropped |
+| `policy.resourceGovernor.*` | `advanced.limits.resourceGovernor.*` (field names identical) |
+| `policy.directBarrier.*` | `advanced.limits.directBarrier.*` |
+| `policy.relay.*` | `advanced.limits.relay.*` |
+| any surviving pinned limit | `runtime.tuning.mode: "fixed"` (v1.5 behavior, byte-for-byte) |
+| explicit field equal to its default | omitted when the schema allows, reported `redundant`; schema-required fields are kept and reported |
+| `policy` holding no non-default values | dropped, reported `discarded` |
+| no `policy` and no limits | `tuning` omitted; the `startup` default applies |
+
+Every translation, omission, and discard is printed to stderr; nothing is
+silently dropped and no security-sensitive value is guessed. Listeners,
+credentials, routing, outbounds, and DNS trust selection are carried over
+untouched. The generated file is re-validated with the same validation
+`check` runs, plus a serialize/parse round-trip; migration fails rather than
+writing an invalid file. A v1.5 file that never set `resourceMode` keeps the
+field absent — the v1.6 `auto` profile then applies, which resolves to
+`dedicated` only inside a fully bounded cgroup v2; pin
+`runtime.profile: "shared"` to keep the unconditional v1.5 `standard`
+posture. Re-running with `--from 1.6` rejects a leftover top-level `policy`
+object with an error naming `advanced.limits`.
+
 ### `advanced.limits.resourceGovernor`
 
 | Field | Required when object present | Whole-object default | Constraints / meaning |
