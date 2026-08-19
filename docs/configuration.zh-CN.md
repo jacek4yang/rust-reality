@@ -30,7 +30,7 @@ rust-reality config format --config config.json > config.formatted.json
   "inbounds": [],
   "outbounds": [],
   "routing": {},
-  "policy": {},
+  "advanced": {},
   "runtime": {}
 }
 ```
@@ -44,8 +44,11 @@ rust-reality config format --config config.json > config.formatted.json
 | `inbounds` | 是 | — | 至少一个强类型 `vless` 或内部 `nxr`、`handoff` 监听。 |
 | `outbounds` | 是 | — | 至少一个 `direct`、`blackhole`、`socks5`、`nxr` 或 `handoff` 传输。 |
 | `routing` | 是 | — | 全局规则和显式 UUID 分组策略。 |
-| `policy` | 否 | 有界生产默认值 | admission、direct 拨号、缓冲和 Linux relay 策略。 |
-| `runtime` | 否 | `standard` | 进程资源姿态。 |
+| `advanced` | 否 | 有界生产默认值 | 专家逃生舱：`advanced.limits` 保存数值化的 admission、direct 拨号、缓冲和 Linux relay 策略。 |
+| `runtime` | 否 | `standard` 姿态、`auto` profile | 进程资源姿态、机器租户 profile 与策略调谐模式。 |
+
+v1.5 的顶层 `policy` 对象是 `advanced.limits` 的弃用别名；它仍可解析，
+合并行为见[弃用别名：`policy`](#弃用别名policy)。
 
 从 1.4 升级配置必须迁移：标量形式 `"listen": "<ip>"` 和
 `network.addressFamily` 都会被拒绝。完整的新旧字段映射表见
@@ -88,7 +91,7 @@ rust-reality config format --config config.json > config.formatted.json
 
 所有 connector 侧的域名解析——direct 出站拨号、REALITY 伪装目标，以及
 SOCKS5/NXR/Handoff 服务器名——都经过一个共享的进程级解析器。每次解析
-持有一个 `DnsLookup` 准入许可（`policy.resourceGovernor.maxDnsLookups`），
+持有一个 `DnsLookup` 准入许可（`advanced.limits.resourceGovernor.maxDnsLookups`），
 完全相同的并发查询会合并为一次上游请求（singleflight）。路由策略查询
 （`domainStrategy: IPIfNonMatch`/`IPOnDemand`）则刻意使用系统解析器，
 使 IP 规则检查的地址与实际拨号的地址完全一致。
@@ -363,7 +366,7 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 { "protocol": "direct", "tag": "direct" }
 ```
 
-受 `policy.directBarrier` 和连接超时约束，直接连接所选目标。不接受 `settings` 字段。
+受 `advanced.limits.directBarrier` 和连接超时约束，直接连接所选目标。不接受 `settings` 字段。
 
 ### Blackhole
 
@@ -588,13 +591,24 @@ connectTimeoutMs` 并留有余量：首个密封记录只有在转移被读取�
 
 占位符必须换成公网入站客户端中实际存在的 UUID。
 
-## `policy`
+## `advanced`
 
-`policy` 或三个子对象之一缺失时，使用该子对象完整默认值。如果显式提供
+专家逃生舱。`advanced.limits` 保存完整的数值化资源与 relay 策略；每个字段都有
+有界生产默认值，因此整个对象、`limits` 或其三个子对象都可以缺省。如果显式提供
 `resourceGovernor`、`directBarrier` 或 `relay`，标记“对象存在时必填”的字段必须
 提供；不能假设部分对象自动继承所有默认值。`config format` 会显示已应用默认值。
 
-### `policy.resourceGovernor`
+### 弃用别名：`policy`
+
+v1.5 的顶层 `policy` 对象仍可解析且行为完全一致。加载时，`policy` 中每个与默认值
+不同的字段都会合并到 `advanced.limits` 的同名字段；同一字段在两处被设置为不同的
+非默认值属于验证错误，错误信息会指出两个位置。只要存在 `policy` 对象且
+`runtime.tuning.mode` 未显式设置，模式就被强制为 `fixed`，逐字节保留 v1.5 行为。
+改写绝不静默：`check` 和 `config format` 会打印一条警告，`serve` 在启动和每次
+热更新时记录一条 `configuration_deprecation` 事件。该别名永不序列化——
+`config format` 会把文件改写为规范位置——新配置必须使用 `advanced.limits`。
+
+### `advanced.limits.resourceGovernor`
 
 | 字段 | 对象存在时必填 | 整体默认值 | 约束/含义 |
 | --- | --- | --- | --- |
@@ -610,7 +624,7 @@ connectTimeoutMs` 并留有余量：首个密封记录只有在转移被读取�
 | `connectTimeoutMs` | 是 | `10000` | 伪装/出站连接截止时间，`1..=600000`，不超过 fallback 超时。 |
 | `fallbackTimeoutMs` | 是 | `120000` | fallback 最大生命周期，`1..=600000`。 |
 
-### `policy.directBarrier`
+### `advanced.limits.directBarrier`
 
 | 字段 | 对象存在时必填 | 整体默认值 | 约束/含义 |
 | --- | --- | --- | --- |
@@ -619,7 +633,7 @@ connectTimeoutMs` 并留有余量：首个密封记录只有在转移被读取�
 
 它把 direct 目标压力与已认证连接总数隔离。
 
-### `policy.relay`
+### `advanced.limits.relay`
 
 | 字段 | 对象存在时必填 | 整体默认值 | 约束/含义 |
 | --- | --- | --- | --- |
@@ -677,7 +691,10 @@ splice 永远不会跨越 REALITY/TLS 安全边界。传输开始前无法获得
 
 | 字段 | 对象存在时必填 | 默认值/允许值 | 含义与约束 |
 | --- | --- | --- | --- |
-| `runtime.resourceMode` | 否 | `standard`；`standard`、`dedicated` | `dedicated` 声明独占机器或 cgroup：把 `RLIMIT_NOFILE` 软限制提升到硬限制、按专用余量推导描述符预算，并运行有界内存压力监控器。见[专用资源模式](#dedicated-resource-mode)。冷设置，修改必须重启。 |
+| `runtime.resourceMode` | 否 | 未设置（实际为 `standard`）；`standard`、`dedicated` | `dedicated` 声明独占机器或 cgroup：把 `RLIMIT_NOFILE` 软限制提升到硬限制、按专用余量推导描述符预算，并运行有界内存压力监控器。见[专用资源模式](#dedicated-resource-mode)。冷设置，修改必须重启。设置后 `resourceMode` 优先于 `profile`。 |
+| `runtime.profile` | 否 | `auto`；`auto`、`shared`、`dedicated` | 声明谁拥有这台机器。`shared` 映射到 `resourceMode: standard`，`dedicated` 映射到 `resourceMode: dedicated`；与 `resourceMode` 矛盾的组合是验证错误。`auto` 在 `resourceMode` 已设置时服从它，否则仅当 cgroup v2 租户边界完全可观测（`cpu.max` 配额有限且 `memory.max` 有限）时解析为 `dedicated`；在裸金属上绝不猜测为 dedicated。 |
+| `runtime.tuning.mode` | 否 | `startup`；`fixed`、`startup`、`adaptive` | 数值策略的产生方式。`fixed` 取自 `advanced.limits`（或内置默认值）且永不变动——即 v1.5 行为。`startup` 和 `adaptive` 是 v1.6 调谐模型的推导模式；在启动推导切片落地之前，它们解析为与 `fixed` 相同的固定数值。存在弃用的 `policy` 对象时，除非显式设置模式，否则强制为 `fixed`。 |
+| `runtime.tuning.objective` | 否 | `balanced`；`latency`、`balanced`、`throughput` | 推导数值的形态；只有推导调谐模式才会使用。 |
 
 ### Dedicated resource mode
 
@@ -758,10 +775,11 @@ generation，已有连接继续使用其获取的 generation。
 - 任意 `network.dial` 修改，因为启动快照与共享健康状态属于进程生命周期；
 - 任意 `dns` 修改（`servers`、`timeoutMs` 或 `cache`），因为共享解析器——
   包括其超时与缓存边界——在启动时安装一次，属于进程生命周期；
-- 任意 `runtime` 修改，因为资源模式影响进程生命周期的描述符预算和内存监控器；
-- 任意 `policy.resourceGovernor` 修改，因为 REALITY 重放 admission/状态属于进程生命周期；
-- 任意 `policy.directBarrier` 修改，因为直连拨号 authority 属于进程生命周期；
-- 任意 `policy.relay` 修改，因为缓冲/splice 池属于进程生命周期；
+- 任意 `runtime` 修改（`resourceMode`、`profile` 或 `tuning`），因为资源姿态影响
+  进程生命周期的描述符预算和内存监控器；
+- 任意 `advanced.limits.resourceGovernor` 修改，因为 REALITY 重放 admission/状态属于进程生命周期；
+- 任意 `advanced.limits.directBarrier` 修改，因为直连拨号 authority 属于进程生命周期；
+- 任意 `advanced.limits.relay` 修改，因为缓冲/splice 池属于进程生命周期；
 - NXR `maxNonceEntries` 或 `nonceRetentionSeconds` 修改；
 - Handoff `maxNonceEntries` 或 `nonceRetentionSeconds` 修改。
 

@@ -34,7 +34,7 @@ Top-level shape:
   "inbounds": [],
   "outbounds": [],
   "routing": {},
-  "policy": {},
+  "advanced": {},
   "runtime": {}
 }
 ```
@@ -48,8 +48,12 @@ Top-level shape:
 | `inbounds` | yes | — | At least one strictly typed `vless` or internal `nxr` or `handoff` listener. |
 | `outbounds` | yes | — | At least one `direct`, `blackhole`, `socks5`, `nxr`, or `handoff` transport. |
 | `routing` | yes | — | Global rules and explicit per-UUID policy groups. |
-| `policy` | no | bounded production defaults | Admission, direct-dial, buffer, and Linux relay policy. |
-| `runtime` | no | `standard` | Process resource posture. |
+| `advanced` | no | bounded production defaults | Expert escape hatch: `advanced.limits` holds the numeric admission, direct-dial, buffer, and Linux relay policy. |
+| `runtime` | no | `standard` posture, `auto` profile | Process resource posture, machine tenancy profile, and policy tuning mode. |
+
+The v1.5 top-level `policy` object is a deprecated alias for
+`advanced.limits`; it still parses, with the merge behavior described in
+[Deprecated alias: `policy`](#deprecated-alias-policy).
 
 Upgrading a 1.4 configuration requires migration: the scalar
 `"listen": "<ip>"` form and `network.addressFamily` are rejected. The complete
@@ -97,7 +101,7 @@ are operator-provided; only the two primary Geo URLs are downloaded directly.
 Every connector-side name resolution — direct outbound dials, REALITY cover
 targets, and SOCKS5/NXR/Handoff server names — goes through one shared
 process-wide resolver. Each resolution holds a `DnsLookup` admission permit
-(`policy.resourceGovernor.maxDnsLookups`), and identical concurrent lookups
+(`advanced.limits.resourceGovernor.maxDnsLookups`), and identical concurrent lookups
 coalesce into one upstream flight. Routing-strategy lookups
 (`domainStrategy: IPIfNonMatch`/`IPOnDemand`) deliberately use the system
 resolver instead, so the addresses checked by IP rules are exactly the
@@ -406,7 +410,7 @@ and must be unique among outbounds.
 ```
 
 Connects directly to the selected destination subject to
-`policy.directBarrier` and connection timeout. No `settings` field is accepted.
+`advanced.limits.directBarrier` and connection timeout. No `settings` field is accepted.
 
 ### Blackhole
 
@@ -639,15 +643,31 @@ route decision so direct dialing uses the same addresses.
 
 Replace placeholders with UUIDs present in public inbound clients.
 
-## `policy`
+## `advanced`
 
-If `policy` or one of its three child objects is absent, the complete child
-default is used. If `resourceGovernor`, `directBarrier`, or `relay` is explicitly
-present, fields marked “required when object present” must be supplied; do not
-assume a partial object inherits every default. `config format` makes applied
-defaults visible.
+Expert escape hatch. `advanced.limits` holds the complete numeric resource
+and relay policy; every field carries the bounded production default, so the
+whole object, `limits`, or any of its three child objects may be absent. If
+`resourceGovernor`, `directBarrier`, or `relay` is explicitly present, fields
+marked “required when object present” must be supplied; do not assume a
+partial object inherits every default. `config format` makes applied defaults
+visible.
 
-### `policy.resourceGovernor`
+### Deprecated alias: `policy`
+
+The v1.5 top-level `policy` object still parses and behaves identically.
+While loading, every `policy` field whose value differs from its default is
+merged into the same field of `advanced.limits`; setting one field in both
+places to different non-default values is a validation error naming both
+locations. When a `policy` object is present at all and
+`runtime.tuning.mode` is not explicitly set, the mode is forced to `fixed`,
+preserving v1.5 behavior byte-for-byte. The rewrite is never silent: `check`
+and `config format` print one warning, and `serve` logs one
+`configuration_deprecation` event at startup and on each reload. The alias
+never serializes — `config format` rewrites the file to the canonical
+location — and new configurations must use `advanced.limits`.
+
+### `advanced.limits.resourceGovernor`
 
 | Field | Required when object present | Whole-object default | Constraints / meaning |
 | --- | --- | --- | --- |
@@ -663,7 +683,7 @@ defaults visible.
 | `connectTimeoutMs` | yes | `10000` | Cover/outbound connect deadline, `1..=600000`, no more than fallback timeout. |
 | `fallbackTimeoutMs` | yes | `120000` | Maximum fallback lifetime, `1..=600000`. |
 
-### `policy.directBarrier`
+### `advanced.limits.directBarrier`
 
 | Field | Required when object present | Whole-object default | Constraints / meaning |
 | --- | --- | --- | --- |
@@ -672,7 +692,7 @@ defaults visible.
 
 This isolates direct destination pressure from authenticated connection count.
 
-### `policy.relay`
+### `advanced.limits.relay`
 
 | Field | Required when object present | Whole-object default | Constraints / meaning |
 | --- | --- | --- | --- |
@@ -735,7 +755,10 @@ Process-level resource posture. The whole object is optional.
 
 | Field | Required when object present | Default / allowed | Constraints / meaning |
 | --- | --- | --- | --- |
-| `runtime.resourceMode` | no | `standard`; `standard`, `dedicated` | `dedicated` declares single-tenant use of the machine or cgroup: raise the soft `RLIMIT_NOFILE` to the hard limit, derive the descriptor budget with the dedicated headroom, and run the bounded memory-pressure monitor. See [Dedicated resource mode](#dedicated-resource-mode). Cold setting; changing it requires a restart. |
+| `runtime.resourceMode` | no | unset (effectively `standard`); `standard`, `dedicated` | `dedicated` declares single-tenant use of the machine or cgroup: raise the soft `RLIMIT_NOFILE` to the hard limit, derive the descriptor budget with the dedicated headroom, and run the bounded memory-pressure monitor. See [Dedicated resource mode](#dedicated-resource-mode). Cold setting; changing it requires a restart. When set, `resourceMode` is authoritative over `profile`. |
+| `runtime.profile` | no | `auto`; `auto`, `shared`, `dedicated` | Who owns this machine. `shared` maps onto `resourceMode: standard` and `dedicated` onto `resourceMode: dedicated`; declaring one together with a contradicting `resourceMode` is a validation error. `auto` defers to `resourceMode` when set and otherwise resolves to `dedicated` only when the cgroup v2 tenancy boundary is fully observable (a finite `cpu.max` quota and a finite `memory.max`); it never guesses dedicated on bare metal. |
+| `runtime.tuning.mode` | no | `startup`; `fixed`, `startup`, `adaptive` | How the numeric policy is produced. `fixed` takes the numbers from `advanced.limits` (or the built-in defaults) and never moves them — v1.5 behavior. `startup` and `adaptive` are the derived modes of the v1.6 tuning model; until the startup-derivation slice lands they resolve to the same fixed numbers as `fixed`. A present deprecated `policy` object forces `fixed` unless the mode is explicitly set. |
+| `runtime.tuning.objective` | no | `balanced`; `latency`, `balanced`, `throughput` | Shape of the derived numbers; consulted only by the derived tuning modes. |
 
 ### Dedicated resource mode
 
@@ -837,13 +860,15 @@ Restart required:
 - any `dns` change (`servers`, `timeoutMs`, or `cache`), because the shared
   resolver — including its timeout and cache bounds — is installed once at
   startup and remains process-lifetime;
-- any `runtime` change, because the resource mode shapes the process-lifetime
-  descriptor budget and memory monitor;
-- any `policy.resourceGovernor` change, because REALITY replay admission/state
+- any `runtime` change (`resourceMode`, `profile`, or `tuning`), because the
+  resource posture shapes the process-lifetime descriptor budget and memory
+  monitor;
+- any `advanced.limits.resourceGovernor` change, because REALITY replay
+  admission/state is process-lifetime;
+- any `advanced.limits.directBarrier` change, because the direct-dial authority
   is process-lifetime;
-- any `policy.directBarrier` change, because the direct-dial authority is
+- any `advanced.limits.relay` change, because buffer/splice pools are
   process-lifetime;
-- any `policy.relay` change, because buffer/splice pools are process-lifetime;
 - NXR `maxNonceEntries` or `nonceRetentionSeconds` changes;
 - Handoff `maxNonceEntries` or `nonceRetentionSeconds` changes.
 

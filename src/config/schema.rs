@@ -43,6 +43,54 @@ mod tests {
         assert!(!schema.contains("addressFamily"));
         assert!(!schema.contains("familyPenaltySeconds"));
         assert!(!schema.contains("healthMemorySeconds"));
+        // v1.6 configuration model: profile, tuning, and the advanced escape
+        // hatch are documented; the deprecated `policy` alias remains in the
+        // schema because it is still accepted input. Assert the enums at
+        // their schema paths — a bare `contains("auto")` would pass on any
+        // unrelated enum value anywhere in the schema.
+        assert!(schema.contains("\"advanced\""));
+        assert!(schema.contains("\"limits\""));
+        assert!(schema.contains("\"profile\""));
+        assert!(schema.contains("\"tuning\""));
+        assert!(schema.contains("\"objective\""));
+        assert!(schema.contains("\"policy\""));
+        let value: serde_json::Value =
+            serde_json::from_str(&schema).expect("schema must be valid JSON");
+        // Schemars renders a documented unit enum as `oneOf` of `const`
+        // strings; collect the consts at the definition's schema path.
+        let consts = |definition: &str| -> Vec<String> {
+            value["$defs"][definition]["oneOf"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{definition} must be a oneOf definition"))
+                .iter()
+                .map(|variant| {
+                    variant["const"]
+                        .as_str()
+                        .unwrap_or_else(|| panic!("{definition} variant must be a const"))
+                        .to_owned()
+                })
+                .collect()
+        };
+        assert_eq!(
+            consts("RuntimeProfile"),
+            ["auto", "shared", "dedicated"],
+            "the profile enum must list exactly the v1.6 profiles"
+        );
+        assert_eq!(
+            consts("TuningMode"),
+            ["fixed", "startup", "adaptive"],
+            "the tuning mode enum must list exactly the v1.6 modes"
+        );
+        assert_eq!(
+            consts("Objective"),
+            ["latency", "balanced", "throughput"],
+            "the objective enum must list exactly the v1.6 objectives"
+        );
+        assert_eq!(
+            value["$defs"]["RuntimeConfig"]["properties"]["profile"]["$ref"],
+            serde_json::json!("#/$defs/RuntimeProfile"),
+            "runtime.profile must reference the profile enum definition"
+        );
         for policy in ["auto", "preferIpv4", "preferIpv6", "ipv4Only", "ipv6Only"] {
             assert!(schema.contains(policy), "missing dial mode {policy}");
         }

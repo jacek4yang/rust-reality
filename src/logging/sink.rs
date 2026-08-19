@@ -85,6 +85,18 @@ pub enum LogEvent {
         /// Snapshot generation.
         generation: u64,
     },
+    /// A deprecated configuration key was accepted and rewritten to its
+    /// canonical location.
+    ///
+    /// Emitted exactly once per configuration load that uses the key — at
+    /// startup and on each reload — never per connection. Both fields are
+    /// fixed identifiers from a closed vocabulary.
+    ConfigurationDeprecation {
+        /// The deprecated location.
+        field: &'static str,
+        /// The canonical replacement location.
+        replacement: &'static str,
+    },
     /// A listener became ready.
     ListenerStarted {
         /// Validated inbound tag.
@@ -373,6 +385,7 @@ impl LogEvent {
             Self::ConnectionRejected { .. }
             | Self::AdmissionLimited { .. }
             | Self::ConfigurationRejected { .. }
+            | Self::ConfigurationDeprecation { .. }
             | Self::ListenerFamilyUnavailable { .. }
             | Self::HandoffRotationWindowOpen { .. }
             | Self::DescriptorPressureChanged { .. }

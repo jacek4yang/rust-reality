@@ -96,7 +96,27 @@ pub fn validate_config(config: &Config) -> Result<(), ConfigError> {
     validate_routing(config, &users, &outbounds)?;
     validate_handoff_egress(config)?;
     validate_handoff_key_independence(config)?;
+    validate_runtime(config)?;
     validate_policy(config)
+}
+
+/// Rejects contradictory tenancy declarations.
+///
+/// `resourceMode` is authoritative when set; a non-`auto` `profile` maps
+/// onto exactly one resource mode, so declaring both with different meanings
+/// can never be resolved honestly.
+fn validate_runtime(config: &Config) -> Result<(), ConfigError> {
+    if let (Some(mode), Some(profile_mode)) = (
+        config.runtime.resource_mode,
+        config.runtime.profile.resource_mode(),
+    ) && mode != profile_mode
+    {
+        return fail(
+            "runtime.profile",
+            "conflicts with runtime.resourceMode; the profile maps to a different resource mode",
+        );
+    }
+    Ok(())
 }
 
 fn validate_network(config: &Config) -> Result<(), ConfigError> {
@@ -1041,30 +1061,30 @@ fn validate_port_matcher(path: &str, matcher: &PortMatcher) -> Result<(), Config
 }
 
 fn validate_policy(config: &Config) -> Result<(), ConfigError> {
-    let governor = &config.policy.resource_governor;
+    let governor = &config.advanced.limits.resource_governor;
     for (path, value) in [
         (
-            "policy.resourceGovernor.maxConnections",
+            "advanced.limits.resourceGovernor.maxConnections",
             governor.max_connections,
         ),
         (
-            "policy.resourceGovernor.maxHandshakes",
+            "advanced.limits.resourceGovernor.maxHandshakes",
             governor.max_handshakes,
         ),
         (
-            "policy.resourceGovernor.maxFallbacks",
+            "advanced.limits.resourceGovernor.maxFallbacks",
             governor.max_fallbacks,
         ),
         (
-            "policy.resourceGovernor.maxCryptoOperations",
+            "advanced.limits.resourceGovernor.maxCryptoOperations",
             governor.max_crypto_operations,
         ),
         (
-            "policy.resourceGovernor.maxReplayEntries",
+            "advanced.limits.resourceGovernor.maxReplayEntries",
             governor.max_replay_entries,
         ),
         (
-            "policy.resourceGovernor.maxDnsLookups",
+            "advanced.limits.resourceGovernor.maxDnsLookups",
             governor.max_dns_lookups,
         ),
     ] {
@@ -1078,29 +1098,29 @@ fn validate_policy(config: &Config) -> Result<(), ConfigError> {
         || governor.max_dns_lookups > governor.max_connections
     {
         return fail(
-            "policy.resourceGovernor",
+            "advanced.limits.resourceGovernor",
             "child admission limits must not exceed their parent limits",
         );
     }
     for (path, timeout) in [
         (
-            "policy.resourceGovernor.clientHelloTimeoutMs",
+            "advanced.limits.resourceGovernor.clientHelloTimeoutMs",
             governor.client_hello_timeout_ms,
         ),
         (
-            "policy.resourceGovernor.handshakeTimeoutMs",
+            "advanced.limits.resourceGovernor.handshakeTimeoutMs",
             governor.handshake_timeout_ms,
         ),
         (
-            "policy.resourceGovernor.connectTimeoutMs",
+            "advanced.limits.resourceGovernor.connectTimeoutMs",
             governor.connect_timeout_ms,
         ),
         (
-            "policy.resourceGovernor.fallbackTimeoutMs",
+            "advanced.limits.resourceGovernor.fallbackTimeoutMs",
             governor.fallback_timeout_ms,
         ),
         (
-            "policy.resourceGovernor.replayRetentionMs",
+            "advanced.limits.resourceGovernor.replayRetentionMs",
             governor.replay_retention_ms,
         ),
     ] {
@@ -1108,57 +1128,60 @@ fn validate_policy(config: &Config) -> Result<(), ConfigError> {
     }
     if governor.client_hello_timeout_ms > governor.handshake_timeout_ms {
         return fail(
-            "policy.resourceGovernor.clientHelloTimeoutMs",
+            "advanced.limits.resourceGovernor.clientHelloTimeoutMs",
             "must not exceed handshakeTimeoutMs",
         );
     }
     if governor.connect_timeout_ms > governor.fallback_timeout_ms {
         return fail(
-            "policy.resourceGovernor.connectTimeoutMs",
+            "advanced.limits.resourceGovernor.connectTimeoutMs",
             "must not exceed fallbackTimeoutMs",
         );
     }
 
-    let barrier = &config.policy.direct_barrier;
+    let barrier = &config.advanced.limits.direct_barrier;
     if barrier.max_concurrent == 0 || barrier.max_per_second == 0 {
-        return fail("policy.directBarrier", "limits must be greater than zero");
+        return fail(
+            "advanced.limits.directBarrier",
+            "limits must be greater than zero",
+        );
     }
     if barrier.max_per_second > MAX_DIRECT_DIALS_PER_SECOND {
         return fail(
-            "policy.directBarrier.maxPerSecond",
+            "advanced.limits.directBarrier.maxPerSecond",
             format!("must not exceed {MAX_DIRECT_DIALS_PER_SECOND}"),
         );
     }
     if barrier.max_concurrent > governor.max_connections {
         return fail(
-            "policy.directBarrier.maxConcurrent",
+            "advanced.limits.directBarrier.maxConcurrent",
             "must not exceed maxConnections",
         );
     }
 
-    let relay = &config.policy.relay;
+    let relay = &config.advanced.limits.relay;
     if !(MIN_RELAY_BUFFER_BYTES..=MAX_RELAY_BUFFER_BYTES).contains(&relay.buffer_bytes) {
         return fail(
-            "policy.relay.bufferBytes",
+            "advanced.limits.relay.bufferBytes",
             format!("must be between {MIN_RELAY_BUFFER_BYTES} and {MAX_RELAY_BUFFER_BYTES}"),
         );
     }
     if !(2..=MAX_RELAY_BUFFERS).contains(&relay.max_pooled_buffers) {
         return fail(
-            "policy.relay.maxPooledBuffers",
+            "advanced.limits.relay.maxPooledBuffers",
             format!("must be between 2 and {MAX_RELAY_BUFFERS}"),
         );
     }
     if relay.splice {
         if relay.max_splice_relays == 0 {
             return fail(
-                "policy.relay.maxSpliceRelays",
+                "advanced.limits.relay.maxSpliceRelays",
                 "must be greater than zero when splice is enabled",
             );
         }
         if relay.max_splice_relays > governor.max_connections {
             return fail(
-                "policy.relay.maxSpliceRelays",
+                "advanced.limits.relay.maxSpliceRelays",
                 "must not exceed maxConnections",
             );
         }
@@ -1177,7 +1200,9 @@ fn validate_relay_memory(relay: &RelayPolicy) -> Result<(), ConfigError> {
     let buffered = u64::try_from(relay.max_pooled_buffers)
         .ok()
         .and_then(|buffers| buffers.checked_mul(buffer_bytes))
-        .ok_or_else(|| ConfigError::new("policy.relay.maxPooledBuffers", "budget overflows"))?;
+        .ok_or_else(|| {
+            ConfigError::new("advanced.limits.relay.maxPooledBuffers", "budget overflows")
+        })?;
 
     // Kernel pipe capacity is reserved worst-case, even though the kernel
     // allocates pipe pages lazily. With the process pool enabled the retained
@@ -1189,20 +1214,24 @@ fn validate_relay_memory(relay: &RelayPolicy) -> Result<(), ConfigError> {
         u64::from(relay.max_pooled_pipes)
             .checked_mul(2)
             .and_then(|pipes| pipes.checked_mul(SPLICE_PIPE_CAPACITY_BYTES))
-            .ok_or_else(|| ConfigError::new("policy.relay.maxPooledPipes", "budget overflows"))?
+            .ok_or_else(|| {
+                ConfigError::new("advanced.limits.relay.maxPooledPipes", "budget overflows")
+            })?
     } else {
         u64::from(relay.max_splice_relays)
             .checked_mul(4)
             .and_then(|pipes| pipes.checked_mul(SPLICE_PIPE_CAPACITY_BYTES))
-            .ok_or_else(|| ConfigError::new("policy.relay.maxSpliceRelays", "budget overflows"))?
+            .ok_or_else(|| {
+                ConfigError::new("advanced.limits.relay.maxSpliceRelays", "budget overflows")
+            })?
     };
 
     let relay_total = buffered
         .checked_add(splice_pipes)
-        .ok_or_else(|| ConfigError::new("policy.relay", "budget overflows"))?;
+        .ok_or_else(|| ConfigError::new("advanced.limits.relay", "budget overflows"))?;
     if relay_total > relay.max_relay_memory_bytes {
         return fail(
-            "policy.relay.maxRelayMemoryBytes",
+            "advanced.limits.relay.maxRelayMemoryBytes",
             format!("configured backends require {relay_total} bytes"),
         );
     }
@@ -1337,13 +1366,13 @@ mod tests {
     #[test]
     fn rejects_direct_rate_finer_than_the_monotonic_clock_domain() {
         let mut config = valid_config();
-        config.policy.direct_barrier.max_per_second = 1_000_000_001;
+        config.advanced.limits.direct_barrier.max_per_second = 1_000_000_001;
 
         assert_eq!(
             validate_config(&config)
                 .expect_err("sub-nanosecond rates cannot be represented exactly")
                 .path(),
-            "policy.directBarrier.maxPerSecond"
+            "advanced.limits.directBarrier.maxPerSecond"
         );
     }
 
@@ -2351,58 +2380,60 @@ mod tests {
     #[test]
     fn an_enabled_kernel_backend_needs_a_nonzero_relay_limit() {
         let mut config = valid_config();
-        config.policy.relay.splice = true;
-        config.policy.relay.max_splice_relays = 0;
+        config.advanced.limits.relay.splice = true;
+        config.advanced.limits.relay.max_splice_relays = 0;
         assert_eq!(
             validate_config(&config)
                 .expect_err("an enabled backend with a zero bound must fail closed")
                 .path(),
-            "policy.relay.maxSpliceRelays"
+            "advanced.limits.relay.maxSpliceRelays"
         );
     }
 
     #[test]
     fn a_kernel_relay_limit_may_not_exceed_max_connections() {
         let mut config = valid_config();
-        config.policy.relay.splice = true;
-        config.policy.relay.max_splice_relays = config.policy.resource_governor.max_connections + 1;
+        config.advanced.limits.relay.splice = true;
+        config.advanced.limits.relay.max_splice_relays =
+            config.advanced.limits.resource_governor.max_connections + 1;
 
         assert_eq!(
             validate_config(&config)
                 .expect_err("a relay bound above maxConnections must fail closed")
                 .path(),
-            "policy.relay.maxSpliceRelays"
+            "advanced.limits.relay.maxSpliceRelays"
         );
     }
 
     #[test]
     fn an_impossible_relay_memory_budget_is_rejected_before_binding() {
         let mut config = valid_config();
-        config.policy.relay.buffer_bytes = 1024 * 1024;
-        config.policy.relay.max_pooled_buffers = 65_536;
-        config.policy.relay.max_relay_memory_bytes = 1;
+        config.advanced.limits.relay.buffer_bytes = 1024 * 1024;
+        config.advanced.limits.relay.max_pooled_buffers = 65_536;
+        config.advanced.limits.relay.max_relay_memory_bytes = 1;
 
         assert_eq!(
             validate_config(&config)
                 .expect_err("an oversized buffered budget must fail closed")
                 .path(),
-            "policy.relay.maxRelayMemoryBytes"
+            "advanced.limits.relay.maxRelayMemoryBytes"
         );
     }
 
     #[test]
     fn pooled_buffers_are_counted_as_buffers_rather_than_bytes() {
         let mut config = valid_config();
-        config.policy.relay.buffer_bytes = 32 * 1024;
-        config.policy.relay.max_pooled_buffers = 4_096;
+        config.advanced.limits.relay.buffer_bytes = 32 * 1024;
+        config.advanced.limits.relay.max_pooled_buffers = 4_096;
         // 4096 buffers x 32 KiB is exactly 128 MiB; a byte budget one below
         // must be rejected. With splice enabled, the budget must additionally
         // cover the relays' pipe pairs (4 pipes x 256 KiB per relay).
-        let splice_pipes = u64::from(config.policy.relay.max_splice_relays) * 4 * 256 * 1024;
-        config.policy.relay.max_relay_memory_bytes = 4_096 * 32 * 1024 - 1;
+        let splice_pipes =
+            u64::from(config.advanced.limits.relay.max_splice_relays) * 4 * 256 * 1024;
+        config.advanced.limits.relay.max_relay_memory_bytes = 4_096 * 32 * 1024 - 1;
         assert!(validate_config(&config).is_err());
 
-        config.policy.relay.max_relay_memory_bytes = 4_096 * 32 * 1024 + splice_pipes;
+        config.advanced.limits.relay.max_relay_memory_bytes = 4_096 * 32 * 1024 + splice_pipes;
         assert!(validate_config(&config).is_ok());
     }
 
@@ -2501,7 +2532,7 @@ mod tests {
         let config: Config = serde_json::from_value(config).expect("dedicated mode must decode");
 
         assert_eq!(
-            config.runtime.resource_mode,
+            config.runtime.resource_mode(),
             crate::config::ResourceMode::Dedicated
         );
         validate_config(&config).expect("dedicated mode must validate");
@@ -2511,10 +2542,10 @@ mod tests {
     fn defaults_to_standard_resource_mode() {
         let config = valid_config();
         assert_eq!(
-            config.runtime.resource_mode,
+            config.runtime.resource_mode(),
             crate::config::ResourceMode::Standard
         );
-        assert_eq!(config.runtime.resource_mode.as_str(), "standard");
+        assert_eq!(config.runtime.resource_mode().as_str(), "standard");
         validate_config(&config).expect("the default mode must validate");
     }
 
@@ -2533,10 +2564,50 @@ mod tests {
     fn rejects_unknown_runtime_fields() {
         let mut config: serde_json::Value =
             serde_json::from_str(crate::config::test_config_json()).expect("fixture must decode");
-        config["runtime"] = serde_json::json!({ "resourceMode": "dedicated", "tuning": {} });
+        config["runtime"] = serde_json::json!({ "resourceMode": "dedicated", "locality": {} });
         assert!(
             serde_json::from_value::<Config>(config).is_err(),
             "deny_unknown_fields applies to the runtime section"
         );
+    }
+
+    #[test]
+    fn rejects_a_profile_that_contradicts_the_resource_mode() {
+        for (resource_mode, profile) in [("dedicated", "shared"), ("standard", "dedicated")] {
+            let mut value: serde_json::Value =
+                serde_json::from_str(crate::config::test_config_json())
+                    .expect("fixture must decode");
+            value["runtime"] = serde_json::json!({
+                "resourceMode": resource_mode,
+                "profile": profile,
+            });
+            let json = serde_json::to_vec(&value).expect("config must encode");
+            let mut config: Config = serde_json::from_slice(&json).expect("config must decode");
+            config.normalize().expect("no alias is present");
+            let error = validate_config(&config)
+                .expect_err("a contradictory tenancy declaration must fail validation");
+            assert_eq!(error.path(), "runtime.profile");
+        }
+    }
+
+    #[test]
+    fn accepts_a_profile_that_matches_or_defers_to_the_resource_mode() {
+        for runtime in [
+            serde_json::json!({ "resourceMode": "dedicated", "profile": "dedicated" }),
+            serde_json::json!({ "resourceMode": "standard", "profile": "shared" }),
+            serde_json::json!({ "resourceMode": "dedicated", "profile": "auto" }),
+            serde_json::json!({ "profile": "dedicated" }),
+            serde_json::json!({ "profile": "shared" }),
+        ] {
+            let mut value: serde_json::Value =
+                serde_json::from_str(crate::config::test_config_json())
+                    .expect("fixture must decode");
+            value["runtime"] = runtime;
+            let json = serde_json::to_vec(&value).expect("config must encode");
+            let mut config: Config = serde_json::from_slice(&json).expect("config must decode");
+            config.normalize().expect("no alias is present");
+            validate_config(&config)
+                .unwrap_or_else(|error| panic!("consistent tenancy must validate: {error}"));
+        }
     }
 }

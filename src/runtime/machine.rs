@@ -164,6 +164,21 @@ impl MachineReport {
         }
     }
 
+    /// Returns whether the single-tenancy boundary is fully observable.
+    ///
+    /// "Tenancy" here means the process is dedicated to its *cgroup* — the
+    /// boundary the dedicated-mode derivation budgets against — not that it
+    /// is the only tenant of the host; sibling cgroups may share the
+    /// machine. True only when the process sits in a cgroup v2 with both a
+    /// finite `cpu.max` quota and a finite `memory.max` — the two boundaries
+    /// a dedicated-mode derivation budgets against. Bare metal, an unbounded
+    /// quota (`max`), and unreadable files all count as unobservable, so
+    /// `auto` profile resolution never guesses dedicated without evidence.
+    #[must_use]
+    pub const fn tenancy_boundary_observable(&self) -> bool {
+        self.cpu_quota_us.is_some() && self.memory_max.is_some()
+    }
+
     /// Returns the memory sampler the pressure monitor should run.
     ///
     /// The cgroup file is preferred because it measures exactly what the
