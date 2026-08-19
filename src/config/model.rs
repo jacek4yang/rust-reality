@@ -237,6 +237,15 @@ pub struct RuntimeConfig {
     /// How the numeric policy is produced and maintained.
     #[serde(default)]
     pub tuning: TuningConfig,
+    /// Path of the adaptive-controller status snapshot.
+    ///
+    /// Consulted only with `runtime.tuning.mode: "adaptive"`: the controller
+    /// atomically rewrites this JSON file at startup and on every ceiling or
+    /// pressure transition, and `rust-reality runtime report` reads it. This
+    /// is a cold setting — the controller is process-lifetime, so a change
+    /// requires a restart and is rejected on hot reload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_file: Option<PathBuf>,
 }
 
 impl RuntimeConfig {
@@ -272,7 +281,9 @@ impl RuntimeConfig {
     /// `objective` compare directly. The tuning mode compares strictly
     /// through [`TuningConfig::mode`]: `fixed`, `startup`, and `adaptive`
     /// produce different effective policies, so any drift between them
-    /// requires a process restart.
+    /// requires a process restart. The status-file path is cold with them:
+    /// the adaptive controller is process-lifetime and cannot retarget the
+    /// file it publishes.
     #[must_use]
     pub fn hot_compatible_with(
         &self,
@@ -283,6 +294,7 @@ impl RuntimeConfig {
             && self.profile == other.profile
             && self.tuning.objective == other.tuning.objective
             && self.tuning.mode() == other.tuning.mode()
+            && self.status_file == other.status_file
     }
 }
 
@@ -335,8 +347,8 @@ pub enum TuningMode {
     #[default]
     Startup,
     /// Startup derivation plus a controller adjusting soft ceilings within
-    /// startup-derived hard bounds. Reserved; currently behaves as
-    /// `startup`.
+    /// the startup-derived hard bounds (hysteresis, dwell, and a critical
+    /// pressure clamp documented in `docs/tuning.md`).
     Adaptive,
 }
 
@@ -1389,6 +1401,7 @@ mod tests {
             let runtime = RuntimeConfig {
                 profile,
                 tuning: TuningConfig::default(),
+                status_file: None,
             };
             assert_eq!(runtime.resolve_resource_mode(&machine), expected);
         }
@@ -1427,6 +1440,7 @@ mod tests {
                     mode: Some(mode),
                     objective: Objective::Balanced,
                 },
+                status_file: None,
             };
             if mode == TuningMode::Startup {
                 assert!(
@@ -1448,10 +1462,12 @@ mod tests {
         let shared = RuntimeConfig {
             profile: RuntimeProfile::Shared,
             tuning: TuningConfig::default(),
+            status_file: None,
         };
         let dedicated_profile = RuntimeConfig {
             profile: RuntimeProfile::Dedicated,
             tuning: TuningConfig::default(),
+            status_file: None,
         };
         assert!(
             !shared.hot_compatible_with(&dedicated_profile, &machine),
@@ -1464,10 +1480,20 @@ mod tests {
                 mode: None,
                 objective: Objective::Throughput,
             },
+            status_file: None,
         };
         assert!(
             !RuntimeConfig::default().hot_compatible_with(&other_objective, &machine),
             "objective drift must reject"
+        );
+
+        let other_status_file = RuntimeConfig {
+            status_file: Some(std::path::PathBuf::from("/run/rust-reality/status.json")),
+            ..RuntimeConfig::default()
+        };
+        assert!(
+            !RuntimeConfig::default().hot_compatible_with(&other_status_file, &machine),
+            "status-file drift must reject: the controller cannot retarget its file"
         );
     }
 
