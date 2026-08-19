@@ -176,9 +176,9 @@ task-clock 每连接 602 µs 对 646 µs——增量式 transcript 哈希改动�
 | 8 | 756.3 | 710.0 | 1.065× | 9.6 ms | 10.2 ms | 18.6 ms | 32.5 ms |
 | 32 | 850.8 | 806.4 | 1.055× | 27.6 ms | 29.7 ms | 59.4 ms | 64.5 ms |
 
-Xray 的每连接服务端 CPU 未测量：perf 归因所需的权限在 Xray 腿上不可用。
-（上文 v1.5.1 对 v1.5.0 的 CPU/conn 数字来自有权限的纯 rust setup
-ABBA。）
+服务端每建连 CPU（perf task-clock 归因，同一基准）：rust-reality 609 µs，
+Xray 988 µs（Xray/rust 比值 1.62×）。（上文 v1.5.1 对 v1.5.0 的
+CPU/conn 数字来自纯 rust setup ABBA。）
 
 ### 吞吐对比 Xray —— `gates/matrix-formal-r01/`、`gates/matrix-r01/`、`gates/matrix-r02/`
 
@@ -246,7 +246,6 @@ soak 期间的描述符、线程与 RSS 增长均平坦，零传输失败。
 - 并发 32 的矩阵轮次使用探索性样本量；只有并发 1 的矩阵是正式发布
   门禁。
 - 小载荷 c1 单元受时延约束，部分呈双峰分布。
-- Xray 每建连服务端 CPU 未测量（perf 权限）。
 - DNS 各阶段使用 loopback 上游（RTT 约 0 ms）。
 - 这些是本机测量结果，不是普遍性能结论。
 

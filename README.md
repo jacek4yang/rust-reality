@@ -116,6 +116,10 @@ lowered server CPU per setup connection by 6.7% (setup ABBA median ratio
 and the formal release evaluator passed all 40 protected metrics with no
 regressions.
 
+Versus Xray: server CPU per setup connection was 609 µs vs 988 µs in the
+same perf-attributed setup benchmark — rust-reality completes a VLESS +
+REALITY + Vision setup with about 0.62× the server CPU.
+
 ### Where rust-reality is faster
 
 - Bulk Direct download (1.48–1.59×) and bidirectional load (1.29–1.33×) at
@@ -126,6 +130,8 @@ regressions.
   while Xray's degrades (2.15× connection-rate advantage at 10,000 rules).
 - Same-name DNS bursts (1.45× wall time) and resident memory (about 5×
   lower RSS under the 10-minute soak).
+- Setup CPU cost: 0.62× the server CPU per connection (609 µs vs 988 µs
+  task-clock, perf-attributed).
 
 ### Where performance is equivalent
 
@@ -159,8 +165,6 @@ regressions.
 - In the 32 MiB × c1 Direct upload cell Xray is faster (223 MiB/s vs
   197 MiB/s in the formal matrix; the same ordering appeared in both
   exploratory rounds).
-- Xray's server CPU per setup connection was not measured — the perf
-  attribution needed privileges the Xray leg did not have.
 - The DNS phases used a loopback upstream (~0 ms RTT), so cold/warm
   numbers isolate resolver and cache plumbing, not network latency.
 

@@ -211,9 +211,10 @@ one leg:
 | 8 | 756.3 | 710.0 | 1.065× | 9.6 ms | 10.2 ms | 18.6 ms | 32.5 ms |
 | 32 | 850.8 | 806.4 | 1.055× | 27.6 ms | 29.7 ms | 59.4 ms | 64.5 ms |
 
-Xray's server CPU per connection was not measured: perf attribution needed
-privileges the Xray leg did not have. (The v1.5.1-vs-v1.5.0 CPU/conn
-figure above comes from the privilege-enabled rust-only setup ABBA.)
+Server CPU per setup connection (perf task-clock attribution, same
+benchmark): rust-reality 609 µs, Xray 988 µs (Xray/rust ratio 1.62×).
+(The v1.5.1-vs-v1.5.0 CPU/conn figure above comes from the rust-only
+setup ABBA.)
 
 ### Throughput vs Xray — `gates/matrix-formal-r01/`, `gates/matrix-r01/`, `gates/matrix-r02/`
 
@@ -288,7 +289,6 @@ and RSS growth over the soak with zero transfer failures.
 - The concurrency-32 matrix rounds used exploratory sample sizes; only the
   concurrency-1 matrix is a formal release gate.
 - Small-payload c1 cells are latency-dominated, and some are bimodal.
-- Xray CPU per setup connection was not measured (perf privileges).
 - The DNS phases used a loopback upstream (~0 ms RTT).
 - Results are measurements of this host and are not a universal
   performance claim.
