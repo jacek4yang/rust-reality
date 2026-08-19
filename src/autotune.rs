@@ -270,27 +270,30 @@ pub fn autotune_config(
     let network = probe_loopback(options.network_bytes)?;
 
     let mut config = source.clone();
+    // Normalize first so a programmatic (unloaded) source with a deprecated
+    // `policy` alias still contributes its timeouts to the derivation.
+    let _alias_used = config.normalize()?;
     if options.dedicated {
-        config.runtime.resource_mode = ResourceMode::Dedicated;
+        config.runtime.resource_mode = Some(ResourceMode::Dedicated);
     }
-    config.policy = derive_policy(
+    config.advanced.limits = derive_policy(
         &machine,
         &protocol,
         &network,
         config.inbounds.len(),
-        config.runtime.resource_mode,
-        &source.policy,
+        config.runtime.resource_mode(),
+        &config.advanced.limits,
     );
     validate_config(&config)?;
     let report = AutotuneReport {
         schema_version: 1,
         package_version: env!("CARGO_PKG_VERSION"),
-        resource_mode: config.runtime.resource_mode.as_str(),
+        resource_mode: config.runtime.resource_mode().as_str(),
         machine,
         protocol,
         storage,
         network,
-        selected_policy: config.policy.clone(),
+        selected_policy: config.advanced.limits.clone(),
     };
     Ok(AutotunedConfig { config, report })
 }
@@ -784,20 +787,23 @@ mod tests {
             bytes_per_direction: 1024 * 1024,
         };
         let mut config = generated.config().clone();
-        config.policy = derive_policy(
+        config.advanced.limits = derive_policy(
             &machine,
             &protocol,
             &network,
             config.inbounds.len(),
             ResourceMode::Standard,
-            &config.policy,
+            &config.advanced.limits,
         );
         validate_config(&config).expect("derived policy must validate");
-        assert_eq!(config.policy.relay.buffer_bytes, 64 * 1024);
-        assert_eq!(config.policy.resource_governor.max_connections, 24_576);
+        assert_eq!(config.advanced.limits.relay.buffer_bytes, 64 * 1024);
+        assert_eq!(
+            config.advanced.limits.resource_governor.max_connections,
+            24_576
+        );
         assert!(
-            config.policy.relay.max_splice_relays
-                <= config.policy.resource_governor.max_connections
+            config.advanced.limits.relay.max_splice_relays
+                <= config.advanced.limits.resource_governor.max_connections
         );
     }
 

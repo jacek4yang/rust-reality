@@ -18,11 +18,12 @@ use rust_reality::{
     autotune::{AutotuneError, AutotuneOptions, autotune_config},
     benchmark::{BenchmarkError, BenchmarkOptions, run_benchmarks},
     config::{
-        ConfigLoadError, GenerateConfigError, GenerateConfigInput, GenerateHandoffConfigInput,
-        GenerateLandingConfigInput, GenerateLineConfigInput, GenerateMultiHandoffConfigInput,
-        GeneratedHandoffConfigs, GeneratedMultiHandoffConfigs, HandoffLandingInput, SecretString,
-        format_config, format_config_schema, generate_handoff_configs, generate_landing_config,
-        generate_line_config, generate_minimal_config, generate_multi_handoff_configs, load_config,
+        ConfigLoadError, ConfigLoadReport, GenerateConfigError, GenerateConfigInput,
+        GenerateHandoffConfigInput, GenerateLandingConfigInput, GenerateLineConfigInput,
+        GenerateMultiHandoffConfigInput, GeneratedHandoffConfigs, GeneratedMultiHandoffConfigs,
+        HandoffLandingInput, SecretString, format_config, format_config_schema,
+        generate_handoff_configs, generate_landing_config, generate_line_config,
+        generate_minimal_config, generate_multi_handoff_configs, load_config_with_report,
     },
     crypto::{
         KeyGenerationError, generate_mldsa65_key_pair, generate_mldsa65_key_pair_from_seed,
@@ -377,7 +378,8 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<(), CliError> {
     match cli.command {
         Command::Check(arguments) => {
-            load_config(&arguments.config)?;
+            let (_config, report) = load_config_with_report(&arguments.config)?;
+            warn_policy_alias(&report);
             write_stdout(format_args!(
                 "configuration {} is valid\n",
                 arguments.config.display()
@@ -437,18 +439,20 @@ fn run_server(arguments: ConfigPath) -> Result<(), CliError> {
 }
 
 fn run_self_test(arguments: ConfigPath) -> Result<(), CliError> {
-    let config = load_config(&arguments.config)?;
+    let (config, report) = load_config_with_report(&arguments.config)?;
+    warn_policy_alias(&report);
     let assets = Arc::new(AssetSnapshot::load(&config)?);
     let summary = assets.summary();
     RoutingTable::compile(
         &config.routing,
         assets,
-        rust_reality::runtime::ResourceGovernor::new(&config.policy.resource_governor),
+        rust_reality::runtime::ResourceGovernor::new(&config.advanced.limits.resource_governor),
     )?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let probe_timeout = Duration::from_millis(config.policy.resource_governor.connect_timeout_ms);
+    let probe_timeout =
+        Duration::from_millis(config.advanced.limits.resource_governor.connect_timeout_ms);
     let reality_destinations = runtime.block_on(async {
         let mut reports = Vec::new();
         let network_environment = rust_reality::network::NetworkEnvironment::detect();
@@ -498,7 +502,8 @@ fn run_config(command: ConfigCommand) -> Result<(), CliError> {
         ConfigCommand::Generate { role } => run_config_generate(role),
         ConfigCommand::Autotune(arguments) => run_config_autotune(arguments),
         ConfigCommand::Format(arguments) => {
-            let config = load_config(arguments.config)?;
+            let (config, report) = load_config_with_report(arguments.config)?;
+            warn_policy_alias(&report);
             write_stdout(format_config(&config)?)
         }
     }
@@ -520,7 +525,8 @@ fn run_config_autotune(arguments: AutotuneArgs) -> Result<(), CliError> {
             "--report must differ from both --config and --output",
         ));
     }
-    let source = load_config(&arguments.config)?;
+    let (source, report) = load_config_with_report(&arguments.config)?;
+    warn_policy_alias(&report);
     let tuned = autotune_config(
         &source,
         &AutotuneOptions {
@@ -789,6 +795,18 @@ fn run_mldsa65(arguments: MlDsa65Args) -> Result<(), CliError> {
 
 fn write_stdout(output: impl fmt::Display) -> Result<(), CliError> {
     write!(io::stdout().lock(), "{output}").map_err(CliError::Io)
+}
+
+/// Reports a rewritten deprecated alias exactly once per load, never silently.
+fn warn_policy_alias(report: &ConfigLoadReport) {
+    if report.policy_alias_used {
+        let _ = writeln!(
+            io::stderr().lock(),
+            "warning: top-level \"policy\" is deprecated; its values were merged into \
+             \"advanced.limits\" and \"runtime.tuning.mode\" was forced to \"fixed\" unless \
+             explicitly set"
+        );
+    }
 }
 
 #[cfg(test)]

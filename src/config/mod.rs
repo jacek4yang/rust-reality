@@ -13,15 +13,19 @@ pub use generate::{
     generate_handoff_configs, generate_landing_config, generate_line_config,
     generate_minimal_config, generate_multi_handoff_configs,
 };
-pub use io::{ConfigLoadError, MAX_CONFIG_BYTES, format_config, load_config};
+pub use io::{
+    ConfigLoadError, ConfigLoadReport, MAX_CONFIG_BYTES, format_config, load_config,
+    load_config_with_report,
+};
 pub use model::{
-    AssetsConfig, BlackholeSettings, Config, DialConfig, DialMode, DirectBarrierConfig,
-    DnsCacheConfig, DnsConfig, DnsStrategy, FileLogConfig, GlobalRule, HandoffInboundConfig,
-    HandoffInboundSettings, HandoffSettings, InboundConfig, ListenConfig, ListenMode, LogConfig,
-    LogLevel, LogOutput, Network, NetworkConfig, NxrInboundConfig, NxrInboundSettings, NxrSettings,
-    OutboundConfig, PolicyConfig, PortMatcher, RealityConfig, RelayPolicy, ResourceGovernorConfig,
-    ResourceMode, RouteRule, RoutingConfig, RuntimeConfig, SecretString, Socks5Settings,
-    StreamSettings, UserPolicy, VlessClient, VlessInboundConfig, VlessInboundSettings,
+    AdvancedConfig, AssetsConfig, BlackholeSettings, Config, DialConfig, DialMode,
+    DirectBarrierConfig, DnsCacheConfig, DnsConfig, DnsStrategy, FileLogConfig, GlobalRule,
+    HandoffInboundConfig, HandoffInboundSettings, HandoffSettings, InboundConfig, ListenConfig,
+    ListenMode, LogConfig, LogLevel, LogOutput, Network, NetworkConfig, NxrInboundConfig,
+    NxrInboundSettings, NxrSettings, Objective, OutboundConfig, PolicyConfig, PortMatcher,
+    RealityConfig, RelayPolicy, ResourceGovernorConfig, ResourceMode, RouteRule, RoutingConfig,
+    RuntimeConfig, RuntimeProfile, SecretString, Socks5Settings, StreamSettings, TuningConfig,
+    TuningMode, UserPolicy, VlessClient, VlessInboundConfig, VlessInboundSettings,
 };
 pub use schema::{config_schema, format_config_schema};
 pub use validate::{ConfigError, validate_config};

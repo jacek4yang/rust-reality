@@ -2,6 +2,43 @@
 
 All notable user-facing changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- v1.6 configuration model: `runtime.profile` (`auto`/`shared`/`dedicated`),
+  `runtime.tuning.mode` (`fixed`/`startup`/`adaptive`),
+  `runtime.tuning.objective` (`latency`/`balanced`/`throughput`), and the
+  `advanced.limits` expert escape hatch holding the numeric resource/relay
+  policy previously living under `policy`. `shared`/`dedicated` profiles map
+  onto `resourceMode: standard`/`dedicated`; a profile contradicting an
+  explicit `resourceMode` is a validation error. In this version the
+  effective numbers still come from `advanced.limits` (or the built-in
+  defaults) exactly as in v1.5 — `startup`/`adaptive` are accepted and
+  validated but resolve to the fixed numbers until the startup-derivation
+  slice lands.
+- The v1.5 top-level `policy` object remains as a deprecated alias: its
+  non-default values merge field-by-field into `advanced.limits` (a field
+  set in both places to different non-default values is a validation
+  error), and a present `policy` object forces `runtime.tuning.mode` to
+  `fixed` unless explicitly set, so v1.5 configs parse and behave
+  byte-identically. The rewrite is never silent: `check` and
+  `config format` print one warning, and `serve` logs one
+  `configuration_deprecation` event at startup and on each reload. The
+  alias never serializes; `config format` rewrites files to the canonical
+  location.
+
+### Changed
+
+- `config autotune` now writes the derived policy to `advanced.limits`
+  instead of the deprecated `policy` object; the report schema and exit
+  codes are unchanged.
+- Validation errors for numeric policy fields now report paths under
+  `advanced.limits.*` (previously `policy.*`).
+- `runtime.resourceMode` is omitted from serialized output when unset
+  (previously always emitted as `"standard"`; the effective default is
+  unchanged).
+
 ## [1.5.1] - 2026-08-19
 
 ### Added

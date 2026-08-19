@@ -43,6 +43,30 @@ mod tests {
         assert!(!schema.contains("addressFamily"));
         assert!(!schema.contains("familyPenaltySeconds"));
         assert!(!schema.contains("healthMemorySeconds"));
+        // v1.6 configuration model: profile, tuning, and the advanced escape
+        // hatch are documented; the deprecated `policy` alias remains in the
+        // schema because it is still accepted input.
+        assert!(schema.contains("\"advanced\""));
+        assert!(schema.contains("\"limits\""));
+        assert!(schema.contains("\"profile\""));
+        assert!(schema.contains("\"tuning\""));
+        assert!(schema.contains("\"objective\""));
+        assert!(schema.contains("\"policy\""));
+        for value in [
+            "auto",
+            "shared",
+            "fixed",
+            "startup",
+            "adaptive",
+            "latency",
+            "balanced",
+            "throughput",
+        ] {
+            assert!(
+                schema.contains(value),
+                "missing tuning/profile value {value}"
+            );
+        }
         for policy in ["auto", "preferIpv4", "preferIpv6", "ipv4Only", "ipv6Only"] {
             assert!(schema.contains(policy), "missing dial mode {policy}");
         }

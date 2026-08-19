@@ -8,6 +8,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+use super::ConfigError;
+
 /// Complete runtime configuration.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -30,12 +32,149 @@ pub struct Config {
     pub outbounds: Vec<OutboundConfig>,
     /// Global and per-user first-match routing.
     pub routing: RoutingConfig,
-    /// Resource and relay limits.
+    /// Deprecated alias for `advanced.limits`.
+    ///
+    /// A v1.5 `policy` object still parses: while loading, its non-default
+    /// values merge into `advanced.limits` and `runtime.tuning.mode` is
+    /// forced to `fixed` unless explicitly set (see [`Config::normalize`]).
+    /// The alias never serializes — `config format` rewrites it to the
+    /// canonical location — and new configurations must use
+    /// `advanced.limits`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<PolicyConfig>,
+    /// Expert escape hatch holding the numeric resource and relay policy.
     #[serde(default)]
-    pub policy: PolicyConfig,
+    pub advanced: AdvancedConfig,
     /// Process resource mode.
     #[serde(default)]
     pub runtime: RuntimeConfig,
+}
+
+impl Config {
+    /// Merges the deprecated top-level `policy` alias into
+    /// `advanced.limits` and applies the alias's tuning-mode rule.
+    ///
+    /// Every `policy` field whose value differs from its default pins the
+    /// same field of `advanced.limits`; a field set in both places to
+    /// different non-default values is a conflict error naming both
+    /// locations. When the alias section is present at all and
+    /// `runtime.tuning.mode` is not explicitly set, the mode is forced to
+    /// `fixed`, preserving v1.5 behavior byte-for-byte.
+    ///
+    /// Returns whether the alias section was present, so the caller can
+    /// report the deprecation exactly once per load. Idempotent: the alias
+    /// is cleared by a successful merge.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when one field carries different non-default values
+    /// in `policy` and `advanced.limits`.
+    pub fn normalize(&mut self) -> Result<bool, ConfigError> {
+        let Some(alias) = self.policy.take() else {
+            return Ok(false);
+        };
+        let defaults = PolicyConfig::default();
+        let limits = &mut self.advanced.limits;
+        macro_rules! merge_alias_field {
+            ($section:ident, $field:ident, $path:literal) => {{
+                let value = alias.$section.$field;
+                if value != defaults.$section.$field {
+                    if limits.$section.$field != defaults.$section.$field
+                        && limits.$section.$field != value
+                    {
+                        return Err(ConfigError::new(
+                            $path,
+                            concat!(
+                                "conflicts with advanced.limits; ",
+                                "set the field in only one place"
+                            ),
+                        ));
+                    }
+                    limits.$section.$field = value;
+                }
+            }};
+        }
+        merge_alias_field!(
+            resource_governor,
+            max_connections,
+            "policy.resourceGovernor.maxConnections"
+        );
+        merge_alias_field!(
+            resource_governor,
+            max_handshakes,
+            "policy.resourceGovernor.maxHandshakes"
+        );
+        merge_alias_field!(
+            resource_governor,
+            max_fallbacks,
+            "policy.resourceGovernor.maxFallbacks"
+        );
+        merge_alias_field!(
+            resource_governor,
+            max_crypto_operations,
+            "policy.resourceGovernor.maxCryptoOperations"
+        );
+        merge_alias_field!(
+            resource_governor,
+            max_replay_entries,
+            "policy.resourceGovernor.maxReplayEntries"
+        );
+        merge_alias_field!(
+            resource_governor,
+            max_dns_lookups,
+            "policy.resourceGovernor.maxDnsLookups"
+        );
+        merge_alias_field!(
+            resource_governor,
+            replay_retention_ms,
+            "policy.resourceGovernor.replayRetentionMs"
+        );
+        merge_alias_field!(
+            resource_governor,
+            client_hello_timeout_ms,
+            "policy.resourceGovernor.clientHelloTimeoutMs"
+        );
+        merge_alias_field!(
+            resource_governor,
+            handshake_timeout_ms,
+            "policy.resourceGovernor.handshakeTimeoutMs"
+        );
+        merge_alias_field!(
+            resource_governor,
+            connect_timeout_ms,
+            "policy.resourceGovernor.connectTimeoutMs"
+        );
+        merge_alias_field!(
+            resource_governor,
+            fallback_timeout_ms,
+            "policy.resourceGovernor.fallbackTimeoutMs"
+        );
+        merge_alias_field!(
+            direct_barrier,
+            max_concurrent,
+            "policy.directBarrier.maxConcurrent"
+        );
+        merge_alias_field!(
+            direct_barrier,
+            max_per_second,
+            "policy.directBarrier.maxPerSecond"
+        );
+        merge_alias_field!(relay, buffer_bytes, "policy.relay.bufferBytes");
+        merge_alias_field!(relay, max_pooled_buffers, "policy.relay.maxPooledBuffers");
+        merge_alias_field!(relay, max_splice_relays, "policy.relay.maxSpliceRelays");
+        merge_alias_field!(
+            relay,
+            max_relay_memory_bytes,
+            "policy.relay.maxRelayMemoryBytes"
+        );
+        merge_alias_field!(relay, splice, "policy.relay.splice");
+        merge_alias_field!(relay, pipe_pool, "policy.relay.pipePool");
+        merge_alias_field!(relay, max_pooled_pipes, "policy.relay.maxPooledPipes");
+        if self.runtime.tuning.mode.is_none() {
+            self.runtime.tuning.mode = Some(TuningMode::Fixed);
+        }
+        Ok(true)
+    }
 }
 
 /// Process-wide network behavior.
@@ -229,9 +368,10 @@ pub enum ListenMode {
 pub struct RuntimeConfig {
     /// How conservatively the process treats machine resources.
     ///
-    /// `standard` (default) derives every budget from the inherited limits
-    /// exactly as documented in the descriptor-budget reference and assumes
-    /// nothing about what else runs on the machine.
+    /// `standard` derives every budget from the inherited limits exactly as
+    /// documented in the descriptor-budget reference and assumes nothing
+    /// about what else runs on the machine; it is the effective mode when
+    /// neither `resourceMode` nor `profile` is set.
     ///
     /// `dedicated` declares that this process owns the machine (or its
     /// cgroup): at startup it raises the soft `RLIMIT_NOFILE` to the hard
@@ -239,8 +379,203 @@ pub struct RuntimeConfig {
     /// `limit/16` to `limit/10`, and runs a bounded memory-pressure monitor
     /// that pauses new setup work before the kernel or the cgroup OOM killer
     /// is reached. See `docs/configuration.md#dedicated-resource-mode`.
+    ///
+    /// When set, `resourceMode` is authoritative over `profile`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_mode: Option<ResourceMode>,
+    /// Who owns this machine.
+    ///
+    /// `shared` maps onto `resourceMode: standard` and `dedicated` onto
+    /// `resourceMode: dedicated`; a non-`auto` profile that contradicts an
+    /// explicit `resourceMode` is a validation error. `auto` (the default)
+    /// defers to `resourceMode` when set and otherwise detects
+    /// single-tenancy from the cgroup v2 boundaries — it never guesses
+    /// dedicated on bare metal.
     #[serde(default)]
-    pub resource_mode: ResourceMode,
+    pub profile: RuntimeProfile,
+    /// How the numeric policy is produced and maintained.
+    #[serde(default)]
+    pub tuning: TuningConfig,
+}
+
+impl RuntimeConfig {
+    /// Returns the configured resource mode, or `standard` when unset.
+    ///
+    /// The serve path keys off this value directly; profile-based
+    /// resolution ([`RuntimeConfig::resolve_resource_mode`]) is wired in by
+    /// the startup-derivation slice.
+    #[must_use]
+    pub const fn resource_mode(&self) -> ResourceMode {
+        match self.resource_mode {
+            Some(mode) => mode,
+            None => ResourceMode::Standard,
+        }
+    }
+
+    /// Resolves the effective resource mode from `resourceMode`, `profile`,
+    /// and the detected machine view.
+    ///
+    /// An explicit `resourceMode` is authoritative. Otherwise a non-`auto`
+    /// profile maps onto the mode, and `auto` resolves to `dedicated` only
+    /// when the cgroup v2 tenancy boundary is fully observable (a finite
+    /// `cpu.max` quota and a finite `memory.max`); `auto` never guesses
+    /// dedicated on bare metal.
+    #[must_use]
+    pub fn resolve_resource_mode(
+        &self,
+        machine: &crate::runtime::machine::MachineReport,
+    ) -> ResourceMode {
+        if let Some(mode) = self.resource_mode {
+            return mode;
+        }
+        match self.profile {
+            RuntimeProfile::Shared => ResourceMode::Standard,
+            RuntimeProfile::Dedicated => ResourceMode::Dedicated,
+            RuntimeProfile::Auto => {
+                if machine.tenancy_boundary_observable() {
+                    ResourceMode::Dedicated
+                } else {
+                    ResourceMode::Standard
+                }
+            }
+        }
+    }
+}
+
+/// Machine-tenancy declaration used to resolve the resource mode.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuntimeProfile {
+    /// Defer to `resourceMode` when set, else detect single-tenancy from the
+    /// cgroup v2 boundaries; never guesses dedicated on bare metal.
+    #[default]
+    Auto,
+    /// Shared machine; maps onto `resourceMode: standard`.
+    Shared,
+    /// This process owns the machine or cgroup; maps onto
+    /// `resourceMode: dedicated`.
+    Dedicated,
+}
+
+impl RuntimeProfile {
+    /// Returns the stable configuration/log name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Shared => "shared",
+            Self::Dedicated => "dedicated",
+        }
+    }
+
+    /// Returns the resource mode a non-`auto` profile maps onto.
+    #[must_use]
+    pub const fn resource_mode(self) -> Option<ResourceMode> {
+        match self {
+            Self::Auto => None,
+            Self::Shared => Some(ResourceMode::Standard),
+            Self::Dedicated => Some(ResourceMode::Dedicated),
+        }
+    }
+}
+
+/// How the numeric policy is produced and maintained.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TuningMode {
+    /// Numbers come from `advanced.limits` (or the built-in defaults) and
+    /// never move. v1.5 behavior.
+    Fixed,
+    /// Derived once at startup from the detected machine; static for the
+    /// process lifetime. Default.
+    ///
+    /// Until the startup-derivation slice lands, this resolves to the same
+    /// fixed numbers as `fixed`.
+    #[default]
+    Startup,
+    /// Startup derivation plus a controller adjusting soft ceilings within
+    /// startup-derived hard bounds. Reserved; currently behaves as
+    /// `startup`.
+    Adaptive,
+}
+
+impl TuningMode {
+    /// Returns the stable configuration/log name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Fixed => "fixed",
+            Self::Startup => "startup",
+            Self::Adaptive => "adaptive",
+        }
+    }
+}
+
+/// Shape of the derived policy numbers.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Objective {
+    /// Prefer lower latency: tighter concurrency ceilings.
+    Latency,
+    /// Balanced derivation. Default.
+    #[default]
+    Balanced,
+    /// Prefer throughput: wider ceilings within machine-derived caps.
+    Throughput,
+}
+
+impl Objective {
+    /// Returns the stable configuration/log name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Latency => "latency",
+            Self::Balanced => "balanced",
+            Self::Throughput => "throughput",
+        }
+    }
+}
+
+/// Policy production and maintenance settings.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct TuningConfig {
+    /// How policy numbers are produced and maintained.
+    ///
+    /// Absent means `startup`, unless a deprecated top-level `policy`
+    /// object was present, which forces `fixed` (see
+    /// [`Config::normalize`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<TuningMode>,
+    /// Shape of the derived numbers; consulted only by derived modes.
+    #[serde(default)]
+    pub objective: Objective,
+}
+
+impl TuningConfig {
+    /// Returns the tuning mode, applying the `startup` default.
+    #[must_use]
+    pub const fn mode(&self) -> TuningMode {
+        match self.mode {
+            Some(mode) => mode,
+            None => TuningMode::Startup,
+        }
+    }
+}
+
+/// Expert escape hatch: the numeric resource and relay limits.
+///
+/// Every field of `limits` carries the v1.5 default; any field present pins
+/// that field. In this version the limits are the complete effective policy
+/// (fixed mode); the machine-derived `startup` and `adaptive` tuning modes
+/// arrive with the startup-derivation slice and will treat absent fields as
+/// derivable.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AdvancedConfig {
+    /// Numeric admission, direct-dial, buffer, and relay limits.
+    #[serde(default)]
+    pub limits: PolicyConfig,
 }
 
 /// Supported process resource modes.
@@ -1190,4 +1525,111 @@ const fn default_pipe_pool() -> bool {
 
 const fn default_max_pooled_pipes() -> u32 {
     512
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        Config, Objective, ResourceMode, RuntimeConfig, RuntimeProfile, TuningConfig, TuningMode,
+    };
+    use crate::runtime::machine::MachineReport;
+
+    fn machine_with(quota: Option<u64>, memory_max: Option<u64>) -> MachineReport {
+        let mut machine = MachineReport::conservative();
+        machine.cpu_quota_us = quota;
+        machine.cpu_period_us = quota.map(|_| 100_000);
+        machine.memory_max = memory_max;
+        machine
+    }
+
+    #[test]
+    fn an_explicit_resource_mode_is_authoritative_over_the_profile() {
+        for profile in [
+            RuntimeProfile::Auto,
+            RuntimeProfile::Shared,
+            RuntimeProfile::Dedicated,
+        ] {
+            let runtime = RuntimeConfig {
+                resource_mode: Some(ResourceMode::Standard),
+                profile,
+                tuning: TuningConfig::default(),
+            };
+            assert_eq!(
+                runtime.resolve_resource_mode(&machine_with(Some(400_000), Some(1 << 30))),
+                ResourceMode::Standard,
+                "resourceMode must win over profile {profile:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_auto_profile_maps_onto_the_resource_mode() {
+        let machine = machine_with(None, None);
+        for (profile, expected) in [
+            (RuntimeProfile::Shared, ResourceMode::Standard),
+            (RuntimeProfile::Dedicated, ResourceMode::Dedicated),
+        ] {
+            let runtime = RuntimeConfig {
+                resource_mode: None,
+                profile,
+                tuning: TuningConfig::default(),
+            };
+            assert_eq!(runtime.resolve_resource_mode(&machine), expected);
+        }
+    }
+
+    #[test]
+    fn auto_resolves_dedicated_only_when_the_tenancy_boundary_is_observable() {
+        let auto = RuntimeConfig::default();
+        assert_eq!(auto.profile, RuntimeProfile::Auto);
+        assert_eq!(
+            auto.resolve_resource_mode(&machine_with(Some(400_000), Some(1 << 30))),
+            ResourceMode::Dedicated,
+            "a finite cpu.max quota and memory.max make single-tenancy observable"
+        );
+        for machine in [
+            machine_with(Some(400_000), None),
+            machine_with(None, Some(1 << 30)),
+            machine_with(None, None),
+        ] {
+            assert_eq!(
+                auto.resolve_resource_mode(&machine),
+                ResourceMode::Standard,
+                "auto never guesses dedicated without the full cgroup boundary"
+            );
+        }
+    }
+
+    #[test]
+    fn tuning_defaults_match_the_documented_model() {
+        let tuning = TuningConfig::default();
+        assert_eq!(tuning.mode(), TuningMode::Startup);
+        assert_eq!(tuning.mode, None, "an unset mode must stay distinguishable");
+        assert_eq!(tuning.objective, Objective::Balanced);
+        assert_eq!(TuningMode::Fixed.as_str(), "fixed");
+        assert_eq!(TuningMode::Startup.as_str(), "startup");
+        assert_eq!(TuningMode::Adaptive.as_str(), "adaptive");
+        assert_eq!(Objective::Latency.as_str(), "latency");
+        assert_eq!(Objective::Balanced.as_str(), "balanced");
+        assert_eq!(Objective::Throughput.as_str(), "throughput");
+        assert_eq!(RuntimeProfile::Auto.as_str(), "auto");
+        assert_eq!(RuntimeProfile::Shared.as_str(), "shared");
+        assert_eq!(RuntimeProfile::Dedicated.as_str(), "dedicated");
+    }
+
+    #[test]
+    fn normalize_without_an_alias_is_a_noop() {
+        let mut config = Config {
+            policy: None,
+            runtime: RuntimeConfig {
+                resource_mode: None,
+                profile: RuntimeProfile::Dedicated,
+                tuning: TuningConfig::default(),
+            },
+            ..serde_json::from_str(crate::config::test_config_json()).expect("fixture must decode")
+        };
+        let before = config.clone();
+        assert!(!config.normalize().expect("normalize must succeed"));
+        assert_eq!(config, before);
+    }
 }

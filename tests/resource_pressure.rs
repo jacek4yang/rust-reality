@@ -616,7 +616,7 @@ fn dedicated_mode_raises_the_soft_limit_in_a_child_process() {
         })
         .expect("configuration must generate");
         let mut config = generated.config().clone();
-        config.runtime.resource_mode = ResourceMode::Dedicated;
+        config.runtime.resource_mode = Some(ResourceMode::Dedicated);
         ProductionServer::from_config(&config)
             .expect("a dedicated server must compile against the raised limit");
         return;

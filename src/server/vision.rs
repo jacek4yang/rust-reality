@@ -222,7 +222,7 @@ impl VisionHandler {
             crate::network::NetworkEnvironment,
         )>,
     ) -> Result<Self, RoutingCompileError> {
-        let governor = &config.policy.resource_governor;
+        let governor = &config.advanced.limits.resource_governor;
         let connect_timeout = Duration::from_millis(governor.connect_timeout_ms);
         let (outbounds, dns_governor) = match authorities {
             Some((_pressure, direct_barrier, dns_governor, network_environment)) => (
@@ -239,7 +239,7 @@ impl VisionHandler {
             None => (
                 OutboundRegistry::with_barrier_and_network(
                     &config.outbounds,
-                    crate::runtime::DirectBarrier::new(&config.policy.direct_barrier),
+                    crate::runtime::DirectBarrier::new(&config.advanced.limits.direct_barrier),
                     connect_timeout,
                     relay.fd_budget().clone(),
                     &config.network,

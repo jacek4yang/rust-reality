@@ -518,7 +518,7 @@ mod tests {
             .local_addr()
             .expect("cover address must exist")
             .to_string();
-        let policy = config.policy.resource_governor.clone();
+        let policy = config.advanced.limits.resource_governor.clone();
         let governor = ResourceGovernor::new(&policy);
         let replay = ReplayCache::new(governor.clone(), &policy);
         let acceptor = RealityAcceptor::from_inbound_with_replay(
@@ -592,7 +592,7 @@ mod tests {
             .stream_settings
             .reality_settings
             .target = refused_target;
-        let policy = config.policy.resource_governor.clone();
+        let policy = config.advanced.limits.resource_governor.clone();
         let governor = ResourceGovernor::new(&policy);
         let replay = ReplayCache::new(governor.clone(), &policy);
         let acceptor = RealityAcceptor::from_inbound_with_replay(

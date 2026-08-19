@@ -3,11 +3,11 @@ use std::net::IpAddr;
 use serde_json::json;
 
 use super::{
-    AssetsConfig, BlackholeSettings, Config, ConfigError, DnsConfig, DnsStrategy,
+    AdvancedConfig, AssetsConfig, BlackholeSettings, Config, ConfigError, DnsConfig, DnsStrategy,
     HandoffInboundConfig, HandoffInboundSettings, HandoffSettings, InboundConfig, LogConfig,
     Network, NetworkConfig, NxrInboundConfig, NxrInboundSettings, NxrSettings, OutboundConfig,
-    PolicyConfig, RealityConfig, RoutingConfig, RuntimeConfig, SecretString, StreamSettings,
-    UserPolicy, VlessClient, VlessInboundConfig, VlessInboundSettings, validate_config,
+    RealityConfig, RoutingConfig, RuntimeConfig, SecretString, StreamSettings, UserPolicy,
+    VlessClient, VlessInboundConfig, VlessInboundSettings, validate_config,
 };
 use crate::crypto::{
     KeyGenerationError, generate_node_key, generate_short_id, generate_uuid,
@@ -277,7 +277,8 @@ pub fn generate_minimal_config(
                 rules: Vec::new(),
             }],
         },
-        policy: PolicyConfig::default(),
+        policy: None,
+        advanced: AdvancedConfig::default(),
         runtime: RuntimeConfig::default(),
     };
     validate_config(&config)?;
@@ -342,7 +343,8 @@ pub fn generate_line_config(
                 rules: Vec::new(),
             }],
         },
-        policy: PolicyConfig::default(),
+        policy: None,
+        advanced: AdvancedConfig::default(),
         runtime: RuntimeConfig::default(),
     };
     validate_config(&config)?;
@@ -390,7 +392,8 @@ pub fn generate_landing_config(
             global_rules: Vec::new(),
             users: Vec::new(),
         },
-        policy: PolicyConfig::default(),
+        policy: None,
+        advanced: AdvancedConfig::default(),
         runtime: RuntimeConfig::default(),
     };
     validate_config(&config)?;
@@ -536,7 +539,8 @@ pub fn generate_multi_handoff_configs(
             global_rules: Vec::new(),
             users,
         },
-        policy: PolicyConfig::default(),
+        policy: None,
+        advanced: AdvancedConfig::default(),
         runtime: RuntimeConfig::default(),
     };
     validate_config(&line)?;
@@ -652,7 +656,8 @@ fn handoff_landing_config(
             global_rules: Vec::new(),
             users: Vec::new(),
         },
-        policy: PolicyConfig::default(),
+        policy: None,
+        advanced: AdvancedConfig::default(),
         runtime: RuntimeConfig::default(),
     }
 }
