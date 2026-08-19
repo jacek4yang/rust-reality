@@ -354,6 +354,13 @@ impl DirectBarrier {
         self.inner.concurrency.ceiling()
     }
 
+    /// Returns the number of dial permits currently held, the adaptive
+    /// controller's utilization signal for both direct-dial knobs.
+    #[must_use]
+    pub fn in_flight(&self) -> u64 {
+        self.inner.concurrency.in_flight()
+    }
+
     /// Adjusts the soft ceiling on concurrent direct dials, clamped to the
     /// configured limit. Lowering takes effect on subsequent dials only;
     /// held dial permits are never revoked (design §3.3).

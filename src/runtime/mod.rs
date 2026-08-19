@@ -17,6 +17,7 @@ pub use fd_plan::{
     FdBudgetError, FdBudgetPlan, FdHeadroomPolicy, FixedFdReserve, MINIMUM_DYNAMIC_UNITS,
 };
 pub use pressure::{PressureGauge, ResourcePressure};
+pub mod adaptive;
 pub mod connection;
 pub mod machine;
 pub mod plan;
