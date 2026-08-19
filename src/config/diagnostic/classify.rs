@@ -134,8 +134,31 @@ fn path_help(path: &str) -> Option<&'static str> {
     }
 }
 
+/// Diagnostics for fields removed in v1.6, per AGENTS.md §7: recognizing a
+/// removed field name solely to emit a targeted fatal error is acceptable.
+fn removed_field(path: &str) -> Option<Classified> {
+    let (title, help) = match path {
+        "policy" => (
+            "field `policy` was removed in v1.6",
+            "move every value to the identically named `advanced.limits.*` fields",
+        ),
+        "runtime.resourceMode" => (
+            "field `runtime.resourceMode` was removed in v1.6",
+            "use `runtime.profile` (\"auto\", \"shared\", or \"dedicated\")",
+        ),
+        _ => return None,
+    };
+    let mut classified = Classified::plain(title, SpanTarget::PathKey(path.to_owned()));
+    classified.config_path = Some(path.to_owned());
+    classified.help = Some(help.to_owned());
+    Some(classified)
+}
+
 fn classify_data(path: &str, message: &str) -> Classified {
     if let Some(name) = quoted_after(message, "unknown field `") {
+        if let Some(removed) = removed_field(path) {
+            return removed;
+        }
         let mut classified = Classified::plain(
             format!("unknown field `{name}`"),
             SpanTarget::PathKey(path.to_owned()),
