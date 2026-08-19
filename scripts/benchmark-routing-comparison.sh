@@ -143,10 +143,10 @@ trap 'exit 143' TERM
 
 wait_port() {
     local port=$1 pid=$2 proto=${3:-tcp}
-    python3 - "$port" "$pid" "${active_starts[$pid]}" "$proto" <<'PY'
+    python3 - "$port" "$pid" "${active_starts[$pid]}" "$proto" "${WAIT_PORT_DEADLINE:-20}" <<'PY'
 import socket, sys, time
 port, pid, expected, proto = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
-deadline = time.monotonic() + 20
+deadline = time.monotonic() + float(sys.argv[5]) if len(sys.argv) > 5 else time.monotonic() + 20
 while time.monotonic() < deadline:
     try:
         raw = open(f"/proc/{pid}/stat").read()
