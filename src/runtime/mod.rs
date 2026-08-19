@@ -19,3 +19,4 @@ pub use fd_plan::{
 pub use pressure::{PressureGauge, ResourcePressure};
 pub mod connection;
 pub mod machine;
+pub mod plan;
