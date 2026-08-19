@@ -67,7 +67,7 @@ explainable, and explicitly overridable.
 Breaking changes are documented concisely in CHANGELOG.md. The **complete**
 operator-facing old→new migration procedure goes into the GitHub Release
 notes of the release that introduces the break, ending with
-`rust-reality config check --config config.json`. The production binary
+`rust-reality check --config config.json`. The production binary
 contains no version-to-version migration engine, and the repository keeps no
 migration-guide archive. Removed configuration fields are rejected strictly;
 recognizing a removed field name solely to emit a targeted fatal error
@@ -97,7 +97,22 @@ away. Run the full quality gates before merging:
     ./scripts/check.sh
     git diff --check
 
-## 10. Decision test
+## 10. Performance and fuzz discipline
+
+- Profile before optimizing; never optimize on intuition.
+- Trace every performance-relevant source change to PMU, syscall, or
+  allocation evidence, and inspect the generated machine code of material
+  hot paths.
+- Never game a benchmark and never publish selective performance claims;
+  retain exact binary identities and the raw evidence behind every number.
+- Fuzz coverage is an attack-surface requirement: every new parser,
+  decoder, or reconstruction path ships with a fuzz target.
+- Preserve current Xray interoperability in every optimization.
+- Revert experiments that show no repeatable benefit; do not explain them
+  away.
+- Profiling instrumentation stays off production hot paths.
+
+## 11. Decision test
 
 For any questionable compatibility path ask: "If rust-reality were created
 today, would we intentionally implement this?" If no — delete it. For any
