@@ -112,9 +112,17 @@ addresses dialed.
 | `dns.cache.maxTtlSeconds` | no | `3600` | Ceiling clamp applied to upstream positive TTLs, `1..=86400`. |
 | `dns.cache.negativeTtlSeconds` | no | `60` | Ceiling clamp applied to upstream negative (SOA) TTLs, `0..=86400`. NXDOMAIN/NODATA answers without an SOA TTL are never cached. |
 | `dns.cache.staticTtlSeconds` | no | `300` | Cache duration for configured static peers (REALITY cover target, fixed SOCKS5/NXR/Handoff endpoints) in every resolver mode, `1..=86400`. |
+| `dns.cache.systemReuseMs` | no | `0` | Optional recent-completion reuse window in milliseconds, applied only with `dns.servers = ["system"]`: positive getaddrinfo answers (which carry no TTL) are reused for at most this long, `0..=60000`. This is NOT authoritative TTL caching — an upstream change becomes visible only when the window expires; negative answers are never cached and there is no stale-while-revalidate. `0` disables it. Ignored with real DNS servers, where upstream TTLs govern. |
+
+Cache identity is the (query class, name) pair: a static peer entry and a
+dynamic per-session entry for the same name are independent slots with
+independent lifetimes, both counting against `maxEntries`. The static TTL
+can never extend a dynamic answer, and a dynamic answer can never satisfy a
+static lookup.
 
 System mode does not cache dynamic answers: getaddrinfo exposes no TTLs, so
-only singleflight coalescing and admission governance apply. With real DNS
+only singleflight coalescing and admission governance apply, unless the
+optional `systemReuseMs` recent-completion window is configured. With real DNS
 servers, every cached positive or negative answer carries the upstream TTL
 clamped to the bounds above. Configured static peers are the explicit
 exception: they are cached in every resolver mode, the operator owns their

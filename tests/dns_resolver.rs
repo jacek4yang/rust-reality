@@ -584,6 +584,46 @@ async fn family_filtering_reads_the_same_cached_answer() {
 }
 
 #[tokio::test]
+async fn static_and_dynamic_lookups_of_one_name_use_independent_entries() {
+    // Cache identity includes the query class: a static entry and a dynamic
+    // entry for the same name have independent lifetimes. The dynamic entry
+    // must not satisfy the static lookup and vice versa.
+    let server = FakeDns::start().await;
+    server.set("peer.test", Scenario::answers(&[42], &[], 300));
+    let resolver = resolver(&server, 2_000);
+
+    resolver
+        .resolve("peer.test", IpFamily::Any, BUDGET)
+        .await
+        .expect("dynamic resolution");
+    let after_dynamic = server.query_count();
+    resolver
+        .resolve_static("peer.test", IpFamily::Any, BUDGET)
+        .await
+        .expect("static resolution");
+    assert!(
+        server.query_count() > after_dynamic,
+        "the static lookup must go upstream despite the cached dynamic entry"
+    );
+    let after_static = server.query_count();
+    for _ in 0..4 {
+        resolver
+            .resolve("peer.test", IpFamily::Any, BUDGET)
+            .await
+            .expect("warm dynamic resolution");
+        resolver
+            .resolve_static("peer.test", IpFamily::Any, BUDGET)
+            .await
+            .expect("warm static resolution");
+    }
+    assert_eq!(
+        server.query_count(),
+        after_static,
+        "each class is then served by its own entry"
+    );
+}
+
+#[tokio::test]
 async fn connector_dials_cached_static_targets_without_re_resolving() {
     let server = FakeDns::start().await;
     server.set(

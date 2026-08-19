@@ -2,6 +2,28 @@
 
 All notable user-facing changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Optional `dns.cache.systemReuseMs` recent-completion reuse window for the
+  system resolver (`["system"]` mode): positive getaddrinfo answers, which
+  carry no TTL, may be reused for a short bounded window (`0..=60000` ms,
+  default `0` = off). This is not authoritative TTL caching: an upstream
+  change becomes visible only when the window expires, negative answers are
+  never cached, and there is no stale-while-revalidate. Ignored with real
+  DNS servers, where upstream TTLs govern.
+
+### Fixed
+
+- The shared DNS cache identity now includes the query class. Previously a
+  static configured peer and a dynamic per-session destination with the same
+  name shared one cache slot, so a static lookup could be served by a
+  dynamic entry (or vice versa) and the static TTL could extend a dynamic
+  answer. Static and dynamic entries for one name now have independent
+  lifetimes, both counting against `dns.cache.maxEntries`; static negative
+  results remain uncached.
+
 ## [1.5.0] - 2026-08-19
 
 ### Added

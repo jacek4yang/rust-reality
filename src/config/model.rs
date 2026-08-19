@@ -468,12 +468,15 @@ const fn default_dns_timeout_ms() -> u64 {
 ///
 /// Dynamic answers are cached only when their TTL is backed by the upstream
 /// resolver: with `dns.servers = ["system"]` the system resolver exposes no
-/// TTLs, so only singleflight coalescing applies and nothing is cached. With
-/// real DNS servers every cached positive or negative answer carries the
-/// upstream TTL clamped to these bounds. Static configured peers (REALITY
-/// cover target, fixed SOCKS5/NXR/Handoff endpoints) are the explicit
-/// exception: the operator owns their staleness through `staticTtlSeconds`,
-/// so they are cached in every resolver mode.
+/// TTLs, so only singleflight coalescing applies and nothing is cached —
+/// unless the optional `systemReuseMs` recent-completion window reuses
+/// positive answers for a short bounded time (not authoritative TTL caching;
+/// negative answers are never cached). With real DNS servers every cached
+/// positive or negative answer carries the upstream TTL clamped to these
+/// bounds. Static configured peers (REALITY cover target, fixed
+/// SOCKS5/NXR/Handoff endpoints) are the explicit exception: the operator
+/// owns their staleness through `staticTtlSeconds`, so they are cached in
+/// every resolver mode.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DnsCacheConfig {
@@ -494,6 +497,15 @@ pub struct DnsCacheConfig {
     /// Cache duration for static configured peers, in every resolver mode.
     #[serde(default = "default_dns_cache_static_ttl_seconds")]
     pub static_ttl_seconds: u32,
+    /// Optional recent-completion reuse window, in milliseconds, applied only
+    /// with `dns.servers = ["system"]`: positive getaddrinfo answers (which
+    /// carry no TTL) are reused for at most this long. This is NOT
+    /// authoritative TTL caching: an upstream change becomes visible only
+    /// when the window expires, negative answers are never cached, and there
+    /// is no stale-while-revalidate. `0` (the default) disables it; ignored
+    /// with real DNS servers, where upstream TTLs govern.
+    #[serde(default)]
+    pub system_reuse_ms: u64,
 }
 
 impl Default for DnsCacheConfig {
@@ -504,6 +516,7 @@ impl Default for DnsCacheConfig {
             max_ttl_seconds: default_dns_cache_max_ttl_seconds(),
             negative_ttl_seconds: default_dns_cache_negative_ttl_seconds(),
             static_ttl_seconds: default_dns_cache_static_ttl_seconds(),
+            system_reuse_ms: 0,
         }
     }
 }

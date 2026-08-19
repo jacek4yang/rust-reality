@@ -102,9 +102,16 @@ SOCKS5/NXR/Handoff 服务器名——都经过一个共享的进程级解析器�
 | `dns.cache.maxTtlSeconds` | 否 | `3600` | 对上游阳性 TTL 施加的上限钳制，`1..=86400`。 |
 | `dns.cache.negativeTtlSeconds` | 否 | `60` | 对上游阴性（SOA）TTL 施加的上限钳制，`0..=86400`。没有 SOA TTL 的 NXDOMAIN/NODATA 应答绝不缓存。 |
 | `dns.cache.staticTtlSeconds` | 否 | `300` | 已配置静态对端（REALITY 伪装目标、固定的 SOCKS5/NXR/Handoff 端点）在任意解析器模式下的缓存时长，`1..=86400`。 |
+| `dns.cache.systemReuseMs` | 否 | `0` | 可选的近期完成复用窗口（毫秒），仅在 `dns.servers = ["system"]` 时生效：不带 TTL 的 getaddrinfo 阳性应答最多复用该时长，`0..=60000`。这不是权威 TTL 缓存——上游变更只在窗口过期后可见；阴性应答绝不缓存，也不提供过期期间旧应答（stale-while-revalidate）。`0` 表示关闭。使用真实 DNS 服务器时忽略此项，由上游 TTL 决定。 |
+
+缓存标识是（查询类别，域名）二元组：同一域名的静态对端条目与动态
+会话条目是相互独立的槽位，生命周期互不影响，并共同计入
+`maxEntries`。静态 TTL 绝不会延长动态应答，动态应答也绝不会满足静态
+查询。
 
 system 模式不缓存动态应答：getaddrinfo 不提供 TTL，因此只有
-singleflight 合并和准入治理生效。使用真实 DNS 服务器时，每条缓存的
+singleflight 合并和准入治理生效，除非配置了可选的 `systemReuseMs`
+近期完成复用窗口。使用真实 DNS 服务器时，每条缓存的
 阳性或阴性应答都携带按上述边界钳制后的上游 TTL。已配置静态对端是
 明确的例外：它们在任意解析器模式下都会被缓存，其过期风险由运维者
 通过 `staticTtlSeconds` 自行承担；静态阴性结果绝不缓存。
