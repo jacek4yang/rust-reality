@@ -118,6 +118,25 @@ sysctls). `--json` prints the same report in a stable schema
 | `-c, --config <PATH>` | yes | Strict JSON configuration file. |
 | `--json` | no | Print the machine-readable JSON report instead of the human summary. |
 
+### `runtime report`
+
+```text
+rust-reality runtime report --status-file <PATH> [--json]
+```
+
+Prints the last adaptive-controller snapshot a running instance published to
+its `runtime.statusFile`: the resource-pressure state and every soft ceiling
+with its current value, floor, startup-derived hard bound, held permits, and
+most recent transition (reason and timestamp). The command only reads the
+file; it never contacts the running process. The file exists only on
+instances running `runtime.tuning.mode: adaptive` with `runtime.statusFile`
+set.
+
+| Option | Required | Meaning |
+| --- | --- | --- |
+| `--status-file <PATH>` | yes | Status file published by the running instance (`runtime.statusFile`). |
+| `--json` | no | Print the machine-readable JSON snapshot instead of the human summary. |
+
 ## Configuration commands
 
 ### `config generate standalone`

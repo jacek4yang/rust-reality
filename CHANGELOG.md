@@ -60,9 +60,31 @@ Then run `rust-reality check --config config.json`.
   `throughput`) scales selected derived outputs after the balanced
   derivation, with the hard caps and safety floors documented in
   `docs/configuration.md#startup-policy-derivation`. `fixed` mode keeps
-  v1.5 behavior byte-for-byte; `adaptive` derives exactly like `startup` in
-  this release — the controller adjusting soft ceilings at runtime is not
-  shipped yet.
+  v1.5 behavior byte-for-byte.
+- Adaptive tuning mode (`runtime.tuning.mode: adaptive`): a controller
+  adjusts the soft admission ceilings (the six `resourceGovernor` pools and
+  `directBarrier.maxConcurrent`) and the GCRA dial rate
+  (`directBarrier.maxPerSecond`) at runtime, within startup-derived hard
+  bounds above and the v1.5 built-in defaults below. Decisions are
+  deterministic and explainable: a 5-second tick, scale-up after 3
+  consecutive ticks at ≥85% utilization, scale-down after 6 consecutive
+  ticks at ≤40%, a 30-second dwell between successive changes to the same
+  knob, ±25% steps quantized to 64 (counts) or 16 (rate), and a one-tick
+  clamp to the floor under critical resource pressure. Held permits are
+  never revoked; timeouts, replay retention, relay pools, the descriptor
+  budget, and listener topology are never touched. `fixed` and `startup`
+  behavior is byte-identical to before — no controller exists outside
+  `adaptive` mode.
+- `runtime.statusFile`: in `adaptive` mode the controller atomically
+  rewrites this JSON snapshot at startup and on every ceiling or pressure
+  transition (pressure state, every knob's value/floor/ceiling/held permits,
+  and the last transition with reason and timestamp). Cold setting.
+- `rust-reality runtime report --status-file <PATH> [--json]`: prints the
+  last adaptive-controller snapshot a running instance published; reads the
+  file only, never contacts the process.
+- New log events: `adaptive_ceiling_changed` (info, exactly one per knob
+  transition — nothing is logged per tick) and
+  `adaptive_status_write_failed` (warn, bounded per failed publish).
 - Dedicated bootstrap topology: `serve` now detects the machine and resolves
   the profile before building the Tokio runtime. In the `dedicated` posture
   the pools are sized from the cgroup-aware CPU view

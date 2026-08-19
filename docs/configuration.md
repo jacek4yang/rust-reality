@@ -745,8 +745,9 @@ Process-level resource posture. The whole object is optional.
 | Field | Required when object present | Default / allowed | Constraints / meaning |
 | --- | --- | --- | --- |
 | `runtime.profile` | no | `auto`; `auto`, `shared`, `dedicated` | Who owns this machine. `shared` selects the standard resource posture and `dedicated` the dedicated posture (raise the soft `RLIMIT_NOFILE` to the hard limit, derive the descriptor budget with the dedicated headroom, and run the bounded memory-pressure monitor; see [Dedicated resource mode](#dedicated-resource-mode)). `auto` resolves to `dedicated` only when the cgroup v2 tenancy boundary is fully observable (a finite `cpu.max` quota and a finite `memory.max`); it never guesses dedicated on bare metal. Cold setting; changing it requires a restart. |
-| `runtime.tuning.mode` | no | `startup`; `fixed`, `startup`, `adaptive` | How the numeric policy is produced. `fixed` takes the numbers from `advanced.limits` (or the built-in defaults) and never moves them — v1.5 behavior. `startup` derives every unpinned field once at startup from the detected machine. `adaptive` derives exactly like `startup` in this version; the controller that adjusts soft ceilings within the derived hard bounds is not shipped yet. See [Startup policy derivation](#startup-policy-derivation). |
+| `runtime.tuning.mode` | no | `startup`; `fixed`, `startup`, `adaptive` | How the numeric policy is produced. `fixed` takes the numbers from `advanced.limits` (or the built-in defaults) and never moves them — v1.5 behavior. `startup` derives every unpinned field once at startup from the detected machine. `adaptive` derives exactly like `startup` and additionally runs the adaptive controller, which adjusts the soft admission ceilings and the direct-dial rate within the startup-derived bounds. See [Startup policy derivation](#startup-policy-derivation) and [Adaptive ceilings](#adaptive-ceilings). |
 | `runtime.tuning.objective` | no | `balanced`; `latency`, `balanced`, `throughput` | Shape of the derived numbers; consulted only by the derived tuning modes (`startup`, `adaptive`). |
+| `runtime.statusFile` | no | unset; a file path | Consulted only in `adaptive` tuning mode: the controller atomically rewrites this JSON snapshot at startup and on every ceiling or pressure transition, and `rust-reality runtime report` reads it. Cold setting; changing it requires a restart. |
 
 ### Startup policy derivation
 
@@ -800,6 +801,41 @@ The effective policy is cold. A reload re-derives the candidate against the
 current machine view and rejects when the derived numbers would differ —
 including drift caused only by a changed cgroup boundary since startup —
 because the admission pools were sized at process start and cannot move.
+
+### Adaptive ceilings
+
+With `runtime.tuning.mode: adaptive` the startup derivation runs exactly as
+in `startup` mode, and a controller then adjusts the *soft* ceilings at
+runtime. A soft ceiling can only tighten admission below the constructed
+pool size; permits already held are never revoked, so established sessions
+are unaffected.
+
+- **Knobs**: the six `resourceGovernor` admission ceilings, plus
+  `directBarrier.maxConcurrent` and `directBarrier.maxPerSecond` (the GCRA
+  dial rate, driven by the same dial-demand signal as the concurrency
+  ceiling). Nothing else moves: all timeouts, `replayRetentionMs`, relay
+  buffer and pool sizes, the descriptor budget, listener topology, and DNS
+  policy are startup-only.
+- **Bounds**: each knob is bounded above by its startup-derived value (the
+  effective policy the pools were constructed with) and below by the v1.5
+  built-in default for the field, lowered to the startup value when an
+  operator pin sits below the default — a pinned ceiling is respected
+  exactly and the server always keeps a responsive minimum.
+- **Decisions**: the controller ticks every 5 seconds and measures held
+  permits against the soft ceiling in effect. A knob scales up after 3
+  consecutive ticks at or above 85% utilization and down after 6 consecutive
+  ticks at or below 40% — fast to protect, slow to relax — with a minimum of
+  30 seconds between successive changes to the same knob. Each step is 25%
+  of the startup value, quantized (counts in 64s, the dial rate in 16s).
+- **Critical pressure**: one tick at critical resource pressure clamps every
+  knob to its floor in a single step, bypassing hysteresis and dwell.
+  Recovery walks back up through the normal hysteresis.
+- **Observability**: every knob change emits exactly one
+  `adaptive_ceiling_changed` log event; nothing is logged per tick. When
+  `runtime.statusFile` is set, the controller additionally rewrites that
+  JSON file atomically at startup and on every ceiling or pressure
+  transition; `rust-reality runtime report --status-file <PATH> [--json]`
+  prints the last published snapshot.
 
 ### Bootstrap runtime topology
 
@@ -916,9 +952,10 @@ Restart required:
 - any `dns` change (`servers`, `timeoutMs`, or `cache`), because the shared
   resolver — including its timeout and cache bounds — is installed once at
   startup and remains process-lifetime;
-- any `runtime` change (`profile` or `tuning`), because the
+- any `runtime` change (`profile`, `tuning`, or `statusFile`), because the
   resource posture shapes the process-lifetime descriptor budget and memory
-  monitor; the tuning mode compares strictly, so `fixed` ↔ `startup` ↔
+  monitor and the adaptive controller is process-lifetime; the tuning mode
+  compares strictly, so `fixed` ↔ `startup` ↔
   `adaptive` drift always requires a restart;
 - under a derived tuning mode (`startup`/`adaptive`), anything that would
   change the derived numbers — an edited `advanced.limits` pin or a changed

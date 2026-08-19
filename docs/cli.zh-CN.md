@@ -104,6 +104,23 @@ Tokio 线程池尺寸，并完全按 `serve` 启动时的方式计算生效的�
 | `-c, --config <PATH>` | 是 | 严格 JSON 配置文件。 |
 | `--json` | 否 | 输出机器可读 JSON 报告，而不是人类可读摘要。 |
 
+### `runtime report`
+
+```text
+rust-reality runtime report --status-file <PATH> [--json]
+```
+
+打印运行中实例发布到其 `runtime.statusFile` 的最后一份自适应控制器快照：
+资源压力状态，以及每个软上限的当前值、下界、启动推导硬界、持有许可数和最近
+一次调整（原因与时间戳）。该命令只读取文件，绝不接触运行中的进程。只有在
+`runtime.tuning.mode: adaptive` 且设置了 `runtime.statusFile` 的实例上该文件
+才存在。
+
+| 选项 | 必填 | 含义 |
+| --- | --- | --- |
+| `--status-file <PATH>` | 是 | 运行中实例发布的状态文件（`runtime.statusFile`）。 |
+| `--json` | 否 | 输出机器可读 JSON 快照，而不是人类可读摘要。 |
+
 ## 配置命令
 
 ### `config generate standalone`
