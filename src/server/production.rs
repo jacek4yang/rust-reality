@@ -16,6 +16,7 @@ use std::{
 use arc_swap::ArcSwap;
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
+use std::io::Write as _;
 use tokio::{
     sync::{mpsc, watch},
     task::{JoinError, JoinSet},
@@ -679,7 +680,7 @@ impl ProductionServer {
                                 ("configuration", runtime.reload_path(&path))
                             });
                         } else {
-                            emit_rejected(&self.runtime, "configuration");
+                            emit_rejected(&self.runtime, "configuration", None);
                         }
                     }
                     reset_refresh(&mut refresh, self.runtime.reload_interval());
@@ -694,8 +695,10 @@ impl ProductionServer {
                 completed = update_tasks.join_next(), if !update_tasks.is_empty() => {
                     match completed {
                         Some(Ok((_, Ok(_)))) => {}
-                        Some(Ok((field, Err(_)))) => emit_rejected(&self.runtime, field),
-                        Some(Err(_)) | None => emit_rejected(&self.runtime, "configuration"),
+                        Some(Ok((field, Err(error)))) => {
+                            emit_rejected(&self.runtime, field, Some(&error));
+                        }
+                        Some(Err(_)) | None => emit_rejected(&self.runtime, "configuration", None),
                     }
                     reset_refresh(&mut refresh, self.runtime.reload_interval());
                 }
@@ -1644,13 +1647,23 @@ fn emit_debug(logger: &Logger, event: impl FnOnce() -> LogEvent) {
     }
 }
 
-fn emit_rejected(runtime: &RuntimeStore, field: &'static str) {
+fn emit_rejected(runtime: &RuntimeStore, field: &'static str, error: Option<&RuntimeUpdateError>) {
     emit(
         &runtime.load().logger,
         &LogEvent::ConfigurationRejected {
             field: field.to_owned(),
         },
     );
+    // The structured event stays a closed shape (a stable path, never
+    // configuration content); the full compiler-style diagnostic goes to
+    // stderr instead, where systemd captures it into the journal and an
+    // interactive operator sees it directly.
+    if let Some(error) = error {
+        let _ignored = writeln!(
+            io::stderr().lock(),
+            "configuration {field} reload rejected:\n{error}"
+        );
+    }
 }
 
 fn emit_admission(logger: &Logger, error: AdmissionDenied) {
