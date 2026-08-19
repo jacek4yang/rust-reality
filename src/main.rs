@@ -93,6 +93,9 @@ enum RuntimeCommand {
     /// Explain the detected machine, resolved profile, bootstrap sizing, and
     /// the effective numeric policy, field by field. Fully offline.
     Explain(RuntimeExplainArgs),
+    /// Print the last adaptive-controller snapshot a running instance
+    /// published to its status file.
+    Report(RuntimeReportArgs),
 }
 
 #[derive(Debug, Args)]
@@ -101,6 +104,17 @@ struct RuntimeExplainArgs {
     #[arg(short, long, value_name = "PATH")]
     config: PathBuf,
     /// Print the machine-readable JSON report instead of the human summary.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct RuntimeReportArgs {
+    /// Status-file path the running instance publishes
+    /// (`runtime.statusFile`); consulted only in `adaptive` tuning mode.
+    #[arg(long, value_name = "PATH")]
+    status_file: PathBuf,
+    /// Print the machine-readable JSON snapshot instead of the human summary.
     #[arg(long)]
     json: bool,
 }
@@ -280,6 +294,7 @@ enum CliError {
     InvalidArgument(&'static str),
     Benchmark(BenchmarkError),
     Autotune(AutotuneError),
+    StatusReport(rust_reality::runtime::adaptive::StatusReadError),
 }
 
 impl fmt::Display for CliError {
@@ -297,6 +312,7 @@ impl fmt::Display for CliError {
             Self::InvalidArgument(message) => formatter.write_str(message),
             Self::Benchmark(source) => source.fmt(formatter),
             Self::Autotune(source) => source.fmt(formatter),
+            Self::StatusReport(source) => source.fmt(formatter),
         }
     }
 }
@@ -316,7 +332,14 @@ impl Error for CliError {
             Self::InvalidArgument(_) => None,
             Self::Benchmark(source) => Some(source),
             Self::Autotune(source) => Some(source),
+            Self::StatusReport(source) => Some(source),
         }
+    }
+}
+
+impl From<rust_reality::runtime::adaptive::StatusReadError> for CliError {
+    fn from(source: rust_reality::runtime::adaptive::StatusReadError) -> Self {
+        Self::StatusReport(source)
     }
 }
 
@@ -502,6 +525,16 @@ fn run_runtime(command: RuntimeCommand) -> Result<(), CliError> {
                 write_stdout(output)
             } else {
                 write_stdout(format_args!("{explanation}"))
+            }
+        }
+        RuntimeCommand::Report(arguments) => {
+            let status = rust_reality::runtime::adaptive::read_status(&arguments.status_file)?;
+            if arguments.json {
+                let mut output = serde_json::to_string_pretty(&status)?;
+                output.push('\n');
+                write_stdout(output)
+            } else {
+                write_stdout(format_args!("{status}"))
             }
         }
     }
@@ -932,6 +965,30 @@ mod tests {
         assert!(
             Cli::try_parse_from(["rust-reality", "runtime", "explain"]).is_err(),
             "the configuration path is required"
+        );
+    }
+
+    #[test]
+    fn parses_runtime_report() {
+        let cli = Cli::try_parse_from([
+            "rust-reality",
+            "runtime",
+            "report",
+            "--status-file",
+            "/run/rust-reality/status.json",
+            "--json",
+        ])
+        .expect("runtime report must parse");
+
+        assert!(matches!(
+            cli.command,
+            Command::Runtime {
+                command: super::RuntimeCommand::Report(_)
+            }
+        ));
+        assert!(
+            Cli::try_parse_from(["rust-reality", "runtime", "report"]).is_err(),
+            "the status-file path is required"
         );
     }
 

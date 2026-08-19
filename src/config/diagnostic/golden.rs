@@ -132,7 +132,7 @@ fn golden_strong_typo_suggestion() {
             "98 |     \"profiel\": \"shared\"\n",
             "   |     ^^^^^^^^^ unknown field\n",
             "   |\n",
-            "   = expected: \"profile\" or \"tuning\"\n",
+            "   = expected: \"profile\", \"tuning\", or \"statusFile\"\n",
             "   = help: did you mean `profile`?"
         )
     );
@@ -154,7 +154,7 @@ fn golden_weak_typo_has_no_suggestion() {
             "98 |     \"profeil\": \"shared\"\n",
             "   |     ^^^^^^^^^ unknown field\n",
             "   |\n",
-            "   = expected: \"profile\" or \"tuning\""
+            "   = expected: \"profile\", \"tuning\", or \"statusFile\""
         )
     );
 }

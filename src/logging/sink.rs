@@ -317,6 +317,35 @@ pub enum LogEvent {
         /// The memory critical-enter watermark in effect.
         memory_critical_enter: u64,
     },
+    /// One adaptive-controller soft-ceiling transition.
+    ///
+    /// Emitted once per knob change, never per tick: a steady state costs
+    /// nothing and a flap is bounded by the controller's dwell.
+    AdaptiveCeilingChanged {
+        /// Stable knob identifier, e.g. `resourceGovernor.maxConnections`.
+        knob: &'static str,
+        /// Why the ceiling moved: `critical-pressure`, `high-utilization`,
+        /// or `low-utilization`.
+        reason: &'static str,
+        /// Previous soft ceiling.
+        from: u64,
+        /// New soft ceiling.
+        to: u64,
+        /// The knob's documented minimum.
+        floor: u64,
+        /// The knob's startup-derived hard bound.
+        ceiling: u64,
+    },
+    /// The adaptive controller could not rewrite its status file.
+    ///
+    /// Emitted once per failed publish attempt; attempts happen only at
+    /// startup and on transitions, so a broken path cannot spam the log.
+    AdaptiveStatusWriteFailed {
+        /// The configured status-file path.
+        path: String,
+        /// The I/O failure.
+        error: String,
+    },
     /// A recoverable listener accept error.
     ///
     /// The raw errno is included because diagnosing the incident this event
@@ -400,7 +429,9 @@ impl LogEvent {
             | Self::DescriptorPressureChanged { .. }
             | Self::ResourcePressureChanged { .. }
             | Self::MemorySamplerChanged { .. }
+            | Self::AdaptiveStatusWriteFailed { .. }
             | Self::AcceptErrorRecovered { .. } => LogLevel::Warn,
+            Self::AdaptiveCeilingChanged { .. } => LogLevel::Info,
         }
     }
 }

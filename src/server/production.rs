@@ -35,7 +35,7 @@ use crate::{
     runtime::{
         AdmissionDenied, AdmissionKind, AdmissionPermit, DirectBarrier, FdBudget, FdBudgetError,
         FdBudgetPlan, FdHeadroomPolicy, FdPermit, FixedFdReserve, PressureGauge, ResourceGovernor,
-        ResourcePressure, UNITS_INBOUND_SOCKET,
+        ResourcePressure, UNITS_INBOUND_SOCKET, adaptive,
         connection::ConnectionTasks,
         machine::{self, MachineReport, MemoryPlan, MemorySampler},
         plan,
@@ -648,6 +648,21 @@ impl ProductionServer {
                 shutdown_receiver.clone(),
             ))
         });
+        // The adaptive controller exists only under the `adaptive` tuning
+        // mode; under `fixed` and `startup` nothing adjusts the ceilings and
+        // behavior is byte-identical to v1.5.
+        let adaptive_task = adaptive_controller(
+            &initial.config,
+            &self.runtime.authorities,
+            &self.runtime.pressure,
+        )
+        .map(|controller| {
+            tokio::spawn(run_adaptive_controller(
+                Arc::clone(&self.runtime),
+                controller,
+                shutdown_receiver.clone(),
+            ))
+        });
         let network_refresh_task = tokio::spawn(run_network_refresh(
             self.runtime.authorities.network_environment.clone(),
             Duration::from_secs(initial.config.network.dial.route_refresh_seconds),
@@ -707,6 +722,9 @@ impl ProductionServer {
 
         update_tasks.abort_all();
         if let Some(task) = monitor_task {
+            task.abort();
+        }
+        if let Some(task) = adaptive_task {
             task.abort();
         }
         network_refresh_task.abort();
@@ -1395,6 +1413,98 @@ async fn run_resource_monitor(
                 },
             );
         }
+    }
+}
+
+/// Builds the adaptive soft-ceiling controller when the tuning mode selects one.
+///
+/// The controller exists only under `adaptive`: under `fixed` and `startup`
+/// no controller is built, nothing ever adjusts a ceiling or the dial rate,
+/// and behavior is byte-identical to v1.5. The knobs are derived from the
+/// effective startup policy, so every hard bound is exactly the value the
+/// pools were constructed with.
+fn adaptive_controller(
+    config: &Config,
+    authorities: &ProcessAuthorities,
+    pressure: &PressureGauge,
+) -> Option<adaptive::AdaptiveController> {
+    (config.runtime.tuning.mode() == TuningMode::Adaptive).then(|| {
+        adaptive::AdaptiveController::new(
+            authorities.governor.clone(),
+            authorities.direct_barrier.clone(),
+            pressure.clone(),
+            &config.advanced.limits,
+            config.runtime.status_file.clone(),
+        )
+    })
+}
+
+/// Runs the adaptive controller until shutdown.
+///
+/// One tick every five seconds, driven by the same cancellable
+/// sleep-or-shutdown pattern as the resource monitor; the loop holds no
+/// lock across an await, so shutdown is never delayed. Observability is
+/// transition-based: exactly one structured event per knob change, and the
+/// status file (when `runtime.statusFile` is set) is rewritten at startup
+/// and whenever a ceiling or the pressure state changed — never per tick.
+async fn run_adaptive_controller(
+    runtime: Arc<RuntimeStore>,
+    mut controller: adaptive::AdaptiveController,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    // Publish the initial snapshot so `runtime report` works before the
+    // first transition.
+    write_adaptive_status(&runtime, &controller);
+    loop {
+        tokio::select! {
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    break;
+                }
+            }
+            () = time::sleep(adaptive::TICK_INTERVAL) => {}
+        }
+        if *shutdown.borrow() {
+            break;
+        }
+        let now = adaptive::unix_millis();
+        let outcome = controller.tick(now);
+        if outcome.changes.is_empty() && !outcome.pressure_changed {
+            continue;
+        }
+        let snapshot = runtime.load();
+        for change in &outcome.changes {
+            emit(
+                &snapshot.logger,
+                &LogEvent::AdaptiveCeilingChanged {
+                    knob: change.knob.name(),
+                    reason: change.reason.as_str(),
+                    from: change.from,
+                    to: change.to,
+                    floor: change.floor,
+                    ceiling: change.ceiling,
+                },
+            );
+        }
+        drop(snapshot);
+        write_adaptive_status(&runtime, &controller);
+    }
+}
+
+/// Rewrites the status file, logging a bounded warning on failure.
+fn write_adaptive_status(runtime: &Arc<RuntimeStore>, controller: &adaptive::AdaptiveController) {
+    if let Err(error) = controller.write_status(adaptive::unix_millis()) {
+        let snapshot = runtime.load();
+        emit(
+            &snapshot.logger,
+            &LogEvent::AdaptiveStatusWriteFailed {
+                path: controller
+                    .status_file()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default(),
+                error: error.to_string(),
+            },
+        );
     }
 }
 
@@ -2718,6 +2828,103 @@ mod tests {
     }
 
     #[test]
+    fn the_adaptive_controller_is_built_only_in_adaptive_mode() {
+        let generated = generated_config(8443);
+        for (mode, expect_controller) in [
+            (crate::config::TuningMode::Fixed, false),
+            (crate::config::TuningMode::Startup, false),
+            (crate::config::TuningMode::Adaptive, true),
+        ] {
+            let mut config = generated.config().clone();
+            config.runtime.tuning.mode = Some(mode);
+            let server = ProductionServer::from_config(&config).expect("server must compile");
+            let snapshot = server.runtime.load();
+            let controller = super::adaptive_controller(
+                &snapshot.config,
+                &server.runtime.authorities,
+                &server.runtime.pressure,
+            );
+            assert_eq!(
+                controller.is_some(),
+                expect_controller,
+                "mode {mode:?} must select the controller only when adaptive"
+            );
+        }
+    }
+
+    #[test]
+    fn status_file_drift_requires_restart() {
+        let generated = generated_config(8443);
+        let mut current = generated.config().clone();
+        current.runtime.tuning.mode = Some(crate::config::TuningMode::Adaptive);
+        current.runtime.status_file = Some(std::path::PathBuf::from("/tmp/rust-reality-a.json"));
+        let server = ProductionServer::from_config(&current).expect("server must compile");
+        let previous = server.runtime.load();
+        let mut replacement = current.clone();
+        replacement.runtime.status_file =
+            Some(std::path::PathBuf::from("/tmp/rust-reality-b.json"));
+
+        assert!(matches!(
+            server.runtime.publish(replacement),
+            Err(RuntimeUpdateError::ResourceModeChanged)
+        ));
+        assert!(Arc::ptr_eq(&previous, &server.runtime.load()));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn adaptive_mode_publishes_a_status_file_and_shuts_down_cleanly() {
+        let generated = generated_config(unused_loopback_port());
+        let mut config = generated.config().clone();
+        config.runtime.tuning.mode = Some(crate::config::TuningMode::Adaptive);
+        let directory = std::env::temp_dir().join(format!(
+            "rust-reality-adaptive-server-{}-{:x}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("test clock must be valid")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).expect("temporary directory must be created");
+        let status_path = directory.join("status.json");
+        config.runtime.status_file = Some(status_path.clone());
+        let server = ProductionServer::from_config(&config).expect("server must compile");
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+        let server_task = tokio::spawn(server.run_until(async move {
+            shutdown_receiver
+                .await
+                .map_err(|_| io::Error::other("test shutdown sender dropped"))
+        }));
+
+        time::timeout(Duration::from_secs(5), async {
+            while !status_path.exists() {
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the controller must publish its initial status snapshot");
+        let status =
+            crate::runtime::adaptive::read_status(&status_path).expect("the snapshot must parse");
+        assert_eq!(status.schema_version, 1);
+        assert_eq!(status.pressure, "normal");
+        assert_eq!(status.knobs.len(), 8);
+        assert!(
+            status
+                .knobs
+                .iter()
+                .all(|knob| knob.value == knob.ceiling && knob.last_change.is_none()),
+            "before any tick every knob sits at its startup-derived ceiling"
+        );
+
+        shutdown_sender.send(()).expect("shutdown must send");
+        time::timeout(Duration::from_secs(5), server_task)
+            .await
+            .expect("the controller task must not hang shutdown")
+            .expect("server task must not panic")
+            .expect("server must stop cleanly");
+        std::fs::remove_dir_all(&directory).expect("temporary directory must be removed");
+    }
+
+    #[test]
     fn startup_tuning_derives_the_policy_from_the_machine() {
         let generated = generated_config(8443);
         assert_eq!(generated.config().runtime.tuning.mode, None);
@@ -2812,6 +3019,7 @@ mod tests {
         let runtime = |profile| crate::config::RuntimeConfig {
             profile,
             tuning: crate::config::TuningConfig::default(),
+            status_file: None,
         };
 
         // The shared profile resolves to standard without consulting the

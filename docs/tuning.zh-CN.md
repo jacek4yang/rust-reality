@@ -388,7 +388,7 @@ rust-reality self-test --config config.json
 | 可热更新（`systemctl reload`） | 需要重启 |
 | --- | --- |
 | 日志、资产、DNS 超时 | 监听拓扑（`mode`、地址、端口、入站数量） |
-| VLESS 用户 / REALITY 状态 | `runtime`（含 `profile`） |
+| VLESS 用户 / REALITY 状态 | `runtime`（含 `profile` 和 `statusFile`） |
 | outbounds / 路由 | `network.dial`、`advanced.limits.resourceGovernor` |
 | NXR 密钥和超时——仅当重放容量不变时 | `advanced.limits.directBarrier`、`advanced.limits.relay` |
 | | NXR `maxNonceEntries` / `nonceRetentionSeconds` |
@@ -778,6 +778,8 @@ rust-reality 在所有输出位置（stderr、journald、文件）都发出结�
 | `admission_limited` | 监听器级 admission 调节器拒绝了新连接（`resource`：`connections`） | **可能是限制在正确工作** | `maxConnections` | 见下文 |
 | `descriptor_pressure_changed` | FD 用量越过水位线 | 仅在负载下 | FD 预算 | `ls /proc/PID/fd \| wc -l` 对 `fd_effective_budget` |
 | `resource_pressure_changed` | FD/内存综合压力状态变化 | 仅在负载下 | 档位对机型 | `memory.current` 对 `memory.max`（§17） |
+| `adaptive_ceiling_changed` | 自适应控制器移动了一个软上限（`knob`、`reason`、`from`→`to`、`floor`、`ceiling`） | 仅 `adaptive` 调谐模式，每次调整一条 | `runtime.tuning.mode` | 稳态不发事件；反复出现 `low-utilization` 说明方案高估了这台主机（§29） |
+| `adaptive_status_write_failed` | 控制器无法重写 `runtime.statusFile` | 仅路径出错时 | `runtime.statusFile` | 检查父目录与权限 |
 
 **不要条件反射式地调高正在触发的限制。** 连接洪峰期间的拒绝是调节器
 在保护已建立的会话。注意每类限制实际出现的位置（VERIFIED，对照 v1.0
@@ -1229,3 +1231,42 @@ standalone 的已验证起点，作为更重的线路角色的初始假设接受
 `nonceRetentionSeconds`——在实测 ≈800 conn/s churn 和 120 s 默认值下
 约为 96 000，*超过* 65536 的默认值，所以调大它（需重启）或限制接入的
 NXR churn（§8）。
+
+## 29. 自适应上限（`runtime.tuning.mode: "adaptive"`）
+
+默认的 `startup` 调谐模式在启动时推导一次数值策略，并在进程生命周期内保持
+不变。`adaptive` 运行同样的推导，随后由控制器在启动推导的边界内移动*软*
+准入上限与直连拨号速率，使服务器在持续饱和时收紧准入、在主机恢复余量后
+重新放宽——且绝不超出启动推导已证明对这台机器安全的范围（VERIFIED 机制，
+`src/runtime/adaptive.rs`）：
+
+- **会动的**：六个 `resourceGovernor` 上限（`maxConnections`、
+  `maxHandshakes`、`maxFallbacks`、`maxCryptoOperations`、
+  `maxReplayEntries`、`maxDnsLookups`）和两个 `directBarrier` 限制
+  （`maxConcurrent`、`maxPerSecond`）。软上限只能在已构建的池尺寸之下收紧
+  准入；已持有的许可绝不会被回收，已建立的会话不受影响。
+- **绝不动的**：所有超时与 `replayRetentionMs`（协议安全参数）、relay
+  缓冲区/池尺寸、描述符预算、监听器拓扑、DNS 策略以及资源 profile。它们在
+  热更新时仍然需要重启，与其他模式完全一致（§10）。
+- **边界**：每个旋钮的上界是其启动推导值，下界是该字段的 v1.5 内置默认值
+  （当运维钉死值低于默认值时下界降至启动值），因此服务器始终保有可响应的
+  最小容量，运维钉死被严格尊重。
+- **节奏**：5 秒一个 tick，与 1 秒的压力监控器解耦。利用率连续 3 个 tick
+  ≥85% 时上调，连续 6 个 tick ≤40% 时下调——保护要快、放松要慢——同一旋钮
+  相邻两次调整至少间隔 30 秒。步长为启动值的 ±25%，按量子取整（计数类 64、
+  拨号速率 16），小池也能动、大池不抖动。
+- **Critical 压力**：只要有一个 tick 处于 critical 资源压力，所有旋钮一步
+  钳到下界——保护绝不等待迟滞。恢复时按正常的 3-tick 迟滞与 30 秒驻留逐步
+  走回。
+
+可观测性以变化为单位：每次旋钮变动发出一条 `adaptive_ceiling_changed` 事件
+（§18），逐 tick 不记日志。设置了 `runtime.statusFile` 时，控制器还会在启动时
+以及每次上限或压力状态变化时原子化重写一份 JSON 快照；用
+`rust-reality runtime report --status-file <PATH> [--json]` 读取——该命令只读
+文件，绝不接触运行中的进程。决策读取的是准入路径本就维护的无锁计数器，热路径
+上不增加任何开销。
+
+何时使用：共享或突发负载的主机——静态推导方案在高峰时段过于乐观、在空闲
+时段又过于保守的场合。需要精确、可复现的数值时（容量认证、A/B 基准），留在
+`fixed` 或 `startup`：自适应上限会移动，而基准比较的是配置，不是移动的
+目标。

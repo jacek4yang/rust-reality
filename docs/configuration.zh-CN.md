@@ -684,8 +684,9 @@ splice 永远不会跨越 REALITY/TLS 安全边界。传输开始前无法获得
 | 字段 | 对象存在时必填 | 默认值/允许值 | 含义与约束 |
 | --- | --- | --- | --- |
 | `runtime.profile` | 否 | `auto`；`auto`、`shared`、`dedicated` | 声明谁拥有这台机器。`shared` 选择标准资源姿态，`dedicated` 选择专用姿态（把 `RLIMIT_NOFILE` 软限制提升到硬限制、按专用余量推导描述符预算，并运行有界内存压力监控器；见[专用资源模式](#dedicated-resource-mode)）。`auto` 仅当 cgroup v2 租户边界完全可观测（`cpu.max` 配额有限且 `memory.max` 有限）时解析为 `dedicated`；在裸金属上绝不猜测为 dedicated。冷设置，修改必须重启。 |
-| `runtime.tuning.mode` | 否 | `startup`；`fixed`、`startup`、`adaptive` | 数值策略的产生方式。`fixed` 取自 `advanced.limits`（或内置默认值）且永不变动——即 v1.5 行为。`startup` 在启动时按检测到的机器推导每个未钉死的字段。`adaptive` 在本版本的推导结果与 `startup` 完全一致；在推导硬界内调节软上限的控制器尚未发布。见[启动策略推导](#启动策略推导)。 |
+| `runtime.tuning.mode` | 否 | `startup`；`fixed`、`startup`、`adaptive` | 数值策略的产生方式。`fixed` 取自 `advanced.limits`（或内置默认值）且永不变动——即 v1.5 行为。`startup` 在启动时按检测到的机器推导每个未钉死的字段。`adaptive` 的推导与 `startup` 完全一致，并额外运行自适应控制器，在启动推导的边界内调节软准入上限与直连拨号速率。见[启动策略推导](#启动策略推导)与[自适应上限](#自适应上限)。 |
 | `runtime.tuning.objective` | 否 | `balanced`；`latency`、`balanced`、`throughput` | 推导数值的形态；只有推导调谐模式（`startup`、`adaptive`）才会使用。 |
+| `runtime.statusFile` | 否 | 不设置；文件路径 | 仅在 `adaptive` 调谐模式下使用：控制器在启动时以及每次上限或压力状态变化时原子化重写这份 JSON 快照，`rust-reality runtime report` 读取它。冷设置，修改必须重启。 |
 
 ### 启动策略推导
 
@@ -730,6 +731,32 @@ autotuner 也不会产生的数值。
 生效策略是冷的。热更新会用当前机器视图重新推导候选配置，只要推导结果会不同就
 拒绝——包括仅由启动后 cgroup 边界变化引起的漂移——因为 admission 池在进程启动时
 已定尺寸，无法变更。
+
+### 自适应上限
+
+`runtime.tuning.mode: adaptive` 下，启动推导与 `startup` 模式完全一致，随后由
+控制器在运行时调节*软*上限。软上限只能在已构建的池尺寸之下收紧准入；已持有的
+许可绝不会被回收，已建立的会话不受影响。
+
+- **调节对象**：六个 `resourceGovernor` 准入上限，外加
+  `directBarrier.maxConcurrent` 与 `directBarrier.maxPerSecond`（GCRA 拨号速率，
+  与并发上限共享同一个拨号需求信号）。其余一律不动：所有超时、
+  `replayRetentionMs`、relay 缓冲区与池尺寸、描述符预算、监听器拓扑和 DNS 策略
+  都仅在启动时确定。
+- **边界**：每个旋钮的上界是其启动推导值（即构建池时使用的生效策略），下界是
+  该字段的 v1.5 内置默认值；当运维钉死值低于默认值时下界降至启动值——钉死的
+  上限被严格尊重，服务器始终保有可响应的最小容量。
+- **决策**：控制器每 5 秒 tick 一次，测量持有许可数相对当前软上限的利用率。
+  利用率连续 3 个 tick 不低于 85% 时上调，连续 6 个 tick 不高于 40% 时下调——
+  保护要快、放松要慢——同一旋钮相邻两次调整至少间隔 30 秒。每步为启动值的
+  25%，按量子取整（计数类 64，拨号速率 16）。
+- **Critical 压力**：只要有一个 tick 处于 critical 资源压力，所有旋钮一步钳到
+  下界，绕过迟滞与驻留。恢复时按正常迟滞逐步走回。
+- **可观测性**：每次旋钮变动恰好发出一条 `adaptive_ceiling_changed` 日志事件，
+  逐 tick 不记日志。设置了 `runtime.statusFile` 时，控制器还会在启动时以及每次
+  上限或压力状态变化时原子化重写该 JSON 文件；
+  `rust-reality runtime report --status-file <PATH> [--json]` 打印最后发布的
+  快照。
 
 ### 启动时的运行时拓扑
 
@@ -822,8 +849,9 @@ generation，已有连接继续使用其获取的 generation。
 - 任意 `network.dial` 修改，因为启动快照与共享健康状态属于进程生命周期；
 - 任意 `dns` 修改（`servers`、`timeoutMs` 或 `cache`），因为共享解析器——
   包括其超时与缓存边界——在启动时安装一次，属于进程生命周期；
-- 任意 `runtime` 修改（`profile` 或 `tuning`），因为资源姿态影响
-  进程生命周期的描述符预算和内存监控器；调谐模式严格比较，`fixed` ↔ `startup` ↔
+- 任意 `runtime` 修改（`profile`、`tuning` 或 `statusFile`），因为资源姿态影响
+  进程生命周期的描述符预算和内存监控器，且自适应控制器是进程生命周期的；调谐模式
+  严格比较，`fixed` ↔ `startup` ↔
   `adaptive` 之间的任何漂移都必须重启；
 - 推导调谐模式（`startup`/`adaptive`）下任何会改变推导结果的修改——编辑过的
   `advanced.limits` 钉死字段，或启动后发生变化的机器边界——因为 admission 池在

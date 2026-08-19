@@ -437,7 +437,7 @@ assembly. Neither replaces watching the first minutes of real traffic.
 | Hot-reloadable (`systemctl reload`) | Restart required |
 | --- | --- |
 | logging, assets, DNS timeout | listener topology (`mode`, addresses, ports, inbound count) |
-| VLESS users / REALITY state | `runtime` (including `profile`) |
+| VLESS users / REALITY state | `runtime` (including `profile` and `statusFile`) |
 | outbounds / routing | `network.dial`, `advanced.limits.resourceGovernor` |
 | NXR keys and timeouts — only when replay capacity is unchanged | `advanced.limits.directBarrier`, `advanced.limits.relay` |
 | | NXR `maxNonceEntries` / `nonceRetentionSeconds` |
@@ -863,6 +863,8 @@ and file). The operational set (VERIFIED names):
 | `admission_limited` | The listener-level admission governor refused a new connection (`resource`: `connections`) | **can be the limits working correctly** | `maxConnections` | see below |
 | `descriptor_pressure_changed` | FD usage crossed a watermark | only under load | FD budget | `ls /proc/PID/fd \| wc -l` vs `fd_effective_budget` |
 | `resource_pressure_changed` | Combined FD/memory pressure state changed | only under load | profile vs class | `memory.current` vs `memory.max` (§17) |
+| `adaptive_ceiling_changed` | The adaptive controller moved one soft ceiling (`knob`, `reason`, `from`→`to`, `floor`, `ceiling`) | only in `adaptive` tuning mode, one per transition | `runtime.tuning.mode` | Steady state emits nothing; repeated `low-utilization` moves mean the plan overestimates the host (§29) |
+| `adaptive_status_write_failed` | The controller could not rewrite `runtime.statusFile` | only on a broken path | `runtime.statusFile` | Check the parent directory and permissions |
 
 **Do not reflexively raise a limit that is firing.** Refusals during a
 connection flood are the governor protecting already-established sessions.
@@ -1375,3 +1377,54 @@ below its line. The parameter that actually binds is anti-replay:
 `maxNonceEntries` ≥ NXR CPS × `nonceRetentionSeconds` — at the measured
 ≈800 conn/s churn and the 120 s default that is ≈96 000, *above* the 65536
 default, so raise it (restart) or cap the accepted NXR churn (§8).
+
+## 29. Adaptive ceilings (`runtime.tuning.mode: "adaptive"`)
+
+The default `startup` tuning mode derives the numeric policy once at startup
+and keeps it fixed for the process lifetime. `adaptive` runs the same
+derivation and then lets a controller move the *soft* admission ceilings and
+the direct-dial rate inside startup-derived bounds, so the server tightens
+admission under sustained saturation and relaxes again when the host has
+headroom — without ever exceeding what the startup derivation proved safe
+for this machine (VERIFIED mechanics, `src/runtime/adaptive.rs`):
+
+- **What moves**: the six `resourceGovernor` ceilings (`maxConnections`,
+  `maxHandshakes`, `maxFallbacks`, `maxCryptoOperations`,
+  `maxReplayEntries`, `maxDnsLookups`) and the two `directBarrier` limits
+  (`maxConcurrent`, `maxPerSecond`). A soft ceiling can only tighten
+  admission below the constructed pool; held permits are never revoked, so
+  established sessions are unaffected.
+- **What never moves**: all timeouts and `replayRetentionMs` (protocol
+  security parameters), relay buffer/pool sizes, the descriptor budget,
+  listener topology, DNS policy, and the resource profile. These stay
+  restart-required on reload, exactly as in the other modes (§10).
+- **Bounds**: every knob is capped above by its startup-derived value and
+  floored below at the v1.5 built-in default for the field (lowered to the
+  startup value when an operator pin sits below the default), so the server
+  always keeps a responsive minimum and an operator pin is respected
+  exactly.
+- **Cadence**: a 5-second tick, decoupled from the 1-second pressure
+  monitor. A knob scales up after 3 consecutive ticks at ≥85% utilization
+  and down after 6 consecutive ticks at ≤40% — fast to protect, slow to
+  relax — with at least 30 s between successive changes to the same knob.
+  Steps are ±25% of the startup value, quantized (64 for counts, 16 for the
+  dial rate), so small pools still move and large pools do not flap.
+- **Critical pressure**: a single tick at critical resource pressure clamps
+  every knob to its floor in one step — protection never waits on
+  hysteresis. Recovery walks back up through the normal 3-tick hysteresis
+  and 30 s dwell.
+
+Observability is transition-based: each knob change emits one
+`adaptive_ceiling_changed` event (§18) and nothing is logged per tick. With
+`runtime.statusFile` set, the controller additionally rewrites a JSON
+snapshot atomically at startup and on every ceiling or pressure transition;
+read it with `rust-reality runtime report --status-file <PATH> [--json]`,
+which reads the file only and never contacts the running process. Decisions
+read the same lock-free counters admission already maintains, so nothing
+lands on the hot path.
+
+When to use it: shared or bursty hosts where a static derived plan is either
+too optimistic for the bad hours or too conservative for the good ones. When
+you need exact, reproducible numbers — capacity certification, A/B
+benchmarks — stay on `fixed` or `startup`: adaptive ceilings move, and a
+benchmark compares configurations, not moving targets.
