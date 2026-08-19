@@ -409,8 +409,18 @@ while IFS=$'\t' read -r block position implementation server_port; do
     if [[ $implementation == baseline ]]; then binary=$baseline_bin; binary_sha=$baseline_sha; binary_build_id=$baseline_build_id; else binary=$candidate_bin; binary_sha=$candidate_sha; binary_build_id=$candidate_build_id; fi
     "$binary" config generate standalone --listen 127.0.0.1 --port "$server_port" --target "127.0.0.1:$origin_port" --server-name localhost \
         >"$work/$slot.raw.json" 2>"$slot_dir/generate.log"
+    # The two implementations speak different configuration generations:
+    # the v1.5 baseline knows only the `policy` object, while the v1.6
+    # candidate rejects `policy`/`resourceMode` and reads the canonical
+    # `advanced.limits` location. Both filters pin the same effective relay
+    # settings, so the comparison stays symmetric.
+    if [[ $implementation == baseline ]]; then
+        relay_filter='.policy.relay.splice=$splice|.policy.relay.pipePool=$pool|.policy.relay.bufferBytes=($kib*1024)'
+    else
+        relay_filter='del(.policy)|del(.runtime.resourceMode)|.advanced.limits.relay.splice=$splice|.advanced.limits.relay.pipePool=$pool|.advanced.limits.relay.bufferBytes=($kib*1024)'
+    fi
     jq --arg cache "$work/assets-$slot" --argjson splice "$splice" --argjson pool "$pipe_pool" --argjson kib "$buffer_kib" \
-        '.log.level="warn"|.assets.cacheDirectory=$cache|.advanced.limits.relay.splice=$splice|.advanced.limits.relay.pipePool=$pool|.advanced.limits.relay.bufferBytes=($kib*1024)' \
+        ".log.level=\"warn\"|.assets.cacheDirectory=\$cache|$relay_filter" \
         "$work/$slot.raw.json" >"$work/$slot.server.json"
     "$binary" serve --config "$work/$slot.server.json" >"$slot_dir/server.log" 2>&1 &
     track_last "$slot-server" "$!"; server_pid=$last_pid; wait_port "$server_port" "$server_pid"
