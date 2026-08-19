@@ -76,10 +76,10 @@ admission 架构和运行时可观测性。设计背后的实测证据见
    | 单个 raw 方向 | 单向 splice → 单向 buffered |
 
    - **splice**：每个方向一对管道（双向 = 两对），每方向恰好 2 个 FD 单元，
-     在 `pipe2` 之前预留。管道请求 256 KiB 容量（尽力而为，低于无特权 1 MiB
+     在 `pipe2` 之前预留。管道请求 512 KiB 容量（尽力而为，不超过无特权 1 MiB
      上限），relay 块大小取管道实际容量；内核管道内存按最坏情况记账：启用管道池
-     （默认，池涵盖逐会话创建）时为 `maxPooledPipes × 2 × 256 KiB`，未启用时
-     为 `maxSpliceRelays × 4 × 256 KiB`。管道由 `PipePool` 池化，稳态会话不再有
+     （默认，池涵盖逐会话创建）时为 `maxPooledPipes × 2 × 512 KiB`，未启用时
+     为 `maxSpliceRelays × 4 × 512 KiB`。管道由 `PipePool` 池化，稳态会话不再有
      pipe2/fcntl/close 抖动，池化管道绝不会带着未读数据复用。源端 EOF →
      对目标写端优雅 shutdown（每方向保留 half-close）。拒绝（池/FD 预算/
      pipe2 失败）只发生在第一个字节之前。

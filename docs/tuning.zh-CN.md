@@ -290,12 +290,15 @@ journalctl -u rust-reality --since -5min | grep -E 'machine_report|descriptor_bu
 
 ```
 buffered pool  = maxPooledBuffers × bufferBytes        = 4096 × 32768      = 128 MiB
-pipe pool (pipePool=true)  = maxPooledPipes × 2 × 256 KiB = 512 × 2 × 256 KiB  = 256 MiB
-pipe pool (pipePool=false) = maxSpliceRelays × 4 × 256 KiB = 256 × 4 × 256 KiB = 256 MiB
+pipe pool (pipePool=true)  = maxPooledPipes × 2 × 512 KiB = 256 × 2 × 512 KiB  = 256 MiB
+pipe pool (pipePool=false) = maxSpliceRelays × 4 × 512 KiB = 256 × 4 × 512 KiB = 512 MiB
 total required ≤ maxRelayMemoryBytes (default 512 MiB)
 ```
 
-（乘积是对 VERIFIED 公式和默认值做的 DERIVED 算术。）
+（乘积是对 VERIFIED 公式和默认值做的 DERIVED 算术。注意在默认
+`maxSpliceRelays` 下，`pipePool=false` 一行会超出默认
+`maxRelayMemoryBytes`：关闭管道池需要提高预算或降低
+`maxSpliceRelays`。）
 
 用于规划的稳态预算（由 MEASURED-LOCAL 输入推导，DERIVED）：
 
@@ -431,7 +434,7 @@ rust-reality self-test --config config.json
       "maxRelayMemoryBytes": 536870912,
       "splice": true,
       "pipePool": true,
-      "maxPooledPipes": 512
+      "maxPooledPipes": 256
     }
   }
 }

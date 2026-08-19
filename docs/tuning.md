@@ -326,12 +326,15 @@ The validator's relay-memory formula (VERIFIED):
 
 ```
 buffered pool  = maxPooledBuffers × bufferBytes        = 4096 × 32768      = 128 MiB
-pipe pool (pipePool=true)  = maxPooledPipes × 2 × 256 KiB = 512 × 2 × 256 KiB  = 256 MiB
-pipe pool (pipePool=false) = maxSpliceRelays × 4 × 256 KiB = 256 × 4 × 256 KiB = 256 MiB
+pipe pool (pipePool=true)  = maxPooledPipes × 2 × 512 KiB = 256 × 2 × 512 KiB  = 256 MiB
+pipe pool (pipePool=false) = maxSpliceRelays × 4 × 512 KiB = 256 × 4 × 512 KiB = 512 MiB
 total required ≤ maxRelayMemoryBytes (default 512 MiB)
 ```
 
-(The products are DERIVED arithmetic on the VERIFIED formula and defaults.)
+(The products are DERIVED arithmetic on the VERIFIED formula and defaults.
+Note the `pipePool=false` row exceeds the default `maxRelayMemoryBytes` at
+the default `maxSpliceRelays`: disabling the pool requires raising the
+budget or lowering `maxSpliceRelays`.)
 
 A steady-state budget for planning (DERIVED from MEASURED-LOCAL inputs):
 
@@ -481,7 +484,7 @@ object appears.
       "maxRelayMemoryBytes": 536870912,
       "splice": true,
       "pipePool": true,
-      "maxPooledPipes": 512
+      "maxPooledPipes": 256
     }
   }
 }

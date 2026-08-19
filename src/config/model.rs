@@ -1374,8 +1374,11 @@ const fn default_pipe_pool() -> bool {
     true
 }
 
+/// Keeps the accounted pool term at 256 MiB with the 512 KiB splice pipe
+/// capacity (256 pairs x 2 pipes x 512 KiB), the same budget the previous
+/// 512 pairs x 256 KiB pipes reserved.
 const fn default_max_pooled_pipes() -> u32 {
-    512
+    256
 }
 
 #[cfg(test)]

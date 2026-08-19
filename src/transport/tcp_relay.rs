@@ -1140,10 +1140,13 @@ struct PipePair {
 ///
 /// A splice call is availability-limited, not chunk-limited, so a larger pipe
 /// only helps when the kernel has more than the default 64 KiB ready — exactly
-/// the sustained-stream case where splice call rate dominates. 256 KiB stays
-/// below the default 1 MiB unprivileged `pipe-max-size`.
+/// the sustained-stream case where splice call rate dominates. Measured on the
+/// loopback reference workload, sustained senders keep 250–500 KiB queued:
+/// 512 KiB halves the splice syscall rate and server CPU per GiB against
+/// 256 KiB, while 1 MiB showed no further gain. 512 KiB stays at or below the
+/// default 1 MiB unprivileged `pipe-max-size`.
 #[cfg(target_os = "linux")]
-const SPLICE_PIPE_CAPACITY: usize = 256 * 1024;
+const SPLICE_PIPE_CAPACITY: usize = 512 * 1024;
 
 #[cfg(target_os = "linux")]
 impl PipePair {

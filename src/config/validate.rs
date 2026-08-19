@@ -40,7 +40,8 @@ const MAX_DIRECT_DIALS_PER_SECOND: u32 = 1_000_000_000;
 /// Kernel pipe capacity reserved worst-case per splice pipe. The kernel
 /// allocates pipe pages lazily, but capacity is the hard bound a full pipe
 /// can pin; a splice relay holds two pipe pairs (four pipes) at this size.
-const SPLICE_PIPE_CAPACITY_BYTES: u64 = 256 * 1024;
+/// Matches `SPLICE_PIPE_CAPACITY` in `transport::tcp_relay`.
+const SPLICE_PIPE_CAPACITY_BYTES: u64 = 512 * 1024;
 
 /// One validation failure identified by a stable JSON path.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1332,7 +1333,7 @@ mod tests {
         NxrInboundSettings, NxrSettings, OutboundConfig, SecretString, validate_config,
     };
 
-    use super::ConfigError;
+    use super::{ConfigError, SPLICE_PIPE_CAPACITY_BYTES};
 
     fn valid_config() -> Config {
         serde_json::from_str(crate::config::test_config_json()).expect("fixture must decode")
@@ -2407,9 +2408,10 @@ mod tests {
         config.advanced.limits.relay.max_pooled_buffers = 4_096;
         // 4096 buffers x 32 KiB is exactly 128 MiB; a byte budget one below
         // must be rejected. With splice enabled, the budget must additionally
-        // cover the relays' pipe pairs (4 pipes x 256 KiB per relay).
-        let splice_pipes =
-            u64::from(config.advanced.limits.relay.max_splice_relays) * 4 * 256 * 1024;
+        // cover the relays' pipe pairs (4 pipes at the pipe capacity each).
+        let splice_pipes = u64::from(config.advanced.limits.relay.max_splice_relays)
+            * 4
+            * SPLICE_PIPE_CAPACITY_BYTES;
         config.advanced.limits.relay.max_relay_memory_bytes = 4_096 * 32 * 1024 - 1;
         assert!(validate_config(&config).is_err());
 

@@ -111,7 +111,7 @@ impl Default for SafetyLimits {
             max_splice_relays: 8_192,
             max_pooled_buffers: 65_536,
             planned_connection_bytes: 64 * 1024,
-            pipe_pair_memory_bytes: 2 * 256 * 1024,
+            pipe_pair_memory_bytes: 2 * 512 * 1024,
         }
     }
 }
@@ -1037,17 +1037,17 @@ mod tests {
         let report = crate::runtime::machine::MachineReport::conservative();
         let capabilities = MachineCapabilities::from_report(&report);
         let policy = derive(&capabilities, ResourceMode::Standard, 1, Probes::default());
-        assert_eq!(policy.resource_governor.max_connections, 153);
+        assert_eq!(policy.resource_governor.max_connections, 197);
         assert_eq!(policy.resource_governor.max_handshakes, 128);
         assert_eq!(policy.resource_governor.max_crypto_operations, 32);
         assert_eq!(policy.resource_governor.max_fallbacks, 128);
         assert_eq!(policy.resource_governor.max_dns_lookups, 32);
         assert_eq!(policy.resource_governor.max_replay_entries, 1_024);
         assert_eq!(policy.relay.buffer_bytes, 32 * 1024);
-        assert_eq!(policy.relay.max_splice_relays, 75);
-        assert_eq!(policy.relay.max_pooled_pipes, 150);
-        assert_eq!(policy.relay.max_pooled_buffers, 306);
-        assert_eq!(policy.relay.max_relay_memory_bytes, 88_670_208);
+        assert_eq!(policy.relay.max_splice_relays, 64);
+        assert_eq!(policy.relay.max_pooled_pipes, 128);
+        assert_eq!(policy.relay.max_pooled_buffers, 394);
+        assert_eq!(policy.relay.max_relay_memory_bytes, 147_128_320);
     }
 
     #[test]
@@ -1201,9 +1201,12 @@ mod tests {
         } else if policy.relay.pipe_pool {
             assert!(policy.relay.max_splice_relays >= 1);
             assert!(policy.relay.max_splice_relays <= governor.max_connections);
-            u64::from(policy.relay.max_pooled_pipes) * 2 * 256 * 1024
+            u64::from(policy.relay.max_pooled_pipes)
+                * SafetyLimits::default().pipe_pair_memory_bytes
         } else {
-            u64::from(policy.relay.max_splice_relays) * 4 * 256 * 1024
+            u64::from(policy.relay.max_splice_relays)
+                * 2
+                * SafetyLimits::default().pipe_pair_memory_bytes
         };
         let buffered = policy.relay.max_pooled_buffers as u64 * policy.relay.buffer_bytes as u64;
         assert!(
@@ -1316,9 +1319,9 @@ mod tests {
         }
         let latency =
             derive_with_objective(&capabilities, ResourceMode::Standard, Objective::Latency);
-        assert_eq!(latency.resource_governor.max_connections, 76);
+        assert_eq!(latency.resource_governor.max_connections, 98);
         assert_eq!(
-            latency.resource_governor.max_handshakes, 76,
+            latency.resource_governor.max_handshakes, 98,
             "the child limit re-clamps to the scaled parent"
         );
         assert_eq!(
@@ -1490,7 +1493,7 @@ mod tests {
             ResourceMode::Standard,
             1,
         );
-        assert_eq!(resolution.policy.resource_governor.max_connections, 153);
+        assert_eq!(resolution.policy.resource_governor.max_connections, 197);
         assert_eq!(resolution.policy.relay.buffer_bytes, 32 * 1024);
     }
 
