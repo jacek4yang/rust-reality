@@ -21,26 +21,19 @@ use serde::Serialize;
 
 use crate::{
     benchmark::{BenchmarkError, BenchmarkOptions, BenchmarkReport, run_benchmarks},
-    config::{
-        Config, ConfigError, PolicyConfig, RelayPolicy, ResourceGovernorConfig, ResourceMode,
-        validate_config,
+    config::{Config, ConfigError, PolicyConfig, ResourceMode, validate_config},
+    runtime::{
+        machine::MachineReport,
+        plan::{MachineCapabilities, Probes, SafetyLimits, StartupPlan},
     },
-    runtime::machine::MachineReport,
 };
+
+pub use crate::runtime::plan::NetworkProbe;
 
 const MEBIBYTE: u64 = 1024 * 1024;
 const STORAGE_BLOCK_BYTES: usize = 1024 * 1024;
 const NETWORK_BLOCK_BYTES: usize = 64 * 1024;
 const NETWORK_ROUND_TRIPS: usize = 128;
-const PIPE_PAIR_MEMORY_BYTES: u64 = 2 * 256 * 1024;
-const MAX_PLANNED_FDS: u64 = 1_048_576;
-const MAX_CONNECTIONS: u64 = 262_144;
-const MAX_SPLICE_RELAYS: u64 = 8_192;
-const MAX_POOLED_BUFFERS: u64 = 65_536;
-/// Planning charge above the measured ~47 KiB idle-session footprint. The
-/// margin covers allocator variation and per-session kernel state without
-/// pretending that every byte is process RSS.
-const PLANNED_CONNECTION_BYTES: u64 = 64 * 1024;
 
 /// Bounds for one host-local autotuning pass.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -146,17 +139,17 @@ pub struct AutotuneMachine {
 }
 
 impl AutotuneMachine {
-    fn from_report(report: &MachineReport) -> Self {
+    fn from_capabilities(capabilities: &MachineCapabilities) -> Self {
         Self {
-            logical_cpus: report.available_cpus,
-            effective_cpus: effective_cpu_count(report),
-            fd_soft_limit: report.fd_soft_limit,
-            fd_hard_limit: report.fd_hard_limit,
-            memory_source: report.memory_source,
-            memory_total_bytes: report.memory_total,
-            memory_current_bytes: report.memory_current,
-            cpu_quota_microseconds: report.cpu_quota_us,
-            cpu_period_microseconds: report.cpu_period_us,
+            logical_cpus: capabilities.logical_cpus,
+            effective_cpus: capabilities.effective_cpus,
+            fd_soft_limit: capabilities.fd_soft_limit,
+            fd_hard_limit: capabilities.fd_hard_limit,
+            memory_source: capabilities.memory_source,
+            memory_total_bytes: capabilities.memory_total_bytes,
+            memory_current_bytes: capabilities.memory_current_bytes,
+            cpu_quota_microseconds: capabilities.cpu_quota_microseconds,
+            cpu_period_microseconds: capabilities.cpu_period_microseconds,
         }
     }
 }
@@ -171,24 +164,6 @@ pub struct StorageProbe {
     pub write_mebibytes_per_second: f64,
     /// Sequential read throughput.
     pub read_mebibytes_per_second: f64,
-}
-
-/// TCP loopback measurements of the local network stack.
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NetworkProbe {
-    /// Echo round trips in the latency sample.
-    pub round_trips: usize,
-    /// Median one-byte TCP round-trip latency.
-    pub p50_round_trip_microseconds: f64,
-    /// 95th percentile one-byte TCP round-trip latency.
-    pub p95_round_trip_microseconds: f64,
-    /// Client-to-server loopback throughput.
-    pub upload_mebibytes_per_second: f64,
-    /// Server-to-client loopback throughput.
-    pub download_mebibytes_per_second: f64,
-    /// Bytes transferred in each throughput direction.
-    pub bytes_per_direction: u64,
 }
 
 /// Autotuning failed without publishing a partial configuration.
@@ -261,7 +236,8 @@ pub fn autotune_config(
 ) -> Result<AutotunedConfig, AutotuneError> {
     validate_options(options)?;
     let machine_report = MachineReport::detect();
-    let machine = AutotuneMachine::from_report(&machine_report);
+    let capabilities = MachineCapabilities::from_report(&machine_report);
+    let machine = AutotuneMachine::from_capabilities(&capabilities);
     let protocol = run_benchmarks(BenchmarkOptions {
         duration: options.benchmark_duration,
         warmup: options.benchmark_warmup,
@@ -325,6 +301,12 @@ fn validate_options(options: &AutotuneOptions) -> Result<(), AutotuneError> {
     Ok(())
 }
 
+/// Derives the tuned policy through the shared [`StartupPlan`] path.
+///
+/// The autotuner contributes its measured probes; serve startup calls
+/// [`StartupPlan::derive`] directly with [`Probes::default`]. Both share the
+/// exact formulas, so this shim only translates the report view into
+/// capabilities and probe inputs.
 fn derive_policy(
     machine: &AutotuneMachine,
     protocol: &BenchmarkReport,
@@ -333,164 +315,40 @@ fn derive_policy(
     resource_mode: ResourceMode,
     source_policy: &PolicyConfig,
 ) -> PolicyConfig {
-    let cpus = u64::try_from(machine.effective_cpus)
-        .unwrap_or(u64::MAX)
-        .max(1);
-    let selected_limit = match resource_mode {
-        ResourceMode::Standard => machine.fd_soft_limit,
-        ResourceMode::Dedicated => machine.fd_hard_limit,
-    }
-    .min(MAX_PLANNED_FDS);
-    let headroom_divisor = match resource_mode {
-        ResourceMode::Standard => 16,
-        ResourceMode::Dedicated => 10,
-    };
-    let headroom = (selected_limit / headroom_divisor).max(64);
-    let listeners = u64::try_from(listener_count).unwrap_or(u64::MAX);
-    let fixed = listeners.saturating_mul(2).saturating_add(3 + 1 + 16 + 32);
-    let dynamic_fds = selected_limit
-        .saturating_sub(headroom)
-        .saturating_sub(fixed)
-        .max(64);
-
-    let relay_budget = relay_memory_budget(machine.memory_total_bytes);
-    let desired_splice = cpus.saturating_mul(256).clamp(1, MAX_SPLICE_RELAYS);
-    let memory_splice = (relay_budget / 2 / (2 * PIPE_PAIR_MEMORY_BYTES)).max(1);
-    let max_splice_relays = desired_splice
-        .min(dynamic_fds / 12)
-        .min(memory_splice)
-        .max(1);
-    let max_pooled_pipes = max_splice_relays.saturating_mul(2);
-    let accelerator_fds = max_splice_relays
-        .saturating_mul(4)
-        .saturating_add(max_pooled_pipes.saturating_mul(2));
-    let fd_connection_limit = dynamic_fds
-        .saturating_sub(accelerator_fds)
-        .saturating_div(2);
-    let memory_connection_limit =
-        connection_memory_limit(machine.memory_total_bytes, resource_mode);
-    let max_connections = fd_connection_limit
-        .min(memory_connection_limit)
-        .clamp(64, MAX_CONNECTIONS);
-
-    let buffer_bytes = selected_buffer_bytes(network);
-    let pipe_memory = max_pooled_pipes.saturating_mul(PIPE_PAIR_MEMORY_BYTES);
-    let buffer_memory = relay_budget
-        .saturating_sub(pipe_memory)
-        .max(2 * buffer_bytes as u64);
-    let max_pooled_buffers = (buffer_memory / buffer_bytes as u64)
-        .clamp(2, MAX_POOLED_BUFFERS)
-        .min(max_connections.saturating_mul(2));
-    let relay_memory =
-        pipe_memory.saturating_add(max_pooled_buffers.saturating_mul(buffer_bytes as u64));
-
     let slowest_operations_per_second = protocol
         .cases
         .iter()
         .map(|case| case.operations_per_second)
         .fold(f64::INFINITY, f64::min);
-    let measured_setup_capacity = if slowest_operations_per_second.is_finite() {
-        (slowest_operations_per_second / 1_000.0) as u64
-    } else {
-        0
+    let probes = Probes {
+        protocol_ops_per_sec: slowest_operations_per_second
+            .is_finite()
+            .then_some(slowest_operations_per_second as u64),
+        network: Some(network),
     };
-    let max_handshakes = cpus
-        .saturating_mul(128)
-        .max(measured_setup_capacity)
-        .min(max_connections)
-        .max(1);
-    let max_crypto_operations = cpus.saturating_mul(32).min(max_handshakes).max(1);
-    let max_fallbacks = max_connections.min(cpus.saturating_mul(128).max(64));
-    let max_dns_lookups = max_connections.min(cpus.saturating_mul(32).max(16));
-    let max_replay_entries = max_connections.saturating_mul(4).clamp(1_024, 1_000_000);
-    let max_direct_concurrent = max_connections.min(cpus.saturating_mul(512).max(64));
-    let max_direct_per_second = cpus
-        .saturating_mul(2_048)
-        .max(measured_setup_capacity.saturating_mul(4))
-        .clamp(64, u64::from(u32::MAX));
+    StartupPlan::derive(
+        &capabilities_of(machine),
+        &SafetyLimits::default(),
+        resource_mode,
+        listener_count,
+        probes,
+        source_policy,
+    )
+    .into_policy()
+}
 
-    PolicyConfig {
-        resource_governor: ResourceGovernorConfig {
-            max_connections: to_u32(max_connections),
-            max_handshakes: to_u32(max_handshakes),
-            max_fallbacks: to_u32(max_fallbacks),
-            max_crypto_operations: to_u32(max_crypto_operations),
-            max_replay_entries: to_u32(max_replay_entries),
-            max_dns_lookups: to_u32(max_dns_lookups),
-            replay_retention_ms: source_policy.resource_governor.replay_retention_ms,
-            client_hello_timeout_ms: source_policy.resource_governor.client_hello_timeout_ms,
-            handshake_timeout_ms: source_policy.resource_governor.handshake_timeout_ms,
-            connect_timeout_ms: source_policy.resource_governor.connect_timeout_ms,
-            fallback_timeout_ms: source_policy.resource_governor.fallback_timeout_ms,
-        },
-        direct_barrier: crate::config::DirectBarrierConfig {
-            max_concurrent: to_u32(max_direct_concurrent),
-            max_per_second: to_u32(max_direct_per_second),
-        },
-        relay: RelayPolicy {
-            buffer_bytes,
-            max_pooled_buffers: usize::try_from(max_pooled_buffers).unwrap_or(65_536),
-            max_splice_relays: to_u32(max_splice_relays.min(max_connections)),
-            max_relay_memory_bytes: relay_memory,
-            splice: cfg!(target_os = "linux"),
-            pipe_pool: cfg!(target_os = "linux"),
-            max_pooled_pipes: if cfg!(target_os = "linux") {
-                to_u32(max_pooled_pipes)
-            } else {
-                0
-            },
-        },
+fn capabilities_of(machine: &AutotuneMachine) -> MachineCapabilities {
+    MachineCapabilities {
+        logical_cpus: machine.logical_cpus,
+        effective_cpus: machine.effective_cpus,
+        fd_soft_limit: machine.fd_soft_limit,
+        fd_hard_limit: machine.fd_hard_limit,
+        memory_source: machine.memory_source,
+        memory_total_bytes: machine.memory_total_bytes,
+        memory_current_bytes: machine.memory_current_bytes,
+        cpu_quota_microseconds: machine.cpu_quota_microseconds,
+        cpu_period_microseconds: machine.cpu_period_microseconds,
     }
-}
-
-fn effective_cpu_count(report: &MachineReport) -> usize {
-    let quota = report
-        .cpu_quota_us
-        .zip(report.cpu_period_us)
-        .filter(|(_, period)| *period > 0)
-        .map(|(quota, period)| quota.saturating_add(period - 1) / period)
-        .and_then(|count| usize::try_from(count).ok());
-    quota.map_or(report.available_cpus, |count| {
-        report.available_cpus.min(count.max(1))
-    })
-}
-
-fn relay_memory_budget(memory_total: u64) -> u64 {
-    if memory_total == 0 {
-        256 * MEBIBYTE
-    } else {
-        (memory_total / 8).clamp(16 * MEBIBYTE, 2 * 1024 * MEBIBYTE)
-    }
-}
-
-fn connection_memory_limit(memory_total: u64, resource_mode: ResourceMode) -> u64 {
-    if memory_total == 0 {
-        return MAX_CONNECTIONS;
-    }
-    // Leave the rest for relay pools, crypto/asset state, the allocator,
-    // kernel socket/pipe memory, and other processes in the same budget.
-    let budget = match resource_mode {
-        ResourceMode::Standard => memory_total.saturating_mul(3) / 8,
-        ResourceMode::Dedicated => memory_total / 2,
-    };
-    (budget / PLANNED_CONNECTION_BYTES).max(64)
-}
-
-fn selected_buffer_bytes(network: &NetworkProbe) -> usize {
-    let slower_direction = network
-        .upload_mebibytes_per_second
-        .min(network.download_mebibytes_per_second);
-    if slower_direction >= 1_024.0 {
-        64 * 1024
-    } else if slower_direction >= 256.0 {
-        32 * 1024
-    } else {
-        16 * 1024
-    }
-}
-
-fn to_u32(value: u64) -> u32 {
-    u32::try_from(value).unwrap_or(u32::MAX)
 }
 
 fn probe_storage(directory: &Path, bytes: u64) -> Result<StorageProbe, AutotuneError> {
@@ -734,24 +592,11 @@ fn percentile(sorted: &[f64], percentile: usize) -> f64 {
 mod tests {
     use std::{net::IpAddr, str::FromStr as _, time::Duration};
 
-    use super::{
-        AutotuneMachine, NetworkProbe, connection_memory_limit, derive_policy, effective_cpu_count,
-        probe_loopback, probe_storage,
-    };
+    use super::{AutotuneMachine, NetworkProbe, derive_policy, probe_loopback, probe_storage};
     use crate::{
         benchmark::{BenchmarkOptions, run_benchmarks},
         config::{GenerateConfigInput, ResourceMode, generate_minimal_config, validate_config},
-        runtime::machine::MachineReport,
     };
-
-    #[test]
-    fn cgroup_quota_reduces_the_effective_cpu_count() {
-        let mut machine = MachineReport::conservative();
-        machine.available_cpus = 16;
-        machine.cpu_quota_us = Some(250_000);
-        machine.cpu_period_us = Some(100_000);
-        assert_eq!(effective_cpu_count(&machine), 3);
-    }
 
     #[test]
     fn derived_policy_is_bounded_and_valid() {
@@ -804,23 +649,6 @@ mod tests {
         assert!(
             config.advanced.limits.relay.max_splice_relays
                 <= config.advanced.limits.resource_governor.max_connections
-        );
-    }
-
-    #[test]
-    fn connection_memory_model_preserves_mode_specific_headroom() {
-        let gibibyte = 1024 * 1024 * 1024;
-        assert_eq!(
-            connection_memory_limit(gibibyte, ResourceMode::Standard),
-            6_144
-        );
-        assert_eq!(
-            connection_memory_limit(gibibyte, ResourceMode::Dedicated),
-            8_192
-        );
-        assert_eq!(
-            connection_memory_limit(0, ResourceMode::Standard),
-            super::MAX_CONNECTIONS
         );
     }
 

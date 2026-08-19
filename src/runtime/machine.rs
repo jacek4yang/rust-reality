@@ -164,6 +164,26 @@ impl MachineReport {
         }
     }
 
+    /// Returns the CPU count after applying a finite cgroup CPU quota.
+    ///
+    /// A quota of `q` microseconds per `p`-microsecond period allows
+    /// `ceil(q / p)` CPUs, never fewer than one and never more than the
+    /// affinity-visible count. An absent quota or a zero period leaves the
+    /// visible count untouched, so an unobservable boundary never shrinks
+    /// the plan.
+    #[must_use]
+    pub fn effective_cpus(&self) -> usize {
+        let quota = self
+            .cpu_quota_us
+            .zip(self.cpu_period_us)
+            .filter(|(_, period)| *period > 0)
+            .map(|(quota, period)| quota.saturating_add(period - 1) / period)
+            .and_then(|count| usize::try_from(count).ok());
+        quota.map_or(self.available_cpus, |count| {
+            self.available_cpus.min(count.max(1))
+        })
+    }
+
     /// Returns whether the single-tenancy boundary is fully observable.
     ///
     /// "Tenancy" here means the process is dedicated to its *cgroup* — the
@@ -514,6 +534,50 @@ mod tests {
                 reading.bytes > 0 && reading.source == super::MemorySampleSource::ResidentSet
             }),
             "a missing cgroup file must fall back to a live RSS sample, got {sample:?}"
+        );
+    }
+
+    #[test]
+    fn effective_cpus_apply_a_finite_cgroup_quota() {
+        let mut report = MachineReport::conservative();
+        report.available_cpus = 16;
+        report.cpu_quota_us = Some(250_000);
+        report.cpu_period_us = Some(100_000);
+        assert_eq!(report.effective_cpus(), 3, "the quota rounds up");
+
+        report.cpu_quota_us = Some(50_000);
+        assert_eq!(
+            report.effective_cpus(),
+            1,
+            "a sub-CPU quota still leaves one CPU"
+        );
+
+        report.cpu_quota_us = Some(1_600_000);
+        assert_eq!(
+            report.effective_cpus(),
+            16,
+            "a quota above the visible count never inflates it"
+        );
+    }
+
+    #[test]
+    fn effective_cpus_ignore_an_unusable_quota() {
+        let mut report = MachineReport::conservative();
+        report.available_cpus = 8;
+        assert_eq!(report.effective_cpus(), 8, "no quota detected");
+
+        report.cpu_quota_us = Some(200_000);
+        assert_eq!(
+            report.effective_cpus(),
+            8,
+            "a quota without a period is unusable"
+        );
+
+        report.cpu_period_us = Some(0);
+        assert_eq!(
+            report.effective_cpus(),
+            8,
+            "a zero period cannot divide and is ignored"
         );
     }
 
