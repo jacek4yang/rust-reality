@@ -634,7 +634,7 @@ connectTimeoutMs` 并留有余量：首个密封记录只有在转移被读取�
 | `maxSpliceRelays` | 否 | `256` | splice 开启时大于零且不超过 `maxConnections`；每条 relay 使用两对 pipe。 |
 | `maxRelayMemoryBytes` | 否 | `536870912` | 池化加注册中继缓冲内存上限。 |
 | `pipePool` | 否 | `true` | 进程级复用 splice 管道，而不是每个会话创建/扩容/销毁。 |
-| `maxPooledPipes` | 否 | `512` | 池化管道上限；管道池按 `maxPooledPipes × 2` 页核算内存。 |
+| `maxPooledPipes` | 否 | `256` | 池化管道上限；管道池按 `maxPooledPipes × 2` 个管道容量核算内存。 |
 | `splice` | 是 | `true` | 只允许在明文 TCP 边界使用有界非阻塞 Linux splice。 |
 
 ### 后端选择
@@ -657,8 +657,8 @@ connectTimeoutMs` 并留有余量：首个密封记录只有在转移被读取�
 ```text
 buffered_memory = maxPooledBuffers * bufferBytes
 pipe_memory     = splice 关闭时 0
-                | pipePool 开启时 maxPooledPipes * 2 * 256 KiB
-                | pipePool 关闭时 maxSpliceRelays * 4 * 256 KiB
+                | pipePool 开启时 maxPooledPipes * 2 * 512 KiB
+                | pipePool 关闭时 maxSpliceRelays * 4 * 512 KiB
 
 buffered_memory + pipe_memory <= maxRelayMemoryBytes
 ```

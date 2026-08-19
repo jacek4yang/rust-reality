@@ -31,6 +31,14 @@ procedure ships in the v1.6.0 release notes.
   `config::load_config`; `Config::normalize`, the `Config.policy` field,
   `RuntimeConfig::resource_mode`, and the whole `config::migrate` module
   are removed.
+- The splice relay pipe capacity rises from 256 KiB to 512 KiB (measured:
+  halves the splice syscall rate and ~5% server CPU per GiB on sustained
+  streams). The worst-case relay-memory accounting doubles per pipe, so the
+  built-in `advanced.limits.relay.maxPooledPipes` default drops from 512 to
+  256, keeping the default accounted pool total at 256 MiB. Configurations
+  that pin `maxPooledPipes` or set `pipePool: false` may need a higher
+  `maxRelayMemoryBytes` under the doubled per-pipe accounting; run
+  `rust-reality check --config config.json`.
 
 ### v1.5 → v1.6 configuration mapping
 

@@ -690,7 +690,7 @@ This isolates direct destination pressure from authenticated connection count.
 | `maxSpliceRelays` | no | `256` | With splice enabled, greater than zero and no more than `maxConnections`. Each relay consumes two pipe pairs. |
 | `maxRelayMemoryBytes` | no | `536870912` | Ceiling on pooled plus registered relay buffer memory. |
 | `pipePool` | no | `true` | Reuse splice pipes process-wide instead of creating/resizing/destroying them per session. |
-| `maxPooledPipes` | no | `512` | Pooled-pipe ceiling; the pool accounts `maxPooledPipes × 2` pipe pages of memory. |
+| `maxPooledPipes` | no | `256` | Pooled-pipe ceiling; the pool accounts `maxPooledPipes × 2` pipe capacities of memory. |
 | `splice` | yes | `true` | Permit bounded nonblocking Linux splice only across plaintext TCP boundaries. |
 
 ### Backend selection
@@ -717,8 +717,8 @@ arithmetic:
 ```text
 buffered_memory = maxPooledBuffers * bufferBytes
 pipe_memory     = 0 when splice is disabled
-                | maxPooledPipes * 2 * 256 KiB when pipePool is on
-                | maxSpliceRelays * 4 * 256 KiB when pipePool is off
+                | maxPooledPipes * 2 * 512 KiB when pipePool is on
+                | maxSpliceRelays * 4 * 512 KiB when pipePool is off
 
 buffered_memory + pipe_memory <= maxRelayMemoryBytes
 ```

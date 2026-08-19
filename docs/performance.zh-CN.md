@@ -264,7 +264,7 @@ BoringSSL 的 C/汇编，静态链接）提供。使用 `--no-default-features` 
 - 对 Xray 26.7.28/Go 的机制审计解释了对比形态：Xray 的 REALITY **fallback**
   路径使用 readv/writev 64 KiB 用户态拷贝——完全不用 splice——而其 Vision
   下行通过 Go 运行时的 `sync.Pool`（1 MiB 管道池）做 splice（池热后每会话
-  约 0 次管道系统调用）。rust-reality 的 `PipePool` 为其 256 KiB 管道消除了
+  约 0 次管道系统调用）。rust-reality 的 `PipePool` 为其 512 KiB 管道消除了
   等价的每会话 pipe2/fcntl/close 抖动。
 - 最终 v1.0.0 干净同源 fallback A/B（两侧 warn 级日志；
   `benchmarks/final/v1-fallback-ab/`）：c1–c32 时 splice fallback 为 Xray 的

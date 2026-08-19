@@ -332,7 +332,7 @@ Measured evidence (validation host above):
   copies — no splice at all — while its Vision downlink splices through the
   Go runtime's `sync.Pool` of 1 MiB pipes (≈0 pipe syscalls per session
   once warm). rust-reality's `PipePool` removes the equivalent per-session
-  pipe2/fcntl/close churn for its 256 KiB pipes.
+  pipe2/fcntl/close churn for its 512 KiB pipes.
 - Final v1.0.0 clean same-origin fallback A/B (warn-level logging both
   sides; `benchmarks/final/v1-fallback-ab/`): splice fallback 1.00–1.03×
   Xray at c1–c32 with equal-or-lower task-clock. An earlier apparent

@@ -2936,10 +2936,10 @@ mod tests {
         .expect("server must compile");
         let effective = &server.runtime.load().config.advanced.limits;
         // The golden conservative-machine derivation from runtime::plan.
-        assert_eq!(effective.resource_governor.max_connections, 153);
+        assert_eq!(effective.resource_governor.max_connections, 197);
         assert_eq!(effective.resource_governor.max_handshakes, 128);
         assert_eq!(effective.relay.buffer_bytes, 32 * 1024);
-        assert_eq!(effective.relay.max_splice_relays, 75);
+        assert_eq!(effective.relay.max_splice_relays, 64);
         assert_eq!(
             effective.resource_governor.handshake_timeout_ms,
             crate::config::ResourceGovernorConfig::default().handshake_timeout_ms,

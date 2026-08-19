@@ -91,12 +91,12 @@ canonical samples live in [benchmarks.md](benchmarks.md).
    | single raw direction | directional splice → directional buffered |
 
    - **splice**: one pipe pair per direction (bilateral = two pairs), exactly
-     2 FD units per direction, reserved before `pipe2`. Pipes request a 256
-     KiB capacity (best effort, below the unprivileged 1 MiB cap) and the
-     relay chunk is the pipe's actual capacity; kernel pipe memory is
-     accounted worst-case as `maxPooledPipes × 2 × 256 KiB` when the pipe
+     2 FD units per direction, reserved before `pipe2`. Pipes request a 512
+     KiB capacity (best effort, at or below the unprivileged 1 MiB cap) and
+     the relay chunk is the pipe's actual capacity; kernel pipe memory is
+     accounted worst-case as `maxPooledPipes × 2 × 512 KiB` when the pipe
      pool is enabled (the default; the pool subsumes per-session creation)
-     or `maxSpliceRelays × 4 × 256 KiB` without it. Pipes are
+     or `maxSpliceRelays × 4 × 512 KiB` without it. Pipes are
      pooled (`PipePool`), so steady-state sessions pay no
      pipe2/fcntl/close churn, and pooled pipes are never reused with unread
      data. Source EOF → graceful write-side shutdown of the destination
