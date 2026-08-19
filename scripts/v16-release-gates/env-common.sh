@@ -15,7 +15,7 @@
 # doing.  The candidate SHA-256 is computed from the binary at source time.
 ROOT=/home/jacek/work/kimi-rust-reality-performance
 GATES=$ROOT/artifacts/v1.6.0/gates
-REPOSITORY=$ROOT/rust-reality
+REPOSITORY=$ROOT/worktrees/v16-gates
 DATAPATH=$ROOT/artifacts/v1.6.0
 
 BASELINE_BIN=$DATAPATH/baseline/extracted/rust-reality
