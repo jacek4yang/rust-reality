@@ -64,6 +64,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "config_diagnostic"
+path = "fuzz_targets/config_diagnostic.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "vision_transitions"
 path = "fuzz_targets/vision_transitions.rs"
 test = false

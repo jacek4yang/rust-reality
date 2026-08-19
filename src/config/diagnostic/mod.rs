@@ -309,10 +309,22 @@ fn actual_value(text: &str, map: &SourceMap, span: Span) -> String {
         return "[REDACTED]".to_owned();
     }
     let raw = &text[span.start..span.end.min(text.len())];
+    // Control characters are replaced so hostile values cannot inject
+    // terminal control sequences into the rendered block.
+    let sanitized = |ch: char| {
+        if ch.is_control() {
+            char::REPLACEMENT_CHARACTER
+        } else {
+            ch
+        }
+    };
     if raw.chars().count() > MAX_ACTUAL {
-        let truncated: String = raw.chars().take(MAX_ACTUAL).collect();
-        format!("{truncated}...")
+        raw.chars()
+            .take(MAX_ACTUAL)
+            .map(sanitized)
+            .collect::<String>()
+            + "..."
     } else {
-        raw.to_owned()
+        raw.chars().map(sanitized).collect()
     }
 }

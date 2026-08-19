@@ -32,7 +32,7 @@ impl Cell {
                 if ch == "\t" {
                     output.push_str("    ");
                 } else {
-                    output.push_str(ch);
+                    push_sanitized(output, ch);
                 }
             }
             Self::Redacted { .. } => output.push_str(REDACTED),
@@ -62,6 +62,18 @@ impl Cell {
         match self {
             Self::Char { src_end, .. } | Self::Redacted { src_end, .. } => *src_end,
         }
+    }
+}
+
+/// Appends one source character, replacing control characters (ESC among
+/// them) with U+FFFD so hostile input can never inject terminal control
+/// sequences into the rendered block.
+fn push_sanitized(output: &mut String, ch: &str) {
+    let mut chars = ch.chars();
+    match chars.next() {
+        Some(c) if c.is_control() => output.push(char::REPLACEMENT_CHARACTER),
+        Some(c) => output.push(c),
+        None => {}
     }
 }
 

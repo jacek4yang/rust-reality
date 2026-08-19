@@ -265,7 +265,11 @@ fn golden_nested_semantic_conflict() {
 
 #[test]
 fn golden_non_ascii_before_error() {
-    let rendered = render_error(&tweak(&base(), &["log", "level"], serde_json::json!("infö")));
+    let rendered = render_error(&tweak(
+        &base(),
+        &["log", "level"],
+        serde_json::json!("infö"),
+    ));
     assert_eq!(
         rendered,
         concat!(
@@ -358,7 +362,13 @@ fn golden_duplicate_key() {
 fn golden_secret_redaction() {
     let rendered = render_error(&tweak(
         &base(),
-        &["inbounds", "0", "streamSettings", "realitySettings", "privateKey"],
+        &[
+            "inbounds",
+            "0",
+            "streamSettings",
+            "realitySettings",
+            "privateKey",
+        ],
         serde_json::json!("not-valid-base64!!!"),
     ));
     assert_eq!(
@@ -422,6 +432,41 @@ fn golden_removed_resource_mode() {
 }
 
 #[test]
+fn golden_control_characters_are_never_emitted() {
+    // A raw ESC byte inside a string is a syntax error; the excerpt must
+    // still replace the control character rather than echo it.
+    let rendered = render_error("{\n  \"inbounds\": [],\n  \"outbounds\": \"no\u{1b}pe\"\n}\n");
+    assert_eq!(
+        rendered,
+        concat!(
+            "error: unescaped control character in string\n",
+            " --> config.json:3:19\n",
+            "  |\n",
+            "3 |   \"outbounds\": \"no�pe\"\n",
+            "  |                   ^\n",
+            "  |\n",
+            "  = help: escape control characters as \\u00XX"
+        )
+    );
+
+    // A JSON-escaped ESC is valid syntax but must never reach the terminal
+    // through the actual-value note either.
+    let rendered = render_error("{\n  \"inbounds\": [],\n  \"outbounds\": \"no\\u001bpe\"\n}\n");
+    assert_eq!(
+        rendered,
+        concat!(
+            "error: invalid type for `outbounds`\n",
+            " --> config.json:3:16\n",
+            "  |\n",
+            "3 |   \"outbounds\": \"no\\u001bpe\"\n",
+            "  |                ^^^^^^^^^^^^ expected a sequence\n",
+            "  |\n",
+            "  = actual value: \"no\\u001bpe\""
+        )
+    );
+}
+
+#[test]
 fn golden_startup_error_through_load_config() {
     // The startup path (`check` and `serve` bootstrap) loads through
     // `load_config`; the pid-suffixed temp path is not golden-stable, so the
@@ -430,8 +475,11 @@ fn golden_startup_error_through_load_config() {
         "rust-reality-golden-startup-{}.json",
         std::process::id()
     ));
-    std::fs::write(&path, "{\n  \"inbounds\": [],\n  \"outbounds\": \"nope\"\n}\n")
-        .expect("fixture must write");
+    std::fs::write(
+        &path,
+        "{\n  \"inbounds\": [],\n  \"outbounds\": \"nope\"\n}\n",
+    )
+    .expect("fixture must write");
     let error = load_config(&path).expect_err("the fixture must fail");
     let rendered = error.to_string();
     let _ignored = std::fs::remove_file(&path);
@@ -475,4 +523,17 @@ fn golden_reload_error_display() {
             "  = actual value: \"nope\""
         )
     );
+}
+
+#[test]
+fn golden_invalid_utf8_and_partial_spans_never_panic() {
+    // Invalid UTF-8 forces lossy decoding; the tolerant scanner must keep
+    // every span on a character boundary (regression: a multi-byte escape
+    // byte once left the scanner mid-character).
+    let bytes: &[u8] = b"[ {},[{\"u\\\xEC\x04";
+    let error = crate::config::io::decode_config(Path::new("config.json"), bytes)
+        .expect_err("the fixture must fail");
+    let rendered = error.to_string();
+    assert!(rendered.starts_with("error: "), "{rendered}");
+    assert!(!rendered.contains('\u{1b}'), "{rendered:?}");
 }

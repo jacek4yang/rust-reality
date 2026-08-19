@@ -415,6 +415,12 @@ impl Scanner<'_> {
 
     fn parse_escape(&mut self, decoded: &mut String) -> Option<()> {
         let escaped = self.peek()?;
+        // Valid JSON escapes are ASCII; anything else (including the lead
+        // byte of a multi-byte character) fails here so `pos` never lands
+        // inside a UTF-8 sequence.
+        if !escaped.is_ascii() {
+            return None;
+        }
         self.pos += 1;
         match escaped {
             b'"' => decoded.push('"'),
