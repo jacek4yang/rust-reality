@@ -26,7 +26,7 @@ use crate::{
     assets::{AssetLoadError, AssetSnapshot},
     config::{
         Config, ConfigError, ConfigLoadError, InboundConfig, ListenMode, ResourceMode,
-        RuntimeConfig, RuntimeProfile, load_config_with_report, validate_config,
+        RuntimeConfig, RuntimeProfile, TuningMode, load_config_with_report, validate_config,
     },
     logging::{AdmissionResource, BackendStatus, LogEvent, LogWriteError, Logger, RejectionReason},
     network::{AddressFamily, ConnectionPlanner, NetworkEnvironment},
@@ -37,6 +37,7 @@ use crate::{
         ResourcePressure, UNITS_INBOUND_SOCKET,
         connection::ConnectionTasks,
         machine::{self, MachineReport, MemoryPlan, MemorySampler},
+        plan,
     },
     transport::{
         BackendDeclineReason, BackendReport, RelayBackend,
@@ -141,10 +142,15 @@ struct MemoryWatch {
 /// own soft `RLIMIT_NOFILE` to the hard limit — a process-local, privilege-
 /// free adjustment — and plans against the relaxed dedicated headroom. A
 /// failed raise is logged through the machine report and the derivation
-/// continues with the effective soft limit. The effective mode comes from
-/// [`resolve_startup_resource_mode`]: an explicit `resourceMode` wins,
-/// otherwise the profile maps onto the mode.
-fn derive_fd_budget(config: &Config) -> Result<ResourceStartup, FdBudgetError> {
+/// continues with the effective soft limit. The effective mode and the
+/// machine view come from the caller: the bootstrap resolves both before the
+/// Tokio runtime exists so the runtime topology and the policy derivation
+/// share one detection.
+fn derive_fd_budget(
+    config: &Config,
+    resource_mode: ResourceMode,
+    mut machine: MachineReport,
+) -> Result<ResourceStartup, FdBudgetError> {
     let listeners = config
         .inbounds
         .iter()
@@ -157,7 +163,6 @@ fn derive_fd_budget(config: &Config) -> Result<ResourceStartup, FdBudgetError> {
         })
         .unwrap_or(u64::MAX);
     let reserve = FixedFdReserve::new(listeners);
-    let (resource_mode, mut machine) = resolve_startup_resource_mode(&config.runtime);
     let dedicated = resource_mode == ResourceMode::Dedicated;
     if !dedicated {
         let limit = read_descriptor_limit();
@@ -225,16 +230,22 @@ fn derive_fd_budget(config: &Config) -> Result<ResourceStartup, FdBudgetError> {
 ///
 /// An explicit `resourceMode` is authoritative; otherwise the profile maps
 /// onto the mode ([`RuntimeConfig::resolve_resource_mode`]). The detected
-/// machine view is gathered only when the resolution or the dedicated-mode
-/// derivation can need it: an explicit `standard` mode and the `shared`
-/// profile both resolve to standard without looking at the machine, while
-/// `auto` needs the cgroup tenancy boundary to decide and every dedicated
-/// outcome budgets against the measured view.
-fn resolve_startup_resource_mode(runtime: &RuntimeConfig) -> (ResourceMode, MachineReport) {
-    let detect = match runtime.resource_mode {
-        Some(mode) => mode == ResourceMode::Dedicated,
-        None => runtime.profile != RuntimeProfile::Shared,
-    };
+/// machine view is gathered only when the resolution, the dedicated-mode
+/// derivation, or the startup policy derivation can need it: an explicit
+/// `standard` mode and the `shared` profile both resolve to standard without
+/// looking at the machine, while `auto` needs the cgroup tenancy boundary to
+/// decide, every dedicated outcome budgets against the measured view, and
+/// `derivation_active` (a `startup`/`adaptive` tuning mode) derives the
+/// numeric policy from the measured view.
+fn resolve_startup_resource_mode(
+    runtime: &RuntimeConfig,
+    derivation_active: bool,
+) -> (ResourceMode, MachineReport) {
+    let detect = derivation_active
+        || match runtime.resource_mode {
+            Some(mode) => mode == ResourceMode::Dedicated,
+            None => runtime.profile != RuntimeProfile::Shared,
+        };
     let machine = if detect {
         MachineReport::detect()
     } else {
@@ -275,7 +286,7 @@ impl ProductionServer {
         let mut config = config.clone();
         let policy_alias_used = config.normalize().map_err(RuntimeUpdateError::Invalid)?;
         validate_config(&config).map_err(RuntimeUpdateError::Invalid)?;
-        Self::compile(config, None, policy_alias_used)
+        Self::compile(config, None, policy_alias_used, None)
     }
 
     /// Loads and compiles a production configuration while retaining its path for
@@ -287,14 +298,64 @@ impl ProductionServer {
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self, ProductionServerError> {
         let path = path.as_ref().to_path_buf();
         let (config, report) = load_config_with_report(&path).map_err(RuntimeUpdateError::Load)?;
-        Self::compile(config, Some(path), report.policy_alias_used)
+        Self::compile(config, Some(path), report.policy_alias_used, None)
+    }
+
+    /// Compiles one already-loaded configuration against a caller-detected
+    /// machine view.
+    ///
+    /// The serve bootstrap uses this constructor: it detects the machine
+    /// before building the Tokio runtime so the runtime topology and the
+    /// startup policy derivation share one detection, then hands the report
+    /// over instead of letting the server detect again.
+    ///
+    /// # Errors
+    ///
+    /// Returns a validation, logger, asset, routing, REALITY, or listener error.
+    pub fn from_loaded(
+        config: Config,
+        config_path: Option<PathBuf>,
+        policy_alias_used: bool,
+        machine: MachineReport,
+    ) -> Result<Self, ProductionServerError> {
+        Self::compile(config, config_path, policy_alias_used, Some(machine))
     }
 
     fn compile(
         config: Config,
         config_path: Option<PathBuf>,
         policy_alias_used: bool,
+        machine: Option<MachineReport>,
     ) -> Result<Self, ProductionServerError> {
+        // Resolve the machine view and the resource mode before anything is
+        // built: the policy derivation and the descriptor budget share this
+        // one detection. A caller-supplied report is used verbatim; otherwise
+        // detection happens here, skipped only when nothing can consume the
+        // view (an explicit shared/standard posture with fixed tuning).
+        let derivation_active = config.runtime.tuning.mode() != TuningMode::Fixed;
+        let (resource_mode, machine) = match machine {
+            Some(machine) => (config.runtime.resolve_resource_mode(&machine), machine),
+            None => resolve_startup_resource_mode(&config.runtime, derivation_active),
+        };
+        // The tuning mode decides where the numeric policy comes from:
+        // `fixed` keeps the configured limits verbatim (v1.5 behavior), the
+        // derived modes merge the passive startup derivation under the
+        // operator pins. The effective policy is what every pool, barrier,
+        // and reload comparison below sees, and the derived output is
+        // validated exactly like autotune output.
+        let mut config = config;
+        if derivation_active {
+            config.advanced.limits = plan::resolve_policy(
+                &config.advanced.limits,
+                &config.runtime.tuning,
+                &machine,
+                resource_mode,
+                config.inbounds.len(),
+            )
+            .policy;
+            validate_config(&config).map_err(RuntimeUpdateError::Invalid)?;
+        }
+        let topology = plan::RuntimeTopology::for_mode(resource_mode, machine.effective_cpus());
         let pressure = PressureGauge::new();
         // Process-lifetime authorities: reload generations swap routing and
         // protocol snapshots only — admission ceilings and the direct-dial
@@ -325,7 +386,8 @@ impl ProductionServer {
             nxr: compile_nxr_replays(&config)?,
             handoff: compile_handoff_replays(&config)?,
         };
-        let startup = derive_fd_budget(&config).map_err(ProductionServerError::DescriptorBudget)?;
+        let startup = derive_fd_budget(&config, resource_mode, machine)
+            .map_err(ProductionServerError::DescriptorBudget)?;
         let tcp_relay = TcpRelay::new(&config.advanced.limits.relay, startup.budget.clone())
             .map_err(RuntimeUpdateError::Relay)?;
         let initial = RuntimeSnapshot::compile(
@@ -391,6 +453,19 @@ impl ProductionServer {
                 },
             );
         }
+        emit(
+            &initial.logger,
+            &LogEvent::RuntimePlanReport {
+                resource_mode: resource_mode.as_str(),
+                tuning_mode: initial.config.runtime.tuning.mode().as_str(),
+                objective: initial.config.runtime.tuning.objective.as_str(),
+                worker_threads: topology
+                    .worker_threads
+                    .unwrap_or(startup.machine.available_cpus),
+                max_blocking_threads: topology.effective_max_blocking_threads(),
+                policy_derived: derivation_active,
+            },
+        );
         emit(
             &initial.logger,
             &LogEvent::DescriptorBudgetReport {
@@ -735,7 +810,7 @@ impl RuntimeStore {
             .lock()
             .map_err(|_| RuntimeUpdateError::Unavailable)?;
         let current = self.load();
-        ensure_hot_compatible(&current, &config)?;
+        let config = ensure_hot_compatible(&current, config)?;
         let generation = self
             .generation
             .load(Ordering::Acquire)
@@ -907,11 +982,18 @@ enum ConnectionHandler {
     Handoff(HandoffLandingHandler),
 }
 
+/// Guards one candidate against the cold settings of the running generation
+/// and returns the candidate with its effective policy resolved.
+///
+/// The returned config carries the startup-derived numbers under a derived
+/// tuning mode (the resolution is the identity under `fixed`), so the
+/// published generation stores exactly what startup stored and the next
+/// reload compares effective against effective.
 fn ensure_hot_compatible(
     current: &RuntimeSnapshot,
-    candidate: &Config,
-) -> Result<(), RuntimeUpdateError> {
-    if listener_topology(candidate) != listener_topology(&current.config) {
+    candidate: Config,
+) -> Result<Config, RuntimeUpdateError> {
+    if listener_topology(&candidate) != listener_topology(&current.config) {
         return Err(RuntimeUpdateError::ListenerTopologyChanged);
     }
     if candidate.network.dial != current.config.network.dial {
@@ -923,11 +1005,12 @@ fn ensure_hot_compatible(
     if candidate.dns != current.config.dns {
         return Err(RuntimeUpdateError::DnsPolicyChanged);
     }
-    // The runtime posture is cold, but compare effective values rather than
-    // raw options: an explicit `resourceMode: standard` and a `policy`-alias-
-    // forced `tuning.mode: fixed` must not reject an equivalent hand-migrated
-    // config. Both modes resolve against one freshly detected machine view,
-    // so identical configs never disagree.
+    // The runtime posture is cold. The resource mode compares resolved
+    // values so an explicit `resourceMode: standard` and an unset mode do
+    // not reject an equivalent hand-migrated config; the tuning mode
+    // compares strictly, because `fixed`, `startup`, and `adaptive` now
+    // produce different effective policies. Both modes resolve against one
+    // freshly detected machine view, so identical configs never disagree.
     let machine = MachineReport::detect();
     if !current
         .config
@@ -935,6 +1018,25 @@ fn ensure_hot_compatible(
         .hot_compatible_with(&candidate.runtime, &machine)
     {
         return Err(RuntimeUpdateError::ResourceModeChanged);
+    }
+    // Compare effective policies, not raw limits: the running generation
+    // carries the startup-derived numbers, so the candidate must pass
+    // through the same derivation — against the same fresh machine view —
+    // before the comparison. In `fixed` mode the resolution is the
+    // identity. A drift that only changes derived inputs (e.g. a changed
+    // cgroup boundary) rejects here, because the pools were sized at
+    // process start and cannot move.
+    let mut candidate = candidate;
+    if candidate.runtime.tuning.mode() != TuningMode::Fixed {
+        candidate.advanced.limits = plan::resolve_policy(
+            &candidate.advanced.limits,
+            &candidate.runtime.tuning,
+            &machine,
+            candidate.runtime.resolve_resource_mode(&machine),
+            candidate.inbounds.len(),
+        )
+        .policy;
+        validate_config(&candidate)?;
     }
     if candidate.advanced.limits.resource_governor
         != current.config.advanced.limits.resource_governor
@@ -944,16 +1046,16 @@ fn ensure_hot_compatible(
     if candidate.advanced.limits.direct_barrier != current.config.advanced.limits.direct_barrier {
         return Err(RuntimeUpdateError::DirectBarrierPolicyChanged);
     }
-    if nxr_replay_policy(candidate) != nxr_replay_policy(&current.config) {
+    if nxr_replay_policy(&candidate) != nxr_replay_policy(&current.config) {
         return Err(RuntimeUpdateError::NxrReplayPolicyChanged);
     }
-    if handoff_replay_policy(candidate) != handoff_replay_policy(&current.config) {
+    if handoff_replay_policy(&candidate) != handoff_replay_policy(&current.config) {
         return Err(RuntimeUpdateError::HandoffReplayPolicyChanged);
     }
     if candidate.advanced.limits.relay != current.config.advanced.limits.relay {
         return Err(RuntimeUpdateError::RelayPolicyChanged);
     }
-    Ok(())
+    Ok(candidate)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2649,20 +2751,114 @@ mod tests {
     }
 
     #[test]
-    fn alias_forced_fixed_tuning_mode_is_reload_compatible_with_unset() {
+    fn tuning_mode_drift_requires_restart() {
         let generated = generated_config(8443);
         let mut current = generated.config().clone();
         // What `Config::normalize` produces for a v1.5 config carrying the
         // deprecated `policy` alias.
         current.runtime.tuning.mode = Some(crate::config::TuningMode::Fixed);
         let server = ProductionServer::from_config(&current).expect("server must compile");
+        let previous = server.runtime.load();
 
+        // A hand-migrated config with an unset mode resolves to `startup`:
+        // it would derive different numbers, so the reload must reject.
         let replacement = generated.config().clone();
         assert_eq!(replacement.runtime.tuning.mode, None);
+        assert!(matches!(
+            server.runtime.publish(replacement),
+            Err(RuntimeUpdateError::ResourceModeChanged)
+        ));
+        assert!(Arc::ptr_eq(&previous, &server.runtime.load()));
+    }
+
+    #[test]
+    fn startup_tuning_derives_the_policy_from_the_machine() {
+        let generated = generated_config(8443);
+        assert_eq!(generated.config().runtime.tuning.mode, None);
+        let server = ProductionServer::from_loaded(
+            generated.config().clone(),
+            None,
+            false,
+            crate::runtime::machine::MachineReport::conservative(),
+        )
+        .expect("server must compile");
+        let effective = &server.runtime.load().config.advanced.limits;
+        // The golden conservative-machine derivation from runtime::plan.
+        assert_eq!(effective.resource_governor.max_connections, 153);
+        assert_eq!(effective.resource_governor.max_handshakes, 128);
+        assert_eq!(effective.relay.buffer_bytes, 32 * 1024);
+        assert_eq!(effective.relay.max_splice_relays, 75);
+        assert_eq!(
+            effective.resource_governor.handshake_timeout_ms,
+            crate::config::ResourceGovernorConfig::default().handshake_timeout_ms,
+            "timeouts are carried from the configuration, never derived"
+        );
+        assert_ne!(
+            effective.resource_governor.max_connections,
+            crate::config::ResourceGovernorConfig::default().max_connections,
+            "the default tuning mode no longer applies the built-in numbers"
+        );
+    }
+
+    #[test]
+    fn fixed_tuning_keeps_the_limits_verbatim() {
+        let generated = generated_config(8443);
+        let mut config = generated.config().clone();
+        config.runtime.tuning.mode = Some(crate::config::TuningMode::Fixed);
+        let server = ProductionServer::from_loaded(
+            config,
+            None,
+            false,
+            crate::runtime::machine::MachineReport::conservative(),
+        )
+        .expect("server must compile");
+        assert_eq!(
+            server.runtime.load().config.advanced.limits,
+            crate::config::PolicyConfig::default(),
+            "fixed mode is byte-identical to v1.5"
+        );
+    }
+
+    #[test]
+    fn an_operator_pin_wins_over_the_startup_derivation() {
+        let generated = generated_config(8443);
+        let mut config = generated.config().clone();
+        config.advanced.limits.resource_governor.max_connections = 1_000;
+        let server = ProductionServer::from_loaded(
+            config,
+            None,
+            false,
+            crate::runtime::machine::MachineReport::conservative(),
+        )
+        .expect("server must compile");
+        let effective = &server.runtime.load().config.advanced.limits;
+        assert_eq!(effective.resource_governor.max_connections, 1_000);
+        assert_eq!(
+            effective.resource_governor.max_handshakes, 128,
+            "unpinned fields still derive"
+        );
+    }
+
+    #[test]
+    fn an_unchanged_startup_tuned_config_reloads_cleanly() {
+        let generated = generated_config(8443);
+        let server =
+            ProductionServer::from_config(generated.config()).expect("server must compile");
+        assert!(
+            server
+                .runtime
+                .load()
+                .config
+                .advanced
+                .limits
+                .resource_governor
+                .max_connections
+                > 0
+        );
         server
             .runtime
-            .publish(replacement)
-            .expect("the hand-migrated config behaves identically to the alias config");
+            .publish(generated.config().clone())
+            .expect("the same startup-tuned configuration must reload");
     }
 
     #[test]
@@ -2679,19 +2875,19 @@ mod tests {
         // The shared profile resolves to standard without consulting the
         // machine, so the conservative view comes back untouched.
         let (mode, machine) =
-            super::resolve_startup_resource_mode(&runtime(None, RuntimeProfile::Shared));
+            super::resolve_startup_resource_mode(&runtime(None, RuntimeProfile::Shared), false);
         assert_eq!(mode, ResourceMode::Standard);
         assert_eq!(machine, MachineReport::conservative());
 
         // The dedicated profile maps onto the dedicated mode.
         let (mode, _) =
-            super::resolve_startup_resource_mode(&runtime(None, RuntimeProfile::Dedicated));
+            super::resolve_startup_resource_mode(&runtime(None, RuntimeProfile::Dedicated), false);
         assert_eq!(mode, ResourceMode::Dedicated);
 
         // Auto agrees with the detected tenancy boundary, whatever the test
         // machine looks like.
         let (mode, machine) =
-            super::resolve_startup_resource_mode(&runtime(None, RuntimeProfile::Auto));
+            super::resolve_startup_resource_mode(&runtime(None, RuntimeProfile::Auto), false);
         let expected = if machine.tenancy_boundary_observable() {
             ResourceMode::Dedicated
         } else {
@@ -2701,17 +2897,30 @@ mod tests {
 
         // An explicit mode is authoritative over the profile and an explicit
         // standard mode skips detection entirely.
-        let (mode, machine) = super::resolve_startup_resource_mode(&runtime(
-            Some(ResourceMode::Standard),
-            RuntimeProfile::Auto,
-        ));
+        let (mode, machine) = super::resolve_startup_resource_mode(
+            &runtime(Some(ResourceMode::Standard), RuntimeProfile::Auto),
+            false,
+        );
         assert_eq!(mode, ResourceMode::Standard);
         assert_eq!(machine, MachineReport::conservative());
-        let (mode, _) = super::resolve_startup_resource_mode(&runtime(
-            Some(ResourceMode::Dedicated),
-            RuntimeProfile::Auto,
-        ));
+        let (mode, _) = super::resolve_startup_resource_mode(
+            &runtime(Some(ResourceMode::Dedicated), RuntimeProfile::Auto),
+            false,
+        );
         assert_eq!(mode, ResourceMode::Dedicated);
+
+        // An active startup derivation needs the measured view even under an
+        // explicit shared posture: the policy derives from the real machine.
+        #[cfg(target_os = "linux")]
+        {
+            let (_, machine) =
+                super::resolve_startup_resource_mode(&runtime(None, RuntimeProfile::Shared), true);
+            assert_ne!(
+                machine,
+                MachineReport::conservative(),
+                "derivation never plans against the conservative fallback on a readable host"
+            );
+        }
     }
 
     fn generated_config(port: u16) -> crate::config::GeneratedConfig {

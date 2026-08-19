@@ -5,6 +5,7 @@ pub mod autotune;
 pub mod benchmark;
 pub mod config;
 pub mod crypto;
+pub mod explain;
 pub mod logging;
 pub mod network;
 pub mod protocol;

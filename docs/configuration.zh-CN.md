@@ -598,6 +598,11 @@ connectTimeoutMs` 并留有余量：首个密封记录只有在转移被读取�
 `resourceGovernor`、`directBarrier` 或 `relay`，标记“对象存在时必填”的字段必须
 提供；不能假设部分对象自动继承所有默认值。`config format` 会显示已应用默认值。
 
+这些数值如何成为生效策略取决于 `runtime.tuning.mode`：`fixed` 下按原样使用；
+推导模式（`startup`、`adaptive`）下，取值与内置默认值不同的字段视为运维钉死
+（operator-pinned），始终优先，其余字段在启动时按检测到的机器推导。见
+[启动策略推导](#启动策略推导)。
+
 ### 弃用别名：`policy`
 
 v1.5 的顶层 `policy` 对象仍可解析且行为完全一致。加载时，`policy` 中每个与默认值
@@ -720,8 +725,64 @@ splice 永远不会跨越 REALITY/TLS 安全边界。传输开始前无法获得
 | --- | --- | --- | --- |
 | `runtime.resourceMode` | 否 | 未设置（实际为 `standard`）；`standard`、`dedicated` | `dedicated` 声明独占机器或 cgroup：把 `RLIMIT_NOFILE` 软限制提升到硬限制、按专用余量推导描述符预算，并运行有界内存压力监控器。见[专用资源模式](#dedicated-resource-mode)。冷设置，修改必须重启。设置后 `resourceMode` 优先于 `profile`。 |
 | `runtime.profile` | 否 | `auto`；`auto`、`shared`、`dedicated` | 声明谁拥有这台机器。`shared` 映射到 `resourceMode: standard`，`dedicated` 映射到 `resourceMode: dedicated`；与 `resourceMode` 矛盾的组合是验证错误。`auto` 在 `resourceMode` 已设置时服从它，否则仅当 cgroup v2 租户边界完全可观测（`cpu.max` 配额有限且 `memory.max` 有限）时解析为 `dedicated`；在裸金属上绝不猜测为 dedicated。 |
-| `runtime.tuning.mode` | 否 | `startup`；`fixed`、`startup`、`adaptive` | 数值策略的产生方式。`fixed` 取自 `advanced.limits`（或内置默认值）且永不变动——即 v1.5 行为。`startup` 和 `adaptive` 是 v1.6 调谐模型的推导模式；在启动推导切片落地之前，它们解析为与 `fixed` 相同的固定数值。存在弃用的 `policy` 对象时，除非显式设置模式，否则强制为 `fixed`。 |
-| `runtime.tuning.objective` | 否 | `balanced`；`latency`、`balanced`、`throughput` | 推导数值的形态；只有推导调谐模式才会使用。 |
+| `runtime.tuning.mode` | 否 | `startup`；`fixed`、`startup`、`adaptive` | 数值策略的产生方式。`fixed` 取自 `advanced.limits`（或内置默认值）且永不变动——即 v1.5 行为。`startup` 在启动时按检测到的机器推导每个未钉死的字段。`adaptive` 在本版本的推导结果与 `startup` 完全一致；在推导硬界内调节软上限的控制器尚未发布。存在弃用的 `policy` 对象时，除非显式设置模式，否则强制为 `fixed`。见[启动策略推导](#启动策略推导)。 |
+| `runtime.tuning.objective` | 否 | `balanced`；`latency`、`balanced`、`throughput` | 推导数值的形态；只有推导调谐模式（`startup`、`adaptive`）才会使用。 |
+
+### 启动策略推导
+
+`runtime.tuning.mode: startup`（默认值）下，serve 路径在启动时按检测到的机器
+推导一次数值策略——公式与 `config autotune` 完全相同，但完全被动：启动时不运行
+任何基准、存储或回环探测，就绪绝不延迟。`autotune` 实测的输入使用保守档位
+（32 KiB 缓冲档位、无实测建链容量），因此没有测量数据时推导出的方案不会发明
+autotuner 也不会产生的数值。
+
+推导逐字段进行。`advanced.limits` 中取值与内置默认值不同的字段视为运维钉死，
+始终优先；其余字段全部推导。（显式写出与默认值相同的值与不写无法区分。）所有
+超时和 `replayRetentionMs` 永不推导——它们是协议安全参数，直接取自配置——未钉死
+的 `relay.splice`/`relay.pipePool` 布尔值跟随推导出的平台能力。
+
+目标（objective）在 balanced 推导之后、硬性上限之前缩放选定的推导输出；安全下限
+最后应用，因此 `latency` 绝不会供给不足，`throughput` 也绝不会超过机器推导的
+上限：
+
+| 字段 | `latency` | `balanced` | `throughput` |
+| --- | --- | --- | --- |
+| `resourceGovernor.maxConnections` | ×0.5 | ×1 | ×1.5 |
+| `resourceGovernor.maxHandshakes` | ×1 | ×1 | ×1 |
+| `resourceGovernor.maxFallbacks` | ×0.5 | ×1 | ×1 |
+| `resourceGovernor.maxCryptoOperations` | ×1 | ×1 | ×1 |
+| `resourceGovernor.maxReplayEntries` | 跟随 `maxConnections`（×4） | | |
+| `resourceGovernor.maxDnsLookups` | ×1 | ×1 | ×1 |
+| `directBarrier.maxConcurrent` | ×0.5 | ×1 | ×1.5 |
+| `directBarrier.maxPerSecond` | ×0.5 | ×1 | ×2 |
+| `relay.bufferBytes` | 下移一档 | 32 KiB 默认档 | 上移一档（最高 64 KiB） |
+| `relay.maxPooledBuffers` | ×0.5 | ×1 | ×2 |
+| `relay.maxSpliceRelays` / `relay.maxPooledPipes` | ×1 | ×1 | ×2 |
+| `relay.maxRelayMemoryBytes` | ×0.75 | ×1 | ×1.5（≤ 内存/4） |
+
+未列出的字段——所有超时和 `replayRetentionMs`——按配置原样保留。
+
+推导出的策略在绑定任何监听器之前经过与 `config autotune` 输出完全相同的校验。
+启动时发出一条 `runtime_plan_report` 日志事件，记录解析出的资源模式、调谐模式
+与目标、以及生效的运行时线程池大小。`rust-reality runtime explain --config …`
+离线打印同一份方案：检测到的机器、解析出的 profile、每个字段的生效值及其来源
+（`derived`、`override` 或 `default`）以及所应用的上下界。
+
+生效策略是冷的。热更新会用当前机器视图重新推导候选配置，只要推导结果会不同就
+拒绝——包括仅由启动后 cgroup 边界变化引起的漂移——因为 admission 池在进程启动时
+已定尺寸，无法变更。
+
+### 启动时的运行时拓扑
+
+`serve` 在构建 Tokio 运行时*之前*检测机器并解析 profile，因此运行时线程池与
+策略推导使用同一份机器视图。`dedicated` 姿态下线程池显式定尺寸：
+`worker_threads = effective_cpus().clamp(1, 64)`——感知 cgroup 配额，即使只有
+1 vCPU 也保留多线程运行时——以及
+`max_blocking_threads = (32 + 8 × effective_cpus).clamp(64, 512)`，DNS 与探测
+工作运行在这个池上。shared/standard 姿态保留 tokio 默认值（每个可见 CPU 一个
+worker、512 个阻塞线程），与 v1.5 构建运行时完全一致。两个尺寸都是冷设置：
+tokio 无法调整存活运行时的大小，因此它们在进程生命周期内固定。纯 CLI 命令
+使用小型单线程运行时。
 
 ### Dedicated resource mode
 
@@ -803,7 +864,11 @@ generation，已有连接继续使用其获取的 generation。
 - 任意 `dns` 修改（`servers`、`timeoutMs` 或 `cache`），因为共享解析器——
   包括其超时与缓存边界——在启动时安装一次，属于进程生命周期；
 - 任意 `runtime` 修改（`resourceMode`、`profile` 或 `tuning`），因为资源姿态影响
-  进程生命周期的描述符预算和内存监控器；
+  进程生命周期的描述符预算和内存监控器；调谐模式严格比较，`fixed` ↔ `startup` ↔
+  `adaptive` 之间的任何漂移都必须重启；
+- 推导调谐模式（`startup`/`adaptive`）下任何会改变推导结果的修改——编辑过的
+  `advanced.limits` 钉死字段，或启动后发生变化的机器边界——因为 admission 池在
+  进程启动时已定尺寸；
 - 任意 `advanced.limits.resourceGovernor` 修改，因为 REALITY 重放 admission/状态属于进程生命周期；
 - 任意 `advanced.limits.directBarrier` 修改，因为直连拨号 authority 属于进程生命周期；
 - 任意 `advanced.limits.relay` 修改，因为缓冲/splice 池属于进程生命周期；

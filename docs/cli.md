@@ -93,6 +93,31 @@ a guarantee that the destination will never change behavior.
 `probe-dest` requires a concrete DNS name; a wildcard is a server-side matching
 pattern and is never a valid ClientHello SNI.
 
+### `runtime explain`
+
+```text
+rust-reality runtime explain --config <PATH> [--json]
+```
+
+Explains the runtime resource plan for one configuration without starting the
+server: it detects the machine (descriptor limits, cgroup v2 CPU and memory
+boundaries), resolves `runtime.profile` to a resource mode, selects the
+bootstrap Tokio pool sizes, and computes the effective numeric policy exactly
+as `serve` would at startup. The command is fully offline: it binds no
+listener, runs no benchmark, and never contacts a running instance.
+
+The human output lists the machine view, the resolved profile and tuning, the
+bootstrap topology, every policy field with its effective value, source
+(`derived`, `override`, or `default`), objective multiplier and safety
+floor/cap, and advisory kernel-tuning suggestions (the process never writes
+sysctls). `--json` prints the same report in a stable schema
+(`schemaVersion: 1`) for automation.
+
+| Option | Required | Meaning |
+| --- | --- | --- |
+| `-c, --config <PATH>` | yes | Strict JSON configuration file. |
+| `--json` | no | Print the machine-readable JSON report instead of the human summary. |
+
 ## Configuration commands
 
 ### `config generate standalone`

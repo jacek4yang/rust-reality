@@ -79,10 +79,32 @@ enum Command {
     Serve(ConfigPath),
     /// Alias for `serve`, suitable for service-manager command lines.
     Run(ConfigPath),
+    /// Inspect the runtime resource plan without starting the server.
+    Runtime {
+        #[command(subcommand)]
+        command: RuntimeCommand,
+    },
     /// Validate configuration, download/revalidate assets, and compile routing.
     SelfTest(ConfigPath),
     /// Quantify bounded protocol hot paths and print a machine-readable report.
     Benchmark(BenchmarkArgs),
+}
+
+#[derive(Debug, Subcommand)]
+enum RuntimeCommand {
+    /// Explain the detected machine, resolved profile, bootstrap sizing, and
+    /// the effective numeric policy, field by field. Fully offline.
+    Explain(RuntimeExplainArgs),
+}
+
+#[derive(Debug, Args)]
+struct RuntimeExplainArgs {
+    /// JSON configuration path.
+    #[arg(short, long, value_name = "PATH")]
+    config: PathBuf,
+    /// Print the machine-readable JSON report instead of the human summary.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -438,6 +460,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
         Command::ProbeDest(arguments) => run_probe_destination(arguments),
         Command::Schema => write_stdout(format_config_schema()?),
         Command::Serve(arguments) | Command::Run(arguments) => run_server(arguments),
+        Command::Runtime { command } => run_runtime(command),
         Command::SelfTest(arguments) => run_self_test(arguments),
         Command::Benchmark(arguments) => run_benchmark(arguments),
     }
@@ -453,14 +476,57 @@ fn run_benchmark(arguments: BenchmarkArgs) -> Result<(), CliError> {
 }
 
 fn run_server(arguments: ConfigPath) -> Result<(), CliError> {
-    let server = ProductionServer::from_path(&arguments.config)?;
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
+    // Bootstrap order (design §4.2): parse the CLI, load and validate the
+    // configuration, inspect the cgroup/machine view, choose the runtime
+    // topology, build the runtime, then serve. Detection is one cheap pass
+    // of /proc and rlimit reads — never a benchmark — so readiness is not
+    // delayed, and the server reuses this report instead of detecting again.
+    let (config, report) = load_config_with_report(&arguments.config)?;
+    let machine = rust_reality::runtime::machine::MachineReport::detect();
+    let resource_mode = config.runtime.resolve_resource_mode(&machine);
+    let topology = rust_reality::runtime::plan::RuntimeTopology::for_mode(
+        resource_mode,
+        machine.effective_cpus(),
+    );
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    // The dedicated posture sizes both pools from the cgroup-aware CPU view;
+    // the shared/standard posture keeps the tokio defaults (no explicit
+    // settings), exactly as v1.5 built the runtime.
+    if let Some(worker_threads) = topology.worker_threads {
+        builder.worker_threads(worker_threads);
+    }
+    if let Some(max_blocking_threads) = topology.max_blocking_threads {
+        builder.max_blocking_threads(max_blocking_threads);
+    }
+    let runtime = builder.enable_all().build()?;
+    let server = ProductionServer::from_loaded(
+        config,
+        Some(arguments.config.clone()),
+        report.policy_alias_used,
+        machine,
+    )?;
     let result = runtime.block_on(server.run());
     runtime.shutdown_timeout(Duration::from_secs(5));
     result?;
     Ok(())
+}
+
+fn run_runtime(command: RuntimeCommand) -> Result<(), CliError> {
+    match command {
+        RuntimeCommand::Explain(arguments) => {
+            let (config, report) = load_config_with_report(&arguments.config)?;
+            warn_policy_alias(&report);
+            let machine = rust_reality::runtime::machine::MachineReport::detect();
+            let explanation = rust_reality::explain::explain_config(&config, &machine);
+            if arguments.json {
+                let mut output = serde_json::to_string_pretty(&explanation)?;
+                output.push('\n');
+                write_stdout(output)
+            } else {
+                write_stdout(format_args!("{explanation}"))
+            }
+        }
+    }
 }
 
 fn run_self_test(arguments: ConfigPath) -> Result<(), CliError> {
@@ -903,6 +969,30 @@ mod tests {
             "no temporary file may remain"
         );
         std::fs::remove_dir_all(directory).expect("temporary directory must be removed");
+    }
+
+    #[test]
+    fn parses_runtime_explain() {
+        let cli = Cli::try_parse_from([
+            "rust-reality",
+            "runtime",
+            "explain",
+            "--config",
+            "/etc/rust-reality/config.json",
+            "--json",
+        ])
+        .expect("runtime explain must parse");
+
+        assert!(matches!(
+            cli.command,
+            Command::Runtime {
+                command: super::RuntimeCommand::Explain(_)
+            }
+        ));
+        assert!(
+            Cli::try_parse_from(["rust-reality", "runtime", "explain"]).is_err(),
+            "the configuration path is required"
+        );
     }
 
     #[test]

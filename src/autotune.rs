@@ -21,7 +21,7 @@ use serde::Serialize;
 
 use crate::{
     benchmark::{BenchmarkError, BenchmarkOptions, BenchmarkReport, run_benchmarks},
-    config::{Config, ConfigError, PolicyConfig, ResourceMode, validate_config},
+    config::{Config, ConfigError, Objective, PolicyConfig, ResourceMode, validate_config},
     runtime::{
         machine::MachineReport,
         plan::{MachineCapabilities, Probes, SafetyLimits, StartupPlan},
@@ -330,6 +330,9 @@ fn derive_policy(
         &capabilities_of(machine),
         &SafetyLimits::default(),
         resource_mode,
+        // The autotuner writes explicit numbers; the objective scales only
+        // the startup derivation, so its output stays the balanced plan.
+        Objective::Balanced,
         listener_count,
         probes,
         source_policy,

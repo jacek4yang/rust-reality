@@ -6,19 +6,39 @@ All notable user-facing changes to this project are documented in this file.
 
 ### Added
 
+- Startup policy derivation (`runtime.tuning.mode: startup`, the default):
+  the serve path derives every numeric policy field that `advanced.limits`
+  does not pin once at startup from the detected machine, using the same
+  formulas as `config autotune`. Derivation is fully passive — no benchmark,
+  storage, or loopback probe runs at startup, so readiness is never delayed —
+  and validated exactly like autotune output before any listener binds. A
+  field whose `advanced.limits` value differs from the built-in default is
+  operator-pinned and always wins; all timeouts and `replayRetentionMs` are
+  never derived. `runtime.tuning.objective` (`latency`/`balanced`/
+  `throughput`) scales selected derived outputs after the balanced
+  derivation, with the hard caps and safety floors documented in
+  `docs/configuration.md#startup-policy-derivation`. `fixed` mode keeps
+  v1.5 behavior byte-for-byte; `adaptive` derives exactly like `startup` in
+  this release — the controller adjusting soft ceilings at runtime is not
+  shipped yet.
+- Dedicated bootstrap topology: `serve` now detects the machine and resolves
+  the profile before building the Tokio runtime. In the `dedicated` posture
+  the pools are sized from the cgroup-aware CPU view
+  (`worker_threads = effective_cpus().clamp(1, 64)`,
+  `max_blocking_threads = (32 + 8 × cpus).clamp(64, 512)`); the
+  shared/standard posture keeps the tokio defaults. A `runtime_plan_report`
+  log event records the resolved mode, tuning, and pool sizes at startup.
+- `rust-reality runtime explain --config <PATH> [--json]`: offline report of
+  the detected machine, resolved profile, bootstrap topology, and the
+  effective value, source (`derived`/`override`/`default`), multiplier, and
+  bounds of every policy field, plus advisory kernel-tuning suggestions.
 - v1.6 configuration model: `runtime.profile` (`auto`/`shared`/`dedicated`),
   `runtime.tuning.mode` (`fixed`/`startup`/`adaptive`),
   `runtime.tuning.objective` (`latency`/`balanced`/`throughput`), and the
   `advanced.limits` expert escape hatch holding the numeric resource/relay
   policy previously living under `policy`. `shared`/`dedicated` profiles map
   onto `resourceMode: standard`/`dedicated`; a profile contradicting an
-  explicit `resourceMode` is a validation error. In this version the
-  effective numbers still come from `advanced.limits` (or the built-in
-  defaults) exactly as in v1.5 — `startup`/`adaptive` are accepted and
-  validated but resolve to the fixed numbers until the startup-derivation
-  slice lands. While that derivation has not landed, behavior is
-  byte-identical to v1.5: `startup` and `adaptive` currently resolve to the
-  same fixed numbers as `fixed`.
+  explicit `resourceMode` is a validation error.
 - The v1.5 top-level `policy` object remains as a deprecated alias: its
   non-default values merge field-by-field into `advanced.limits` (a field
   set in both places to different non-default values is a validation
@@ -47,6 +67,13 @@ All notable user-facing changes to this project are documented in this file.
 
 ### Changed
 
+- Hot reload now compares the tuning mode strictly: `fixed`, `startup`, and
+  `adaptive` produce different effective policies, so any drift between them
+  (including a `policy`-alias-forced `fixed` drifting to an unset `startup`
+  mode) is rejected and requires a restart. Reloads under a derived mode
+  re-derive the candidate against the current machine view and reject when
+  the derived numbers would differ, because the admission pools were sized
+  at process start.
 - `config autotune` now writes the derived policy to `advanced.limits`
   instead of the deprecated `policy` object; the report schema and exit
   codes are unchanged.
