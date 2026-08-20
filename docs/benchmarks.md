@@ -293,11 +293,112 @@ and RSS growth over the soak with zero transfer failures.
 - Results are measurements of this host and are not a universal
   performance claim.
 
+## v1.6.0 release comparison evidence
+
+All v1.6.0 numbers were measured on the release host (Intel i3-8100 4C/4T,
+Linux 6.12.100+deb13-amd64, rustc 1.96.0) with every run serialized under
+the host-exclusive lock `/tmp/v16-bench.lock`. Identities: candidate
+`c182829` (binary SHA-256 `cc53c1f4…`, built by
+`scripts/build-release.sh linux-x86_64-generic`), baseline the published
+v1.5.1 release binary (`149f126`, SHA-256 `49f3246f…`), comparator
+Xray-core 26.7.28 (`5ca6f4b`, go1.26.0, SHA-256 `23d228d7…04c5268`).
+Same methodology as v1.5.1: warn-level logging on both servers, the same
+unmodified Xray SOCKS5 client, TLS 1.3 REALITY cover, loopback origins,
+byte-verified transfers, balanced ABBA interleaving. Evidence root:
+`artifacts/v1.6.0/` (`gates/` for the release gates, `readme-comparison/`
+for the Xray comparison legs).
+
+Release gates (`artifacts/v1.6.0/gates/evaluator-report.json`): the formal
+evaluator passed all 40 protected metrics with zero regressions against
+the v1.5.1 release binary. The two retained v1.6.0 data-path changes were
+measured separately: 512 KiB splice pipes (fallback cpuPerGiB 0.953,
+bootstrap95 [0.925, 0.974], splice syscalls halved; 1 MiB variant measured
+and rejected) and Vision framed-uplink batching (framed-upload:32MiB:c32
+1.055–1.057 across two flipped-order ABBA rounds, origin write syscalls
+3.5× fewer; framed download and c1 unchanged). Compiler experiments were
+run and rejected with numbers: FatLTO, PGO, and BOLT each showed parity on
+protected throughput cells (BOLT's ~3% setup CPU/conn did not convert to
+rate and cost +63% binary size).
+
+### Setup rate and latency vs Xray — `readme-comparison/setup-xray/`
+
+144-sample balanced ABBA (accept → first Vision transition), Xray serving
+one leg:
+
+| concurrency | rust-reality conn/s | Xray conn/s | ratio | p50 rust | p50 Xray | p99 rust | p99 Xray |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 268.5 | 251.4 | 1.068× | 3.7 ms | 3.6 ms | 4.5 ms | 17.7 ms |
+| 8 | 767.5 | 716.9 | 1.071× | 9.6 ms | 10.3 ms | 18.8 ms | 30.8 ms |
+| 32 | 853.2 | 784.5 | 1.088× | 28.0 ms | 29.9 ms | 59.3 ms | 73.3 ms |
+
+Server CPU per setup connection (perf task-clock attribution,
+`readme-comparison/setup-xray-perf/`): rust-reality 571 µs, Xray 925 µs
+(Xray/rust ratio 1.62×).
+
+### Throughput vs Xray — `gates/matrix-r01/`, `gates/matrix-r02/`
+
+32 MiB × concurrency 32, p50 of medians across two flipped-order rounds:
+
+| path | rust-reality MiB/s | Xray MiB/s | ratio |
+|---|---:|---:|---:|
+| bidirectional | 752.5 | 587.7 | 1.28× |
+| Direct download | 1023.3 | 634.6 | 1.61× |
+| framed download | 1369.4 | 1212.1 | 1.13× |
+| Direct upload | 603.9 | 570.6 | 1.06× |
+| framed upload | 1335.8 | 1209.8 | 1.10× |
+| fallback | 2686.5 | 2750.7 | 0.98× |
+
+The fallback row's exploratory full-matrix context can also exhibit a
+kernel pipe-page clamp (`fs.pipe-user-pages-soft`, default 64 MiB): pipes
+created while the host is over the soft limit are clamped to one page, and
+the affected server's splice chunks collapse to ~2 KiB (~0.7× on that
+cell). This was bisected, straced (38 failed `F_SETPIPE_SZ` grows), and
+causally proven (raising the limit restores 1647–1662 MiB/s parity); it
+is an external kernel constraint, not a code regression — the formal
+fallback ABBA gate shows 1.00× with the cpuPerGiB win. Analysis:
+`notes/v1.6.0/fallback-exploratory-cell-pipeclamp.md`.
+
+### DNS vs Xray — `readme-comparison/dns/`
+
+Loopback fake DNS, 8 rounds × 32 connections per phase: cold p50 29.2 ms
+vs 30.4 ms; warm p50 23.1 ms vs 25.0 ms with zero upstream queries on both
+sides; a 64-connection same-name burst finished in 80.2 ms vs 100.2 ms
+wall (2 vs 1 upstream queries).
+
+### Routing rule scaling vs Xray — `readme-comparison/routing2/`
+
+| rules | rust-reality conn/s | Xray conn/s | ratio | p50 rust | p50 Xray |
+|---:|---:|---:|---:|---:|---:|
+| 10 | 795 | 787 | 1.01× | 29.3 ms | 32.3 ms |
+| 100 | 803 | 753 | 1.07× | 28.1 ms | 32.1 ms |
+| 1,000 | 813 | 685 | 1.19× | 29.9 ms | 34.9 ms |
+| 10,000 | 794 | 324 | 2.45× | 29.8 ms | 81.1 ms |
+
+### Memory under soak — `gates/soak-candidate-r01/`, `readme-comparison/xray-resources/`
+
+After the 10-minute mixed-workload soak the standalone rust-reality
+server's VmRSS was 8.3 MiB (HWM 8.3 MiB, 17 fds). Under the equivalent
+load shape the Xray server's VmRSS was 39.5 MiB (HWM 40.9 MiB). Both flat
+across the soak with zero transfer failures.
+
+### Limitations of the v1.6.0 measurements
+
+- One host (4-core i3-8100), one kernel, loopback only; concurrency-32
+  cells on four cores measure scheduler contention as much as proxy cost.
+- The concurrency-32 matrix rounds used exploratory sample sizes; only the
+  concurrency-1 matrix is a formal release gate.
+- Small-payload c1 cells are latency-dominated, and some are bimodal.
+- The DNS phases used a loopback upstream (~0 ms RTT).
+- The exploratory fallback c1 cell is sensitive to the kernel pipe-page
+  soft limit in saturated harness contexts (see above).
+- Results are measurements of this host and are not a universal
+  performance claim.
+
 ## Historical README headline tables
 
 The tables below previously headed the README performance section. They
 are kept here as per-release historical evidence; the current README
-carries the v1.5.1 comparison above. Superseded numbers must not be read
+carries the v1.6.0 comparison above. Superseded numbers must not be read
 as current behavior.
 
 ### v1.0.0 headline table (frozen at v1.0.0)
