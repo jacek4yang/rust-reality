@@ -328,6 +328,32 @@ TLS 1.3 AES-128-GCM record AEAD; `cargo build --release
 --no-default-features` selects the pure-Rust RustCrypto provider with no
 other behavioral change.
 
+## Acknowledgements
+
+`rust-reality` is an independent, from-scratch Rust implementation, but it
+stands on the work of a wider open-source community. In particular, thank you
+to:
+
+- [Xray-core](https://github.com/XTLS/Xray-core) for the VLESS, REALITY, and
+  Vision ecosystem, reference behavior, and the unmodified client used by the
+  interoperability and comparison gates.
+- [Rust](https://www.rust-lang.org/) and [Tokio](https://tokio.rs/) for the
+  language, tooling, and asynchronous networking runtime.
+- [ring](https://github.com/briansmith/ring) and the
+  [RustCrypto](https://github.com/RustCrypto) projects for the cryptographic
+  implementations used by the protocol stack.
+- [Hickory DNS](https://github.com/hickory-dns/hickory-dns) for the asynchronous
+  DNS resolver used by configured upstream resolution.
+
+Thanks also to every maintainer and contributor behind the dependencies
+recorded in `Cargo.lock`. Each third-party project remains subject to its own
+license.
+
+## Friends
+
+- [LINUX DO](https://linux.do/) — a friendly developer and technology
+  community.
+
 ## License
 
 Licensed under either of:
