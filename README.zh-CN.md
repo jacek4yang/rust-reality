@@ -278,6 +278,27 @@ smoke 以及定期 sanitizer 任务。默认构建使用 ring 作为 TLS 1.3 AES
 记录 AEAD；`cargo build --release --no-default-features` 选择纯 Rust 的
 RustCrypto 提供者，没有其他行为差异。
 
+## 致谢
+
+`rust-reality` 是独立、从零编写的 Rust 实现，但离不开更广泛的开源社区。在此
+特别感谢：
+
+- [Xray-core](https://github.com/XTLS/Xray-core)：构建了 VLESS、REALITY 与
+  Vision 生态，提供协议行为参考，以及互操作和对比门禁所使用的未经修改的客户端。
+- [Rust](https://www.rust-lang.org/) 与 [Tokio](https://tokio.rs/)：提供语言、
+  工具链和异步网络运行时。
+- [ring](https://github.com/briansmith/ring) 与
+  [RustCrypto](https://github.com/RustCrypto) 各项目：提供协议栈使用的密码学实现。
+- [Hickory DNS](https://github.com/hickory-dns/hickory-dns)：提供配置上游解析时
+  使用的异步 DNS 解析器。
+
+同时感谢 `Cargo.lock` 中所有依赖背后的维护者与贡献者。各第三方项目仍分别适用
+其自身许可证。
+
+## 友链
+
+- [LINUX DO](https://linux.do/) — 一个友好的开发者与技术社区。
+
 ## 许可证
 
 本仓库采用双重许可，可任选其一：
