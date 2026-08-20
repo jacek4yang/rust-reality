@@ -2,7 +2,7 @@
 
 All notable user-facing changes to this project are documented in this file.
 
-## [Unreleased]
+## [1.6.0] - 2026-08-20
 
 rust-reality is forward-only: there is no backward compatibility between
 releases. v1.5 configurations are rejected with strict unknown-field errors;
