@@ -136,6 +136,17 @@ block_order() {
         [[ $abba_start == baseline ]] && printf '%s\n' B A A B || printf '%s\n' A B B A
     fi
 }
+relay_config_filter() {
+    local generated=$1
+    if jq -e '.advanced.limits.relay | type == "object"' "$generated" \
+        >/dev/null; then
+        printf '%s\n' '.advanced.limits.relay.splice=$splice|.advanced.limits.relay.pipePool=$pool|.advanced.limits.relay.bufferBytes=($kib*1024)'
+    elif jq -e '.policy.relay | type == "object"' "$generated" >/dev/null; then
+        printf '%s\n' '.policy.relay.splice=$splice|.policy.relay.pipePool=$pool|.policy.relay.bufferBytes=($kib*1024)'
+    else
+        die "generated configuration has no canonical relay policy: $generated"
+    fi
+}
 if [[ $self_test == 1 ]]; then
     blocks=3 abba_start=baseline
     [[ $(block_order 1 | paste -sd '') == ABBA ]]
@@ -163,6 +174,15 @@ PY
     if validate_perf_csv "$test_directory/invalid.csv" "$test_directory/invalid.json" \
         >/dev/null 2>&1; then
         die 'low-running perf self-test unexpectedly passed'
+    fi
+    printf '%s\n' '{"advanced":{"limits":{"relay":{}}}}' \
+        >"$test_directory/current.json"
+    printf '%s\n' '{"policy":{"relay":{}}}' >"$test_directory/legacy.json"
+    [[ $(relay_config_filter "$test_directory/current.json") == .advanced.* ]]
+    [[ $(relay_config_filter "$test_directory/legacy.json") == .policy.* ]]
+    printf '%s\n' '{}' >"$test_directory/missing.json"
+    if (relay_config_filter "$test_directory/missing.json") >/dev/null 2>&1; then
+        die 'missing relay policy self-test unexpectedly passed'
     fi
     printf 'benchmark-fallback-ab self-test: PASS\n'
     exit 0
@@ -409,16 +429,10 @@ while IFS=$'\t' read -r block position implementation server_port; do
     if [[ $implementation == baseline ]]; then binary=$baseline_bin; binary_sha=$baseline_sha; binary_build_id=$baseline_build_id; else binary=$candidate_bin; binary_sha=$candidate_sha; binary_build_id=$candidate_build_id; fi
     "$binary" config generate standalone --listen 127.0.0.1 --port "$server_port" --target "127.0.0.1:$origin_port" --server-name localhost \
         >"$work/$slot.raw.json" 2>"$slot_dir/generate.log"
-    # The two implementations speak different configuration generations:
-    # the v1.5 baseline knows only the `policy` object, while the v1.6
-    # candidate rejects `policy`/`resourceMode` and reads the canonical
-    # `advanced.limits` location. Both filters pin the same effective relay
-    # settings, so the comparison stays symmetric.
-    if [[ $implementation == baseline ]]; then
-        relay_filter='.policy.relay.splice=$splice|.policy.relay.pipePool=$pool|.policy.relay.bufferBytes=($kib*1024)'
-    else
-        relay_filter='del(.policy)|del(.runtime.resourceMode)|.advanced.limits.relay.splice=$splice|.advanced.limits.relay.pipePool=$pool|.advanced.limits.relay.bufferBytes=($kib*1024)'
-    fi
+    # Select the canonical schema emitted by this exact binary. A/B role does
+    # not imply a configuration generation: a patch release compares two
+    # binaries from the same generation.
+    relay_filter=$(relay_config_filter "$work/$slot.raw.json")
     jq --arg cache "$work/assets-$slot" --argjson splice "$splice" --argjson pool "$pipe_pool" --argjson kib "$buffer_kib" \
         ".log.level=\"warn\"|.assets.cacheDirectory=\$cache|$relay_filter" \
         "$work/$slot.raw.json" >"$work/$slot.server.json"
