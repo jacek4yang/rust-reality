@@ -27,6 +27,25 @@ harnesses; the design-level evidence behind the numbers lives in
 - Declined backends and failed cells are recorded as declines/failures, never
   as fabricated numbers.
 
+### Active-probe regression contract
+
+`scripts/active-probe-cases.json` is the canonical deterministic case inventory.
+`scripts/active-probe-gate.py --output PATH` executes every named test exactly
+once and atomically records commit-bound JSON evidence. Repository validation
+rejects a missing or renamed case. The inventory covers authentication success
+and rejection, replay, ClientHello fragmentation, ClientFinished failure and
+absence, cover timeout/refusal/malformed flight, exact fallback prefixes, and
+resource pressure.
+
+The separate `benchmark-tls-shape.sh` harness compares an identical captured
+stock-Xray ClientHello against rust-reality, the pinned Xray server where
+applicable, and the direct local cover. It retains TLS record sequence,
+deterministically observable process-write segmentation, packet captures when
+available, exact prefixes, and repeated first-byte/flight timings. Deterministic
+wire and closure differences fail; timing is reported as a distribution rather
+than fragile microsecond equality. Packetization remains network-dependent.
+These measurements do not establish indistinguishability.
+
 ## Harnesses
 
 | Harness | Purpose |
