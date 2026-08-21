@@ -18,6 +18,21 @@
   流量型 DDoS，也不能把一台主机的结果外推到其他 CPU、内核和网络。
 - 后端拒绝和失败 cell 按拒绝/失败记录，绝不编造数字。
 
+### 主动探测回归契约
+
+`scripts/active-probe-cases.json` 是确定性用例的唯一清单。
+`scripts/active-probe-gate.py --output PATH` 会逐个且仅执行一次指定测试，并以原子
+方式写出绑定提交的 JSON 证据；仓库校验也会拒绝缺失或被改名的用例。清单覆盖认证成功
+与拒绝、重放、ClientHello 分片、ClientFinished 畸形或缺失、cover 超时/拒绝/畸形
+flight、精确 fallback 前缀和资源压力。
+
+独立的 `benchmark-tls-shape.sh` 会把同一个由原版 Xray 生成并捕获的 ClientHello，
+分别交给 rust-reality、适用时的固定 Xray 服务端以及本地 cover 直接入口。它保留 TLS
+record 序列、可确定观测的进程 write 分段、可用时的抓包、精确前缀，以及重复测量的
+首字节/flight 完成时间。确定性的 wire 或关闭语义差异会失败；时间仅按分布报告，不以
+脆弱的微秒相等作为门禁。分包行为仍依赖网络环境。这些测量不能证明各实现的网络观测
+完全相同。
+
 ## Harness
 
 | Harness | 用途 |
