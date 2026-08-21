@@ -95,8 +95,8 @@ splice pipe 都有明确上限。数据路径没有无界队列或缓存；协�
 竞态状态明确纳入发布条件。
 
 `fuzz/Cargo.toml` 是攻击面的权威清单。当前目标覆盖原始 VLESS/wire parser、
-Vision 解码与状态转换、Handoff header/blob/open 与结构化 round trip、NXR round
-trip、cover flight 解析、TLS 1.3 record round trip、transcript 哈希、严格配置解码
+结构化 REALITY 认证与重放状态、Vision 解码与状态转换、Handoff header/blob/open 与
+结构化 round trip、NXR round trip、cover flight 解析、TLS 1.3 record round trip、transcript 哈希、严格配置解码
 和诊断渲染。CI 会拒绝未声明的目标源码并运行每个已声明目标；全 crate 行覆盖率不能
 替代这些可达边界的覆盖。
 

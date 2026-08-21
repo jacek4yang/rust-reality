@@ -148,9 +148,10 @@ remain outside established relay read/write loops.
 
 The robustness evidence is intentionally separate from throughput numbers.
 At the time of this historical dual-stack measurement six bounded parser
-targets ran 20,000 cases each. The current attack-surface program declares 13
-targets in `fuzz/Cargo.toml`; every target now runs in bounded, time-based CI
-shards, with a deeper scheduled budget. The parser property gate still covers
+targets ran 20,000 cases each. The current attack-surface program declares 14
+targets in `fuzz/Cargo.toml`, including structured REALITY authentication; every
+target runs in bounded, time-based CI shards, with a deeper scheduled budget.
+The parser property gate still covers
 every maximum-request prefix plus three byte mutations at every position.
 Local restricted-shell runs disable only LSan's ptrace-unsupported leak
 detector; CI retains leak detection, while TSan covers the replay duplicate

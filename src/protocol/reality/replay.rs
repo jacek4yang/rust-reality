@@ -265,6 +265,29 @@ impl ReplayCache {
             .map(|shard| lock_recover(shard).entries.len())
             .sum()
     }
+
+    /// Returns the entry count for structured replay fuzzing.
+    #[cfg(feature = "fuzzing")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn fuzz_entry_count(&self) -> usize {
+        self.inner
+            .shards
+            .iter()
+            .map(|shard| lock_recover(shard).entries.len())
+            .sum()
+    }
+
+    /// Reserves at an explicit monotonic instant for deterministic expiry fuzzing.
+    #[cfg(feature = "fuzzing")]
+    #[doc(hidden)]
+    pub fn fuzz_reserve_at(
+        &self,
+        hello: &ClientHello,
+        now: Instant,
+    ) -> Result<ReplayReservation, ReplayError> {
+        self.reserve_at(hello, now)
+    }
 }
 
 /// A pending replay entry that rolls back unless ClientFinished explicitly commits it.
@@ -319,6 +342,13 @@ impl ReplayReservation {
             .push(Reverse((expires_at, self.generation, self.key)));
         self.active = false;
         Ok(())
+    }
+
+    /// Commits at an explicit instant for deterministic structured fuzzing.
+    #[cfg(feature = "fuzzing")]
+    #[doc(hidden)]
+    pub fn fuzz_commit_at(&mut self, now: Instant) -> Result<(), ReplayError> {
+        self.commit_at(now)
     }
 }
 

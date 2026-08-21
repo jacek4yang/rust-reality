@@ -127,7 +127,8 @@ make unhandled input, resource, arithmetic, and race states explicit release
 criteria.
 
 `fuzz/Cargo.toml` is the authoritative attack-surface inventory. Its current
-targets cover raw VLESS/wire parsers, Vision decoding and state transitions,
+targets cover raw VLESS/wire parsers, structured REALITY authentication and
+replay state, Vision decoding and state transitions,
 Handoff headers/blobs/opening and structured round trips, NXR round trips,
 cover-flight parsing, TLS 1.3 record round trips, transcript hashing, strict
 configuration decoding, and diagnostic rendering. CI rejects undeclared

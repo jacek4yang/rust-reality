@@ -25,6 +25,161 @@ const GCM_TAG_LEN: usize = 16;
 /// both hit and miss at 512. Keep the lower observed boundary.
 const SORTED_SHORT_ID_LIMIT: usize = 256;
 
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub mod fuzzing {
+    use aes_gcm::{
+        Aes256Gcm, KeyInit,
+        aead::{AeadInOut, Nonce, array::Array},
+    };
+    use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
+    use x25519_dalek::{PublicKey, StaticSecret};
+
+    use super::{RealityAuthenticator, derive_auth_key};
+    use crate::{
+        config::{RealityConfig, SecretString},
+        protocol::{
+            reality::{
+                ClientHello, X25519_GROUP, client_hello::fixtures::client_hello_with_key_share,
+            },
+            vless::UserId,
+        },
+    };
+
+    /// An entirely synthetic valid REALITY authentication transcript.
+    pub struct SyntheticTranscript {
+        /// Compiled server-side authentication state.
+        pub authenticator: RealityAuthenticator,
+        /// Parsed synthetic ClientHello carrying a valid REALITY session ID.
+        pub hello: ClientHello,
+        /// UUID that owns the selected short ID.
+        pub owner: UserId,
+    }
+
+    /// Synthetic inputs for one valid REALITY transcript.
+    pub struct SyntheticTranscriptSpec {
+        /// Client X25519 private bytes.
+        pub client_secret: [u8; 32],
+        /// ClientHello random.
+        pub random: [u8; 32],
+        /// Three-byte Xray client version.
+        pub client_version: [u8; 3],
+        /// Client Unix timestamp.
+        pub client_time: u32,
+        /// Selected REALITY short ID.
+        pub short_id: [u8; 8],
+        /// UUID owning the selected short ID.
+        pub owner: [u8; 16],
+        /// A second configured short ID.
+        pub other_short_id: [u8; 8],
+        /// UUID owning the second short ID.
+        pub other_owner: [u8; 16],
+    }
+
+    /// Builds a valid synthetic X25519/HKDF/AES-GCM REALITY transcript.
+    ///
+    /// This entry point exists only with the non-default `fuzzing` feature.
+    #[must_use]
+    pub fn synthetic_transcript(spec: SyntheticTranscriptSpec) -> SyntheticTranscript {
+        const SERVER_SECRET: [u8; 32] = [0x11; 32];
+        const SERVER_NAME: &str = "www.example.com";
+
+        let server_secret = StaticSecret::from(SERVER_SECRET);
+        let client_secret = StaticSecret::from(spec.client_secret);
+        let client_public = PublicKey::from(&client_secret).to_bytes();
+        let shared = client_secret.diffie_hellman(&PublicKey::from(&server_secret));
+        let auth_key = derive_auth_key(shared.as_bytes(), &spec.random)
+            .expect("REALITY HKDF output has a fixed valid length");
+        let zero_message = client_hello_with_key_share(
+            spec.random,
+            &[0; 32],
+            SERVER_NAME,
+            &[],
+            X25519_GROUP,
+            &client_public,
+        );
+        let mut plaintext = [0_u8; 16];
+        plaintext[..3].copy_from_slice(&spec.client_version);
+        plaintext[4..8].copy_from_slice(&spec.client_time.to_be_bytes());
+        plaintext[8..].copy_from_slice(&spec.short_id);
+        let cipher = Aes256Gcm::new(&Array(*auth_key.as_bytes()));
+        let nonce: Nonce<Aes256Gcm> = Array([
+            spec.random[20],
+            spec.random[21],
+            spec.random[22],
+            spec.random[23],
+            spec.random[24],
+            spec.random[25],
+            spec.random[26],
+            spec.random[27],
+            spec.random[28],
+            spec.random[29],
+            spec.random[30],
+            spec.random[31],
+        ]);
+        let tag = cipher
+            .encrypt_inout_detached(&nonce, &zero_message, plaintext.as_mut_slice().into())
+            .expect("fixed-size synthetic REALITY encryption must succeed");
+        let mut session_id = [0_u8; 32];
+        session_id[..16].copy_from_slice(&plaintext);
+        session_id[16..].copy_from_slice(&tag);
+        let message = client_hello_with_key_share(
+            spec.random,
+            &session_id,
+            SERVER_NAME,
+            &[],
+            X25519_GROUP,
+            &client_public,
+        );
+        let hello = ClientHello::parse_message(&message)
+            .expect("synthetic ClientHello is structurally valid");
+        let owner = UserId::new(spec.owner);
+        let mut bindings = vec![(spec.short_id, spec.owner)];
+        if spec.other_short_id != spec.short_id {
+            bindings.push((spec.other_short_id, spec.other_owner));
+        }
+        let authenticator = synthetic_authenticator(&bindings);
+        SyntheticTranscript {
+            authenticator,
+            hello,
+            owner,
+        }
+    }
+
+    /// Compiles synthetic ownership state for reject-path fuzzing.
+    #[must_use]
+    pub fn synthetic_authenticator(bindings: &[([u8; 8], [u8; 16])]) -> RealityAuthenticator {
+        const SERVER_SECRET: [u8; 32] = [0x11; 32];
+        let config = RealityConfig {
+            target: "cover.invalid:443".to_owned(),
+            server_names: vec!["www.example.com".to_owned()],
+            private_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(SERVER_SECRET)),
+            max_time_diff_ms: 60_000,
+        };
+        let encoded = bindings
+            .iter()
+            .map(|(short_id, owner)| (UserId::new(*owner), encode_short_id(*short_id)))
+            .collect::<Vec<_>>();
+        RealityAuthenticator::compile(
+            &config,
+            encoded
+                .iter()
+                .map(|(owner, short_id)| (*owner, short_id.as_str())),
+        )
+        .expect("synthetic REALITY authentication state is valid")
+    }
+
+    fn encode_short_id(short_id: [u8; 8]) -> String {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut output = String::with_capacity(16);
+        for byte in short_id {
+            output.push(char::from(HEX[usize::from(byte >> 4)]));
+            output.push(char::from(HEX[usize::from(byte & 0x0f)]));
+        }
+        output
+    }
+}
+
 /// A decoded REALITY setting cannot be compiled into authentication state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RealityAuthConfigError {
@@ -620,6 +775,16 @@ mod tests {
         ));
 
         let (authenticator, hello) = valid_handshake(SHORT_ID, NOW, &["aabb"]);
+        authenticator
+            .authenticate(&hello, u64::from(NOW) - 60)
+            .expect("negative clock boundary must be inclusive");
+        authenticator
+            .authenticate(&hello, u64::from(NOW) + 60)
+            .expect("positive clock boundary must be inclusive");
+        assert!(matches!(
+            authenticator.authenticate(&hello, u64::from(NOW) - 61),
+            Err(RealityAuthError::TimeSkew)
+        ));
         assert!(matches!(
             authenticator.authenticate(&hello, u64::from(NOW) + 61),
             Err(RealityAuthError::TimeSkew)

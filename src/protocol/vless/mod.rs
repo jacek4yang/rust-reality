@@ -20,6 +20,20 @@ pub use response::{
 };
 pub use types::{Address, Command, Destination, RequestHeader, UserId, VERSION};
 pub(crate) use validate::validate_authenticated_vision_fields;
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub fn fuzz_validate_short_id_owner(
+    request_user_id: UserId,
+    authenticated_user_id: UserId,
+) -> Result<(), RequestValidationError> {
+    validate_authenticated_vision_fields(
+        request_user_id,
+        &[],
+        Command::Tcp,
+        true,
+        authenticated_user_id,
+    )
+}
 pub use validate::{RequestValidationError, UserRegistry, authorize_authenticated_vision_tcp};
 pub use vision::{
     VISION_FRAME_SIZE, VisionCommand, VisionDecodeError, VisionDecoder, VisionEncodeError,
