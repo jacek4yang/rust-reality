@@ -10,9 +10,20 @@ numbers were measured on the validation host: Intel Core i3-8100 (4C/4T @
 client. Loopback shares the host CPUs between server, client, and origin;
 these numbers describe implementation cost, never Internet throughput. The
 frozen v1.0.0 release comparison matrix is published in
-[benchmarks.md](benchmarks.md). v1.5.1 and v1.5.0 evidence is in the
+[benchmarks.md](benchmarks.md). v1.6.0, v1.5.1, and v1.5.0 evidence is in the
 sections immediately below and keeps the v1.0.0 tables unchanged as
 historical release measurements.
+
+## v1.6.0 release evidence
+
+The v1.6.0 release was measured against the published v1.5.1 binary with the
+formal evaluator passing all 40 protected metrics and zero regressions. The
+retained changes were 512 KiB splice pipes (fallback CPU/GiB ratio 0.953,
+bootstrap95 [0.925, 0.974]) and framed-uplink batching (+5.5% at c32 with
+3.5× fewer origin writes). The public comparator remains Xray-core 26.7.28
+(`5ca6f4b`, go1.26.0, binary SHA-256 `23d228d7…04c5268`). Full setup,
+throughput, DNS, routing, RSS, limitations, identities, and evidence paths are
+in [benchmarks.md](benchmarks.md#v160-release-comparison-evidence).
 
 ## v1.5.1 release evidence
 
