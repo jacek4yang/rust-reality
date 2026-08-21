@@ -2,7 +2,9 @@
 
 All notable user-facing changes to this project are documented in this file.
 
-## [Unreleased]
+## [1.6.1] - 2026-08-23
+
+No configuration migration is required from v1.6.0.
 
 ### Added
 
@@ -10,6 +12,30 @@ All notable user-facing changes to this project are documented in this file.
   fully static, built and executed on native x86_64 hardware, and intended
   for Alpine, other musl distributions, and minimal containers. Release
   aggregation remains all-or-nothing, so a missing musl tier blocks publish.
+
+### Security
+
+- CI now discovers and runs every target declared by `fuzz/Cargo.toml` in
+  bounded shards, with scheduled deeper coverage and failure artifacts.
+- Structured synthetic REALITY authentication fuzzing now covers successful
+  authentication, owner/short-ID mismatch, timestamp and session-ID bounds,
+  transcript mutations, replay duplicates, and rollback on failed exits.
+
+### Testing
+
+- A deterministic 17-case active-probe regression gate now protects valid and
+  rejected authentication, ClientHello fragmentation/replay, TLS shape,
+  fallback prefix ownership, cover failures, close behavior, and pressure
+  rejection without making network-dependent packetization claims.
+- The Linux x86_64 performance contract now records protected workload cells,
+  immutable binary and host identity, allocation baselines, hot-structure size
+  guardrails, and identity-bound `perf stat`/`perf c2c` evidence.
+
+### Documentation
+
+- English and Chinese current-release performance tables are validated against
+  one machine-readable source, preventing version, comparator, row, heading,
+  and headline-value drift.
 
 ## [1.6.0] - 2026-08-20
 

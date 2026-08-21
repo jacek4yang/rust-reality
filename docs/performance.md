@@ -14,16 +14,19 @@ frozen v1.0.0 release comparison matrix is published in
 sections immediately below and keeps the v1.0.0 tables unchanged as
 historical release measurements.
 
-## v1.6.0 release evidence
+## v1.6.1 release evidence
 
-The v1.6.0 release was measured against the published v1.5.1 binary with the
+The v1.6.1 headline comparison retains the v1.6.0 measurements against the
+published v1.5.1 binary because the v1.6.1 hardening train does not change the
+production data path. The exact v1.6.1 candidate is additionally gated against
+the published v1.6.0 binary. The original comparison used the
 formal evaluator passing all 40 protected metrics and zero regressions. The
 retained changes were 512 KiB splice pipes (fallback CPU/GiB ratio 0.953,
 bootstrap95 [0.925, 0.974]) and framed-uplink batching (+5.5% at c32 with
 3.5× fewer origin writes). The public comparator remains Xray-core 26.7.28
 (`5ca6f4b`, go1.26.0, binary SHA-256 `23d228d7…04c5268`). Full setup,
 throughput, DNS, routing, RSS, limitations, identities, and evidence paths are
-in [benchmarks.md](benchmarks.md#v160-release-comparison-evidence).
+in [benchmarks.md](benchmarks.md#v161-release-comparison-evidence).
 
 ## v1.5.1 release evidence
 
