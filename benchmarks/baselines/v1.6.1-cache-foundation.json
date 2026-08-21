@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "f17a62c8a79f917fc38cdf5411eb333b5d51213a",
+  "binarySha256": "78114ea19e350dfc325fd1ba43602d96dbf9c034f6ac41466c2a80391dae225f",
+  "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25), LLVM 22.1.2",
+  "host": {"architecture":"x86_64","cpu":"Intel Core i3-8100","effectiveCpus":4,"kernel":"6.12.100+deb13-amd64","virtualization":"VT-x capability present; bare-metal versus guest not inferred","cacheLineBytes":64,"l1d":"4 x 32 KiB","l1i":"4 x 32 KiB","l2":"4 x 256 KiB","l3":"6 MiB shared"},
+  "pmu": {"perfVersion":"6.12.100","perfEventParanoid":3,"status":"UNAVAILABLE_WITH_HARNESS","reason":"unprivileged hardware PMU access denied by kernel policy; no value fabricated"},
+  "structureSizesBytes": {"ClientHello":168,"ReplayCache":8,"TlsApplicationIoTcp":328,"VisionDecoder":64,"VisionEncoder":424,"AdmissionPermit":32,"DirectBarrier":8,"FdBudget":8,"ResourceGovernor":8,"RealityEstablished":472},
+  "allocationBaselines": {"framedReadPerRecord":0,"framedWritePerRecord":0,"visionDecodePerRecord":0,"rawBorrowedDecodePerRecord":0,"outerDownlinkPerBatch":0,"source":"protocol::reality::tls13::allocation_gate tests"},
+  "notes": ["Structure guardrails are upper bounds, not ABI promises.","PMU and cache-to-cache metrics require a permitted controlled host.","This foundation records current state and contains no performance claim."]
+}

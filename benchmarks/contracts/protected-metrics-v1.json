@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "scope": "Linux x86_64 dedicated and shared profiles",
+  "direction": {"higherIsBetter": ["throughput","connectionsPerSecond","handshakesPerSecond"], "lowerIsBetter": ["cpuTime","cycles","instructions","syscalls","allocations","copies","latency","rss","memory","descriptors","threads","leakedResources"]},
+  "equivalenceMarginsPercent": {"throughput": 1.0, "connectionsPerSecond": 1.0, "handshakesPerSecond": 1.0, "cpuTime": 1.0, "cycles": 1.0, "instructions": 1.0, "syscalls": 1.0, "allocations": 1.0, "copies": 1.0, "p50": 1.0, "p95": 1.0, "p99": 2.0, "p99_9": 2.0, "rss": 1.0, "memoryPerConnection": 1.0, "descriptors": 0.0, "threads": 0.0, "leakedResources": 0.0},
+  "statistics": {"design": "balanced paired ABBA", "interval": "one-sided bootstrap or stricter existing paired evaluator", "ambiguous": "collect more samples", "directionalLossInvestigationPercent": 0.5},
+  "workloadFamilies": ["setup-valid","setup-invalid-short-id","setup-owner-mismatch","setup-replay","setup-malformed-clienthello","setup-x25519","setup-x25519mlkem768","fallback","direct-upload","direct-download","direct-bidirectional","framed-upload","framed-download","framed-bidirectional","handoff-line","handoff-landing","traffic-small-interactive","traffic-large-sustained","traffic-sparse","traffic-half-close","traffic-reset","traffic-idle","routing-hit","routing-miss","dns-cold","dns-warm","dns-same-name-burst","dns-distinct-name-burst"],
+  "policyCardinalities": {"users": [1,64,128,512,1000,10000], "routingRules": [10,100,1000,10000], "shortIdSets": ["small","large"]},
+  "concurrency": [1,8,32,64],
+  "effectiveCpuCounts": [1,2,4,8],
+  "networkRttMs": [1,20,80,200],
+  "networkConditions": ["loopback","local-nic-or-virtual-nic-when-available","mild-loss","bandwidth-limited","asymmetric-upload-download","slow-reader","slow-writer"],
+  "rules": ["protect each cell independently","retain raw and invalid samples","verify payload integrity","do not trade c1 latency for c32 throughput","do not trade shared-profile performance for dedicated-profile performance"]
+}
