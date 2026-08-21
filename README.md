@@ -322,8 +322,9 @@ cargo install cargo-audit --version 0.22.2 --locked
 
 The quality gate includes formatting, strict Clippy, dependency policy,
 RustSec audit, documentation, nextest, release-mode tests, doc tests, and
-benchmark harness execution. Security CI additionally runs parser fuzz smoke
-tests and scheduled sanitizer jobs. The default build uses ring for the
+benchmark harness execution. Security CI additionally runs every target from
+`fuzz/Cargo.toml` in bounded shards, with a deeper scheduled fuzz budget, plus
+ASan/LSan and TSan jobs. The default build uses ring for the
 TLS 1.3 AES-128-GCM record AEAD; `cargo build --release
 --no-default-features` selects the pure-Rust RustCrypto provider with no
 other behavioral change.

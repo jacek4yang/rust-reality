@@ -39,28 +39,40 @@ jobs:
           cargo audit --deny warnings
 
   fuzz:
-    name: Parser fuzz smoke
+    name: Fuzz shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      FUZZ_SMOKE_SECONDS: ${{ github.event_name == 'schedule' && '120' || '8' }}
+      FUZZ_SMOKE_MAX_SECONDS: 120
+      FUZZ_OUTPUT_DIR: fuzz-output
+      FUZZ_TOOLCHAIN: nightly-2026-08-02
     steps:
       - name: Check out repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - name: Install nightly Rust
-        run: rustup toolchain install nightly
+        run: rustup toolchain install nightly-2026-08-02
       - name: Install cargo-fuzz
-        run: cargo +nightly install cargo-fuzz --version 0.13.2 --locked
-      - name: Fuzz bounded wire parsers
-        run: cargo +nightly fuzz run wire_parsers -- -runs=20000 -max_len=65536
-      - name: Fuzz Vision framing
-        run: cargo +nightly fuzz run vision_decoder -- -runs=20000 -max_len=16384
-      - name: Fuzz handoff header parser
-        run: cargo +nightly fuzz run handoff_header -- -runs=20000 -max_len=65536
-      - name: Fuzz handoff continuation blob decoder
-        run: cargo +nightly fuzz run handoff_blob -- -runs=20000 -max_len=131072
-      - name: Fuzz handoff transfer open
-        run: cargo +nightly fuzz run handoff_open_transfer -- -runs=20000 -max_len=65536
-      - name: Fuzz bounded cover flight
-        run: cargo +nightly fuzz run cover_flight -- -runs=20000 -max_len=131072
+        run: cargo +nightly-2026-08-02 install cargo-fuzz --version 0.13.2 --locked
+      - name: Run authoritative target shard
+        shell: bash
+        run: |
+          target_output="$(python3 scripts/fuzz-targets.py \
+            --shard-index "${{ matrix.shard }}" --shard-count 4)"
+          mapfile -t targets <<<"$target_output"
+          scripts/fuzz-smoke.sh "${targets[@]}"
+      - name: Upload fuzz failure evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-shard-${{ matrix.shard }}
+          path: fuzz-output/
+          if-no-files-found: error
+          retention-days: 7
 
   sanitizers:
     name: Address and leak sanitizer

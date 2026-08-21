@@ -126,6 +126,14 @@ gates. These tests do not claim mathematical absence of all defects, but they
 make unhandled input, resource, arithmetic, and race states explicit release
 criteria.
 
+`fuzz/Cargo.toml` is the authoritative attack-surface inventory. Its current
+targets cover raw VLESS/wire parsers, Vision decoding and state transitions,
+Handoff headers/blobs/opening and structured round trips, NXR round trips,
+cover-flight parsing, TLS 1.3 record round trips, transcript hashing, strict
+configuration decoding, and diagnostic rendering. CI rejects undeclared
+target source files and runs every declared target; whole-crate line coverage
+is not treated as a substitute for these reachable boundaries.
+
 Linux `splice` is permitted only after both sides are plaintext TCP sockets. It
 cannot cross the REALITY/TLS application boundary. If bounded splice resources
 are unavailable before transfer starts, relay falls back to bounded userspace
