@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -45,6 +46,95 @@ FORBIDDEN_PHRASES = (
 # Files where historical wording is legitimate (version history and ADRs).
 FORBIDDEN_EXEMPT = ("CHANGELOG.md", "docs/decisions/")
 
+RELEASE_HEADLINES = ROOT / "machine-readable/current-release-headlines.json"
+
+
+def section(text: str, start: str, end: str | None) -> str:
+    try:
+        body = text.split(start, 1)[1]
+    except IndexError:
+        return ""
+    return body.split(end, 1)[0] if end and end in body else body
+
+
+def release_headline_failures() -> list[str]:
+    """Keep current bilingual release surfaces tied to one small data file."""
+    try:
+        data = json.loads(RELEASE_HEADLINES.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return [f"{RELEASE_HEADLINES.relative_to(ROOT)}: {error}"]
+
+    if data.get("schemaVersion") != 1:
+        return ["current release headline schemaVersion must be 1"]
+
+    cargo = ROOT.joinpath("Cargo.toml").read_text(encoding="utf-8")
+    version_match = re.search(r'^version = "([^"]+)"', cargo, re.MULTILINE)
+    cargo_release = f"v{version_match.group(1)}" if version_match else None
+    release = data.get("release")
+    failures: list[str] = []
+    if cargo_release != release:
+        failures.append(
+            f"current release mismatch: Cargo.toml={cargo_release!r}, headline data={release!r}"
+        )
+
+    documents = {
+        "README.md": section(
+            ROOT.joinpath("README.md").read_text(encoding="utf-8"),
+            "## Performance vs Xray-core",
+            "## Architecture",
+        ),
+        "README.zh-CN.md": section(
+            ROOT.joinpath("README.zh-CN.md").read_text(encoding="utf-8"),
+            "## 与 Xray-core 的性能对比",
+            "## 架构",
+        ),
+        "docs/benchmarks.md": section(
+            ROOT.joinpath("docs/benchmarks.md").read_text(encoding="utf-8"),
+            f"## {release} release comparison evidence",
+            "## Historical README headline tables",
+        ),
+        "docs/benchmarks.zh-CN.md": section(
+            ROOT.joinpath("docs/benchmarks.zh-CN.md").read_text(encoding="utf-8"),
+            f"## {release} 发布对比证据",
+            "## 历史 README 头条表格",
+        ),
+        "docs/performance.md": section(
+            ROOT.joinpath("docs/performance.md").read_text(encoding="utf-8"),
+            f"## {release} release evidence",
+            "## v1.5.1 release evidence",
+        ),
+        "docs/performance.zh-CN.md": section(
+            ROOT.joinpath("docs/performance.zh-CN.md").read_text(encoding="utf-8"),
+            f"## {release} 发布证据",
+            "## v1.5.1 发布证据",
+        ),
+    }
+
+    comparator = data["comparator"]
+    common = [
+        release,
+        comparator["version"],
+        comparator["commit"],
+        comparator["goVersion"],
+        comparator["binarySha256Abbreviated"],
+    ]
+    table_values = [
+        value
+        for group in (data["setup"], data["throughputRatios"], data["routing"])
+        for row in group.values()
+        for value in (row if isinstance(row, list) else [row])
+    ]
+    full_values = common + table_values + data["headlineValues"]
+    for name, body in documents.items():
+        if not body:
+            failures.append(f"{name}: missing current-release heading for {release}")
+            continue
+        required = full_values if name.startswith("README") else common
+        missing = [value for value in required if value not in body]
+        if missing:
+            failures.append(f"{name}: current-release data missing {missing!r}")
+    return failures
+
 
 def forbidden_phrase_failures() -> list[str]:
     failures: list[str] = []
@@ -84,6 +174,7 @@ def main() -> int:
                 failures.append(f"missing required document: {relative}")
 
     failures.extend(forbidden_phrase_failures())
+    failures.extend(release_headline_failures())
     for source in markdown_files():
         text = source.read_text(encoding="utf-8")
         for match in LINK.finditer(text):

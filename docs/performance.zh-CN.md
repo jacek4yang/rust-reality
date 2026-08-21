@@ -8,8 +8,18 @@
 对编译的 Go 源站、未经修改的 Xray 26.7.28 客户端。loopback 让服务端、客户端
 和源站共享主机 CPU；这些数字描述的是实现成本，绝不是互联网吞吐。冻结的
 v1.0.0 发布对比矩阵见
-[benchmarks.zh-CN.md](benchmarks.zh-CN.md)。v1.5.1 与 v1.5.0 的证据在下面紧随的
+[benchmarks.zh-CN.md](benchmarks.zh-CN.md)。v1.6.0、v1.5.1 与 v1.5.0 的证据在下面紧随的
 章节中，v1.0.0 表格作为该版本的历史发布测量保持不变。
+
+## v1.6.0 发布证据
+
+v1.6.0 与已发布的 v1.5.1 二进制对比测量；正式评估器 40 项受保护指标全部
+通过、零回归。保留的改动是 512 KiB splice pipe（fallback CPU/GiB 比值
+0.953，bootstrap95 [0.925, 0.974]）和 framed 上行批量写入（c32 +5.5%，
+源站 write 减少 3.5×）。公开对比对象仍为 Xray-core 26.7.28（`5ca6f4b`，
+go1.26.0，二进制 SHA-256 `23d228d7…04c5268`）。完整建连、吞吐、DNS、路由、
+RSS、限制、身份与证据路径见
+[benchmarks.zh-CN.md](benchmarks.zh-CN.md#v160-发布对比证据)。
 
 ## v1.5.1 发布证据
 
