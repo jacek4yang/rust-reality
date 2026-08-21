@@ -105,5 +105,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "reality_auth_round_trip"
+path = "fuzz_targets/reality_auth_round_trip.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 members = ["."]

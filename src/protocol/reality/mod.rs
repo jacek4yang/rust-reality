@@ -6,6 +6,9 @@ mod read;
 mod replay;
 pub mod tls13;
 
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub use auth::fuzzing;
 pub use auth::{
     AuthKey, RealityAuthConfigError, RealityAuthError, RealityAuthResult, RealityAuthenticator,
 };
