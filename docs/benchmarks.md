@@ -146,12 +146,15 @@ connections measured 0.666 versus 0.663 ms task-clock per connection (+0.55%)
 and +0.15% instructions per connection. Family planning, health, and refresh
 remain outside established relay read/write loops.
 
-The robustness evidence is intentionally separate from throughput numbers:
-each of the six bounded fuzz targets runs 20,000 cases, and the parser
-property gate covers every maximum-request prefix plus three byte mutations at
-every position. Local restricted-shell runs disable only LSan's ptrace-
-unsupported leak detector; CI's scheduled sanitizer jobs retain leak detection
-and run the full suite, while TSan covers the replay duplicate race.
+The robustness evidence is intentionally separate from throughput numbers.
+At the time of this historical dual-stack measurement six bounded parser
+targets ran 20,000 cases each. The current attack-surface program declares 13
+targets in `fuzz/Cargo.toml`; every target now runs in bounded, time-based CI
+shards, with a deeper scheduled budget. The parser property gate still covers
+every maximum-request prefix plus three byte mutations at every position.
+Local restricted-shell runs disable only LSan's ptrace-unsupported leak
+detector; CI retains leak detection, while TSan covers the replay duplicate
+race.
 
 ## Methodology rules (and the traps that invalidated earlier numbers)
 

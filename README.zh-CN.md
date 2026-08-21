@@ -274,8 +274,9 @@ cargo install cargo-audit --version 0.22.2 --locked
 ```
 
 质量门禁包含格式化、严格 Clippy、依赖策略、RustSec 审计、文档、nextest、
-release 模式测试、doc test 和基准入口执行。Security CI 还执行解析器 fuzz
-smoke 以及定期 sanitizer 任务。默认构建使用 ring 作为 TLS 1.3 AES-128-GCM
+release 模式测试、doc test 和基准入口执行。Security CI 还把
+`fuzz/Cargo.toml` 中每个目标分进有界 CI shard，定时运行更深预算，并执行
+ASan/LSan 与 TSan 任务。默认构建使用 ring 作为 TLS 1.3 AES-128-GCM
 记录 AEAD；`cargo build --release --no-default-features` 选择纯 Rust 的
 RustCrypto 提供者，没有其他行为差异。
 
