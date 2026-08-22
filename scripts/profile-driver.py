@@ -255,7 +255,6 @@ def cmd_ladder(args):
 
     levels = [int(x) for x in args.levels.split(",") if x]
     baseline_oom = cgroup_oom_kills(args.cgroup)
-    base_fds = proc_fd_count(args.server_pid) or 0
     held = []          # asyncio StreamWriter objects kept open
     total_failed = 0
     abort_reason = None
@@ -293,13 +292,20 @@ def cmd_ladder(args):
         current_oom = cgroup_oom_kills(args.cgroup)
         oom_delta = (None if baseline_oom is None or current_oom is None
                      else current_oom - baseline_oom)
-        established = max(0, (fds - base_fds) // 2) if fds is not None else None
+        # open_one returns a writer only after the SOCKS client receives a
+        # successful CONNECT reply. At that point the corresponding REALITY
+        # session and outbound connection are established server-side. Do not
+        # infer this count from the process FD delta: preceding splice traffic
+        # may leave bounded pipe pairs in the pool, and reusing those pipes
+        # changes the FD delta without changing the session count.
+        established = opened
         return {
             "cell": "ladder",
             "tag": RECORD_TAG,
             "level": level,
             "connectionsHeld": opened,
             "serverEstablishedSessions": established,
+            "establishmentEvidence": "successful-socks-connect",
             "connectionsFailedTotal": failed,
             "serverAlive": pid_alive(args.server_pid),
             "serverRssBytes": proc_rss_bytes(args.server_pid),
