@@ -186,9 +186,6 @@ def summarize_download(cells, concurrency):
 PRESSURE_KEYS = ("resource_pressure_changed", "descriptor_pressure_changed",
                  "admission_limited", "connection_rejected")
 
-BASE_FDS = 15  # listener, stdio, runtime descriptors before any session
-
-
 def summarize_ladder(cells, tag=None):
     rows = [c for c in cells if c.get("cell") == "ladder"
             and c.get("tag") == tag]
@@ -207,6 +204,10 @@ def summarize_ladder(cells, tag=None):
 
     levels = []
     max_clean = 0
+    establishment_evidence = all(
+        row.get("establishmentEvidence") == "successful-socks-connect"
+        for row in rows
+    )
     first_pressure = None
     prev_events = {k: 0 for k in PRESSURE_KEYS}
     prev_failed = 0
@@ -218,10 +219,8 @@ def summarize_ladder(cells, tag=None):
     for level in order:
         group = by_level[level]
         established = max(
-            (r.get("serverEstablishedSessions")
-             if r.get("serverEstablishedSessions") is not None
-             else max(0, ((r.get("serverFdCount") or BASE_FDS) - BASE_FDS) // 2))
-            for r in group)
+            r.get("serverEstablishedSessions", -1) for r in group
+        )
         held = max(r.get("connectionsHeld") or 0 for r in group)
         new_pressure = 0
         new_failed = 0
@@ -280,6 +279,10 @@ def summarize_ladder(cells, tag=None):
         "levels": levels,
         "maxCleanLevel": max_clean,
         "maxEstablishedSessions": max_established,
+        "establishmentEvidence": {
+            "kind": "successful-socks-connect",
+            "pass": establishment_evidence,
+        },
         "firstPressureLevel": first_pressure,
         "oomKills": oom_kills if oom_status_known else None,
         "oomStatusKnown": oom_status_known,
@@ -446,12 +449,14 @@ def main():
         and ladder["completed"]
         and ladder["abortReason"] is None
         and ladder["maxCleanLevel"] > 0
+        and ladder["establishmentEvidence"]["pass"]
     )
     tuned_ladder_ok = bool(
         ladder_tuned
         and ladder_tuned["completed"]
         and ladder_tuned["abortReason"] is None
         and ladder_tuned["maxCleanLevel"] > 0
+        and ladder_tuned["establishmentEvidence"]["pass"]
     )
     passed = (churn_ok and download_ok and oom_status_known and oom_kills == 0
               and ladder_ok and tuned_ladder_ok and resource_boundaries["pass"]

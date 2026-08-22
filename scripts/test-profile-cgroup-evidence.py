@@ -70,6 +70,7 @@ def ladder(tag):
         "level": 100,
         "connectionsHeld": 100,
         "serverEstablishedSessions": 100,
+        "establishmentEvidence": "successful-socks-connect",
         "connectionsFailedTotal": 0,
         "serverAlive": True,
         "serverRssBytes": 24 * 1024 * 1024,
@@ -146,6 +147,14 @@ class ProfileCgroupEvidenceTests(unittest.TestCase):
         self.assertIs(summary["pass"], True)
         self.assertIs(summary["resourceBoundaryEvidence"]["pass"], True)
         self.assertIs(summary["swapEvidence"]["pass"], True)
+        self.assertIs(summary["ladder"]["establishmentEvidence"]["pass"], True)
+
+    def test_ladder_without_successful_connect_evidence_is_rejected(self):
+        cells = copy.deepcopy(passing_cells())
+        for cell in cells:
+            if cell.get("cell") == "ladder":
+                cell.pop("establishmentEvidence")
+        self.assert_rejected(cells)
 
     def test_nonzero_swap_limit_is_rejected(self):
         cells = copy.deepcopy(passing_cells())
