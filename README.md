@@ -188,13 +188,16 @@ protocol stack itself.
 ## Supported scope
 
 Supported release targets: Linux x86_64 and Linux aarch64 with a modern
-kernel. Releases ship three archives: `linux-x86_64-generic` (baseline
-x86-64, the recommended asset), `linux-x86_64-v3` (opt-in; requires the
-x86-64-v3 microarchitecture level, no runtime fallback, and no measured
-advantage on the validation host — the record AEAD dispatches to AES hardware
-at runtime in every tier), and `linux-aarch64-generic` (ARMv8.0 with neon,
-built and smoke-tested natively on ARM runners). Use the generic archive when
-CPU support is unknown.
+kernel. Releases ship four archives: `linux-x86_64-generic` (baseline
+x86-64 GNU/glibc, recommended for conventional distributions),
+`linux-x86_64-musl` (baseline x86-64, fully static, recommended for Alpine,
+other musl systems, and minimal containers), `linux-x86_64-v3` (opt-in;
+requires the x86-64-v3 microarchitecture level, no runtime fallback, and no
+measured advantage on the validation host — the record AEAD dispatches to AES
+hardware at runtime in every tier), and `linux-aarch64-generic` (ARMv8.0 with
+neon, built and smoke-tested natively on ARM runners). Use a baseline archive
+when CPU support is unknown and select GNU versus musl for the deployment
+userspace.
 
 The public
 inbound does not support plain VLESS, TLS-only VLESS, WebSocket, QUIC, UDP
@@ -212,9 +215,11 @@ then verify all assets before installation:
 
 ```shell
 sha256sum --check SHA256SUMS
-# Generic x86-64 package (recommended when CPU support is unknown):
+# Generic GNU/glibc x86-64 package:
 tar -xzf rust-reality-v<version>-linux-x86_64-generic.tar.gz
-# Or, on an x86-64-v3 CPU:
+# On Alpine/musl or in a minimal container, use the static package:
+# tar -xzf rust-reality-v<version>-linux-x86_64-musl.tar.gz
+# Or, on an x86-64-v3 GNU/glibc CPU:
 # tar -xzf rust-reality-v<version>-linux-x86_64-v3.tar.gz
 # On ARM64 (ARMv8.0 with neon or later):
 # tar -xzf rust-reality-v<version>-linux-aarch64-generic.tar.gz

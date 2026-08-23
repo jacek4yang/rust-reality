@@ -21,9 +21,10 @@
 ## 安装官方 Release
 
 从同一个 [GitHub Release](https://github.com/jacek4yang/rust-reality/releases)
-下载五个资产：
+下载六个资产：
 
 - `rust-reality-vX.Y.Z-linux-x86_64-generic.tar.gz`
+- `rust-reality-vX.Y.Z-linux-x86_64-musl.tar.gz`
 - `rust-reality-vX.Y.Z-linux-x86_64-v3.tar.gz`
 - `rust-reality-vX.Y.Z-linux-aarch64-generic.tar.gz`
 - `release-manifest.json`
@@ -33,9 +34,11 @@
 
 ```shell
 sha256sum --check SHA256SUMS
-# x86-64 通用包（不确定 CPU 能力时推荐）：
+# x86-64 GNU/glibc 通用包：
 tar -xzf rust-reality-v<version>-linux-x86_64-generic.tar.gz
-# 或在 x86-64-v3 CPU 上使用：
+# Alpine/musl 或极简容器使用完全静态包：
+# tar -xzf rust-reality-v<version>-linux-x86_64-musl.tar.gz
+# 或在 x86-64-v3 GNU/glibc CPU 上使用：
 # tar -xzf rust-reality-v<version>-linux-x86_64-v3.tar.gz
 # 在 ARM64（ARMv8.0 含 neon 或更高）上使用：
 # tar -xzf rust-reality-v<version>-linux-aarch64-generic.tar.gz
@@ -45,8 +48,10 @@ rust-reality --version
 
 `release-manifest.json` schema v3 记录版本、tag、精确源码 commit、target triple、
 源码时间戳、编译器、cargo features，以及每个档位的压缩包名称、SHA-256、目标
-CPU/特性、是否在本机实测，以及最低 CPU 要求。最低要求：`linux-x86_64-generic`
-运行于基线 x86-64；`linux-x86_64-v3` 要求 x86-64-v3 微架构级别，且没有运行时
+CPU/特性、是否在本机实测，以及最低 CPU 要求。最低要求：
+`linux-x86_64-generic` 和 `linux-x86_64-musl` 都运行于基线 x86-64；musl
+资产完全静态，适合 Alpine 和极简容器。`linux-x86_64-v3` 要求 x86-64-v3
+微架构级别，且没有运行时
 回退；`linux-aarch64-generic` 要求 ARMv8.0 含 neon。v3 档是可选项，在验证主机
 上没有实测优势（ring 在每个档位都于运行时做 AES 硬件调度），只有确认 CPU 满足
 条件时才应选择它。不要混用不同 Release 的压缩包、manifest 或 checksum。

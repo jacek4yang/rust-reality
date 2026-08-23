@@ -54,7 +54,12 @@ FAKE
     } >"$path"
 }
 
-TIERS=(linux-x86_64-generic linux-x86_64-v3 linux-aarch64-generic)
+TIERS=(
+    linux-x86_64-generic
+    linux-x86_64-musl
+    linux-x86_64-v3
+    linux-aarch64-generic
+)
 for tier in "${TIERS[@]}"; do
     write_fake_binary "$WORK_DIRECTORY/bin/$tier" "$tier"
     chmod 0755 "$WORK_DIRECTORY/bin/$tier"
@@ -82,8 +87,12 @@ if [[ ${1:-} == metadata ]]; then
     exit 0
 fi
 
-printf '%s\t%s\t%s\n' \
-    "${CARGO_TARGET_DIR:?}" "${RUSTFLAGS:?}" "$*" >>"${FAKE_CARGO_LOG:?}"
+printf '%s\t%s\t%s\t%s\t%s\n' \
+    "${CARGO_TARGET_DIR:?}" \
+    "${RUSTFLAGS:?}" \
+    "${CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER:-}" \
+    "${CC_x86_64_unknown_linux_musl:-}" \
+    "$*" >>"${FAKE_CARGO_LOG:?}"
 if [[ ${1:-} == build ]]; then
     output="$CARGO_TARGET_DIR/release"
     previous=
@@ -100,6 +109,12 @@ if [[ ${1:-} == build ]]; then
 fi
 FAKE_CARGO
 chmod 0755 "$WORK_DIRECTORY/fake-tools/cargo"
+
+cat >"$WORK_DIRECTORY/fake-tools/musl-gcc" <<'FAKE_MUSL_GCC'
+#!/usr/bin/env sh
+exit 0
+FAKE_MUSL_GCC
+chmod 0755 "$WORK_DIRECTORY/fake-tools/musl-gcc"
 
 init_fixture_repo() {
     local root=$1
@@ -122,6 +137,10 @@ test_build_release_tiers() {
         PATH="$WORK_DIRECTORY/fake-tools:$PATH" \
         FAKE_CARGO_LOG="$log" \
         "$root/scripts/build-release.sh" linux-x86_64-generic >/dev/null
+    env \
+        PATH="$WORK_DIRECTORY/fake-tools:$PATH" \
+        FAKE_CARGO_LOG="$log" \
+        "$root/scripts/build-release.sh" linux-x86_64-musl >/dev/null
     env \
         PATH="$WORK_DIRECTORY/fake-tools:$PATH" \
         FAKE_CARGO_LOG="$log" \
@@ -150,15 +169,21 @@ import sys
 root = Path(sys.argv[1])
 records = [line.split("\t") for line in Path(sys.argv[2]).read_text().splitlines()]
 assert records == [
-    [str(root / "target"), "-C target-cpu=x86-64",
+    [str(root / "target"), "-C target-cpu=x86-64", "", "",
      "test --workspace --release --locked"],
-    [str(root / "target"), "-C target-cpu=x86-64",
+    [str(root / "target"), "-C target-cpu=x86-64", "", "",
      "build --workspace --release --locked"],
-    [str(root / "target/x86-64-v3"), "-C target-cpu=x86-64-v3",
+    [str(root / "target/x86_64-musl"), "-C target-cpu=x86-64",
+     "musl-gcc", "musl-gcc",
+     "test --workspace --release --locked --target x86_64-unknown-linux-musl"],
+    [str(root / "target/x86_64-musl"), "-C target-cpu=x86-64",
+     "musl-gcc", "musl-gcc",
+     "build --workspace --release --locked --target x86_64-unknown-linux-musl"],
+    [str(root / "target/x86-64-v3"), "-C target-cpu=x86-64-v3", "", "",
      "test --workspace --release --locked"],
-    [str(root / "target/x86-64-v3"), "-C target-cpu=x86-64-v3",
+    [str(root / "target/x86-64-v3"), "-C target-cpu=x86-64-v3", "", "",
      "build --workspace --release --locked"],
-    [str(root / "target/aarch64-generic"), "-C target-cpu=generic",
+    [str(root / "target/aarch64-generic"), "-C target-cpu=generic", "", "",
      "build --workspace --release --locked --target aarch64-unknown-linux-gnu"],
 ], records
 PY
@@ -349,6 +374,7 @@ binary_root = pathlib.Path(sys.argv[2])
 repository_root = pathlib.Path(sys.argv[3])
 names = {
     "linux-x86_64-generic": "rust-reality-v9.8.7-linux-x86_64-generic.tar.gz",
+    "linux-x86_64-musl": "rust-reality-v9.8.7-linux-x86_64-musl.tar.gz",
     "linux-x86_64-v3": "rust-reality-v9.8.7-linux-x86_64-v3.tar.gz",
     "linux-aarch64-generic": "rust-reality-v9.8.7-linux-aarch64-generic.tar.gz",
 }
@@ -375,11 +401,13 @@ assert manifest["sha256"] == hashlib.sha256(
 artifacts = manifest["artifacts"]
 assert [artifact["tier"] for artifact in artifacts] == [
     "linux-x86_64-generic",
+    "linux-x86_64-musl",
     "linux-x86_64-v3",
     "linux-aarch64-generic",
 ]
 assert [artifact["cpuTier"] for artifact in artifacts] == [
     "portable",
+    "portable-musl",
     "x86-64-v3",
     "aarch64-generic",
 ]
@@ -395,11 +423,18 @@ for artifact in artifacts:
 
 by_tier = {artifact["tier"]: artifact for artifact in artifacts}
 generic = by_tier["linux-x86_64-generic"]
+musl = by_tier["linux-x86_64-musl"]
 v3 = by_tier["linux-x86_64-v3"]
 aarch64 = by_tier["linux-aarch64-generic"]
 assert generic["target"] == "x86_64-unknown-linux-gnu"
 assert generic["requirements"]["isaLevel"] == "x86-64"
 assert generic["requirements"]["requiredCpuFeatures"] == ["sse2"]
+assert musl["target"] == "x86_64-unknown-linux-musl"
+assert musl["requirements"]["isaLevel"] == "x86-64"
+assert musl["requirements"]["requiredCpuFeatures"] == ["sse2"]
+assert musl["requirements"]["libc"] == "musl"
+assert musl["requirements"]["linkage"] == "static"
+assert musl["requirements"]["dynamicLoaderRequired"] is False
 assert v3["target"] == "x86_64-unknown-linux-gnu"
 assert v3["requirements"]["isaLevel"] == "x86-64-v3"
 assert v3["requirements"]["requiredCpuFeatures"] == [

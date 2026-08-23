@@ -89,16 +89,46 @@ jobs:
       - name: Install Rust toolchain
         run: rustup toolchain install
 
-      - name: Verify native build host
-        # Every matrix tier runs on a matching native runner
-        # (ubuntu-22.04-arm for aarch64), so smoke below is real hardware
-        # evidence and the manifest records measuredNatively: true.
+      - name: Install musl target and linker
+        if: matrix.target == 'x86_64-unknown-linux-musl'
         run: |
-          test "$(rustc -vV | sed -n 's/^host: //p')" = "${{ matrix.target }}"
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends musl-tools
+          rustup target add x86_64-unknown-linux-musl
+          command -v musl-gcc
+
+      - name: Verify native build host
+        # GNU and aarch64 tiers use a matching rustc host. The musl tier is
+        # cross-libc but same-ISA: cargo tests and the packaged binary execute
+        # directly on real x86_64 hardware, so measuredNatively remains true.
+        run: |
+          host_target="$(rustc -vV | sed -n 's/^host: //p')"
+          if [[ "${{ matrix.target }}" == x86_64-unknown-linux-musl ]]; then
+            test "$host_target" = x86_64-unknown-linux-gnu
+            test "$(uname -m)" = x86_64
+          else
+            test "$host_target" = "${{ matrix.target }}"
+          fi
           test "${{ matrix.measured-natively }}" = true
 
       - name: Build tier release
         run: ./scripts/build-release.sh "${{ matrix.tier }}"
+
+      - name: Verify musl binary is fully static
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          binary=target/x86_64-musl/x86_64-unknown-linux-musl/release/rust-reality
+          test -x "$binary"
+          readelf -h "$binary" | grep -F 'Machine:' | grep -F 'X86-64'
+          if readelf -l "$binary" | grep -Eq '(^|[[:space:]])INTERP([[:space:]]|$)'; then
+            printf '%s\n' 'musl release unexpectedly requires a dynamic loader' >&2
+            exit 1
+          fi
+          if readelf -d "$binary" | grep -F '(NEEDED)'; then
+            printf '%s\n' 'musl release unexpectedly requires a shared library' >&2
+            exit 1
+          fi
+          "$binary" --version | grep -Fx "rust-reality ${GITHUB_REF_NAME#v}"
 
       - name: Package tier asset
         run: ./scripts/package-release.sh "$GITHUB_REF_NAME" "${{ matrix.tier }}" dist

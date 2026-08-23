@@ -24,10 +24,11 @@ For machine sizing, resource profiles, and performance diagnosis, see
 
 ## Install an official release
 
-Download these five assets from the same
+Download these six assets from the same
 [GitHub Release](https://github.com/jacek4yang/rust-reality/releases):
 
 - `rust-reality-vX.Y.Z-linux-x86_64-generic.tar.gz`
+- `rust-reality-vX.Y.Z-linux-x86_64-musl.tar.gz`
 - `rust-reality-vX.Y.Z-linux-x86_64-v3.tar.gz`
 - `rust-reality-vX.Y.Z-linux-aarch64-generic.tar.gz`
 - `release-manifest.json`
@@ -37,9 +38,11 @@ Verify every file listed in `SHA256SUMS` before extraction:
 
 ```shell
 sha256sum --check SHA256SUMS
-# Generic x86-64 package (recommended when CPU support is unknown):
+# Generic GNU/glibc x86-64 package:
 tar -xzf rust-reality-v<version>-linux-x86_64-generic.tar.gz
-# Or, on an x86-64-v3 CPU:
+# On Alpine/musl or in a minimal container, use the static package:
+# tar -xzf rust-reality-v<version>-linux-x86_64-musl.tar.gz
+# Or, on an x86-64-v3 GNU/glibc CPU:
 # tar -xzf rust-reality-v<version>-linux-x86_64-v3.tar.gz
 # On ARM64 (ARMv8.0 with neon or later):
 # tar -xzf rust-reality-v<version>-linux-aarch64-generic.tar.gz
@@ -50,8 +53,10 @@ rust-reality --version
 `release-manifest.json` schema v3 records the version, tag, exact source
 commit, target triples, source timestamp, compiler, cargo features, and each
 tier's archive name, SHA-256, target CPU/features, native-measurement status,
-and minimum CPU requirements. Minimums: `linux-x86_64-generic` runs on
-baseline x86-64; `linux-x86_64-v3` requires the x86-64-v3 microarchitecture
+and minimum CPU requirements. Minimums: `linux-x86_64-generic` and
+`linux-x86_64-musl` both run on baseline x86-64; the musl asset is fully
+static and is the correct choice for Alpine/minimal containers.
+`linux-x86_64-v3` requires the x86-64-v3 microarchitecture
 level and has no runtime fallback; `linux-aarch64-generic` requires ARMv8.0
 with neon. The v3 tier is opt-in with no measured advantage on the validation
 host (ring dispatches AES hardware support at runtime in every tier), so pick

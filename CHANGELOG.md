@@ -2,6 +2,15 @@
 
 All notable user-facing changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Official `linux-x86_64-musl` release archive: baseline x86-64,
+  fully static, built and executed on native x86_64 hardware, and intended
+  for Alpine, other musl distributions, and minimal containers. Release
+  aggregation remains all-or-nothing, so a missing musl tier blocks publish.
+
 ## [1.6.0] - 2026-08-20
 
 rust-reality is forward-only: there is no backward compatibility between
