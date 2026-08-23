@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# release-matrix.sh — canonical v1.5.0 release tier matrix (single source of
-# truth). Source it for the shell API, or execute it:
+# release-matrix.sh — canonical release tier matrix (single source of truth).
+# Source it for the shell API, or execute it:
 #
 #   release-matrix.sh --tiers            space-separated tier ids
 #   release-matrix.sh --github-matrix    GitHub Actions matrix JSON (one line,
@@ -13,7 +13,12 @@
 #   dispatch AES-NI/AVX2/SHA-NI at runtime, so cpu tiers change mostly LLVM
 #   codegen of the proxy's own code, not the crypto path.
 # - linux-x86_64-v3 is kept as an opt-in tier with a documented "no crypto
-#   advantage" expectation; the generic build remains the recommended asset.
+#   advantage" expectation; the GNU generic build remains the recommended
+#   asset for conventional glibc distributions.
+# - linux-x86_64-musl is a baseline x86-64, fully static musl asset for
+#   Alpine, other musl systems, and minimal containers. It is cross-libc
+#   built on an x86_64 GNU runner, then executed directly on the same native
+#   ISA; measuredNatively therefore remains true.
 # - an aarch64-crypto tier (+aes,+sha2) was evaluated and DROPPED: ring does
 #   HWCAP runtime dispatch on aarch64, the remaining gain is restricted to
 #   non-default fallback paths, and no aarch64 hardware is available to
@@ -28,6 +33,7 @@ set -Eeuo pipefail
 # architecture (native runner); cross/qemu tiers must set it to false.
 readonly RELEASE_MATRIX=(
     "linux-x86_64-generic|x86_64-unknown-linux-gnu|x86-64||ubuntu-22.04|true"
+    "linux-x86_64-musl|x86_64-unknown-linux-musl|x86-64||ubuntu-22.04|true"
     "linux-x86_64-v3|x86_64-unknown-linux-gnu|x86-64-v3||ubuntu-22.04|true"
     "linux-aarch64-generic|aarch64-unknown-linux-gnu|generic||ubuntu-22.04-arm|true"
 )
@@ -79,6 +85,19 @@ release_matrix_requirements_json() {
 }
 JSON
             ;;
+        linux-x86_64-musl)
+            cat <<'JSON'
+{
+  "architecture": "x86_64",
+  "isaLevel": "x86-64",
+  "requiredCpuFeatures": ["sse2"],
+  "runtimeDispatch": true,
+  "libc": "musl",
+  "linkage": "static",
+  "dynamicLoaderRequired": false
+}
+JSON
+            ;;
         linux-x86_64-v3)
             cat <<'JSON'
 {
@@ -114,6 +133,7 @@ JSON
 release_matrix_cpu_tier_alias() {
     case $1 in
         linux-x86_64-generic) printf 'portable\n' ;;
+        linux-x86_64-musl) printf 'portable-musl\n' ;;
         linux-x86_64-v3) printf 'x86-64-v3\n' ;;
         linux-aarch64-generic) printf 'aarch64-generic\n' ;;
         *)
@@ -129,6 +149,7 @@ release_matrix_cpu_tier_alias() {
 release_matrix_target_dir() {
     case $1 in
         linux-x86_64-generic) printf 'target\n' ;;
+        linux-x86_64-musl) printf 'target/x86_64-musl\n' ;;
         linux-x86_64-v3) printf 'target/x86-64-v3\n' ;;
         linux-aarch64-generic) printf 'target/aarch64-generic\n' ;;
         *)

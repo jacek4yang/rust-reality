@@ -158,12 +158,14 @@ relay。生命周期、热路径拓扑、描述符预算模型和可观测事件
 
 ## 支持范围
 
-正式发布目标：采用现代内核的 Linux x86_64 和 Linux aarch64。Release 提供三个
-压缩包：`linux-x86_64-generic`（基线 x86-64，推荐资产）、`linux-x86_64-v3`
-（可选；要求 x86-64-v3 微架构级别，无运行时回退，在验证主机上没有实测优势——
-记录 AEAD 在每个档位都于运行时调度到 AES 硬件），以及
-`linux-aarch64-generic`（ARMv8.0 含 neon，在 ARM runner 上原生构建并通过冒烟
-测试）。不确定机器能力时应选择通用包。公网入站不支持纯 VLESS、仅 TLS
+正式发布目标：采用现代内核的 Linux x86_64 和 Linux aarch64。Release 提供四个
+压缩包：`linux-x86_64-generic`（基线 x86-64 GNU/glibc，适合常规发行版）、
+`linux-x86_64-musl`（基线 x86-64、完全静态，适合 Alpine、其他 musl 系统和
+极简容器）、`linux-x86_64-v3`（可选；要求 x86-64-v3 微架构级别，无运行时
+回退，在验证主机上没有实测优势——记录 AEAD 在每个档位都于运行时调度到 AES
+硬件），以及 `linux-aarch64-generic`（ARMv8.0 含 neon，在 ARM runner 上原生
+构建并通过冒烟测试）。不确定 CPU 能力时选择基线包，再根据部署用户空间选择
+GNU 或 musl。公网入站不支持纯 VLESS、仅 TLS
 的 VLESS、WebSocket、QUIC、UDP 代理或非 Vision flow。NXR 不是公网协议，一次
 认证请求完成后也不会加密后续载荷。公网协议带有使用未经修改的 Xray-core
 26.7.28 客户端的端到端互操作门禁；部署者仍须根据自己的 VPS 审查威胁模型、
@@ -176,9 +178,11 @@ relay。生命周期、热路径拓扑、描述符预算模型和可观测事件
 
 ```shell
 sha256sum --check SHA256SUMS
-# x86-64 通用包（不确定 CPU 能力时推荐）：
+# x86-64 GNU/glibc 通用包：
 tar -xzf rust-reality-v<version>-linux-x86_64-generic.tar.gz
-# 或在 x86-64-v3 CPU 上使用：
+# Alpine/musl 或极简容器使用完全静态包：
+# tar -xzf rust-reality-v<version>-linux-x86_64-musl.tar.gz
+# 或在 x86-64-v3 GNU/glibc CPU 上使用：
 # tar -xzf rust-reality-v<version>-linux-x86_64-v3.tar.gz
 # 在 ARM64（ARMv8.0 含 neon 或更高）上使用：
 # tar -xzf rust-reality-v<version>-linux-aarch64-generic.tar.gz

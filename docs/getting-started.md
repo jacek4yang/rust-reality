@@ -14,9 +14,11 @@ then verify all assets before installation:
 
 ```shell
 sha256sum --check SHA256SUMS
-# Generic x86-64 package (recommended when CPU support is unknown):
+# Generic GNU/glibc x86-64 package:
 tar -xzf rust-reality-v<version>-linux-x86_64-generic.tar.gz
-# Or, on an x86-64-v3 CPU:
+# On Alpine/musl or in a minimal container, use the static package:
+# tar -xzf rust-reality-v<version>-linux-x86_64-musl.tar.gz
+# Or, on an x86-64-v3 GNU/glibc CPU:
 # tar -xzf rust-reality-v<version>-linux-x86_64-v3.tar.gz
 # On ARM64 (ARMv8.0 with neon or later):
 # tar -xzf rust-reality-v<version>-linux-aarch64-generic.tar.gz
@@ -27,8 +29,10 @@ rust-reality --version
 `release-manifest.json` schema v3 records the version, tag, exact source
 commit, target triples, source timestamp, compiler, cargo features, and each
 tier's archive name, SHA-256, target CPU/features, native-measurement status,
-and minimum CPU requirements. The generic x86-64 package targets baseline
-x86-64. The v3 package requires the x86-64-v3 microarchitecture level and has
+and minimum CPU requirements. Both generic x86-64 packages target baseline
+x86-64: choose the GNU/glibc archive for conventional distributions or the
+fully static musl archive for Alpine and minimal containers. The v3 package
+requires the x86-64-v3 microarchitecture level and has
 no runtime fallback; on the validation host it showed no measured advantage
 (the record AEAD dispatches to AES hardware at runtime in every tier), so use
 it only when you know the CPU qualifies. The aarch64 package requires ARMv8.0

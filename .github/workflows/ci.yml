@@ -56,3 +56,39 @@ jobs:
 
       - name: Test RustCrypto fallback configuration
         run: cargo test --workspace --no-default-features --locked
+
+  musl:
+    name: x86_64 musl release target
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - name: Install musl target and linker
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends musl-tools
+          rustup target add x86_64-unknown-linux-musl
+
+      - name: Test and build musl release tier
+        run: ./scripts/build-release.sh linux-x86_64-musl
+
+      - name: Verify fully static executable
+        run: |
+          binary=target/x86_64-musl/x86_64-unknown-linux-musl/release/rust-reality
+          test -x "$binary"
+          readelf -h "$binary" | grep -F 'Machine:' | grep -F 'X86-64'
+          if readelf -l "$binary" | grep -Eq '(^|[[:space:]])INTERP([[:space:]]|$)'; then
+            printf '%s\n' 'musl CI binary unexpectedly requires a dynamic loader' >&2
+            exit 1
+          fi
+          if readelf -d "$binary" | grep -F '(NEEDED)'; then
+            printf '%s\n' 'musl CI binary unexpectedly requires a shared library' >&2
+            exit 1
+          fi
+          "$binary" --version | grep -E '^rust-reality [0-9]+\.[0-9]+\.[0-9]+$'
