@@ -325,9 +325,10 @@ and RSS growth over the soak with zero transfer failures.
 - Results are measurements of this host and are not a universal
   performance claim.
 
-## v1.6.0 release comparison evidence
+## v1.6.1 release comparison evidence
 
-All v1.6.0 numbers were measured on the release host (Intel i3-8100 4C/4T,
+The v1.6.1 headline retains the v1.6.0 numbers measured on the release host
+(Intel i3-8100 4C/4T,
 Linux 6.12.100+deb13-amd64, rustc 1.96.0) with every run serialized under
 the host-exclusive lock `/tmp/v16-bench.lock`. Identities: candidate
 `c182829` (binary SHA-256 `cc53c1f4…`, built by
