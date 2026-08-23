@@ -76,10 +76,12 @@ if [[ $TARGET == x86_64-unknown-linux-musl ]]; then
             exit 1
         fi
     fi
-    target_environment+=(
-        "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=$musl_cc"
-        "CC_x86_64_unknown_linux_musl=$musl_cc"
-    )
+    # Use musl-gcc only for C dependencies (notably ring). Rust's musl target
+    # owns the final self-contained link. Pointing Cargo's final linker at the
+    # distribution wrapper can mix its host-specific PIE specs with Rust's
+    # bundled musl CRT; Ubuntu 22.04 then emits a dynamically linked test
+    # executable which faults before main.
+    target_environment+=("CC_x86_64_unknown_linux_musl=$musl_cc")
 fi
 
 build_command=(
