@@ -4,16 +4,23 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing annotated release tag to rebuild and publish
+        required: true
+        type: string
 
 permissions: {}
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event.inputs.tag || github.ref }}
   cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
   NEXTEST_PROFILE: ci
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
   verify:
@@ -30,8 +37,14 @@ jobs:
       - name: Check out tagged source
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
+          ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Install Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
 
       - name: Install Rust toolchain
         run: rustup toolchain install
@@ -57,8 +70,8 @@ jobs:
           # actions/checkout resolves the pushed tag ref to its commit, so the
           # local refs/tags entry may point at the commit object; fetch the
           # real tag object before checking that the tag is annotated.
-          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
-          ./scripts/verify-release-tag.sh "$GITHUB_REF_NAME"
+          git fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          ./scripts/verify-release-tag.sh "$RELEASE_TAG"
 
       - name: Run repository quality gates
         run: ./scripts/check.sh
@@ -83,6 +96,7 @@ jobs:
       - name: Check out tagged source
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
+          ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -128,18 +142,18 @@ jobs:
             printf '%s\n' 'musl release unexpectedly requires a shared library' >&2
             exit 1
           fi
-          "$binary" --version | grep -Fx "rust-reality ${GITHUB_REF_NAME#v}"
+          "$binary" --version | grep -Fx "rust-reality ${RELEASE_TAG#v}"
 
       - name: Package tier asset
-        run: ./scripts/package-release.sh "$GITHUB_REF_NAME" "${{ matrix.tier }}" dist
+        run: ./scripts/package-release.sh "$RELEASE_TAG" "${{ matrix.tier }}" dist
 
       - name: Smoke-test packaged tier asset
-        run: ./scripts/smoke-release-assets.sh "$GITHUB_REF_NAME" "${{ matrix.tier }}" dist
+        run: ./scripts/smoke-release-assets.sh "$RELEASE_TAG" "${{ matrix.tier }}" dist
 
       - name: Preserve verified tier asset
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-assets-${{ github.ref_name }}-${{ matrix.tier }}
+          name: release-assets-${{ env.RELEASE_TAG }}-${{ matrix.tier }}
           path: dist/
           if-no-files-found: error
           retention-days: 7
@@ -157,13 +171,14 @@ jobs:
       - name: Check out tagged source
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
+          ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Restore all tier assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: release-assets-${{ github.ref_name }}-*
+          pattern: release-assets-${{ env.RELEASE_TAG }}-*
           path: dist/
           merge-multiple: true
 
@@ -171,12 +186,12 @@ jobs:
         # Requires every tier of scripts/release-matrix.sh; a failed or
         # missing required tier fails the release here, so partial
         # publishes are impossible.
-        run: ./scripts/aggregate-release.sh "$GITHUB_REF_NAME" dist
+        run: ./scripts/aggregate-release.sh "$RELEASE_TAG" dist
 
       - name: Preserve aggregated release assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-assets-${{ github.ref_name }}
+          name: release-assets-${{ env.RELEASE_TAG }}
           path: dist/
           if-no-files-found: error
           retention-days: 7
@@ -194,7 +209,7 @@ jobs:
       - name: Restore verified release assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: release-assets-${{ github.ref_name }}
+          name: release-assets-${{ env.RELEASE_TAG }}
           path: dist/
 
       - name: Publish GitHub Release
@@ -210,7 +225,7 @@ jobs:
           trap 'rm -rf -- "$verification_directory"' EXIT
 
           if release_state="$(
-              gh release view "$GITHUB_REF_NAME" \
+              gh release view "$RELEASE_TAG" \
                   --json isDraft,isPrerelease \
                   --jq '[.isDraft, .isPrerelease] | @tsv' \
                   2>/dev/null
@@ -220,41 +235,41 @@ jobs:
             [[ "$release_is_draft" == true || "$release_is_draft" == false ]]
             if [[ "$release_is_prerelease" != false ]]; then
               printf 'refusing to publish over prerelease %s\n' \
-                  "$GITHUB_REF_NAME" >&2
+                  "$RELEASE_TAG" >&2
               exit 1
             fi
             if [[ "$release_is_draft" == false ]]; then
-              gh release download "$GITHUB_REF_NAME" \
+              gh release download "$RELEASE_TAG" \
                   --dir "$verification_directory"
               diff --brief --recursive \
                   "$asset_directory" "$verification_directory"
               published_state="$(
-                  gh release view "$GITHUB_REF_NAME" \
+                  gh release view "$RELEASE_TAG" \
                       --json isDraft,isPrerelease \
                       --jq '[.isDraft, .isPrerelease] | @tsv'
               )"
               [[ "$published_state" == $'false\tfalse' ]]
-              printf 'published assets already match %s\n' "$GITHUB_REF_NAME"
+              printf 'published assets already match %s\n' "$RELEASE_TAG"
               exit 0
             fi
           else
-            gh release create "$GITHUB_REF_NAME" \
+            gh release create "$RELEASE_TAG" \
               --draft \
               --prerelease=false \
               --generate-notes \
-              --title "rust-reality $GITHUB_REF_NAME" \
+              --title "rust-reality $RELEASE_TAG" \
               --verify-tag
           fi
 
-          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
-          gh release download "$GITHUB_REF_NAME" \
+          gh release upload "$RELEASE_TAG" dist/* --clobber
+          gh release download "$RELEASE_TAG" \
               --dir "$verification_directory"
           diff --brief --recursive \
               "$asset_directory" "$verification_directory"
-          gh release edit "$GITHUB_REF_NAME" \
+          gh release edit "$RELEASE_TAG" \
               --draft=false --prerelease=false
           published_state="$(
-              gh release view "$GITHUB_REF_NAME" \
+              gh release view "$RELEASE_TAG" \
                   --json isDraft,isPrerelease \
                   --jq '[.isDraft, .isPrerelease] | @tsv'
           )"

@@ -282,7 +282,7 @@ FAKE_GH
         cd "$root/run"
         env PATH="$root/bin:$PATH" FAKE_GH_LOG="$gh_log" \
             GH_REPO=example/rust-reality GH_TOKEN=fake \
-            GITHUB_REF_NAME=v9.8.7 bash "$publish_script" \
+            RELEASE_TAG=v9.8.7 bash "$publish_script" \
             >"$root/publish.out" 2>"$root/publish.error"
     ); then
         printf '%s\n' 'existing prerelease unexpectedly passed publish gate' >&2
