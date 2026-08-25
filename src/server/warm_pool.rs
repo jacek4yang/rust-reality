@@ -38,8 +38,8 @@ const BASE_BACKOFF: Duration = Duration::from_millis(100);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 const ARRIVAL_EWMA_WEIGHT: f64 = 0.25;
 const CONNECT_EWMA_WEIGHT: f64 = 0.25;
-const CONNECT_SAFETY_FACTOR: f64 = 1.5;
-const BURST_HEADROOM_FACTOR: f64 = 0.5;
+const CONNECT_SAFETY_FACTOR: f64 = 1.0;
+const BURST_HEADROOM_FACTOR: f64 = 0.25;
 const MAX_STALE_CHECKS_PER_CHECKOUT: usize = 4;
 
 /// Process-lifetime bounds shared by every pool and immutable generation.
@@ -594,9 +594,17 @@ fn prune_and_adjust(inner: &Arc<PoolInner>, now: Instant) {
     };
     let mut desired = estimated.max(inner.policy.min_ready);
     if misses > 0 {
-        let accelerated = state
-            .target_ready
-            .saturating_add(inner.policy.refill_batch.max(state.target_ready / 2));
+        // A miss is an acceleration signal, not evidence that a complete
+        // refill batch must remain idle forever. Growing by refill_batch made
+        // four cold-start misses retain twenty cover sockets under the
+        // default policy. Scale the step to observed misses (with a small
+        // multiplicative floor) and let the rate/latency estimator account
+        // for sustained load on the following ticks.
+        let miss_step = u32::try_from(misses)
+            .unwrap_or(u32::MAX)
+            .min(inner.policy.refill_batch)
+            .max((state.target_ready / 2).max(1));
+        let accelerated = state.target_ready.saturating_add(miss_step);
         desired = desired.max(accelerated);
     }
     desired = desired.min(inner.policy.max_ready);
