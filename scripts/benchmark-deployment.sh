@@ -740,6 +740,7 @@ section_nxr() {
         > "$work/topo-c.line.base.json" 2> "$work/topo-c.line.generate.log"
     jq --arg cache "$work/assets-c-line" --argjson sport "$port_socks_t" \
         '.log.level = "warn" | .assets.cacheDirectory = $cache
+         | .outbounds |= map(select(.protocol != "nxr"))
          | .outbounds += [{protocol: "socks5", tag: "via-socks",
                            settings: {address: "127.0.0.1", port: $sport}}]
          | .routing.users[0].defaultOutbound = "via-socks"' \
@@ -1025,6 +1026,7 @@ section_rtt() {
         2> "$work/rtt-c.generate.log" | \
         jq --arg cache "$work/assets-rtt-c" --argjson sport "$ns_socks_port" \
             '.log.level = "info" | .assets.cacheDirectory = $cache
+             | .outbounds |= map(select(.protocol != "nxr"))
              | .outbounds += [{protocol: "socks5", tag: "via-socks",
                                settings: {address: "10.203.0.2", port: $sport}}]
              | .routing.users[0].defaultOutbound = "via-socks"' \
