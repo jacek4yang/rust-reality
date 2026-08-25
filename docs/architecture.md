@@ -35,6 +35,23 @@ canonical samples live in [benchmarks.md](benchmarks.md).
    the old generation's refills and closes its idle sockets without affecting
    checked-out transactions.
 
+   After a valid ClientFinished commits replay state, that exact conservative
+   ClientHello class may nominate bounded background collection. Four fresh,
+   controlled probes vary random, session ID, key shares, ECH/GREASE material,
+   and extension order; only identical target negotiation, ALPN, ServerHello
+   skeleton, CCS choice, and record plan publish an immutable profile. A hit
+   reconstructs only those stable semantics, while the existing flight builder
+   generates fresh per-session cryptography. The cache has at most 16 classes,
+   a jittered ten-minute lifetime, closed lifecycle states, no persistence, and
+   no user-observation training. Collection uses one controller with four
+   bounded concurrent observations and fail-fast resource admission.
+
+   Profile lookup occurs only after authentication and replay reservation.
+   Unknown, stale, unstable, generation-mismatched, or unrepresentable classes
+   fall through to warm live cover and then ordinary cold live cover. An
+   authentication failure cannot observe, consume, nominate, or train either
+   authenticated optimization.
+
    In v1.5, the cover response is consumed through a bounded incremental
    reader. Its plan can contain optional CCS, four positional encrypted
    handshake records, and an optional fifth post-Finished record. At most

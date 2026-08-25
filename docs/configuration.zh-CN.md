@@ -207,7 +207,11 @@ singleflight 合并和准入治理生效，除非配置了可选的 `systemReuse
       "serverNames": ["www.example.com"],
       "privateKey": "GENERATED-X25519-PRIVATE-KEY",
       "maxTimeDiffMs": 60000,
-      "coverOptimization": { "enabled": true, "warmTcp": true }
+      "coverOptimization": {
+        "enabled": true,
+        "warmTcp": true,
+        "prebuiltProfiles": true
+      }
     }
   }
 }
@@ -236,6 +240,7 @@ singleflight 合并和准入治理生效，除非配置了可选的 `systemReuse
 | `streamSettings.realitySettings.maxTimeDiffMs` | 否 | `60000` | 接受的客户端时钟差，`0..=600000`；零表示关闭该检查。 |
 | `streamSettings.realitySettings.coverOptimization.enabled` | 否 | `true` | 已认证伪装优化总开关；绝不改变拒绝/fallback 行为。 |
 | `streamSettings.realitySettings.coverOptimization.warmTcp` | 否 | `true` | 保留有界、已完成 TCP 建连的伪装 socket；认证 checkout 前不发送 TLS 字节。 |
+| `streamSettings.realitySettings.coverOptimization.prebuiltProfiles` | 否 | `true` | 用受控探针收集有界、仅内存的伪装 profile；只有 ClientHello class 精确匹配且 profile 已验证时，才在本地生成全新认证 flight。miss 始终使用真实伪装目标。 |
 
 每个公网 UUID 必须在 `routing.users[].userIds` 中恰好出现一次。
 

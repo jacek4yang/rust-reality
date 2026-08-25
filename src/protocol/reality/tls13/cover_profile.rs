@@ -201,7 +201,11 @@ fn parse_encrypted_extensions_alpn(input: &[u8]) -> Result<Option<Vec<u8>>, Cove
             }
             selected_alpn = Some(protocol);
         } else {
-            extension.skip_remaining();
+            // The local REALITY flight intentionally emits only ALPN in
+            // EncryptedExtensions. A cover extension that cannot be reproduced
+            // exactly makes this class live-only; silently ignoring it would
+            // create a deterministic authenticated differential.
+            return Err(CoverProfileError::MalformedEncryptedExtensions);
         }
     }
     Ok(selected_alpn)
@@ -270,10 +274,6 @@ impl<'a> Reader<'a> {
     fn subreader(&mut self, length: usize) -> Result<Self, CoverProfileError> {
         Ok(Self::new(self.read_bytes(length)?))
     }
-
-    fn skip_remaining(&mut self) {
-        self.position = self.input.len();
-    }
 }
 
 #[cfg(test)]
@@ -300,6 +300,10 @@ mod tests {
             parse_encrypted_extensions_alpn(&[
                 8, 0, 0, 14, 0, 12, 0, 16, 0, 8, 0, 6, 2, b'h', b'2', 2, b'h', b'3',
             ]),
+            Err(CoverProfileError::MalformedEncryptedExtensions)
+        );
+        assert_eq!(
+            parse_encrypted_extensions_alpn(&[8, 0, 0, 6, 0, 4, 0, 42, 0, 0]),
             Err(CoverProfileError::MalformedEncryptedExtensions)
         );
     }

@@ -13,6 +13,11 @@ All notable user-facing changes to this project are documented in this file.
 - Added bounded `realitySettings.coverOptimization` switches and the shared
   `advanced.limits.warmConnections` policy, with strict FD accounting,
   pressure-first reclamation, refill backoff, and reload isolation.
+- Added bounded ephemeral REALITY cover profiles. Four controlled observations
+  must agree before an exact normalized ClientHello class can locally generate
+  a fresh authenticated flight. Unknown, stale, unstable, or unrepresentable
+  classes use live cover; unauthenticated and replayed traffic never consults
+  profiles.
 
 ### Performance
 

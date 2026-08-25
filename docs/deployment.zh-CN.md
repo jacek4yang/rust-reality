@@ -133,10 +133,17 @@ rust-reality probe-dest \
 
 默认情况下，每个活跃 REALITY listener 会异步保留一小组有界、已完成 TCP 建连
 的伪装目标 socket。只有认证成功的握手 checkout 后才发送 TLS 字节。warm hit 会
-从认证关键路径移除伪装目标 TCP 握手，但不会移除后续伪装目标 TLS 响应 RTT、物理
-传播时延，也不能在无界瞬时流量下保证命中。被拒绝的流量始终独立新建并交互真实
-伪装目标。只有明确证据表明伪装目标或网络拒绝 idle 预连接 TCP 时，才关闭
-`coverOptimization.warmTcp`。
+从认证关键路径移除伪装目标 TCP 握手。与此同时，有界 collector 发送受控探针，
+只有四次观测在语义上完全一致时才发布内存 profile。精确命中已验证 profile 时，
+还会移除伪装目标 ClientHello 到 flight 的 RTT；每个 server random、session ID
+回显、临时 key share、流量秘密、REALITY 证书、CertificateVerify、Finished 与
+记录序号仍逐会话全新生成。未知、过期、不稳定或无法安全表达的 class 使用真实目标。
+
+prebuilt 模式只在 REALITY 认证及重放预留成功后使用。未认证、畸形、不兼容或重放
+流量始终与真实伪装路径交互，不受 cache 状态影响。该优化不会消除物理传播时延，也
+不能在数学意义上的无界瞬时流量中保证命中。只有进行聚焦兼容性排查时才关闭
+`coverOptimization.warmTcp` 或 `coverOptimization.prebuiltProfiles`；任一 miss
+都会安全降级到下一层真实目标路径，不改变正确性。
 
 提供 ALPN 的伪装目标应当协商 ALPN。没有 ALPN 的伪装目标是受支持的——
 v1.5 会把生成的 EncryptedExtensions ALPN 塑形成目标实际观测到的记录槽位——

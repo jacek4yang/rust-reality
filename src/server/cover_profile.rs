@@ -9,6 +9,7 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
+use futures_util::{StreamExt, stream::FuturesUnordered};
 use tokio::{sync::Notify, time::Instant};
 
 use crate::{
@@ -52,6 +53,7 @@ struct CoverProfilesInner {
 
 #[derive(Clone)]
 struct PublishedProfile {
+    generation: u64,
     class: NormalizedClientHelloClass,
     profile: Arc<CoverProfile>,
     template: CoverProbeTemplate,
@@ -214,11 +216,18 @@ impl CoverProfiles {
         let now = Instant::now();
         let published = self.inner.published.load();
         if let Some(entry) = published.iter().find(|entry| entry.class == class) {
-            if entry.expires_at > now {
+            if profile_is_current(
+                entry.generation,
+                self.inner.generation,
+                entry.expires_at,
+                now,
+            ) {
                 return Some(Arc::clone(&entry.profile));
             }
-            self.inner.metrics.stale.fetch_add(1, Ordering::Relaxed);
-            enqueue(&self.inner, entry.template.clone(), now);
+            if entry.generation == self.inner.generation {
+                self.inner.metrics.stale.fetch_add(1, Ordering::Relaxed);
+                enqueue(&self.inner, entry.template.clone(), now);
+            }
         }
         self.inner.metrics.miss.fetch_add(1, Ordering::Relaxed);
         None
@@ -387,50 +396,13 @@ async fn collect_consensus(
     inner: &CoverProfilesInner,
     candidate: &Candidate,
 ) -> Result<CoverProfile, CollectionFailure> {
-    let mut consensus = None;
+    let mut observations = FuturesUnordered::new();
     for variant in 0..REQUIRED_CONSENSUS {
-        if inner.lifecycle.load(Ordering::Acquire) != LIFECYCLE_ACTIVE {
-            return Err(CollectionFailure::Unavailable);
-        }
-        // Fail-fast background admission gives active work priority and creates
-        // no attacker-controlled wait queue.
-        let _permit = inner
-            .governor
-            .try_acquire(AdmissionKind::CryptoOperation)
-            .map_err(|_| CollectionFailure::Unavailable)?;
-        let probe = candidate
-            .template
-            .generate(variant)
-            .map_err(|_| CollectionFailure::Unavailable)?;
-        let mut cover = inner
-            .fallback
-            .profile_probe(probe.wire_record())
-            .await
-            .map_err(|_| CollectionFailure::Unavailable)?;
-        let target_flight = cover
-            .read_server_flight(probe.hello(), inner.read_timeout)
-            .await
-            .map_err(|_| CollectionFailure::Unavailable)?;
-        let (target, plan, mut prefix) = target_flight.into_parts();
-        let encrypted = first_encrypted_record_range(&prefix, plan)
-            .map_err(|_| CollectionFailure::Unavailable)?;
-        if prefix.len() < encrypted.end {
-            cover
-                .complete_prefix(&mut prefix, encrypted.end, inner.read_timeout)
-                .await
-                .map_err(|_| CollectionFailure::Unavailable)?;
-        }
-        let first_record = prefix
-            .get(encrypted)
-            .ok_or(CollectionFailure::Unavailable)?;
-        let observed = CoverProfile::from_controlled_observation(
-            candidate.class,
-            &probe,
-            target,
-            plan,
-            first_record,
-        )
-        .map_err(|_| CollectionFailure::Unavailable)?;
+        observations.push(collect_observation(inner, candidate, variant));
+    }
+    let mut consensus = None;
+    while let Some(observed) = observations.next().await {
+        let observed = observed?;
         match &consensus {
             None => consensus = Some(observed),
             Some(expected) if expected == &observed => {}
@@ -438,6 +410,50 @@ async fn collect_consensus(
         }
     }
     consensus.ok_or(CollectionFailure::Unavailable)
+}
+
+async fn collect_observation(
+    inner: &CoverProfilesInner,
+    candidate: &Candidate,
+    variant: u8,
+) -> Result<CoverProfile, CollectionFailure> {
+    if inner.lifecycle.load(Ordering::Acquire) != LIFECYCLE_ACTIVE {
+        return Err(CollectionFailure::Unavailable);
+    }
+    // Four consensus observations may overlap, but the fixed cardinality and
+    // fail-fast admission preserve active-session priority and create no
+    // attacker-controlled waiter or unbounded task set.
+    let _permit = inner
+        .governor
+        .try_acquire(AdmissionKind::CryptoOperation)
+        .map_err(|_| CollectionFailure::Unavailable)?;
+    let probe = candidate
+        .template
+        .generate(variant)
+        .map_err(|_| CollectionFailure::Unavailable)?;
+    let mut cover = inner
+        .fallback
+        .profile_probe(probe.wire_record())
+        .await
+        .map_err(|_| CollectionFailure::Unavailable)?;
+    let target_flight = cover
+        .read_server_flight(probe.hello(), inner.read_timeout)
+        .await
+        .map_err(|_| CollectionFailure::Unavailable)?;
+    let (target, plan, mut prefix) = target_flight.into_parts();
+    let encrypted =
+        first_encrypted_record_range(&prefix, plan).map_err(|_| CollectionFailure::Unavailable)?;
+    if prefix.len() < encrypted.end {
+        cover
+            .complete_prefix(&mut prefix, encrypted.end, inner.read_timeout)
+            .await
+            .map_err(|_| CollectionFailure::Unavailable)?;
+    }
+    let first_record = prefix
+        .get(encrypted)
+        .ok_or(CollectionFailure::Unavailable)?;
+    CoverProfile::from_controlled_observation(candidate.class, &probe, target, plan, first_record)
+        .map_err(|_| CollectionFailure::Unavailable)
 }
 
 fn first_encrypted_record_range(
@@ -477,6 +493,7 @@ fn publish(inner: &CoverProfilesInner, candidate: Candidate, profile: CoverProfi
         return;
     }
     profiles.push(PublishedProfile {
+        generation: inner.generation,
         class: candidate.class,
         profile: Arc::new(profile),
         template: candidate.template,
@@ -530,6 +547,15 @@ fn derive_profile_state(
     }
 }
 
+fn profile_is_current(
+    profile_generation: u64,
+    current_generation: u64,
+    expires_at: Instant,
+    now: Instant,
+) -> bool {
+    profile_generation == current_generation && expires_at > now
+}
+
 fn jittered_ttl() -> Duration {
     let mut bytes = [0_u8; 8];
     if getrandom::fill(&mut bytes).is_err() {
@@ -552,7 +578,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 mod tests {
     use super::{
         CoverHandshakePlan, CoverHandshakeRecordShape, CoverProfileState, LIFECYCLE_ACTIVE,
-        LIFECYCLE_CREATED, derive_profile_state, first_encrypted_record_range,
+        LIFECYCLE_CREATED, derive_profile_state, first_encrypted_record_range, profile_is_current,
     };
 
     #[test]
@@ -611,5 +637,23 @@ mod tests {
             derive_profile_state(LIFECYCLE_ACTIVE, true, true, true, true),
             CoverProfileState::Validated
         );
+    }
+
+    #[test]
+    fn expiration_and_generation_mismatch_are_always_misses() {
+        let now = tokio::time::Instant::now();
+        assert!(profile_is_current(
+            23,
+            23,
+            now + std::time::Duration::from_secs(1),
+            now
+        ));
+        assert!(!profile_is_current(
+            22,
+            23,
+            now + std::time::Duration::from_secs(1),
+            now
+        ));
+        assert!(!profile_is_current(23, 23, now, now));
     }
 }

@@ -147,12 +147,22 @@ after persistent handshake failures or target changes.
 By default, each active REALITY listener asynchronously keeps a small bounded
 set of TCP-established cover sockets. No TLS bytes are sent until a successfully
 authenticated handshake checks one out. This removes the cover TCP handshake
-from that authenticated critical path on a warm hit; it does not remove the
-subsequent cover TLS response RTT, physical propagation latency, or guarantee a
-hit under unbounded instantaneous demand. Rejected traffic always opens and
-interacts with the real cover independently. Disable `coverOptimization.warmTcp`
-only when an operator has evidence that the cover or network rejects idle
-preconnected TCP.
+from that authenticated critical path on a warm hit. In parallel, a bounded
+collector makes controlled probes and publishes an ephemeral profile only
+after four semantically identical observations. An exact validated profile hit
+also removes the cover ClientHello-to-flight RTT: every server random, session
+ID echo, ephemeral key share, traffic secret, REALITY certificate,
+CertificateVerify, Finished, and record sequence is still generated fresh.
+Unknown, expired, unstable, or unrepresentable classes use the live cover.
+
+Prebuilt mode is only used after valid REALITY authentication and replay
+reservation. Unauthenticated, malformed, incompatible, and replayed traffic
+continues to interact with the actual cover path, independent of cache state.
+The optimization does not eliminate physical propagation latency or guarantee
+a hit under mathematically unbounded instantaneous demand. Disable
+`coverOptimization.warmTcp` or `coverOptimization.prebuiltProfiles` only for a
+focused compatibility investigation; either miss degrades to the next live
+tier without changing correctness.
 
 A cover that offers ALPN should negotiate it. Covers without ALPN are
 legitimately supported — v1.5 shapes the generated EncryptedExtensions ALPN to

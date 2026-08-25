@@ -41,7 +41,9 @@ The optimization has three strictly ordered tiers.
    CertificateVerify, Finished, and record sequence state are regenerated for
    every connection. Any uncertainty is a profile miss and returns to tier 2.
 
-Tier 1 is implemented and measured before tier 2 is enabled.
+Each lower tier remains an independently selectable benchmark mode and a
+production fallback. Tier 2 never makes tier 1 or cold live cover a correctness
+dependency.
 
 ## Warm TCP ownership
 
@@ -114,12 +116,20 @@ structure/order, and hybrid capability remain class inputs where they can
 change cover behavior. False misses are preferred to false hits.
 
 Profiles are produced only by bounded controlled probes using the production
-parsers. User traffic may report disagreement but cannot publish profile
-semantics. Several identical observations are required before an immutable
-generation becomes `Validated`; `Unavailable`, `Collecting`, `Stale`,
-`Unstable`, and `Disabled` states always select the live cover. Profiles are
-ephemeral initially, expire, refresh with bounded jitter, and are never reused
-across configuration generations unless a later decision proves that safe.
+parsers. User traffic may nominate at most one of 16 conservative classes only
+after ClientFinished and replay commit, but cannot publish profile semantics.
+Four fresh observations run concurrently inside one controller task; each owns
+normal FD and fail-fast crypto admission, and there is no task per probe. The
+observations vary random, session ID, ephemeral key shares, ECH/GREASE material,
+and extension order. All four must agree on the erased ServerHello skeleton,
+target negotiation, decrypted ALPN, compatibility CCS, and record plan before
+an immutable generation becomes `Validated`.
+
+`Unavailable`, `Collecting`, `Stale`, `Unstable`, and `Disabled` states always
+select the live cover. Profiles remain in memory, expire after a jittered
+ten-minute lifetime, and are never reused across configuration generations.
+An unexpected EncryptedExtensions field is deliberately live-only because the
+local flight cannot reproduce it exactly.
 
 The implementation does not support cover-selected TLS 1.3 PSK/resumption or
 early data. Such observations are profile misses.

@@ -691,6 +691,11 @@ hits = record["cover_profile_hit"]
 misses = record["cover_profile_miss"]
 if hits <= 0 or record["cover_profile_validated"] <= 0:
     raise SystemExit("candidate benchmark did not exercise a validated profile hit")
+if (record["cover_profile_state"] != "validated"
+        or record["cover_profile_unstable"] != 0
+        or record["cover_profile_refresh_failure"] != 0
+        or record["cover_profile_disagreement"] != 0):
+    raise SystemExit("controlled cover-profile differential consensus failed")
 record["profileHitRatio"] = hits / (hits + misses)
 with open(sys.argv[2], "x", encoding="utf-8") as output:
     json.dump(record, output, indent=2, sort_keys=True)
