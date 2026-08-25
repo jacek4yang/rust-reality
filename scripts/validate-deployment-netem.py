@@ -9,7 +9,14 @@ from pathlib import Path
 from typing import Any
 
 
-LEGS = ("nxr", "socks")
+LEGS = (
+    "handoff-warm",
+    "handoff-cold",
+    "nxr-warm",
+    "nxr-cold",
+    "socks-warm",
+    "socks-cold",
+)
 
 
 def parse_words(raw: str, converter: type[int] | type[float]) -> list[int] | list[float]:
@@ -99,7 +106,13 @@ def validate(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
                         f"{leg}: c{concurrency} sample {row.get('sampleIndex')} "
                         f"has {row.get('connections')} connections, expected {args.connections}"
                     )
-                for field in ("connectionsPerSecond", "p50Seconds", "p95Seconds", "p99Seconds"):
+                for field in (
+                    "connectionsPerSecond",
+                    "p50Seconds",
+                    "p90Seconds",
+                    "p95Seconds",
+                    "p99Seconds",
+                ):
                     value = row.get(field)
                     if not isinstance(value, (int, float)) or value <= 0:
                         errors.append(

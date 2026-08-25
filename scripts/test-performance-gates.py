@@ -642,16 +642,20 @@ def netem_fixture(root: Path, omit_last: bool = False) -> tuple[Path, list[Path]
     for rtt in (0, 20):
         for loss in (0.0, 1.0):
             raw = {}
-            for leg in ("nxr", "socks"):
+            for leg in (
+                "handoff-warm", "handoff-cold", "nxr-warm", "nxr-cold",
+                "socks-warm", "socks-cold",
+            ):
                 path = root / f"rtt{rtt}-loss{loss}-{leg}.jsonl"
                 rows = [
                     {"concurrency": concurrency, "sampleIndex": sample,
                      "failed": 0, "connections": 3,
                      "connectionsPerSecond": 100.0, "p50Seconds": 0.01,
-                     "p95Seconds": 0.02, "p99Seconds": 0.03}
+                     "p90Seconds": 0.015, "p95Seconds": 0.02,
+                     "p99Seconds": 0.03}
                     for concurrency in (1, 2) for sample in (0, 1)
                 ]
-                if omit_last and rtt == 20 and loss == 1.0 and leg == "socks":
+                if omit_last and rtt == 20 and loss == 1.0 and leg == "socks-cold":
                     rows.pop()
                 write_jsonl(path, rows)
                 raw[leg] = str(path)
@@ -673,8 +677,8 @@ def test_netem(root: Path) -> None:
                     "--connections", "3")
     assert result.returncode == 0, (result.stdout, result.stderr)
     report = json.loads(output.read_text())
-    assert report["expectedRawRecordCount"] == 32
-    assert report["actualRawRecordCount"] == 32
+    assert report["expectedRawRecordCount"] == 96
+    assert report["actualRawRecordCount"] == 96
 
     missing = root / "netem-missing"
     missing.mkdir()
@@ -694,25 +698,38 @@ def deployment_summary_fixture(root: Path) -> None:
         "cost-complex-ipifnonmatch", "cost-complex-ipondemand",
     )
     labels = list(cost_labels) + [f"topo-{name}" for name in "abcd"]
-    labels.extend(
+    rtt_labels = [
         f"rtt{rtt}-loss{str(loss).replace('.', 'p')}-{leg}"
-        for rtt in (0, 20, 50, 100, 200)
+        for rtt in (1, 10, 50, 100, 200)
         for loss in (0, 0.1, 1)
-        for leg in ("nxr", "socks")
-    )
+        for leg in (
+            "handoff-warm", "handoff-cold", "nxr-warm", "nxr-cold",
+            "socks-warm", "socks-cold",
+        )
+    ]
+    labels.extend(rtt_labels)
     for label in labels:
+        if label in rtt_labels:
+            concurrencies = (1, 8, 32, 128, 512)
+            samples = range(6)
+            connections = 512
+        else:
+            concurrencies = (8, 32)
+            samples = range(3)
+            connections = 96
         rows = [
             {
                 "concurrency": concurrency,
                 "sampleIndex": sample,
-                "connections": 96,
+                "connections": connections,
                 "failed": 0,
                 "connectionsPerSecond": 100.0,
                 "p50Seconds": 0.01,
+                "p90Seconds": 0.015,
                 "p95Seconds": 0.02,
                 "p99Seconds": 0.03,
             }
-            for concurrency in (8, 32) for sample in range(3)
+            for concurrency in concurrencies for sample in samples
         ]
         write_jsonl(root / f"setup-{label}.jsonl", rows)
     for topology in "abcd":
@@ -742,17 +759,20 @@ def deployment_summary_fixture(root: Path) -> None:
         "dataQualityVerdict": "PASS",
         "performanceVerdict": "NOT_EVALUATED",
         "expectedDimensions": {
-            "rttsMs": [0, 20, 50, 100, 200],
+            "rttsMs": [1, 10, 50, 100, 200],
             "perDirectionLossPercent": [0.0, 0.1, 1.0],
-            "legs": ["nxr", "socks"],
-            "concurrencies": [8, 32],
-            "samplesPerConcurrency": 3,
-            "connectionsPerSample": 96,
+            "legs": [
+                "handoff-warm", "handoff-cold", "nxr-warm", "nxr-cold",
+                "socks-warm", "socks-cold",
+            ],
+            "concurrencies": [1, 8, 32, 128, 512],
+            "samplesPerConcurrency": 6,
+            "connectionsPerSample": 512,
         },
         "expectedProfileCount": 15,
         "actualProfileCount": 15,
-        "expectedRawRecordCount": 180,
-        "actualRawRecordCount": 180,
+        "expectedRawRecordCount": 2700,
+        "actualRawRecordCount": 2700,
         "missingProfiles": [],
         "unexpectedProfiles": [],
     })
@@ -768,14 +788,16 @@ def test_deployment_summary(root: Path) -> None:
         "--concurrencies", "8 32", "--throughput-samples", "3",
         "--throughput-cells", "32:1 32:32 512:32",
         "--longflow-mib", "512",
-        "--rtts", "0 20 50 100 200", "--losses", "0 0.1 1",
+        "--rtt-samples", "6", "--rtt-connections", "512",
+        "--rtt-concurrencies", "1 8 32 128 512",
+        "--rtts", "1 10 50 100 200", "--losses", "0 0.1 1",
     )
     result = invoke(DEPLOYMENT_DRIVER, *arguments)
     assert result.returncode == 0, (result.stdout, result.stderr)
     report = json.loads((deployment / "summary.json").read_text())
     assert report["gateVerdict"] == "PASS"
     assert report["performanceVerdict"] == "NOT_EVALUATED"
-    assert len(report["setup"]) == 39
+    assert len(report["setup"]) == 99
 
     (deployment / "setup-topo-d.jsonl").unlink()
     result = invoke(DEPLOYMENT_DRIVER, *arguments)

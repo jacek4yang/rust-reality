@@ -22,7 +22,8 @@
 #             512 MiB c32, byte integrity per cell.
 #   rtt       RTT sweep (only with REQUIRE_NETEM=1): the line<->landing hop is
 #             moved onto a veth pair across a network namespace, shaped by
-#             tc netem at 0/20/50/100 ms RTT, rerunning the B vs C setup
+#             tc netem at 1/10/50/100/200 ms RTT, rerunning explicit cold and
+#             warm NXR/SOCKS5 setup cells on the same shaped hop.
 #             comparison. All host network state is recorded before/after and
 #             restored (trap on EXIT/INT/TERM); every change is logged.
 #   longflow  Long-flow relay verification: after NXR auth on the landing the
@@ -62,7 +63,8 @@
 #      default omits rtt), OUT_DIR, SMOKE (0; 1 = tiny-scale harness self-test),
 #      SAMPLES (3), CONNS (96), CONCURRENCIES ("8 32"), TPUT_SAMPLES (3),
 #      TPUT_CELLS ("32:1 32:32 512:32"), LONGFLOW_MIB (512),
-#      RTTS ("0 20 50 100 200"), LOSSES ("0 0.1 1", applied per direction),
+#      RTTS ("1 10 50 100 200"), LOSSES ("0 0.1 1", applied per direction),
+#      RTT_CONNS (512), RTT_CONCURRENCIES ("1 8 32 128 512"),
 #      KEEP_WORK (0), REQUIRE_NETEM (0), TMPDIR
 #      (optional external work root for generated payloads and secrets).
 #
@@ -106,8 +108,10 @@ concurrencies=${CONCURRENCIES:-8 32}
 tput_samples=${TPUT_SAMPLES:-3}
 tput_cells=${TPUT_CELLS:-32:1 32:32 512:32}
 longflow_mib=${LONGFLOW_MIB:-512}
-rtts=${RTTS:-0 20 50 100 200}
+rtts=${RTTS:-1 10 50 100 200}
 losses=${LOSSES:-0 0.1 1}
+rtt_conns=${RTT_CONNS:-512}
+rtt_concurrencies=${RTT_CONCURRENCIES:-1 8 32 128 512}
 require_netem=${REQUIRE_NETEM:-}
 driver="$repository/scripts/deployment_driver.py"
 rr_register_harness_file "$driver"
@@ -122,6 +126,8 @@ if [[ $smoke == 1 ]]; then
     longflow_mib=1
     rtts="20"
     losses="0"
+    rtt_conns=2
+    rtt_concurrencies="1"
 fi
 
 if [[ $RR_EXPLORATORY == 0 ]]; then
@@ -136,7 +142,8 @@ if [[ $RR_EXPLORATORY == 0 ]]; then
         exit 2
     }
     python3 - "$sections" "$samples" "$conns" "$concurrencies" \
-        "$tput_samples" "$tput_cells" "$longflow_mib" "$rtts" "$losses" <<'PY'
+        "$tput_samples" "$tput_cells" "$longflow_mib" "$rtts" "$losses" \
+        "$rtt_conns" "$rtt_concurrencies" <<'PY'
 import sys
 
 sections = sys.argv[1].split()
@@ -158,6 +165,8 @@ try:
     losses = sys.argv[9].split()
     parsed_rtts = [int(value) for value in rtts]
     parsed_losses = [float(value) for value in losses]
+    rtt_connections = int(sys.argv[10])
+    rtt_concurrencies = [int(value) for value in sys.argv[11].split()]
 except ValueError as error:
     raise SystemExit(f"invalid formal deployment dimension: {error}")
 if samples < 3 or connections < 96:
@@ -170,10 +179,14 @@ if throughput_cells != [(32, 1), (32, 32), (512, 32)]:
     raise SystemExit("formal TPUT_CELLS must be exactly: 32:1 32:32 512:32")
 if longflow_mib < 512:
     raise SystemExit("formal LONGFLOW_MIB must be >=512")
-if len(parsed_rtts) != 5 or set(parsed_rtts) != {0, 20, 50, 100, 200}:
-    raise SystemExit("formal RTTS must contain exactly 0 20 50 100 200")
+if len(parsed_rtts) != 5 or set(parsed_rtts) != {1, 10, 50, 100, 200}:
+    raise SystemExit("formal RTTS must contain exactly 1 10 50 100 200")
 if len(parsed_losses) != 3 or set(parsed_losses) != {0.0, 0.1, 1.0}:
     raise SystemExit("formal LOSSES must contain exactly 0 0.1 1")
+if rtt_connections < 512:
+    raise SystemExit("formal RTT_CONNS must be >=512")
+if rtt_concurrencies != [1, 8, 32, 128, 512]:
+    raise SystemExit("formal RTT_CONCURRENCIES must be exactly: 1 8 32 128 512")
 PY
 else
     sections=${sections:-routing cost nxr longflow}
@@ -927,10 +940,12 @@ section_rtt() {
     # line<->landing hop crosses the shaped veth pair. Measurement requests
     # address the origin as 127.0.0.1:<port>: the line node forwards that
     # destination and the in-namespace hop resolves it on ITS loopback.
-    local ns_origin_port ns_landing_port ns_socks_port
+    local ns_origin_port ns_landing_port ns_socks_port ns_handoff_port ns_handoff_cold_port
     ns_origin_port=$(free_port)
     ns_landing_port=$(free_port)
     ns_socks_port=$(free_port)
+    ns_handoff_port=$(free_port)
+    ns_handoff_cold_port=$(free_port)
     start_ns_process "$work/ns-origin.pid" "$work/ns-origin.log" "$work/bench-origin" \
         --port "$ns_origin_port" --payload-dir "$work/payload-a" \
         --put-log "$work/put-ns.jsonl"
@@ -945,14 +960,50 @@ section_rtt() {
         "$rust_bin" serve --config "$work/rtt.landing.json"
     start_ns_process "$work/ns-socks.pid" "$work/ns-socks.log" python3 "$driver" \
         socks-server --port "$ns_socks_port"
+
+    local port_line_h port_line_h_cold
+    port_line_h=$(free_port)
+    port_line_h_cold=$(free_port)
+    "$rust_bin" config generate handoff \
+        --listen 127.0.0.1 --port "$port_line_h" --server-address 127.0.0.1 \
+        --target "127.0.0.1:$https_port" --server-name localhost \
+        --landing-address 10.203.0.2 --landing-port "$ns_handoff_port" \
+        --output-dir "$work/rtt-handoff" >"$work/rtt-handoff.generate.out" \
+        2>"$work/rtt-handoff.generate.log"
+    jq --arg cache "$work/assets-rtt-handoff-line" \
+        '.log.level = "warn" | .assets.cacheDirectory = $cache' \
+        "$work/rtt-handoff/line.json" >"$work/rtt-handoff.line.json"
+    jq --arg cache "$work/assets-rtt-handoff-landing" \
+        '.log.level = "warn" | .assets.cacheDirectory = $cache' \
+        "$work/rtt-handoff/landing.json" >"$work/rtt-handoff.landing.json"
+    jq --arg cache "$work/assets-rtt-handoff-cold-line" \
+        --argjson linePort "$port_line_h_cold" \
+        --argjson landingPort "$ns_handoff_cold_port" \
+        '.inbounds[0].port = $linePort | .assets.cacheDirectory = $cache
+         | (.outbounds[] | select(.protocol == "handoff").settings.port) = $landingPort
+         | (.outbounds[] | select(.protocol == "handoff").settings.warmTcp) = false' \
+        "$work/rtt-handoff.line.json" >"$work/rtt-handoff-cold.line.json"
+    jq --arg cache "$work/assets-rtt-handoff-cold-landing" \
+        --argjson port "$ns_handoff_cold_port" \
+        '.inbounds[0].port = $port | .assets.cacheDirectory = $cache' \
+        "$work/rtt-handoff.landing.json" >"$work/rtt-handoff-cold.landing.json"
+    start_ns_process "$work/ns-handoff.pid" "$work/ns-handoff.log" \
+        "$rust_bin" serve --config "$work/rtt-handoff.landing.json"
+    start_ns_process "$work/ns-handoff-cold.pid" "$work/ns-handoff-cold.log" \
+        "$rust_bin" serve --config "$work/rtt-handoff-cold.landing.json"
     wait_ns_port "$ns_origin_port"
     wait_port 10.203.0.2 "$ns_landing_port" 20
     wait_port 10.203.0.2 "$ns_socks_port" 20
+    wait_port 10.203.0.2 "$ns_handoff_port" 20
+    wait_port 10.203.0.2 "$ns_handoff_cold_port" 20
 
-    # Line B: NXR into the namespace; line C: SOCKS5 into the namespace.
-    local port_line_b port_line_c
+    # Warm and cold LINE variants share the exact LANDING/SOCKS peer and
+    # network shape. They differ only in the transport's `warmTcp` switch.
+    local port_line_b port_line_b_cold port_line_c port_line_c_cold
     port_line_b=$(free_port)
+    port_line_b_cold=$(free_port)
     port_line_c=$(free_port)
+    port_line_c_cold=$(free_port)
     "$rust_bin" config generate line --listen 127.0.0.1 --port "$port_line_b" \
         --target "127.0.0.1:$https_port" --server-name localhost \
         --nxr-address 10.203.0.2 --nxr-port "$ns_landing_port" --nxr-key "$nxr_key" \
@@ -960,6 +1011,11 @@ section_rtt() {
         jq --arg cache "$work/assets-rtt-b" \
             '.log.level = "warn" | .assets.cacheDirectory = $cache' \
         > "$work/rtt-b.line.json"
+    jq --arg cache "$work/assets-rtt-b-cold" --argjson port "$port_line_b_cold" \
+        '.inbounds[0].port = $port | .log.level = "warn"
+         | .assets.cacheDirectory = $cache
+         | (.outbounds[] | select(.protocol == "nxr").settings.warmTcp) = false' \
+        "$work/rtt-b.line.json" > "$work/rtt-b-cold.line.json"
     "$rust_bin" config generate line --listen 127.0.0.1 --port "$port_line_c" \
         --target "127.0.0.1:$https_port" --server-name localhost \
         --nxr-address 10.203.0.2 --nxr-port 9 --nxr-key "$nxr_key" \
@@ -970,9 +1026,21 @@ section_rtt() {
                                settings: {address: "10.203.0.2", port: $sport}}]
              | .routing.users[0].defaultOutbound = "via-socks"' \
         > "$work/rtt-c.line.json"
+    jq --arg cache "$work/assets-rtt-c-cold" --argjson port "$port_line_c_cold" \
+        '.inbounds[0].port = $port | .log.level = "warn"
+         | .assets.cacheDirectory = $cache
+         | (.outbounds[] | select(.protocol == "socks5").settings.warmTcp) = false' \
+        "$work/rtt-c.line.json" > "$work/rtt-c-cold.line.json"
 
     start_server "$work/rtt-b.line.json" rtt-b-line
+    local pid_line_b=$SERVER_PID
+    start_server "$work/rtt-b-cold.line.json" rtt-b-cold-line
     start_server "$work/rtt-c.line.json" rtt-c-line
+    local pid_line_c=$SERVER_PID
+    start_server "$work/rtt-c-cold.line.json" rtt-c-cold-line
+    start_server "$work/rtt-handoff.line.json" rtt-handoff-line
+    local pid_line_h=$SERVER_PID
+    start_server "$work/rtt-handoff-cold.line.json" rtt-handoff-cold-line
     local pub_b sid_b uuid_b pub_c sid_c uuid_c
     pub_b=$(sed -n 's/^REALITY public key for the client: //p' "$work/rtt-b.generate.log")
     sid_b=$(jq -r '.inbounds[0].settings.clients[0].shortIds[0]' "$work/rtt-b.line.json")
@@ -982,13 +1050,59 @@ section_rtt() {
     uuid_c=$(jq -r '.inbounds[0].settings.clients[0].id' "$work/rtt-c.line.json")
     start_client "$port_line_b" "$pub_b" "$uuid_b" "$sid_b" rtt-b
     local socks_b=$CLIENT_SOCKS
+    start_client "$port_line_b_cold" "$pub_b" "$uuid_b" "$sid_b" rtt-b-cold
+    local socks_b_cold=$CLIENT_SOCKS
     start_client "$port_line_c" "$pub_c" "$uuid_c" "$sid_c" rtt-c
     local socks_c=$CLIENT_SOCKS
+    start_client "$port_line_c_cold" "$pub_c" "$uuid_c" "$sid_c" rtt-c-cold
+    local socks_c_cold=$CLIENT_SOCKS
+    local pub_h sid_h uuid_h
+    pub_h=$(sed -n 's/^REALITY public key for the client: //p' \
+        "$work/rtt-handoff.generate.log")
+    sid_h=$(jq -r '.inbounds[0].settings.clients[0].shortIds[0]' \
+        "$work/rtt-handoff.line.json")
+    uuid_h=$(jq -r '.inbounds[0].settings.clients[0].id' \
+        "$work/rtt-handoff.line.json")
+    start_client "$port_line_h" "$pub_h" "$uuid_h" "$sid_h" rtt-handoff
+    local socks_h=$CLIENT_SOCKS
+    start_client "$port_line_h_cold" "$pub_h" "$uuid_h" "$sid_h" rtt-handoff-cold
+    local socks_h_cold=$CLIENT_SOCKS
+
+    # Retain balanced ABBA blocks for each cold/warm pair. Each one-sample
+    # invocation performs the same unrecorded warmup, then its rows are
+    # assigned stable per-mode sample indexes before append.
+    run_setup_abba_pair() {
+        local label_a=$1 port_a=$2 out_a=$3 label_b=$4 port_b=$5 out_b=$6
+        local block slot temp_a="$work/setup-abba-a.jsonl" temp_b="$work/setup-abba-b.jsonl"
+        : >"$out_a"
+        : >"$out_b"
+        for block in $(seq 0 $((samples - 1))); do
+            slot=$((block * 2))
+            python3 "$driver" setup-rate --path /payload-0.bin --label "$label_a-a$block" \
+                --socks-port "$port_a" --host 127.0.0.1 --port "$ns_origin_port" \
+                --samples 1 --conns "$rtt_conns" --concurrencies "$rtt_concurrencies" --out "$temp_a"
+            jq -c --argjson sample "$slot" '.sampleIndex = $sample' "$temp_a" >>"$out_a"
+            python3 "$driver" setup-rate --path /payload-0.bin --label "$label_b-b$block" \
+                --socks-port "$port_b" --host 127.0.0.1 --port "$ns_origin_port" \
+                --samples 1 --conns "$rtt_conns" --concurrencies "$rtt_concurrencies" --out "$temp_b"
+            jq -c --argjson sample "$slot" '.sampleIndex = $sample' "$temp_b" >>"$out_b"
+
+            slot=$((slot + 1))
+            python3 "$driver" setup-rate --path /payload-0.bin --label "$label_b-b$block" \
+                --socks-port "$port_b" --host 127.0.0.1 --port "$ns_origin_port" \
+                --samples 1 --conns "$rtt_conns" --concurrencies "$rtt_concurrencies" --out "$temp_b"
+            jq -c --argjson sample "$slot" '.sampleIndex = $sample' "$temp_b" >>"$out_b"
+            python3 "$driver" setup-rate --path /payload-0.bin --label "$label_a-a$block" \
+                --socks-port "$port_a" --host 127.0.0.1 --port "$ns_origin_port" \
+                --samples 1 --conns "$rtt_conns" --concurrencies "$rtt_concurrencies" --out "$temp_a"
+            jq -c --argjson sample "$slot" '.sampleIndex = $sample' "$temp_a" >>"$out_a"
+        done
+    }
 
     local rtt half observed loss loss_name profile
     : >"$state/profiles.jsonl"
     for rtt in $rtts; do
-        half=$((rtt / 2))
+        half=$(awk -v rtt="$rtt" 'BEGIN { printf "%.3f", rtt / 2 }')
         for loss in $losses; do
             [[ $loss =~ ^([0-9]+)(\.[0-9]+)?$ ]] || {
                 echo "LOSSES contains an invalid percentage: $loss" >&2
@@ -1006,22 +1120,29 @@ section_rtt() {
             log "netns: measured RTT ${observed:-?} ms for $profile"
             printf 'rtt=%s half_delay_ms=%s per_direction_loss_percent=%s observed_rtt_ms=%s\n' \
                 "$rtt" "$half" "$loss" "${observed:-}" >> "$state/rtts.txt"
-            local nxr_raw="$out_dir/setup-${profile}-nxr.jsonl"
-            local socks_raw="$out_dir/setup-${profile}-socks.jsonl"
-            python3 "$driver" setup-rate --path /payload-0.bin --label "${profile}-nxr" \
-                --socks-port "$socks_b" --host 127.0.0.1 --port "$ns_origin_port" \
-                --samples "$samples" --conns "$conns" \
-                --concurrencies "$concurrencies" --out "$nxr_raw"
-            python3 "$driver" setup-rate --path /payload-0.bin --label "${profile}-socks" \
-                --socks-port "$socks_c" --host 127.0.0.1 --port "$ns_origin_port" \
-                --samples "$samples" --conns "$conns" \
-                --concurrencies "$concurrencies" --out "$socks_raw"
+            local nxr_warm_raw="$out_dir/setup-${profile}-nxr-warm.jsonl"
+            local nxr_cold_raw="$out_dir/setup-${profile}-nxr-cold.jsonl"
+            local socks_warm_raw="$out_dir/setup-${profile}-socks-warm.jsonl"
+            local socks_cold_raw="$out_dir/setup-${profile}-socks-cold.jsonl"
+            local handoff_warm_raw="$out_dir/setup-${profile}-handoff-warm.jsonl"
+            local handoff_cold_raw="$out_dir/setup-${profile}-handoff-cold.jsonl"
+            run_setup_abba_pair "${profile}-nxr-warm" "$socks_b" "$nxr_warm_raw" \
+                "${profile}-nxr-cold" "$socks_b_cold" "$nxr_cold_raw"
+            run_setup_abba_pair "${profile}-socks-warm" "$socks_c" "$socks_warm_raw" \
+                "${profile}-socks-cold" "$socks_c_cold" "$socks_cold_raw"
+            run_setup_abba_pair "${profile}-handoff-warm" "$socks_h" "$handoff_warm_raw" \
+                "${profile}-handoff-cold" "$socks_h_cold" "$handoff_cold_raw"
             jq -cn --arg profile "$profile" --argjson rtt "$rtt" \
                 --arg loss "$loss" --arg observed "${observed:-}" \
-                --arg nxr "$nxr_raw" --arg socks "$socks_raw" \
+                --arg nxrWarm "$nxr_warm_raw" --arg nxrCold "$nxr_cold_raw" \
+                --arg socksWarm "$socks_warm_raw" --arg socksCold "$socks_cold_raw" \
+                --arg handoffWarm "$handoff_warm_raw" --arg handoffCold "$handoff_cold_raw" \
                 '{profile:$profile,targetRttMs:$rtt,perDirectionLossPercent:($loss|tonumber),
                   observedRttMs:(if $observed == "" then null else ($observed|tonumber) end),
-                  raw:{nxr:$nxr,socks:$socks}}' >>"$state/profiles.jsonl"
+                  raw:{"nxr-warm":$nxrWarm,"nxr-cold":$nxrCold,
+                       "socks-warm":$socksWarm,"socks-cold":$socksCold,
+                       "handoff-warm":$handoffWarm,"handoff-cold":$handoffCold}}' \
+                >>"$state/profiles.jsonl"
         done
     done
 
@@ -1029,8 +1150,17 @@ section_rtt() {
         --profiles "$state/profiles.jsonl" \
         --output "$out_dir/summary-netem.json" \
         --rtts "$rtts" --losses "$losses" \
-        --concurrencies "$concurrencies" \
-        --samples "$samples" --connections "$conns"
+        --concurrencies "$rtt_concurrencies" \
+        --samples "$((samples * 2))" --connections "$rtt_conns"
+
+    # Graceful retirement emits fixed-cardinality transport pool summaries.
+    # Preserve those logs beside the raw samples before temporary cleanup.
+    rr_stop_registered_pid "$pid_line_b"
+    rr_stop_registered_pid "$pid_line_c"
+    rr_stop_registered_pid "$pid_line_h"
+    install -m 0600 "$work/server-rtt-b-line.log" "$state/nxr-warm-server.log"
+    install -m 0600 "$work/server-rtt-c-line.log" "$state/socks-warm-server.log"
+    install -m 0600 "$work/server-rtt-handoff-line.log" "$state/handoff-warm-server.log"
 
     echo "=== after: tc qdisc show (before teardown)" | tee -a "$state/netstate.txt"
     sudo -n "$tc" qdisc show | tee -a "$state/netstate.txt"
@@ -1152,6 +1282,8 @@ if [[ $RR_EXPLORATORY == 0 ]]; then
     summarize_args+=(--formal-plan --samples "$samples" --connections "$conns"
         --concurrencies "$concurrencies" --throughput-samples "$tput_samples"
         --throughput-cells "$tput_cells" --longflow-mib "$longflow_mib"
+        --rtt-samples "$((samples * 2))" --rtt-connections "$rtt_conns"
+        --rtt-concurrencies "$rtt_concurrencies"
         --rtts "$rtts" --losses "$losses")
 fi
 python3 "$driver" "${summarize_args[@]}" || verdict=1
