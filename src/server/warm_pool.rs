@@ -33,7 +33,8 @@ use super::connector::{AccountedTcpStream, DestinationConnectError, DestinationC
 const LIFECYCLE_CREATED: u8 = 0;
 const LIFECYCLE_ACTIVE: u8 = 1;
 const LIFECYCLE_STOPPED: u8 = 2;
-const CONTROLLER_TICK: Duration = Duration::from_millis(100);
+const ADAPT_INTERVAL: Duration = Duration::from_millis(100);
+const MAINTENANCE_TICK: Duration = Duration::from_millis(500);
 const BASE_BACKOFF: Duration = Duration::from_millis(100);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 const ARRIVAL_EWMA_WEIGHT: f64 = 0.25;
@@ -515,7 +516,7 @@ type DialFuture = Pin<Box<dyn Future<Output = DialOutcome> + Send>>;
 
 async fn run_controller(inner: Arc<PoolInner>) {
     let mut dials = FuturesUnordered::<DialFuture>::new();
-    let mut ticker = time::interval(CONTROLLER_TICK);
+    let mut ticker = time::interval_at(Instant::now() + MAINTENANCE_TICK, MAINTENANCE_TICK);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     prune_and_adjust(&inner, Instant::now());
     loop {
@@ -525,10 +526,13 @@ async fn run_controller(inner: Arc<PoolInner>) {
         reconcile(&inner, &mut dials);
         tokio::select! {
             biased;
-            _ = inner.notify.notified() => {}
+            _ = inner.notify.notified() => {
+                adjust_if_due(&inner, Instant::now());
+            }
             completed = dials.next(), if !dials.is_empty() => {
                 if let Some(outcome) = completed {
                     handle_dial_completion(&inner, outcome);
+                    adjust_if_due(&inner, Instant::now());
                 }
             }
             _ = ticker.tick() => {
@@ -542,6 +546,13 @@ async fn run_controller(inner: Arc<PoolInner>) {
     state.ready.clear();
     inner.metrics.connecting.store(0, Ordering::Release);
     inner.metrics.ready.store(0, Ordering::Release);
+}
+
+fn adjust_if_due(inner: &Arc<PoolInner>, now: Instant) {
+    let due = now.duration_since(lock(&inner.state).last_tick) >= ADAPT_INTERVAL;
+    if due {
+        prune_and_adjust(inner, now);
+    }
 }
 
 fn prune_and_adjust(inner: &Arc<PoolInner>, now: Instant) {
