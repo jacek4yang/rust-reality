@@ -41,6 +41,7 @@ const CONNECT_EWMA_WEIGHT: f64 = 0.25;
 const CONNECT_SAFETY_FACTOR: f64 = 1.0;
 const BURST_HEADROOM_FACTOR: f64 = 0.25;
 const MAX_STALE_CHECKS_PER_CHECKOUT: usize = 4;
+const REFILL_COALESCE_DELAY: Duration = Duration::from_millis(1);
 
 /// Process-lifetime bounds shared by every pool and immutable generation.
 #[derive(Clone)]
@@ -535,12 +536,11 @@ async fn run_controller(inner: Arc<PoolInner>) {
         tokio::select! {
             biased;
             _ = inner.notify.notified() => {
-                // Let checkout tasks in the same burst finish before the next
-                // reconciliation. Notify already coalesces pending signals;
-                // one cooperative yield avoids repeatedly waking this control
-                // task between adjacent checkouts without adding a timer or
-                // network round trip to the session path.
-                tokio::task::yield_now().await;
+                // Authenticated checkouts in one arrival burst finish a little
+                // apart. One bounded control-plane delay per singleflight
+                // refill cycle lets their deficits coalesce before dialing.
+                // It never delays checkout or adds network I/O to a session.
+                time::sleep(REFILL_COALESCE_DELAY).await;
             }
             completed = dials.next(), if !dials.is_empty() => {
                 if let Some(outcome) = completed {
