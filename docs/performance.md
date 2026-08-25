@@ -45,6 +45,66 @@ under `artifacts/release-train/v1.7.0/cover-warm-pool/` outside the repository.
 Prebuilt cover profiles are not enabled by this phase; authenticated cache
 misses still obtain the real cover TLS flight.
 
+## v1.7 development: authenticated prebuilt cover profiles
+
+The second phase keeps the first phase as its exact fallback, but lets a
+successfully authenticated and replay-reserved connection use an immutable
+profile produced by four agreeing controlled probes. The profile contains no
+server random, ephemeral private key, traffic secret, certificate, Finished
+message, or record sequence. Unknown, expired, unstable, or unrepresentable
+ClientHello classes use the live cover; unauthenticated and replayed traffic
+never consults the cache.
+
+A controlled local Go/OpenSSL cover was placed behind one-leg veth/netem while
+the client/server path remained unimpaired. Each cell retained three balanced
+ABBA blocks, exact payload checks, raw samples, binary identities, host lock,
+and server `perf stat` counters. The table compares cold live cover against a
+validated prebuilt profile at concurrency one:
+
+| cover RTT | cold p50 | prebuilt p50 | cold/prebuilt setup rate | prebuilt/cold CPU per connection |
+|---:|---:|---:|---:|---:|
+| 1 ms | 5.765 ms | 1.740 ms | 3.2352 (95% bootstrap 3.2342–3.2594) | 0.8629 (0.8584–0.8769) |
+| 10 ms | 24.015 ms | 1.752 ms | 13.0246 (12.9824–13.0270) | 0.8432 (0.8373–0.8688) |
+| 50 ms | 104.112 ms | 1.757 ms | 56.5138 (56.4268–56.7233) | 0.8732 (0.8711–0.8748) |
+| 100 ms | 204.114 ms | 1.766 ms | 107.3951 (107.3693–108.0402) | 0.8130 (0.7954–0.8166) |
+| 200 ms | 404.171 ms | 1.767 ms | 212.5548 (211.3442–213.1219) | 0.8021 (0.8010–0.8127) |
+
+The flat 1.74–1.77 ms prebuilt p50, while cold p50 grows by roughly two cover
+RTTs, is the central RTT-removal evidence. At 50 ms and c8, setup rate was
+19.2841× cold (95% interval 19.0849–19.4471). A separate warm-live versus
+prebuilt run isolates the second RTT: prebuilt was 28.9731× at c1 and 9.9656×
+at c8, with CPU per connection 0.8551× warm-live. No sample failed payload
+integrity.
+
+The aggregate counters deliberately include nonblocking startup and profile
+preconditioning, so observed profile-hit ratios ranged from 81.67% to 97.92%.
+They are not presented as a 99.9% steady-state claim. Every candidate slot
+published exactly four conservative Chrome-class profiles, with no profile
+disagreement or collection failure. A sequential collector and a controller
+that requeued an already-collecting class were rejected: the first exposed
+network latency serially, while the second caused redundant refreshes. The
+retained collector performs four bounded probes concurrently in one controller
+task and coalesces demand for an in-flight class.
+
+The immutable Phase-A baseline was commit `2e09e6e`, binary SHA-256
+`f541b02684d7a2fa4a9c97423a30b9651af458dcec3fbd30e53c6e76fbf45787`.
+The final runtime candidate was commit `8464371`, SHA-256
+`c893fbc7a94de996346aa5e22691f14385ea3064312f7cadad2d4cd6b0a23c13`;
+the 50/200 ms reruns used source `5540152`, SHA-256
+`84d6c317c16bfb00cc186c2b649aa9b6df776120a9ec34ff1b5911e9075d934c`,
+whose only additional change was the RTT-derived readiness timeout in the
+benchmark harness. Raw and rejected-experiment evidence is retained outside
+the repository under `artifacts/release-train/v1.7.0/cover-profiles/`.
+These focused three-block runs establish a large non-ambiguous mechanism win;
+the repository's longer formal release evaluator remains a release gate and
+is not relabeled as having passed here.
+
+The evidence covers a stable single-modal local cover and Xray's Chrome 133
+ClientHello family. Multi-modal covers, unrecognized encrypted extensions,
+PSK/resumption, and rare uncollected ClientHello classes intentionally stay on
+the warm-live path. This is a conservative validated-class optimization, not
+a claim of universal TLS indistinguishability.
+
 ## v1.6.1 release evidence
 
 The v1.6.1 headline comparison retains the v1.6.0 measurements against the

@@ -163,6 +163,17 @@ soaks cover expiry, backoff, shrink, reload, cancellation, and pressure. A
 longer soak remains release evidence only when it measures a property that
 cannot be accelerated honestly.
 
+Controlled one-leg netem measurements at 1, 10, 50, 100, and 200 ms cover RTT
+kept authenticated prebuilt p50 between 1.740 and 1.767 ms while cold-live p50
+grew from 5.765 to 404.171 ms. At 50 ms, a separate warm-live comparison made
+the profile path 28.9731× faster at c1 and 9.9656× at c8, isolating removal of
+the remaining cover ClientHello-to-flight RTT. All retained runs used three
+balanced ABBA blocks with payload checks and immutable binary hashes; no
+profile disagreement or collection failure occurred. Aggregate startup-aware
+profile-hit ratios ranged from 81.67% to 97.92%, so this evidence is not a
+99.9% steady-state claim. Full identities, confidence intervals, limitations,
+and rejected collector experiments are recorded in `docs/performance.md`.
+
 ## Revisit criteria
 
 Multi-modal profile sampling, persistent profile storage, application-level
