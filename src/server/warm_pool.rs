@@ -20,7 +20,7 @@ use std::{
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use tokio::{
     sync::Notify,
-    time::{self, Instant, MissedTickBehavior},
+    time::{self, Instant},
 };
 
 use crate::{
@@ -516,8 +516,8 @@ type DialFuture = Pin<Box<dyn Future<Output = DialOutcome> + Send>>;
 
 async fn run_controller(inner: Arc<PoolInner>) {
     let mut dials = FuturesUnordered::<DialFuture>::new();
-    let mut ticker = time::interval_at(Instant::now() + MAINTENANCE_TICK, MAINTENANCE_TICK);
-    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let maintenance = time::sleep(MAINTENANCE_TICK);
+    tokio::pin!(maintenance);
     prune_and_adjust(&inner, Instant::now());
     loop {
         if inner.lifecycle.load(Ordering::Acquire) != LIFECYCLE_ACTIVE {
@@ -527,16 +527,22 @@ async fn run_controller(inner: Arc<PoolInner>) {
         tokio::select! {
             biased;
             _ = inner.notify.notified() => {
-                adjust_if_due(&inner, Instant::now());
+                let now = Instant::now();
+                adjust_if_due(&inner, now);
+                maintenance.as_mut().reset(now + MAINTENANCE_TICK);
             }
             completed = dials.next(), if !dials.is_empty() => {
                 if let Some(outcome) = completed {
                     handle_dial_completion(&inner, outcome);
-                    adjust_if_due(&inner, Instant::now());
+                    let now = Instant::now();
+                    adjust_if_due(&inner, now);
+                    maintenance.as_mut().reset(now + MAINTENANCE_TICK);
                 }
             }
-            _ = ticker.tick() => {
-                prune_and_adjust(&inner, Instant::now());
+            () = &mut maintenance => {
+                let now = Instant::now();
+                prune_and_adjust(&inner, now);
+                maintenance.as_mut().reset(now + MAINTENANCE_TICK);
             }
         }
     }

@@ -78,11 +78,12 @@ idle excess gradually. Low/high watermark hysteresis and a bounded refill
 batch prevent oscillation and dial storms.
 
 Arrival adaptation is demand-driven at a 100 ms minimum interval from checkout
-and dial-completion events. A 500 ms maintenance tick handles quiet-pool expiry,
-backoff recovery, and shrink without imposing a 10 Hz wakeup on every idle
-pool. This split was retained only after `perf stat` showed that the original
-100 ms unconditional timer materially increased context switches and CPU per
-setup connection.
+and dial-completion events. A resettable 500 ms quiet-pool deadline handles
+expiry, backoff recovery, and shrink; real demand resets it because those same
+events already perform due maintenance. This avoids a periodic wakeup during
+continuous traffic and does not impose the original 10 Hz timer on every idle
+pool. The split was retained only after `perf stat` showed that the unconditional
+timer materially increased context switches and CPU per setup connection.
 
 Background failures use capped exponential backoff with endpoint-derived
 jitter. User-flow cold connects do not wait behind that backoff. Idle health is
