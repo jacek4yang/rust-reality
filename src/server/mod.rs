@@ -1,6 +1,7 @@
 //! VLESS server runtime components.
 
 pub mod connector;
+mod cover_profile;
 pub mod direct;
 pub mod dns;
 pub mod fallback;

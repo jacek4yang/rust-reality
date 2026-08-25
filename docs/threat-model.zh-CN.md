@@ -35,6 +35,20 @@ VLESS 的配置会在绑定监听端口前被拒绝。`serverNames` 可使用具
 一样新建自己的真实伪装目标连接。ready/connecting socket 均严格有界、计入 FD
 预算并按 generation 隔离；资源压力下先丢弃推测性预热资源，避免与活跃流量竞争。
 
+prebuilt profile 保持同一未认证边界。认证与重放预留成功前无法查询 profile。权威
+来源是有界 collector，而不是任意用户观测；只有四次受控响应完全一致才发布。
+profile 会擦除目标 random、session ID、临时 key exchange 与流量秘密，带抖动过期，
+也绝不跨配置 generation。未知 GREASE/ECH 形状、不支持的 PSK、意外的
+EncryptedExtensions、profile 分歧、过期状态或本地 flight 尺寸失败都会选择真实
+伪装目标，绝不猜测。获授权客户端最多占用 16 个有界提名槽之一，不能发布目标语义，
+也不能影响已有的 validated profile。
+
+本项目不声称所有 TLS 流量都具有完全相同的可观测行为。更窄的目标是：对已验证
+class 不引入清晰、确定的
+语义差异——所选版本、cipher、group、ServerHello 扩展顺序、ALPN、compatibility
+CCS 与外层 record plan 均来自受控目标证据，而 random 与秘密字段必须变化。主动未
+认证探针和捕获重放始终只得到真实伪装目标行为。
+
 配置、路由资产、用户、REALITY 状态和出站作为一个不可变 generation 发布。
 刷新失败保留最后一个完整快照。私钥、UUID、NXR PSK、Handoff PSK 和静态密钥、
 凭据和完整配置不进入结构化日志。
@@ -101,8 +115,10 @@ splice pipe 都有明确上限。数据路径没有无界队列或缓存；协�
 
 `fuzz/Cargo.toml` 是攻击面的权威清单。当前目标覆盖原始 VLESS/wire parser、
 结构化 REALITY 认证与重放状态、Vision 解码与状态转换、Handoff header/blob/open 与
-结构化 round trip、NXR round trip、cover flight 解析、TLS 1.3 record round trip、transcript 哈希、严格配置解码
-和诊断渲染。CI 会拒绝未声明的目标源码并运行每个已声明目标；全 crate 行覆盖率不能
+结构化 round trip、NXR round trip、cover flight 解析、TLS 1.3 record round trip、
+transcript 哈希、严格 normalized ClientHello 分类、受控 profile compatibility、
+profile EncryptedExtensions 解析、ServerHello 重建、严格配置解码和诊断渲染。
+CI 会拒绝未声明的目标源码并运行每个已声明目标；全 crate 行覆盖率不能
 替代这些可达边界的覆盖。
 
 Linux `splice` 只允许在两侧都是明文 TCP socket 后使用，不能跨越 REALITY/TLS

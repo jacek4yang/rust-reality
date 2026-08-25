@@ -1,7 +1,7 @@
 use std::{error::Error, fmt, io, sync::Arc, time::Duration};
 
 use tokio::{
-    io::AsyncWriteExt,
+    io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
     time::{self, Instant},
 };
@@ -295,6 +295,17 @@ impl RealityFallback {
         self.connect_with_permit(consumed_prefix, None, true).await
     }
 
+    /// Opens one cold, independently accounted connection for a controlled
+    /// background profile probe. It never consumes a warm socket, so real
+    /// authenticated handshakes retain priority over speculative collection.
+    pub(crate) async fn profile_probe(
+        &self,
+        controlled_prefix: &[u8],
+    ) -> Result<CoverConnection, FallbackError> {
+        self.connect_with_permit(controlled_prefix, None, false)
+            .await
+    }
+
     async fn connect_with_permit(
         &self,
         consumed_prefix: &[u8],
@@ -389,6 +400,33 @@ impl CoverConnection {
     ) -> Result<TargetServerFlightRead, TargetServerHelloReadError> {
         let remaining = self.deadline.saturating_duration_since(Instant::now());
         read_server_flight(&mut self.stream, client, timeout.min(remaining)).await
+    }
+
+    /// Completes a bounded already-started cover prefix without changing its
+    /// byte order. Used only by the controlled collector when the production
+    /// coalesced-flight parser intentionally stopped after one ciphertext byte.
+    pub(crate) async fn complete_prefix(
+        &mut self,
+        prefix: &mut Vec<u8>,
+        required_len: usize,
+        timeout: Duration,
+    ) -> Result<(), FallbackError> {
+        if prefix.len() >= required_len {
+            return Ok(());
+        }
+        let missing = required_len.saturating_sub(prefix.len());
+        prefix
+            .try_reserve_exact(missing)
+            .map_err(|_| FallbackError::Io(io::Error::other("cover profile prefix bound")))?;
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        let read_timeout = timeout.min(remaining);
+        let mut tail = vec![0_u8; missing];
+        time::timeout(read_timeout, self.stream.read_exact(&mut tail))
+            .await
+            .map_err(|_| FallbackError::SessionTimeout)?
+            .map_err(FallbackError::Io)?;
+        prefix.extend_from_slice(&tail);
+        Ok(())
     }
 
     /// Reads the compatible target ServerHello without consuming its next record.

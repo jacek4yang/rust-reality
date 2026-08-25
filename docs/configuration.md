@@ -236,7 +236,11 @@ change requires restart.
       "serverNames": ["www.example.com"],
       "privateKey": "GENERATED-X25519-PRIVATE-KEY",
       "maxTimeDiffMs": 60000,
-      "coverOptimization": { "enabled": true, "warmTcp": true }
+      "coverOptimization": {
+        "enabled": true,
+        "warmTcp": true,
+        "prebuiltProfiles": true
+      }
     }
   }
 }
@@ -266,6 +270,7 @@ handoff`.
 | `streamSettings.realitySettings.maxTimeDiffMs` | no | `60000` | Accepted client clock difference, `0..=600000`; zero disables this check. |
 | `streamSettings.realitySettings.coverOptimization.enabled` | no | `true` | Master switch for authenticated-only cover latency optimizations. It never changes rejection/fallback behavior. |
 | `streamSettings.realitySettings.coverOptimization.warmTcp` | no | `true` | Maintain bounded TCP-established cover sockets. No TLS byte is sent before authenticated checkout. |
+| `streamSettings.realitySettings.coverOptimization.prebuiltProfiles` | no | `true` | Collect bounded, ephemeral cover profiles with controlled probes and locally build fresh authenticated flights only for exact, validated ClientHello classes. A miss always uses the live cover. |
 
 Every public UUID must appear exactly once in `routing.users[].userIds`.
 

@@ -23,6 +23,10 @@
   short ID：ClientHello short ID 先通过不可变、按基数自适应的 owner 索引解析
   出 UUID；VLESS 解码后，头中的 UUID 必须与该 owner 完全相等。因此从两个
   不同客户端条目分别复制 UUID 与 short ID，无法拼成获准会话。
+  已认证 setup 有三层 fail-safe cover 路径：精确匹配的 validated profile 在本地
+  生成全新 flight；否则用已完成 TCP 建连的 warm socket 取得当前真实目标 flight；
+  再否则使用普通 cold cover 路径。prebuilt 模式绝不重放 ServerHello 或密钥材料，
+  且认证与重放预留前不可达。
 - **Fallback** 是失败模式：未认证连接会按序、逐字节地转发到伪装目标。没有
   任何合成响应会把服务标识为代理，且 fallback 并发独立于已认证流量计数。
 - **VLESS** 是 TLS 流内的已认证请求协议：UUID、命令和目标。解密为 `none`——

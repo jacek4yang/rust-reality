@@ -1066,6 +1066,11 @@ pub struct CoverOptimizationConfig {
     /// live-cover transactions. No TLS bytes are sent before checkout.
     #[serde(default = "default_true")]
     pub warm_tcp: bool,
+    /// Build conservative cover-derived TLS profiles in the background and
+    /// use them only after successful REALITY authentication and replay
+    /// reservation. Unknown, stale, or unstable classes use the live cover.
+    #[serde(default = "default_true")]
+    pub prebuilt_profiles: bool,
 }
 
 impl Default for CoverOptimizationConfig {
@@ -1073,6 +1078,7 @@ impl Default for CoverOptimizationConfig {
         Self {
             enabled: true,
             warm_tcp: true,
+            prebuilt_profiles: true,
         }
     }
 }

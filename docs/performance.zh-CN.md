@@ -37,6 +37,60 @@ controller 实验保存在仓库外的
 `artifacts/release-train/v1.7.0/cover-warm-pool/`。本阶段尚未启用 prebuilt
 cover profile；已认证 cache miss 仍取得真实 cover TLS flight。
 
+## v1.7 开发证据：已认证 prebuilt cover profile
+
+第二阶段把第一阶段保留为精确回退路径，但允许已经通过 REALITY 认证和 replay
+reservation 的连接使用由四次一致的受控 probe 生成的不可变 profile。profile
+不含 server random、临时私钥、traffic secret、证书、Finished 消息或 record
+sequence。未知、过期、不稳定或无法精确表示的 ClientHello class 均使用真实
+cover；未认证流量和 replay 从不查询 cache。
+
+受控本地 Go/OpenSSL cover 位于单边 veth/netem 后，client/server 路径不施加
+损伤。每个 cell 保留三组平衡 ABBA block、精确载荷校验、原始样本、二进制身份、
+主机独占锁和服务端 `perf stat` 计数。下表在并发一时比较 cold live cover 与已
+验证 prebuilt profile：
+
+| cover RTT | cold p50 | prebuilt p50 | cold/prebuilt setup rate | prebuilt/cold 每连接 CPU |
+|---:|---:|---:|---:|---:|
+| 1 ms | 5.765 ms | 1.740 ms | 3.2352（95% bootstrap 3.2342–3.2594） | 0.8629（0.8584–0.8769） |
+| 10 ms | 24.015 ms | 1.752 ms | 13.0246（12.9824–13.0270） | 0.8432（0.8373–0.8688） |
+| 50 ms | 104.081 ms | 1.754 ms | 56.3245（56.2386–57.1053） | 0.8845（0.8605–0.8930） |
+| 100 ms | 204.114 ms | 1.766 ms | 107.3951（107.3693–108.0402） | 0.8130（0.7954–0.8166） |
+| 200 ms | 404.171 ms | 1.767 ms | 212.5548（211.3442–213.1219） | 0.8021（0.8010–0.8127） |
+
+prebuilt p50 在 1.74–1.77 ms 内基本不随 RTT 变化，而 cold p50 约随两个 cover
+RTT 增长，这是消除 RTT 的核心证据。在 50 ms、c8 时 setup rate 为 cold 的
+18.5491×（95% 区间 17.7258–19.2288）。另一次 warm-live 对 prebuilt 运行把
+第二个 RTT 单独隔离出来：prebuilt 在 c1 为 28.9731×，c8 为 9.9656×，每连接
+CPU 为 warm-live 的 0.8551×。所有样本的载荷完整性均通过。
+
+聚合计数刻意包含非阻塞启动和 profile 预处理，因此实测 profile hit ratio 为
+81.67%–97.92%；这里不把它表述成 99.9% 稳态结论。每个候选 slot 都恰好发布
+四个保守的 Chrome class profile，没有 profile disagreement 或 collection
+failure。顺序 collector 和会重复排队正在收集 class 的 controller 均被否决：
+前者串行暴露网络时延，后者造成多余 refresh。保留实现由一个 controller task
+并发执行四个有界 probe，并合并正在收集 class 的重复需求。
+
+不可变 Phase-A 基线为提交 `2e09e6e`，二进制 SHA-256
+`f541b02684d7a2fa4a9c97423a30b9651af458dcec3fbd30e53c6e76fbf45787`。
+实测运行时候选为提交 `8464371`，SHA-256
+`c893fbc7a94de996346aa5e22691f14385ea3064312f7cadad2d4cd6b0a23c13`；
+50/200 ms 复测使用源码 `5540152`，SHA-256
+`84d6c317c16bfb00cc186c2b649aa9b6df776120a9ec34ff1b5911e9075d934c`，
+其唯一新增改动是 benchmark harness 中按 RTT 推导的 readiness timeout。资源
+优先级自审修复后，50 ms 以源码 `a1c5aec`、二进制 SHA-256
+`dcef737d0445f0a8c5190bc67a02d2e62a5cf0fcd1771a308a298b40b4516134`
+重新测量；上述 c1/c8 和 CPU 收益保持，24/24 个样本有效。原始数据和被否决实验
+保存在仓库外的
+`artifacts/release-train/v1.7.0/cover-profiles/`。这些三组 block 的聚焦运行
+证明了幅度大且无歧义的机制收益；仓库更长的正式发布评估器仍保留为 release
+门禁，本文不把它改称为已通过。
+
+证据覆盖稳定、单模式的本地 cover 和 Xray Chrome 133 ClientHello family。
+多模式 cover、无法识别的 encrypted extension、PSK/resumption 和罕见的未收集
+ClientHello class 会有意留在 warm-live 路径。这是保守的已验证 class 优化，
+不是对所有 TLS 行为都完全相同的声明。
+
 ## v1.6.1 发布证据
 
 v1.6.1 头条保留 v1.6.0 与已发布的 v1.5.1 二进制对比测量，因为 v1.6.1

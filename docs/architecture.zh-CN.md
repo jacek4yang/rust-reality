@@ -28,6 +28,18 @@ admission 架构和运行时可观测性。设计背后的实测证据见
    连接池，因此仍完整观察真实伪装目标。reload 会停止旧 generation 的 refill
    并关闭其 idle socket，不影响已经 checkout 的事务。
 
+   有效 ClientFinished 提交重放状态后，该精确、保守的 ClientHello class 才可提名
+   有界后台收集。四个全新受控探针会改变 random、session ID、key share、
+   ECH/GREASE 材料和扩展顺序；只有目标协商、ALPN、ServerHello 骨架、CCS 选择与
+   record plan 全部一致，才发布不可变 profile。命中只重建这些稳定语义，现有 flight
+   builder 仍生成全新的逐会话密码状态。cache 最多 16 个 class，使用带抖动的十分钟
+   生命周期、封闭状态集合、不落盘，也不以用户观测训练。一个 controller 以最多四个
+   并发受控观测和快速失败的资源准入完成收集。
+
+   profile 查询只发生在认证与重放预留之后。未知、过期、不稳定、generation 不同或
+   无法表达的 class 先降级到 warm live cover，再降级到普通 cold live cover。
+   认证失败无法观察、消费、提名或训练任一已认证优化。
+
    v1.5 通过有界增量读取器消费伪装目标响应。计划可以包含可选 CCS、四条位置化
    加密握手记录和可选的第五条 Finished 后记录；最多保留 66,642 字节。第五条
    记录优先从已缓冲数据判断，否则只做一次非阻塞探测。存在第五条记录时，会

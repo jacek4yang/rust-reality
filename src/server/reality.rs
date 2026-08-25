@@ -30,6 +30,7 @@ use tokio::{
 };
 
 use super::{
+    cover_profile::{CoverProfileSnapshot, CoverProfiles},
     fallback::{CoverConnection, FallbackError, FallbackStats, RealityFallback},
     warm_pool::{WarmPoolAuthority, WarmPoolSnapshot},
 };
@@ -136,6 +137,12 @@ struct SelectedCoverFlight {
     retained_prefix: Vec<u8>,
 }
 
+struct PreparedServerFlight {
+    flight: ServerFlight,
+    plan: CoverHandshakePlan,
+    retained_prefix: Vec<u8>,
+}
+
 /// Non-secret cover-flight selection data used only for debug evidence.
 pub(crate) struct CoverFlightEvidence {
     pub(crate) emit_ccs: bool,
@@ -225,6 +232,7 @@ pub struct RealityAcceptor {
     client_hello_timeout: Duration,
     handshake_timeout: Duration,
     target_hello_timeout: Duration,
+    profiles: Option<CoverProfiles>,
 }
 
 impl RealityAcceptor {
@@ -301,6 +309,7 @@ impl RealityAcceptor {
         let identity = CertificateIdentity::generate()
             .map(Arc::new)
             .map_err(RealityAcceptorConfigError::Certificate)?;
+        let generation = warm.as_ref().map(|(generation, _, _)| *generation);
         let fallback = match warm {
             Some((generation, authority, warm_policy))
                 if reality.cover_optimization.enabled && reality.cover_optimization.warm_tcp =>
@@ -326,6 +335,19 @@ impl RealityAcceptor {
                 network_environment,
             ),
         };
+        let target_hello_timeout = Duration::from_millis(policy.connect_timeout_ms);
+        let profiles = generation
+            .filter(|_| {
+                reality.cover_optimization.enabled && reality.cover_optimization.prebuilt_profiles
+            })
+            .map(|generation| {
+                CoverProfiles::new(
+                    generation,
+                    fallback.clone(),
+                    governor.clone(),
+                    target_hello_timeout,
+                )
+            });
         Ok(Self {
             authenticator,
             replay,
@@ -335,23 +357,36 @@ impl RealityAcceptor {
             inbound_tag: Arc::from(inbound.tag.as_str()),
             client_hello_timeout: Duration::from_millis(policy.client_hello_timeout_ms),
             handshake_timeout: Duration::from_millis(policy.handshake_timeout_ms),
-            target_hello_timeout: Duration::from_millis(policy.connect_timeout_ms),
+            target_hello_timeout,
+            profiles,
         })
     }
 
     /// Starts speculative cover dialing after the listener generation is live.
     pub(crate) fn activate_cover_pool(&self) {
         self.fallback.activate();
+        if let Some(profiles) = &self.profiles {
+            let _started = profiles.activate();
+        }
     }
 
     /// Stops this generation's refills and closes its unused cover sockets.
     pub(crate) fn deactivate_cover_pool(&self) -> bool {
-        self.fallback.deactivate()
+        let profiles = self
+            .profiles
+            .as_ref()
+            .is_some_and(CoverProfiles::deactivate);
+        self.fallback.deactivate() || profiles
     }
 
     /// Returns secret-free, fixed-cardinality cover-pool state.
     pub(crate) fn cover_pool_snapshot(&self) -> Option<WarmPoolSnapshot> {
         self.fallback.warm_pool_snapshot()
+    }
+
+    /// Returns fixed-cardinality, secret-free profile state.
+    pub(crate) fn cover_profile_snapshot(&self) -> Option<CoverProfileSnapshot> {
+        self.profiles.as_ref().map(CoverProfiles::snapshot)
     }
 
     /// Authenticates one accepted TCP stream or relays it byte-exactly to cover.
@@ -425,55 +460,71 @@ impl RealityAcceptor {
         let handshake_deadline = handshake_started
             .checked_add(self.handshake_timeout)
             .ok_or(RealityAcceptError::HandshakeWriteTimeout)?;
-        let mut cover = self
-            .fallback
-            .mirror(&client_prefix)
-            .await
-            .map_err(RealityAcceptError::Fallback)?;
-        let target_flight = match cover
-            .read_server_flight(
-                &hello,
-                self.target_hello_timeout
-                    .min(handshake_deadline.saturating_duration_since(Instant::now())),
-            )
-            .await
+        let prepared = if let Some(prepared) =
+            self.try_prebuilt_flight(&hello, authenticated.auth_key())
         {
-            Ok(target_flight) => target_flight,
-            Err(error) => {
-                let (_, target_prefix) = error.into_parts();
-                drop(replay);
-                return transition_cover(stream, cover, &target_prefix, handshake_permit).await;
+            prepared
+        } else {
+            let mut cover = self
+                .fallback
+                .mirror(&client_prefix)
+                .await
+                .map_err(RealityAcceptError::Fallback)?;
+            let target_flight = match cover
+                .read_server_flight(
+                    &hello,
+                    self.target_hello_timeout
+                        .min(handshake_deadline.saturating_duration_since(Instant::now())),
+                )
+                .await
+            {
+                Ok(target_flight) => target_flight,
+                Err(error) => {
+                    let (_, target_prefix) = error.into_parts();
+                    drop(replay);
+                    return transition_cover(stream, cover, &target_prefix, handshake_permit).await;
+                }
+            };
+            let (target, record_shape, target_prefix) = target_flight.into_parts();
+            let crypto_permit = match self.governor.try_acquire(AdmissionKind::CryptoOperation) {
+                Ok(permit) => permit,
+                Err(_) => {
+                    drop(replay);
+                    return transition_cover(stream, cover, &target_prefix, handshake_permit).await;
+                }
+            };
+            // The client's first protocol is only the preference: the flight
+            // builder downgrades it to what the cover's observed EE record slot
+            // can hold, emitting no ALPN for a cover that negotiated none.
+            let selected_alpn = hello.alpn_protocols().next();
+            let flight = match build_server_flight_with_shape(
+                &hello,
+                authenticated.auth_key(),
+                target,
+                &self.identity,
+                selected_alpn,
+                record_shape,
+            ) {
+                Ok(flight) => flight,
+                Err(_) => {
+                    drop(crypto_permit);
+                    drop(replay);
+                    return transition_cover(stream, cover, &target_prefix, handshake_permit).await;
+                }
+            };
+            drop(crypto_permit);
+            drop(cover);
+            PreparedServerFlight {
+                flight,
+                plan: record_shape,
+                retained_prefix: target_prefix,
             }
         };
-        let (target, record_shape, target_prefix) = target_flight.into_parts();
-        let crypto_permit = match self.governor.try_acquire(AdmissionKind::CryptoOperation) {
-            Ok(permit) => permit,
-            Err(_) => {
-                drop(replay);
-                return transition_cover(stream, cover, &target_prefix, handshake_permit).await;
-            }
-        };
-        // The client's first protocol is only the preference: the flight
-        // builder downgrades it to what the cover's observed EE record slot
-        // can hold, emitting no ALPN for a cover that negotiated none.
-        let selected_alpn = hello.alpn_protocols().next();
-        let flight = match build_server_flight_with_shape(
-            &hello,
-            authenticated.auth_key(),
-            target,
-            &self.identity,
-            selected_alpn,
-            record_shape,
-        ) {
-            Ok(flight) => flight,
-            Err(_) => {
-                drop(crypto_permit);
-                drop(replay);
-                return transition_cover(stream, cover, &target_prefix, handshake_permit).await;
-            }
-        };
-        drop(crypto_permit);
-        drop(cover);
+        let PreparedServerFlight {
+            flight,
+            plan: record_shape,
+            retained_prefix: target_prefix,
+        } = prepared;
         write_server_flight(&mut stream, &flight, handshake_deadline).await?;
         let established = read_client_finished(
             &mut stream,
@@ -485,6 +536,9 @@ impl RealityAcceptor {
         replay
             .commit_after_client_finished()
             .map_err(RealityAcceptError::Replay)?;
+        if let Some(profiles) = &self.profiles {
+            profiles.nominate(&hello);
+        }
         drop(handshake_permit);
 
         Ok(RealityAcceptOutcome::Established(Box::new(
@@ -513,6 +567,48 @@ impl RealityAcceptor {
             .await
             .map(RealityAcceptOutcome::Fallback)
             .map_err(RealityAcceptError::Fallback)
+    }
+
+    fn try_prebuilt_flight(
+        &self,
+        hello: &crate::protocol::reality::ClientHello,
+        auth_key: &crate::protocol::reality::AuthKey,
+    ) -> Option<PreparedServerFlight> {
+        let profiles = self.profiles.as_ref()?;
+        let profile = profiles.lookup(hello)?;
+        let mut server_random = [0_u8; 32];
+        getrandom::fill(&mut server_random).ok()?;
+        let materialized = match profile.materialize(hello, server_random) {
+            Ok(materialized) => materialized,
+            Err(_) => {
+                profiles.invalidate(hello);
+                return None;
+            }
+        };
+        let _crypto_permit = self
+            .governor
+            .try_acquire(AdmissionKind::CryptoOperation)
+            .ok()?;
+        let flight = match build_server_flight_with_shape(
+            hello,
+            auth_key,
+            materialized.server_hello,
+            &self.identity,
+            materialized.selected_alpn.as_deref(),
+            materialized.plan,
+        ) {
+            Ok(flight) => flight,
+            Err(_) => {
+                profiles.invalidate(hello);
+                return None;
+            }
+        };
+        profiles.record_hit();
+        Some(PreparedServerFlight {
+            flight,
+            plan: materialized.plan,
+            retained_prefix: Vec::new(),
+        })
     }
 }
 
@@ -705,6 +801,13 @@ mod tests {
         assert_eq!(snapshot.checkout_total, 0);
         assert_eq!(snapshot.checkout_hit, 0);
         assert_eq!(snapshot.ready, 1);
+        let profile = acceptor
+            .cover_profile_snapshot()
+            .expect("cover profile cache must exist");
+        assert_eq!(profile.hit, 0);
+        assert_eq!(profile.miss, 0);
+        assert_eq!(profile.refresh, 0);
+        assert_eq!(profile.validated, 0);
         acceptor.deactivate_cover_pool();
         drop(warm_cover);
     }

@@ -44,6 +44,24 @@ own real-cover connection exactly as before. Ready and connecting sockets are
 strictly bounded, FD-accounted, generation-isolated, and discarded under
 resource pressure before speculative warming can compete with active traffic.
 
+Prebuilt profiles preserve the same unauthenticated boundary. Profile lookup
+is unreachable until authentication and replay reservation succeed. A bounded
+collector, not arbitrary user observations, is authoritative; it publishes
+only after four controlled responses agree. Profiles erase cover random,
+session ID, ephemeral key exchange, and traffic secrets, expire with jitter,
+and never cross configuration generations. Unknown GREASE/ECH shapes,
+unsupported PSK, unexpected EncryptedExtensions, profile disagreement, stale
+state, or local-flight sizing failure selects live cover instead of guessing.
+An authorized client can at most consume one of 16 bounded nomination slots;
+it cannot publish cover semantics or influence an existing validated profile.
+
+This does not claim universal TLS indistinguishability. The narrower objective
+is no clear deterministic semantic difference for a validated class: selected
+version, cipher, group, ServerHello extension order, ALPN, compatibility CCS,
+and outer record plan follow controlled cover evidence, while random and secret
+fields must vary. Active unauthenticated probes and captured replays continue
+to receive only real-cover behavior.
+
 Configuration, routing assets, users, REALITY state, and outbounds are published
 as one immutable generation. A failed refresh keeps the last complete snapshot.
 Private keys, UUIDs, NXR PSKs, Handoff PSKs and static keys, credentials, and
@@ -138,6 +156,8 @@ targets cover raw VLESS/wire parsers, structured REALITY authentication and
 replay state, Vision decoding and state transitions,
 Handoff headers/blobs/opening and structured round trips, NXR round trips,
 cover-flight parsing, TLS 1.3 record round trips, transcript hashing, strict
+normalized ClientHello classification, controlled profile compatibility,
+profile EncryptedExtensions parsing, ServerHello reconstruction,
 configuration decoding, and diagnostic rendering. CI rejects undeclared
 target source files and runs every declared target; whole-crate line coverage
 is not treated as a substitute for these reachable boundaries.

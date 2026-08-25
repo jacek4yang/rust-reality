@@ -29,8 +29,17 @@ abba_start=${ABBA_START:-baseline}
 measure_mode=${MEASURE_MODE:-perf}
 self_test=${SELF_TEST:-0}
 cover_netem_rtt_ms=${COVER_NETEM_RTT_MS:-}
+baseline_cover_mode=${BASELINE_COVER_MODE:-default}
+candidate_cover_mode=${CANDIDATE_COVER_MODE:-default}
 
 die() { printf 'benchmark-setup-rate: %s\n' "$*" >&2; exit 2; }
+
+for cover_mode in "$baseline_cover_mode" "$candidate_cover_mode"; do
+    case "$cover_mode" in
+        default|cold|warm|prebuilt) ;;
+        *) die "unsupported cover mode: $cover_mode" ;;
+    esac
+done
 
 
 harness_tree_snapshot() {
@@ -399,12 +408,13 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 wait_port() {
-    local port=$1 pid=$2 host=${3:-127.0.0.1} start
+    local port=$1 pid=$2 host=${3:-127.0.0.1} rtt_ms=${4:-0} start
     start=$(pid_start_time "$pid") || return 1
-    python3 - "$port" "$pid" "$start" "$host" <<'PY'
+    python3 - "$port" "$pid" "$start" "$host" "$rtt_ms" <<'PY'
 import os, socket, sys, time
-port, pid, expected, host = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3], sys.argv[4]
-deadline = time.monotonic() + 10
+port, pid, expected, host, rtt_ms = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3], sys.argv[4], int(sys.argv[5])
+connect_timeout = max(.1, rtt_ms * 3 / 1000)
+deadline = time.monotonic() + max(10, connect_timeout * 5)
 while time.monotonic() < deadline:
     try:
         raw = open(f"/proc/{pid}/stat").read(); observed = raw[raw.rfind(")") + 2:].split()[19]
@@ -412,7 +422,7 @@ while time.monotonic() < deadline:
         raise SystemExit("registered process exited")
     if observed != expected: raise SystemExit("PID identity changed")
     with socket.socket() as sock:
-        sock.settimeout(.1)
+        sock.settimeout(connect_timeout)
         if sock.connect_ex((host, port)) == 0: raise SystemExit(0)
     time.sleep(.02)
 raise SystemExit(f"port {port} did not become ready")
@@ -532,7 +542,7 @@ else
     track_last origin-https "$!"; https_pid=$last_pid
 fi
 wait_port "$http_port" "$http_pid"
-wait_port "$https_port" "$https_pid" "$cover_address"
+wait_port "$https_port" "$https_pid" "$cover_address" "${cover_netem_rtt_ms:-0}"
 
 python3 - "$out_dir/order.json" "$blocks" "$abba_start" "$port_base" <<'PY'
 import json, sys
@@ -555,9 +565,9 @@ jq -n --arg runId "$run_id" --arg startedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg contractPath "$host_contract_path" --arg contractSha "$host_contract_sha" --arg helperPath "$host_helper_path" --arg helperSha "$host_helper_sha" --argjson hostLock "$host_lock_evidence" \
     --arg xrayBin "$xray_bin" --arg xraySha "$xray_sha" --arg xrayBuildId "$xray_build_id" \
     --arg repositoryHead "$repository_head" --argjson repositoryDirty "$repository_dirty" --arg mode "$measure_mode" --arg concurrencies "$concurrencies" --argjson blocks "$blocks" --argjson samples "$samples" --argjson conns "$connections" \
-    --arg coverTarget "$cover_target" --arg coverNetemRttMs "$cover_netem_rtt_ms" \
+    --arg coverTarget "$cover_target" --arg coverNetemRttMs "$cover_netem_rtt_ms" --arg baselineCoverMode "$baseline_cover_mode" --arg candidateCoverMode "$candidate_cover_mode" \
     --argjson portBase "$port_base" --argjson portCount "$port_count" \
-    '{schemaVersion:2,runId:$runId,startedAt:$startedAt,repository:{head:$repositoryHead,dirty:$repositoryDirty},method:"balanced block ABBA",blocks:$blocks,samplesPerSlot:$samples,connectionsPerSample:$conns,concurrencies:$concurrencies,measureMode:$mode,ports:{address:"127.0.0.1",base:$portBase,count:$portCount},coverNetwork:{target:$coverTarget,netemRttMs:(if $coverNetemRttMs == "" then null else ($coverNetemRttMs|tonumber) end),model:(if $coverNetemRttMs == "" then "loopback" else "one-leg-veth-netem" end)},baseline:{path:$baselineBin,sha256:$baselineSha,buildId:$baselineBuildId,commit:$baselineCommit,identity:{path:$baselineIdentity,sha256:$baselineIdentitySha}},candidate:{path:$candidateBin,sha256:$candidateSha,buildId:$candidateBuildId,commit:$candidateCommit},harness:{entrypoint:{path:$scriptPath,sha256:$scriptSha},contract:{path:$contractPath,sha256:$contractSha},keeperHelper:{path:$helperPath,sha256:$helperSha},benchOrigin:{path:$benchOriginTree,manifestSha256:$benchOriginManifest,fileCount:$benchOriginFiles}},hostExclusiveLock:$hostLock,xray:{path:$xrayBin,sha256:$xraySha,buildId:$xrayBuildId}}' >"$out_dir/environment.json"
+    '{schemaVersion:2,runId:$runId,startedAt:$startedAt,repository:{head:$repositoryHead,dirty:$repositoryDirty},method:"balanced block ABBA",blocks:$blocks,samplesPerSlot:$samples,connectionsPerSample:$conns,concurrencies:$concurrencies,measureMode:$mode,ports:{address:"127.0.0.1",base:$portBase,count:$portCount},coverNetwork:{target:$coverTarget,netemRttMs:(if $coverNetemRttMs == "" then null else ($coverNetemRttMs|tonumber) end),model:(if $coverNetemRttMs == "" then "loopback" else "one-leg-veth-netem" end)},coverModes:{baseline:$baselineCoverMode,candidate:$candidateCoverMode},baseline:{path:$baselineBin,sha256:$baselineSha,buildId:$baselineBuildId,commit:$baselineCommit,identity:{path:$baselineIdentity,sha256:$baselineIdentitySha}},candidate:{path:$candidateBin,sha256:$candidateSha,buildId:$candidateBuildId,commit:$candidateCommit},harness:{entrypoint:{path:$scriptPath,sha256:$scriptSha},contract:{path:$contractPath,sha256:$contractSha},keeperHelper:{path:$helperPath,sha256:$helperSha},benchOrigin:{path:$benchOriginTree,manifestSha256:$benchOriginManifest,fileCount:$benchOriginFiles}},hostExclusiveLock:$hostLock,xray:{path:$xrayBin,sha256:$xraySha,buildId:$xrayBuildId}}' >"$out_dir/environment.json"
 
 slot_index=0
 while IFS=$'\t' read -r block position implementation server_port socks_port; do
@@ -565,14 +575,22 @@ while IFS=$'\t' read -r block position implementation server_port socks_port; do
     slot=$(printf 'block-%02d-slot-%02d-%s' "$block" "$position" "$implementation")
     slot_dir="$out_dir/slots/$slot"; mkdir -p "$slot_dir"
     if [[ $implementation == baseline ]]; then binary=$baseline_bin; binary_sha=$baseline_sha; binary_build_id=$baseline_build_id; else binary=$candidate_bin; binary_sha=$candidate_sha; binary_build_id=$candidate_build_id; fi
+    if [[ $implementation == baseline ]]; then cover_mode=$baseline_cover_mode; else cover_mode=$candidate_cover_mode; fi
     "$binary" config generate standalone --listen 127.0.0.1 --port "$server_port" \
         --target "$cover_target" --server-name localhost >"$work/$slot.raw.json" 2>"$slot_dir/generate.log"
     public_key=$(sed -n 's/^REALITY public key for the client: //p' "$slot_dir/generate.log")
     uuid=$(jq -er '.inbounds[0].settings.clients[0].id' "$work/$slot.raw.json")
     short_id=$(jq -er '.inbounds[0].settings.clients[0].shortIds[0]' "$work/$slot.raw.json")
-    jq --arg cache "$work/assets-$slot" --arg netem "$cover_netem_rtt_ms" \
+    jq --arg cache "$work/assets-$slot" --arg netem "$cover_netem_rtt_ms" --arg coverMode "$cover_mode" --arg implementation "$implementation" \
         '.log.level=(if $netem == "" then "warn" else "info" end)
-         |.assets.cacheDirectory=$cache' "$work/$slot.raw.json" >"$work/$slot.server.json"
+         |.assets.cacheDirectory=$cache
+         |if $coverMode == "cold" then
+              .inbounds[0].streamSettings.realitySettings.coverOptimization=(if $implementation == "baseline" then {enabled:true,warmTcp:false} else {enabled:true,warmTcp:false,prebuiltProfiles:false} end)
+          elif $coverMode == "warm" then
+              .inbounds[0].streamSettings.realitySettings.coverOptimization=(if $implementation == "baseline" then {enabled:true,warmTcp:true} else {enabled:true,warmTcp:true,prebuiltProfiles:false} end)
+          elif $coverMode == "prebuilt" then
+              .inbounds[0].streamSettings.realitySettings.coverOptimization={enabled:true,warmTcp:true,prebuiltProfiles:true}
+          else . end' "$work/$slot.raw.json" >"$work/$slot.server.json"
     jq -n --arg uuid "$uuid" --arg pk "$public_key" --arg sid "$short_id" --argjson server "$server_port" --argjson socks "$socks_port" \
         '{log:{loglevel:"warning"},inbounds:[{listen:"127.0.0.1",port:$socks,protocol:"socks",settings:{auth:"noauth",udp:false}}],outbounds:[{protocol:"vless",settings:{vnext:[{address:"127.0.0.1",port:$server,users:[{id:$uuid,encryption:"none",flow:"xtls-rprx-vision"}]}]},streamSettings:{network:"tcp",security:"reality",realitySettings:{fingerprint:"chrome",serverName:"localhost",publicKey:$pk,shortId:$sid,spiderX:"/"}}}]}' >"$work/$slot.client.json"
     if [[ $measure_mode == strace ]]; then
@@ -597,6 +615,14 @@ while IFS=$'\t' read -r block position implementation server_port socks_port; do
     if [[ -n $cover_netem_rtt_ms ]]; then
         warm_concurrency=$(printf '%s\n' $concurrencies | sort -nr | head -1)
         warm_connections=$((warm_concurrency * 2))
+        # Chrome 133 legitimately rotates among four GREASE-ECH payload
+        # lengths. Precondition every implementation symmetrically with enough
+        # sessions to characterize that bounded class corpus before perf starts;
+        # startup collection remains visible in the aggregate profile counters.
+        if [[ $candidate_cover_mode == prebuilt || $candidate_cover_mode == default ]] &&
+           ((warm_connections < 32)); then
+            warm_connections=32
+        fi
         ((warm_connections > 64)) && warm_connections=64
         python3 "$work/driver.py" 1 "$warm_connections" "$socks_port" "$http_port" \
             "$warm_concurrency" "$slot_dir/warmup.json" "$implementation" "$block" "$position"
@@ -656,6 +682,35 @@ with open(sys.argv[2], "x", encoding="utf-8") as output:
     json.dump(record, output, indent=2, sort_keys=True)
     output.write("\n")
 PY
+        if [[ $candidate_cover_mode == prebuilt || $candidate_cover_mode == default ]]; then
+            python3 - "$slot_dir/server.log" "$slot_dir/profile-summary.json" <<'PY'
+import json, sys
+records = []
+for line in open(sys.argv[1], encoding="utf-8"):
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if record.get("event") == "cover_profile_summary":
+        records.append(record)
+if len(records) != 1:
+    raise SystemExit(f"expected one cover_profile_summary, found {len(records)}")
+record = records[0]
+hits = record["cover_profile_hit"]
+misses = record["cover_profile_miss"]
+if hits <= 0 or record["cover_profile_validated"] <= 0:
+    raise SystemExit("candidate benchmark did not exercise a validated profile hit")
+if (record["cover_profile_state"] != "validated"
+        or record["cover_profile_unstable"] != 0
+        or record["cover_profile_refresh_failure"] != 0
+        or record["cover_profile_disagreement"] != 0):
+    raise SystemExit("controlled cover-profile differential consensus failed")
+record["profileHitRatio"] = hits / (hits + misses)
+with open(sys.argv[2], "x", encoding="utf-8") as output:
+    json.dump(record, output, indent=2, sort_keys=True)
+    output.write("\n")
+PY
+        fi
     fi
     if [[ $measure_mode == perf ]]; then [[ -s $slot_dir/perf.json ]] || die "missing validated perf evidence in $slot"; else [[ -s $slot_dir/strace.txt ]] || die "missing strace evidence in $slot"; fi
     [[ $(sha256sum "$binary" | awk '{print $1}') == "$binary_sha" ]] || die "$implementation binary changed after $slot"
@@ -667,7 +722,7 @@ import json, pathlib, random, statistics, sys
 root=pathlib.Path(sys.argv[1]); blocks,samples,connections=int(sys.argv[2]),int(sys.argv[3]),int(sys.argv[4]); concurrencies=[int(x) for x in sys.argv[5].split()]; mode=sys.argv[6]
 order=json.load(open(root/'order.json'))['slots']; slot_dirs=sorted((root/'slots').iterdir())
 if len(order)!=blocks*4 or len(slot_dirs)!=blocks*4: raise SystemExit('missing ABBA slots')
-all_rows=[]; slots=[]; perf_rows=[]; pool_rows=[]
+all_rows=[]; slots=[]; perf_rows=[]; pool_rows=[]; profile_rows=[]
 for slot in slot_dirs:
     identity=json.load(open(slot/'identity.json')); rows=json.load(open(slot/'samples.json'))
     if len(rows)!=samples*len(concurrencies): raise SystemExit(f'missing samples: {slot}')
@@ -675,6 +730,8 @@ for slot in slot_dirs:
     all_rows.extend(rows); slots.append(identity)
     pool_path=slot/'pool-summary.json'
     if pool_path.exists(): pool_rows.append(json.load(open(pool_path)))
+    profile_path=slot/'profile-summary.json'
+    if profile_path.exists(): profile_rows.append(json.load(open(profile_path)))
     if mode == 'perf':
         perf = json.load(open(slot/'perf.json'))
         perf_rows.append({**identity, **perf})
@@ -717,7 +774,18 @@ if pool_rows:
                   'coldFallback':sum(row['pool_cold_fallback'] for row in pool_rows),
                   'staleDiscard':sum(row['pool_stale_discard'] for row in pool_rows)}
     pool_summary['warmHitRatio']=pool_summary['checkoutHit']/pool_summary['checkoutTotal']
-summary={'schemaVersion':2,'status':'COMPLETE','performanceVerdict':'NOT_EVALUATED','method':'alternating balanced ABBA blocks; block bootstrap','slotCount':len(slots),'rawSampleCount':len(all_rows),'cells':cells,'serverCpuPerConnection':cpu_summary,'coverPool':pool_summary,'failures':0}
+profile_summary=None
+if profile_rows:
+    profile_summary={'slotCount':len(profile_rows),
+                     'hit':sum(row['cover_profile_hit'] for row in profile_rows),
+                     'miss':sum(row['cover_profile_miss'] for row in profile_rows),
+                     'stale':sum(row['cover_profile_stale'] for row in profile_rows),
+                     'unstable':sum(row['cover_profile_unstable'] for row in profile_rows),
+                     'refresh':sum(row['cover_profile_refresh'] for row in profile_rows),
+                     'refreshFailure':sum(row['cover_profile_refresh_failure'] for row in profile_rows),
+                     'disagreement':sum(row['cover_profile_disagreement'] for row in profile_rows)}
+    profile_summary['profileHitRatio']=profile_summary['hit']/(profile_summary['hit']+profile_summary['miss'])
+summary={'schemaVersion':3,'status':'COMPLETE','performanceVerdict':'NOT_EVALUATED','method':'alternating balanced ABBA blocks; block bootstrap','slotCount':len(slots),'rawSampleCount':len(all_rows),'cells':cells,'serverCpuPerConnection':cpu_summary,'coverPool':pool_summary,'coverProfile':profile_summary,'failures':0}
 json.dump(summary,open(root/'summary.json','x'),indent=2); print(json.dumps(summary))
 PY
 

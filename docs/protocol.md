@@ -27,6 +27,11 @@ Xray-compatible client
   cardinality-adaptive owner index; after VLESS decode, the header UUID must
   equal that resolved owner. A UUID and a short ID copied from different client
   entries therefore cannot be combined into an authorized session.
+  Authenticated setup has three fail-safe cover tiers: a validated exact-class
+  profile builds a fresh local flight; otherwise a TCP-established warm socket
+  obtains the current real cover flight; otherwise the ordinary cold cover
+  path is used. Prebuilt mode never replays a ServerHello or key material and
+  is unreachable before authentication and replay reservation.
 - **Fallback** is the failure mode: an unauthenticated connection is
   forwarded byte-for-byte, in order, to the cover target. No synthetic
   response identifies the service as a proxy, and fallback concurrency is
