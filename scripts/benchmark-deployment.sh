@@ -24,7 +24,9 @@
 #             moved onto a veth pair across a network namespace, shaped by
 #             tc netem at 1/10/50/100/200 ms RTT, rerunning explicit cold and
 #             warm NXR/SOCKS5 setup cells on the same shaped hop.
-#             comparison. All host network state is recorded before/after and
+#             comparison. Cumulative startup-aware warm-pool hit/miss/stale
+#             and controller counters are retained at graceful retirement.
+#             All host network state is recorded before/after and
 #             restored (trap on EXIT/INT/TERM); every change is logged.
 #   longflow  Long-flow relay verification: after NXR auth on the landing the
 #             debug log must show a relay backend (expect splice) carrying the
@@ -288,7 +290,7 @@ trap 'exit 143' TERM
 for program in curl jq python3 go openssl sha256sum; do
     command -v "$program" >/dev/null || { echo "missing: $program" >&2; exit 2; }
 done
-log "servers log at warn level (longflow landing at debug, by design); out: $out_dir"
+log "servers log at warn level; RTT warm LINEs use info for retirement metrics and longflow LANDING uses debug; out: $out_dir"
 
 free_port() { rr_next_port; }
 
@@ -971,7 +973,7 @@ section_rtt() {
         --output-dir "$work/rtt-handoff" >"$work/rtt-handoff.generate.out" \
         2>"$work/rtt-handoff.generate.log"
     jq --arg cache "$work/assets-rtt-handoff-line" \
-        '.log.level = "warn" | .assets.cacheDirectory = $cache' \
+        '.log.level = "info" | .assets.cacheDirectory = $cache' \
         "$work/rtt-handoff/line.json" >"$work/rtt-handoff.line.json"
     jq --arg cache "$work/assets-rtt-handoff-landing" \
         '.log.level = "warn" | .assets.cacheDirectory = $cache' \
@@ -979,7 +981,8 @@ section_rtt() {
     jq --arg cache "$work/assets-rtt-handoff-cold-line" \
         --argjson linePort "$port_line_h_cold" \
         --argjson landingPort "$ns_handoff_cold_port" \
-        '.inbounds[0].port = $linePort | .assets.cacheDirectory = $cache
+        '.inbounds[0].port = $linePort | .log.level = "warn"
+         | .assets.cacheDirectory = $cache
          | (.outbounds[] | select(.protocol == "handoff").settings.port) = $landingPort
          | (.outbounds[] | select(.protocol == "handoff").settings.warmTcp) = false' \
         "$work/rtt-handoff.line.json" >"$work/rtt-handoff-cold.line.json"
@@ -1009,7 +1012,7 @@ section_rtt() {
         --nxr-address 10.203.0.2 --nxr-port "$ns_landing_port" --nxr-key "$nxr_key" \
         2> "$work/rtt-b.generate.log" | \
         jq --arg cache "$work/assets-rtt-b" \
-            '.log.level = "warn" | .assets.cacheDirectory = $cache' \
+            '.log.level = "info" | .assets.cacheDirectory = $cache' \
         > "$work/rtt-b.line.json"
     jq --arg cache "$work/assets-rtt-b-cold" --argjson port "$port_line_b_cold" \
         '.inbounds[0].port = $port | .log.level = "warn"
@@ -1021,7 +1024,7 @@ section_rtt() {
         --nxr-address 10.203.0.2 --nxr-port 9 --nxr-key "$nxr_key" \
         2> "$work/rtt-c.generate.log" | \
         jq --arg cache "$work/assets-rtt-c" --argjson sport "$ns_socks_port" \
-            '.log.level = "warn" | .assets.cacheDirectory = $cache
+            '.log.level = "info" | .assets.cacheDirectory = $cache
              | .outbounds += [{protocol: "socks5", tag: "via-socks",
                                settings: {address: "10.203.0.2", port: $sport}}]
              | .routing.users[0].defaultOutbound = "via-socks"' \
@@ -1146,13 +1149,6 @@ section_rtt() {
         done
     done
 
-    python3 "$netem_summarizer" \
-        --profiles "$state/profiles.jsonl" \
-        --output "$out_dir/summary-netem.json" \
-        --rtts "$rtts" --losses "$losses" \
-        --concurrencies "$rtt_concurrencies" \
-        --samples "$((samples * 2))" --connections "$rtt_conns"
-
     # Graceful retirement emits fixed-cardinality transport pool summaries.
     # Preserve those logs beside the raw samples before temporary cleanup.
     rr_stop_registered_pid "$pid_line_b"
@@ -1161,6 +1157,35 @@ section_rtt() {
     install -m 0600 "$work/server-rtt-b-line.log" "$state/nxr-warm-server.log"
     install -m 0600 "$work/server-rtt-c-line.log" "$state/socks-warm-server.log"
     install -m 0600 "$work/server-rtt-handoff-line.log" "$state/handoff-warm-server.log"
+    jq -s \
+        '[.[] | select(.event == "transport_pool_summary" and .transport == "nxr")][0]' \
+        "$state/nxr-warm-server.log" >"$work/nxr-pool.json"
+    jq -s \
+        '[.[] | select(.event == "transport_pool_summary" and .transport == "socks5")][0]' \
+        "$state/socks-warm-server.log" >"$work/socks-pool.json"
+    jq -s \
+        '[.[] | select(.event == "transport_pool_summary" and .transport == "handoff")][0]' \
+        "$state/handoff-warm-server.log" >"$work/handoff-pool.json"
+    jq -s \
+        'map(. + {
+          checkoutAcquisitionRatio:
+            (if .pool_checkout_total == 0 then 0
+             else (.pool_checkout_hit / .pool_checkout_total) end),
+          successfulWarmRatioLowerBound:
+            (if .pool_checkout_total == 0 then 0
+             else (((.pool_checkout_hit - .pool_stale_discard) | if . < 0 then 0 else . end)
+                   / .pool_checkout_total) end)
+        })' \
+        "$work/handoff-pool.json" "$work/nxr-pool.json" "$work/socks-pool.json" \
+        >"$state/pool-summaries.json"
+
+    python3 "$netem_summarizer" \
+        --profiles "$state/profiles.jsonl" \
+        --pool-summaries "$state/pool-summaries.json" \
+        --output "$out_dir/summary-netem.json" \
+        --rtts "$rtts" --losses "$losses" \
+        --concurrencies "$rtt_concurrencies" \
+        --samples "$((samples * 2))" --connections "$rtt_conns"
 
     echo "=== after: tc qdisc show (before teardown)" | tee -a "$state/netstate.txt"
     sudo -n "$tc" qdisc show | tee -a "$state/netstate.txt"

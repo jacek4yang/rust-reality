@@ -666,12 +666,46 @@ def netem_fixture(root: Path, omit_last: bool = False) -> tuple[Path, list[Path]
     return profiles, raw_paths
 
 
+def netem_pool_fixture(root: Path) -> Path:
+    path = root / "pool-summaries.json"
+    write_json(path, [
+        {
+            "event": "transport_pool_summary",
+            "transport": transport,
+            "generation": 1,
+            "pool_ready": 4,
+            "pool_connecting": 0,
+            "pool_in_use": 0,
+            "pool_checkout_total": 100,
+            "pool_checkout_hit": 99,
+            "pool_checkout_miss": 1,
+            "pool_cold_fallback": 1,
+            "pool_stale_discard": 0,
+            "pool_connect_failure": 0,
+            "pool_refill": 104,
+            "pool_target_ready": 4,
+            "pool_growth": 1,
+            "pool_shrink": 1,
+            "arrival_rate_ewma": "20.000",
+            "connect_latency_ewma_ms": "50.000",
+            "recent_burst": "4.000",
+            "checkoutAcquisitionRatio": 0.99,
+            "successfulWarmRatioLowerBound": 0.99,
+        }
+        for transport in ("handoff", "nxr", "socks5")
+    ])
+    return path
+
+
 def test_netem(root: Path) -> None:
     passing = root / "netem-pass"
     passing.mkdir()
     profiles, _ = netem_fixture(passing)
+    pool_summaries = netem_pool_fixture(passing)
     output = passing / "summary.json"
-    result = invoke(NETEM, "--profiles", str(profiles), "--output", str(output),
+    result = invoke(NETEM, "--profiles", str(profiles),
+                    "--pool-summaries", str(pool_summaries),
+                    "--output", str(output),
                     "--rtts", "0 20", "--losses", "0 1",
                     "--concurrencies", "1 2", "--samples", "2",
                     "--connections", "3")
@@ -683,8 +717,11 @@ def test_netem(root: Path) -> None:
     missing = root / "netem-missing"
     missing.mkdir()
     profiles, _ = netem_fixture(missing, omit_last=True)
+    pool_summaries = netem_pool_fixture(missing)
     output = missing / "summary.json"
-    result = invoke(NETEM, "--profiles", str(profiles), "--output", str(output),
+    result = invoke(NETEM, "--profiles", str(profiles),
+                    "--pool-summaries", str(pool_summaries),
+                    "--output", str(output),
                     "--rtts", "0 20", "--losses", "0 1",
                     "--concurrencies", "1 2", "--samples", "2",
                     "--connections", "3")

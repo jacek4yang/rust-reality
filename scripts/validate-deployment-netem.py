@@ -17,6 +17,7 @@ LEGS = (
     "socks-warm",
     "socks-cold",
 )
+WARM_TRANSPORTS = ("handoff", "nxr", "socks5")
 
 
 def parse_words(raw: str, converter: type[int] | type[float]) -> list[int] | list[float]:
@@ -38,6 +39,65 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def read_pool_summaries(path: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    errors: list[str] = []
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, list):
+        return [], ["pool summaries must be an array"]
+    transports = [row.get("transport") for row in value if isinstance(row, dict)]
+    if sorted(transports) != sorted(WARM_TRANSPORTS):
+        errors.append(
+            f"pool summaries must contain exactly {list(WARM_TRANSPORTS)}"
+        )
+    required_counters = (
+        "pool_ready",
+        "pool_connecting",
+        "pool_in_use",
+        "pool_checkout_total",
+        "pool_checkout_hit",
+        "pool_checkout_miss",
+        "pool_cold_fallback",
+        "pool_stale_discard",
+        "pool_connect_failure",
+        "pool_refill",
+        "pool_target_ready",
+        "pool_growth",
+        "pool_shrink",
+    )
+    for index, row in enumerate(value):
+        if not isinstance(row, dict):
+            errors.append(f"pool summary {index} is not an object")
+            continue
+        for field in required_counters:
+            counter = row.get(field)
+            if not isinstance(counter, int) or counter < 0:
+                errors.append(
+                    f"pool summary {row.get('transport', index)} has invalid {field}"
+                )
+        total = row.get("pool_checkout_total")
+        hits = row.get("pool_checkout_hit")
+        misses = row.get("pool_checkout_miss")
+        if all(isinstance(item, int) for item in (total, hits, misses)):
+            if total != hits + misses:
+                errors.append(
+                    f"pool summary {row.get('transport', index)} checkout accounting mismatch"
+                )
+            if total <= 0:
+                errors.append(
+                    f"pool summary {row.get('transport', index)} has no measured checkouts"
+                )
+        for field in (
+            "checkoutAcquisitionRatio",
+            "successfulWarmRatioLowerBound",
+        ):
+            ratio = row.get(field)
+            if not isinstance(ratio, (int, float)) or not 0 <= ratio <= 1:
+                errors.append(
+                    f"pool summary {row.get('transport', index)} has invalid {field}"
+                )
+    return value, errors
+
+
 def validate(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
     expected_rtts = parse_words(args.rtts, int)
     expected_losses = parse_words(args.losses, float)
@@ -50,6 +110,7 @@ def validate(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
     profiles: list[dict[str, Any]] = []
     seen_keys: set[tuple[Any, Any]] = set()
     actual_raw_record_count = 0
+    pool_summaries, pool_errors = read_pool_summaries(args.pool_summaries)
 
     for profile in read_jsonl(args.profiles):
         errors: list[str] = []
@@ -144,6 +205,7 @@ def validate(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         and not missing
         and not unexpected
         and actual_raw_record_count == expected_raw_record_count
+        and not pool_errors
         and all(row["verdict"] == "PASS" for row in profiles)
     )
     report = {
@@ -169,6 +231,8 @@ def validate(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         "expectedConcurrencies": expected_concurrencies,
         "expectedRawRecordCount": expected_raw_record_count,
         "actualRawRecordCount": actual_raw_record_count,
+        "poolSummaries": pool_summaries,
+        "poolSummaryErrors": pool_errors,
         "missingProfiles": missing,
         "unexpectedProfiles": unexpected,
         "profiles": profiles,
@@ -179,6 +243,7 @@ def validate(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profiles", type=Path, required=True)
+    parser.add_argument("--pool-summaries", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--rtts", required=True)
     parser.add_argument("--losses", required=True)
