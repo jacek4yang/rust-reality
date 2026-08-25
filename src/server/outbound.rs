@@ -1093,7 +1093,7 @@ async fn read_before(
 mod tests {
     use std::{
         io,
-        net::Ipv4Addr,
+        net::{Ipv4Addr, Ipv6Addr},
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
@@ -1187,6 +1187,36 @@ mod tests {
         })
         .await
         .expect("warm pool must become ready");
+    }
+
+    async fn serve_one_no_auth_socks_connect(listener: &TcpListener) -> io::Result<()> {
+        for _ in 0..4 {
+            let (mut stream, _) = listener.accept().await?;
+            let mut greeting = [0_u8; 3];
+            match tokio::time::timeout(Duration::from_millis(100), stream.read_exact(&mut greeting))
+                .await
+            {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => return Err(error),
+                Err(_) => continue,
+            }
+            if greeting != [SOCKS_VERSION, 1, SOCKS_NO_AUTH] {
+                return Err(io::Error::other("unexpected SOCKS greeting"));
+            }
+            stream.write_all(&[SOCKS_VERSION, SOCKS_NO_AUTH]).await?;
+            let mut request = [0_u8; 10];
+            stream.read_exact(&mut request).await?;
+            if request[..4] != [SOCKS_VERSION, SOCKS_CONNECT, 0, 1] {
+                return Err(io::Error::other("unexpected SOCKS CONNECT request"));
+            }
+            stream
+                .write_all(&[SOCKS_VERSION, 0, 0, 1, 127, 0, 0, 1, 0, 0])
+                .await?;
+            return Ok(());
+        }
+        Err(io::Error::other(
+            "SOCKS protocol did not begin on a bounded candidate",
+        ))
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1421,6 +1451,178 @@ mod tests {
         let snapshot = registry.warm_pool_snapshots().remove(0).pool;
         assert_eq!(snapshot.checkout_hit, 1);
         assert_eq!(snapshot.cold_fallback, 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn socks5_upstream_close_while_ready_discards_then_cold_falls_back() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("SOCKS server must bind");
+        let address = listener.local_addr().expect("SOCKS address");
+        let policy = warm_policy();
+        let registry = OutboundRegistry::with_warm_pools(
+            &[OutboundConfig::Socks5 {
+                tag: "socks".to_owned(),
+                settings: Socks5Settings {
+                    address: address.ip().to_string(),
+                    port: address.port(),
+                    username: None,
+                    password: None,
+                    warm_tcp: true,
+                },
+            }],
+            DirectBarrier::new(&DirectBarrierConfig::default()),
+            Duration::from_secs(2),
+            FdBudget::new(4_096),
+            &NetworkConfig::default(),
+            NetworkEnvironment::detect(),
+            11,
+            WarmPoolAuthority::new(&policy, 1, PressureGauge::new()),
+            &policy,
+        );
+        registry.activate_warm_pools();
+        let (mut stale_peer, _) = listener.accept().await.expect("warm peer must connect");
+        wait_for_one_ready(&registry).await;
+        stale_peer
+            .shutdown()
+            .await
+            .expect("peer FIN must be observable");
+        drop(stale_peer);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let server = tokio::spawn(async move { serve_one_no_auth_socks_connect(&listener).await });
+
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 443);
+        let OutboundConnectOutcome::Connected(connection) = registry
+            .connect("socks", &destination)
+            .await
+            .expect("cold SOCKS fallback must negotiate")
+        else {
+            panic!("SOCKS cannot blackhole");
+        };
+        drop(connection);
+        let snapshot = registry.warm_pool_snapshots().remove(0).pool;
+        assert_eq!(snapshot.checkout_hit, 0);
+        assert_eq!(snapshot.checkout_miss, 1);
+        assert_eq!(snapshot.cold_fallback, 1);
+        assert_eq!(snapshot.stale_discard, 1);
+        registry.deactivate_warm_pools();
+        server
+            .await
+            .expect("SOCKS server must join")
+            .expect("SOCKS server result");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn socks5_upstream_close_immediately_after_checkout_recovers_before_connect() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("SOCKS server must bind");
+        let address = listener.local_addr().expect("SOCKS address");
+        let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut checked_out, _) = listener.accept().await?;
+            accepted_tx
+                .send(())
+                .map_err(|()| io::Error::other("receiver closed"))?;
+            let mut greeting = [0_u8; 3];
+            checked_out.read_exact(&mut greeting).await?;
+            assert_eq!(greeting, [SOCKS_VERSION, 1, SOCKS_NO_AUTH]);
+            drop(checked_out);
+            serve_one_no_auth_socks_connect(&listener).await
+        });
+        let policy = warm_policy();
+        let registry = OutboundRegistry::with_warm_pools(
+            &[OutboundConfig::Socks5 {
+                tag: "socks".to_owned(),
+                settings: Socks5Settings {
+                    address: address.ip().to_string(),
+                    port: address.port(),
+                    username: None,
+                    password: None,
+                    warm_tcp: true,
+                },
+            }],
+            DirectBarrier::new(&DirectBarrierConfig::default()),
+            Duration::from_secs(2),
+            FdBudget::new(4_096),
+            &NetworkConfig::default(),
+            NetworkEnvironment::detect(),
+            12,
+            WarmPoolAuthority::new(&policy, 1, PressureGauge::new()),
+            &policy,
+        );
+        registry.activate_warm_pools();
+        accepted_rx.await.expect("warm TCP must reach SOCKS server");
+        wait_for_one_ready(&registry).await;
+
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 443);
+        let OutboundConnectOutcome::Connected(connection) = registry
+            .connect("socks", &destination)
+            .await
+            .expect("bounded pre-CONNECT retry must recover")
+        else {
+            panic!("SOCKS cannot blackhole");
+        };
+        drop(connection);
+        let snapshot = registry.warm_pool_snapshots().remove(0).pool;
+        assert!(snapshot.checkout_hit >= 1);
+        assert_eq!(snapshot.stale_discard, 1);
+        assert!(snapshot.checkout_total <= 2);
+        assert!(snapshot.cold_fallback <= 1);
+        registry.deactivate_warm_pools();
+        server
+            .await
+            .expect("SOCKS server must join")
+            .expect("SOCKS server result");
+    }
+
+    #[tokio::test]
+    async fn socks5_connect_encodes_ipv4_ipv6_and_domain_destinations() {
+        let destinations = [
+            (
+                Destination::new(Address::Ipv4(Ipv4Addr::new(192, 0, 2, 1)), 443),
+                vec![SOCKS_VERSION, SOCKS_CONNECT, 0, 1, 192, 0, 2, 1, 1, 187],
+            ),
+            (
+                Destination::new(Address::Ipv6(Ipv6Addr::LOCALHOST), 53),
+                [
+                    vec![SOCKS_VERSION, SOCKS_CONNECT, 0, 4],
+                    vec![0; 15],
+                    vec![1, 0, 53],
+                ]
+                .concat(),
+            ),
+            (
+                Destination::new(Address::Domain("example.com".to_owned()), 80),
+                [
+                    vec![SOCKS_VERSION, SOCKS_CONNECT, 0, 3, 11],
+                    b"example.com".to_vec(),
+                    vec![0, 80],
+                ]
+                .concat(),
+            ),
+        ];
+        for (destination, expected) in destinations {
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+                .await
+                .expect("test listener must bind");
+            let address = listener.local_addr().expect("test listener address");
+            let writer = tokio::net::TcpStream::connect(address);
+            let reader = listener.accept();
+            let (writer, reader) = tokio::join!(writer, reader);
+            let mut writer = writer.expect("writer must connect");
+            let (mut reader, _) = reader.expect("reader must accept");
+            super::write_connect_request(
+                &mut writer,
+                &destination,
+                tokio::time::Instant::now() + Duration::from_secs(1),
+            )
+            .await
+            .expect("SOCKS CONNECT must encode");
+            let mut actual = vec![0_u8; expected.len()];
+            reader.read_exact(&mut actual).await.expect("encoded bytes");
+            assert_eq!(actual, expected);
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
