@@ -1101,26 +1101,53 @@ fn validate_policy(config: &Config) -> Result<(), ConfigError> {
     }
 
     // An untouched READY socket is retired at the earlier of the idle and
-    // absolute lifetime bounds. Keep the local landing zero-byte window at
-    // least one authentication deadline beyond that point so a colocated or
-    // combined LINE/LANDING configuration cannot predictably churn sockets.
-    // Separate-node deployments repeat the same comparison in their preflight.
+    // absolute lifetime bounds. When this process obviously dials one of its
+    // own Handoff/NXR listeners, keep the landing zero-byte window at least one
+    // authentication deadline beyond that point. Landing-only configurations
+    // must not inherit an unrelated LINE policy; separate-node deployments
+    // repeat the same comparison in their preflight.
     let warm = &config.advanced.limits.warm_connections;
     let effective_ready_lifetime = warm.idle_timeout_ms.min(warm.max_lifetime_ms);
     for (index, inbound) in config.inbounds.iter().enumerate() {
-        let (pre_auth, authentication) = match inbound {
+        let (pre_auth, authentication, has_colocated_warm_outbound) = match inbound {
             InboundConfig::Nxr(inbound) => (
                 inbound.settings.pre_auth_idle_timeout_ms,
                 inbound.settings.authentication_timeout_ms,
+                config.outbounds.iter().any(|outbound| {
+                    matches!(
+                        outbound,
+                        OutboundConfig::Nxr { settings, .. }
+                            if settings.warm_tcp
+                                && settings.port == inbound.port
+                                && target_is_local_listener(
+                                    &settings.address,
+                                    &inbound.listen,
+                                    inbound.port,
+                                )
+                    )
+                }),
             ),
             InboundConfig::Handoff(inbound) => (
                 inbound.settings.pre_auth_idle_timeout_ms,
                 inbound.settings.authentication_timeout_ms,
+                config.outbounds.iter().any(|outbound| {
+                    matches!(
+                        outbound,
+                        OutboundConfig::Handoff { settings, .. }
+                            if settings.warm_tcp
+                                && settings.port == inbound.port
+                                && target_is_local_listener(
+                                    &settings.address,
+                                    &inbound.listen,
+                                    inbound.port,
+                                )
+                    )
+                }),
             ),
             InboundConfig::Vless(_) => continue,
         };
         let required = effective_ready_lifetime.saturating_add(authentication);
-        if pre_auth < required {
+        if has_colocated_warm_outbound && pre_auth < required {
             return fail(
                 format!("inbounds[{index}].settings.preAuthIdleTimeoutMs"),
                 format!(
@@ -1273,6 +1300,21 @@ fn validate_policy(config: &Config) -> Result<(), ConfigError> {
     }
     validate_relay_memory(relay)?;
     Ok(())
+}
+
+fn target_is_local_listener(address: &str, listen: &super::ListenConfig, port: u16) -> bool {
+    let Ok(target) = address.parse::<IpAddr>() else {
+        return false;
+    };
+    ConnectionPlanner::listener_addresses(listen, port)
+        .into_iter()
+        .map(|address| address.ip())
+        .any(|bound| {
+            bound == target
+                || (bound.is_unspecified()
+                    && target.is_loopback()
+                    && bound.is_ipv4() == target.is_ipv4())
+        })
 }
 
 /// Rejects an impossible relay memory budget before any listener binds.
@@ -1845,6 +1887,17 @@ mod tests {
                     connect_timeout_ms: 10_000,
                 },
             }));
+        validate_config(&config)
+            .expect("a landing-only configuration has no local warm lifetime to compare");
+        config.outbounds.push(OutboundConfig::Nxr {
+            tag: "colocated-line".to_owned(),
+            settings: crate::config::NxrSettings {
+                address: std::net::Ipv4Addr::LOCALHOST.to_string(),
+                port: 9443,
+                pre_shared_key: SecretString::new("WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo"),
+                warm_tcp: true,
+            },
+        });
         let error = validate_config(&config)
             .expect_err("predictable warm-socket churn must fail validation");
         assert_eq!(error.path(), "inbounds[1].settings.preAuthIdleTimeoutMs");

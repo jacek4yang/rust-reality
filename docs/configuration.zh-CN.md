@@ -348,11 +348,13 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 独立性仍是运维者的责任。Handoff 监听器承载在线会话
 密钥，不得直接暴露在互联网：防火墙应只允许来自线路机源地址的访问。
 
-每个 Handoff/NXR 入站都要求
+对于可明确识别的同进程 Handoff/NXR 入站与 warm 出站组合，配置校验要求
 `preAuthIdleTimeoutMs >= min(warmConnections.idleTimeoutMs,
 warmConnections.maxLifetimeMs) + authenticationTimeoutMs`，避免正常 LINE
 ready 生命周期系统性长于 LANDING。idle socket 仍未认证，并受
 `advanced.limits.resourceGovernor.maxPreAuthIdleConnections` 独立上限约束。
+LINE 与 LANDING 使用独立配置时，部署预检必须执行同一比较；仅 LANDING 的
+配置不会与未使用的 warm-pool 策略耦合。
 
 #### 密钥轮换
 

@@ -385,12 +385,15 @@ material. Independence across nodes remains the operator's obligation. The Hando
 session keys and must not be exposed to the Internet: allow it only from the
 line nodes' source addresses at the firewall.
 
-For every Handoff or NXR inbound, validation requires
-`preAuthIdleTimeoutMs >= min(warmConnections.idleTimeoutMs,
+For an obvious colocated Handoff or NXR inbound/warm-outbound pair, validation
+requires `preAuthIdleTimeoutMs >= min(warmConnections.idleTimeoutMs,
 warmConnections.maxLifetimeMs) + authenticationTimeoutMs`. This prevents the
 normal LINE ready lifetime from systematically outliving LANDING. Idle sockets
 remain unauthenticated and are also bounded by
-`advanced.limits.resourceGovernor.maxPreAuthIdleConnections`.
+`advanced.limits.resourceGovernor.maxPreAuthIdleConnections`. Separate LINE
+and LANDING configurations must enforce the same comparison during deployment
+preflight; a LANDING-only configuration is not coupled to an unused warm-pool
+policy.
 
 #### Key rotation
 

@@ -860,9 +860,14 @@ impl RuntimeStore {
             &self.pressure,
             &self.authorities,
         )?;
-        current.deactivate_warm_pools();
         self.current.store(Arc::new(candidate));
         self.generation.store(generation, Ordering::Release);
+        // Publish first so an accept racing this update can only observe a
+        // live old generation or the new one, never a retired handler. The old
+        // snapshot remains locally owned here while its unused speculative
+        // sockets are reclaimed immediately afterwards; checked-out sessions
+        // retain their independent stream and permits.
+        current.deactivate_warm_pools();
         let published = self.load();
         emit(
             &published.logger,

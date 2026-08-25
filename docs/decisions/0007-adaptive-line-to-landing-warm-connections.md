@@ -49,11 +49,13 @@ Handoff or NXR authority, replay state, destination side effect, or session
 ownership is granted merely because the TCP connection was established in
 advance.**
 
-The default pre-auth idle lifetime is 60 seconds. Configuration validation
-requires it to cover the smaller of the LINE pool's idle and absolute
-lifetimes plus the short authentication deadline, preventing predictable
-LINE/LANDING stale churn. `maxPreAuthIdleConnections` is a separate LANDING
-ceiling, defaults to 1024, and cannot exceed `maxConnections`.
+The default pre-auth idle lifetime is 60 seconds. For an obvious colocated
+LINE/LANDING pair, configuration validation requires it to cover the smaller
+of the LINE pool's idle and absolute lifetimes plus the short authentication
+deadline, preventing predictable stale churn without coupling a LANDING-only
+configuration to an unused LINE policy. Separate-node deployment preflight
+must enforce the same relationship. `maxPreAuthIdleConnections` is a separate
+LANDING ceiling, defaults to 1024, and cannot exceed `maxConnections`.
 
 ## Pool ownership and adaptation
 
