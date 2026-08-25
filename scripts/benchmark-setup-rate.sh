@@ -286,6 +286,14 @@ grep -aFq -- "$candidate_commit" "$candidate_bin" || die 'candidate ELF does not
 slot_count=$((blocks * 4))
 port_count=$((2 + slot_count * 2))
 ((port_base >= 1024 && port_base + port_count - 1 <= 65535)) || die 'PORT_BASE does not leave a large enough port block'
+[[ -r /proc/sys/net/ipv4/ip_local_port_range ]] ||
+    die 'cannot verify the Linux ephemeral port range'
+read -r ephemeral_port_min ephemeral_port_max </proc/sys/net/ipv4/ip_local_port_range
+[[ $ephemeral_port_min =~ ^[0-9]+$ && $ephemeral_port_max =~ ^[0-9]+$ ]] ||
+    die 'invalid Linux ephemeral port range'
+port_last=$((port_base + port_count - 1))
+((port_last < ephemeral_port_min || port_base > ephemeral_port_max)) ||
+    die "benchmark port block $port_base-$port_last overlaps the Linux ephemeral range $ephemeral_port_min-$ephemeral_port_max"
 python3 - "$port_base" "$port_count" <<'PY'
 import socket, sys
 base, count = map(int, sys.argv[1:])
