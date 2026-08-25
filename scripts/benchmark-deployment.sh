@@ -23,7 +23,7 @@
 #   rtt       RTT sweep (only with REQUIRE_NETEM=1): the line<->landing hop is
 #             moved onto a veth pair across a network namespace, shaped by
 #             tc netem at 1/10/50/100/200 ms RTT, rerunning explicit cold and
-#             warm NXR/SOCKS5 setup cells on the same shaped hop.
+#             warm Handoff/NXR/SOCKS5 setup cells on the same shaped hop.
 #             comparison. Cumulative startup-aware warm-pool hit/miss/stale
 #             and controller counters are retained at graceful retirement.
 #             All host network state is recorded before/after and
@@ -67,6 +67,7 @@
 #      TPUT_CELLS ("32:1 32:32 512:32"), LONGFLOW_MIB (512),
 #      RTTS ("1 10 50 100 200"), LOSSES ("0 0.1 1", applied per direction),
 #      RTT_CONNS (512), RTT_CONCURRENCIES ("1 8 32 128 512"),
+#      EVALUATE_NETEM_PERFORMANCE (formal default: 1; exploratory default: 0),
 #      KEEP_WORK (0), REQUIRE_NETEM (0), TMPDIR
 #      (optional external work root for generated payloads and secrets).
 #
@@ -115,6 +116,7 @@ losses=${LOSSES:-0 0.1 1}
 rtt_conns=${RTT_CONNS:-512}
 rtt_concurrencies=${RTT_CONCURRENCIES:-1 8 32 128 512}
 require_netem=${REQUIRE_NETEM:-}
+evaluate_netem_performance=${EVALUATE_NETEM_PERFORMANCE:-}
 driver="$repository/scripts/deployment_driver.py"
 rr_register_harness_file "$driver"
 rr_write_contract_metadata
@@ -135,6 +137,7 @@ fi
 if [[ $RR_EXPLORATORY == 0 ]]; then
     sections=${sections:-routing cost nxr rtt longflow}
     require_netem=${require_netem:-1}
+    evaluate_netem_performance=${evaluate_netem_performance:-1}
     [[ $smoke == 0 ]] || {
         echo "formal deployment evidence cannot use SMOKE=1" >&2
         exit 2
@@ -193,9 +196,14 @@ PY
 else
     sections=${sections:-routing cost nxr longflow}
     require_netem=${require_netem:-0}
+    evaluate_netem_performance=${evaluate_netem_performance:-0}
 fi
 [[ $require_netem == 0 || $require_netem == 1 ]] || {
     echo "REQUIRE_NETEM must be 0 or 1" >&2
+    exit 2
+}
+[[ $evaluate_netem_performance == 0 || $evaluate_netem_performance == 1 ]] || {
+    echo "EVALUATE_NETEM_PERFORMANCE must be 0 or 1" >&2
     exit 2
 }
 
@@ -208,6 +216,7 @@ host_veth=""
 ns_veth=""
 netns_created=0
 host_veth_created=0
+netem_evaluation_failed=0
 netns_identity=""
 host_veth_ifindex=""
 
@@ -1181,13 +1190,18 @@ section_rtt() {
         "$work/handoff-pool.json" "$work/nxr-pool.json" "$work/socks-pool.json" \
         >"$state/pool-summaries.json"
 
-    python3 "$netem_summarizer" \
+    local netem_args=(
         --profiles "$state/profiles.jsonl" \
         --pool-summaries "$state/pool-summaries.json" \
         --output "$out_dir/summary-netem.json" \
         --rtts "$rtts" --losses "$losses" \
         --concurrencies "$rtt_concurrencies" \
         --samples "$((samples * 2))" --connections "$rtt_conns"
+    )
+    if [[ $evaluate_netem_performance == 1 ]]; then
+        netem_args+=(--evaluate-performance)
+    fi
+    python3 "$netem_summarizer" "${netem_args[@]}" || netem_evaluation_failed=1
 
     echo "=== after: tc qdisc show (before teardown)" | tee -a "$state/netstate.txt"
     sudo -n "$tc" qdisc show | tee -a "$state/netstate.txt"
@@ -1303,7 +1317,7 @@ for section in $sections; do
     esac
 done
 
-verdict=0
+verdict=$netem_evaluation_failed
 summarize_args=(summarize --out-dir "$out_dir")
 if [[ $RR_EXPLORATORY == 0 ]]; then
     summarize_args+=(--formal-plan --samples "$samples" --connections "$conns"
@@ -1323,10 +1337,14 @@ if [[ $require_netem == 1 && ! -s $out_dir/summary-netem.json ]]; then
     mv -- "$work/summary.failed.json" "$out_dir/summary.json"
     verdict=1
 fi
-if [[ $require_netem == 1 ]] && ! jq -e '
+expected_netem_performance=NOT_EVALUATED
+if [[ $evaluate_netem_performance == 1 ]]; then
+    expected_netem_performance=PASS
+fi
+if [[ $require_netem == 1 ]] && ! jq -e --arg performance "$expected_netem_performance" '
     .verdict == "PASS"
     and .dataQualityVerdict == "PASS"
-    and .performanceVerdict == "NOT_EVALUATED"
+    and .performanceVerdict == $performance
     and .actualProfileCount == .expectedProfileCount
     and .actualRawRecordCount == .expectedRawRecordCount
     and (.missingProfiles | length) == 0
@@ -1338,5 +1356,5 @@ fi
 if (( verdict == 0 )); then
     rr_finalize_contract || verdict=1
 fi
-log "done; results in $out_dir (correctness/data gate: $(jq -r .gateVerdict "$out_dir/summary.json"); performance: NOT_EVALUATED)"
+log "done; results in $out_dir (correctness/data gate: $(jq -r .gateVerdict "$out_dir/summary.json"); performance: $(jq -r .performanceVerdict "$out_dir/summary.json"))"
 exit "$verdict"

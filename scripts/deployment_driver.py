@@ -955,7 +955,13 @@ def cmd_summarize(args):
             with open(path) as fh:
                 report = json.load(fh)
             summary[key] = report
-            verdicts[key] = report.get("verdict")
+            if key == "netemProfiles":
+                verdicts[key] = report.get("dataQualityVerdict")
+                summary["performanceVerdict"] = report.get(
+                    "performanceVerdict", "INVALID"
+                )
+            else:
+                verdicts[key] = report.get("verdict")
     if args.formal_plan:
         concurrencies = [int(value) for value in args.concurrencies.split()]
         rtt_concurrencies = [
@@ -1075,8 +1081,7 @@ def cmd_summarize(args):
         )
         expected_dimensions = netem.get("expectedDimensions", {})
         if not (
-            netem.get("verdict") == "PASS"
-            and netem.get("dataQualityVerdict") == "PASS"
+            netem.get("dataQualityVerdict") == "PASS"
             and netem.get("expectedProfileCount") == expected_profiles
             and netem.get("actualProfileCount") == expected_profiles
             and netem.get("expectedRawRecordCount") == expected_raw
@@ -1115,11 +1120,14 @@ def cmd_summarize(args):
     gate_passed = (
         summary["correctnessVerdict"] == "PASS"
         and summary["dataQualityVerdict"] == "PASS"
+        and (not args.formal_plan or summary["performanceVerdict"] == "PASS")
     )
     summary["gateVerdict"] = "PASS" if gate_passed else "FAIL"
-    # `overallVerdict` deliberately cannot say PASS: this harness collects
-    # performance measurements but does not make the cross-run CI decision.
-    summary["overallVerdict"] = "NOT_EVALUATED" if gate_passed else "FAIL"
+    summary["overallVerdict"] = (
+        "PASS" if gate_passed and args.formal_plan else
+        "NOT_EVALUATED" if gate_passed else
+        "FAIL"
+    )
     summary["failedSections"] = sorted(set(failed + data_quality_failures))
     with open(os.path.join(out_dir, "summary.json"), "w") as fh:
         json.dump(summary, fh, indent=2)

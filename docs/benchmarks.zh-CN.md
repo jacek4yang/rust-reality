@@ -64,8 +64,12 @@ v1.7 transport 结论只接受 `REQUIRE_NETEM=1` 的正式 deployment run。warm
 p50/p90/p95/p99、setup rate、精确环境/二进制哈希和原始失败。profile inventory
 fail-closed：每个 RTT、loss、concurrency 都必须有 Handoff/NXR/SOCKS5 cold/warm leg。
 
-在 release evaluator 验证预期机制之前，结果保持 `NOT_EVALUATED`：cold latency
-应随 LINE→LANDING RTT 明显增长，而 warm hit 的 TCP 建连部分不增长。pool log
+正式运行会给出 fail-closed 的性能判定。每种 transport 使用零丢包、并发 1 的
+50/100/200 ms profile，保留完整 ABBA block，并以实测整形链路 RTT 评估
+`median(cold p50) - median(warm p50)`。中位效果必须处于 0.65--1.35 RTT；
+100 与 200 ms 下确定性 block-bootstrap 下界还必须大于 0.5 RTT。该判定只验证
+warm hit 从用户路径移除一次 TCP 握手；丢包与高并发 cell 仍是强制的稳健性证据，
+但不会被重新标记为干净的 RTT 机制估计。pool log
 提供 startup-aware checkout、hit/miss、cold fallback、stale、ready/connecting/target、
 EWMA、growth 与 shrink 计数。debug/instrumented run 可解释 phase，不能提供头条数字。
 idle-age、burst、prebuilt-cover + warm-LANDING 组合、protected path 与 soak 是独立保留

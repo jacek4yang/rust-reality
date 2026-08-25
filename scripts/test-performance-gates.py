@@ -697,6 +697,48 @@ def netem_pool_fixture(root: Path) -> Path:
     return path
 
 
+def netem_mechanism_fixture(root: Path, removed_rtt_fraction: float) -> Path:
+    profiles = root / "profiles.jsonl"
+    profile_rows = []
+    for rtt in (50, 100, 200):
+        raw = {}
+        for leg in (
+            "handoff-warm", "handoff-cold", "nxr-warm", "nxr-cold",
+            "socks-warm", "socks-cold",
+        ):
+            path = root / f"rtt{rtt}-{leg}.jsonl"
+            rows = []
+            for sample in range(6):
+                block_factor = (0.9, 1.0, 1.1)[sample // 2]
+                warm_seconds = 0.005 + rtt / 1000
+                removed_seconds = (
+                    rtt / 1000 * removed_rtt_fraction * block_factor
+                    if leg.endswith("-cold") else 0.0
+                )
+                p50 = warm_seconds + removed_seconds
+                rows.append({
+                    "concurrency": 1,
+                    "sampleIndex": sample,
+                    "failed": 0,
+                    "connections": 512,
+                    "connectionsPerSecond": 100.0,
+                    "p50Seconds": p50,
+                    "p90Seconds": p50 * 1.1,
+                    "p95Seconds": p50 * 1.2,
+                    "p99Seconds": p50 * 1.3,
+                })
+            write_jsonl(path, rows)
+            raw[leg] = str(path)
+        profile_rows.append({
+            "targetRttMs": rtt,
+            "observedRttMs": float(rtt),
+            "perDirectionLossPercent": 0.0,
+            "raw": raw,
+        })
+    write_jsonl(profiles, profile_rows)
+    return profiles
+
+
 def test_netem(root: Path) -> None:
     passing = root / "netem-pass"
     passing.mkdir()
@@ -727,6 +769,52 @@ def test_netem(root: Path) -> None:
                     "--connections", "3")
     assert result.returncode == 1, (result.stdout, result.stderr)
     assert json.loads(output.read_text())["dataQualityVerdict"] == "FAIL"
+
+    mechanism_pass = root / "netem-mechanism-pass"
+    mechanism_pass.mkdir()
+    profiles = netem_mechanism_fixture(mechanism_pass, 1.0)
+    pool_summaries = netem_pool_fixture(mechanism_pass)
+    output = mechanism_pass / "summary.json"
+    result = invoke(
+        NETEM,
+        "--profiles", str(profiles),
+        "--pool-summaries", str(pool_summaries),
+        "--output", str(output),
+        "--rtts", "50 100 200",
+        "--losses", "0",
+        "--concurrencies", "1",
+        "--samples", "6",
+        "--connections", "512",
+        "--evaluate-performance",
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    report = json.loads(output.read_text())
+    assert report["schemaVersion"] == 3
+    assert report["performanceVerdict"] == "PASS"
+    assert len(report["performanceMechanism"]["cells"]) == 9
+
+    mechanism_fail = root / "netem-mechanism-fail"
+    mechanism_fail.mkdir()
+    profiles = netem_mechanism_fixture(mechanism_fail, 0.2)
+    pool_summaries = netem_pool_fixture(mechanism_fail)
+    output = mechanism_fail / "summary.json"
+    result = invoke(
+        NETEM,
+        "--profiles", str(profiles),
+        "--pool-summaries", str(pool_summaries),
+        "--output", str(output),
+        "--rtts", "50 100 200",
+        "--losses", "0",
+        "--concurrencies", "1",
+        "--samples", "6",
+        "--connections", "512",
+        "--evaluate-performance",
+    )
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    report = json.loads(output.read_text())
+    assert report["dataQualityVerdict"] == "PASS"
+    assert report["performanceVerdict"] == "FAIL"
+    assert report["verdict"] == "FAIL"
 
 
 def deployment_summary_fixture(root: Path) -> None:
@@ -792,9 +880,10 @@ def deployment_summary_fixture(root: Path) -> None:
     })
     write_json(root / "summary-longflow.json", {"verdict": "PASS"})
     write_json(root / "summary-netem.json", {
+        "schemaVersion": 3,
         "verdict": "PASS",
         "dataQualityVerdict": "PASS",
-        "performanceVerdict": "NOT_EVALUATED",
+        "performanceVerdict": "PASS",
         "expectedDimensions": {
             "rttsMs": [1, 10, 50, 100, 200],
             "perDirectionLossPercent": [0.0, 0.1, 1.0],
@@ -833,8 +922,26 @@ def test_deployment_summary(root: Path) -> None:
     assert result.returncode == 0, (result.stdout, result.stderr)
     report = json.loads((deployment / "summary.json").read_text())
     assert report["gateVerdict"] == "PASS"
-    assert report["performanceVerdict"] == "NOT_EVALUATED"
+    assert report["performanceVerdict"] == "PASS"
+    assert report["overallVerdict"] == "PASS"
     assert len(report["setup"]) == 99
+
+    netem_path = deployment / "summary-netem.json"
+    netem = json.loads(netem_path.read_text())
+    netem["verdict"] = "FAIL"
+    netem["performanceVerdict"] = "FAIL"
+    write_json(netem_path, netem)
+    result = invoke(DEPLOYMENT_DRIVER, *arguments)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    report = json.loads((deployment / "summary.json").read_text())
+    assert report["correctnessVerdict"] == "PASS"
+    assert report["dataQualityVerdict"] == "PASS"
+    assert report["performanceVerdict"] == "FAIL"
+    assert report["gateVerdict"] == "FAIL"
+
+    netem["verdict"] = "PASS"
+    netem["performanceVerdict"] = "PASS"
+    write_json(netem_path, netem)
 
     (deployment / "setup-topo-d.jsonl").unlink()
     result = invoke(DEPLOYMENT_DRIVER, *arguments)

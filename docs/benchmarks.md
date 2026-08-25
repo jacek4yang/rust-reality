@@ -81,9 +81,14 @@ ABBA blocks, p50/p90/p95/p99, setup rate, exact environment and binary hashes,
 and raw failures. The profile inventory is fail-closed: all Handoff, NXR, and
 SOCKS5 cold/warm legs must exist for every RTT, loss, and concurrency.
 
-The resulting performance verdict remains `NOT_EVALUATED` until the release
-evaluator checks the expected mechanism: cold latency rises materially with
-LINE-to-LANDING RTT while the TCP-establishment portion of a warm hit does not.
+The formal run emits a fail-closed performance verdict. For each transport it
+uses the zero-loss concurrency-one 50/100/200 ms profiles, preserves complete
+ABBA blocks, and evaluates `median(cold p50) - median(warm p50)` against the
+measured shaped-link RTT. The median effect must be 0.65--1.35 RTT; at 100 and
+200 ms its deterministic block-bootstrap lower bound must exceed 0.5 RTT.
+This checks only the expected mechanism: the warm hit removes one TCP handshake
+from the user path. Loss and higher-concurrency cells remain mandatory
+robustness evidence but are not relabelled as clean RTT-mechanism estimates.
 Pool logs supply startup-aware checkout, hit/miss, cold fallback, stale,
 ready/connecting/target, EWMA, growth, and shrink counters. Debug/instrumented
 runs may explain phases but cannot supply headline numbers. Idle-age, burst,
