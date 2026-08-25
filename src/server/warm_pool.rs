@@ -518,13 +518,11 @@ async fn run_controller(inner: Arc<PoolInner>) {
         if inner.lifecycle.load(Ordering::Acquire) != LIFECYCLE_ACTIVE {
             break;
         }
+        drain_completed_dials(&inner, &mut dials);
         reconcile(&inner, &mut dials);
         tokio::select! {
             biased;
             _ = inner.notify.notified() => {}
-            completed = dials.join_next(), if !dials.is_empty() => {
-                handle_dial_completion(&inner, completed);
-            }
             _ = ticker.tick() => {
                 prune_and_adjust(&inner, Instant::now());
             }
@@ -621,7 +619,7 @@ fn prune_and_adjust(inner: &Arc<PoolInner>, now: Instant) {
         .store(state.target_ready, Ordering::Release);
 }
 
-fn reconcile(inner: &Arc<PoolInner>, dials: &mut JoinSet<DialOutcome>) {
+fn reconcile(inner: &Arc<PoolInner>, dials: &mut JoinSet<()>) {
     if inner.lifecycle.load(Ordering::Acquire) != LIFECYCLE_ACTIVE
         || inner.fd_budget.pressure() != FdPressure::Normal
         || !inner.authority.speculative_allowed()
@@ -650,24 +648,39 @@ fn reconcile(inner: &Arc<PoolInner>, dials: &mut JoinSet<DialOutcome>) {
         let connector = inner.connector.clone();
         let target = Arc::clone(&inner.target);
         let fd_budget = inner.fd_budget.clone();
+        let completion_inner = Arc::clone(inner);
         dials.spawn(async move {
             let _global_permit = global_permit;
             let started = Instant::now();
             let result = connector
                 .connect_target_accounted(target.as_ref(), &fd_budget)
                 .await;
-            DialOutcome {
-                result,
-                elapsed: started.elapsed(),
-            }
+            handle_dial_completion(
+                &completion_inner,
+                DialOutcome {
+                    result,
+                    elapsed: started.elapsed(),
+                },
+            );
         });
     }
 }
 
-fn handle_dial_completion(
-    inner: &Arc<PoolInner>,
-    completed: Option<Result<DialOutcome, tokio::task::JoinError>>,
-) {
+fn drain_completed_dials(inner: &Arc<PoolInner>, dials: &mut JoinSet<()>) {
+    while let Some(completed) = dials.try_join_next() {
+        if completed.is_err() {
+            let mut state = lock(&inner.state);
+            state.connecting = state.connecting.saturating_sub(1);
+            inner
+                .metrics
+                .connecting
+                .store(state.connecting, Ordering::Release);
+            record_dial_failure(inner, &mut state, Instant::now());
+        }
+    }
+}
+
+fn handle_dial_completion(inner: &Arc<PoolInner>, outcome: DialOutcome) {
     let now = Instant::now();
     let mut state = lock(&inner.state);
     state.connecting = state.connecting.saturating_sub(1);
@@ -675,10 +688,6 @@ fn handle_dial_completion(
         .metrics
         .connecting
         .store(state.connecting, Ordering::Release);
-    let Some(Ok(outcome)) = completed else {
-        record_dial_failure(inner, &mut state, now);
-        return;
-    };
     let elapsed_ms = outcome.elapsed.as_secs_f64() * 1_000.0;
     state.connect_latency_ewma_ms = ewma(
         state.connect_latency_ewma_ms,
@@ -711,8 +720,6 @@ fn handle_dial_completion(
         Ok(_) => {}
         Err(_) => record_dial_failure(inner, &mut state, now),
     }
-    drop(state);
-    inner.notify.notify_one();
 }
 
 fn record_dial_failure(inner: &PoolInner, state: &mut PoolState, now: Instant) {
