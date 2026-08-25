@@ -437,7 +437,12 @@ impl AdaptiveTcpPool {
                 .checkout_hit
                 .fetch_add(1, Ordering::Relaxed);
             self.inner.metrics.in_use.fetch_add(1, Ordering::AcqRel);
-            if ready_after <= low_watermark(target_ready) {
+            // Arm refill only when this checkout crosses the low watermark.
+            // Once dials are in flight, each completion reconciles the newest
+            // deficit before polling again. Notifying for every checkout
+            // below the watermark only wakes the controller repeatedly under
+            // sustained demand; a genuine pool miss still notifies directly.
+            if ready_after == low_watermark(target_ready) {
                 self.inner.notify.notify_one();
             }
             return Some(WarmCheckout {
