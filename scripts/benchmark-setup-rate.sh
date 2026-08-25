@@ -614,6 +614,14 @@ while IFS=$'\t' read -r block position implementation server_port socks_port; do
     if [[ -n $cover_netem_rtt_ms ]]; then
         warm_concurrency=$(printf '%s\n' $concurrencies | sort -nr | head -1)
         warm_connections=$((warm_concurrency * 2))
+        # Chrome 133 legitimately rotates among four GREASE-ECH payload
+        # lengths. Precondition every implementation symmetrically with enough
+        # sessions to characterize that bounded class corpus before perf starts;
+        # startup collection remains visible in the aggregate profile counters.
+        if [[ $candidate_cover_mode == prebuilt || $candidate_cover_mode == default ]] &&
+           ((warm_connections < 32)); then
+            warm_connections=32
+        fi
         ((warm_connections > 64)) && warm_connections=64
         python3 "$work/driver.py" 1 "$warm_connections" "$socks_port" "$http_port" \
             "$warm_concurrency" "$slot_dir/warmup.json" "$implementation" "$block" "$position"

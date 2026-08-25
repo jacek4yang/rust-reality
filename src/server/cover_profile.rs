@@ -69,6 +69,7 @@ struct Candidate {
 struct CollectionQueue {
     candidates: VecDeque<Candidate>,
     cooldowns: Vec<ProfileCooldown>,
+    in_flight: Option<NormalizedClientHelloClass>,
 }
 
 struct ProfileCooldown {
@@ -193,6 +194,7 @@ impl CoverProfiles {
         let mut queue = lock(&self.inner.queue);
         queue.candidates.clear();
         queue.cooldowns.clear();
+        queue.in_flight = None;
         drop(queue);
         let publication = lock(&self.inner.publication);
         self.inner.published.store(Arc::new(Vec::new()));
@@ -333,6 +335,7 @@ fn enqueue(inner: &Arc<CoverProfilesInner>, template: CoverProbeTemplate, now: I
             .candidates
             .iter()
             .any(|candidate| candidate.class == class)
+        || queue.in_flight == Some(class)
         || queue.candidates.len() >= MAX_PROFILE_CLASSES
     {
         return;
@@ -351,7 +354,14 @@ async fn run_collector(inner: Arc<CoverProfilesInner>) {
         if inner.lifecycle.load(Ordering::Acquire) != LIFECYCLE_ACTIVE {
             break;
         }
-        let candidate = lock(&inner.queue).candidates.pop_front();
+        let candidate = {
+            let mut queue = lock(&inner.queue);
+            let candidate = queue.candidates.pop_front();
+            if let Some(candidate) = &candidate {
+                queue.in_flight = Some(candidate.class);
+            }
+            candidate
+        };
         let Some(candidate) = candidate else {
             inner.notify.notified().await;
             continue;
@@ -384,6 +394,7 @@ async fn run_collector(inner: Arc<CoverProfilesInner>) {
                 );
             }
         }
+        lock(&inner.queue).in_flight = None;
     }
 }
 
