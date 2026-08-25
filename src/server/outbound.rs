@@ -1283,6 +1283,60 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn stale_warm_nxr_socket_is_discarded_before_cold_fallback() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("NXR landing must bind");
+        let address = listener.local_addr().expect("NXR landing address");
+        let key_bytes = [0x63; 32];
+        let policy = warm_policy();
+        let registry = OutboundRegistry::with_warm_pools(
+            &[OutboundConfig::Nxr {
+                tag: "nxr".to_owned(),
+                settings: NxrSettings {
+                    address: address.ip().to_string(),
+                    port: address.port(),
+                    pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(key_bytes)),
+                    warm_tcp: true,
+                },
+            }],
+            DirectBarrier::new(&DirectBarrierConfig::default()),
+            Duration::from_secs(2),
+            FdBudget::new(4_096),
+            &NetworkConfig::default(),
+            NetworkEnvironment::detect(),
+            8,
+            WarmPoolAuthority::new(&policy, 1, PressureGauge::new()),
+            &policy,
+        );
+        registry.activate_warm_pools();
+        let (mut stale_peer, _) = listener.accept().await.expect("warm peer must connect");
+        wait_for_one_ready(&registry).await;
+        stale_peer
+            .shutdown()
+            .await
+            .expect("peer FIN must be observable");
+        drop(stale_peer);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
+        let OutboundConnectOutcome::Connected(connection) = registry
+            .connect("nxr", &destination)
+            .await
+            .expect("cold fallback must submit a fresh authenticated request")
+        else {
+            panic!("NXR cannot blackhole");
+        };
+        drop(connection);
+        let snapshot = registry.warm_pool_snapshots().remove(0).pool;
+        assert_eq!(snapshot.checkout_hit, 0);
+        assert_eq!(snapshot.checkout_miss, 1);
+        assert_eq!(snapshot.cold_fallback, 1);
+        assert_eq!(snapshot.stale_discard, 1);
+        registry.deactivate_warm_pools();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn warm_socks5_stays_protocol_unprivileged_until_checkout() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await

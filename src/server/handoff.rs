@@ -948,6 +948,74 @@ mod tests {
         let _deactivated = pool.deactivate();
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn stale_warm_handoff_socket_is_discarded_before_cold_fallback() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("landing must bind");
+        let address = listener.local_addr().expect("landing address");
+        let policy = WarmConnectionPolicy {
+            min_ready: 1,
+            max_ready: 1,
+            max_connecting: 1,
+            refill_batch: 1,
+            idle_timeout_ms: 30_000,
+            max_lifetime_ms: 60_000,
+            shrink_delay_ms: 30_000,
+        };
+        let fd_budget = FdBudget::new(4_096);
+        let landing_public = PublicKey::from(&StaticSecret::from(LANDING_SECRET));
+        let line = HandoffLine::from_settings_with_warm_pool(
+            &HandoffSettings {
+                address: address.ip().to_string(),
+                port: address.port(),
+                pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
+                landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public.as_bytes()),
+                connect_timeout_ms: 2_000,
+                first_byte_timeout_ms: 2_000,
+                warm_tcp: true,
+            },
+            DestinationConnector::new(Duration::from_secs(2)),
+            &fd_budget,
+            Some((
+                12,
+                WarmPoolAuthority::new(&policy, 1, PressureGauge::new()),
+                &policy,
+            )),
+        )
+        .expect("line settings must compile");
+        let pool = line.warm_pool().expect("warm pool must exist").clone();
+        assert!(pool.activate());
+        let (mut stale_peer, _) = listener.accept().await.expect("warm peer must connect");
+        timeout(Duration::from_secs(2), async {
+            while pool.snapshot().ready != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("pool must become ready");
+        stale_peer
+            .shutdown()
+            .await
+            .expect("peer FIN must be observable");
+        drop(stale_peer);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let state = test_state(Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 443));
+        let (stream, permit) = line
+            .transfer(&fd_budget, &state, [0x43; 32])
+            .await
+            .expect("cold fallback must submit a fresh transfer");
+        drop(stream);
+        drop(permit);
+        let snapshot = pool.snapshot();
+        assert_eq!(snapshot.checkout_hit, 0);
+        assert_eq!(snapshot.checkout_miss, 1);
+        assert_eq!(snapshot.cold_fallback, 1);
+        assert_eq!(snapshot.stale_discard, 1);
+        pool.deactivate();
+    }
+
     #[tokio::test(start_paused = true)]
     async fn first_handoff_byte_enters_the_short_authentication_deadline() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
