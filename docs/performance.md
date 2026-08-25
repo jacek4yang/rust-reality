@@ -65,13 +65,13 @@ validated prebuilt profile at concurrency one:
 |---:|---:|---:|---:|---:|
 | 1 ms | 5.765 ms | 1.740 ms | 3.2352 (95% bootstrap 3.2342–3.2594) | 0.8629 (0.8584–0.8769) |
 | 10 ms | 24.015 ms | 1.752 ms | 13.0246 (12.9824–13.0270) | 0.8432 (0.8373–0.8688) |
-| 50 ms | 104.112 ms | 1.757 ms | 56.5138 (56.4268–56.7233) | 0.8732 (0.8711–0.8748) |
+| 50 ms | 104.081 ms | 1.754 ms | 56.3245 (56.2386–57.1053) | 0.8845 (0.8605–0.8930) |
 | 100 ms | 204.114 ms | 1.766 ms | 107.3951 (107.3693–108.0402) | 0.8130 (0.7954–0.8166) |
 | 200 ms | 404.171 ms | 1.767 ms | 212.5548 (211.3442–213.1219) | 0.8021 (0.8010–0.8127) |
 
 The flat 1.74–1.77 ms prebuilt p50, while cold p50 grows by roughly two cover
 RTTs, is the central RTT-removal evidence. At 50 ms and c8, setup rate was
-19.2841× cold (95% interval 19.0849–19.4471). A separate warm-live versus
+18.5491× cold (95% interval 17.7258–19.2288). A separate warm-live versus
 prebuilt run isolates the second RTT: prebuilt was 28.9731× at c1 and 9.9656×
 at c8, with CPU per connection 0.8551× warm-live. No sample failed payload
 integrity.
@@ -93,7 +93,11 @@ The measured runtime candidate was commit `8464371`, SHA-256
 the 50/200 ms reruns used source `5540152`, SHA-256
 `84d6c317c16bfb00cc186c2b649aa9b6df776120a9ec34ff1b5911e9075d934c`,
 whose only additional change was the RTT-derived readiness timeout in the
-benchmark harness. Raw and rejected-experiment evidence is retained outside
+benchmark harness. The post-review resource-priority fix was remeasured at
+50 ms as source `a1c5aec`, binary SHA-256
+`dcef737d0445f0a8c5190bc67a02d2e62a5cf0fcd1771a308a298b40b4516134`;
+it retained the c1/c8 and CPU improvements above with 24/24 valid samples.
+Raw and rejected-experiment evidence is retained outside
 the repository under `artifacts/release-train/v1.7.0/cover-profiles/`.
 These focused three-block runs establish a large non-ambiguous mechanism win;
 the repository's longer formal release evaluator remains a release gate and
