@@ -7,7 +7,9 @@
 
 use std::{
     collections::hash_map::DefaultHasher,
+    future::Future,
     hash::{Hash, Hasher},
+    pin::Pin,
     sync::{
         Arc, Mutex, MutexGuard,
         atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering},
@@ -15,9 +17,9 @@ use std::{
     time::Duration,
 };
 
+use futures_util::{StreamExt, stream::FuturesUnordered};
 use tokio::{
     sync::Notify,
-    task::JoinSet,
     time::{self, Instant, MissedTickBehavior},
 };
 
@@ -509,8 +511,10 @@ struct DialOutcome {
     elapsed: Duration,
 }
 
+type DialFuture = Pin<Box<dyn Future<Output = DialOutcome> + Send>>;
+
 async fn run_controller(inner: Arc<PoolInner>) {
-    let mut dials = JoinSet::new();
+    let mut dials = FuturesUnordered::<DialFuture>::new();
     let mut ticker = time::interval(CONTROLLER_TICK);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     prune_and_adjust(&inner, Instant::now());
@@ -518,18 +522,21 @@ async fn run_controller(inner: Arc<PoolInner>) {
         if inner.lifecycle.load(Ordering::Acquire) != LIFECYCLE_ACTIVE {
             break;
         }
-        drain_completed_dials(&inner, &mut dials);
         reconcile(&inner, &mut dials);
         tokio::select! {
             biased;
             _ = inner.notify.notified() => {}
+            completed = dials.next(), if !dials.is_empty() => {
+                if let Some(outcome) = completed {
+                    handle_dial_completion(&inner, outcome);
+                }
+            }
             _ = ticker.tick() => {
                 prune_and_adjust(&inner, Instant::now());
             }
         }
     }
-    dials.abort_all();
-    while dials.join_next().await.is_some() {}
+    drop(dials);
     let mut state = lock(&inner.state);
     state.connecting = 0;
     state.ready.clear();
@@ -619,7 +626,7 @@ fn prune_and_adjust(inner: &Arc<PoolInner>, now: Instant) {
         .store(state.target_ready, Ordering::Release);
 }
 
-fn reconcile(inner: &Arc<PoolInner>, dials: &mut JoinSet<()>) {
+fn reconcile(inner: &Arc<PoolInner>, dials: &mut FuturesUnordered<DialFuture>) {
     if inner.lifecycle.load(Ordering::Acquire) != LIFECYCLE_ACTIVE
         || inner.fd_budget.pressure() != FdPressure::Normal
         || !inner.authority.speculative_allowed()
@@ -648,35 +655,17 @@ fn reconcile(inner: &Arc<PoolInner>, dials: &mut JoinSet<()>) {
         let connector = inner.connector.clone();
         let target = Arc::clone(&inner.target);
         let fd_budget = inner.fd_budget.clone();
-        let completion_inner = Arc::clone(inner);
-        dials.spawn(async move {
+        dials.push(Box::pin(async move {
             let _global_permit = global_permit;
             let started = Instant::now();
             let result = connector
                 .connect_target_accounted(target.as_ref(), &fd_budget)
                 .await;
-            handle_dial_completion(
-                &completion_inner,
-                DialOutcome {
-                    result,
-                    elapsed: started.elapsed(),
-                },
-            );
-        });
-    }
-}
-
-fn drain_completed_dials(inner: &Arc<PoolInner>, dials: &mut JoinSet<()>) {
-    while let Some(completed) = dials.try_join_next() {
-        if completed.is_err() {
-            let mut state = lock(&inner.state);
-            state.connecting = state.connecting.saturating_sub(1);
-            inner
-                .metrics
-                .connecting
-                .store(state.connecting, Ordering::Release);
-            record_dial_failure(inner, &mut state, Instant::now());
-        }
+            DialOutcome {
+                result,
+                elapsed: started.elapsed(),
+            }
+        }));
     }
 }
 
