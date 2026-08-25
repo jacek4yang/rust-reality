@@ -144,6 +144,16 @@ rust-reality probe-dest \
 Target availability and behavior are external dependencies. Re-run the probe
 after persistent handshake failures or target changes.
 
+By default, each active REALITY listener asynchronously keeps a small bounded
+set of TCP-established cover sockets. No TLS bytes are sent until a successfully
+authenticated handshake checks one out. This removes the cover TCP handshake
+from that authenticated critical path on a warm hit; it does not remove the
+subsequent cover TLS response RTT, physical propagation latency, or guarantee a
+hit under unbounded instantaneous demand. Rejected traffic always opens and
+interacts with the real cover independently. Disable `coverOptimization.warmTcp`
+only when an operator has evidence that the cover or network rejects idle
+preconnected TCP.
+
 A cover that offers ALPN should negotiate it. Covers without ALPN are
 legitimately supported — v1.5 shapes the generated EncryptedExtensions ALPN to
 the cover's observed record slot — but prefer covers that present ALPN when

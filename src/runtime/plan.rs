@@ -310,6 +310,7 @@ impl StartupPlan {
                     0
                 },
             },
+            warm_connections: overrides.warm_connections.clone(),
         };
         PlannedPolicy {
             policy: scale_for_objective(&policy, objective, limits, capabilities),
@@ -524,6 +525,7 @@ fn scale_for_objective(
             pipe_pool: balanced.relay.pipe_pool,
             max_pooled_pipes: to_u32(max_pooled_pipes),
         },
+        warm_connections: balanced.warm_connections.clone(),
     }
 }
 

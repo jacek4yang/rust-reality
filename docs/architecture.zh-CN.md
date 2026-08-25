@@ -21,6 +21,13 @@ admission 架构和运行时可观测性。设计背后的实测证据见
    拷贝。认证 short ID 通过按基数自适应的不可变索引解析，并把其唯一 owner
    UUID 带入 established 会话。
 
+   每个不可变 listener generation 还可以持有一个有界、自适应的伪装目标裸 TCP
+   连接池。这些 socket 只完成 TCP 建连：idle 时不发送 ClientHello 或任何 TLS
+   字节，checkout 后只使用一次。只有 REALITY 认证与重放预留成功后才会查询
+   连接池；miss 立即回到原始冷连接。畸形、认证拒绝与重放 ClientHello 从不查询
+   连接池，因此仍完整观察真实伪装目标。reload 会停止旧 generation 的 refill
+   并关闭其 idle socket，不影响已经 checkout 的事务。
+
    v1.5 通过有界增量读取器消费伪装目标响应。计划可以包含可选 CCS、四条位置化
    加密握手记录和可选的第五条 Finished 后记录；最多保留 66,642 字节。第五条
    记录优先从已缓冲数据判断，否则只做一次非阻塞探测。存在第五条记录时，会

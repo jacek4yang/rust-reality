@@ -3,11 +3,12 @@ use std::net::IpAddr;
 use serde_json::json;
 
 use super::{
-    AdvancedConfig, AssetsConfig, BlackholeSettings, Config, ConfigError, DnsConfig, DnsStrategy,
-    HandoffInboundConfig, HandoffInboundSettings, HandoffSettings, InboundConfig, LogConfig,
-    Network, NetworkConfig, NxrInboundConfig, NxrInboundSettings, NxrSettings, OutboundConfig,
-    RealityConfig, RoutingConfig, RuntimeConfig, SecretString, StreamSettings, UserPolicy,
-    VlessClient, VlessInboundConfig, VlessInboundSettings, validate_config,
+    AdvancedConfig, AssetsConfig, BlackholeSettings, Config, ConfigError, CoverOptimizationConfig,
+    DnsConfig, DnsStrategy, HandoffInboundConfig, HandoffInboundSettings, HandoffSettings,
+    InboundConfig, LogConfig, Network, NetworkConfig, NxrInboundConfig, NxrInboundSettings,
+    NxrSettings, OutboundConfig, RealityConfig, RoutingConfig, RuntimeConfig, SecretString,
+    StreamSettings, UserPolicy, VlessClient, VlessInboundConfig, VlessInboundSettings,
+    validate_config,
 };
 use crate::crypto::{
     KeyGenerationError, generate_node_key, generate_short_id, generate_uuid,
@@ -261,6 +262,7 @@ pub fn generate_minimal_config(
                     server_names: vec![input.server_name],
                     private_key,
                     max_time_diff_ms: 60_000,
+                    cover_optimization: CoverOptimizationConfig::default(),
                 },
             },
         })],
@@ -696,6 +698,7 @@ fn public_inbound_with_clients(
                 server_names: vec![input.server_name.clone()],
                 private_key,
                 max_time_diff_ms: 60_000,
+                cover_optimization: CoverOptimizationConfig::default(),
             },
         },
     })

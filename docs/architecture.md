@@ -25,6 +25,16 @@ canonical samples live in [benchmarks.md](benchmarks.md).
    cardinality-adaptive immutable index and carries its unique owner UUID into
    the established session.
 
+   Each immutable listener generation may also own a bounded adaptive pool of
+   raw TCP connections to its cover. These sockets are TCP-established only:
+   no ClientHello or other TLS byte is sent while idle, and checkout is
+   single-use. The pool is consulted only after REALITY authentication and
+   replay reservation succeed. A miss immediately uses the original cold
+   connect; malformed, rejected, and replayed ClientHellos never consult the
+   pool and therefore retain the exact real-cover observation. Reload stops
+   the old generation's refills and closes its idle sockets without affecting
+   checked-out transactions.
+
    In v1.5, the cover response is consumed through a bounded incremental
    reader. Its plan can contain optional CCS, four positional encrypted
    handshake records, and an optional fifth post-Finished record. At most

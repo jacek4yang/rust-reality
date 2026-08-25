@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    config::{NetworkConfig, ResourceGovernorConfig, VlessInboundConfig},
+    config::{NetworkConfig, ResourceGovernorConfig, VlessInboundConfig, WarmConnectionPolicy},
     network::NetworkEnvironment,
     protocol::{
         reality::{
@@ -29,7 +29,10 @@ use tokio::{
     time::{self, Instant},
 };
 
-use super::fallback::{CoverConnection, FallbackError, FallbackStats, RealityFallback};
+use super::{
+    fallback::{CoverConnection, FallbackError, FallbackStats, RealityFallback},
+    warm_pool::{WarmPoolAuthority, WarmPoolSnapshot},
+};
 
 /// Validated runtime state could not be built for one REALITY listener.
 #[derive(Debug)]
@@ -227,6 +230,7 @@ pub struct RealityAcceptor {
 impl RealityAcceptor {
     /// Compiles an inbound while retaining process-wide replay history across
     /// immutable runtime generations.
+    #[cfg(test)]
     pub(crate) fn from_inbound_with_replay(
         inbound: &VlessInboundConfig,
         governor: ResourceGovernor,
@@ -236,17 +240,84 @@ impl RealityAcceptor {
         network: &NetworkConfig,
         network_environment: NetworkEnvironment,
     ) -> Result<Self, RealityAcceptorConfigError> {
+        Self::build(
+            inbound,
+            governor,
+            policy,
+            replay,
+            relay,
+            network,
+            network_environment,
+            None,
+        )
+    }
+
+    /// Compiles an inbound with a generation-isolated authenticated cover pool.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "extends the existing listener constructor with one pool generation"
+    )]
+    pub(crate) fn from_inbound_with_warm_pool(
+        inbound: &VlessInboundConfig,
+        governor: ResourceGovernor,
+        policy: &ResourceGovernorConfig,
+        replay: ReplayCache,
+        relay: crate::transport::TcpRelay,
+        network: &NetworkConfig,
+        network_environment: NetworkEnvironment,
+        generation: u64,
+        warm_authority: WarmPoolAuthority,
+        warm_policy: &WarmConnectionPolicy,
+    ) -> Result<Self, RealityAcceptorConfigError> {
+        Self::build(
+            inbound,
+            governor,
+            policy,
+            replay,
+            relay,
+            network,
+            network_environment,
+            Some((generation, warm_authority, warm_policy)),
+        )
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one immutable listener generation requires these existing authorities"
+    )]
+    fn build(
+        inbound: &VlessInboundConfig,
+        governor: ResourceGovernor,
+        policy: &ResourceGovernorConfig,
+        replay: ReplayCache,
+        relay: crate::transport::TcpRelay,
+        network: &NetworkConfig,
+        network_environment: NetworkEnvironment,
+        warm: Option<(u64, WarmPoolAuthority, &WarmConnectionPolicy)>,
+    ) -> Result<Self, RealityAcceptorConfigError> {
         let reality = &inbound.stream_settings.reality_settings;
         let authenticator = RealityAuthenticator::from_inbound(inbound)
             .map_err(RealityAcceptorConfigError::Authentication)?;
         let identity = CertificateIdentity::generate()
             .map(Arc::new)
             .map_err(RealityAcceptorConfigError::Certificate)?;
-        Ok(Self {
-            authenticator,
-            replay,
-            identity,
-            fallback: RealityFallback::with_environment(
+        let fallback = match warm {
+            Some((generation, authority, warm_policy))
+                if reality.cover_optimization.enabled && reality.cover_optimization.warm_tcp =>
+            {
+                RealityFallback::with_warm_pool(
+                    reality.target.as_str(),
+                    governor.clone(),
+                    policy,
+                    relay,
+                    network,
+                    network_environment,
+                    generation,
+                    authority,
+                    warm_policy,
+                )
+            }
+            _ => RealityFallback::with_environment(
                 reality.target.as_str(),
                 governor.clone(),
                 policy,
@@ -254,12 +325,33 @@ impl RealityAcceptor {
                 network,
                 network_environment,
             ),
+        };
+        Ok(Self {
+            authenticator,
+            replay,
+            identity,
+            fallback,
             governor,
             inbound_tag: Arc::from(inbound.tag.as_str()),
             client_hello_timeout: Duration::from_millis(policy.client_hello_timeout_ms),
             handshake_timeout: Duration::from_millis(policy.handshake_timeout_ms),
             target_hello_timeout: Duration::from_millis(policy.connect_timeout_ms),
         })
+    }
+
+    /// Starts speculative cover dialing after the listener generation is live.
+    pub(crate) fn activate_cover_pool(&self) {
+        self.fallback.activate();
+    }
+
+    /// Stops this generation's refills and closes its unused cover sockets.
+    pub(crate) fn deactivate_cover_pool(&self) -> bool {
+        self.fallback.deactivate()
+    }
+
+    /// Returns secret-free, fixed-cardinality cover-pool state.
+    pub(crate) fn cover_pool_snapshot(&self) -> Option<WarmPoolSnapshot> {
+        self.fallback.warm_pool_snapshot()
     }
 
     /// Authenticates one accepted TCP stream or relays it byte-exactly to cover.
@@ -494,13 +586,128 @@ mod tests {
 
     use super::{RealityAcceptError, RealityAcceptOutcome, RealityAcceptor};
     use crate::{
-        config::{Config, test_config_json},
+        config::{Config, WarmConnectionPolicy, test_config_json},
         protocol::reality::{ReplayCache, SESSION_ID_LEN, client_hello_fixtures},
-        runtime::ResourceGovernor,
-        server::fallback::FallbackError,
+        runtime::{FdBudget, PressureGauge, ResourceGovernor},
+        server::{fallback::FallbackError, warm_pool::WarmPoolAuthority},
     };
 
     const COVER_RESPONSE: &[u8] = b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n";
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn authentication_failure_cannot_observe_or_consume_warm_cover_socket() {
+        let cover_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("cover listener must bind");
+        let mut config: Config =
+            serde_json::from_str(test_config_json()).expect("test config must parse");
+        config.inbounds[0]
+            .as_vless_mut()
+            .expect("fixture must contain VLESS")
+            .stream_settings
+            .reality_settings
+            .target = cover_listener
+            .local_addr()
+            .expect("cover address must exist")
+            .to_string();
+        let policy = config.advanced.limits.resource_governor.clone();
+        let warm_policy = WarmConnectionPolicy {
+            min_ready: 1,
+            max_ready: 2,
+            max_connecting: 1,
+            refill_batch: 1,
+            idle_timeout_ms: 1_000,
+            max_lifetime_ms: 2_000,
+            shrink_delay_ms: 1_000,
+        };
+        let governor = ResourceGovernor::new(&policy);
+        let replay = ReplayCache::new(governor.clone(), &policy);
+        let fd_budget = FdBudget::new(64);
+        let acceptor = RealityAcceptor::from_inbound_with_warm_pool(
+            config.inbounds[0]
+                .as_vless()
+                .expect("fixture must contain VLESS"),
+            governor,
+            &policy,
+            replay,
+            crate::transport::TcpRelay::new(&crate::config::RelayPolicy::default(), fd_budget)
+                .expect("test relay must build"),
+            &config.network,
+            crate::network::NetworkEnvironment::detect(),
+            17,
+            WarmPoolAuthority::new(&warm_policy, 1, PressureGauge::new()),
+            &warm_policy,
+        )
+        .expect("validated inbound must compile");
+        acceptor.activate_cover_pool();
+        let (warm_cover, _) = timeout(Duration::from_secs(1), cover_listener.accept())
+            .await
+            .expect("pool must connect without a long warmup")
+            .expect("warm cover accept must succeed");
+        timeout(Duration::from_secs(1), async {
+            while acceptor
+                .cover_pool_snapshot()
+                .is_none_or(|snapshot| snapshot.ready != 1)
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("one cover socket must become ready");
+        let mut unexpected = [0_u8; 1];
+        assert_eq!(
+            warm_cover
+                .try_read(&mut unexpected)
+                .expect_err("raw warm TCP must carry no TLS bytes")
+                .kind(),
+            io::ErrorKind::WouldBlock
+        );
+
+        let (mut client, server, peer_addr) = tcp_pair().await;
+        let message = client_hello_fixtures::client_hello(
+            [0x44; 32],
+            &[0x11; SESSION_ID_LEN],
+            "www.example.com",
+            &[b"h2"],
+        );
+        let client_prefix = client_hello_fixtures::record(&message);
+        let exchange = async {
+            let accept = acceptor.accept(server, peer_addr);
+            let client_io = async {
+                client.write_all(&client_prefix).await?;
+                client.shutdown().await?;
+                let mut response = Vec::new();
+                client.read_to_end(&mut response).await?;
+                Ok::<_, io::Error>(response)
+            };
+            let cold_cover_io = async {
+                let (mut cover, _) = cover_listener.accept().await?;
+                let mut request = Vec::new();
+                cover.read_to_end(&mut request).await?;
+                cover.write_all(COVER_RESPONSE).await?;
+                cover.shutdown().await?;
+                Ok::<_, io::Error>(request)
+            };
+            tokio::join!(accept, client_io, cold_cover_io)
+        };
+        let (outcome, response, request) = timeout(Duration::from_secs(2), exchange)
+            .await
+            .expect("fallback exchange must complete");
+        assert!(matches!(
+            outcome.expect("fallback must succeed"),
+            RealityAcceptOutcome::Fallback(_)
+        ));
+        assert_eq!(response.expect("client I/O must succeed"), COVER_RESPONSE);
+        assert_eq!(request.expect("cover I/O must succeed"), client_prefix);
+        let snapshot = acceptor
+            .cover_pool_snapshot()
+            .expect("warm cover pool must exist");
+        assert_eq!(snapshot.checkout_total, 0);
+        assert_eq!(snapshot.checkout_hit, 0);
+        assert_eq!(snapshot.ready, 1);
+        acceptor.deactivate_cover_pool();
+        drop(warm_cover);
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn authentication_failure_relays_exact_client_hello_to_cover() {

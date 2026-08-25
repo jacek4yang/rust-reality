@@ -30,6 +30,11 @@ VLESS 的配置会在绑定监听端口前被拒绝。`serverNames` 可使用具
 转发到 REALITY 目标，再进入实时 relay。fallback 并发和生命周期与已认证连接分别
 设限。
 
+伪装目标 warm pool 不改变该边界。idle 池化 socket 不授予任何权限，也不包含 TLS
+状态；只有已经通过认证并完成重放预留的握手才能 checkout。所有失败类别仍像以前
+一样新建自己的真实伪装目标连接。ready/connecting socket 均严格有界、计入 FD
+预算并按 generation 隔离；资源压力下先丢弃推测性预热资源，避免与活跃流量竞争。
+
 配置、路由资产、用户、REALITY 状态和出站作为一个不可变 generation 发布。
 刷新失败保留最后一个完整快照。私钥、UUID、NXR PSK、Handoff PSK 和静态密钥、
 凭据和完整配置不进入结构化日志。

@@ -37,6 +37,9 @@ const MAX_RELAY_BUFFERS: usize = 65_536;
 /// per nanosecond. Reject larger values instead of silently under-delivering
 /// the configured steady-state rate.
 const MAX_DIRECT_DIALS_PER_SECOND: u32 = 1_000_000_000;
+const MAX_WARM_READY_PER_POOL: u32 = 4_096;
+const MAX_WARM_CONNECTING_PER_POOL: u32 = 1_024;
+const MAX_WARM_TIMEOUT_MS: u64 = 60 * 60 * 1_000;
 /// Kernel pipe capacity reserved worst-case per splice pipe. The kernel
 /// allocates pipe pages lazily, but capacity is the hard bound a full pipe
 /// can pin; a splice relay holds two pipe pairs (four pipes) at this size.
@@ -1140,6 +1143,64 @@ fn validate_policy(config: &Config) -> Result<(), ConfigError> {
         );
     }
 
+    let warm = &config.advanced.limits.warm_connections;
+    if warm.max_ready == 0 || warm.max_ready > MAX_WARM_READY_PER_POOL {
+        return fail(
+            "advanced.limits.warmConnections.maxReady",
+            format!("must be between 1 and {MAX_WARM_READY_PER_POOL}"),
+        );
+    }
+    if warm.min_ready > warm.max_ready {
+        return fail(
+            "advanced.limits.warmConnections.minReady",
+            "must not exceed maxReady",
+        );
+    }
+    if warm.max_connecting == 0
+        || warm.max_connecting > MAX_WARM_CONNECTING_PER_POOL
+        || warm.max_connecting > warm.max_ready
+    {
+        return fail(
+            "advanced.limits.warmConnections.maxConnecting",
+            format!(
+                "must be between 1 and the lesser of maxReady and {MAX_WARM_CONNECTING_PER_POOL}"
+            ),
+        );
+    }
+    if warm.refill_batch == 0 || warm.refill_batch > warm.max_connecting {
+        return fail(
+            "advanced.limits.warmConnections.refillBatch",
+            "must be between 1 and maxConnecting",
+        );
+    }
+    for (path, timeout) in [
+        (
+            "advanced.limits.warmConnections.idleTimeoutMs",
+            warm.idle_timeout_ms,
+        ),
+        (
+            "advanced.limits.warmConnections.maxLifetimeMs",
+            warm.max_lifetime_ms,
+        ),
+        (
+            "advanced.limits.warmConnections.shrinkDelayMs",
+            warm.shrink_delay_ms,
+        ),
+    ] {
+        if !(100..=MAX_WARM_TIMEOUT_MS).contains(&timeout) {
+            return fail(
+                path,
+                format!("must be between 100 and {MAX_WARM_TIMEOUT_MS}"),
+            );
+        }
+    }
+    if warm.max_lifetime_ms < warm.idle_timeout_ms {
+        return fail(
+            "advanced.limits.warmConnections.maxLifetimeMs",
+            "must not be shorter than idleTimeoutMs",
+        );
+    }
+
     let relay = &config.advanced.limits.relay;
     if !(MIN_RELAY_BUFFER_BYTES..=MAX_RELAY_BUFFER_BYTES).contains(&relay.buffer_bytes) {
         return fail(
@@ -1354,6 +1415,48 @@ mod tests {
                 .expect_err("sub-nanosecond rates cannot be represented exactly")
                 .path(),
             "advanced.limits.directBarrier.maxPerSecond"
+        );
+    }
+
+    #[test]
+    fn rejects_incoherent_warm_connection_bounds() {
+        let mut config = valid_config();
+        config.advanced.limits.warm_connections.min_ready = 9;
+        config.advanced.limits.warm_connections.max_ready = 8;
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("minimum ready above the hard bound must fail")
+                .path(),
+            "advanced.limits.warmConnections.minReady"
+        );
+
+        let mut config = valid_config();
+        config.advanced.limits.warm_connections.max_connecting = 0;
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("zero speculative dial capacity must fail")
+                .path(),
+            "advanced.limits.warmConnections.maxConnecting"
+        );
+
+        let mut config = valid_config();
+        config.advanced.limits.warm_connections.refill_batch =
+            config.advanced.limits.warm_connections.max_connecting + 1;
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("a refill batch may not exceed dial capacity")
+                .path(),
+            "advanced.limits.warmConnections.refillBatch"
+        );
+
+        let mut config = valid_config();
+        config.advanced.limits.warm_connections.max_lifetime_ms =
+            config.advanced.limits.warm_connections.idle_timeout_ms - 1;
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("absolute lifetime may not precede idle expiry")
+                .path(),
+            "advanced.limits.warmConnections.maxLifetimeMs"
         );
     }
 

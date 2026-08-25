@@ -63,7 +63,7 @@ exact diagnostic instead of manufacturing a measurement.
 | `cargo bench` (criterion) | Regression analysis for VLESS decoding, Vision framing, relay backends, dual-stack planning/setup/fallback, adaptive short-ID/identity/tag lookup, REALITY digest hashing, replay expiry/reservation, and direct admission contention, with baselines and plots. |
 | `scripts/benchmark-matrix.sh` | Full A/B/C loopback matrix (baseline/final/Xray) over direction × payload × concurrency. |
 | `scripts/benchmark-fallback-ab.sh` | Clean fallback A/B against Xray: warn-level logging both sides, direct-to-listener. |
-| `scripts/benchmark-setup-rate.sh` | Connection setup-rate model (accept → first Vision transition). |
+| `scripts/benchmark-setup-rate.sh` | Balanced setup-rate A/B (accept → first Vision transition). `COVER_NETEM_RTT_MS` moves only the TLS cover behind a veth/netns and applies a recorded one-leg delay, retaining pool hit/miss summaries. |
 | `scripts/benchmark-vision-direct.sh`, `scripts/benchmark-xray.sh` | Focused Vision-Direct and Xray comparisons. |
 | `scripts/benchmark-deployment.sh` | Deployment characterization: routing correctness proof, routing decision cost (incl. DNS strategies), NXR topologies (direct/NXR/SOCKS5/Xray), optional netem RTT sweep, and long-flow relay evidence. |
 | `scripts/soak-test.sh` | Loopback mixed-workload soak (tunnel traffic + connection churn) with `/proc`-based leak bounding; env: `DURATION_MIN`, `ROUND_SLEEP`, `RUST_REALITY_BIN`, `XRAY_BIN`, `OUT_DIR`. |

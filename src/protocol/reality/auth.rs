@@ -155,6 +155,7 @@ pub mod fuzzing {
             server_names: vec!["www.example.com".to_owned()],
             private_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(SERVER_SECRET)),
             max_time_diff_ms: 60_000,
+            cover_optimization: crate::config::CoverOptimizationConfig::default(),
         };
         let encoded = bindings
             .iter()
@@ -915,6 +916,7 @@ mod tests {
             server_names: vec!["www.example.com".to_owned()],
             private_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(private_key)),
             max_time_diff_ms: 60_000,
+            cover_optimization: crate::config::CoverOptimizationConfig::default(),
         }
     }
 

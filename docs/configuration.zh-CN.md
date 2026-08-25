@@ -206,7 +206,8 @@ singleflight 合并和准入治理生效，除非配置了可选的 `systemReuse
       "target": "www.example.com:443",
       "serverNames": ["www.example.com"],
       "privateKey": "GENERATED-X25519-PRIVATE-KEY",
-      "maxTimeDiffMs": 60000
+      "maxTimeDiffMs": 60000,
+      "coverOptimization": { "enabled": true, "warmTcp": true }
     }
   }
 }
@@ -233,6 +234,8 @@ singleflight 合并和准入治理生效，除非配置了可选的 `systemReuse
 | `streamSettings.realitySettings.serverNames` | 是 | — | 非空、大小写不敏感唯一的具体 ASCII DNS 名或最左侧单标签模式，如 `*.lmu.edu`。 |
 | `streamSettings.realitySettings.privateKey` | 是 | — | URL-safe 无填充 base64，解码为恰好 32 字节 X25519 私钥；秘密。 |
 | `streamSettings.realitySettings.maxTimeDiffMs` | 否 | `60000` | 接受的客户端时钟差，`0..=600000`；零表示关闭该检查。 |
+| `streamSettings.realitySettings.coverOptimization.enabled` | 否 | `true` | 已认证伪装优化总开关；绝不改变拒绝/fallback 行为。 |
+| `streamSettings.realitySettings.coverOptimization.warmTcp` | 否 | `true` | 保留有界、已完成 TCP 建连的伪装 socket；认证 checkout 前不发送 TLS 字节。 |
 
 每个公网 UUID 必须在 `routing.users[].userIds` 中恰好出现一次。
 
@@ -591,8 +594,8 @@ connectTimeoutMs` 并留有余量：首个密封记录只有在转移被读取�
 ## `advanced`
 
 专家逃生舱。`advanced.limits` 保存完整的数值化资源与 relay 策略；每个字段都有
-有界生产默认值，因此整个对象、`limits` 或其三个子对象都可以缺省。如果显式提供
-`resourceGovernor`、`directBarrier` 或 `relay`，标记“对象存在时必填”的字段必须
+有界生产默认值，因此整个对象、`limits` 或其四个子对象都可以缺省。如果显式提供
+`resourceGovernor`、`directBarrier`、`warmConnections` 或 `relay`，标记“对象存在时必填”的字段必须
 提供；不能假设部分对象自动继承所有默认值。`config format` 会显示已应用默认值。
 
 这些数值如何成为生效策略取决于 `runtime.tuning.mode`：`fixed` 下按原样使用；
@@ -624,6 +627,22 @@ connectTimeoutMs` 并留有余量：首个密封记录只有在转移被读取�
 | `maxPerSecond` | 是 | `4096` | 每秒新 direct 拨号，范围为 1 至 1,000,000,000。 |
 
 它把 direct 目标压力与已认证连接总数隔离。
+
+### `advanced.limits.warmConnections`
+
+| 字段 | 对象存在时必填 | 整体默认值 | 约束/含义 |
+| --- | --- | --- | --- |
+| `minReady` | 是 | `4` | 低负载 ready 下限；可为零且不超过 `maxReady`。 |
+| `maxReady` | 是 | `256` | 每个伪装目标的 ready 上限，`1..=4096`。 |
+| `maxConnecting` | 是 | `64` | 每目标推测性并发拨号，`1..=min(maxReady, 1024)`。 |
+| `refillBatch` | 是 | `16` | 每次控制器协调提交的拨号数，`1..=maxConnecting`。 |
+| `idleTimeoutMs` | 是 | `30000` | 未使用 idle 最大时长，`100..=3600000`。 |
+| `maxLifetimeMs` | 是 | `300000` | 未使用 socket 绝对寿命，不小于 `idleTimeoutMs` 且不超过一小时。 |
+| `shrinkDelayMs` | 是 | `30000` | 开始逐步回缩前的无需求迟滞，`100..=3600000`。 |
+
+这些上限按 endpoint 计算；严格的进程级 authority 还会约束所有 generation，FD
+预算仍是最终边界。checkout 从不等待 refill；压力下先释放推测性 ready socket，
+再尝试普通冷路径。
 
 ### `advanced.limits.relay`
 
@@ -858,6 +877,7 @@ generation，已有连接继续使用其获取的 generation。
   进程启动时已定尺寸；
 - 任意 `advanced.limits.resourceGovernor` 修改，因为 REALITY 重放 admission/状态属于进程生命周期；
 - 任意 `advanced.limits.directBarrier` 修改，因为直连拨号 authority 属于进程生命周期；
+- 任意 `advanced.limits.warmConnections` 修改，因为跨 generation 的推测连接 authority 属于进程生命周期；
 - 任意 `advanced.limits.relay` 修改，因为缓冲/splice 池属于进程生命周期；
 - NXR `maxNonceEntries` 或 `nonceRetentionSeconds` 修改；
 - Handoff `maxNonceEntries` 或 `nonceRetentionSeconds` 修改。

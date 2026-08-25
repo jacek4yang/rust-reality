@@ -144,6 +144,37 @@ pub enum LogEvent {
         /// SHA-256 of those retained bytes; never payload bytes themselves.
         retained_prefix_sha256: String,
     },
+    /// One bounded cover-pool summary emitted when its generation retires.
+    CoverPoolSummary {
+        /// Immutable runtime generation that owned the pool.
+        generation: u64,
+        /// TCP-established sockets still ready at retirement.
+        pool_ready: u32,
+        /// Speculative dials still pending at retirement.
+        pool_connecting: u32,
+        /// Checked-out cover transactions still active at retirement.
+        pool_in_use: u64,
+        /// Total non-waiting checkout attempts.
+        pool_checkout_total: u64,
+        /// Attempts that acquired an established socket.
+        pool_checkout_hit: u64,
+        /// Attempts that found no usable established socket.
+        pool_checkout_miss: u64,
+        /// Misses that used the ordinary cold connection path.
+        pool_cold_fallback: u64,
+        /// Speculative cover connection failures.
+        pool_connect_failure: u64,
+        /// Idle sockets discarded as closed or expired.
+        pool_stale_discard: u64,
+        /// Speculative dials submitted by the controller.
+        pool_refill: u64,
+        /// Final adaptive ready target.
+        pool_target_ready: u32,
+        /// Adaptive upward target transitions.
+        pool_growth: u64,
+        /// Adaptive downward target transitions.
+        pool_shrink: u64,
+    },
     /// A connection completed. Emitted only at debug level.
     ConnectionClosed {
         /// Remote address.
@@ -416,7 +447,8 @@ impl LogEvent {
             | Self::RelayBackendReport { .. }
             | Self::DescriptorBudgetReport { .. }
             | Self::RuntimePlanReport { .. }
-            | Self::MachineReport { .. } => LogLevel::Info,
+            | Self::MachineReport { .. }
+            | Self::CoverPoolSummary { .. } => LogLevel::Info,
             Self::ConnectionAccepted { .. }
             | Self::ConnectionClosed { .. }
             | Self::CoverFlightSelected { .. }

@@ -56,6 +56,7 @@ use super::{
     },
     routing::RoutingCompileError,
     vision::{VisionHandler, VisionSessionError},
+    warm_pool::WarmPoolAuthority,
 };
 
 const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
@@ -110,10 +111,28 @@ fn theoretical_fd_peak(config: &Config) -> u64 {
         } else {
             0
         };
+    // Every cover pool retains at most maxReady established descriptors.
+    // A speculative Happy Eyeballs dial can transiently hold two candidates,
+    // so account maxConnecting twice. Checked-out sockets replace a normal
+    // per-connection cover dial and are already covered by the connection term.
+    let cover_pools = u64::try_from(maximum_cover_pool_count(config)).unwrap_or(u64::MAX);
+    let warm = &config.advanced.limits.warm_connections;
+    let warm_cover = cover_pools.saturating_mul(
+        u64::from(warm.max_ready).saturating_add(u64::from(warm.max_connecting).saturating_mul(2)),
+    );
     connections
         .saturating_mul(3)
         .saturating_add(splice)
         .saturating_add(pool_retention)
+        .saturating_add(warm_cover)
+}
+
+fn maximum_cover_pool_count(config: &Config) -> usize {
+    config
+        .inbounds
+        .iter()
+        .filter(|inbound| matches!(inbound, InboundConfig::Vless(_)))
+        .count()
 }
 
 /// Everything the startup resource derivation decided, before any listener
@@ -360,6 +379,11 @@ impl ProductionServer {
             ),
             direct_barrier: DirectBarrier::with_pressure(
                 &config.advanced.limits.direct_barrier,
+                pressure.clone(),
+            ),
+            warm_pools: WarmPoolAuthority::new(
+                &config.advanced.limits.warm_connections,
+                maximum_cover_pool_count(&config),
                 pressure.clone(),
             ),
             network_environment: NetworkEnvironment::from_config(&config.network.dial),
@@ -617,6 +641,9 @@ impl ProductionServer {
             );
         }
 
+        // Listener binding is complete, so this immutable generation may begin
+        // speculative cover dialing without delaying availability.
+        initial.activate_cover_pools();
         let (shutdown_sender, shutdown_receiver) = watch::channel(false);
         let mut listener_tasks = JoinSet::new();
         for (acceptor, address) in bound {
@@ -709,7 +736,9 @@ impl ProductionServer {
                 }
                 completed = update_tasks.join_next(), if !update_tasks.is_empty() => {
                     match completed {
-                        Some(Ok((_, Ok(_)))) => {}
+                        Some(Ok((_, Ok(_)))) => {
+                            self.runtime.load().activate_cover_pools();
+                        }
                         Some(Ok((field, Err(error)))) => {
                             emit_rejected(&self.runtime, field, Some(&error));
                         }
@@ -720,6 +749,7 @@ impl ProductionServer {
             }
         };
 
+        self.runtime.load().deactivate_cover_pools();
         update_tasks.abort_all();
         if let Some(task) = monitor_task {
             task.abort();
@@ -772,6 +802,7 @@ struct RuntimeStore {
 struct ProcessAuthorities {
     governor: ResourceGovernor,
     direct_barrier: DirectBarrier,
+    warm_pools: WarmPoolAuthority,
     network_environment: NetworkEnvironment,
 }
 
@@ -816,6 +847,7 @@ impl RuntimeStore {
             &self.pressure,
             &self.authorities,
         )?;
+        current.deactivate_cover_pools();
         self.current.store(Arc::new(candidate));
         self.generation.store(generation, Ordering::Release);
         let published = self.load();
@@ -870,7 +902,7 @@ impl RuntimeSnapshot {
             let address = canonical_listener_address(inbound);
             let handler = match inbound {
                 InboundConfig::Vless(inbound) => ConnectionHandler::Public {
-                    reality: Box::new(RealityAcceptor::from_inbound_with_replay(
+                    reality: Box::new(RealityAcceptor::from_inbound_with_warm_pool(
                         inbound,
                         authorities.governor.clone(),
                         &config.advanced.limits.resource_governor,
@@ -878,6 +910,9 @@ impl RuntimeSnapshot {
                         tcp_relay.clone(),
                         &config.network,
                         authorities.network_environment.clone(),
+                        generation,
+                        authorities.warm_pools.clone(),
+                        &config.advanced.limits.warm_connections,
                     )?),
                     vision: vision.clone(),
                 },
@@ -955,6 +990,45 @@ impl RuntimeSnapshot {
             connections,
             logger,
         })
+    }
+
+    fn activate_cover_pools(&self) {
+        for connection in self.connections.values() {
+            if let ConnectionHandler::Public { reality, .. } = &connection.handler {
+                reality.activate_cover_pool();
+            }
+        }
+    }
+
+    fn deactivate_cover_pools(&self) {
+        for connection in self.connections.values() {
+            if let ConnectionHandler::Public { reality, .. } = &connection.handler {
+                let snapshot = reality.cover_pool_snapshot();
+                if reality.deactivate_cover_pool()
+                    && let Some(snapshot) = snapshot
+                {
+                    emit(
+                        &self.logger,
+                        &LogEvent::CoverPoolSummary {
+                            generation: snapshot.generation,
+                            pool_ready: snapshot.ready,
+                            pool_connecting: snapshot.connecting,
+                            pool_in_use: snapshot.in_use,
+                            pool_checkout_total: snapshot.checkout_total,
+                            pool_checkout_hit: snapshot.checkout_hit,
+                            pool_checkout_miss: snapshot.checkout_miss,
+                            pool_cold_fallback: snapshot.cold_fallback,
+                            pool_connect_failure: snapshot.connect_failure,
+                            pool_stale_discard: snapshot.stale_discard,
+                            pool_refill: snapshot.refill,
+                            pool_target_ready: snapshot.target_ready,
+                            pool_growth: snapshot.growth,
+                            pool_shrink: snapshot.shrink,
+                        },
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -1035,6 +1109,10 @@ fn ensure_hot_compatible(
     }
     if candidate.advanced.limits.direct_barrier != current.config.advanced.limits.direct_barrier {
         return Err(RuntimeUpdateError::DirectBarrierPolicyChanged);
+    }
+    if candidate.advanced.limits.warm_connections != current.config.advanced.limits.warm_connections
+    {
+        return Err(RuntimeUpdateError::WarmConnectionPolicyChanged);
     }
     if nxr_replay_policy(&candidate) != nxr_replay_policy(&current.config) {
         return Err(RuntimeUpdateError::NxrReplayPolicyChanged);
@@ -1954,6 +2032,7 @@ pub enum RuntimeUpdateError {
     ResourceModeChanged,
     ReplayPolicyChanged,
     DirectBarrierPolicyChanged,
+    WarmConnectionPolicyChanged,
     NxrReplayPolicyChanged,
     HandoffReplayPolicyChanged,
     Relay(TcpRelayConfigError),
@@ -2004,6 +2083,9 @@ impl fmt::Display for RuntimeUpdateError {
             Self::DirectBarrierPolicyChanged => {
                 formatter.write_str("direct barrier policy requires a process restart")
             }
+            Self::WarmConnectionPolicyChanged => {
+                formatter.write_str("warm connection policy requires a process restart")
+            }
             Self::NxrReplayPolicyChanged => {
                 formatter.write_str("NXR replay policy requires a process restart")
             }
@@ -2041,6 +2123,7 @@ impl Error for RuntimeUpdateError {
             | Self::ResourceModeChanged
             | Self::ReplayPolicyChanged
             | Self::DirectBarrierPolicyChanged
+            | Self::WarmConnectionPolicyChanged
             | Self::NxrReplayPolicyChanged
             | Self::HandoffReplayPolicyChanged
             | Self::RelayPolicyChanged
@@ -2318,17 +2401,19 @@ mod tests {
         config.advanced.limits.relay.max_splice_relays = 4;
         config.advanced.limits.relay.max_pooled_pipes = 8;
         let connections = u64::from(config.advanced.limits.resource_governor.max_connections) * 3;
+        let warm = u64::from(config.advanced.limits.warm_connections.max_ready)
+            + u64::from(config.advanced.limits.warm_connections.max_connecting) * 2;
 
         assert_eq!(
             theoretical_fd_peak(&config),
-            connections + 4 * 4 + 8 * 2,
-            "two live dial candidates, armed splice relays, and retained pipes are demand"
+            connections + 4 * 4 + 8 * 2 + warm,
+            "active flows, warm cover candidates, armed splice relays, and retained pipes are demand"
         );
 
         config.advanced.limits.relay.pipe_pool = false;
         assert_eq!(
             theoretical_fd_peak(&config),
-            connections + 4 * 4,
+            connections + 4 * 4 + warm,
             "a disabled pool retains nothing"
         );
 
@@ -2336,7 +2421,7 @@ mod tests {
         config.advanced.limits.relay.splice = false;
         assert_eq!(
             theoretical_fd_peak(&config),
-            connections + 4 * 4,
+            connections + 4 * 4 + warm,
             "without splice there is no pool to retain pipes"
         );
     }
@@ -2787,6 +2872,22 @@ mod tests {
         assert!(matches!(
             server.runtime.publish(replacement),
             Err(RuntimeUpdateError::ReplayPolicyChanged)
+        ));
+        assert!(Arc::ptr_eq(&previous, &server.runtime.load()));
+    }
+
+    #[test]
+    fn warm_connection_policy_change_requires_restart() {
+        let generated = generated_config(8443);
+        let server =
+            ProductionServer::from_config(generated.config()).expect("server must compile");
+        let previous = server.runtime.load();
+        let mut replacement = generated.config().clone();
+        replacement.advanced.limits.warm_connections.max_ready += 1;
+
+        assert!(matches!(
+            server.runtime.publish(replacement),
+            Err(RuntimeUpdateError::WarmConnectionPolicyChanged)
         ));
         assert!(Arc::ptr_eq(&previous, &server.runtime.load()));
     }

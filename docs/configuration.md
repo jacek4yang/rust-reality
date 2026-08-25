@@ -235,7 +235,8 @@ change requires restart.
       "target": "www.example.com:443",
       "serverNames": ["www.example.com"],
       "privateKey": "GENERATED-X25519-PRIVATE-KEY",
-      "maxTimeDiffMs": 60000
+      "maxTimeDiffMs": 60000,
+      "coverOptimization": { "enabled": true, "warmTcp": true }
     }
   }
 }
@@ -263,6 +264,8 @@ handoff`.
 | `streamSettings.realitySettings.serverNames` | yes | — | Non-empty, case-insensitively unique array of concrete ASCII DNS names or leftmost one-label patterns such as `*.lmu.edu`. |
 | `streamSettings.realitySettings.privateKey` | yes | — | URL-safe unpadded base64 decoding to exactly 32 X25519 bytes. Secret. |
 | `streamSettings.realitySettings.maxTimeDiffMs` | no | `60000` | Accepted client clock difference, `0..=600000`; zero disables this check. |
+| `streamSettings.realitySettings.coverOptimization.enabled` | no | `true` | Master switch for authenticated-only cover latency optimizations. It never changes rejection/fallback behavior. |
+| `streamSettings.realitySettings.coverOptimization.warmTcp` | no | `true` | Maintain bounded TCP-established cover sockets. No TLS byte is sent before authenticated checkout. |
 
 Every public UUID must appear exactly once in `routing.users[].userIds`.
 
@@ -643,8 +646,8 @@ Replace placeholders with UUIDs present in public inbound clients.
 
 Expert escape hatch. `advanced.limits` holds the complete numeric resource
 and relay policy; every field carries the bounded production default, so the
-whole object, `limits`, or any of its three child objects may be absent. If
-`resourceGovernor`, `directBarrier`, or `relay` is explicitly present, fields
+whole object, `limits`, or any of its four child objects may be absent. If
+`resourceGovernor`, `directBarrier`, `warmConnections`, or `relay` is explicitly present, fields
 marked “required when object present” must be supplied; do not assume a
 partial object inherits every default. `config format` makes applied defaults
 visible.
@@ -680,6 +683,23 @@ is derived from the detected machine at startup. See
 | `maxPerSecond` | yes | `4096` | New direct dials per second, from 1 through 1,000,000,000. |
 
 This isolates direct destination pressure from authenticated connection count.
+
+### `advanced.limits.warmConnections`
+
+| Field | Required when object present | Whole-object default | Constraints / meaning |
+| --- | --- | --- | --- |
+| `minReady` | yes | `4` | Low-demand ready floor; may be zero and never exceeds `maxReady`. |
+| `maxReady` | yes | `256` | Per-cover ready ceiling, `1..=4096`. |
+| `maxConnecting` | yes | `64` | Per-cover simultaneous speculative dials, `1..=min(maxReady, 1024)`. |
+| `refillBatch` | yes | `16` | Dials submitted per controller reconciliation, `1..=maxConnecting`. |
+| `idleTimeoutMs` | yes | `30000` | Maximum unused idle age, `100..=3600000`. |
+| `maxLifetimeMs` | yes | `300000` | Absolute unused-socket lifetime, at least `idleTimeoutMs` and no more than one hour. |
+| `shrinkDelayMs` | yes | `30000` | Demand-free hysteresis before gradual shrink, `100..=3600000`. |
+
+These limits are per endpoint; a strict process-lifetime authority additionally
+bounds all generations, and the FD budget remains final. A checkout never waits
+for refill. Under pressure speculative ready sockets are dropped before the
+normal cold path is attempted.
 
 ### `advanced.limits.relay`
 
@@ -965,6 +985,8 @@ Restart required:
   admission/state is process-lifetime;
 - any `advanced.limits.directBarrier` change, because the direct-dial authority
   is process-lifetime;
+- any `advanced.limits.warmConnections` change, because the cross-generation
+  speculative-connection authority is process-lifetime;
 - any `advanced.limits.relay` change, because buffer/splice pools are
   process-lifetime;
 - NXR `maxNonceEntries` or `nonceRetentionSeconds` changes;

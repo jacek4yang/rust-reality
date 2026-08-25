@@ -2,6 +2,18 @@
 
 All notable user-facing changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Authenticated REALITY handshakes can consume a generation-isolated adaptive
+  pool of TCP-established cover sockets, removing the cover TCP handshake RTT
+  on a warm hit. No TLS bytes are sent before checkout; failures and replayed
+  or malformed ClientHellos retain the original real-cover byte-exact path.
+- Added bounded `realitySettings.coverOptimization` switches and the shared
+  `advanced.limits.warmConnections` policy, with strict FD accounting,
+  pressure-first reclamation, refill backoff, and reload isolation.
+
 ## [1.6.1] - 2026-08-23
 
 No configuration migration is required from v1.6.0.
