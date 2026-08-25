@@ -476,7 +476,11 @@ cd "$REPOSITORY"
 printf '%s' "$(printf 'x%.0s' {1..256})" >"$work/payload.bin"
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=localhost \
     -keyout "$work/origin.key" -out "$work/origin.crt" >/dev/null 2>&1
-(cd scripts/bench-origin && go build -o "$work/bench-origin" .)
+# The harness identity is the fail-closed source-tree manifest recorded above.
+# Go's VCS discovery follows a linked worktree's common Git directory and can
+# otherwise inspect the non-repository workspace parent, so disable redundant
+# VCS stamping for this ephemeral helper explicitly.
+(cd scripts/bench-origin && go build -buildvcs=false -o "$work/bench-origin" .)
 http_port=$port_base; https_port=$((port_base + 1))
 "$work/bench-origin" --port "$http_port" --payload-dir "$work" --put-log "$work/http-put.jsonl" \
     >"$out_dir/origin-http.log" 2>&1 & track_last origin-http "$!"; http_pid=$last_pid
