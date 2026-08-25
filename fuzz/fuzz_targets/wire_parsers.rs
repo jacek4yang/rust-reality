@@ -10,7 +10,9 @@ use rust_reality::protocol::{
 fuzz_target!(|input: &[u8]| {
     let _ = decode_request(input);
     fuzz_decode_request_ref(input);
-    let _ = ClientHello::parse_message(input);
+    if let Ok(hello) = ClientHello::parse_message(input) {
+        let _ = hello.normalized_profile_class();
+    }
     let _ = ClientHello::parse_record(input);
     let _ = request_len_from_header(input);
     let key = NxrKey::new([0x33; 32]);

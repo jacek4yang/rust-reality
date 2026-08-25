@@ -15,6 +15,10 @@ const MAX_EXTENSIONS: usize = 64;
 const X25519_KEY_EXCHANGE_LEN: usize = 32;
 const MLKEM768_CIPHERTEXT_LEN: usize = 1_088;
 const X25519_MLKEM768_SERVER_SHARE_LEN: usize = MLKEM768_CIPHERTEXT_LEN + 32;
+const SERVER_RANDOM_START: usize = 6;
+const SERVER_RANDOM_END: usize = SERVER_RANDOM_START + 32;
+const SESSION_ID_LENGTH_OFFSET: usize = SERVER_RANDOM_END;
+const SESSION_ID_START: usize = SESSION_ID_LENGTH_OFFSET + 1;
 
 /// A target ServerHello cannot safely seed the dedicated REALITY handshake.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -53,6 +57,21 @@ impl Error for ServerHelloError {}
 
 /// Validated target presentation bytes with a replaceable server key share.
 pub struct ServerHelloTemplate {
+    message: Vec<u8>,
+    suite: CipherSuite,
+    key_share_group: u16,
+    key_exchange: Range<usize>,
+}
+
+/// Stable cover-derived ServerHello bytes with every session field erased.
+///
+/// The skeleton retains target extension structure/order and negotiation, but
+/// stores zeroes in the server-random, echoed-session-ID, and key-exchange
+/// ranges. Materialization copies the bounded skeleton and supplies a fresh
+/// random plus the exact current client session ID. The handshake builder then
+/// supplies a fresh ephemeral server share as it does on the live-cover path.
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct ServerHelloProfileTemplate {
     message: Vec<u8>,
     suite: CipherSuite,
     key_share_group: u16,
@@ -169,6 +188,48 @@ impl ServerHelloTemplate {
         &self.message
     }
 
+    /// Returns the observed cover key exchange for a controlled collector.
+    ///
+    /// User handshakes never expose or persist this value. The collector needs
+    /// it only to derive the cover handshake read keys before erasing it from
+    /// the immutable profile skeleton.
+    pub(crate) fn observed_key_exchange(&self) -> Option<&[u8]> {
+        self.message.get(self.key_exchange.clone())
+    }
+
+    /// Erases all per-session target values and returns a stable profile skeleton.
+    pub(crate) fn into_profile_template(
+        mut self,
+    ) -> Result<ServerHelloProfileTemplate, ServerHelloError> {
+        let session_len = usize::from(
+            *self
+                .message
+                .get(SESSION_ID_LENGTH_OFFSET)
+                .ok_or(ServerHelloError::Malformed)?,
+        );
+        let session_end = SESSION_ID_START
+            .checked_add(session_len)
+            .ok_or(ServerHelloError::TooLarge)?;
+        self.message
+            .get_mut(SERVER_RANDOM_START..SERVER_RANDOM_END)
+            .ok_or(ServerHelloError::Malformed)?
+            .fill(0);
+        self.message
+            .get_mut(SESSION_ID_START..session_end)
+            .ok_or(ServerHelloError::Malformed)?
+            .fill(0);
+        self.message
+            .get_mut(self.key_exchange.clone())
+            .ok_or(ServerHelloError::Malformed)?
+            .fill(0);
+        Ok(ServerHelloProfileTemplate {
+            message: self.message,
+            suite: self.suite,
+            key_share_group: self.key_share_group,
+            key_exchange: self.key_exchange,
+        })
+    }
+
     /// Consumes the template and replaces only the key-exchange bytes.
     ///
     /// # Errors
@@ -186,10 +247,80 @@ impl ServerHelloTemplate {
     }
 }
 
+impl ServerHelloProfileTemplate {
+    /// Creates one session template from stable profile bytes.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a changed offer, mismatched session-ID length, malformed
+    /// skeleton, or bounded allocation failure. These failures select the
+    /// live cover rather than guessing.
+    pub(crate) fn materialize(
+        &self,
+        client: &ClientHello,
+        server_random: [u8; 32],
+    ) -> Result<ServerHelloTemplate, ServerHelloError> {
+        if !client.cipher_offered(self.suite.wire_value()) {
+            return Err(ServerHelloError::UnsupportedCipherSuite);
+        }
+        validate_key_share(self.key_share_group, self.key_exchange.len(), client)?;
+        let session_id = client
+            .session_id()
+            .ok_or(ServerHelloError::SessionIdMismatch)?;
+        let stored_session_len = usize::from(
+            *self
+                .message
+                .get(SESSION_ID_LENGTH_OFFSET)
+                .ok_or(ServerHelloError::Malformed)?,
+        );
+        if session_id.len() != stored_session_len {
+            return Err(ServerHelloError::SessionIdMismatch);
+        }
+        let session_end = SESSION_ID_START
+            .checked_add(stored_session_len)
+            .ok_or(ServerHelloError::TooLarge)?;
+        let mut message = Vec::new();
+        message
+            .try_reserve_exact(self.message.len())
+            .map_err(|_| ServerHelloError::BufferAllocation)?;
+        message.extend_from_slice(&self.message);
+        message
+            .get_mut(SERVER_RANDOM_START..SERVER_RANDOM_END)
+            .ok_or(ServerHelloError::Malformed)?
+            .copy_from_slice(&server_random);
+        message
+            .get_mut(SESSION_ID_START..session_end)
+            .ok_or(ServerHelloError::Malformed)?
+            .copy_from_slice(session_id);
+        Ok(ServerHelloTemplate {
+            message,
+            suite: self.suite,
+            key_share_group: self.key_share_group,
+            key_exchange: self.key_exchange.clone(),
+        })
+    }
+
+    #[cfg(test)]
+    fn raw_message(&self) -> &[u8] {
+        &self.message
+    }
+}
+
 impl fmt::Debug for ServerHelloTemplate {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ServerHelloTemplate")
+            .field("suite", &self.suite)
+            .field("key_share_group", &self.key_share_group)
+            .field("message_len", &self.message.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for ServerHelloProfileTemplate {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ServerHelloProfileTemplate")
             .field("suite", &self.suite)
             .field("key_share_group", &self.key_share_group)
             .field("message_len", &self.message.len())
@@ -361,6 +492,49 @@ mod tests {
         assert_eq!(patched.iter().filter(|byte| **byte == 0x77).count(), 32);
         assert_eq!(message.iter().filter(|byte| **byte == 0x55).count(), 32);
         assert_eq!(patched.iter().filter(|byte| **byte == 0x55).count(), 0);
+    }
+
+    #[test]
+    fn profile_erases_and_regenerates_every_server_hello_session_field() {
+        let observed_client = client(X25519_GROUP, &[0x22; 32]);
+        let observed = server_hello(
+            &[0x11; SESSION_ID_LEN],
+            0x1301,
+            X25519_GROUP,
+            &[0x55; 32],
+            &[],
+        );
+        let profile = ServerHelloTemplate::parse(&observed, &observed_client)
+            .expect("observed target ServerHello must parse")
+            .into_profile_template()
+            .expect("per-session fields must erase");
+
+        assert_eq!(&profile.raw_message()[6..38], &[0; 32]);
+        assert_eq!(&profile.raw_message()[39..71], &[0; SESSION_ID_LEN]);
+        assert_eq!(
+            &profile.raw_message()[profile.raw_message().len() - 32..],
+            &[0; 32]
+        );
+
+        let current = ClientHello::parse_message(&fixtures::client_hello_with_key_share(
+            [0x33; 32],
+            &[0x44; SESSION_ID_LEN],
+            "www.example.com",
+            &[b"h2"],
+            X25519_GROUP,
+            &[0x66; 32],
+        ))
+        .expect("current ClientHello must parse");
+        let materialized = profile
+            .materialize(&current, [0x77; 32])
+            .expect("matching current offer must materialize")
+            .into_patched_message(&[0x88; 32])
+            .expect("fresh server share must patch");
+
+        assert_eq!(&materialized[6..38], &[0x77; 32]);
+        assert_eq!(&materialized[39..71], &[0x44; SESSION_ID_LEN]);
+        assert_eq!(&materialized[materialized.len() - 32..], &[0x88; 32]);
+        assert_ne!(&materialized[6..38], &observed[6..38]);
     }
 
     #[test]

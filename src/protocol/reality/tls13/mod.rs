@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod allocation_gate;
 mod application_io;
+mod cover_profile;
 mod handshake;
 mod handshake_read;
 mod idle;
@@ -18,6 +19,9 @@ pub use application_io::{
     ApplicationRecord, ApplicationWriteStats, TlsApplicationIo, TlsApplicationIoError,
     TlsApplicationReader, TlsApplicationWriter, resume_application_halves,
 };
+pub(crate) use cover_profile::CoverProfile;
+#[cfg(feature = "fuzzing")]
+pub use cover_profile::fuzz_cover_profile_extensions;
 pub(crate) use handshake::build_server_flight_with_shape;
 pub use handshake::{
     EstablishedTls, ExportedTlsState, RealityHandshakeError, ServerFlight, build_server_flight,
@@ -44,6 +48,7 @@ pub use record_read::{
     read_tls_record, read_tls_record_into, record_storage,
 };
 pub(crate) use record_read::{MAX_TLS13_CIPHERTEXT_LEN, TLS_RECORD_HEADER_LEN, buffered_failure};
+pub(crate) use server_hello::ServerHelloProfileTemplate;
 pub use server_hello::{
     ServerHelloError, ServerHelloTemplate, change_cipher_spec_record, plaintext_handshake_record,
 };

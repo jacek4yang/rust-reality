@@ -1004,9 +1004,9 @@ impl RuntimeSnapshot {
         for connection in self.connections.values() {
             if let ConnectionHandler::Public { reality, .. } = &connection.handler {
                 let snapshot = reality.cover_pool_snapshot();
-                if reality.deactivate_cover_pool()
-                    && let Some(snapshot) = snapshot
-                {
+                let profile_snapshot = reality.cover_profile_snapshot();
+                let _deactivated = reality.deactivate_cover_pool();
+                if let Some(snapshot) = snapshot {
                     emit(
                         &self.logger,
                         &LogEvent::CoverPoolSummary {
@@ -1024,6 +1024,24 @@ impl RuntimeSnapshot {
                             pool_target_ready: snapshot.target_ready,
                             pool_growth: snapshot.growth,
                             pool_shrink: snapshot.shrink,
+                        },
+                    );
+                }
+                if let Some(snapshot) = profile_snapshot {
+                    emit(
+                        &self.logger,
+                        &LogEvent::CoverProfileSummary {
+                            generation: snapshot.generation,
+                            cover_profile_hit: snapshot.hit,
+                            cover_profile_miss: snapshot.miss,
+                            cover_profile_stale: snapshot.stale,
+                            cover_profile_unstable: snapshot.unstable,
+                            cover_profile_refresh: snapshot.refresh,
+                            cover_profile_refresh_failure: snapshot.refresh_failure,
+                            cover_profile_disagreement: snapshot.disagreement,
+                            cover_profile_disabled: snapshot.disabled,
+                            cover_profile_collecting: snapshot.collecting,
+                            cover_profile_validated: snapshot.validated,
                         },
                     );
                 }

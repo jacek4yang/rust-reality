@@ -175,6 +175,31 @@ pub enum LogEvent {
         /// Adaptive downward target transitions.
         pool_shrink: u64,
     },
+    /// One bounded cover-profile summary emitted when its generation retires.
+    CoverProfileSummary {
+        /// Immutable runtime generation that owned the cache and collector.
+        generation: u64,
+        /// Successfully generated authenticated profile flights.
+        cover_profile_hit: u64,
+        /// Exact-class lookup misses, including startup and stale profiles.
+        cover_profile_miss: u64,
+        /// Expired profiles rejected before use.
+        cover_profile_stale: u64,
+        /// Classes whose controlled observations did not reach consensus.
+        cover_profile_unstable: u64,
+        /// Immutable validated profile publications.
+        cover_profile_refresh: u64,
+        /// Bounded controlled collection failures.
+        cover_profile_refresh_failure: u64,
+        /// Controlled observations that disagreed semantically.
+        cover_profile_disagreement: u64,
+        /// Lookups attempted outside the active generation lifecycle.
+        cover_profile_disabled: u64,
+        /// Collection operations active at retirement.
+        cover_profile_collecting: u32,
+        /// Validated profile classes at retirement.
+        cover_profile_validated: u32,
+    },
     /// A connection completed. Emitted only at debug level.
     ConnectionClosed {
         /// Remote address.
@@ -448,7 +473,8 @@ impl LogEvent {
             | Self::DescriptorBudgetReport { .. }
             | Self::RuntimePlanReport { .. }
             | Self::MachineReport { .. }
-            | Self::CoverPoolSummary { .. } => LogLevel::Info,
+            | Self::CoverPoolSummary { .. }
+            | Self::CoverProfileSummary { .. } => LogLevel::Info,
             Self::ConnectionAccepted { .. }
             | Self::ConnectionClosed { .. }
             | Self::CoverFlightSelected { .. }
