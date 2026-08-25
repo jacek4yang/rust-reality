@@ -179,6 +179,8 @@ pub enum LogEvent {
     CoverProfileSummary {
         /// Immutable runtime generation that owned the cache and collector.
         generation: u64,
+        /// Closed aggregate lifecycle state at generation retirement.
+        cover_profile_state: &'static str,
         /// Successfully generated authenticated profile flights.
         cover_profile_hit: u64,
         /// Exact-class lookup misses, including startup and stale profiles.

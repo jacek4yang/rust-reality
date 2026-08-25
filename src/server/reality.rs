@@ -801,6 +801,13 @@ mod tests {
         assert_eq!(snapshot.checkout_total, 0);
         assert_eq!(snapshot.checkout_hit, 0);
         assert_eq!(snapshot.ready, 1);
+        let profile = acceptor
+            .cover_profile_snapshot()
+            .expect("cover profile cache must exist");
+        assert_eq!(profile.hit, 0);
+        assert_eq!(profile.miss, 0);
+        assert_eq!(profile.refresh, 0);
+        assert_eq!(profile.validated, 0);
         acceptor.deactivate_cover_pool();
         drop(warm_cover);
     }

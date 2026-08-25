@@ -66,7 +66,37 @@ struct Candidate {
 #[derive(Default)]
 struct CollectionQueue {
     candidates: VecDeque<Candidate>,
-    cooldowns: Vec<(NormalizedClientHelloClass, Instant)>,
+    cooldowns: Vec<ProfileCooldown>,
+}
+
+struct ProfileCooldown {
+    class: NormalizedClientHelloClass,
+    until: Instant,
+    state: CoverProfileState,
+}
+
+/// Closed aggregate state vocabulary for the generation-local profile cache.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CoverProfileState {
+    Unavailable,
+    Collecting,
+    Validated,
+    Stale,
+    Unstable,
+    Disabled,
+}
+
+impl CoverProfileState {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unavailable => "unavailable",
+            Self::Collecting => "collecting",
+            Self::Validated => "validated",
+            Self::Stale => "stale",
+            Self::Unstable => "unstable",
+            Self::Disabled => "disabled",
+        }
+    }
 }
 
 #[derive(Default)]
@@ -87,6 +117,7 @@ struct CoverProfileMetrics {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CoverProfileSnapshot {
     pub(crate) generation: u64,
+    pub(crate) state: CoverProfileState,
     pub(crate) hit: u64,
     pub(crate) miss: u64,
     pub(crate) stale: u64,
@@ -221,7 +252,12 @@ impl CoverProfiles {
             Ordering::Release,
         );
         drop(publication);
-        cooldown(&self.inner, class, UNSTABLE_COOLDOWN);
+        cooldown(
+            &self.inner,
+            class,
+            UNSTABLE_COOLDOWN,
+            CoverProfileState::Unstable,
+        );
     }
 
     /// Admits one sanitized class only after ClientFinished and replay commit.
@@ -238,8 +274,22 @@ impl CoverProfiles {
     }
 
     pub(crate) fn snapshot(&self) -> CoverProfileSnapshot {
+        let now = Instant::now();
+        let published = self.inner.published.load();
+        let queue = lock(&self.inner.queue);
+        let state = derive_profile_state(
+            self.inner.lifecycle.load(Ordering::Acquire),
+            published.iter().any(|entry| entry.expires_at > now),
+            self.inner.metrics.collecting.load(Ordering::Acquire) > 0
+                || !queue.candidates.is_empty(),
+            published.iter().any(|entry| entry.expires_at <= now),
+            queue.cooldowns.iter().any(|cooldown| {
+                cooldown.until > now && cooldown.state == CoverProfileState::Unstable
+            }),
+        );
         CoverProfileSnapshot {
             generation: self.inner.generation,
+            state,
             hit: self.inner.metrics.hit.load(Ordering::Relaxed),
             miss: self.inner.metrics.miss.load(Ordering::Relaxed),
             stale: self.inner.metrics.stale.load(Ordering::Relaxed),
@@ -265,11 +315,11 @@ fn enqueue(inner: &Arc<CoverProfilesInner>, template: CoverProbeTemplate, now: I
         return;
     }
     let mut queue = lock(&inner.queue);
-    queue.cooldowns.retain(|(_, until)| *until > now);
+    queue.cooldowns.retain(|cooldown| cooldown.until > now);
     if queue
         .cooldowns
         .iter()
-        .any(|(cooldown_class, _)| *cooldown_class == class)
+        .any(|cooldown| cooldown.class == class)
         || queue
             .candidates
             .iter()
@@ -305,14 +355,24 @@ async fn run_collector(inner: Arc<CoverProfilesInner>) {
             Err(CollectionFailure::Unstable) => {
                 inner.metrics.unstable.fetch_add(1, Ordering::Relaxed);
                 inner.metrics.disagreement.fetch_add(1, Ordering::Relaxed);
-                cooldown(&inner, candidate.class, UNSTABLE_COOLDOWN);
+                cooldown(
+                    &inner,
+                    candidate.class,
+                    UNSTABLE_COOLDOWN,
+                    CoverProfileState::Unstable,
+                );
             }
             Err(CollectionFailure::Unavailable) => {
                 inner
                     .metrics
                     .refresh_failure
                     .fetch_add(1, Ordering::Relaxed);
-                cooldown(&inner, candidate.class, FAILURE_COOLDOWN);
+                cooldown(
+                    &inner,
+                    candidate.class,
+                    FAILURE_COOLDOWN,
+                    CoverProfileState::Unavailable,
+                );
             }
         }
     }
@@ -431,12 +491,43 @@ fn publish(inner: &CoverProfilesInner, candidate: Candidate, profile: CoverProfi
     drop(publication);
 }
 
-fn cooldown(inner: &CoverProfilesInner, class: NormalizedClientHelloClass, duration: Duration) {
+fn cooldown(
+    inner: &CoverProfilesInner,
+    class: NormalizedClientHelloClass,
+    duration: Duration,
+    state: CoverProfileState,
+) {
     let mut queue = lock(&inner.queue);
     if queue.cooldowns.len() >= MAX_PROFILE_CLASSES {
         queue.cooldowns.remove(0);
     }
-    queue.cooldowns.push((class, Instant::now() + duration));
+    queue.cooldowns.push(ProfileCooldown {
+        class,
+        until: Instant::now() + duration,
+        state,
+    });
+}
+
+fn derive_profile_state(
+    lifecycle: u8,
+    validated: bool,
+    collecting: bool,
+    stale: bool,
+    unstable: bool,
+) -> CoverProfileState {
+    if lifecycle != LIFECYCLE_ACTIVE {
+        CoverProfileState::Disabled
+    } else if validated {
+        CoverProfileState::Validated
+    } else if collecting {
+        CoverProfileState::Collecting
+    } else if stale {
+        CoverProfileState::Stale
+    } else if unstable {
+        CoverProfileState::Unstable
+    } else {
+        CoverProfileState::Unavailable
+    }
 }
 
 fn jittered_ttl() -> Duration {
@@ -459,7 +550,10 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CoverHandshakePlan, CoverHandshakeRecordShape, first_encrypted_record_range};
+    use super::{
+        CoverHandshakePlan, CoverHandshakeRecordShape, CoverProfileState, LIFECYCLE_ACTIVE,
+        LIFECYCLE_CREATED, derive_profile_state, first_encrypted_record_range,
+    };
 
     #[test]
     fn locates_first_encrypted_record_with_and_without_compatibility_ccs() {
@@ -488,6 +582,34 @@ mod tests {
                 },
             ),
             Ok(9..46)
+        );
+    }
+
+    #[test]
+    fn aggregate_profile_state_is_closed_and_fail_safe() {
+        assert_eq!(
+            derive_profile_state(LIFECYCLE_CREATED, false, false, false, false),
+            CoverProfileState::Disabled
+        );
+        assert_eq!(
+            derive_profile_state(LIFECYCLE_ACTIVE, false, false, false, false),
+            CoverProfileState::Unavailable
+        );
+        assert_eq!(
+            derive_profile_state(LIFECYCLE_ACTIVE, false, true, false, false),
+            CoverProfileState::Collecting
+        );
+        assert_eq!(
+            derive_profile_state(LIFECYCLE_ACTIVE, false, false, true, false),
+            CoverProfileState::Stale
+        );
+        assert_eq!(
+            derive_profile_state(LIFECYCLE_ACTIVE, false, false, false, true),
+            CoverProfileState::Unstable
+        );
+        assert_eq!(
+            derive_profile_state(LIFECYCLE_ACTIVE, true, true, true, true),
+            CoverProfileState::Validated
         );
     }
 }

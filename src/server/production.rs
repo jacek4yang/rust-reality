@@ -1032,6 +1032,7 @@ impl RuntimeSnapshot {
                         &self.logger,
                         &LogEvent::CoverProfileSummary {
                             generation: snapshot.generation,
+                            cover_profile_state: snapshot.state.as_str(),
                             cover_profile_hit: snapshot.hit,
                             cover_profile_miss: snapshot.miss,
                             cover_profile_stale: snapshot.stale,
