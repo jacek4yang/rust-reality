@@ -317,14 +317,16 @@ impl CoverProfiles {
 
 fn enqueue(inner: &Arc<CoverProfilesInner>, template: CoverProbeTemplate, now: Instant) {
     let class = template.class();
-    if inner
-        .published
-        .load()
+    let published = inner.published.load();
+    if published
         .iter()
         .any(|entry| entry.class == class && entry.expires_at > now)
     {
         return;
     }
+    let known = published.len();
+    let replaces_existing = published.iter().any(|entry| entry.class == class);
+    drop(published);
     let mut queue = lock(&inner.queue);
     queue.cooldowns.retain(|cooldown| cooldown.until > now);
     if queue
@@ -340,13 +342,16 @@ fn enqueue(inner: &Arc<CoverProfilesInner>, template: CoverProbeTemplate, now: I
     {
         return;
     }
-    let known = inner.published.load().len();
-    if known.saturating_add(queue.candidates.len()) >= MAX_PROFILE_CLASSES {
+    if !collection_capacity_available(known, queue.candidates.len(), replaces_existing) {
         return;
     }
     queue.candidates.push_back(Candidate { class, template });
     drop(queue);
     inner.notify.notify_one();
+}
+
+fn collection_capacity_available(known: usize, queued: usize, replaces_existing: bool) -> bool {
+    replaces_existing || known.saturating_add(queued) < MAX_PROFILE_CLASSES
 }
 
 async fn run_collector(inner: Arc<CoverProfilesInner>) {
@@ -601,8 +606,24 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 mod tests {
     use super::{
         CoverHandshakePlan, CoverHandshakeRecordShape, CoverProfileState, LIFECYCLE_ACTIVE,
-        LIFECYCLE_CREATED, derive_profile_state, first_encrypted_record_range, profile_is_current,
+        LIFECYCLE_CREATED, MAX_PROFILE_CLASSES, collection_capacity_available,
+        derive_profile_state, first_encrypted_record_range, profile_is_current,
     };
+
+    #[test]
+    fn a_full_cache_can_refresh_but_cannot_admit_a_new_class() {
+        assert!(collection_capacity_available(MAX_PROFILE_CLASSES, 0, true));
+        assert!(!collection_capacity_available(
+            MAX_PROFILE_CLASSES,
+            0,
+            false
+        ));
+        assert!(!collection_capacity_available(
+            MAX_PROFILE_CLASSES - 1,
+            1,
+            false
+        ));
+    }
 
     #[test]
     fn locates_first_encrypted_record_with_and_without_compatibility_ccs() {
