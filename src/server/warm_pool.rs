@@ -41,7 +41,6 @@ const CONNECT_EWMA_WEIGHT: f64 = 0.25;
 const CONNECT_SAFETY_FACTOR: f64 = 1.0;
 const BURST_HEADROOM_FACTOR: f64 = 0.25;
 const MAX_STALE_CHECKS_PER_CHECKOUT: usize = 4;
-const REFILL_COALESCE_DELAY: Duration = Duration::from_millis(1);
 
 /// Process-lifetime bounds shared by every pool and immutable generation.
 #[derive(Clone)]
@@ -209,7 +208,6 @@ impl From<&WarmConnectionPolicy> for PoolPolicy {
 struct PoolState {
     ready: Vec<ReadySocket>,
     connecting: u32,
-    refill_active: bool,
     target_ready: u32,
     arrivals_window: u64,
     misses_window: u64,
@@ -326,7 +324,6 @@ impl AdaptiveTcpPool {
                 state: Mutex::new(PoolState {
                     ready: Vec::new(),
                     connecting: 0,
-                    refill_active: false,
                     target_ready: policy.min_ready,
                     arrivals_window: 0,
                     misses_window: 0,
@@ -408,7 +405,7 @@ impl AdaptiveTcpPool {
         }
 
         for attempt in 0..MAX_STALE_CHECKS_PER_CHECKOUT {
-            let (candidate, signal_refill) = {
+            let (candidate, ready_after, target_ready) = {
                 let mut state = lock(&self.inner.state);
                 if attempt == 0 {
                     state.arrivals_window = state.arrivals_window.saturating_add(1);
@@ -420,14 +417,8 @@ impl AdaptiveTcpPool {
                     .metrics
                     .ready
                     .store(ready_after, Ordering::Release);
-                let signal_refill =
-                    ready_after <= low_watermark(state.target_ready) && !state.refill_active;
-                state.refill_active |= signal_refill;
-                (candidate, signal_refill)
+                (candidate, ready_after, state.target_ready)
             };
-            if signal_refill {
-                self.inner.notify.notify_one();
-            }
             let Some(candidate) = candidate else {
                 break;
             };
@@ -446,6 +437,9 @@ impl AdaptiveTcpPool {
                 .checkout_hit
                 .fetch_add(1, Ordering::Relaxed);
             self.inner.metrics.in_use.fetch_add(1, Ordering::AcqRel);
+            if ready_after <= low_watermark(target_ready) {
+                self.inner.notify.notify_one();
+            }
             return Some(WarmCheckout {
                 connection: candidate.connection,
                 use_permit: WarmUsePermit::new(Arc::clone(&self.inner)),
@@ -501,12 +495,8 @@ impl AdaptiveTcpPool {
             .fetch_add(1, Ordering::Relaxed);
         let mut state = lock(&self.inner.state);
         state.misses_window = state.misses_window.saturating_add(1);
-        let signal_refill = !state.refill_active;
-        state.refill_active = true;
         drop(state);
-        if signal_refill {
-            self.inner.notify.notify_one();
-        }
+        self.inner.notify.notify_one();
     }
 }
 
@@ -535,13 +525,7 @@ async fn run_controller(inner: Arc<PoolInner>) {
         reconcile(&inner, &mut dials);
         tokio::select! {
             biased;
-            _ = inner.notify.notified() => {
-                // Authenticated checkouts in one arrival burst finish a little
-                // apart. One bounded control-plane delay per singleflight
-                // refill cycle lets their deficits coalesce before dialing.
-                // It never delays checkout or adds network I/O to a session.
-                time::sleep(REFILL_COALESCE_DELAY).await;
-            }
+            _ = inner.notify.notified() => {}
             completed = dials.next(), if !dials.is_empty() => {
                 if let Some(outcome) = completed {
                     handle_dial_completion(&inner, outcome);
@@ -691,11 +675,6 @@ fn reconcile(inner: &Arc<PoolInner>, dials: &mut FuturesUnordered<DialFuture>) {
             }
         }));
     }
-    // Keep the cycle armed while a completion is guaranteed to wake this
-    // controller. Once there is no in-flight dial, the next checkout must be
-    // able to arm and notify a new cycle. The pool mutex makes that hand-off
-    // race-free with checkout.
-    state.refill_active = state.connecting > 0;
 }
 
 fn handle_dial_completion(inner: &Arc<PoolInner>, outcome: DialOutcome) {
