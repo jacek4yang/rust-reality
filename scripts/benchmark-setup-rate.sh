@@ -408,12 +408,13 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 wait_port() {
-    local port=$1 pid=$2 host=${3:-127.0.0.1} start
+    local port=$1 pid=$2 host=${3:-127.0.0.1} rtt_ms=${4:-0} start
     start=$(pid_start_time "$pid") || return 1
-    python3 - "$port" "$pid" "$start" "$host" <<'PY'
+    python3 - "$port" "$pid" "$start" "$host" "$rtt_ms" <<'PY'
 import os, socket, sys, time
-port, pid, expected, host = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3], sys.argv[4]
-deadline = time.monotonic() + 10
+port, pid, expected, host, rtt_ms = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3], sys.argv[4], int(sys.argv[5])
+connect_timeout = max(.1, rtt_ms * 3 / 1000)
+deadline = time.monotonic() + max(10, connect_timeout * 5)
 while time.monotonic() < deadline:
     try:
         raw = open(f"/proc/{pid}/stat").read(); observed = raw[raw.rfind(")") + 2:].split()[19]
@@ -421,7 +422,7 @@ while time.monotonic() < deadline:
         raise SystemExit("registered process exited")
     if observed != expected: raise SystemExit("PID identity changed")
     with socket.socket() as sock:
-        sock.settimeout(.1)
+        sock.settimeout(connect_timeout)
         if sock.connect_ex((host, port)) == 0: raise SystemExit(0)
     time.sleep(.02)
 raise SystemExit(f"port {port} did not become ready")
@@ -541,7 +542,7 @@ else
     track_last origin-https "$!"; https_pid=$last_pid
 fi
 wait_port "$http_port" "$http_pid"
-wait_port "$https_port" "$https_pid" "$cover_address"
+wait_port "$https_port" "$https_pid" "$cover_address" "${cover_netem_rtt_ms:-0}"
 
 python3 - "$out_dir/order.json" "$blocks" "$abba_start" "$port_base" <<'PY'
 import json, sys
