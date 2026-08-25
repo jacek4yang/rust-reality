@@ -11,6 +11,32 @@ v1.0.0 发布对比矩阵见
 [benchmarks.zh-CN.md](benchmarks.zh-CN.md)。v1.6.0、v1.5.1 与 v1.5.0 的证据在下面紧随的
 章节中，v1.0.0 表格作为该版本的历史发布测量保持不变。
 
+## v1.7 开发证据：已认证 cover TCP 预热
+
+第一阶段的 cover 时延优化仍以真实 TLS cover 为权威，只把 TCP 三次握手移入有界
+后台池。受控单边 veth/netem 运行对 cover 链路施加实测 50 ms RTT，而客户端与
+服务端 loopback 路径保持不变。三组平衡 ABBA block 将不可变的功能前 main
+二进制（`6cff6b7`，SHA-256 `e92ac308…ffd94`）与候选 `aaf6a25`
+（SHA-256 `be02eb84…096e46`）比较，保留 24 个原始样本且零失败。候选/基线
+setup-rate 中位比值在 c1 为 1.9297（95% block-bootstrap 1.9288–1.9299），
+c8 为 1.8402（1.7676–1.8943）。因此 warm hit 消除一个 cover TCP RTT；当前
+cover ClientHello 到 flight 的 RTT 仍然存在。
+
+每个被测连接的服务端 task-clock 为基线的 0.9929×（95% 区间
+0.9926–1.0027），指令数中位约低 0.44%。由于 speculative replacement connect
+与当前 cover transaction 重叠，context switch 仍约高 5.4%，但已从被否决的
+10 Hz controller 约 +18.5% 大幅下降。聚焦 `strace` ABBA 只跟踪 `read`、
+`recvfrom`、`recvmsg`，没有发现候选 syscall 数膨胀（每个 slot 约
+2,775–2,790 次），因此排除了被动 stale-socket 检查是 CPU 根因的假设。
+
+聚合池计数包含刻意不阻塞启动的 warmup 与 c1 到 c8 的 burst 转换：864 次
+checkout 中 834 次命中（96.53%）；每个候选 slot 有 4–7 次 cold fallback，
+没有 stale discard 或失败样本。这不是 99.9% 稳态声明。池没有排队用户流并能
+恢复，但数学意义上的瞬时负载跃迁仍可超过当前 ready 存量。全部原始证据及失败
+controller 实验保存在仓库外的
+`artifacts/release-train/v1.7.0/cover-warm-pool/`。本阶段尚未启用 prebuilt
+cover profile；已认证 cache miss 仍取得真实 cover TLS flight。
+
 ## v1.6.1 发布证据
 
 v1.6.1 头条保留 v1.6.0 与已发布的 v1.5.1 二进制对比测量，因为 v1.6.1

@@ -48,7 +48,7 @@ JSON；如果内核或 VPS 策略拒绝某个事件，则记录带原始诊断�
 | `cargo bench`（criterion） | VLESS 解码、Vision framing、relay 后端、双栈规划/setup/fallback、自适应 short-ID/身份/tag 查找、REALITY digest 哈希、重放过期/reserve 和 direct admission 争用的回归分析，带基线和图表。 |
 | `scripts/benchmark-matrix.sh` | 完整 A/B/C loopback 矩阵（baseline/final/Xray），覆盖 方向 × 载荷 × 并发。 |
 | `scripts/benchmark-fallback-ab.sh` | 干净的 fallback A/B：两侧 warn 级日志，直连 listener。 |
-| `scripts/benchmark-setup-rate.sh` | 平衡 setup 速率 A/B（accept → 第一次 Vision 转换）。设置 `COVER_NETEM_RTT_MS` 时只把 TLS 伪装目标移到 veth/netns 后并施加有记录的单向延迟，同时保留 pool hit/miss 汇总。 |
+| `scripts/benchmark-setup-rate.sh` | 平衡 setup 速率 A/B（accept → 第一次 Vision 转换）。设置 `COVER_NETEM_RTT_MS` 时只把 TLS 伪装目标移到 veth/netns 后并施加有记录的单向延迟，同时保留 pool hit/miss 汇总。`MEASURE_MODE=perf` 在 warmup 后归因 task-clock/指令/context switch；`strace` 记录有界的 read/receive syscall 集，并先优雅停止 tracee，避免静默产生空汇总。 |
 | `scripts/benchmark-vision-direct.sh`、`scripts/benchmark-xray.sh` | 聚焦的 Vision-Direct 与 Xray 对比。 |
 | `scripts/benchmark-deployment.sh` | 部署特征化：路由正确性证明、路由决策成本（含 DNS 策略）、NXR 拓扑（direct/NXR/SOCKS5/Xray）、可选的 netem RTT 扫描，以及长连接 relay 证据。 |
 | `scripts/soak-test.sh` | 回环混合负载浸泡测试（隧道流量 + 连接churn），用 `/proc` 快照做泄漏上界检查；环境变量：`DURATION_MIN`、`ROUND_SLEEP`、`RUST_REALITY_BIN`、`XRAY_BIN`、`OUT_DIR`。 |

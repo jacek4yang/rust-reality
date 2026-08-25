@@ -14,6 +14,37 @@ frozen v1.0.0 release comparison matrix is published in
 sections immediately below and keeps the v1.0.0 tables unchanged as
 historical release measurements.
 
+## v1.7 development: authenticated cover TCP warming
+
+The first cover-latency phase keeps the real TLS cover authoritative but moves
+its TCP three-way handshake into a bounded background pool. A controlled
+one-leg veth/netem run applied a measured 50 ms cover RTT while leaving the
+client/server loopback path unchanged. Three balanced ABBA blocks compared the
+immutable pre-feature main binary (`6cff6b7`, SHA-256 `e92ac308…ffd94`) with
+candidate `aaf6a25` (SHA-256 `be02eb84…096e46`), retaining 24 raw samples and
+zero failures. Median candidate/baseline setup-rate ratios were 1.9297 at c1
+(95% block-bootstrap 1.9288–1.9299) and 1.8402 at c8
+(1.7676–1.8943). Thus a warm hit removes one cover TCP RTT while the current
+cover ClientHello-to-flight RTT remains.
+
+Server task-clock per measured connection was 0.9929× baseline (95% interval
+0.9926–1.0027); median instructions were about 0.44% lower. Context switches
+remained about 5.4% higher because speculative replacement connects overlap
+the active cover transaction, down from about 18.5% with the rejected 10 Hz
+controller. A focused `strace` ABBA traced only `read`/`recvfrom`/`recvmsg` and
+found no candidate syscall-count expansion (roughly 2,775–2,790 calls per
+slot), rejecting the passive stale-socket check as the CPU cause.
+
+The aggregate pool counters include the intentionally nonblocking startup
+warmup and the c1-to-c8 burst transition: 834/864 checkouts hit (96.53%), with
+4–7 cold fallbacks per candidate slot and no stale discards or failed samples.
+This is not a 99.9% steady-state claim. The pool recovered without queuing user
+flows, but a mathematically instantaneous workload step can exceed its current
+ready stock. Raw evidence, including losing controller experiments, is retained
+under `artifacts/release-train/v1.7.0/cover-warm-pool/` outside the repository.
+Prebuilt cover profiles are not enabled by this phase; authenticated cache
+misses still obtain the real cover TLS flight.
+
 ## v1.6.1 release evidence
 
 The v1.6.1 headline comparison retains the v1.6.0 measurements against the

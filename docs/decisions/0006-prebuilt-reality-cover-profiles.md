@@ -60,11 +60,12 @@ old generation synchronously: it stops refill and closes idle sockets, while
 already checked-out sessions retain ownership and finish normally. The new
 generation warms asynchronously and never blocks listener startup.
 
-One controller task owns each pool's dial `JoinSet`; the number of dial tasks
-is bounded by `maxConnecting`. Checkout only takes a short control-plane lock,
-transfers socket ownership, and leaves no pool synchronization in the TLS or
-relay data path. A checkout immediately wakes the controller. Misses perform a
-normal cold connect rather than waiting for refill.
+One controller task owns a bounded `FuturesUnordered` set of connect futures;
+there is no task spawned per dial and its cardinality never exceeds
+`maxConnecting`. Checkout only takes a short control-plane lock, transfers
+socket ownership, and leaves no pool synchronization in the TLS or relay data
+path. Crossing the low watermark wakes the controller. Misses perform a normal
+cold connect rather than waiting for refill.
 
 ## Adaptive controller
 
@@ -75,6 +76,13 @@ rate times establishment latency plus conservative burst headroom. Misses
 accelerate bounded growth. Shrink starts only after a cooldown and removes
 idle excess gradually. Low/high watermark hysteresis and a bounded refill
 batch prevent oscillation and dial storms.
+
+Arrival adaptation is demand-driven at a 100 ms minimum interval from checkout
+and dial-completion events. A 500 ms maintenance tick handles quiet-pool expiry,
+backoff recovery, and shrink without imposing a 10 Hz wakeup on every idle
+pool. This split was retained only after `perf stat` showed that the original
+100 ms unconditional timer materially increased context switches and CPU per
+setup connection.
 
 Background failures use capped exponential backoff with endpoint-derived
 jitter. User-flow cold connects do not wait behind that backoff. Idle health is

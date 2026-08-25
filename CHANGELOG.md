@@ -14,6 +14,13 @@ All notable user-facing changes to this project are documented in this file.
   `advanced.limits.warmConnections` policy, with strict FD accounting,
   pressure-first reclamation, refill backoff, and reload isolation.
 
+### Performance
+
+- On a controlled 50 ms cover RTT, authenticated warm-cover setup measured
+  1.93× the pre-feature c1 rate and 1.84× at c8 while remaining inside the
+  protected CPU-per-connection margin. Unauthenticated and replayed traffic
+  continues to use the real cover path.
+
 ## [1.6.1] - 2026-08-23
 
 No configuration migration is required from v1.6.0.
