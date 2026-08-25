@@ -711,49 +711,56 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn valid_nxr_authenticates_after_normal_pre_auth_idle() {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            .await
-            .expect("landing must bind");
-        let address = listener.local_addr().expect("landing address");
+    async fn valid_nxr_authenticates_across_the_pre_auth_idle_age_matrix() {
         let key = NxrKey::new([0x34; 32]);
-        let cache =
-            NxrReplayCache::new(8, Duration::from_secs(60)).expect("cache policy must compile");
-        let handler = NxrLandingHandler::new(
-            NxrAuthenticator::new(key.clone(), cache, 5),
-            Duration::from_secs(1),
-            Duration::from_secs(1),
-            TcpRelay::new(
-                &RelayPolicy::default(),
-                crate::runtime::FdBudget::new(4_096),
-            )
-            .expect("relay policy must compile"),
-            Duration::from_secs(1),
-        );
-        let client = TcpStream::connect(address);
-        let accepted = listener.accept();
-        let (client, accepted) = tokio::join!(client, accepted);
-        let mut client = client.expect("client must connect");
-        let (server, _) = accepted.expect("landing must accept");
         let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 9);
-        let mut request = Vec::new();
-        encode_request(
-            &destination,
-            super::unix_seconds().expect("clock must be valid"),
-            [0x45; 16],
-            &key,
-            &mut request,
-        )
-        .expect("request must encode");
-        let task = tokio::spawn(async move { handler.handle(server).await });
-        tokio::task::yield_now().await;
-        time::advance(Duration::from_secs(30)).await;
-        assert!(!task.is_finished(), "normal warm idle must remain accepted");
-        client.write_all(&request).await.expect("request write");
-        assert!(matches!(
-            task.await.expect("handler must join"),
-            Err(super::NxrLandingError::Destination(_))
-        ));
+        for (index, idle_age) in [0, 1, 5, 15, 30, 59].into_iter().enumerate() {
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+                .await
+                .expect("landing must bind");
+            let address = listener.local_addr().expect("landing address");
+            let cache =
+                NxrReplayCache::new(8, Duration::from_secs(60)).expect("cache policy must compile");
+            let handler = NxrLandingHandler::new(
+                NxrAuthenticator::new(key.clone(), cache, 5),
+                Duration::from_secs(1),
+                Duration::from_secs(1),
+                TcpRelay::new(
+                    &RelayPolicy::default(),
+                    crate::runtime::FdBudget::new(4_096),
+                )
+                .expect("relay policy must compile"),
+                Duration::from_secs(1),
+            );
+            let client = TcpStream::connect(address);
+            let accepted = listener.accept();
+            let (client, accepted) = tokio::join!(client, accepted);
+            let mut client = client.expect("client must connect");
+            let (server, _) = accepted.expect("landing must accept");
+            let mut nonce = [0x45; 16];
+            nonce[0] = u8::try_from(index).expect("small matrix index");
+            let mut request = Vec::new();
+            encode_request(
+                &destination,
+                super::unix_seconds().expect("clock must be valid"),
+                nonce,
+                &key,
+                &mut request,
+            )
+            .expect("request must encode");
+            let task = tokio::spawn(async move { handler.handle(server).await });
+            tokio::task::yield_now().await;
+            time::advance(Duration::from_secs(idle_age)).await;
+            assert!(
+                !task.is_finished(),
+                "valid NXR idle age {idle_age}s must remain accepted"
+            );
+            client.write_all(&request).await.expect("request write");
+            assert!(matches!(
+                task.await.expect("handler must join"),
+                Err(super::NxrLandingError::Destination(_))
+            ));
+        }
     }
 
     #[tokio::test(start_paused = true)]

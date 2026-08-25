@@ -972,30 +972,35 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn valid_handoff_authenticates_after_normal_pre_auth_idle() {
-        let (mut client, server) = tcp_pair().await;
-        let handler = test_landing_handler();
+    async fn valid_handoff_authenticates_across_the_pre_auth_idle_age_matrix() {
         let state = test_state(Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 9));
         let landing_public = PublicKey::from(&StaticSecret::from(LANDING_SECRET));
-        let mut message = Vec::new();
-        seal_transfer(
-            &state,
-            &HandoffPsk::new(PSK),
-            &landing_public,
-            [0x49; 32],
-            unix_seconds().expect("clock must be valid"),
-            &mut message,
-        )
-        .expect("transfer must seal");
-        let task = tokio::spawn(async move { handler.handle(server).await });
-        tokio::task::yield_now().await;
-        tokio::time::advance(Duration::from_secs(30)).await;
-        assert!(!task.is_finished(), "normal warm idle must remain accepted");
-        client.write_all(&message).await.expect("transfer write");
-        assert!(matches!(
-            task.await.expect("handler must join"),
-            Err(HandoffLandingError::Destination(_))
-        ));
+        for (index, idle_age) in [0, 1, 5, 15, 30, 59].into_iter().enumerate() {
+            let (mut client, server) = tcp_pair().await;
+            let handler = test_landing_handler();
+            let mut message = Vec::new();
+            seal_transfer(
+                &state,
+                &HandoffPsk::new(PSK),
+                &landing_public,
+                [u8::try_from(index).expect("small matrix index"); 32],
+                unix_seconds().expect("clock must be valid"),
+                &mut message,
+            )
+            .expect("transfer must seal");
+            let task = tokio::spawn(async move { handler.handle(server).await });
+            tokio::task::yield_now().await;
+            tokio::time::advance(Duration::from_secs(idle_age)).await;
+            assert!(
+                !task.is_finished(),
+                "valid Handoff idle age {idle_age}s must remain accepted"
+            );
+            client.write_all(&message).await.expect("transfer write");
+            assert!(matches!(
+                task.await.expect("handler must join"),
+                Err(HandoffLandingError::Destination(_))
+            ));
+        }
     }
 
     #[tokio::test(start_paused = true)]
