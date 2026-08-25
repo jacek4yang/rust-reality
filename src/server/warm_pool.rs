@@ -1195,6 +1195,7 @@ mod tests {
 
         old.deactivate();
         wait_for(|| old.snapshot().ready == 0 && old.snapshot().connecting == 0).await;
+        wait_for(|| new.snapshot().ready == 1 && new.snapshot().connecting == 0).await;
         assert_eq!(old.snapshot().generation, 21);
         assert_eq!(new.snapshot().generation, 22);
         assert_eq!(new.snapshot().ready, 1);
