@@ -26,6 +26,7 @@ ed25519-dalek = { version = "3.0.0", default-features = false, features = ["fast
 # `rand_core` is already a mandatory transitive dependency of the dalek
 # crates, so this enables no new crate in the build graph.
 getrandom = { version = "0.4.3", features = ["sys_rng"] }
+futures-util = "0.3.33"
 hkdf = "0.13.0"
 hmac = { version = "0.13.0", features = ["zeroize"] }
 libcrux-ml-dsa = { version = "0.0.10", default-features = false, features = ["mldsa65", "std"] }

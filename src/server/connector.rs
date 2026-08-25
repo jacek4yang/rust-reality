@@ -375,6 +375,20 @@ impl AccountedTcpStream {
     pub fn into_parts(self) -> (TcpStream, FdPermit) {
         (self.stream, self.fd_permit)
     }
+
+    /// Performs a local, non-waiting idle-socket health check.
+    ///
+    /// EOF, a reset, and unsolicited bytes all make a preconnected protocol
+    /// socket unusable; one nonblocking `recv` reports each of those states and
+    /// `WouldBlock` is the healthy result. This deliberately sends no ping and
+    /// therefore adds no network RTT at checkout.
+    pub(crate) fn idle_healthy(&self) -> bool {
+        let mut byte = [0_u8; 1];
+        match self.stream.try_read(&mut byte) {
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => true,
+            Ok(_) | Err(_) => false,
+        }
+    }
 }
 
 struct AttemptResult<T> {

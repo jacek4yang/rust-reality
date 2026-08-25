@@ -21,14 +21,15 @@ pub use generate::{
 pub use io::fuzz_decode_config;
 pub use io::{ConfigLoadError, MAX_CONFIG_BYTES, format_config, load_config};
 pub use model::{
-    AdvancedConfig, AssetsConfig, BlackholeSettings, Config, DialConfig, DialMode,
-    DirectBarrierConfig, DnsCacheConfig, DnsConfig, DnsStrategy, FileLogConfig, GlobalRule,
-    HandoffInboundConfig, HandoffInboundSettings, HandoffSettings, InboundConfig, ListenConfig,
-    ListenMode, LogConfig, LogLevel, LogOutput, Network, NetworkConfig, NxrInboundConfig,
-    NxrInboundSettings, NxrSettings, Objective, OutboundConfig, PolicyConfig, PortMatcher,
-    RealityConfig, RelayPolicy, ResourceGovernorConfig, ResourceMode, RouteRule, RoutingConfig,
-    RuntimeConfig, RuntimeProfile, SecretString, Socks5Settings, StreamSettings, TuningConfig,
-    TuningMode, UserPolicy, VlessClient, VlessInboundConfig, VlessInboundSettings,
+    AdvancedConfig, AssetsConfig, BlackholeSettings, Config, CoverOptimizationConfig, DialConfig,
+    DialMode, DirectBarrierConfig, DnsCacheConfig, DnsConfig, DnsStrategy, FileLogConfig,
+    GlobalRule, HandoffInboundConfig, HandoffInboundSettings, HandoffSettings, InboundConfig,
+    ListenConfig, ListenMode, LogConfig, LogLevel, LogOutput, Network, NetworkConfig,
+    NxrInboundConfig, NxrInboundSettings, NxrSettings, Objective, OutboundConfig, PolicyConfig,
+    PortMatcher, RealityConfig, RelayPolicy, ResourceGovernorConfig, ResourceMode, RouteRule,
+    RoutingConfig, RuntimeConfig, RuntimeProfile, SecretString, Socks5Settings, StreamSettings,
+    TuningConfig, TuningMode, UserPolicy, VlessClient, VlessInboundConfig, VlessInboundSettings,
+    WarmConnectionPolicy,
 };
 pub use schema::{config_schema, format_config_schema};
 pub use validate::{ConfigError, validate_config};

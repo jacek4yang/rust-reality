@@ -37,6 +37,13 @@ already consumed from the peer is forwarded to the configured REALITY target,
 in order, before live relay begins. Fallback concurrency and lifetime are
 bounded independently from authenticated connections.
 
+Cover warm pooling does not change that boundary. An idle pooled socket grants
+no authority and contains no TLS state. Only a successfully authenticated,
+replay-reserved handshake may check one out; every failure category opens its
+own real-cover connection exactly as before. Ready and connecting sockets are
+strictly bounded, FD-accounted, generation-isolated, and discarded under
+resource pressure before speculative warming can compete with active traffic.
+
 Configuration, routing assets, users, REALITY state, and outbounds are published
 as one immutable generation. A failed refresh keeps the last complete snapshot.
 Private keys, UUIDs, NXR PSKs, Handoff PSKs and static keys, credentials, and

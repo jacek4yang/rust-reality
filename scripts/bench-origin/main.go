@@ -45,7 +45,8 @@ const copyBufferSize = 256 << 10 // 256 KiB, same as the Python origin
 
 var (
 	payloadDir = flag.String("payload-dir", "", "directory containing payload-<n>.bin files")
-	port       = flag.Int("port", 0, "listen port (127.0.0.1 only)")
+	listenAddr = flag.String("listen-address", "127.0.0.1", "numeric listen address")
+	port       = flag.Int("port", 0, "listen port")
 	putLogPath = flag.String("put-log", "", "path of the per-PUT JSONL log")
 	tlsCert    = flag.String("tls-cert", "", "TLS certificate (with --tls-key enables TLS 1.3 only)")
 	tlsKey     = flag.String("tls-key", "", "TLS private key (with --tls-cert enables TLS 1.3 only)")
@@ -66,12 +67,15 @@ func main() {
 		flag.Usage()
 		log.Fatal("--port, --payload-dir and --put-log are required")
 	}
+	if net.ParseIP(*listenAddr) == nil {
+		log.Fatal("--listen-address must be a numeric IP literal")
+	}
 	if (*tlsCert == "") != (*tlsKey == "") {
 		log.Fatal("--tls-cert and --tls-key must be given together")
 	}
 
 	server := &http.Server{
-		Addr:    net.JoinHostPort("127.0.0.1", strconv.Itoa(*port)),
+		Addr:    net.JoinHostPort(*listenAddr, strconv.Itoa(*port)),
 		Handler: http.HandlerFunc(route),
 	}
 	var err error

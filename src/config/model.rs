@@ -1041,10 +1041,44 @@ pub struct RealityConfig {
     /// Maximum accepted client-clock difference; zero disables the check.
     #[serde(default = "default_reality_time_diff_ms")]
     pub max_time_diff_ms: u64,
+    /// Authenticated-only cover latency optimizations. Rejected handshakes
+    /// continue using the live cover path regardless of these settings.
+    #[serde(default)]
+    pub cover_optimization: CoverOptimizationConfig,
 }
 
 const fn default_reality_time_diff_ms() -> u64 {
     60_000
+}
+
+/// Small operator-facing switchboard for authenticated cover optimizations.
+///
+/// Numeric capacity and lifetime bounds remain process policy under
+/// `advanced.limits.warmConnections`; operators never configure TLS record
+/// shape or ServerHello semantics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct CoverOptimizationConfig {
+    /// Master switch for authenticated cover optimizations.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Keep bounded TCP-established cover sockets ready for authenticated
+    /// live-cover transactions. No TLS bytes are sent before checkout.
+    #[serde(default = "default_true")]
+    pub warm_tcp: bool,
+}
+
+impl Default for CoverOptimizationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            warm_tcp: true,
+        }
+    }
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 /// One configured outbound transport.
@@ -1244,6 +1278,48 @@ pub struct PolicyConfig {
     /// Buffered and Linux-accelerated relay controls.
     #[serde(default)]
     pub relay: RelayPolicy,
+    /// Bounded per-endpoint warm TCP connection policy. A process-lifetime
+    /// authority additionally caps the sum across endpoints and generations.
+    #[serde(default)]
+    pub warm_connections: WarmConnectionPolicy,
+}
+
+/// Bounded adaptive warm TCP policy shared by eligible internal transports.
+///
+/// The ready, connecting, and refill bounds are per endpoint. The runtime
+/// derives a strict process-wide bound from these values and the number of
+/// configured endpoints, while `FdBudget` remains the final descriptor limit.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct WarmConnectionPolicy {
+    /// Ready sockets maintained during low demand.
+    pub min_ready: u32,
+    /// Maximum ready sockets retained by one endpoint pool.
+    pub max_ready: u32,
+    /// Maximum simultaneous speculative dials by one endpoint pool.
+    pub max_connecting: u32,
+    /// Maximum dials submitted by one reconciliation pass.
+    pub refill_batch: u32,
+    /// Maximum idle age before an unused socket is discarded.
+    pub idle_timeout_ms: u64,
+    /// Maximum absolute age of an unused socket.
+    pub max_lifetime_ms: u64,
+    /// Demand-free interval before gradual shrink begins.
+    pub shrink_delay_ms: u64,
+}
+
+impl Default for WarmConnectionPolicy {
+    fn default() -> Self {
+        Self {
+            min_ready: 4,
+            max_ready: 256,
+            max_connecting: 64,
+            refill_batch: 16,
+            idle_timeout_ms: 30_000,
+            max_lifetime_ms: 300_000,
+            shrink_delay_ms: 30_000,
+        }
+    }
 }
 
 /// Bounded connection and pre-authentication resource limits.

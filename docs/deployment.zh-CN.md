@@ -131,6 +131,13 @@ rust-reality probe-dest \
 
 目标可用性和行为属于外部依赖。持续握手失败或更换目标后应重新探测。
 
+默认情况下，每个活跃 REALITY listener 会异步保留一小组有界、已完成 TCP 建连
+的伪装目标 socket。只有认证成功的握手 checkout 后才发送 TLS 字节。warm hit 会
+从认证关键路径移除伪装目标 TCP 握手，但不会移除后续伪装目标 TLS 响应 RTT、物理
+传播时延，也不能在无界瞬时流量下保证命中。被拒绝的流量始终独立新建并交互真实
+伪装目标。只有明确证据表明伪装目标或网络拒绝 idle 预连接 TCP 时，才关闭
+`coverOptimization.warmTcp`。
+
 提供 ALPN 的伪装目标应当协商 ALPN。没有 ALPN 的伪装目标是受支持的——
 v1.5 会把生成的 EncryptedExtensions ALPN 塑形成目标实际观测到的记录槽位——
 但有 ALPN 的目标应优先，因为已认证会话此时能与目标的扩展形状完全一致。

@@ -7,7 +7,7 @@ use tokio::{
 };
 
 use crate::{
-    config::{NetworkConfig, ResourceGovernorConfig},
+    config::{NetworkConfig, ResourceGovernorConfig, WarmConnectionPolicy},
     network::NetworkEnvironment,
     protocol::reality::{
         ClientHello,
@@ -20,6 +20,10 @@ use crate::{
     runtime::{AdmissionDenied, AdmissionKind, AdmissionPermit, ResourceGovernor},
     transport::{RelayContext, TcpRelay, relay::RelayStats},
 };
+
+use super::warm_pool::{AdaptiveTcpPool, WarmPoolAuthority, WarmPoolSnapshot, WarmUsePermit};
+
+const MAX_WARM_CHECKOUT_ATTEMPTS: usize = 2;
 
 /// Completed fallback byte counts, including the already-consumed wire prefix.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -97,6 +101,7 @@ pub struct RealityFallback {
     connect_timeout: Duration,
     session_timeout: Duration,
     connector: super::connector::DestinationConnector,
+    warm_pool: Option<AdaptiveTcpPool>,
 }
 
 /// One admitted cover connection whose byte ownership can transition to fallback.
@@ -108,6 +113,7 @@ pub struct CoverConnection {
     fd_permit: Option<crate::runtime::FdPermit>,
     deadline: Instant,
     forwarded_prefix: u64,
+    warm_use: Option<WarmUsePermit>,
 }
 
 impl RealityFallback {
@@ -139,18 +145,98 @@ impl RealityFallback {
         network: &NetworkConfig,
         environment: NetworkEnvironment,
     ) -> Self {
+        Self::build(
+            target.into(),
+            governor,
+            config,
+            relay,
+            network,
+            environment,
+            None,
+        )
+    }
+
+    /// Creates fallback state with an authenticated-only raw cover TCP pool.
+    #[must_use]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "extends the existing immutable fallback constructor with one pool generation"
+    )]
+    pub(crate) fn with_warm_pool(
+        target: impl Into<Arc<str>>,
+        governor: ResourceGovernor,
+        config: &ResourceGovernorConfig,
+        relay: TcpRelay,
+        network: &NetworkConfig,
+        environment: NetworkEnvironment,
+        generation: u64,
+        authority: WarmPoolAuthority,
+        policy: &WarmConnectionPolicy,
+    ) -> Self {
+        Self::build(
+            target.into(),
+            governor,
+            config,
+            relay,
+            network,
+            environment,
+            Some((generation, authority, policy)),
+        )
+    }
+
+    fn build(
+        target: Arc<str>,
+        governor: ResourceGovernor,
+        config: &ResourceGovernorConfig,
+        relay: TcpRelay,
+        network: &NetworkConfig,
+        environment: NetworkEnvironment,
+        warm: Option<(u64, WarmPoolAuthority, &WarmConnectionPolicy)>,
+    ) -> Self {
+        let connector = super::connector::DestinationConnector::with_environment(
+            Duration::from_millis(config.connect_timeout_ms),
+            network.clone(),
+            environment,
+        );
+        let warm_pool = warm.map(|(generation, authority, policy)| {
+            AdaptiveTcpPool::new(
+                Arc::clone(&target),
+                generation,
+                connector.clone(),
+                relay.fd_budget().clone(),
+                authority,
+                policy,
+            )
+        });
         Self {
-            target: target.into(),
+            target,
             governor,
             relay,
             connect_timeout: Duration::from_millis(config.connect_timeout_ms),
             session_timeout: Duration::from_millis(config.fallback_timeout_ms),
-            connector: super::connector::DestinationConnector::with_environment(
-                Duration::from_millis(config.connect_timeout_ms),
-                network.clone(),
-                environment,
-            ),
+            connector,
+            warm_pool,
         }
+    }
+
+    /// Starts speculative cover dialing without delaying listener startup.
+    pub(crate) fn activate(&self) {
+        if let Some(pool) = &self.warm_pool {
+            let _started = pool.activate();
+        }
+    }
+
+    /// Stops refill and closes every idle socket in this immutable generation.
+    pub(crate) fn deactivate(&self) -> bool {
+        if let Some(pool) = &self.warm_pool {
+            return pool.deactivate();
+        }
+        false
+    }
+
+    /// Returns fixed-cardinality pool metrics when warm cover TCP is enabled.
+    pub(crate) fn warm_pool_snapshot(&self) -> Option<WarmPoolSnapshot> {
+        self.warm_pool.as_ref().map(AdaptiveTcpPool::snapshot)
     }
 
     /// Forwards every consumed byte before relaying any new client input.
@@ -192,7 +278,7 @@ impl RealityFallback {
             .governor
             .try_acquire(AdmissionKind::Fallback)
             .map_err(FallbackError::Admission)?;
-        self.connect_with_permit(consumed_prefix, Some(permit))
+        self.connect_with_permit(consumed_prefix, Some(permit), false)
             .await
     }
 
@@ -206,13 +292,14 @@ impl RealityFallback {
     ///
     /// Returns a connection deadline, prefix write, or session error.
     pub async fn mirror(&self, consumed_prefix: &[u8]) -> Result<CoverConnection, FallbackError> {
-        self.connect_with_permit(consumed_prefix, None).await
+        self.connect_with_permit(consumed_prefix, None, true).await
     }
 
     async fn connect_with_permit(
         &self,
         consumed_prefix: &[u8],
         permit: Option<AdmissionPermit>,
+        allow_warm: bool,
     ) -> Result<CoverConnection, FallbackError> {
         let now = Instant::now();
         let deadline = now
@@ -221,6 +308,34 @@ impl RealityFallback {
         let connect_deadline = now
             .checked_add(self.connect_timeout)
             .map_or(deadline, |candidate| candidate.min(deadline));
+        if allow_warm && let Some(pool) = &self.warm_pool {
+            for _ in 0..MAX_WARM_CHECKOUT_ATTEMPTS {
+                let Some(checkout) = pool.checkout() else {
+                    break;
+                };
+                let (connected, warm_use) = checkout.into_parts();
+                let (mut stream, fd_permit) = connected.into_parts();
+                match time::timeout_at(connect_deadline, stream.write_all(consumed_prefix)).await {
+                    Ok(Ok(())) => {
+                        return Ok(CoverConnection {
+                            stream,
+                            governor: self.governor.clone(),
+                            relay: self.relay.clone(),
+                            permit,
+                            fd_permit: Some(fd_permit),
+                            deadline,
+                            forwarded_prefix: prefix_len(consumed_prefix),
+                            warm_use: Some(warm_use),
+                        });
+                    }
+                    Ok(Err(_)) | Err(_) => {
+                        pool.record_stale_checkout();
+                    }
+                }
+            }
+            pool.record_cold_fallback();
+        }
+
         let connected = time::timeout_at(
             connect_deadline,
             self.connector
@@ -252,6 +367,7 @@ impl RealityFallback {
             fd_permit: Some(fd_permit),
             deadline,
             forwarded_prefix,
+            warm_use: None,
         })
     }
 }
@@ -317,6 +433,7 @@ impl CoverConnection {
         // Declared before the relay future so it drops last: the cover
         // descriptor is closed before its budget unit is released.
         let _fd_permit = self.fd_permit.take();
+        let _warm_use = self.warm_use.take();
         let operation = async {
             let mut inbound = inbound;
             inbound
@@ -346,6 +463,10 @@ impl CoverConnection {
             .await
             .map_err(|_| FallbackError::SessionTimeout)?
     }
+}
+
+fn prefix_len(prefix: &[u8]) -> u64 {
+    u64::try_from(prefix.len()).unwrap_or(u64::MAX)
 }
 
 impl fmt::Debug for CoverConnection {
@@ -381,9 +502,11 @@ mod tests {
 
     use super::{FallbackError, RealityFallback};
     use crate::{
-        config::{RelayPolicy, ResourceGovernorConfig},
+        config::{NetworkConfig, RelayPolicy, ResourceGovernorConfig, WarmConnectionPolicy},
+        network::NetworkEnvironment,
         protocol::reality::{ClientHello, SESSION_ID_LEN, X25519_GROUP, client_hello_fixtures},
-        runtime::{FdBudget, ResourceGovernor},
+        runtime::{FdBudget, PressureGauge, ResourceGovernor, ResourcePressure},
+        server::warm_pool::WarmPoolAuthority,
         transport::TcpRelay,
     };
 
@@ -395,6 +518,171 @@ mod tests {
         let relay = TcpRelay::new(&RelayPolicy::default(), FdBudget::new(4_096))
             .expect("test relay must build");
         RealityFallback::new(target, ResourceGovernor::new(config), config, relay)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn authenticated_mirror_consumes_preestablished_socket_byte_exactly() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("cover listener must bind");
+        let target = listener
+            .local_addr()
+            .expect("cover address must exist")
+            .to_string();
+        let resource = ResourceGovernorConfig::default();
+        let warm = WarmConnectionPolicy {
+            min_ready: 1,
+            max_ready: 2,
+            max_connecting: 1,
+            refill_batch: 1,
+            idle_timeout_ms: 1_000,
+            max_lifetime_ms: 2_000,
+            shrink_delay_ms: 1_000,
+        };
+        let relay = TcpRelay::new(&RelayPolicy::default(), FdBudget::new(64))
+            .expect("test relay must build");
+        let pressure = PressureGauge::new();
+        let fallback = RealityFallback::with_warm_pool(
+            target,
+            ResourceGovernor::new(&resource),
+            &resource,
+            relay,
+            &NetworkConfig::default(),
+            NetworkEnvironment::detect(),
+            31,
+            WarmPoolAuthority::new(&warm, 1, pressure),
+            &warm,
+        );
+        fallback.activate();
+        let (mut cover, _) = timeout(Duration::from_secs(1), listener.accept())
+            .await
+            .expect("pool warmup must remain bounded")
+            .expect("cover must accept the pre-established TCP socket");
+        timeout(Duration::from_secs(1), async {
+            while fallback
+                .warm_pool_snapshot()
+                .is_none_or(|snapshot| snapshot.ready != 1)
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("pre-established socket must become ready");
+
+        let mirror = fallback
+            .mirror(PREFIX)
+            .await
+            .expect("authenticated mirror must check out the warm socket");
+        let mut observed = vec![0_u8; PREFIX.len()];
+        cover
+            .read_exact(&mut observed)
+            .await
+            .expect("exact ClientHello prefix must reach the cover");
+        assert_eq!(observed, PREFIX);
+        let snapshot = fallback
+            .warm_pool_snapshot()
+            .expect("warm pool must be configured");
+        assert_eq!(snapshot.generation, 31);
+        assert_eq!(snapshot.checkout_total, 1);
+        assert_eq!(snapshot.checkout_hit, 1);
+        assert_eq!(snapshot.checkout_miss, 0);
+        assert_eq!(snapshot.in_use, 1);
+        assert_eq!(snapshot.cold_fallback, 0);
+
+        drop(mirror);
+        fallback.deactivate();
+        assert_eq!(
+            fallback
+                .warm_pool_snapshot()
+                .expect("warm pool must be configured")
+                .in_use,
+            0
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn resource_pressure_discards_speculative_socket_before_cold_fallback() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("cover listener must bind");
+        let target = listener
+            .local_addr()
+            .expect("cover address must exist")
+            .to_string();
+        let resource = ResourceGovernorConfig::default();
+        let warm = WarmConnectionPolicy {
+            min_ready: 1,
+            max_ready: 1,
+            max_connecting: 1,
+            refill_batch: 1,
+            idle_timeout_ms: 1_000,
+            max_lifetime_ms: 2_000,
+            shrink_delay_ms: 1_000,
+        };
+        let relay = TcpRelay::new(&RelayPolicy::default(), FdBudget::new(64))
+            .expect("test relay must build");
+        let pressure = PressureGauge::new();
+        let fallback = RealityFallback::with_warm_pool(
+            target,
+            ResourceGovernor::new(&resource),
+            &resource,
+            relay,
+            &NetworkConfig::default(),
+            NetworkEnvironment::detect(),
+            32,
+            WarmPoolAuthority::new(&warm, 1, pressure.clone()),
+            &warm,
+        );
+        fallback.activate();
+        let (stale, _) = timeout(Duration::from_secs(1), listener.accept())
+            .await
+            .expect("pool warmup must remain bounded")
+            .expect("cover must accept the pre-established socket");
+        timeout(Duration::from_secs(1), async {
+            while fallback
+                .warm_pool_snapshot()
+                .is_none_or(|snapshot| snapshot.ready != 1)
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("pre-established socket must become ready");
+        pressure.set(ResourcePressure::Pressure);
+        timeout(Duration::from_secs(1), async {
+            while fallback
+                .warm_pool_snapshot()
+                .is_some_and(|snapshot| snapshot.ready != 0)
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("pressure must promptly yield speculative descriptor capacity");
+
+        let (mirror, cold_cover, observed) = timeout(Duration::from_secs(2), async {
+            let mirror = fallback
+                .mirror(PREFIX)
+                .await
+                .expect("cold fallback must recover the cover transaction");
+            let (mut cover, _) = listener.accept().await?;
+            let mut observed = vec![0_u8; PREFIX.len()];
+            cover.read_exact(&mut observed).await?;
+            Ok::<_, io::Error>((mirror, cover, observed))
+        })
+        .await
+        .expect("pressure fallback must remain bounded")
+        .expect("cold cover must receive the prefix");
+        assert_eq!(observed, PREFIX);
+        let snapshot = fallback
+            .warm_pool_snapshot()
+            .expect("warm pool must be configured");
+        assert_eq!(snapshot.stale_discard, 0);
+        assert!(snapshot.checkout_miss >= 1);
+        assert_eq!(snapshot.cold_fallback, 1);
+
+        drop((mirror, cold_cover, stale));
+        fallback.deactivate();
     }
 
     async fn tcp_pair() -> (TcpStream, TcpStream) {

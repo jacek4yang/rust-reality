@@ -1556,6 +1556,7 @@ dependencies = [
  "clap",
  "criterion",
  "ed25519-dalek",
+ "futures-util",
  "getrandom 0.4.3",
  "hickory-resolver",
  "hkdf",
