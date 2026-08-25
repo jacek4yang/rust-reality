@@ -51,7 +51,7 @@ JSON；如果内核或 VPS 策略拒绝某个事件，则记录带原始诊断�
 | `scripts/benchmark-setup-rate.sh` | 平衡 setup 速率 A/B（accept → 第一次 Vision 转换）。设置 `COVER_NETEM_RTT_MS` 时只把 TLS 伪装目标移到 veth/netns 后并施加有记录的单向延迟，同时保留 pool hit/miss 汇总。`MEASURE_MODE=perf` 在 warmup 后归因 task-clock/指令/context switch；`strace` 记录有界的 read/receive syscall 集，并先优雅停止 tracee，避免静默产生空汇总。 |
 | `scripts/benchmark-vision-direct.sh`、`scripts/benchmark-xray.sh` | 聚焦的 Vision-Direct 与 Xray 对比。 |
 | `scripts/benchmark-deployment.sh` | 部署特征化：路由正确性证明、路由决策成本（含 DNS 策略）、NXR 拓扑（direct/NXR/SOCKS5/Xray）、长连接 relay 证据，以及正式单跳 netem matrix。RTT 段保留精确生产构建在 1/10/50/100/200 ms、c1/8/32/128/512 下 Handoff/NXR/SOCKS5 的 ABBA cold/warm 样本与无秘密 pool retirement summary。 |
-| `scripts/soak-test.sh` | 回环混合负载浸泡测试（隧道流量 + 连接churn），用 `/proc` 快照做泄漏上界检查；环境变量：`DURATION_MIN`、`ROUND_SLEEP`、`RUST_REALITY_BIN`、`XRAY_BIN`、`OUT_DIR`。 |
+| `scripts/soak-test.sh` | 回环混合负载浸泡测试（隧道流量 + 连接 churn），包含长期运行的 warm Handoff、NXR 与仅预建 TCP 的 SOCKS5 拓扑、一次中点原子 generation reload/reconnect，并用逐进程 `/proc` 快照检查泄漏上界；环境变量：`DURATION_MIN`、`ROUND_SLEEP`、`RUST_REALITY_BIN`、`XRAY_BIN`、`OUT_DIR`。 |
 | `scripts/benchmark-real-path.sh` | 真实互联网路径上与 Xray 的 A/B：崩溃与协议错误门禁；吞吐受路径最慢链路限制，不能用于区分带宽。 |
 | `scripts/benchmark-vless-encryption.sh` | Xray v26.7.28 下 `encryption:none` 与同一 REALITY + Vision 内叠加 VLESS Encryption 的 A/B；测吞吐、服务端 CPU/GiB 和预热后的 setup。 |
 | `scripts/test-xray-interop.sh` | 兼容性门禁（见下），不是基准。 |
