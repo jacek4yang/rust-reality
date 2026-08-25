@@ -88,7 +88,7 @@ task and coalesces demand for an in-flight class.
 
 The immutable Phase-A baseline was commit `2e09e6e`, binary SHA-256
 `f541b02684d7a2fa4a9c97423a30b9651af458dcec3fbd30e53c6e76fbf45787`.
-The final runtime candidate was commit `8464371`, SHA-256
+The measured runtime candidate was commit `8464371`, SHA-256
 `c893fbc7a94de996346aa5e22691f14385ea3064312f7cadad2d4cd6b0a23c13`;
 the 50/200 ms reruns used source `5540152`, SHA-256
 `84d6c317c16bfb00cc186c2b649aa9b6df776120a9ec34ff1b5911e9075d934c`,

@@ -434,14 +434,20 @@ async fn collect_observation(
     // Four consensus observations may overlap, but the fixed cardinality and
     // fail-fast admission preserve active-session priority and create no
     // attacker-controlled waiter or unbounded task set.
-    let _permit = inner
-        .governor
-        .try_acquire(AdmissionKind::CryptoOperation)
-        .map_err(|_| CollectionFailure::Unavailable)?;
-    let probe = candidate
-        .template
-        .generate(variant)
-        .map_err(|_| CollectionFailure::Unavailable)?;
+    let probe = {
+        // Speculative collection must not occupy scarce crypto admission while
+        // waiting on the remote cover. Hold the fail-fast permit only around
+        // actual local key generation; active handshakes can use the capacity
+        // throughout the network wait below.
+        let _permit = inner
+            .governor
+            .try_acquire(AdmissionKind::CryptoOperation)
+            .map_err(|_| CollectionFailure::Unavailable)?;
+        candidate
+            .template
+            .generate(variant)
+            .map_err(|_| CollectionFailure::Unavailable)?
+    };
     let mut cover = inner
         .fallback
         .profile_probe(probe.wire_record())
@@ -463,6 +469,12 @@ async fn collect_observation(
     let first_record = prefix
         .get(encrypted)
         .ok_or(CollectionFailure::Unavailable)?;
+    // Decryption/key-schedule work is independently fail-fast so speculative
+    // refresh yields to active handshakes under pressure.
+    let _permit = inner
+        .governor
+        .try_acquire(AdmissionKind::CryptoOperation)
+        .map_err(|_| CollectionFailure::Unavailable)?;
     CoverProfile::from_controlled_observation(candidate.class, &probe, target, plan, first_record)
         .map_err(|_| CollectionFailure::Unavailable)
 }
