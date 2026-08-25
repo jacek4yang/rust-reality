@@ -341,11 +341,11 @@ track_last() {
     last_pid=$pid
 }
 stop_tracked() {
-    local pid=$1 index
+    local pid=$1 signal=${2:-TERM} index
     for index in "${!tracked_pids[@]}"; do
         [[ ${tracked_pids[index]} == "$pid" ]] || continue
         if pid_owned "$pid" "${tracked_starts[index]}"; then
-            kill -TERM "$pid" 2>/dev/null || true
+            kill -"$signal" "$pid" 2>/dev/null || true
             for _ in {1..50}; do pid_owned "$pid" "${tracked_starts[index]}" || break; sleep 0.02; done
             pid_owned "$pid" "${tracked_starts[index]}" && kill -KILL "$pid" 2>/dev/null || true
         fi
@@ -619,7 +619,7 @@ PY
         --argjson block "$block" --argjson position "$position" --argjson serverPid "$server_pid" --argjson serverPort "$server_port" --argjson socksPort "$socks_port" \
         '{block:$block,position:$position,implementation:$implementation,binary:{path:$binary,sha256:$sha,buildId:$buildId},process:{serverPid:$serverPid},ports:{server:$serverPort,socks:$socksPort}}' >"$slot_dir/identity.json"
     stop_tracked "$client_pid"
-    [[ -z $wrapper_pid ]] && stop_tracked "$server_pid" || stop_tracked "$wrapper_pid"
+    [[ -z $wrapper_pid ]] && stop_tracked "$server_pid" || stop_tracked "$wrapper_pid" INT
     if [[ $implementation == candidate && -n $cover_netem_rtt_ms ]]; then
         python3 - "$slot_dir/server.log" "$slot_dir/pool-summary.json" <<'PY'
 import json, sys
