@@ -378,15 +378,11 @@ impl AccountedTcpStream {
 
     /// Performs a local, non-waiting idle-socket health check.
     ///
-    /// A ready peer must have neither a pending socket error nor readable
-    /// bytes. EOF and unsolicited bytes both make a preconnected protocol
-    /// socket unusable; `WouldBlock` is the healthy result. This deliberately
-    /// sends no ping and therefore adds no network RTT at checkout.
+    /// EOF, a reset, and unsolicited bytes all make a preconnected protocol
+    /// socket unusable; one nonblocking `recv` reports each of those states and
+    /// `WouldBlock` is the healthy result. This deliberately sends no ping and
+    /// therefore adds no network RTT at checkout.
     pub(crate) fn idle_healthy(&self) -> bool {
-        match self.stream.take_error() {
-            Ok(None) => {}
-            Ok(Some(_)) | Err(_) => return false,
-        }
         let mut byte = [0_u8; 1];
         match self.stream.try_read(&mut byte) {
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => true,

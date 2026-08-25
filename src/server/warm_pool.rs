@@ -393,25 +393,29 @@ impl AdaptiveTcpPool {
             .checkout_total
             .fetch_add(1, Ordering::Relaxed);
         let now = Instant::now();
-        {
+        if self.inner.lifecycle.load(Ordering::Acquire) != LIFECYCLE_ACTIVE {
             let mut state = lock(&self.inner.state);
             state.arrivals_window = state.arrivals_window.saturating_add(1);
             state.last_demand = now;
-        }
-        if self.inner.lifecycle.load(Ordering::Acquire) != LIFECYCLE_ACTIVE {
+            drop(state);
             self.record_miss();
             return None;
         }
 
-        for _ in 0..MAX_STALE_CHECKS_PER_CHECKOUT {
-            let candidate = {
+        for attempt in 0..MAX_STALE_CHECKS_PER_CHECKOUT {
+            let (candidate, ready_after, target_ready) = {
                 let mut state = lock(&self.inner.state);
+                if attempt == 0 {
+                    state.arrivals_window = state.arrivals_window.saturating_add(1);
+                    state.last_demand = now;
+                }
                 let candidate = state.ready.pop();
+                let ready_after = saturating_u32(state.ready.len());
                 self.inner
                     .metrics
                     .ready
-                    .store(saturating_u32(state.ready.len()), Ordering::Release);
-                candidate
+                    .store(ready_after, Ordering::Release);
+                (candidate, ready_after, state.target_ready)
             };
             let Some(candidate) = candidate else {
                 break;
@@ -431,7 +435,9 @@ impl AdaptiveTcpPool {
                 .checkout_hit
                 .fetch_add(1, Ordering::Relaxed);
             self.inner.metrics.in_use.fetch_add(1, Ordering::AcqRel);
-            self.inner.notify.notify_one();
+            if ready_after <= low_watermark(target_ready) {
+                self.inner.notify.notify_one();
+            }
             return Some(WarmCheckout {
                 connection: candidate.connection,
                 use_permit: WarmUsePermit::new(Arc::clone(&self.inner)),
@@ -543,9 +549,12 @@ fn prune_and_adjust(inner: &Arc<PoolInner>, now: Instant) {
         state.ready.clear();
     } else {
         state.ready.retain(|ready| {
+            // FIN, RST, and unsolicited data are checked exactly once before
+            // checkout. Repeating a recv syscall for every ready socket on
+            // every controller tick costs CPU while providing no additional
+            // authorization boundary.
             let healthy = now.duration_since(ready.idle_since) <= inner.policy.idle_timeout
-                && now.duration_since(ready.connected_at) <= inner.policy.max_lifetime
-                && ready.connection.idle_healthy();
+                && now.duration_since(ready.connected_at) <= inner.policy.max_lifetime;
             expired += usize::from(!healthy);
             healthy
         });
@@ -680,7 +689,6 @@ fn handle_dial_completion(
         Ok(connection)
             if inner.lifecycle.load(Ordering::Acquire) == LIFECYCLE_ACTIVE
                 && inner.fd_budget.pressure() == FdPressure::Normal
-                && connection.idle_healthy()
                 && saturating_u32(state.ready.len()) < state.target_ready
                 && saturating_u32(state.ready.len()) < inner.policy.max_ready =>
         {
@@ -740,6 +748,10 @@ fn saturating_u32(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 
+fn low_watermark(target_ready: u32) -> u32 {
+    target_ready.saturating_sub((target_ready / 4).max(1))
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
@@ -774,7 +786,7 @@ mod tests {
         time::Duration,
     };
 
-    use tokio::{net::TcpListener, task::JoinHandle, time};
+    use tokio::{io::AsyncWriteExt, net::TcpListener, task::JoinHandle, time};
 
     use super::{AdaptiveTcpPool, WarmPoolAuthority};
     use crate::{
@@ -960,6 +972,60 @@ mod tests {
         wait_for(|| pool.snapshot().target_ready == policy.min_ready).await;
         assert!(pool.snapshot().shrink > 0);
 
+        pool.deactivate();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn low_watermark_coalesces_refill_without_waiting_for_exhaustion() {
+        let fixture = CoverFixture::start().await;
+        let mut policy = policy();
+        policy.min_ready = 8;
+        policy.max_ready = 8;
+        policy.max_connecting = 8;
+        policy.refill_batch = 8;
+        let authority = WarmPoolAuthority::new(&policy, 1, PressureGauge::new());
+        let pool = pool(&fixture, 12, &policy, authority, FdBudget::new(64));
+        assert!(pool.activate());
+        wait_for(|| pool.snapshot().ready == 8).await;
+        let initial_refills = pool.snapshot().refill;
+
+        drop(pool.checkout());
+        time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(pool.snapshot().ready, 7);
+        assert_eq!(pool.snapshot().refill, initial_refills);
+
+        drop(pool.checkout());
+        wait_for(|| pool.snapshot().ready == 8).await;
+        assert_eq!(pool.snapshot().refill, initial_refills + 2);
+        pool.deactivate();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn checkout_discards_a_peer_closed_idle_socket_and_recovers() {
+        let fixture = CoverFixture::start().await;
+        let mut policy = policy();
+        policy.min_ready = 1;
+        policy.max_ready = 1;
+        policy.max_connecting = 1;
+        policy.refill_batch = 1;
+        let authority = WarmPoolAuthority::new(&policy, 1, PressureGauge::new());
+        let pool = pool(&fixture, 13, &policy, authority, FdBudget::new(64));
+        assert!(pool.activate());
+        wait_for(|| pool.snapshot().ready == 1 && fixture.accepted_count() == 1).await;
+
+        let mut peer = fixture
+            .accepted
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .pop()
+            .expect("fixture must own the peer half");
+        peer.shutdown().await.expect("peer FIN must succeed");
+        drop(peer);
+        time::sleep(Duration::from_millis(10)).await;
+
+        assert!(pool.checkout().is_none());
+        assert_eq!(pool.snapshot().stale_discard, 1);
+        wait_for(|| pool.snapshot().ready == 1 && fixture.accepted_count() == 1).await;
         pool.deactivate();
     }
 
