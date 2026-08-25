@@ -580,13 +580,13 @@ while IFS=$'\t' read -r block position implementation server_port socks_port; do
     public_key=$(sed -n 's/^REALITY public key for the client: //p' "$slot_dir/generate.log")
     uuid=$(jq -er '.inbounds[0].settings.clients[0].id' "$work/$slot.raw.json")
     short_id=$(jq -er '.inbounds[0].settings.clients[0].shortIds[0]' "$work/$slot.raw.json")
-    jq --arg cache "$work/assets-$slot" --arg netem "$cover_netem_rtt_ms" --arg coverMode "$cover_mode" \
+    jq --arg cache "$work/assets-$slot" --arg netem "$cover_netem_rtt_ms" --arg coverMode "$cover_mode" --arg implementation "$implementation" \
         '.log.level=(if $netem == "" then "warn" else "info" end)
          |.assets.cacheDirectory=$cache
          |if $coverMode == "cold" then
-              .inbounds[0].streamSettings.realitySettings.coverOptimization={enabled:true,warmTcp:false,prebuiltProfiles:false}
+              .inbounds[0].streamSettings.realitySettings.coverOptimization=(if $implementation == "baseline" then {enabled:true,warmTcp:false} else {enabled:true,warmTcp:false,prebuiltProfiles:false} end)
           elif $coverMode == "warm" then
-              .inbounds[0].streamSettings.realitySettings.coverOptimization={enabled:true,warmTcp:true,prebuiltProfiles:false}
+              .inbounds[0].streamSettings.realitySettings.coverOptimization=(if $implementation == "baseline" then {enabled:true,warmTcp:true} else {enabled:true,warmTcp:true,prebuiltProfiles:false} end)
           elif $coverMode == "prebuilt" then
               .inbounds[0].streamSettings.realitySettings.coverOptimization={enabled:true,warmTcp:true,prebuiltProfiles:true}
           else . end' "$work/$slot.raw.json" >"$work/$slot.server.json"
