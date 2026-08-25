@@ -15,7 +15,10 @@ use tokio::{
 use zeroize::Zeroizing;
 
 use crate::{
-    config::{DirectBarrierConfig, NetworkConfig, NxrSettings, OutboundConfig, Socks5Settings},
+    config::{
+        DirectBarrierConfig, NetworkConfig, NxrSettings, OutboundConfig, Socks5Settings,
+        WarmConnectionPolicy,
+    },
     network::NetworkEnvironment,
     protocol::{
         nxr::{NxrKey, NxrProtocolError, encode_request},
@@ -26,7 +29,9 @@ use crate::{
 
 use super::{
     connector::{AccountedTcpStream, DestinationConnectError, DestinationConnector},
+    counted_write::{WriteProgress, write_all_counted_before},
     handoff::HandoffLine,
+    warm_pool::{AdaptiveTcpPool, WarmPoolAuthority, WarmPoolSnapshot, WarmUsePermit},
 };
 
 const SOCKS_VERSION: u8 = 5;
@@ -45,13 +50,18 @@ enum OutboundIndex {
 }
 
 impl OutboundIndex {
-    fn from_config(outbounds: &[OutboundConfig], connector: &DestinationConnector) -> Self {
+    fn from_config(
+        outbounds: &[OutboundConfig],
+        connector: &DestinationConnector,
+        fd_budget: &FdBudget,
+        warm: Option<&WarmBuildContext<'_>>,
+    ) -> Self {
         let mut entries = outbounds
             .iter()
             .map(|outbound| {
                 (
                     Box::<str>::from(outbound.tag()),
-                    CompiledOutbound::from_config(outbound, connector),
+                    CompiledOutbound::from_config(outbound, connector, fd_budget, warm),
                 )
             })
             .collect::<Vec<_>>();
@@ -87,6 +97,19 @@ impl OutboundIndex {
             }
         }
     }
+
+    fn values(&self) -> Box<dyn Iterator<Item = &CompiledOutbound> + '_> {
+        match self {
+            Self::Sorted(entries) => Box::new(entries.iter().map(|(_, outbound)| outbound)),
+            Self::Hashed(entries) => Box::new(entries.values()),
+        }
+    }
+}
+
+struct WarmBuildContext<'a> {
+    generation: u64,
+    authority: WarmPoolAuthority,
+    policy: &'a WarmConnectionPolicy,
 }
 
 /// Immutable outbound transports indexed by validated routing tags.
@@ -115,6 +138,7 @@ impl OutboundRegistry {
             fd_budget,
             NetworkConfig::default(),
             NetworkEnvironment::detect(),
+            None,
         )
     }
 
@@ -136,6 +160,7 @@ impl OutboundRegistry {
             fd_budget,
             NetworkConfig::default(),
             NetworkEnvironment::detect(),
+            None,
         )
     }
 
@@ -156,6 +181,40 @@ impl OutboundRegistry {
             fd_budget,
             network.clone(),
             environment,
+            None,
+        )
+    }
+
+    /// Compiles generation-owned adaptive pools for eligible fixed peers.
+    #[must_use]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per process/generation authority"
+    )]
+    pub(crate) fn with_warm_pools(
+        outbounds: &[OutboundConfig],
+        direct_barrier: DirectBarrier,
+        connect_timeout: Duration,
+        fd_budget: FdBudget,
+        network: &NetworkConfig,
+        environment: NetworkEnvironment,
+        generation: u64,
+        authority: WarmPoolAuthority,
+        policy: &WarmConnectionPolicy,
+    ) -> Self {
+        let warm = WarmBuildContext {
+            generation,
+            authority,
+            policy,
+        };
+        Self::build(
+            outbounds,
+            direct_barrier,
+            connect_timeout,
+            fd_budget,
+            network.clone(),
+            environment,
+            Some(&warm),
         )
     }
 
@@ -166,11 +225,14 @@ impl OutboundRegistry {
         fd_budget: FdBudget,
         network: NetworkConfig,
         environment: NetworkEnvironment,
+        warm: Option<&WarmBuildContext<'_>>,
     ) -> Self {
         let connector =
             DestinationConnector::with_environment(connect_timeout, network, environment);
         Self {
-            outbounds: Arc::new(OutboundIndex::from_config(outbounds, &connector)),
+            outbounds: Arc::new(OutboundIndex::from_config(
+                outbounds, &connector, &fd_budget, warm,
+            )),
             direct_barrier,
             connect_timeout,
             fd_budget,
@@ -258,6 +320,7 @@ impl OutboundRegistry {
                 Ok(OutboundConnectOutcome::Connected(OutboundConnection {
                     stream,
                     fd_permit,
+                    warm_permit: None,
                 }))
             }
             CompiledOutbound::Blackhole { delay } => {
@@ -275,10 +338,12 @@ impl OutboundRegistry {
                     &self.fd_budget,
                 )
                 .await?;
-                let (stream, fd_permit) = connected.into_parts();
+                let (connection, warm_permit) = connected.into_parts();
+                let (stream, fd_permit) = connection.into_parts();
                 Ok(OutboundConnectOutcome::Connected(OutboundConnection {
                     stream,
                     fd_permit,
+                    warm_permit,
                 }))
             }
             CompiledOutbound::Nxr(Some(settings)) => {
@@ -290,10 +355,12 @@ impl OutboundRegistry {
                     &self.fd_budget,
                 )
                 .await?;
-                let (stream, fd_permit) = connected.into_parts();
+                let (connection, warm_permit) = connected.into_parts();
+                let (stream, fd_permit) = connection.into_parts();
                 Ok(OutboundConnectOutcome::Connected(OutboundConnection {
                     stream,
                     fd_permit,
+                    warm_permit,
                 }))
             }
             CompiledOutbound::Nxr(None) => Err(OutboundConnectError::NxrSettings),
@@ -308,6 +375,25 @@ impl OutboundRegistry {
     #[must_use]
     pub fn contains(&self, tag: &str) -> bool {
         self.outbounds.contains(tag)
+    }
+
+    pub(crate) fn activate_warm_pools(&self) {
+        for outbound in self.outbounds.values() {
+            outbound.activate_warm_pool();
+        }
+    }
+
+    pub(crate) fn deactivate_warm_pools(&self) {
+        for outbound in self.outbounds.values() {
+            outbound.deactivate_warm_pool();
+        }
+    }
+
+    pub(crate) fn warm_pool_snapshots(&self) -> Vec<OutboundWarmPoolSnapshot> {
+        self.outbounds
+            .values()
+            .filter_map(CompiledOutbound::warm_pool_snapshot)
+            .collect()
     }
 }
 
@@ -330,29 +416,96 @@ enum CompiledOutbound {
 }
 
 impl CompiledOutbound {
-    fn from_config(outbound: &OutboundConfig, connector: &DestinationConnector) -> Self {
+    fn from_config(
+        outbound: &OutboundConfig,
+        connector: &DestinationConnector,
+        fd_budget: &FdBudget,
+        warm: Option<&WarmBuildContext<'_>>,
+    ) -> Self {
         match outbound {
             OutboundConfig::Direct { .. } => Self::Direct,
             OutboundConfig::Blackhole { settings, .. } => Self::Blackhole {
                 delay: Duration::from_millis(settings.response_delay_ms),
             },
-            OutboundConfig::Socks5 { settings, .. } => Self::Socks5(settings.into()),
-            OutboundConfig::Nxr { settings, .. } => Self::Nxr(CompiledNxr::new(settings)),
-            OutboundConfig::Handoff { settings, .. } => Self::Handoff(
-                HandoffLine::from_settings_with_connector(settings, connector.clone()),
-            ),
+            OutboundConfig::Socks5 { settings, .. } => {
+                Self::Socks5(CompiledSocks5::new(settings, connector, fd_budget, warm))
+            }
+            OutboundConfig::Nxr { settings, .. } => {
+                Self::Nxr(CompiledNxr::new(settings, connector, fd_budget, warm))
+            }
+            OutboundConfig::Handoff { settings, .. } => {
+                Self::Handoff(HandoffLine::from_settings_with_warm_pool(
+                    settings,
+                    connector.clone(),
+                    fd_budget,
+                    warm.map(|context| {
+                        (
+                            context.generation,
+                            context.authority.clone(),
+                            context.policy,
+                        )
+                    }),
+                ))
+            }
         }
     }
+
+    fn warm_pool(&self) -> Option<&AdaptiveTcpPool> {
+        match self {
+            Self::Socks5(settings) => settings.pool.as_ref(),
+            Self::Nxr(Some(settings)) => settings.pool.as_ref(),
+            Self::Handoff(Some(line)) => line.warm_pool(),
+            Self::Direct | Self::Blackhole { .. } | Self::Nxr(None) | Self::Handoff(None) => None,
+        }
+    }
+
+    fn activate_warm_pool(&self) {
+        if let Some(pool) = self.warm_pool() {
+            let _activated = pool.activate();
+        }
+    }
+
+    fn deactivate_warm_pool(&self) {
+        if let Some(pool) = self.warm_pool() {
+            let _deactivated = pool.deactivate();
+        }
+    }
+
+    fn warm_pool_snapshot(&self) -> Option<OutboundWarmPoolSnapshot> {
+        let transport = match self {
+            Self::Socks5(_) => "socks5",
+            Self::Nxr(Some(_)) => "nxr",
+            Self::Handoff(Some(_)) => "handoff",
+            Self::Direct | Self::Blackhole { .. } | Self::Nxr(None) | Self::Handoff(None) => {
+                return None;
+            }
+        };
+        self.warm_pool().map(|pool| OutboundWarmPoolSnapshot {
+            transport,
+            pool: pool.snapshot(),
+        })
+    }
+}
+
+pub(crate) struct OutboundWarmPoolSnapshot {
+    pub(crate) transport: &'static str,
+    pub(crate) pool: WarmPoolSnapshot,
 }
 
 struct CompiledSocks5 {
     address: Arc<str>,
     port: u16,
     credentials: Option<Socks5Credentials>,
+    pool: Option<AdaptiveTcpPool>,
 }
 
-impl From<&Socks5Settings> for CompiledSocks5 {
-    fn from(settings: &Socks5Settings) -> Self {
+impl CompiledSocks5 {
+    fn new(
+        settings: &Socks5Settings,
+        connector: &DestinationConnector,
+        fd_budget: &FdBudget,
+        warm: Option<&WarmBuildContext<'_>>,
+    ) -> Self {
         let credentials = settings
             .username
             .as_ref()
@@ -365,6 +518,16 @@ impl From<&Socks5Settings> for CompiledSocks5 {
             address: Arc::from(settings.address.as_str()),
             port: settings.port,
             credentials,
+            pool: settings.warm_tcp.then_some(warm).flatten().map(|warm| {
+                AdaptiveTcpPool::new(
+                    Arc::from(format!("{}:{}", settings.address, settings.port)),
+                    warm.generation,
+                    connector.clone(),
+                    fd_budget.clone(),
+                    warm.authority.clone(),
+                    warm.policy,
+                )
+            }),
         }
     }
 }
@@ -378,10 +541,16 @@ struct CompiledNxr {
     address: Arc<str>,
     port: u16,
     key: NxrKey,
+    pool: Option<AdaptiveTcpPool>,
 }
 
 impl CompiledNxr {
-    fn new(settings: &NxrSettings) -> Option<Self> {
+    fn new(
+        settings: &NxrSettings,
+        connector: &DestinationConnector,
+        fd_budget: &FdBudget,
+        warm: Option<&WarmBuildContext<'_>>,
+    ) -> Option<Self> {
         let decoded = Zeroizing::new(
             BASE64_URL_SAFE_NO_PAD
                 .decode(settings.pre_shared_key.expose())
@@ -392,6 +561,16 @@ impl CompiledNxr {
             address: Arc::from(settings.address.as_str()),
             port: settings.port,
             key: NxrKey::new(key),
+            pool: settings.warm_tcp.then_some(warm).flatten().map(|warm| {
+                AdaptiveTcpPool::new(
+                    Arc::from(format!("{}:{}", settings.address, settings.port)),
+                    warm.generation,
+                    connector.clone(),
+                    fd_budget.clone(),
+                    warm.authority.clone(),
+                    warm.policy,
+                )
+            }),
         })
     }
 }
@@ -400,6 +579,7 @@ impl CompiledNxr {
 pub struct OutboundConnection {
     stream: TcpStream,
     fd_permit: FdPermit,
+    warm_permit: Option<WarmUsePermit>,
 }
 
 impl OutboundConnection {
@@ -410,6 +590,7 @@ impl OutboundConnection {
             self.stream,
             OutboundPermit {
                 _fd: self.fd_permit,
+                _warm: self.warm_permit,
             },
         )
     }
@@ -427,6 +608,7 @@ impl fmt::Debug for OutboundConnection {
 /// Permit retained until a connected outbound session ends.
 pub struct OutboundPermit {
     _fd: FdPermit,
+    _warm: Option<WarmUsePermit>,
 }
 
 /// The selected route either connected or intentionally discarded the session.
@@ -568,10 +750,42 @@ async fn connect_nxr(
     timeout: Duration,
     connector: &DestinationConnector,
     fd_budget: &FdBudget,
-) -> Result<AccountedTcpStream, OutboundConnectError> {
+) -> Result<PreparedConnection, OutboundConnectError> {
     let deadline = Instant::now()
         .checked_add(timeout)
         .ok_or(OutboundConnectError::NxrTimeout)?;
+
+    if let Some(pool) = &settings.pool {
+        if let Some(checkout) = pool.checkout() {
+            let (connection, warm_permit) = checkout.into_parts();
+            let (mut stream, fd_permit) = connection.into_parts();
+            let request = fresh_nxr_request(settings, destination)?;
+            match write_all_counted_before(&mut stream, &request, deadline).await {
+                Ok(WriteProgress::CompleteWrite) => {
+                    return Ok(PreparedConnection {
+                        connection: AccountedTcpStream::from_parts(stream, fd_permit),
+                        warm_permit: Some(warm_permit),
+                    });
+                }
+                Ok(WriteProgress::NoBytesWritten | WriteProgress::PartialWrite { .. }) => {
+                    unreachable!("counted write reports incomplete progress only as an error")
+                }
+                Err(error) => {
+                    match error.progress() {
+                        WriteProgress::NoBytesWritten | WriteProgress::PartialWrite { .. } => {}
+                        WriteProgress::CompleteWrite => {
+                            unreachable!("a complete write cannot be a retryable error")
+                        }
+                    }
+                    pool.record_stale_checkout();
+                    // The immediate cold fallback below is the sole alternate
+                    // attempt and constructs a fresh timestamp, nonce and HMAC.
+                }
+            }
+        }
+        pool.record_cold_fallback();
+    }
+
     let connected = time::timeout_at(
         deadline,
         connector.connect_host_accounted(settings.address.as_ref(), settings.port, fd_budget),
@@ -580,6 +794,27 @@ async fn connect_nxr(
     .map_err(|_| OutboundConnectError::NxrTimeout)?
     .map_err(map_nxr_connect_error)?;
     let (mut stream, fd_permit) = connected.into_parts();
+    let request = fresh_nxr_request(settings, destination)?;
+    write_all_counted_before(&mut stream, &request, deadline)
+        .await
+        .map_err(|error| {
+            let source = error.into_source();
+            if source.kind() == io::ErrorKind::TimedOut {
+                OutboundConnectError::NxrTimeout
+            } else {
+                OutboundConnectError::NxrConnect(source)
+            }
+        })?;
+    Ok(PreparedConnection {
+        connection: AccountedTcpStream::from_parts(stream, fd_permit),
+        warm_permit: None,
+    })
+}
+
+fn fresh_nxr_request(
+    settings: &CompiledNxr,
+    destination: &Destination,
+) -> Result<Vec<u8>, OutboundConnectError> {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| OutboundConnectError::NxrClock)?
@@ -589,11 +824,7 @@ async fn connect_nxr(
     let mut request = Vec::new();
     encode_request(destination, timestamp, nonce, &settings.key, &mut request)
         .map_err(OutboundConnectError::NxrProtocol)?;
-    time::timeout_at(deadline, stream.write_all(&request))
-        .await
-        .map_err(|_| OutboundConnectError::NxrTimeout)?
-        .map_err(OutboundConnectError::NxrConnect)?;
-    Ok(AccountedTcpStream::from_parts(stream, fd_permit))
+    Ok(request)
 }
 
 async fn connect_socks5(
@@ -602,10 +833,34 @@ async fn connect_socks5(
     timeout: Duration,
     connector: &DestinationConnector,
     fd_budget: &FdBudget,
-) -> Result<AccountedTcpStream, OutboundConnectError> {
+) -> Result<PreparedConnection, OutboundConnectError> {
     let deadline = Instant::now()
         .checked_add(timeout)
         .ok_or(OutboundConnectError::SocksTimeout)?;
+    if let Some(pool) = &settings.pool {
+        for _attempt in 0..2 {
+            let Some(checkout) = pool.checkout() else {
+                break;
+            };
+            let (connection, warm_permit) = checkout.into_parts();
+            let (mut stream, fd_permit) = connection.into_parts();
+            match negotiate_socks5_retryable(&mut stream, settings, destination, deadline).await {
+                Ok(()) => {
+                    return Ok(PreparedConnection {
+                        connection: AccountedTcpStream::from_parts(stream, fd_permit),
+                        warm_permit: Some(warm_permit),
+                    });
+                }
+                Err((error, true)) => {
+                    pool.record_stale_checkout();
+                    let _unused = error;
+                }
+                Err((error, false)) => return Err(error),
+            }
+        }
+        pool.record_cold_fallback();
+    }
+
     let connected = time::timeout_at(
         deadline,
         connector.connect_host_accounted(settings.address.as_ref(), settings.port, fd_budget),
@@ -616,7 +871,21 @@ async fn connect_socks5(
     let (mut stream, fd_permit) = connected.into_parts();
 
     negotiate_socks5(&mut stream, settings, destination, deadline).await?;
-    Ok(AccountedTcpStream::from_parts(stream, fd_permit))
+    Ok(PreparedConnection {
+        connection: AccountedTcpStream::from_parts(stream, fd_permit),
+        warm_permit: None,
+    })
+}
+
+struct PreparedConnection {
+    connection: AccountedTcpStream,
+    warm_permit: Option<WarmUsePermit>,
+}
+
+impl PreparedConnection {
+    fn into_parts(self) -> (AccountedTcpStream, Option<WarmUsePermit>) {
+        (self.connection, self.warm_permit)
+    }
 }
 
 async fn negotiate_socks5(
@@ -625,36 +894,70 @@ async fn negotiate_socks5(
     destination: &Destination,
     deadline: Instant,
 ) -> Result<(), OutboundConnectError> {
+    negotiate_socks5_retryable(stream, settings, destination, deadline)
+        .await
+        .map_err(|(error, _retryable)| error)
+}
+
+/// Returns whether an error occurred before SOCKS CONNECT began and is
+/// therefore safe to repeat on one fresh transport. Protocol rejection is
+/// never retryable.
+async fn negotiate_socks5_retryable(
+    stream: &mut TcpStream,
+    settings: &CompiledSocks5,
+    destination: &Destination,
+    deadline: Instant,
+) -> Result<(), (OutboundConnectError, bool)> {
     let method = if settings.credentials.is_some() {
         SOCKS_USERNAME_PASSWORD
     } else {
         SOCKS_NO_AUTH
     };
-    write_before(stream, &[SOCKS_VERSION, 1, method], deadline).await?;
+    write_before(stream, &[SOCKS_VERSION, 1, method], deadline)
+        .await
+        .map_err(|error| (error, true))?;
     let mut method_reply = [0_u8; 2];
-    read_before(stream, &mut method_reply, deadline).await?;
+    read_before(stream, &mut method_reply, deadline)
+        .await
+        .map_err(|error| (error, true))?;
     if method_reply[0] != SOCKS_VERSION || method_reply[1] != method {
-        return Err(OutboundConnectError::SocksProtocol(
-            Socks5ProtocolError::UnexpectedMethod {
+        return Err((
+            OutboundConnectError::SocksProtocol(Socks5ProtocolError::UnexpectedMethod {
                 expected: method,
                 received: method_reply[1],
-            },
+            }),
+            false,
         ));
     }
     if method_reply[1] == SOCKS_NO_ACCEPTABLE_METHODS {
-        return Err(OutboundConnectError::SocksProtocol(
-            Socks5ProtocolError::UnexpectedMethod {
+        return Err((
+            OutboundConnectError::SocksProtocol(Socks5ProtocolError::UnexpectedMethod {
                 expected: method,
                 received: method_reply[1],
-            },
+            }),
+            false,
         ));
     }
 
     if let Some(credentials) = &settings.credentials {
-        authenticate_socks5(stream, credentials, deadline).await?;
+        authenticate_socks5(stream, credentials, deadline)
+            .await
+            .map_err(|error| {
+                let retryable = matches!(
+                    error,
+                    OutboundConnectError::SocksConnect(_) | OutboundConnectError::SocksTimeout
+                );
+                (error, retryable)
+            })?;
     }
-    write_connect_request(stream, destination, deadline).await?;
-    read_connect_reply(stream, deadline).await
+    // Beginning CONNECT is the side-effect cutoff for arbitrary third-party
+    // SOCKS servers. Every failure from here is final for this logical flow.
+    write_connect_request(stream, destination, deadline)
+        .await
+        .map_err(|error| (error, false))?;
+    read_connect_reply(stream, deadline)
+        .await
+        .map_err(|error| (error, false))
 }
 
 async fn authenticate_socks5(
@@ -788,27 +1091,38 @@ async fn read_before(
 
 #[cfg(test)]
 mod tests {
-    use std::{net::Ipv4Addr, time::Duration};
+    use std::{
+        io,
+        net::Ipv4Addr,
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    };
 
     use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
+        sync::mpsc,
     };
 
     use super::{
         OutboundConnectError, OutboundConnectOutcome, OutboundIndex, OutboundRegistry,
+        SOCKS_CONNECT, SOCKS_NO_AUTH, SOCKS_USERNAME_PASSWORD, SOCKS_VERSION,
         SORTED_OUTBOUND_LIMIT, Socks5ProtocolError,
     };
     use crate::{
-        config::{DirectBarrierConfig, NxrSettings, OutboundConfig, SecretString, Socks5Settings},
+        config::{
+            DirectBarrierConfig, NetworkConfig, NxrSettings, OutboundConfig, SecretString,
+            Socks5Settings, WarmConnectionPolicy,
+        },
+        network::NetworkEnvironment,
         protocol::{
             nxr::{
                 NxrKey, REQUEST_HEADER_LEN, decode_authenticated_request, request_len_from_header,
             },
             vless::{Address, Destination},
         },
-        runtime::{AdmissionDenied, DirectBarrier, ResourcePressure},
+        runtime::{AdmissionDenied, DirectBarrier, FdBudget, PressureGauge, ResourcePressure},
+        server::warm_pool::WarmPoolAuthority,
     };
 
     #[test]
@@ -819,12 +1133,18 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let connector = super::DestinationConnector::new(Duration::from_secs(1));
-        let small = OutboundIndex::from_config(&configs[..SORTED_OUTBOUND_LIMIT], &connector);
+        let fd_budget = FdBudget::new(4_096);
+        let small = OutboundIndex::from_config(
+            &configs[..SORTED_OUTBOUND_LIMIT],
+            &connector,
+            &fd_budget,
+            None,
+        );
         assert!(matches!(small, OutboundIndex::Sorted(_)));
         assert!(small.contains("direct-2"));
         assert!(!small.contains("missing"));
 
-        let large = OutboundIndex::from_config(&configs, &connector);
+        let large = OutboundIndex::from_config(&configs, &connector, &fd_budget, None);
         assert!(matches!(large, OutboundIndex::Hashed(_)));
         assert!(large.contains("direct-4"));
     }
@@ -838,6 +1158,339 @@ mod tests {
             connect_timeout,
             crate::runtime::FdBudget::new(4_096),
         )
+    }
+
+    fn warm_policy() -> WarmConnectionPolicy {
+        WarmConnectionPolicy {
+            min_ready: 1,
+            max_ready: 4,
+            max_connecting: 1,
+            refill_batch: 1,
+            idle_timeout_ms: 30_000,
+            max_lifetime_ms: 60_000,
+            shrink_delay_ms: 30_000,
+        }
+    }
+
+    async fn wait_for_one_ready(registry: &OutboundRegistry) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if registry
+                    .warm_pool_snapshots()
+                    .first()
+                    .is_some_and(|snapshot| snapshot.pool.ready == 1)
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("warm pool must become ready");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn warm_nxr_sends_no_protocol_bytes_before_checkout_and_uses_fresh_nonce() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("NXR landing must bind");
+        let address = listener.local_addr().expect("NXR landing address");
+        let key_bytes = [0x62; 32];
+        let key = NxrKey::new(key_bytes);
+        let (accepted_tx, mut accepted_rx) = mpsc::channel(2);
+        let server = tokio::spawn(async move {
+            let mut nonces = Vec::new();
+            for expected_payload in [b"one".as_slice(), b"two".as_slice()] {
+                let (mut stream, _) = listener.accept().await?;
+                let mut probe = [0_u8; 1];
+                assert!(
+                    matches!(stream.try_read(&mut probe), Err(ref error) if error.kind() == io::ErrorKind::WouldBlock)
+                );
+                accepted_tx.send(()).await.map_err(io::Error::other)?;
+                let mut header = [0_u8; REQUEST_HEADER_LEN];
+                stream.read_exact(&mut header).await?;
+                let total = request_len_from_header(&header).map_err(io::Error::other)?;
+                let mut request = vec![0_u8; total];
+                request[..REQUEST_HEADER_LEN].copy_from_slice(&header);
+                stream
+                    .read_exact(&mut request[REQUEST_HEADER_LEN..])
+                    .await?;
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(io::Error::other)?
+                    .as_secs();
+                let authenticated = decode_authenticated_request(&request, &key, now, 30)
+                    .map_err(io::Error::other)?;
+                nonces.push(*authenticated.nonce());
+                let mut payload = vec![0_u8; expected_payload.len()];
+                stream.read_exact(&mut payload).await?;
+                assert_eq!(payload, expected_payload);
+            }
+            Ok::<_, io::Error>(nonces)
+        });
+
+        let policy = warm_policy();
+        let pressure = PressureGauge::new();
+        let fd_budget = FdBudget::new(4_096);
+        let registry = OutboundRegistry::with_warm_pools(
+            &[OutboundConfig::Nxr {
+                tag: "nxr".to_owned(),
+                settings: NxrSettings {
+                    address: address.ip().to_string(),
+                    port: address.port(),
+                    pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(key_bytes)),
+                    warm_tcp: true,
+                },
+            }],
+            DirectBarrier::new(&DirectBarrierConfig::default()),
+            Duration::from_secs(2),
+            fd_budget,
+            &NetworkConfig::default(),
+            NetworkEnvironment::detect(),
+            7,
+            WarmPoolAuthority::new(&policy, 1, pressure),
+            &policy,
+        );
+        registry.activate_warm_pools();
+        let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
+        for payload in [b"one".as_slice(), b"two".as_slice()] {
+            accepted_rx
+                .recv()
+                .await
+                .expect("warm dial must reach landing");
+            wait_for_one_ready(&registry).await;
+            let OutboundConnectOutcome::Connected(connection) = registry
+                .connect("nxr", &destination)
+                .await
+                .expect("warm NXR checkout must connect")
+            else {
+                panic!("NXR cannot blackhole");
+            };
+            let (mut stream, permit) = connection.into_parts();
+            stream.write_all(payload).await.expect("raw payload");
+            drop(stream);
+            drop(permit);
+        }
+        registry.deactivate_warm_pools();
+        let nonces = server
+            .await
+            .expect("server must join")
+            .expect("server result");
+        assert_ne!(nonces[0], nonces[1], "every warm flow needs a fresh nonce");
+        let snapshot = registry.warm_pool_snapshots().remove(0).pool;
+        assert_eq!(snapshot.checkout_hit, 2);
+        assert_eq!(snapshot.cold_fallback, 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn warm_socks5_stays_protocol_unprivileged_until_checkout() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("SOCKS server must bind");
+        let address = listener.local_addr().expect("SOCKS address");
+        let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await?;
+            let mut probe = [0_u8; 1];
+            assert!(
+                matches!(stream.try_read(&mut probe), Err(ref error) if error.kind() == io::ErrorKind::WouldBlock)
+            );
+            accepted_tx
+                .send(())
+                .map_err(|()| io::Error::other("receiver closed"))?;
+            let mut greeting = [0_u8; 3];
+            stream.read_exact(&mut greeting).await?;
+            assert_eq!(greeting, [SOCKS_VERSION, 1, SOCKS_NO_AUTH]);
+            stream.write_all(&[SOCKS_VERSION, SOCKS_NO_AUTH]).await?;
+            let mut request = [0_u8; 4];
+            stream.read_exact(&mut request).await?;
+            assert_eq!(request, [SOCKS_VERSION, SOCKS_CONNECT, 0, 3]);
+            let mut length = [0_u8; 1];
+            stream.read_exact(&mut length).await?;
+            let mut domain = vec![0_u8; usize::from(length[0])];
+            stream.read_exact(&mut domain).await?;
+            assert_eq!(domain, b"example.com");
+            let mut port = [0_u8; 2];
+            stream.read_exact(&mut port).await?;
+            assert_eq!(u16::from_be_bytes(port), 443);
+            stream
+                .write_all(&[SOCKS_VERSION, 0, 0, 1, 127, 0, 0, 1, 0, 0])
+                .await?;
+            let mut payload = [0_u8; 4];
+            stream.read_exact(&mut payload).await?;
+            assert_eq!(&payload, b"data");
+            Ok::<_, io::Error>(())
+        });
+
+        let policy = warm_policy();
+        let pressure = PressureGauge::new();
+        let registry = OutboundRegistry::with_warm_pools(
+            &[OutboundConfig::Socks5 {
+                tag: "socks".to_owned(),
+                settings: Socks5Settings {
+                    address: address.ip().to_string(),
+                    port: address.port(),
+                    username: None,
+                    password: None,
+                    warm_tcp: true,
+                },
+            }],
+            DirectBarrier::new(&DirectBarrierConfig::default()),
+            Duration::from_secs(2),
+            FdBudget::new(4_096),
+            &NetworkConfig::default(),
+            NetworkEnvironment::detect(),
+            9,
+            WarmPoolAuthority::new(&policy, 1, pressure),
+            &policy,
+        );
+        registry.activate_warm_pools();
+        accepted_rx.await.expect("warm TCP must reach SOCKS server");
+        wait_for_one_ready(&registry).await;
+        let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
+        let OutboundConnectOutcome::Connected(connection) = registry
+            .connect("socks", &destination)
+            .await
+            .expect("warm SOCKS checkout must negotiate")
+        else {
+            panic!("SOCKS cannot blackhole");
+        };
+        let (mut stream, permit) = connection.into_parts();
+        stream.write_all(b"data").await.expect("relay payload");
+        drop(stream);
+        drop(permit);
+        registry.deactivate_warm_pools();
+        server
+            .await
+            .expect("server must join")
+            .expect("server result");
+        let snapshot = registry.warm_pool_snapshots().remove(0).pool;
+        assert_eq!(snapshot.checkout_hit, 1);
+        assert_eq!(snapshot.cold_fallback, 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn warm_socks5_credentials_are_isolated_between_outbound_pools() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("SOCKS server must bind");
+        let address = listener.local_addr().expect("SOCKS address");
+        let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let mut streams = Vec::new();
+            for _ in 0..2 {
+                streams.push(listener.accept().await?.0);
+            }
+            accepted_tx
+                .send(())
+                .map_err(|()| io::Error::other("receiver closed"))?;
+            let mut credentials = Vec::new();
+            for mut stream in streams {
+                let mut greeting = [0_u8; 3];
+                stream.read_exact(&mut greeting).await?;
+                assert_eq!(greeting, [SOCKS_VERSION, 1, SOCKS_USERNAME_PASSWORD]);
+                stream
+                    .write_all(&[SOCKS_VERSION, SOCKS_USERNAME_PASSWORD])
+                    .await?;
+
+                let mut auth_header = [0_u8; 2];
+                stream.read_exact(&mut auth_header).await?;
+                assert_eq!(auth_header[0], 1);
+                let mut username = vec![0_u8; usize::from(auth_header[1])];
+                stream.read_exact(&mut username).await?;
+                let mut password_length = [0_u8; 1];
+                stream.read_exact(&mut password_length).await?;
+                let mut password = vec![0_u8; usize::from(password_length[0])];
+                stream.read_exact(&mut password).await?;
+                credentials.push((username, password));
+                stream.write_all(&[1, 0]).await?;
+
+                let mut connect = [0_u8; 4];
+                stream.read_exact(&mut connect).await?;
+                assert_eq!(connect, [SOCKS_VERSION, SOCKS_CONNECT, 0, 1]);
+                let mut destination = [0_u8; 6];
+                stream.read_exact(&mut destination).await?;
+                stream
+                    .write_all(&[SOCKS_VERSION, 0, 0, 1, 127, 0, 0, 1, 0, 0])
+                    .await?;
+            }
+            credentials.sort();
+            Ok::<_, io::Error>(credentials)
+        });
+
+        let policy = warm_policy();
+        let registry = OutboundRegistry::with_warm_pools(
+            &[
+                OutboundConfig::Socks5 {
+                    tag: "socks-a".to_owned(),
+                    settings: Socks5Settings {
+                        address: address.ip().to_string(),
+                        port: address.port(),
+                        username: Some(SecretString::new("alice".to_owned())),
+                        password: Some(SecretString::new("alpha".to_owned())),
+                        warm_tcp: true,
+                    },
+                },
+                OutboundConfig::Socks5 {
+                    tag: "socks-b".to_owned(),
+                    settings: Socks5Settings {
+                        address: address.ip().to_string(),
+                        port: address.port(),
+                        username: Some(SecretString::new("bob".to_owned())),
+                        password: Some(SecretString::new("bravo".to_owned())),
+                        warm_tcp: true,
+                    },
+                },
+            ],
+            DirectBarrier::new(&DirectBarrierConfig::default()),
+            Duration::from_secs(2),
+            FdBudget::new(4_096),
+            &NetworkConfig::default(),
+            NetworkEnvironment::detect(),
+            10,
+            WarmPoolAuthority::new(&policy, 2, PressureGauge::new()),
+            &policy,
+        );
+        registry.activate_warm_pools();
+        accepted_rx.await.expect("both warm sockets must connect");
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if registry
+                    .warm_pool_snapshots()
+                    .iter()
+                    .all(|snapshot| snapshot.pool.ready == 1)
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both pools must become ready");
+
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 443);
+        for tag in ["socks-a", "socks-b"] {
+            let OutboundConnectOutcome::Connected(connection) = registry
+                .connect(tag, &destination)
+                .await
+                .expect("isolated warm SOCKS connection")
+            else {
+                panic!("SOCKS cannot blackhole");
+            };
+            drop(connection);
+        }
+        registry.deactivate_warm_pools();
+        let credentials = server
+            .await
+            .expect("server must join")
+            .expect("server result");
+        assert_eq!(
+            credentials,
+            vec![
+                (b"alice".to_vec(), b"alpha".to_vec()),
+                (b"bob".to_vec(), b"bravo".to_vec())
+            ]
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -919,6 +1572,7 @@ mod tests {
                     port: address.port(),
                     username: Some(SecretString::new("user")),
                     password: Some(SecretString::new("pass")),
+                    warm_tcp: false,
                 },
             }],
             &DirectBarrierConfig::default(),
@@ -980,6 +1634,7 @@ mod tests {
                     port: address.port(),
                     username,
                     password,
+                    warm_tcp: false,
                 },
             }],
             &DirectBarrierConfig::default(),
@@ -1284,6 +1939,7 @@ mod tests {
                     address: address.ip().to_string(),
                     port: address.port(),
                     pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(key_bytes)),
+                    warm_tcp: false,
                 },
             }],
             &DirectBarrierConfig::default(),
@@ -1631,6 +2287,7 @@ mod tests {
                     port: address.port(),
                     username: None,
                     password: None,
+                    warm_tcp: false,
                 },
             }],
             barrier,
@@ -1690,6 +2347,7 @@ mod tests {
                     address: address.ip().to_string(),
                     port: address.port(),
                     pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(key_bytes)),
+                    warm_tcp: false,
                 },
             }],
             barrier,

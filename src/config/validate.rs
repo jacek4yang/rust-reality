@@ -438,6 +438,10 @@ fn validate_nxr_inbound(path: &str, inbound: &NxrInboundConfig) -> Result<(), Co
         );
     }
     validate_timeout(
+        &format!("{path}.settings.preAuthIdleTimeoutMs"),
+        settings.pre_auth_idle_timeout_ms,
+    )?;
+    validate_timeout(
         &format!("{path}.settings.authenticationTimeoutMs"),
         settings.authentication_timeout_ms,
     )?;
@@ -506,6 +510,10 @@ fn validate_handoff_inbound(path: &str, inbound: &HandoffInboundConfig) -> Resul
             ),
         );
     }
+    validate_timeout(
+        &format!("{path}.settings.preAuthIdleTimeoutMs"),
+        settings.pre_auth_idle_timeout_ms,
+    )?;
     validate_timeout(
         &format!("{path}.settings.authenticationTimeoutMs"),
         settings.authentication_timeout_ms,
@@ -1056,6 +1064,10 @@ fn validate_policy(config: &Config) -> Result<(), ConfigError> {
             governor.max_handshakes,
         ),
         (
+            "advanced.limits.resourceGovernor.maxPreAuthIdleConnections",
+            governor.max_pre_auth_idle_connections,
+        ),
+        (
             "advanced.limits.resourceGovernor.maxFallbacks",
             governor.max_fallbacks,
         ),
@@ -1077,6 +1089,7 @@ fn validate_policy(config: &Config) -> Result<(), ConfigError> {
         }
     }
     if governor.max_handshakes > governor.max_connections
+        || governor.max_pre_auth_idle_connections > governor.max_connections
         || governor.max_fallbacks > governor.max_connections
         || governor.max_crypto_operations > governor.max_handshakes
         || governor.max_dns_lookups > governor.max_connections
@@ -1085,6 +1098,36 @@ fn validate_policy(config: &Config) -> Result<(), ConfigError> {
             "advanced.limits.resourceGovernor",
             "child admission limits must not exceed their parent limits",
         );
+    }
+
+    // An untouched READY socket is retired at the earlier of the idle and
+    // absolute lifetime bounds. Keep the local landing zero-byte window at
+    // least one authentication deadline beyond that point so a colocated or
+    // combined LINE/LANDING configuration cannot predictably churn sockets.
+    // Separate-node deployments repeat the same comparison in their preflight.
+    let warm = &config.advanced.limits.warm_connections;
+    let effective_ready_lifetime = warm.idle_timeout_ms.min(warm.max_lifetime_ms);
+    for (index, inbound) in config.inbounds.iter().enumerate() {
+        let (pre_auth, authentication) = match inbound {
+            InboundConfig::Nxr(inbound) => (
+                inbound.settings.pre_auth_idle_timeout_ms,
+                inbound.settings.authentication_timeout_ms,
+            ),
+            InboundConfig::Handoff(inbound) => (
+                inbound.settings.pre_auth_idle_timeout_ms,
+                inbound.settings.authentication_timeout_ms,
+            ),
+            InboundConfig::Vless(_) => continue,
+        };
+        let required = effective_ready_lifetime.saturating_add(authentication);
+        if pre_auth < required {
+            return fail(
+                format!("inbounds[{index}].settings.preAuthIdleTimeoutMs"),
+                format!(
+                    "must be at least {required} so warmConnections idle lifetime plus authentication headroom expires first"
+                ),
+            );
+        }
     }
     for (path, timeout) in [
         (
@@ -1773,12 +1816,78 @@ mod tests {
                     max_time_difference_seconds: 30,
                     max_nonce_entries: 4_096,
                     nonce_retention_seconds: 120,
+                    pre_auth_idle_timeout_ms: 60_000,
                     authentication_timeout_ms: 3_000,
                     connect_timeout_ms: 10_000,
                 },
             }));
 
         validate_config(&config).expect("NXR listener must validate independently");
+    }
+
+    #[test]
+    fn landing_pre_auth_idle_must_outlive_ready_socket_plus_authentication() {
+        let mut config = valid_config();
+        let key = SecretString::new("WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo");
+        config
+            .inbounds
+            .push(crate::config::InboundConfig::Nxr(NxrInboundConfig {
+                tag: "landing-internal".to_owned(),
+                listen: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST).into(),
+                port: 9443,
+                settings: NxrInboundSettings {
+                    pre_shared_key: key,
+                    max_time_difference_seconds: 30,
+                    max_nonce_entries: 4_096,
+                    nonce_retention_seconds: 120,
+                    pre_auth_idle_timeout_ms: 32_999,
+                    authentication_timeout_ms: 3_000,
+                    connect_timeout_ms: 10_000,
+                },
+            }));
+        let error = validate_config(&config)
+            .expect_err("predictable warm-socket churn must fail validation");
+        assert_eq!(error.path(), "inbounds[1].settings.preAuthIdleTimeoutMs");
+        config.inbounds[1] = match config.inbounds[1].clone() {
+            crate::config::InboundConfig::Nxr(mut inbound) => {
+                inbound.settings.pre_auth_idle_timeout_ms = 33_000;
+                crate::config::InboundConfig::Nxr(inbound)
+            }
+            _ => unreachable!("fixture is NXR"),
+        };
+        validate_config(&config).expect("ready lifetime plus auth headroom must validate");
+    }
+
+    #[test]
+    fn pre_auth_idle_admission_is_nonzero_and_bounded_by_connections() {
+        let mut config = valid_config();
+        config
+            .advanced
+            .limits
+            .resource_governor
+            .max_pre_auth_idle_connections = 0;
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("zero pre-auth capacity must fail")
+                .path(),
+            "advanced.limits.resourceGovernor.maxPreAuthIdleConnections"
+        );
+        config
+            .advanced
+            .limits
+            .resource_governor
+            .max_pre_auth_idle_connections = config
+            .advanced
+            .limits
+            .resource_governor
+            .max_connections
+            .saturating_add(1);
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("pre-auth capacity above connection capacity must fail")
+                .path(),
+            "advanced.limits.resourceGovernor"
+        );
     }
 
     #[test]
@@ -1797,6 +1906,7 @@ mod tests {
                     max_time_difference_seconds: 30,
                     max_nonce_entries: 4_096,
                     nonce_retention_seconds: 60,
+                    pre_auth_idle_timeout_ms: 60_000,
                     authentication_timeout_ms: 3_000,
                     connect_timeout_ms: 10_000,
                 },
@@ -1825,6 +1935,7 @@ mod tests {
                     max_time_difference_seconds: 30,
                     max_nonce_entries: 4_096,
                     nonce_retention_seconds: 120,
+                    pre_auth_idle_timeout_ms: 60_000,
                     authentication_timeout_ms: 3_000,
                     connect_timeout_ms: 10_000,
                     egress: None,
@@ -1842,6 +1953,7 @@ mod tests {
                 landing_public_key: "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo".to_owned(),
                 connect_timeout_ms: 10_000,
                 first_byte_timeout_ms: 15_000,
+                warm_tcp: true,
             },
         });
 
@@ -1860,6 +1972,7 @@ mod tests {
                 max_time_difference_seconds: 30,
                 max_nonce_entries: 4_096,
                 nonce_retention_seconds: 120,
+                pre_auth_idle_timeout_ms: 60_000,
                 authentication_timeout_ms: 3_000,
                 connect_timeout_ms: 10_000,
                 egress: egress.map(str::to_owned),
@@ -1896,6 +2009,7 @@ mod tests {
                 landing_public_key: "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo".to_owned(),
                 connect_timeout_ms: 10_000,
                 first_byte_timeout_ms: 15_000,
+                warm_tcp: true,
             },
         });
 
@@ -1917,6 +2031,7 @@ mod tests {
                     port: 1080,
                     username: None,
                     password: None,
+                    warm_tcp: true,
                 },
             });
             config.outbounds.push(OutboundConfig::Nxr {
@@ -1925,6 +2040,7 @@ mod tests {
                     address: "10.0.0.5".to_owned(),
                     port: 9443,
                     pre_shared_key: key.clone(),
+                    warm_tcp: true,
                 },
             });
 
@@ -1960,6 +2076,7 @@ mod tests {
                 landing_public_key: "not-base64!".to_owned(),
                 connect_timeout_ms: 10_000,
                 first_byte_timeout_ms: 15_000,
+                warm_tcp: true,
             },
         });
 
@@ -1992,6 +2109,7 @@ mod tests {
                     landing_public_key: "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo".to_owned(),
                     connect_timeout_ms: 10_000,
                     first_byte_timeout_ms: value,
+                    warm_tcp: true,
                 },
             });
             let result = validate_config(&config);
@@ -2038,6 +2156,7 @@ mod tests {
                     max_time_difference_seconds: 30,
                     max_nonce_entries: 4_096,
                     nonce_retention_seconds: 60,
+                    pre_auth_idle_timeout_ms: 60_000,
                     authentication_timeout_ms: 3_000,
                     connect_timeout_ms: 10_000,
                     egress: None,
@@ -2071,6 +2190,7 @@ mod tests {
                     max_time_difference_seconds: 30,
                     max_nonce_entries: 4_096,
                     nonce_retention_seconds: 120,
+                    pre_auth_idle_timeout_ms: 60_000,
                     authentication_timeout_ms: 3_000,
                     connect_timeout_ms: 10_000,
                 },
@@ -2086,6 +2206,7 @@ mod tests {
                     max_time_difference_seconds: 30,
                     max_nonce_entries: 4_096,
                     nonce_retention_seconds: 120,
+                    pre_auth_idle_timeout_ms: 60_000,
                     authentication_timeout_ms: 3_000,
                     connect_timeout_ms: 10_000,
                     egress: None,
@@ -2109,6 +2230,7 @@ mod tests {
                 address: "127.0.0.1".to_owned(),
                 port: 9443,
                 pre_shared_key: shared.clone(),
+                warm_tcp: true,
             },
         });
         config.outbounds.push(OutboundConfig::Handoff {
@@ -2120,6 +2242,7 @@ mod tests {
                 landing_public_key: "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo".to_owned(),
                 connect_timeout_ms: 10_000,
                 first_byte_timeout_ms: 15_000,
+                warm_tcp: true,
             },
         });
         assert_eq!(
@@ -2148,6 +2271,7 @@ mod tests {
                     max_time_difference_seconds: 30,
                     max_nonce_entries: 4_096,
                     nonce_retention_seconds: 120,
+                    pre_auth_idle_timeout_ms: 60_000,
                     authentication_timeout_ms: 3_000,
                     connect_timeout_ms: 10_000,
                     egress: None,
@@ -2180,6 +2304,7 @@ mod tests {
                 landing_public_key: "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo".to_owned(),
                 connect_timeout_ms: 10_000,
                 first_byte_timeout_ms: 15_000,
+                warm_tcp: true,
             },
         });
         assert_eq!(
@@ -2208,6 +2333,7 @@ mod tests {
                 max_time_difference_seconds: 30,
                 max_nonce_entries: 4_096,
                 nonce_retention_seconds: 120,
+                pre_auth_idle_timeout_ms: 60_000,
                 authentication_timeout_ms: 3_000,
                 connect_timeout_ms: 10_000,
                 egress: None,
@@ -2345,6 +2471,7 @@ mod tests {
                     max_time_difference_seconds: 30,
                     max_nonce_entries: 4_096,
                     nonce_retention_seconds: 120,
+                    pre_auth_idle_timeout_ms: 60_000,
                     authentication_timeout_ms: 3_000,
                     connect_timeout_ms: 10_000,
                 },
@@ -2441,6 +2568,7 @@ mod tests {
                 address: "127.0.0.1".to_owned(),
                 port: 9443,
                 pre_shared_key: SecretString::new("too-short"),
+                warm_tcp: true,
             },
         });
 

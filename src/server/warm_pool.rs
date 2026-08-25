@@ -34,7 +34,7 @@ const LIFECYCLE_CREATED: u8 = 0;
 const LIFECYCLE_ACTIVE: u8 = 1;
 const LIFECYCLE_STOPPED: u8 = 2;
 const ADAPT_INTERVAL: Duration = Duration::from_millis(100);
-const MAINTENANCE_TICK: Duration = Duration::from_millis(500);
+const QUIET_RECHECK: Duration = Duration::from_secs(30);
 const BASE_BACKOFF: Duration = Duration::from_millis(100);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 const ARRIVAL_EWMA_WEIGHT: f64 = 0.25;
@@ -516,8 +516,10 @@ type DialFuture = Pin<Box<dyn Future<Output = DialOutcome> + Send>>;
 
 async fn run_controller(inner: Arc<PoolInner>) {
     let mut dials = FuturesUnordered::<DialFuture>::new();
-    let maintenance = time::sleep(MAINTENANCE_TICK);
+    let maintenance = time::sleep_until(next_maintenance_deadline(&inner, Instant::now()));
     tokio::pin!(maintenance);
+    let mut resource_pressure = inner.authority.pressure.state();
+    let mut fd_pressure = inner.fd_budget.pressure();
     prune_and_adjust(&inner, Instant::now());
     loop {
         if inner.lifecycle.load(Ordering::Acquire) != LIFECYCLE_ACTIVE {
@@ -529,20 +531,38 @@ async fn run_controller(inner: Arc<PoolInner>) {
             _ = inner.notify.notified() => {
                 let now = Instant::now();
                 adjust_if_due(&inner, now);
-                maintenance.as_mut().reset(now + MAINTENANCE_TICK);
+                maintenance.as_mut().reset(next_maintenance_deadline(&inner, now));
             }
             completed = dials.next(), if !dials.is_empty() => {
                 if let Some(outcome) = completed {
                     handle_dial_completion(&inner, outcome);
                     let now = Instant::now();
                     adjust_if_due(&inner, now);
-                    maintenance.as_mut().reset(now + MAINTENANCE_TICK);
+                    maintenance.as_mut().reset(next_maintenance_deadline(&inner, now));
                 }
+            }
+            changed = inner.authority.pressure.wait_for_change(resource_pressure) => {
+                resource_pressure = changed;
+                if resource_pressure != ResourcePressure::Normal {
+                    cancel_speculative_dials(&inner, &mut dials);
+                }
+                let now = Instant::now();
+                prune_and_adjust(&inner, now);
+                maintenance.as_mut().reset(next_maintenance_deadline(&inner, now));
+            }
+            changed = inner.fd_budget.wait_for_pressure_change(fd_pressure) => {
+                fd_pressure = changed;
+                if fd_pressure != FdPressure::Normal {
+                    cancel_speculative_dials(&inner, &mut dials);
+                }
+                let now = Instant::now();
+                prune_and_adjust(&inner, now);
+                maintenance.as_mut().reset(next_maintenance_deadline(&inner, now));
             }
             () = &mut maintenance => {
                 let now = Instant::now();
                 prune_and_adjust(&inner, now);
-                maintenance.as_mut().reset(now + MAINTENANCE_TICK);
+                maintenance.as_mut().reset(next_maintenance_deadline(&inner, now));
             }
         }
     }
@@ -552,6 +572,40 @@ async fn run_controller(inner: Arc<PoolInner>) {
     state.ready.clear();
     inner.metrics.connecting.store(0, Ordering::Release);
     inner.metrics.ready.store(0, Ordering::Release);
+}
+
+fn cancel_speculative_dials(inner: &PoolInner, dials: &mut FuturesUnordered<DialFuture>) {
+    dials.clear();
+    let mut state = lock(&inner.state);
+    state.connecting = 0;
+    inner.metrics.connecting.store(0, Ordering::Release);
+}
+
+/// Schedules only work that can change state. A stable minimum pool wakes for
+/// its earliest socket expiry (normally 30 seconds), not every socket and not
+/// on a fixed subsecond polling tick.
+fn next_maintenance_deadline(inner: &PoolInner, now: Instant) -> Instant {
+    let state = lock(&inner.state);
+    let mut next = now + QUIET_RECHECK;
+    if state.arrivals_window != 0 || state.misses_window != 0 {
+        next = next.min(state.last_tick + ADAPT_INTERVAL);
+    }
+    if state.target_ready > inner.policy.min_ready {
+        let shrink_at = state.last_demand + inner.policy.shrink_delay;
+        next = next.min(if shrink_at <= now {
+            now + ADAPT_INTERVAL
+        } else {
+            shrink_at
+        });
+    }
+    if let Some(backoff_until) = state.backoff_until {
+        next = next.min(backoff_until.max(now + Duration::from_millis(1)));
+    }
+    for ready in &state.ready {
+        next = next.min(ready.idle_since + inner.policy.idle_timeout + Duration::from_millis(1));
+        next = next.min(ready.connected_at + inner.policy.max_lifetime + Duration::from_millis(1));
+    }
+    next.max(now)
 }
 
 fn adjust_if_due(inner: &Arc<PoolInner>, now: Instant) {
@@ -663,6 +717,7 @@ fn reconcile(inner: &Arc<PoolInner>, dials: &mut FuturesUnordered<DialFuture>) {
     if state.backoff_until.is_some_and(|deadline| deadline > now) {
         return;
     }
+    state.backoff_until = None;
     let occupied = saturating_u32(state.ready.len()).saturating_add(state.connecting);
     let deficit = state.target_ready.saturating_sub(occupied);
     let local_slots = inner.policy.max_connecting.saturating_sub(state.connecting);
@@ -813,7 +868,7 @@ mod tests {
     use crate::{
         config::{NetworkConfig, WarmConnectionPolicy},
         network::NetworkEnvironment,
-        runtime::{FdBudget, PressureGauge},
+        runtime::{FdBudget, PressureGauge, ResourcePressure},
         server::connector::DestinationConnector,
     };
 
@@ -1022,6 +1077,47 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn hundreds_of_concurrent_checkouts_remain_bounded_and_single_owned() {
+        let fixture = CoverFixture::start().await;
+        let mut policy = policy();
+        policy.min_ready = 32;
+        policy.max_ready = 64;
+        policy.max_connecting = 8;
+        policy.refill_batch = 8;
+        let fd_budget = FdBudget::new(256);
+        let authority = WarmPoolAuthority::new(&policy, 1, PressureGauge::new());
+        let pool = pool(&fixture, 15, &policy, authority.clone(), fd_budget.clone());
+        assert!(pool.activate());
+        wait_for(|| pool.snapshot().ready == policy.min_ready).await;
+
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..512 {
+            let pool = pool.clone();
+            tasks.spawn(async move { pool.checkout() });
+        }
+        let mut owned = Vec::new();
+        while let Some(result) = tasks.join_next().await {
+            if let Some(checkout) = result.expect("checkout task must join") {
+                owned.push(checkout);
+            }
+        }
+        let snapshot = pool.snapshot();
+        assert_eq!(snapshot.checkout_total, 512);
+        assert_eq!(snapshot.checkout_hit + snapshot.checkout_miss, 512);
+        assert_eq!(snapshot.in_use, owned.len() as u64);
+        assert!(snapshot.ready <= policy.max_ready);
+        assert!(snapshot.connecting <= policy.max_connecting);
+        assert!(owned.len() <= policy.max_ready as usize);
+
+        drop(owned);
+        assert_eq!(pool.snapshot().in_use, 0);
+        pool.deactivate();
+        wait_for(|| fd_budget.in_use() == 0).await;
+        assert_eq!(authority.counts(), (0, 0));
+        assert_eq!(fd_budget.underflows(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn checkout_discards_a_peer_closed_idle_socket_and_recovers() {
         let fixture = CoverFixture::start().await;
         let mut policy = policy();
@@ -1048,6 +1144,37 @@ mod tests {
         assert_eq!(pool.snapshot().stale_discard, 1);
         wait_for(|| pool.snapshot().ready == 1 && fixture.accepted_count() == 1).await;
         pool.deactivate();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pressure_reclaims_ready_state_before_checked_out_sessions() {
+        let fixture = CoverFixture::start().await;
+        let policy = policy();
+        let pressure = PressureGauge::new();
+        let authority = WarmPoolAuthority::new(&policy, 1, pressure.clone());
+        let fd_budget = FdBudget::new(64);
+        let pool = pool(&fixture, 16, &policy, authority.clone(), fd_budget.clone());
+        assert!(pool.activate());
+        wait_for(|| pool.snapshot().ready == policy.min_ready).await;
+        let active = pool.checkout().expect("one established session");
+        assert_eq!(pool.snapshot().in_use, 1);
+
+        pressure.set(ResourcePressure::Pressure);
+        wait_for(|| pool.snapshot().ready == 0 && pool.snapshot().connecting == 0).await;
+        assert_eq!(
+            pool.snapshot().in_use,
+            1,
+            "checked out session must survive"
+        );
+        assert_eq!(authority.counts(), (0, 0));
+        assert_eq!(fd_budget.in_use(), 1);
+
+        drop(active);
+        assert_eq!(pool.snapshot().in_use, 0);
+        assert_eq!(fd_budget.in_use(), 0);
+        pressure.set(ResourcePressure::Normal);
+        pool.deactivate();
+        assert_eq!(fd_budget.underflows(), 0);
     }
 
     #[tokio::test(flavor = "current_thread")]

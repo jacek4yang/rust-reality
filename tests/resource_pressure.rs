@@ -187,6 +187,7 @@ fn landing_registry(port: u16, key: &str) -> Arc<OutboundRegistry> {
                 address: Ipv4Addr::LOCALHOST.to_string(),
                 port,
                 pre_shared_key: rust_reality::config::SecretString::new(key.to_owned()),
+                warm_tcp: false,
             },
         }],
         &DirectBarrierConfig::default(),

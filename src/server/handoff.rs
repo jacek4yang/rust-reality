@@ -19,7 +19,7 @@ use std::{
 
 use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::AsyncReadExt,
     net::TcpStream,
     time::{self, Instant},
 };
@@ -27,7 +27,10 @@ use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
 use crate::{
-    config::{HandoffInboundConfig, HandoffSettings, NetworkConfig, SecretString},
+    config::{
+        HandoffInboundConfig, HandoffSettings, NetworkConfig, ResourceGovernorConfig, SecretString,
+        WarmConnectionPolicy,
+    },
     network::NetworkEnvironment,
     protocol::{
         handoff::{
@@ -40,7 +43,7 @@ use crate::{
         },
         vless::UserId,
     },
-    runtime::{FdBudget, FdPermit},
+    runtime::{AdmissionDenied, FdBudget, FdPermit, PressureGauge, ResourceGovernor},
     transport::{
         relay::RelayStats,
         tcp_relay::{TcpRelay, TcpRelayConfigError},
@@ -49,8 +52,11 @@ use crate::{
 
 use super::{
     connector::{DestinationConnectError, DestinationConnector},
+    counted_write::{WriteProgress, write_all_counted_before},
     outbound::{OutboundConnectError, OutboundConnectOutcome, OutboundRegistry},
+    pre_auth::{PreAuthError, PreAuthGeneration, begin_authentication},
     vision::{VisionSessionError, run_resumed_session},
+    warm_pool::{AdaptiveTcpPool, WarmPoolAuthority, WarmUsePermit},
 };
 
 /// Compiled LINE-side landing endpoint for session transfers.
@@ -66,6 +72,7 @@ pub struct HandoffLine {
     connect_timeout: Duration,
     first_byte_timeout: Duration,
     connector: DestinationConnector,
+    pool: Option<AdaptiveTcpPool>,
 }
 
 impl HandoffLine {
@@ -105,7 +112,36 @@ impl HandoffLine {
             connect_timeout: Duration::from_millis(settings.connect_timeout_ms),
             first_byte_timeout: Duration::from_millis(settings.first_byte_timeout_ms),
             connector: connector.with_timeout(Duration::from_millis(settings.connect_timeout_ms)),
+            pool: None,
         })
+    }
+
+    /// Compiles an optional generation-owned raw TCP pool. Key material stays
+    /// in this immutable line object and never enters the pool identity.
+    pub(crate) fn from_settings_with_warm_pool(
+        settings: &HandoffSettings,
+        connector: DestinationConnector,
+        fd_budget: &FdBudget,
+        warm: Option<(u64, WarmPoolAuthority, &WarmConnectionPolicy)>,
+    ) -> Option<Self> {
+        let mut line = Self::from_settings_with_connector(settings, connector)?;
+        if settings.warm_tcp
+            && let Some((generation, authority, policy)) = warm
+        {
+            line.pool = Some(AdaptiveTcpPool::new(
+                Arc::from(format!("{}:{}", settings.address, settings.port)),
+                generation,
+                line.connector.clone(),
+                fd_budget.clone(),
+                authority,
+                policy,
+            ));
+        }
+        Some(line)
+    }
+
+    pub(crate) const fn warm_pool(&self) -> Option<&AdaptiveTcpPool> {
+        self.pool.as_ref()
     }
 
     /// Returns the deadline for LANDING's first downlink byte after the
@@ -132,14 +168,91 @@ impl HandoffLine {
     /// # Errors
     ///
     /// Returns a descriptor-budget, deadline, connection, clock, or transfer
-    /// sealing error. Every error leaves the client session to its caller's
-    /// abort path; a partially written transfer is never retried.
+    /// sealing error. A complete transfer write is the irreversible cutoff;
+    /// bounded retries before it always construct new authenticated bytes.
     pub(crate) async fn transfer(
         &self,
         fd_budget: &FdBudget,
         state: &ContinuationState,
         client_random: [u8; 32],
-    ) -> Result<(TcpStream, FdPermit), HandoffLineError> {
+    ) -> Result<(TcpStream, HandoffTransportPermit), HandoffLineError> {
+        let deadline = Instant::now()
+            .checked_add(self.connect_timeout)
+            .ok_or(HandoffLineError::Timeout)?;
+
+        if let Some(pool) = &self.pool {
+            if let Some(checkout) = pool.checkout() {
+                let (connection, warm) = checkout.into_parts();
+                let (mut stream, fd_permit) = connection.into_parts();
+                let message = self.seal_fresh(state, client_random)?;
+                match write_all_counted_before(&mut stream, &message, deadline).await {
+                    Ok(WriteProgress::CompleteWrite) => {
+                        return Ok((
+                            stream,
+                            HandoffTransportPermit {
+                                _fd: fd_permit,
+                                _warm: Some(warm),
+                            },
+                        ));
+                    }
+                    Ok(WriteProgress::NoBytesWritten | WriteProgress::PartialWrite { .. }) => {
+                        unreachable!("counted write reports incomplete progress only as an error")
+                    }
+                    Err(error) => {
+                        match error.progress() {
+                            WriteProgress::NoBytesWritten | WriteProgress::PartialWrite { .. } => {}
+                            WriteProgress::CompleteWrite => {
+                                unreachable!("a complete write cannot be a retryable error")
+                            }
+                        }
+                        pool.record_stale_checkout();
+                        // Dropping the stream and permits permanently discards
+                        // every partial byte. The immediate cold fallback is
+                        // the sole alternate attempt and constructs fresh state.
+                    }
+                }
+            }
+            pool.record_cold_fallback();
+        }
+
+        let connected = time::timeout_at(
+            deadline,
+            self.connector
+                .connect_host_accounted(self.address.as_ref(), self.port, fd_budget),
+        )
+        .await
+        .map_err(|_| HandoffLineError::Timeout)?
+        .map_err(|error| match error {
+            DestinationConnectError::DescriptorBudget => HandoffLineError::DescriptorBudget,
+            DestinationConnectError::TimedOut { .. } => HandoffLineError::Timeout,
+            error => HandoffLineError::Connect(error.into_io()),
+        })?;
+        let (mut stream, fd_permit) = connected.into_parts();
+        let message = self.seal_fresh(state, client_random)?;
+        write_all_counted_before(&mut stream, &message, deadline)
+            .await
+            .map_err(|error| {
+                let source = error.into_source();
+                if source.kind() == io::ErrorKind::TimedOut {
+                    HandoffLineError::Timeout
+                } else {
+                    HandoffLineError::Connect(source)
+                }
+            })?;
+        Ok((
+            stream,
+            HandoffTransportPermit {
+                _fd: fd_permit,
+                _warm: None,
+            },
+        ))
+    }
+
+    fn seal_fresh(
+        &self,
+        state: &ContinuationState,
+        client_random: [u8; 32],
+    ) -> Result<Vec<u8>, HandoffLineError> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| HandoffLineError::Clock)?
@@ -154,28 +267,14 @@ impl HandoffLine {
             &mut message,
         )
         .map_err(HandoffLineError::Transfer)?;
-        let deadline = Instant::now()
-            .checked_add(self.connect_timeout)
-            .ok_or(HandoffLineError::Timeout)?;
-        let connected = time::timeout_at(
-            deadline,
-            self.connector
-                .connect_host_accounted(self.address.as_ref(), self.port, fd_budget),
-        )
-        .await
-        .map_err(|_| HandoffLineError::Timeout)?
-        .map_err(|error| match error {
-            DestinationConnectError::DescriptorBudget => HandoffLineError::DescriptorBudget,
-            DestinationConnectError::TimedOut { .. } => HandoffLineError::Timeout,
-            error => HandoffLineError::Connect(error.into_io()),
-        })?;
-        let (mut stream, fd_permit) = connected.into_parts();
-        time::timeout_at(deadline, stream.write_all(&message))
-            .await
-            .map_err(|_| HandoffLineError::Timeout)?
-            .map_err(HandoffLineError::Connect)?;
-        Ok((stream, fd_permit))
+        Ok(message)
     }
+}
+
+/// Session-lifetime authority for one permanently checked-out Handoff socket.
+pub(crate) struct HandoffTransportPermit {
+    _fd: FdPermit,
+    _warm: Option<WarmUsePermit>,
 }
 
 impl fmt::Debug for HandoffLine {
@@ -279,7 +378,11 @@ pub struct HandoffLandingHandler {
     maximum_time_difference: u64,
     connector: DestinationConnector,
     egress: Option<LandingEgress>,
+    pre_auth_idle_timeout: Duration,
     authentication_timeout: Duration,
+    governor: ResourceGovernor,
+    pressure: PressureGauge,
+    generation: PreAuthGeneration,
     relay: TcpRelay,
     /// Idle bound handed to the resumed Vision relay, so a stalled peer cannot
     /// park a landing session on its descriptors and permits forever.
@@ -305,7 +408,11 @@ impl HandoffLandingHandler {
     /// # Errors
     ///
     /// Rejects malformed or incorrectly sized key material.
-    pub fn from_inbound_with_replay(
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one parameter per immutable landing policy and process authority"
+    )]
+    pub(crate) fn from_inbound_with_replay(
         inbound: &HandoffInboundConfig,
         replay: HandoffReplayCache,
         relay: TcpRelay,
@@ -313,6 +420,9 @@ impl HandoffLandingHandler {
         outbounds: &OutboundRegistry,
         network: &NetworkConfig,
         network_environment: NetworkEnvironment,
+        governor: ResourceGovernor,
+        pressure: PressureGauge,
+        generation: PreAuthGeneration,
     ) -> Result<Self, HandoffLandingConfigError> {
         let settings = &inbound.settings;
         let psk = decode_key(&settings.pre_shared_key)?;
@@ -343,6 +453,11 @@ impl HandoffLandingHandler {
             relay,
             io_timeout,
         );
+        handler.pre_auth_idle_timeout =
+            Duration::from_millis(inbound.settings.pre_auth_idle_timeout_ms);
+        handler.governor = governor;
+        handler.pressure = pressure;
+        handler.generation = generation;
         handler.connector = DestinationConnector::with_environment(
             Duration::from_millis(inbound.settings.connect_timeout_ms),
             network.clone(),
@@ -380,13 +495,18 @@ impl HandoffLandingHandler {
         relay: TcpRelay,
         io_timeout: Duration,
     ) -> Self {
+        let governor = ResourceGovernor::new(&ResourceGovernorConfig::default());
         Self {
             keys,
             replay,
             maximum_time_difference,
             connector: DestinationConnector::new(connect_timeout),
             egress: None,
+            pre_auth_idle_timeout: Duration::from_secs(60),
             authentication_timeout,
+            governor,
+            pressure: PressureGauge::new(),
+            generation: PreAuthGeneration::default(),
             relay,
             io_timeout,
         }
@@ -407,7 +527,22 @@ impl HandoffLandingHandler {
     /// Returns bounded transfer-read, clock, authentication, destination, or
     /// relay errors. Callers must silently close on every error.
     pub async fn handle(&self, mut inbound: TcpStream) -> Result<RelayStats, HandoffLandingError> {
-        let message = read_transfer(&mut inbound, self.authentication_timeout).await?;
+        let authentication = begin_authentication(
+            &mut inbound,
+            self.pre_auth_idle_timeout,
+            self.authentication_timeout,
+            &self.governor,
+            &self.pressure,
+            &self.generation,
+        )
+        .await
+        .map_err(HandoffLandingError::from_pre_auth)?;
+        let message = read_transfer_after_first(
+            &mut inbound,
+            authentication.first_byte,
+            authentication.deadline,
+        )
+        .await?;
         let now = unix_seconds()?;
         let opened = open_transfer(
             &message,
@@ -431,6 +566,7 @@ impl HandoffLandingHandler {
         // layers only; the continuation copies are zeroized here, before the
         // whole-session relay below.
         drop(opened);
+        drop(authentication);
         // The descriptor unit is reserved before connect(2) and outlives the
         // relay: the outbound socket closes before its unit is released. Both
         // permit slots are declared before the socket so either dial path
@@ -522,15 +658,14 @@ fn resume_tls(state: &ContinuationState) -> Result<EstablishedTls, HandoffLandin
         .map_err(|_| HandoffLandingError::Protocol(HandoffError::State))
 }
 
-async fn read_transfer(
+async fn read_transfer_after_first(
     stream: &mut TcpStream,
-    timeout: Duration,
+    first_byte: u8,
+    deadline: Instant,
 ) -> Result<Vec<u8>, HandoffLandingError> {
-    let deadline = Instant::now()
-        .checked_add(timeout)
-        .ok_or(HandoffLandingError::Timeout)?;
     let mut header = [0_u8; HEADER_LEN];
-    read_exact_before(stream, &mut header, deadline).await?;
+    header[0] = first_byte;
+    read_exact_before(stream, &mut header[1..], deadline).await?;
     let total = message_len_from_header(&header).map_err(HandoffLandingError::Protocol)?;
     let mut message = Vec::new();
     message
@@ -593,6 +728,10 @@ impl Error for HandoffLandingConfigError {
 /// One Handoff landing connection failed and must close silently.
 #[derive(Debug)]
 pub enum HandoffLandingError {
+    /// Pre-auth idle or authentication admission was refused.
+    Admission(AdmissionDenied),
+    /// An unused socket was reclaimed by pressure or generation retirement.
+    Reclaimed,
     Timeout,
     Read(io::Error),
     Protocol(HandoffError),
@@ -604,6 +743,17 @@ pub enum HandoffLandingError {
     Egress(OutboundConnectError),
     Session(VisionSessionError),
     DescriptorBudget,
+}
+
+impl HandoffLandingError {
+    fn from_pre_auth(error: PreAuthError) -> Self {
+        match error {
+            PreAuthError::Admission(error) => Self::Admission(error),
+            PreAuthError::Timeout => Self::Timeout,
+            PreAuthError::Read(error) => Self::Read(error),
+            PreAuthError::Reclaimed => Self::Reclaimed,
+        }
+    }
 }
 
 impl fmt::Display for HandoffLandingError {
@@ -620,7 +770,12 @@ impl Error for HandoffLandingError {
             Self::Destination(source) => Some(source),
             Self::Egress(source) => Some(source),
             Self::Session(source) => Some(source),
-            Self::Timeout | Self::Allocation | Self::Clock | Self::DescriptorBudget => None,
+            Self::Admission(source) => Some(source),
+            Self::Reclaimed
+            | Self::Timeout
+            | Self::Allocation
+            | Self::Clock
+            | Self::DescriptorBudget => None,
         }
     }
 }
@@ -651,12 +806,12 @@ mod tests {
         config::{
             BlackholeSettings, DirectBarrierConfig, DnsStrategy, HandoffSettings, OutboundConfig,
             RelayPolicy, ResourceGovernorConfig, RoutingConfig, SecretString, Socks5Settings,
-            UserPolicy,
+            UserPolicy, WarmConnectionPolicy,
         },
         protocol::{
             handoff::{
-                ContinuationState, HandoffLandingKeys, HandoffPsk, HandoffReplayCache,
-                seal_transfer,
+                ContinuationState, HEADER_LEN, HandoffLandingKeys, HandoffPsk, HandoffReplayCache,
+                message_len_from_header, seal_transfer,
             },
             reality::tls13::{
                 CipherSuite, ContentType, EstablishedTls, ExportedRecordState, Tls13KeySchedule,
@@ -667,12 +822,14 @@ mod tests {
                 VisionDecoder, VisionEncoder,
             },
         },
-        runtime::FdBudget,
+        runtime::{FdBudget, PressureGauge},
         server::{
+            connector::DestinationConnector,
             outbound::OutboundRegistry,
             reality::RealityEstablished,
             routing::{EmptyAssetMatcher, RoutingTable},
             vision::{VisionHandler, VisionSessionError},
+            warm_pool::WarmPoolAuthority,
         },
         transport::TcpRelay,
     };
@@ -710,8 +867,148 @@ mod tests {
             landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public.as_bytes()),
             connect_timeout_ms: 1_000,
             first_byte_timeout_ms: 1_000,
+            warm_tcp: false,
         })
         .expect("test handoff settings must compile")
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn warm_handoff_sends_no_transfer_bytes_before_checkout() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("landing must bind");
+        let address = listener.local_addr().expect("landing address");
+        let policy = WarmConnectionPolicy {
+            min_ready: 1,
+            max_ready: 2,
+            max_connecting: 1,
+            refill_batch: 1,
+            idle_timeout_ms: 30_000,
+            max_lifetime_ms: 60_000,
+            shrink_delay_ms: 30_000,
+        };
+        let fd_budget = FdBudget::new(4_096);
+        let pressure = PressureGauge::new();
+        let landing_public = PublicKey::from(&StaticSecret::from(LANDING_SECRET));
+        let line = HandoffLine::from_settings_with_warm_pool(
+            &HandoffSettings {
+                address: address.ip().to_string(),
+                port: address.port(),
+                pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
+                landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public.as_bytes()),
+                connect_timeout_ms: 2_000,
+                first_byte_timeout_ms: 2_000,
+                warm_tcp: true,
+            },
+            DestinationConnector::new(Duration::from_secs(2)),
+            &fd_budget,
+            Some((11, WarmPoolAuthority::new(&policy, 1, pressure), &policy)),
+        )
+        .expect("line settings must compile");
+        let pool = line.warm_pool().expect("warm pool must exist").clone();
+        let _activated = pool.activate();
+        let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+        let landing = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await?;
+            let mut probe = [0_u8; 1];
+            assert!(
+                matches!(stream.try_read(&mut probe), Err(ref error) if error.kind() == io::ErrorKind::WouldBlock)
+            );
+            accepted_tx
+                .send(())
+                .map_err(|()| io::Error::other("receiver closed"))?;
+            let mut header = [0_u8; HEADER_LEN];
+            stream.read_exact(&mut header).await?;
+            let total = message_len_from_header(&header).map_err(io::Error::other)?;
+            let mut remainder = vec![0_u8; total - HEADER_LEN];
+            stream.read_exact(&mut remainder).await?;
+            Ok::<_, io::Error>(())
+        });
+        accepted_rx.await.expect("warm TCP must reach landing");
+        timeout(Duration::from_secs(2), async {
+            while pool.snapshot().ready != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("pool must become ready");
+        let state = test_state(Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 443));
+        let (stream, permit) = line
+            .transfer(&fd_budget, &state, [0x42; 32])
+            .await
+            .expect("warm transfer must write");
+        drop(stream);
+        drop(permit);
+        landing
+            .await
+            .expect("landing must join")
+            .expect("landing result");
+        assert_eq!(pool.snapshot().checkout_hit, 1);
+        assert_eq!(pool.snapshot().cold_fallback, 0);
+        let _deactivated = pool.deactivate();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn first_handoff_byte_enters_the_short_authentication_deadline() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("landing must bind");
+        let address = listener.local_addr().expect("landing address");
+        let client = TcpStream::connect(address);
+        let accepted = listener.accept();
+        let (client, accepted) = tokio::join!(client, accepted);
+        let mut client = client.expect("client must connect");
+        let (server, _) = accepted.expect("landing must accept");
+        let handler = test_landing_handler();
+        let task = tokio::spawn(async move { handler.handle(server).await });
+
+        client.write_all(b"H").await.expect("first byte");
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert!(matches!(
+            task.await.expect("handler must join"),
+            Err(HandoffLandingError::Timeout)
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn valid_handoff_authenticates_after_normal_pre_auth_idle() {
+        let (mut client, server) = tcp_pair().await;
+        let handler = test_landing_handler();
+        let state = test_state(Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 9));
+        let landing_public = PublicKey::from(&StaticSecret::from(LANDING_SECRET));
+        let mut message = Vec::new();
+        seal_transfer(
+            &state,
+            &HandoffPsk::new(PSK),
+            &landing_public,
+            [0x49; 32],
+            unix_seconds().expect("clock must be valid"),
+            &mut message,
+        )
+        .expect("transfer must seal");
+        let task = tokio::spawn(async move { handler.handle(server).await });
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(30)).await;
+        assert!(!task.is_finished(), "normal warm idle must remain accepted");
+        client.write_all(&message).await.expect("transfer write");
+        assert!(matches!(
+            task.await.expect("handler must join"),
+            Err(HandoffLandingError::Destination(_))
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unused_handoff_socket_expires_at_pre_auth_idle_deadline() {
+        let (_client, server) = tcp_pair().await;
+        let handler = test_landing_handler();
+        let task = tokio::spawn(async move { handler.handle(server).await });
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(60)).await;
+        assert!(matches!(
+            task.await.expect("handler must join"),
+            Err(HandoffLandingError::Timeout)
+        ));
     }
 
     fn test_state(destination: Destination) -> ContinuationState {
@@ -881,6 +1178,7 @@ mod tests {
                     landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public.as_bytes()),
                     connect_timeout_ms: 1_000,
                     first_byte_timeout_ms: 1_000,
+                    warm_tcp: false,
                 },
             }],
             &barrier,
@@ -945,7 +1243,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn landing_rejects_a_replayed_transfer() {
+    async fn landing_rejects_a_replayed_transfer_on_preestablished_sockets() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("landing must bind");
@@ -969,16 +1267,20 @@ mod tests {
 
         let exchange = async {
             let landing = async {
-                let mut outcomes = Vec::new();
-                for _ in 0..2 {
-                    let (stream, _) = listener.accept().await?;
-                    outcomes.push(handler.handle(stream).await);
-                }
-                Ok::<_, io::Error>(outcomes)
+                let (first, _) = listener.accept().await?;
+                let (second, _) = listener.accept().await?;
+                let first_handler = handler.clone();
+                let (first, second) =
+                    tokio::join!(first_handler.handle(first), handler.handle(second));
+                Ok::<_, io::Error>([first, second])
             };
             let peer = async {
-                for _ in 0..2 {
-                    let mut stream = TcpStream::connect(address).await?;
+                let mut streams = [
+                    TcpStream::connect(address).await?,
+                    TcpStream::connect(address).await?,
+                ];
+                tokio::task::yield_now().await;
+                for stream in &mut streams {
                     stream.write_all(&message).await?;
                     let mut response = Vec::new();
                     stream.read_to_end(&mut response).await?;
@@ -1331,6 +1633,7 @@ mod tests {
                     port: socks_address.port(),
                     username: None,
                     password: None,
+                    warm_tcp: false,
                 },
             }]),
             "socks",
@@ -1675,6 +1978,7 @@ mod tests {
                 landing_public_key: BASE64_URL_SAFE_NO_PAD.encode([0x77; 32]),
                 connect_timeout_ms: 1_000,
                 first_byte_timeout_ms: 1_000,
+                warm_tcp: false,
             })
             .is_none()
         );
@@ -1686,6 +1990,7 @@ mod tests {
                 landing_public_key: BASE64_URL_SAFE_NO_PAD.encode([0x77; 16]),
                 connect_timeout_ms: 1_000,
                 first_byte_timeout_ms: 1_000,
+                warm_tcp: false,
             })
             .is_none()
         );

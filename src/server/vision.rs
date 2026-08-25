@@ -189,7 +189,11 @@ impl VisionHandler {
     /// # Errors
     ///
     /// Returns a routing matcher or UUID compilation error.
-    pub fn from_config_with_pressure(
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one parameter per process-lifetime authority and generation input"
+    )]
+    pub(crate) fn from_config_with_pressure(
         config: &Config,
         assets: Arc<dyn AssetMatcher>,
         relay: TcpRelay,
@@ -197,6 +201,8 @@ impl VisionHandler {
         direct_barrier: crate::runtime::DirectBarrier,
         governor: crate::runtime::ResourceGovernor,
         network_environment: crate::network::NetworkEnvironment,
+        generation: u64,
+        warm_authority: super::warm_pool::WarmPoolAuthority,
     ) -> Result<Self, RoutingCompileError> {
         Self::build(
             config,
@@ -207,6 +213,8 @@ impl VisionHandler {
                 direct_barrier,
                 governor,
                 network_environment,
+                generation,
+                warm_authority,
             )),
         )
     }
@@ -220,19 +228,31 @@ impl VisionHandler {
             crate::runtime::DirectBarrier,
             crate::runtime::ResourceGovernor,
             crate::network::NetworkEnvironment,
+            u64,
+            super::warm_pool::WarmPoolAuthority,
         )>,
     ) -> Result<Self, RoutingCompileError> {
         let governor = &config.advanced.limits.resource_governor;
         let connect_timeout = Duration::from_millis(governor.connect_timeout_ms);
         let (outbounds, dns_governor) = match authorities {
-            Some((_pressure, direct_barrier, dns_governor, network_environment)) => (
-                OutboundRegistry::with_barrier_and_network(
+            Some((
+                _pressure,
+                direct_barrier,
+                dns_governor,
+                network_environment,
+                generation,
+                warm_authority,
+            )) => (
+                OutboundRegistry::with_warm_pools(
                     &config.outbounds,
                     direct_barrier,
                     connect_timeout,
                     relay.fd_budget().clone(),
                     &config.network,
                     network_environment,
+                    generation,
+                    warm_authority,
+                    &config.advanced.limits.warm_connections,
                 ),
                 dns_governor,
             ),

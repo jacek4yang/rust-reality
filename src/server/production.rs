@@ -51,6 +51,7 @@ use super::{
     dns::{DnsResolver, DnsResolverConfigError},
     handoff::{HandoffLandingConfigError, HandoffLandingError, HandoffLandingHandler},
     nxr::{NxrLandingConfigError, NxrLandingError, NxrLandingHandler, NxrReplayCache},
+    pre_auth::PreAuthGeneration,
     reality::{
         RealityAcceptError, RealityAcceptOutcome, RealityAcceptor, RealityAcceptorConfigError,
     },
@@ -111,28 +112,40 @@ fn theoretical_fd_peak(config: &Config) -> u64 {
         } else {
             0
         };
-    // Every cover pool retains at most maxReady established descriptors.
+    // Every eligible transport pool retains at most maxReady established descriptors.
     // A speculative Happy Eyeballs dial can transiently hold two candidates,
     // so account maxConnecting twice. Checked-out sockets replace a normal
     // per-connection cover dial and are already covered by the connection term.
-    let cover_pools = u64::try_from(maximum_cover_pool_count(config)).unwrap_or(u64::MAX);
+    let pool_count = u64::try_from(maximum_warm_pool_count(config)).unwrap_or(u64::MAX);
     let warm = &config.advanced.limits.warm_connections;
-    let warm_cover = cover_pools.saturating_mul(
+    let warm_transport = pool_count.saturating_mul(
         u64::from(warm.max_ready).saturating_add(u64::from(warm.max_connecting).saturating_mul(2)),
     );
     connections
         .saturating_mul(3)
         .saturating_add(splice)
         .saturating_add(pool_retention)
-        .saturating_add(warm_cover)
+        .saturating_add(warm_transport)
 }
 
-fn maximum_cover_pool_count(config: &Config) -> usize {
-    config
+fn maximum_warm_pool_count(config: &Config) -> usize {
+    let cover = config
         .inbounds
         .iter()
         .filter(|inbound| matches!(inbound, InboundConfig::Vless(_)))
-        .count()
+        .count();
+    let outbound = config
+        .outbounds
+        .iter()
+        .filter(|outbound| match outbound {
+            crate::config::OutboundConfig::Socks5 { settings, .. } => settings.warm_tcp,
+            crate::config::OutboundConfig::Nxr { settings, .. } => settings.warm_tcp,
+            crate::config::OutboundConfig::Handoff { settings, .. } => settings.warm_tcp,
+            crate::config::OutboundConfig::Direct { .. }
+            | crate::config::OutboundConfig::Blackhole { .. } => false,
+        })
+        .count();
+    cover.saturating_add(outbound)
 }
 
 /// Everything the startup resource derivation decided, before any listener
@@ -383,7 +396,7 @@ impl ProductionServer {
             ),
             warm_pools: WarmPoolAuthority::new(
                 &config.advanced.limits.warm_connections,
-                maximum_cover_pool_count(&config),
+                maximum_warm_pool_count(&config),
                 pressure.clone(),
             ),
             network_environment: NetworkEnvironment::from_config(&config.network.dial),
@@ -642,8 +655,8 @@ impl ProductionServer {
         }
 
         // Listener binding is complete, so this immutable generation may begin
-        // speculative cover dialing without delaying availability.
-        initial.activate_cover_pools();
+        // speculative cover and fixed-peer dialing without delaying availability.
+        initial.activate_warm_pools();
         let (shutdown_sender, shutdown_receiver) = watch::channel(false);
         let mut listener_tasks = JoinSet::new();
         for (acceptor, address) in bound {
@@ -737,7 +750,7 @@ impl ProductionServer {
                 completed = update_tasks.join_next(), if !update_tasks.is_empty() => {
                     match completed {
                         Some(Ok((_, Ok(_)))) => {
-                            self.runtime.load().activate_cover_pools();
+                            self.runtime.load().activate_warm_pools();
                         }
                         Some(Ok((field, Err(error)))) => {
                             emit_rejected(&self.runtime, field, Some(&error));
@@ -749,7 +762,7 @@ impl ProductionServer {
             }
         };
 
-        self.runtime.load().deactivate_cover_pools();
+        self.runtime.load().deactivate_warm_pools();
         update_tasks.abort_all();
         if let Some(task) = monitor_task {
             task.abort();
@@ -847,7 +860,7 @@ impl RuntimeStore {
             &self.pressure,
             &self.authorities,
         )?;
-        current.deactivate_cover_pools();
+        current.deactivate_warm_pools();
         self.current.store(Arc::new(candidate));
         self.generation.store(generation, Ordering::Release);
         let published = self.load();
@@ -866,6 +879,8 @@ struct RuntimeSnapshot {
     config: Config,
     connections: HashMap<SocketAddr, Arc<ConnectionRuntime>>,
     logger: Logger,
+    pre_auth_generation: PreAuthGeneration,
+    outbounds: super::outbound::OutboundRegistry,
 }
 
 impl RuntimeSnapshot {
@@ -879,6 +894,7 @@ impl RuntimeSnapshot {
         authorities: &ProcessAuthorities,
     ) -> Result<Self, RuntimeUpdateError> {
         let logger = Logger::new(&config.log)?;
+        let pre_auth_generation = PreAuthGeneration::default();
         let assets = Arc::new(AssetSnapshot::load_generation(&config, generation)?);
         let vision = VisionHandler::from_config_with_pressure(
             &config,
@@ -888,7 +904,10 @@ impl RuntimeSnapshot {
             authorities.direct_barrier.clone(),
             authorities.governor.clone(),
             authorities.network_environment.clone(),
+            generation,
+            authorities.warm_pools.clone(),
         )?;
+        let outbounds = vision.outbounds().clone();
         let mut connections = HashMap::new();
         let listener_count = config
             .inbounds
@@ -931,6 +950,9 @@ impl RuntimeSnapshot {
                         ),
                         &config.network,
                         authorities.network_environment.clone(),
+                        authorities.governor.clone(),
+                        pressure.clone(),
+                        pre_auth_generation.clone(),
                     )?)
                 }
                 InboundConfig::Handoff(inbound) => {
@@ -967,6 +989,9 @@ impl RuntimeSnapshot {
                         vision.outbounds(),
                         &config.network,
                         authorities.network_environment.clone(),
+                        authorities.governor.clone(),
+                        pressure.clone(),
+                        pre_auth_generation.clone(),
                     )?)
                 }
             };
@@ -989,10 +1014,13 @@ impl RuntimeSnapshot {
             config,
             connections,
             logger,
+            pre_auth_generation,
+            outbounds,
         })
     }
 
-    fn activate_cover_pools(&self) {
+    fn activate_warm_pools(&self) {
+        self.outbounds.activate_warm_pools();
         for connection in self.connections.values() {
             if let ConnectionHandler::Public { reality, .. } = &connection.handler {
                 reality.activate_cover_pool();
@@ -1000,7 +1028,36 @@ impl RuntimeSnapshot {
         }
     }
 
-    fn deactivate_cover_pools(&self) {
+    fn deactivate_warm_pools(&self) {
+        self.pre_auth_generation.deactivate();
+        let outbound_snapshots = self.outbounds.warm_pool_snapshots();
+        self.outbounds.deactivate_warm_pools();
+        for snapshot in outbound_snapshots {
+            let pool = snapshot.pool;
+            emit(
+                &self.logger,
+                &LogEvent::TransportPoolSummary {
+                    transport: snapshot.transport,
+                    generation: pool.generation,
+                    pool_ready: pool.ready,
+                    pool_connecting: pool.connecting,
+                    pool_in_use: pool.in_use,
+                    pool_checkout_total: pool.checkout_total,
+                    pool_checkout_hit: pool.checkout_hit,
+                    pool_checkout_miss: pool.checkout_miss,
+                    pool_cold_fallback: pool.cold_fallback,
+                    pool_connect_failure: pool.connect_failure,
+                    pool_stale_discard: pool.stale_discard,
+                    pool_refill: pool.refill,
+                    pool_target_ready: pool.target_ready,
+                    pool_growth: pool.growth,
+                    pool_shrink: pool.shrink,
+                    arrival_rate_ewma: format!("{:.3}", pool.arrival_rate_per_second),
+                    connect_latency_ewma_ms: format!("{:.3}", pool.connect_latency_ms),
+                    recent_burst: format!("{:.3}", pool.recent_burst),
+                },
+            );
+        }
         for connection in self.connections.values() {
             if let ConnectionHandler::Public { reality, .. } = &connection.handler {
                 let snapshot = reality.cover_pool_snapshot();
@@ -1024,6 +1081,9 @@ impl RuntimeSnapshot {
                             pool_target_ready: snapshot.target_ready,
                             pool_growth: snapshot.growth,
                             pool_shrink: snapshot.shrink,
+                            arrival_rate_ewma: format!("{:.3}", snapshot.arrival_rate_per_second),
+                            connect_latency_ewma_ms: format!("{:.3}", snapshot.connect_latency_ms),
+                            recent_burst: format!("{:.3}", snapshot.recent_burst),
                         },
                     );
                 }
@@ -1877,6 +1937,10 @@ fn emit_admission(logger: &Logger, error: AdmissionDenied) {
     let resource = match error {
         AdmissionDenied::Limit(AdmissionKind::Connection)
         | AdmissionDenied::Pressure(AdmissionKind::Connection) => AdmissionResource::Connections,
+        AdmissionDenied::Limit(AdmissionKind::PreAuthIdle)
+        | AdmissionDenied::Pressure(AdmissionKind::PreAuthIdle) => {
+            AdmissionResource::PreAuthIdleConnections
+        }
         AdmissionDenied::Limit(AdmissionKind::Handshake)
         | AdmissionDenied::Pressure(AdmissionKind::Handshake) => AdmissionResource::Handshakes,
         AdmissionDenied::Limit(AdmissionKind::Fallback)
@@ -1935,6 +1999,10 @@ impl ConnectionRunError {
     fn rejection_reason(&self) -> RejectionReason {
         match self {
             Self::Reality(RealityAcceptError::Admission(_)) => RejectionReason::ResourceLimit,
+            Self::Nxr(NxrLandingError::Admission(_) | NxrLandingError::Reclaimed)
+            | Self::Handoff(HandoffLandingError::Admission(_) | HandoffLandingError::Reclaimed) => {
+                RejectionReason::ResourceLimit
+            }
             Self::Reality(RealityAcceptError::HandshakeWriteTimeout)
             | Self::Vision(VisionSessionError::Timeout)
             | Self::Nxr(NxrLandingError::Timeout)
@@ -1980,6 +2048,8 @@ impl ConnectionRunError {
             Self::Vision(VisionSessionError::Outbound(
                 crate::server::outbound::OutboundConnectError::Admission(denied),
             )) => Some(*denied),
+            Self::Nxr(NxrLandingError::Admission(denied))
+            | Self::Handoff(HandoffLandingError::Admission(denied)) => Some(*denied),
             _ => None,
         }
     }
@@ -2477,6 +2547,7 @@ mod tests {
                 max_time_difference_seconds: 30,
                 max_nonce_entries: 4_096,
                 nonce_retention_seconds: 120,
+                pre_auth_idle_timeout_ms: 60_000,
                 authentication_timeout_ms: 1_000,
                 connect_timeout_ms: 1_000,
             },
@@ -2499,6 +2570,7 @@ mod tests {
                     address: Ipv4Addr::LOCALHOST.to_string(),
                     port: landing_port,
                     pre_shared_key: SecretString::new(encoded_key),
+                    warm_tcp: false,
                 },
             }],
             &DirectBarrierConfig::default(),
@@ -2652,6 +2724,7 @@ mod tests {
                     max_time_difference_seconds: 30,
                     max_nonce_entries: 4_096,
                     nonce_retention_seconds: 120,
+                    pre_auth_idle_timeout_ms: 60_000,
                     authentication_timeout_ms: 1_000,
                     connect_timeout_ms: 1_000,
                     egress: None,
@@ -3201,6 +3274,11 @@ mod tests {
         let mut config = generated.config().clone();
         config.advanced.limits.resource_governor.max_connections = 2;
         config.advanced.limits.resource_governor.max_handshakes = 2;
+        config
+            .advanced
+            .limits
+            .resource_governor
+            .max_pre_auth_idle_connections = 2;
         config.advanced.limits.resource_governor.max_fallbacks = 2;
         config
             .advanced

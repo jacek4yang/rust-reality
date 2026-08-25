@@ -324,6 +324,7 @@ pub fn generate_line_config(
                     address: input.nxr_address,
                     port: input.nxr_port,
                     pre_shared_key: input.pre_shared_key,
+                    warm_tcp: true,
                 },
             },
             OutboundConfig::Direct {
@@ -380,6 +381,7 @@ pub fn generate_landing_config(
                 max_time_difference_seconds: 30,
                 max_nonce_entries: 65_536,
                 nonce_retention_seconds: 120,
+                pre_auth_idle_timeout_ms: 60_000,
                 authentication_timeout_ms: 3_000,
                 connect_timeout_ms: 10_000,
             },
@@ -487,6 +489,7 @@ pub fn generate_multi_handoff_configs(
                 landing_public_key,
                 connect_timeout_ms: 10_000,
                 first_byte_timeout_ms: 15_000,
+                warm_tcp: true,
             },
         });
         landing_material.push((landing.port, pre_shared_key, landing_private_key));
@@ -639,6 +642,7 @@ fn handoff_landing_config(
                 max_time_difference_seconds: 30,
                 max_nonce_entries: 65_536,
                 nonce_retention_seconds: 120,
+                pre_auth_idle_timeout_ms: 60_000,
                 authentication_timeout_ms: 3_000,
                 connect_timeout_ms: 10_000,
                 egress: None,

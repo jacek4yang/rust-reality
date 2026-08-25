@@ -63,7 +63,10 @@ impl ResourcePressure {
     pub(crate) const fn admits(self, kind: AdmissionKind) -> bool {
         match self {
             Self::Normal => true,
-            Self::Pressure => !matches!(kind, AdmissionKind::Handshake | AdmissionKind::Fallback),
+            Self::Pressure => !matches!(
+                kind,
+                AdmissionKind::PreAuthIdle | AdmissionKind::Handshake | AdmissionKind::Fallback
+            ),
             Self::Critical => false,
         }
     }
@@ -168,6 +171,38 @@ impl PressureGauge {
             notified.await;
         }
     }
+
+    /// Waits until speculative unauthenticated state must yield.
+    ///
+    /// Registration precedes the state re-check, matching
+    /// [`Self::wait_while_critical`], so a transition cannot be lost between
+    /// observation and parking. This is used only by bounded pre-auth idle
+    /// sockets; authenticated sessions never wait on it.
+    pub async fn wait_until_pressure(&self) {
+        while self.state() == ResourcePressure::Normal {
+            let notified = self.inner.changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.state() != ResourcePressure::Normal {
+                break;
+            }
+            notified.await;
+        }
+    }
+
+    /// Waits for any effective pressure transition from `observed`.
+    pub(crate) async fn wait_for_change(&self, observed: ResourcePressure) -> ResourcePressure {
+        loop {
+            let notified = self.inner.changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            let current = self.state();
+            if current != observed {
+                return current;
+            }
+            notified.await;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -179,6 +214,7 @@ mod tests {
     fn pressure_refuses_fallback_before_handshake_before_connection() {
         for kind in [
             AdmissionKind::Connection,
+            AdmissionKind::PreAuthIdle,
             AdmissionKind::Handshake,
             AdmissionKind::Fallback,
             AdmissionKind::CryptoOperation,
@@ -192,6 +228,10 @@ mod tests {
             "fallback work is refused first"
         );
         assert!(
+            !ResourcePressure::Pressure.admits(AdmissionKind::PreAuthIdle),
+            "speculative pre-auth idle sockets are refused under pressure"
+        );
+        assert!(
             !ResourcePressure::Pressure.admits(AdmissionKind::Handshake),
             "new unauthenticated setup is refused under pressure"
         );
@@ -200,6 +240,7 @@ mod tests {
 
         for kind in [
             AdmissionKind::Connection,
+            AdmissionKind::PreAuthIdle,
             AdmissionKind::Handshake,
             AdmissionKind::Fallback,
             AdmissionKind::CryptoOperation,

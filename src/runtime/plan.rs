@@ -283,6 +283,7 @@ impl StartupPlan {
             resource_governor: ResourceGovernorConfig {
                 max_connections: to_u32(max_connections),
                 max_handshakes: to_u32(max_handshakes),
+                max_pre_auth_idle_connections: to_u32(max_handshakes.min(max_connections)),
                 max_fallbacks: to_u32(max_fallbacks),
                 max_crypto_operations: to_u32(max_crypto_operations),
                 max_replay_entries: to_u32(max_replay_entries),
@@ -433,6 +434,9 @@ fn scale_for_objective(
     let max_handshakes = u64::from(governor.max_handshakes)
         .min(max_connections)
         .max(1);
+    let max_pre_auth_idle_connections = u64::from(governor.max_pre_auth_idle_connections)
+        .min(max_connections)
+        .max(1);
     let max_crypto_operations = u64::from(governor.max_crypto_operations)
         .min(max_handshakes)
         .max(1);
@@ -506,6 +510,7 @@ fn scale_for_objective(
         resource_governor: ResourceGovernorConfig {
             max_connections: to_u32(max_connections),
             max_handshakes: to_u32(max_handshakes),
+            max_pre_auth_idle_connections: to_u32(max_pre_auth_idle_connections),
             max_fallbacks: to_u32(max_fallbacks),
             max_crypto_operations: to_u32(max_crypto_operations),
             max_replay_entries: to_u32(max_replay_entries),
@@ -714,6 +719,14 @@ pub fn resolve_policy(
         resource_governor,
         max_handshakes,
         "resourceGovernor.maxHandshakes",
+        Some(1.0),
+        Some(1),
+        None
+    );
+    resolve_field!(
+        resource_governor,
+        max_pre_auth_idle_connections,
+        "resourceGovernor.maxPreAuthIdleConnections",
         Some(1.0),
         Some(1),
         None
@@ -1187,6 +1200,8 @@ mod tests {
         assert!(governor.max_connections >= 64);
         assert!(governor.max_handshakes >= 1);
         assert!(governor.max_handshakes <= governor.max_connections);
+        assert!(governor.max_pre_auth_idle_connections >= 1);
+        assert!(governor.max_pre_auth_idle_connections <= governor.max_connections);
         assert!(governor.max_crypto_operations >= 1);
         assert!(governor.max_crypto_operations <= governor.max_handshakes);
         assert!(governor.max_fallbacks >= 1);

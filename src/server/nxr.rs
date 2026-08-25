@@ -19,7 +19,7 @@ use tokio::{
 use zeroize::Zeroizing;
 
 use crate::{
-    config::{NetworkConfig, NxrInboundConfig},
+    config::{NetworkConfig, NxrInboundConfig, ResourceGovernorConfig},
     network::NetworkEnvironment,
     protocol::{
         nxr::{
@@ -35,7 +35,12 @@ use crate::{
     },
 };
 
-use super::connector::{DestinationConnectError, DestinationConnector};
+use crate::runtime::{AdmissionDenied, PressureGauge, ResourceGovernor};
+
+use super::{
+    connector::{DestinationConnectError, DestinationConnector},
+    pre_auth::{PreAuthError, PreAuthGeneration, begin_authentication},
+};
 
 const REPLAY_SHARDS: usize = 16;
 
@@ -283,7 +288,11 @@ impl NxrAuthenticator {
 pub struct NxrLandingHandler {
     authenticator: NxrAuthenticator,
     connector: DestinationConnector,
+    pre_auth_idle_timeout: Duration,
     authentication_timeout: Duration,
+    governor: ResourceGovernor,
+    pressure: PressureGauge,
+    generation: PreAuthGeneration,
     relay: TcpRelay,
     /// Idle liveness bound handed to the raw relay, so a stalled peer cannot
     /// park a landing session on its descriptors and permits forever.
@@ -297,13 +306,20 @@ impl NxrLandingHandler {
     /// # Errors
     ///
     /// Rejects malformed or incorrectly sized PSK material.
-    pub fn from_inbound_with_replay(
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one parameter per immutable landing policy and process authority"
+    )]
+    pub(crate) fn from_inbound_with_replay(
         inbound: &NxrInboundConfig,
         replay: NxrReplayCache,
         relay: TcpRelay,
         liveness: Duration,
         network: &NetworkConfig,
         network_environment: NetworkEnvironment,
+        governor: ResourceGovernor,
+        pressure: PressureGauge,
+        generation: PreAuthGeneration,
     ) -> Result<Self, NxrLandingConfigError> {
         let decoded = Zeroizing::new(
             BASE64_URL_SAFE_NO_PAD
@@ -325,6 +341,11 @@ impl NxrLandingHandler {
             relay,
             liveness,
         );
+        handler.pre_auth_idle_timeout =
+            Duration::from_millis(inbound.settings.pre_auth_idle_timeout_ms);
+        handler.governor = governor;
+        handler.pressure = pressure;
+        handler.generation = generation;
         handler.connector = DestinationConnector::with_environment(
             Duration::from_millis(inbound.settings.connect_timeout_ms),
             network.clone(),
@@ -342,10 +363,15 @@ impl NxrLandingHandler {
         relay: TcpRelay,
         liveness: Duration,
     ) -> Self {
+        let governor = ResourceGovernor::new(&ResourceGovernorConfig::default());
         Self {
             authenticator,
             connector: DestinationConnector::new(connect_timeout),
+            pre_auth_idle_timeout: Duration::from_secs(60),
             authentication_timeout,
+            governor,
+            pressure: PressureGauge::new(),
+            generation: PreAuthGeneration::default(),
             relay,
             liveness,
         }
@@ -359,9 +385,25 @@ impl NxrLandingHandler {
     /// Returns bounded request-read, clock, authentication, destination, or relay
     /// errors. Callers must silently close on every error.
     pub async fn handle(&self, mut inbound: TcpStream) -> Result<RelayStats, NxrLandingError> {
-        let request = read_request(&mut inbound, self.authentication_timeout).await?;
+        let authentication = begin_authentication(
+            &mut inbound,
+            self.pre_auth_idle_timeout,
+            self.authentication_timeout,
+            &self.governor,
+            &self.pressure,
+            &self.generation,
+        )
+        .await
+        .map_err(NxrLandingError::from_pre_auth)?;
+        let request = read_request_after_first(
+            &mut inbound,
+            authentication.first_byte,
+            authentication.deadline,
+        )
+        .await?;
         let now = unix_seconds()?;
         let destination = self.authenticator.authenticate(&request, now)?;
+        drop(authentication);
         // The descriptor unit is reserved before connect(2) and outlives the
         // relay: the outbound socket closes before its unit is released.
         let connected = self
@@ -422,15 +464,14 @@ impl Error for NxrLandingConfigError {
     }
 }
 
-async fn read_request(
+async fn read_request_after_first(
     stream: &mut TcpStream,
-    timeout: Duration,
+    first_byte: u8,
+    deadline: Instant,
 ) -> Result<Vec<u8>, NxrLandingError> {
-    let deadline = Instant::now()
-        .checked_add(timeout)
-        .ok_or(NxrLandingError::Timeout)?;
     let mut header = [0_u8; REQUEST_HEADER_LEN];
-    read_exact_before(stream, &mut header, deadline).await?;
+    header[0] = first_byte;
+    read_exact_before(stream, &mut header[1..], deadline).await?;
     let total = request_len_from_header(&header).map_err(NxrLandingError::Protocol)?;
     let mut request = Vec::new();
     request
@@ -514,6 +555,8 @@ impl From<NxrReplayError> for NxrAuthenticationError {
 /// One NXR landing connection failed and must close silently.
 #[derive(Debug)]
 pub enum NxrLandingError {
+    Admission(AdmissionDenied),
+    Reclaimed,
     Timeout,
     Read(io::Error),
     Protocol(NxrProtocolError),
@@ -523,6 +566,17 @@ pub enum NxrLandingError {
     Destination(DestinationConnectError),
     Relay(io::Error),
     DescriptorBudget,
+}
+
+impl NxrLandingError {
+    fn from_pre_auth(error: PreAuthError) -> Self {
+        match error {
+            PreAuthError::Admission(error) => Self::Admission(error),
+            PreAuthError::Timeout => Self::Timeout,
+            PreAuthError::Read(error) => Self::Read(error),
+            PreAuthError::Reclaimed => Self::Reclaimed,
+        }
+    }
 }
 
 impl fmt::Display for NxrLandingError {
@@ -535,11 +589,12 @@ impl Error for NxrLandingError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::DescriptorBudget => None,
+            Self::Admission(source) => Some(source),
             Self::Read(source) | Self::Relay(source) => Some(source),
             Self::Protocol(source) => Some(source),
             Self::Authentication(source) => Some(source),
             Self::Destination(source) => Some(source),
-            Self::Timeout | Self::Allocation | Self::Clock => None,
+            Self::Reclaimed | Self::Timeout | Self::Allocation | Self::Clock => None,
         }
     }
 }
@@ -616,6 +671,194 @@ mod tests {
             destination
         );
         assert!(authenticator.authenticate(&request, 100).is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn first_byte_enters_short_deadline_without_reserving_replay() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("landing must bind");
+        let address = listener.local_addr().expect("landing address");
+        let cache =
+            NxrReplayCache::new(8, Duration::from_secs(60)).expect("cache policy must compile");
+        let mut handler = NxrLandingHandler::new(
+            NxrAuthenticator::new(NxrKey::new([0x33; 32]), cache.clone(), 5),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            TcpRelay::new(
+                &RelayPolicy::default(),
+                crate::runtime::FdBudget::new(4_096),
+            )
+            .expect("relay policy must compile"),
+            Duration::from_secs(1),
+        );
+        handler.pre_auth_idle_timeout = Duration::from_secs(60);
+        let client = TcpStream::connect(address);
+        let accepted = listener.accept();
+        let (client, accepted) = tokio::join!(client, accepted);
+        let mut client = client.expect("client must connect");
+        let (server, _) = accepted.expect("landing must accept");
+        let task = tokio::spawn(async move { handler.handle(server).await });
+
+        client.write_all(b"N").await.expect("first byte");
+        tokio::task::yield_now().await;
+        time::advance(Duration::from_secs(1)).await;
+        assert!(matches!(
+            task.await.expect("handler must join"),
+            Err(super::NxrLandingError::Timeout)
+        ));
+        assert_eq!(cache.entry_count(), 0, "slowloris must reserve no nonce");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn valid_nxr_authenticates_after_normal_pre_auth_idle() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("landing must bind");
+        let address = listener.local_addr().expect("landing address");
+        let key = NxrKey::new([0x34; 32]);
+        let cache =
+            NxrReplayCache::new(8, Duration::from_secs(60)).expect("cache policy must compile");
+        let handler = NxrLandingHandler::new(
+            NxrAuthenticator::new(key.clone(), cache, 5),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            TcpRelay::new(
+                &RelayPolicy::default(),
+                crate::runtime::FdBudget::new(4_096),
+            )
+            .expect("relay policy must compile"),
+            Duration::from_secs(1),
+        );
+        let client = TcpStream::connect(address);
+        let accepted = listener.accept();
+        let (client, accepted) = tokio::join!(client, accepted);
+        let mut client = client.expect("client must connect");
+        let (server, _) = accepted.expect("landing must accept");
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 9);
+        let mut request = Vec::new();
+        encode_request(
+            &destination,
+            super::unix_seconds().expect("clock must be valid"),
+            [0x45; 16],
+            &key,
+            &mut request,
+        )
+        .expect("request must encode");
+        let task = tokio::spawn(async move { handler.handle(server).await });
+        tokio::task::yield_now().await;
+        time::advance(Duration::from_secs(30)).await;
+        assert!(!task.is_finished(), "normal warm idle must remain accepted");
+        client.write_all(&request).await.expect("request write");
+        assert!(matches!(
+            task.await.expect("handler must join"),
+            Err(super::NxrLandingError::Destination(_))
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unused_nxr_socket_expires_without_replay_state() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("landing must bind");
+        let address = listener.local_addr().expect("landing address");
+        let cache =
+            NxrReplayCache::new(8, Duration::from_secs(60)).expect("cache policy must compile");
+        let mut handler = NxrLandingHandler::new(
+            NxrAuthenticator::new(NxrKey::new([0x36; 32]), cache.clone(), 5),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            TcpRelay::new(
+                &RelayPolicy::default(),
+                crate::runtime::FdBudget::new(4_096),
+            )
+            .expect("relay policy must compile"),
+            Duration::from_secs(1),
+        );
+        handler.pre_auth_idle_timeout = Duration::from_secs(60);
+        let client = TcpStream::connect(address);
+        let accepted = listener.accept();
+        let (_client, accepted) = tokio::join!(client, accepted);
+        let (server, _) = accepted.expect("landing must accept");
+        let task = tokio::spawn(async move { handler.handle(server).await });
+        tokio::task::yield_now().await;
+        time::advance(Duration::from_secs(60)).await;
+        assert!(matches!(
+            task.await.expect("handler must join"),
+            Err(super::NxrLandingError::Timeout)
+        ));
+        assert_eq!(cache.entry_count(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn replay_is_rejected_on_preestablished_nxr_sockets() {
+        let landing_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("landing must bind");
+        let landing_address = landing_listener.local_addr().expect("landing address");
+        let key = NxrKey::new([0x35; 32]);
+        let cache =
+            NxrReplayCache::new(8, Duration::from_secs(60)).expect("cache policy must compile");
+        let handler = NxrLandingHandler::new(
+            NxrAuthenticator::new(key.clone(), cache, 5),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            TcpRelay::new(
+                &RelayPolicy::default(),
+                crate::runtime::FdBudget::new(4_096),
+            )
+            .expect("relay policy must compile"),
+            Duration::from_secs(1),
+        );
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 9);
+        let mut request = Vec::new();
+        encode_request(
+            &destination,
+            super::unix_seconds().expect("clock must be valid"),
+            [0x47; 16],
+            &key,
+            &mut request,
+        )
+        .expect("request must encode");
+
+        let landing = async {
+            let (first, _) = landing_listener.accept().await?;
+            let (second, _) = landing_listener.accept().await?;
+            let first_handler = handler.clone();
+            let (first, second) = tokio::join!(first_handler.handle(first), handler.handle(second));
+            Ok::<_, io::Error>([first, second])
+        };
+        let line = async {
+            let mut streams = [
+                TcpStream::connect(landing_address).await?,
+                TcpStream::connect(landing_address).await?,
+            ];
+            tokio::task::yield_now().await;
+            for stream in &mut streams {
+                stream.write_all(&request).await?;
+                let mut response = Vec::new();
+                stream.read_to_end(&mut response).await?;
+                assert!(response.is_empty(), "rejections stay silent");
+            }
+            Ok::<_, io::Error>(())
+        };
+        let (landing, line) = time::timeout(Duration::from_secs(3), async {
+            tokio::join!(landing, line)
+        })
+        .await
+        .expect("replay test must not stall");
+        line.expect("line exchange must succeed");
+        let outcomes = landing.expect("landing exchange must succeed");
+        assert!(matches!(
+            outcomes[0],
+            Err(super::NxrLandingError::Destination(_))
+        ));
+        assert!(matches!(
+            outcomes[1],
+            Err(super::NxrLandingError::Authentication(
+                super::NxrAuthenticationError::Replay(super::NxrReplayError::Duplicate)
+            ))
+        ));
     }
 
     #[tokio::test(flavor = "current_thread")]
