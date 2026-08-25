@@ -18,6 +18,16 @@ All notable user-facing changes to this project are documented in this file.
   a fresh authenticated flight. Unknown, stale, unstable, or unrepresentable
   classes use live cover; unauthenticated and replayed traffic never consults
   profiles.
+- Handoff, NXR, and SOCKS5 fixed-peer outbounds now reuse the existing
+  generation-isolated adaptive TCP pool. A checked-out socket is single-use,
+  carries no protocol authority, and a miss immediately follows the cold path.
+- Handoff and NXR LANDING listeners now separate bounded zero-byte pre-auth
+  idle from the existing short authentication deadline. The first protocol
+  byte switches phases; a distinct `maxPreAuthIdleConnections` admission cap,
+  pressure reclamation, and reload isolation protect intentional idle state.
+- Added byte-counted Handoff/NXR write boundaries. A bounded pre-complete retry
+  always constructs fresh authentication state; a complete transfer/request
+  is never retried because LANDING may already have external side effects.
 
 ### Performance
 
@@ -25,6 +35,10 @@ All notable user-facing changes to this project are documented in this file.
   1.93× the pre-feature c1 rate and 1.84× at c8 while remaining inside the
   protected CPU-per-connection margin. Unauthenticated and replayed traffic
   continues to use the real cover path.
+- On a warm transport checkout, the LINE-to-LANDING/upstream TCP handshake is
+  removed from the per-flow critical path. Controlled release-candidate RTT
+  evidence remains a mandatory v1.7.0 publication gate and is not inferred
+  from unit tests.
 
 ## [1.6.1] - 2026-08-23
 

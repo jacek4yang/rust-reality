@@ -109,6 +109,24 @@ PSK/resumption, and rare uncollected ClientHello classes intentionally stay on
 the warm-live path. This is a conservative validated-class optimization, not
 a claim of universal TLS indistinguishability.
 
+## v1.7 development: warm LINE-to-LANDING transport
+
+Handoff, NXR, and SOCKS5 now use single-use TCP-established sockets from the
+same bounded adaptive pool. A valid hit removes the fixed-peer TCP handshake
+from the user flow; it does not remove protocol authentication, a protocol
+response dependency, destination setup, or physical propagation. Handoff and
+NXR generate fresh authentication state for every attempt, and LANDING keeps
+zero-byte warm sockets in a distinct bounded pre-auth idle phase whose first
+byte starts the original short authentication deadline.
+
+No release-candidate latency numbers are recorded here yet. Publication of
+v1.7.0 requires retained production-build cold/warm samples at 1, 10, 50, 100,
+and 200 ms for all three transports, startup-aware and steady-state hit ratios,
+idle-age and burst matrices, resource counters, and the existing full release
+evaluator. Unit and loopback integration tests establish ownership and security
+mechanics only; they are not relabeled as RTT evidence. A tracing build may
+attribute phases, but headline results must use the exact optimized candidate.
+
 ## v1.6.1 release evidence
 
 The v1.6.1 headline comparison retains the v1.6.0 measurements against the

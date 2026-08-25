@@ -269,6 +269,7 @@ singleflight 合并和准入治理生效，除非配置了可选的 `systemReuse
     "maxTimeDifferenceSeconds": 30,
     "maxNonceEntries": 65536,
     "nonceRetentionSeconds": 120,
+    "preAuthIdleTimeoutMs": 60000,
     "authenticationTimeoutMs": 3000,
     "connectTimeoutMs": 10000
   }
@@ -285,11 +286,14 @@ singleflight 合并和准入治理生效，除非配置了可选的 `systemReuse
 | `settings.maxTimeDifferenceSeconds` | 否 | `30` | 接受的绝对墙上时钟差，`1..=300`。 |
 | `settings.maxNonceEntries` | 否 | `65536` | 已验证 nonce 最大条目数，`1..=1000000`。 |
 | `settings.nonceRetentionSeconds` | 否 | `120` | 重放保留时间，从 `2 * maxTimeDifferenceSeconds + 1` 到 `86400`。 |
-| `settings.authenticationTimeoutMs` | 否 | `3000` | 读取一次有界认证请求的截止时间，`1..=600000`。 |
+| `settings.preAuthIdleTimeoutMs` | 否 | `60000` | 已接受 socket 在零协议字节状态的最长寿命，`1..=600000`；此阶段不做认证或目标工作。 |
+| `settings.authenticationTimeoutMs` | 否 | `3000` | 首字节到达后完成一次有界认证请求的截止时间，`1..=600000`。 |
 | `settings.connectTimeoutMs` | 否 | `10000` | 认证成功后才开始的目标连接截止时间，`1..=600000`。 |
 
 NXR 认证失败会在 DNS 和目标连接之前静默关闭；成功后连接切换成原始双向字节。
 NXR 没有认证后加密，不得直接暴露在互联网。
+首个请求字节把连接从较长的有界 idle 阶段切到短认证截止时间；发送一个字节不能
+继承 idle 寿命。
 
 ### 内部 Handoff 入站
 
@@ -305,6 +309,7 @@ NXR 没有认证后加密，不得直接暴露在互联网。
     "maxTimeDifferenceSeconds": 30,
     "maxNonceEntries": 65536,
     "nonceRetentionSeconds": 120,
+    "preAuthIdleTimeoutMs": 60000,
     "authenticationTimeoutMs": 3000,
     "connectTimeoutMs": 10000
   }
@@ -322,7 +327,8 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 | `settings.maxTimeDifferenceSeconds` | 否 | `30` | 接受的绝对墙上时钟差，`1..=300`。 |
 | `settings.maxNonceEntries` | 否 | `65536` | 已保留转移 nonce 最大条目数，`1..=1000000`。 |
 | `settings.nonceRetentionSeconds` | 否 | `120` | 重放保留时间，从 `2 * maxTimeDifferenceSeconds + 1` 到 `86400`。 |
-| `settings.authenticationTimeoutMs` | 否 | `3000` | 读取一次有界密封转移消息的截止时间，`1..=600000`。 |
+| `settings.preAuthIdleTimeoutMs` | 否 | `60000` | 已接受 socket 在零 transfer 字节状态的最长寿命，`1..=600000`；不分配完整 continuation，不做 crypto、重放预留或目标工作。 |
+| `settings.authenticationTimeoutMs` | 否 | `3000` | 首字节到达后完成一次有界密封转移的截止时间，`1..=600000`。 |
 | `settings.connectTimeoutMs` | 否 | `10000` | 认证成功后才开始的被转移目标连接截止时间，`1..=600000`。 |
 | `settings.egress` | 否 | 直接连接 | 选择落地机到达被转移目标所用出站的 tag。该 tag 必须引用 `direct`、`socks5`、`nxr` 或 `blackhole` 出站；引用 `handoff` 出站会被拒绝——落地机不允许串联。 |
 | `settings.previousPreSharedKeys` | 否 | `[]` | 有界密钥轮换窗口内仍被接受的已退役成对 PSK：最多两个独立的 URL-safe 无填充 base64 值，各解码为恰好 32 字节；列表内重复或与 `preSharedKey` 相同都会被拒绝。 |
@@ -341,6 +347,12 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 与任何 REALITY `privateKey` 相同，都无法通过校验；任何 previous-key 条目与上述材料相同同样会被拒绝。跨节点的
 独立性仍是运维者的责任。Handoff 监听器承载在线会话
 密钥，不得直接暴露在互联网：防火墙应只允许来自线路机源地址的访问。
+
+每个 Handoff/NXR 入站都要求
+`preAuthIdleTimeoutMs >= min(warmConnections.idleTimeoutMs,
+warmConnections.maxLifetimeMs) + authenticationTimeoutMs`，避免正常 LINE
+ready 生命周期系统性长于 LANDING。idle socket 仍未认证，并受
+`advanced.limits.resourceGovernor.maxPreAuthIdleConnections` 独立上限约束。
 
 #### 密钥轮换
 
@@ -400,7 +412,8 @@ NXR 没有认证后加密，不得直接暴露在互联网。
     "address": "127.0.0.1",
     "port": 1080,
     "username": "user",
-    "password": "secret"
+    "password": "secret",
+    "warmTcp": true
   }
 }
 ```
@@ -411,6 +424,7 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 | `settings.port` | 是 | — | 非零 SOCKS5 TCP 端口。 |
 | `settings.username` | 否 | 不存在 | 必须与 `password` 同时出现，非空且最多 255 字节；Debug 输出受保护。 |
 | `settings.password` | 否 | 不存在 | 必须与 `username` 同时出现，非空且最多 255 字节；秘密。 |
+| `settings.warmTcp` | 否 | `true` | 只预先建立 TCP。对 idle/连接数限制激进的上游应关闭；checkout 前绝不进行 SOCKS method/认证/CONNECT。 |
 
 两个凭据都不存在时协商无认证；两者同时存在时使用用户名/密码认证。
 
@@ -423,19 +437,21 @@ NXR 没有认证后加密，不得直接暴露在互联网。
   "settings": {
     "address": "10.0.0.2",
     "port": 7443,
-    "preSharedKey": "GENERATED-NXR-KEY"
+    "preSharedKey": "GENERATED-NXR-KEY",
+    "warmTcp": true
   }
 }
 ```
 
-| 字段 | 必填 | 含义与约束 |
-| --- | --- | --- |
-| `settings.address` | 是 | 有效落地机 ASCII hostname 或 IP。 |
-| `settings.port` | 是 | 防火墙限制的非零 NXR TCP 端口。 |
-| `settings.preSharedKey` | 是 | 与落地入站相同的独立 URL-safe 无填充 32 字节密钥。 |
+| 字段 | 必填 | 默认值 | 含义与约束 |
+| --- | --- | --- | --- |
+| `settings.address` | 是 | — | 有效落地机 ASCII hostname 或 IP。 |
+| `settings.port` | 是 | — | 防火墙限制的非零 NXR TCP 端口。 |
+| `settings.preSharedKey` | 是 | — | 与落地入站相同的独立 URL-safe 无填充 32 字节密钥。 |
+| `settings.warmTcp` | 否 | `true` | 预建未获协议权限、单次使用的 TCP；每次 checkout 都生成 fresh timestamp、nonce 与 HMAC。 |
 
-每条用户 TCP 流建立一条 NXR TCP 连接并发送一次严格有界认证请求；没有多路复用
-或长期连接池。
+每条用户 TCP 流独占一条 NXR TCP 连接并发送一次严格有界认证请求。warm socket
+只使用一次；没有多路复用，miss 会立即建立普通冷连接。
 
 ### Handoff 出站
 
@@ -449,7 +465,8 @@ NXR 没有认证后加密，不得直接暴露在互联网。
     "preSharedKey": "GENERATED-HANDOFF-KEY",
     "landingPublicKey": "GENERATED-X25519-PUBLIC-KEY",
     "connectTimeoutMs": 10000,
-    "firstByteTimeoutMs": 15000
+    "firstByteTimeoutMs": 15000,
+    "warmTcp": true
   }
 }
 ```
@@ -462,10 +479,11 @@ NXR 没有认证后加密，不得直接暴露在互联网。
 | `settings.landingPublicKey` | 是 | — | 落地机的静态 X25519 公钥，URL-safe 无填充 base64，解码为恰好 32 字节；公开材料，不是秘密。 |
 | `settings.connectTimeoutMs` | 否 | `10000` | 连接落地机并写入一次密封转移消息的截止时间，`1..=600000`。 |
 | `settings.firstByteTimeoutMs` | 否 | `15000` | 转移后落地机首个下行字节的截止时间，`1000..=600000`；见下文。 |
+| `settings.warmTcp` | 否 | `true` | 预建未获协议权限、单次使用的 TCP；每次 checkout 仍密封 fresh authenticated transfer。 |
 
 把用户路由到 handoff 出站会在会话边界把整个已认证会话转移给落地机：每条
 会话一条 TCP 连接，承载一次密封转移，随后承载会话的原始 TLS 密文——没有多路
-复用或长期连接池。转移协议对任何失败都以静默关闭应答，因此线路机把
+复用或 socket 回池。转移协议对任何失败都以静默关闭应答，因此线路机把
 `firstByteTimeoutMs` 内没有首个下行字节视为拒绝信号，并重置客户端 socket；
 转移失败后会话绝不在本地继续服务。
 
@@ -613,7 +631,8 @@ connectTimeoutMs` 并留有余量：首个密封记录只有在转移被读取�
 | 字段 | 对象存在时必填 | 整体默认值 | 约束/含义 |
 | --- | --- | --- | --- |
 | `maxConnections` | 是 | `16384` | 大于零；已接受连接的父级上限。 |
-| `maxHandshakes` | 是 | `1024` | 大于零且不超过 `maxConnections`；并发认证前工作。 |
+| `maxHandshakes` | 是 | `1024` | 大于零且不超过 `maxConnections`；收到首个协议字节后正在进行认证的并发会话。 |
+| `maxPreAuthIdleConnections` | 否 | `1024` | 大于零且不超过 `maxConnections`；已接受但尚未发送协议字节的 Handoff/NXR socket。压力下先于活跃会话回收。 |
 | `maxFallbacks` | 是 | `512` | 大于零且不超过 `maxConnections`；并发伪装转发。 |
 | `maxCryptoOperations` | 是 | `128` | 大于零且不超过 `maxHandshakes`；昂贵密码学工作 admission。 |
 | `maxReplayEntries` | 是 | `65536` | 大于零；pending 加 committed REALITY 重放条目。 |
@@ -638,14 +657,15 @@ connectTimeoutMs` 并留有余量：首个密封记录只有在转移被读取�
 | 字段 | 对象存在时必填 | 整体默认值 | 约束/含义 |
 | --- | --- | --- | --- |
 | `minReady` | 是 | `4` | 低负载 ready 下限；可为零且不超过 `maxReady`。 |
-| `maxReady` | 是 | `256` | 每个伪装目标的 ready 上限，`1..=4096`。 |
-| `maxConnecting` | 是 | `64` | 每目标推测性并发拨号，`1..=min(maxReady, 1024)`。 |
+| `maxReady` | 是 | `256` | 每 endpoint 的 ready 上限，`1..=4096`。 |
+| `maxConnecting` | 是 | `64` | 每 endpoint 推测性并发拨号，`1..=min(maxReady, 1024)`。 |
 | `refillBatch` | 是 | `16` | 每次控制器协调提交的拨号数，`1..=maxConnecting`。 |
 | `idleTimeoutMs` | 是 | `30000` | 未使用 idle 最大时长，`100..=3600000`。 |
 | `maxLifetimeMs` | 是 | `300000` | 未使用 socket 绝对寿命，不小于 `idleTimeoutMs` 且不超过一小时。 |
 | `shrinkDelayMs` | 是 | `30000` | 开始逐步回缩前的无需求迟滞，`100..=3600000`。 |
 
-这些上限按 endpoint 计算；严格的进程级 authority 还会约束所有 generation，FD
+这些上限按启用的 REALITY cover、Handoff、NXR 与 SOCKS5 pool 的 endpoint 计算；
+严格的进程级 authority 还会约束所有 generation，FD
 预算仍是最终边界。checkout 从不等待 refill；压力下先释放推测性 ready socket，
 再尝试普通冷路径。
 
@@ -733,6 +753,7 @@ autotuner 也不会产生的数值。
 | --- | --- | --- | --- |
 | `resourceGovernor.maxConnections` | ×0.5 | ×1 | ×1.5 |
 | `resourceGovernor.maxHandshakes` | ×1 | ×1 | ×1 |
+| `resourceGovernor.maxPreAuthIdleConnections` | ×1 | ×1 | ×1 |
 | `resourceGovernor.maxFallbacks` | ×0.5 | ×1 | ×1 |
 | `resourceGovernor.maxCryptoOperations` | ×1 | ×1 | ×1 |
 | `resourceGovernor.maxReplayEntries` | 跟随 `maxConnections`（×4） | | |

@@ -31,6 +31,10 @@ Xray-compatible client
   TLS ownership to a firewall-restricted landing node over one authenticated,
   sealed channel, shedding its per-byte TLS CPU to the landing node
   (measured loopback: −82% line download CPU/GiB).
+- Adaptive single-use warm TCP pools pre-pay fixed-peer establishment for
+  Handoff, NXR, and SOCKS5. On a valid hit the LINE-to-LANDING/upstream TCP
+  handshake leaves the per-flow critical path; every protocol still performs
+  its normal per-session authentication and a miss cold-connects immediately.
 - Framed record batching, zero steady-state per-record allocations, and zero
   avoidable userspace copies on every data path.
 - ring (BoringSSL-derived) AES-128-GCM record AEAD by default; a pure-Rust

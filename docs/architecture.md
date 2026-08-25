@@ -231,13 +231,48 @@ registration per progress step, no hot-path logging.
 | fallback | conn task | prefix vecs (bounded) | fallback CAS, FD CAS ×2, connect | connect, prefix write, then relay | prefix writes only |
 | VLESS request | conn task | 533 B initial buffer; grows only for coalesced payload; accepted domain owned once | 0 | TLS records | Addons/domain/prefetch parsed borrowed |
 | routing | conn task | 0 no-DNS hit path | one UUID lookup; group policy shared by Arc | optional bounded DNS (spawn_blocking, 1 semaphore slot held till op ends) | 0 |
-| outbound connect | conn task | one bounded address plan; numeric/single family skips DNS and task spawning | one tag lookup; 1 FD CAS/candidate; lock-free rate + concurrency CAS | connect | 0 |
+| outbound connect | conn task | one bounded address plan; numeric/single family skips DNS and task spawning | one tag lookup; warm checkout or 1 FD CAS/candidate; lock-free rate + concurrency CAS | checkout or connect | 0 |
 | Vision framed uplink | direction task | socket buffer once (grow-only) | 0 in loop | 1 read/refill (≤64 KiB), 1 write/record | AEAD open in place; borrowed Vision decode (0) |
 | Vision framed downlink | direction task | socket buffer once | 0 in loop | 1 read/refill, 1 write per packed record set | AEAD seal in place; Vision frames packed |
 | Direct transition | both tasks | 0 | 2 atomics + 1 mutex (once) | 0 | pending-drain write |
 | raw relay (splice) | direction task(s) | 0 | pool Mutex per take/give_back (2/session) | splice×2/chunk; pipe syscalls ~0 (pool) | 0 (kernel) |
 | raw relay (buffered) | direction task(s) | pooled 32 KiB buffer | pool Mutex + semaphore per session | read+write/chunk | 1 userspace copy/chunk |
 | teardown | direction tasks | 0 | state CAS | shutdown/close; abort→SO_LINGER+close | 0 |
+
+## LINE-to-LANDING warm transport
+
+Fixed Handoff, NXR, and SOCKS5 peers reuse the adaptive TCP pool described in
+[ADR 0007](decisions/0007-adaptive-line-to-landing-warm-connections.md). It
+pre-pays only TCP establishment. READY sockets have no user, destination,
+protocol credentials, replay state, or session state:
+
+```text
+CONNECTING -> READY -> CHECKED_OUT -> SESSION_OWNED -> CLOSED
+                  \-> STALE/STOPPED -> CLOSED
+```
+
+Checkout transfers the socket and its descriptor/authority permits exactly
+once; relay never touches pool synchronization and the socket never returns to
+READY. A miss cold-connects immediately and wakes bounded refill. The target
+accounts for demand rate, measured connect latency, recent burst, and existing
+ready/connecting work; pressure and immutable-generation replacement drain
+unused speculative state first.
+
+Handoff and NXR LANDING listeners deliberately accept those quiet sockets in
+a separate bounded phase:
+
+```text
+ACCEPTED -> PRE_AUTH_IDLE --first byte--> AUTHENTICATING -> AUTHENTICATED
+```
+
+`PRE_AUTH_IDLE` owns one byte of read state and a distinct admission permit.
+It performs no crypto, replay reservation, DNS, or destination connect. The
+first byte anchors the existing short authentication deadline, preventing a
+one-byte slowloris from borrowing the longer idle lifetime. Pressure or reload
+can reclaim unused idle sockets without disturbing authenticated sessions.
+Handoff/NXR write progress is counted: at most one pre-complete retry creates
+entirely fresh authentication bytes, and complete write is the irreversible
+cutoff because LANDING may already have external side effects.
 
 ## Handoff session transfer
 

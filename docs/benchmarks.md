@@ -65,11 +65,31 @@ exact diagnostic instead of manufacturing a measurement.
 | `scripts/benchmark-fallback-ab.sh` | Clean fallback A/B against Xray: warn-level logging both sides, direct-to-listener. |
 | `scripts/benchmark-setup-rate.sh` | Balanced setup-rate A/B (accept → first Vision transition). `COVER_NETEM_RTT_MS` moves only the TLS cover behind a veth/netns and applies a recorded one-leg delay, retaining pool hit/miss summaries. `MEASURE_MODE=perf` attributes task-clock/instructions/context switches after warmup; `strace` records the bounded read/receive syscall set and gracefully stops the tracee so summaries cannot be silently empty. |
 | `scripts/benchmark-vision-direct.sh`, `scripts/benchmark-xray.sh` | Focused Vision-Direct and Xray comparisons. |
-| `scripts/benchmark-deployment.sh` | Deployment characterization: routing correctness proof, routing decision cost (incl. DNS strategies), NXR topologies (direct/NXR/SOCKS5/Xray), optional netem RTT sweep, and long-flow relay evidence. |
+| `scripts/benchmark-deployment.sh` | Deployment characterization: routing correctness proof, routing decision cost (incl. DNS strategies), NXR topologies (direct/NXR/SOCKS5/Xray), long-flow relay evidence, and a formal one-leg netem matrix. The RTT section retains production-build ABBA cold/warm samples for Handoff/NXR/SOCKS5 at 1/10/50/100/200 ms, c1/8/32/128/512, plus secret-free pool retirement summaries. |
 | `scripts/soak-test.sh` | Loopback mixed-workload soak (tunnel traffic + connection churn) with `/proc`-based leak bounding; env: `DURATION_MIN`, `ROUND_SLEEP`, `RUST_REALITY_BIN`, `XRAY_BIN`, `OUT_DIR`. |
 | `scripts/benchmark-real-path.sh` | Real-Internet A/B against Xray: crash and protocol-error gates on a real path; throughput is capped by the slowest link, so it does not discriminate bandwidth. |
 | `scripts/benchmark-vless-encryption.sh` | Xray v26.7.28 A/B for `encryption:none` versus VLESS Encryption inside the same REALITY + Vision stack; measures throughput, server CPU/GiB, and warmed setup. |
 | `scripts/test-xray-interop.sh` | Compatibility gate (below), not a benchmark. |
+
+## v1.7 LINE-to-LANDING evidence contract
+
+The v1.7 transport claim is accepted only from the formal deployment run with
+`REQUIRE_NETEM=1`. Its warm and cold processes use the same release binary,
+peer, origin, client, shaped veth pair, and configuration identity; only the
+outbound `warmTcp` switch differs. Each protocol/mode cell retains balanced
+ABBA blocks, p50/p90/p95/p99, setup rate, exact environment and binary hashes,
+and raw failures. The profile inventory is fail-closed: all Handoff, NXR, and
+SOCKS5 cold/warm legs must exist for every RTT, loss, and concurrency.
+
+The resulting performance verdict remains `NOT_EVALUATED` until the release
+evaluator checks the expected mechanism: cold latency rises materially with
+LINE-to-LANDING RTT while the TCP-establishment portion of a warm hit does not.
+Pool logs supply startup-aware checkout, hit/miss, cold fallback, stale,
+ready/connecting/target, EWMA, growth, and shrink counters. Debug/instrumented
+runs may explain phases but cannot supply headline numbers. Idle-age, burst,
+combined prebuilt-cover plus warm-LANDING, protected-path, and soak evidence
+remain separate retained release artifacts; no missing artifact is inferred
+from this focused matrix.
 
 ## Canonical v1.0.0 samples
 

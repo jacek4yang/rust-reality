@@ -267,6 +267,12 @@ rust-reality config generate landing \
 保持时钟同步。默认 NXR 请求接受 30 秒误差并保留 nonce 120 秒；认证失败会在
 DNS 和目标连接之前关闭。
 
+生成的落地配置还允许有界的零字节 pre-auth idle 区间，使 LINE 可以维持未获协议
+权限的 warm TCP。首个请求字节启动正常的短认证截止时间。应按所有允许的 LINE
+节点为 `maxPreAuthIdleConnections` 与主机 FD 上限定容；允许的源 IP 仍未认证。
+保持 `preAuthIdleTimeoutMs` 与 LINE warm idle/lifetime 策略一致，并在防火墙/NAT
+变化后观察 `transport_pool_summary` 的 hit、stale、fallback、ready 和 connecting。
+
 ## 线路机与 Handoff 落地机
 
 Handoff 把已接受会话的完整 TLS 所有权用一条密封且防重放的消息从线路机转移
@@ -315,6 +321,11 @@ UUID 和 REALITY 公钥打印到标准错误；Handoff PSK 和私钥只存在于
 
 保持时钟同步。默认转移接受 30 秒误差并预留 nonce 120 秒。任何转移失败都静默
 关闭、零响应字节，且线路机会重置客户端连接而不是在本地服务该会话。
+
+Handoff listener 使用与 NXR 相同的有界零字节 pre-auth idle 阶段。首字节之前不
+分配 continuation buffer，也不做 replay、X25519、HKDF、AEAD、DNS 或目标工作；
+该字节会立即启动短认证截止时间。资源压力与 reload 会在影响活跃会话前关闭未用
+idle socket；已 checkout 的会话由所属 generation 持有直至关闭。
 
 默认情况下落地机直接连接每个被转移的目标。当落地机本身没有直连路由——目标
 只能经由上游 SOCKS5 代理或再一跳 NXR 到达——在 Handoff 入站上把

@@ -295,6 +295,15 @@ Keep clocks synchronized. The default NXR request accepts 30 seconds of skew
 and retains nonces for 120 seconds. Authentication failure closes before DNS or
 destination connect.
 
+The generated landing also permits a bounded zero-byte pre-auth idle interval
+so LINE can keep protocol-unprivileged TCP sockets warm. The first request byte
+starts the normal short authentication deadline. Size
+`maxPreAuthIdleConnections` and the host FD limit for all permitted LINE nodes;
+an allowed source IP is still unauthenticated. Keep
+`preAuthIdleTimeoutMs` consistent with the LINE warm idle/lifetime policy and
+watch `transport_pool_summary` hit, stale, fallback, ready, and connecting
+counters after firewall/NAT changes.
+
 ## Line node and Handoff landing node
 
 Handoff transfers an accepted session's full TLS ownership from the line node
@@ -354,6 +363,13 @@ Keep clocks synchronized. The default transfer accepts 30 seconds of skew and
 reserves nonces for 120 seconds. Every transfer failure closes silently with
 zero response bytes, and the line node resets the client socket rather than
 serving the session locally.
+
+The Handoff listener uses the same bounded zero-byte pre-auth idle phase as
+NXR. It allocates no continuation buffer and performs no replay, X25519, HKDF,
+AEAD, DNS, or destination work before the first byte. That byte immediately
+starts the short authentication deadline. Resource pressure and reload close
+unused idle sockets before affecting active sessions; checked-out sessions
+remain generation-owned until close.
 
 By default the landing node dials every transferred destination directly. When
 the landing itself has no direct route — its destinations are reachable only

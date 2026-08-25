@@ -300,6 +300,7 @@ add an audited wildcard only when multiple real certificate names are required.
     "maxTimeDifferenceSeconds": 30,
     "maxNonceEntries": 65536,
     "nonceRetentionSeconds": 120,
+    "preAuthIdleTimeoutMs": 60000,
     "authenticationTimeoutMs": 3000,
     "connectTimeoutMs": 10000
   }
@@ -316,12 +317,15 @@ add an audited wildcard only when multiple real certificate names are required.
 | `settings.maxTimeDifferenceSeconds` | no | `30` | Accepted absolute wall-clock skew, `1..=300`. |
 | `settings.maxNonceEntries` | no | `65536` | Maximum verified nonce entries, `1..=1000000`. |
 | `settings.nonceRetentionSeconds` | no | `120` | Replay retention; from `2 * maxTimeDifferenceSeconds + 1` through `86400`. |
-| `settings.authenticationTimeoutMs` | no | `3000` | Deadline to read the one bounded authentication request, `1..=600000`. |
+| `settings.preAuthIdleTimeoutMs` | no | `60000` | Maximum accepted lifetime with zero protocol bytes, `1..=600000`; no authentication or destination work occurs in this phase. |
+| `settings.authenticationTimeoutMs` | no | `3000` | Deadline to finish the bounded authentication request after its first byte, `1..=600000`. |
 | `settings.connectTimeoutMs` | no | `10000` | Deadline to connect only after authentication succeeds, `1..=600000`. |
 
 NXR authentication failure closes silently before DNS or destination connect.
 After success, the connection becomes raw bidirectional bytes. NXR has no
 post-authentication encryption and must not be exposed to the Internet.
+The first request byte switches from the long bounded idle phase to the short
+authentication deadline; sending one byte cannot retain the idle lifetime.
 
 ### Internal Handoff inbound
 
@@ -337,6 +341,7 @@ post-authentication encryption and must not be exposed to the Internet.
     "maxTimeDifferenceSeconds": 30,
     "maxNonceEntries": 65536,
     "nonceRetentionSeconds": 120,
+    "preAuthIdleTimeoutMs": 60000,
     "authenticationTimeoutMs": 3000,
     "connectTimeoutMs": 10000
   }
@@ -354,7 +359,8 @@ post-authentication encryption and must not be exposed to the Internet.
 | `settings.maxTimeDifferenceSeconds` | no | `30` | Accepted absolute wall-clock skew, `1..=300`. |
 | `settings.maxNonceEntries` | no | `65536` | Maximum reserved transfer nonces, `1..=1000000`. |
 | `settings.nonceRetentionSeconds` | no | `120` | Replay retention; from `2 * maxTimeDifferenceSeconds + 1` through `86400`. |
-| `settings.authenticationTimeoutMs` | no | `3000` | Deadline to read the one bounded sealed transfer, `1..=600000`. |
+| `settings.preAuthIdleTimeoutMs` | no | `60000` | Maximum accepted lifetime with zero transfer bytes, `1..=600000`; no continuation allocation, crypto, replay reservation, or destination work occurs. |
+| `settings.authenticationTimeoutMs` | no | `3000` | Deadline to finish the bounded sealed transfer after its first byte, `1..=600000`. |
 | `settings.connectTimeoutMs` | no | `10000` | Deadline to dial the transferred destination after authentication succeeds, `1..=600000`. |
 | `settings.egress` | no | direct dial | Outbound tag selecting how the landing reaches transferred destinations. The tag must reference a `direct`, `socks5`, `nxr`, or `blackhole` outbound; a `handoff` outbound is rejected — landings cannot be chained. |
 | `settings.previousPreSharedKeys` | no | `[]` | Retired pair PSKs still accepted during a bounded key-rotation window: at most two independent URL-safe unpadded base64 values decoding to exactly 32 bytes each; duplicates within the list and any value equal to `preSharedKey` are rejected. |
@@ -378,6 +384,13 @@ fails validation — and so does any previous-key entry equal to that
 material. Independence across nodes remains the operator's obligation. The Handoff listener carries live
 session keys and must not be exposed to the Internet: allow it only from the
 line nodes' source addresses at the firewall.
+
+For every Handoff or NXR inbound, validation requires
+`preAuthIdleTimeoutMs >= min(warmConnections.idleTimeoutMs,
+warmConnections.maxLifetimeMs) + authenticationTimeoutMs`. This prevents the
+normal LINE ready lifetime from systematically outliving LANDING. Idle sockets
+remain unauthenticated and are also bounded by
+`advanced.limits.resourceGovernor.maxPreAuthIdleConnections`.
 
 #### Key rotation
 
@@ -443,7 +456,8 @@ No destination connection is opened.
     "address": "127.0.0.1",
     "port": 1080,
     "username": "user",
-    "password": "secret"
+    "password": "secret",
+    "warmTcp": true
   }
 }
 ```
@@ -454,6 +468,7 @@ No destination connection is opened.
 | `settings.port` | yes | — | SOCKS5 TCP port, non-zero. |
 | `settings.username` | no | absent | Must appear with `password`, be non-empty, and be at most 255 bytes. Secret-protected in debug output. |
 | `settings.password` | no | absent | Must appear with `username`, be non-empty, and be at most 255 bytes. Secret. |
+| `settings.warmTcp` | no | `true` | Pre-establish TCP only. Disable for upstreams with aggressive idle/connection limits. SOCKS method/authentication/CONNECT never occurs before checkout. |
 
 Without credentials the client negotiates no-authentication. With both fields it
 uses username/password authentication.
@@ -467,19 +482,22 @@ uses username/password authentication.
   "settings": {
     "address": "10.0.0.2",
     "port": 7443,
-    "preSharedKey": "GENERATED-NXR-KEY"
+    "preSharedKey": "GENERATED-NXR-KEY",
+    "warmTcp": true
   }
 }
 ```
 
-| Field | Required | Meaning and constraints |
-| --- | --- | --- |
-| `settings.address` | yes | Valid landing-node ASCII hostname or IP address. |
-| `settings.port` | yes | Firewall-restricted NXR TCP port, non-zero. |
-| `settings.preSharedKey` | yes | Same independent URL-safe unpadded 32-byte key as the landing inbound. |
+| Field | Required | Default | Meaning and constraints |
+| --- | --- | --- | --- |
+| `settings.address` | yes | — | Valid landing-node ASCII hostname or IP address. |
+| `settings.port` | yes | — | Firewall-restricted NXR TCP port, non-zero. |
+| `settings.preSharedKey` | yes | — | Same independent URL-safe unpadded 32-byte key as the landing inbound. |
+| `settings.warmTcp` | no | `true` | Pre-establish protocol-unprivileged single-use TCP sockets; each checkout creates a fresh timestamp, nonce, and HMAC. |
 
-Each user TCP flow opens one NXR TCP connection and sends one authenticated,
-strictly bounded request. There is no multiplexing or persistent pool.
+Each user TCP flow owns one NXR TCP connection and sends one authenticated,
+strictly bounded request. A warm socket is single-use; there is no multiplexing
+and a miss immediately opens the normal cold connection.
 
 ### Handoff outbound
 
@@ -493,7 +511,8 @@ strictly bounded request. There is no multiplexing or persistent pool.
     "preSharedKey": "GENERATED-HANDOFF-KEY",
     "landingPublicKey": "GENERATED-X25519-PUBLIC-KEY",
     "connectTimeoutMs": 10000,
-    "firstByteTimeoutMs": 15000
+    "firstByteTimeoutMs": 15000,
+    "warmTcp": true
   }
 }
 ```
@@ -506,11 +525,12 @@ strictly bounded request. There is no multiplexing or persistent pool.
 | `settings.landingPublicKey` | yes | — | The landing node's static X25519 public key, URL-safe unpadded base64 decoding to exactly 32 bytes; public material, not a secret. |
 | `settings.connectTimeoutMs` | no | `10000` | Deadline to dial the landing node and write the one sealed transfer, `1..=600000`. |
 | `settings.firstByteTimeoutMs` | no | `15000` | Deadline for the landing node's first downlink byte after the transfer, `1000..=600000`; see below. |
+| `settings.warmTcp` | no | `true` | Pre-establish protocol-unprivileged single-use TCP sockets. Every checkout still seals a fresh authenticated transfer. |
 
 Routing a user to a handoff outbound transfers the whole accepted session to
 the landing node at the session boundary: one TCP connection per session
 carries one sealed transfer and then the session's raw TLS ciphertext — no
-multiplexing or persistent pool. The transfer protocol answers every failure
+multiplexing or socket reuse. The transfer protocol answers every failure
 with a silent close, so the line node treats a missing first downlink byte
 within `firstByteTimeoutMs` as the rejection signal and resets the client
 socket; the session is never served locally after a failed transfer.
@@ -669,7 +689,8 @@ is derived from the detected machine at startup. See
 | Field | Required when object present | Whole-object default | Constraints / meaning |
 | --- | --- | --- | --- |
 | `maxConnections` | yes | `16384` | Greater than zero; parent ceiling for accepted connections. |
-| `maxHandshakes` | yes | `1024` | Greater than zero and no more than `maxConnections`; concurrent pre-auth work. |
+| `maxHandshakes` | yes | `1024` | Greater than zero and no more than `maxConnections`; sessions actively authenticating after their first protocol byte. |
+| `maxPreAuthIdleConnections` | no | `1024` | Greater than zero and no more than `maxConnections`; accepted Handoff/NXR sockets that have sent zero protocol bytes. Reclaimed under pressure before active sessions. |
 | `maxFallbacks` | yes | `512` | Greater than zero and no more than `maxConnections`; concurrent cover relays. |
 | `maxCryptoOperations` | yes | `128` | Greater than zero and no more than `maxHandshakes`; expensive crypto admission. |
 | `maxReplayEntries` | yes | `65536` | Greater than zero; pending plus committed REALITY replay entries. |
@@ -694,14 +715,15 @@ This isolates direct destination pressure from authenticated connection count.
 | Field | Required when object present | Whole-object default | Constraints / meaning |
 | --- | --- | --- | --- |
 | `minReady` | yes | `4` | Low-demand ready floor; may be zero and never exceeds `maxReady`. |
-| `maxReady` | yes | `256` | Per-cover ready ceiling, `1..=4096`. |
-| `maxConnecting` | yes | `64` | Per-cover simultaneous speculative dials, `1..=min(maxReady, 1024)`. |
+| `maxReady` | yes | `256` | Per-endpoint ready ceiling, `1..=4096`. |
+| `maxConnecting` | yes | `64` | Per-endpoint simultaneous speculative dials, `1..=min(maxReady, 1024)`. |
 | `refillBatch` | yes | `16` | Dials submitted per controller reconciliation, `1..=maxConnecting`. |
 | `idleTimeoutMs` | yes | `30000` | Maximum unused idle age, `100..=3600000`. |
 | `maxLifetimeMs` | yes | `300000` | Absolute unused-socket lifetime, at least `idleTimeoutMs` and no more than one hour. |
 | `shrinkDelayMs` | yes | `30000` | Demand-free hysteresis before gradual shrink, `100..=3600000`. |
 
-These limits are per endpoint; a strict process-lifetime authority additionally
+These limits apply to enabled REALITY cover, Handoff, NXR, and SOCKS5 pools per
+endpoint; a strict process-lifetime authority additionally
 bounds all generations, and the FD budget remains final. A checkout never waits
 for refill. Under pressure speculative ready sockets are dropped before the
 normal cold path is attempted.
@@ -800,6 +822,7 @@ under-provision and `throughput` never exceeds the machine-derived ceilings:
 | --- | --- | --- | --- |
 | `resourceGovernor.maxConnections` | ×0.5 | ×1 | ×1.5 |
 | `resourceGovernor.maxHandshakes` | ×1 | ×1 | ×1 |
+| `resourceGovernor.maxPreAuthIdleConnections` | ×1 | ×1 | ×1 |
 | `resourceGovernor.maxFallbacks` | ×0.5 | ×1 | ×1 |
 | `resourceGovernor.maxCryptoOperations` | ×1 | ×1 | ×1 |
 | `resourceGovernor.maxReplayEntries` | follows `maxConnections` (×4) | | |

@@ -250,6 +250,12 @@ journalctl -u rust-reality --since -5min | grep -E 'machine_report|descriptor_bu
 安全余量（`fd_safety_headroom`：`standard` 下 limit/16，`dedicated`
 下 limit/10）。
 
+启用的 cover/Handoff/NXR/SOCKS5 warm pool 会为每个固定 endpoint 增加最多
+`maxReady` 个推测 FD 与 `maxConnecting` 个瞬时拨号，全部受同一实测预算和进程
+authority 约束。LANDING 还会在 `maxPreAuthIdleConnections` 下持有已接受、零字节
+的 Handoff/NXR socket。这些是延迟储备，不是 session；压力下先回收。应按配置的
+endpoint 数量定容，而不只按活跃用户相乘。
+
 实操规则：
 
 - **信 `descriptor_budget_report`，别信 ulimit 算术。** 服务端在启动时
@@ -356,7 +362,8 @@ policy 里每个超时存在的意义，都是给一个停滞的对端能占住�
 | `handshakeTimeoutMs` | 10000 | 整个认证握手 |
 | `connectTimeoutMs` | 10000 | 到目标/下一跳的出站连接 |
 | `fallbackTimeoutMs` | 120000 | 伪装（fallback）连接的生命周期 |
-| NXR `authenticationTimeoutMs` | 3000 | NXR 节点认证 |
+| Handoff/NXR `preAuthIdleTimeoutMs` | 60000 | warm LANDING socket 保持零协议字节的期限 |
+| Handoff/NXR `authenticationTimeoutMs` | 3000 | 首个协议字节之后的认证期限 |
 | NXR `connectTimeoutMs` | 10000 | 落地端到目标的连接 |
 | `dns.timeoutMs` | 5000 | 一次 DNS 解析 |
 
@@ -364,6 +371,9 @@ policy 里每个超时存在的意义，都是给一个停滞的对端能占住�
   高 RTT 国际链路，或确实要 2–4 秒才应答的解析器。先测量（§13），
   再适度调大对应的那个超时。
 - **调小**不会让任何东西变快；只会让慢但合法的客户端更早被掐死。
+- `preAuthIdleTimeoutMs` 应长于 LINE pool 的有效 ready 寿命并留出认证余量。不要
+  通过放大 `authenticationTimeoutMs` 获得 warm 容量；首字节会有意切换到该短
+  截止时间。
 - 当真正的问题是丢包或上游过载时，**调大**超时只会掩盖问题：停滞的
   对端占槽更久，admission 上限反而填满得*更快*。如果你调大了某个
   超时后 `connection_rejected`（`timeout` 类）变多，原因就在这里（DERIVED 机制）。

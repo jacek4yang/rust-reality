@@ -60,7 +60,8 @@ gate is described in [benchmarks.md](benchmarks.md).
   under a bounded, fail-fast pool) and a direct-barrier that rate-limits
   unauthenticated dials.
 - **SOCKS5**: outbound to an upstream SOCKS5 server with optional
-  username/password authentication.
+  username/password authentication. Its optional warm state is TCP-only;
+  method negotiation, authentication, and CONNECT remain per-flow.
 - **blackhole**: bounded discard with an optional response delay.
 - **NXR**: forwards the flow to a landing node (below).
 - **Handoff**: transfers the whole session to a landing node (below).
@@ -69,7 +70,7 @@ gate is described in [benchmarks.md](benchmarks.md).
 
 NXR is an internal replacement for unauthenticated SOCKS-style
 line-to-landing access, not a public protocol. Each authenticated user TCP
-flow on the line node creates one NXR TCP connection to the landing node and
+flow on the line node owns one NXR TCP connection to the landing node and
 sends exactly one bounded request: version, target, timestamp, random nonce,
 and an HMAC under an independent 32-byte pre-shared key. The landing node
 checks structure, time window, HMAC, and a bounded nonce replay cache before
@@ -77,11 +78,18 @@ any DNS resolution or destination connection; failure is a silent close.
 
 After that one-time authenticated request, NXR switches permanently to raw
 bidirectional bytes with half-close: there is no TLS, REALITY, AEAD,
-certificate, multiplexing, pooling, persistent framing, or
+certificate, multiplexing, persistent framing, or
 post-authentication encryption. The NXR listener must be firewall-restricted
 to the line node's fixed source IP, and the hop must be treated as plaintext:
 anyone who can observe it can observe payload that is not protected
 end-to-end (for example by HTTPS).
+
+TCP may be established before a flow exists, but it remains protocol-
+unprivileged. LANDING waits for byte one under a bounded pre-auth idle policy,
+then applies the existing short deadline to the rest of the request. No replay
+state, DNS, or destination side effect occurs in the idle phase. A checked-out
+socket is single-use and each attempt constructs a fresh timestamp, nonce, and
+HMAC; no logical flow is retried after the complete request write.
 
 ## Handoff: the internal session-transfer hop
 
@@ -107,6 +115,14 @@ node applies no
 routing policy to the transferred destination and holds live session keys, so
 its memory is part of the session's secrecy boundary. The Handoff listener
 must be reachable only from the line nodes' addresses.
+
+The TCP connection may likewise be established in advance without changing
+Handoff wire bytes or authority. The first transfer byte ends a bounded
+zero-byte idle phase and starts the short transfer-authentication deadline.
+Each checkout seals fresh timestamp/nonce/ephemeral-key/AEAD state. A bounded
+alternate is permitted only before complete transfer write; after that cutoff
+LANDING may already have resumed the session or connected the destination, so
+late failure is final.
 
 ## Trust boundaries in one paragraph
 

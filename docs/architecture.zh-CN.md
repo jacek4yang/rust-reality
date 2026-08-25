@@ -182,13 +182,42 @@ Aho-Corasick 扫描覆盖目标域名的全部 keyword 匹配器。域名组无�
 | fallback | 连接任务 | 前缀 vec（有界） | fallback CAS、FD CAS ×2、connect | connect、前缀写，然后 relay | 仅前缀写 |
 | VLESS 请求 | 连接任务 | 初始 533 B；仅为同记录载荷增长；接受后域名拥有一次 | 0 | TLS 记录 | Addons/域名/预取均借用解析 |
 | 路由 | 连接任务 | 无 DNS 命中路径 0 | 一次 UUID 查找；组策略由 Arc 共享 | 可选有界 DNS（spawn_blocking，信号量槽持有到操作结束） | 0 |
-| 出站连接 | 连接任务 | 一个有界地址计划；数字/单地址族跳过 DNS 与任务生成 | 一次 tag 查找；每候选一次 FD CAS；无锁速率 + 并发 CAS | connect | 0 |
+| 出站连接 | 连接任务 | 一个有界地址计划；数字/单地址族跳过 DNS 与任务生成 | 一次 tag 查找；warm checkout 或每候选一次 FD CAS；无锁速率 + 并发 CAS | checkout 或 connect | 0 |
 | Vision framed 上行 | 方向任务 | socket 缓冲区一次（只增） | 循环内 0 | 每次补充 1 读（≤64 KiB）、每记录 1 写 | AEAD 原地 open；Vision 借用解码（0） |
 | Vision framed 下行 | 方向任务 | socket 缓冲区一次 | 循环内 0 | 每次补充 1 读、每组打包记录 1 写 | AEAD 原地 seal；Vision 帧打包 |
 | Direct 转换 | 两个任务 | 0 | 2 个原子量 + 1 个互斥锁（一次） | 0 | 待排空数据写入 |
 | raw relay（splice） | 方向任务 | 0 | 池互斥锁每次取/还（每会话 2 次） | 每块 splice×2；管道系统调用约 0（池化） | 0（内核） |
 | raw relay（buffered） | 方向任务 | 池化 32 KiB 缓冲区 | 每会话池互斥锁 + 信号量 | 每块 read+write | 每块 1 次用户态拷贝 |
 | 拆除 | 方向任务 | 0 | 状态 CAS | shutdown/close；abort→SO_LINGER+close | 0 |
+
+## LINE→LANDING warm transport
+
+固定 Handoff、NXR 与 SOCKS5 对端复用
+[ADR 0007](decisions/0007-adaptive-line-to-landing-warm-connections.md) 的自适应
+TCP pool。它只预付 TCP 建连。READY socket 不含用户、目标、协议凭据、重放或
+会话状态：
+
+```text
+CONNECTING -> READY -> CHECKED_OUT -> SESSION_OWNED -> CLOSED
+                  \-> STALE/STOPPED -> CLOSED
+```
+
+checkout 只转移一次 socket 及其 descriptor/authority permit；relay 不再接触 pool
+同步，socket 绝不返回 READY。miss 立即冷连接并唤醒有界 refill。目标容量综合需求
+速率、实测 connect latency、recent burst 与现有 ready/connecting 工作；压力和不可变
+generation 替换会先清理未用的推测状态。
+
+Handoff/NXR LANDING 用独立有界阶段容纳这些安静 socket：
+
+```text
+ACCEPTED -> PRE_AUTH_IDLE --首字节--> AUTHENTICATING -> AUTHENTICATED
+```
+
+`PRE_AUTH_IDLE` 只持有一字节 read 状态与独立 admission permit，不做 crypto、重放
+预留、DNS 或目标连接。首字节锚定原有短认证截止时间，避免单字节 slowloris 借用
+较长 idle 寿命。压力或 reload 可回收未用 idle socket，不影响已认证会话。
+Handoff/NXR 对写入进度计数：完整写入前至多重试一次且重新生成全部认证字节；
+完整写入是不可逆边界，因为 LANDING 可能已有外部副作用。
 
 ## Handoff 会话转移
 
