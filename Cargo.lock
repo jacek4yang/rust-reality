@@ -1543,6 +1543,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rr-session"
+version = "0.1.0"
+
+[[package]]
 name = "rust-reality"
 version = "1.7.0"
 dependencies = [
@@ -1566,6 +1570,7 @@ dependencies = [
  "regex",
  "ring",
  "rr-linux",
+ "rr-session",
  "rustix",
  "schemars",
  "serde",

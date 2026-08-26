@@ -1,0 +1,21 @@
+[package]
+name = "rr-session"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+description = "Runtime-independent rust-reality session semantics"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lints.rust]
+unsafe_code = "deny"
+unreachable_pub = "warn"
+unused_must_use = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+allow_attributes_without_reason = "warn"
+dbg_macro = "deny"
+todo = "deny"
+undocumented_unsafe_blocks = "deny"
+unimplemented = "deny"

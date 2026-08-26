@@ -27,135 +27,13 @@ use std::{
     },
 };
 
+pub use rr_session::{
+    Direction, DirectionState, InvalidTransition, RawDecision, RawRelayGrant, RawRelayTransition,
+};
 use tokio::net::{
     TcpStream,
     tcp::{OwnedReadHalf, OwnedWriteHalf},
 };
-
-/// One Vision relay direction.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Direction {
-    /// Client to destination.
-    Uplink,
-    /// Destination to client.
-    Downlink,
-}
-
-impl fmt::Display for Direction {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Uplink => "uplink",
-            Self::Downlink => "downlink",
-        })
-    }
-}
-
-/// The bounded lifecycle of one Vision direction.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
-pub enum DirectionState {
-    /// TLS and Vision processing continues.
-    Framed = 0,
-    /// An authenticated Direct command was accepted, but already decoded or
-    /// encoded bytes still have to be flushed in order.
-    DirectPending = 1,
-    /// This direction sits at the exact raw boundary and has not consumed any
-    /// byte belonging to the raw phase without transferring it.
-    RawReady = 2,
-    /// Vision End selected continued outer TLS behaviour.
-    Outer = 3,
-    /// Normal EOF or a completed half-close.
-    Closed = 4,
-    /// Protocol, I/O, timeout, cancellation, or invariant failure.
-    Failed = 5,
-    /// This direction committed to the bilateral pair handoff and deposited —
-    /// or is about to deposit — its socket halves for the peer to reunite.
-    PairPending = 6,
-    /// This direction claimed its halves for an independent directional relay.
-    Relaying = 7,
-}
-
-impl DirectionState {
-    const fn from_repr(value: u8) -> Self {
-        match value {
-            1 => Self::DirectPending,
-            2 => Self::RawReady,
-            3 => Self::Outer,
-            4 => Self::Closed,
-            5 => Self::Failed,
-            6 => Self::PairPending,
-            7 => Self::Relaying,
-            _ => Self::Framed,
-        }
-    }
-
-    /// Returns whether `next` is a permitted successor of `self`.
-    ///
-    /// The forbidden set is exhaustive rather than a default: `Outer` never
-    /// becomes `RawReady`, `RawReady` never returns to `Framed`, and neither
-    /// `Closed` nor `Failed` ever becomes active again.
-    #[must_use]
-    pub const fn permits(self, next: Self) -> bool {
-        matches!(
-            (self, next),
-            (Self::Framed, Self::DirectPending)
-                | (Self::Framed, Self::Outer)
-                | (Self::Framed, Self::Closed)
-                | (Self::Framed, Self::Failed)
-                | (Self::DirectPending, Self::RawReady)
-                | (Self::DirectPending, Self::Closed)
-                | (Self::DirectPending, Self::Failed)
-                | (Self::RawReady, Self::PairPending)
-                | (Self::RawReady, Self::Relaying)
-                | (Self::RawReady, Self::Closed)
-                | (Self::RawReady, Self::Failed)
-                | (Self::PairPending, Self::Closed)
-                | (Self::PairPending, Self::Failed)
-                | (Self::Relaying, Self::Closed)
-                | (Self::Relaying, Self::Failed)
-                | (Self::Outer, Self::Closed)
-                | (Self::Outer, Self::Failed)
-        )
-    }
-}
-
-impl fmt::Display for DirectionState {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Framed => "framed",
-            Self::DirectPending => "directPending",
-            Self::RawReady => "rawReady",
-            Self::Outer => "outer",
-            Self::Closed => "closed",
-            Self::Failed => "failed",
-            Self::PairPending => "pairPending",
-            Self::Relaying => "relaying",
-        })
-    }
-}
-
-/// A state machine transition that the Vision direction lifecycle forbids.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct InvalidTransition {
-    /// The direction whose transition was rejected.
-    pub direction: Direction,
-    /// The state the direction was in.
-    pub from: DirectionState,
-    /// The state the caller attempted to enter.
-    pub to: DirectionState,
-}
-
-impl fmt::Display for InvalidTransition {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "{} direction cannot move from {} to {}",
-            self.direction, self.from, self.to
-        )
-    }
-}
-
-impl std::error::Error for InvalidTransition {}
 
 /// Both complete sockets, recovered without descriptor aliasing.
 pub struct RecoveredSockets {
@@ -180,15 +58,6 @@ impl HandoffSlots {
             && self.destination_reader.is_some()
             && self.destination_writer.is_some()
     }
-}
-
-/// The raw-relay form one direction committed to at its boundary.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RawDecision {
-    /// Both directions will deposit their halves for the bilateral pair relay.
-    Pair,
-    /// This direction relays its own halves independently.
-    Directional,
 }
 
 /// Shared, allocation-stable coordination state for one Vision session.
@@ -312,15 +181,15 @@ impl DirectHandoff {
     ///
     /// Returns [`InvalidTransition`] when this direction's state cannot move
     /// to the chosen form, which means the direction already terminated.
-    pub fn decide(&self, direction: Direction) -> Result<RawDecision, InvalidTransition> {
+    pub fn decide(&self, direction: Direction) -> Result<RawRelayGrant, InvalidTransition> {
         let _guard = lock_recover(&self.slots);
-        if self.peer_can_pair(direction) {
-            self.advance(direction, DirectionState::PairPending)?;
-            Ok(RawDecision::Pair)
-        } else {
-            self.advance(direction, DirectionState::Relaying)?;
-            Ok(RawDecision::Directional)
-        }
+        let transition = RawRelayTransition::plan(
+            direction,
+            self.state(direction),
+            self.state(Self::peer(direction)),
+        )?;
+        self.advance(direction, transition.next_state())?;
+        Ok(transition.into_grant())
     }
 
     /// Deposits the uplink's halves once the uplink is at the raw boundary.
@@ -564,7 +433,7 @@ mod tests {
         let first = handoff
             .decide(Direction::Uplink)
             .expect("uplink may commit");
-        assert_eq!(first, RawDecision::Pair);
+        assert_eq!(first.into_decision(), RawDecision::Pair);
         assert_eq!(
             handoff.state(Direction::Uplink),
             DirectionState::PairPending
@@ -574,7 +443,7 @@ mod tests {
             .decide(Direction::Downlink)
             .expect("downlink may commit");
         assert_eq!(
-            second,
+            second.into_decision(),
             RawDecision::Pair,
             "the second decider must observe the committed PairPending"
         );
@@ -585,7 +454,7 @@ mod tests {
         solo.advance(Direction::Uplink, DirectionState::RawReady)
             .expect("uplink may become raw");
         let decision = solo.decide(Direction::Uplink).expect("uplink may commit");
-        assert_eq!(decision, RawDecision::Directional);
+        assert_eq!(decision.into_decision(), RawDecision::Directional);
         assert_eq!(solo.state(Direction::Uplink), DirectionState::Relaying);
     }
 
@@ -615,8 +484,14 @@ mod tests {
                 tokio::spawn(async move { handoff.decide(Direction::Downlink) })
             };
             let (up, down) = tokio::join!(up, down);
-            let up = up.expect("uplink task").expect("uplink may commit");
-            let down = down.expect("downlink task").expect("downlink may commit");
+            let up = up
+                .expect("uplink task")
+                .expect("uplink may commit")
+                .into_decision();
+            let down = down
+                .expect("downlink task")
+                .expect("downlink may commit")
+                .into_decision();
             assert_eq!(
                 up, down,
                 "round {round}: decisions split the pair ({up:?} vs {down:?})"

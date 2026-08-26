@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use rr_session::{Direction, DirectionState, RawRelayTransition};
 use rust_reality::{
     config::{DnsStrategy, GlobalRule, Network, PortMatcher, RoutingConfig, UserPolicy},
     protocol::vless::{Address, Destination, UserId, VisionCommand, VisionDecoder, VisionEncoder},
@@ -11,10 +12,33 @@ const USER: UserId = UserId::new([0x11; 16]);
 const USER_UUID: &str = "11111111-1111-1111-1111-111111111111";
 
 fn vision_benchmarks(criterion: &mut Criterion) {
+    session_transition_benchmarks(criterion);
     decode_benchmarks(criterion);
     raw_decode_benchmarks(criterion);
     encode_benchmarks(criterion);
     routing_benchmarks(criterion);
+}
+
+fn session_transition_benchmarks(criterion: &mut Criterion) {
+    let mut group = criterion.benchmark_group("session/vision_raw_grant");
+    for (name, peer) in [
+        ("pair", DirectionState::RawReady),
+        ("directional", DirectionState::Framed),
+    ] {
+        group.bench_function(name, |bencher| {
+            bencher.iter(|| {
+                let transition = RawRelayTransition::plan(
+                    std::hint::black_box(Direction::Uplink),
+                    std::hint::black_box(DirectionState::RawReady),
+                    std::hint::black_box(peer),
+                )
+                .expect("raw-ready transition must be valid");
+                std::hint::black_box(transition.next_state());
+                std::hint::black_box(transition.into_grant().into_decision());
+            });
+        });
+    }
+    group.finish();
 }
 
 fn decode_benchmarks(criterion: &mut Criterion) {

@@ -726,14 +726,17 @@ rr_register_pid() {
 }
 
 rr_pid_is_registered() {
-    local pid=$1 expected=${RR_PID_STARTS[$1]:-} actual
+    local pid=${1:-} expected actual
+    [[ $pid =~ ^[1-9][0-9]*$ ]] || return 1
+    expected=${RR_PID_STARTS[$pid]:-}
     [[ -n $expected ]] || return 1
     actual=$(rr_pid_starttime "$pid" 2>/dev/null) || return 1
     [[ $actual == "$expected" ]]
 }
 
 rr_stop_registered_pid() {
-    local pid=$1 attempt
+    local pid=${1:-} attempt
+    [[ $pid =~ ^[1-9][0-9]*$ ]] || return 0
     if rr_pid_is_registered "$pid"; then
         kill -TERM "$pid" 2>/dev/null || true
     fi

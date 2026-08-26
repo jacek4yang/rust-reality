@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/rr-linux"]
+members = [".", "crates/rr-linux", "crates/rr-session"]
 resolver = "3"
 
 [package]
@@ -32,6 +32,7 @@ hmac = { version = "0.13.0", features = ["zeroize"] }
 libcrux-ml-dsa = { version = "0.0.10", default-features = false, features = ["mldsa65", "std"] }
 ml-kem = { version = "0.3.2", default-features = false, features = ["zeroize"] }
 regex = { version = "1.12.3", default-features = false, features = ["perf", "std", "unicode"] }
+rr-session = { path = "crates/rr-session", version = "0.1.0" }
 ring = { version = "0.17.14", default-features = false, optional = true }
 schemars = { version = "1.2.2", default-features = false, features = ["derive", "std"] }
 serde = { version = "1.0.229", default-features = false, features = ["derive", "std"] }

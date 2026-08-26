@@ -7,13 +7,7 @@ use tokio::{
     time::{self, Instant},
 };
 
-/// Observable ownership progress at the retry boundary.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum WriteProgress {
-    NoBytesWritten,
-    PartialWrite { bytes_written: usize },
-    CompleteWrite,
-}
+use rr_session::WriteProgress;
 
 /// A write failed before the complete authenticated message was submitted.
 #[derive(Debug)]
@@ -61,14 +55,16 @@ pub(crate) async fn write_all_counted_before<W: AsyncWrite + Unpin>(
                         "authenticated write returned zero",
                     ),
                     written,
+                    bytes.len(),
                 ));
             }
             Ok(Ok(count)) => count,
-            Ok(Err(error)) => return Err(failure(error, written)),
+            Ok(Err(error)) => return Err(failure(error, written, bytes.len())),
             Err(_) => {
                 return Err(failure(
                     io::Error::new(io::ErrorKind::TimedOut, "authenticated write timed out"),
                     written,
+                    bytes.len(),
                 ));
             }
         };
@@ -77,14 +73,9 @@ pub(crate) async fn write_all_counted_before<W: AsyncWrite + Unpin>(
     Ok(WriteProgress::CompleteWrite)
 }
 
-fn failure(source: io::Error, written: usize) -> CountedWriteError {
-    let progress = if written == 0 {
-        WriteProgress::NoBytesWritten
-    } else {
-        WriteProgress::PartialWrite {
-            bytes_written: written,
-        }
-    };
+fn failure(source: io::Error, written: usize, message_len: usize) -> CountedWriteError {
+    let progress = WriteProgress::from_written(written, message_len);
+    debug_assert!(progress.permits_fresh_attempt());
     CountedWriteError { source, progress }
 }
 
@@ -99,7 +90,9 @@ mod tests {
 
     use tokio::io::AsyncWrite;
 
-    use super::{WriteProgress, write_all_counted_before};
+    use rr_session::WriteProgress;
+
+    use super::write_all_counted_before;
 
     struct ScriptedWriter {
         first_limit: usize,

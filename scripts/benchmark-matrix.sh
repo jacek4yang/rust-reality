@@ -151,7 +151,7 @@ cleanup() {
     local exit_status=$?
     trap - EXIT
     set +e
-    for pid in "${pids[@]:-}"; do
+    for pid in "${pids[@]}"; do
         rr_stop_registered_pid "$pid"
     done
     if [[ ${KEEP_WORK:-0} == 1 ]]; then
@@ -216,7 +216,7 @@ origin_impl=${ORIGIN_IMPL:-go}
 case $origin_impl in
     go)
         if command -v go >/dev/null 2>&1; then
-            (cd scripts/bench-origin && go build -o "$work/bench-origin" .)
+            (cd scripts/bench-origin && go build -buildvcs=false -o "$work/bench-origin" .)
         else
             echo "warning: go toolchain unavailable; falling back to the embedded Python origin" >&2
             origin_impl=python

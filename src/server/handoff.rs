@@ -49,10 +49,11 @@ use crate::{
         tcp_relay::{TcpRelay, TcpRelayConfigError},
     },
 };
+use rr_session::WriteProgress;
 
 use super::{
     connector::{DestinationConnectError, DestinationConnector},
-    counted_write::{WriteProgress, write_all_counted_before},
+    counted_write::write_all_counted_before,
     outbound::{OutboundConnectError, OutboundConnectOutcome, OutboundRegistry},
     pre_auth::{PreAuthError, PreAuthGeneration, begin_authentication},
     vision::{VisionSessionError, run_resumed_session},
