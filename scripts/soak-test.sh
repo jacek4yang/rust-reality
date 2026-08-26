@@ -4,13 +4,16 @@
 #
 # Workload mix per round: direct download (TLS origin), framed download
 # (plain origin), fallback (direct-to-listener), and rapid connect/drop
-# churn. Real cover-NST/sequence-one Handoff and byte-exact NXR topologies
-# remain alive for the timed soak and are exercised at the start, at each
-# monotonic interval, and at the end. /proc snapshots cover every
-# rust-reality process individually and in aggregate.
+# churn. Real cover-NST/sequence-one Handoff, byte-exact NXR, and TCP-warm
+# SOCKS5 topologies remain alive for the timed soak and are exercised at the
+# start, at each monotonic interval, and at the end. /proc snapshots cover every
+# rust-reality process individually and in aggregate. Per-process RSS detects
+# local retention; aggregate PSS avoids counting shared file-backed pages once
+# per process. This is optional long-horizon evidence. Publication is gated by
+# the focused mechanism program and the active dual-VPS canary instead.
 #
 # Env: DURATION_MIN (30), ROUND_SLEEP (5), DISTRIBUTED_INTERVAL_SECONDS (1800),
-# RUST_REALITY_BIN, XRAY_BIN, OUT_DIR. REQUIRE_RELEASE_QUALIFIED=1 additionally
+# RUST_REALITY_BIN, XRAY_BIN, OUT_DIR. REQUIRE_LONG_HORIZON_QUALIFIED=1 additionally
 # requires explicit RUN_ID, absolute new OUT_DIR, disk-backed TMPDIR, PORT_BASE,
 # RUST_REALITY_SHA256, XRAY_SHA256, EXPECTED_SOURCE_COMMIT, and read-only
 # absolute binary paths.
@@ -24,7 +27,7 @@ xray=${XRAY_BIN:-../artifacts/xray-reference}
 duration_min=${DURATION_MIN:-30}
 round_sleep=${ROUND_SLEEP:-5}
 minimum_rounds=${MIN_ROUNDS:-$duration_min}
-require_release_qualified=${REQUIRE_RELEASE_QUALIFIED:-0}
+require_long_horizon_qualified=${REQUIRE_LONG_HORIZON_QUALIFIED:-0}
 distributed_interval_seconds=${DISTRIBUTED_INTERVAL_SECONDS:-1800}
 max_distributed_attempts=145
 run_id=${RUN_ID:-${RR_RUN_ID:-soak-$(date -u +%Y%m%dT%H%M%SZ)-$$}}
@@ -110,55 +113,56 @@ done
 [[ $duration_min =~ ^[1-9][0-9]*$ ]] || { echo "DURATION_MIN must be positive" >&2; exit 2; }
 [[ $round_sleep =~ ^[0-9]+$ ]] || { echo "ROUND_SLEEP must be non-negative" >&2; exit 2; }
 [[ $minimum_rounds =~ ^[1-9][0-9]*$ ]] || { echo "MIN_ROUNDS must be positive" >&2; exit 2; }
-[[ $require_release_qualified == 0 || $require_release_qualified == 1 ]] \
-    || { echo "REQUIRE_RELEASE_QUALIFIED must be 0 or 1" >&2; exit 2; }
+[[ $require_long_horizon_qualified == 0 || $require_long_horizon_qualified == 1 ]] \
+    || { echo "REQUIRE_LONG_HORIZON_QUALIFIED must be 0 or 1" >&2; exit 2; }
 [[ $distributed_interval_seconds =~ ^[1-9][0-9]*$ ]] \
     || { echo "DISTRIBUTED_INTERVAL_SECONDS must be positive" >&2; exit 2; }
-if (( require_release_qualified == 1 \
+if (( require_long_horizon_qualified == 1 \
     && (distributed_interval_seconds < 300 || distributed_interval_seconds > 1800) )); then
-    echo "release soak DISTRIBUTED_INTERVAL_SECONDS must be in 300..1800" >&2
+    echo "long-horizon soak DISTRIBUTED_INTERVAL_SECONDS must be in 300..1800" >&2
     exit 2
 fi
 planned_distributed_attempts=$((
-    2 + (duration_min * 60 - 1) / distributed_interval_seconds
+    3 + (duration_min * 60 - 1) / distributed_interval_seconds
 ))
 if (( planned_distributed_attempts > max_distributed_attempts )); then
     echo "distributed attempt count $planned_distributed_attempts exceeds hard limit $max_distributed_attempts" >&2
     exit 2
 fi
 planned_distributed_payload_bytes=$((
-    (planned_distributed_attempts * 2 + 2) * 1048576
+    (planned_distributed_attempts * 3 + 3) * 1048576
 ))
 [[ $run_id =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
     || { echo "RUN_ID is invalid: $run_id" >&2; exit 2; }
-if (( require_release_qualified == 1 )); then
+if (( require_long_horizon_qualified == 1 )); then
     [[ ${EXPLORATORY:-0} == 0 ]] \
-        || { echo "release-qualified soak cannot be exploratory" >&2; exit 2; }
-    rr_contract_init "$repository" soak-test diagnostics/final 12
+        || { echo "qualified long-horizon soak cannot be exploratory" >&2; exit 2; }
+    rr_contract_init "$repository" soak-test diagnostics/final 15
     contract_initialized=1
     case $(realpath -m -- "$RR_OUT_DIR")/ in
         "$repository"/*)
-            echo "release-qualified OUT_DIR must be outside the repository" >&2
+            echo "qualified long-horizon OUT_DIR must be outside the repository" >&2
             exit 2
             ;;
     esac
     case "$RR_TMPDIR"/ in
         "$repository"/*)
-            echo "release-qualified TMPDIR must be outside the repository" >&2
+            echo "qualified long-horizon TMPDIR must be outside the repository" >&2
             exit 2
             ;;
     esac
     rr_register_harness_file "$repository/scripts/cover-flight-shape-proxy.py"
+    rr_register_harness_file "$repository/scripts/deployment_driver.py"
     rr_register_harness_tree "$repository/scripts/bench-origin"
     rr_register_binary rust-reality "$rust_bin" "$expected_rust_sha256" rust \
         "${EXPECTED_SOURCE_COMMIT:-}"
     rr_register_binary xray "$xray" "$expected_xray_sha256" xray
     [[ ${RR_BINARY_BUILD_IDS[rust-reality]} =~ ^[0-9a-f]+$ ]] \
-        || { echo "release-qualified rust-reality binary has no ELF Build ID" >&2; exit 2; }
+        || { echo "qualified long-horizon rust-reality binary has no ELF Build ID" >&2; exit 2; }
     [[ ${RR_BINARY_BUILD_IDS[xray]} =~ ^[0-9a-f]+$ ]] \
-        || { echo "release-qualified Xray binary has no ELF Build ID" >&2; exit 2; }
+        || { echo "qualified long-horizon Xray binary has no ELF Build ID" >&2; exit 2; }
     [[ $RR_HARNESS_COMMIT == "${EXPECTED_SOURCE_COMMIT:-}" ]] \
-        || { echo "release-qualified binary source commit must equal harness HEAD" >&2; exit 2; }
+        || { echo "qualified long-horizon binary source commit must equal harness HEAD" >&2; exit 2; }
     rr_write_contract_metadata preflight
     run_id=$RR_RUN_ID
     port_base=$RR_PORT_BASE
@@ -170,8 +174,8 @@ if (( require_release_qualified == 1 )); then
     xray_sha256=${RR_BINARY_SHA256[xray]}
 else
     if [[ -n $port_base ]]; then
-        [[ $port_base =~ ^[0-9]+$ ]] && (( port_base >= 1024 && port_base <= 65524 )) \
-            || { echo "PORT_BASE must leave a 12-port block in 1024..65535" >&2; exit 2; }
+        [[ $port_base =~ ^[0-9]+$ ]] && (( port_base >= 1024 && port_base <= 65521 )) \
+            || { echo "PORT_BASE must leave a 15-port block in 1024..65535" >&2; exit 2; }
     fi
     [[ -x $rust_bin ]] || { echo "RUST_REALITY_BIN not executable: $rust_bin" >&2; exit 1; }
     rust_bin=$(realpath "$rust_bin")
@@ -205,7 +209,7 @@ import sys
 base = int(sys.argv[1]) if sys.argv[1] else None
 sockets = []
 try:
-    for index in range(12):
+    for index in range(15):
         sock = socket.socket()
         sockets.append(sock)
         port = base + index if base is not None else 0
@@ -220,11 +224,13 @@ PY
 read -r rust_port rust_socks https_port http_port \
     handoff_cover_upstream_port handoff_cover_port handoff_line_port \
     handoff_landing_port handoff_socks_port nxr_line_port nxr_landing_port \
-    nxr_socks_port < <(allocate_ports)
+    nxr_socks_port socks_line_port socks_upstream_port socks_client_port \
+    < <(allocate_ports)
 port_block_json=$(printf '%s\n' "$rust_port" "$rust_socks" "$https_port" "$http_port" \
     "$handoff_cover_upstream_port" "$handoff_cover_port" "$handoff_line_port" \
     "$handoff_landing_port" "$handoff_socks_port" "$nxr_line_port" \
-    "$nxr_landing_port" "$nxr_socks_port" | jq -sc 'map(tonumber)')
+    "$nxr_landing_port" "$nxr_socks_port" "$socks_line_port" \
+    "$socks_upstream_port" "$socks_client_port" | jq -sc 'map(tonumber)')
 run_contract_file=
 (( contract_initialized == 0 )) || run_contract_file=run-contract.json
 
@@ -237,14 +243,14 @@ jq -n --arg runId "$run_id" --arg rustBin "$rust_bin" --arg rustSha256 "$rust_sh
     --argjson plannedDistributedAttempts "$planned_distributed_attempts" \
     --argjson maxDistributedAttempts "$max_distributed_attempts" \
     --argjson plannedDistributedPayloadBytes "$planned_distributed_payload_bytes" \
-    --argjson requireReleaseQualified "$require_release_qualified" \
+    --argjson requireLongHorizonQualified "$require_long_horizon_qualified" \
     --argjson portBlock "$port_block_json" \
     '{schemaVersion:2,runId:$runId,startedAt:$startedAt,durationMinutes:$durationMinutes,
       distributedIntervalSeconds:$distributedIntervalSeconds,
       plannedDistributedAttempts:$plannedDistributedAttempts,
       maxDistributedAttempts:$maxDistributedAttempts,
       plannedDistributedPayloadBytes:$plannedDistributedPayloadBytes,
-      requireReleaseQualified:$requireReleaseQualified,
+      requireLongHorizonQualified:$requireLongHorizonQualified,
       formalRunContract:(if $runContract == "" then null else $runContract end),
       ports:{address:"127.0.0.1",block:$portBlock},
       rustReality:{path:$rustBin,sha256:$rustSha256},
@@ -425,7 +431,9 @@ wait_port "$handoff_cover_port" "$handoff_cover_proxy_pid"
     --output-dir "$work/handoff" >"$work/handoff-generate.out" \
     2>"$work/handoff-generate.log"
 jq --arg cache "$work/assets-handoff-line" \
-    '.log.level="debug" | .assets.cacheDirectory=$cache' \
+    '.log.level="debug" | .assets.cacheDirectory=$cache
+     | .inbounds[0].streamSettings.realitySettings.coverOptimization.warmTcp=false
+     | .inbounds[0].streamSettings.realitySettings.coverOptimization.prebuiltProfiles=false' \
     "$work/handoff/line.json" >"$work/handoff-line.json"
 jq --arg cache "$work/assets-handoff-landing" \
     '.log.level="debug" | .assets.cacheDirectory=$cache' \
@@ -480,11 +488,48 @@ start_logged "$out_dir/nxr-xray.log" "$xray" run -config "$work/nxr-client.json"
 nxr_xray_pid=$last_pid
 wait_port "$nxr_socks_port" "$nxr_xray_pid"
 
+# SOCKS5: the rust-reality LINE owns a TCP-only warm pool to a conventional
+# no-auth SOCKS5 server. Method negotiation and CONNECT still begin only after
+# checkout; repeated byte-exact transfers exercise that boundary during the
+# same idle, churn, and resource-observation window as Handoff and NXR.
+start_logged "$out_dir/socks-upstream.log" python3 \
+    "$repository/scripts/deployment_driver.py" socks-server \
+    --port "$socks_upstream_port"
+socks_upstream_pid=$last_pid
+wait_port "$socks_upstream_port" "$socks_upstream_pid"
+"$rust_bin" config generate line --listen 127.0.0.1 --port "$socks_line_port" \
+    --target "127.0.0.1:$https_port" --server-name localhost \
+    --nxr-address 127.0.0.1 --nxr-port 9 --nxr-key "$nxr_key" \
+    >"$work/socks-line.raw.json" 2>"$work/socks-line-generate.log"
+jq --arg cache "$work/assets-socks-line" --argjson port "$socks_upstream_port" \
+    '.log.level="debug" | .assets.cacheDirectory=$cache
+     | .outbounds |= map(select(.protocol != "nxr"))
+     | .outbounds += [{protocol:"socks5",tag:"via-socks",
+                       settings:{address:"127.0.0.1",port:$port,warmTcp:true}}]
+     | .routing.users[0].defaultOutbound="via-socks"' \
+    "$work/socks-line.raw.json" >"$work/socks-line.json"
+socks_public_key=$(sed -n 's/^REALITY public key for the client: //p' \
+    "$work/socks-line-generate.log")
+socks_uuid=$(jq -r '.inbounds[0].settings.clients[0].id' \
+    "$work/socks-line.raw.json")
+socks_short_id=$(jq -r '.inbounds[0].settings.clients[0].shortIds[0]' \
+    "$work/socks-line.raw.json")
+make_xray_client "$socks_line_port" "$socks_client_port" "$socks_public_key" \
+    "$socks_uuid" "$socks_short_id" "$work/socks-client.json"
+"$rust_bin" check --config "$work/socks-line.json" >/dev/null
+start_logged "$out_dir/socks-line.log" "$rust_bin" serve --config "$work/socks-line.json"
+socks_line_pid=$last_pid
+wait_port "$socks_line_port" "$socks_line_pid"
+start_logged "$out_dir/socks-xray.log" "$xray" run -config "$work/socks-client.json"
+socks_xray_pid=$last_pid
+wait_port "$socks_client_port" "$socks_xray_pid"
+
 distributed_samples="$out_dir/distributed-samples.jsonl"
 : >"$distributed_samples"
 distributed_attempts=0
 last_handoff_download=
 last_nxr_download=
+last_socks_download=
 
 monotonic_now() {
     python3 - <<'PY'
@@ -585,10 +630,13 @@ run_distributed_attempt() {
     attempt=$distributed_attempts
     last_handoff_download=$(printf '%s/distributed/handoff-%04d.bin' "$out_dir" "$attempt")
     last_nxr_download=$(printf '%s/distributed/nxr-%04d.bin' "$out_dir" "$attempt")
+    last_socks_download=$(printf '%s/distributed/socks-%04d.bin' "$out_dir" "$attempt")
     run_distributed_download "$attempt" "$trigger" handoff-seq1 \
         "$handoff_socks_port" "$last_handoff_download"
     run_distributed_download "$attempt" "$trigger" nxr-byte-integrity \
         "$nxr_socks_port" "$last_nxr_download"
+    run_distributed_download "$attempt" "$trigger" socks5-byte-integrity \
+        "$socks_client_port" "$last_socks_download"
 }
 
 start_logged "$work/rust.log" "$rust_bin" serve --config "$work/rust.json"
@@ -598,9 +646,9 @@ start_logged /dev/null "$xray" run -config "$work/rust-client.json"
 rust_xray_pid=$last_pid
 wait_port "$rust_socks" "$rust_xray_pid"
 
-rust_process_names=(standalone handoff-line handoff-landing nxr-line nxr-landing)
+rust_process_names=(standalone handoff-line handoff-landing nxr-line nxr-landing socks-line)
 rust_process_pids=("$server_pid" "$handoff_line_pid" "$handoff_landing_pid" \
-    "$nxr_line_pid" "$nxr_landing_pid")
+    "$nxr_line_pid" "$nxr_landing_pid" "$socks_line_pid")
 
 snapshot() {
     local label=$1 index pid expected
@@ -639,6 +687,12 @@ for offset in range(0, len(raw_identities), 3):
         )
     with open(f"/proc/{pid}/status", encoding="ascii") as handle:
         fields = dict(line.split(":", 1) for line in handle if ":" in line)
+    try:
+        with open(f"/proc/{pid}/smaps_rollup", encoding="ascii") as handle:
+            smaps = dict(line.split(":", 1) for line in handle if ":" in line)
+        pss = int(smaps["Pss"].split()[0])
+    except (FileNotFoundError, KeyError, PermissionError):
+        pss = None
     rss = int(fields["VmRSS"].split()[0])
     processes[name] = {
         "alive": True,
@@ -646,6 +700,7 @@ for offset in range(0, len(raw_identities), 3):
         "pidStarttime": observed,
         "fds": len(os.listdir(f"/proc/{pid}/fd")),
         "vmRssKiB": rss,
+        "vmPssKiB": pss,
         "vmHwmKiB": int(fields.get("VmHWM", fields["VmRSS"]).split()[0]),
         "threads": int(fields["Threads"].split()[0]),
     }
@@ -653,6 +708,11 @@ totals = {
     field: sum(process[field] for process in processes.values())
     for field in ("fds", "vmRssKiB", "vmHwmKiB", "threads")
 }
+totals["vmPssKiB"] = (
+    sum(process["vmPssKiB"] for process in processes.values())
+    if all(process["vmPssKiB"] is not None for process in processes.values())
+    else None
+)
 print(json.dumps({
     "label": label,
     "monotonicSeconds": time.monotonic(),
@@ -661,6 +721,7 @@ print(json.dumps({
     "totals": totals,
     "fds": totals["fds"],
     "vmRssKiB": totals["vmRssKiB"],
+    "vmPssKiB": totals["vmPssKiB"],
     "vmHwmKiB": totals["vmHwmKiB"],
     "threads": totals["threads"],
 }))
@@ -681,10 +742,32 @@ round=0
 timed_start_seconds=$SECONDS
 deadline=$(( timed_start_seconds + duration_min * 60 ))
 next_distributed=$(( timed_start_seconds + distributed_interval_seconds ))
+reload_at=$(( timed_start_seconds + duration_min * 30 ))
+reload_triggered=0
 run_distributed_attempt start
 snapshot start
 while (( SECONDS < deadline )); do
     round=$((round + 1))
+    if (( reload_triggered == 0 && SECONDS >= reload_at )); then
+        snapshot before-reload
+        reload_pids=("$handoff_line_pid" "$handoff_landing_pid" "$nxr_line_pid" \
+            "$nxr_landing_pid" "$socks_line_pid")
+        reload_logs=("$out_dir/handoff-line.log" "$out_dir/handoff-landing.log" \
+            "$out_dir/nxr-line.log" "$out_dir/nxr-landing.log" \
+            "$out_dir/socks-line.log")
+        for pid in "${reload_pids[@]}"; do
+            expected=${active_starts[$pid]:-}
+            [[ -n $expected ]] && pid_is_owned "$pid" "$expected" \
+                || { echo "cannot reload unowned process PID $pid" >&2; exit 1; }
+            kill -HUP "$pid"
+        done
+        for log in "${reload_logs[@]}"; do
+            wait_log_event "$log" '"event":"configuration_published","generation":1'
+        done
+        reload_triggered=1
+        run_distributed_attempt reload
+        snapshot after-reload
+    fi
     verify_download -sS --insecure --fail --socks5-hostname 127.0.0.1:$rust_socks \
         --max-time 60 https://127.0.0.1:$https_port/payload-4.bin \
         || failures=$((failures + 1))
@@ -709,15 +792,18 @@ done
 run_distributed_attempt end
 install -m 0600 "$last_handoff_download" "$out_dir/handoff-download.bin"
 install -m 0600 "$last_nxr_download" "$out_dir/nxr-download.bin"
+install -m 0600 "$last_socks_download" "$out_dir/socks-download.bin"
 sleep 5
 snapshot end
 
 python3 - "$distributed_samples" "$out_dir/handoff-cover-shape-proxy.log" \
+    "$out_dir/handoff-landing.log" "$out_dir/nxr-landing.log" \
     "$distributed_interval_seconds" "$distributed_payload_sha256" \
     "$(sha256sum "$work/handoff-line.json" | awk '{print $1}')" \
     "$(sha256sum "$work/handoff-landing.json" | awk '{print $1}')" \
     "$(sha256sum "$work/nxr-line.json" | awk '{print $1}')" \
     "$(sha256sum "$work/nxr-landing.json" | awk '{print $1}')" \
+    "$(sha256sum "$work/socks-line.json" | awk '{print $1}')" \
     "$out_dir/distributed-gates.json" <<'PY'
 import collections
 import json
@@ -727,21 +813,25 @@ import sys
 (
     samples_path,
     proxy_log_path,
+    handoff_landing_log_path,
+    nxr_landing_log_path,
     interval_text,
     payload_sha256,
     handoff_line_sha256,
     handoff_landing_sha256,
     nxr_line_sha256,
     nxr_landing_sha256,
+    socks_line_sha256,
     output_path,
 ) = sys.argv[1:]
 interval = int(interval_text)
 samples = [json.loads(line) for line in Path(samples_path).read_text().splitlines()]
 paths = {
     name: [sample for sample in samples if sample.get("path") == name]
-    for name in ("handoff-seq1", "nxr-byte-integrity")
+    for name in ("handoff-seq1", "nxr-byte-integrity", "socks5-byte-integrity")
 }
 handoff, nxr = paths["handoff-seq1"], paths["nxr-byte-integrity"]
+socks = paths["socks5-byte-integrity"]
 attempts = len({sample.get("attempt") for sample in samples})
 elapsed = handoff[-1]["monotonicSeconds"] - handoff[0]["monotonicSeconds"] if handoff else 0
 required_attempts = 1 + int(elapsed // interval)
@@ -808,13 +898,38 @@ nxr_summary.update({
     "lineConfigSha256": nxr_line_sha256,
     "landingConfigSha256": nxr_landing_sha256,
 })
+socks_summary = path_summary(socks, False)
+socks_summary.update({
+    "lineLog": "socks-line.log",
+    "upstreamLog": "socks-upstream.log",
+    "lineConfigSha256": socks_line_sha256,
+    "preparation": "tcp-only",
+})
 triggers = collections.Counter(sample.get("trigger") for sample in handoff)
 proxy_complete = proxy_completions[-1] if proxy_completions else None
+
+
+def rejection_reasons(path):
+    reasons = collections.Counter()
+    for line in Path(path).read_text(errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("event") == "connection_rejected":
+            reasons[event.get("reason", "unclassified")] += 1
+    return dict(reasons)
+
+
+handoff_landing_rejections = rejection_reasons(handoff_landing_log_path)
+nxr_landing_rejections = rejection_reasons(nxr_landing_log_path)
 ok = (
     attempts >= required_attempts
     and len(handoff) == attempts
     and len(nxr) == attempts
+    and len(socks) == attempts
     and triggers.get("start") == 1
+    and triggers.get("reload") == 1
     and triggers.get("end") == 1
     and handoff_summary["successes"] == attempts
     and handoff_summary["failures"] == 0
@@ -825,6 +940,12 @@ ok = (
     and nxr_summary["failures"] == 0
     and nxr_summary["allPayloadBytes"]
     and nxr_summary["allPayloadSha256"]
+    and socks_summary["successes"] == attempts
+    and socks_summary["failures"] == 0
+    and socks_summary["allPayloadBytes"]
+    and socks_summary["allPayloadSha256"]
+    and not handoff_landing_rejections
+    and not nxr_landing_rejections
     and len(shape_events) == attempts
     and proxy_complete is not None
     and proxy_complete.get("shaped") == attempts
@@ -837,9 +958,25 @@ result = {
     "elapsedSeconds": round(elapsed, 3),
     "attempts": attempts,
     "requiredAttempts": required_attempts,
+    "reload": {
+        "triggerAttempts": triggers.get("reload", 0),
+        "expectedGeneration": 1,
+        "logs": [
+            "handoff-line.log",
+            "handoff-landing.log",
+            "nxr-line.log",
+            "nxr-landing.log",
+            "socks-line.log",
+        ],
+    },
     "samplesPath": "distributed-samples.jsonl",
     "handoffSeq1": handoff_summary,
     "nxrByteIntegrity": nxr_summary,
+    "socks5ByteIntegrity": socks_summary,
+    "landingConnectionRejections": {
+        "handoff": handoff_landing_rejections,
+        "nxr": nxr_landing_rejections,
+    },
     "proxy": {
         "accepted": proxy_complete.get("accepted") if proxy_complete else None,
         "shaped": proxy_complete.get("shaped") if proxy_complete else None,
@@ -861,14 +998,14 @@ final_xray_sha256=$(sha256sum "$xray" | awk '{print $1}')
     || { echo 'XRAY_BIN changed during soak' >&2; exit 1; }
 
 python3 - "$out_dir/resources.jsonl" "$failures" "$round" "$minimum_rounds" \
-    "$duration_min" "$require_release_qualified" "$expected_payload_sha256" \
+    "$duration_min" "$require_long_horizon_qualified" "$expected_payload_sha256" \
     "$max_distributed_attempts" "$out_dir/distributed-gates.json" \
     "$out_dir/soak-summary.json" <<'PY'
 import json, statistics, sys
 records = [json.loads(line) for line in open(sys.argv[1])]
 failures, rounds, minimum_rounds = map(int, sys.argv[2:5])
 duration_minutes = int(sys.argv[5])
-require_release_qualified = bool(int(sys.argv[6]))
+require_long_horizon_qualified = bool(int(sys.argv[6]))
 payload_sha256 = sys.argv[7]
 max_distributed_attempts = int(sys.argv[8])
 distributed_path, output = sys.argv[9:11]
@@ -885,15 +1022,23 @@ def resource_stats(values):
     tail_records = records[tail_offset:]
     tail_values = values[tail_offset:]
     xs = [record["monotonicSeconds"] for record in tail_records]
-    ys = [value["vmRssKiB"] / 1024 for value in tail_values]
-    if len(xs) >= 2 and len(set(xs)) > 1:
+
+    def tail_slope(key):
+        raw = [value.get(key) for value in tail_values]
+        if any(value is None for value in raw):
+            return None
+        ys = [value / 1024 for value in raw]
+        if len(xs) < 2 or len(set(xs)) <= 1:
+            return 0.0
         xbar, ybar = statistics.mean(xs), statistics.mean(ys)
         denominator = sum((x - xbar) ** 2 for x in xs)
-        slope = 3600 * sum(
+        return 3600 * sum(
             (x - xbar) * (y - ybar) for x, y in zip(xs, ys)
         ) / denominator
-    else:
-        slope = 0.0
+
+    rss_slope = tail_slope("vmRssKiB")
+    pss_slope = tail_slope("vmPssKiB")
+    pss_available = all(value.get("vmPssKiB") is not None for value in values)
     sampled_rss_peak_growth_mib = (
         max(value["vmRssKiB"] for value in values) - first["vmRssKiB"]
     ) / 1024
@@ -912,7 +1057,28 @@ def resource_stats(values):
         # before the next sampled VmRSS snapshot. This is the gated RSS peak.
         "rssPeakGrowthMiB": round(rss_hwm_growth_mib, 1),
         "rssSampledPeakGrowthMiB": round(sampled_rss_peak_growth_mib, 1),
-        "rssTailSlopeMiBPerHour": round(slope, 3),
+        "rssTailSlopeMiBPerHour": round(rss_slope, 3),
+        "pssAvailable": pss_available,
+        "pssGrowthMiB": (
+            round((last["vmPssKiB"] - first["vmPssKiB"]) / 1024, 1)
+            if pss_available
+            else None
+        ),
+        "pssSampledPeakGrowthMiB": (
+            round(
+                (
+                    max(value["vmPssKiB"] for value in values)
+                    - first["vmPssKiB"]
+                )
+                / 1024,
+                1,
+            )
+            if pss_available
+            else None
+        ),
+        "pssTailSlopeMiBPerHour": (
+            round(pss_slope, 3) if pss_slope is not None else None
+        ),
     }
 
 
@@ -926,7 +1092,12 @@ resources_by_process = {
 }
 
 
-def resources_ok(stats):
+def resources_ok(stats, *, aggregate=False):
+    slope = (
+        stats["pssTailSlopeMiBPerHour"]
+        if aggregate and stats["pssAvailable"]
+        else stats["rssTailSlopeMiBPerHour"]
+    )
     return (
         stats["fdGrowth"] <= 32
         and stats["threadGrowth"] <= 8
@@ -936,7 +1107,7 @@ def resources_ok(stats):
         and stats["rssPeakGrowthMiB"] <= 64
         and (
             not slope_gate_applied
-            or stats["rssTailSlopeMiBPerHour"] <= 2
+            or slope <= 2
         )
     )
 
@@ -946,11 +1117,18 @@ required_distributed_attempts = distributed.get("requiredAttempts", 0)
 ok = (
     failures == 0
     and rounds >= minimum_rounds
-    and resources_ok(aggregate_resources)
+    and resources_ok(aggregate_resources, aggregate=True)
     and all(resources_ok(stats) for stats in resources_by_process.values())
     and all(r.get("serverAlive") for r in records)
     and distributed.get("ok") is True
     and distributed_attempts >= required_distributed_attempts
+    and distributed.get("reload", {}).get("triggerAttempts") == 1
+    and distributed.get("reload", {}).get("expectedGeneration") == 1
+    and len(distributed.get("reload", {}).get("logs", [])) == 5
+    and distributed.get("landingConnectionRejections") == {
+        "handoff": {},
+        "nxr": {},
+    }
     and distributed.get("handoffSeq1", {}).get("attempts") == distributed_attempts
     and distributed.get("handoffSeq1", {}).get("successes") == distributed_attempts
     and distributed.get("handoffSeq1", {}).get("failures") == 0
@@ -966,9 +1144,16 @@ ok = (
     and distributed.get("nxrByteIntegrity", {}).get("failures") == 0
     and distributed.get("nxrByteIntegrity", {}).get("download", {}).get("bytes") == 1048576
     and distributed.get("nxrByteIntegrity", {}).get("download", {}).get("sha256") == distributed.get("payloadSha256")
+    and distributed.get("socks5ByteIntegrity", {}).get("attempts") == distributed_attempts
+    and distributed.get("socks5ByteIntegrity", {}).get("successes") == distributed_attempts
+    and distributed.get("socks5ByteIntegrity", {}).get("failures") == 0
+    and distributed.get("socks5ByteIntegrity", {}).get("preparation") == "tcp-only"
+    and distributed.get("socks5ByteIntegrity", {}).get("download", {}).get("bytes") == 1048576
+    and distributed.get("socks5ByteIntegrity", {}).get("download", {}).get("sha256") == distributed.get("payloadSha256")
 )
-release_qualified = (
+long_horizon_qualified = (
     ok
+    and aggregate_resources["pssAvailable"]
     and duration_minutes == 720
     and elapsed_seconds >= 720 * 60
     and slope_gate_applied
@@ -982,6 +1167,9 @@ release_qualified = (
     and distributed.get("nxrByteIntegrity", {}).get("attempts", 0) >= 25
     and distributed.get("nxrByteIntegrity", {}).get("successes", 0) >= 25
     and distributed.get("nxrByteIntegrity", {}).get("failures") == 0
+    and distributed.get("socks5ByteIntegrity", {}).get("attempts", 0) >= 25
+    and distributed.get("socks5ByteIntegrity", {}).get("successes", 0) >= 25
+    and distributed.get("socks5ByteIntegrity", {}).get("failures") == 0
 )
 summary = {
     "rounds": rounds,
@@ -999,19 +1187,32 @@ summary = {
     "rssPeakGrowthMiB": aggregate_resources["rssPeakGrowthMiB"],
     "rssSampledPeakGrowthMiB": aggregate_resources["rssSampledPeakGrowthMiB"],
     "rssTailSlopeMiBPerHour": aggregate_resources["rssTailSlopeMiBPerHour"],
+    "pssAvailable": aggregate_resources["pssAvailable"],
+    "pssGrowthMiB": aggregate_resources["pssGrowthMiB"],
+    "pssSampledPeakGrowthMiB": aggregate_resources["pssSampledPeakGrowthMiB"],
+    "pssTailSlopeMiBPerHour": aggregate_resources["pssTailSlopeMiBPerHour"],
+    "memorySlopeGateBasis": {
+        "aggregate": (
+            "pss" if aggregate_resources["pssAvailable"] else "rss-fallback"
+        ),
+        "perProcess": "rss",
+    },
     "resourceAggregate": aggregate_resources,
     "resourceByProcess": resources_by_process,
+    "memoryTailSlopeGateApplied": slope_gate_applied,
+    # Retained for readers of the previous schema; per-process RSS remains
+    # gated, while aggregate slope uses PSS when available.
     "rssTailSlopeGateApplied": slope_gate_applied,
     "durationMinutes": duration_minutes,
     "elapsedSeconds": round(elapsed_seconds, 3),
-    "releaseQualified": release_qualified,
+    "longHorizonQualified": long_horizon_qualified,
     "distributedGates": distributed,
     "ok": ok,
 }
 with open(output, "x") as fh:
     json.dump({"summary": summary, "snapshots": records}, fh, indent=2)
 print(json.dumps(summary))
-sys.exit(0 if ok and (not require_release_qualified or release_qualified) else 1)
+sys.exit(0 if ok and (not require_long_horizon_qualified or long_horizon_qualified) else 1)
 PY
 if (( contract_initialized == 1 )); then
     rr_finalize_contract

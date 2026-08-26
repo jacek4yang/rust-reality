@@ -91,6 +91,20 @@ failure。顺序 collector 和会重复排队正在收集 class 的 controller �
 ClientHello class 会有意留在 warm-live 路径。这是保守的已验证 class 优化，
 不是对所有 TLS 行为都完全相同的声明。
 
+## v1.7 开发：warm LINE→LANDING transport
+
+Handoff、NXR 与 SOCKS5 现在从同一有界自适应 pool 使用单次 checkout 的已建立
+TCP。有效命中会从用户流中移除固定对端 TCP 握手，但不会移除协议认证、协议响应
+依赖、目标建连或物理传播。Handoff/NXR 每次尝试都生成 fresh authentication
+state；LANDING 把零字节 warm socket 保存在独立、有界的 pre-auth idle 阶段，
+首字节会启动原有短认证截止时间。
+
+本文尚未记录 release-candidate 延迟数字。发布 v1.7.0 前必须保留精确生产构建在
+1、10、50、100、200 ms 下三种 transport 的 cold/warm 样本、startup-aware 与
+稳态命中率、idle-age/burst matrix、资源计数以及现有完整 release evaluator。
+unit/loopback integration test 只证明所有权与安全机制，不冒充 RTT 证据。tracing
+构建可归因阶段，但头条结果必须来自精确优化候选。
+
 ## v1.6.1 发布证据
 
 v1.6.1 头条保留 v1.6.0 与已发布的 v1.5.1 二进制对比测量，因为 v1.6.1

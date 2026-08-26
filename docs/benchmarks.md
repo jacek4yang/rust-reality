@@ -65,11 +65,57 @@ exact diagnostic instead of manufacturing a measurement.
 | `scripts/benchmark-fallback-ab.sh` | Clean fallback A/B against Xray: warn-level logging both sides, direct-to-listener. |
 | `scripts/benchmark-setup-rate.sh` | Balanced setup-rate A/B (accept → first Vision transition). `COVER_NETEM_RTT_MS` moves only the TLS cover behind a veth/netns and applies a recorded one-leg delay, retaining pool hit/miss summaries. `MEASURE_MODE=perf` attributes task-clock/instructions/context switches after warmup; `strace` records the bounded read/receive syscall set and gracefully stops the tracee so summaries cannot be silently empty. |
 | `scripts/benchmark-vision-direct.sh`, `scripts/benchmark-xray.sh` | Focused Vision-Direct and Xray comparisons. |
-| `scripts/benchmark-deployment.sh` | Deployment characterization: routing correctness proof, routing decision cost (incl. DNS strategies), NXR topologies (direct/NXR/SOCKS5/Xray), optional netem RTT sweep, and long-flow relay evidence. |
-| `scripts/soak-test.sh` | Loopback mixed-workload soak (tunnel traffic + connection churn) with `/proc`-based leak bounding; env: `DURATION_MIN`, `ROUND_SLEEP`, `RUST_REALITY_BIN`, `XRAY_BIN`, `OUT_DIR`. |
+| `scripts/benchmark-deployment.sh` | Deployment characterization: routing correctness proof, routing decision cost (incl. DNS strategies), NXR topologies (direct/NXR/SOCKS5/Xray), long-flow relay evidence, and a formal one-leg netem matrix. The RTT section retains production-build ABBA cold/warm samples for Handoff/NXR/SOCKS5 at 1/10/50/100/200 ms, c1/8/32/128/512, plus secret-free pool retirement summaries. |
+| `scripts/soak-test.sh` | Optional long-horizon loopback evidence with warm Handoff, NXR, and TCP-only SOCKS5, midpoint reload, per-process RSS, and aggregate PSS. It is scheduled/non-blocking; `REQUIRE_LONG_HORIZON_QUALIFIED=1` preserves a strict immutable-binary contract for a requested long investigation. |
+| `scripts/evaluate-release-canary.py` | Fail-closed evaluator for the approximately ten-minute exact-candidate dual-VPS active canary: deployment, real-WAN Handoff, stock Xray, integrity, churn, reload, LANDING restart/recovery, bounded pools, and recovering resource envelopes. |
 | `scripts/benchmark-real-path.sh` | Real-Internet A/B against Xray: crash and protocol-error gates on a real path; throughput is capped by the slowest link, so it does not discriminate bandwidth. |
 | `scripts/benchmark-vless-encryption.sh` | Xray v26.7.28 A/B for `encryption:none` versus VLESS Encryption inside the same REALITY + Vision stack; measures throughput, server CPU/GiB, and warmed setup. |
 | `scripts/test-xray-interop.sh` | Compatibility gate (below), not a benchmark. |
+
+## v1.7 LINE-to-LANDING evidence contract
+
+The v1.7 transport claim is accepted only from a formal deployment run with
+`REQUIRE_NETEM=1`. `DEPLOYMENT_PLAN=mechanism` is the focused foreground gate:
+it runs zero-loss concurrency-one 50/100/200 ms cells with six balanced samples
+per leg. `DEPLOYMENT_PLAN=robustness` runs the complete RTT/loss/concurrency
+Cartesian product as an asynchronous evidence campaign, while the default
+`DEPLOYMENT_PLAN=full` additionally retains routing, topology, throughput, and
+long-flow evidence. The focused mechanism program is the release claim gate;
+robustness cells are retained when the validation budget permits and every
+omission is reported as `SKIPPED`, never silently treated as a pass. The split
+prevents a multi-hour robustness campaign from blocking unrelated review and
+engineering work. All plans' warm and cold processes use the same release binary,
+peer, origin, client, shaped veth pair, and configuration identity; only the
+outbound `warmTcp` switch differs. Each protocol/mode cell retains balanced
+ABBA blocks, p50/p90/p95/p99, setup rate, exact environment and binary hashes,
+and raw failures. The profile inventory is fail-closed: all Handoff, NXR, and
+SOCKS5 cold/warm legs must exist for every RTT, loss, and concurrency.
+
+The formal run emits a fail-closed performance verdict. For each transport it
+uses the zero-loss concurrency-one 50/100/200 ms profiles, preserves complete
+ABBA blocks, and evaluates `median(cold p50) - median(warm p50)` against the
+measured shaped-link RTT. The median effect must be 0.65--1.35 RTT; at 100 and
+200 ms its deterministic block-bootstrap lower bound must exceed 0.5 RTT.
+This checks only the expected mechanism: the warm hit removes one TCP handshake
+from the user path. Loss and higher-concurrency cells are robustness evidence,
+not clean RTT-mechanism estimates, and do not delay the focused mechanism
+verdict.
+Pool logs supply startup-aware checkout, hit/miss, cold fallback, stale,
+ready/connecting/target, EWMA, growth, and shrink counters. Debug/instrumented
+runs may explain phases but cannot supply headline numbers. Idle-age, burst,
+combined prebuilt-cover plus warm-LANDING, protected-path, and soak evidence
+remain separate retained release artifacts; no missing artifact is inferred
+from this focused matrix.
+
+Release evidence has three tiers. Tier A is the mandatory focused mechanism
+gate above and is budgeted for approximately 10–20 minutes. Tier B is the
+mandatory approximately ten-minute dual-VPS active canary evaluated by
+`evaluate-release-canary.py`. Tier C is an optional hours-long or overnight
+soak. Tier C may find long-horizon retention defects, but it no longer blocks
+publication or the next development worktree. The Tier B memory gate compares
+baseline, burst peak, and post-recovery FD/thread/RSS envelopes; it does not
+extrapolate a precise MiB/hour slope from ten minutes or claim equivalence to
+long-duration evidence.
 
 ## Canonical v1.0.0 samples
 

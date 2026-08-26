@@ -94,7 +94,7 @@ jobs:
           --target x86_64-unknown-linux-gnu
 
   thread-sanitizer:
-    name: Replay, Handoff, and transport race sanitizer
+    name: Replay and warm-transport race sanitizer
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -113,6 +113,18 @@ jobs:
           cargo +nightly test -Zbuild-std --all-features --locked \
             --target x86_64-unknown-linux-gnu \
             server::handoff::tests -- --test-threads=1
+          cargo +nightly test -Zbuild-std --all-features --locked \
+            --target x86_64-unknown-linux-gnu \
+            server::nxr::tests -- --test-threads=1
+          cargo +nightly test -Zbuild-std --all-features --locked \
+            --target x86_64-unknown-linux-gnu \
+            server::outbound::tests -- --test-threads=1
+          cargo +nightly test -Zbuild-std --all-features --locked \
+            --target x86_64-unknown-linux-gnu \
+            server::pre_auth::tests -- --test-threads=1
+          cargo +nightly test -Zbuild-std --all-features --locked \
+            --target x86_64-unknown-linux-gnu \
+            server::warm_pool::tests -- --test-threads=1
           cargo +nightly test -Zbuild-std --all-features --locked \
             --target x86_64-unknown-linux-gnu \
             server::vision::tests -- --test-threads=1

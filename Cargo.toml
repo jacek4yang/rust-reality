@@ -95,6 +95,7 @@ fuzzing = []
 allocation-counter = "0.8.1"
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 ring = { version = "0.17.14", default-features = false }
+tokio = { version = "1.52.3", default-features = false, features = ["test-util"] }
 
 [[bench]]
 name = "vless_decode"

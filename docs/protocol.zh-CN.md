@@ -46,7 +46,8 @@
 
 - **direct**：有界连接，可选域名策略（在有界、快速失败的池中做 DNS 解析）和
   限制未认证拨号速率的 direct barrier。
-- **SOCKS5**：指向上游 SOCKS5 服务器的出站，可选用户名/密码认证。
+- **SOCKS5**：指向上游 SOCKS5 服务器的出站，可选用户名/密码认证。可选 warm
+  状态只有 TCP；method negotiation、认证与 CONNECT 仍逐流进行。
 - **blackhole**：有界丢弃，可选响应延迟。
 - **NXR**：把流量转发到落地机（见下）。
 - **Handoff**：把整个会话转移到落地机（见下）。
@@ -54,16 +55,21 @@
 ## NXR：内部线路机到落地机跳转
 
 NXR 是未认证 SOCKS 式线路机到落地机访问的内部替代品，不是公网协议。线路机
-上每条已认证的用户 TCP 流量创建一条到落地机的 NXR TCP 连接，并恰好发送一个
+上每条已认证的用户 TCP 流量独占一条到落地机的 NXR TCP 连接，并恰好发送一个
 有界请求：版本、目标、时间戳、随机 nonce，以及在独立 32 字节预共享密钥下的
 HMAC。落地机在任何 DNS 解析或目标连接之前检查结构、时间窗、HMAC 和有界
 nonce 重放缓存；失败即静默关闭。
 
 这一次性认证请求之后，NXR 永久切换为带 half-close 的裸双向字节流：没有
-TLS、REALITY、AEAD、证书、多路复用、连接池、持久 framing，也没有认证后的
+TLS、REALITY、AEAD、证书、多路复用、持久 framing，也没有认证后的
 加密。NXR listener 必须用防火墙限制为只允许线路机固定源 IP，并且整个跳转
 必须按明文对待：任何能观测该链路的人都能观测没有端到端保护（例如 HTTPS）
 的载荷。
+
+TCP 可以在用户流出现前建立，但仍未获协议权限。LANDING 在有界 pre-auth idle
+策略下等待首字节，然后对请求剩余部分应用原有短截止时间；idle 阶段没有重放
+状态、DNS 或目标副作用。checkout 的 socket 只使用一次，每次尝试都生成 fresh
+timestamp、nonce 与 HMAC；完整请求写入后绝不重试逻辑流。
 
 ## Handoff：内部会话转移跳转
 
@@ -82,6 +88,11 @@ TLS 密文。
 实现不停机轮换；窗口结束后应及时移除退役密钥。落地机不对
 转移的目标应用路由策略，且持有活跃会话密钥，因此其内存属于会话保密边界的
 一部分。Handoff listener 必须只允许线路机的地址访问。
+
+TCP 同样可以提前建立，且不改变 Handoff wire bytes 或权限。首个 transfer 字节
+结束有界零字节 idle 阶段并启动短 transfer 认证截止时间。每次 checkout 都密封
+fresh timestamp/nonce/临时密钥/AEAD state。只有完整 transfer 写入前才允许一次
+有界替代；越过该界后 LANDING 可能已经恢复会话或连接目标，迟到失败是最终失败。
 
 ## 一段话信任边界
 

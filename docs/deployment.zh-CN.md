@@ -267,6 +267,12 @@ rust-reality config generate landing \
 保持时钟同步。默认 NXR 请求接受 30 秒误差并保留 nonce 120 秒；认证失败会在
 DNS 和目标连接之前关闭。
 
+生成的落地配置还允许有界的零字节 pre-auth idle 区间，使 LINE 可以维持未获协议
+权限的 warm TCP。首个请求字节启动正常的短认证截止时间。应按所有允许的 LINE
+节点为 `maxPreAuthIdleConnections` 与主机 FD 上限定容；允许的源 IP 仍未认证。
+保持 `preAuthIdleTimeoutMs` 与 LINE warm idle/lifetime 策略一致，并在防火墙/NAT
+变化后观察 `transport_pool_summary` 的 hit、stale、fallback、ready 和 connecting。
+
 ## 线路机与 Handoff 落地机
 
 Handoff 把已接受会话的完整 TLS 所有权用一条密封且防重放的消息从线路机转移
@@ -315,6 +321,11 @@ UUID 和 REALITY 公钥打印到标准错误；Handoff PSK 和私钥只存在于
 
 保持时钟同步。默认转移接受 30 秒误差并预留 nonce 120 秒。任何转移失败都静默
 关闭、零响应字节，且线路机会重置客户端连接而不是在本地服务该会话。
+
+Handoff listener 使用与 NXR 相同的有界零字节 pre-auth idle 阶段。首字节之前不
+分配 continuation buffer，也不做 replay、X25519、HKDF、AEAD、DNS 或目标工作；
+该字节会立即启动短认证截止时间。资源压力与 reload 会在影响活跃会话前关闭未用
+idle socket；已 checkout 的会话由所属 generation 持有直至关闭。
 
 默认情况下落地机直接连接每个被转移的目标。当落地机本身没有直连路由——目标
 只能经由上游 SOCKS5 代理或再一跳 NXR 到达——在 Handoff 入站上把
@@ -425,6 +436,42 @@ sudo systemctl restart rust-reality
 ```
 
 回滚时恢复旧二进制及其兼容配置后重启。不要降级二进制却保留旧版本不认识的新字段。
+
+### 日常节点的版本化部署
+
+永久生产化节点必须把可替换软件与持久身份分开。`scripts/deploy-release-vps.sh`
+采用以下规范布局：
+
+```text
+/opt/rust-reality/releases/RELEASE/rust-reality
+/opt/rust-reality/current -> releases/CURRENT
+/opt/rust-reality/previous -> releases/PREVIOUS
+
+/etc/rust-reality/releases/RELEASE/config.json
+/etc/rust-reality/current -> releases/CURRENT
+/etc/rust-reality/previous -> releases/PREVIOUS
+```
+
+配置代际由 root 管理，仅服务组可读；除非运维显式轮换，否则各代保持同一
+REALITY/VLESS 持久身份。首次迁移先把正在运行的二进制和配置复制成最小已知良好
+回滚包，然后 systemd 才改用 `current`。canary 成功后只保留 CURRENT 与 PREVIOUS，
+删除的只能是更旧的可替换软件代际，绝不能随旧二进制裁剪部署身份。
+
+部署脚本对每个远端修改都要求 `MUTATE_REMOTE=1`。`stage` 在不切换 live 节点时
+验证版本、SHA-256、`check` 与 `self-test`；`cutover` 先准备 PREVIOUS，并在进程、
+可执行文件身份或 443 健康检查失败时自动恢复它。后续 stock-Xray、字节完整性或
+主动 canary 失败时立即执行 `rollback`。脚本不编辑 SSH、防火墙或监听端口。
+
+日常边缘机的 22 是永久管理基础设施，443 是唯一公网 rust-reality 监听；origin、
+指标与 benchmark helper 只能在 loopback、Unix socket 或隔离 namespace。正常
+release 执行[发布流程](release-process.zh-CN.md)中的短时高密度 canary 后继续运行；
+长期 soak 是计划任务/非阻塞证据，不再是发布等待。
+
+**rust-reality release 是可替换的软件代际；VPS 的 REALITY/VLESS 身份是持久部署
+状态。正常升级必须保持已有客户端可见身份和 443 endpoint，使现有配置继续有效。**
+
+**live VPS 通常只保留两个已验证软件代际：CURRENT 与 PREVIOUS。失败候选自动回到
+PREVIOUS。rust-reality 部署自动化永不修改 22 端口。**
 
 ## 故障排查清单
 

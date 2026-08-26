@@ -295,6 +295,15 @@ Keep clocks synchronized. The default NXR request accepts 30 seconds of skew
 and retains nonces for 120 seconds. Authentication failure closes before DNS or
 destination connect.
 
+The generated landing also permits a bounded zero-byte pre-auth idle interval
+so LINE can keep protocol-unprivileged TCP sockets warm. The first request byte
+starts the normal short authentication deadline. Size
+`maxPreAuthIdleConnections` and the host FD limit for all permitted LINE nodes;
+an allowed source IP is still unauthenticated. Keep
+`preAuthIdleTimeoutMs` consistent with the LINE warm idle/lifetime policy and
+watch `transport_pool_summary` hit, stale, fallback, ready, and connecting
+counters after firewall/NAT changes.
+
 ## Line node and Handoff landing node
 
 Handoff transfers an accepted session's full TLS ownership from the line node
@@ -354,6 +363,13 @@ Keep clocks synchronized. The default transfer accepts 30 seconds of skew and
 reserves nonces for 120 seconds. Every transfer failure closes silently with
 zero response bytes, and the line node resets the client socket rather than
 serving the session locally.
+
+The Handoff listener uses the same bounded zero-byte pre-auth idle phase as
+NXR. It allocates no continuation buffer and performs no replay, X25519, HKDF,
+AEAD, DNS, or destination work before the first byte. That byte immediately
+starts the short authentication deadline. Resource pressure and reload close
+unused idle sockets before affecting active sessions; checked-out sessions
+remain generation-owned until close.
 
 By default the landing node dials every transferred destination directly. When
 the landing itself has no direct route — its destinations are reachable only
@@ -488,6 +504,53 @@ sudo systemctl restart rust-reality
 Rollback by restoring the previous binary and its compatible configuration,
 then restarting. Do not downgrade while retaining configuration fields unknown
 to the older version.
+
+### Versioned daily-node deployment
+
+A permanent production-like node should separate replaceable software from
+persistent identity. The canonical layout used by
+`scripts/deploy-release-vps.sh` is:
+
+```text
+/opt/rust-reality/releases/RELEASE/rust-reality
+/opt/rust-reality/current -> releases/CURRENT
+/opt/rust-reality/previous -> releases/PREVIOUS
+
+/etc/rust-reality/releases/RELEASE/config.json
+/etc/rust-reality/current -> releases/CURRENT
+/etc/rust-reality/previous -> releases/PREVIOUS
+```
+
+The configuration generations are root-owned and service-group-readable. They
+carry the same persistent REALITY/VLESS identity unless rotation is an explicit
+operator action. The first migration copies the running binary and its config
+into a minimal known-good rollback bundle before the systemd unit begins using
+`current`. After a successful canary, keep CURRENT and PREVIOUS and delete only
+older replaceable release generations. Never prune identity merely because an
+old binary is pruned.
+
+The deployment driver requires `MUTATE_REMOTE=1` for every mutation. `stage`
+validates version, SHA-256, `check`, and `self-test` without switching the live
+node. `cutover` prepares PREVIOUS and restores it automatically if the process,
+executable identity, or port-443 health check fails. If stock-Xray, byte
+integrity, or the active canary subsequently fails, run `rollback` immediately.
+The script does not edit SSH, firewall rules, or listener ports.
+
+For a daily-use edge host, port 22 is permanent administrative infrastructure
+and port 443 is the only public rust-reality listener. Auxiliary origins,
+metrics, and benchmark helpers stay on loopback, Unix sockets, or isolated
+namespaces. A normal release runs the short high-density canary described in
+[the release program](release-process.md), then remains deployed. Longer soak
+testing is scheduled/non-blocking evidence rather than a publication wait.
+
+**rust-reality releases are replaceable software generations; the VPS
+REALITY/VLESS identity is persistent deployment state. Normal upgrades must
+preserve the existing client-visible identity and port 443 endpoint so already
+configured clients continue working.**
+
+**The live VPS normally retains exactly two validated software generations:
+CURRENT and PREVIOUS. A failed candidate automatically returns to PREVIOUS.
+Port 22 is never modified by rust-reality deployment automation.**
 
 ## Troubleshooting checklist
 

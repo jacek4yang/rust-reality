@@ -28,6 +28,9 @@
 - 可选 Handoff 拓扑：线路机可以通过一条已认证的密封信道，把已接受会话的
   TLS 属主转移给防火墙限制的落地机，把逐字节 TLS CPU 卸给落地机（loopback
   实测：线路机下载 CPU/GiB −82%）。
+- 自适应、单次使用的 warm TCP pool 为 Handoff、NXR 与 SOCKS5 预付固定对端
+  建连成本。有效命中时，LINE→LANDING/上游 TCP 握手不再位于逐流关键路径；
+  每种协议仍逐会话正常认证，miss 会立即冷连接。
 - framed 记录打包、稳态每条记录零分配、每条数据路径零可避免的用户态拷贝。
 - 默认使用 ring（源自 BoringSSL）的 AES-128-GCM 记录 AEAD；纯 Rust 的
   RustCrypto 回退构建只差一个参数，并持续测试。

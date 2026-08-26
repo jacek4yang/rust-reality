@@ -96,6 +96,7 @@ struct FdBudgetInner {
     low_watermark: u64,
     under_pressure: AtomicBool,
     released: Notify,
+    pressure_changed: Notify,
     waiters: AtomicU64,
     peak_used: AtomicU64,
     denials: AtomicU64,
@@ -138,6 +139,7 @@ impl FdBudget {
                 low_watermark,
                 under_pressure: AtomicBool::new(false),
                 released: Notify::new(),
+                pressure_changed: Notify::new(),
                 waiters: AtomicU64::new(0),
                 peak_used: AtomicU64::new(0),
                 denials: AtomicU64::new(0),
@@ -197,6 +199,20 @@ impl FdBudget {
             FdPressure::High
         } else {
             FdPressure::Normal
+        }
+    }
+
+    /// Waits for the descriptor-pressure state to differ from `observed`.
+    pub(crate) async fn wait_for_pressure_change(&self, observed: FdPressure) -> FdPressure {
+        loop {
+            let notified = self.inner.pressure_changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            let current = self.pressure();
+            if current != observed {
+                return current;
+            }
+            notified.await;
         }
     }
 
@@ -282,6 +298,7 @@ impl FdBudget {
             self.inner
                 .pressure_transitions
                 .fetch_add(1, Ordering::Relaxed);
+            self.inner.pressure_changed.notify_waiters();
         }
     }
 
@@ -313,6 +330,7 @@ impl FdBudget {
             self.inner
                 .pressure_transitions
                 .fetch_add(1, Ordering::Relaxed);
+            self.inner.pressure_changed.notify_waiters();
         }
         // Every release reaches here, but almost none of them have a listener:
         // skip the Notify (and its global wait-list lock) unless a waiter is

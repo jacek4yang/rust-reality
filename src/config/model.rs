@@ -855,7 +855,12 @@ pub struct NxrInboundSettings {
     /// Monotonic replay retention in seconds.
     #[serde(default = "default_nxr_nonce_retention_seconds")]
     pub nonce_retention_seconds: u64,
-    /// Absolute deadline for reading the one authentication request.
+    /// Maximum time an accepted socket may remain completely silent before
+    /// beginning the authenticated request.
+    #[serde(default = "default_nxr_pre_auth_idle_timeout_ms")]
+    pub pre_auth_idle_timeout_ms: u64,
+    /// Absolute deadline for reading the one authentication request after its
+    /// first byte arrives.
     #[serde(default = "default_nxr_authentication_timeout_ms")]
     pub authentication_timeout_ms: u64,
     /// Absolute deadline for connecting to the authenticated destination.
@@ -873,6 +878,10 @@ const fn default_nxr_nonce_entries() -> u32 {
 
 const fn default_nxr_nonce_retention_seconds() -> u64 {
     120
+}
+
+const fn default_nxr_pre_auth_idle_timeout_ms() -> u64 {
+    60_000
 }
 
 const fn default_nxr_authentication_timeout_ms() -> u64 {
@@ -919,7 +928,12 @@ pub struct HandoffInboundSettings {
     /// Monotonic replay retention in seconds.
     #[serde(default = "default_handoff_nonce_retention_seconds")]
     pub nonce_retention_seconds: u64,
-    /// Absolute deadline for reading the one sealed transfer message.
+    /// Maximum time an accepted socket may remain completely silent before
+    /// beginning the sealed transfer.
+    #[serde(default = "default_handoff_pre_auth_idle_timeout_ms")]
+    pub pre_auth_idle_timeout_ms: u64,
+    /// Absolute deadline for reading the one sealed transfer message after its
+    /// first byte arrives.
     #[serde(default = "default_handoff_authentication_timeout_ms")]
     pub authentication_timeout_ms: u64,
     /// Absolute deadline for connecting to the transferred destination.
@@ -958,6 +972,10 @@ const fn default_handoff_nonce_entries() -> u32 {
 
 const fn default_handoff_nonce_retention_seconds() -> u64 {
     120
+}
+
+const fn default_handoff_pre_auth_idle_timeout_ms() -> u64 {
+    60_000
 }
 
 const fn default_handoff_authentication_timeout_ms() -> u64 {
@@ -1164,6 +1182,10 @@ pub struct Socks5Settings {
     /// Optional password.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<SecretString>,
+    /// Pre-establish TCP connections to this server. SOCKS negotiation and
+    /// authentication always remain session-owned and occur after checkout.
+    #[serde(default = "default_true")]
+    pub warm_tcp: bool,
 }
 
 /// NXR landing-node outbound configuration.
@@ -1176,6 +1198,9 @@ pub struct NxrSettings {
     pub port: u16,
     /// URL-safe unpadded base64 encoding of an independent 32-byte PSK.
     pub pre_shared_key: SecretString,
+    /// Pre-establish protocol-unprivileged TCP connections to this landing.
+    #[serde(default = "default_true")]
+    pub warm_tcp: bool,
 }
 
 /// Handoff landing-node outbound configuration.
@@ -1207,6 +1232,9 @@ pub struct HandoffSettings {
     /// node is slow or congested.
     #[serde(default = "default_handoff_first_byte_timeout_ms")]
     pub first_byte_timeout_ms: u64,
+    /// Pre-establish protocol-unprivileged TCP connections to this landing.
+    #[serde(default = "default_true")]
+    pub warm_tcp: bool,
 }
 
 /// User-group routing with a small global prelude.
@@ -1336,6 +1364,10 @@ pub struct ResourceGovernorConfig {
     pub max_connections: u32,
     /// Concurrent pre-authentication handshakes.
     pub max_handshakes: u32,
+    /// Accepted Handoff/NXR sockets that have sent no protocol bytes. These
+    /// speculative idle sockets are reclaimed before active authentication.
+    #[serde(default = "default_max_pre_auth_idle_connections")]
+    pub max_pre_auth_idle_connections: u32,
     /// Concurrent cover fallbacks.
     pub max_fallbacks: u32,
     /// Concurrent expensive cryptographic operations.
@@ -1364,6 +1396,7 @@ impl Default for ResourceGovernorConfig {
         Self {
             max_connections: 16_384,
             max_handshakes: 1_024,
+            max_pre_auth_idle_connections: default_max_pre_auth_idle_connections(),
             max_fallbacks: 512,
             max_crypto_operations: 128,
             max_replay_entries: 65_536,
@@ -1383,6 +1416,10 @@ const fn default_replay_retention_ms() -> u64 {
 
 const fn default_max_dns_lookups() -> u32 {
     64
+}
+
+const fn default_max_pre_auth_idle_connections() -> u32 {
+    1_024
 }
 
 /// Direct outbound admission isolation.

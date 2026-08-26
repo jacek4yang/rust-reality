@@ -62,6 +62,23 @@ and outer record plan follow controlled cover evidence, while random and secret
 fields must vary. Active unauthenticated probes and captured replays continue
 to receive only real-cover behavior.
 
+Fixed-peer transport warming preserves the Handoff, NXR, and SOCKS5 protocol
+boundaries. A checked-out socket is single-use; it is never returned to READY
+and carries no authenticated user, key agreement, replay reservation,
+destination, or SOCKS authorization. Firewall source restriction remains an
+additional deployment boundary for Handoff and NXR, never a replacement for
+fresh per-flow authentication.
+
+**A warm TCP connection is only prepaid transport state. Before the first
+protocol byte it is unauthenticated, bounded, idle state; after the first
+protocol byte it enters the existing short authentication deadline. No
+Handoff or NXR authority, replay state, destination side effect, or session
+ownership is granted merely because the TCP connection was established in
+advance.** LANDING admits that idle state under its own finite ceiling and
+reclaims it on pressure or generation replacement. The first byte immediately
+starts the short deadline, so a slowloris cannot inherit the long warm-idle
+lifetime.
+
 Configuration, routing assets, users, REALITY state, and outbounds are published
 as one immutable generation. A failed refresh keeps the last complete snapshot.
 Private keys, UUIDs, NXR PSKs, Handoff PSKs and static keys, credentials, and
@@ -77,14 +94,14 @@ and its revisit gates are recorded in
 ## NXR boundary
 
 NXR is an internal replacement for unauthenticated SOCKS-style line-to-landing
-access, not for the public protocol. Each user TCP flow creates one NXR TCP
+access, not for the public protocol. Each user TCP flow owns one NXR TCP
 connection and sends exactly one bounded request containing a version, target,
 timestamp, random nonce, and HMAC under an independent 32-byte PSK.
 
 The landing node checks structure, time, HMAC, and a bounded nonce replay cache
 before DNS resolution or a destination connection. Failure is a silent close.
 Success switches permanently to raw bidirectional bytes with half-close. There
-is no TLS, REALITY, AEAD, certificate, multiplexing, pool, persistent framing,
+is no TLS, REALITY, AEAD, certificate, multiplexing, persistent framing,
 or post-authentication encryption in NXR. Its listener should be reachable only
 from the line node's source IP at the firewall.
 
@@ -130,6 +147,13 @@ policy to the transferred destination — trust in the line node is absolute, so
 a compromised line node turns the landing node into an internal dialer; and the
 landing node holds live session keys for every transferred session, so its
 memory is part of the session's secrecy boundary.
+
+Handoff and NXR retries stop at the complete authenticated write. Before that
+boundary at most one alternate transport is permitted and it uses a fresh
+timestamp, nonce, Handoff ephemeral key/AEAD transfer, or NXR HMAC request.
+After a complete write, LANDING may already have reserved replay state,
+resolved or connected a destination, or resumed a session, so the logical flow
+is never repeated because of a late close or response failure.
 
 ## Resource and kernel boundaries
 

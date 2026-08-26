@@ -281,6 +281,13 @@ files, DNS sockets, and the relay pipe pool, plus the fixed reserve
 `standard`, limit/10 in `dedicated`) that the server subtracts before
 admitting any work.
 
+Enabled cover/Handoff/NXR/SOCKS5 warm pools add up to `maxReady` speculative
+FDs per fixed endpoint and `maxConnecting` transient dials, all inside the
+same measured budget and process authority. LANDING also holds accepted
+zero-byte Handoff/NXR sockets under `maxPreAuthIdleConnections`. These are
+latency reserves, not sessions: pressure drains them first. Account for the
+number of configured endpoints rather than multiplying only by live users.
+
 Practical rules:
 
 - **Trust `descriptor_budget_report`, not ulimit arithmetic.** The server
@@ -402,7 +409,8 @@ Defaults (VERIFIED):
 | `handshakeTimeoutMs` | 10000 | Whole authentication handshake |
 | `connectTimeoutMs` | 10000 | Outbound connect to the destination/next hop |
 | `fallbackTimeoutMs` | 120000 | A fallback (cover) connection's lifetime |
-| NXR `authenticationTimeoutMs` | 3000 | NXR node authentication |
+| Handoff/NXR `preAuthIdleTimeoutMs` | 60000 | Zero protocol bytes on a warm LANDING socket |
+| Handoff/NXR `authenticationTimeoutMs` | 3000 | Authentication after the first protocol byte |
 | NXR `connectTimeoutMs` | 10000 | Landing's connect to the destination |
 | `dns.timeoutMs` | 5000 | One DNS resolution |
 
@@ -412,6 +420,10 @@ Defaults (VERIFIED):
   then raise the specific timeout, modestly.
 - **Lowering** a timeout does not make anything faster; it only kills
   slow-but-legitimate clients sooner.
+- Keep `preAuthIdleTimeoutMs` longer than the LINE pool's effective ready
+  lifetime plus authentication headroom. Do not widen
+  `authenticationTimeoutMs` to create warm capacity: byte one deliberately
+  switches to that short deadline.
 - **Raising** a timeout when the real problem is loss or an overloaded
   upstream only hides the problem: stalled peers hold their slots longer,
   so admission limits fill *faster*. If you raised a timeout and

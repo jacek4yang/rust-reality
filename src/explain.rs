@@ -326,7 +326,7 @@ mod tests {
         assert_eq!(json["bootstrap"]["maxBlockingThreads"], 64);
         assert_eq!(json["bootstrap"]["sizing"], "dedicated");
         let fields = json["fields"].as_array().expect("fields must be a list");
-        assert_eq!(fields.len(), 20, "every policy field is explained");
+        assert_eq!(fields.len(), 21, "every policy field is explained");
         let connections = fields
             .iter()
             .find(|field| field["field"] == "resourceGovernor.maxConnections")

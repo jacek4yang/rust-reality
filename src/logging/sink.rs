@@ -24,6 +24,8 @@ pub enum AdmissionResource {
     Connections,
     /// Concurrent unauthenticated handshakes.
     Handshakes,
+    /// Accepted Handoff/NXR sockets that have sent no protocol bytes.
+    PreAuthIdleConnections,
     /// Concurrent cover fallbacks.
     Fallbacks,
     /// Concurrent expensive cryptographic operations.
@@ -174,6 +176,34 @@ pub enum LogEvent {
         pool_growth: u64,
         /// Adaptive downward target transitions.
         pool_shrink: u64,
+        /// Demand-rate EWMA observed by the adaptive controller.
+        arrival_rate_ewma: String,
+        /// TCP establishment-latency EWMA in milliseconds.
+        connect_latency_ewma_ms: String,
+        /// Recent bounded burst demand retained by the controller.
+        recent_burst: String,
+    },
+    /// One endpoint-secret-free downstream warm-pool summary at generation retirement.
+    TransportPoolSummary {
+        /// Closed transport class: `handoff`, `nxr`, or `socks5`.
+        transport: &'static str,
+        generation: u64,
+        pool_ready: u32,
+        pool_connecting: u32,
+        pool_in_use: u64,
+        pool_checkout_total: u64,
+        pool_checkout_hit: u64,
+        pool_checkout_miss: u64,
+        pool_cold_fallback: u64,
+        pool_connect_failure: u64,
+        pool_stale_discard: u64,
+        pool_refill: u64,
+        pool_target_ready: u32,
+        pool_growth: u64,
+        pool_shrink: u64,
+        arrival_rate_ewma: String,
+        connect_latency_ewma_ms: String,
+        recent_burst: String,
     },
     /// One bounded cover-profile summary emitted when its generation retires.
     CoverProfileSummary {
@@ -476,6 +506,7 @@ impl LogEvent {
             | Self::RuntimePlanReport { .. }
             | Self::MachineReport { .. }
             | Self::CoverPoolSummary { .. }
+            | Self::TransportPoolSummary { .. }
             | Self::CoverProfileSummary { .. } => LogLevel::Info,
             Self::ConnectionAccepted { .. }
             | Self::ConnectionClosed { .. }

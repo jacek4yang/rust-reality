@@ -17,6 +17,8 @@ use crate::runtime::pressure::{PressureGauge, ResourcePressure};
 pub enum AdmissionKind {
     /// Accepted client sockets.
     Connection,
+    /// Accepted Handoff/NXR sockets that have not sent a protocol byte.
+    PreAuthIdle,
     /// Incomplete authenticated handshakes.
     Handshake,
     /// Cover-target fallback sessions.
@@ -83,6 +85,7 @@ impl AdmissionPermit {
 
 struct GovernorInner {
     connections: CeilingSemaphore,
+    pre_auth_idle: CeilingSemaphore,
     handshakes: CeilingSemaphore,
     fallbacks: CeilingSemaphore,
     dns_lookups: CeilingSemaphore,
@@ -120,6 +123,7 @@ impl ResourceGovernor {
         Self {
             inner: Arc::new(GovernorInner {
                 connections: CeilingSemaphore::new(config.max_connections),
+                pre_auth_idle: CeilingSemaphore::new(config.max_pre_auth_idle_connections),
                 handshakes: CeilingSemaphore::new(config.max_handshakes),
                 fallbacks: CeilingSemaphore::new(config.max_fallbacks),
                 dns_lookups: CeilingSemaphore::new(config.max_dns_lookups),
@@ -181,6 +185,7 @@ impl ResourceGovernor {
     fn pool(&self, kind: AdmissionKind) -> &CeilingSemaphore {
         match kind {
             AdmissionKind::Connection => &self.inner.connections,
+            AdmissionKind::PreAuthIdle => &self.inner.pre_auth_idle,
             AdmissionKind::Handshake => &self.inner.handshakes,
             AdmissionKind::Fallback => &self.inner.fallbacks,
             AdmissionKind::CryptoOperation => &self.inner.crypto_operations,

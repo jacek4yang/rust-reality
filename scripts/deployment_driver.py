@@ -649,6 +649,7 @@ def cmd_setup_rate(args):
                 "failed": len(latencies) - len(good),
                 "connectionsPerSecond": len(good) / wall,
                 "p50Seconds": percentile(good, 0.50),
+                "p90Seconds": percentile(good, 0.90),
                 "p95Seconds": percentile(good, 0.95),
                 "p99Seconds": percentile(good, 0.99),
             })
@@ -660,7 +661,8 @@ def cmd_setup_rate(args):
         if cells:
             print(f"{args.label} c{conc}: " + "; ".join(
                 f"{x['connectionsPerSecond']:.0f} conn/s "
-                f"(p50 {x['p50Seconds'] * 1000:.1f}ms, p99 {x['p99Seconds'] * 1000:.1f}ms, "
+                f"(p50 {x['p50Seconds'] * 1000:.1f}ms, p90 {x['p90Seconds'] * 1000:.1f}ms, "
+                f"p99 {x['p99Seconds'] * 1000:.1f}ms, "
                 f"fail {x['failed']})" for x in cells))
         else:
             print(f"{args.label} c{conc}: ALL CONNECTIONS FAILED")
@@ -900,6 +902,8 @@ def cmd_summarize(args):
                     [r["connectionsPerSecond"] for r in good]),
                 "medianP50Ms": median_or_none(
                     [r["p50Seconds"] * 1000 for r in good]),
+                "medianP90Ms": median_or_none(
+                    [r["p90Seconds"] * 1000 for r in good]),
                 "medianP95Ms": median_or_none(
                     [r["p95Seconds"] * 1000 for r in good]),
                 "medianP99Ms": median_or_none(
@@ -951,9 +955,18 @@ def cmd_summarize(args):
             with open(path) as fh:
                 report = json.load(fh)
             summary[key] = report
-            verdicts[key] = report.get("verdict")
+            if key == "netemProfiles":
+                verdicts[key] = report.get("dataQualityVerdict")
+                summary["performanceVerdict"] = report.get(
+                    "performanceVerdict", "INVALID"
+                )
+            else:
+                verdicts[key] = report.get("verdict")
     if args.formal_plan:
         concurrencies = [int(value) for value in args.concurrencies.split()]
+        rtt_concurrencies = [
+            int(value) for value in args.rtt_concurrencies.split()
+        ]
         rtts = [int(value) for value in args.rtts.split()]
         loss_tokens = args.losses.split()
         losses = [float(value) for value in loss_tokens]
@@ -966,6 +979,9 @@ def cmd_summarize(args):
             "samples": args.samples,
             "connectionsPerSample": args.connections,
             "concurrencies": concurrencies,
+            "rttSamplesPerConcurrency": args.rtt_samples,
+            "rttConnectionsPerSample": args.rtt_connections,
+            "rttConcurrencies": rtt_concurrencies,
             "throughputSamples": args.throughput_samples,
             "throughputCells": [
                 {"payloadMiB": mib, "concurrency": concurrency}
@@ -982,29 +998,43 @@ def cmd_summarize(args):
                 verdicts[required_verdict] = "MISSING"
                 data_quality_failures.append(f"missing:{required_verdict}")
 
-        expected_setup = {
+        expected_base_setup = {
             "cost-simple", "cost-medium", "cost-complex",
             "cost-complex-ipifnonmatch", "cost-complex-ipondemand",
             "topo-a", "topo-b", "topo-c", "topo-d",
         }
-        expected_setup.update(
-            f"rtt{rtt}-loss{loss.replace('.', 'p')}-{leg}"
-            for rtt in rtts for loss in loss_tokens for leg in ("nxr", "socks")
+        rtt_legs = (
+            "handoff-warm", "handoff-cold", "nxr-warm", "nxr-cold",
+            "socks-warm", "socks-cold",
         )
+        expected_rtt_setup = {
+            f"rtt{rtt}-loss{loss.replace('.', 'p')}-{leg}"
+            for rtt in rtts for loss in loss_tokens for leg in rtt_legs
+        }
+        expected_setup = expected_base_setup | expected_rtt_setup
         if set(setup) != expected_setup:
             data_quality_failures.append("formal:setup-label-set")
-        expected_concurrency_keys = {f"c{value}" for value in concurrencies}
-        expected_connections_per_label = (
-            len(concurrencies) * args.samples * args.connections
-        )
         for label in expected_setup & set(setup):
             entry = setup[label]
+            if label in expected_rtt_setup:
+                expected_concurrency_keys = {
+                    f"c{value}" for value in rtt_concurrencies
+                }
+                expected_samples = args.rtt_samples
+                expected_connections = args.rtt_connections
+            else:
+                expected_concurrency_keys = {f"c{value}" for value in concurrencies}
+                expected_samples = args.samples
+                expected_connections = args.connections
+            expected_connections_per_label = (
+                len(expected_concurrency_keys) * expected_samples * expected_connections
+            )
             if set(entry["byConcurrency"]) != expected_concurrency_keys:
                 data_quality_failures.append(f"formal:setup-concurrencies:{label}")
             if entry.get("totalConnections") != expected_connections_per_label:
                 data_quality_failures.append(f"formal:setup-connections:{label}")
             for concurrency in expected_concurrency_keys & set(entry["byConcurrency"]):
-                if entry["byConcurrency"][concurrency].get("samples") != args.samples:
+                if entry["byConcurrency"][concurrency].get("samples") != expected_samples:
                     data_quality_failures.append(
                         f"formal:setup-samples:{label}:{concurrency}"
                     )
@@ -1046,19 +1076,20 @@ def cmd_summarize(args):
         netem = summary.get("netemProfiles", {})
         expected_profiles = len(rtts) * len(losses)
         expected_raw = (
-            expected_profiles * 2 * len(concurrencies) * args.samples
+            expected_profiles * len(rtt_legs) * len(rtt_concurrencies)
+            * args.rtt_samples
         )
         expected_dimensions = netem.get("expectedDimensions", {})
         if not (
-            netem.get("verdict") == "PASS"
-            and netem.get("dataQualityVerdict") == "PASS"
+            netem.get("dataQualityVerdict") == "PASS"
             and netem.get("expectedProfileCount") == expected_profiles
             and netem.get("actualProfileCount") == expected_profiles
             and netem.get("expectedRawRecordCount") == expected_raw
             and netem.get("actualRawRecordCount") == expected_raw
-            and expected_dimensions.get("connectionsPerSample") == args.connections
-            and expected_dimensions.get("samplesPerConcurrency") == args.samples
-            and expected_dimensions.get("concurrencies") == concurrencies
+            and expected_dimensions.get("legs") == list(rtt_legs)
+            and expected_dimensions.get("connectionsPerSample") == args.rtt_connections
+            and expected_dimensions.get("samplesPerConcurrency") == args.rtt_samples
+            and expected_dimensions.get("concurrencies") == rtt_concurrencies
         ):
             data_quality_failures.append("formal:netem-cardinality")
 
@@ -1089,11 +1120,14 @@ def cmd_summarize(args):
     gate_passed = (
         summary["correctnessVerdict"] == "PASS"
         and summary["dataQualityVerdict"] == "PASS"
+        and (not args.formal_plan or summary["performanceVerdict"] == "PASS")
     )
     summary["gateVerdict"] = "PASS" if gate_passed else "FAIL"
-    # `overallVerdict` deliberately cannot say PASS: this harness collects
-    # performance measurements but does not make the cross-run CI decision.
-    summary["overallVerdict"] = "NOT_EVALUATED" if gate_passed else "FAIL"
+    summary["overallVerdict"] = (
+        "PASS" if gate_passed and args.formal_plan else
+        "NOT_EVALUATED" if gate_passed else
+        "FAIL"
+    )
     summary["failedSections"] = sorted(set(failed + data_quality_failures))
     with open(os.path.join(out_dir, "summary.json"), "w") as fh:
         json.dump(summary, fh, indent=2)
@@ -1181,6 +1215,9 @@ def main():
     p.add_argument("--samples", type=int)
     p.add_argument("--connections", type=int)
     p.add_argument("--concurrencies")
+    p.add_argument("--rtt-samples", type=int)
+    p.add_argument("--rtt-connections", type=int)
+    p.add_argument("--rtt-concurrencies")
     p.add_argument("--throughput-samples", type=int)
     p.add_argument("--throughput-cells")
     p.add_argument("--longflow-mib", type=int)
