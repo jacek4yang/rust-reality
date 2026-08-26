@@ -5,7 +5,7 @@ Verify every mutable fact below before relying on it.
 ## Repository
 
 ```text
-main                774ea33   (verify: git log --oneline -1 origin/main)
+main                0829ffc   (verify: git log --oneline -1 origin/main)
 latest release      v1.8.0    (tag on 6618e9d)
 open PRs            none at time of writing
 ```
@@ -13,7 +13,8 @@ open PRs            none at time of writing
 Merged v1.8 series: #100 Session Engine extraction, #101 irreversible write
 boundary by type, #102 semantic event-sequence fuzzing, #103 Tokio adapter
 boundary, #104 transport capability policy, #105 memory audit, #106 release
-v1.8.0, #107 supplemental evidence + throughput investigation.
+v1.8.0, #107 supplemental evidence + throughput investigation, #108 relay-buffer
+hypothesis rejected on mechanism, #109 partial derived-policy overrides.
 
 ## Deployment
 
@@ -90,19 +91,40 @@ Next action is reproduction from the original client and link, capturing server
 CPU, TCP retransmissions, chosen backend, and Vision mode simultaneously. Local
 tuning should not continue until then.
 
-## Real finding that is independently actionable
+## Corrected diagnosis of the configuration defect — FIXED in #109
 
-The live node reports `tuning_mode: fixed`, `policy_derived: false`. The daily
-configuration pins a block of numeric limits that happen to equal the built-in
-defaults, and pinning them silently selects fixed mode, disabling all
-machine-aware derivation. On the same binary, a `dedicated` +
-`adaptive`/`throughput` policy derives materially different values — 2x relay
-buffer, 3.8x splice relays, 7.5x pooled buffers/pipes/relay memory — while
-deriving `maxHandshakes` and `maxPreAuthIdleConnections` *lower*.
+An earlier note said "pinning a block of defaults silently disables derivation".
+**That was wrong.** Derivation is disabled by `runtime.tuning.mode: fixed` alone.
+The live node's `advanced.limits` block is *inert* because every value in it equals
+the built-in default — which is exactly why `runtime explain` reported every field
+as `default` rather than `operator`.
 
-This is a genuine configuration-usability defect and justifies the
-single-node-first work on its own merits. It is **not** established as the cause of
-the download figure and must not be released as if it were.
+The real defects, both reproduced and both now fixed by #109:
+
+- **Defect A (loud).** `RelayPolicy::buffer_bytes`, `max_pooled_buffers` and
+  `splice` have no serde default, so they are mandatory once the `relay` object
+  exists. Overriding one number failed with `missing required field
+  maxPooledBuffers`, forcing the operator to restate unrelated siblings.
+- **Defect B (silent, worse).** Override-ness was inferred by comparing a value to
+  the built-in default, never by whether the field was written. So a field
+  deliberately set to a value equal to the default was indistinguishable from an
+  absent field and was silently replaced by derivation. A full relay block written
+  entirely with default values resolved to `bufferBytes` 65536,
+  `maxPooledBuffers` 30929, `maxSpliceRelays` 964 — every explicit number
+  discarded with no warning.
+
+#109 adds `advanced.overrides`, which is presence-based: a field present there is
+operator-pinned whatever its value, siblings keep deriving, and existing 1.x
+configurations resolve byte-identically because the legacy value-inequality path is
+retained after it. Mutation-checked.
+
+The policy-difference measurement itself stands: on the same binary, `dedicated` +
+`adaptive`/`throughput` derives 2x relay buffer, 3.8x splice relays, 7.5x pooled
+buffers/pipes/relay memory, while deriving `maxHandshakes` and
+`maxPreAuthIdleConnections` *lower*. Derivation is sizing, not inflation.
+
+None of this is established as the cause of the download figure, and it must not be
+released as if it were.
 
 Note the distinction that matters for any claim:
 `runtime.tuning.mode = adaptive` adjusts soft admission and direct-dial ceilings at
@@ -111,18 +133,24 @@ adaptive controller. Do not attribute startup-derivation effects to `adaptive`.
 
 ## Next exact actions
 
-1. Partial expert overrides so one field can be pinned without duplicating its
-   siblings, removing the full-block pinning trap. Design target:
-   `advanced.overrides.relay.bufferBytes` pins only that field.
-2. One canonical compiled runtime plan consumed by all runtime code; no
-   `SimpleRuntime`/`AdvancedRuntime` split.
-3. `runtime explain`/`report` to show per-field provenance: derived, default, or
-   operator-pinned.
-4. Complete datapath copy ledger with every copy classified; target
-   `AVOIDABLE = 0` on production paths.
-5. Hot-path inventory and profile cards; note PMU counters are unavailable on this
-   host, so cycles/cache figures must come from another host or be omitted rather
-   than fabricated.
+1. **Conflict validation for overrides.** Reject a field appearing in both
+   `advanced.limits` as a non-default and `advanced.overrides` with a conflicting
+   value, naming both JSON paths. `PolicyOverrides::pinned_paths()` already exists
+   for this.
+2. **Compiled runtime plan.** The hot path should not traverse user-facing
+   configuration. Target one immutable generation-scoped plan with compact IDs
+   (`OutboundId`, `RouteId`, `UserIndex`) replacing string/hash lookups — but only
+   where the formal evaluator shows a win.
+3. **Datapath copy ledger** with every copy classified crypto/kernel/security/
+   protocol/lifetime-required or measured-justified; target `AVOIDABLE = 0`. Start
+   from the measured fact that bulk download is splice with no userspace copy, so
+   the ledger's live targets are the framed path, setup, Handoff/NXR encode, and
+   the buffered fallback.
+4. **Hot-path inventory and profile cards.** PMU is unavailable on this host
+   (`perf_event_paranoid = 3`), so cycles and cache figures must come from another
+   host or be omitted, never fabricated.
+5. **Reproduce 671 vs 808 from the original client.** No local tuning should
+   continue until then; the datapath has no demonstrated mechanism for it.
 
 ## Environment gotchas
 
