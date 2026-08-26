@@ -133,9 +133,24 @@ splice pipe 都有明确上限。数据路径没有无界队列或缓存；协�
 结构化 REALITY 认证与重放状态、Vision 解码与状态转换、Handoff header/blob/open 与
 结构化 round trip、NXR round trip、cover flight 解析、TLS 1.3 record round trip、
 transcript 哈希、严格 normalized ClientHello 分类、受控 profile compatibility、
-profile EncryptedExtensions 解析、ServerHello 重建、严格配置解码和诊断渲染。
+profile EncryptedExtensions 解析、ServerHello 重建、严格配置解码、诊断渲染，
+以及运行时无关的会话所有权与重试语义。
 CI 会拒绝未声明的目标源码并运行每个已声明目标；全 crate 行覆盖率不能
 替代这些可达边界的覆盖。
+
+测试模型是分层的，任何一层都不能替代另一层：字节级 wire fuzzing 与 parser
+fuzzing 仍然是 wire 行为的权威依据，语义事件序列 fuzzing 覆盖只有事件序列才能
+违反的所有权规则，集成测试覆盖组装后的运行时。
+
+语义层就是 `session_semantics` 目标。它用任意事件序列驱动 `rr-session` 会话引擎，
+不涉及 socket、时钟或运行时，并断言：每个方向最多只能获得一次传输授权；两个
+Vision 方向在任意交错顺序下都不会把双向 pair 拆开；每个方向的状态增长受一个独立
+定义的推进阶梯约束；终态方向在序列剩余部分始终保持终态；已认证的单消息传输在越过
+不可逆的 `CommittedWrite` 边界之后永不再授权新的尝试。它所依赖的单步关系——合法
+状态转换表、严格推进顺序、pair/directional 规则，以及授权只能在何处规划——由
+`crates/rr-session/src/vision.rs` 中的单元测试针对一份手写参考模型**穷举**验证，
+因此两层都不是对被检查代码的复述。重放双重提交与认证前权限仍由结构化 REALITY 认证
+和 Handoff/NXR round trip 目标覆盖，因为这部分状态尚未抽取进会话引擎。
 
 Linux `splice` 只允许在两侧都是明文 TCP socket 后使用，不能跨越 REALITY/TLS
 应用边界。如果传输开始前无法获取有界 splice 资源，则使用有界用户态缓冲。

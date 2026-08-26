@@ -12,6 +12,7 @@ arbitrary = { version = "1.4", features = ["derive"] }
 libfuzzer-sys = "0.4"
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
 rust-reality = { path = "..", features = ["fuzzing"] }
+rr-session = { path = "../crates/rr-session" }
 x25519-dalek = { version = "3.0.0", default-features = false, features = ["static_secrets"] }
 
 [[bin]]
@@ -108,6 +109,13 @@ bench = false
 [[bin]]
 name = "reality_auth_round_trip"
 path = "fuzz_targets/reality_auth_round_trip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "session_semantics"
+path = "fuzz_targets/session_semantics.rs"
 test = false
 doc = false
 bench = false

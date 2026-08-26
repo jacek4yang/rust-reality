@@ -1465,6 +1465,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rr-session"
+version = "0.1.0"
+
+[[package]]
 name = "rust-reality"
 version = "1.7.0"
 dependencies = [
@@ -1486,6 +1490,7 @@ dependencies = [
  "regex",
  "ring",
  "rr-linux",
+ "rr-session",
  "rustix",
  "schemars",
  "serde",
@@ -1506,6 +1511,7 @@ version = "0.0.0"
 dependencies = [
  "arbitrary",
  "libfuzzer-sys",
+ "rr-session",
  "rust-reality",
  "serde_json",
  "x25519-dalek",

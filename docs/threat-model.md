@@ -182,9 +182,31 @@ Handoff headers/blobs/opening and structured round trips, NXR round trips,
 cover-flight parsing, TLS 1.3 record round trips, transcript hashing, strict
 normalized ClientHello classification, controlled profile compatibility,
 profile EncryptedExtensions parsing, ServerHello reconstruction,
-configuration decoding, and diagnostic rendering. CI rejects undeclared
+configuration decoding, diagnostic rendering, and runtime-independent session
+ownership and retry semantics. CI rejects undeclared
 target source files and runs every declared target; whole-crate line coverage
 is not treated as a substitute for these reachable boundaries.
+
+The testing model is layered and no layer replaces another: byte-level wire
+fuzzing and parser fuzzing remain authoritative for wire behaviour, semantic
+event-sequence fuzzing covers ownership rules that only a sequence of events can
+violate, and integration tests cover the assembled runtime.
+
+The semantic layer is the `session_semantics` target. It drives the `rr-session`
+Session Engine with arbitrary event sequences and no socket, clock, or runtime,
+and asserts that a transport grant is issued at most once per direction, that the
+two Vision directions never split a bilateral pair across arbitrary
+interleavings, that per-direction state growth stays bounded by an independently
+defined progress ladder, that a terminal direction stays terminal for the rest of
+a sequence, and that an authenticated transfer never authorizes an attempt after
+its irreversible `CommittedWrite` boundary. The single-step relations it relies
+on — the legal transition table, the strict progress ordering, the
+pair/directional rule, and where a grant may be planned — are proven
+*exhaustively* against a hand-written reference model by the unit tests in
+`crates/rr-session/src/vision.rs`, so neither layer is a restatement of the code
+it checks. Replay double-commit and pre-authentication authority remain covered
+by the structured REALITY authentication and Handoff/NXR round-trip targets,
+because that state has not been extracted into the Session Engine.
 
 Linux `splice` is permitted only after both sides are plaintext TCP sockets. It
 cannot cross the REALITY/TLS application boundary. If bounded splice resources
