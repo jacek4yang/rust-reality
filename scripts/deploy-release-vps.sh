@@ -185,6 +185,21 @@ new_config=$config_root/$release_id
 old_binary=$(readlink -f /opt/rust-reality/current)
 old_config=$(readlink -f /etc/rust-reality/current)
 [[ $old_binary == "$release_root/"* && $old_config == "$config_root/"* ]]
+unexpected_public_listeners() {
+    ss -ltnH | awk '
+        $4 ~ /^(0\.0\.0\.0|\[::\]|\*):/ {
+            port=$4
+            sub(/^.*:/, "", port)
+            if (port != 22 && port != 443) print $4
+        }
+    ' | sort -u
+}
+# Some hosts have an unrelated, firewall-blocked daemon which already binds a
+# wildcard address. A rust-reality deployment must not introduce another
+# public listener, but disabling unrelated host services is outside this
+# deployment tool's authority. Snapshot the pre-cutover set and reject only
+# ports newly introduced during the cutover.
+preexisting_unexpected=$(unexpected_public_listeners)
 rollback() {
     set +e
     systemctl stop "$service"
@@ -220,8 +235,15 @@ systemctl is-active --quiet "$service"
 pid=$(systemctl show "$service" -p MainPID --value)
 [[ $(readlink -f "/proc/$pid/exe") == "$new_binary/rust-reality" ]]
 ss -ltnH | awk '$4 ~ /(^|\]|:)443$/ {found=1} END {exit !found}'
-unexpected=$(ss -ltnH | awk '$4 ~ /^(0\.0\.0\.0|\[::\]|\*):/ {sub(/^.*:/,"",$4); if ($4 != 22 && $4 != 443) print $4}' | sort -nu)
-[[ -z $unexpected ]]
+observed_unexpected=$(unexpected_public_listeners)
+introduced_unexpected=
+while IFS= read -r listener; do
+    [[ -z $listener ]] && continue
+    if ! grep -Fqx -- "$listener" <<<"$preexisting_unexpected"; then
+        introduced_unexpected+="${introduced_unexpected:+,}$listener"
+    fi
+done <<<"$observed_unexpected"
+[[ -z $introduced_unexpected ]]
 printf 'pendingRelease=%s\npreviousBinary=%s\npreviousConfig=%s\n' \
     "$release_id" "$old_binary" "$old_config" >"$state_root/pending"
 chmod 0600 "$state_root/pending"

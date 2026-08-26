@@ -48,8 +48,10 @@ ID、SNI/target、flow、endpoint、routing 与 outbound 语义。配置秘密�
 首次迁移先复制已知良好二进制和兼容配置作为最小回滚包。
 `deploy-release-vps.sh stage` 在不切换 CURRENT 的情况下验证版本、SHA、`check`
 和 `self-test`；`cutover` 先准备 PREVIOUS，再以最短 stop/symlink/start 窗口切换，
-启动或 443 健康失败会自动恢复旧代际。后续互操作或 canary 失败执行 `rollback`。
-`promote` 只保留 CURRENT 与 PREVIOUS；裁剪软件代际永远不能删除持久身份。
+验证二进制与 443，并拒绝切换期间新出现的非预期 wildcard TCP 监听。主机原有的
+无关监听仍由主机管理员负责，部署工具不会擅自停止；启动或监听策略健康失败会
+自动恢复旧代际。后续互操作或 canary 失败执行 `rollback`。`promote` 只保留
+CURRENT 与 PREVIOUS；裁剪软件代际永远不能删除持久身份。
 
 ## 双 VPS 主动 canary
 
