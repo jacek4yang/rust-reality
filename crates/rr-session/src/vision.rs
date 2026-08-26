@@ -4,6 +4,7 @@ use core::fmt;
 
 /// One Vision relay direction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
 pub enum Direction {
     /// Client to destination.
     Uplink,
@@ -131,6 +132,7 @@ impl core::error::Error for InvalidTransition {}
 
 /// The raw-relay form one direction committed to at its boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
 pub enum RawDecision {
     /// Both directions will deposit their halves for the bilateral pair relay.
     Pair,
@@ -138,9 +140,96 @@ pub enum RawDecision {
     Directional,
 }
 
+/// A validated state transition that will issue one raw-relay grant.
+///
+/// Planning is pure and does not change runtime-owned atomic state. The runtime
+/// adapter must commit [`Self::next_state`] first and may only then consume the
+/// transition with [`Self::into_grant`]. This keeps the semantic choice in the
+/// Session Engine without moving synchronization or sockets across the layer.
+#[derive(Debug, Eq, PartialEq)]
+pub struct RawRelayTransition {
+    grant: RawRelayGrant,
+    next_state: DirectionState,
+}
+
+impl RawRelayTransition {
+    /// Plans the only legal raw-relay successor from `current`.
+    ///
+    /// A peer at its raw boundary, or one already committed to a pair, selects
+    /// the bilateral pair. Every other peer state selects an independent
+    /// directional relay so neither direction waits for the other.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidTransition`] unless `current` is exactly `RawReady`.
+    pub const fn plan(
+        direction: Direction,
+        current: DirectionState,
+        peer: DirectionState,
+    ) -> Result<Self, InvalidTransition> {
+        let (decision, next_state) = match peer {
+            DirectionState::RawReady | DirectionState::PairPending => {
+                (RawDecision::Pair, DirectionState::PairPending)
+            }
+            _ => (RawDecision::Directional, DirectionState::Relaying),
+        };
+        if !current.permits(next_state) {
+            return Err(InvalidTransition {
+                direction,
+                from: current,
+                to: next_state,
+            });
+        }
+        Ok(Self {
+            grant: RawRelayGrant {
+                direction,
+                decision,
+            },
+            next_state,
+        })
+    }
+
+    /// Returns the state the runtime adapter must atomically commit.
+    #[must_use]
+    pub const fn next_state(&self) -> DirectionState {
+        self.next_state
+    }
+
+    /// Consumes the committed transition and issues its one-shot relay grant.
+    #[must_use = "a committed raw-relay grant must be consumed by the transport adapter"]
+    pub const fn into_grant(self) -> RawRelayGrant {
+        self.grant
+    }
+}
+
+/// One-shot authority to transfer a direction into the raw transport backend.
+///
+/// This value is deliberately neither `Copy` nor `Clone`. It is issued only by
+/// a valid [`RawRelayTransition`] and is consumed before the runtime transfers
+/// socket ownership. It never wraps or observes relay buffers after handoff.
+#[derive(Debug, Eq, PartialEq)]
+pub struct RawRelayGrant {
+    direction: Direction,
+    decision: RawDecision,
+}
+
+impl RawRelayGrant {
+    /// Returns the direction whose transport ownership is being transferred.
+    #[must_use]
+    pub const fn direction(&self) -> Direction {
+        self.direction
+    }
+
+    /// Consumes the one-shot authority and returns the selected relay form.
+    #[must_use]
+    pub const fn into_decision(self) -> RawDecision {
+        self.decision
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{DirectionState, InvalidTransition};
+    use super::{Direction, DirectionState, InvalidTransition, RawDecision, RawRelayTransition};
 
     #[test]
     fn representation_round_trips_every_state() {
@@ -180,5 +269,58 @@ mod tests {
     fn invalid_transition_is_core_error() {
         fn assert_error<T: core::error::Error>() {}
         assert_error::<InvalidTransition>();
+    }
+
+    #[test]
+    fn raw_relay_transition_issues_one_direction_bound_grant() {
+        let pair = RawRelayTransition::plan(
+            Direction::Uplink,
+            DirectionState::RawReady,
+            DirectionState::PairPending,
+        )
+        .expect("raw-ready direction may pair");
+        assert_eq!(pair.next_state(), DirectionState::PairPending);
+        let pair = pair.into_grant();
+        assert_eq!(pair.direction(), Direction::Uplink);
+        assert_eq!(pair.into_decision(), RawDecision::Pair);
+
+        let directional = RawRelayTransition::plan(
+            Direction::Downlink,
+            DirectionState::RawReady,
+            DirectionState::Framed,
+        )
+        .expect("raw-ready direction may relay independently");
+        assert_eq!(directional.next_state(), DirectionState::Relaying);
+        assert_eq!(
+            directional.into_grant().into_decision(),
+            RawDecision::Directional
+        );
+    }
+
+    #[test]
+    fn raw_relay_grant_cannot_be_planned_before_or_after_the_boundary() {
+        for state in [
+            DirectionState::Framed,
+            DirectionState::DirectPending,
+            DirectionState::Outer,
+            DirectionState::Closed,
+            DirectionState::Failed,
+            DirectionState::PairPending,
+            DirectionState::Relaying,
+        ] {
+            assert!(
+                RawRelayTransition::plan(Direction::Uplink, state, DirectionState::Framed).is_err(),
+                "{state:?} unexpectedly issued a raw grant"
+            );
+        }
+    }
+
+    #[test]
+    fn raw_relay_values_remain_compact_and_allocation_free() {
+        assert_eq!(core::mem::size_of::<Direction>(), 1);
+        assert_eq!(core::mem::size_of::<DirectionState>(), 1);
+        assert_eq!(core::mem::size_of::<RawDecision>(), 1);
+        assert_eq!(core::mem::size_of::<super::RawRelayGrant>(), 2);
+        assert_eq!(core::mem::size_of::<RawRelayTransition>(), 3);
     }
 }

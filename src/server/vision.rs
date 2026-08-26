@@ -32,7 +32,9 @@ use crate::{
 };
 
 use super::{
-    direct::{DirectHandoff, Direction, DirectionState, InvalidTransition, RawDecision},
+    direct::{
+        DirectHandoff, Direction, DirectionState, InvalidTransition, RawDecision, RawRelayGrant,
+    },
     handoff::HandoffLineError,
     outbound::{
         OutboundConnectError, OutboundConnectOutcome, OutboundRegistry, SessionOutboundOutcome,
@@ -1020,6 +1022,7 @@ async fn finish_uplink_direct(
     match decide_raw_relay(handoff, Direction::Uplink)
         .await
         .map_err(VisionSessionError::DirectTransition)?
+        .into_decision()
     {
         RawDecision::Pair => {
             let recovered = handoff
@@ -1324,6 +1327,7 @@ async fn finish_downlink_direct(
     match decide_raw_relay(handoff, Direction::Downlink)
         .await
         .map_err(VisionSessionError::DirectTransition)?
+        .into_decision()
     {
         RawDecision::Pair => {
             let recovered = handoff
@@ -1549,7 +1553,7 @@ fn settle(handoff: &DirectHandoff, direction: Direction, state: DirectionState) 
 async fn decide_raw_relay(
     handoff: &DirectHandoff,
     direction: Direction,
-) -> Result<RawDecision, InvalidTransition> {
+) -> Result<RawRelayGrant, InvalidTransition> {
     for attempt in 0..3 {
         if handoff.peer_can_pair(direction) || attempt == 2 {
             break;

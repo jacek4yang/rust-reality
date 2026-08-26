@@ -82,9 +82,11 @@ both stream owners to the existing relay backend. The Session Engine does not
 observe relay chunks and no semantic abstraction is invoked per byte or per
 buffer.
 
-A future one-shot value tentatively named `RawRelayGrant` may make that
-transition compiler-visible. It may be introduced only when it consumes all
-pre-relay semantic state exactly once and does not wrap the steady-state relay.
+A one-shot `RawRelayGrant` makes that transition compiler-visible. The pure
+Session Engine plans the legal `RawReady` successor, the runtime adapter first
+commits that state atomically, and only then consumes the non-`Clone`,
+non-`Copy` grant while transferring socket ownership. The grant is gone before
+the steady-state relay starts and never wraps a relay buffer or syscall.
 
 ## Ownership and side-effect rules
 
@@ -122,7 +124,10 @@ stock-Xray gates.
 1. Extract byte-exact authenticated write progress.
 2. Extract Vision direction states and the legal transition table while leaving
    atomic coordination and socket halves in the Tokio module.
-3. Express retry/ownership and one-shot relay eligibility as pure values.
+3. Express retry/ownership and one-shot relay eligibility as pure values. The
+   first `RawRelayGrant` extraction covers Vision Direct; later protocol grants
+   must reuse the same one-shot ownership principle rather than creating a
+   parallel session model.
 4. Move eligible codec/orchestration decisions without changing wire bytes.
 5. Make the Tokio driver consume semantic inputs/outputs explicitly.
 6. Delete transitional re-exports and duplicate definitions.

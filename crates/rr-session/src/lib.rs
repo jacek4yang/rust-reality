@@ -9,5 +9,7 @@
 mod vision;
 mod write_progress;
 
-pub use vision::{Direction, DirectionState, InvalidTransition, RawDecision};
+pub use vision::{
+    Direction, DirectionState, InvalidTransition, RawDecision, RawRelayGrant, RawRelayTransition,
+};
 pub use write_progress::WriteProgress;

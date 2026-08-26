@@ -27,7 +27,9 @@ use std::{
     },
 };
 
-pub use rr_session::{Direction, DirectionState, InvalidTransition, RawDecision};
+pub use rr_session::{
+    Direction, DirectionState, InvalidTransition, RawDecision, RawRelayGrant, RawRelayTransition,
+};
 use tokio::net::{
     TcpStream,
     tcp::{OwnedReadHalf, OwnedWriteHalf},
@@ -179,15 +181,15 @@ impl DirectHandoff {
     ///
     /// Returns [`InvalidTransition`] when this direction's state cannot move
     /// to the chosen form, which means the direction already terminated.
-    pub fn decide(&self, direction: Direction) -> Result<RawDecision, InvalidTransition> {
+    pub fn decide(&self, direction: Direction) -> Result<RawRelayGrant, InvalidTransition> {
         let _guard = lock_recover(&self.slots);
-        if self.peer_can_pair(direction) {
-            self.advance(direction, DirectionState::PairPending)?;
-            Ok(RawDecision::Pair)
-        } else {
-            self.advance(direction, DirectionState::Relaying)?;
-            Ok(RawDecision::Directional)
-        }
+        let transition = RawRelayTransition::plan(
+            direction,
+            self.state(direction),
+            self.state(Self::peer(direction)),
+        )?;
+        self.advance(direction, transition.next_state())?;
+        Ok(transition.into_grant())
     }
 
     /// Deposits the uplink's halves once the uplink is at the raw boundary.
@@ -431,7 +433,7 @@ mod tests {
         let first = handoff
             .decide(Direction::Uplink)
             .expect("uplink may commit");
-        assert_eq!(first, RawDecision::Pair);
+        assert_eq!(first.into_decision(), RawDecision::Pair);
         assert_eq!(
             handoff.state(Direction::Uplink),
             DirectionState::PairPending
@@ -441,7 +443,7 @@ mod tests {
             .decide(Direction::Downlink)
             .expect("downlink may commit");
         assert_eq!(
-            second,
+            second.into_decision(),
             RawDecision::Pair,
             "the second decider must observe the committed PairPending"
         );
@@ -452,7 +454,7 @@ mod tests {
         solo.advance(Direction::Uplink, DirectionState::RawReady)
             .expect("uplink may become raw");
         let decision = solo.decide(Direction::Uplink).expect("uplink may commit");
-        assert_eq!(decision, RawDecision::Directional);
+        assert_eq!(decision.into_decision(), RawDecision::Directional);
         assert_eq!(solo.state(Direction::Uplink), DirectionState::Relaying);
     }
 
@@ -482,8 +484,14 @@ mod tests {
                 tokio::spawn(async move { handoff.decide(Direction::Downlink) })
             };
             let (up, down) = tokio::join!(up, down);
-            let up = up.expect("uplink task").expect("uplink may commit");
-            let down = down.expect("downlink task").expect("downlink may commit");
+            let up = up
+                .expect("uplink task")
+                .expect("uplink may commit")
+                .into_decision();
+            let down = down
+                .expect("downlink task")
+                .expect("downlink may commit")
+                .into_decision();
             assert_eq!(
                 up, down,
                 "round {round}: decisions split the pair ({up:?} vs {down:?})"
