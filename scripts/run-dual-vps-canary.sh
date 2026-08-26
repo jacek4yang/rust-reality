@@ -38,6 +38,10 @@ readonly SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterv
 [[ $CANDIDATE_BUILD_ID =~ ^[0-9a-f]+$ ]]
 [[ $LINE_PUBLIC_IPV4 =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
 [[ -x $XRAY_BIN && -r $XRAY_CONFIG && -r $PAYLOAD_ONE_MIB && -r $PAYLOAD_LARGE ]]
+jq -e --argjson port "$SOCKS_PORT" '
+    any(.inbounds[]?;
+        .protocol == "socks" and .listen == "127.0.0.1" and .port == $port)
+' "$XRAY_CONFIG" >/dev/null
 [[ ! -e $OUT_DIR && ! -L $OUT_DIR ]]
 mkdir -p "$(dirname "$OUT_DIR")"
 mkdir "$OUT_DIR"
@@ -155,7 +159,10 @@ landing_sampler_pid=$!
 xray_pid=$!
 ready=0
 for _ in $(seq 1 100); do
-    if ss -ltnH | awk -v port=":$SOCKS_PORT" '$4 ~ port"$" {found=1} END {exit !found}'; then
+    if ss -ltnpH | awk -v port=":$SOCKS_PORT" -v pid="$xray_pid" '
+        $4 ~ port"$" && index($0, "pid=" pid ",") {found=1}
+        END {exit !found}
+    '; then
         ready=1
         break
     fi
