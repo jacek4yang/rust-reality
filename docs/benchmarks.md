@@ -73,8 +73,17 @@ exact diagnostic instead of manufacturing a measurement.
 
 ## v1.7 LINE-to-LANDING evidence contract
 
-The v1.7 transport claim is accepted only from the formal deployment run with
-`REQUIRE_NETEM=1`. Its warm and cold processes use the same release binary,
+The v1.7 transport claim is accepted only from a formal deployment run with
+`REQUIRE_NETEM=1`. `DEPLOYMENT_PLAN=mechanism` is the focused foreground gate:
+it runs zero-loss concurrency-one 50/100/200 ms cells with six balanced samples
+per leg. `DEPLOYMENT_PLAN=robustness` runs the complete RTT/loss/concurrency
+Cartesian product as an asynchronous evidence campaign, while the default
+`DEPLOYMENT_PLAN=full` additionally retains routing, topology, throughput, and
+long-flow evidence. The focused mechanism program is the release claim gate;
+robustness cells are retained when the validation budget permits and every
+omission is reported as `SKIPPED`, never silently treated as a pass. The split
+prevents a multi-hour robustness campaign from blocking unrelated review and
+engineering work. All plans' warm and cold processes use the same release binary,
 peer, origin, client, shaped veth pair, and configuration identity; only the
 outbound `warmTcp` switch differs. Each protocol/mode cell retains balanced
 ABBA blocks, p50/p90/p95/p99, setup rate, exact environment and binary hashes,
@@ -87,8 +96,9 @@ ABBA blocks, and evaluates `median(cold p50) - median(warm p50)` against the
 measured shaped-link RTT. The median effect must be 0.65--1.35 RTT; at 100 and
 200 ms its deterministic block-bootstrap lower bound must exceed 0.5 RTT.
 This checks only the expected mechanism: the warm hit removes one TCP handshake
-from the user path. Loss and higher-concurrency cells remain mandatory
-robustness evidence but are not relabelled as clean RTT-mechanism estimates.
+from the user path. Loss and higher-concurrency cells are robustness evidence,
+not clean RTT-mechanism estimates, and do not delay the focused mechanism
+verdict.
 Pool logs supply startup-aware checkout, hit/miss, cold fallback, stale,
 ready/connecting/target, EWMA, growth, and shrink counters. Debug/instrumented
 runs may explain phases but cannot supply headline numbers. Idle-age, burst,

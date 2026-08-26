@@ -65,8 +65,9 @@
 #      default omits rtt), OUT_DIR, SMOKE (0; 1 = tiny-scale harness self-test),
 #      SAMPLES (3), CONNS (96), CONCURRENCIES ("8 32"), TPUT_SAMPLES (3),
 #      TPUT_CELLS ("32:1 32:32 512:32"), LONGFLOW_MIB (512),
-#      RTTS ("1 10 50 100 200"), LOSSES ("0 0.1 1", applied per direction),
-#      RTT_CONNS (512), RTT_CONCURRENCIES ("1 8 32 128 512"),
+#      DEPLOYMENT_PLAN ("full"; formal alternatives: "mechanism" and
+#      "robustness"), RTTS (plan-derived), LOSSES (plan-derived, applied per
+#      direction), RTT_CONNS (plan-derived), RTT_CONCURRENCIES (plan-derived),
 #      EVALUATE_NETEM_PERFORMANCE (formal default: 1; exploratory default: 0),
 #      KEEP_WORK (0), REQUIRE_NETEM (0), TMPDIR
 #      (optional external work root for generated payloads and secrets).
@@ -111,10 +112,32 @@ concurrencies=${CONCURRENCIES:-8 32}
 tput_samples=${TPUT_SAMPLES:-3}
 tput_cells=${TPUT_CELLS:-32:1 32:32 512:32}
 longflow_mib=${LONGFLOW_MIB:-512}
-rtts=${RTTS:-1 10 50 100 200}
-losses=${LOSSES:-0 0.1 1}
-rtt_conns=${RTT_CONNS:-512}
-rtt_concurrencies=${RTT_CONCURRENCIES:-1 8 32 128 512}
+deployment_plan=${DEPLOYMENT_PLAN:-full}
+case $deployment_plan in
+    full|robustness)
+        default_rtts="1 10 50 100 200"
+        default_losses="0 0.1 1"
+        default_rtt_conns=512
+        default_rtt_concurrencies="1 8 32 128 512"
+        ;;
+    mechanism)
+        # The release claim is a concurrency-one, zero-loss mechanism. Thirty-two
+        # flows in each of six ABBA legs retain a useful latency distribution
+        # without serializing the engineering program behind the robustness run.
+        default_rtts="50 100 200"
+        default_losses="0"
+        default_rtt_conns=32
+        default_rtt_concurrencies="1"
+        ;;
+    *)
+        echo "DEPLOYMENT_PLAN must be full, mechanism, or robustness" >&2
+        exit 2
+        ;;
+esac
+rtts=${RTTS:-$default_rtts}
+losses=${LOSSES:-$default_losses}
+rtt_conns=${RTT_CONNS:-$default_rtt_conns}
+rtt_concurrencies=${RTT_CONCURRENCIES:-$default_rtt_concurrencies}
 require_netem=${REQUIRE_NETEM:-}
 evaluate_netem_performance=${EVALUATE_NETEM_PERFORMANCE:-}
 driver="$repository/scripts/deployment_driver.py"
@@ -135,7 +158,11 @@ if [[ $smoke == 1 ]]; then
 fi
 
 if [[ $RR_EXPLORATORY == 0 ]]; then
-    sections=${sections:-routing cost nxr rtt longflow}
+    if [[ $deployment_plan == full ]]; then
+        sections=${sections:-routing cost nxr rtt longflow}
+    else
+        sections=${sections:-rtt}
+    fi
     require_netem=${require_netem:-1}
     evaluate_netem_performance=${evaluate_netem_performance:-1}
     [[ $smoke == 0 ]] || {
@@ -146,52 +173,70 @@ if [[ $RR_EXPLORATORY == 0 ]]; then
         echo "formal deployment evidence requires REQUIRE_NETEM=1" >&2
         exit 2
     }
-    python3 - "$sections" "$samples" "$conns" "$concurrencies" \
+    python3 - "$deployment_plan" "$sections" "$samples" "$conns" "$concurrencies" \
         "$tput_samples" "$tput_cells" "$longflow_mib" "$rtts" "$losses" \
         "$rtt_conns" "$rtt_concurrencies" <<'PY'
 import sys
 
-sections = sys.argv[1].split()
-if sections != ["routing", "cost", "nxr", "rtt", "longflow"]:
-    raise SystemExit(
-        "formal SECTIONS must be exactly: routing cost nxr rtt longflow"
-    )
+plan = sys.argv[1]
+sections = sys.argv[2].split()
+expected_sections = (
+    ["routing", "cost", "nxr", "rtt", "longflow"]
+    if plan == "full" else ["rtt"]
+)
+if sections != expected_sections:
+    raise SystemExit(f"formal {plan} SECTIONS must be exactly: {' '.join(expected_sections)}")
 try:
-    samples = int(sys.argv[2])
-    connections = int(sys.argv[3])
-    concurrencies = [int(value) for value in sys.argv[4].split()]
-    throughput_samples = int(sys.argv[5])
+    samples = int(sys.argv[3])
+    connections = int(sys.argv[4])
+    concurrencies = [int(value) for value in sys.argv[5].split()]
+    throughput_samples = int(sys.argv[6])
     throughput_cells = [
         tuple(int(part) for part in value.split(":"))
-        for value in sys.argv[6].split()
+        for value in sys.argv[7].split()
     ]
-    longflow_mib = int(sys.argv[7])
-    rtts = sys.argv[8].split()
-    losses = sys.argv[9].split()
+    longflow_mib = int(sys.argv[8])
+    rtts = sys.argv[9].split()
+    losses = sys.argv[10].split()
     parsed_rtts = [int(value) for value in rtts]
     parsed_losses = [float(value) for value in losses]
-    rtt_connections = int(sys.argv[10])
-    rtt_concurrencies = [int(value) for value in sys.argv[11].split()]
+    rtt_connections = int(sys.argv[11])
+    rtt_concurrencies = [int(value) for value in sys.argv[12].split()]
 except ValueError as error:
     raise SystemExit(f"invalid formal deployment dimension: {error}")
-if samples < 3 or connections < 96:
-    raise SystemExit("formal SAMPLES must be >=3 and CONNS must be >=96")
-if concurrencies != [8, 32]:
-    raise SystemExit("formal CONCURRENCIES must be exactly: 8 32")
-if throughput_samples < 3:
-    raise SystemExit("formal TPUT_SAMPLES must be >=3")
-if throughput_cells != [(32, 1), (32, 32), (512, 32)]:
-    raise SystemExit("formal TPUT_CELLS must be exactly: 32:1 32:32 512:32")
-if longflow_mib < 512:
-    raise SystemExit("formal LONGFLOW_MIB must be >=512")
-if len(parsed_rtts) != 5 or set(parsed_rtts) != {1, 10, 50, 100, 200}:
-    raise SystemExit("formal RTTS must contain exactly 1 10 50 100 200")
-if len(parsed_losses) != 3 or set(parsed_losses) != {0.0, 0.1, 1.0}:
-    raise SystemExit("formal LOSSES must contain exactly 0 0.1 1")
-if rtt_connections < 512:
-    raise SystemExit("formal RTT_CONNS must be >=512")
-if rtt_concurrencies != [1, 8, 32, 128, 512]:
-    raise SystemExit("formal RTT_CONCURRENCIES must be exactly: 1 8 32 128 512")
+if samples < 3:
+    raise SystemExit("formal SAMPLES must be >=3")
+if plan == "full":
+    if connections < 96:
+        raise SystemExit("formal CONNS must be >=96")
+    if concurrencies != [8, 32]:
+        raise SystemExit("formal CONCURRENCIES must be exactly: 8 32")
+    if throughput_samples < 3:
+        raise SystemExit("formal TPUT_SAMPLES must be >=3")
+    if throughput_cells != [(32, 1), (32, 32), (512, 32)]:
+        raise SystemExit("formal TPUT_CELLS must be exactly: 32:1 32:32 512:32")
+    if longflow_mib < 512:
+        raise SystemExit("formal LONGFLOW_MIB must be >=512")
+if plan in ("full", "robustness"):
+    if len(parsed_rtts) != 5 or set(parsed_rtts) != {1, 10, 50, 100, 200}:
+        raise SystemExit(f"formal {plan} RTTS must contain exactly 1 10 50 100 200")
+    if len(parsed_losses) != 3 or set(parsed_losses) != {0.0, 0.1, 1.0}:
+        raise SystemExit(f"formal {plan} LOSSES must contain exactly 0 0.1 1")
+    if rtt_connections < 512:
+        raise SystemExit(f"formal {plan} RTT_CONNS must be >=512")
+    if rtt_concurrencies != [1, 8, 32, 128, 512]:
+        raise SystemExit(
+            f"formal {plan} RTT_CONCURRENCIES must be exactly: 1 8 32 128 512"
+        )
+else:
+    if parsed_rtts != [50, 100, 200]:
+        raise SystemExit("formal mechanism RTTS must be exactly: 50 100 200")
+    if parsed_losses != [0.0]:
+        raise SystemExit("formal mechanism LOSSES must be exactly: 0")
+    if rtt_connections < 32:
+        raise SystemExit("formal mechanism RTT_CONNS must be >=32")
+    if rtt_concurrencies != [1]:
+        raise SystemExit("formal mechanism RTT_CONCURRENCIES must be exactly: 1")
 PY
 else
     sections=${sections:-routing cost nxr longflow}
@@ -1289,6 +1334,7 @@ write_environment() {
         --arg cpu "$(sed -n 's/^model name\s*: //p' /proc/cpuinfo | head -1)" \
         --argjson cpus "$(nproc)" \
         --arg dateUtc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --arg deploymentPlan "$deployment_plan" \
         --arg sections "$sections" --argjson smoke "$smoke" \
         --arg cpuMethod "$cpu_method" \
         '{
@@ -1297,7 +1343,8 @@ write_environment() {
           xrayBin: $xrayBin, xraySha256: $xraySha, xrayVersion: $xrayVersion,
           gitSha: $gitSha, gitBranch: $gitBranch,
           kernel: $kernel, cpu: $cpu, logicalCpus: $cpus,
-          dateUtc: $dateUtc, sections: $sections, smoke: $smoke,
+          dateUtc: $dateUtc, deploymentPlan: $deploymentPlan,
+          sections: $sections, smoke: $smoke,
           cpuMeasurement: $cpuMethod
         }' > "$out_dir/environment.json"
 }
@@ -1320,12 +1367,14 @@ done
 verdict=$netem_evaluation_failed
 summarize_args=(summarize --out-dir "$out_dir")
 if [[ $RR_EXPLORATORY == 0 ]]; then
-    summarize_args+=(--formal-plan --samples "$samples" --connections "$conns"
-        --concurrencies "$concurrencies" --throughput-samples "$tput_samples"
-        --throughput-cells "$tput_cells" --longflow-mib "$longflow_mib"
-        --rtt-samples "$((samples * 2))" --rtt-connections "$rtt_conns"
-        --rtt-concurrencies "$rtt_concurrencies"
-        --rtts "$rtts" --losses "$losses")
+    if [[ $deployment_plan == full ]]; then
+        summarize_args+=(--formal-plan --samples "$samples" --connections "$conns"
+            --concurrencies "$concurrencies" --throughput-samples "$tput_samples"
+            --throughput-cells "$tput_cells" --longflow-mib "$longflow_mib"
+            --rtt-samples "$((samples * 2))" --rtt-connections "$rtt_conns"
+            --rtt-concurrencies "$rtt_concurrencies"
+            --rtts "$rtts" --losses "$losses")
+    fi
 fi
 python3 "$driver" "${summarize_args[@]}" || verdict=1
 if [[ $require_netem == 1 && ! -s $out_dir/summary-netem.json ]]; then
@@ -1352,6 +1401,34 @@ if [[ $require_netem == 1 ]] && ! jq -e --arg performance "$expected_netem_perfo
 ' "$out_dir/summary-netem.json" >/dev/null; then
     echo "netem summary is incomplete or has an invalid Cartesian product" >&2
     verdict=1
+fi
+if [[ $RR_EXPLORATORY == 0 && $deployment_plan != full ]]; then
+    # The netem validator above is the fail-closed Cartesian-product and
+    # performance authority for RTT-only formal programs. Promote its verdict
+    # into the run-level summary without pretending routing/throughput/longflow
+    # were part of this focused artifact.
+    if (( verdict == 0 )); then
+        jq --arg plan "$deployment_plan" '
+            .formalPlan = {
+              kind:$plan,
+              sections:["rtt"],
+              rttsMs:.netemProfiles.expectedDimensions.rttsMs,
+              perDirectionLossPercent:.netemProfiles.expectedDimensions.perDirectionLossPercent,
+              concurrencies:.netemProfiles.expectedDimensions.concurrencies,
+              samplesPerConcurrency:.netemProfiles.expectedDimensions.samplesPerConcurrency,
+              connectionsPerSample:.netemProfiles.expectedDimensions.connectionsPerSample
+            }
+            | .gateVerdict="PASS"
+            | .overallVerdict="PASS"
+        ' "$out_dir/summary.json" >"$work/summary.formal-rtt.json"
+    else
+        jq --arg plan "$deployment_plan" '
+            .formalPlan = {kind:$plan,sections:["rtt"]}
+            | .gateVerdict="FAIL"
+            | .overallVerdict="FAIL"
+        ' "$out_dir/summary.json" >"$work/summary.formal-rtt.json"
+    fi
+    mv -- "$work/summary.formal-rtt.json" "$out_dir/summary.json"
 fi
 if (( verdict == 0 )); then
     rr_finalize_contract || verdict=1

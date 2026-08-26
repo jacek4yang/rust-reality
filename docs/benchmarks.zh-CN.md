@@ -58,8 +58,15 @@ JSON；如果内核或 VPS 策略拒绝某个事件，则记录带原始诊断�
 
 ## v1.7 LINE→LANDING 证据契约
 
-v1.7 transport 结论只接受 `REQUIRE_NETEM=1` 的正式 deployment run。warm/cold
-进程使用同一 release binary、peer、origin、client、整形 veth pair 与配置身份；
+v1.7 transport 结论只接受 `REQUIRE_NETEM=1` 的正式 deployment run。
+`DEPLOYMENT_PLAN=mechanism` 是聚焦的前台 gate：只运行零丢包、并发 1 的
+50/100/200 ms cell，每条 leg 保留 6 个平衡样本。`DEPLOYMENT_PLAN=robustness`
+把完整 RTT/loss/concurrency 笛卡尔积作为异步证据任务；默认
+`DEPLOYMENT_PLAN=full` 还保留 routing、topology、throughput 与 long-flow 证据。
+聚焦 mechanism program 是发布性能结论的 gate；时间预算允许时保留 robustness cell，
+所有缺失项必须明确记录为 `SKIPPED`，不能静默当成 PASS。这样数小时的 robustness
+campaign 不再阻塞无关的 review 与工程工作。所有 plan 的 warm/cold 进程使用同一
+release binary、peer、origin、client、整形 veth pair 与配置身份；
 唯一差异是出站 `warmTcp` 开关。每个 protocol/mode cell 保留平衡 ABBA block、
 p50/p90/p95/p99、setup rate、精确环境/二进制哈希和原始失败。profile inventory
 fail-closed：每个 RTT、loss、concurrency 都必须有 Handoff/NXR/SOCKS5 cold/warm leg。
@@ -68,8 +75,9 @@ fail-closed：每个 RTT、loss、concurrency 都必须有 Handoff/NXR/SOCKS5 co
 50/100/200 ms profile，保留完整 ABBA block，并以实测整形链路 RTT 评估
 `median(cold p50) - median(warm p50)`。中位效果必须处于 0.65--1.35 RTT；
 100 与 200 ms 下确定性 block-bootstrap 下界还必须大于 0.5 RTT。该判定只验证
-warm hit 从用户路径移除一次 TCP 握手；丢包与高并发 cell 仍是强制的稳健性证据，
-但不会被重新标记为干净的 RTT 机制估计。pool log
+warm hit 从用户路径移除一次 TCP 握手。丢包与高并发 cell 属于 robustness 证据，
+不会被重新标记为干净的 RTT 机制估计，
+也不会延迟聚焦 mechanism verdict。pool log
 提供 startup-aware checkout、hit/miss、cold fallback、stale、ready/connecting/target、
 EWMA、growth 与 shrink 计数。debug/instrumented run 可解释 phase，不能提供头条数字。
 idle-age、burst、prebuilt-cover + warm-LANDING 组合、protected path 与 soak 是独立保留
