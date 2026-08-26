@@ -1,0 +1,36 @@
+[Unit]
+Description=rust-reality VLESS REALITY Vision proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rust-reality
+Group=rust-reality
+ExecStart=/opt/rust-reality/current/rust-reality serve --config /etc/rust-reality/current/config.json
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=40s
+LimitNOFILE=1048576
+
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/rust-reality /var/log/rust-reality
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

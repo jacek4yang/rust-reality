@@ -170,6 +170,15 @@ netem when suitable hosts exist and is not substituted for deterministic
 mechanism tests. ADR 0006's authenticated prebuilt-cover and active-probe
 evidence must remain non-regressed.
 
+Publication uses two time-bounded blocking tiers: a focused controlled-netem
+mechanism gate (approximately 10–20 minutes) and an approximately ten-minute
+high-density exact-candidate dual-VPS canary. The canary concentrates steady
+traffic, churn, burst/recovery, reload, LANDING restart, integrity, and resource
+recovery transitions. Hours-long soak runs remain scheduled, non-blocking
+long-horizon evidence. A short canary is not represented as proof that no
+long-term leak exists; conversely, wall-clock idleness is not used as a proxy
+for deterministic protocol, replay, ownership, sanitizer, or resource tests.
+
 ## Limitations and revisit criteria
 
 Instantaneous unbounded demand can miss. Middleboxes may silently expire idle

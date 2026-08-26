@@ -9,10 +9,11 @@
 # start, at each monotonic interval, and at the end. /proc snapshots cover every
 # rust-reality process individually and in aggregate. Per-process RSS detects
 # local retention; aggregate PSS avoids counting shared file-backed pages once
-# per process. Release-qualified evidence requires PSS availability.
+# per process. This is optional long-horizon evidence. Publication is gated by
+# the focused mechanism program and the active dual-VPS canary instead.
 #
 # Env: DURATION_MIN (30), ROUND_SLEEP (5), DISTRIBUTED_INTERVAL_SECONDS (1800),
-# RUST_REALITY_BIN, XRAY_BIN, OUT_DIR. REQUIRE_RELEASE_QUALIFIED=1 additionally
+# RUST_REALITY_BIN, XRAY_BIN, OUT_DIR. REQUIRE_LONG_HORIZON_QUALIFIED=1 additionally
 # requires explicit RUN_ID, absolute new OUT_DIR, disk-backed TMPDIR, PORT_BASE,
 # RUST_REALITY_SHA256, XRAY_SHA256, EXPECTED_SOURCE_COMMIT, and read-only
 # absolute binary paths.
@@ -26,7 +27,7 @@ xray=${XRAY_BIN:-../artifacts/xray-reference}
 duration_min=${DURATION_MIN:-30}
 round_sleep=${ROUND_SLEEP:-5}
 minimum_rounds=${MIN_ROUNDS:-$duration_min}
-require_release_qualified=${REQUIRE_RELEASE_QUALIFIED:-0}
+require_long_horizon_qualified=${REQUIRE_LONG_HORIZON_QUALIFIED:-0}
 distributed_interval_seconds=${DISTRIBUTED_INTERVAL_SECONDS:-1800}
 max_distributed_attempts=145
 run_id=${RUN_ID:-${RR_RUN_ID:-soak-$(date -u +%Y%m%dT%H%M%SZ)-$$}}
@@ -112,13 +113,13 @@ done
 [[ $duration_min =~ ^[1-9][0-9]*$ ]] || { echo "DURATION_MIN must be positive" >&2; exit 2; }
 [[ $round_sleep =~ ^[0-9]+$ ]] || { echo "ROUND_SLEEP must be non-negative" >&2; exit 2; }
 [[ $minimum_rounds =~ ^[1-9][0-9]*$ ]] || { echo "MIN_ROUNDS must be positive" >&2; exit 2; }
-[[ $require_release_qualified == 0 || $require_release_qualified == 1 ]] \
-    || { echo "REQUIRE_RELEASE_QUALIFIED must be 0 or 1" >&2; exit 2; }
+[[ $require_long_horizon_qualified == 0 || $require_long_horizon_qualified == 1 ]] \
+    || { echo "REQUIRE_LONG_HORIZON_QUALIFIED must be 0 or 1" >&2; exit 2; }
 [[ $distributed_interval_seconds =~ ^[1-9][0-9]*$ ]] \
     || { echo "DISTRIBUTED_INTERVAL_SECONDS must be positive" >&2; exit 2; }
-if (( require_release_qualified == 1 \
+if (( require_long_horizon_qualified == 1 \
     && (distributed_interval_seconds < 300 || distributed_interval_seconds > 1800) )); then
-    echo "release soak DISTRIBUTED_INTERVAL_SECONDS must be in 300..1800" >&2
+    echo "long-horizon soak DISTRIBUTED_INTERVAL_SECONDS must be in 300..1800" >&2
     exit 2
 fi
 planned_distributed_attempts=$((
@@ -133,20 +134,20 @@ planned_distributed_payload_bytes=$((
 ))
 [[ $run_id =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
     || { echo "RUN_ID is invalid: $run_id" >&2; exit 2; }
-if (( require_release_qualified == 1 )); then
+if (( require_long_horizon_qualified == 1 )); then
     [[ ${EXPLORATORY:-0} == 0 ]] \
-        || { echo "release-qualified soak cannot be exploratory" >&2; exit 2; }
+        || { echo "qualified long-horizon soak cannot be exploratory" >&2; exit 2; }
     rr_contract_init "$repository" soak-test diagnostics/final 15
     contract_initialized=1
     case $(realpath -m -- "$RR_OUT_DIR")/ in
         "$repository"/*)
-            echo "release-qualified OUT_DIR must be outside the repository" >&2
+            echo "qualified long-horizon OUT_DIR must be outside the repository" >&2
             exit 2
             ;;
     esac
     case "$RR_TMPDIR"/ in
         "$repository"/*)
-            echo "release-qualified TMPDIR must be outside the repository" >&2
+            echo "qualified long-horizon TMPDIR must be outside the repository" >&2
             exit 2
             ;;
     esac
@@ -157,11 +158,11 @@ if (( require_release_qualified == 1 )); then
         "${EXPECTED_SOURCE_COMMIT:-}"
     rr_register_binary xray "$xray" "$expected_xray_sha256" xray
     [[ ${RR_BINARY_BUILD_IDS[rust-reality]} =~ ^[0-9a-f]+$ ]] \
-        || { echo "release-qualified rust-reality binary has no ELF Build ID" >&2; exit 2; }
+        || { echo "qualified long-horizon rust-reality binary has no ELF Build ID" >&2; exit 2; }
     [[ ${RR_BINARY_BUILD_IDS[xray]} =~ ^[0-9a-f]+$ ]] \
-        || { echo "release-qualified Xray binary has no ELF Build ID" >&2; exit 2; }
+        || { echo "qualified long-horizon Xray binary has no ELF Build ID" >&2; exit 2; }
     [[ $RR_HARNESS_COMMIT == "${EXPECTED_SOURCE_COMMIT:-}" ]] \
-        || { echo "release-qualified binary source commit must equal harness HEAD" >&2; exit 2; }
+        || { echo "qualified long-horizon binary source commit must equal harness HEAD" >&2; exit 2; }
     rr_write_contract_metadata preflight
     run_id=$RR_RUN_ID
     port_base=$RR_PORT_BASE
@@ -242,14 +243,14 @@ jq -n --arg runId "$run_id" --arg rustBin "$rust_bin" --arg rustSha256 "$rust_sh
     --argjson plannedDistributedAttempts "$planned_distributed_attempts" \
     --argjson maxDistributedAttempts "$max_distributed_attempts" \
     --argjson plannedDistributedPayloadBytes "$planned_distributed_payload_bytes" \
-    --argjson requireReleaseQualified "$require_release_qualified" \
+    --argjson requireLongHorizonQualified "$require_long_horizon_qualified" \
     --argjson portBlock "$port_block_json" \
     '{schemaVersion:2,runId:$runId,startedAt:$startedAt,durationMinutes:$durationMinutes,
       distributedIntervalSeconds:$distributedIntervalSeconds,
       plannedDistributedAttempts:$plannedDistributedAttempts,
       maxDistributedAttempts:$maxDistributedAttempts,
       plannedDistributedPayloadBytes:$plannedDistributedPayloadBytes,
-      requireReleaseQualified:$requireReleaseQualified,
+      requireLongHorizonQualified:$requireLongHorizonQualified,
       formalRunContract:(if $runContract == "" then null else $runContract end),
       ports:{address:"127.0.0.1",block:$portBlock},
       rustReality:{path:$rustBin,sha256:$rustSha256},
@@ -997,14 +998,14 @@ final_xray_sha256=$(sha256sum "$xray" | awk '{print $1}')
     || { echo 'XRAY_BIN changed during soak' >&2; exit 1; }
 
 python3 - "$out_dir/resources.jsonl" "$failures" "$round" "$minimum_rounds" \
-    "$duration_min" "$require_release_qualified" "$expected_payload_sha256" \
+    "$duration_min" "$require_long_horizon_qualified" "$expected_payload_sha256" \
     "$max_distributed_attempts" "$out_dir/distributed-gates.json" \
     "$out_dir/soak-summary.json" <<'PY'
 import json, statistics, sys
 records = [json.loads(line) for line in open(sys.argv[1])]
 failures, rounds, minimum_rounds = map(int, sys.argv[2:5])
 duration_minutes = int(sys.argv[5])
-require_release_qualified = bool(int(sys.argv[6]))
+require_long_horizon_qualified = bool(int(sys.argv[6]))
 payload_sha256 = sys.argv[7]
 max_distributed_attempts = int(sys.argv[8])
 distributed_path, output = sys.argv[9:11]
@@ -1150,7 +1151,7 @@ ok = (
     and distributed.get("socks5ByteIntegrity", {}).get("download", {}).get("bytes") == 1048576
     and distributed.get("socks5ByteIntegrity", {}).get("download", {}).get("sha256") == distributed.get("payloadSha256")
 )
-release_qualified = (
+long_horizon_qualified = (
     ok
     and aggregate_resources["pssAvailable"]
     and duration_minutes == 720
@@ -1204,14 +1205,14 @@ summary = {
     "rssTailSlopeGateApplied": slope_gate_applied,
     "durationMinutes": duration_minutes,
     "elapsedSeconds": round(elapsed_seconds, 3),
-    "releaseQualified": release_qualified,
+    "longHorizonQualified": long_horizon_qualified,
     "distributedGates": distributed,
     "ok": ok,
 }
 with open(output, "x") as fh:
     json.dump({"summary": summary, "snapshots": records}, fh, indent=2)
 print(json.dumps(summary))
-sys.exit(0 if ok and (not require_release_qualified or release_qualified) else 1)
+sys.exit(0 if ok and (not require_long_horizon_qualified or long_horizon_qualified) else 1)
 PY
 if (( contract_initialized == 1 )); then
     rr_finalize_contract

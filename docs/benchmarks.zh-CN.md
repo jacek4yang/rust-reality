@@ -51,7 +51,8 @@ JSON；如果内核或 VPS 策略拒绝某个事件，则记录带原始诊断�
 | `scripts/benchmark-setup-rate.sh` | 平衡 setup 速率 A/B（accept → 第一次 Vision 转换）。设置 `COVER_NETEM_RTT_MS` 时只把 TLS 伪装目标移到 veth/netns 后并施加有记录的单向延迟，同时保留 pool hit/miss 汇总。`MEASURE_MODE=perf` 在 warmup 后归因 task-clock/指令/context switch；`strace` 记录有界的 read/receive syscall 集，并先优雅停止 tracee，避免静默产生空汇总。 |
 | `scripts/benchmark-vision-direct.sh`、`scripts/benchmark-xray.sh` | 聚焦的 Vision-Direct 与 Xray 对比。 |
 | `scripts/benchmark-deployment.sh` | 部署特征化：路由正确性证明、路由决策成本（含 DNS 策略）、NXR 拓扑（direct/NXR/SOCKS5/Xray）、长连接 relay 证据，以及正式单跳 netem matrix。RTT 段保留精确生产构建在 1/10/50/100/200 ms、c1/8/32/128/512 下 Handoff/NXR/SOCKS5 的 ABBA cold/warm 样本与无秘密 pool retirement summary。 |
-| `scripts/soak-test.sh` | 回环混合负载浸泡测试（隧道流量 + 连接 churn），包含长期运行的 warm Handoff、NXR 与仅预建 TCP 的 SOCKS5 拓扑、一次中点原子 generation reload/reconnect、逐进程 RSS 上界，以及不会对共享映射按进程重复计数的汇总 PSS 上界；release-qualified 证据要求 `/proc/*/smaps_rollup` 可用；环境变量：`DURATION_MIN`、`ROUND_SLEEP`、`RUST_REALITY_BIN`、`XRAY_BIN`、`OUT_DIR`。 |
+| `scripts/soak-test.sh` | 可选的长期回环证据：warm Handoff/NXR/仅 TCP SOCKS5、中点 reload、逐进程 RSS 与汇总 PSS。它是计划任务/非阻塞证据；确需长期调查时用 `REQUIRE_LONG_HORIZON_QUALIFIED=1` 保持严格不可变二进制合约。 |
+| `scripts/evaluate-release-canary.py` | 对约十分钟精确候选双 VPS 主动 canary 做 fail-closed 评估：部署、真实 WAN Handoff、stock Xray、完整性、churn、reload、LANDING 重启/恢复、有界 pool 与资源恢复包络。 |
 | `scripts/benchmark-real-path.sh` | 真实互联网路径上与 Xray 的 A/B：崩溃与协议错误门禁；吞吐受路径最慢链路限制，不能用于区分带宽。 |
 | `scripts/benchmark-vless-encryption.sh` | Xray v26.7.28 下 `encryption:none` 与同一 REALITY + Vision 内叠加 VLESS Encryption 的 A/B；测吞吐、服务端 CPU/GiB 和预热后的 setup。 |
 | `scripts/test-xray-interop.sh` | 兼容性门禁（见下），不是基准。 |
@@ -82,6 +83,12 @@ warm hit 从用户路径移除一次 TCP 握手。丢包与高并发 cell 属于
 EWMA、growth 与 shrink 计数。debug/instrumented run 可解释 phase，不能提供头条数字。
 idle-age、burst、prebuilt-cover + warm-LANDING 组合、protected path 与 soak 是独立保留
 的 release artifact；不能从本聚焦 matrix 推断缺失证据。
+
+发布证据分三层：A 层是上述强制聚焦机制门禁，预算约 10–20 分钟；B 层是由
+`evaluate-release-canary.py` 评估的强制约十分钟双 VPS 主动 canary；C 层是可选的
+数小时或整夜 soak。C 层仍可发现长期保持问题，但不再阻塞发布或下一开发 worktree。
+B 层内存门禁比较基线、burst 峰值和恢复后的 FD/thread/RSS 包络，不会从十分钟
+外推精确 MiB/hour，也不声称等价于长期证据。
 
 ## v1.0.0 规范样本
 

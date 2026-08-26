@@ -437,6 +437,42 @@ sudo systemctl restart rust-reality
 
 回滚时恢复旧二进制及其兼容配置后重启。不要降级二进制却保留旧版本不认识的新字段。
 
+### 日常节点的版本化部署
+
+永久生产化节点必须把可替换软件与持久身份分开。`scripts/deploy-release-vps.sh`
+采用以下规范布局：
+
+```text
+/opt/rust-reality/releases/RELEASE/rust-reality
+/opt/rust-reality/current -> releases/CURRENT
+/opt/rust-reality/previous -> releases/PREVIOUS
+
+/etc/rust-reality/releases/RELEASE/config.json
+/etc/rust-reality/current -> releases/CURRENT
+/etc/rust-reality/previous -> releases/PREVIOUS
+```
+
+配置代际由 root 管理，仅服务组可读；除非运维显式轮换，否则各代保持同一
+REALITY/VLESS 持久身份。首次迁移先把正在运行的二进制和配置复制成最小已知良好
+回滚包，然后 systemd 才改用 `current`。canary 成功后只保留 CURRENT 与 PREVIOUS，
+删除的只能是更旧的可替换软件代际，绝不能随旧二进制裁剪部署身份。
+
+部署脚本对每个远端修改都要求 `MUTATE_REMOTE=1`。`stage` 在不切换 live 节点时
+验证版本、SHA-256、`check` 与 `self-test`；`cutover` 先准备 PREVIOUS，并在进程、
+可执行文件身份或 443 健康检查失败时自动恢复它。后续 stock-Xray、字节完整性或
+主动 canary 失败时立即执行 `rollback`。脚本不编辑 SSH、防火墙或监听端口。
+
+日常边缘机的 22 是永久管理基础设施，443 是唯一公网 rust-reality 监听；origin、
+指标与 benchmark helper 只能在 loopback、Unix socket 或隔离 namespace。正常
+release 执行[发布流程](release-process.zh-CN.md)中的短时高密度 canary 后继续运行；
+长期 soak 是计划任务/非阻塞证据，不再是发布等待。
+
+**rust-reality release 是可替换的软件代际；VPS 的 REALITY/VLESS 身份是持久部署
+状态。正常升级必须保持已有客户端可见身份和 443 endpoint，使现有配置继续有效。**
+
+**live VPS 通常只保留两个已验证软件代际：CURRENT 与 PREVIOUS。失败候选自动回到
+PREVIOUS。rust-reality 部署自动化永不修改 22 端口。**
+
 ## 故障排查清单
 
 - `check`：JSON 语法、未知字段、引用或限制失败。
