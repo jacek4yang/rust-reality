@@ -109,6 +109,50 @@ PSK/resumption, and rare uncollected ClientHello classes intentionally stay on
 the warm-live path. This is a conservative validated-class optimization, not
 a claim of universal TLS indistinguishability.
 
+## v1.8.0 release evidence
+
+v1.8.0 is an architecture release. It changes no wire byte, no configuration
+shape, and no deployment identity, and its performance claim is **neutrality**
+rather than improvement.
+
+Four independent formal gates compared release-tier candidates against the
+immutable published v1.7.0 `linux-x86_64-generic` asset (SHA-256
+`7765a65f…c2e23c03`, verified against the release `SHA256SUMS` before
+extraction). Every gate was judged solely by
+`scripts/evaluate-release-performance.py`: exact one-sided paired sign-flip
+permutation on the mean oriented block log ratio, with separate global Holm
+corrections for the regression and improvement families at family-wise
+alpha 0.05, and a minimum of twelve complete ABBA blocks per metric.
+
+| staged change | protected metrics | verdict |
+|---|---:|---|
+| Session Engine extraction (`rr-session`) | 32 at concurrency 1, plus 24 covering concurrency 1, 8 and 32 | PASS, 0 regressions |
+| Irreversible write boundary by type | 32 | PASS, 0 regressions |
+| Explicit Tokio runtime adapter | 32 | PASS, 0 regressions |
+| Transport capability boundary | 32 | PASS, 0 regressions |
+
+Server CPU per connection, the metric these changes could most plausibly have
+moved, stayed inside noise in every gate: 1.0051 [0.9952, 1.0122], 0.9992
+[0.9936, 1.0061], 1.0018 [0.9962, 1.0042], and 1.0029 [0.9924, 1.0094]
+respectively.
+
+Code size is the mechanical cross-check. Release-tier builds with identical
+flags produced `.text` 6 089 575 bytes for the first staged change and 6 089 319
+bytes for the remaining three, i.e. the write-boundary change removed 256 bytes
+by deleting four panic sites and nothing after it added any machine code at all.
+
+Two limits of this evidence are stated rather than implied. These legs exercise
+REALITY setup, fallback, Vision framed, Vision Direct, and bidirectional
+transfer; they do **not** exercise Handoff or NXR, which are covered at release
+time by the dual-VPS active canary. And the earlier headline Xray-comparison
+tables were measured on the v1.7.0 and v1.6.1 binaries; they are carried forward
+because neutrality was formally established, not because they were re-measured
+here.
+
+`docs/memory-audit-v1.8.md` records the ownership map, copy ledger, allocation
+ledger, and async future sizes, including one measured duplication that remains
+present in v1.8 because the fix for it failed its protected-path gate.
+
 ## v1.7.0 release evidence
 
 v1.7.0 combines authenticated cover TCP warming, validated prebuilt REALITY

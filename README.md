@@ -69,7 +69,7 @@ Xray-compatible client
 
 Comparator: Xray-core 26.7.28 (commit `5ca6f4b`, go1.26.0, binary SHA-256
 `23d228d7…04c5268`) — the same binary that gates interoperability. Every
-v1.7.0 protected Xray-comparison number below retains the v1.6.1 measurement
+v1.8.0 protected Xray-comparison number below retains the v1.6.1 measurement
 foundation from the release host (Intel i3-8100 4C/4T, Linux 6.12). Both
 servers used warn-level logging (rust-reality performs
 no per-connection log work at warn), the same unmodified Xray SOCKS5
@@ -88,7 +88,7 @@ Connection setup (accept → first Vision transition; 144-sample ABBA):
 | 8 | 767.5 | 716.9 | 1.07× | 18.8 ms | 30.8 ms |
 | 32 | 853.2 | 784.5 | 1.09× | 59.3 ms | 73.3 ms |
 
-Bulk throughput, v1.7.0 vs Xray p50 ratio (32 MiB × concurrency 32, two
+Bulk throughput, v1.8.0 vs Xray p50 ratio (32 MiB × concurrency 32, two
 rounds):
 
 | path | ratio |
