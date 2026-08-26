@@ -373,6 +373,21 @@ and RSS growth over the soak with zero transfer failures.
 - Results are measurements of this host and are not a universal
   performance claim.
 
+## v1.8.0 release comparison evidence
+
+v1.8.0 introduced no new comparison table. It is an architecture release whose
+performance claim is neutrality against v1.7.0, established by four independent
+formal gates rather than by a new headline measurement campaign. The gate
+inputs, verdicts, and stated limits are recorded in
+[performance.md](performance.md#v180-release-evidence).
+
+The stock Xray compatibility gate ran unchanged: the pinned
+`artifacts/xray-reference-v26.7.28` client drove every matrix cell of every gate
+with zero invalid samples and passing SHA-256 payload-integrity cells.
+
+The v1.7.0 and earlier headline tables below remain the measurement foundation
+and are unchanged.
+
 ## v1.7.0 release comparison evidence
 
 The v1.7.0 protected Xray-comparison headline retains the v1.6.1 measurement

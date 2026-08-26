@@ -2,6 +2,87 @@
 
 All notable user-facing changes to this project are documented in this file.
 
+## [1.8.0] - 2026-08-26
+
+No configuration migration is required from v1.7.0, and no wire-format,
+client-visible, or deployment-identity change is included. Existing stock Xray
+client links continue to work unchanged. This release is an internal architecture
+release: it establishes compiler- and CI-enforced layer boundaries so that future
+performance, fuzzing, and transport work has something solid to stand on.
+
+### Added
+
+- Added the internal, dependency-free `no_std` Session Engine crate
+  `rr-session`, which owns synchronous data-only session decisions: byte-exact
+  authenticated-write progress and its irreversible retry boundary, the Vision
+  direction lifecycle and its permitted transition table, one-shot raw-relay
+  ownership grants, and the bounded raw-relay rendezvous policy.
+- Added semantic event-sequence fuzzing (`session_semantics`) alongside the
+  existing byte-level wire and parser fuzzing, which is unchanged. It drives the
+  Session Engine with arbitrary event sequences and no socket, clock, or runtime,
+  and asserts that a transport grant is issued at most once per direction, that
+  the two Vision directions never split a bilateral pair, that per-direction
+  state growth stays bounded, that a terminal direction stays terminal, and that
+  an authenticated transfer never authorises an attempt after its irreversible
+  boundary.
+- Added CI-enforced layering gates. `tests/session_engine_boundary.rs` fails the
+  build if the Session Engine names a runtime, socket, descriptor, clock,
+  allocator, synchronisation primitive, randomness source, or logger, if it gains
+  a dependency, or if it stops being `no_std`; it also fails if the transport
+  layer can name the Session Engine at all, which is the cheapest strong form of
+  the rule that the raw relay imposes no per-chunk semantic work.
+  `tests/transport_capability_boundary.rs` fails the build if protocol semantics
+  can name or select a transport backend.
+- Added `docs/memory-audit-v1.8.md`: an ownership map for eleven tracked items, a
+  copy ledger with every hot-path copy classified, an allocation ledger, and an
+  async future-size table, together with an explicit statement of what is not
+  measured.
+
+### Changed
+
+- The irreversible authenticated-write boundary is now expressed by type rather
+  than by convention. A completed write yields a one-shot, non-`Clone`
+  `CommittedWrite` witness and a failed write yields `RetryableProgress`, which
+  cannot describe a committed message. Four runtime `unreachable!` guards were
+  deleted from the Handoff and NXR transfer paths because the states they
+  excluded are no longer representable.
+- The raw-relay rendezvous policy — how many cooperative scheduling points a
+  Vision direction may spend waiting for its peer, and when to stop observing —
+  moved into the Session Engine as `PairRendezvous`. The Tokio adapter keeps only
+  the scheduling operation it is asked to perform. Behaviour is unchanged: at most
+  three peer observations and at most two scheduling points, then the same
+  mutex-serialised commit.
+- Each raw transport capability now takes the policy type it can honour. The
+  directional relay takes `DirectionalRelayContext`, which has no reset-as-EOF
+  field because its backends do not implement one, so that option is no longer
+  accepted and silently ignored.
+
+### Fixed
+
+- `WriteProgress::from_written` classified a fully delivered zero-length message
+  as retryable, disagreeing with the counted writer, which reports completion for
+  an empty message without issuing a write. Completion is now tested first.
+  Production authenticated messages always carry a mandatory header and are never
+  empty, so no reachable outcome changes; this removes a latent hazard that
+  pointed toward retrying an already-delivered message.
+
+### Performance
+
+- Performance is neutral against the immutable v1.7.0 release asset. Four
+  independent formal gates, each judged by `evaluate-release-performance.py` with
+  exact paired sign-flip permutation tests and global Holm correction, reported
+  `PASS` with zero regressions: the Session Engine extraction (32 metrics at
+  concurrency 1 plus 24 metrics covering concurrency 1, 8 and 32), the write
+  boundary change (32), the runtime adapter (32), and the transport capability
+  boundary (32).
+- One measured memory finding is documented rather than fixed. Each spawned
+  connection task carries the connection future twice — 21 224 bytes instead of
+  10 768 — because rustc keeps a captured upvar slot alive alongside the awaitee
+  slot. The obvious fix was implemented, removed the duplication exactly, and was
+  then rejected because two independent formal rounds both failed the protected
+  framed-download cell. See `notes/v1.8.0/rejected-connection-future-factory.md`
+  for the evidence and the revisit conditions.
+
 ## [1.7.0] - 2026-08-26
 
 No configuration migration is required from v1.6.1. Handoff, NXR, and SOCKS5
