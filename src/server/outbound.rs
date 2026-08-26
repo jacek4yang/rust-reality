@@ -26,7 +26,7 @@ use crate::{
     },
     runtime::{AdmissionDenied, DirectBarrier, FdBudget, FdPermit},
 };
-use rr_session::WriteProgress;
+use rr_session::AttemptTransport;
 
 use super::{
     connector::{AccountedTcpStream, DestinationConnectError, DestinationConnector},
@@ -761,22 +761,21 @@ async fn connect_nxr(
             let (mut stream, fd_permit) = connection.into_parts();
             let request = fresh_nxr_request(settings, destination)?;
             match write_all_counted_before(&mut stream, &request, deadline).await {
-                Ok(WriteProgress::CompleteWrite) => {
+                Ok(committed) => {
+                    // The warm socket carried its own fresh request to
+                    // completion, so it now owns this session.
+                    committed.commit_transport_ownership();
                     return Ok(PreparedConnection {
                         connection: AccountedTcpStream::from_parts(stream, fd_permit),
                         warm_permit: Some(warm_permit),
                     });
                 }
-                Ok(WriteProgress::NoBytesWritten | WriteProgress::PartialWrite { .. }) => {
-                    unreachable!("counted write reports incomplete progress only as an error")
-                }
                 Err(error) => {
-                    match error.progress() {
-                        WriteProgress::NoBytesWritten | WriteProgress::PartialWrite { .. } => {}
-                        WriteProgress::CompleteWrite => {
-                            unreachable!("a complete write cannot be a retryable error")
-                        }
-                    }
+                    // The error type proves no byte was authenticated, and the
+                    // warm transport is the speculative attempt, so an alternate
+                    // attempt remains.
+                    debug_assert!(AttemptTransport::Warm.permits_alternate_attempt());
+                    let _discarded = error.progress().bytes_discarded();
                     pool.record_stale_checkout();
                     // The immediate cold fallback below is the sole alternate
                     // attempt and constructs a fresh timestamp, nonce and HMAC.

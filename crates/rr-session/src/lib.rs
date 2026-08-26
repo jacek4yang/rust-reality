@@ -6,10 +6,10 @@
 
 #![no_std]
 
+mod transfer;
 mod vision;
-mod write_progress;
 
+pub use transfer::{AttemptTransport, CommittedWrite, RetryableProgress, WriteProgress};
 pub use vision::{
     Direction, DirectionState, InvalidTransition, RawDecision, RawRelayGrant, RawRelayTransition,
 };
-pub use write_progress::WriteProgress;
