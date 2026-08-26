@@ -1850,6 +1850,14 @@ async fn run_connection(
             emit_debug(logger, || LogEvent::ConnectionClosed { peer });
             Ok(())
         }
+        Err(error) if error.is_quiet_pre_auth_retirement() => {
+            // READY-socket lifetime rotation closes a zero-byte transport by
+            // design. It granted no authority and started no authentication,
+            // so reporting it as a warn-level authentication rejection would
+            // turn ordinary idle maintenance into unbounded log I/O.
+            emit_debug(logger, || LogEvent::ConnectionClosed { peer });
+            Ok(())
+        }
         Err(error) => {
             emit_connection_failure(logger, peer, &error);
             Err(io::Error::other(error))
@@ -2001,6 +2009,18 @@ enum ConnectionRunError {
 }
 
 impl ConnectionRunError {
+    const fn is_quiet_pre_auth_retirement(&self) -> bool {
+        matches!(
+            self,
+            Self::Nxr(
+                NxrLandingError::PreAuthPeerClosed | NxrLandingError::PreAuthGenerationRetired,
+            ) | Self::Handoff(
+                HandoffLandingError::PreAuthPeerClosed
+                    | HandoffLandingError::PreAuthGenerationRetired,
+            )
+        )
+    }
+
     fn rejection_reason(&self) -> RejectionReason {
         match self {
             Self::Reality(RealityAcceptError::Admission(_)) => RejectionReason::ResourceLimit,
@@ -2377,8 +2397,8 @@ mod tests {
     };
 
     use super::{
-        ProductionServer, RuntimeUpdateError, is_degradable_listener_bind_error,
-        theoretical_fd_peak,
+        ConnectionRunError, ProductionServer, RuntimeUpdateError,
+        is_degradable_listener_bind_error, theoretical_fd_peak,
     };
     use crate::{
         config::{
@@ -2387,8 +2407,36 @@ mod tests {
             generate_minimal_config,
         },
         protocol::vless::{Address, Destination, VISION_FLOW},
-        server::outbound::{OutboundConnectOutcome, OutboundRegistry},
+        server::{
+            handoff::HandoffLandingError,
+            nxr::NxrLandingError,
+            outbound::{OutboundConnectOutcome, OutboundRegistry},
+        },
     };
+
+    #[test]
+    fn zero_byte_warm_retirement_is_quiet_for_both_landing_protocols() {
+        assert!(
+            ConnectionRunError::Handoff(HandoffLandingError::PreAuthPeerClosed)
+                .is_quiet_pre_auth_retirement()
+        );
+        assert!(
+            ConnectionRunError::Nxr(NxrLandingError::PreAuthPeerClosed)
+                .is_quiet_pre_auth_retirement()
+        );
+        assert!(
+            ConnectionRunError::Handoff(HandoffLandingError::PreAuthGenerationRetired)
+                .is_quiet_pre_auth_retirement()
+        );
+        assert!(
+            !ConnectionRunError::Nxr(NxrLandingError::Read(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "peer stalled after byte one",
+            )))
+            .is_quiet_pre_auth_retirement(),
+            "EOF after authentication starts must remain a rejection"
+        );
+    }
 
     #[test]
     fn compiles_generated_reality_vision_server_without_plain_inbound() {

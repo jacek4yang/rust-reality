@@ -128,6 +128,15 @@ and follows the bounded retry rules above. Background connect failures use
 capped exponential backoff with jitter; user-triggered cold dials never wait
 behind it. Correctness never depends on warm availability.
 
+Normal READY lifetime rotation closes an unused socket with zero protocol
+bytes, and reload retires the old LANDING pre-auth generation explicitly.
+LANDING classifies both as ordinary transport retirement and keeps them silent
+at normal log levels; otherwise bounded idle maintenance would become
+warning-rate amplification as pool targets grow. Pressure reclamation remains
+a resource-limit signal. A peer that sent any protocol byte has already
+entered `AUTHENTICATING`, so a subsequent EOF remains an authentication
+failure under the short deadline.
+
 ## Security consequences
 
 Firewall restriction to LINE source addresses remains mandatory for Handoff

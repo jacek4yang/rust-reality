@@ -449,4 +449,11 @@ and a two-dimensional (FD + memory) pressure model; see the
 | `admission_limited` | per category refused by a limit or by the pressure state |
 | `connection_completed` (debug) | per connection: byte counts, per-direction Direct flags, selected backends, handoff delays |
 
+An unused Handoff/NXR warm socket that closes before sending byte one, or whose
+old pre-auth generation is retired by reload, is normal lifecycle work rather
+than an authentication rejection. It is silent unless debug logging is
+enabled; pressure reclamation remains a resource-limit signal. Once byte one
+arrives, failures retain the ordinary closed-vocabulary rejection behavior and
+short authentication deadline.
+
 No event carries a target, an SNI value, a UUID, a key, or any payload.

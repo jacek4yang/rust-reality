@@ -732,6 +732,10 @@ pub enum HandoffLandingError {
     Admission(AdmissionDenied),
     /// An unused socket was reclaimed by pressure or generation retirement.
     Reclaimed,
+    /// The LINE retired an unused zero-byte warm transport normally.
+    PreAuthPeerClosed,
+    /// Runtime reload retired this unused pre-auth generation normally.
+    PreAuthGenerationRetired,
     Timeout,
     Read(io::Error),
     Protocol(HandoffError),
@@ -750,8 +754,10 @@ impl HandoffLandingError {
         match error {
             PreAuthError::Admission(error) => Self::Admission(error),
             PreAuthError::Timeout => Self::Timeout,
+            PreAuthError::PeerClosed => Self::PreAuthPeerClosed,
             PreAuthError::Read(error) => Self::Read(error),
-            PreAuthError::Reclaimed => Self::Reclaimed,
+            PreAuthError::PressureReclaimed => Self::Reclaimed,
+            PreAuthError::GenerationRetired => Self::PreAuthGenerationRetired,
         }
     }
 }
@@ -772,6 +778,8 @@ impl Error for HandoffLandingError {
             Self::Session(source) => Some(source),
             Self::Admission(source) => Some(source),
             Self::Reclaimed
+            | Self::PreAuthPeerClosed
+            | Self::PreAuthGenerationRetired
             | Self::Timeout
             | Self::Allocation
             | Self::Clock

@@ -77,8 +77,11 @@ pub(crate) struct AuthenticationStart {
 pub(crate) enum PreAuthError {
     Admission(AdmissionDenied),
     Timeout,
+    /// The peer retired an unused zero-byte transport normally.
+    PeerClosed,
     Read(io::Error),
-    Reclaimed,
+    PressureReclaimed,
+    GenerationRetired,
 }
 
 /// Waits for byte one without allocating protocol state or performing crypto.
@@ -99,11 +102,17 @@ pub(crate) async fn begin_authentication(
     let mut first = [0_u8; 1];
     tokio::select! {
         biased;
-        () = generation.wait_deactivated() => return Err(PreAuthError::Reclaimed),
-        () = pressure.wait_until_pressure() => return Err(PreAuthError::Reclaimed),
+        () = generation.wait_deactivated() => return Err(PreAuthError::GenerationRetired),
+        () = pressure.wait_until_pressure() => return Err(PreAuthError::PressureReclaimed),
         () = time::sleep_until(idle_deadline) => return Err(PreAuthError::Timeout),
         result = stream.read_exact(&mut first) => {
-            result.map_err(PreAuthError::Read)?;
+            match result {
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
+                    return Err(PreAuthError::PeerClosed);
+                }
+                Err(error) => return Err(PreAuthError::Read(error)),
+            }
         }
     }
 
@@ -218,6 +227,30 @@ mod tests {
         assert_eq!(governor.in_flight(AdmissionKind::PreAuthIdle), 0);
     }
 
+    #[tokio::test]
+    async fn zero_byte_peer_retirement_is_distinct_from_authentication_failure() {
+        let (client, mut server) = tcp_pair().await;
+        let governor = ResourceGovernor::new(&ResourceGovernorConfig::default());
+        let pressure = PressureGauge::new();
+        let generation = PreAuthGeneration::default();
+        drop(client);
+
+        assert!(matches!(
+            begin_authentication(
+                &mut server,
+                Duration::from_secs(60),
+                Duration::from_secs(3),
+                &governor,
+                &pressure,
+                &generation,
+            )
+            .await,
+            Err(PreAuthError::PeerClosed)
+        ));
+        assert_eq!(governor.in_flight(AdmissionKind::PreAuthIdle), 0);
+        assert_eq!(governor.in_flight(AdmissionKind::Handshake), 0);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn pressure_and_generation_retirement_reclaim_idle_sockets() {
         for reclaim_by_pressure in [true, false] {
@@ -245,10 +278,12 @@ mod tests {
             } else {
                 generation.deactivate();
             }
-            assert!(matches!(
-                task.await.expect("task must join"),
-                Err(PreAuthError::Reclaimed)
-            ));
+            let result = task.await.expect("task must join");
+            if reclaim_by_pressure {
+                assert!(matches!(result, Err(PreAuthError::PressureReclaimed)));
+            } else {
+                assert!(matches!(result, Err(PreAuthError::GenerationRetired)));
+            }
             assert_eq!(governor.in_flight(AdmissionKind::PreAuthIdle), 0);
         }
     }
@@ -295,7 +330,7 @@ mod tests {
         generation.deactivate();
         assert!(matches!(
             first.await.expect("first task must join"),
-            Err(PreAuthError::Reclaimed)
+            Err(PreAuthError::GenerationRetired)
         ));
         assert_eq!(governor.in_flight(AdmissionKind::PreAuthIdle), 0);
     }

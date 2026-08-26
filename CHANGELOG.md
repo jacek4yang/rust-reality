@@ -28,6 +28,11 @@ All notable user-facing changes to this project are documented in this file.
 - Added byte-counted Handoff/NXR write boundaries. A bounded pre-complete retry
   always constructs fresh authentication state; a complete transfer/request
   is never retried because LANDING may already have external side effects.
+- Normal zero-byte Handoff/NXR warm-socket and old-generation retirement is
+  silent at ordinary log levels instead of being mislabeled as authentication
+  rejection/resource pressure. Any connection that sent byte one still uses
+  the short authentication deadline and ordinary rejection reporting; actual
+  pressure reclamation remains visible.
 
 ### Performance
 

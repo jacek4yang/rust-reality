@@ -362,4 +362,9 @@ accept 错误按原始 `errno` 分类：
 | `admission_limited` | 每个被限制或压力状态拒绝的类别 |
 | `connection_completed`（debug） | 每连接：字节数、按方向的 Direct 标志、选中的后端、交接延迟 |
 
+未使用的 Handoff/NXR warm socket 在发送第一字节前关闭，或 reload
+退役旧 pre-auth generation，都属于正常 lifecycle，不是认证拒绝；除非启用
+debug 日志，否则保持静默。压力回收仍作为 resource-limit 信号。
+第一字节到达后，后续失败仍使用原有封闭原因词表和短认证截止时间。
+
 任何事件都不携带目标地址、SNI 值、UUID、密钥或载荷。

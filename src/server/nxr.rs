@@ -557,6 +557,10 @@ impl From<NxrReplayError> for NxrAuthenticationError {
 pub enum NxrLandingError {
     Admission(AdmissionDenied),
     Reclaimed,
+    /// The LINE retired an unused zero-byte warm transport normally.
+    PreAuthPeerClosed,
+    /// Runtime reload retired this unused pre-auth generation normally.
+    PreAuthGenerationRetired,
     Timeout,
     Read(io::Error),
     Protocol(NxrProtocolError),
@@ -573,8 +577,10 @@ impl NxrLandingError {
         match error {
             PreAuthError::Admission(error) => Self::Admission(error),
             PreAuthError::Timeout => Self::Timeout,
+            PreAuthError::PeerClosed => Self::PreAuthPeerClosed,
             PreAuthError::Read(error) => Self::Read(error),
-            PreAuthError::Reclaimed => Self::Reclaimed,
+            PreAuthError::PressureReclaimed => Self::Reclaimed,
+            PreAuthError::GenerationRetired => Self::PreAuthGenerationRetired,
         }
     }
 }
@@ -594,7 +600,12 @@ impl Error for NxrLandingError {
             Self::Protocol(source) => Some(source),
             Self::Authentication(source) => Some(source),
             Self::Destination(source) => Some(source),
-            Self::Reclaimed | Self::Timeout | Self::Allocation | Self::Clock => None,
+            Self::Reclaimed
+            | Self::PreAuthPeerClosed
+            | Self::PreAuthGenerationRetired
+            | Self::Timeout
+            | Self::Allocation
+            | Self::Clock => None,
         }
     }
 }
