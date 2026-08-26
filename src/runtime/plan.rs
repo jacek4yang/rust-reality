@@ -20,8 +20,8 @@ use serde::Serialize;
 
 use crate::{
     config::{
-        DirectBarrierConfig, Objective, PolicyConfig, RelayPolicy, ResourceGovernorConfig,
-        ResourceMode, TuningConfig, TuningMode,
+        DirectBarrierConfig, Objective, PolicyConfig, PolicyOverrides, RelayPolicy,
+        ResourceGovernorConfig, ResourceMode, TuningConfig, TuningMode,
     },
     runtime::machine::MachineReport,
 };
@@ -636,6 +636,7 @@ pub struct PolicyResolution {
 #[must_use]
 pub fn resolve_policy(
     limits: &PolicyConfig,
+    overrides: &PolicyOverrides,
     tuning: &TuningConfig,
     machine: &MachineReport,
     mode: ResourceMode,
@@ -661,7 +662,13 @@ pub fn resolve_policy(
     macro_rules! resolve_field {
         ($section:ident, $name:ident, $path:literal, $multiplier:expr, $floor:expr, $cap:expr) => {{
             let default = defaults.$section.$name;
-            let (value, source) = if limits.$section.$name != default {
+            // `advanced.overrides` is presence-based, so it is consulted first and
+            // honours a pin whose value equals the built-in default. The legacy
+            // `advanced.limits` inequality check stays after it so existing 1.x
+            // configurations resolve exactly as before.
+            let (value, source) = if let Some(pinned) = overrides.$section.$name {
+                (pinned, FieldSource::Override)
+            } else if limits.$section.$name != default {
                 (limits.$section.$name, FieldSource::Override)
             } else if derive {
                 (derived.$section.$name, FieldSource::Derived)
@@ -689,7 +696,9 @@ pub fn resolve_policy(
     macro_rules! resolve_carried {
         ($section:ident, $name:ident, $path:literal) => {{
             let default = defaults.$section.$name;
-            let (value, source) = if limits.$section.$name != default {
+            let (value, source) = if let Some(pinned) = overrides.$section.$name {
+                (pinned, FieldSource::Override)
+            } else if limits.$section.$name != default {
                 (limits.$section.$name, FieldSource::Override)
             } else {
                 (default, FieldSource::Default)
@@ -914,7 +923,9 @@ mod tests {
         FieldSource, MachineCapabilities, Probes, RuntimeTopology, SafetyLimits, StartupPlan,
         resolve_policy,
     };
-    use crate::config::{Objective, PolicyConfig, ResourceMode, TuningConfig, TuningMode};
+    use crate::config::{
+        Objective, PolicyConfig, PolicyOverrides, ResourceMode, TuningConfig, TuningMode,
+    };
 
     fn capabilities(
         effective_cpus: usize,
@@ -1397,7 +1408,14 @@ mod tests {
             mode: Some(TuningMode::Fixed),
             objective: Objective::Throughput,
         };
-        let resolution = resolve_policy(&limits, &tuning, &machine, ResourceMode::Standard, 1);
+        let resolution = resolve_policy(
+            &limits,
+            &PolicyOverrides::default(),
+            &tuning,
+            &machine,
+            ResourceMode::Standard,
+            1,
+        );
         assert_eq!(resolution.policy, limits, "fixed never derives");
         assert!(resolution.plan.is_none());
         assert!(
@@ -1420,7 +1438,14 @@ mod tests {
         let machine = report(4, 65_536, 1_048_576, 4 * 1024 * 1024 * 1024);
         let limits = PolicyConfig::default();
         let tuning = TuningConfig::default();
-        let resolution = resolve_policy(&limits, &tuning, &machine, ResourceMode::Standard, 1);
+        let resolution = resolve_policy(
+            &limits,
+            &PolicyOverrides::default(),
+            &tuning,
+            &machine,
+            ResourceMode::Standard,
+            1,
+        );
         let expected = StartupPlan::derive(
             &MachineCapabilities::from_report(&machine),
             &SafetyLimits::default(),
@@ -1465,6 +1490,7 @@ mod tests {
         limits.relay.buffer_bytes = 8 * 1024;
         let resolution = resolve_policy(
             &limits,
+            &PolicyOverrides::default(),
             &TuningConfig::default(),
             &machine,
             ResourceMode::Standard,
@@ -1505,6 +1531,7 @@ mod tests {
         let machine = crate::runtime::machine::MachineReport::conservative();
         let resolution = resolve_policy(
             &PolicyConfig::default(),
+            &PolicyOverrides::default(),
             &TuningConfig::default(),
             &machine,
             ResourceMode::Standard,
@@ -1520,6 +1547,7 @@ mod tests {
         let tuning = TuningConfig::default();
         let shared = resolve_policy(
             &PolicyConfig::default(),
+            &PolicyOverrides::default(),
             &tuning,
             &machine,
             ResourceMode::Standard,
@@ -1527,6 +1555,7 @@ mod tests {
         );
         let dedicated = resolve_policy(
             &PolicyConfig::default(),
+            &PolicyOverrides::default(),
             &tuning,
             &machine,
             ResourceMode::Dedicated,
@@ -1579,5 +1608,118 @@ mod tests {
         assert_eq!(super::shift_buffer_tier(32 * 1024, 1), 64 * 1024);
         assert_eq!(super::shift_buffer_tier(64 * 1024, 1), 64 * 1024);
         assert_eq!(super::shift_buffer_tier(64 * 1024, -1), 32 * 1024);
+    }
+
+    /// Regression test for the defect that `advanced.limits` cannot express a pin
+    /// whose value equals the built-in default: the value was silently discarded
+    /// and replaced by derivation.
+    #[test]
+    fn an_override_equal_to_the_default_is_still_operator_pinned() {
+        let machine = report(4, 65_536, 1_048_576, 4 * 1024 * 1024 * 1024);
+        let defaults = PolicyConfig::default();
+        let mut overrides = PolicyOverrides::default();
+        overrides.relay.buffer_bytes = Some(defaults.relay.buffer_bytes);
+
+        let resolution = resolve_policy(
+            &PolicyConfig::default(),
+            &overrides,
+            &TuningConfig::default(),
+            &machine,
+            ResourceMode::Dedicated,
+            1,
+        );
+
+        let source_of = |name: &str| {
+            resolution
+                .fields
+                .iter()
+                .find(|field| field.field == name)
+                .expect("the field is reported")
+                .source
+        };
+        assert_eq!(
+            resolution.policy.relay.buffer_bytes, defaults.relay.buffer_bytes,
+            "an explicit pin equal to the default must survive derivation"
+        );
+        assert_eq!(source_of("relay.bufferBytes"), FieldSource::Override);
+    }
+
+    /// Regression test for the defect that overriding one field required restating
+    /// its mandatory siblings: siblings must keep deriving independently.
+    #[test]
+    fn an_override_does_not_pin_its_siblings() {
+        let machine = report(4, 65_536, 1_048_576, 4 * 1024 * 1024 * 1024);
+        let mut overrides = PolicyOverrides::default();
+        overrides.relay.buffer_bytes = Some(49_152);
+
+        let resolution = resolve_policy(
+            &PolicyConfig::default(),
+            &overrides,
+            &TuningConfig::default(),
+            &machine,
+            ResourceMode::Dedicated,
+            1,
+        );
+
+        let source_of = |name: &str| {
+            resolution
+                .fields
+                .iter()
+                .find(|field| field.field == name)
+                .expect("the field is reported")
+                .source
+        };
+        assert_eq!(resolution.policy.relay.buffer_bytes, 49_152);
+        assert_eq!(source_of("relay.bufferBytes"), FieldSource::Override);
+        assert_eq!(
+            source_of("relay.maxPooledBuffers"),
+            FieldSource::Derived,
+            "a sibling of an overridden field must keep deriving"
+        );
+        assert_eq!(
+            source_of("relay.maxSpliceRelays"),
+            FieldSource::Derived,
+            "a sibling of an overridden field must keep deriving"
+        );
+    }
+
+    /// The override channel must also reach fields the derivation never produces,
+    /// which previously could only be set through the value-inequality path.
+    #[test]
+    fn overrides_reach_carried_timeout_fields() {
+        let machine = report(4, 65_536, 1_048_576, 4 * 1024 * 1024 * 1024);
+        let defaults = PolicyConfig::default();
+        let mut overrides = PolicyOverrides::default();
+        overrides.resource_governor.handshake_timeout_ms =
+            Some(defaults.resource_governor.handshake_timeout_ms);
+
+        let resolution = resolve_policy(
+            &PolicyConfig::default(),
+            &overrides,
+            &TuningConfig::default(),
+            &machine,
+            ResourceMode::Dedicated,
+            1,
+        );
+
+        let field = resolution
+            .fields
+            .iter()
+            .find(|field| field.field == "resourceGovernor.handshakeTimeoutMs")
+            .expect("the field is reported");
+        assert_eq!(field.source, FieldSource::Override);
+    }
+
+    #[test]
+    fn pinned_paths_names_every_override_by_json_path() {
+        let mut overrides = PolicyOverrides::default();
+        assert!(overrides.is_empty());
+        overrides.relay.buffer_bytes = Some(32_768);
+        overrides.resource_governor.max_connections = Some(1_024);
+        let paths = overrides.pinned_paths();
+        assert!(paths.contains(&"advanced.overrides.relay.bufferBytes"));
+        assert!(paths.contains(&"advanced.overrides.resourceGovernor.maxConnections"));
+        assert_eq!(paths.len(), 2);
+        assert!(!overrides.is_empty());
     }
 }

@@ -121,6 +121,7 @@ pub fn explain_config(config: &Config, machine: &MachineReport) -> ExplainReport
     let topology = RuntimeTopology::for_mode(resource_mode, machine.effective_cpus());
     let resolution = resolve_policy(
         &config.advanced.limits,
+        &config.advanced.overrides,
         &config.runtime.tuning,
         machine,
         resource_mode,
