@@ -29,8 +29,8 @@ use crate::runtime::{FdPermit, UNITS_SPLICE_DIRECTION, UNITS_SPLICE_RELAY};
 
 use super::backend::{
     BackendCapability, BackendDeclineReason, BackendReport, BackendRequest, BackendRun,
-    DirectionalRelayOutcome, RelayBackend, RelayContext, RelayDirection, RelayOutcome,
-    TransferLedger,
+    DirectionalRelayContext, DirectionalRelayOutcome, RelayBackend, RelayContext, RelayDirection,
+    RelayOutcome, TransferLedger,
 };
 
 /// Process-wide bounded relay state for plaintext TCP-to-TCP boundaries.
@@ -128,6 +128,11 @@ impl TcpRelay {
     /// waiting; an exhausted pool or descriptor budget declines *before* the
     /// first byte and falls through to one pooled userspace buffer.
     ///
+    /// The policy argument is [`DirectionalRelayContext`] rather than
+    /// [`RelayContext`] because this capability does not implement
+    /// reset-as-EOF. That option is therefore unrepresentable here instead of
+    /// accepted and ignored.
+    ///
     /// # Errors
     ///
     /// Returns allocation, socket, pipe, or shutdown errors. A backend error
@@ -139,9 +144,9 @@ impl TcpRelay {
         mut source: OwnedReadHalf,
         mut destination: OwnedWriteHalf,
         direction: RelayDirection,
-        request: BackendRequest,
-        liveness: Option<Duration>,
+        context: DirectionalRelayContext,
     ) -> io::Result<DirectionalRelayOutcome> {
+        let DirectionalRelayContext { request, liveness } = context;
         let order = directional_selection_order(request);
         let mut last_decline = BackendDeclineReason::Disabled;
         for backend in order {
@@ -1355,7 +1360,7 @@ mod tests {
         time,
     };
 
-    use super::{TcpRelay, classify_abort, is_liveness_timeout_abort};
+    use super::{DirectionalRelayContext, TcpRelay, classify_abort, is_liveness_timeout_abort};
     use crate::{
         config::RelayPolicy,
         runtime::FdBudget,
@@ -1892,8 +1897,12 @@ mod tests {
         let (source_reader, _source_writer) = relay_source.into_split();
         let (_sink_reader, sink_writer) = relay_sink.into_split();
         let exchange = async {
-            let relay_io =
-                relay.relay_direction(source_reader, sink_writer, direction, request, None);
+            let relay_io = relay.relay_direction(
+                source_reader,
+                sink_writer,
+                direction,
+                DirectionalRelayContext::owned_direction().with_request(request),
+            );
             let sender_io = async {
                 sender.write_all(payload).await?;
                 sender.shutdown().await?;
@@ -2111,8 +2120,9 @@ mod tests {
                 source_reader,
                 sink_writer,
                 RelayDirection::Uplink,
-                request,
-                Some(liveness),
+                DirectionalRelayContext::owned_direction()
+                    .with_request(request)
+                    .with_liveness(liveness),
             ),
         )
         .await
@@ -2162,8 +2172,9 @@ mod tests {
                 source_reader,
                 sink_writer,
                 RelayDirection::Uplink,
-                BackendRequest::Explicit(RelayBackend::Buffered),
-                Some(Duration::from_millis(200)),
+                DirectionalRelayContext::owned_direction()
+                    .with_request(BackendRequest::Explicit(RelayBackend::Buffered))
+                    .with_liveness(Duration::from_millis(200)),
             ),
         )
         .await
@@ -2310,8 +2321,9 @@ mod tests {
                 source_reader,
                 sink_writer,
                 RelayDirection::Uplink,
-                request,
-                Some(liveness),
+                DirectionalRelayContext::owned_direction()
+                    .with_request(request)
+                    .with_liveness(liveness),
             );
             let sender_io = async {
                 for chunk in 0..8_u8 {

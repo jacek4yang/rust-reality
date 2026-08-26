@@ -7,7 +7,8 @@ pub mod tcp_relay;
 
 pub use backend::{
     BackendCapability, BackendDeclineReason, BackendReport, BackendRequest,
-    DirectionalRelayOutcome, RelayBackend, RelayContext, RelayDirection, RelayOutcome,
+    DirectionalRelayContext, DirectionalRelayOutcome, RelayBackend, RelayContext, RelayDirection,
+    RelayOutcome,
 };
 pub use relay::RelayStats;
 pub use tcp::{AcceptBackoff, AcceptErrorClass, EmergencyDescriptor, TcpAcceptor};
