@@ -45,7 +45,7 @@ use super::{
     routing::{AssetMatcher, RouteResolutionError, RoutingCompileError, RoutingTable},
 };
 use crate::transport::{
-    BackendRequest, RelayBackend, RelayContext, RelayDirection, RelayOutcome, TcpRelay,
+    DirectionalRelayContext, RelayBackend, RelayContext, RelayDirection, RelayOutcome, TcpRelay,
 };
 
 const MAX_REQUEST_HEADER_SIZE: usize = 533;
@@ -1407,8 +1407,7 @@ async fn run_directional(
             source,
             destination,
             relay_direction,
-            BackendRequest::Automatic,
-            Some(timeout),
+            DirectionalRelayContext::owned_direction().with_liveness(timeout),
         )
         .await
     {

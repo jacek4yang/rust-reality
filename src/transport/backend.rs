@@ -379,6 +379,58 @@ impl RelayContext {
     }
 }
 
+/// Immutable per-relay policy for the raw **directional** capability.
+///
+/// The two raw capabilities this transport offers are described by two policy
+/// types, not one, because they honour different options:
+///
+/// * the bidirectional capability owns both complete sockets and can therefore
+///   treat a source reset as a direction EOF ([`RelayContext::source_reset_is_eof`]);
+/// * the directional capability owns one direction's halves, leaves the peer
+///   direction untouched, and its backends do **not** implement reset-as-EOF.
+///
+/// Giving the directional capability its own policy type makes that difference
+/// unrepresentable rather than silently ignored: a caller cannot ask a
+/// directional relay for an option it would drop on the floor. This mirrors how
+/// the Session Engine makes a retry after an irreversible write unrepresentable
+/// instead of guarding it at runtime.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DirectionalRelayContext {
+    /// The backend the caller requested.
+    pub request: BackendRequest,
+    /// Idle liveness bound for this direction.
+    ///
+    /// When set, a direction that moves no byte for this long terminates instead
+    /// of parking on a stalled peer forever, pinning its descriptors, pipes, map
+    /// entries and permits.
+    pub liveness: Option<Duration>,
+}
+
+impl DirectionalRelayContext {
+    /// Returns a context for a caller that owns exactly one direction's halves.
+    #[must_use]
+    pub const fn owned_direction() -> Self {
+        Self {
+            request: BackendRequest::Automatic,
+            liveness: None,
+        }
+    }
+
+    /// Returns the same context with an explicit backend request.
+    #[must_use]
+    pub const fn with_request(mut self, request: BackendRequest) -> Self {
+        self.request = request;
+        self
+    }
+
+    /// Returns the same context with an idle liveness bound.
+    #[must_use]
+    pub const fn with_liveness(mut self, liveness: Duration) -> Self {
+        self.liveness = Some(liveness);
+        self
+    }
+}
+
 /// Monotonic, checked byte counters shared by a relay and its backend.
 ///
 /// The ledger is the single source of truth for "has this relay transferred a

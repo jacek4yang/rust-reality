@@ -99,6 +99,33 @@ both stream owners to the existing relay backend. The Session Engine does not
 observe relay chunks and no semantic abstraction is invoked per byte or per
 buffer.
 
+Transport offers exactly two raw capabilities, and each is described by its own
+policy type rather than by a shared one:
+
+- the **bidirectional** capability owns both complete sockets and takes
+  `RelayContext`, which can request reset-as-EOF because both sockets carry the
+  session's own record layer;
+- the **directional** capability owns one direction's halves, leaves the peer
+  direction untouched, and takes `DirectionalRelayContext`, which has no
+  reset-as-EOF field at all because the directional backends do not implement it.
+
+Two policy types rather than one is deliberate. A single shared context would let
+a caller ask the directional capability for an option it silently drops; giving
+each capability the vocabulary it can actually honour makes the unsupported
+request unrepresentable, in the same way the Session Engine makes a retry after an
+irreversible write unrepresentable instead of guarding it at runtime.
+
+Backend *selection* is a Runtime Adapter decision, never a protocol one.
+`tests/transport_capability_boundary.rs` enforces this: protocol modules may not
+name a relay backend, a relay type, a relay policy, or the transport module at
+all; the Session Engine may not name a transport capability or `splice`; and a
+raw relay entry point may only be invoked from the adapter or transport layers.
+The test deliberately does *not* claim that protocol code never names a socket or
+descriptor — `src/protocol/reality/tls13` exposes a raw descriptor precisely so an
+authenticated session can hand ownership to a kernel relay backend, and
+`CoverFlightIo` is implemented for the concrete production `TcpStream`. Those are
+the boundary working as designed.
+
 A one-shot `RawRelayGrant` makes that transition compiler-visible. The pure
 Session Engine plans the legal `RawReady` successor, the runtime adapter first
 commits that state atomically, and only then consumes the non-`Clone`,
