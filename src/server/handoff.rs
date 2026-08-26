@@ -176,12 +176,11 @@ impl HandoffLine {
         state: &ContinuationState,
         client_random: [u8; 32],
     ) -> Result<(TcpStream, HandoffTransportPermit), HandoffLineError> {
-        let deadline = Instant::now()
-            .checked_add(self.connect_timeout)
-            .ok_or(HandoffLineError::Timeout)?;
-
         if let Some(pool) = &self.pool {
             if let Some(checkout) = pool.checkout() {
+                let deadline = Instant::now()
+                    .checked_add(self.connect_timeout)
+                    .ok_or(HandoffLineError::Timeout)?;
                 let (connection, warm) = checkout.into_parts();
                 let (mut stream, fd_permit) = connection.into_parts();
                 let message = self.seal_fresh(state, client_random)?;
@@ -215,6 +214,13 @@ impl HandoffLine {
             pool.record_cold_fallback();
         }
 
+        // The required cold path owns a fresh per-attempt deadline. A stale
+        // warm socket may consume its complete write allowance before failing;
+        // carrying that expired absolute deadline into the cold dial would
+        // make pool availability a correctness dependency.
+        let deadline = Instant::now()
+            .checked_add(self.connect_timeout)
+            .ok_or(HandoffLineError::Timeout)?;
         let connected = time::timeout_at(
             deadline,
             self.connector

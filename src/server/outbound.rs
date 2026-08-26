@@ -751,12 +751,11 @@ async fn connect_nxr(
     connector: &DestinationConnector,
     fd_budget: &FdBudget,
 ) -> Result<PreparedConnection, OutboundConnectError> {
-    let deadline = Instant::now()
-        .checked_add(timeout)
-        .ok_or(OutboundConnectError::NxrTimeout)?;
-
     if let Some(pool) = &settings.pool {
         if let Some(checkout) = pool.checkout() {
+            let deadline = Instant::now()
+                .checked_add(timeout)
+                .ok_or(OutboundConnectError::NxrTimeout)?;
             let (connection, warm_permit) = checkout.into_parts();
             let (mut stream, fd_permit) = connection.into_parts();
             let request = fresh_nxr_request(settings, destination)?;
@@ -786,6 +785,12 @@ async fn connect_nxr(
         pool.record_cold_fallback();
     }
 
+    // Speculative transport failure cannot consume the required connection's
+    // timeout budget. Retry count remains bounded, but every permitted attempt
+    // receives the same normal per-attempt deadline as an ordinary cold dial.
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or(OutboundConnectError::NxrTimeout)?;
     let connected = time::timeout_at(
         deadline,
         connector.connect_host_accounted(settings.address.as_ref(), settings.port, fd_budget),
@@ -834,14 +839,14 @@ async fn connect_socks5(
     connector: &DestinationConnector,
     fd_budget: &FdBudget,
 ) -> Result<PreparedConnection, OutboundConnectError> {
-    let deadline = Instant::now()
-        .checked_add(timeout)
-        .ok_or(OutboundConnectError::SocksTimeout)?;
     if let Some(pool) = &settings.pool {
         for _attempt in 0..2 {
             let Some(checkout) = pool.checkout() else {
                 break;
             };
+            let deadline = Instant::now()
+                .checked_add(timeout)
+                .ok_or(OutboundConnectError::SocksTimeout)?;
             let (connection, warm_permit) = checkout.into_parts();
             let (mut stream, fd_permit) = connection.into_parts();
             match negotiate_socks5_retryable(&mut stream, settings, destination, deadline).await {
@@ -861,6 +866,12 @@ async fn connect_socks5(
         pool.record_cold_fallback();
     }
 
+    // A third-party SOCKS server may deliberately expire or stall an idle
+    // preconnected socket. Preserve the normal cold path by giving it a fresh
+    // deadline after the bounded READY-socket attempts.
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or(OutboundConnectError::SocksTimeout)?;
     let connected = time::timeout_at(
         deadline,
         connector.connect_host_accounted(settings.address.as_ref(), settings.port, fd_budget),
@@ -1569,6 +1580,73 @@ mod tests {
         assert_eq!(snapshot.stale_discard, 1);
         assert!(snapshot.checkout_total <= 2);
         assert!(snapshot.cold_fallback <= 1);
+        registry.deactivate_warm_pools();
+        server
+            .await
+            .expect("SOCKS server must join")
+            .expect("SOCKS server result");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stalled_warm_socks_attempt_does_not_consume_retry_deadline() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("SOCKS server must bind");
+        let address = listener.local_addr().expect("SOCKS address");
+        let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut stalled, _) = listener.accept().await?;
+            accepted_tx
+                .send(())
+                .map_err(|()| io::Error::other("receiver closed"))?;
+            let mut greeting = [0_u8; 3];
+            stalled.read_exact(&mut greeting).await?;
+            assert_eq!(greeting, [SOCKS_VERSION, 1, SOCKS_NO_AUTH]);
+
+            // Keep the checked-out socket open without replying until its
+            // per-attempt deadline fires. Refill may establish the one bounded
+            // alternate in the listener backlog meanwhile.
+            serve_one_no_auth_socks_connect(&listener).await?;
+            drop(stalled);
+            Ok::<_, io::Error>(())
+        });
+        let policy = warm_policy();
+        let registry = OutboundRegistry::with_warm_pools(
+            &[OutboundConfig::Socks5 {
+                tag: "socks".to_owned(),
+                settings: Socks5Settings {
+                    address: address.ip().to_string(),
+                    port: address.port(),
+                    username: None,
+                    password: None,
+                    warm_tcp: true,
+                },
+            }],
+            DirectBarrier::new(&DirectBarrierConfig::default()),
+            Duration::from_millis(25),
+            FdBudget::new(4_096),
+            &NetworkConfig::default(),
+            NetworkEnvironment::detect(),
+            13,
+            WarmPoolAuthority::new(&policy, 1, PressureGauge::new()),
+            &policy,
+        );
+        registry.activate_warm_pools();
+        accepted_rx.await.expect("warm TCP must reach SOCKS server");
+        wait_for_one_ready(&registry).await;
+
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 443);
+        let OutboundConnectOutcome::Connected(connection) = registry
+            .connect("socks", &destination)
+            .await
+            .expect("bounded alternate must receive a fresh deadline")
+        else {
+            panic!("SOCKS cannot blackhole");
+        };
+        drop(connection);
+        let snapshot = registry.warm_pool_snapshots().remove(0).pool;
+        assert_eq!(snapshot.stale_discard, 1);
+        assert!(snapshot.checkout_total <= 2);
         registry.deactivate_warm_pools();
         server
             .await

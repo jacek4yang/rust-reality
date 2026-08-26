@@ -33,6 +33,10 @@ All notable user-facing changes to this project are documented in this file.
   rejection/resource pressure. Any connection that sent byte one still uses
   the short authentication deadline and ordinary rejection reporting; actual
   pressure reclamation remains visible.
+- A stalled stale Handoff, NXR, or SOCKS5 warm socket can no longer consume the
+  absolute deadline of its bounded cold fallback. Each permitted transport
+  attempt receives the normal per-attempt timeout; retry counts and
+  irreversible authenticated-write boundaries are unchanged.
 
 ### Performance
 

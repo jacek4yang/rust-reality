@@ -479,7 +479,7 @@ LINE 与 LANDING 使用独立配置时，部署预检必须执行同一比较；
 | `settings.port` | 是 | — | 防火墙限制的非零 Handoff TCP 端口。 |
 | `settings.preSharedKey` | 是 | — | 与落地入站相同的独立 URL-safe 无填充 32 字节成对 PSK。 |
 | `settings.landingPublicKey` | 是 | — | 落地机的静态 X25519 公钥，URL-safe 无填充 base64，解码为恰好 32 字节；公开材料，不是秘密。 |
-| `settings.connectTimeoutMs` | 否 | `10000` | 连接落地机并写入一次密封转移消息的截止时间，`1..=600000`。 |
+| `settings.connectTimeoutMs` | 否 | `10000` | 每次尝试连接落地机并写入一次密封转移消息的截止时间，`1..=600000`。可重试但未完整写入的 warm 尝试不会耗尽唯一 cold fallback 的新截止时间。 |
 | `settings.firstByteTimeoutMs` | 否 | `15000` | 转移后落地机首个下行字节的截止时间，`1000..=600000`；见下文。 |
 | `settings.warmTcp` | 否 | `true` | 预建未获协议权限、单次使用的 TCP；每次 checkout 仍密封 fresh authenticated transfer。 |
 
@@ -642,7 +642,7 @@ connectTimeoutMs` 并留有余量：首个密封记录只有在转移被读取�
 | `maxDnsLookups` | 否 | `64` | 共享 DNS 解析器准入的并发解析数，覆盖系统 getaddrinfo 池和上游服务器请求。 |
 | `clientHelloTimeoutMs` | 是 | `3000` | ClientHello 读取截止时间，`1..=600000`，不超过握手超时。 |
 | `handshakeTimeoutMs` | 是 | `10000` | 认证握手截止时间，`1..=600000`。 |
-| `connectTimeoutMs` | 是 | `10000` | 伪装/出站连接截止时间，`1..=600000`，不超过 fallback 超时。 |
+| `connectTimeoutMs` | 是 | `10000` | 每次伪装/出站连接尝试的截止时间，`1..=600000`，不超过 fallback 超时。固定对端的有界 stale 重试会获得新的截止时间；重试次数仍为固定上限。 |
 | `fallbackTimeoutMs` | 是 | `120000` | fallback 最大生命周期，`1..=600000`。 |
 
 ### `advanced.limits.directBarrier`

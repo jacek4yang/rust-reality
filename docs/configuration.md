@@ -526,7 +526,7 @@ and a miss immediately opens the normal cold connection.
 | `settings.port` | yes | — | Firewall-restricted Handoff TCP port, non-zero. |
 | `settings.preSharedKey` | yes | — | Same independent URL-safe unpadded 32-byte pair PSK as the landing inbound. |
 | `settings.landingPublicKey` | yes | — | The landing node's static X25519 public key, URL-safe unpadded base64 decoding to exactly 32 bytes; public material, not a secret. |
-| `settings.connectTimeoutMs` | no | `10000` | Deadline to dial the landing node and write the one sealed transfer, `1..=600000`. |
+| `settings.connectTimeoutMs` | no | `10000` | Per-attempt deadline to dial the landing node and write the one sealed transfer, `1..=600000`. A retryable incomplete warm write cannot consume the sole cold fallback's fresh deadline. |
 | `settings.firstByteTimeoutMs` | no | `15000` | Deadline for the landing node's first downlink byte after the transfer, `1000..=600000`; see below. |
 | `settings.warmTcp` | no | `true` | Pre-establish protocol-unprivileged single-use TCP sockets. Every checkout still seals a fresh authenticated transfer. |
 
@@ -701,7 +701,7 @@ is derived from the detected machine at startup. See
 | `maxDnsLookups` | no | `64` | Concurrent resolutions admitted to the shared DNS resolver, across both the system getaddrinfo pool and upstream server flights. |
 | `clientHelloTimeoutMs` | yes | `3000` | ClientHello read deadline, `1..=600000`, no more than handshake timeout. |
 | `handshakeTimeoutMs` | yes | `10000` | Authenticated handshake deadline, `1..=600000`. |
-| `connectTimeoutMs` | yes | `10000` | Cover/outbound connect deadline, `1..=600000`, no more than fallback timeout. |
+| `connectTimeoutMs` | yes | `10000` | Per-attempt cover/outbound connect deadline, `1..=600000`, no more than fallback timeout. Bounded fixed-peer stale retries receive fresh deadlines; their retry count remains fixed. |
 | `fallbackTimeoutMs` | yes | `120000` | Maximum fallback lifetime, `1..=600000`. |
 
 ### `advanced.limits.directBarrier`

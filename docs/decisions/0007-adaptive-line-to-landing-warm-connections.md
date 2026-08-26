@@ -126,7 +126,10 @@ bounds. They do not perform a checkout round trip. A stale checkout is
 discarded, records a fixed-cardinality transport metric, accelerates refill,
 and follows the bounded retry rules above. Background connect failures use
 capped exponential backoff with jitter; user-triggered cold dials never wait
-behind it. Correctness never depends on warm availability.
+behind it. Each permitted warm or cold attempt receives its own normal
+per-attempt deadline, so a stalled stale socket cannot consume the cold
+fallback's timeout budget. The retry count remains fixed and bounded;
+correctness never depends on warm availability.
 
 Normal READY lifetime rotation closes an unused socket with zero protocol
 bytes, and reload retires the old LANDING pre-auth generation explicitly.
