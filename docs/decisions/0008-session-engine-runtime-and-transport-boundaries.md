@@ -94,8 +94,16 @@ the steady-state relay starts and never wraps a relay buffer or syscall.
 - Warm sockets are protocol-unprivileged until fresh authentication succeeds.
 - `CompleteWrite` is irreversible: the peer may authenticate and perform a
   destination side effect, so another transport cannot retry that session.
+- The irreversible boundary is expressed by type rather than by convention. A
+  completed authenticated write yields a one-shot, non-`Clone`, non-`Copy`
+  `CommittedWrite` witness that the runtime adapter consumes when it binds the
+  session to that transport, and a failed write yields `RetryableProgress`,
+  which is statically incapable of describing a committed message. The two
+  outcomes are disjoint, so no call site needs a runtime `unreachable!` guard to
+  rule out retrying a committed session.
 - A permitted retry constructs entirely fresh Handoff or NXR authentication
-  state; the old byte vector is never reused.
+  state; the old byte vector is never reused. `RetryableProgress` therefore
+  reports only how many bytes were discarded and never an offset to resume from.
 - Terminal session/direction states never revive.
 - Raw relay consumes socket ownership once; the pool and Session Engine cannot
   reclaim a checked-out session socket.

@@ -49,7 +49,7 @@ use crate::{
         tcp_relay::{TcpRelay, TcpRelayConfigError},
     },
 };
-use rr_session::WriteProgress;
+use rr_session::AttemptTransport;
 
 use super::{
     connector::{DestinationConnectError, DestinationConnector},
@@ -186,7 +186,10 @@ impl HandoffLine {
                 let (mut stream, fd_permit) = connection.into_parts();
                 let message = self.seal_fresh(state, client_random)?;
                 match write_all_counted_before(&mut stream, &message, deadline).await {
-                    Ok(WriteProgress::CompleteWrite) => {
+                    Ok(committed) => {
+                        // The warm socket carried its own fresh authentication
+                        // to completion, so it now owns this session.
+                        committed.commit_transport_ownership();
                         return Ok((
                             stream,
                             HandoffTransportPermit {
@@ -195,16 +198,12 @@ impl HandoffLine {
                             },
                         ));
                     }
-                    Ok(WriteProgress::NoBytesWritten | WriteProgress::PartialWrite { .. }) => {
-                        unreachable!("counted write reports incomplete progress only as an error")
-                    }
                     Err(error) => {
-                        match error.progress() {
-                            WriteProgress::NoBytesWritten | WriteProgress::PartialWrite { .. } => {}
-                            WriteProgress::CompleteWrite => {
-                                unreachable!("a complete write cannot be a retryable error")
-                            }
-                        }
+                        // The error type proves no byte was authenticated, and
+                        // the warm transport is the speculative attempt, so an
+                        // alternate attempt remains.
+                        debug_assert!(AttemptTransport::Warm.permits_alternate_attempt());
+                        let _discarded = error.progress().bytes_discarded();
                         pool.record_stale_checkout();
                         // Dropping the stream and permits permanently discards
                         // every partial byte. The immediate cold fallback is
