@@ -6,6 +6,8 @@
 
 #![no_std]
 
+mod vision;
 mod write_progress;
 
+pub use vision::{Direction, DirectionState, InvalidTransition, RawDecision};
 pub use write_progress::WriteProgress;
