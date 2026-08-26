@@ -118,10 +118,13 @@ MUTATE_REMOTE=1 RELEASE_ID=... PRUNE_OLD_RELEASES=1 \
 
 `stage` verifies version, SHA-256, `check`, and `self-test` without changing
 CURRENT. `cutover` prepares PREVIOUS, performs the shortest stop/symlink/start
-window, verifies the executable and 443, and automatically restores the old
-generation on startup failure. A later interoperability or canary failure runs
-`rollback`. Promotion keeps CURRENT and PREVIOUS and prunes older replaceable
-software; persistent identity is never pruned with release directories.
+window, verifies the executable and 443, and rejects any unexpected wildcard
+TCP listener introduced during the cutover. Pre-existing unrelated listeners
+remain the host operator's responsibility and are not silently disabled by the
+deployment tool. Any startup or listener-policy failure automatically restores
+the old generation. A later interoperability or canary failure runs `rollback`.
+Promotion keeps CURRENT and PREVIOUS and prunes older replaceable software;
+persistent identity is never pruned with release directories.
 
 ## Phase 4 — dual-VPS active canary
 
