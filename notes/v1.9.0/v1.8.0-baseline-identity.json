@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "role": "immutable optimization baseline",
+  "tag": "v1.8.0",
+  "commit": "6618e9dbe2cbaf8767f7262e8ff5d9dfdbe58f50",
+  "tier": "linux-x86_64-generic",
+  "tarballSha256": "e35a4f1424e25a303679f4b7a7c95701ffcf1ff01bf783f11a22a8286fa83da3",
+  "binarySha256": "450392ccc73fd4dd8441c04dcdcc93f0eb8b0ea2524e17904ca4bb376416ed1c",
+  "gnuBuildId": "e6abf487110749c49daff574d0059838c92f2e98",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "target": "x86_64-unknown-linux-gnu",
+  "targetCpu": "x86-64",
+  "targetFeatures": [],
+  "cargoFeatures": ["default"],
+  "linking": "dynamically linked",
+  "symbols": "stripped",
+  "releaseProfile": {
+    "codegenUnits": 1,
+    "lto": "thin",
+    "panic": "abort",
+    "strip": "symbols"
+  },
+  "sourceDateEpoch": 1787754276,
+  "provenance": "published GitHub release asset, SHA-256 verified against release SHA256SUMS before extraction",
+  "verifiedAt": "2026-08-26T16:40Z",
+  "usage": "Every architecture/performance comparison from v1.8.0 onward must name this exact baseline. Prefer this published artifact over rebuilding a similar baseline."
+}
