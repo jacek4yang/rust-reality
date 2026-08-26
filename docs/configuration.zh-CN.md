@@ -628,6 +628,44 @@ connectTimeoutMs` 并留有余量：首个密封记录只有在转移被读取�
 （operator-pinned），始终优先，其余字段在启动时按检测到的机器推导。见
 [启动策略推导](#启动策略推导)。
 
+### `advanced.overrides`
+
+`advanced.limits` 通过“取值是否不同于内置默认值”来判断运维意图，这无法表达运维
+真正需要的两种情况。其一，修改一个数值时必须把同一对象中标记“对象存在时必填”的
+兄弟字段一并写出。其二，刻意设置为恰好等于默认值的字段与缺省字段无法区分，因此在
+推导模式下会被推导值静默替换。
+
+`advanced.overrides` 基于“是否出现”判断，修正了这两点。它镜像 `advanced.limits`
+的四个子对象，所有字段均为可选，且出现在此处的字段**无论取值为何**都视为运维钉死，
+包括取值恰好等于默认值的情况：
+
+```json
+{
+  "advanced": {
+    "overrides": {
+      "relay": { "bufferBytes": 65536 }
+    }
+  }
+}
+```
+
+这只钉死 `relay.bufferBytes`。`maxPooledBuffers`、`maxSpliceRelays` 以及其余字段
+继续按检测到的机器推导，且无需提供任何兄弟字段。
+
+每个字段的生效取值按以下顺序选择：
+
+1. 出现在 `advanced.overrides` 中——运维钉死，报告为 `override`；
+2. 否则出现在 `advanced.limits` 中且取值不同于默认值——运维钉死，报告为
+   `override`（保留原有行为，使既有配置解析结果完全不变）；
+3. 否则在 `startup` 或 `adaptive` 下取推导值，报告为 `derived`；
+4. 否则取内置默认值，报告为 `default`。
+
+`runtime explain` 会打印每个字段的来源，因此未生效的钉死无需阅读源码即可发现。
+
+注意：`runtime.tuning.mode: adaptive` 在进程运行期间调整准入与直连软上限，并不会
+重新调整 `relay.bufferBytes`——后者在启动时推导。因此钉死 relay 字段等于在整个
+进程生命周期内钉死它。
+
 ### `advanced.limits.resourceGovernor`
 
 | 字段 | 对象存在时必填 | 整体默认值 | 约束/含义 |

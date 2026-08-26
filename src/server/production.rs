@@ -372,6 +372,7 @@ impl ProductionServer {
         if derivation_active {
             config.advanced.limits = plan::resolve_policy(
                 &config.advanced.limits,
+                &config.advanced.overrides,
                 &config.runtime.tuning,
                 &machine,
                 resource_mode,
@@ -1178,6 +1179,7 @@ fn ensure_hot_compatible(
     if candidate.runtime.tuning.mode() != TuningMode::Fixed {
         candidate.advanced.limits = plan::resolve_policy(
             &candidate.advanced.limits,
+            &candidate.advanced.overrides,
             &candidate.runtime.tuning,
             &machine,
             candidate.runtime.resolve_resource_mode(&machine),

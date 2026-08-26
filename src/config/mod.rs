@@ -26,10 +26,10 @@ pub use model::{
     GlobalRule, HandoffInboundConfig, HandoffInboundSettings, HandoffSettings, InboundConfig,
     ListenConfig, ListenMode, LogConfig, LogLevel, LogOutput, Network, NetworkConfig,
     NxrInboundConfig, NxrInboundSettings, NxrSettings, Objective, OutboundConfig, PolicyConfig,
-    PortMatcher, RealityConfig, RelayPolicy, ResourceGovernorConfig, ResourceMode, RouteRule,
-    RoutingConfig, RuntimeConfig, RuntimeProfile, SecretString, Socks5Settings, StreamSettings,
-    TuningConfig, TuningMode, UserPolicy, VlessClient, VlessInboundConfig, VlessInboundSettings,
-    WarmConnectionPolicy,
+    PolicyOverrides, PortMatcher, RealityConfig, RelayPolicy, ResourceGovernorConfig, ResourceMode,
+    RouteRule, RoutingConfig, RuntimeConfig, RuntimeProfile, SecretString, Socks5Settings,
+    StreamSettings, TuningConfig, TuningMode, UserPolicy, VlessClient, VlessInboundConfig,
+    VlessInboundSettings, WarmConnectionPolicy,
 };
 pub use schema::{config_schema, format_config_schema};
 pub use validate::{ConfigError, validate_config};

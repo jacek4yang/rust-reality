@@ -687,6 +687,50 @@ built-in default is operator-pinned and always wins, while every other field
 is derived from the detected machine at startup. See
 [Startup policy derivation](#startup-policy-derivation).
 
+### `advanced.overrides`
+
+`advanced.limits` decides operator intent by comparing a value to the built-in
+default, which cannot express two things an operator legitimately wants. First,
+changing one number requires restating that object's “required when object
+present” siblings. Second, a field deliberately set to a value that happens to
+equal the default is indistinguishable from an absent field, so under a derived
+mode it is silently replaced by the derived value.
+
+`advanced.overrides` is presence-based and fixes both. It mirrors the four
+`advanced.limits` child objects, every field is optional, and a field present here
+is operator-pinned **whatever its value**, including a value equal to the default:
+
+```json
+{
+  "advanced": {
+    "overrides": {
+      "relay": { "bufferBytes": 65536 }
+    }
+  }
+}
+```
+
+That pins `relay.bufferBytes` alone. `maxPooledBuffers`, `maxSpliceRelays`, and
+every other field keep deriving from the detected machine, and no sibling has to
+be supplied.
+
+Per field the effective value is chosen in this order:
+
+1. present in `advanced.overrides` — operator-pinned, reported as `override`;
+2. otherwise present in `advanced.limits` with a value differing from the default
+   — operator-pinned, reported as `override` (the pre-existing behaviour, retained
+   so existing configurations resolve identically);
+3. otherwise, under `startup` or `adaptive`, the derived value, reported as
+   `derived`;
+4. otherwise the built-in default, reported as `default`.
+
+`runtime explain` prints the resolved source for every field, so a pin that is not
+taking effect is visible without reading source.
+
+Note that `runtime.tuning.mode: adaptive` adjusts soft admission and direct-dial
+ceilings while the process runs. It does not retune `relay.bufferBytes`, which is
+startup-derived. Pinning a relay field therefore pins it for the process lifetime.
+
 ### `advanced.limits.resourceGovernor`
 
 | Field | Required when object present | Whole-object default | Constraints / meaning |

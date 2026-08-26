@@ -427,6 +427,15 @@ pub struct AdvancedConfig {
     /// Numeric admission, direct-dial, buffer, and relay limits.
     #[serde(default)]
     pub limits: PolicyConfig,
+    /// Per-field operator pins that survive machine-aware derivation.
+    ///
+    /// `limits` infers operator intent by comparing a value to the built-in
+    /// default, which cannot express two things an operator legitimately wants:
+    /// changing one field without restating its mandatory siblings, and pinning a
+    /// field to a value that happens to equal the default. A field present here is
+    /// operator-pinned whatever its value; absent fields keep deriving.
+    #[serde(default)]
+    pub overrides: PolicyOverrides,
 }
 
 /// Supported process resource modes.
@@ -1317,6 +1326,141 @@ pub struct PolicyConfig {
     #[serde(default)]
     pub warm_connections: WarmConnectionPolicy,
 }
+
+/// Per-field operator pins that survive machine-aware derivation.
+///
+/// Every field is optional, so an operator may pin exactly one number without
+/// restating its mandatory siblings, and a pin is honoured even when its value
+/// equals the built-in default. `PolicyConfig` cannot express either case,
+/// because it infers operator intent by comparing a value to that default.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct PolicyOverrides {
+    /// Global resource admission pins.
+    #[serde(default)]
+    pub resource_governor: ResourceGovernorOverrides,
+    /// Direct outbound isolation pins.
+    #[serde(default)]
+    pub direct_barrier: DirectBarrierOverrides,
+    /// Buffered and Linux-accelerated relay pins.
+    #[serde(default)]
+    pub relay: RelayOverrides,
+    /// Bounded per-endpoint warm TCP pins.
+    #[serde(default)]
+    pub warm_connections: WarmConnectionOverrides,
+}
+
+impl PolicyOverrides {
+    /// Returns every `advanced.overrides` JSON path this value pins.
+    ///
+    /// Used by validation to report a conflicting duplicate by exact path, and by
+    /// the runtime report to name which channel supplied a field.
+    #[must_use]
+    pub fn pinned_paths(&self) -> Vec<&'static str> {
+        let mut paths = Vec::new();
+        self.resource_governor.extend_pinned(&mut paths);
+        self.direct_barrier.extend_pinned(&mut paths);
+        self.relay.extend_pinned(&mut paths);
+        self.warm_connections.extend_pinned(&mut paths);
+        paths
+    }
+
+    /// Whether the operator pinned nothing at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.pinned_paths().is_empty()
+    }
+}
+
+/// Declares an all-optional override mirror of one policy section.
+macro_rules! policy_overrides {
+    (
+        $(#[$outer:meta])*
+        $name:ident, $section:literal, { $($field:ident: $ty:ty => $path:literal),+ $(,)? }
+    ) => {
+        $(#[$outer])*
+        #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+        #[serde(deny_unknown_fields, rename_all = "camelCase")]
+        pub struct $name {
+            $(
+                /// Operator pin for the matching `advanced.limits` field.
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                pub $field: Option<$ty>,
+            )+
+        }
+
+        impl $name {
+            /// Appends the JSON path of every pinned field.
+            fn extend_pinned(&self, paths: &mut Vec<&'static str>) {
+                $(
+                    if self.$field.is_some() {
+                        paths.push(concat!("advanced.overrides.", $section, ".", $path));
+                    }
+                )+
+            }
+        }
+    };
+}
+
+policy_overrides!(
+    /// Optional pins for [`ResourceGovernorConfig`].
+    ResourceGovernorOverrides,
+    "resourceGovernor",
+    {
+        max_connections: u32 => "maxConnections",
+        max_handshakes: u32 => "maxHandshakes",
+        max_pre_auth_idle_connections: u32 => "maxPreAuthIdleConnections",
+        max_fallbacks: u32 => "maxFallbacks",
+        max_crypto_operations: u32 => "maxCryptoOperations",
+        max_replay_entries: u32 => "maxReplayEntries",
+        max_dns_lookups: u32 => "maxDnsLookups",
+        replay_retention_ms: u64 => "replayRetentionMs",
+        client_hello_timeout_ms: u64 => "clientHelloTimeoutMs",
+        handshake_timeout_ms: u64 => "handshakeTimeoutMs",
+        connect_timeout_ms: u64 => "connectTimeoutMs",
+        fallback_timeout_ms: u64 => "fallbackTimeoutMs",
+    }
+);
+
+policy_overrides!(
+    /// Optional pins for [`DirectBarrierConfig`].
+    DirectBarrierOverrides,
+    "directBarrier",
+    {
+        max_concurrent: u32 => "maxConcurrent",
+        max_per_second: u32 => "maxPerSecond",
+    }
+);
+
+policy_overrides!(
+    /// Optional pins for [`RelayPolicy`].
+    RelayOverrides,
+    "relay",
+    {
+        buffer_bytes: usize => "bufferBytes",
+        max_pooled_buffers: usize => "maxPooledBuffers",
+        max_splice_relays: u32 => "maxSpliceRelays",
+        max_relay_memory_bytes: u64 => "maxRelayMemoryBytes",
+        splice: bool => "splice",
+        pipe_pool: bool => "pipePool",
+        max_pooled_pipes: u32 => "maxPooledPipes",
+    }
+);
+
+policy_overrides!(
+    /// Optional pins for [`WarmConnectionPolicy`].
+    WarmConnectionOverrides,
+    "warmConnections",
+    {
+        min_ready: u32 => "minReady",
+        max_ready: u32 => "maxReady",
+        max_connecting: u32 => "maxConnecting",
+        refill_batch: u32 => "refillBatch",
+        idle_timeout_ms: u64 => "idleTimeoutMs",
+        max_lifetime_ms: u64 => "maxLifetimeMs",
+        shrink_delay_ms: u64 => "shrinkDelayMs",
+    }
+);
 
 /// Bounded adaptive warm TCP policy shared by eligible internal transports.
 ///
