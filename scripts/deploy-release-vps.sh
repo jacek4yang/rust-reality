@@ -182,6 +182,7 @@ state_root=/var/lib/rust-reality/deployment
 new_binary=$release_root/$release_id
 new_config=$config_root/$release_id
 [[ -x $new_binary/rust-reality && -r $new_config/config.json ]]
+install -d -m 0750 -o root -g rust-reality "$state_root"
 old_binary=$(readlink -f /opt/rust-reality/current)
 old_config=$(readlink -f /etc/rust-reality/current)
 [[ $old_binary == "$release_root/"* && $old_config == "$config_root/"* ]]
