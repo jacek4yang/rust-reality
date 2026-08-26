@@ -43,7 +43,7 @@ def fixture() -> dict:
             "connectingPeak": 24,
             "maxConnecting": 32,
         },
-        "landingRejections": {"systematic": False},
+        "landingRejections": {"count": 4, "authenticationOrProtocol": 0},
         "resources": {"line": samples, "landing": list(samples)},
     }
 
@@ -54,11 +54,20 @@ assert passing["ok"] is True, passing
 bad = fixture()
 bad["checks"]["lineReload"] = False
 bad["handoffPool"]["connectingPeak"] = 33
-bad["resources"]["line"][-1]["fd"] = 100
+bad["resources"]["line"][-1]["fd"] = 3_000
 failing = MODULE.evaluate(bad)
 assert failing["ok"] is False
 assert any("lineReload" in reason for reason in failing["reasons"])
 assert any("maxConnecting" in reason for reason in failing["reasons"])
 assert any("FD count" in reason for reason in failing["reasons"])
+
+bad_rejections = fixture()
+bad_rejections["landingRejections"] = {
+    "count": 4,
+    "authenticationOrProtocol": 1,
+}
+rejected = MODULE.evaluate(bad_rejections)
+assert rejected["ok"] is False
+assert any("authentication/protocol" in reason for reason in rejected["reasons"])
 
 print("release canary evaluator tests passed")

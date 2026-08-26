@@ -144,9 +144,13 @@ Handoff, deliberately observed cold fallback, generation retirement, LANDING
 recovery, at least 500 bounded connection attempts, bounded pool targets and
 connects, no systematic LANDING rejection churn, and recovering FD/thread/RSS
 envelopes. RSS need not return byte-for-byte because allocator retention is
-real; the short canary does not extrapolate a MiB/hour slope. NXR receives a
-separate compact run on the same LANDING 443, after which the intended daily
-configuration is restored.
+real; FD recovery also uses reviewed absolute ceilings that account for the
+bounded reusable splice-pipe pool rather than comparing a warmed process to
+its pre-traffic descriptor count. The controlled restart may cause a small,
+bounded number of outbound failures, but authentication/protocol rejection is
+never accepted. The short canary does not extrapolate a MiB/hour slope. NXR
+receives a separate compact run on the same LANDING 443, after which the
+intended daily configuration is restored.
 
 ## Phase 5 — tag, publish, and deploy official artifacts
 

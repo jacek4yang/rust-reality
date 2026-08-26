@@ -67,9 +67,11 @@ idle/stale 轮换、LINE reload、LANDING 服务受控重启与恢复、1 MiB �
 `evaluate-release-canary.py` 采用 fail-closed 合约：必须有精确候选身份、两端 SSH、
 端口/防火墙限制、stock Xray、完整性、warm Handoff、故意触发的 cold fallback、
 generation 退休、LANDING 恢复、至少 500 次有界连接、pool 上界、无系统性落地机
-拒绝 churn，以及可恢复的 FD/thread/RSS 包络。短 canary 不外推 MiB/hour；RSS
-无需逐字节回到起点。NXR 在同一 LANDING 443 上顺序做短补充验证，之后恢复预期
-日常配置。
+拒绝 churn，以及可恢复的 FD/thread/RSS 包络。FD 门禁使用经评审的绝对上界，
+并计入有界可复用 splice pipe pool，不会把预热后的进程与未负载起点做错误
+比较。受控 LANDING restart 可以产生少量、有上界的 outbound failure，但不允许任何
+authentication/protocol rejection。短 canary 不外推 MiB/hour；RSS 无需逐字节回到起点。
+NXR 在同一 LANDING 443 上顺序做短补充验证，之后恢复预期日常配置。
 
 ## 标签、官方产物与回滚
 

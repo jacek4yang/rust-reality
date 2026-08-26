@@ -34,6 +34,18 @@ REQUIRED_CHECKS = (
     "noReplayRegression",
 )
 
+# These are deliberately fixed release-canary ceilings, not values supplied by
+# the candidate under test.  LINE retains a bounded 256-entry splice pipe pool
+# (two descriptors per entry) after it first sees bulk traffic, so comparing
+# the final descriptor count with the pre-traffic process by a tiny delta
+# misclassifies intentional reusable kernel state as a leak.  Peak limits also
+# include bounded active sessions and speculative sockets.  Configuration that
+# legitimately needs larger limits must change this reviewed contract.
+FD_LIMITS = {
+    "line": {"final": 768, "peak": 2_048},
+    "landing": {"final": 256, "peak": 1_024},
+}
+
 
 def load_object(path: Path) -> dict[str, Any]:
     with path.open(encoding="utf-8") as handle:
@@ -78,10 +90,12 @@ def resource_reasons(report: dict[str, Any]) -> list[str]:
         first = normalized[0]
         last = normalized[-1]
         peak = {name: max(sample[name] for sample in normalized) for name in first}
-        if last["fd"] > first["fd"] + 32:
-            reasons.append(f"{host} FD count did not recover within +32")
-        if peak["fd"] > first["fd"] + 256:
-            reasons.append(f"{host} FD peak exceeded baseline +256")
+        if last["fd"] > FD_LIMITS[host]["final"]:
+            reasons.append(
+                f"{host} final FD count exceeded {FD_LIMITS[host]['final']}"
+            )
+        if peak["fd"] > FD_LIMITS[host]["peak"]:
+            reasons.append(f"{host} FD peak exceeded {FD_LIMITS[host]['peak']}")
         if last["threads"] > first["threads"] + 8:
             reasons.append(f"{host} thread count did not recover within +8")
         if peak["threads"] > first["threads"] + 16:
@@ -121,6 +135,7 @@ def evaluate(report: dict[str, Any]) -> dict[str, Any]:
             if checks.get(check) is not True:
                 reasons.append(f"required check failed or missing: {check}")
 
+    attempted: int | None = None
     traffic = report.get("traffic")
     if not isinstance(traffic, dict):
         reasons.append("traffic must be an object")
@@ -164,9 +179,28 @@ def evaluate(report: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(rejections, dict):
         reasons.append("landingRejections must be an object")
     else:
-        systematic = rejections.get("systematic")
-        if systematic is not False:
-            reasons.append("systematic LANDING rejection churn detected or not measured")
+        try:
+            count = integer(rejections.get("count"), "landingRejections.count")
+            authentication = integer(
+                rejections.get("authenticationOrProtocol"),
+                "landingRejections.authenticationOrProtocol",
+            )
+            # A controlled LANDING restart intentionally interrupts a bounded
+            # number of destination relays.  It must never produce an auth or
+            # protocol rejection, and its total rejection count must stay
+            # below both 2% of attempted traffic and an absolute ceiling.
+            if authentication != 0:
+                reasons.append("LANDING authentication/protocol rejection observed")
+            if attempted is None:
+                reasons.append("cannot bound LANDING rejections without traffic attempts")
+            else:
+                allowed = min(256, max(8, attempted // 50))
+                if count > allowed:
+                    reasons.append(
+                        f"LANDING rejection count {count} exceeded restart allowance {allowed}"
+                    )
+        except ValueError as error:
+            reasons.append(str(error))
 
     reasons.extend(resource_reasons(report))
     return {

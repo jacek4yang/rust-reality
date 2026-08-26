@@ -28,6 +28,7 @@ readonly CANDIDATE_RUSTC=${CANDIDATE_RUSTC:?CANDIDATE_RUSTC is required}
 readonly ROLLBACK_ON_FAILURE=${ROLLBACK_ON_FAILURE:-1}
 readonly SAMPLE_INTERVAL_SECONDS=${SAMPLE_INTERVAL_SECONDS:-5}
 readonly CANARY_SECONDS=${CANARY_SECONDS:-600}
+readonly SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3)
 
 [[ $SOCKS_PORT =~ ^[0-9]+$ ]] && (( SOCKS_PORT >= 1024 && SOCKS_PORT <= 65535 ))
 [[ $CANARY_SECONDS =~ ^[0-9]+$ ]] && (( CANARY_SECONDS >= 480 && CANARY_SECONDS <= 900 ))
@@ -72,9 +73,9 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-ssh -o BatchMode=yes -o ConnectTimeout=10 "$LINE_HOST" true
-ssh -o BatchMode=yes -o ConnectTimeout=10 "$LANDING_HOST" true
-ssh -o BatchMode=yes "$LINE_HOST" bash -s <<'REMOTE'
+ssh "${SSH_OPTIONS[@]}" "$LINE_HOST" true
+ssh "${SSH_OPTIONS[@]}" "$LANDING_HOST" true
+ssh "${SSH_OPTIONS[@]}" "$LINE_HOST" bash -s <<'REMOTE'
 set -Eeuo pipefail
 unexpected=$(ss -ltnH | awk '
     $4 ~ /^(0\.0\.0\.0|\[::\]|\*):/ {
@@ -85,7 +86,7 @@ unexpected=$(ss -ltnH | awk '
 ')
 [[ -z $unexpected ]]
 REMOTE
-ssh -o BatchMode=yes "$LANDING_HOST" sudo -n bash -s -- "$LINE_PUBLIC_IPV4" <<'REMOTE'
+ssh "${SSH_OPTIONS[@]}" "$LANDING_HOST" sudo -n bash -s -- "$LINE_PUBLIC_IPV4" <<'REMOTE'
 set -Eeuo pipefail
 line=$1
 iptables-save | awk -v line="$line" '
@@ -96,9 +97,9 @@ iptables-save | awk -v line="$line" '
     END {exit !(ok==1 && bad==0)}
 '
 REMOTE
-line_restarts_start=$(ssh -o BatchMode=yes "$LINE_HOST" \
+line_restarts_start=$(ssh "${SSH_OPTIONS[@]}" "$LINE_HOST" \
     "systemctl show '$LINE_SERVICE' -p NRestarts --value")
-landing_restarts_start=$(ssh -o BatchMode=yes "$LANDING_HOST" \
+landing_restarts_start=$(ssh "${SSH_OPTIONS[@]}" "$LANDING_HOST" \
     "systemctl show '$LANDING_SERVICE' -p NRestarts --value")
 
 started_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -107,7 +108,7 @@ deadline=$((started_epoch + CANARY_SECONDS))
 
 sample_host() {
     local host=$1 service=$2 output=$3
-    ssh -o BatchMode=yes "$host" sudo -n python3 - "$service" "$CANARY_SECONDS" \
+    ssh "${SSH_OPTIONS[@]}" "$host" sudo -n python3 - "$service" "$CANARY_SECONDS" \
         "$SAMPLE_INTERVAL_SECONDS" >"$output" <<'PY'
 import json
 from pathlib import Path
@@ -163,19 +164,21 @@ done
 [[ $ready == 1 ]]
 
 attempts_file=$OUT_DIR/traffic-attempts.txt
+traffic_errors=$OUT_DIR/traffic-errors.log
 : >"$attempts_file"
+: >"$traffic_errors"
 
 request_once() {
     local url=$1
     if curl -fsS --noproxy '' --max-time 20 --socks5-hostname \
-        "127.0.0.1:$SOCKS_PORT" "$url" -o /dev/null; then
+        "127.0.0.1:$SOCKS_PORT" "$url" -o /dev/null 2>>"$traffic_errors"; then
         printf 'ok\n' >>"$attempts_file"
     else
         printf 'fail\n' >>"$attempts_file"
     fi
 }
 export -f request_once
-export SOCKS_PORT attempts_file
+export SOCKS_PORT attempts_file traffic_errors
 
 run_batch() {
     local count=$1 concurrency=$2
@@ -207,13 +210,13 @@ run_until "$((started_epoch + 270))" 64 192
 while (( $(date +%s) < started_epoch + 330 )); do sleep 1; done
 
 # Atomic LINE generation reload and resumed traffic (5:30–6:30).
-ssh -o BatchMode=yes "$LINE_HOST" "sudo -n systemctl reload '$LINE_SERVICE'"
+ssh "${SSH_OPTIONS[@]}" "$LINE_HOST" "sudo -n systemctl reload '$LINE_SERVICE'"
 run_until "$((started_epoch + 390))" 8 32
 
 # Controlled LANDING restart and bounded recovery (6:30–7:30).
-ssh -o BatchMode=yes "$LANDING_HOST" "sudo -n systemctl restart '$LANDING_SERVICE'"
+ssh "${SSH_OPTIONS[@]}" "$LANDING_HOST" "sudo -n systemctl restart '$LANDING_SERVICE'"
 for _ in $(seq 1 100); do
-    if ssh -o BatchMode=yes "$LANDING_HOST" "systemctl is-active --quiet '$LANDING_SERVICE'"; then
+    if ssh "${SSH_OPTIONS[@]}" "$LANDING_HOST" "systemctl is-active --quiet '$LANDING_SERVICE'"; then
         break
     fi
     sleep 0.1
@@ -236,13 +239,16 @@ curl -fsS --noproxy '' --max-time 120 --socks5-hostname "127.0.0.1:$SOCKS_PORT" 
     --upload-file "$PAYLOAD_LARGE" "${UPLOAD_URL%/}/bidi" -o /dev/null
 wait "$download_pid"
 cmp -s "$PAYLOAD_LARGE" "$OUT_DIR/download-bidirectional.bin"
-ssh -o BatchMode=yes "$LANDING_HOST" \
+ssh "${SSH_OPTIONS[@]}" "$LANDING_HOST" \
     "sudo -n awk 'BEGIN{ok=0} /\"bytes\":33554432/{ok++} END{exit !(ok>=2)}' /var/lib/rust-reality/canary-put.jsonl"
 run_until "$((started_epoch + 540))" 16 64
 
-# Final steady recovery and a second generation retirement summary.
-run_until "$deadline" 8 32
-ssh -o BatchMode=yes "$LINE_HOST" "sudo -n systemctl reload '$LINE_SERVICE'"
+# Final steady recovery, then a quiet resource-recovery window and a second
+# generation-retirement summary.  The quiet tail makes the final FD/RSS sample
+# meaningful without turning the canary into passive wall-clock waiting.
+run_until "$((deadline - 30))" 8 32
+while (( $(date +%s) < deadline )); do sleep 1; done
+ssh "${SSH_OPTIONS[@]}" "$LINE_HOST" "sudo -n systemctl reload '$LINE_SERVICE'"
 sleep 2
 
 kill "$line_sampler_pid" "$landing_sampler_pid" 2>/dev/null || true
@@ -255,21 +261,21 @@ kill "$xray_pid"
 wait "$xray_pid" 2>/dev/null || true
 xray_pid=
 
-ssh -o BatchMode=yes "$LINE_HOST" true
-ssh -o BatchMode=yes "$LANDING_HOST" true
-ssh -o BatchMode=yes "$LINE_HOST" "systemctl is-active --quiet '$LINE_SERVICE'"
-ssh -o BatchMode=yes "$LANDING_HOST" "systemctl is-active --quiet '$LANDING_SERVICE'"
-line_restarts_end=$(ssh -o BatchMode=yes "$LINE_HOST" \
+ssh "${SSH_OPTIONS[@]}" "$LINE_HOST" true
+ssh "${SSH_OPTIONS[@]}" "$LANDING_HOST" true
+ssh "${SSH_OPTIONS[@]}" "$LINE_HOST" "systemctl is-active --quiet '$LINE_SERVICE'"
+ssh "${SSH_OPTIONS[@]}" "$LANDING_HOST" "systemctl is-active --quiet '$LANDING_SERVICE'"
+line_restarts_end=$(ssh "${SSH_OPTIONS[@]}" "$LINE_HOST" \
     "systemctl show '$LINE_SERVICE' -p NRestarts --value")
-landing_restarts_end=$(ssh -o BatchMode=yes "$LANDING_HOST" \
+landing_restarts_end=$(ssh "${SSH_OPTIONS[@]}" "$LANDING_HOST" \
     "systemctl show '$LANDING_SERVICE' -p NRestarts --value")
 [[ $line_restarts_end == "$line_restarts_start" ]]
 [[ $landing_restarts_end == "$landing_restarts_start" ]]
 
-ssh -o BatchMode=yes "$LINE_HOST" \
+ssh "${SSH_OPTIONS[@]}" "$LINE_HOST" \
     "journalctl -u '$LINE_SERVICE' --since '$started_iso' --no-pager -o cat" \
     >"$OUT_DIR/line-journal.jsonl"
-ssh -o BatchMode=yes "$LANDING_HOST" \
+ssh "${SSH_OPTIONS[@]}" "$LANDING_HOST" \
     "journalctl -u '$LANDING_SERVICE' --since '$started_iso' --no-pager -o cat" \
     >"$OUT_DIR/landing-journal.jsonl"
 
@@ -311,6 +317,9 @@ for line in (out / "landing-journal.jsonl").read_text().splitlines():
         continue
     if event.get("event") == "connection_rejected":
         landing_rejections.append(event.get("reason", "unknown"))
+authentication_rejections = sum(
+    reason in {"authentication", "protocol"} for reason in landing_rejections
+)
 hits = sum(event.get("pool_checkout_hit", 0) for event in events)
 misses = sum(event.get("pool_checkout_miss", 0) for event in events)
 cold = sum(event.get("pool_cold_fallback", 0) for event in events)
@@ -345,8 +354,10 @@ report = {
                     "coldFallback": cold, "targetReadyPeak": target_peak,
                     "maxReady": 256, "connectingPeak": connecting_peak,
                     "maxConnecting": 64},
-    "landingRejections": {"systematic": len(landing_rejections) > 2,
-                          "count": len(landing_rejections)},
+    "landingRejections": {
+        "count": len(landing_rejections),
+        "authenticationOrProtocol": authentication_rejections,
+    },
     "resources": {"line": resources("line-resources.jsonl"),
                   "landing": resources("landing-resources.jsonl")},
 }
