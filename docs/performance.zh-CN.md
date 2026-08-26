@@ -91,7 +91,10 @@ failure。顺序 collector 和会重复排队正在收集 class 的 controller �
 ClientHello class 会有意留在 warm-live 路径。这是保守的已验证 class 优化，
 不是对所有 TLS 行为都完全相同的声明。
 
-## v1.7 开发：warm LINE→LANDING transport
+## v1.7.0 发布证据
+
+v1.7.0 组合了已认证 cover TCP 预热、已验证 prebuilt REALITY cover
+profile，以及自适应、单次使用的固定对端 TCP 预热。
 
 Handoff、NXR 与 SOCKS5 现在从同一有界自适应 pool 使用单次 checkout 的已建立
 TCP。有效命中会从用户流中移除固定对端 TCP 握手，但不会移除协议认证、协议响应
@@ -99,11 +102,43 @@ TCP。有效命中会从用户流中移除固定对端 TCP 握手，但不会移
 state；LANDING 把零字节 warm socket 保存在独立、有界的 pre-auth idle 阶段，
 首字节会启动原有短认证截止时间。
 
-本文尚未记录 release-candidate 延迟数字。发布 v1.7.0 前必须保留精确生产构建在
-1、10、50、100、200 ms 下三种 transport 的 cold/warm 样本、startup-aware 与
-稳态命中率、idle-age/burst matrix、资源计数以及现有完整 release evaluator。
-unit/loopback integration test 只证明所有权与安全机制，不冒充 RTT 证据。tracing
-构建可归因阶段，但头条结果必须来自精确优化候选。
+受保护的 Xray-core 26.7.28 对比沿用 v1.6.1 测量基础
+（`5ca6f4b`、go1.26.0、二进制 SHA-256 `23d228d7…04c5268`）。下文的
+warm transport 受控机制证据是增量证据：unit/loopback integration test
+只证明所有权与安全机制，延迟声明只来自优化生产构建。
+
+feature HEAD `90539d3` 的生产构建（二进制 SHA-256
+`3e096423…e0800c`、Build ID `12b42d63…153b`）通过了聚焦、fail-closed 的
+机制评估。每个 cell 使用 3 个平衡 ABBA block，每条 leg 6 个样本，
+每样本 32 条连接，并发 1，丢包 0，以实测 veth/netem RTT 归一化，
+并对本地 origin 做逐字节校验。该二进制仍报告发布前 package version
+1.6.1，因此这是精确 PR 证据，不是已打标签的 v1.7.0 二进制。数值为
+block p50 中位数：
+
+| transport | 实测 RTT | warm p50 | cold p50 | cold − warm | delta / RTT |
+|---|---:|---:|---:|---:|---:|
+| Handoff | 50.203 ms | 52.458 ms | 102.640 ms | 50.182 ms | 0.9996 |
+| NXR | 50.203 ms | 52.328 ms | 102.574 ms | 50.248 ms | 1.0009 |
+| SOCKS5 | 50.203 ms | 153.148 ms | 203.287 ms | 50.139 ms | 0.9987 |
+| Handoff | 100.200 ms | 102.458 ms | 202.647 ms | 100.190 ms | 0.9999 |
+| NXR | 100.200 ms | 102.309 ms | 202.677 ms | 100.368 ms | 1.0017 |
+| SOCKS5 | 100.200 ms | 303.155 ms | 403.320 ms | 100.155 ms | 0.9995 |
+| Handoff | 200.219 ms | 202.513 ms | 402.644 ms | 200.149 ms | 0.9996 |
+| NXR | 200.219 ms | 202.356 ms | 402.640 ms | 200.286 ms | 1.0003 |
+| SOCKS5 | 200.219 ms | 603.172 ms | 803.288 ms | 200.111 ms | 0.9995 |
+
+9 个机制 cell、108 条预期 raw record、run contract 和数据质量门禁全部通过；
+所有测量流均完成。该结论边界很窄：它证明有效 warm hit 会从关键路径
+移除一次固定对端 TCP 握手 RTT。Handoff/NXR 认证、SOCKS5 negotiation 与
+CONNECT、目标建连和物理传播仍然存在。原始证据在仓库外的
+`artifacts/v1.7.0/mechanism-90539d3/`。
+
+同一个精确二进制还完成了 1 与 10 ms 的补充零丢包 cell：2/2 个 profile、
+72/72 条 raw record，且无 flow failure。实测 RTT 为 1.175 ms 时，
+cold-minus-warm 中位数为 RTT 的 0.9633--1.0570；实测 10.196 ms 时为
+0.9939--1.0036。1 ms 下固定本地处理与 timer 噪声占比明显，因此这些 cell
+保留为 data-quality 证据，不纳入正式 performance verdict。原始证据在仓库外的
+`artifacts/v1.7.0/low-rtt-diagnostic-90539d3-r1/`。
 
 ## v1.6.1 发布证据
 

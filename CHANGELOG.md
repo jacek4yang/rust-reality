@@ -2,7 +2,11 @@
 
 All notable user-facing changes to this project are documented in this file.
 
-## [Unreleased]
+## [1.7.0] - 2026-08-26
+
+No configuration migration is required from v1.6.1. Handoff, NXR, and SOCKS5
+TCP warming is enabled by default; set `warmTcp: false` on an individual
+outbound whose peer enforces an incompatible idle or connection policy.
 
 ### Added
 
@@ -38,6 +42,16 @@ All notable user-facing changes to this project are documented in this file.
   attempt receives the normal per-attempt timeout; retry counts and
   irreversible authenticated-write boundaries are unchanged.
 
+### Security
+
+- Warm sockets are prepaid transport state only. Handoff and NXR retain fresh
+  per-session authentication and replay protection, SOCKS5 still negotiates
+  and authenticates after checkout, and unauthenticated REALITY traffic stays
+  on the real-cover path.
+- LANDING pre-auth idle sockets are finite, perform no destination DNS/connect
+  or protocol crypto, yield before authenticated sessions under pressure, and
+  cannot cross immutable configuration generations.
+
 ### Performance
 
 - On a controlled 50 ms cover RTT, authenticated warm-cover setup measured
@@ -45,9 +59,26 @@ All notable user-facing changes to this project are documented in this file.
   protected CPU-per-connection margin. Unauthenticated and replayed traffic
   continues to use the real cover path.
 - On a warm transport checkout, the LINE-to-LANDING/upstream TCP handshake is
-  removed from the per-flow critical path. Controlled release-candidate RTT
-  evidence remains a mandatory v1.7.0 publication gate and is not inferred
-  from unit tests.
+  removed from the per-flow critical path. The optimized feature-head build
+  passed all nine controlled 50/100/200 ms Handoff/NXR/SOCKS5 mechanism cells:
+  median cold-minus-warm setup was 0.999–1.002 measured RTT. Exact-final
+  publication evidence remains a release gate and is not inferred from unit
+  tests.
+
+### Testing
+
+- Added deterministic Handoff/NXR pre-auth, slowloris, replay, idle-age,
+  pressure, reload, retry-boundary, FD-lifetime, stale-checkout, and cold
+  fallback coverage, plus SOCKS5 authentication/CONNECT and credential
+  isolation coverage.
+- The deployment evaluator retains paired production-build cold/warm samples,
+  measured netem RTT, fixed-cardinality pool counters, and a fail-closed
+  one-handshake-removal verdict for Handoff, NXR, and SOCKS5.
+- Optional long-horizon soak evidence records aggregate PSS and per-process
+  RSS, avoiding repeated accounting of shared file-backed mappings while
+  retaining process-local growth detection. Publication instead requires the
+  exact-candidate high-density dual-VPS canary; long-horizon soak remains
+  scheduled, non-blocking stability monitoring.
 
 ## [1.6.1] - 2026-08-23
 

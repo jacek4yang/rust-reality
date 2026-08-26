@@ -64,9 +64,11 @@ v1.7 transport 结论只接受 `REQUIRE_NETEM=1` 的正式 deployment run。
 50/100/200 ms cell，每条 leg 保留 6 个平衡样本。`DEPLOYMENT_PLAN=robustness`
 把完整 RTT/loss/concurrency 笛卡尔积作为异步证据任务；默认
 `DEPLOYMENT_PLAN=full` 还保留 routing、topology、throughput 与 long-flow 证据。
-聚焦 mechanism program 是发布性能结论的 gate；时间预算允许时保留 robustness cell，
-所有缺失项必须明确记录为 `SKIPPED`，不能静默当成 PASS。这样数小时的 robustness
-campaign 不再阻塞无关的 review 与工程工作。所有 plan 的 warm/cold 进程使用同一
+聚焦 mechanism program 是发布性能结论的 gate。robustness run 只有在完整、
+fail-closed 的 inventory 与 completion marker 都存在时才是 PASS。若外部 wall-clock
+预算将其停止，preflight/incomplete contract 与 artifact 说明必须标明缺失 cell；
+该部分运行只能作为 diagnostic 证据。这样数小时的 robustness campaign 不再阻塞
+无关的 review 与工程工作。所有 plan 的 warm/cold 进程使用同一
 release binary、peer、origin、client、整形 veth pair 与配置身份；
 唯一差异是出站 `warmTcp` 开关。每个 protocol/mode cell 保留平衡 ABBA block、
 p50/p90/p95/p99、setup rate、精确环境/二进制哈希和原始失败。profile inventory
@@ -307,10 +309,11 @@ soak 期间的描述符、线程与 RSS 增长均平坦，零传输失败。
 - DNS 各阶段使用 loopback 上游（RTT 约 0 ms）。
 - 这些是本机测量结果，不是普遍性能结论。
 
-## v1.6.1 发布对比证据
+## v1.7.0 发布对比证据
 
-v1.6.1 头条保留 v1.6.0 在发布主机测得的数字（Intel i3-8100 4C/4T、Linux 6.12、rustc
-1.96.0）上测得，每次运行都由主机独占锁串行。身份：候选 `c182829`，基线为
+v1.7.0 受保护的 Xray 对比头条沿用 v1.6.1 测量基础：即 v1.6.0
+在发布主机测得的数字（Intel i3-8100 4C/4T、Linux 6.12、rustc
+1.96.0），每次运行都由主机独占锁串行。身份：候选 `c182829`，基线为
 已发布的 v1.5.1 二进制（`149f126`），对比对象 Xray-core 26.7.28（`5ca6f4b`，
 go1.26.0，二进制 SHA-256 `23d228d7…04c5268`）。两侧使用 warn 日志、同一个
 未经修改的 Xray SOCKS5 客户端、TLS 1.3 REALITY cover、loopback origin、

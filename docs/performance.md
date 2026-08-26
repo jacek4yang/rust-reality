@@ -109,7 +109,10 @@ PSK/resumption, and rare uncollected ClientHello classes intentionally stay on
 the warm-live path. This is a conservative validated-class optimization, not
 a claim of universal TLS indistinguishability.
 
-## v1.7 development: warm LINE-to-LANDING transport
+## v1.7.0 release evidence
+
+v1.7.0 combines authenticated cover TCP warming, validated prebuilt REALITY
+cover profiles, and adaptive single-use fixed-peer TCP warming.
 
 Handoff, NXR, and SOCKS5 now use single-use TCP-established sockets from the
 same bounded adaptive pool. A valid hit removes the fixed-peer TCP handshake
@@ -119,13 +122,47 @@ NXR generate fresh authentication state for every attempt, and LANDING keeps
 zero-byte warm sockets in a distinct bounded pre-auth idle phase whose first
 byte starts the original short authentication deadline.
 
-No release-candidate latency numbers are recorded here yet. Publication of
-v1.7.0 requires retained production-build cold/warm samples at 1, 10, 50, 100,
-and 200 ms for all three transports, startup-aware and steady-state hit ratios,
-idle-age and burst matrices, resource counters, and the existing full release
-evaluator. Unit and loopback integration tests establish ownership and security
-mechanics only; they are not relabeled as RTT evidence. A tracing build may
-attribute phases, but headline results must use the exact optimized candidate.
+The protected Xray-core 26.7.28 comparison retains the v1.6.1 measurement
+foundation (`5ca6f4b`, go1.26.0, binary SHA-256
+`23d228d7…04c5268`). The controlled warm-transport mechanism evidence below
+is additive: unit and loopback integration tests establish ownership and
+security mechanics, while only optimized production binaries supply latency
+claims.
+
+The feature-head production build at `90539d3` (binary SHA-256
+`3e096423…e0800c`, Build ID `12b42d63…153b`) passed the focused fail-closed
+mechanism evaluator. It used three balanced ABBA blocks per cell, six samples
+per leg, 32 connections per sample at concurrency one, zero loss, measured
+veth/netem RTT, and byte-verified local origins. The binary still reported the
+pre-release package version 1.6.1, so it is exact PR evidence rather than the
+tagged v1.7.0 binary. Values are medians of block p50s:
+
+| transport | measured RTT | warm p50 | cold p50 | cold − warm | delta / RTT |
+|---|---:|---:|---:|---:|---:|
+| Handoff | 50.203 ms | 52.458 ms | 102.640 ms | 50.182 ms | 0.9996 |
+| NXR | 50.203 ms | 52.328 ms | 102.574 ms | 50.248 ms | 1.0009 |
+| SOCKS5 | 50.203 ms | 153.148 ms | 203.287 ms | 50.139 ms | 0.9987 |
+| Handoff | 100.200 ms | 102.458 ms | 202.647 ms | 100.190 ms | 0.9999 |
+| NXR | 100.200 ms | 102.309 ms | 202.677 ms | 100.368 ms | 1.0017 |
+| SOCKS5 | 100.200 ms | 303.155 ms | 403.320 ms | 100.155 ms | 0.9995 |
+| Handoff | 200.219 ms | 202.513 ms | 402.644 ms | 200.149 ms | 0.9996 |
+| NXR | 200.219 ms | 202.356 ms | 402.640 ms | 200.286 ms | 1.0003 |
+| SOCKS5 | 200.219 ms | 603.172 ms | 803.288 ms | 200.111 ms | 0.9995 |
+
+All nine mechanism cells, all 108 expected raw records, the run contract, and
+the data-quality gate passed; every measured flow completed. The result is
+narrow: it proves that one fixed-peer TCP handshake RTT leaves the critical
+path on a valid warm hit. Handoff/NXR authentication, SOCKS5 negotiation and
+CONNECT, destination setup, and physical propagation remain. Evidence root:
+`artifacts/v1.7.0/mechanism-90539d3/` outside the repository.
+
+The same exact binary also completed supplemental 1 and 10 ms zero-loss cells
+with 2/2 profiles, 72/72 raw records, and no flow failures. At the measured
+1.175 ms RTT, cold-minus-warm medians were 0.9633--1.0570 RTT; at 10.196 ms
+they were 0.9939--1.0036 RTT. These cells are retained as data-quality evidence
+rather than included in the formal performance verdict because fixed local
+processing and timer noise are material at 1 ms. Evidence root:
+`artifacts/v1.7.0/low-rtt-diagnostic-90539d3-r1/` outside the repository.
 
 ## v1.6.1 release evidence
 
