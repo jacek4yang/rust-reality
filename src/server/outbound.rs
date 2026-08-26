@@ -26,10 +26,11 @@ use crate::{
     },
     runtime::{AdmissionDenied, DirectBarrier, FdBudget, FdPermit},
 };
+use rr_session::WriteProgress;
 
 use super::{
     connector::{AccountedTcpStream, DestinationConnectError, DestinationConnector},
-    counted_write::{WriteProgress, write_all_counted_before},
+    counted_write::write_all_counted_before,
     handoff::HandoffLine,
     warm_pool::{AdaptiveTcpPool, WarmPoolAuthority, WarmPoolSnapshot, WarmUsePermit},
 };
