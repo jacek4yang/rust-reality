@@ -7,7 +7,9 @@
 # churn. Real cover-NST/sequence-one Handoff, byte-exact NXR, and TCP-warm
 # SOCKS5 topologies remain alive for the timed soak and are exercised at the
 # start, at each monotonic interval, and at the end. /proc snapshots cover every
-# rust-reality process individually and in aggregate.
+# rust-reality process individually and in aggregate. Per-process RSS detects
+# local retention; aggregate PSS avoids counting shared file-backed pages once
+# per process. Release-qualified evidence requires PSS availability.
 #
 # Env: DURATION_MIN (30), ROUND_SLEEP (5), DISTRIBUTED_INTERVAL_SECONDS (1800),
 # RUST_REALITY_BIN, XRAY_BIN, OUT_DIR. REQUIRE_RELEASE_QUALIFIED=1 additionally
@@ -684,6 +686,12 @@ for offset in range(0, len(raw_identities), 3):
         )
     with open(f"/proc/{pid}/status", encoding="ascii") as handle:
         fields = dict(line.split(":", 1) for line in handle if ":" in line)
+    try:
+        with open(f"/proc/{pid}/smaps_rollup", encoding="ascii") as handle:
+            smaps = dict(line.split(":", 1) for line in handle if ":" in line)
+        pss = int(smaps["Pss"].split()[0])
+    except (FileNotFoundError, KeyError, PermissionError):
+        pss = None
     rss = int(fields["VmRSS"].split()[0])
     processes[name] = {
         "alive": True,
@@ -691,6 +699,7 @@ for offset in range(0, len(raw_identities), 3):
         "pidStarttime": observed,
         "fds": len(os.listdir(f"/proc/{pid}/fd")),
         "vmRssKiB": rss,
+        "vmPssKiB": pss,
         "vmHwmKiB": int(fields.get("VmHWM", fields["VmRSS"]).split()[0]),
         "threads": int(fields["Threads"].split()[0]),
     }
@@ -698,6 +707,11 @@ totals = {
     field: sum(process[field] for process in processes.values())
     for field in ("fds", "vmRssKiB", "vmHwmKiB", "threads")
 }
+totals["vmPssKiB"] = (
+    sum(process["vmPssKiB"] for process in processes.values())
+    if all(process["vmPssKiB"] is not None for process in processes.values())
+    else None
+)
 print(json.dumps({
     "label": label,
     "monotonicSeconds": time.monotonic(),
@@ -706,6 +720,7 @@ print(json.dumps({
     "totals": totals,
     "fds": totals["fds"],
     "vmRssKiB": totals["vmRssKiB"],
+    "vmPssKiB": totals["vmPssKiB"],
     "vmHwmKiB": totals["vmHwmKiB"],
     "threads": totals["threads"],
 }))
@@ -1006,15 +1021,23 @@ def resource_stats(values):
     tail_records = records[tail_offset:]
     tail_values = values[tail_offset:]
     xs = [record["monotonicSeconds"] for record in tail_records]
-    ys = [value["vmRssKiB"] / 1024 for value in tail_values]
-    if len(xs) >= 2 and len(set(xs)) > 1:
+
+    def tail_slope(key):
+        raw = [value.get(key) for value in tail_values]
+        if any(value is None for value in raw):
+            return None
+        ys = [value / 1024 for value in raw]
+        if len(xs) < 2 or len(set(xs)) <= 1:
+            return 0.0
         xbar, ybar = statistics.mean(xs), statistics.mean(ys)
         denominator = sum((x - xbar) ** 2 for x in xs)
-        slope = 3600 * sum(
+        return 3600 * sum(
             (x - xbar) * (y - ybar) for x, y in zip(xs, ys)
         ) / denominator
-    else:
-        slope = 0.0
+
+    rss_slope = tail_slope("vmRssKiB")
+    pss_slope = tail_slope("vmPssKiB")
+    pss_available = all(value.get("vmPssKiB") is not None for value in values)
     sampled_rss_peak_growth_mib = (
         max(value["vmRssKiB"] for value in values) - first["vmRssKiB"]
     ) / 1024
@@ -1033,7 +1056,28 @@ def resource_stats(values):
         # before the next sampled VmRSS snapshot. This is the gated RSS peak.
         "rssPeakGrowthMiB": round(rss_hwm_growth_mib, 1),
         "rssSampledPeakGrowthMiB": round(sampled_rss_peak_growth_mib, 1),
-        "rssTailSlopeMiBPerHour": round(slope, 3),
+        "rssTailSlopeMiBPerHour": round(rss_slope, 3),
+        "pssAvailable": pss_available,
+        "pssGrowthMiB": (
+            round((last["vmPssKiB"] - first["vmPssKiB"]) / 1024, 1)
+            if pss_available
+            else None
+        ),
+        "pssSampledPeakGrowthMiB": (
+            round(
+                (
+                    max(value["vmPssKiB"] for value in values)
+                    - first["vmPssKiB"]
+                )
+                / 1024,
+                1,
+            )
+            if pss_available
+            else None
+        ),
+        "pssTailSlopeMiBPerHour": (
+            round(pss_slope, 3) if pss_slope is not None else None
+        ),
     }
 
 
@@ -1047,7 +1091,12 @@ resources_by_process = {
 }
 
 
-def resources_ok(stats):
+def resources_ok(stats, *, aggregate=False):
+    slope = (
+        stats["pssTailSlopeMiBPerHour"]
+        if aggregate and stats["pssAvailable"]
+        else stats["rssTailSlopeMiBPerHour"]
+    )
     return (
         stats["fdGrowth"] <= 32
         and stats["threadGrowth"] <= 8
@@ -1057,7 +1106,7 @@ def resources_ok(stats):
         and stats["rssPeakGrowthMiB"] <= 64
         and (
             not slope_gate_applied
-            or stats["rssTailSlopeMiBPerHour"] <= 2
+            or slope <= 2
         )
     )
 
@@ -1067,7 +1116,7 @@ required_distributed_attempts = distributed.get("requiredAttempts", 0)
 ok = (
     failures == 0
     and rounds >= minimum_rounds
-    and resources_ok(aggregate_resources)
+    and resources_ok(aggregate_resources, aggregate=True)
     and all(resources_ok(stats) for stats in resources_by_process.values())
     and all(r.get("serverAlive") for r in records)
     and distributed.get("ok") is True
@@ -1103,6 +1152,7 @@ ok = (
 )
 release_qualified = (
     ok
+    and aggregate_resources["pssAvailable"]
     and duration_minutes == 720
     and elapsed_seconds >= 720 * 60
     and slope_gate_applied
@@ -1136,8 +1186,21 @@ summary = {
     "rssPeakGrowthMiB": aggregate_resources["rssPeakGrowthMiB"],
     "rssSampledPeakGrowthMiB": aggregate_resources["rssSampledPeakGrowthMiB"],
     "rssTailSlopeMiBPerHour": aggregate_resources["rssTailSlopeMiBPerHour"],
+    "pssAvailable": aggregate_resources["pssAvailable"],
+    "pssGrowthMiB": aggregate_resources["pssGrowthMiB"],
+    "pssSampledPeakGrowthMiB": aggregate_resources["pssSampledPeakGrowthMiB"],
+    "pssTailSlopeMiBPerHour": aggregate_resources["pssTailSlopeMiBPerHour"],
+    "memorySlopeGateBasis": {
+        "aggregate": (
+            "pss" if aggregate_resources["pssAvailable"] else "rss-fallback"
+        ),
+        "perProcess": "rss",
+    },
     "resourceAggregate": aggregate_resources,
     "resourceByProcess": resources_by_process,
+    "memoryTailSlopeGateApplied": slope_gate_applied,
+    # Retained for readers of the previous schema; per-process RSS remains
+    # gated, while aggregate slope uses PSS when available.
     "rssTailSlopeGateApplied": slope_gate_applied,
     "durationMinutes": duration_minutes,
     "elapsedSeconds": round(elapsed_seconds, 3),
