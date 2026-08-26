@@ -73,6 +73,23 @@ The adapter uses static dispatch and ordinary synchronous calls into
 `rr-session`. It must not add a channel, boxed future, heap allocation, or
 dynamic dispatch per protocol transition.
 
+Scheduling *policy* is semantic and belongs to the engine; only the scheduling
+*operation* belongs to the adapter. The bilateral raw-relay rendezvous is the
+worked example: `PairRendezvous` owns how many cooperative scheduling points a
+direction may spend waiting for its peer to become pairable and when to stop
+observing, while the adapter owns only the `yield_now` the policy asks for. The
+policy never sleeps, never arms a timer, and never waits on the peer, so no
+direction depends on its peer for liveness. Expressing it as a value rather than
+as a loop bound inside async control flow is what makes the budget testable and
+fuzzable without a runtime.
+
+The layering is enforced rather than documented only. `tests/session_engine_boundary.rs`
+fails the build if the Session Engine names a runtime, socket, descriptor, clock,
+allocator, synchronization primitive, randomness source, or logger; if the engine
+declares any dependency or stops being `no_std`; or if Transport names the engine
+at all. The last check is the cheapest strong form of the permanent raw-hot-path
+invariant: a layer that cannot name the engine cannot call it per chunk.
+
 ### Transport
 
 Transport continues to own concrete TCP streams, buffered relay, Linux splice,

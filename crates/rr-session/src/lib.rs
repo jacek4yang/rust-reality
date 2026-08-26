@@ -6,9 +6,11 @@
 
 #![no_std]
 
+mod rendezvous;
 mod transfer;
 mod vision;
 
+pub use rendezvous::{PairRendezvous, RendezvousStep};
 pub use transfer::{AttemptTransport, CommittedWrite, RetryableProgress, WriteProgress};
 pub use vision::{
     Direction, DirectionState, InvalidTransition, RawDecision, RawRelayGrant, RawRelayTransition,

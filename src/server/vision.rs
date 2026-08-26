@@ -31,6 +31,8 @@ use crate::{
     },
 };
 
+use rr_session::{PairRendezvous, RendezvousStep};
+
 use super::{
     direct::{
         DirectHandoff, Direction, DirectionState, InvalidTransition, RawDecision, RawRelayGrant,
@@ -1542,22 +1544,24 @@ fn settle(handoff: &DirectHandoff, direction: Direction, state: DirectionState) 
 
 /// Gives the peer a bounded chance to reach a pairable state, then commits.
 ///
-/// Two scheduling points — never a sleep, a timer, or a wait on the peer — let
-/// a peer whose own boundary flight is already queued observe `RawReady` and
-/// become pairable before this direction commits. The commit itself is the
-/// mutex-serialized [`DirectHandoff::decide`]: the peer read and the state
-/// transition are one critical section, so the two directions can never
-/// disagree about the relay form — a peer that observed `RawReady` or
+/// This is the Runtime Adapter shape: the adapter observes shared state, the
+/// Session Engine decides, the adapter performs the OS or executor operation.
+/// [`PairRendezvous`] owns the policy — how many cooperative scheduling points
+/// may be spent and when to stop observing — and this function owns only the
+/// `yield_now` that the policy asks for. Never a sleep, a timer, or a wait on
+/// the peer, so no direction depends on its peer for liveness.
+///
+/// The commit itself is the mutex-serialized [`DirectHandoff::decide`]: the peer
+/// read and the state transition are one critical section, so the two directions
+/// can never disagree about the relay form — a peer that observed `RawReady` or
 /// `PairPending` pairs, and a peer that observed `Relaying` relays
 /// directionally, with no interleaving in between.
 async fn decide_raw_relay(
     handoff: &DirectHandoff,
     direction: Direction,
 ) -> Result<RawRelayGrant, InvalidTransition> {
-    for attempt in 0..3 {
-        if handoff.peer_can_pair(direction) || attempt == 2 {
-            break;
-        }
+    let mut rendezvous = PairRendezvous::new();
+    while rendezvous.step(handoff.peer_can_pair(direction)) == RendezvousStep::Yield {
         tokio::task::yield_now().await;
     }
     handoff.decide(direction)
