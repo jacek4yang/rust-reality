@@ -18,6 +18,8 @@ REQUIRED_CHECKS = (
     "linePublicPortsRestricted",
     "landingPublicPortsRestricted",
     "landingFirewallLineOnly",
+    "lineCandidateIdentity",
+    "landingCandidateIdentity",
     "stockXray",
     "oneMiBIntegrity",
     "largeIntegrity",
@@ -119,6 +121,14 @@ def evaluate(report: dict[str, Any]) -> dict[str, Any]:
         for field in ("commit", "sha256", "buildId", "version", "target", "rustc"):
             if not isinstance(candidate.get(field), str) or not candidate[field]:
                 reasons.append(f"candidate.{field} must be a non-empty string")
+
+    comparator = report.get("comparator")
+    if not isinstance(comparator, dict):
+        reasons.append("comparator must be an object")
+    else:
+        for field in ("name", "version", "sha256", "buildId"):
+            if not isinstance(comparator.get(field), str) or not comparator[field]:
+                reasons.append(f"comparator.{field} must be a non-empty string")
 
     try:
         elapsed = integer(report.get("elapsedSeconds"), "elapsedSeconds")

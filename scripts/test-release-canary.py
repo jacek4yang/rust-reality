@@ -31,6 +31,12 @@ def fixture() -> dict:
             "target": "x86_64-unknown-linux-gnu",
             "rustc": "rustc 1.96.0",
         },
+        "comparator": {
+            "name": "Xray",
+            "version": "26.7.28",
+            "sha256": "d" * 64,
+            "buildId": "e" * 40,
+        },
         "elapsedSeconds": 600,
         "checks": {name: True for name in MODULE.REQUIRED_CHECKS},
         "traffic": {"connectionsAttempted": 1_000, "connectionsSuccessful": 999},

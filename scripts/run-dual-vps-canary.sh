@@ -10,6 +10,7 @@ readonly LINE_SERVICE=${LINE_SERVICE:-rust-reality.service}
 readonly LANDING_SERVICE=${LANDING_SERVICE:-rust-reality.service}
 readonly LINE_PUBLIC_IPV4=${LINE_PUBLIC_IPV4:?LINE_PUBLIC_IPV4 is required}
 readonly XRAY_BIN=${XRAY_BIN:?XRAY_BIN is required}
+readonly XRAY_SHA256=${XRAY_SHA256:?XRAY_SHA256 is required}
 readonly XRAY_CONFIG=${XRAY_CONFIG:?XRAY_CONFIG is required}
 readonly SOCKS_PORT=${SOCKS_PORT:?SOCKS_PORT is required}
 readonly SMALL_URL=${SMALL_URL:?SMALL_URL is required}
@@ -36,8 +37,10 @@ readonly SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterv
 [[ $CANDIDATE_COMMIT =~ ^[0-9a-f]{40}$ ]]
 [[ $CANDIDATE_SHA256 =~ ^[0-9a-f]{64}$ ]]
 [[ $CANDIDATE_BUILD_ID =~ ^[0-9a-f]+$ ]]
+[[ $XRAY_SHA256 =~ ^[0-9a-f]{64}$ ]]
 [[ $LINE_PUBLIC_IPV4 =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
 [[ -x $XRAY_BIN && -r $XRAY_CONFIG && -r $PAYLOAD_ONE_MIB && -r $PAYLOAD_LARGE ]]
+[[ $(sha256sum "$XRAY_BIN" | awk '{print $1}') == "$XRAY_SHA256" ]]
 jq -e --argjson port "$SOCKS_PORT" '
     any(.inbounds[]?;
         .protocol == "socks" and .listen == "127.0.0.1" and .port == $port)
@@ -79,6 +82,24 @@ trap 'exit 143' TERM
 
 ssh "${SSH_OPTIONS[@]}" "$LINE_HOST" true
 ssh "${SSH_OPTIONS[@]}" "$LANDING_HOST" true
+verify_remote_candidate() {
+    local host=$1 service=$2
+    ssh "${SSH_OPTIONS[@]}" "$host" sudo -n bash -s -- \
+        "$service" "$CANDIDATE_SHA256" "$CANDIDATE_VERSION" <<'REMOTE'
+set -Eeuo pipefail
+service=$1
+expected_sha=$2
+expected_version=$3
+systemctl is-active --quiet "$service"
+pid=$(systemctl show "$service" -p MainPID --value)
+[[ $pid =~ ^[1-9][0-9]*$ && -e /proc/$pid/exe ]]
+exe=$(readlink -f "/proc/$pid/exe")
+[[ $(sha256sum "/proc/$pid/exe" | awk '{print $1}') == "$expected_sha" ]]
+[[ $($exe --version | awk 'NR == 1 {print $2}') == "$expected_version" ]]
+REMOTE
+}
+verify_remote_candidate "$LINE_HOST" "$LINE_SERVICE"
+verify_remote_candidate "$LANDING_HOST" "$LANDING_SERVICE"
 ssh "${SSH_OPTIONS[@]}" "$LINE_HOST" bash -s <<'REMOTE'
 set -Eeuo pipefail
 unexpected=$(ss -ltnH | awk '
@@ -210,8 +231,10 @@ run_until "$((started_epoch + 135))" 8 32
 # High connection churn (2:15–3:30).
 run_until "$((started_epoch + 210))" 32 96
 
-# Bounded burst and adaptive recovery (3:30–4:30).
-run_until "$((started_epoch + 270))" 64 192
+# Bounded burst and adaptive recovery (3:30–4:30).  Thirty-two concurrent
+# clients saturate the measured 2-vCPU LANDING without overflowing the
+# loopback origin's accept backlog; larger stress matrices are non-blocking.
+run_until "$((started_epoch + 270))" 32 96
 
 # No traffic: expiry/rotation and pre-auth-idle cooperation (4:30–5:30).
 while (( $(date +%s) < started_epoch + 330 )); do sleep 1; done
@@ -289,10 +312,14 @@ ssh "${SSH_OPTIONS[@]}" "$LANDING_HOST" \
 ended_epoch=$(date +%s)
 attempted=$(wc -l <"$attempts_file")
 successful=$(grep -c '^ok$' "$attempts_file" || true)
+xray_version=$($XRAY_BIN version | awk 'NR == 1 {print $2}')
+xray_build_id=$(readelf -n "$XRAY_BIN" | sed -n 's/.*Build ID: //p')
+[[ -n $xray_version && -n $xray_build_id ]]
 python3 - "$OUT_DIR" "$CANDIDATE_COMMIT" "$CANDIDATE_SHA256" \
     "$CANDIDATE_BUILD_ID" "$CANDIDATE_VERSION" "$CANDIDATE_TARGET" \
-    "$CANDIDATE_RUSTC" "$((ended_epoch - started_epoch))" "$attempted" \
-    "$successful" "$line_restarts_start" "$line_restarts_end" \
+    "$CANDIDATE_RUSTC" "$XRAY_SHA256" "$xray_version" "$xray_build_id" \
+    "$((ended_epoch - started_epoch))" "$attempted" "$successful" \
+    "$line_restarts_start" "$line_restarts_end" \
     "$landing_restarts_start" "$landing_restarts_end" <<'PY'
 import json
 from pathlib import Path
@@ -300,9 +327,10 @@ import sys
 
 out = Path(sys.argv[1])
 commit, sha, build_id, version, target, rustc = sys.argv[2:8]
-elapsed, attempted, successful = map(int, sys.argv[8:11])
+xray_sha, xray_version, xray_build_id = sys.argv[8:11]
+elapsed, attempted, successful = map(int, sys.argv[11:14])
 line_restarts_start, line_restarts_end, landing_restarts_start, landing_restarts_end = map(
-    int, sys.argv[11:15]
+    int, sys.argv[14:18]
 )
 
 def resources(name):
@@ -336,12 +364,15 @@ report = {
     "schemaVersion": 1,
     "candidate": {"commit": commit, "sha256": sha, "buildId": build_id,
                   "version": version, "target": target, "rustc": rustc},
+    "comparator": {"name": "Xray", "version": xray_version,
+                   "sha256": xray_sha, "buildId": xray_build_id},
     "elapsedSeconds": elapsed,
     "checks": {
         "lineSsh": True, "landingSsh": True,
         "lineServiceActive": True, "landingServiceActive": True,
         "linePublicPortsRestricted": True, "landingPublicPortsRestricted": True,
         "landingFirewallLineOnly": True, "stockXray": True,
+        "lineCandidateIdentity": True, "landingCandidateIdentity": True,
         "oneMiBIntegrity": True, "largeIntegrity": True,
         "uploadIntegrity": True, "bidirectionalIntegrity": True,
         "lineReload": len(events) >= 1, "generationRetirement": len(events) >= 1,
