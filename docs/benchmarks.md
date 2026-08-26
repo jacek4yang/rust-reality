@@ -80,11 +80,13 @@ it runs zero-loss concurrency-one 50/100/200 ms cells with six balanced samples
 per leg. `DEPLOYMENT_PLAN=robustness` runs the complete RTT/loss/concurrency
 Cartesian product as an asynchronous evidence campaign, while the default
 `DEPLOYMENT_PLAN=full` additionally retains routing, topology, throughput, and
-long-flow evidence. The focused mechanism program is the release claim gate;
-robustness cells are retained when the validation budget permits and every
-omission is reported as `SKIPPED`, never silently treated as a pass. The split
-prevents a multi-hour robustness campaign from blocking unrelated review and
-engineering work. All plans' warm and cold processes use the same release binary,
+long-flow evidence. The focused mechanism program is the release claim gate.
+A robustness run is a PASS only when its complete fail-closed inventory and
+completion marker exist. If an external wall-clock budget stops it, the
+preflight/incomplete contract and an artifact note identify the missing cells;
+the partial run is diagnostic evidence only. The split prevents a multi-hour
+robustness campaign from blocking unrelated review and engineering work. All
+plans' warm and cold processes use the same release binary,
 peer, origin, client, shaped veth pair, and configuration identity; only the
 outbound `warmTcp` switch differs. Each protocol/mode cell retains balanced
 ABBA blocks, p50/p90/p95/p99, setup rate, exact environment and binary hashes,
@@ -371,10 +373,11 @@ and RSS growth over the soak with zero transfer failures.
 - Results are measurements of this host and are not a universal
   performance claim.
 
-## v1.6.1 release comparison evidence
+## v1.7.0 release comparison evidence
 
-The v1.6.1 headline retains the v1.6.0 numbers measured on the release host
-(Intel i3-8100 4C/4T,
+The v1.7.0 protected Xray-comparison headline retains the v1.6.1 measurement
+foundation: the v1.6.0 numbers measured on the release host (Intel i3-8100
+4C/4T,
 Linux 6.12.100+deb13-amd64, rustc 1.96.0) with every run serialized under
 the host-exclusive lock `/tmp/v16-bench.lock`. Identities: candidate
 `c182829` (binary SHA-256 `cc53c1f4…`, built by

@@ -23,6 +23,9 @@
 
 - 公网 VLESS + REALITY + Vision 数据路径兼容 Xray-core 26.7.28，并以未经修改的
   Xray 客户端做端到端门禁。
+- 已认证 REALITY 建连会在精确、保守的 ClientHello class 准备好时使用已验证的
+  prebuilt cover profile；否则依次使用 warm live-cover TCP 和普通 cold
+  live-cover 路径。未认证、畸形、不支持及重放流量始终看到真实 cover。
 - 方向级 Vision Direct：每个方向在认证完成的瞬间就切换到 raw 内核 relay
   （优先 `splice`），分裂脑从结构上不可能发生。
 - 可选 Handoff 拓扑：线路机可以通过一条已认证的密封信道，把已接受会话的
@@ -54,8 +57,9 @@
 ## 与 Xray-core 的性能对比
 
 对比对象：Xray-core 26.7.28（提交 `5ca6f4b`，go1.26.0，二进制 SHA-256
-`23d228d7…04c5268`）——即互操作测试所用的同一二进制。以下所有 v1.6.1
-数字均在发布主机（Intel i3-8100 4C/4T，Linux 6.12）上测得：两侧服务器均
+`23d228d7…04c5268`）——即互操作测试所用的同一二进制。v1.7.0 受保护的
+Xray 对比数字沿用 v1.6.1 在发布主机（Intel i3-8100 4C/4T，Linux
+6.12）上的测量基础：两侧服务器均
 使用 warn 级日志（rust-reality 在 warn 级不做任何逐连接日志工作），两台
 服务器前置同一个未修改的 Xray SOCKS5 客户端，使用相同的 TLS 1.3 REALITY
 cover，loopback origin，传输逐字节校验，并采用平衡 ABBA 交错。这些是受控
@@ -71,7 +75,7 @@ cover，loopback origin，传输逐字节校验，并采用平衡 ABBA 交错。
 | 8 | 767.5 | 716.9 | 1.07× | 18.8 ms | 30.8 ms |
 | 32 | 853.2 | 784.5 | 1.09× | 59.3 ms | 73.3 ms |
 
-批量吞吐，v1.6.1 对 Xray 的 p50 比值（32 MiB × 并发 32，两轮）：
+批量吞吐，v1.7.0 对 Xray 的 p50 比值（32 MiB × 并发 32，两轮）：
 
 | 路径 | 比值 |
 |---|---:|
