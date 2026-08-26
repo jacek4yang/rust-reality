@@ -33,8 +33,8 @@
 use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 use rr_session::{
-    AttemptTransport, Direction, DirectionState, RawDecision, RawRelayTransition,
-    RetryableProgress, WriteProgress,
+    AttemptTransport, Direction, DirectionState, PairRendezvous, RawDecision, RawRelayTransition,
+    RendezvousStep, RetryableProgress, WriteProgress,
 };
 
 /// Bound on driven events so a single input cannot run unboundedly long.
@@ -88,7 +88,13 @@ enum Event {
     /// The runtime attempts to commit an arbitrary lifecycle transition.
     Advance { direction: bool, state: u8 },
     /// The runtime asks the engine to plan the raw-relay transition.
-    PlanRawRelay { direction: bool },
+    ///
+    /// `peer_observations` supplies one bit per rendezvous look, so the
+    /// fuzzer controls whether the peer appears pairable on each look.
+    PlanRawRelay {
+        direction: bool,
+        peer_observations: u8,
+    },
     /// A new authenticated single-message transfer starts. `warm` models whether
     /// a warm pool offered a prepaid socket for the first attempt.
     BeginTransfer { warm: bool },
@@ -385,7 +391,47 @@ impl Session {
     }
 
     /// Plans and, when legal, commits the one-shot raw-relay transition.
-    fn plan_raw_relay(&mut self, direction: Direction) {
+    ///
+    /// `peer_observations` models what the adapter would see on each successive
+    /// look at the peer while spending its bounded rendezvous budget. Driving the
+    /// rendezvous here is what makes the budget a *sequence* property: no matter
+    /// what the adapter observes, the number of scheduling points spent must stay
+    /// inside the engine's own bound.
+    fn plan_raw_relay(&mut self, direction: Direction, peer_observations: u8) {
+        let mut rendezvous = PairRendezvous::new();
+        let mut looks = 0_u8;
+        loop {
+            // Bit `looks` of the fuzzed byte is this look's observation.
+            let observed = looks < 8 && (peer_observations >> looks) & 1 == 1;
+            looks = looks.saturating_add(1);
+            match rendezvous.step(observed) {
+                RendezvousStep::Yield => {
+                    // Invariant: the adapter can never be asked to spend more
+                    // scheduling points than the engine's declared budget.
+                    assert!(
+                        rendezvous.yields_spent() <= PairRendezvous::YIELD_BUDGET,
+                        "rendezvous asked for {} scheduling points, above the {} budget",
+                        rendezvous.yields_spent(),
+                        PairRendezvous::YIELD_BUDGET
+                    );
+                    assert!(!rendezvous.committed());
+                }
+                RendezvousStep::Commit => break,
+            }
+            // Invariant: the loop terminates. Without an absorbing commit this
+            // would run forever and the fuzzer would report a timeout.
+            assert!(
+                looks <= PairRendezvous::YIELD_BUDGET.saturating_add(1),
+                "rendezvous did not commit within its budget"
+            );
+        }
+        assert!(
+            rendezvous.committed(),
+            "the rendezvous left without committing"
+        );
+        // Committing is absorbing, so a later look cannot reopen the budget.
+        assert_eq!(rendezvous.step(false), RendezvousStep::Commit);
+
         let current = self.state(direction);
         let peer = self.peer_state(direction);
         let planned = RawRelayTransition::plan(direction, current, peer);
@@ -493,8 +539,11 @@ fuzz_target!(|bytes: &[u8]| {
                     DirectionState::from_repr(state % 8),
                 );
             }
-            Event::PlanRawRelay { direction } => {
-                session.plan_raw_relay(direction_of(direction));
+            Event::PlanRawRelay {
+                direction,
+                peer_observations,
+            } => {
+                session.plan_raw_relay(direction_of(direction), peer_observations);
             }
             Event::BeginTransfer { warm } => {
                 if let Some(previous) = &session.transfer {
