@@ -781,6 +781,7 @@ sleep 5
 snapshot end
 
 python3 - "$distributed_samples" "$out_dir/handoff-cover-shape-proxy.log" \
+    "$out_dir/handoff-landing.log" "$out_dir/nxr-landing.log" \
     "$distributed_interval_seconds" "$distributed_payload_sha256" \
     "$(sha256sum "$work/handoff-line.json" | awk '{print $1}')" \
     "$(sha256sum "$work/handoff-landing.json" | awk '{print $1}')" \
@@ -796,6 +797,8 @@ import sys
 (
     samples_path,
     proxy_log_path,
+    handoff_landing_log_path,
+    nxr_landing_log_path,
     interval_text,
     payload_sha256,
     handoff_line_sha256,
@@ -888,6 +891,22 @@ socks_summary.update({
 })
 triggers = collections.Counter(sample.get("trigger") for sample in handoff)
 proxy_complete = proxy_completions[-1] if proxy_completions else None
+
+
+def rejection_reasons(path):
+    reasons = collections.Counter()
+    for line in Path(path).read_text(errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("event") == "connection_rejected":
+            reasons[event.get("reason", "unclassified")] += 1
+    return dict(reasons)
+
+
+handoff_landing_rejections = rejection_reasons(handoff_landing_log_path)
+nxr_landing_rejections = rejection_reasons(nxr_landing_log_path)
 ok = (
     attempts >= required_attempts
     and len(handoff) == attempts
@@ -909,6 +928,8 @@ ok = (
     and socks_summary["failures"] == 0
     and socks_summary["allPayloadBytes"]
     and socks_summary["allPayloadSha256"]
+    and not handoff_landing_rejections
+    and not nxr_landing_rejections
     and len(shape_events) == attempts
     and proxy_complete is not None
     and proxy_complete.get("shaped") == attempts
@@ -936,6 +957,10 @@ result = {
     "handoffSeq1": handoff_summary,
     "nxrByteIntegrity": nxr_summary,
     "socks5ByteIntegrity": socks_summary,
+    "landingConnectionRejections": {
+        "handoff": handoff_landing_rejections,
+        "nxr": nxr_landing_rejections,
+    },
     "proxy": {
         "accepted": proxy_complete.get("accepted") if proxy_complete else None,
         "shaped": proxy_complete.get("shaped") if proxy_complete else None,
@@ -1050,6 +1075,10 @@ ok = (
     and distributed.get("reload", {}).get("triggerAttempts") == 1
     and distributed.get("reload", {}).get("expectedGeneration") == 1
     and len(distributed.get("reload", {}).get("logs", [])) == 5
+    and distributed.get("landingConnectionRejections") == {
+        "handoff": {},
+        "nxr": {},
+    }
     and distributed.get("handoffSeq1", {}).get("attempts") == distributed_attempts
     and distributed.get("handoffSeq1", {}).get("successes") == distributed_attempts
     and distributed.get("handoffSeq1", {}).get("failures") == 0
