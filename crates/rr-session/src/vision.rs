@@ -231,35 +231,143 @@ impl RawRelayGrant {
 mod tests {
     use super::{Direction, DirectionState, InvalidTransition, RawDecision, RawRelayTransition};
 
+    /// Every state in the lifecycle, for exhaustive enumeration.
+    const ALL_STATES: [DirectionState; 8] = [
+        DirectionState::Framed,
+        DirectionState::DirectPending,
+        DirectionState::RawReady,
+        DirectionState::Outer,
+        DirectionState::Closed,
+        DirectionState::Failed,
+        DirectionState::PairPending,
+        DirectionState::Relaying,
+    ];
+
+    /// The legal transitions, written out independently of [`DirectionState::permits`].
+    ///
+    /// This is a reference model, not a restatement: it is an explicit edge list
+    /// derived from ADR 0008's boundary rules, while production expresses the
+    /// same relation as a single `matches!` pattern. Checking one against the
+    /// other over the full 8x8 product is what makes an accidental extra or
+    /// missing edge a test failure instead of a silent behaviour change.
+    const REFERENCE_EDGES: [(DirectionState, DirectionState); 17] = [
+        (DirectionState::Framed, DirectionState::DirectPending),
+        (DirectionState::Framed, DirectionState::Outer),
+        (DirectionState::Framed, DirectionState::Closed),
+        (DirectionState::Framed, DirectionState::Failed),
+        (DirectionState::DirectPending, DirectionState::RawReady),
+        (DirectionState::DirectPending, DirectionState::Closed),
+        (DirectionState::DirectPending, DirectionState::Failed),
+        (DirectionState::RawReady, DirectionState::PairPending),
+        (DirectionState::RawReady, DirectionState::Relaying),
+        (DirectionState::RawReady, DirectionState::Closed),
+        (DirectionState::RawReady, DirectionState::Failed),
+        (DirectionState::PairPending, DirectionState::Closed),
+        (DirectionState::PairPending, DirectionState::Failed),
+        (DirectionState::Relaying, DirectionState::Closed),
+        (DirectionState::Relaying, DirectionState::Failed),
+        (DirectionState::Outer, DirectionState::Closed),
+        (DirectionState::Outer, DirectionState::Failed),
+    ];
+
+    /// Independently assigned progress rank; a legal transition must raise it.
+    fn reference_rank(state: DirectionState) -> u8 {
+        match state {
+            DirectionState::Framed => 0,
+            DirectionState::DirectPending => 1,
+            DirectionState::RawReady | DirectionState::Outer => 2,
+            DirectionState::PairPending | DirectionState::Relaying => 3,
+            DirectionState::Closed | DirectionState::Failed => 4,
+        }
+    }
+
+    fn reference_permits(from: DirectionState, to: DirectionState) -> bool {
+        REFERENCE_EDGES
+            .iter()
+            .any(|&(edge_from, edge_to)| edge_from == from && edge_to == to)
+    }
+
+    /// Independently restated bilateral pair rule.
+    fn reference_decision(peer: DirectionState) -> RawDecision {
+        match peer {
+            DirectionState::RawReady | DirectionState::PairPending => RawDecision::Pair,
+            _ => RawDecision::Directional,
+        }
+    }
+
+    #[test]
+    fn the_transition_table_matches_the_reference_model_exhaustively() {
+        for from in ALL_STATES {
+            for to in ALL_STATES {
+                assert_eq!(
+                    from.permits(to),
+                    reference_permits(from, to),
+                    "production and reference disagree about {from:?} -> {to:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_legal_transition_strictly_advances_progress() {
+        // Strict monotonicity is the property that makes the lifecycle acyclic,
+        // makes terminal states absorbing, and bounds the number of transitions
+        // a direction can accept. Production never states it directly.
+        for from in ALL_STATES {
+            for to in ALL_STATES {
+                if from.permits(to) {
+                    assert!(
+                        reference_rank(to) > reference_rank(from),
+                        "{from:?} -> {to:?} did not strictly advance progress"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn no_state_permits_itself() {
+        for state in ALL_STATES {
+            assert!(!state.permits(state), "{state:?} permits itself");
+        }
+    }
+
+    #[test]
+    fn the_lifecycle_is_bounded_by_the_rank_ladder() {
+        // The longest legal chain cannot exceed the number of distinct ranks,
+        // so a direction accepts at most that many transitions in any run.
+        let ranks = ALL_STATES.map(reference_rank);
+        let highest = ranks.iter().copied().max().expect("states exist");
+        for from in ALL_STATES {
+            for to in ALL_STATES {
+                if from.permits(to) {
+                    assert!(reference_rank(to) <= highest);
+                }
+            }
+        }
+        assert_eq!(highest, 4, "the rank ladder changed; revisit the bound");
+    }
+
     #[test]
     fn representation_round_trips_every_state() {
-        for state in [
-            DirectionState::Framed,
-            DirectionState::DirectPending,
-            DirectionState::RawReady,
-            DirectionState::Outer,
-            DirectionState::Closed,
-            DirectionState::Failed,
-            DirectionState::PairPending,
-            DirectionState::Relaying,
-        ] {
+        for state in ALL_STATES {
             assert_eq!(DirectionState::from_repr(state as u8), state);
+        }
+    }
+
+    #[test]
+    fn out_of_range_representations_decode_to_the_initial_state() {
+        // The runtime stores this in one atomic byte; an unexpected value must
+        // not be interpreted as an advanced or terminal state.
+        for value in 8_u8..=u8::MAX {
+            assert_eq!(DirectionState::from_repr(value), DirectionState::Framed);
         }
     }
 
     #[test]
     fn terminal_states_never_revive() {
         for terminal in [DirectionState::Closed, DirectionState::Failed] {
-            for next in [
-                DirectionState::Framed,
-                DirectionState::DirectPending,
-                DirectionState::RawReady,
-                DirectionState::Outer,
-                DirectionState::Closed,
-                DirectionState::Failed,
-                DirectionState::PairPending,
-                DirectionState::Relaying,
-            ] {
+            for next in ALL_STATES {
                 assert!(!terminal.permits(next));
             }
         }
@@ -269,6 +377,73 @@ mod tests {
     fn invalid_transition_is_core_error() {
         fn assert_error<T: core::error::Error>() {}
         assert_error::<InvalidTransition>();
+    }
+
+    #[test]
+    fn a_grant_is_planned_only_at_the_raw_boundary_for_every_peer_state() {
+        // Exhaustive over both directions, all own states, and all peer states.
+        for direction in [Direction::Uplink, Direction::Downlink] {
+            for current in ALL_STATES {
+                for peer in ALL_STATES {
+                    let planned = RawRelayTransition::plan(direction, current, peer);
+                    if current == DirectionState::RawReady {
+                        let transition =
+                            planned.expect("the raw boundary must plan a legal successor");
+                        let expected = reference_decision(peer);
+                        let next = transition.next_state();
+                        assert_eq!(
+                            next,
+                            match expected {
+                                RawDecision::Pair => DirectionState::PairPending,
+                                RawDecision::Directional => DirectionState::Relaying,
+                            },
+                            "planned successor disagrees with the reference decision \
+                             for peer {peer:?}"
+                        );
+                        assert!(current.permits(next));
+                        let grant = transition.into_grant();
+                        assert_eq!(grant.direction(), direction);
+                        assert_eq!(
+                            grant.into_decision(),
+                            expected,
+                            "grant decision disagrees with the reference rule \
+                             for peer {peer:?}"
+                        );
+                    } else {
+                        let error =
+                            planned.expect_err("a grant was issued away from the raw boundary");
+                        assert_eq!(error.direction, direction);
+                        assert_eq!(error.from, current);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_paired_peer_always_pairs_back() {
+        // This is what makes the runtime rule "never leave PairPending before
+        // the peer decides" sufficient to keep a bilateral pair from splitting.
+        for direction in [Direction::Uplink, Direction::Downlink] {
+            for peer in [DirectionState::RawReady, DirectionState::PairPending] {
+                let grant = RawRelayTransition::plan(direction, DirectionState::RawReady, peer)
+                    .expect("the raw boundary must plan")
+                    .into_grant();
+                assert_eq!(grant.into_decision(), RawDecision::Pair);
+            }
+        }
+    }
+
+    #[test]
+    fn leaving_the_raw_boundary_is_irreversible() {
+        // A committed direction can never plan a second grant, which is the
+        // "exactly one transport owner" rule.
+        for committed in [DirectionState::PairPending, DirectionState::Relaying] {
+            assert!(!committed.permits(DirectionState::RawReady));
+            for peer in ALL_STATES {
+                assert!(RawRelayTransition::plan(Direction::Uplink, committed, peer).is_err());
+            }
+        }
     }
 
     #[test]
@@ -295,24 +470,6 @@ mod tests {
             directional.into_grant().into_decision(),
             RawDecision::Directional
         );
-    }
-
-    #[test]
-    fn raw_relay_grant_cannot_be_planned_before_or_after_the_boundary() {
-        for state in [
-            DirectionState::Framed,
-            DirectionState::DirectPending,
-            DirectionState::Outer,
-            DirectionState::Closed,
-            DirectionState::Failed,
-            DirectionState::PairPending,
-            DirectionState::Relaying,
-        ] {
-            assert!(
-                RawRelayTransition::plan(Direction::Uplink, state, DirectionState::Framed).is_err(),
-                "{state:?} unexpectedly issued a raw grant"
-            );
-        }
     }
 
     #[test]
