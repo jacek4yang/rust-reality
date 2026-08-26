@@ -209,7 +209,17 @@ rollback() {
     ln -sfn "$old_config" /etc/rust-reality/current.rollback
     mv -Tf /etc/rust-reality/current.rollback /etc/rust-reality/current
     systemctl start "$service"
-    systemctl is-active --quiet "$service"
+    for _ in $(seq 1 100); do
+        pid=$(systemctl show "$service" -p MainPID --value)
+        if systemctl is-active --quiet "$service" \
+            && [[ $pid =~ ^[1-9][0-9]*$ ]] \
+            && [[ $(readlink -f "/proc/$pid/exe" 2>/dev/null || true) == "$old_binary/rust-reality" ]] \
+            && ss -ltnH | awk '$4 ~ /(^|\]|:)443$/ {found=1} END {exit !found}'; then
+            return 0
+        fi
+        sleep 0.1
+    done
+    return 1
 }
 trap 'status=$?; trap - ERR; rollback; exit "$status"' ERR
 ln -sfn "$old_binary" /opt/rust-reality/previous.next
@@ -277,7 +287,19 @@ mv -Tf /opt/rust-reality/current.next /opt/rust-reality/current
 ln -sfn "$previous_config" /etc/rust-reality/current.next
 mv -Tf /etc/rust-reality/current.next /etc/rust-reality/current
 systemctl start "$service"
+for _ in $(seq 1 100); do
+    pid=$(systemctl show "$service" -p MainPID --value)
+    if systemctl is-active --quiet "$service" \
+        && [[ $pid =~ ^[1-9][0-9]*$ ]] \
+        && [[ $(readlink -f "/proc/$pid/exe" 2>/dev/null || true) == "$previous_binary/rust-reality" ]] \
+        && ss -ltnH | awk '$4 ~ /(^|\]|:)443$/ {found=1} END {exit !found}'; then
+        break
+    fi
+    sleep 0.1
+done
 systemctl is-active --quiet "$service"
+pid=$(systemctl show "$service" -p MainPID --value)
+[[ $(readlink -f "/proc/$pid/exe") == "$previous_binary/rust-reality" ]]
 ss -ltnH | awk '$4 ~ /(^|\]|:)443$/ {found=1} END {exit !found}'
 rm -f /var/lib/rust-reality/deployment/pending
 REMOTE
