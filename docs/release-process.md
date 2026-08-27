@@ -141,7 +141,7 @@ controlled LANDING restart/recovery, 1 MiB and larger download/upload/
 bidirectional integrity, and final recovery. Resource sampling uses SSH, not a
 public metrics listener.
 
-`evaluate-release-canary.py` is fail-closed. It requires exact identity, both
+`cargo dev deploy canary` is fail-closed. It requires exact identity, both
 SSH connections, constrained listeners/firewall, stock Xray, integrity, warm
 Handoff, deliberately observed cold fallback, generation retirement, LANDING
 recovery, at least 500 bounded connection attempts, bounded pool targets and

@@ -437,8 +437,8 @@
       "invoked_by_check_sh": false,
       "calls_scripts": [],
       "disposition": "MIGRATE",
-      "replacement": "cargo dev deploy canary",
-      "status": "not-started"
+      "replacement": "deploy::canary (cargo dev deploy canary)",
+      "status": "deleted-after-parity; byte-identical verdict + exit codes (pass/fail/inadmissible); run-dual-vps-canary.sh switched"
     },
     {
       "path": "scripts/export-hotspot-bundle.sh",
@@ -808,8 +808,8 @@
         "evaluate-release-canary.py"
       ],
       "disposition": "MERGE",
-      "replacement": "rr-dev deploy module tests",
-      "status": "not-started"
+      "replacement": "deploy::canary module tests",
+      "status": "deleted-after-parity; 3 contract cases ported as native tests; removed last-but-one external check.rs validator"
     },
     {
       "path": "scripts/test-xray-interop.sh",
