@@ -20,6 +20,15 @@ use clap::{Parser, Subcommand};
 mod check;
 mod docs;
 mod doctor;
+// The evaluator core lands before the evidence-loading layer that will call it, so
+// nothing outside its own tests uses it yet. `expect` rather than `allow`: this
+// becomes a hard error the moment `perf evaluate` is wired up, so the staging
+// annotation cannot outlive the staging.
+#[expect(
+    dead_code,
+    reason = "pure statistical core; the manifest/pairing layer and `perf evaluate` land next"
+)]
+mod perf;
 mod process;
 
 /// Development control plane for the rust-reality repository.
