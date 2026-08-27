@@ -9,5 +9,6 @@
 //! The migrated Python scripts are deleted in the same change that adds their
 //! Rust replacement, so no compatibility wrapper or dual authority survives.
 
+pub mod config_identity;
 pub mod perf_contract;
 pub mod probe_manifest;

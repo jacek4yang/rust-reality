@@ -22,6 +22,7 @@ mod checks;
 mod docs;
 mod doctor;
 mod fuzz;
+mod hash;
 mod perf;
 mod process;
 mod release;
@@ -67,6 +68,23 @@ enum Command {
     Fuzz {
         #[command(subcommand)]
         command: FuzzCommand,
+    },
+    /// Configuration identity tooling.
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigCommand {
+    /// Emit a secret-free identity fingerprint for a deployment config.
+    Fingerprint {
+        /// Path to the config JSON.
+        config: PathBuf,
+        /// Optional path to write the fingerprint report to; stdout when omitted.
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
 }
 
@@ -200,6 +218,31 @@ fn main() -> ExitCode {
         },
         Command::Release { command } => run_release(&repo, command),
         Command::Fuzz { command } => run_fuzz(&repo, command),
+        Command::Config { command } => match command {
+            ConfigCommand::Fingerprint { config, output } => {
+                match checks::config_identity::report(&config) {
+                    Ok(report) => {
+                        let rendered = report.to_python_json();
+                        if let Some(path) = output {
+                            match std::fs::write(&path, &rendered) {
+                                Ok(()) => ExitCode::SUCCESS,
+                                Err(error) => {
+                                    eprintln!("config fingerprint: {error}");
+                                    ExitCode::FAILURE
+                                }
+                            }
+                        } else {
+                            print!("{rendered}");
+                            ExitCode::SUCCESS
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("config fingerprint: {error}");
+                        ExitCode::FAILURE
+                    }
+                }
+            }
+        },
         Command::Docs { command } => match command {
             DocsCommand::Check => {
                 let report = docs::check(&repo);

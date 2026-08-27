@@ -371,8 +371,8 @@
       "invoked_by_check_sh": true,
       "calls_scripts": [],
       "disposition": "MIGRATE",
-      "replacement": "cargo dev historical verify",
-      "status": "not-started"
+      "replacement": "checks::config_identity (cargo dev config fingerprint)",
+      "status": "deleted-after-parity; byte-identical fingerprint output verified, dependency-free SHA-256"
     },
     {
       "path": "scripts/cover-flight-shape-proxy.py",
@@ -726,8 +726,8 @@
         "config-identity-fingerprint.py"
       ],
       "disposition": "MERGE",
-      "replacement": "rr-dev historical module tests",
-      "status": "not-started"
+      "replacement": "checks::config_identity module tests",
+      "status": "deleted-after-parity; secret-free invariant + parity ported as native tests"
     },
     {
       "path": "scripts/test-descriptor-pressure.sh",

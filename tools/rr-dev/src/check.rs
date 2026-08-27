@@ -277,10 +277,9 @@ fn validator_steps(repo: &Path, scope: Scope) -> Vec<Step> {
     });
 
     if scope == Scope::All {
-        let full: [(&str, &[&str]); 3] = [
+        let full: [(&str, &[&str]); 2] = [
             ("test-performance-gates.py", &[]),
             ("test-release-canary.py", &[]),
-            ("test-config-identity-fingerprint.py", &[]),
         ];
         for (name, args) in full {
             let path = format!("scripts/{name}");
@@ -424,14 +423,13 @@ mod tests {
         // Each policy the legacy script enforces must be covered by a gate step.
         // Two validators are now native rr-dev checks, so those legacy tokens map
         // to the gate label that replaced them; the rest still run externally.
-        let coverage: [(&str, &str); 12] = [
+        let coverage: [(&str, &str); 11] = [
             ("cargo dev docs check", "cargo dev docs check"),
             ("fuzz-targets.py", "fuzz target manifest"),
             ("active-probe-gate.py", "active-probe manifest"),
             ("check-performance-contract.py", "performance/cache contract"),
             ("test-performance-gates.py", "test-performance-gates.py"),
             ("test-release-canary.py", "test-release-canary.py"),
-            ("test-config-identity-fingerprint.py", "test-config-identity-fingerprint.py"),
             ("cargo fmt --all --check", "cargo fmt --all --check"),
             ("clippy", "clippy"),
             ("deny", "deny"),
