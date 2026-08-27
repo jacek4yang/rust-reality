@@ -74,7 +74,7 @@ jobs:
           ./scripts/verify-release-tag.sh "$RELEASE_TAG"
 
       - name: Run repository quality gates
-        run: ./scripts/check.sh
+        run: cargo dev check --all
 
       - name: Export release matrix
         id: release-matrix

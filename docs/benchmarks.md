@@ -29,10 +29,10 @@ harnesses; the design-level evidence behind the numbers lives in
 
 ### Active-probe regression contract
 
-`scripts/active-probe-cases.json` is the canonical deterministic case inventory.
-`scripts/active-probe-gate.py --output PATH` executes every named test exactly
-once and atomically records commit-bound JSON evidence. Repository validation
-rejects a missing or renamed case. The inventory covers authentication success
+`tools/fixtures/active-probe-cases.json` is the canonical deterministic case
+inventory. `cargo dev check` validates the manifest and proves every named test
+still exists, rejecting a missing or renamed case. The inventory covers
+authentication success
 and rejection, replay, ClientHello fragmentation, ClientFinished failure and
 absence, cover timeout/refusal/malformed flight, exact fallback prefixes, and
 resource pressure.

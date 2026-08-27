@@ -280,7 +280,7 @@ NXR 必须由防火墙限制，其认证后的字节是明文。不要在 issue 
 cargo install cargo-nextest --version 0.9.140 --locked
 cargo install cargo-deny --version 0.19.4 --locked
 cargo install cargo-audit --version 0.22.2 --locked
-./scripts/check.sh
+cargo dev check --all
 ./scripts/build-release.sh
 ```
 

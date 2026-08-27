@@ -186,9 +186,43 @@ impl Scope {
                     "--no-run",
                 ],
             ));
+            steps.push(audit_step(repo));
         }
 
         steps
+    }
+}
+
+/// The advisory audit, as a gate step with the script's cached-retry fallback.
+///
+/// `check.sh` runs `cargo audit --deny warnings`, and on a failed fresh advisory
+/// fetch retries against the cached database with `--no-fetch`. A transient
+/// registry outage must not turn a clean tree red, but a real advisory still
+/// fails the gate. This reproduces that two-attempt behaviour natively.
+fn audit_step(_repo: &Path) -> Step {
+    Step::Native {
+        label: "cargo audit --deny warnings".to_owned(),
+        run: |repo| {
+            let fresh = Tool::new("cargo")
+                .args(["audit", "--deny", "warnings"])
+                .current_dir(repo)
+                .streaming()
+                .probe()
+                .map_err(|error| error.to_string())?;
+            if fresh.success() {
+                return Ok(());
+            }
+            eprintln!(
+                "fresh advisory retrieval failed; retrying the cached database without network access"
+            );
+            Tool::new("cargo")
+                .args(["audit", "--no-fetch", "--deny", "warnings"])
+                .current_dir(repo)
+                .streaming()
+                .run()
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        },
     }
 }
 
@@ -207,38 +241,64 @@ fn shell_syntax_steps(repo: &Path) -> Vec<Step> {
         .collect()
 }
 
-/// The Python validators, which still own their policy in this slice.
+/// The gate validators.
+///
+/// Two of these are now native rr-dev checks that own their policy directly: the
+/// active-probe manifest and the performance/cache contract. The fuzz manifest
+/// stays external for now because `security.yml` also invokes `fuzz-targets.py`;
+/// it migrates as one unit with that workflow in the fuzz slice. The remaining
+/// three are Python test harnesses that verify modules migrated in later slices;
+/// they stay external and are skipped automatically once their scripts are gone.
 fn validator_steps(repo: &Path, scope: Scope) -> Vec<Step> {
     let mut steps = Vec::new();
-    let fast: [(&str, &[&str]); 3] = [
-        ("fuzz-targets.py", &[]),
-        ("active-probe-gate.py", &["--check"]),
-        ("check-performance-contract.py", &[]),
-    ];
-    let full: [(&str, &[&str]); 3] = [
-        ("test-performance-gates.py", &[]),
-        ("test-release-canary.py", &[]),
-        ("test-config-identity-fingerprint.py", &[]),
-    ];
-    let selected: Vec<(&str, &[&str])> = if scope == Scope::All {
-        fast.iter().chain(full.iter()).copied().collect()
-    } else {
-        fast.to_vec()
-    };
-    for (name, args) in selected {
-        let path = format!("scripts/{name}");
-        if !repo.join(&path).is_file() {
-            continue;
-        }
-        let label = format!("python3 {path} {}", args.join(" "));
+
+    if repo.join("scripts/fuzz-targets.py").is_file() {
         steps.push(Step::External {
-            label: label.trim_end().to_owned(),
+            label: "python3 scripts/fuzz-targets.py".to_owned(),
             tool: Tool::new("python3")
-                .arg(&path)
-                .args(args.iter().copied())
+                .arg("scripts/fuzz-targets.py")
                 .current_dir(repo)
                 .streaming(),
         });
+    }
+    steps.push(Step::Native {
+        label: "active-probe manifest".to_owned(),
+        run: |repo| {
+            crate::checks::probe_manifest::check(repo)
+                .map(|line| println!("{line}"))
+                .map_err(|error| error.to_string())
+        },
+    });
+    steps.push(Step::Native {
+        label: "performance/cache contract".to_owned(),
+        run: |repo| {
+            crate::checks::perf_contract::check(repo)
+                .map(|line| println!("{line}"))
+                .map_err(|error| error.to_string())
+        },
+    });
+
+    if scope == Scope::All {
+        let full: [(&str, &[&str]); 3] = [
+            ("test-performance-gates.py", &[]),
+            ("test-release-canary.py", &[]),
+            ("test-config-identity-fingerprint.py", &[]),
+        ];
+        for (name, args) in full {
+            let path = format!("scripts/{name}");
+            if !repo.join(&path).is_file() {
+                continue;
+            }
+            let label = format!("python3 {path} {}", args.join(" "));
+            steps.push(Step::External {
+                label: label.trim_end().to_owned(),
+                tool: Tool::new("python3")
+                    .arg(&path)
+                    .args(args.iter().copied())
+                    .current_dir(repo)
+                    .streaming(),
+            });
+        }
     }
     if scope == Scope::All && repo.join("scripts/test-package-release.sh").is_file() {
         steps.push(Step::External {
@@ -372,29 +432,32 @@ mod tests {
             .collect();
         let joined = labels.join("\n");
 
-        // Every cargo and python step the script runs must appear in the gate.
-        for required in [
-            "cargo dev docs check",
-            "fuzz-targets.py",
-            "active-probe-gate.py",
-            "check-performance-contract.py",
-            "test-performance-gates.py",
-            "test-release-canary.py",
-            "test-config-identity-fingerprint.py",
-            "test-package-release.sh",
-            "cargo fmt --all --check",
-            "clippy",
-            "deny",
-            "doc",
-            "nextest",
-        ] {
+        // Each policy the legacy script enforces must be covered by a gate step.
+        // Two validators are now native rr-dev checks, so those legacy tokens map
+        // to the gate label that replaced them; the rest still run externally.
+        let coverage: [(&str, &str); 13] = [
+            ("cargo dev docs check", "cargo dev docs check"),
+            ("fuzz-targets.py", "fuzz-targets.py"),
+            ("active-probe-gate.py", "active-probe manifest"),
+            ("check-performance-contract.py", "performance/cache contract"),
+            ("test-performance-gates.py", "test-performance-gates.py"),
+            ("test-release-canary.py", "test-release-canary.py"),
+            ("test-config-identity-fingerprint.py", "test-config-identity-fingerprint.py"),
+            ("test-package-release.sh", "test-package-release.sh"),
+            ("cargo fmt --all --check", "cargo fmt --all --check"),
+            ("clippy", "clippy"),
+            ("deny", "deny"),
+            ("doc", "doc"),
+            ("nextest", "nextest"),
+        ];
+        for (legacy_token, gate_label) in coverage {
             assert!(
-                source.contains(required),
-                "this parity test is stale: check.sh no longer mentions {required}"
+                source.contains(legacy_token),
+                "this parity test is stale: check.sh no longer mentions {legacy_token}"
             );
             assert!(
-                joined.contains(required),
-                "the gate omits a step the legacy script runs: {required}"
+                joined.contains(gate_label),
+                "the gate omits the step covering {legacy_token}: expected {gate_label}"
             );
         }
     }

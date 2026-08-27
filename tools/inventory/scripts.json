@@ -75,7 +75,7 @@
       ],
       "disposition": "MOVE_DATA",
       "replacement": "tools/fixtures/active-probe-cases.json",
-      "status": "not-started"
+      "status": "moved"
     },
     {
       "path": "scripts/active-probe-gate.py",
@@ -88,8 +88,8 @@
         "active-probe-cases.json"
       ],
       "disposition": "MIGRATE",
-      "replacement": "cargo dev probe active",
-      "status": "not-started"
+      "replacement": "checks::probe_manifest (cargo dev check); --check gate migrated, unused --output recording mode dropped",
+      "status": "deleted-after-parity"
     },
     {
       "path": "scripts/aggregate-hotspot-samples.py",
@@ -337,8 +337,8 @@
         "perf-stat-evidence.py"
       ],
       "disposition": "MIGRATE",
-      "replacement": "cargo dev perf contract",
-      "status": "not-started"
+      "replacement": "checks::perf_contract (cargo dev check); perf-*-evidence.py compile-check dropped as self-referential",
+      "status": "deleted-after-parity"
     },
     {
       "path": "scripts/check.sh",
@@ -360,7 +360,7 @@
       ],
       "disposition": "MIGRATE",
       "replacement": "cargo dev check --all",
-      "status": "in-progress"
+      "status": "deleted-after-parity; ci.yml and release.yml switched; audit retry ported natively"
     },
     {
       "path": "scripts/config-identity-fingerprint.py",

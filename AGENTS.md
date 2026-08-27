@@ -94,7 +94,7 @@ away. Run the full quality gates before merging:
     cargo test --workspace --locked
     cargo test --workspace --no-default-features --locked
     cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-    ./scripts/check.sh
+    cargo dev check --all
     git diff --check
 
 ## 10. Performance and fuzz discipline

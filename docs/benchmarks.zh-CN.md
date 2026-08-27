@@ -20,9 +20,8 @@
 
 ### 主动探测回归契约
 
-`scripts/active-probe-cases.json` 是确定性用例的唯一清单。
-`scripts/active-probe-gate.py --output PATH` 会逐个且仅执行一次指定测试，并以原子
-方式写出绑定提交的 JSON 证据；仓库校验也会拒绝缺失或被改名的用例。清单覆盖认证成功
+`tools/fixtures/active-probe-cases.json` 是确定性用例的唯一清单。
+`cargo dev check` 会校验该清单并确认每个指定测试仍然存在，拒绝缺失或被改名的用例。清单覆盖认证成功
 与拒绝、重放、ClientHello 分片、ClientFinished 畸形或缺失、cover 超时/拒绝/畸形
 flight、精确 fallback 前缀和资源压力。
 
