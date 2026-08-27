@@ -60,11 +60,7 @@ jobs:
         run: cargo +nightly-2026-08-02 install cargo-fuzz --version 0.13.2 --locked
       - name: Run authoritative target shard
         shell: bash
-        run: |
-          target_output="$(python3 scripts/fuzz-targets.py \
-            --shard-index "${{ matrix.shard }}" --shard-count 4)"
-          mapfile -t targets <<<"$target_output"
-          scripts/fuzz-smoke.sh "${targets[@]}"
+        run: cargo dev fuzz smoke --shard-index "${{ matrix.shard }}" --shard-count 4
       - name: Upload fuzz failure evidence
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

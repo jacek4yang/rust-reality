@@ -466,8 +466,8 @@
         "fuzz-targets.py"
       ],
       "disposition": "MIGRATE",
-      "replacement": "cargo dev fuzz smoke",
-      "status": "not-started"
+      "replacement": "fuzz::smoke (cargo dev fuzz smoke)",
+      "status": "deleted-after-parity; live smoke run verified, security.yml switched"
     },
     {
       "path": "scripts/fuzz-targets.py",
@@ -478,8 +478,8 @@
       "invoked_by_check_sh": true,
       "calls_scripts": [],
       "disposition": "MIGRATE",
-      "replacement": "cargo dev fuzz targets",
-      "status": "not-started"
+      "replacement": "fuzz::targets (cargo dev fuzz targets)",
+      "status": "deleted-after-parity; full+all-shards byte-identical to python"
     },
     {
       "path": "scripts/host-exclusive-lock-keeper.py",
