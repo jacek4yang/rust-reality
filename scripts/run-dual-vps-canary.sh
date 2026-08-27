@@ -402,7 +402,7 @@ report = {
 (out / "canary-input.json").write_text(json.dumps(report, indent=2) + "\n")
 PY
 
-python3 "$REPOSITORY/scripts/evaluate-release-canary.py" \
+cargo dev deploy canary \
     "$OUT_DIR/canary-input.json" --output "$OUT_DIR/canary-verdict.json"
 completed=1
 printf 'dual-VPS active canary PASS: %s\n' "$OUT_DIR/canary-verdict.json"

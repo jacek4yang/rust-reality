@@ -20,6 +20,7 @@ use clap::{Parser, Subcommand};
 mod bench;
 mod check;
 mod checks;
+mod deploy;
 mod docs;
 mod doctor;
 mod fuzz;
@@ -79,6 +80,26 @@ enum Command {
     Bench {
         #[command(subcommand)]
         command: BenchCommand,
+    },
+    /// Deployment engineering.
+    Deploy {
+        #[command(subcommand)]
+        command: DeployCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum DeployCommand {
+    /// Evaluate a recorded dual-VPS release-canary report, fail-closed.
+    ///
+    /// Exit status is three-valued: 0 when the canary passes, 1 for a real
+    /// failure, and 2 when the input was inadmissible.
+    Canary {
+        /// Path to the recorded canary report JSON.
+        input: PathBuf,
+        /// Optional path to write the verdict to; stdout when omitted.
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
 }
 
@@ -273,6 +294,7 @@ fn main() -> ExitCode {
             }
         },
         Command::Bench { command } => run_bench(&command),
+        Command::Deploy { command } => run_deploy(command),
         Command::Docs { command } => match command {
             DocsCommand::Check => {
                 let report = docs::check(&repo);
@@ -592,5 +614,36 @@ fn run_bench(command: &BenchCommand) -> ExitCode {
                 ExitCode::FAILURE
             }
         }
+    }
+}
+
+
+/// Dispatches a `cargo dev deploy` subcommand.
+///
+/// The canary evaluator is fail-closed and three-valued, mirroring
+/// `cargo dev perf evaluate`: exit 0 on pass, 1 on a real canary failure, and 2
+/// when the recorded report could not be admitted at all.
+fn run_deploy(command: DeployCommand) -> ExitCode {
+    match command {
+        DeployCommand::Canary { input, output } => match deploy::canary::evaluate_file(&input) {
+            deploy::canary::Outcome::Evaluated { verdict, ok } => {
+                if let Some(path) = output
+                    && let Err(error) = std::fs::write(&path, &verdict)
+                {
+                    eprintln!("deploy canary: {error}");
+                    return ExitCode::from(2);
+                }
+                print!("{verdict}");
+                if ok {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::from(1)
+                }
+            }
+            deploy::canary::Outcome::Inadmissible(reason) => {
+                eprintln!("canary evaluation failed: {reason}");
+                ExitCode::from(2)
+            }
+        },
     }
 }

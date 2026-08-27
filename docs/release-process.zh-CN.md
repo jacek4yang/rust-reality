@@ -66,7 +66,7 @@ stock Xray client -> LINE:443 -> warm Handoff -> LANDING:443 -> loopback origin
 idle/stale 轮换、LINE reload、LANDING 服务受控重启与恢复、1 MiB 及更大下载/
 上传/双向逐字节完整性、最后稳态回收。指标通过 SSH 获取，不开放公网指标端口。
 
-`evaluate-release-canary.py` 采用 fail-closed 合约：必须有精确候选身份、两端 SSH、
+`cargo dev deploy canary` 采用 fail-closed 合约：必须有精确候选身份、两端 SSH、
 端口/防火墙限制、stock Xray、完整性、warm Handoff、故意触发的 cold fallback、
 generation 退休、LANDING 恢复、至少 500 次有界连接、pool 上界、无系统性落地机
 拒绝 churn，以及可恢复的 FD/thread/RSS 包络。FD 门禁使用经评审的绝对上界，
