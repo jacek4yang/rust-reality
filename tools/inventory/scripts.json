@@ -954,9 +954,9 @@
       "scripts/__pycache__": "build artifact, must be removed and ignored",
       "scripts/bench-origin": "benchmark origin helper (2 files)",
       "scripts/ipv6-e2e": "IPv6 end-to-end helpers (1 sh, 2 py)",
-      "scripts/v150-release-gates": "historical v1.5.0 gate harness (7 sh, 2 py) - PRESERVE_EVIDENCE",
-      "scripts/v151-release-gates": "historical v1.5.1 gate harness (7 sh, 2 py) - PRESERVE_EVIDENCE",
-      "scripts/v16-release-gates": "historical v1.6.0 gate harness (7 sh, 2 py) - PRESERVE_EVIDENCE"
+      "scripts/v150-release-gates": "MOVED to notes/history/release-gates/v150-release-gates/ as inert historical evidence (was already non-runnable: calls deleted evaluate-release-performance.py)",
+      "scripts/v151-release-gates": "MOVED to notes/history/release-gates/v151-release-gates/ as inert historical evidence (was already non-runnable: calls deleted evaluate-release-performance.py)",
+      "scripts/v16-release-gates": "MOVED to notes/history/release-gates/v16-release-gates/ as inert historical evidence (was already non-runnable: calls deleted evaluate-release-performance.py)"
     }
   },
   "audit": {

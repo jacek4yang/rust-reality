@@ -12,9 +12,11 @@ python3 scripts/evaluate-release-performance.py --manifest PATH --output PATH
 exit 0 = evaluation completed;  exit non-zero = fail closed
 ```
 
-No production code calls it. Callers are the gate harnesses under
-`scripts/v150-release-gates/` and `scripts/v16-release-gates/`, plus documentation
-references in `docs/performance.md`, its Chinese translation and `CHANGELOG.md`.
+No production code calls it. Callers are the historical gate harnesses under
+`notes/history/release-gates/v150-release-gates/` and
+`notes/history/release-gates/v16-release-gates/` (inert evidence), plus
+documentation references in `docs/performance.md`, its Chinese translation and
+`CHANGELOG.md`.
 
 ## Constants
 
