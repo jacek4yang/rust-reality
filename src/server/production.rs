@@ -2702,6 +2702,204 @@ mod tests {
         assert!(!Arc::ptr_eq(&previous, &current));
     }
 
+    /// Resolves the outbound table a snapshot's listener actually compiled.
+    ///
+    /// Reaching through the handler rather than the config is the point: this is
+    /// the table a live connection would consult, so a crossing between
+    /// generations would be visible here and nowhere else.
+    fn outbounds_of(state: &super::ConnectionRuntime) -> &super::super::outbound::OutboundRegistry {
+        match &state.handler {
+            super::ConnectionHandler::Public { vision, .. } => vision.outbounds(),
+            super::ConnectionHandler::Nxr(_) | super::ConnectionHandler::Handoff(_) => {
+                panic!("the generated listener must be a public VLESS listener")
+            }
+        }
+    }
+
+    /// Returns the single listener runtime of a snapshot.
+    fn only_listener(snapshot: &super::RuntimeSnapshot) -> Arc<super::ConnectionRuntime> {
+        let mut listeners = snapshot.connections.values();
+        let state = listeners
+            .next()
+            .expect("the generated config declares one listener")
+            .clone();
+        assert!(
+            listeners.next().is_none(),
+            "this test assumes a single listener"
+        );
+        state
+    }
+
+    /// Adds a second, network-free outbound so the candidate differs observably.
+    fn with_extra_outbound(base: &crate::config::Config, tag: &str) -> crate::config::Config {
+        let mut candidate = base.clone();
+        candidate
+            .outbounds
+            .push(crate::config::OutboundConfig::Blackhole {
+                tag: tag.to_owned(),
+                settings: crate::config::BlackholeSettings::default(),
+            });
+        candidate
+    }
+
+    #[test]
+    fn a_rejected_publication_must_not_advance_the_generation_counter() {
+        let generated = generated_config(unused_loopback_port());
+        let server =
+            ProductionServer::from_config(generated.config()).expect("server must compile");
+        let before = server
+            .runtime
+            .generation
+            .load(std::sync::atomic::Ordering::Acquire);
+
+        let mut incompatible = generated.config().clone();
+        incompatible.network.dial.mode = DialMode::PreferIpv6;
+        assert!(matches!(
+            server.runtime.publish(incompatible),
+            Err(RuntimeUpdateError::NetworkDialPolicyChanged)
+        ));
+
+        assert_eq!(
+            server
+                .runtime
+                .generation
+                .load(std::sync::atomic::Ordering::Acquire),
+            before,
+            "a rejected candidate must leave the generation counter untouched, or the \
+             next accepted publication silently skips a generation number"
+        );
+        assert_eq!(
+            server.runtime.load().generation,
+            before,
+            "the live snapshot must still report the last good generation"
+        );
+    }
+
+    #[test]
+    fn generations_increment_by_exactly_one_and_never_repeat() {
+        let generated = generated_config(unused_loopback_port());
+        let server =
+            ProductionServer::from_config(generated.config()).expect("server must compile");
+        let mut seen = vec![server.runtime.load().generation];
+
+        for round in 1..=4u64 {
+            let accepted = with_extra_outbound(generated.config(), &format!("probe-{round}"));
+            let published = server
+                .runtime
+                .publish(accepted)
+                .expect("an added outbound is a hot-compatible change");
+            assert_eq!(
+                published, round,
+                "each accepted publication must advance the generation by exactly one"
+            );
+
+            let mut rejected = generated.config().clone();
+            rejected.network.dial.mode = DialMode::PreferIpv6;
+            assert!(server.runtime.publish(rejected).is_err());
+
+            seen.push(published);
+        }
+
+        let mut unique = seen.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            seen.len(),
+            "a generation number must never be reused: {seen:?}"
+        );
+        assert_eq!(seen, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn outbound_tables_are_replaced_wholesale_across_a_publication() {
+        let generated = generated_config(unused_loopback_port());
+        let server =
+            ProductionServer::from_config(generated.config()).expect("server must compile");
+        let before = only_listener(&server.runtime.load());
+        assert!(outbounds_of(&before).contains("direct"));
+        assert!(
+            !outbounds_of(&before).contains("crossed"),
+            "the first generation cannot know a tag introduced later"
+        );
+
+        server
+            .runtime
+            .publish(with_extra_outbound(generated.config(), "crossed"))
+            .expect("an added outbound is hot-compatible");
+
+        let after = only_listener(&server.runtime.load());
+        assert!(
+            outbounds_of(&after).contains("crossed"),
+            "the published generation must expose its own outbound table"
+        );
+        assert!(
+            outbounds_of(&after).contains("direct"),
+            "the published table must be complete, not a partial overlay"
+        );
+        assert!(
+            !Arc::ptr_eq(&before, &after),
+            "a publication must install a freshly compiled listener runtime"
+        );
+    }
+
+    #[test]
+    fn an_in_flight_connection_keeps_its_own_generation_outbound_table() {
+        let generated = generated_config(unused_loopback_port());
+        let server =
+            ProductionServer::from_config(generated.config()).expect("server must compile");
+
+        // A live connection holds exactly this: an Arc taken at accept time.
+        let in_flight = only_listener(&server.runtime.load());
+
+        server
+            .runtime
+            .publish(with_extra_outbound(generated.config(), "next-generation"))
+            .expect("an added outbound is hot-compatible");
+
+        assert!(
+            !outbounds_of(&in_flight).contains("next-generation"),
+            "a connection that started before the reload must never observe the new \
+             generation's outbound table"
+        );
+        assert!(
+            outbounds_of(&in_flight).contains("direct"),
+            "the retired generation must stay usable until its sessions finish"
+        );
+        assert!(
+            outbounds_of(&only_listener(&server.runtime.load())).contains("next-generation"),
+            "newly accepted connections must observe the published generation"
+        );
+    }
+
+    #[test]
+    fn retiring_a_generation_deactivates_only_its_own_pre_auth_pool() {
+        let generated = generated_config(unused_loopback_port());
+        let server =
+            ProductionServer::from_config(generated.config()).expect("server must compile");
+        let retired = server.runtime.load();
+
+        server
+            .runtime
+            .publish(with_extra_outbound(generated.config(), "pool-probe"))
+            .expect("an added outbound is hot-compatible");
+
+        let published = server.runtime.load();
+        assert!(
+            !Arc::ptr_eq(&retired, &published),
+            "the retired and published generations must be distinct objects"
+        );
+        assert!(
+            !retired.pre_auth_generation.is_active(),
+            "publish must retire the old generation's pre-auth pool"
+        );
+        assert!(
+            published.pre_auth_generation.is_active(),
+            "retiring the old generation must not deactivate the published one, or a \
+             reload would strand every subsequent pre-auth connection"
+        );
+    }
+
     #[test]
     fn rejected_hot_update_keeps_last_good_runtime() {
         let generated = generated_config(8443);
