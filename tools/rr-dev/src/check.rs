@@ -300,15 +300,6 @@ fn validator_steps(repo: &Path, scope: Scope) -> Vec<Step> {
             });
         }
     }
-    if scope == Scope::All && repo.join("scripts/test-package-release.sh").is_file() {
-        steps.push(Step::External {
-            label: "scripts/test-package-release.sh".to_owned(),
-            tool: Tool::new("bash")
-                .arg("scripts/test-package-release.sh")
-                .current_dir(repo)
-                .streaming(),
-        });
-    }
     steps
 }
 
@@ -435,7 +426,7 @@ mod tests {
         // Each policy the legacy script enforces must be covered by a gate step.
         // Two validators are now native rr-dev checks, so those legacy tokens map
         // to the gate label that replaced them; the rest still run externally.
-        let coverage: [(&str, &str); 13] = [
+        let coverage: [(&str, &str); 12] = [
             ("cargo dev docs check", "cargo dev docs check"),
             ("fuzz-targets.py", "fuzz-targets.py"),
             ("active-probe-gate.py", "active-probe manifest"),
@@ -443,7 +434,6 @@ mod tests {
             ("test-performance-gates.py", "test-performance-gates.py"),
             ("test-release-canary.py", "test-release-canary.py"),
             ("test-config-identity-fingerprint.py", "test-config-identity-fingerprint.py"),
-            ("test-package-release.sh", "test-package-release.sh"),
             ("cargo fmt --all --check", "cargo fmt --all --check"),
             ("clippy", "clippy"),
             ("deny", "deny"),

@@ -331,7 +331,7 @@ cargo install cargo-nextest --version 0.9.140 --locked
 cargo install cargo-deny --version 0.19.4 --locked
 cargo install cargo-audit --version 0.22.2 --locked
 cargo dev check --all
-./scripts/build-release.sh
+cargo dev release build linux-x86_64-generic
 ```
 
 The quality gate includes formatting, strict Clippy, dependency policy,

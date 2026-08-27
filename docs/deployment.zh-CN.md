@@ -60,7 +60,7 @@ CPU/特性、是否在本机实测，以及最低 CPU 要求。最低要求：
 
 ```shell
 cargo dev check --all
-./scripts/build-release.sh
+cargo dev release build linux-x86_64-generic
 ```
 
 ### 发布后的逐档 Xray 验收
