@@ -33,7 +33,7 @@ See `notes/v1.9.0/compiled-runtime-plan-audit.md`, `control-path-ledger.md`,
 
 ## Development control plane
 
-`cargo dev` is the emerging canonical entry point, in `dev/` as an independent
+`cargo dev` is the emerging canonical entry point, in `tools/` as an independent
 workspace excluded from the production graph:
 
 ```text
@@ -44,7 +44,7 @@ cargo dev check           fast local scope
 cargo dev check --all     the full scope CI enforces, parity-tested against check.sh
 ```
 
-`dev/inventory/scripts.json` inventories all 63 files under `scripts/` (25,824
+`tools/inventory/scripts.json` inventories all 63 files under `scripts/` (25,824
 lines); only 9 are CI-invoked and 10 are invoked by `check.sh`, so the remaining ~44
 are manual tooling whose migration is optional. Migration order and per-script
 replacement commands are recorded there.
