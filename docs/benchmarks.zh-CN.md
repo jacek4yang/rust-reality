@@ -37,7 +37,7 @@ record 序列、可确定观测的进程 write 分段、可用时的抓包、精
 机器可读的受保护 cell 契约位于 `benchmarks/contracts/protected-metrics-v1.json`。
 `benchmarks/baselines/v1.6.1-cache-foundation.json` 保存 v1.6.1 的不可变测量基础：
 干净 main 的二进制/编译器/主机身份、重要结构尺寸和已有的 record 路径零分配断言。
-`perf-stat-evidence.py` 与 `perf-c2c-evidence.py` 会验证被测二进制哈希并原子写出
+`cargo dev perf environment --tool stat`/`--tool c2c` 会验证被测二进制哈希并原子写出
 JSON；如果内核或 VPS 策略拒绝某个事件，则记录带原始诊断的 `UNAVAILABLE`，不会编造
 测量值。
 

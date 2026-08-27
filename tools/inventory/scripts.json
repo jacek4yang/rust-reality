@@ -529,8 +529,8 @@
       "invoked_by_check_sh": false,
       "calls_scripts": [],
       "disposition": "MERGE",
-      "replacement": "cargo dev perf environment",
-      "status": "not-started"
+      "replacement": "perf::environment (cargo dev perf environment --tool c2c)",
+      "status": "deleted-after-parity; identity-bound, 3-valued status, atomic JSON"
     },
     {
       "path": "scripts/perf-stat-evidence.py",
@@ -541,8 +541,8 @@
       "invoked_by_check_sh": false,
       "calls_scripts": [],
       "disposition": "MERGE",
-      "replacement": "cargo dev perf environment",
-      "status": "not-started"
+      "replacement": "perf::environment (cargo dev perf environment --tool stat)",
+      "status": "deleted-after-parity; live UNAVAILABLE classification + sha256 mismatch rejection verified"
     },
     {
       "path": "scripts/profile-built-in-benchmark.sh",

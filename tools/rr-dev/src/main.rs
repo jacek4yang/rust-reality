@@ -186,6 +186,36 @@ enum PerfCommand {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Capture identity-bound perf-stat or perf-c2c environment evidence.
+    ///
+    /// The workload command follows `--` and its argv[0] must be the identified
+    /// binary. Status is three-valued: PASS, UNAVAILABLE (perf refused for
+    /// permission/capability reasons), or FAIL.
+    Environment {
+        /// Which perf tool to run.
+        #[arg(long, value_enum)]
+        tool: EnvironmentTool,
+        /// Where to write the evidence JSON.
+        #[arg(long)]
+        output: PathBuf,
+        /// The binary the workload must execute.
+        #[arg(long)]
+        binary: PathBuf,
+        /// The expected lowercase-hex SHA-256 of that binary.
+        #[arg(long)]
+        binary_sha256: String,
+        /// The workload command; everything after `--`.
+        #[arg(last = true)]
+        command: Vec<String>,
+    },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum EnvironmentTool {
+    /// `perf stat`.
+    Stat,
+    /// `perf c2c`.
+    C2c,
 }
 
 #[derive(Subcommand)]
@@ -200,22 +230,7 @@ fn main() -> ExitCode {
 
     match cli.command {
         Command::Doctor => run_doctor(),
-        Command::Perf { command } => match command {
-            PerfCommand::Evaluate { manifest, output } => {
-                match perf::report::evaluate_to_file(&manifest, &output) {
-                    Ok(verdict) => {
-                        println!("{}: {}", verdict.as_str(), output.display());
-                        ExitCode::from(verdict.exit_code())
-                    }
-                    Err(error) => {
-                        // An argument or write failure, distinct from inadmissible
-                        // evidence: no report is produced at all.
-                        eprintln!("perf evaluate: {error}");
-                        ExitCode::from(2)
-                    }
-                }
-            }
-        },
+        Command::Perf { command } => run_perf(command),
         Command::Release { command } => run_release(&repo, command),
         Command::Fuzz { command } => run_fuzz(&repo, command),
         Command::Config { command } => match command {
@@ -321,6 +336,56 @@ fn run_doctor() -> ExitCode {
     ExitCode::FAILURE
 }
 
+
+/// Dispatches a `cargo dev perf` subcommand.
+fn run_perf(command: PerfCommand) -> ExitCode {
+    match command {
+        PerfCommand::Evaluate { manifest, output } => {
+            match perf::report::evaluate_to_file(&manifest, &output) {
+                Ok(verdict) => {
+                    println!("{}: {}", verdict.as_str(), output.display());
+                    ExitCode::from(verdict.exit_code())
+                }
+                Err(error) => {
+                    // An argument or write failure, distinct from inadmissible
+                    // evidence: no report is produced at all.
+                    eprintln!("perf evaluate: {error}");
+                    ExitCode::from(2)
+                }
+            }
+        }
+        PerfCommand::Environment {
+            tool,
+            output,
+            binary,
+            binary_sha256,
+            command,
+        } => {
+            let kind = match tool {
+                EnvironmentTool::Stat => perf::environment::Kind::Stat,
+                EnvironmentTool::C2c => perf::environment::Kind::C2c,
+            };
+            match perf::environment::capture(
+                kind,
+                &perf::environment::Options {
+                    output: &output,
+                    binary: &binary,
+                    binary_sha256: &binary_sha256,
+                    command: &command,
+                },
+            ) {
+                Ok(message) => {
+                    println!("{message}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("perf environment: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+    }
+}
 
 /// Dispatches a `cargo dev release` subcommand.
 ///
