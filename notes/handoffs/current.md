@@ -5,10 +5,49 @@ Verify every mutable fact below before relying on it.
 ## Repository
 
 ```text
-main                (see origin/main)   (verify: git log --oneline -1 origin/main)
+main                f823c00   (verify: git log --oneline -1 origin/main)
 latest release      v1.8.0    (tag on 6618e9d)
 open PRs            none at time of writing
 ```
+
+Merged since v1.8.0: #111 override conflict validation, #112 v1.4.0 historical
+baseline, #113 policy-field provenance in `runtime explain`, #114 per-connection
+control-path ledger, #115 generation-isolation mutation tests, #116 copy/allocation
+ledger, #117 `rr-dev` foundation.
+
+## Closed questions — do not reopen without the recorded revisit condition
+
+```text
+CompiledRuntimePlan          no new construct required; RuntimeSnapshot::compile plus
+                             ArcSwap<RuntimeSnapshot> already provide it
+control-plane bulk cost      ~15 relaxed atomics per connection, lock-free, cannot
+                             explain a sustained bulk-throughput gap
+relay.bufferBytes            rejected on mechanism; bulk download is Direct + splice
+pipe-page exhaustion         0 of 80 concurrent streams downgraded
+framed copies/allocations    AVOIDABLE = 0; zero allocations per record, 7 CI gates
+4 * MAX_TLS_RECORD_WIRE_LEN  KEEP; it buys syscall amortisation, it is not slack
+```
+
+See `notes/v1.9.0/compiled-runtime-plan-audit.md`, `control-path-ledger.md`,
+`copy-allocation-ledger.md`, `historical-throughput-v140-baseline.md`.
+
+## Development control plane
+
+`cargo dev` is the emerging canonical entry point, in `dev/` as an independent
+workspace excluded from the production graph:
+
+```text
+cargo dev doctor          environment diagnosis; reports RESTRICTED distinctly from
+                         missing, so an installed perf with perf_event_paranoid=3 is
+                         never reported as absent
+cargo dev check           fast local scope
+cargo dev check --all     the full scope CI enforces, parity-tested against check.sh
+```
+
+`dev/inventory/scripts.json` inventories all 63 files under `scripts/` (25,824
+lines); only 9 are CI-invoked and 10 are invoked by `check.sh`, so the remaining ~44
+are manual tooling whose migration is optional. Migration order and per-script
+replacement commands are recorded there.
 
 Merged v1.8 series: #100 Session Engine extraction, #101 irreversible write
 boundary by type, #102 semantic event-sequence fuzzing, #103 Tokio adapter
