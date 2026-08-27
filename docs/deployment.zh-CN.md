@@ -59,7 +59,7 @@ CPU/特性、是否在本机实测，以及最低 CPU 要求。最低要求：
 需要自行构建时使用固定工具链和锁定依赖图：
 
 ```shell
-./scripts/check.sh
+cargo dev check --all
 ./scripts/build-release.sh
 ```
 

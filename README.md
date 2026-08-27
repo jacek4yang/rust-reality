@@ -330,7 +330,7 @@ The pinned toolchain is declared in `rust-toolchain.toml`:
 cargo install cargo-nextest --version 0.9.140 --locked
 cargo install cargo-deny --version 0.19.4 --locked
 cargo install cargo-audit --version 0.22.2 --locked
-./scripts/check.sh
+cargo dev check --all
 ./scripts/build-release.sh
 ```
 

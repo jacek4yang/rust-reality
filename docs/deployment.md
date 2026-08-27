@@ -66,7 +66,7 @@ manifest, or checksum from different releases.
 To build instead, use the pinned toolchain and locked dependency graph:
 
 ```shell
-./scripts/check.sh
+cargo dev check --all
 ./scripts/build-release.sh
 ```
 

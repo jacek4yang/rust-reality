@@ -145,7 +145,7 @@ release_matrix_cpu_tier_alias() {
 
 # Default CARGO_TARGET_DIR per tier (relative to the repository root). The
 # x86_64-generic tier keeps the plain target/ directory so it shares the
-# cache with check.sh.
+# cache with the `cargo dev check` gate.
 release_matrix_target_dir() {
     case $1 in
         linux-x86_64-generic) printf 'target\n' ;;

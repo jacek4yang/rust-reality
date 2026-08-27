@@ -18,6 +18,7 @@ use std::{path::PathBuf, process::ExitCode};
 use clap::{Parser, Subcommand};
 
 mod check;
+mod checks;
 mod docs;
 mod doctor;
 mod perf;
