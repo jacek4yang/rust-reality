@@ -46,6 +46,18 @@ impl Default for GenerationInner {
 
 impl PreAuthGeneration {
     /// Reclaims every unused socket in this immutable generation.
+    /// Reports whether this generation still admits pre-auth work.
+    ///
+    /// Reload retires a generation by clearing this flag, so a test can assert
+    /// that retiring one generation leaves a concurrently published generation
+    /// untouched. Production code never needs to ask: `deactivate` is
+    /// idempotent and the flag is consulted internally, so this exists purely
+    /// to make the generation boundary observable to the tests that guard it.
+    #[cfg(test)]
+    pub(crate) fn is_active(&self) -> bool {
+        self.inner.active.load(std::sync::atomic::Ordering::Acquire)
+    }
+
     pub(crate) fn deactivate(&self) {
         if self.inner.active.swap(false, Ordering::AcqRel) {
             self.inner.changed.notify_waiters();
