@@ -108,10 +108,17 @@ listener, runs no benchmark, and never contacts a running instance.
 
 The human output lists the machine view, the resolved profile and tuning, the
 bootstrap topology, every policy field with its effective value, source
-(`derived`, `override`, or `default`), objective multiplier and safety
+(`startup-derived`, `operator-override`, `operator-legacy-limit`, or
+`default`), objective multiplier and safety
 floor/cap, and advisory kernel-tuning suggestions (the process never writes
 sysctls). `--json` prints the same report in a stable schema
-(`schemaVersion: 1`) for automation.
+(`schemaVersion: 2`) for automation.
+
+Schema 2 split the former single `override` source into `operator-override`
+(pinned by presence in `advanced.overrides`) and `operator-legacy-limit` (pinned by
+an `advanced.limits` value differing from the built-in default), and renamed
+`derived` to `startup-derived`. Automation that matched on `override` or `derived`
+must be updated; the `schemaVersion` field makes the change detectable.
 
 | Option | Required | Meaning |
 | --- | --- | --- |
