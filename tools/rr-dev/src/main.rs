@@ -17,6 +17,7 @@ use std::{path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand};
 
+mod bench;
 mod check;
 mod checks;
 mod docs;
@@ -74,6 +75,19 @@ enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+    /// Benchmarks: the typed measurement lifecycle and suite catalogue.
+    Bench {
+        #[command(subcommand)]
+        command: BenchCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum BenchCommand {
+    /// List the benchmark suites and the legacy scripts they supersede.
+    List,
+    /// Validate the benchmark environment (tools, host lock, workspace, ports).
+    Environment,
 }
 
 #[derive(Subcommand)]
@@ -258,6 +272,7 @@ fn main() -> ExitCode {
                 }
             }
         },
+        Command::Bench { command } => run_bench(&command),
         Command::Docs { command } => match command {
             DocsCommand::Check => {
                 let report = docs::check(&repo);
@@ -392,7 +407,7 @@ fn run_perf(command: PerfCommand) -> ExitCode {
 /// Each stage prints its own success line and maps a domain error onto a single
 /// non-zero exit. Release stages are fail-closed: a stage that cannot prove its
 /// invariant returns an error rather than a partial success.
-fn run_release(repo: &PathBuf, command: ReleaseCommand) -> ExitCode {
+fn run_release(repo: &std::path::Path, command: ReleaseCommand) -> ExitCode {
     let result = match command {
         ReleaseCommand::Matrix {
             github_matrix,
@@ -528,5 +543,54 @@ fn resolve_targets(
             fuzz::targets::shard(repo, index, count).map_err(|error| error.to_string())
         }
         _ => Err("--shard-index and --shard-count must be supplied together".to_owned()),
+    }
+}
+
+
+/// Dispatches a `cargo dev bench` subcommand.
+///
+/// `list` shows the suite catalogue and the legacy scripts each supersedes.
+/// `environment` runs the typed preflight that every suite depends on: tool
+/// availability, host-exclusive lock acquire/release, an ephemeral workspace and
+/// loopback port reservation. It exits non-zero when the host cannot run a
+/// benchmark, so it doubles as a CI-safe readiness probe.
+fn run_bench(command: &BenchCommand) -> ExitCode {
+    match command {
+        BenchCommand::List => {
+            println!("{:<20} supersedes            summary", "suite");
+            println!("{}", "-".repeat(80));
+            for suite in &bench::runner::SUITES {
+                println!("{:<20} {:<20}  {}", suite.id, suite.supersedes, suite.summary);
+            }
+            ExitCode::SUCCESS
+        }
+        BenchCommand::Environment => {
+            let report = bench::runner::preflight(&bench::runner::COMMON_TOOLS);
+            println!("tools present : {}", report.present_tools.join(", "));
+            if report.missing_tools.is_empty() {
+                println!("tools missing : none");
+            } else {
+                println!("tools missing : {}", report.missing_tools.join(", "));
+            }
+            println!(
+                "host lock     : {}",
+                report
+                    .lock_identity
+                    .as_deref()
+                    .map_or_else(|| if report.lock_ok { "ok" } else { "unavailable" }.to_owned(), |identity| format!("ok (device:inode {identity})"))
+            );
+            println!(
+                "workspace     : {}",
+                if report.workspace_ok { "ok" } else { "unavailable" }
+            );
+            println!("ports reserved: {}", report.reserved_ports);
+            if report.is_ready() {
+                println!("\nthis host can run benchmarks");
+                ExitCode::SUCCESS
+            } else {
+                eprintln!("\nthe benchmark environment is not ready");
+                ExitCode::FAILURE
+            }
+        }
     }
 }
