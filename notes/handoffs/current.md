@@ -5,7 +5,7 @@ Verify every mutable fact below before relying on it.
 ## Repository
 
 ```text
-main                0829ffc   (verify: git log --oneline -1 origin/main)
+main                (see origin/main)   (verify: git log --oneline -1 origin/main)
 latest release      v1.8.0    (tag on 6618e9d)
 open PRs            none at time of writing
 ```
@@ -78,6 +78,40 @@ Use the published artifact as baseline. Do not rebuild a "similar" one.
    live node reached Vision Direct after 3942 bytes and ran **splice both
    directions**. The netem 32K/64K sweep was therefore not run for the download
    case; it remains useful only to characterise the buffered *fallback* backend.
+
+## Historical baseline corrected: v1.4.0, not v1.7.0
+
+The operator's known-good observations are approximately stock Xray ~800 Mbps,
+rust-reality v1.4.0 ~800 Mbps, current deployment observed once near ~670 Mbps. The
+question is therefore whether a regression appeared anywhere between v1.4.0 and
+current, not merely v1.7 versus v1.8.
+
+Official v1.4.0 baseline is verified and recorded: commit `ed8fea0a`, binary
+SHA-256 `38ba5cd5…`, Build ID `d1de46ed…`. It supports `benchmark` so it is
+registrable as a formal baseline. It rejects the current config schema, but
+`private/v17-90539d3/v1.4.0-config.json` validates under it and preserves identity
+exactly (privateKey, target, serverNames, UUIDs, port all hash-identical).
+
+Harness gap: `benchmark-matrix.sh` generates one config shape for all rust
+implementations, so it cannot drive a v1.4.0 baseline until per-version config
+generation exists.
+
+Two mechanisms proposed and both **rejected on measurement**; see
+`notes/v1.9.0/historical-throughput-v140-baseline.md`:
+
+1. `relay.bufferBytes` — rejected on mechanism, bulk path is splice.
+2. splice pipe-page exhaustion — `SPLICE_PIPE_CAPACITY` doubled 256 KiB to 512 KiB
+   after v1.4.0, halving concurrent splice headroom from ~128 to ~64 relays against
+   the node's 16384-page soft budget. Prediction tested with 80 concurrent streams:
+   **0 of 80 sessions showed `pipe_capacity_downgraded`**, 80/80 reached Direct,
+   79/79 bulk sessions on splice. Not active at this concurrency. Revisit only if a
+   workload holds >~64 simultaneous splice relays or the node's
+   `fs.pipe-user-pages-soft` is lower.
+
+Search prior for any future bisect: `src/transport/relay.rs` is **unchanged** since
+v1.4.0 and `tcp_relay.rs` moved only 47 lines, while `src/runtime` grew ~3,600
+lines (plan.rs, adaptive.rs, ceiling.rs, admission.rs). The runtime/admission layer
+is the more likely location, not the splice loop.
 
 ## Open question — no demonstrated mechanism
 
