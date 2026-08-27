@@ -1,0 +1,996 @@
+{
+  "generated_by": "hand-audited; regenerate with `cargo dev inventory` once PR B lands",
+  "total_files": 63,
+  "total_lines": 25824,
+  "by_language": {
+    "data": 1,
+    "python": 25,
+    "bash": 36,
+    "c": 1
+  },
+  "invoked_by_ci": [
+    "scripts/aggregate-release.sh",
+    "scripts/build-release.sh",
+    "scripts/check.sh",
+    "scripts/fuzz-smoke.sh",
+    "scripts/fuzz-targets.py",
+    "scripts/package-release.sh",
+    "scripts/release-matrix.sh",
+    "scripts/smoke-release-assets.sh",
+    "scripts/verify-release-tag.sh"
+  ],
+  "invoked_by_check_sh": [
+    "scripts/active-probe-gate.py",
+    "scripts/check-docs.py",
+    "scripts/check-performance-contract.py",
+    "scripts/config-identity-fingerprint.py",
+    "scripts/fuzz-targets.py",
+    "scripts/package-release.sh",
+    "scripts/test-config-identity-fingerprint.py",
+    "scripts/test-package-release.sh",
+    "scripts/test-performance-gates.py",
+    "scripts/test-release-canary.py"
+  ],
+  "data_not_program": [
+    "scripts/active-probe-cases.json"
+  ],
+  "scripts": [
+    {
+      "path": "scripts/active-probe-cases.json",
+      "language": "data",
+      "lines": 20,
+      "executable": false,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "benchmark-tls-shape.sh"
+      ],
+      "is_data_not_program": true,
+      "replacement": "dev/fixtures/active-probe-cases.json",
+      "migration_status": "relocate-fixture"
+    },
+    {
+      "path": "scripts/active-probe-gate.py",
+      "language": "python",
+      "lines": 62,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": true,
+      "referenced_by_docs": true,
+      "calls_scripts": [
+        "active-probe-cases.json"
+      ],
+      "is_data_not_program": false,
+      "replacement": "cargo dev probe active --check",
+      "migration_status": "invoked-by-rr-dev"
+    },
+    {
+      "path": "scripts/aggregate-hotspot-samples.py",
+      "language": "python",
+      "lines": 334,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/aggregate-release.sh",
+      "language": "bash",
+      "lines": 164,
+      "executable": true,
+      "invoked_by_ci": true,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "package-release.sh",
+        "release-matrix.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": "cargo dev release aggregate",
+      "migration_status": "planned-PR-F"
+    },
+    {
+      "path": "scripts/benchmark-contract.sh",
+      "language": "bash",
+      "lines": 876,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "host-exclusive-lock-keeper.py"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/benchmark-deployment.sh",
+      "language": "bash",
+      "lines": 1437,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": true,
+      "calls_scripts": [
+        "benchmark-contract.sh",
+        "benchmark-matrix.sh",
+        "deployment_driver.py",
+        "validate-deployment-netem.py"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/benchmark-dns-comparison.sh",
+      "language": "bash",
+      "lines": 465,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "benchmark-contract.sh",
+        "dns-fake-server.py"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/benchmark-fallback-ab.sh",
+      "language": "bash",
+      "lines": 515,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": true,
+      "calls_scripts": [
+        "benchmark-contract.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/benchmark-matrix.sh",
+      "language": "bash",
+      "lines": 1716,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": true,
+      "calls_scripts": [
+        "benchmark-contract.sh",
+        "benchmark-xray.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": "cargo dev bench matrix",
+      "migration_status": "planned-PR-D"
+    },
+    {
+      "path": "scripts/benchmark-real-path.sh",
+      "language": "bash",
+      "lines": 262,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": true,
+      "calls_scripts": [
+        "benchmark-contract.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/benchmark-routing-comparison.sh",
+      "language": "bash",
+      "lines": 426,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "benchmark-contract.sh",
+        "dns-fake-server.py"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/benchmark-setup-rate-xray.sh",
+      "language": "bash",
+      "lines": 427,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "benchmark-contract.sh",
+        "benchmark-setup-rate.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/benchmark-setup-rate.sh",
+      "language": "bash",
+      "lines": 801,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": true,
+      "calls_scripts": [
+        "benchmark-contract.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/benchmark-tls-shape.sh",
+      "language": "bash",
+      "lines": 1131,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "benchmark-contract.sh",
+        "record-delay-reader-test-evidence.sh",
+        "tls-record-delay-fixture.py",
+        "tls-shape-helper.py",
+        "tls-shape-reference.c"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/benchmark-vision-direct.sh",
+      "language": "bash",
+      "lines": 465,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": true,
+      "calls_scripts": [
+        "benchmark-contract.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/benchmark-vless-encryption.sh",
+      "language": "bash",
+      "lines": 386,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": true,
+      "calls_scripts": [
+        "benchmark-contract.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/benchmark-xray.sh",
+      "language": "bash",
+      "lines": 379,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": true,
+      "calls_scripts": [
+        "benchmark-contract.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/build-release.sh",
+      "language": "bash",
+      "lines": 112,
+      "executable": true,
+      "invoked_by_ci": true,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": true,
+      "calls_scripts": [
+        "release-matrix.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": "cargo dev release build",
+      "migration_status": "planned-PR-F"
+    },
+    {
+      "path": "scripts/check-docs.py",
+      "language": "python",
+      "lines": 206,
+      "executable": false,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": true,
+      "referenced_by_docs": false,
+      "calls_scripts": [],
+      "is_data_not_program": false,
+      "replacement": "cargo dev docs check",
+      "migration_status": "invoked-by-rr-dev"
+    },
+    {
+      "path": "scripts/check-performance-contract.py",
+      "language": "python",
+      "lines": 48,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": true,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "perf-c2c-evidence.py",
+        "perf-stat-evidence.py"
+      ],
+      "is_data_not_program": false,
+      "replacement": "cargo dev perf contract",
+      "migration_status": "invoked-by-rr-dev"
+    },
+    {
+      "path": "scripts/check.sh",
+      "language": "bash",
+      "lines": 53,
+      "executable": true,
+      "invoked_by_ci": true,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": true,
+      "calls_scripts": [
+        "active-probe-gate.py",
+        "check-docs.py",
+        "check-performance-contract.py",
+        "config-identity-fingerprint.py",
+        "fuzz-targets.py",
+        "package-release.sh",
+        "test-config-identity-fingerprint.py",
+        "test-package-release.sh",
+        "test-performance-gates.py",
+        "test-release-canary.py"
+      ],
+      "is_data_not_program": false,
+      "replacement": "cargo dev check --all",
+      "migration_status": "migrated-parity-tested"
+    },
+    {
+      "path": "scripts/config-identity-fingerprint.py",
+      "language": "python",
+      "lines": 71,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": true,
+      "referenced_by_docs": false,
+      "calls_scripts": [],
+      "is_data_not_program": false,
+      "replacement": "cargo dev historical verify",
+      "migration_status": "planned-PR-E"
+    },
+    {
+      "path": "scripts/cover-flight-shape-proxy.py",
+      "language": "python",
+      "lines": 128,
+      "executable": false,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/deploy-release-vps.sh",
+      "language": "bash",
+      "lines": 369,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": true,
+      "calls_scripts": [],
+      "is_data_not_program": false,
+      "replacement": "cargo dev deploy",
+      "migration_status": "planned-PR-G"
+    },
+    {
+      "path": "scripts/deployment_driver.py",
+      "language": "python",
+      "lines": 1257,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "benchmark-deployment.sh",
+        "benchmark-setup-rate.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": "cargo dev deploy (driver)",
+      "migration_status": "planned-PR-G"
+    },
+    {
+      "path": "scripts/dns-fake-server.py",
+      "language": "python",
+      "lines": 162,
+      "executable": false,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "benchmark-dns-comparison.sh",
+        "benchmark-routing-comparison.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/evaluate-release-canary.py",
+      "language": "python",
+      "lines": 244,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": true,
+      "calls_scripts": [],
+      "is_data_not_program": false,
+      "replacement": "cargo dev deploy canary",
+      "migration_status": "planned-PR-G"
+    },
+    {
+      "path": "scripts/evaluate-release-performance.py",
+      "language": "python",
+      "lines": 938,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": true,
+      "calls_scripts": [],
+      "is_data_not_program": false,
+      "replacement": "cargo dev perf evaluate",
+      "migration_status": "planned-PR-C"
+    },
+    {
+      "path": "scripts/export-hotspot-bundle.sh",
+      "language": "bash",
+      "lines": 196,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "aggregate-hotspot-samples.py",
+        "idalib-export-address.py"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/fuzz-smoke.sh",
+      "language": "bash",
+      "lines": 104,
+      "executable": true,
+      "invoked_by_ci": true,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "fuzz-targets.py"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/fuzz-targets.py",
+      "language": "python",
+      "lines": 72,
+      "executable": false,
+      "invoked_by_ci": true,
+      "invoked_by_check_sh": true,
+      "referenced_by_docs": false,
+      "calls_scripts": [],
+      "is_data_not_program": false,
+      "replacement": "cargo dev fuzz targets",
+      "migration_status": "invoked-by-rr-dev"
+    },
+    {
+      "path": "scripts/host-exclusive-lock-keeper.py",
+      "language": "python",
+      "lines": 164,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/idalib-export-address.py",
+      "language": "python",
+      "lines": 141,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/package-release.sh",
+      "language": "bash",
+      "lines": 155,
+      "executable": true,
+      "invoked_by_ci": true,
+      "invoked_by_check_sh": true,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "release-matrix.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": "cargo dev release package",
+      "migration_status": "planned-PR-F"
+    },
+    {
+      "path": "scripts/perf-c2c-evidence.py",
+      "language": "python",
+      "lines": 98,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/perf-stat-evidence.py",
+      "language": "python",
+      "lines": 94,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/profile-built-in-benchmark.sh",
+      "language": "bash",
+      "lines": 7,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "profile-forensics.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/profile-driver.py",
+      "language": "python",
+      "lines": 439,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "benchmark-matrix.sh",
+        "benchmark-setup-rate.sh",
+        "validate-profiles.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/profile-forensics.sh",
+      "language": "bash",
+      "lines": 360,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "benchmark-contract.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/profile-report.py",
+      "language": "python",
+      "lines": 100,
+      "executable": false,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/profile-summarize.py",
+      "language": "python",
+      "lines": 627,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/record-delay-reader-test-evidence.sh",
+      "language": "bash",
+      "lines": 37,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/release-matrix.sh",
+      "language": "bash",
+      "lines": 202,
+      "executable": true,
+      "invoked_by_ci": true,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "check.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": "cargo dev release matrix",
+      "migration_status": "planned-PR-F"
+    },
+    {
+      "path": "scripts/run-dual-vps-canary.sh",
+      "language": "bash",
+      "lines": 408,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "deploy-release-vps.sh",
+        "evaluate-release-canary.py"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/run-target-host-validation.sh",
+      "language": "bash",
+      "lines": 88,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "benchmark-matrix.sh",
+        "check-docs.py",
+        "test-xray-interop.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/sampling-xray-resources.sh",
+      "language": "bash",
+      "lines": 328,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "benchmark-contract.sh",
+        "soak-test.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/smoke-release-assets.sh",
+      "language": "bash",
+      "lines": 259,
+      "executable": true,
+      "invoked_by_ci": true,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "package-release.sh",
+        "release-matrix.sh",
+        "test-package-release.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": "cargo dev release smoke",
+      "migration_status": "planned-PR-F"
+    },
+    {
+      "path": "scripts/soak-test.sh",
+      "language": "bash",
+      "lines": 1219,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": true,
+      "calls_scripts": [
+        "benchmark-contract.sh",
+        "cover-flight-shape-proxy.py",
+        "deployment_driver.py"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/test-config-identity-fingerprint.py",
+      "language": "python",
+      "lines": 42,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": true,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "config-identity-fingerprint.py"
+      ],
+      "is_data_not_program": false,
+      "replacement": "cargo dev historical verify (self-test)",
+      "migration_status": "invoked-by-rr-dev"
+    },
+    {
+      "path": "scripts/test-descriptor-pressure.sh",
+      "language": "bash",
+      "lines": 630,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": true,
+      "calls_scripts": [
+        "benchmark-contract.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/test-openssl-no-ccs-interop.sh",
+      "language": "bash",
+      "lines": 296,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "benchmark-contract.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/test-package-release.sh",
+      "language": "bash",
+      "lines": 499,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": true,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "aggregate-release.sh",
+        "build-release.sh",
+        "package-release.sh",
+        "release-matrix.sh",
+        "smoke-release-assets.sh",
+        "verify-release-tag.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": "cargo dev release package (self-test)",
+      "migration_status": "invoked-by-rr-dev"
+    },
+    {
+      "path": "scripts/test-performance-gates.py",
+      "language": "python",
+      "lines": 1012,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": true,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "benchmark-contract.sh",
+        "benchmark-fallback-ab.sh",
+        "benchmark-matrix.sh",
+        "benchmark-setup-rate.sh",
+        "deployment_driver.py",
+        "evaluate-release-performance.py",
+        "host-exclusive-lock-keeper.py",
+        "validate-deployment-netem.py"
+      ],
+      "is_data_not_program": false,
+      "replacement": "cargo dev perf evaluate (self-test)",
+      "migration_status": "invoked-by-rr-dev"
+    },
+    {
+      "path": "scripts/test-profile-cgroup-evidence.py",
+      "language": "python",
+      "lines": 248,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "profile-summarize.py"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/test-release-canary.py",
+      "language": "python",
+      "lines": 79,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": true,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "evaluate-release-canary.py"
+      ],
+      "is_data_not_program": false,
+      "replacement": "cargo dev deploy canary (self-test)",
+      "migration_status": "invoked-by-rr-dev"
+    },
+    {
+      "path": "scripts/test-xray-interop.sh",
+      "language": "bash",
+      "lines": 210,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": true,
+      "calls_scripts": [
+        "benchmark-contract.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/tls-record-delay-fixture.py",
+      "language": "python",
+      "lines": 542,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/tls-shape-helper.py",
+      "language": "python",
+      "lines": 929,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/tls-shape-reference.c",
+      "language": "c",
+      "lines": 280,
+      "executable": false,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [
+        "benchmark-tls-shape.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": "benchmarks/fixtures/tls-shape-reference.c",
+      "migration_status": "relocate-fixture"
+    },
+    {
+      "path": "scripts/validate-deployment-netem.py",
+      "language": "python",
+      "lines": 498,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/validate-ipv6-e2e.sh",
+      "language": "bash",
+      "lines": 953,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": true,
+      "calls_scripts": [
+        "test-openssl-no-ccs-interop.sh"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/validate-profiles.sh",
+      "language": "bash",
+      "lines": 984,
+      "executable": true,
+      "invoked_by_ci": false,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": true,
+      "calls_scripts": [
+        "benchmark-contract.sh",
+        "build-release.sh",
+        "profile-driver.py",
+        "profile-summarize.py"
+      ],
+      "is_data_not_program": false,
+      "replacement": null,
+      "migration_status": "pending"
+    },
+    {
+      "path": "scripts/verify-release-tag.sh",
+      "language": "bash",
+      "lines": 70,
+      "executable": true,
+      "invoked_by_ci": true,
+      "invoked_by_check_sh": false,
+      "referenced_by_docs": false,
+      "calls_scripts": [],
+      "is_data_not_program": false,
+      "replacement": "cargo dev release verify-tag",
+      "migration_status": "planned-PR-F"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+# `cargo dev ...` is the canonical developer and CI entry point for repository
+# policy. The alias means nobody needs to know that the tool lives in a separate
+# workspace under dev/.
+[alias]
+dev = "run --quiet --manifest-path dev/Cargo.toml --package rr-dev --"
