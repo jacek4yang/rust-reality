@@ -23,6 +23,7 @@ mod docs;
 mod doctor;
 mod perf;
 mod process;
+mod release;
 
 /// Development control plane for the rust-reality repository.
 #[derive(Parser)]
@@ -55,6 +56,69 @@ enum Command {
     Perf {
         #[command(subcommand)]
         command: PerfCommand,
+    },
+    /// Release engineering: tier matrix, build, package, smoke, aggregate.
+    Release {
+        #[command(subcommand)]
+        command: ReleaseCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ReleaseCommand {
+    /// Print the release tier matrix.
+    Matrix {
+        /// Emit the GitHub Actions matrix JSON line for `$GITHUB_OUTPUT`.
+        #[arg(long)]
+        github_matrix: bool,
+        /// List tier ids, space-separated.
+        #[arg(long)]
+        tiers: bool,
+    },
+    /// Verify a release tag's `SemVer`, version, annotation and commit identity.
+    VerifyTag {
+        /// The release tag, e.g. v1.8.0.
+        tag: String,
+        /// The mainline ref the tag commit must be reachable from.
+        #[arg(default_value = "origin/main")]
+        main_ref: String,
+    },
+    /// Build (and, unless --build-only, test) a tier.
+    Build {
+        /// The tier id.
+        tier: String,
+        /// Build without running the workspace test suite (required for
+        /// non-runnable cross tiers).
+        #[arg(long)]
+        build_only: bool,
+    },
+    /// Package a built tier into a deterministic tarball and tier fragment.
+    Package {
+        /// The release tag.
+        tag: String,
+        /// The tier id.
+        tier: String,
+        /// Output directory.
+        #[arg(default_value = "dist")]
+        output: PathBuf,
+    },
+    /// Smoke-test a packaged tier by running its binary against a cover.
+    Smoke {
+        /// The release tag.
+        tag: String,
+        /// The tier id.
+        tier: String,
+        /// Directory containing the packaged assets.
+        #[arg(default_value = "dist")]
+        assets: PathBuf,
+    },
+    /// Aggregate the complete tier matrix into a manifest and SHA256SUMS.
+    Aggregate {
+        /// The release tag.
+        tag: String,
+        /// The dist directory containing every tier's tarball and fragment.
+        #[arg(default_value = "dist")]
+        dist: PathBuf,
     },
 }
 
@@ -104,6 +168,7 @@ fn main() -> ExitCode {
                 }
             }
         },
+        Command::Release { command } => run_release(&repo, command),
         Command::Docs { command } => match command {
             DocsCommand::Check => {
                 let report = docs::check(&repo);
@@ -180,4 +245,77 @@ fn run_doctor() -> ExitCode {
     }
     eprintln!("\nmissing requirements: {}", blocking.join(", "));
     ExitCode::FAILURE
+}
+
+
+/// Dispatches a `cargo dev release` subcommand.
+///
+/// Each stage prints its own success line and maps a domain error onto a single
+/// non-zero exit. Release stages are fail-closed: a stage that cannot prove its
+/// invariant returns an error rather than a partial success.
+fn run_release(repo: &PathBuf, command: ReleaseCommand) -> ExitCode {
+    let result = match command {
+        ReleaseCommand::Matrix {
+            github_matrix,
+            tiers,
+        } => {
+            if github_matrix {
+                println!("{}", release::matrix::github_matrix());
+            } else if tiers {
+                println!("{}", release::matrix::Tier::ids().join(" "));
+            } else {
+                for tier in &release::matrix::TIERS {
+                    println!(
+                        "{}\t{}\t{}\t{}",
+                        tier.id, tier.target, tier.target_cpu, tier.runs_on
+                    );
+                }
+            }
+            Ok(String::new())
+        }
+        ReleaseCommand::VerifyTag { tag, main_ref } => {
+            release::verify_tag::verify(repo, &tag, &main_ref)
+        }
+        ReleaseCommand::Build { tier, build_only } => {
+            release::build::build(repo, &tier, build_only)
+        }
+        ReleaseCommand::Package { tag, tier, output } => release::package::package(
+            &release::package::Options {
+                repo,
+                tag: &tag,
+                tier: &tier,
+                output: &output,
+                binary_override: std::env::var_os("RUST_REALITY_RELEASE_BIN").map(Into::into),
+                cargo_features: std::env::var("RUST_REALITY_CARGO_FEATURES").ok(),
+                measured_natively: std::env::var("RUST_REALITY_MEASURED_NATIVELY")
+                    .ok()
+                    .map(|value| value == "true"),
+            },
+        )
+        .map(|packaged| {
+            format!(
+                "packaged {tier} -> {} (sha256 {}, fragment {})",
+                packaged.archive.display(),
+                packaged.sha256,
+                packaged.fragment.display()
+            )
+        }),
+        ReleaseCommand::Smoke { tag, tier, assets } => {
+            release::smoke::smoke(repo, &tag, &tier, &assets)
+        }
+        ReleaseCommand::Aggregate { tag, dist } => release::aggregate::aggregate(&dist, &tag),
+    };
+
+    match result {
+        Ok(message) => {
+            if !message.is_empty() {
+                println!("{message}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
 }

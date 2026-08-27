@@ -71,14 +71,14 @@ jobs:
           # local refs/tags entry may point at the commit object; fetch the
           # real tag object before checking that the tag is annotated.
           git fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
-          ./scripts/verify-release-tag.sh "$RELEASE_TAG"
+          cargo dev release verify-tag "$RELEASE_TAG"
 
       - name: Run repository quality gates
         run: cargo dev check --all
 
       - name: Export release matrix
         id: release-matrix
-        run: ./scripts/release-matrix.sh --github-matrix >> "$GITHUB_OUTPUT"
+        run: cargo dev release matrix --github-matrix >> "$GITHUB_OUTPUT"
 
   build:
     name: Build, package, and smoke ${{ matrix.tier }}
@@ -126,7 +126,7 @@ jobs:
           test "${{ matrix.measured-natively }}" = true
 
       - name: Build tier release
-        run: ./scripts/build-release.sh "${{ matrix.tier }}"
+        run: cargo dev release build "${{ matrix.tier }}"
 
       - name: Verify musl binary is fully static
         if: matrix.target == 'x86_64-unknown-linux-musl'
@@ -145,10 +145,10 @@ jobs:
           "$binary" --version | grep -Fx "rust-reality ${RELEASE_TAG#v}"
 
       - name: Package tier asset
-        run: ./scripts/package-release.sh "$RELEASE_TAG" "${{ matrix.tier }}" dist
+        run: cargo dev release package "$RELEASE_TAG" "${{ matrix.tier }}" dist
 
       - name: Smoke-test packaged tier asset
-        run: ./scripts/smoke-release-assets.sh "$RELEASE_TAG" "${{ matrix.tier }}" dist
+        run: cargo dev release smoke "$RELEASE_TAG" "${{ matrix.tier }}" dist
 
       - name: Preserve verified tier asset
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -183,10 +183,10 @@ jobs:
           merge-multiple: true
 
       - name: Build combined manifest and checksums
-        # Requires every tier of scripts/release-matrix.sh; a failed or
-        # missing required tier fails the release here, so partial
-        # publishes are impossible.
-        run: ./scripts/aggregate-release.sh "$RELEASE_TAG" dist
+        # Requires every tier of the release matrix; a failed or missing
+        # required tier fails the release here, so partial publishes are
+        # impossible.
+        run: cargo dev release aggregate "$RELEASE_TAG" dist
 
       - name: Preserve aggregated release assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

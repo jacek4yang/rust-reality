@@ -116,7 +116,7 @@
       ],
       "disposition": "MIGRATE",
       "replacement": "cargo dev release aggregate",
-      "status": "not-started"
+      "status": "deleted-after-parity; fail-closed complete-matrix, missing/unlisted rejected by tests"
     },
     {
       "path": "scripts/benchmark-contract.sh",
@@ -323,7 +323,7 @@
       ],
       "disposition": "MIGRATE",
       "replacement": "cargo dev release build",
-      "status": "not-started"
+      "status": "deleted-after-parity; musl cross + target-cpu preserved"
     },
     {
       "path": "scripts/check-performance-contract.py",
@@ -518,7 +518,7 @@
       ],
       "disposition": "MIGRATE",
       "replacement": "cargo dev release package",
-      "status": "not-started"
+      "status": "deleted-after-parity; deterministic tar + schemaV3 fragment, verified reproducible"
     },
     {
       "path": "scripts/perf-c2c-evidence.py",
@@ -636,7 +636,7 @@
       ],
       "disposition": "MIGRATE",
       "replacement": "cargo dev release matrix",
-      "status": "not-started"
+      "status": "deleted-after-parity; --github-matrix output byte-identical"
     },
     {
       "path": "scripts/run-dual-vps-canary.sh",
@@ -697,7 +697,7 @@
       ],
       "disposition": "MIGRATE",
       "replacement": "cargo dev release smoke",
-      "status": "not-started"
+      "status": "deleted-after-parity; loopback TLS1.3 cover via openssl s_server"
     },
     {
       "path": "scripts/soak-test.sh",
@@ -773,8 +773,8 @@
         "verify-release-tag.sh"
       ],
       "disposition": "MERGE",
-      "replacement": "rr-dev release module tests",
-      "status": "not-started"
+      "replacement": "rr-dev release::harness tests",
+      "status": "deleted-after-parity; determinism + fail-closed invariants ported as native tests"
     },
     {
       "path": "scripts/test-performance-gates.py",
@@ -916,7 +916,7 @@
       "calls_scripts": [],
       "disposition": "MIGRATE",
       "replacement": "cargo dev release verify-tag",
-      "status": "not-started"
+      "status": "deleted-after-parity; SemVer+tag/commit identity gate"
     }
   ],
   "findings": [

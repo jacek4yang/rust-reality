@@ -67,7 +67,7 @@ To build instead, use the pinned toolchain and locked dependency graph:
 
 ```shell
 cargo dev check --all
-./scripts/build-release.sh
+cargo dev release build linux-x86_64-generic
 ```
 
 ### Post-publication per-tier Xray acceptance

@@ -76,7 +76,7 @@ jobs:
           rustup target add x86_64-unknown-linux-musl
 
       - name: Test and build musl release tier
-        run: ./scripts/build-release.sh linux-x86_64-musl
+        run: cargo dev release build linux-x86_64-musl
 
       - name: Verify fully static executable
         run: |
