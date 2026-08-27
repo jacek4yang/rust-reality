@@ -662,6 +662,29 @@ connectTimeoutMs` 并留有余量：首个密封记录只有在转移被读取�
 
 `runtime explain` 会打印每个字段的来源，因此未生效的钉死无需阅读源码即可发现。
 
+#### 每个字段只能声明一次
+
+同一字段可以通过旧的 `advanced.limits` 通道声明，也可以通过 `advanced.overrides`
+声明，但不能同时使用两者。当两者针对同一生效字段时，验证会**失败关闭**，并同时
+给出 override 路径与冲突的旧路径：
+
+```text
+error: this field is also set through the legacy
+       `advanced.limits.relay.bufferBytes`; specify it in exactly one place.
+       Remove the legacy value to keep the override, or remove the override to
+       keep the legacy value
+    = configuration path: advanced.overrides.relay.bufferBytes
+```
+
+这里刻意不引入需要记忆的优先级规则。即使两个取值相同也会被拒绝，因为“只声明一次”
+无需推理哪一处声明会胜出。
+
+以下两种形态**不是**冲突：
+
+- 旧通道中取值等于内置默认值的字段在旧规则下不表达任何意图，因此 override 可以
+  干净生效。这使得已经写入完整默认值块的部署无需先改写配置即可开始使用 override；
+- 旧通道与 override 指向互不相交的字段，语义明确，受支持。
+
 注意：`runtime.tuning.mode: adaptive` 在进程运行期间调整准入与直连软上限，并不会
 重新调整 `relay.bufferBytes`——后者在启动时推导。因此钉死 relay 字段等于在整个
 进程生命周期内钉死它。

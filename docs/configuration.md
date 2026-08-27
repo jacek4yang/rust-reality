@@ -727,6 +727,34 @@ Per field the effective value is chosen in this order:
 `runtime explain` prints the resolved source for every field, so a pin that is not
 taking effect is visible without reading source.
 
+#### Specifying a field in exactly one place
+
+A field may be expressed through the legacy `advanced.limits` channel or through
+`advanced.overrides`, but not both. When both speak about the same effective field,
+validation **fails closed** and names the override path together with the
+conflicting legacy path:
+
+```text
+error: this field is also set through the legacy
+       `advanced.limits.relay.bufferBytes`; specify it in exactly one place.
+       Remove the legacy value to keep the override, or remove the override to
+       keep the legacy value
+    = configuration path: advanced.overrides.relay.bufferBytes
+```
+
+There is deliberately no precedence rule to memorise. Duplication is rejected even
+when the two values agree, because "specify it once" needs no reasoning about which
+declaration would have won.
+
+Two shapes are **not** conflicts:
+
+- a legacy field whose value equals the built-in default expresses no intent under
+  the legacy rule, so an override applies cleanly. This is what lets a deployment
+  that wrote a full default-valued block adopt overrides without first rewriting its
+  configuration;
+- legacy and override addressing disjoint fields, which is unambiguous and
+  supported.
+
 Note that `runtime.tuning.mode: adaptive` adjusts soft admission and direct-dial
 ceilings while the process runs. It does not retune `relay.bufferBytes`, which is
 startup-derived. Pinning a relay field therefore pins it for the process lifetime.

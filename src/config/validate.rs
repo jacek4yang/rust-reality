@@ -11,7 +11,7 @@ use zeroize::Zeroizing;
 
 use super::{
     Config, GlobalRule, HandoffInboundConfig, InboundConfig, LogOutput, Network, NxrInboundConfig,
-    OutboundConfig, PortMatcher, RelayPolicy, SecretString, VlessInboundConfig,
+    OutboundConfig, PolicyConfig, PortMatcher, RelayPolicy, SecretString, VlessInboundConfig,
 };
 use crate::{network::ConnectionPlanner, server_name::is_server_name_pattern};
 
@@ -1052,7 +1052,218 @@ fn validate_port_matcher(path: &str, matcher: &PortMatcher) -> Result<(), Config
     }
 }
 
+/// Rejects a field expressed through both the legacy and the override channel.
+///
+/// `advanced.limits` expresses operator intent by differing from the built-in
+/// default; `advanced.overrides` expresses it by being present. When both speak
+/// about the same effective field there are two operator-authored sources for one
+/// value, and any precedence rule would be an invisible convention the operator
+/// has to memorise. This fails closed instead, naming both JSON paths.
+///
+/// Two shapes are deliberately *not* conflicts:
+///
+/// * a legacy block whose value equals the built-in default expresses no intent
+///   under the legacy rule, so an override applies cleanly. This is what lets an
+///   existing deployment that wrote a full default-valued block start using
+///   overrides without first rewriting its configuration;
+/// * legacy and override touching disjoint fields, which is unambiguous.
+fn validate_policy_override_conflicts(config: &Config) -> Result<(), ConfigError> {
+    let limits = &config.advanced.limits;
+    let overrides = &config.advanced.overrides;
+    let defaults = PolicyConfig::default();
+
+    macro_rules! reject_conflict {
+        ($section:ident, $field:ident, $legacy:literal, $override_path:literal) => {
+            if overrides.$section.$field.is_some()
+                && limits.$section.$field != defaults.$section.$field
+            {
+                return Err(ConfigError::new(
+                    $override_path,
+                    concat!(
+                        "this field is also set through the legacy `",
+                        $legacy,
+                        "`; specify it in exactly one place. \
+                         Remove the legacy value to keep the override, or remove the \
+                         override to keep the legacy value"
+                    ),
+                ));
+            }
+        };
+    }
+
+    reject_conflict!(
+        resource_governor,
+        max_connections,
+        "advanced.limits.resourceGovernor.maxConnections",
+        "advanced.overrides.resourceGovernor.maxConnections"
+    );
+    reject_conflict!(
+        resource_governor,
+        max_handshakes,
+        "advanced.limits.resourceGovernor.maxHandshakes",
+        "advanced.overrides.resourceGovernor.maxHandshakes"
+    );
+    reject_conflict!(
+        resource_governor,
+        max_pre_auth_idle_connections,
+        "advanced.limits.resourceGovernor.maxPreAuthIdleConnections",
+        "advanced.overrides.resourceGovernor.maxPreAuthIdleConnections"
+    );
+    reject_conflict!(
+        resource_governor,
+        max_fallbacks,
+        "advanced.limits.resourceGovernor.maxFallbacks",
+        "advanced.overrides.resourceGovernor.maxFallbacks"
+    );
+    reject_conflict!(
+        resource_governor,
+        max_crypto_operations,
+        "advanced.limits.resourceGovernor.maxCryptoOperations",
+        "advanced.overrides.resourceGovernor.maxCryptoOperations"
+    );
+    reject_conflict!(
+        resource_governor,
+        max_replay_entries,
+        "advanced.limits.resourceGovernor.maxReplayEntries",
+        "advanced.overrides.resourceGovernor.maxReplayEntries"
+    );
+    reject_conflict!(
+        resource_governor,
+        max_dns_lookups,
+        "advanced.limits.resourceGovernor.maxDnsLookups",
+        "advanced.overrides.resourceGovernor.maxDnsLookups"
+    );
+    reject_conflict!(
+        resource_governor,
+        replay_retention_ms,
+        "advanced.limits.resourceGovernor.replayRetentionMs",
+        "advanced.overrides.resourceGovernor.replayRetentionMs"
+    );
+    reject_conflict!(
+        resource_governor,
+        client_hello_timeout_ms,
+        "advanced.limits.resourceGovernor.clientHelloTimeoutMs",
+        "advanced.overrides.resourceGovernor.clientHelloTimeoutMs"
+    );
+    reject_conflict!(
+        resource_governor,
+        handshake_timeout_ms,
+        "advanced.limits.resourceGovernor.handshakeTimeoutMs",
+        "advanced.overrides.resourceGovernor.handshakeTimeoutMs"
+    );
+    reject_conflict!(
+        resource_governor,
+        connect_timeout_ms,
+        "advanced.limits.resourceGovernor.connectTimeoutMs",
+        "advanced.overrides.resourceGovernor.connectTimeoutMs"
+    );
+    reject_conflict!(
+        resource_governor,
+        fallback_timeout_ms,
+        "advanced.limits.resourceGovernor.fallbackTimeoutMs",
+        "advanced.overrides.resourceGovernor.fallbackTimeoutMs"
+    );
+    reject_conflict!(
+        direct_barrier,
+        max_concurrent,
+        "advanced.limits.directBarrier.maxConcurrent",
+        "advanced.overrides.directBarrier.maxConcurrent"
+    );
+    reject_conflict!(
+        direct_barrier,
+        max_per_second,
+        "advanced.limits.directBarrier.maxPerSecond",
+        "advanced.overrides.directBarrier.maxPerSecond"
+    );
+    reject_conflict!(
+        relay,
+        buffer_bytes,
+        "advanced.limits.relay.bufferBytes",
+        "advanced.overrides.relay.bufferBytes"
+    );
+    reject_conflict!(
+        relay,
+        max_pooled_buffers,
+        "advanced.limits.relay.maxPooledBuffers",
+        "advanced.overrides.relay.maxPooledBuffers"
+    );
+    reject_conflict!(
+        relay,
+        max_splice_relays,
+        "advanced.limits.relay.maxSpliceRelays",
+        "advanced.overrides.relay.maxSpliceRelays"
+    );
+    reject_conflict!(
+        relay,
+        max_relay_memory_bytes,
+        "advanced.limits.relay.maxRelayMemoryBytes",
+        "advanced.overrides.relay.maxRelayMemoryBytes"
+    );
+    reject_conflict!(
+        relay,
+        splice,
+        "advanced.limits.relay.splice",
+        "advanced.overrides.relay.splice"
+    );
+    reject_conflict!(
+        relay,
+        pipe_pool,
+        "advanced.limits.relay.pipePool",
+        "advanced.overrides.relay.pipePool"
+    );
+    reject_conflict!(
+        relay,
+        max_pooled_pipes,
+        "advanced.limits.relay.maxPooledPipes",
+        "advanced.overrides.relay.maxPooledPipes"
+    );
+    reject_conflict!(
+        warm_connections,
+        min_ready,
+        "advanced.limits.warmConnections.minReady",
+        "advanced.overrides.warmConnections.minReady"
+    );
+    reject_conflict!(
+        warm_connections,
+        max_ready,
+        "advanced.limits.warmConnections.maxReady",
+        "advanced.overrides.warmConnections.maxReady"
+    );
+    reject_conflict!(
+        warm_connections,
+        max_connecting,
+        "advanced.limits.warmConnections.maxConnecting",
+        "advanced.overrides.warmConnections.maxConnecting"
+    );
+    reject_conflict!(
+        warm_connections,
+        refill_batch,
+        "advanced.limits.warmConnections.refillBatch",
+        "advanced.overrides.warmConnections.refillBatch"
+    );
+    reject_conflict!(
+        warm_connections,
+        idle_timeout_ms,
+        "advanced.limits.warmConnections.idleTimeoutMs",
+        "advanced.overrides.warmConnections.idleTimeoutMs"
+    );
+    reject_conflict!(
+        warm_connections,
+        max_lifetime_ms,
+        "advanced.limits.warmConnections.maxLifetimeMs",
+        "advanced.overrides.warmConnections.maxLifetimeMs"
+    );
+    reject_conflict!(
+        warm_connections,
+        shrink_delay_ms,
+        "advanced.limits.warmConnections.shrinkDelayMs",
+        "advanced.overrides.warmConnections.shrinkDelayMs"
+    );
+    Ok(())
+}
+
 fn validate_policy(config: &Config) -> Result<(), ConfigError> {
+    validate_policy_override_conflicts(config)?;
     let governor = &config.advanced.limits.resource_governor;
     for (path, value) in [
         (
@@ -2830,5 +3041,124 @@ mod tests {
             validate_config(&config)
                 .unwrap_or_else(|error| panic!("a declared profile must validate: {error}"));
         }
+    }
+
+    /// A field expressed through both channels must fail closed, naming the
+    /// override path so the operator sees exactly which declaration to remove.
+    #[test]
+    fn rejects_a_field_set_through_both_the_legacy_and_the_override_channel() {
+        let mut config = valid_config();
+        config.advanced.limits.relay.buffer_bytes = 49_152;
+        config.advanced.overrides.relay.buffer_bytes = Some(65_536);
+
+        let error = validate_config(&config)
+            .expect_err("one effective field must not have two operator-authored sources");
+        assert_eq!(error.path(), "advanced.overrides.relay.bufferBytes");
+        assert!(
+            error
+                .message()
+                .contains("advanced.limits.relay.bufferBytes"),
+            "the error must name the conflicting legacy path, got: {}",
+            error.message()
+        );
+    }
+
+    /// Equal values are still rejected. The rule is "specify it in one place",
+    /// which needs no reasoning about which value would have won.
+    #[test]
+    fn rejects_a_duplicated_field_even_when_both_values_agree() {
+        let mut config = valid_config();
+        config.advanced.limits.relay.buffer_bytes = 49_152;
+        config.advanced.overrides.relay.buffer_bytes = Some(49_152);
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("duplication is rejected regardless of agreement")
+                .path(),
+            "advanced.overrides.relay.bufferBytes"
+        );
+    }
+
+    /// Compatibility case that matters most: a deployment that wrote a full
+    /// default-valued legacy block must be able to adopt an override without
+    /// first rewriting its configuration. A legacy value equal to the built-in
+    /// default expresses no intent under the legacy rule, so it is not a conflict.
+    #[test]
+    fn accepts_an_override_beside_a_legacy_block_that_only_holds_defaults() {
+        let mut config = valid_config();
+        let defaults = crate::config::PolicyConfig::default();
+        config.advanced.limits.relay = defaults.relay.clone();
+        config.advanced.overrides.relay.buffer_bytes = Some(65_536);
+
+        validate_config(&config)
+            .expect("a default-valued legacy field must not conflict with an override");
+    }
+
+    /// Legacy and override touching different fields is unambiguous and allowed.
+    #[test]
+    fn accepts_legacy_and_override_addressing_disjoint_fields() {
+        let mut config = valid_config();
+        config.advanced.limits.relay.buffer_bytes = 49_152;
+        config.advanced.overrides.relay.max_pooled_pipes = Some(512);
+
+        validate_config(&config).expect("disjoint declarations are unambiguous");
+    }
+
+    /// The rule applies across every section, not only relay.
+    #[test]
+    fn rejects_conflicts_in_every_policy_section() {
+        type Mutate = fn(&mut Config);
+        let cases: [(&str, Mutate); 4] = [
+            ("advanced.overrides.resourceGovernor.maxConnections", |c| {
+                c.advanced.limits.resource_governor.max_connections = 100_000;
+                c.advanced.overrides.resource_governor.max_connections = Some(90_000);
+            }),
+            ("advanced.overrides.directBarrier.maxConcurrent", |c| {
+                c.advanced.limits.direct_barrier.max_concurrent = 4_096;
+                c.advanced.overrides.direct_barrier.max_concurrent = Some(2_048);
+            }),
+            ("advanced.overrides.warmConnections.maxReady", |c| {
+                c.advanced.limits.warm_connections.max_ready = 512;
+                c.advanced.overrides.warm_connections.max_ready = Some(256);
+            }),
+            ("advanced.overrides.relay.maxSpliceRelays", |c| {
+                c.advanced.limits.relay.max_splice_relays = 512;
+                c.advanced.overrides.relay.max_splice_relays = Some(1_024);
+            }),
+        ];
+        for (expected_path, mutate) in cases {
+            let mut config = valid_config();
+            mutate(&mut config);
+            assert_eq!(
+                validate_config(&config)
+                    .expect_err("each section must reject a duplicated field")
+                    .path(),
+                expected_path
+            );
+        }
+    }
+
+    /// A carried timeout field the derivation never produces is also covered.
+    #[test]
+    fn rejects_a_conflicting_carried_timeout_field() {
+        let mut config = valid_config();
+        let defaults = crate::config::PolicyConfig::default();
+        config
+            .advanced
+            .limits
+            .resource_governor
+            .handshake_timeout_ms = defaults.resource_governor.handshake_timeout_ms + 1_000;
+        config
+            .advanced
+            .overrides
+            .resource_governor
+            .handshake_timeout_ms = Some(5_000);
+
+        assert_eq!(
+            validate_config(&config)
+                .expect_err("carried fields are covered too")
+                .path(),
+            "advanced.overrides.resourceGovernor.handshakeTimeoutMs"
+        );
     }
 }
