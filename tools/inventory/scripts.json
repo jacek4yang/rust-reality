@@ -929,5 +929,28 @@
       "replacement": "cargo dev release verify-tag",
       "status": "not-started"
     }
-  ]
+  ],
+  "findings": [
+    {
+      "finding": "recorded benchmark evidence embeds an absolute path and SHA-256 of scripts/benchmark-contract.sh in its host-exclusive-lock identity, and verify_contract_identity re-verifies it against the live filesystem",
+      "consequence": "replaying pre-migration evidence requires that file to remain present and unchanged; the recorded path points into an ephemeral worktree, so replay is already fragile independently of the scripts/ removal target",
+      "affects": [
+        "scripts/benchmark-contract.sh"
+      ],
+      "status": "open policy question, no decision taken",
+      "evidence": "notes/v1.9.0/evaluator-parity-baseline.md"
+    }
+  ],
+  "parity_baseline": {
+    "manifest": "artifacts/v180-release-gate/gates/evaluator-manifest-r01.json",
+    "replay_result": "exit 0, status COMPLETE, verdict PASS, 32 protected metrics",
+    "differences_vs_archive": [
+      "evaluator.path"
+    ],
+    "allowed_difference_fields": [
+      "evaluator.path",
+      "evaluator.sha256"
+    ],
+    "note": "evaluator.path already differs between two Python runs from different checkouts, so it is not a Rust-specific exception"
+  }
 }
