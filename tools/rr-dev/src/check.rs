@@ -25,10 +25,68 @@ pub enum Scope {
     All,
 }
 
-/// One gate step: a label and the invocation that implements it.
-struct Step {
-    label: String,
-    tool: Tool,
+/// One gate step.
+///
+/// A step is either an external tool or a check rr-dev implements itself. Native
+/// checks run in process rather than re-invoking `rr-dev` as a subprocess: that
+/// keeps one implementation, avoids a second process per check, and means a
+/// failure surfaces as a typed value instead of a parsed exit code.
+enum Step {
+    /// Delegate to an external program.
+    External {
+        /// What to print before running.
+        label: String,
+        /// The invocation.
+        tool: Tool,
+    },
+    /// Run a check implemented inside rr-dev.
+    Native {
+        /// What to print before running.
+        label: String,
+        /// The check, returning a rendered failure report.
+        run: fn(&Path) -> Result<(), String>,
+    },
+}
+
+impl Step {
+    /// The label printed before this step runs.
+    fn label(&self) -> &str {
+        match self {
+            Self::External { label, .. } | Self::Native { label, .. } => label,
+        }
+    }
+
+    /// Runs the step, mapping a native failure onto the shared error type.
+    fn execute(&self, repo: &Path) -> Result<std::time::Duration, ToolError> {
+        match self {
+            Self::External { tool, .. } => tool.run().map(|outcome| outcome.elapsed),
+            Self::Native { label, run } => {
+                let started = std::time::Instant::now();
+                run(repo).map_err(|report| ToolError::Failed {
+                    command: label.clone(),
+                    code: Some(1),
+                    stderr: report,
+                })?;
+                Ok(started.elapsed())
+            }
+        }
+    }
+}
+
+/// The documentation policy, as a gate step.
+fn docs_step() -> Step {
+    Step::Native {
+        label: "cargo dev docs check".to_owned(),
+        run: |repo| {
+            let report = crate::docs::check(repo);
+            if report.is_clean() {
+                println!("{}", report.render());
+                Ok(())
+            } else {
+                Err(report.render())
+            }
+        },
+    }
 }
 
 impl Scope {
@@ -40,6 +98,7 @@ impl Scope {
     fn steps(self, repo: &Path) -> Vec<Step> {
         let mut steps = Vec::new();
         steps.extend(shell_syntax_steps(repo));
+        steps.push(docs_step());
         steps.extend(validator_steps(repo, self));
         steps.extend(self.cargo_steps(repo));
         steps
@@ -80,7 +139,7 @@ impl Scope {
                     "sources",
                 ],
             ));
-            steps.push(Step {
+            steps.push(Step::External {
                 label: "cargo doc --all-features --locked --no-deps".to_owned(),
                 tool: Tool::new("cargo")
                     .args(["doc", "--all-features", "--locked", "--no-deps"])
@@ -90,7 +149,7 @@ impl Scope {
             });
         }
 
-        steps.push(Step {
+        steps.push(Step::External {
             label: "cargo nextest run --all-features --locked".to_owned(),
             tool: Tool::new("cargo")
                 .args([
@@ -141,7 +200,7 @@ impl Scope {
 fn shell_syntax_steps(repo: &Path) -> Vec<Step> {
     shell_scripts(repo)
         .into_iter()
-        .map(|script| Step {
+        .map(|script| Step::External {
             label: format!("bash -n {script}"),
             tool: Tool::new("bash").arg("-n").arg(&script).current_dir(repo),
         })
@@ -151,8 +210,7 @@ fn shell_syntax_steps(repo: &Path) -> Vec<Step> {
 /// The Python validators, which still own their policy in this slice.
 fn validator_steps(repo: &Path, scope: Scope) -> Vec<Step> {
     let mut steps = Vec::new();
-    let fast: [(&str, &[&str]); 4] = [
-        ("check-docs.py", &[]),
+    let fast: [(&str, &[&str]); 3] = [
         ("fuzz-targets.py", &[]),
         ("active-probe-gate.py", &["--check"]),
         ("check-performance-contract.py", &[]),
@@ -173,7 +231,7 @@ fn validator_steps(repo: &Path, scope: Scope) -> Vec<Step> {
             continue;
         }
         let label = format!("python3 {path} {}", args.join(" "));
-        steps.push(Step {
+        steps.push(Step::External {
             label: label.trim_end().to_owned(),
             tool: Tool::new("python3")
                 .arg(&path)
@@ -183,7 +241,7 @@ fn validator_steps(repo: &Path, scope: Scope) -> Vec<Step> {
         });
     }
     if scope == Scope::All && repo.join("scripts/test-package-release.sh").is_file() {
-        steps.push(Step {
+        steps.push(Step::External {
             label: "scripts/test-package-release.sh".to_owned(),
             tool: Tool::new("bash")
                 .arg("scripts/test-package-release.sh")
@@ -195,7 +253,7 @@ fn validator_steps(repo: &Path, scope: Scope) -> Vec<Step> {
 }
 
 fn cargo(repo: &Path, label: &str, args: &[&str]) -> Step {
-    Step {
+    Step::External {
         label: label.to_owned(),
         tool: Tool::new("cargo")
             .args(args.iter().copied())
@@ -243,13 +301,13 @@ pub fn run(repo: &Path, scope: Scope) -> Result<(), ToolError> {
     let total = steps.len();
     let mut slowest: Option<(String, std::time::Duration)> = None;
     for (index, step) in steps.into_iter().enumerate() {
-        println!("\n==> [{}/{total}] {}", index + 1, step.label);
-        let outcome = step.tool.run()?;
+        println!("\n==> [{}/{total}] {}", index + 1, step.label());
+        let elapsed = step.execute(repo)?;
         let replace = slowest
             .as_ref()
-            .is_none_or(|(_, longest)| outcome.elapsed > *longest);
+            .is_none_or(|(_, longest)| elapsed > *longest);
         if replace {
-            slowest = Some((step.label, outcome.elapsed));
+            slowest = Some((step.label().to_owned(), elapsed));
         }
     }
     println!("\nall {total} checks passed");
@@ -278,12 +336,12 @@ mod tests {
         let fast: Vec<String> = Scope::Fast
             .steps(&repo)
             .into_iter()
-            .map(|step| step.label)
+            .map(|step| step.label().to_owned())
             .collect();
         let all: Vec<String> = Scope::All
             .steps(&repo)
             .into_iter()
-            .map(|step| step.label)
+            .map(|step| step.label().to_owned())
             .collect();
         for label in &fast {
             assert!(
@@ -310,13 +368,13 @@ mod tests {
         let labels: Vec<String> = Scope::All
             .steps(&repo)
             .into_iter()
-            .map(|step| step.label)
+            .map(|step| step.label().to_owned())
             .collect();
         let joined = labels.join("\n");
 
         // Every cargo and python step the script runs must appear in the gate.
         for required in [
-            "check-docs.py",
+            "cargo dev docs check",
             "fuzz-targets.py",
             "active-probe-gate.py",
             "check-performance-contract.py",
@@ -371,7 +429,10 @@ mod tests {
     fn steps_never_route_through_a_shell_interpreter() {
         let repo = repo_root();
         for step in Scope::All.steps(&repo) {
-            let rendered = step.tool.redacted();
+            let rendered = match &step {
+                Step::External { tool, .. } => tool.redacted(),
+                Step::Native { label, .. } => label.clone(),
+            };
             assert!(
                 !rendered.contains("sh -c"),
                 "no gate step may build a shell command line: {rendered}"

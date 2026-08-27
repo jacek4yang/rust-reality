@@ -1,5 +1,8 @@
 # Rust build output
-/target
+#
+# Unanchored so it also covers the independent tooling workspace at
+# tools/target, which a root-anchored `/target` would miss.
+target/
 /dist/
 
 # Local runtime configuration

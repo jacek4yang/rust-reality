@@ -30,7 +30,7 @@ for script in scripts/*.sh; do
     run bash -n "$script"
 done
 
-run python3 scripts/check-docs.py
+run cargo dev docs check
 run python3 scripts/fuzz-targets.py
 run python3 scripts/active-probe-gate.py --check
 run python3 scripts/check-performance-contract.py
