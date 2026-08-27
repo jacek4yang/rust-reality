@@ -935,10 +935,14 @@
       "finding": "recorded benchmark evidence embeds an absolute path and SHA-256 of scripts/benchmark-contract.sh in its host-exclusive-lock identity, and verify_contract_identity re-verifies it against the live filesystem",
       "consequence": "replaying pre-migration evidence requires that file to remain present and unchanged; the recorded path points into an ephemeral worktree, so replay is already fragile independently of the scripts/ removal target",
       "affects": [
-        "scripts/benchmark-contract.sh"
+        "scripts/benchmark-contract.sh",
+        "scripts/host-exclusive-lock-keeper.py"
       ],
-      "status": "open policy question, no decision taken",
-      "evidence": "notes/v1.9.0/evaluator-parity-baseline.md"
+      "status": "resolved for the recoverable half; ADR 0009 accepted",
+      "evidence": "notes/v1.9.0/evaluator-parity-baseline.md",
+      "resolution": "ADR 0009: recoverable external inputs archived content-addressed under benchmarks/evidence/objects/sha256/; original evidence untouched; sidecar records resolution",
+      "durability_ceiling": "replay of v1.8.0 evidence remains bounded by hostExclusiveLock deviceInode (/tmp lock, device:inode 43:509895) and keeperExe (uv-managed interpreter); neither is content and neither can be archived",
+      "scripts_target": "unblocked - archived bytes are evidence data, not active shell policy"
     }
   ],
   "parity_baseline": {
