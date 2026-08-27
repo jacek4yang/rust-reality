@@ -23,10 +23,10 @@
     "DELETE_OBSOLETE": "no longer provides useful behaviour; deleted rather than ported"
   },
   "totals": {
-    "files": 62,
+    "files": 61,
     "lines": 25618,
     "bash": 36,
-    "python": 24,
+    "python": 23,
     "data_or_other": 2,
     "invoked_by_ci": 9,
     "by_disposition": {
@@ -46,6 +46,14 @@
       "disposition": "MIGRATE",
       "status": "deleted-after-parity",
       "parity_evidence": "identical stdout and exit status on a clean tree; identical exit status across 7 injected failure classes plus one negative control"
+    },
+    {
+      "path": "scripts/evaluate-release-performance.py",
+      "lines": 938,
+      "replacement": "cargo dev perf evaluate",
+      "disposition": "MIGRATE",
+      "status": "deleted-after-parity",
+      "parity_evidence": "benchmarks/evidence/evaluator-authority-transfer-acceptance.json: recorded v1.8.0 replay byte-identical after normalising exactly evaluator.path and evaluator.sha256; 32 protected metrics; 0 historical verdict changes; 10 of 10 exit-code classes matched; the repository's existing synthetic gate suite passes against the Rust binary including the regression class"
     }
   ],
   "scripts": [
@@ -425,18 +433,6 @@
       "disposition": "MIGRATE",
       "replacement": "cargo dev deploy canary",
       "status": "not-started"
-    },
-    {
-      "path": "scripts/evaluate-release-performance.py",
-      "language": "python",
-      "lines": 938,
-      "executable": true,
-      "invoked_by_ci": false,
-      "invoked_by_check_sh": false,
-      "calls_scripts": [],
-      "disposition": "MIGRATE",
-      "replacement": "cargo dev perf evaluate",
-      "status": "in-progress"
     },
     {
       "path": "scripts/export-hotspot-bundle.sh",
@@ -956,5 +952,18 @@
       "evaluator.sha256"
     ],
     "note": "evaluator.path already differs between two Python runs from different checkouts, so it is not a Rust-specific exception"
+  },
+  "scope_correction": {
+    "note": "the original census counted only top-level files; the tracked scripts tree is larger",
+    "tracked_files_total": 98,
+    "top_level_files": 61,
+    "subdirectories": {
+      "scripts/__pycache__": "build artifact, must be removed and ignored",
+      "scripts/bench-origin": "benchmark origin helper (2 files)",
+      "scripts/ipv6-e2e": "IPv6 end-to-end helpers (1 sh, 2 py)",
+      "scripts/v150-release-gates": "historical v1.5.0 gate harness (7 sh, 2 py) - PRESERVE_EVIDENCE",
+      "scripts/v151-release-gates": "historical v1.5.1 gate harness (7 sh, 2 py) - PRESERVE_EVIDENCE",
+      "scripts/v16-release-gates": "historical v1.6.0 gate harness (7 sh, 2 py) - PRESERVE_EVIDENCE"
+    }
   }
 }

@@ -20,14 +20,6 @@ use clap::{Parser, Subcommand};
 mod check;
 mod docs;
 mod doctor;
-// The evaluator core lands before the evidence-loading layer that will call it, so
-// nothing outside its own tests uses it yet. `expect` rather than `allow`: this
-// becomes a hard error the moment `perf evaluate` is wired up, so the staging
-// annotation cannot outlive the staging.
-#[expect(
-    dead_code,
-    reason = "pure statistical core; the manifest/pairing layer and `perf evaluate` land next"
-)]
 mod perf;
 mod process;
 
@@ -58,6 +50,29 @@ enum Command {
         #[command(subcommand)]
         command: DocsCommand,
     },
+    /// Release performance evaluation.
+    Perf {
+        #[command(subcommand)]
+        command: PerfCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum PerfCommand {
+    /// Evaluate recorded benchmark evidence and write a gate report.
+    ///
+    /// Exit status is three-valued and load-bearing: 0 when the gate passes, 1 for a
+    /// real performance regression, and 2 when the evidence was inadmissible so no
+    /// comparison happened. A failing gate and a broken harness need different
+    /// operator responses, so the two are never collapsed.
+    Evaluate {
+        /// Absolute path to the evaluator manifest.
+        #[arg(long)]
+        manifest: PathBuf,
+        /// Absolute path of the report to create. Must not already exist.
+        #[arg(long)]
+        output: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -72,6 +87,22 @@ fn main() -> ExitCode {
 
     match cli.command {
         Command::Doctor => run_doctor(),
+        Command::Perf { command } => match command {
+            PerfCommand::Evaluate { manifest, output } => {
+                match perf::report::evaluate_to_file(&manifest, &output) {
+                    Ok(verdict) => {
+                        println!("{}: {}", verdict.as_str(), output.display());
+                        ExitCode::from(verdict.exit_code())
+                    }
+                    Err(error) => {
+                        // An argument or write failure, distinct from inadmissible
+                        // evidence: no report is produced at all.
+                        eprintln!("perf evaluate: {error}");
+                        ExitCode::from(2)
+                    }
+                }
+            }
+        },
         Command::Docs { command } => match command {
             DocsCommand::Check => {
                 let report = docs::check(&repo);

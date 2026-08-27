@@ -15,7 +15,6 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
-EVALUATOR = ROOT / "evaluate-release-performance.py"
 NETEM = ROOT / "validate-deployment-netem.py"
 DEPLOYMENT_DRIVER = ROOT / "deployment_driver.py"
 HOST_LOCK_CONTRACT = ROOT / "benchmark-contract.sh"
@@ -459,182 +458,6 @@ rr_host_lock_stop
         assert after.returncode == 0, (collector, after.stdout, after.stderr)
 
 
-def test_evaluator(root: Path) -> None:
-    passing = root / "pass"
-    passing.mkdir()
-    passing_manifest, _ = manifest(passing)
-    passing_output = passing / "result.json"
-    result = invoke(EVALUATOR, "--manifest", str(passing_manifest),
-                    "--output", str(passing_output))
-    assert result.returncode == 0, (result.stdout, result.stderr)
-    passing_report = json.loads(passing_output.read_text())
-    assert passing_report["overallPerformanceVerdict"] == "PASS"
-    assert len({
-        row["hostExclusiveLock"]["keeperPid"] for row in passing_report["inputs"]
-    }) == 3
-    assert passing_report["method"]["hypothesisFamilySize"] == 8
-    assert passing_report["method"]["hypothesisFamilies"] == {
-        "regression": 8, "improvement": 8,
-    }
-    assert not any(row["significant"] for row in passing_report["protectedMetrics"])
-    assert all(
-        row["improvementSignificant"] for row in passing_report["protectedMetrics"]
-    )
-    deterministic_output = passing / "result-deterministic.json"
-    result = invoke(EVALUATOR, "--manifest", str(passing_manifest),
-                    "--output", str(deterministic_output))
-    assert result.returncode == 0, (result.stdout, result.stderr)
-    assert passing_output.read_bytes() == deterministic_output.read_bytes()
-
-    three_same_direction = root / "three-same-direction"
-    three_same_direction.mkdir()
-    three_manifest, _ = manifest(three_same_direction, 0.80, blocks=3)
-    three_output = three_same_direction / "result.json"
-    result = invoke(EVALUATOR, "--manifest", str(three_manifest),
-                    "--output", str(three_output))
-    assert result.returncode == 2, (result.stdout, result.stderr)
-    report = json.loads(three_output.read_text())
-    assert report["overallPerformanceVerdict"] == "INVALID"
-    assert "requires 12..16 complete ABBA blocks" in report["errors"][0]
-
-    regression = root / "regression-twelve-blocks"
-    regression.mkdir()
-    regression_manifest, _ = manifest(regression, 0.80, blocks=12)
-    regression_output = regression / "result.json"
-    result = invoke(EVALUATOR, "--manifest", str(regression_manifest),
-                    "--output", str(regression_output))
-    assert result.returncode == 1, (result.stdout, result.stderr)
-    report = json.loads(regression_output.read_text())
-    assert report["overallPerformanceVerdict"] == "FAIL"
-    assert report["regressions"]
-    throughput = next(
-        row for row in report["protectedMetrics"]
-        if row["id"] == "setup:c1:throughput"
-    )
-    assert throughput["rawPValue"] == 1.0 / 4096.0
-    assert throughput["holmAdjustedPValue"] <= 0.05
-    assert throughput["significant"] is True
-
-    missing = root / "missing"
-    missing.mkdir()
-    missing_manifest, workloads = manifest(missing)
-    setup = Path(workloads[0]["runDir"])
-    rows = (setup / "raw-samples.jsonl").read_text().splitlines()
-    (setup / "raw-samples.jsonl").write_text("\n".join(rows[:-1]) + "\n")
-    document = json.loads(missing_manifest.read_text())
-    document["workloads"][0]["files"]["raw-samples.jsonl"] = sha(
-        setup / "raw-samples.jsonl"
-    )
-    write_json(missing_manifest, document)
-    missing_output = missing / "result.json"
-    result = invoke(EVALUATOR, "--manifest", str(missing_manifest),
-                    "--output", str(missing_output))
-    assert result.returncode == 2, (result.stdout, result.stderr)
-    assert json.loads(missing_output.read_text())["overallPerformanceVerdict"] == "INVALID"
-
-    missing_lock = root / "missing-lock"
-    missing_lock.mkdir()
-    missing_lock_manifest, workloads = manifest(missing_lock)
-    setup = Path(workloads[0]["runDir"])
-    environment = json.loads((setup / "environment.json").read_text())
-    del environment["hostExclusiveLock"]
-    write_json(setup / "environment.json", environment)
-    completion = json.loads((setup / "completion.json").read_text())
-    completion["evidence"]["sha256"] = sha(setup / "environment.json")
-    write_json(setup / "completion.json", completion)
-    document = json.loads(missing_lock_manifest.read_text())
-    document["workloads"][0]["files"]["environment.json"] = sha(
-        setup / "environment.json"
-    )
-    document["workloads"][0]["files"]["completion.json"] = sha(
-        setup / "completion.json"
-    )
-    write_json(missing_lock_manifest, document)
-    missing_lock_output = missing_lock / "result.json"
-    result = invoke(EVALUATOR, "--manifest", str(missing_lock_manifest),
-                    "--output", str(missing_lock_output))
-    assert result.returncode == 2, (result.stdout, result.stderr)
-    assert json.loads(missing_lock_output.read_text())["overallPerformanceVerdict"] == "INVALID"
-
-    failed_exit = root / "failed-exit"
-    failed_exit.mkdir()
-    failed_exit_manifest, workloads = manifest(failed_exit)
-    fallback = Path(workloads[1]["runDir"])
-    completion = json.loads((fallback / "completion.json").read_text())
-    completion["exitCode"] = 2
-    write_json(fallback / "completion.json", completion)
-    document = json.loads(failed_exit_manifest.read_text())
-    document["workloads"][1]["files"]["completion.json"] = sha(
-        fallback / "completion.json"
-    )
-    write_json(failed_exit_manifest, document)
-    failed_exit_output = failed_exit / "result.json"
-    result = invoke(EVALUATOR, "--manifest", str(failed_exit_manifest),
-                    "--output", str(failed_exit_output))
-    assert result.returncode == 2, (result.stdout, result.stderr)
-    assert json.loads(failed_exit_output.read_text())["overallPerformanceVerdict"] == "INVALID"
-
-    missing_completion = root / "missing-completion"
-    missing_completion.mkdir()
-    missing_completion_manifest, workloads = manifest(missing_completion)
-    matrix = Path(workloads[2]["runDir"])
-    (matrix / "run-completion.json").unlink()
-    missing_completion_output = missing_completion / "result.json"
-    result = invoke(EVALUATOR, "--manifest", str(missing_completion_manifest),
-                    "--output", str(missing_completion_output))
-    assert result.returncode == 2, (result.stdout, result.stderr)
-    assert json.loads(missing_completion_output.read_text())[
-        "overallPerformanceVerdict"
-    ] == "INVALID"
-
-    reordered = root / "reordered"
-    reordered.mkdir()
-    reordered_manifest, workloads = manifest(reordered)
-    matrix = Path(workloads[2]["runDir"])
-    rows = (matrix / "samples.jsonl").read_text().splitlines()
-    rows[0], rows[1] = rows[1], rows[0]
-    (matrix / "samples.jsonl").write_text("\n".join(rows) + "\n")
-    document = json.loads(reordered_manifest.read_text())
-    document["workloads"][2]["files"]["samples.jsonl"] = sha(
-        matrix / "samples.jsonl"
-    )
-    write_json(reordered_manifest, document)
-    reordered_output = reordered / "result.json"
-    result = invoke(EVALUATOR, "--manifest", str(reordered_manifest),
-                    "--output", str(reordered_output))
-    assert result.returncode == 2, (result.stdout, result.stderr)
-    assert json.loads(reordered_output.read_text())["overallPerformanceVerdict"] == "INVALID"
-
-
-def test_exact_statistics() -> None:
-    evaluator = runpy.run_path(str(EVALUATOR))
-    exact = evaluator["exact_sign_flip_pvalues"]
-    holm = evaluator["holm_adjusted_pvalues"]
-    floating_regression = [-math.log(2.0), -math.log(3.0), -math.log(5.0)]
-    regression, improvement = exact(floating_regression)
-    assert regression == 1.0 / 8.0
-    assert improvement == 1.0
-    regression, improvement = exact([-1.0] * 12)
-    assert regression == 1.0 / 4096.0
-    assert improvement == 1.0
-
-    hypotheses = [("a", 0.01), ("b", 0.04), ("c", 0.03)]
-    adjusted = holm(hypotheses)
-    reversed_adjusted = holm(list(reversed(hypotheses)))
-    assert adjusted == reversed_adjusted
-    assert math.isclose(adjusted["a"], 0.03)
-    assert math.isclose(adjusted["b"], 0.06)
-    assert math.isclose(adjusted["c"], 0.06)
-
-    formal_family = holm([
-        (f"metric-{index:03d}", 1.0 / 4096.0) for index in range(110)
-    ])
-    assert len(formal_family) == 110
-    assert all(math.isclose(value, 110.0 / 4096.0)
-               for value in formal_family.values())
-    assert all(value <= 0.05 for value in formal_family.values())
-
-
 def netem_fixture(root: Path, omit_last: bool = False) -> tuple[Path, list[Path]]:
     profiles = root / "profiles.jsonl"
     profile_rows = []
@@ -996,10 +819,8 @@ def test_matrix_pipe_budget_model() -> None:
 
 
 def main() -> None:
-    test_exact_statistics()
     with tempfile.TemporaryDirectory(prefix="rust-reality-performance-gate-") as value:
         root = Path(value).resolve()
-        test_evaluator(root)
         test_netem(root)
         test_deployment_summary(root)
         test_host_lock_keeper(root)

@@ -25,6 +25,10 @@
 use super::stats::{StatsError, median};
 
 /// The number of resamples the evaluator's method block records.
+///
+/// Retained as the documented default even though callers now read the value from
+/// the manifest, because the percentile-index tests pin their arithmetic to it.
+#[cfg(test)]
 pub const DEFAULT_ITERATIONS: usize = 20_000;
 
 /// `CPython`'s `random.Random`, restricted to what the bootstrap needs.
