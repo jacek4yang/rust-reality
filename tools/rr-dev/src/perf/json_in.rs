@@ -180,15 +180,6 @@ impl Value {
         self.field(path, key)?.as_int(&format!("{path}.{key}"))
     }
 
-    /// Reads a required numeric member.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the member is absent or not a number.
-    pub fn f64_field(&self, path: &str, key: &str) -> Field<f64> {
-        self.field(path, key)?.as_f64(&format!("{path}.{key}"))
-    }
-
     /// Reads a required array member.
     ///
     /// # Errors
@@ -468,8 +459,14 @@ mod tests {
         assert!(value.int_field("$", "whole").is_err());
         assert!(value.int_field("$", "ratio").is_err());
         // Both are acceptable as measurements.
-        assert_eq!(value.f64_field("$", "ratio"), Ok(1.5));
-        assert_eq!(value.f64_field("$", "whole"), Ok(12.0));
+        assert_eq!(
+            value.field("$", "ratio").and_then(|v| v.as_f64("ratio")),
+            Ok(1.5)
+        );
+        assert_eq!(
+            value.field("$", "whole").and_then(|v| v.as_f64("whole")),
+            Ok(12.0)
+        );
     }
 
     #[test]

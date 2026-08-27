@@ -119,7 +119,7 @@ Four independent formal gates compared release-tier candidates against the
 immutable published v1.7.0 `linux-x86_64-generic` asset (SHA-256
 `7765a65f…c2e23c03`, verified against the release `SHA256SUMS` before
 extraction). Every gate was judged solely by
-`scripts/evaluate-release-performance.py`: exact one-sided paired sign-flip
+`cargo dev perf evaluate`: exact one-sided paired sign-flip
 permutation on the mean oriented block log ratio, with separate global Holm
 corrections for the regression and improvement families at family-wise
 alpha 0.05, and a minimum of twelve complete ABBA blocks per metric.

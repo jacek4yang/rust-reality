@@ -1,0 +1,85 @@
+{
+  "differentialSuites": {
+    "existingSyntheticGateSuite": "scripts/test-performance-gates.py evaluator cases repointed at the Rust binary: PASS across passing, three-workload, regression (exit 1), missing manifest, missing lock, failed collector exit, missing completion and reordered-evidence classes",
+    "exitCodeClasses": "10 of 10 matched: valid pass, relative path, nonexistent manifest, malformed JSON, unsupported schema, invalid tier, identical identities, missing workload, digest mismatch, pre-existing output",
+    "recordedV180Replay": "byte-identical after normalising evaluator.path and evaluator.sha256"
+  },
+  "kind": "evaluator-authority-transfer-acceptance",
+  "manifest": {
+    "path": "/home/jacek/work/kimi-rust-reality-performance/artifacts/v180-release-gate/gates/evaluator-manifest-r01.json",
+    "sha256": "2ab0ecab68b24c0b6fff36b11a0cb8e26a83f0261d0a8f03198f4d27625310fd"
+  },
+  "methodologyChanges": "none",
+  "metricCensus": {
+    "fallback": 3,
+    "matrix": 24,
+    "setup": 5,
+    "total": 32
+  },
+  "metricIds": [
+    "fallback:c1:p99-latency",
+    "fallback:c1:throughput",
+    "fallback:server-cpu",
+    "matrix-c1:bidi_1_1:p99-latency",
+    "matrix-c1:bidi_1_1:throughput",
+    "matrix-c1:bidi_32_1:p99-latency",
+    "matrix-c1:bidi_32_1:throughput",
+    "matrix-c1:direct-download_1_1:p99-latency",
+    "matrix-c1:direct-download_1_1:throughput",
+    "matrix-c1:direct-download_32_1:p99-latency",
+    "matrix-c1:direct-download_32_1:throughput",
+    "matrix-c1:direct-upload_1_1:p99-latency",
+    "matrix-c1:direct-upload_1_1:throughput",
+    "matrix-c1:direct-upload_32_1:p99-latency",
+    "matrix-c1:direct-upload_32_1:throughput",
+    "matrix-c1:fallback_1_1:p99-latency",
+    "matrix-c1:fallback_1_1:throughput",
+    "matrix-c1:fallback_32_1:p99-latency",
+    "matrix-c1:fallback_32_1:throughput",
+    "matrix-c1:framed-download_1_1:p99-latency",
+    "matrix-c1:framed-download_1_1:throughput",
+    "matrix-c1:framed-download_32_1:p99-latency",
+    "matrix-c1:framed-download_32_1:throughput",
+    "matrix-c1:framed-upload_1_1:p99-latency",
+    "matrix-c1:framed-upload_1_1:throughput",
+    "matrix-c1:framed-upload_32_1:p99-latency",
+    "matrix-c1:framed-upload_32_1:throughput",
+    "setup:c1:p99-latency",
+    "setup:c1:throughput",
+    "setup:c32:p99-latency",
+    "setup:c32:throughput",
+    "setup:server-cpu"
+  ],
+  "newEvaluator": {
+    "implementation": "rust rr-dev",
+    "path": "/home/jacek/work/kimi-rust-reality-performance/worktrees/rrdev/tools/target/debug/rr-dev",
+    "sha256": "7d055860e04da8088ae538fb52164b45b5f3c6fd965d8ae36469512568a6347f"
+  },
+  "newReportSha256": "9930ff70de10607c65186261c06ff1d27befb078d67646b3a788fe2a03356367",
+  "normalizationFields": [
+    "evaluator.path",
+    "evaluator.sha256"
+  ],
+  "normalizedReportSha256": "ca6c526ab78eabfe34b02c59264511c8556ffe5c312c8cdc0ef3d5e077e95879",
+  "oldEvaluator": {
+    "implementation": "python",
+    "path": "/home/jacek/work/kimi-rust-reality-performance/worktrees/rrdev/scripts/evaluate-release-performance.py",
+    "sha256": "c047e7b32fef24523631af3f98cb53285c72aa4aa37cf183b41adddada8425db"
+  },
+  "oldReportSha256": "26d4546e7ba10c7b9b77b3edf65bbda80e4f0f81de5b3f5cb3d74f8b77d66583",
+  "purpose": "Durable proof that the Rust evaluator reproduced the Python evaluator on real recorded v1.8.0 evidence. Recorded because ADR 0009 established that this legacy evidence cannot be replayed indefinitely.",
+  "recordedAt": "2026-08-27T12:32:28Z",
+  "repositoryHead": "d0ba1211f19b930c3f43774b862b7b5b444cb0d0",
+  "results": {
+    "byteDifferencesAfterNormalization": 0,
+    "exitCodeMismatches": 0,
+    "exitCodeNew": 0,
+    "exitCodeOld": 0,
+    "globalVerdict": "PASS",
+    "historicalVerdictChanges": 0,
+    "perMetricVerdictChanges": 0,
+    "protectedMetrics": 32,
+    "unexpectedReportDifferences": 0
+  },
+  "schemaVersion": 1
+}

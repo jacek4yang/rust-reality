@@ -59,16 +59,6 @@ pub enum Direction {
 }
 
 impl Direction {
-    /// Parses the wire spelling used by the evidence schema.
-    #[must_use]
-    pub fn parse(text: &str) -> Option<Self> {
-        match text {
-            "higher-is-better" => Some(Self::HigherIsBetter),
-            "lower-is-better" => Some(Self::LowerIsBetter),
-            _ => None,
-        }
-    }
-
     /// The wire spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -993,13 +983,5 @@ mod tests {
     #[test]
     fn median_rejects_an_empty_sample_rather_than_returning_zero() {
         assert_eq!(median(&[]), Err(StatsError::EmptySample));
-    }
-
-    #[test]
-    fn direction_round_trips_through_its_wire_spelling() {
-        for direction in [Direction::HigherIsBetter, Direction::LowerIsBetter] {
-            assert_eq!(Direction::parse(direction.as_str()), Some(direction));
-        }
-        assert_eq!(Direction::parse("sideways"), None);
     }
 }

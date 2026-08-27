@@ -24,8 +24,11 @@
 
 use super::{
     evidence::EvidenceError,
-    stats::{Direction, MAX_EXACT_BLOCKS, MIN_EXACT_BLOCKS},
+    stats::{MAX_EXACT_BLOCKS, MIN_EXACT_BLOCKS},
 };
+
+#[cfg(test)]
+use super::stats::Direction;
 
 /// An arm of the formal matrix.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -77,7 +80,15 @@ impl MatrixRole {
     }
 }
 
-/// Which direction a measured quantity improves in.
+/// Which direction a measured quantity improves in, per the contract file.
+///
+/// Deliberately test-only. The evaluator does not consult this map: each metric's
+/// direction is fixed where the metric is constructed, exactly as the Python original
+/// fixes it at the `metric()` call. The map is therefore *documentation* that the
+/// contract file and the implementation agree, and the golden test below is what keeps
+/// them from drifting apart. Wiring it into the pipeline would be a methodology change,
+/// not a refactor.
+#[cfg(test)]
 ///
 /// Transcribed from the `direction` object of the contract. A measure absent from
 /// both lists is not protected, and asking for its direction returns `None` rather
@@ -218,11 +229,6 @@ pub enum ContractError {
         /// Cells present in raw samples but absent from the summary.
         samples_only: Vec<String>,
     },
-    /// A measure with no direction in the contract was treated as protected.
-    UnknownDirection {
-        /// The measure that has no recorded direction.
-        measure: String,
-    },
     /// Underlying evidence admissibility failure.
     Evidence(EvidenceError),
 }
@@ -272,12 +278,6 @@ impl std::fmt::Display for ContractError {
                 formatter,
                 "matrix: summary cells do not exactly cover raw samples (summary only: {summary_only:?}, samples only: {samples_only:?})"
             ),
-            Self::UnknownDirection { measure } => {
-                write!(
-                    formatter,
-                    "measure {measure} has no direction in the protected contract"
-                )
-            }
             Self::Evidence(error) => write!(formatter, "{error}"),
         }
     }
@@ -772,7 +772,6 @@ mod tests {
         // assumptions. All twelve v1.8.0 gate cells must validate.
         // Evidence archives live beside the checkout, not inside it, so the path is
         // searched upward rather than assumed at one fixed depth.
-        const RELATIVE: &str = "artifacts/v180-release-gate/gates/matrix-formal-r01/summary.json";
         let summary = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .ancestors()
             .map(|ancestor| {

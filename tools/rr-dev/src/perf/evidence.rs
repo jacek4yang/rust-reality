@@ -11,44 +11,8 @@
 //! strict; where it is permissive, this is permissive. Migration parity, not
 //! improvement.
 
-use std::collections::BTreeMap;
-
 /// The only evidence schema version the evaluator accepts.
 pub const SUPPORTED_SCHEMA_VERSION: u64 = 1;
-
-/// Which implementation produced a sample.
-///
-/// The two arms of every paired comparison. Modelled as an enum rather than a
-/// string so a mismatch cannot silently become a third bucket that pairs with
-/// nothing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ImplementationRole {
-    /// The reference side of the comparison.
-    Baseline,
-    /// The side under test.
-    Candidate,
-}
-
-impl ImplementationRole {
-    /// Parses the wire spelling used in evidence rows and order manifests.
-    #[must_use]
-    pub fn parse(text: &str) -> Option<Self> {
-        match text {
-            "baseline" => Some(Self::Baseline),
-            "candidate" => Some(Self::Candidate),
-            _ => None,
-        }
-    }
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Baseline => "baseline",
-            Self::Candidate => "candidate",
-        }
-    }
-}
 
 /// Which evidence family a workload directory belongs to.
 ///
@@ -122,114 +86,18 @@ impl WorkloadKind {
 /// Why evidence was refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EvidenceError {
-    /// The schema version is absent or unsupported.
-    UnsupportedSchema {
-        /// What the manifest claimed, rendered for the message.
-        found: String,
-    },
-    /// A required field is missing or has the wrong JSON type.
-    Field {
-        /// Dotted path to the offending field.
-        path: String,
-        /// What was expected there.
-        expected: &'static str,
-    },
     /// A numeric measurement was not a positive finite number.
     NotPositive {
         /// Where the value came from.
         context: String,
-    },
-    /// A required workload kind is absent from the manifest.
-    MissingKind {
-        /// The absent kind.
-        kind: &'static str,
-    },
-    /// A workload kind appeared more than once.
-    DuplicateKind {
-        /// The repeated kind.
-        kind: String,
-    },
-    /// An unrecognised workload kind.
-    UnknownKind {
-        /// What the manifest said.
-        found: String,
-    },
-    /// A required evidence file is missing from a workload entry.
-    MissingFile {
-        /// The workload kind.
-        kind: &'static str,
-        /// The absent file.
-        file: String,
-    },
-    /// A workload entry declares a file the kind does not define.
-    UnexpectedFile {
-        /// The workload kind.
-        kind: &'static str,
-        /// The extra file.
-        file: String,
-    },
-    /// A recorded digest did not match the file on disk.
-    DigestMismatch {
-        /// The file that failed.
-        file: String,
-        /// The digest the manifest recorded.
-        expected: String,
-        /// The digest computed from the file.
-        actual: String,
-    },
-    /// A digest field was not a lowercase hexadecimal SHA-256.
-    MalformedDigest {
-        /// The file whose digest was malformed.
-        file: String,
-        /// The offending text.
-        found: String,
     },
 }
 
 impl std::fmt::Display for EvidenceError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnsupportedSchema { found } => write!(
-                formatter,
-                "evidence schemaVersion must be {SUPPORTED_SCHEMA_VERSION}, found {found}"
-            ),
-            Self::Field { path, expected } => {
-                write!(formatter, "{path}: expected {expected}")
-            }
             Self::NotPositive { context } => {
                 write!(formatter, "{context} must be a positive finite number")
-            }
-            Self::MissingKind { kind } => {
-                write!(
-                    formatter,
-                    "evidence is missing the required {kind} workload"
-                )
-            }
-            Self::DuplicateKind { kind } => {
-                write!(formatter, "workload kind {kind} appears more than once")
-            }
-            Self::UnknownKind { found } => {
-                write!(formatter, "unknown workload kind {found}")
-            }
-            Self::MissingFile { kind, file } => {
-                write!(formatter, "{kind}: missing required evidence file {file}")
-            }
-            Self::UnexpectedFile { kind, file } => {
-                write!(formatter, "{kind}: unexpected evidence file {file}")
-            }
-            Self::DigestMismatch {
-                file,
-                expected,
-                actual,
-            } => write!(
-                formatter,
-                "{file}: digest mismatch, manifest recorded {expected} but the file hashes to {actual}"
-            ),
-            Self::MalformedDigest { file, found } => {
-                write!(
-                    formatter,
-                    "{file}: digest {found} is not a lowercase hex SHA-256"
-                )
             }
         }
     }
@@ -272,42 +140,6 @@ pub struct BinaryIdentity {
     pub commit: String,
     /// SHA-256 of the binary itself.
     pub sha256: String,
-}
-
-/// One workload entry from the manifest.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkloadEntry {
-    /// Which evidence family this is.
-    pub kind: WorkloadKind,
-    /// Human-facing name used to build metric identifiers.
-    pub name: String,
-    /// Directory holding the evidence files.
-    pub run_dir: std::path::PathBuf,
-    /// Recorded digest for each required file.
-    pub files: BTreeMap<String, String>,
-}
-
-/// A validated evaluator manifest.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Manifest {
-    /// Release tier the evidence belongs to.
-    pub tier: String,
-    /// Identity of the candidate binary.
-    pub candidate: BinaryIdentity,
-    /// Identity of the baseline binary.
-    pub baseline: BinaryIdentity,
-    /// Resample count for the reporting-only bootstrap.
-    pub bootstrap_iterations: usize,
-    /// Workload entries, one per required kind.
-    pub workloads: Vec<WorkloadEntry>,
-}
-
-impl Manifest {
-    /// Returns the entry for one kind.
-    #[must_use]
-    pub fn workload(&self, kind: WorkloadKind) -> Option<&WorkloadEntry> {
-        self.workloads.iter().find(|entry| entry.kind == kind)
-    }
 }
 
 /// Whether `text` is a lowercase hexadecimal SHA-256 digest.
@@ -407,10 +239,6 @@ mod tests {
 
     #[test]
     fn wire_spellings_round_trip() {
-        for role in [ImplementationRole::Baseline, ImplementationRole::Candidate] {
-            assert_eq!(ImplementationRole::parse(role.as_str()), Some(role));
-        }
-        assert_eq!(ImplementationRole::parse("control"), None);
         for kind in WorkloadKind::required_kinds() {
             assert_eq!(WorkloadKind::parse(kind.as_str()), Some(kind));
         }
@@ -428,29 +256,5 @@ mod tests {
             "g3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         ));
         assert!(!is_sha256_hex(""));
-    }
-
-    #[test]
-    fn manifest_lookup_finds_each_kind() {
-        let manifest = Manifest {
-            tier: "portable".to_owned(),
-            candidate: BinaryIdentity {
-                commit: "a".repeat(40),
-                sha256: "b".repeat(64),
-            },
-            baseline: BinaryIdentity {
-                commit: "c".repeat(40),
-                sha256: "d".repeat(64),
-            },
-            bootstrap_iterations: 20_000,
-            workloads: vec![WorkloadEntry {
-                kind: WorkloadKind::Matrix,
-                name: "matrix".to_owned(),
-                run_dir: std::path::PathBuf::from("/tmp/matrix"),
-                files: BTreeMap::new(),
-            }],
-        };
-        assert!(manifest.workload(WorkloadKind::Matrix).is_some());
-        assert!(manifest.workload(WorkloadKind::SetupAbba).is_none());
     }
 }

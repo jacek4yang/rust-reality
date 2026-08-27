@@ -99,7 +99,7 @@ v1.8.0 是架构发布：不改变任何 wire 字节、配置结构或部署身�
 四个独立的正式门禁将 release tier 候选二进制与不可变的已发布 v1.7.0
 `linux-x86_64-generic` 资产（SHA-256 `7765a65f…c2e23c03`，解包前已针对发布
 `SHA256SUMS` 校验）对比。每个门禁的判定完全交给
-`scripts/evaluate-release-performance.py`：对平均定向块对数比值做精确单侧配对
+`cargo dev perf evaluate`：对平均定向块对数比值做精确单侧配对
 符号翻转置换检验，回归族与改进族分别做全局 Holm 校正，族错误率 0.05，每个指标
 至少十二个完整 ABBA 块。
 

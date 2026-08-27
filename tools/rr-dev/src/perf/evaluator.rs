@@ -162,15 +162,6 @@ impl DeterministicMetric {
             classification: None,
         })
     }
-
-    /// Whether this metric permits the gate to pass.
-    ///
-    /// Uncorrected metrics report `None`: a verdict before correction would be
-    /// meaningless, so it is not offered.
-    #[must_use]
-    pub fn passes(&self) -> Option<bool> {
-        self.classification.map(Classification::passes)
-    }
 }
 
 /// Statistics that exist for the report and never for the verdict.
@@ -201,15 +192,6 @@ impl ReportingStatistics {
     }
 }
 
-/// One metric as the report presents it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct MetricEvaluation {
-    /// Verdict-bearing values.
-    pub deterministic: DeterministicMetric,
-    /// Presentation-only values.
-    pub reporting: ReportingStatistics,
-}
-
 /// Why an evaluation could not produce a verdict.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EvaluationError {
@@ -218,8 +200,6 @@ pub enum EvaluationError {
         /// What the manifest said.
         found: String,
     },
-    /// Candidate and baseline identities were identical.
-    IdenticalIdentities,
     /// The bootstrap iteration count was outside the permitted range.
     BootstrapIterations {
         /// The requested count.
@@ -227,8 +207,6 @@ pub enum EvaluationError {
     },
     /// No protected metric survived to be evaluated.
     NoProtectedMetrics,
-    /// Workloads disagreed about the host-exclusive lock identity.
-    CoordinationMismatch,
     /// A statistical precondition failed.
     Stats(StatsError),
     /// A contract precondition failed.
@@ -251,9 +229,6 @@ impl std::fmt::Display for EvaluationError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnsupportedTier { found } => write!(formatter, "invalid CPU tier: {found}"),
-            Self::IdenticalIdentities => {
-                write!(formatter, "candidate and baseline identities are identical")
-            }
             Self::BootstrapIterations { found } => write!(
                 formatter,
                 "bootstrapIterations must be in {MIN_BOOTSTRAP_ITERATIONS}..{MAX_BOOTSTRAP_ITERATIONS}, found {found}"
@@ -261,10 +236,6 @@ impl std::fmt::Display for EvaluationError {
             Self::NoProtectedMetrics => {
                 write!(formatter, "no protected metrics were produced")
             }
-            Self::CoordinationMismatch => write!(
-                formatter,
-                "workloads used different host-exclusive lock protocols/identities"
-            ),
             Self::Stats(error) => write!(formatter, "{error}"),
             Self::Contract(error) => write!(formatter, "{error}"),
         }
@@ -446,7 +417,6 @@ mod tests {
             evaluated.classification, None,
             "classification is unavailable before global correction"
         );
-        assert_eq!(evaluated.passes(), None);
     }
 
     #[test]
