@@ -1,37 +1,52 @@
 {
-  "generated_by": "hand-audited; regenerate with `cargo dev inventory` once PR B lands",
-  "total_files": 62,
-  "total_lines": 25618,
-  "by_language": {
-    "data": 1,
-    "python": 24,
-    "bash": 36,
-    "c": 1
+  "goal": "The top-level scripts/ directory must not exist. Every entry carries exactly one final disposition; there is no category for leaving a file in place.",
+  "acceptance_gate": [
+    "every CI-required script has a proven rr-dev replacement",
+    "every release-required script has a proven rr-dev replacement",
+    "every benchmark-policy script migrated into the typed BenchmarkRunner/evidence model or deleted",
+    "every performance/statistics script migrated to the authoritative typed evaluator",
+    "every deployment/canary/rollback script migrated with safety invariants preserved",
+    "all data-only files moved to fixture/data directories",
+    "historical evidence moved to evidence/research locations",
+    "no GitHub Actions, release workflow, AGENTS.md, README or mdBook reference to scripts/",
+    "no compatibility wrappers preserving old command names",
+    "no equivalent shell/Python policy relocated to ci/, misc/, tools/scripts/ or .github/scripts/",
+    "behavioural parity demonstrated for every safety- or decision-critical migration",
+    "full CI green on the exact final head, then git rm -r scripts"
+  ],
+  "dispositions": {
+    "MIGRATE": "still-useful executable policy becomes typed rr-dev functionality",
+    "MERGE": "behaviour absorbed into shared rr-dev infrastructure, no one-command-per-script mapping",
+    "MOVE_DATA": "declarative fixture/dataset moves to a fixture directory and stays data",
+    "MOVE_HELPER": "a real program rather than orchestration; becomes a small Rust helper under tools/",
+    "PRESERVE_EVIDENCE": "historical/research evidence moves to notes or benchmark evidence, not executable policy",
+    "DELETE_OBSOLETE": "no longer provides useful behaviour; deleted rather than ported"
   },
-  "invoked_by_ci": [
-    "scripts/aggregate-release.sh",
-    "scripts/build-release.sh",
-    "scripts/check.sh",
-    "scripts/fuzz-smoke.sh",
-    "scripts/fuzz-targets.py",
-    "scripts/package-release.sh",
-    "scripts/release-matrix.sh",
-    "scripts/smoke-release-assets.sh",
-    "scripts/verify-release-tag.sh"
-  ],
-  "invoked_by_check_sh": [
-    "scripts/active-probe-gate.py",
-    "scripts/check-performance-contract.py",
-    "scripts/config-identity-fingerprint.py",
-    "scripts/fuzz-targets.py",
-    "scripts/package-release.sh",
-    "scripts/test-config-identity-fingerprint.py",
-    "scripts/test-package-release.sh",
-    "scripts/test-performance-gates.py",
-    "scripts/test-release-canary.py"
-  ],
-  "data_not_program": [
-    "scripts/active-probe-cases.json"
+  "totals": {
+    "files": 62,
+    "lines": 25618,
+    "bash": 36,
+    "python": 24,
+    "data_or_other": 2,
+    "invoked_by_ci": 9,
+    "by_disposition": {
+      "MOVE_DATA": 3,
+      "MIGRATE": 18,
+      "MERGE": 36,
+      "MOVE_HELPER": 3,
+      "DELETE_OBSOLETE": 2
+    },
+    "unassigned": []
+  },
+  "migrated": [
+    {
+      "path": "scripts/check-docs.py",
+      "lines": 206,
+      "replacement": "cargo dev docs check",
+      "disposition": "MIGRATE",
+      "status": "deleted-after-parity",
+      "parity_evidence": "identical stdout and exit status on a clean tree; identical exit status across 7 injected failure classes plus one negative control"
+    }
   ],
   "scripts": [
     {
@@ -41,13 +56,12 @@
       "executable": false,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "benchmark-tls-shape.sh"
       ],
-      "is_data_not_program": true,
-      "replacement": "dev/fixtures/active-probe-cases.json",
-      "migration_status": "relocate-fixture"
+      "disposition": "MOVE_DATA",
+      "replacement": "tools/fixtures/active-probe-cases.json",
+      "status": "not-started"
     },
     {
       "path": "scripts/active-probe-gate.py",
@@ -56,13 +70,12 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": true,
-      "referenced_by_docs": true,
       "calls_scripts": [
         "active-probe-cases.json"
       ],
-      "is_data_not_program": false,
-      "replacement": "cargo dev probe active --check",
-      "migration_status": "invoked-by-rr-dev"
+      "disposition": "MIGRATE",
+      "replacement": "cargo dev probe active",
+      "status": "not-started"
     },
     {
       "path": "scripts/aggregate-hotspot-samples.py",
@@ -71,11 +84,10 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MIGRATE",
+      "replacement": "cargo dev perf aggregate",
+      "status": "not-started"
     },
     {
       "path": "scripts/aggregate-release.sh",
@@ -84,14 +96,13 @@
       "executable": true,
       "invoked_by_ci": true,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "package-release.sh",
         "release-matrix.sh"
       ],
-      "is_data_not_program": false,
+      "disposition": "MIGRATE",
       "replacement": "cargo dev release aggregate",
-      "migration_status": "planned-PR-F"
+      "status": "not-started"
     },
     {
       "path": "scripts/benchmark-contract.sh",
@@ -100,13 +111,12 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "host-exclusive-lock-keeper.py"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "BenchmarkRunner contract workload",
+      "status": "not-started"
     },
     {
       "path": "scripts/benchmark-deployment.sh",
@@ -115,16 +125,15 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": true,
       "calls_scripts": [
         "benchmark-contract.sh",
         "benchmark-matrix.sh",
         "deployment_driver.py",
         "validate-deployment-netem.py"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev bench deployment",
+      "status": "not-started"
     },
     {
       "path": "scripts/benchmark-dns-comparison.sh",
@@ -133,14 +142,13 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "benchmark-contract.sh",
         "dns-fake-server.py"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev bench dns",
+      "status": "not-started"
     },
     {
       "path": "scripts/benchmark-fallback-ab.sh",
@@ -149,13 +157,12 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": true,
       "calls_scripts": [
         "benchmark-contract.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev bench fallback",
+      "status": "not-started"
     },
     {
       "path": "scripts/benchmark-matrix.sh",
@@ -164,14 +171,13 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": true,
       "calls_scripts": [
         "benchmark-contract.sh",
         "benchmark-xray.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": "cargo dev bench matrix",
-      "migration_status": "planned-PR-D"
+      "disposition": "MERGE",
+      "replacement": "cargo dev bench matrix (BenchmarkRunner)",
+      "status": "not-started"
     },
     {
       "path": "scripts/benchmark-real-path.sh",
@@ -180,13 +186,12 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": true,
       "calls_scripts": [
         "benchmark-contract.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev bench real-path",
+      "status": "not-started"
     },
     {
       "path": "scripts/benchmark-routing-comparison.sh",
@@ -195,14 +200,13 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "benchmark-contract.sh",
         "dns-fake-server.py"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev bench routing",
+      "status": "not-started"
     },
     {
       "path": "scripts/benchmark-setup-rate-xray.sh",
@@ -211,14 +215,13 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "benchmark-contract.sh",
         "benchmark-setup-rate.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "BenchmarkRunner xray adapter",
+      "status": "not-started"
     },
     {
       "path": "scripts/benchmark-setup-rate.sh",
@@ -227,13 +230,12 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": true,
       "calls_scripts": [
         "benchmark-contract.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev bench setup",
+      "status": "not-started"
     },
     {
       "path": "scripts/benchmark-tls-shape.sh",
@@ -242,7 +244,6 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "benchmark-contract.sh",
         "record-delay-reader-test-evidence.sh",
@@ -250,9 +251,9 @@
         "tls-shape-helper.py",
         "tls-shape-reference.c"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "BenchmarkRunner tls-shape workload",
+      "status": "not-started"
     },
     {
       "path": "scripts/benchmark-vision-direct.sh",
@@ -261,13 +262,12 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": true,
       "calls_scripts": [
         "benchmark-contract.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "BenchmarkRunner workload",
+      "status": "not-started"
     },
     {
       "path": "scripts/benchmark-vless-encryption.sh",
@@ -276,13 +276,12 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": true,
       "calls_scripts": [
         "benchmark-contract.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "BenchmarkRunner workload",
+      "status": "not-started"
     },
     {
       "path": "scripts/benchmark-xray.sh",
@@ -291,13 +290,12 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": true,
       "calls_scripts": [
         "benchmark-contract.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "BenchmarkRunner xray adapter",
+      "status": "not-started"
     },
     {
       "path": "scripts/build-release.sh",
@@ -306,13 +304,12 @@
       "executable": true,
       "invoked_by_ci": true,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": true,
       "calls_scripts": [
         "release-matrix.sh"
       ],
-      "is_data_not_program": false,
+      "disposition": "MIGRATE",
       "replacement": "cargo dev release build",
-      "migration_status": "planned-PR-F"
+      "status": "not-started"
     },
     {
       "path": "scripts/check-performance-contract.py",
@@ -321,14 +318,13 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": true,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "perf-c2c-evidence.py",
         "perf-stat-evidence.py"
       ],
-      "is_data_not_program": false,
+      "disposition": "MIGRATE",
       "replacement": "cargo dev perf contract",
-      "migration_status": "invoked-by-rr-dev"
+      "status": "not-started"
     },
     {
       "path": "scripts/check.sh",
@@ -337,7 +333,6 @@
       "executable": true,
       "invoked_by_ci": true,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": true,
       "calls_scripts": [
         "active-probe-gate.py",
         "check-performance-contract.py",
@@ -349,9 +344,9 @@
         "test-performance-gates.py",
         "test-release-canary.py"
       ],
-      "is_data_not_program": false,
+      "disposition": "MIGRATE",
       "replacement": "cargo dev check --all",
-      "migration_status": "migrated-parity-tested"
+      "status": "in-progress"
     },
     {
       "path": "scripts/config-identity-fingerprint.py",
@@ -360,11 +355,10 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": true,
-      "referenced_by_docs": false,
       "calls_scripts": [],
-      "is_data_not_program": false,
+      "disposition": "MIGRATE",
       "replacement": "cargo dev historical verify",
-      "migration_status": "planned-PR-E"
+      "status": "not-started"
     },
     {
       "path": "scripts/cover-flight-shape-proxy.py",
@@ -373,11 +367,10 @@
       "executable": false,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MOVE_HELPER",
+      "replacement": "tools/helpers (Rust cover-flight proxy)",
+      "status": "not-started"
     },
     {
       "path": "scripts/deploy-release-vps.sh",
@@ -386,11 +379,10 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": true,
       "calls_scripts": [],
-      "is_data_not_program": false,
+      "disposition": "MIGRATE",
       "replacement": "cargo dev deploy",
-      "migration_status": "planned-PR-G"
+      "status": "not-started"
     },
     {
       "path": "scripts/deployment_driver.py",
@@ -399,14 +391,13 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "benchmark-deployment.sh",
         "benchmark-setup-rate.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": "cargo dev deploy (driver)",
-      "migration_status": "planned-PR-G"
+      "disposition": "MIGRATE",
+      "replacement": "cargo dev deploy (planner)",
+      "status": "not-started"
     },
     {
       "path": "scripts/dns-fake-server.py",
@@ -415,14 +406,13 @@
       "executable": false,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "benchmark-dns-comparison.sh",
         "benchmark-routing-comparison.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MOVE_HELPER",
+      "replacement": "tools/helpers (Rust fake DNS origin)",
+      "status": "not-started"
     },
     {
       "path": "scripts/evaluate-release-canary.py",
@@ -431,11 +421,10 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": true,
       "calls_scripts": [],
-      "is_data_not_program": false,
+      "disposition": "MIGRATE",
       "replacement": "cargo dev deploy canary",
-      "migration_status": "planned-PR-G"
+      "status": "not-started"
     },
     {
       "path": "scripts/evaluate-release-performance.py",
@@ -444,11 +433,10 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": true,
       "calls_scripts": [],
-      "is_data_not_program": false,
+      "disposition": "MIGRATE",
       "replacement": "cargo dev perf evaluate",
-      "migration_status": "planned-PR-C"
+      "status": "in-progress"
     },
     {
       "path": "scripts/export-hotspot-bundle.sh",
@@ -457,14 +445,13 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "aggregate-hotspot-samples.py",
         "idalib-export-address.py"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev perf aggregate",
+      "status": "not-started"
     },
     {
       "path": "scripts/fuzz-smoke.sh",
@@ -473,13 +460,12 @@
       "executable": true,
       "invoked_by_ci": true,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "fuzz-targets.py"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MIGRATE",
+      "replacement": "cargo dev fuzz smoke",
+      "status": "not-started"
     },
     {
       "path": "scripts/fuzz-targets.py",
@@ -488,11 +474,10 @@
       "executable": false,
       "invoked_by_ci": true,
       "invoked_by_check_sh": true,
-      "referenced_by_docs": false,
       "calls_scripts": [],
-      "is_data_not_program": false,
+      "disposition": "MIGRATE",
       "replacement": "cargo dev fuzz targets",
-      "migration_status": "invoked-by-rr-dev"
+      "status": "not-started"
     },
     {
       "path": "scripts/host-exclusive-lock-keeper.py",
@@ -501,11 +486,10 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "rr-dev benchmark host lock",
+      "status": "not-started"
     },
     {
       "path": "scripts/idalib-export-address.py",
@@ -514,11 +498,10 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "DELETE_OBSOLETE",
+      "replacement": "one-off reverse-engineering helper, no current consumer",
+      "status": "not-started"
     },
     {
       "path": "scripts/package-release.sh",
@@ -527,13 +510,12 @@
       "executable": true,
       "invoked_by_ci": true,
       "invoked_by_check_sh": true,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "release-matrix.sh"
       ],
-      "is_data_not_program": false,
+      "disposition": "MIGRATE",
       "replacement": "cargo dev release package",
-      "migration_status": "planned-PR-F"
+      "status": "not-started"
     },
     {
       "path": "scripts/perf-c2c-evidence.py",
@@ -542,11 +524,10 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev perf environment",
+      "status": "not-started"
     },
     {
       "path": "scripts/perf-stat-evidence.py",
@@ -555,11 +536,10 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev perf environment",
+      "status": "not-started"
     },
     {
       "path": "scripts/profile-built-in-benchmark.sh",
@@ -568,13 +548,12 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "profile-forensics.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev bench (built-in)",
+      "status": "not-started"
     },
     {
       "path": "scripts/profile-driver.py",
@@ -583,15 +562,14 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "benchmark-matrix.sh",
         "benchmark-setup-rate.sh",
         "validate-profiles.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev perf hotspot",
+      "status": "not-started"
     },
     {
       "path": "scripts/profile-forensics.sh",
@@ -600,13 +578,12 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "benchmark-contract.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev perf hotspot",
+      "status": "not-started"
     },
     {
       "path": "scripts/profile-report.py",
@@ -615,11 +592,10 @@
       "executable": false,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev perf hotspot",
+      "status": "not-started"
     },
     {
       "path": "scripts/profile-summarize.py",
@@ -628,11 +604,10 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MIGRATE",
+      "replacement": "cargo dev perf hotspot",
+      "status": "not-started"
     },
     {
       "path": "scripts/record-delay-reader-test-evidence.sh",
@@ -641,11 +616,10 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "rr-dev evidence capture",
+      "status": "not-started"
     },
     {
       "path": "scripts/release-matrix.sh",
@@ -654,13 +628,12 @@
       "executable": true,
       "invoked_by_ci": true,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "check.sh"
       ],
-      "is_data_not_program": false,
+      "disposition": "MIGRATE",
       "replacement": "cargo dev release matrix",
-      "migration_status": "planned-PR-F"
+      "status": "not-started"
     },
     {
       "path": "scripts/run-dual-vps-canary.sh",
@@ -669,14 +642,13 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "deploy-release-vps.sh",
         "evaluate-release-canary.py"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev deploy canary",
+      "status": "not-started"
     },
     {
       "path": "scripts/run-target-host-validation.sh",
@@ -685,14 +657,13 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "benchmark-matrix.sh",
         "test-xray-interop.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev check --all on target host",
+      "status": "not-started"
     },
     {
       "path": "scripts/sampling-xray-resources.sh",
@@ -701,14 +672,13 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "benchmark-contract.sh",
         "soak-test.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "BenchmarkRunner provenance capture",
+      "status": "not-started"
     },
     {
       "path": "scripts/smoke-release-assets.sh",
@@ -717,15 +687,14 @@
       "executable": true,
       "invoked_by_ci": true,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "package-release.sh",
         "release-matrix.sh",
         "test-package-release.sh"
       ],
-      "is_data_not_program": false,
+      "disposition": "MIGRATE",
       "replacement": "cargo dev release smoke",
-      "migration_status": "planned-PR-F"
+      "status": "not-started"
     },
     {
       "path": "scripts/soak-test.sh",
@@ -734,15 +703,14 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": true,
       "calls_scripts": [
         "benchmark-contract.sh",
         "cover-flight-shape-proxy.py",
         "deployment_driver.py"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev bench soak",
+      "status": "not-started"
     },
     {
       "path": "scripts/test-config-identity-fingerprint.py",
@@ -751,13 +719,12 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": true,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "config-identity-fingerprint.py"
       ],
-      "is_data_not_program": false,
-      "replacement": "cargo dev historical verify (self-test)",
-      "migration_status": "invoked-by-rr-dev"
+      "disposition": "MERGE",
+      "replacement": "rr-dev historical module tests",
+      "status": "not-started"
     },
     {
       "path": "scripts/test-descriptor-pressure.sh",
@@ -766,13 +733,12 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": true,
       "calls_scripts": [
         "benchmark-contract.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev bench pressure",
+      "status": "not-started"
     },
     {
       "path": "scripts/test-openssl-no-ccs-interop.sh",
@@ -781,13 +747,12 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "benchmark-contract.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev bench interop",
+      "status": "not-started"
     },
     {
       "path": "scripts/test-package-release.sh",
@@ -796,7 +761,6 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": true,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "aggregate-release.sh",
         "build-release.sh",
@@ -805,9 +769,9 @@
         "smoke-release-assets.sh",
         "verify-release-tag.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": "cargo dev release package (self-test)",
-      "migration_status": "invoked-by-rr-dev"
+      "disposition": "MERGE",
+      "replacement": "rr-dev release module tests",
+      "status": "not-started"
     },
     {
       "path": "scripts/test-performance-gates.py",
@@ -816,7 +780,6 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": true,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "benchmark-contract.sh",
         "benchmark-fallback-ab.sh",
@@ -827,9 +790,9 @@
         "host-exclusive-lock-keeper.py",
         "validate-deployment-netem.py"
       ],
-      "is_data_not_program": false,
-      "replacement": "cargo dev perf evaluate (self-test)",
-      "migration_status": "invoked-by-rr-dev"
+      "disposition": "MERGE",
+      "replacement": "rr-dev perf module tests",
+      "status": "not-started"
     },
     {
       "path": "scripts/test-profile-cgroup-evidence.py",
@@ -838,13 +801,12 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "profile-summarize.py"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "DELETE_OBSOLETE",
+      "replacement": "superseded by rr-dev doctor cgroup detection",
+      "status": "not-started"
     },
     {
       "path": "scripts/test-release-canary.py",
@@ -853,13 +815,12 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": true,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "evaluate-release-canary.py"
       ],
-      "is_data_not_program": false,
-      "replacement": "cargo dev deploy canary (self-test)",
-      "migration_status": "invoked-by-rr-dev"
+      "disposition": "MERGE",
+      "replacement": "rr-dev deploy module tests",
+      "status": "not-started"
     },
     {
       "path": "scripts/test-xray-interop.sh",
@@ -868,13 +829,12 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": true,
       "calls_scripts": [
         "benchmark-contract.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev bench xray (interop workload)",
+      "status": "not-started"
     },
     {
       "path": "scripts/tls-record-delay-fixture.py",
@@ -883,11 +843,10 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MOVE_DATA",
+      "replacement": "benchmarks/fixtures/ (generator kept as data-producing helper)",
+      "status": "not-started"
     },
     {
       "path": "scripts/tls-shape-helper.py",
@@ -896,11 +855,10 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MOVE_HELPER",
+      "replacement": "tools/helpers (Rust tls-shape helper)",
+      "status": "not-started"
     },
     {
       "path": "scripts/tls-shape-reference.c",
@@ -909,13 +867,12 @@
       "executable": false,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [
         "benchmark-tls-shape.sh"
       ],
-      "is_data_not_program": false,
+      "disposition": "MOVE_DATA",
       "replacement": "benchmarks/fixtures/tls-shape-reference.c",
-      "migration_status": "relocate-fixture"
+      "status": "not-started"
     },
     {
       "path": "scripts/validate-deployment-netem.py",
@@ -924,11 +881,10 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev bench deployment (netem)",
+      "status": "not-started"
     },
     {
       "path": "scripts/validate-ipv6-e2e.sh",
@@ -937,13 +893,12 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": true,
       "calls_scripts": [
         "test-openssl-no-ccs-interop.sh"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev bench ipv6",
+      "status": "not-started"
     },
     {
       "path": "scripts/validate-profiles.sh",
@@ -952,16 +907,15 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": true,
       "calls_scripts": [
         "benchmark-contract.sh",
         "build-release.sh",
         "profile-driver.py",
         "profile-summarize.py"
       ],
-      "is_data_not_program": false,
-      "replacement": null,
-      "migration_status": "pending"
+      "disposition": "MERGE",
+      "replacement": "cargo dev bench profiles",
+      "status": "not-started"
     },
     {
       "path": "scripts/verify-release-tag.sh",
@@ -970,20 +924,10 @@
       "executable": true,
       "invoked_by_ci": true,
       "invoked_by_check_sh": false,
-      "referenced_by_docs": false,
       "calls_scripts": [],
-      "is_data_not_program": false,
+      "disposition": "MIGRATE",
       "replacement": "cargo dev release verify-tag",
-      "migration_status": "planned-PR-F"
-    }
-  ],
-  "migrated": [
-    {
-      "path": "scripts/check-docs.py",
-      "lines": 206,
-      "replacement": "cargo dev docs check",
-      "status": "deleted-after-parity",
-      "parity_evidence": "identical stdout and exit status on a clean tree; identical exit status across 7 injected failure classes plus one negative control (image references must not be validated)"
+      "status": "not-started"
     }
   ]
 }

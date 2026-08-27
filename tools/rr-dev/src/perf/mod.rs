@@ -17,6 +17,7 @@
 
 pub mod bootstrap;
 pub mod contract;
+pub mod evaluator;
 pub mod evidence;
 pub mod pairing;
 pub mod stats;
