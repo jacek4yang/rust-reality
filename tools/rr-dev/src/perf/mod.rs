@@ -19,5 +19,6 @@ pub mod bootstrap;
 pub mod contract;
 pub mod evaluator;
 pub mod evidence;
+pub mod json_out;
 pub mod pairing;
 pub mod stats;
