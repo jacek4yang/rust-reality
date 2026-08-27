@@ -18,6 +18,7 @@ use std::{path::PathBuf, process::ExitCode};
 use clap::{Parser, Subcommand};
 
 mod check;
+mod docs;
 mod doctor;
 mod process;
 
@@ -43,6 +44,17 @@ enum Command {
         #[arg(long)]
         all: bool,
     },
+    /// Documentation tooling.
+    Docs {
+        #[command(subcommand)]
+        command: DocsCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum DocsCommand {
+    /// Validate bilingual coverage, local links, stale wording and release headlines.
+    Check,
 }
 
 fn main() -> ExitCode {
@@ -51,6 +63,18 @@ fn main() -> ExitCode {
 
     match cli.command {
         Command::Doctor => run_doctor(),
+        Command::Docs { command } => match command {
+            DocsCommand::Check => {
+                let report = docs::check(&repo);
+                if report.is_clean() {
+                    println!("{}", report.render());
+                    ExitCode::SUCCESS
+                } else {
+                    eprint!("{}", report.render());
+                    ExitCode::FAILURE
+                }
+            }
+        },
         Command::Check { all } => {
             let scope = if all {
                 check::Scope::All

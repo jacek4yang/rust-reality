@@ -1,10 +1,10 @@
 {
   "generated_by": "hand-audited; regenerate with `cargo dev inventory` once PR B lands",
-  "total_files": 63,
-  "total_lines": 25824,
+  "total_files": 62,
+  "total_lines": 25618,
   "by_language": {
     "data": 1,
-    "python": 25,
+    "python": 24,
     "bash": 36,
     "c": 1
   },
@@ -21,7 +21,6 @@
   ],
   "invoked_by_check_sh": [
     "scripts/active-probe-gate.py",
-    "scripts/check-docs.py",
     "scripts/check-performance-contract.py",
     "scripts/config-identity-fingerprint.py",
     "scripts/fuzz-targets.py",
@@ -316,19 +315,6 @@
       "migration_status": "planned-PR-F"
     },
     {
-      "path": "scripts/check-docs.py",
-      "language": "python",
-      "lines": 206,
-      "executable": false,
-      "invoked_by_ci": false,
-      "invoked_by_check_sh": true,
-      "referenced_by_docs": false,
-      "calls_scripts": [],
-      "is_data_not_program": false,
-      "replacement": "cargo dev docs check",
-      "migration_status": "invoked-by-rr-dev"
-    },
-    {
       "path": "scripts/check-performance-contract.py",
       "language": "python",
       "lines": 48,
@@ -354,7 +340,6 @@
       "referenced_by_docs": true,
       "calls_scripts": [
         "active-probe-gate.py",
-        "check-docs.py",
         "check-performance-contract.py",
         "config-identity-fingerprint.py",
         "fuzz-targets.py",
@@ -703,7 +688,6 @@
       "referenced_by_docs": false,
       "calls_scripts": [
         "benchmark-matrix.sh",
-        "check-docs.py",
         "test-xray-interop.sh"
       ],
       "is_data_not_program": false,
@@ -991,6 +975,15 @@
       "is_data_not_program": false,
       "replacement": "cargo dev release verify-tag",
       "migration_status": "planned-PR-F"
+    }
+  ],
+  "migrated": [
+    {
+      "path": "scripts/check-docs.py",
+      "lines": 206,
+      "replacement": "cargo dev docs check",
+      "status": "deleted-after-parity",
+      "parity_evidence": "identical stdout and exit status on a clean tree; identical exit status across 7 injected failure classes plus one negative control (image references must not be validated)"
     }
   ]
 }

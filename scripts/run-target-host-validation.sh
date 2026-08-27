@@ -64,7 +64,7 @@ else
 fi
 record "benches-compile" cargo bench --workspace --no-run || failures=$((failures + 1))
 record "fuzz-compile" cargo check --manifest-path fuzz/Cargo.toml || failures=$((failures + 1))
-record "docs-links" python3 scripts/check-docs.py || failures=$((failures + 1))
+record "docs-links" cargo dev docs check || failures=$((failures + 1))
 
 if (( skip_benchmarks == 0 )); then
     xray=${XRAY_BIN:-xray}
