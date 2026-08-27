@@ -43,7 +43,7 @@ target、features、主机、内核、负载、原始样本和完整性结果；
 
 REALITY/VLESS 身份是持久部署状态。正常升级必须保持密钥对应关系、UUID、short
 ID、SNI/target、flow、endpoint、routing 与 outbound 语义。配置秘密不得打印
-或进入公开工件；迁移前后用 `config-identity-fingerprint.py` 只比较指纹。
+或进入公开工件；迁移前后用 `cargo dev config fingerprint` 只比较指纹。
 
 首次迁移先复制已知良好二进制和兼容配置作为最小回滚包。
 `deploy-release-vps.sh stage` 在不切换 CURRENT 的情况下验证版本、SHA、`check`

@@ -102,7 +102,7 @@ REALITY/VLESS identity is persistent deployment state. Normal upgrades preserve
 the private/public-key relationship, VLESS UUIDs, short IDs, SNI/target policy,
 flow, endpoint, routing, and outbound semantics. Secret-bearing configuration
 is never printed or stored in public artifacts. Compare migrations using
-`config-identity-fingerprint.py`, which emits hashes rather than values.
+`cargo dev config fingerprint`, which emits hashes rather than values.
 
 The first migration copies the known-good binary and compatible config into a
 minimal rollback bundle before replacing the old active layout. Thereafter:
