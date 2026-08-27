@@ -17,6 +17,7 @@
 
 pub mod bootstrap;
 pub mod contract;
+pub mod environment;
 pub mod evaluator;
 pub mod evidence;
 pub mod json_in;

@@ -25,6 +25,16 @@ const K: [u32; 64] = [
     0xc671_78f2,
 ];
 
+/// Returns the lowercase hex SHA-256 of a file's contents.
+///
+/// # Errors
+///
+/// Returns a message when the file cannot be read.
+pub fn sha256_file(path: &std::path::Path) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    Ok(sha256_hex(&bytes))
+}
+
 /// Returns the lowercase hex SHA-256 of `data`.
 #[must_use]
 pub fn sha256_hex(data: &[u8]) -> String {

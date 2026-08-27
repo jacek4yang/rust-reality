@@ -52,8 +52,7 @@ The machine-readable protected-cell contract is
 `benchmarks/contracts/protected-metrics-v1.json`. The immutable v1.6.1
 measurement foundation in `benchmarks/baselines/v1.6.1-cache-foundation.json`
 records the clean-main binary/compiler/host identity, important structure sizes,
-and the existing zero-allocation record-path assertions. `perf-stat-evidence.py`
-and `perf-c2c-evidence.py` verify the measured binary hash and emit atomic JSON;
+and the existing zero-allocation record-path assertions. `cargo dev perf environment --tool stat` and `--tool c2c` verify the measured binary hash and emit atomic JSON;
 when kernel or VPS policy denies an event, they record `UNAVAILABLE` with the
 exact diagnostic instead of manufacturing a measurement.
 
