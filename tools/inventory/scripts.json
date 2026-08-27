@@ -23,10 +23,10 @@
     "DELETE_OBSOLETE": "no longer provides useful behaviour; deleted rather than ported"
   },
   "totals": {
-    "files": 61,
+    "files": 60,
     "lines": 25618,
     "bash": 36,
-    "python": 23,
+    "python": 22,
     "data_or_other": 2,
     "invoked_by_ci": 9,
     "by_disposition": {
@@ -54,6 +54,12 @@
       "disposition": "MIGRATE",
       "status": "deleted-after-parity",
       "parity_evidence": "benchmarks/evidence/evaluator-authority-transfer-acceptance.json: recorded v1.8.0 replay byte-identical after normalising exactly evaluator.path and evaluator.sha256; 32 protected metrics; 0 historical verdict changes; 10 of 10 exit-code classes matched; the repository's existing synthetic gate suite passes against the Rust binary including the regression class"
+    },
+    {
+      "path": "scripts/test-profile-cgroup-evidence.py",
+      "disposition": "DELETE_OBSOLETE",
+      "status": "deleted",
+      "reason": "zero callers anywhere in the repository; cgroup detection is now covered by cargo dev doctor"
     }
   ],
   "scripts": [
@@ -495,9 +501,10 @@
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
       "calls_scripts": [],
-      "disposition": "DELETE_OBSOLETE",
-      "replacement": "one-off reverse-engineering helper, no current consumer",
-      "status": "not-started"
+      "disposition": "MERGE",
+      "replacement": "cargo dev perf hotspot (hotspot-bundle family)",
+      "status": "not-started",
+      "disposition_correction": "was DELETE_OBSOLETE; export-hotspot-bundle.sh invokes it, so it is part of the hotspot family and shares that family's disposition"
     },
     {
       "path": "scripts/package-release.sh",
@@ -791,20 +798,6 @@
       "status": "not-started"
     },
     {
-      "path": "scripts/test-profile-cgroup-evidence.py",
-      "language": "python",
-      "lines": 248,
-      "executable": true,
-      "invoked_by_ci": false,
-      "invoked_by_check_sh": false,
-      "calls_scripts": [
-        "profile-summarize.py"
-      ],
-      "disposition": "DELETE_OBSOLETE",
-      "replacement": "superseded by rr-dev doctor cgroup detection",
-      "status": "not-started"
-    },
-    {
       "path": "scripts/test-release-canary.py",
       "language": "python",
       "lines": 79,
@@ -964,6 +957,22 @@
       "scripts/v150-release-gates": "historical v1.5.0 gate harness (7 sh, 2 py) - PRESERVE_EVIDENCE",
       "scripts/v151-release-gates": "historical v1.5.1 gate harness (7 sh, 2 py) - PRESERVE_EVIDENCE",
       "scripts/v16-release-gates": "historical v1.6.0 gate harness (7 sh, 2 py) - PRESERVE_EVIDENCE"
+    }
+  },
+  "audit": {
+    "profiling_hotspot_family": {
+      "members": [
+        "export-hotspot-bundle.sh",
+        "profile-driver.py",
+        "profile-forensics.sh",
+        "profile-report.py",
+        "profile-summarize.py",
+        "aggregate-hotspot-samples.py",
+        "idalib-export-address.py",
+        "profile-built-in-benchmark.sh"
+      ],
+      "ci_or_gate_references": 0,
+      "finding": "the entire family is manual investigation tooling with no CI, gate or release caller; it is reachable only by hand. Disposition remains MERGE into cargo dev perf hotspot, but the family carries no blocking dependency, so it can be migrated or deleted late in the programme without risk to CI or release."
     }
   }
 }
