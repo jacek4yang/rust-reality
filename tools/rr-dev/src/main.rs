@@ -21,6 +21,7 @@ mod check;
 mod checks;
 mod docs;
 mod doctor;
+mod fuzz;
 mod perf;
 mod process;
 mod release;
@@ -61,6 +62,35 @@ enum Command {
     Release {
         #[command(subcommand)]
         command: ReleaseCommand,
+    },
+    /// Fuzzing: validate the target manifest and run deterministic smoke passes.
+    Fuzz {
+        #[command(subcommand)]
+        command: FuzzCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum FuzzCommand {
+    /// Validate the fuzz manifest and print the (optionally sharded) target list.
+    Targets {
+        /// Shard index (0-based); requires --shard-count.
+        #[arg(long)]
+        shard_index: Option<usize>,
+        /// Total shard count; requires --shard-index.
+        #[arg(long)]
+        shard_count: Option<usize>,
+    },
+    /// Run a deterministic short libFuzzer smoke pass over the targets.
+    Smoke {
+        /// Targets to smoke; all declared targets when omitted.
+        targets: Vec<String>,
+        /// Shard index (0-based) to smoke; requires --shard-count.
+        #[arg(long)]
+        shard_index: Option<usize>,
+        /// Total shard count; requires --shard-index.
+        #[arg(long)]
+        shard_count: Option<usize>,
     },
 }
 
@@ -169,6 +199,7 @@ fn main() -> ExitCode {
             }
         },
         Command::Release { command } => run_release(&repo, command),
+        Command::Fuzz { command } => run_fuzz(&repo, command),
         Command::Docs { command } => match command {
             DocsCommand::Check => {
                 let report = docs::check(&repo);
@@ -317,5 +348,77 @@ fn run_release(repo: &PathBuf, command: ReleaseCommand) -> ExitCode {
             eprintln!("{error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+
+/// Dispatches a `cargo dev fuzz` subcommand.
+///
+/// `targets` prints the validated (optionally sharded) target list, one per line,
+/// as the retired `fuzz-targets.py` did. `smoke` runs the deterministic libFuzzer
+/// pass; with a shard it resolves that shard first, collapsing the shell pipeline
+/// `security.yml` used into one invocation.
+fn run_fuzz(repo: &std::path::Path, command: FuzzCommand) -> ExitCode {
+    match command {
+        FuzzCommand::Targets {
+            shard_index,
+            shard_count,
+        } => {
+            let names = match resolve_targets(repo, shard_index, shard_count) {
+                Ok(names) => names,
+                Err(error) => {
+                    eprintln!("{error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            println!("{}", names.join("\n"));
+            ExitCode::SUCCESS
+        }
+        FuzzCommand::Smoke {
+            targets,
+            shard_index,
+            shard_count,
+        } => {
+            let selected = if shard_index.is_some() || shard_count.is_some() {
+                if !targets.is_empty() {
+                    eprintln!("fuzz smoke: pass either explicit targets or a shard, not both");
+                    return ExitCode::FAILURE;
+                }
+                match resolve_targets(repo, shard_index, shard_count) {
+                    Ok(names) => names,
+                    Err(error) => {
+                        eprintln!("{error}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            } else {
+                targets
+            };
+            match fuzz::smoke::smoke(repo, &selected) {
+                Ok(message) => {
+                    println!("{message}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+    }
+}
+
+/// Resolves the full or sharded target list, requiring both shard arguments together.
+fn resolve_targets(
+    repo: &std::path::Path,
+    shard_index: Option<usize>,
+    shard_count: Option<usize>,
+) -> Result<Vec<String>, String> {
+    match (shard_index, shard_count) {
+        (None, None) => fuzz::targets::all(repo).map_err(|error| error.to_string()),
+        (Some(index), Some(count)) => {
+            fuzz::targets::shard(repo, index, count).map_err(|error| error.to_string())
+        }
+        _ => Err("--shard-index and --shard-count must be supplied together".to_owned()),
     }
 }

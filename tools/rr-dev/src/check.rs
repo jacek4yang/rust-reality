@@ -243,24 +243,22 @@ fn shell_syntax_steps(repo: &Path) -> Vec<Step> {
 
 /// The gate validators.
 ///
-/// Two of these are now native rr-dev checks that own their policy directly: the
-/// active-probe manifest and the performance/cache contract. The fuzz manifest
-/// stays external for now because `security.yml` also invokes `fuzz-targets.py`;
-/// it migrates as one unit with that workflow in the fuzz slice. The remaining
-/// three are Python test harnesses that verify modules migrated in later slices;
-/// they stay external and are skipped automatically once their scripts are gone.
+/// Three of these are native rr-dev checks that own their policy directly: the
+/// fuzz manifest, the active-probe manifest and the performance/cache contract.
+/// The remaining three are Python test harnesses that verify modules migrated in
+/// later slices; they stay external and are skipped automatically once their
+/// scripts are gone.
 fn validator_steps(repo: &Path, scope: Scope) -> Vec<Step> {
     let mut steps = Vec::new();
 
-    if repo.join("scripts/fuzz-targets.py").is_file() {
-        steps.push(Step::External {
-            label: "python3 scripts/fuzz-targets.py".to_owned(),
-            tool: Tool::new("python3")
-                .arg("scripts/fuzz-targets.py")
-                .current_dir(repo)
-                .streaming(),
-        });
-    }
+    steps.push(Step::Native {
+        label: "fuzz target manifest".to_owned(),
+        run: |repo| {
+            crate::fuzz::targets::all(repo)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        },
+    });
     steps.push(Step::Native {
         label: "active-probe manifest".to_owned(),
         run: |repo| {
@@ -428,7 +426,7 @@ mod tests {
         // to the gate label that replaced them; the rest still run externally.
         let coverage: [(&str, &str); 12] = [
             ("cargo dev docs check", "cargo dev docs check"),
-            ("fuzz-targets.py", "fuzz-targets.py"),
+            ("fuzz-targets.py", "fuzz target manifest"),
             ("active-probe-gate.py", "active-probe manifest"),
             ("check-performance-contract.py", "performance/cache contract"),
             ("test-performance-gates.py", "test-performance-gates.py"),
