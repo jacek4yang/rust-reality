@@ -1,5 +1,9 @@
 [workspace]
 members = [".", "crates/rr-linux", "crates/rr-session"]
+# `dev/` is an independent workspace holding development tooling. Excluding it
+# keeps development-only dependencies out of the production dependency graph,
+# release artifacts and supply-chain policy.
+exclude = ["dev"]
 resolver = "3"
 
 [package]

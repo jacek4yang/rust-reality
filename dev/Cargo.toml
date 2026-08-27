@@ -1,0 +1,15 @@
+# Development tooling lives in its own workspace on purpose.
+#
+# The production rust-reality dependency graph must not grow because a developer
+# command wants an argument parser or a JSON serialiser. Keeping `dev/` out of the
+# production workspace means `cargo build` for the server never sees these crates,
+# and `cargo deny`/`cargo audit` policy for the shipped binary stays unaffected.
+[workspace]
+members = ["rr-dev"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.96"
+license = "MIT OR Apache-2.0"
+publish = false
