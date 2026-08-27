@@ -16,4 +16,6 @@
 //! evidence plumbing.
 
 pub mod bootstrap;
+pub mod evidence;
+pub mod pairing;
 pub mod stats;
