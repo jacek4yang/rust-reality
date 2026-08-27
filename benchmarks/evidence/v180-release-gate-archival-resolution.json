@@ -1,0 +1,47 @@
+{
+  "appliesTo": "artifacts/v180-release-gate/gates",
+  "durabilityCeiling": "Archiving the two recoverable artifacts is necessary but NOT sufficient for durable replay of v1.8.0 evidence. The binding constraint is the lock-file device:inode, which no archival mechanism can restore. Full replay durability requires an evidence schema change for future runs, not an archival fix for past ones.",
+  "kind": "archival-resolution",
+  "originalEvidenceModified": false,
+  "principle": {
+    "durableIdentity": "a SHA-256 records what was used",
+    "provenance": "an absolute execution path records where a run happened",
+    "rule": "historical replay resolves external inputs by content identity; a path is never the durable root of trust"
+  },
+  "purpose": "Later durability metadata for the v1.8.0 release gate. This file is NOT part of the original recorded evidence and must never be read as such. The original evidence answers 'what was recorded at release time'; this sidecar answers 'how can those exact external bytes still be recovered today'.",
+  "resolution": [
+    {
+      "archivedObject": "benchmarks/evidence/objects/sha256/817aab781f3db676b574645d90e0d0a2c49143cb37a5cc77517eaa0b739eed14/benchmark-contract.sh",
+      "archivedSha256": "817aab781f3db676b574645d90e0d0a2c49143cb37a5cc77517eaa0b739eed14",
+      "class": "CONTRACT",
+      "recordedPath": "/home/jacek/work/kimi-rust-reality-performance/worktrees/v18-final/scripts/benchmark-contract.sh",
+      "recordedSha256": "817aab781f3db676b574645d90e0d0a2c49143cb37a5cc77517eaa0b739eed14",
+      "verifiedAtCapture": true
+    },
+    {
+      "archivedObject": "benchmarks/evidence/objects/sha256/e117f3d1e939e4a9170834d3cd8fac304eeb6c07d348b1ead6a3e7e31359b431/host-exclusive-lock-keeper.py",
+      "archivedSha256": "e117f3d1e939e4a9170834d3cd8fac304eeb6c07d348b1ead6a3e7e31359b431",
+      "class": "EXECUTABLE",
+      "recordedPath": "/home/jacek/work/kimi-rust-reality-performance/worktrees/v18-final/scripts/host-exclusive-lock-keeper.py",
+      "recordedSha256": "e117f3d1e939e4a9170834d3cd8fac304eeb6c07d348b1ead6a3e7e31359b431",
+      "verifiedAtCapture": true
+    }
+  ],
+  "schemaVersion": 1,
+  "unresolvable": [
+    {
+      "class": "LOCK_FILE",
+      "consequence": "replay of this evidence stops working after the next reboot of this host",
+      "field": "hostExclusiveLock.path + hostExclusiveLock.deviceInode",
+      "reason": "A device:inode pair is a runtime property of one inode on one filesystem. It cannot be archived or reconstructed, and the file is a zero-byte lock in /tmp that will not survive a reboot. No content-addressed mechanism can restore it.",
+      "recordedValue": "/tmp/v18-bench.lock at device:inode 43:509895"
+    },
+    {
+      "class": "EXECUTABLE",
+      "consequence": "replay breaks on Python toolchain change",
+      "field": "hostExclusiveLock.keeperExe",
+      "reason": "Not repository content. The evaluator requires the path to exist and be canonical, so a toolchain upgrade or cache prune breaks it. Archiving a Python interpreter into the repository is not a defensible response.",
+      "recordedValue": "a uv-managed CPython 3.14.6 interpreter path"
+    }
+  ]
+}
