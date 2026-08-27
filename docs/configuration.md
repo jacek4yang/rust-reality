@@ -716,13 +716,21 @@ be supplied.
 
 Per field the effective value is chosen in this order:
 
-1. present in `advanced.overrides` — operator-pinned, reported as `override`;
+1. present in `advanced.overrides` — operator-pinned, reported as
+   `operator-override`;
 2. otherwise present in `advanced.limits` with a value differing from the default
-   — operator-pinned, reported as `override` (the pre-existing behaviour, retained
-   so existing configurations resolve identically);
+   — operator-pinned, reported as `operator-legacy-limit` (the pre-existing
+   behaviour, retained so existing configurations resolve identically);
 3. otherwise, under `startup` or `adaptive`, the derived value, reported as
-   `derived`;
+   `startup-derived`;
 4. otherwise the built-in default, reported as `default`.
+
+The two operator labels are distinguished on purpose: with two input languages an
+operator needs to see *which* one supplied a number. `startup-derived` is likewise
+explicit that the value came from startup derivation, not from the adaptive
+controller — the controller only moves selected soft admission and direct-dial
+ceilings while the process runs, and never retunes a startup-derived field such as
+`relay.bufferBytes`.
 
 `runtime explain` prints the resolved source for every field, so a pin that is not
 taking effect is visible without reading source.
@@ -917,7 +925,8 @@ any listener binds. One `runtime_plan_report` log event at startup records
 the resolved resource mode, the tuning mode and objective, and the effective
 runtime pool sizes. `rust-reality runtime explain --config …` prints the same
 plan offline: the detected machine, the resolved profile, the effective value
-of every field with its source (`derived`, `override`, or `default`), and the
+of every field with its source (`startup-derived`, `operator-override`,
+`operator-legacy-limit`, or `default`), and the
 applied bounds.
 
 The effective policy is cold. A reload re-derives the candidate against the

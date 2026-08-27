@@ -654,11 +654,16 @@ connectTimeoutMs` 并留有余量：首个密封记录只有在转移被读取�
 
 每个字段的生效取值按以下顺序选择：
 
-1. 出现在 `advanced.overrides` 中——运维钉死，报告为 `override`；
+1. 出现在 `advanced.overrides` 中——运维钉死，报告为 `operator-override`；
 2. 否则出现在 `advanced.limits` 中且取值不同于默认值——运维钉死，报告为
-   `override`（保留原有行为，使既有配置解析结果完全不变）；
-3. 否则在 `startup` 或 `adaptive` 下取推导值，报告为 `derived`；
+   `operator-legacy-limit`（保留原有行为，使既有配置解析结果完全不变）；
+3. 否则在 `startup` 或 `adaptive` 下取推导值，报告为 `startup-derived`；
 4. 否则取内置默认值，报告为 `default`。
+
+两个运维标签刻意区分：存在两种输入语言时，运维需要看到究竟是哪一种提供了数值。
+`startup-derived` 同样明确表示取值来自启动推导，而非自适应控制器——控制器只在进程
+运行期间移动选定的准入与直连软上限，绝不会重新调整 `relay.bufferBytes` 这类启动
+推导字段。
 
 `runtime explain` 会打印每个字段的来源，因此未生效的钉死无需阅读源码即可发现。
 
@@ -834,7 +839,8 @@ autotuner 也不会产生的数值。
 启动时发出一条 `runtime_plan_report` 日志事件，记录解析出的资源模式、调谐模式
 与目标、以及生效的运行时线程池大小。`rust-reality runtime explain --config …`
 离线打印同一份方案：检测到的机器、解析出的 profile、每个字段的生效值及其来源
-（`derived`、`override` 或 `default`）以及所应用的上下界。
+（`startup-derived`、`operator-override`、`operator-legacy-limit` 或 `default`）
+以及所应用的上下界。
 
 生效策略是冷的。热更新会用当前机器视图重新推导候选配置，只要推导结果会不同就
 拒绝——包括仅由启动后 cgroup 边界变化引起的漂移——因为 admission 池在进程启动时

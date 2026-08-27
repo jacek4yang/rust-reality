@@ -22,7 +22,12 @@ use crate::{
 };
 
 /// The schema version of the JSON report. Bump on any shape change.
-pub const EXPLAIN_SCHEMA_VERSION: u32 = 1;
+///
+/// Version 2 split the single `override` source into `operator-override` and
+/// `operator-legacy-limit`, and renamed `derived` to `startup-derived`, so a
+/// consumer can tell which input language supplied a pinned value and cannot
+/// mistake startup derivation for the adaptive controller.
+pub const EXPLAIN_SCHEMA_VERSION: u32 = 2;
 
 /// One complete `runtime explain` report.
 #[derive(Clone, Debug, Serialize)]
@@ -332,7 +337,7 @@ mod tests {
             .iter()
             .find(|field| field["field"] == "resourceGovernor.maxConnections")
             .expect("maxConnections is explained");
-        assert_eq!(connections["source"], "derived");
+        assert_eq!(connections["source"], "startup-derived");
         assert_eq!(connections["multiplier"], 1.0);
         assert_eq!(connections["floor"], 64);
         let timeouts = fields
@@ -362,12 +367,15 @@ mod tests {
             .find(|field| field["field"] == "resourceGovernor.maxConnections")
             .expect("maxConnections is explained");
         assert_eq!(pinned["value"], 100_000);
-        assert_eq!(pinned["source"], "override");
+        assert_eq!(
+            pinned["source"], "operator-legacy-limit",
+            "advanced.limits is the legacy input language and is labelled as such"
+        );
         let derived = fields
             .iter()
             .find(|field| field["field"] == "resourceGovernor.maxHandshakes")
             .expect("maxHandshakes is explained");
-        assert_eq!(derived["source"], "derived");
+        assert_eq!(derived["source"], "startup-derived");
     }
 
     #[test]

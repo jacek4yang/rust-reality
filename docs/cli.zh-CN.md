@@ -95,9 +95,15 @@ Tokio 线程池尺寸，并完全按 `serve` 启动时的方式计算生效的�
 离线：不绑定监听器、不运行基准，也不接触任何运行中的实例。
 
 人类可读输出列出机器视图、解析出的 profile 与调谐设置、启动拓扑、每个策略字段
-的生效值与来源（`derived`、`override` 或 `default`）、目标乘数和安全上下限，
+的生效值与来源（`startup-derived`、`operator-override`、`operator-legacy-limit`
+或 `default`）、目标乘数和安全上下限，
 以及仅供参考的内核调优建议（进程绝不写 sysctl）。`--json` 以稳定模式
-（`schemaVersion: 1`）输出同一份报告，便于自动化。
+（`schemaVersion: 2`）输出同一份报告，便于自动化。
+
+schema 2 将原本单一的 `override` 来源拆分为 `operator-override`（因出现在
+`advanced.overrides` 中而钉死）与 `operator-legacy-limit`（因 `advanced.limits`
+取值不同于内置默认值而钉死），并将 `derived` 重命名为 `startup-derived`。原先匹配
+`override` 或 `derived` 的自动化需要更新；`schemaVersion` 字段使该变更可被检测。
 
 | 选项 | 必填 | 含义 |
 | --- | --- | --- |

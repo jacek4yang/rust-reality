@@ -572,10 +572,23 @@ fn to_u32(value: u64) -> u32 {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FieldSource {
     /// Derived at startup from the detected machine (`startup`/`adaptive`).
+    ///
+    /// Startup derivation, not the adaptive controller. The controller moves only
+    /// selected soft admission and direct-dial ceilings while the process runs; it
+    /// never retunes a startup-derived field such as `relay.bufferBytes`.
     Derived,
-    /// Pinned by an explicit `advanced.limits` value; always wins.
+    /// Pinned by presence in `advanced.overrides`.
+    ///
+    /// Honoured whatever the value, including a value equal to the built-in
+    /// default. Reported separately from the legacy channel so an operator can see
+    /// which input language supplied the number.
     Override,
-    /// The built-in default (`fixed` mode with no explicit value).
+    /// Pinned by an `advanced.limits` value that differs from the built-in default.
+    ///
+    /// The legacy 1.x input language. Retained for compatibility; the override
+    /// channel is the recommended way to pin a field.
+    LegacyLimit,
+    /// The built-in default: no operator value and no derivation.
     Default,
 }
 
@@ -584,10 +597,17 @@ impl FieldSource {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Derived => "derived",
-            Self::Override => "override",
+            Self::Derived => "startup-derived",
+            Self::Override => "operator-override",
+            Self::LegacyLimit => "operator-legacy-limit",
             Self::Default => "default",
         }
+    }
+
+    /// Whether an operator pinned this field through either input language.
+    #[must_use]
+    pub const fn is_operator_pinned(self) -> bool {
+        matches!(self, Self::Override | Self::LegacyLimit)
     }
 }
 
@@ -669,7 +689,7 @@ pub fn resolve_policy(
             let (value, source) = if let Some(pinned) = overrides.$section.$name {
                 (pinned, FieldSource::Override)
             } else if limits.$section.$name != default {
-                (limits.$section.$name, FieldSource::Override)
+                (limits.$section.$name, FieldSource::LegacyLimit)
             } else if derive {
                 (derived.$section.$name, FieldSource::Derived)
             } else {
@@ -699,7 +719,7 @@ pub fn resolve_policy(
             let (value, source) = if let Some(pinned) = overrides.$section.$name {
                 (pinned, FieldSource::Override)
             } else if limits.$section.$name != default {
-                (limits.$section.$name, FieldSource::Override)
+                (limits.$section.$name, FieldSource::LegacyLimit)
             } else {
                 (default, FieldSource::Default)
             };
@@ -1430,7 +1450,12 @@ mod tests {
             .find(|field| field.field == "resourceGovernor.maxConnections")
             .expect("the field is reported");
         assert_eq!(pinned.value, 100_000);
-        assert_eq!(pinned.source, FieldSource::Override);
+        assert_eq!(
+            pinned.source,
+            FieldSource::LegacyLimit,
+            "a value pinned through advanced.limits reports the legacy channel"
+        );
+        assert!(pinned.source.is_operator_pinned());
     }
 
     #[test]
@@ -1512,9 +1537,9 @@ mod tests {
         };
         assert_eq!(
             source_of("resourceGovernor.maxConnections"),
-            FieldSource::Override
+            FieldSource::LegacyLimit
         );
-        assert_eq!(source_of("relay.bufferBytes"), FieldSource::Override);
+        assert_eq!(source_of("relay.bufferBytes"), FieldSource::LegacyLimit);
         assert_eq!(
             source_of("resourceGovernor.maxHandshakes"),
             FieldSource::Derived
