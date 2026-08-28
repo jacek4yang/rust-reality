@@ -47,6 +47,10 @@ pub struct CurlTransfer {
     pub url: String,
     /// The per-transfer deadline, as the legacy scripts passed it.
     pub max_time_secs: u64,
+    /// Pass `--insecure` (self-signed HTTPS origins).
+    pub insecure: bool,
+    /// Pass `--tlsv1.3` (Vision-direct TLS origin).
+    pub tls_v1_3: bool,
 }
 
 impl Transfer for CurlTransfer {
@@ -69,23 +73,29 @@ impl Transfer for CurlTransfer {
         ] {
             curl = curl.env(name, "");
         }
-        let outcome = curl
-            .args([
-                "--fail",
-                "--silent",
-                "--show-error",
-                "--socks5-hostname",
-                &format!("127.0.0.1:{socks_port}"),
-                "--max-time",
-                &self.max_time_secs.to_string(),
-                "--output",
-                "/dev/null",
-                "--write-out",
-                "%{size_download} %{time_total}",
-                &self.url,
-            ])
-            .probe()
-            .map_err(|error| error.to_string())?;
+        let mut args = vec![
+            "--fail".to_owned(),
+            "--silent".to_owned(),
+            "--show-error".to_owned(),
+        ];
+        if self.insecure {
+            args.push("--insecure".to_owned());
+        }
+        if self.tls_v1_3 {
+            args.push("--tlsv1.3".to_owned());
+        }
+        args.extend([
+            "--socks5-hostname".to_owned(),
+            format!("127.0.0.1:{socks_port}"),
+            "--max-time".to_owned(),
+            self.max_time_secs.to_string(),
+            "--output".to_owned(),
+            "/dev/null".to_owned(),
+            "--write-out".to_owned(),
+            "%{size_download} %{time_total}".to_owned(),
+            self.url.clone(),
+        ]);
+        let outcome = curl.args(args).probe().map_err(|error| error.to_string())?;
         if !outcome.success() {
             return Err(format!(
                 "curl exited {:?}: {}",
@@ -634,6 +644,8 @@ fn drive_workload(
     let transfer = CurlTransfer {
         url: context.transfer_url.clone(),
         max_time_secs: context.transfer_max_time_secs,
+        insecure: false,
+        tls_v1_3: false,
     };
     drive_workload_with(context, binaries, ports, &transfer)
 }

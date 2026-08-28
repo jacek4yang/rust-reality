@@ -110,9 +110,9 @@ enum BenchCommand {
     List,
     /// Validate the benchmark environment (tools, host lock, workspace, ports).
     Environment,
-    /// Run a tunnel A/B suite end to end (`real-path` or `xray`).
+    /// Run a tunnel A/B suite end to end (`real-path`, `xray`, or `vision-direct`).
     Run {
-        /// Suite id: `real-path` (WAN) or `xray` (loopback concurrent).
+        /// Suite id: `real-path`, `xray`, or `vision-direct`.
         #[arg(long, default_value = "real-path")]
         suite: String,
         /// Path to the rust-reality release binary.
@@ -697,6 +697,7 @@ fn run_bench(command: &BenchCommand) -> ExitCode {
                 expected_bytes: *bytes,
                 suite_id: match suite.as_str() {
                     "xray" => "benchmark-xray".to_owned(),
+                    "vision-direct" => "benchmark-vision-direct".to_owned(),
                     _ => "benchmark-real-path".to_owned(),
                 },
                 transfer_url: url.clone().unwrap_or_else(|| {
@@ -704,7 +705,7 @@ fn run_bench(command: &BenchCommand) -> ExitCode {
                 }),
                 transfer_max_time_secs: *max_time,
                 out_dir,
-                allow_private: suite == "xray",
+                allow_private: suite == "xray" || suite == "vision-direct",
             };
             match suite.as_str() {
                 "real-path" => run_bench_run(&context),
@@ -714,10 +715,24 @@ fn run_bench(command: &BenchCommand) -> ExitCode {
                         samples: *samples,
                         concurrency: *concurrency,
                         payload_mib: *payload_mib,
+                        tls_origin: false,
+                        harness: "benchmark-xray".to_owned(),
+                    },
+                ),
+                "vision-direct" => run_bench_xray(
+                    &context,
+                    &bench::loopback::LoopbackPlan {
+                        samples: *samples,
+                        concurrency: *concurrency,
+                        payload_mib: *payload_mib,
+                        tls_origin: true,
+                        harness: "benchmark-vision-direct".to_owned(),
                     },
                 ),
                 other => {
-                    eprintln!("bench run: unknown suite {other} (known: real-path, xray)");
+                    eprintln!(
+                        "bench run: unknown suite {other} (known: real-path, xray, vision-direct)"
+                    );
                     ExitCode::from(2)
                 }
             }

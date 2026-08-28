@@ -5,7 +5,7 @@ Verify every mutable fact below before relying on it.
 ## Repository
 
 ```text
-main                2aa3c9e   (verify: git rev-parse origin/main)
+main                3075a09   (verify: git rev-parse origin/main)
 latest release      v1.8.0    (tag on 6618e9d)
 open PRs            none at time of writing; this branch opens the real-path PR
 ```
@@ -17,7 +17,7 @@ tool migrates into typed `rr-dev` functionality (`cargo dev ...`), moves to a
 fixture/helper location, or becomes inert historical evidence.
 
 ```text
-scripts/ recursively tracked        44 after this PR deletes benchmark-xray.sh
+scripts/ recursively tracked        43 after this PR deletes benchmark-vision-direct.sh
                                     (verify: git ls-files scripts/ | wc -l)
 workflow scripts/ references        0
 ```
@@ -39,13 +39,13 @@ bench real-path cargo dev bench run --suite real-path
 bench xray     cargo dev bench run --suite xray
                engine + identity + suites + origin + loopback concurrent lifecycle
                proven with local tests and live smokes (WAN real-path + loopback xray);
-               benchmark-real-path.sh and benchmark-xray.sh deleted
+               benchmark-real-path.sh, benchmark-xray.sh, and benchmark-vision-direct.sh deleted
 ```
 
 ### Remaining families
 
 ```text
-benchmark suites   remaining: vision-direct, vless-encryption, setup-rate,
+benchmark suites   remaining: vless-encryption, setup-rate,
                    setup-rate-xray, dns-comparison, routing-comparison,
                    fallback-ab, matrix, tls-shape, soak-test.sh,
                    test-descriptor-pressure.sh, test-openssl-no-ccs-interop.sh,
@@ -106,6 +106,5 @@ After this PR merges:
 1. update local main to the new HEAD;
 2. remove the merged worktree/build output;
 3. recount scripts/;
-4. migrate `benchmark-vision-direct.sh` (TLS origin variant) onto the same lifecycle;
-5. fold vless-encryption and remaining A/B tunnel variants;
-6. delete each legacy script once its suite is covered.
+4. fold vless-encryption and remaining A/B tunnel variants onto the same lifecycle;
+5. delete each legacy script once its suite is covered.
