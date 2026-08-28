@@ -1,11 +1,9 @@
 //! The canonical repository quality gate.
 //!
-//! This is a typed reimplementation of the step sequence in `scripts/check.sh`.
-//! Behavioural parity with that script is the requirement for this slice: the
-//! same steps, in the same order, with the same fail-closed semantics. Policy
-//! migration out of the Python validators happens in later slices, so for now
-//! those validators are invoked rather than reimplemented — that keeps this
-//! change reviewable and keeps one source of truth for each rule.
+//! This is the typed repository gate that replaced `scripts/check.sh` and its
+//! external Python policy validators. Repository policy runs in process; Cargo,
+//! Bash syntax validation for surviving scripts, and mature audit/build tools
+//! remain external mechanisms invoked with typed argv.
 //!
 //! Two deliberate differences from the script are documented at
 //! [`Scope::steps`]: the `bash -n` sweep is scoped to surviving scripts, and the
@@ -21,7 +19,7 @@ use crate::process::{Tool, ToolError};
 pub enum Scope {
     /// Formatting, lint and the default test profile. The fast local loop.
     Fast,
-    /// Everything CI enforces, matching `scripts/check.sh` exactly.
+    /// Everything CI enforces.
     All,
 }
 
@@ -385,50 +383,6 @@ mod tests {
             all.len() > fast.len(),
             "the full scope must add steps, otherwise the split is pointless"
         );
-    }
-
-    #[test]
-    fn the_full_scope_matches_the_legacy_script_step_for_step() {
-        let repo = repo_root();
-        let script = repo.join("scripts/check.sh");
-        if !script.is_file() {
-            // The script has been deleted by a later migration slice; parity is
-            // then guaranteed by the golden test that replaced this one.
-            return;
-        }
-        let source = std::fs::read_to_string(&script).expect("check.sh must be readable");
-        let labels: Vec<String> = Scope::All
-            .steps(&repo)
-            .into_iter()
-            .map(|step| step.label().to_owned())
-            .collect();
-        let joined = labels.join("\n");
-
-        // Each policy the legacy script enforces must be covered by a gate step.
-        // Two validators are now native rr-dev checks, so those legacy tokens map
-        // to the gate label that replaced them; the rest still run externally.
-        let coverage: [(&str, &str); 10] = [
-            ("cargo dev docs check", "cargo dev docs check"),
-            ("fuzz-targets.py", "fuzz target manifest"),
-            ("active-probe-gate.py", "active-probe manifest"),
-            ("check-performance-contract.py", "performance/cache contract"),
-            ("test-performance-gates.py", "test-performance-gates.py"),
-            ("cargo fmt --all --check", "cargo fmt --all --check"),
-            ("clippy", "clippy"),
-            ("deny", "deny"),
-            ("doc", "doc"),
-            ("nextest", "nextest"),
-        ];
-        for (legacy_token, gate_label) in coverage {
-            assert!(
-                source.contains(legacy_token),
-                "this parity test is stale: check.sh no longer mentions {legacy_token}"
-            );
-            assert!(
-                joined.contains(gate_label),
-                "the gate omits the step covering {legacy_token}: expected {gate_label}"
-            );
-        }
     }
 
     #[test]

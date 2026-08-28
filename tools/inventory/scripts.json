@@ -14,6 +14,14 @@
     "behavioural parity demonstrated for every safety- or decision-critical migration",
     "full CI green on the exact final head, then git rm -r scripts"
   ],
+  "current_state": {
+    "base_main": "787ae7092eb8505c1e93e750ede94d477db2ecdb",
+    "snapshot": "EXPECTED_POST_MERGE_PR_148",
+    "tracked_files": 41,
+    "tracked_lines": 19831,
+    "repository_owned_external_python_validators": 0,
+    "workflow_scripts_references": 0
+  },
   "dispositions": {
     "MIGRATE": "still-useful executable policy becomes typed rr-dev functionality",
     "MERGE": "behaviour absorbed into shared rr-dev infrastructure, no one-command-per-script mapping",
@@ -142,8 +150,10 @@
       "calls_scripts": [
         "benchmark-contract.sh",
         "benchmark-matrix.sh",
-        "deployment_driver.py",
-        "validate-deployment-netem.py"
+        "deployment_driver.py"
+      ],
+      "calls_cargo_dev": [
+        "cargo dev deploy netem"
       ],
       "disposition": "MERGE",
       "replacement": "cargo dev bench deployment",
@@ -779,7 +789,7 @@
     {
       "path": "scripts/test-performance-gates.py",
       "language": "python",
-      "lines": 1012,
+      "lines": 614,
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": true,
@@ -794,8 +804,8 @@
         "validate-deployment-netem.py"
       ],
       "disposition": "MERGE",
-      "replacement": "rr-dev perf module tests",
-      "status": "not-started"
+      "replacement": "bench::{host_lock,publication}, deploy::summary, and native check tests",
+      "status": "deleted-after-parity; final repository-owned external Python policy validator removed"
     },
     {
       "path": "scripts/test-release-canary.py",
@@ -872,8 +882,8 @@
       "invoked_by_check_sh": false,
       "calls_scripts": [],
       "disposition": "MERGE",
-      "replacement": "cargo dev bench deployment (netem)",
-      "status": "not-started"
+      "replacement": "cargo dev deploy netem",
+      "status": "deleted-after-parity in PR #146; surviving deployment benchmark caller switched to rr-dev"
     },
     {
       "path": "scripts/validate-ipv6-e2e.sh",
