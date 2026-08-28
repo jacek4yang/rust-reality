@@ -8,3 +8,4 @@
 
 pub mod canary;
 pub mod netem;
+pub mod summary;

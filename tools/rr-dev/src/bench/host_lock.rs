@@ -147,4 +147,45 @@ mod tests {
         }
         assert!(!dir.exists(), "lock directory removed on release");
     }
+
+    #[test]
+    fn an_early_error_releases_the_lock() {
+        fn fail_after_acquiring(path: &Path) -> Result<(), String> {
+            let _lock = HostLock::acquire(path)?;
+            Err("injected collector failure".to_owned())
+        }
+
+        let path = lock_path("early-error");
+        let _ = std::fs::remove_dir_all(lock_dir(&path));
+        assert!(fail_after_acquiring(&path).is_err());
+        let after =
+            HostLock::acquire(&path).expect("an early collector error must release the host lock");
+        drop(after);
+    }
+
+    #[test]
+    fn a_background_child_cannot_retain_the_directory_lock() {
+        let Some(sleep) = std::env::var_os("PATH").and_then(|path| {
+            std::env::split_paths(&path)
+                .map(|dir| dir.join("sleep"))
+                .find(|candidate| candidate.is_file())
+        }) else {
+            return;
+        };
+
+        let path = lock_path("background-child");
+        let _ = std::fs::remove_dir_all(lock_dir(&path));
+        let lock = HostLock::acquire(&path).expect("lock acquires");
+        let mut child = std::process::Command::new(sleep)
+            .arg("30")
+            .spawn()
+            .expect("sleep helper starts");
+
+        drop(lock);
+        let after = HostLock::acquire(&path)
+            .expect("a child process cannot inherit ownership of a directory lock");
+        drop(after);
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }

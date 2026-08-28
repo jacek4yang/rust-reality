@@ -112,7 +112,9 @@ fn evaluate(report: &Value) -> (Vec<String>, Option<&Value>, Option<&Value>) {
     let elapsed = report.optional("elapsedSeconds");
     match elapsed.and_then(int) {
         Some(value) if (480..=900).contains(&value) => {}
-        Some(_) => reasons.push("elapsedSeconds must be in the active-canary range 480..900".to_owned()),
+        Some(_) => {
+            reasons.push("elapsedSeconds must be in the active-canary range 480..900".to_owned());
+        }
         None => reasons.push("elapsedSeconds must be an integer".to_owned()),
     }
 

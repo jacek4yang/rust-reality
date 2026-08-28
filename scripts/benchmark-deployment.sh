@@ -83,7 +83,6 @@ set -Eeuo pipefail
 
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$repository/scripts/benchmark-contract.sh"
-netem_summarizer="$repository/scripts/validate-deployment-netem.py"
 cd "$repository"
 
 # --------------------------------------------------------------------------
@@ -102,7 +101,7 @@ if [[ $RR_EXPLORATORY == 1 && $xray != /* ]]; then xray=$(command -v "$xray"); f
 rr_register_binary xray "$xray" "${XRAY_SHA256:-}" xray
 xray=${RR_BINARY_PATHS[xray]}
 rr_register_harness_tree "$repository/scripts/bench-origin"
-rr_register_harness_file "$netem_summarizer"
+rr_register_harness_tree "$repository/tools/rr-dev/src"
 rr_write_contract_metadata
 out_dir=$RR_OUT_DIR
 smoke=${SMOKE:-0}
@@ -1246,7 +1245,7 @@ section_rtt() {
     if [[ $evaluate_netem_performance == 1 ]]; then
         netem_args+=(--evaluate-performance)
     fi
-    python3 "$netem_summarizer" "${netem_args[@]}" || netem_evaluation_failed=1
+    cargo dev deploy netem "${netem_args[@]}" || netem_evaluation_failed=1
 
     echo "=== after: tc qdisc show (before teardown)" | tee -a "$state/netstate.txt"
     sudo -n "$tc" qdisc show | tee -a "$state/netstate.txt"

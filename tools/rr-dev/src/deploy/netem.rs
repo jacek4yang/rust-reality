@@ -961,7 +961,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// Mirror of `netem_mechanism_fixture` in `scripts/test-performance-gates.py`.
+    /// Frozen mirror of the former `CPython` mechanism fixture.
     ///
     /// `removed_rtt_fraction` 1.0 yields a point estimate of 1.0 (PASS); 0.2
     /// yields 0.2 (FAIL the 0.65..1.35 gate). Bootstrap is exercised but the

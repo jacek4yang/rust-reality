@@ -32,6 +32,7 @@ pub mod loopback;
 pub mod origin;
 pub mod origin_tls;
 pub mod process;
+pub mod publication;
 pub mod report;
 pub mod runner;
 pub mod suites;

@@ -1,6 +1,6 @@
-# Engineering handoff — expected post-merge state for PR #146
+# Engineering handoff — expected post-merge state for PR #148
 
-This file describes the repository tree expected after PR #146 merges. While the
+This file describes the repository tree expected after PR #148 merges. While the
 PR is open, `main` remains the authoritative merged state and the PR body is the
 authoritative continuation ledger. Verify every mutable GitHub, Git, disk, and
 environment fact before relying on it.
@@ -8,8 +8,8 @@ environment fact before relying on it.
 ## Repository
 
 ```text
-base main           df3e214   (verify: git rev-parse origin/main)
-candidate           PR #146   (verify its head/state with GitHub)
+base main           787ae70   (verify: git rev-parse origin/main)
+candidate           PR #148   (verify its head/state with GitHub)
 latest release      v1.8.0    (tag on 6618e9d)
 tracking issue      #147      (durable scripts-elimination execution state)
 ```
@@ -17,12 +17,13 @@ tracking issue      #147      (durable scripts-elimination execution state)
 ## scripts/ elimination milestone — in progress
 
 ```text
-scripts/ recursively tracked        42 (verify: git ls-files scripts/ | wc -l)
+scripts/ recursively tracked        41 (verify: git ls-files scripts/ | wc -l)
 workflow scripts/ references        0
 session start                       46
 deleted this session                benchmark-real-path.sh, benchmark-xray.sh,
                                     benchmark-vision-direct.sh,
-                                    validate-deployment-netem.py
+                                    validate-deployment-netem.py,
+                                    test-performance-gates.py
 ```
 
 ### Completed families (do not redo)
@@ -36,21 +37,20 @@ bench suites   cargo dev bench run --suite {real-path,xray,vision-direct}
 pipe budget    checks::pipe_budget (native; Python extract removed)
 deploy netem   cargo dev deploy netem  (data-quality + ABBA mechanism)
                validate-deployment-netem.py DELETED
+check policy   cargo dev check --all runs zero repository-owned .py validators
+               deployment summary + lock/publication contracts are native
 ```
 
 ### Remaining — exact next actions
 
 ```text
-1. Port the remaining test-performance-gates.py contracts to native Rust:
-   deployment summary fixtures, atomic report publication, and injected
-   collector failure / lock-release behavior.
-   - then DELETE test-performance-gates.py
-   - cargo dev check --all must then run zero repo-owned .py validators
-   - KEEP deployment_driver.py until all benchmark/deployment callers migrate
+1. Migrate the core A/B benchmark family on the existing foundation:
+   fallback-ab, matrix, setup-rate, setup-rate-xray.
+   - delete all four scripts immediately after native parity
+   - do not rebuild process/workspace/lock/identity/report lifecycle
 
-2. Continue benchmark suites on the existing foundation:
-   vless-encryption, setup-rate*, dns, routing, fallback-ab, matrix, tls-shape,
-   soak, descriptor-pressure, interop/*, validate-*, sampling-*, helpers, hotspot
+2. Continue DNS/routing/VLESS, TLS/interop/IPv6, soak/profiles/resources,
+   deployment, then hotspot/final shell-contract cleanup.
 
 3. Outer workspace: ~18 GiB free; no cleanup was performed for this PR.
    Gate each expensive operation on its measured peak plus a safety reserve.
