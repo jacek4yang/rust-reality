@@ -263,6 +263,7 @@ pub fn generate_identities(
         rust_port,
         &context.cover_target,
         &context.cover_sni,
+        None,
     )?;
     let xray_keys = generate_xray_keys(context.xray_bin)?;
     Ok((rust_identity, xray_keys))
@@ -277,6 +278,11 @@ pub fn generate_identities(
 /// generate a *fresh* identity per slot, while the tunnel suites generate one for
 /// the whole run.
 ///
+/// `stderr_log` archives the generator's stderr, which the slot-based harnesses
+/// kept as `generate.log` beside the slot's other evidence — it is where the
+/// REALITY public key is announced, so a slot that failed to produce one leaves
+/// the reason on disk.
+///
 /// # Errors
 ///
 /// Returns the first failure in generation order.
@@ -286,6 +292,7 @@ pub fn generate_rust_identity(
     rust_port: u16,
     cover_target: &str,
     cover_sni: &str,
+    stderr_log: Option<&std::path::Path>,
 ) -> Result<RustIdentity, String> {
     let outcome = Tool::new(rust_bin.display().to_string())
         .args([
@@ -303,6 +310,10 @@ pub fn generate_rust_identity(
         ])
         .probe()
         .map_err(|error| format!("rust-reality config generate failed: {error}"))?;
+    if let Some(path) = stderr_log {
+        std::fs::write(path, &outcome.stderr)
+            .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+    }
     if !outcome.success() {
         return Err(format!(
             "rust-reality config generate exited {:?}: {}",

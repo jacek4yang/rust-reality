@@ -316,6 +316,7 @@ fn slot_configuration(
             ports.server,
             cover_target,
             "localhost",
+            Some(&inputs.run.slot_directory(&entry.directory_name())?.join("generate.log")),
         )?;
         let reality = RealityIdentity {
             uuid: rust_identity.uuid.clone(),

@@ -15,10 +15,10 @@
     "full CI green on the exact final head, then git rm -r scripts"
   ],
   "current_state": {
-    "base_main": "787ae7092eb8505c1e93e750ede94d477db2ecdb",
-    "snapshot": "EXPECTED_POST_MERGE_PR_148",
-    "tracked_files": 41,
-    "tracked_lines": 19831,
+    "base_main": "996e8ad0b9224609151722b4c78535b65585e1d3",
+    "snapshot": "IN_PROGRESS_PR_149_CORE_AB_ABBA",
+    "tracked_files": 40,
+    "tracked_lines": 19404,
     "repository_owned_external_python_validators": 0,
     "workflow_scripts_references": 0
   },
@@ -244,8 +244,8 @@
         "benchmark-setup-rate.sh"
       ],
       "disposition": "MERGE",
-      "replacement": "BenchmarkRunner xray adapter",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite setup-rate-xray",
+      "status": "deleted-after-parity in PR #149; wall and perf mechanisms accepted locally against real rust-reality and Xray servers"
     },
     {
       "path": "scripts/benchmark-setup-rate.sh",
