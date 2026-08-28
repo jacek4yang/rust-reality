@@ -48,6 +48,10 @@ pub struct LoopbackPlan {
     pub concurrency: usize,
     /// Payload size in MiB.
     pub payload_mib: u64,
+    /// When true, serve a TLS 1.3 HTTPS origin (Vision-direct); otherwise plain HTTP.
+    pub tls_origin: bool,
+    /// Report harness id (`benchmark-xray` or `benchmark-vision-direct`).
+    pub harness: String,
 }
 
 /// Outcome of a loopback concurrent suite run.
@@ -193,6 +197,74 @@ fn percentile(ordered: &[f64], fraction: f64) -> f64 {
     ordered[index.saturating_sub(1).min(ordered.len() - 1)]
 }
 
+/// Summary of Vision Direct promotion events parsed from the rust-reality server log.
+#[derive(Debug, Clone, Default)]
+pub struct DirectSummary {
+    /// Completed connections that emitted a Direct event.
+    pub connections: usize,
+    /// Accepted connections (includes the readiness probe).
+    pub accepted_connections: usize,
+    /// True when accepted connections <= 1 (curl likely bypassed the tunnel).
+    pub tunnel_bypass_detected: bool,
+    /// Connections that promoted the uplink to Direct.
+    pub uplink_direct: usize,
+    /// Connections that promoted the downlink to Direct.
+    pub downlink_direct: usize,
+    /// Backend name counts across uplink/downlink/relay fields.
+    pub backends: std::collections::BTreeMap<String, usize>,
+}
+
+/// Parses Vision Direct events from a rust-reality JSON log.
+#[must_use]
+pub fn parse_direct_events(log: &std::path::Path) -> DirectSummary {
+    let Ok(text) = std::fs::read_to_string(log) else {
+        return DirectSummary::default();
+    };
+    let mut summary = DirectSummary::default();
+    for line in text.lines() {
+        let line = line.trim();
+        if !line.starts_with('{') {
+            continue;
+        }
+        let Ok(value) = crate::perf::json_in::parse(line) else {
+            continue;
+        };
+        let Some(event) = value.optional("event").and_then(|v| v.as_str("event").ok()) else {
+            continue;
+        };
+        match event {
+            "connection_accepted" => summary.accepted_connections += 1,
+            "connection_completed" => {
+                summary.connections += 1;
+                if value
+                    .optional("uplink_direct")
+                    .and_then(|v| v.as_bool("uplink_direct").ok())
+                    == Some(true)
+                {
+                    summary.uplink_direct += 1;
+                }
+                if value
+                    .optional("downlink_direct")
+                    .and_then(|v| v.as_bool("downlink_direct").ok())
+                    == Some(true)
+                {
+                    summary.downlink_direct += 1;
+                }
+                for key in ["uplink_backend", "downlink_backend", "relay_backend"] {
+                    if let Some(backend) = value.optional(key).and_then(|v| v.as_str(key).ok())
+                        && !backend.is_empty()
+                    {
+                        *summary.backends.entry(backend.to_owned()).or_insert(0) += 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    summary.tunnel_bypass_detected = summary.accepted_connections <= 1;
+    summary
+}
+
 /// Assembles the schema-v1 loopback concurrent report.
 #[must_use]
 #[allow(clippy::too_many_lines)]
@@ -202,6 +274,7 @@ pub fn assemble_report(
     measurements: &[ConcurrentSample],
     order: &[String],
     binaries: &[(String, String, String)],
+    direct: Option<&DirectSummary>,
 ) -> String {
     let mut summary = std::collections::BTreeMap::new();
     for name in ["rust-reality", "xray"] {
@@ -266,9 +339,9 @@ pub fn assemble_report(
         })
         .collect();
 
-    Json::object([
+    let report = Json::object([
         ("schemaVersion", Json::Int(1)),
-        ("harness", Json::string("benchmark-xray")),
+        ("harness", Json::string(plan.harness.clone())),
         ("status", Json::string("COMPLETE")),
         ("performanceVerdict", Json::string("NOT_EVALUATED")),
         (
@@ -292,7 +365,11 @@ pub fn assemble_report(
                 ),
                 (
                     "destination",
-                    Json::string("loopback Python HTTP server"),
+                    Json::string(if plan.tls_origin {
+                        "loopback TLS 1.3 HTTPS origin (Vision Direct eligible)"
+                    } else {
+                        "loopback Python HTTP server"
+                    }),
                 ),
                 ("realityTarget", Json::string(context.cover_target.clone())),
                 (
@@ -335,8 +412,57 @@ pub fn assemble_report(
                 .collect(),
             ),
         ),
-    ])
-    .to_python_json()
+    ]);
+    // Attach Vision Direct summary when present.
+    let report = if let Some(direct) = direct {
+        let Json::Object(mut members) = report else {
+            return report.to_python_json();
+        };
+        members.insert(
+            "rustRealityDirect".to_owned(),
+            Json::object([
+                (
+                    "connections",
+                    Json::Int(i64::try_from(direct.connections).unwrap_or(i64::MAX)),
+                ),
+                (
+                    "acceptedConnections",
+                    Json::Int(i64::try_from(direct.accepted_connections).unwrap_or(i64::MAX)),
+                ),
+                (
+                    "tunnelBypassDetected",
+                    Json::Bool(direct.tunnel_bypass_detected),
+                ),
+                (
+                    "uplinkDirect",
+                    Json::Int(i64::try_from(direct.uplink_direct).unwrap_or(i64::MAX)),
+                ),
+                (
+                    "downlinkDirect",
+                    Json::Int(i64::try_from(direct.downlink_direct).unwrap_or(i64::MAX)),
+                ),
+                (
+                    "backends",
+                    Json::Object(
+                        direct
+                            .backends
+                            .iter()
+                            .map(|(key, value)| {
+                                (
+                                    key.clone(),
+                                    Json::Int(i64::try_from(*value).unwrap_or(i64::MAX)),
+                                )
+                            })
+                            .collect(),
+                    ),
+                ),
+            ]),
+        );
+        Json::Object(members)
+    } else {
+        report
+    };
+    report.to_python_json()
 }
 
 /// Runs the loopback concurrent suite end to end.
@@ -346,6 +472,7 @@ pub fn assemble_report(
 /// Returns a setup/process/workload error. A completed report with failed
 /// transfers is returned as [`RunError::Workload`] is not used here — any
 /// transfer failure aborts the suite (matching the legacy `check=True`).
+#[allow(clippy::too_many_lines)]
 pub fn run_loopback(
     context: &SuiteContext<'_>,
     plan: &LoopbackPlan,
@@ -379,19 +506,40 @@ pub fn run_loopback(
         .ok_or_else(|| RunError::Setup("could not reserve origin port".to_owned()))?;
     let payload_path = run.workspace.join("payload.bin");
     origin::write_payload(&payload_path, context.expected_bytes).map_err(RunError::Setup)?;
-    let origin = origin::launch(
-        run.workspace.path(),
-        "payload.bin",
-        context.expected_bytes,
-        origin_port,
-        &run.workspace.join("http-origin.log"),
-    )
-    .map_err(RunError::Processes)?;
-    context.transfer_url = origin.url();
+    let origin = if plan.tls_origin {
+        let (cert, key) = crate::bench::origin_tls::generate_self_signed(run.workspace.path())
+            .map_err(RunError::Setup)?;
+        let origin = crate::bench::origin_tls::launch_https(
+            run.workspace.path(),
+            "payload.bin",
+            context.expected_bytes,
+            origin_port,
+            &cert,
+            &key,
+            &run.workspace.join("https-origin.log"),
+        )
+        .map_err(RunError::Processes)?;
+        // HTTPS URL for the TLS origin.
+        context.transfer_url = format!("https://127.0.0.1:{origin_port}/payload.bin");
+        origin
+    } else {
+        let origin = origin::launch(
+            run.workspace.path(),
+            "payload.bin",
+            context.expected_bytes,
+            origin_port,
+            &run.workspace.join("http-origin.log"),
+        )
+        .map_err(RunError::Processes)?;
+        context.transfer_url = origin.url();
+        origin
+    };
 
     let transfer = CurlTransfer {
         url: context.transfer_url.clone(),
         max_time_secs: context.transfer_max_time_secs,
+        insecure: plan.tls_origin,
+        tls_v1_3: plan.tls_origin,
     };
 
     // Warmup each implementation once, matching the legacy harness.
@@ -432,7 +580,23 @@ pub fn run_loopback(
             )
         })
         .collect();
-    let report_json = assemble_report(plan, &context, &measurements, &order, &binaries);
+    // Give the server a moment to flush per-connection completion events.
+    if plan.tls_origin {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    let direct = if plan.tls_origin {
+        Some(parse_direct_events(&run.workspace.join("rust-server.log")))
+    } else {
+        None
+    };
+    let report_json = assemble_report(
+        plan,
+        &context,
+        &measurements,
+        &order,
+        &binaries,
+        direct.as_ref(),
+    );
     std::fs::create_dir_all(&context.out_dir).map_err(|error| {
         RunError::Setup(format!(
             "could not create {}: {error}",

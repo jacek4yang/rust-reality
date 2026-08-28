@@ -48,7 +48,7 @@ JSON；如果内核或 VPS 策略拒绝某个事件，则记录带原始诊断�
 | `scripts/benchmark-matrix.sh` | 完整 A/B/C loopback 矩阵（baseline/final/Xray），覆盖 方向 × 载荷 × 并发。 |
 | `scripts/benchmark-fallback-ab.sh` | 干净的 fallback A/B：两侧 warn 级日志，直连 listener。 |
 | `scripts/benchmark-setup-rate.sh` | 平衡 setup 速率 A/B（accept → 第一次 Vision 转换）。设置 `COVER_NETEM_RTT_MS` 时只把 TLS 伪装目标移到 veth/netns 后并施加有记录的单向延迟，同时保留 pool hit/miss 汇总。`MEASURE_MODE=perf` 在 warmup 后归因 task-clock/指令/context switch；`strace` 记录有界的 read/receive syscall 集，并先优雅停止 tracee，避免静默产生空汇总。 |
-| `scripts/benchmark-vision-direct.sh`、`cargo dev bench run --suite xray` | 聚焦的 Vision-Direct 与 Xray 对比。 |
+| `cargo dev bench run --suite vision-direct`、`cargo dev bench run --suite xray` | 聚焦的 Vision-Direct 与 Xray 对比。 |
 | `scripts/benchmark-deployment.sh` | 部署特征化：路由正确性证明、路由决策成本（含 DNS 策略）、NXR 拓扑（direct/NXR/SOCKS5/Xray）、长连接 relay 证据，以及正式单跳 netem matrix。RTT 段保留精确生产构建在 1/10/50/100/200 ms、c1/8/32/128/512 下 Handoff/NXR/SOCKS5 的 ABBA cold/warm 样本与无秘密 pool retirement summary。 |
 | `scripts/soak-test.sh` | 可选的长期回环证据：warm Handoff/NXR/仅 TCP SOCKS5、中点 reload、逐进程 RSS 与汇总 PSS。它是计划任务/非阻塞证据；确需长期调查时用 `REQUIRE_LONG_HORIZON_QUALIFIED=1` 保持严格不可变二进制合约。 |
 | `cargo dev deploy canary` | 对约十分钟精确候选双 VPS 主动 canary 做 fail-closed 评估：部署、真实 WAN Handoff、stock Xray、完整性、churn、reload、LANDING 重启/恢复、有界 pool 与资源恢复包络。 |
