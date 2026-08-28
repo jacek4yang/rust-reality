@@ -140,6 +140,43 @@ enum BenchCommand {
     List,
     /// Validate the benchmark environment (tools, host lock, workspace, ports).
     Environment,
+    /// Drive one slot's connection-setup workload and write its samples.
+    ///
+    /// A suite runs this as a child process so `perf stat -- <workload>` bounds
+    /// the measurement window exactly as `perf stat -- python3 driver.py` did.
+    /// It is not normally invoked by hand.
+    Workload {
+        /// Loopback SOCKS5 port of the client fronting the server under test.
+        #[arg(long)]
+        socks_port: u16,
+        /// Loopback port of the plain-HTTP origin to reach through the proxy.
+        #[arg(long)]
+        origin_port: u16,
+        /// Connections per sample.
+        #[arg(long)]
+        connections: usize,
+        /// Space-separated concurrency levels.
+        #[arg(long)]
+        concurrencies: String,
+        /// Samples per concurrency level; `0` performs warm-up only.
+        #[arg(long)]
+        samples: usize,
+        /// Implementation label recorded on every row.
+        #[arg(long)]
+        implementation: String,
+        /// Block number.
+        #[arg(long)]
+        block: usize,
+        /// Position within the block.
+        #[arg(long)]
+        position: usize,
+        /// Record raw `latenciesSeconds` (the Xray comparator does).
+        #[arg(long)]
+        record_latencies: bool,
+        /// Where to write `samples.json`; omitted for a warm-up-only run.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     /// Run a tunnel A/B suite end to end (`real-path`, `xray`, or `vision-direct`).
     Run {
         /// Suite id: `real-path`, `xray`, or `vision-direct`.
@@ -649,6 +686,34 @@ fn resolve_targets(
 #[allow(clippy::too_many_lines)]
 fn run_bench(command: &BenchCommand) -> ExitCode {
     match command {
+        BenchCommand::Workload {
+            socks_port,
+            origin_port,
+            connections,
+            concurrencies,
+            samples,
+            implementation,
+            block,
+            position,
+            record_latencies,
+            output,
+        } => run_bench_workload(
+            &bench::workload::SetupRatePlan {
+                socks_port: *socks_port,
+                origin_port: *origin_port,
+                connections: *connections,
+                concurrencies: concurrencies
+                    .split_whitespace()
+                    .filter_map(|word| word.parse().ok())
+                    .collect(),
+                samples: *samples,
+                implementation: implementation.clone(),
+                block: *block,
+                position: *position,
+                record_latencies: *record_latencies,
+            },
+            output.as_deref(),
+        ),
         BenchCommand::List => {
             println!("{:<20} supersedes            summary", "suite");
             println!("{}", "-".repeat(80));
@@ -766,6 +831,49 @@ fn run_bench(command: &BenchCommand) -> ExitCode {
                     ExitCode::from(2)
                 }
             }
+        }
+    }
+}
+
+/// Drives one slot's setup-rate workload as a child process.
+///
+/// With `samples == 0` this only warms the path up, exactly as the legacy driver
+/// did; a warm-up failure is fatal because measuring a tunnel that never carried
+/// traffic would record setup times for a path that does not work.
+fn run_bench_workload(
+    plan: &bench::workload::SetupRatePlan,
+    output: Option<&std::path::Path>,
+) -> ExitCode {
+    if plan.concurrencies.is_empty() {
+        eprintln!("bench workload: at least one concurrency level is required");
+        return ExitCode::from(2);
+    }
+    if plan.samples == 0 {
+        return match bench::workload::warm_up(plan.socks_port, plan.origin_port) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("bench workload: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    let rows = match bench::workload::run_slot(plan) {
+        Ok(rows) => rows,
+        Err(error) => {
+            eprintln!("bench workload: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let Some(output) = output else {
+        eprintln!("bench workload: --output is required when samples are measured");
+        return ExitCode::from(2);
+    };
+    let document = bench::workload::rows_json(&rows, plan.record_latencies).to_python_json();
+    match std::fs::write(output, document) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("bench workload: could not write {}: {error}", output.display());
+            ExitCode::FAILURE
         }
     }
 }
