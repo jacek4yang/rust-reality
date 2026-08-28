@@ -109,6 +109,36 @@ enum BenchCommand {
     List,
     /// Validate the benchmark environment (tools, host lock, workspace, ports).
     Environment,
+    /// Run the real-path A/B tunnel-download suite end to end.
+    Run {
+        /// Path to the rust-reality release binary.
+        #[arg(long, default_value = "target/release/rust-reality")]
+        rust_bin: PathBuf,
+        /// Path to the Xray binary.
+        #[arg(long, default_value = "xray")]
+        xray_bin: PathBuf,
+        /// Alternating transfers across both implementations.
+        #[arg(long, default_value_t = 20)]
+        runs: usize,
+        /// Expected payload bytes per transfer.
+        #[arg(long, default_value_t = 5_000_000)]
+        bytes: u64,
+        /// The download URL (cloudflare speed endpoint by default).
+        #[arg(long)]
+        url: Option<String>,
+        /// The REALITY cover target (`host:port`).
+        #[arg(long, default_value = "dl.google.com:443")]
+        cover_target: String,
+        /// The REALITY cover SNI.
+        #[arg(long, default_value = "dl.google.com")]
+        cover_sni: String,
+        /// Per-transfer curl deadline in seconds.
+        #[arg(long, default_value_t = 300)]
+        max_time: u64,
+        /// Directory for the durable report (created; unique per run by default).
+        #[arg(long)]
+        out_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -373,7 +403,6 @@ fn run_doctor() -> ExitCode {
     ExitCode::FAILURE
 }
 
-
 /// Dispatches a `cargo dev perf` subcommand.
 fn run_perf(command: PerfCommand) -> ExitCode {
     match command {
@@ -455,8 +484,8 @@ fn run_release(repo: &std::path::Path, command: ReleaseCommand) -> ExitCode {
         ReleaseCommand::Build { tier, build_only } => {
             release::build::build(repo, &tier, build_only)
         }
-        ReleaseCommand::Package { tag, tier, output } => release::package::package(
-            &release::package::Options {
+        ReleaseCommand::Package { tag, tier, output } => {
+            release::package::package(&release::package::Options {
                 repo,
                 tag: &tag,
                 tier: &tier,
@@ -466,16 +495,16 @@ fn run_release(repo: &std::path::Path, command: ReleaseCommand) -> ExitCode {
                 measured_natively: std::env::var("RUST_REALITY_MEASURED_NATIVELY")
                     .ok()
                     .map(|value| value == "true"),
-            },
-        )
-        .map(|packaged| {
-            format!(
-                "packaged {tier} -> {} (sha256 {}, fragment {})",
-                packaged.archive.display(),
-                packaged.sha256,
-                packaged.fragment.display()
-            )
-        }),
+            })
+            .map(|packaged| {
+                format!(
+                    "packaged {tier} -> {} (sha256 {}, fragment {})",
+                    packaged.archive.display(),
+                    packaged.sha256,
+                    packaged.fragment.display()
+                )
+            })
+        }
         ReleaseCommand::Smoke { tag, tier, assets } => {
             release::smoke::smoke(repo, &tag, &tier, &assets)
         }
@@ -495,7 +524,6 @@ fn run_release(repo: &std::path::Path, command: ReleaseCommand) -> ExitCode {
         }
     }
 }
-
 
 /// Dispatches a `cargo dev fuzz` subcommand.
 ///
@@ -568,7 +596,6 @@ fn resolve_targets(
     }
 }
 
-
 /// Dispatches a `cargo dev bench` subcommand.
 ///
 /// `list` shows the suite catalogue and the legacy scripts each supersedes.
@@ -582,7 +609,10 @@ fn run_bench(command: &BenchCommand) -> ExitCode {
             println!("{:<20} supersedes            summary", "suite");
             println!("{}", "-".repeat(80));
             for suite in &bench::runner::SUITES {
-                println!("{:<20} {:<20}  {}", suite.id, suite.supersedes, suite.summary);
+                println!(
+                    "{:<20} {:<20}  {}",
+                    suite.id, suite.supersedes, suite.summary
+                );
             }
             ExitCode::SUCCESS
         }
@@ -596,14 +626,18 @@ fn run_bench(command: &BenchCommand) -> ExitCode {
             }
             println!(
                 "host lock     : {}",
-                report
-                    .lock_identity
-                    .as_deref()
-                    .map_or_else(|| if report.lock_ok { "ok" } else { "unavailable" }.to_owned(), |identity| format!("ok (device:inode {identity})"))
+                report.lock_identity.as_deref().map_or_else(
+                    || if report.lock_ok { "ok" } else { "unavailable" }.to_owned(),
+                    |identity| format!("ok (device:inode {identity})")
+                )
             );
             println!(
                 "workspace     : {}",
-                if report.workspace_ok { "ok" } else { "unavailable" }
+                if report.workspace_ok {
+                    "ok"
+                } else {
+                    "unavailable"
+                }
             );
             println!("ports reserved: {}", report.reserved_ports);
             if report.is_ready() {
@@ -614,9 +648,126 @@ fn run_bench(command: &BenchCommand) -> ExitCode {
                 ExitCode::FAILURE
             }
         }
+        BenchCommand::Run {
+            rust_bin,
+            xray_bin,
+            runs,
+            bytes,
+            url,
+            cover_target,
+            cover_sni,
+            max_time,
+            out_dir,
+        } => {
+            let out_dir = out_dir.clone().unwrap_or_else(|| {
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |duration| duration.as_secs());
+                std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join(format!(
+                        "benchmarks/benchmark-real-path-{stamp}-{}",
+                        std::process::id()
+                    ))
+            });
+            run_bench_run(&bench::suites::SuiteContext {
+                rust_bin,
+                xray_bin,
+                cover_target: cover_target.clone(),
+                cover_sni: cover_sni.clone(),
+                runs: *runs,
+                expected_bytes: *bytes,
+                suite_id: "benchmark-real-path".to_owned(),
+                transfer_url: url.clone().unwrap_or_else(|| {
+                    format!("https://speed.cloudflare.com/__down?bytes={bytes}")
+                }),
+                transfer_max_time_secs: *max_time,
+                out_dir,
+            })
+        }
     }
 }
 
+/// Validates the `bench run` parameters and drives the real-path suite.
+///
+/// Exit codes mirror the legacy contract: 0 when every transfer succeeded, 1
+/// when the report completed with failed transfers, 3 when direct egress is
+/// unavailable (the gate is NOT RUN), and 2 on a hard setup/process error that
+/// prevented a report.
+fn run_bench_run(context: &bench::suites::SuiteContext<'_>) -> ExitCode {
+    if context.runs == 0 || context.expected_bytes == 0 {
+        eprintln!("bench run: runs and bytes must be positive");
+        return ExitCode::from(2);
+    }
+    // The real-path gate requires direct Internet egress: the servers dial the
+    // destination themselves. Probe with a tiny download and fail closed with
+    // the legacy NOT RUN semantics.
+    if let Err(error) = probe_egress() {
+        eprintln!(
+            "direct Internet egress to speed.cloudflare.com is unavailable; real-path gate NOT RUN ({error})"
+        );
+        return ExitCode::from(3);
+    }
+    match bench::suites::run_suite(context) {
+        Ok(outcome) => {
+            println!(
+                "bench run: {} transfers, {} failures -> PASS",
+                outcome.samples.len(),
+                outcome.report.failures
+            );
+            ExitCode::SUCCESS
+        }
+        Err(bench::suites::RunError::Workload(report)) => {
+            eprintln!(
+                "bench run: {} transfer(s) failed; report records the details",
+                report.failures
+            );
+            ExitCode::FAILURE
+        }
+        Err(error) => {
+            eprintln!("bench run: {error}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// Probes direct egress to the real-path speed endpoint.
+///
+/// # Errors
+///
+/// Returns the curl failure text when the probe fails.
+fn probe_egress() -> Result<(), String> {
+    let mut curl = process::Tool::new("curl");
+    for name in [
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "NO_PROXY",
+        "no_proxy",
+    ] {
+        curl = curl.env(name, "");
+    }
+    let outcome = curl
+        .args([
+            "--fail",
+            "--silent",
+            "--max-time",
+            "30",
+            "-o",
+            "/dev/null",
+            "https://speed.cloudflare.com/__down?bytes=100000",
+        ])
+        .probe()
+        .map_err(|error| error.to_string())?;
+    if outcome.success() {
+        Ok(())
+    } else {
+        Err(format!("curl exited {:?}", outcome.code))
+    }
+}
 
 /// Dispatches a `cargo dev deploy` subcommand.
 ///

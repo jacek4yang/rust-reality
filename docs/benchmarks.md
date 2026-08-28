@@ -67,7 +67,7 @@ exact diagnostic instead of manufacturing a measurement.
 | `scripts/benchmark-deployment.sh` | Deployment characterization: routing correctness proof, routing decision cost (incl. DNS strategies), NXR topologies (direct/NXR/SOCKS5/Xray), long-flow relay evidence, and a formal one-leg netem matrix. The RTT section retains production-build ABBA cold/warm samples for Handoff/NXR/SOCKS5 at 1/10/50/100/200 ms, c1/8/32/128/512, plus secret-free pool retirement summaries. |
 | `scripts/soak-test.sh` | Optional long-horizon loopback evidence with warm Handoff, NXR, and TCP-only SOCKS5, midpoint reload, per-process RSS, and aggregate PSS. It is scheduled/non-blocking; `REQUIRE_LONG_HORIZON_QUALIFIED=1` preserves a strict immutable-binary contract for a requested long investigation. |
 | `cargo dev deploy canary` | Fail-closed evaluator for the approximately ten-minute exact-candidate dual-VPS active canary: deployment, real-WAN Handoff, stock Xray, integrity, churn, reload, LANDING restart/recovery, bounded pools, and recovering resource envelopes. |
-| `scripts/benchmark-real-path.sh` | Real-Internet A/B against Xray: crash and protocol-error gates on a real path; throughput is capped by the slowest link, so it does not discriminate bandwidth. |
+| `cargo dev bench run` | Real-Internet A/B against Xray: crash and protocol-error gates on a real path; throughput is capped by the slowest link, so it does not discriminate bandwidth. |
 | `scripts/benchmark-vless-encryption.sh` | Xray v26.7.28 A/B for `encryption:none` versus VLESS Encryption inside the same REALITY + Vision stack; measures throughput, server CPU/GiB, and warmed setup. |
 | `scripts/test-xray-interop.sh` | Compatibility gate (below), not a benchmark. |
 
