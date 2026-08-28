@@ -13,7 +13,7 @@
 //! cargo dev check --all
 //! ```
 
-use std::{path::PathBuf, process::ExitCode};
+use std::{path::{Path, PathBuf}, process::ExitCode};
 
 use clap::{Parser, Subcommand};
 
@@ -100,6 +100,36 @@ enum DeployCommand {
         /// Optional path to write the verdict to; stdout when omitted.
         #[arg(long)]
         output: Option<PathBuf>,
+    },
+    /// Validate a recorded deployment netem Cartesian product, fail-closed.
+    Netem {
+        /// Path to profiles.jsonl.
+        #[arg(long)]
+        profiles: PathBuf,
+        /// Path to pool-summaries.json.
+        #[arg(long)]
+        pool_summaries: PathBuf,
+        /// Output report path (must not already exist).
+        #[arg(long)]
+        output: PathBuf,
+        /// Space-separated RTT values in ms.
+        #[arg(long)]
+        rtts: String,
+        /// Space-separated per-direction loss percents.
+        #[arg(long)]
+        losses: String,
+        /// Space-separated concurrencies.
+        #[arg(long)]
+        concurrencies: String,
+        /// Samples per concurrency.
+        #[arg(long)]
+        samples: i64,
+        /// Connections per sample.
+        #[arg(long)]
+        connections: i64,
+        /// Evaluate the controlled RTT mechanism (v1.7 ABBA cells).
+        #[arg(long)]
+        evaluate_performance: bool,
     },
 }
 
@@ -841,6 +871,63 @@ fn probe_egress() -> Result<(), String> {
     }
 }
 
+/// Runs the netem Cartesian-product validator.
+#[allow(clippy::too_many_arguments)]
+fn run_deploy_netem(
+    profiles: &Path,
+    pool_summaries: &Path,
+    output: &Path,
+    rtts: &str,
+    losses: &str,
+    concurrencies: &str,
+    samples: i64,
+    connections: i64,
+    evaluate_performance: bool,
+) -> ExitCode {
+    if output.exists() {
+        eprintln!("deploy netem: output must not exist: {}", output.display());
+        return ExitCode::from(2);
+    }
+    let args = match (
+        deploy::netem::parse_i64_list(rtts),
+        deploy::netem::parse_f64_list(losses),
+        deploy::netem::parse_i64_list(concurrencies),
+    ) {
+        (Ok(rtts), Ok(losses), Ok(concurrencies)) => deploy::netem::NetemArgs {
+            profiles: profiles.to_path_buf(),
+            pool_summaries: pool_summaries.to_path_buf(),
+            rtts,
+            losses,
+            concurrencies,
+            samples,
+            connections,
+            evaluate_performance,
+        },
+        (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => {
+            eprintln!("deploy netem: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    match deploy::netem::validate(&args) {
+        Ok(report) => {
+            if let Err(error) = std::fs::write(output, &report.json) {
+                eprintln!("deploy netem: could not write {}: {error}", output.display());
+                return ExitCode::from(2);
+            }
+            print!("{}", report.json);
+            if report.passed {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => {
+            eprintln!("deploy netem: {error}");
+            ExitCode::from(2)
+        }
+    }
+}
+
 /// Dispatches a `cargo dev deploy` subcommand.
 ///
 /// The canary evaluator is fail-closed and three-valued, mirroring
@@ -848,6 +935,27 @@ fn probe_egress() -> Result<(), String> {
 /// when the recorded report could not be admitted at all.
 fn run_deploy(command: DeployCommand) -> ExitCode {
     match command {
+        DeployCommand::Netem {
+            profiles,
+            pool_summaries,
+            output,
+            rtts,
+            losses,
+            concurrencies,
+            samples,
+            connections,
+            evaluate_performance,
+        } => run_deploy_netem(
+            &profiles,
+            &pool_summaries,
+            &output,
+            &rtts,
+            &losses,
+            &concurrencies,
+            samples,
+            connections,
+            evaluate_performance,
+        ),
         DeployCommand::Canary { input, output } => match deploy::canary::evaluate_file(&input) {
             deploy::canary::Outcome::Evaluated { verdict, ok } => {
                 if let Some(path) = output
