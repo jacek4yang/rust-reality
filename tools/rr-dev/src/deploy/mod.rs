@@ -7,3 +7,4 @@
 //! machinery is never migrated ahead of a tested evaluator.
 
 pub mod canary;
+pub mod netem;

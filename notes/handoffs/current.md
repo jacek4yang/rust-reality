@@ -5,7 +5,7 @@ Verify every mutable fact below before relying on it.
 ## Repository
 
 ```text
-main                de736fd   (verify: git rev-parse origin/main)
+main                810a616   (verify: git rev-parse origin/main)
 latest release      v1.8.0    (tag on 6618e9d)
 open PRs            none at time of writing; this branch continues suite migration
 ```
@@ -59,9 +59,10 @@ benchmark helpers  bench-origin/, dns-fake-server.py, cover-flight-shape-proxy.p
                    by benchmark-contract.sh + test-performance-gates.py)
 deployment         deploy-release-vps.sh, deployment_driver.py,
                    run-dual-vps-canary.sh, validate-deployment-netem.py
-                   -> cargo dev deploy {inspect,plan,promote,rollback}
-                   (canary already landed; netem+summarize are the unique
-                   remaining contracts still exercised by test-performance-gates.py)
+                   -> cargo dev deploy {inspect,plan,promote,rollback,netem,canary}
+                   canary + netem data-quality landed; mechanism ABBA evaluation
+                   and deployment_driver summarize still Python / next to port
+                   before deleting test-performance-gates.py
 hotspot/profiling  export-hotspot-bundle.sh, profile-*, aggregate-hotspot-samples.py,
                    idalib-export-address.py -> cargo dev perf hotspot; last
 last check gate    test-performance-gates.py still invoked by cargo dev check --all
@@ -93,9 +94,10 @@ framed copies/allocations    AVOIDABLE = 0
 
 ## Next action
 
-1. Prefer migrating `validate-deployment-netem.py` + `deployment_driver.py summarize`
-   into `cargo dev deploy`, then delete those scripts and `test-performance-gates.py`
-   so `cargo dev check --all` has zero external Python validators.
-2. Or continue benchmark suites: `benchmark-vless-encryption.sh` next (Xray-only
-   encryption A/B; reuse origin_tls + concurrent measure).
-3. Do not rebuild the benchmark foundation.
+1. Finish netem mechanism ABBA evaluation in deploy::netem; switch
+   test-performance-gates netem cases to cargo dev deploy netem; delete
+   validate-deployment-netem.py.
+2. Port deployment_driver.py summarize into cargo dev deploy summarize; delete
+   deployment_driver.py + test-performance-gates.py.
+3. Continue benchmark suites (vless-encryption, setup-rate, matrix, …).
+4. Do not rebuild the benchmark foundation.
