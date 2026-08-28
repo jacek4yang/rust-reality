@@ -25,6 +25,7 @@
 #![allow(dead_code)]
 
 pub mod aggregate;
+pub mod attest;
 pub mod attribution;
 pub mod config;
 pub mod engine;
