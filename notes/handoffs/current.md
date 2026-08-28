@@ -1,13 +1,17 @@
-# Engineering handoff — current state
+# Engineering handoff — expected post-merge state for PR #146
 
-Verify every mutable fact below before relying on it.
+This file describes the repository tree expected after PR #146 merges. While the
+PR is open, `main` remains the authoritative merged state and the PR body is the
+authoritative continuation ledger. Verify every mutable GitHub, Git, disk, and
+environment fact before relying on it.
 
 ## Repository
 
 ```text
-main                df3e214   (verify: git rev-parse origin/main)
+base main           df3e214   (verify: git rev-parse origin/main)
+candidate           PR #146   (verify its head/state with GitHub)
 latest release      v1.8.0    (tag on 6618e9d)
-open PRs            none at time of writing
+tracking issue      #147      (durable scripts-elimination execution state)
 ```
 
 ## scripts/ elimination milestone — in progress
@@ -37,15 +41,19 @@ deploy netem   cargo dev deploy netem  (data-quality + ABBA mechanism)
 ### Remaining — exact next actions
 
 ```text
-1. Port deployment_driver.py summarize -> cargo dev deploy summarize
-   - then DELETE deployment_driver.py + test-performance-gates.py
+1. Port the remaining test-performance-gates.py contracts to native Rust:
+   deployment summary fixtures, atomic report publication, and injected
+   collector failure / lock-release behavior.
+   - then DELETE test-performance-gates.py
    - cargo dev check --all must then run zero repo-owned .py validators
+   - KEEP deployment_driver.py until all benchmark/deployment callers migrate
 
 2. Continue benchmark suites on the existing foundation:
    vless-encryption, setup-rate*, dns, routing, fallback-ab, matrix, tls-shape,
    soak, descriptor-pressure, interop/*, validate-*, sampling-*, helpers, hotspot
 
-3. Outer workspace: ~18–19 GiB free after reclaiming ~905 MiB tmp cargo targets.
+3. Outer workspace: ~18 GiB free; no cleanup was performed for this PR.
+   Gate each expensive operation on its measured peak plus a safety reserve.
    Preserve artifacts/ (pinned evidence), proxy-env.sh, private/.
 ```
 
