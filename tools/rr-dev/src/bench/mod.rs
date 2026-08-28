@@ -41,4 +41,5 @@ pub mod publication;
 pub mod report;
 pub mod runner;
 pub mod suites;
+pub mod workload;
 pub mod workspace;
