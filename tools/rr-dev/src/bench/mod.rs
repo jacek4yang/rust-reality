@@ -24,6 +24,7 @@
 //! allowed here: the API is deliberately staged, not unused.
 #![allow(dead_code)]
 
+pub mod ab_suites;
 pub mod aggregate;
 pub mod attest;
 pub mod attribution;

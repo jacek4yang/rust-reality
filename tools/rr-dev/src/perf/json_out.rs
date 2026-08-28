@@ -86,6 +86,54 @@ impl Json {
         out
     }
 
+    /// Renders the document as `json.dumps(sort_keys=True)` does: one line, with
+    /// Python's default `", "` and `": "` separators and no trailing newline.
+    ///
+    /// This is the form the harnesses used for JSON Lines evidence
+    /// (`raw-samples.jsonl`), where one document per line is the point and the
+    /// indented form would be unreadable.
+    #[must_use]
+    pub fn to_compact_json(&self) -> String {
+        let mut out = String::new();
+        self.write_compact(&mut out);
+        out
+    }
+
+    fn write_compact(&self, out: &mut String) {
+        match self {
+            Self::Null => out.push_str("null"),
+            Self::Bool(true) => out.push_str("true"),
+            Self::Bool(false) => out.push_str("false"),
+            Self::Int(value) => {
+                let _ = write!(out, "{value}");
+            }
+            Self::Float(value) => out.push_str(&format_float(*value)),
+            Self::Str(text) => out.push_str(&escape(text)),
+            Self::Array(items) => {
+                out.push('[');
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        out.push_str(", ");
+                    }
+                    item.write_compact(out);
+                }
+                out.push(']');
+            }
+            Self::Object(members) => {
+                out.push('{');
+                for (index, (key, value)) in members.iter().enumerate() {
+                    if index > 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(&escape(key));
+                    out.push_str(": ");
+                    value.write_compact(out);
+                }
+                out.push('}');
+            }
+        }
+    }
+
     fn write(&self, out: &mut String, depth: usize) {
         match self {
             Self::Null => out.push_str("null"),
@@ -500,5 +548,28 @@ mod tests {
         let rendered = Json::Int(1).to_python_json();
         assert_eq!(rendered, "1\n");
         assert!(!rendered.ends_with("\n\n"));
+    }
+
+    /// `to_compact_json` must match `json.dumps(sort_keys=True)` byte for byte,
+    /// including Python's default `", "` / `": "` separators.
+    #[test]
+    fn the_compact_form_matches_python_dumps() {
+        let document = Json::object([
+            ("b", Json::Int(2)),
+            ("a", Json::Array(vec![Json::Int(1), Json::Int(2)])),
+            ("c", Json::object([("d", Json::Null)])),
+            ("e", Json::Float(1.5)),
+            ("f", Json::string("x")),
+        ]);
+        assert_eq!(
+            document.to_compact_json(),
+            r#"{"a": [1, 2], "b": 2, "c": {"d": null}, "e": 1.5, "f": "x"}"#
+        );
+
+        let empties = Json::object([
+            ("empty", Json::object([] as [(&str, Json); 0])),
+            ("list", Json::Array(vec![])),
+        ]);
+        assert_eq!(empties.to_compact_json(), r#"{"empty": {}, "list": []}"#);
     }
 }
