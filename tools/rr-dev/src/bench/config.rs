@@ -26,9 +26,34 @@ pub struct RealityIdentity {
 ///
 /// Mirrors the `jq` server template in `benchmark-xray.sh` and siblings: a single
 /// VLESS inbound with `xtls-rprx-vision` and REALITY stream settings, plus a
-/// `freedom` direct outbound.
+/// `freedom` direct outbound. When `allow_private` is set, the freedom outbound
+/// carries `finalRules: [{action: "allow"}]` so a loopback origin is reachable —
+/// Xray blocks private targets by default.
 #[must_use]
-pub fn xray_server(identity: &RealityIdentity, listen_port: u16, private_key: &str) -> Json {
+pub fn xray_server(
+    identity: &RealityIdentity,
+    listen_port: u16,
+    private_key: &str,
+    allow_private: bool,
+) -> Json {
+    let outbound = if allow_private {
+        Json::object([
+            ("tag", Json::string("direct")),
+            ("protocol", Json::string("freedom")),
+            (
+                "settings",
+                Json::object([(
+                    "finalRules",
+                    Json::Array(vec![Json::object([("action", Json::string("allow"))])]),
+                )]),
+            ),
+        ])
+    } else {
+        Json::object([
+            ("tag", Json::string("direct")),
+            ("protocol", Json::string("freedom")),
+        ])
+    };
     Json::object([
         ("log", Json::object([("loglevel", Json::string("warning"))])),
         (
@@ -76,13 +101,7 @@ pub fn xray_server(identity: &RealityIdentity, listen_port: u16, private_key: &s
                 ),
             ])]),
         ),
-        (
-            "outbounds",
-            Json::Array(vec![Json::object([
-                ("tag", Json::string("direct")),
-                ("protocol", Json::string("freedom")),
-            ])]),
-        ),
+        ("outbounds", Json::Array(vec![outbound])),
     ])
 }
 
@@ -108,10 +127,7 @@ pub fn xray_client(
                 ("protocol", Json::string("socks")),
                 (
                     "settings",
-                    Json::object([
-                        ("auth", Json::string("noauth")),
-                        ("udp", Json::Bool(false)),
-                    ]),
+                    Json::object([("auth", Json::string("noauth")), ("udp", Json::Bool(false))]),
                 ),
             ])]),
         ),
@@ -174,12 +190,21 @@ mod tests {
 
     #[test]
     fn the_server_config_pins_vision_and_reality() {
-        let rendered = xray_server(&identity(), 8443, "PRIVKEY").to_python_json();
+        let rendered = xray_server(&identity(), 8443, "PRIVKEY", false).to_python_json();
         assert!(rendered.contains("\"flow\": \"xtls-rprx-vision\""));
         assert!(rendered.contains("\"security\": \"reality\""));
         assert!(rendered.contains("\"privateKey\": \"PRIVKEY\""));
         assert!(rendered.contains("\"target\": \"dl.google.com:443\""));
         assert!(rendered.contains("\"protocol\": \"freedom\""));
+    }
+
+    #[test]
+    fn allow_private_emits_final_rules() {
+        let rendered = xray_server(&identity(), 8443, "PRIVKEY", true).to_python_json();
+        assert!(rendered.contains("\"finalRules\""));
+        assert!(rendered.contains("\"action\": \"allow\""));
+        let blocked = xray_server(&identity(), 8443, "PRIVKEY", false).to_python_json();
+        assert!(!blocked.contains("finalRules"));
     }
 
     #[test]

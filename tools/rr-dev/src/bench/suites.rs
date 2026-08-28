@@ -228,6 +228,9 @@ pub struct SuiteContext<'a> {
     /// Directory the durable report is written to (created if missing). The
     /// legacy contract recorded evidence outside the ephemeral workspace.
     pub out_dir: std::path::PathBuf,
+    /// Whether the Xray server freedom outbound must allow private targets
+    /// (required for loopback origins; forbidden for real-path WAN suites).
+    pub allow_private: bool,
 }
 
 /// Generates the REALITY identities for both server/client pairs.
@@ -447,7 +450,13 @@ pub fn write_configs(
     .map_err(|error| format!("could not write rust-server.json: {error}"))?;
     std::fs::write(
         workspace.join("xray-server.json"),
-        config::xray_server(&identity, ports[1], &xray_keys.private).to_python_json(),
+        config::xray_server(
+            &identity,
+            ports[1],
+            &xray_keys.private,
+            context.allow_private,
+        )
+        .to_python_json(),
     )
     .map_err(|error| format!("could not write xray-server.json: {error}"))?;
     std::fs::write(
@@ -776,6 +785,7 @@ mod tests {
             transfer_url: "https://speed.cloudflare.com/__down?bytes=1000000".to_owned(),
             transfer_max_time_secs: 120,
             out_dir: dir.path().to_path_buf(),
+            allow_private: false,
         };
         (context, dir)
     }
