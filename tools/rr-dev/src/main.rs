@@ -218,6 +218,24 @@ enum BenchCommand {
         /// Payload size in MiB (xray suite).
         #[arg(long, default_value_t = 64)]
         payload_mib: u64,
+        /// Balanced ABBA blocks of four slots (setup-rate suites).
+        #[arg(long, default_value_t = 3)]
+        blocks: usize,
+        /// Connections per sample (setup-rate suites).
+        #[arg(long, default_value_t = 96)]
+        connections: usize,
+        /// Space-separated concurrency levels (setup-rate suites).
+        #[arg(long, default_value = "1 8 32")]
+        concurrencies: String,
+        /// Which implementation leads block one (setup-rate suites).
+        #[arg(long, default_value = "rust")]
+        abba_start: String,
+        /// `perf` attributes server CPU; `wall` records rates only.
+        #[arg(long, default_value = "perf")]
+        measure_mode: String,
+        /// Run identifier recorded in the completion marker.
+        #[arg(long)]
+        run_id: Option<String>,
     },
 }
 
@@ -403,7 +421,7 @@ fn main() -> ExitCode {
                 }
             }
         },
-        Command::Bench { command } => run_bench(&command),
+        Command::Bench { command } => run_bench(&repo, &command),
         Command::Deploy { command } => run_deploy(command),
         Command::Docs { command } => match command {
             DocsCommand::Check => {
@@ -684,7 +702,7 @@ fn resolve_targets(
 /// loopback port reservation. It exits non-zero when the host cannot run a
 /// benchmark, so it doubles as a CI-safe readiness probe.
 #[allow(clippy::too_many_lines)]
-fn run_bench(command: &BenchCommand) -> ExitCode {
+fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
     match command {
         BenchCommand::Workload {
             socks_port,
@@ -771,7 +789,28 @@ fn run_bench(command: &BenchCommand) -> ExitCode {
             samples,
             concurrency,
             payload_mib,
+            blocks,
+            connections,
+            concurrencies,
+            abba_start,
+            measure_mode,
+            run_id,
         } => {
+            if suite == "setup-rate-xray" {
+                return run_bench_setup_rate_xray(
+                    repo,
+                    rust_bin,
+                    xray_bin,
+                    out_dir.as_deref(),
+                    run_id.as_deref(),
+                    *blocks,
+                    *samples,
+                    *connections,
+                    concurrencies,
+                    abba_start,
+                    measure_mode,
+                );
+            }
             let out_dir = out_dir.clone().unwrap_or_else(|| {
                 let stamp = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -831,6 +870,87 @@ fn run_bench(command: &BenchCommand) -> ExitCode {
                     ExitCode::from(2)
                 }
             }
+        }
+    }
+}
+
+/// Drives the Xray setup-rate comparator.
+///
+/// Exit status follows the family contract: 0 when the run published, 1 when a
+/// measurement failed, and 2 when the request itself was inadmissible.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "these are the suite's command-line parameters, one per flag"
+)]
+fn run_bench_setup_rate_xray(
+    repo: &Path,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    out_dir: Option<&Path>,
+    run_id: Option<&str>,
+    blocks: usize,
+    samples: usize,
+    connections: usize,
+    concurrencies: &str,
+    abba_start: &str,
+    measure_mode: &str,
+) -> ExitCode {
+    let attribution = match measure_mode {
+        "perf" => bench::slot::Attribution::Perf(&bench::attribution::TASK_CLOCK_ONLY),
+        "wall" => bench::slot::Attribution::Wall,
+        other => {
+            eprintln!("bench run: MEASURE_MODE must be perf or wall, got {other}");
+            return ExitCode::from(2);
+        }
+    };
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let run_id = run_id.map_or_else(
+        || format!("benchmark-setup-rate-xray-{stamp}-{}", std::process::id()),
+        str::to_owned,
+    );
+    let out_dir = out_dir.map_or_else(
+        || {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("benchmarks")
+                .join(&run_id)
+        },
+        Path::to_path_buf,
+    );
+    let plan = bench::ab_suites::ComparatorPlan {
+        repo: repo.to_path_buf(),
+        rust_bin: rust_bin.to_path_buf(),
+        xray_bin: xray_bin.to_path_buf(),
+        out_dir,
+        run_id,
+        blocks,
+        samples,
+        connections,
+        concurrencies: concurrencies
+            .split_whitespace()
+            .filter_map(|word| word.parse().ok())
+            .collect(),
+        abba_start: abba_start.to_owned(),
+        attribution,
+    };
+    if let Err(error) = bench::ab_suites::validate(&plan) {
+        eprintln!("bench run setup-rate-xray: {error}");
+        return ExitCode::from(2);
+    }
+    match bench::ab_suites::run_setup_rate_xray(&plan) {
+        Ok(outcome) => {
+            println!(
+                "setup-rate xray comparison complete: {} ({} slots)",
+                outcome.out_dir.display(),
+                outcome.slot_count
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("bench run setup-rate-xray: {error}");
+            ExitCode::FAILURE
         }
     }
 }
