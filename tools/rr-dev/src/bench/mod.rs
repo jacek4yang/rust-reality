@@ -29,6 +29,7 @@ pub mod aggregate;
 pub mod attest;
 pub mod attribution;
 pub mod config;
+pub mod cover;
 pub mod engine;
 pub mod evidence;
 pub mod host_lock;

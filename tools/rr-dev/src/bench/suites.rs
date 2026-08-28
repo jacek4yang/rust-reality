@@ -434,7 +434,7 @@ fn patch_rust_config(raw: &str, workspace: &Workspace) -> Result<String, String>
 
 /// Renders a parsed JSON value as compact one-line JSON. The children only parse
 /// the config, so the canonical evidence form stays deterministic and small.
-fn render_compact(value: &json_in::Value) -> String {
+pub fn render_compact(value: &json_in::Value) -> String {
     match value {
         json_in::Value::Null => "null".to_owned(),
         json_in::Value::Bool(flag) => flag.to_string(),
