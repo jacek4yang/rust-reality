@@ -11,4 +11,5 @@
 
 pub mod config_identity;
 pub mod perf_contract;
+pub mod pipe_budget;
 pub mod probe_manifest;
