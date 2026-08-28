@@ -412,6 +412,43 @@ mod tests {
         );
     }
 
+    /// A real capture from this repository's benchmark host, taken with the exact
+    /// `stat_command` invocation attached to a busy process. Real `perf` emits
+    /// seven fields, not five: a per-second rate and a human label follow the ones
+    /// the contract reads. The parser must take the first five and ignore the rest.
+    #[test]
+    fn a_real_attached_capture_parses() {
+        let captured = "# started on Fri Aug 28 10:40:49 2026\n\
+                        \n\
+                        983.88,msec,task-clock,983882214,100.00,0.980,CPUs utilized\n\
+                        1229106888,,instructions,983879028,100.00,,\n\
+                        798,,context-switches,983873668,100.00,811.073,/sec\n";
+        let record = parse_csv(captured, &REQUIRED_EVENTS).expect("a real capture is valid");
+        assert_eq!(record.task_clock_milliseconds, 983.88);
+        assert_eq!(record.events["instructions"].value, 1_229_106_888.0);
+        assert_eq!(record.events["context-switches"].value, 798.0);
+        assert_eq!(record.events["context-switches"].unit, "");
+        assert_eq!(task_clock_only(captured).unwrap(), 983.88);
+    }
+
+    /// What real `perf` writes when the attached process consumed no CPU during the
+    /// window: `<not counted>` with a zero enabled time. Accepting it would record
+    /// a slot as costing nothing, so both guards must fire.
+    #[test]
+    fn a_real_idle_target_capture_is_rejected() {
+        let captured = "# started on Fri Aug 28 10:40:39 2026\n\
+                        \n\
+                        <not counted>,msec,task-clock,0,100.00,,\n\
+                        <not counted>,,instructions,0,100.00,,\n\
+                        <not counted>,,context-switches,0,100.00,,\n";
+        let error = parse_csv(captured, &REQUIRED_EVENTS).unwrap_err();
+        assert_eq!(
+            error,
+            "perf event was not counted: task-clock: <not counted>"
+        );
+        assert!(task_clock_only(captured).is_err());
+    }
+
     #[test]
     fn the_perf_command_matches_the_legacy_invocation() {
         let (program, args) = stat_command(
