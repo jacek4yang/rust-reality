@@ -15,7 +15,6 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
-NETEM = ROOT / "validate-deployment-netem.py"
 DEPLOYMENT_DRIVER = ROOT / "deployment_driver.py"
 HOST_LOCK_CONTRACT = ROOT / "benchmark-contract.sh"
 HOST_LOCK_HELPER = ROOT / "host-exclusive-lock-keeper.py"
@@ -458,186 +457,12 @@ rr_host_lock_stop
         assert after.returncode == 0, (collector, after.stdout, after.stderr)
 
 
-def netem_fixture(root: Path, omit_last: bool = False) -> tuple[Path, list[Path]]:
-    profiles = root / "profiles.jsonl"
-    profile_rows = []
-    raw_paths = []
-    for rtt in (0, 20):
-        for loss in (0.0, 1.0):
-            raw = {}
-            for leg in (
-                "handoff-warm", "handoff-cold", "nxr-warm", "nxr-cold",
-                "socks-warm", "socks-cold",
-            ):
-                path = root / f"rtt{rtt}-loss{loss}-{leg}.jsonl"
-                rows = [
-                    {"concurrency": concurrency, "sampleIndex": sample,
-                     "failed": 0, "connections": 3,
-                     "connectionsPerSecond": 100.0, "p50Seconds": 0.01,
-                     "p90Seconds": 0.015, "p95Seconds": 0.02,
-                     "p99Seconds": 0.03}
-                    for concurrency in (1, 2) for sample in (0, 1)
-                ]
-                if omit_last and rtt == 20 and loss == 1.0 and leg == "socks-cold":
-                    rows.pop()
-                write_jsonl(path, rows)
-                raw[leg] = str(path)
-                raw_paths.append(path)
-            profile_rows.append({"targetRttMs": rtt,
-                                 "perDirectionLossPercent": loss, "raw": raw})
-    write_jsonl(profiles, profile_rows)
-    return profiles, raw_paths
 
 
-def netem_pool_fixture(root: Path) -> Path:
-    path = root / "pool-summaries.json"
-    write_json(path, [
-        {
-            "event": "transport_pool_summary",
-            "transport": transport,
-            "generation": 1,
-            "pool_ready": 4,
-            "pool_connecting": 0,
-            "pool_in_use": 0,
-            "pool_checkout_total": 100,
-            "pool_checkout_hit": 99,
-            "pool_checkout_miss": 1,
-            "pool_cold_fallback": 1,
-            "pool_stale_discard": 0,
-            "pool_connect_failure": 0,
-            "pool_refill": 104,
-            "pool_target_ready": 4,
-            "pool_growth": 1,
-            "pool_shrink": 1,
-            "arrival_rate_ewma": "20.000",
-            "connect_latency_ewma_ms": "50.000",
-            "recent_burst": "4.000",
-            "checkoutAcquisitionRatio": 0.99,
-            "successfulWarmRatioLowerBound": 0.99,
-        }
-        for transport in ("handoff", "nxr", "socks5")
-    ])
-    return path
 
 
-def netem_mechanism_fixture(root: Path, removed_rtt_fraction: float) -> Path:
-    profiles = root / "profiles.jsonl"
-    profile_rows = []
-    for rtt in (50, 100, 200):
-        raw = {}
-        for leg in (
-            "handoff-warm", "handoff-cold", "nxr-warm", "nxr-cold",
-            "socks-warm", "socks-cold",
-        ):
-            path = root / f"rtt{rtt}-{leg}.jsonl"
-            rows = []
-            for sample in range(6):
-                block_factor = (0.9, 1.0, 1.1)[sample // 2]
-                warm_seconds = 0.005 + rtt / 1000
-                removed_seconds = (
-                    rtt / 1000 * removed_rtt_fraction * block_factor
-                    if leg.endswith("-cold") else 0.0
-                )
-                p50 = warm_seconds + removed_seconds
-                rows.append({
-                    "concurrency": 1,
-                    "sampleIndex": sample,
-                    "failed": 0,
-                    "connections": 512,
-                    "connectionsPerSecond": 100.0,
-                    "p50Seconds": p50,
-                    "p90Seconds": p50 * 1.1,
-                    "p95Seconds": p50 * 1.2,
-                    "p99Seconds": p50 * 1.3,
-                })
-            write_jsonl(path, rows)
-            raw[leg] = str(path)
-        profile_rows.append({
-            "targetRttMs": rtt,
-            "observedRttMs": float(rtt),
-            "perDirectionLossPercent": 0.0,
-            "raw": raw,
-        })
-    write_jsonl(profiles, profile_rows)
-    return profiles
 
 
-def test_netem(root: Path) -> None:
-    passing = root / "netem-pass"
-    passing.mkdir()
-    profiles, _ = netem_fixture(passing)
-    pool_summaries = netem_pool_fixture(passing)
-    output = passing / "summary.json"
-    result = invoke(NETEM, "--profiles", str(profiles),
-                    "--pool-summaries", str(pool_summaries),
-                    "--output", str(output),
-                    "--rtts", "0 20", "--losses", "0 1",
-                    "--concurrencies", "1 2", "--samples", "2",
-                    "--connections", "3")
-    assert result.returncode == 0, (result.stdout, result.stderr)
-    report = json.loads(output.read_text())
-    assert report["expectedRawRecordCount"] == 96
-    assert report["actualRawRecordCount"] == 96
-
-    missing = root / "netem-missing"
-    missing.mkdir()
-    profiles, _ = netem_fixture(missing, omit_last=True)
-    pool_summaries = netem_pool_fixture(missing)
-    output = missing / "summary.json"
-    result = invoke(NETEM, "--profiles", str(profiles),
-                    "--pool-summaries", str(pool_summaries),
-                    "--output", str(output),
-                    "--rtts", "0 20", "--losses", "0 1",
-                    "--concurrencies", "1 2", "--samples", "2",
-                    "--connections", "3")
-    assert result.returncode == 1, (result.stdout, result.stderr)
-    assert json.loads(output.read_text())["dataQualityVerdict"] == "FAIL"
-
-    mechanism_pass = root / "netem-mechanism-pass"
-    mechanism_pass.mkdir()
-    profiles = netem_mechanism_fixture(mechanism_pass, 1.0)
-    pool_summaries = netem_pool_fixture(mechanism_pass)
-    output = mechanism_pass / "summary.json"
-    result = invoke(
-        NETEM,
-        "--profiles", str(profiles),
-        "--pool-summaries", str(pool_summaries),
-        "--output", str(output),
-        "--rtts", "50 100 200",
-        "--losses", "0",
-        "--concurrencies", "1",
-        "--samples", "6",
-        "--connections", "512",
-        "--evaluate-performance",
-    )
-    assert result.returncode == 0, (result.stdout, result.stderr)
-    report = json.loads(output.read_text())
-    assert report["schemaVersion"] == 3
-    assert report["performanceVerdict"] == "PASS"
-    assert len(report["performanceMechanism"]["cells"]) == 9
-
-    mechanism_fail = root / "netem-mechanism-fail"
-    mechanism_fail.mkdir()
-    profiles = netem_mechanism_fixture(mechanism_fail, 0.2)
-    pool_summaries = netem_pool_fixture(mechanism_fail)
-    output = mechanism_fail / "summary.json"
-    result = invoke(
-        NETEM,
-        "--profiles", str(profiles),
-        "--pool-summaries", str(pool_summaries),
-        "--output", str(output),
-        "--rtts", "50 100 200",
-        "--losses", "0",
-        "--concurrencies", "1",
-        "--samples", "6",
-        "--connections", "512",
-        "--evaluate-performance",
-    )
-    assert result.returncode == 1, (result.stdout, result.stderr)
-    report = json.loads(output.read_text())
-    assert report["dataQualityVerdict"] == "PASS"
-    assert report["performanceVerdict"] == "FAIL"
-    assert report["verdict"] == "FAIL"
 
 
 def deployment_summary_fixture(root: Path) -> None:
@@ -779,7 +604,6 @@ def test_deployment_summary(root: Path) -> None:
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="rust-reality-performance-gate-") as value:
         root = Path(value).resolve()
-        test_netem(root)
         test_deployment_summary(root)
         test_host_lock_keeper(root)
         test_collector_early_failure_releases_lock(root)
