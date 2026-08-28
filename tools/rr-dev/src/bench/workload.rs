@@ -365,6 +365,55 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::net::TcpListener;
+    use std::path::{Path, PathBuf};
+
+    use crate::bench::{origin_go, process::Child, workspace::Workspace};
+    use crate::perf::json_out::Json;
+
+    /// The repository root, two levels above this crate's manifest.
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("tools/rr-dev sits two levels below the repository root")
+            .to_path_buf()
+    }
+
+    /// A plain SOCKS5 inbound with a direct outbound. `finalRules: allow` is
+    /// required because Xray blocks private destinations by default.
+    fn xray_socks_config(socks_port: u16) -> Json {
+        Json::object([
+            ("log", Json::object([("loglevel", Json::string("warning"))])),
+            (
+                "inbounds",
+                Json::Array(vec![Json::object([
+                    ("listen", Json::string("127.0.0.1")),
+                    ("port", Json::Int(i64::from(socks_port))),
+                    ("protocol", Json::string("socks")),
+                    (
+                        "settings",
+                        Json::object([
+                            ("auth", Json::string("noauth")),
+                            ("udp", Json::Bool(false)),
+                        ]),
+                    ),
+                ])]),
+            ),
+            (
+                "outbounds",
+                Json::Array(vec![Json::object([
+                    ("protocol", Json::string("freedom")),
+                    (
+                        "settings",
+                        Json::object([(
+                            "finalRules",
+                            Json::Array(vec![Json::object([("action", Json::string("allow"))])]),
+                        )]),
+                    ),
+                ])]),
+            ),
+        ])
+    }
 
     /// A loopback stand-in for the Xray SOCKS client plus origin: it speaks just
     /// enough SOCKS5 and HTTP to be indistinguishable from the real path to the
@@ -557,6 +606,87 @@ mod tests {
         let rendered = row.to_json(false).to_python_json();
         assert!(!rendered.contains("latenciesSeconds"));
         assert!(rendered.contains("\"p99Seconds\""));
+    }
+
+    /// Drives the workload through a **real Xray SOCKS5 inbound** and the real Go
+    /// origin, with no tunnel in between.
+    ///
+    /// The fake above proves the driver's failure handling; this proves the thing
+    /// that fake cannot — that the bytes this driver writes are accepted by the
+    /// exact SOCKS5 implementation the harnesses put in front of every server. A
+    /// greeting or CONNECT that only satisfies our own stand-in would fail every
+    /// slot of a real run.
+    ///
+    /// Opt-in: set `RR_DEV_TEST_XRAY_BIN` to an Xray binary. Skipped otherwise, so
+    /// CI does not need the pinned artifact.
+    #[test]
+    fn the_driver_speaks_to_a_real_xray_socks_inbound() {
+        let Some(xray) = std::env::var_os("RR_DEV_TEST_XRAY_BIN").map(PathBuf::from) else {
+            return;
+        };
+        if !xray.is_file() || !crate::process::Tool::exists("go") {
+            return;
+        }
+        let workspace = Workspace::create("workload-xray").unwrap();
+        let Ok(origin_binary) = origin_go::build(&repo_root(), &workspace) else {
+            return;
+        };
+        origin_go::write_setup_payload(workspace.path()).unwrap();
+        let ports = crate::bench::workspace::reserve_ports(2).unwrap();
+        let (origin_port, socks_port) = (ports[0], ports[1]);
+
+        let _origin = origin_go::start(
+            &origin_binary,
+            &workspace,
+            &origin_go::OriginPlan {
+                label: "origin-http".to_owned(),
+                listen_address: "127.0.0.1".to_owned(),
+                port: origin_port,
+                payload_dir: workspace.path().to_path_buf(),
+                put_log: workspace.join("http-put.jsonl"),
+                tls: None,
+            },
+        )
+        .expect("the origin becomes ready");
+
+        let config_path = workspace.join("xray-socks.json");
+        std::fs::write(&config_path, xray_socks_config(socks_port).to_python_json()).unwrap();
+        let mut client = Child::spawn(
+            "xray-socks",
+            &xray,
+            &[
+                "run".to_owned(),
+                "-config".to_owned(),
+                config_path.display().to_string(),
+            ],
+            workspace.path(),
+            &[],
+            &workspace.join("xray-socks.log"),
+        )
+        .expect("xray starts");
+        client
+            .wait_for_port(socks_port, Duration::from_secs(30))
+            .expect("the SOCKS inbound becomes ready");
+
+        warm_up(socks_port, origin_port).expect("a real Xray SOCKS5 handshake succeeds");
+        let plan = SetupRatePlan {
+            socks_port,
+            origin_port,
+            connections: 8,
+            concurrencies: vec![1, 4],
+            samples: 1,
+            implementation: "rust".to_owned(),
+            block: 1,
+            position: 1,
+            record_latencies: true,
+        };
+        let rows = run_slot(&plan).expect("every connection completes through Xray");
+        assert_eq!(rows.len(), 2);
+        for row in &rows {
+            assert_eq!(row.connections, 8);
+            assert_eq!(row.failed, 0);
+            assert!(row.connections_per_second().unwrap() > 0.0);
+        }
     }
 
     /// With nothing successful there is no rate and no percentile, exactly as the

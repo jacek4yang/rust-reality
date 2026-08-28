@@ -171,6 +171,8 @@ pub fn write_pattern_payload(directory: &Path, mebibytes: u64) -> Result<PathBuf
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read as _;
+    use std::net::{Ipv4Addr, TcpStream};
 
     #[test]
     fn a_missing_source_tree_fails_closed() {
@@ -243,9 +245,7 @@ mod tests {
         let child = start(&binary, &workspace, &plan).expect("the origin becomes ready");
 
         // Fetch exactly what the workload fetches, without a proxy in the way.
-        use std::io::{Read as _, Write as _};
-        let mut stream =
-            std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).unwrap();
+        let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
         stream
             .write_all(
                 format!("GET /payload.bin HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\n\r\n").as_bytes(),
