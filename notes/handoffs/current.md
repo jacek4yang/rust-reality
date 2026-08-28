@@ -5,9 +5,9 @@ Verify every mutable fact below before relying on it.
 ## Repository
 
 ```text
-main                2829c5f   (verify: git rev-parse origin/main)
+main                f4199c4   (verify: git rev-parse origin/main)
 latest release      v1.8.0    (tag on 6618e9d)
-open PRs            none at time of writing
+open PRs            none at time of writing; this branch opens the real-path PR
 ```
 
 ## scripts/ elimination milestone — in progress
@@ -17,7 +17,8 @@ tool migrates into typed `rr-dev` functionality (`cargo dev ...`), moves to a
 fixture/helper location, or becomes inert historical evidence.
 
 ```text
-scripts/ recursively tracked        ~44 (verify: git ls-files scripts/ | wc -l)
+scripts/ recursively tracked        45 after this PR deletes benchmark-real-path.sh
+                                    (verify: git ls-files scripts/ | wc -l)
 workflow scripts/ references        0
 ```
 
@@ -32,22 +33,27 @@ config id      cargo dev config fingerprint
 perf env       cargo dev perf environment --tool {stat,c2c}
 historical     v1.5.0/v1.5.1/v1.6.0 release-gate harnesses moved to
                notes/history/release-gates/ (inert evidence)
-bench core     cargo dev bench {list,environment}  (lifecycle foundation only)
+bench core     cargo dev bench {list,environment}  (lifecycle foundation)
 deploy canary  cargo dev deploy canary            (pure evaluator; Python deleted)
+bench real-path cargo dev bench run               (this PR; benchmark-real-path.sh deleted)
+               engine + identity + suites lifecycle proven with local tests and a
+               live WAN smoke (verified rust-reality + pinned Xray binaries)
 ```
 
 ### Remaining families
 
 ```text
-benchmark suites   the benchmark-*.sh family (real-path, xray, vision-direct,
-                   vless-encryption, setup-rate, setup-rate-xray, dns-comparison,
-                   routing-comparison, fallback-ab, matrix, tls-shape) plus
-                   soak-test.sh, test-descriptor-pressure.sh,
-                   test-openssl-no-ccs-interop.sh, test-xray-interop.sh,
-                   validate-ipv6-e2e.sh, validate-profiles.sh,
-                   sampling-xray-resources.sh, run-target-host-validation.sh,
+benchmark suites   remaining: xray, vision-direct, vless-encryption, setup-rate,
+                   setup-rate-xray, dns-comparison, routing-comparison,
+                   fallback-ab, matrix, tls-shape, soak-test.sh,
+                   test-descriptor-pressure.sh, test-openssl-no-ccs-interop.sh,
+                   test-xray-interop.sh, validate-ipv6-e2e.sh,
+                   validate-profiles.sh, sampling-xray-resources.sh,
+                   run-target-host-validation.sh,
                    record-delay-reader-test-evidence.sh, benchmark-deployment.sh
-                   -> migrate onto the cargo dev bench lifecycle (PR #138)
+                   -> consume bench::{engine,suites} lifecycle; do NOT rebuild
+                   the foundation. Next: migrate benchmark-xray.sh (loopback
+                   origin variant of the same A/B tunnel pattern).
 benchmark helpers  bench-origin/ (Go origin), dns-fake-server.py,
                    cover-flight-shape-proxy.py, tls-shape-helper.py,
                    tls-record-delay-fixture.py, ipv6-e2e/, tls-shape-reference.c,
@@ -67,9 +73,16 @@ last check gate    test-performance-gates.py is the only external validator stil
 ### Outer workspace cleanup — still pending
 
 `~/work/kimi-rust-reality-performance/` still holds unmanaged state, notably
-`artifacts/` (~16 GB). Classify evidence-safely before deleting anything; never
-delete the only copy of release/performance evidence. Preserve `proxy-env.sh`;
-treat `private/` as sensitive.
+`artifacts/` (~5.4 GB now; previously ~16 GB). Classify evidence-safely before
+deleting anything; never delete the only copy of release/performance evidence.
+Preserve `proxy-env.sh`; treat `private/` as sensitive.
+
+Verified reusable artifacts:
+
+```text
+artifacts/xray-reference-v26.7.28
+  sha256 23d228d78d699306c4782d6b400e2afa97c9bc9f291ae623448b5504904c5268
+```
 
 ## Closed questions — do not reopen without the recorded revisit condition
 
@@ -83,3 +96,16 @@ pipe-page exhaustion         0 of 80 concurrent streams downgraded
 framed copies/allocations    AVOIDABLE = 0; zero allocations per record, 7 CI gates
 4 * MAX_TLS_RECORD_WIRE_LEN  KEEP; it buys syscall amortisation, it is not slack
 ```
+
+## Next action
+
+After this PR merges:
+
+1. update local main to the new HEAD;
+2. remove the merged worktree/build output;
+3. recount scripts/;
+4. migrate `benchmark-xray.sh` onto the same `bench::{engine,suites}` lifecycle
+   (loopback HTTP origin + concurrent A/B; reuse CurlTransfer / config / process
+   guards — do not invent another engine);
+5. then fold vision-direct and the other A/B tunnel variants;
+6. delete each legacy script once its suite is covered.
