@@ -99,7 +99,7 @@ impl Scope {
         let mut steps = Vec::new();
         steps.extend(shell_syntax_steps(repo));
         steps.push(docs_step());
-        steps.extend(validator_steps(repo, self));
+        steps.extend(validator_steps());
         steps.extend(self.cargo_steps(repo));
         steps
     }
@@ -243,12 +243,9 @@ fn shell_syntax_steps(repo: &Path) -> Vec<Step> {
 
 /// The gate validators.
 ///
-/// Three of these are native rr-dev checks that own their policy directly: the
-/// fuzz manifest, the active-probe manifest and the performance/cache contract.
-/// The remaining three are Python test harnesses that verify modules migrated in
-/// later slices; they stay external and are skipped automatically once their
-/// scripts are gone.
-fn validator_steps(repo: &Path, scope: Scope) -> Vec<Step> {
+/// Every repository policy validator here is native rr-dev code. External tools
+/// remain mechanisms in the cargo steps, never repository-owned Python policy.
+fn validator_steps() -> Vec<Step> {
     let mut steps = Vec::new();
 
     steps.push(Step::Native {
@@ -275,25 +272,12 @@ fn validator_steps(repo: &Path, scope: Scope) -> Vec<Step> {
                 .map_err(|error| error.to_string())
         },
     });
-
-    if scope == Scope::All {
-        let full: [(&str, &[&str]); 1] = [("test-performance-gates.py", &[])];
-        for (name, args) in full {
-            let path = format!("scripts/{name}");
-            if !repo.join(&path).is_file() {
-                continue;
-            }
-            let label = format!("python3 {path} {}", args.join(" "));
-            steps.push(Step::External {
-                label: label.trim_end().to_owned(),
-                tool: Tool::new("python3")
-                    .arg(&path)
-                    .args(args.iter().copied())
-                    .current_dir(repo)
-                    .streaming(),
-            });
-        }
-    }
+    steps.push(Step::Native {
+        label: "deployment summary contract".to_owned(),
+        run: |_repo| {
+            crate::deploy::summary::check_contract().map(|line| println!("{line}"))
+        },
+    });
     steps
 }
 
@@ -334,12 +318,15 @@ fn shell_scripts(repo: &Path) -> Vec<String> {
 /// Returns the first step failure. Steps run in dependency order, so an early
 /// failure usually explains the later ones and stopping is the useful behaviour.
 pub fn run(repo: &Path, scope: Scope) -> Result<(), ToolError> {
-    for tool in ["cargo", "python3", "bash"] {
-        if !Tool::exists(tool) {
-            return Err(ToolError::NotFound {
-                program: tool.to_owned(),
-            });
-        }
+    if !Tool::exists("cargo") {
+        return Err(ToolError::NotFound {
+            program: "cargo".to_owned(),
+        });
+    }
+    if !shell_scripts(repo).is_empty() && !Tool::exists("bash") {
+        return Err(ToolError::NotFound {
+            program: "bash".to_owned(),
+        });
     }
 
     let steps = scope.steps(repo);
@@ -481,6 +468,16 @@ mod tests {
             assert!(
                 !rendered.contains("sh -c"),
                 "no gate step may build a shell command line: {rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn repository_policy_steps_are_native() {
+        for step in validator_steps() {
+            assert!(
+                matches!(step, Step::Native { .. }),
+                "repository validators must not invoke external scripts"
             );
         }
     }
