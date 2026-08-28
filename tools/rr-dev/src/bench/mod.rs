@@ -28,6 +28,8 @@ pub mod config;
 pub mod engine;
 pub mod host_lock;
 pub mod identity;
+pub mod loopback;
+pub mod origin;
 pub mod process;
 pub mod report;
 pub mod runner;

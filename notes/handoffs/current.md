@@ -5,7 +5,7 @@ Verify every mutable fact below before relying on it.
 ## Repository
 
 ```text
-main                f4199c4   (verify: git rev-parse origin/main)
+main                2aa3c9e   (verify: git rev-parse origin/main)
 latest release      v1.8.0    (tag on 6618e9d)
 open PRs            none at time of writing; this branch opens the real-path PR
 ```
@@ -17,7 +17,7 @@ tool migrates into typed `rr-dev` functionality (`cargo dev ...`), moves to a
 fixture/helper location, or becomes inert historical evidence.
 
 ```text
-scripts/ recursively tracked        45 after this PR deletes benchmark-real-path.sh
+scripts/ recursively tracked        44 after this PR deletes benchmark-xray.sh
                                     (verify: git ls-files scripts/ | wc -l)
 workflow scripts/ references        0
 ```
@@ -35,15 +35,17 @@ historical     v1.5.0/v1.5.1/v1.6.0 release-gate harnesses moved to
                notes/history/release-gates/ (inert evidence)
 bench core     cargo dev bench {list,environment}  (lifecycle foundation)
 deploy canary  cargo dev deploy canary            (pure evaluator; Python deleted)
-bench real-path cargo dev bench run               (this PR; benchmark-real-path.sh deleted)
-               engine + identity + suites lifecycle proven with local tests and a
-               live WAN smoke (verified rust-reality + pinned Xray binaries)
+bench real-path cargo dev bench run --suite real-path
+bench xray     cargo dev bench run --suite xray
+               engine + identity + suites + origin + loopback concurrent lifecycle
+               proven with local tests and live smokes (WAN real-path + loopback xray);
+               benchmark-real-path.sh and benchmark-xray.sh deleted
 ```
 
 ### Remaining families
 
 ```text
-benchmark suites   remaining: xray, vision-direct, vless-encryption, setup-rate,
+benchmark suites   remaining: vision-direct, vless-encryption, setup-rate,
                    setup-rate-xray, dns-comparison, routing-comparison,
                    fallback-ab, matrix, tls-shape, soak-test.sh,
                    test-descriptor-pressure.sh, test-openssl-no-ccs-interop.sh,
@@ -104,8 +106,6 @@ After this PR merges:
 1. update local main to the new HEAD;
 2. remove the merged worktree/build output;
 3. recount scripts/;
-4. migrate `benchmark-xray.sh` onto the same `bench::{engine,suites}` lifecycle
-   (loopback HTTP origin + concurrent A/B; reuse CurlTransfer / config / process
-   guards — do not invent another engine);
-5. then fold vision-direct and the other A/B tunnel variants;
+4. migrate `benchmark-vision-direct.sh` (TLS origin variant) onto the same lifecycle;
+5. fold vless-encryption and remaining A/B tunnel variants;
 6. delete each legacy script once its suite is covered.

@@ -104,13 +104,17 @@ enum DeployCommand {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum BenchCommand {
     /// List the benchmark suites and the legacy scripts they supersede.
     List,
     /// Validate the benchmark environment (tools, host lock, workspace, ports).
     Environment,
-    /// Run the real-path A/B tunnel-download suite end to end.
+    /// Run a tunnel A/B suite end to end (`real-path` or `xray`).
     Run {
+        /// Suite id: `real-path` (WAN) or `xray` (loopback concurrent).
+        #[arg(long, default_value = "real-path")]
+        suite: String,
         /// Path to the rust-reality release binary.
         #[arg(long, default_value = "target/release/rust-reality")]
         rust_bin: PathBuf,
@@ -138,6 +142,15 @@ enum BenchCommand {
         /// Directory for the durable report (created; unique per run by default).
         #[arg(long)]
         out_dir: Option<PathBuf>,
+        /// Samples per implementation (xray suite).
+        #[arg(long, default_value_t = 9)]
+        samples: usize,
+        /// Concurrent transfers per sample (xray suite).
+        #[arg(long, default_value_t = 4)]
+        concurrency: usize,
+        /// Payload size in MiB (xray suite).
+        #[arg(long, default_value_t = 64)]
+        payload_mib: u64,
     },
 }
 
@@ -603,6 +616,7 @@ fn resolve_targets(
 /// availability, host-exclusive lock acquire/release, an ephemeral workspace and
 /// loopback port reservation. It exits non-zero when the host cannot run a
 /// benchmark, so it doubles as a CI-safe readiness probe.
+#[allow(clippy::too_many_lines)]
 fn run_bench(command: &BenchCommand) -> ExitCode {
     match command {
         BenchCommand::List => {
@@ -649,6 +663,7 @@ fn run_bench(command: &BenchCommand) -> ExitCode {
             }
         }
         BenchCommand::Run {
+            suite,
             rust_bin,
             xray_bin,
             runs,
@@ -658,6 +673,9 @@ fn run_bench(command: &BenchCommand) -> ExitCode {
             cover_sni,
             max_time,
             out_dir,
+            samples,
+            concurrency,
+            payload_mib,
         } => {
             let out_dir = out_dir.clone().unwrap_or_else(|| {
                 let stamp = std::time::SystemTime::now()
@@ -670,20 +688,39 @@ fn run_bench(command: &BenchCommand) -> ExitCode {
                         std::process::id()
                     ))
             });
-            run_bench_run(&bench::suites::SuiteContext {
+            let context = bench::suites::SuiteContext {
                 rust_bin,
                 xray_bin,
                 cover_target: cover_target.clone(),
                 cover_sni: cover_sni.clone(),
                 runs: *runs,
                 expected_bytes: *bytes,
-                suite_id: "benchmark-real-path".to_owned(),
+                suite_id: match suite.as_str() {
+                    "xray" => "benchmark-xray".to_owned(),
+                    _ => "benchmark-real-path".to_owned(),
+                },
                 transfer_url: url.clone().unwrap_or_else(|| {
                     format!("https://speed.cloudflare.com/__down?bytes={bytes}")
                 }),
                 transfer_max_time_secs: *max_time,
                 out_dir,
-            })
+                allow_private: suite == "xray",
+            };
+            match suite.as_str() {
+                "real-path" => run_bench_run(&context),
+                "xray" => run_bench_xray(
+                    &context,
+                    &bench::loopback::LoopbackPlan {
+                        samples: *samples,
+                        concurrency: *concurrency,
+                        payload_mib: *payload_mib,
+                    },
+                ),
+                other => {
+                    eprintln!("bench run: unknown suite {other} (known: real-path, xray)");
+                    ExitCode::from(2)
+                }
+            }
         }
     }
 }
@@ -726,6 +763,26 @@ fn run_bench_run(context: &bench::suites::SuiteContext<'_>) -> ExitCode {
         }
         Err(error) => {
             eprintln!("bench run: {error}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// Drives the loopback concurrent xray suite.
+fn run_bench_xray(
+    context: &bench::suites::SuiteContext<'_>,
+    plan: &bench::loopback::LoopbackPlan,
+) -> ExitCode {
+    match bench::loopback::run_loopback(context, plan) {
+        Ok(outcome) => {
+            println!(
+                "bench run xray: {} measurements -> PASS",
+                outcome.measurements.len()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("bench run xray: {error}");
             ExitCode::from(2)
         }
     }
