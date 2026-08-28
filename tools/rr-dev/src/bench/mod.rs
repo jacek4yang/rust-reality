@@ -28,6 +28,7 @@ pub mod aggregate;
 pub mod attribution;
 pub mod config;
 pub mod engine;
+pub mod evidence;
 pub mod host_lock;
 pub mod identity;
 pub mod loopback;
