@@ -31,6 +31,7 @@ pub mod identity;
 pub mod loopback;
 pub mod origin;
 pub mod origin_tls;
+pub mod plan;
 pub mod process;
 pub mod publication;
 pub mod report;
