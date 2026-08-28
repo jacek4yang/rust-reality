@@ -24,7 +24,9 @@
 //! allowed here: the API is deliberately staged, not unused.
 #![allow(dead_code)]
 
+pub mod config;
 pub mod host_lock;
 pub mod process;
+pub mod report;
 pub mod runner;
 pub mod workspace;

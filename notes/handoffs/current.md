@@ -5,15 +5,71 @@ Verify every mutable fact below before relying on it.
 ## Repository
 
 ```text
-main                f823c00   (verify: git log --oneline -1 origin/main)
+main                2829c5f   (verify: git rev-parse origin/main)
 latest release      v1.8.0    (tag on 6618e9d)
 open PRs            none at time of writing
 ```
 
-Merged since v1.8.0: #111 override conflict validation, #112 v1.4.0 historical
-baseline, #113 policy-field provenance in `runtime explain`, #114 per-connection
-control-path ledger, #115 generation-isolation mutation tests, #116 copy/allocation
-ledger, #117 `rr-dev` foundation.
+## scripts/ elimination milestone — in progress
+
+The top-level `scripts/` directory is being eliminated: every legacy Bash/Python
+tool migrates into typed `rr-dev` functionality (`cargo dev ...`), moves to a
+fixture/helper location, or becomes inert historical evidence.
+
+```text
+scripts/ recursively tracked        ~44 (verify: git ls-files scripts/ | wc -l)
+workflow scripts/ references        0
+```
+
+### Completed families (do not redo)
+
+```text
+evaluator      cargo dev perf evaluate            (Python evaluator deleted)
+checks         cargo dev check --all              (check.sh deleted; CI switched)
+release        cargo dev release {matrix,verify-tag,build,package,smoke,aggregate}
+fuzz           cargo dev fuzz {targets,smoke}      (security.yml switched)
+config id      cargo dev config fingerprint
+perf env       cargo dev perf environment --tool {stat,c2c}
+historical     v1.5.0/v1.5.1/v1.6.0 release-gate harnesses moved to
+               notes/history/release-gates/ (inert evidence)
+bench core     cargo dev bench {list,environment}  (lifecycle foundation only)
+deploy canary  cargo dev deploy canary            (pure evaluator; Python deleted)
+```
+
+### Remaining families
+
+```text
+benchmark suites   the benchmark-*.sh family (real-path, xray, vision-direct,
+                   vless-encryption, setup-rate, setup-rate-xray, dns-comparison,
+                   routing-comparison, fallback-ab, matrix, tls-shape) plus
+                   soak-test.sh, test-descriptor-pressure.sh,
+                   test-openssl-no-ccs-interop.sh, test-xray-interop.sh,
+                   validate-ipv6-e2e.sh, validate-profiles.sh,
+                   sampling-xray-resources.sh, run-target-host-validation.sh,
+                   record-delay-reader-test-evidence.sh, benchmark-deployment.sh
+                   -> migrate onto the cargo dev bench lifecycle (PR #138)
+benchmark helpers  bench-origin/ (Go origin), dns-fake-server.py,
+                   cover-flight-shape-proxy.py, tls-shape-helper.py,
+                   tls-record-delay-fixture.py, ipv6-e2e/, tls-shape-reference.c,
+                   host-exclusive-lock-keeper.py (superseded by bench::host_lock)
+deployment         deploy-release-vps.sh, deployment_driver.py,
+                   run-dual-vps-canary.sh, validate-deployment-netem.py
+                   -> cargo dev deploy {inspect,plan,promote,rollback}
+                   (LIVE HOST safety: dry-run/fake testable before deleting)
+hotspot/profiling  export-hotspot-bundle.sh, profile-{driver,forensics,report,
+                   summarize,built-in-benchmark}, aggregate-hotspot-samples.py,
+                   idalib-export-address.py (part of the chain, not obsolete)
+                   -> cargo dev perf hotspot; last, 0 CI/gate/release refs
+last check gate    test-performance-gates.py is the only external validator still
+                   invoked by cargo dev check --all (auto-skips when absent)
+```
+
+### Outer workspace cleanup — still pending
+
+`~/work/kimi-rust-reality-performance/` still holds unmanaged state, notably
+`artifacts/` (~16 GB). Classify evidence-safely before deleting anything; never
+delete the only copy of release/performance evidence. Preserve `proxy-env.sh`;
+treat `private/` as sensitive.
 
 ## Closed questions — do not reopen without the recorded revisit condition
 
@@ -27,228 +83,3 @@ pipe-page exhaustion         0 of 80 concurrent streams downgraded
 framed copies/allocations    AVOIDABLE = 0; zero allocations per record, 7 CI gates
 4 * MAX_TLS_RECORD_WIRE_LEN  KEEP; it buys syscall amortisation, it is not slack
 ```
-
-See `notes/v1.9.0/compiled-runtime-plan-audit.md`, `control-path-ledger.md`,
-`copy-allocation-ledger.md`, `historical-throughput-v140-baseline.md`.
-
-## Development control plane
-
-`cargo dev` is the emerging canonical entry point, in `tools/` as an independent
-workspace excluded from the production graph:
-
-```text
-cargo dev doctor          environment diagnosis; reports RESTRICTED distinctly from
-                         missing, so an installed perf with perf_event_paranoid=3 is
-                         never reported as absent
-cargo dev check           fast local scope
-cargo dev check --all     the full scope CI enforces, parity-tested against check.sh
-```
-
-`tools/inventory/scripts.json` inventories all 63 files under `scripts/` (25,824
-lines); only 9 are CI-invoked and 10 are invoked by `check.sh`, so the remaining ~44
-are manual tooling whose migration is optional. Migration order and per-script
-replacement commands are recorded there.
-
-Merged v1.8 series: #100 Session Engine extraction, #101 irreversible write
-boundary by type, #102 semantic event-sequence fuzzing, #103 Tokio adapter
-boundary, #104 transport capability policy, #105 memory audit, #106 release
-v1.8.0, #107 supplemental evidence + throughput investigation, #108 relay-buffer
-hypothesis rejected on mechanism, #109 partial derived-policy overrides.
-
-## Deployment
-
-```text
-rust-reality-vps       (LINE, daily-use, 1 vCPU, 1973 MiB)
-    v1.8.0  sha 450392cc…  restarts 0
-    CURRENT  v1.8.0-official-daily
-    PREVIOUS v1.8.0-daily-rollback     (identical daily config, log level error)
-    ports    22, 443 only (v4 + v6)
-    config   sha b4042c54f3f8fa9657ddc9d0e951e279ad5b908e06cadd770df170067bdbd504
-
-rust-reality-landing-vps  (LANDING, 2 vCPU, 954 MiB)
-    v1.8.0  sha 450392cc…  restarts 0
-    CURRENT  v1.8.0-official-handoff
-    PREVIOUS v1.8.0-official-nxr
-```
-
-Both CURRENT and PREVIOUS on LINE carry the byte-identical daily configuration, so
-a rollback cannot change client-visible identity.
-
-## Immutable optimisation baseline
-
-`notes/v1.9.0/v1.8.0-baseline-identity.json`
-
-```text
-tag           v1.8.0
-commit        6618e9dbe2cbaf8767f7262e8ff5d9dfdbe58f50
-binary sha256 450392ccc73fd4dd8441c04dcdcc93f0eb8b0ea2524e17904ca4bb376416ed1c
-build id      e6abf487110749c49daff574d0059838c92f2e98
-rustc         1.96.0 (ac68faa20 2026-05-25)
-target        x86_64-unknown-linux-gnu, target-cpu x86-64, features [default]
-profile       codegen-units=1 lto=thin panic=abort strip=symbols
-```
-
-Use the published artifact as baseline. Do not rebuild a "similar" one.
-
-## Completed and measured
-
-- **v1.8 dual-VPS gap closed.** Four legs, all PASS, 1063 attempts each at 100.00%
-  success, zero authentication/replay/protocol rejections. Warm hits 1059–1062,
-  cold fallback observed in every leg, LANDING restart and recovery verified.
-  `notes/v1.9.0/v18-supplemental-dual-vps-evidence.md`.
-- **v1.8 is neutral against v1.7.0** on the low-RTT formal gate, 32/32 protected
-  metrics `NO_SIGNIFICANT_CHANGE`.
-  `artifacts/v180-release-gate/gates/evaluation-r01.json`.
-- **Relay-buffer hypothesis rejected on mechanism.** See below.
-
-## Rejected experiments — do not repeat blindly
-
-1. **Connection-future factory** (`notes/v1.8.0/rejected-connection-future-factory.md`).
-   Removed a real 21 224 → 10 768 byte per-task duplication, then failed the
-   protected `framed-download` 32 MiB c1 cell in two independent rounds with the
-   same sign. Three revisit conditions recorded. Mechanism still unexplained;
-   candidate is 1 408 bytes of added `.text` shifting instruction-cache layout, and
-   PMU is unavailable on this host to test it (`perf_event_paranoid = 3`).
-2. **`relay.bufferBytes` 32K→64K as the download fix**
-   (`artifacts/v190-baseline/datapath-measurement-rejects-buffer-hypothesis.md`).
-   Rejected on mechanism *before* benchmarking: the field feeds only
-   `TcpRelay`'s buffered backend, the framed path uses a compile-time
-   `4 * MAX_TLS_RECORD_WIRE_LEN`, and a measured real 32 MiB HTTPS download on the
-   live node reached Vision Direct after 3942 bytes and ran **splice both
-   directions**. The netem 32K/64K sweep was therefore not run for the download
-   case; it remains useful only to characterise the buffered *fallback* backend.
-
-## Historical baseline corrected: v1.4.0, not v1.7.0
-
-The operator's known-good observations are approximately stock Xray ~800 Mbps,
-rust-reality v1.4.0 ~800 Mbps, current deployment observed once near ~670 Mbps. The
-question is therefore whether a regression appeared anywhere between v1.4.0 and
-current, not merely v1.7 versus v1.8.
-
-Official v1.4.0 baseline is verified and recorded: commit `ed8fea0a`, binary
-SHA-256 `38ba5cd5…`, Build ID `d1de46ed…`. It supports `benchmark` so it is
-registrable as a formal baseline. It rejects the current config schema, but
-`private/v17-90539d3/v1.4.0-config.json` validates under it and preserves identity
-exactly (privateKey, target, serverNames, UUIDs, port all hash-identical).
-
-Harness gap: `benchmark-matrix.sh` generates one config shape for all rust
-implementations, so it cannot drive a v1.4.0 baseline until per-version config
-generation exists.
-
-Two mechanisms proposed and both **rejected on measurement**; see
-`notes/v1.9.0/historical-throughput-v140-baseline.md`:
-
-1. `relay.bufferBytes` — rejected on mechanism, bulk path is splice.
-2. splice pipe-page exhaustion — `SPLICE_PIPE_CAPACITY` doubled 256 KiB to 512 KiB
-   after v1.4.0, halving concurrent splice headroom from ~128 to ~64 relays against
-   the node's 16384-page soft budget. Prediction tested with 80 concurrent streams:
-   **0 of 80 sessions showed `pipe_capacity_downgraded`**, 80/80 reached Direct,
-   79/79 bulk sessions on splice. Not active at this concurrency. Revisit only if a
-   workload holds >~64 simultaneous splice relays or the node's
-   `fs.pipe-user-pages-soft` is lower.
-
-Search prior for any future bisect: `src/transport/relay.rs` is **unchanged** since
-v1.4.0 and `tcp_relay.rs` moved only 47 lines, while `src/runtime` grew ~3,600
-lines (plan.rs, adaptive.rs, ceiling.rs, admission.rs). The runtime/admission layer
-is the more likely location, not the splice loop.
-
-## Open question — no demonstrated mechanism
-
-The reported 671 versus 808 Mbps download difference has **no demonstrated
-mechanism in the datapath**. Bulk download is kernel splice after a ~4 KB framed
-preamble, which is version-insensitive by construction. This host cannot measure
-the regime: its own link caps near 62–71 Mbps proxied, and the unproxied reference
-is slower still.
-
-Next action is reproduction from the original client and link, capturing server
-CPU, TCP retransmissions, chosen backend, and Vision mode simultaneously. Local
-tuning should not continue until then.
-
-## Corrected diagnosis of the configuration defect — FIXED in #109
-
-An earlier note said "pinning a block of defaults silently disables derivation".
-**That was wrong.** Derivation is disabled by `runtime.tuning.mode: fixed` alone.
-The live node's `advanced.limits` block is *inert* because every value in it equals
-the built-in default — which is exactly why `runtime explain` reported every field
-as `default` rather than `operator`.
-
-The real defects, both reproduced and both now fixed by #109:
-
-- **Defect A (loud).** `RelayPolicy::buffer_bytes`, `max_pooled_buffers` and
-  `splice` have no serde default, so they are mandatory once the `relay` object
-  exists. Overriding one number failed with `missing required field
-  maxPooledBuffers`, forcing the operator to restate unrelated siblings.
-- **Defect B (silent, worse).** Override-ness was inferred by comparing a value to
-  the built-in default, never by whether the field was written. So a field
-  deliberately set to a value equal to the default was indistinguishable from an
-  absent field and was silently replaced by derivation. A full relay block written
-  entirely with default values resolved to `bufferBytes` 65536,
-  `maxPooledBuffers` 30929, `maxSpliceRelays` 964 — every explicit number
-  discarded with no warning.
-
-#109 adds `advanced.overrides`, which is presence-based: a field present there is
-operator-pinned whatever its value, siblings keep deriving, and existing 1.x
-configurations resolve byte-identically because the legacy value-inequality path is
-retained after it. Mutation-checked.
-
-The policy-difference measurement itself stands: on the same binary, `dedicated` +
-`adaptive`/`throughput` derives 2x relay buffer, 3.8x splice relays, 7.5x pooled
-buffers/pipes/relay memory, while deriving `maxHandshakes` and
-`maxPreAuthIdleConnections` *lower*. Derivation is sizing, not inflation.
-
-None of this is established as the cause of the download figure, and it must not be
-released as if it were.
-
-Note the distinction that matters for any claim:
-`runtime.tuning.mode = adaptive` adjusts soft admission and direct-dial ceilings at
-runtime. `relay.bufferBytes` is **startup-derived** and is not retuned by the
-adaptive controller. Do not attribute startup-derivation effects to `adaptive`.
-
-## Next exact actions
-
-1. **Conflict validation for overrides.** Reject a field appearing in both
-   `advanced.limits` as a non-default and `advanced.overrides` with a conflicting
-   value, naming both JSON paths. `PolicyOverrides::pinned_paths()` already exists
-   for this.
-2. **Compiled runtime plan.** The hot path should not traverse user-facing
-   configuration. Target one immutable generation-scoped plan with compact IDs
-   (`OutboundId`, `RouteId`, `UserIndex`) replacing string/hash lookups — but only
-   where the formal evaluator shows a win.
-3. **Datapath copy ledger** with every copy classified crypto/kernel/security/
-   protocol/lifetime-required or measured-justified; target `AVOIDABLE = 0`. Start
-   from the measured fact that bulk download is splice with no userspace copy, so
-   the ledger's live targets are the framed path, setup, Handoff/NXR encode, and
-   the buffered fallback.
-4. **Hot-path inventory and profile cards.** PMU is unavailable on this host
-   (`perf_event_paranoid = 3`), so cycles and cache figures must come from another
-   host or be omitted, never fabricated.
-5. **Reproduce 671 vs 808 from the original client.** No local tuning should
-   continue until then; the datapath has no demonstrated mechanism for it.
-
-## Environment gotchas
-
-- `perf_event_paranoid = 3`: no unprivileged hardware PMU. Do not fabricate
-  cycles/cache numbers.
-- Formal runs require a clean worktree (modified tracked files fail; untracked are
-  fine), plus `RUN_ID`, absolute non-existent `OUT_DIR`, absolute disk-backed
-  `TMPDIR`, and `PORT_BASE`. Binaries must be read-only with
-  `RUST_REALITY_GIT_COMMIT` stamped at build time via
-  `scripts/build-release.sh linux-x86_64-generic`.
-- Launch long jobs detached: `setsid nohup … > log 2>&1 < /dev/null & disown`.
-  Plain backgrounding gets killed with the tool shell.
-- Never `pkill -f` a pattern that also matches the agent's own shell command line;
-  it terminates the tool shell. Use
-  `ps -eo pid,args --no-headers | awk '$2 ~ /binary$/ {print $1}'`.
-- A second matrix round needs a different `PORT_BASE` because of `TIME_WAIT`.
-- `/home` has hit 100% twice. Reclaim with `rm -rf worktrees/*/target` for merged
-  branches; pinned evidence binaries live under `artifacts/*/candidate/`.
-- Structured log events are snake_case: `runtime_plan_report`,
-  `transport_pool_summary`, `relay_backend_report`, `connection_completed`,
-  `connection_rejected`.
-- `connection_completed` is debug-level and is the authoritative per-session record
-  of `uplink_direct`, `downlink_direct`, `uplink_backend`, `downlink_backend`, and
-  `downlink_direct_at_bytes`.
-- Short IDs are unique per inbound; the validator rejects reuse.
-- To observe the live datapath without disturbing the daily node, stage a
-  generation that differs from the daily configuration in **only** the `log` key
-  and verify identity/clients/routing/outbounds hash-identical first.

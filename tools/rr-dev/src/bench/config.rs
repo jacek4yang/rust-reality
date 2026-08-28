@@ -1,0 +1,194 @@
+//! VLESS + REALITY configuration generation shared by benchmark suites.
+//!
+//! Benchmark suites compare rust-reality against Xray over the same VLESS +
+//! REALITY + `xtls-rprx-vision` shape on loopback. The rust-reality server config
+//! comes from `rust-reality config generate standalone`; the Xray server and
+//! client configs are built here as typed JSON, replacing the `jq` templates the
+//! shell scripts embedded. Keeping this in one module means every suite renders
+//! the comparator identically.
+
+use crate::perf::json_out::Json;
+
+/// The REALITY identity shared between a server and its client.
+#[derive(Debug, Clone)]
+pub struct RealityIdentity {
+    /// The client UUID.
+    pub uuid: String,
+    /// The REALITY short id.
+    pub short_id: String,
+    /// The cover server name (SNI).
+    pub server_name: String,
+    /// The cover target `host:port`.
+    pub target: String,
+}
+
+/// Builds the Xray VLESS + REALITY server config for a tunnel benchmark.
+///
+/// Mirrors the `jq` server template in `benchmark-xray.sh` and siblings: a single
+/// VLESS inbound with `xtls-rprx-vision` and REALITY stream settings, plus a
+/// `freedom` direct outbound.
+#[must_use]
+pub fn xray_server(identity: &RealityIdentity, listen_port: u16, private_key: &str) -> Json {
+    Json::object([
+        ("log", Json::object([("loglevel", Json::string("warning"))])),
+        (
+            "inbounds",
+            Json::Array(vec![Json::object([
+                ("listen", Json::string("127.0.0.1")),
+                ("port", Json::Int(i64::from(listen_port))),
+                ("protocol", Json::string("vless")),
+                (
+                    "settings",
+                    Json::object([
+                        (
+                            "clients",
+                            Json::Array(vec![Json::object([
+                                ("id", Json::string(identity.uuid.clone())),
+                                ("flow", Json::string("xtls-rprx-vision")),
+                            ])]),
+                        ),
+                        ("decryption", Json::string("none")),
+                    ]),
+                ),
+                (
+                    "streamSettings",
+                    Json::object([
+                        ("network", Json::string("tcp")),
+                        ("security", Json::string("reality")),
+                        (
+                            "realitySettings",
+                            Json::object([
+                                ("show", Json::Bool(false)),
+                                ("target", Json::string(identity.target.clone())),
+                                ("xver", Json::Int(0)),
+                                (
+                                    "serverNames",
+                                    Json::Array(vec![Json::string(identity.server_name.clone())]),
+                                ),
+                                ("privateKey", Json::string(private_key.to_owned())),
+                                (
+                                    "shortIds",
+                                    Json::Array(vec![Json::string(identity.short_id.clone())]),
+                                ),
+                            ]),
+                        ),
+                    ]),
+                ),
+            ])]),
+        ),
+        (
+            "outbounds",
+            Json::Array(vec![Json::object([
+                ("tag", Json::string("direct")),
+                ("protocol", Json::string("freedom")),
+            ])]),
+        ),
+    ])
+}
+
+/// Builds the Xray VLESS + REALITY client config with a local SOCKS inbound.
+///
+/// Mirrors the `make_client` `jq` template: a SOCKS inbound forwarding to a
+/// VLESS/REALITY/`xtls-rprx-vision` outbound at `server_port`, pinned to the cover
+/// `public_key` and `server_name`.
+#[must_use]
+pub fn xray_client(
+    identity: &RealityIdentity,
+    server_port: u16,
+    socks_port: u16,
+    public_key: &str,
+) -> Json {
+    Json::object([
+        ("log", Json::object([("loglevel", Json::string("warning"))])),
+        (
+            "inbounds",
+            Json::Array(vec![Json::object([
+                ("listen", Json::string("127.0.0.1")),
+                ("port", Json::Int(i64::from(socks_port))),
+                ("protocol", Json::string("socks")),
+                (
+                    "settings",
+                    Json::object([
+                        ("auth", Json::string("noauth")),
+                        ("udp", Json::Bool(false)),
+                    ]),
+                ),
+            ])]),
+        ),
+        (
+            "outbounds",
+            Json::Array(vec![Json::object([
+                ("protocol", Json::string("vless")),
+                (
+                    "settings",
+                    Json::object([(
+                        "vnext",
+                        Json::Array(vec![Json::object([
+                            ("address", Json::string("127.0.0.1")),
+                            ("port", Json::Int(i64::from(server_port))),
+                            (
+                                "users",
+                                Json::Array(vec![Json::object([
+                                    ("id", Json::string(identity.uuid.clone())),
+                                    ("encryption", Json::string("none")),
+                                    ("flow", Json::string("xtls-rprx-vision")),
+                                ])]),
+                            ),
+                        ])]),
+                    )]),
+                ),
+                (
+                    "streamSettings",
+                    Json::object([
+                        ("network", Json::string("tcp")),
+                        ("security", Json::string("reality")),
+                        (
+                            "realitySettings",
+                            Json::object([
+                                ("fingerprint", Json::string("chrome")),
+                                ("serverName", Json::string(identity.server_name.clone())),
+                                ("publicKey", Json::string(public_key.to_owned())),
+                                ("shortId", Json::string(identity.short_id.clone())),
+                                ("spiderX", Json::string("/")),
+                            ]),
+                        ),
+                    ]),
+                ),
+            ])]),
+        ),
+    ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn identity() -> RealityIdentity {
+        RealityIdentity {
+            uuid: "11111111-2222-3333-4444-555555555555".to_owned(),
+            short_id: "0123abcd".to_owned(),
+            server_name: "dl.google.com".to_owned(),
+            target: "dl.google.com:443".to_owned(),
+        }
+    }
+
+    #[test]
+    fn the_server_config_pins_vision_and_reality() {
+        let rendered = xray_server(&identity(), 8443, "PRIVKEY").to_python_json();
+        assert!(rendered.contains("\"flow\": \"xtls-rprx-vision\""));
+        assert!(rendered.contains("\"security\": \"reality\""));
+        assert!(rendered.contains("\"privateKey\": \"PRIVKEY\""));
+        assert!(rendered.contains("\"target\": \"dl.google.com:443\""));
+        assert!(rendered.contains("\"protocol\": \"freedom\""));
+    }
+
+    #[test]
+    fn the_client_config_binds_socks_and_pins_public_key() {
+        let rendered = xray_client(&identity(), 8443, 1080, "PUBKEY").to_python_json();
+        assert!(rendered.contains("\"protocol\": \"socks\""));
+        assert!(rendered.contains("\"publicKey\": \"PUBKEY\""));
+        assert!(rendered.contains("\"port\": 1080"));
+        assert!(rendered.contains("\"port\": 8443"));
+        assert!(rendered.contains("\"fingerprint\": \"chrome\""));
+    }
+}
