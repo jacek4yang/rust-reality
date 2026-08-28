@@ -41,6 +41,7 @@ pub mod process;
 pub mod publication;
 pub mod report;
 pub mod runner;
+pub mod slot;
 pub mod suites;
 pub mod workload;
 pub mod workspace;
