@@ -587,6 +587,15 @@ fn marker_counts(path: &Path) -> MarkerCounts {
     counts
 }
 
+fn marker_json(counts: &MarkerCounts) -> Json {
+    Json::object(
+        counts
+            .values
+            .iter()
+            .map(|(key, value)| (*key, Json::Int(*value))),
+    )
+}
+
 fn open_wave(socks_port: u16, origin_port: u16, count: usize) -> Vec<Option<TcpStream>> {
     if count == 0 {
         return Vec::new();
@@ -631,6 +640,7 @@ fn ladder_sample(
     cgroup: &Path,
     server_log: &Path,
     baseline_oom: Option<i64>,
+    baseline_markers: &MarkerCounts,
 ) -> Json {
     let resources = sample_now(server_pid, cgroup);
     let markers = marker_counts(server_log);
@@ -683,13 +693,9 @@ fn ladder_sample(
         ),
         (
             "logEvents",
-            Json::object(
-                markers
-                    .values
-                    .into_iter()
-                    .map(|(key, value)| (key, Json::Int(value))),
-            ),
+            marker_json(&markers),
         ),
+        ("logEventBaseline", marker_json(baseline_markers)),
         (
             "latestPressureState",
             markers.latest_pressure.map_or(Json::Null, Json::string),
@@ -724,6 +730,7 @@ pub fn ladder(
     tag: Option<&str>,
 ) -> Vec<Json> {
     let baseline_oom = oom_kills(cgroup);
+    let baseline_markers = marker_counts(server_log);
     let mut connections: Vec<TcpStream> = Vec::new();
     let mut failed = 0;
     let mut abort_reason = None;
@@ -752,6 +759,7 @@ pub fn ladder(
             cgroup,
             server_log,
             baseline_oom,
+            &baseline_markers,
         );
         let alive = match &sample {
             Json::Object(fields) => matches!(fields.get("serverAlive"), Some(Json::Bool(true))),
@@ -816,6 +824,7 @@ pub fn ladder(
                     cgroup,
                     server_log,
                     baseline_oom,
+                    &baseline_markers,
                 ),
                 &[("recheck", Json::Bool(true))],
             );
@@ -841,6 +850,7 @@ pub fn ladder(
         cgroup,
         server_log,
         baseline_oom,
+        &baseline_markers,
     );
     rows.push(with_fields(
         final_sample,

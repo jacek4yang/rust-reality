@@ -330,6 +330,12 @@ fn event_count(row: &Value, key: &str) -> i64 {
         .unwrap_or(0)
 }
 
+fn baseline_event_count(row: &Value, key: &str) -> i64 {
+    object(row, "logEventBaseline")
+        .and_then(|events| integer(events, key))
+        .unwrap_or(0)
+}
+
 fn summarize_ladder(cells: &[Value], tag: Option<&str>) -> Option<Ladder> {
     let rows: Vec<&Value> = cells
         .iter()
@@ -359,8 +365,11 @@ fn summarize_ladder(cells: &[Value], tag: Option<&str>) -> Option<Ladder> {
     let evidence = rows.iter().all(|row| {
         string(row, "establishmentEvidence").as_deref() == Some("successful-socks-connect")
     });
-    let mut previous_events: BTreeMap<&str, i64> =
-        PRESSURE_KEYS.into_iter().map(|key| (key, 0)).collect();
+    let first = rows.first().copied();
+    let mut previous_events: BTreeMap<&str, i64> = PRESSURE_KEYS
+        .into_iter()
+        .map(|key| (key, first.map_or(0, |row| baseline_event_count(row, key))))
+        .collect();
     let mut previous_failed = 0;
     let mut summary = Ladder {
         establishment_evidence: evidence,
@@ -1477,5 +1486,18 @@ mod tests {
         let ladder = summarize_ladder(&rows, Some("tuned")).unwrap();
         assert_eq!(ladder.levels[0].new_pressure, 1);
         assert_eq!(ladder.first_pressure_level, Some(10));
+    }
+
+    #[test]
+    fn absolute_log_counters_are_normalized_to_the_ladder_baseline() {
+        let rows = json_in::parse_lines(
+            r#"{"cell":"ladder","tag":null,"level":100,"connectionsHeld":100,"serverEstablishedSessions":100,"establishmentEvidence":"successful-socks-connect","connectionsFailedTotal":0,"serverAlive":true,"serverRssBytes":1,"serverFdCount":2,"cgroupMemoryCurrent":3,"cgroupOomKills":0,"logEventBaseline":{"connection_rejected":3},"logEvents":{"connection_rejected":3},"latestPressureState":null,"ladderComplete":true,"abortReason":null}
+"#,
+        )
+        .unwrap();
+        let ladder = summarize_ladder(&rows, None).unwrap();
+        assert_eq!(ladder.levels[0].new_pressure, 0);
+        assert_eq!(ladder.max_clean_level, 100);
+        assert_eq!(ladder.first_pressure_level, None);
     }
 }
