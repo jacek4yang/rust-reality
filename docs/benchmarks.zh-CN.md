@@ -25,10 +25,12 @@
 与拒绝、重放、ClientHello 分片、ClientFinished 畸形或缺失、cover 超时/拒绝/畸形
 flight、精确 fallback 前缀和资源压力。
 
-独立的 `benchmark-tls-shape.sh` 会把同一个由原版 Xray 生成并捕获的 ClientHello，
+`cargo dev bench run --suite tls-shape` 会把同一个由原版 Xray 生成并捕获的 ClientHello，
 分别交给 rust-reality、适用时的固定 Xray 服务端以及本地 cover 直接入口。它保留 TLS
 record 序列、可确定观测的进程 write 分段、可用时的抓包、精确前缀，以及重复测量的
-首字节/flight 完成时间。确定性的 wire 或关闭语义差异会失败；时间仅按分布报告，不以
+首字节/flight 完成时间，并通过确定性的延迟 record cover 矩阵（already-buffered 与
+absent-would-block 两种第五 record 分类，0/20/50/100/200 ms 延迟）驱动真实候选，
+同时执行生产 reader 门禁。确定性的 wire 或关闭语义差异会失败；时间仅按分布报告，不以
 脆弱的微秒相等作为门禁。分包行为仍依赖网络环境。这些测量不能证明各实现的网络观测
 完全相同。
 

@@ -23,6 +23,7 @@ umask 077
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$repository/scripts/benchmark-contract.sh"
 rust_bin=${RUST_REALITY_BIN:-target/release/rust-reality}
+rr_dev_bin=${RR_DEV_BIN:-tools/target/release/rr-dev}
 xray=${XRAY_BIN:-../artifacts/xray-reference}
 duration_min=${DURATION_MIN:-30}
 round_sleep=${ROUND_SLEEP:-5}
@@ -151,7 +152,6 @@ if (( require_long_horizon_qualified == 1 )); then
             exit 2
             ;;
     esac
-    rr_register_harness_file "$repository/scripts/cover-flight-shape-proxy.py"
     rr_register_harness_file "$repository/scripts/deployment_driver.py"
     rr_register_harness_tree "$repository/scripts/bench-origin"
     rr_register_binary rust-reality "$rust_bin" "$expected_rust_sha256" rust \
@@ -414,8 +414,7 @@ start_logged "$out_dir/handoff-cover-trace.log" openssl s_server \
     -alpn 'h2,http/1.1' -trace -msg -state
 handoff_cover_upstream_pid=$last_pid
 wait_port "$handoff_cover_upstream_port" "$handoff_cover_upstream_pid"
-start_logged "$out_dir/handoff-cover-shape-proxy.log" python3 -u \
-    "$repository/scripts/cover-flight-shape-proxy.py" \
+start_logged "$out_dir/handoff-cover-shape-proxy.log" "$rr_dev_bin" bench shape-proxy \
     --listen-port "$handoff_cover_port" \
     --upstream-port "$handoff_cover_upstream_port" \
     --max-shaped "$planned_distributed_attempts" \

@@ -16,9 +16,9 @@
   ],
   "current_state": {
     "base_main": "d818ded524691bfe445c432241d8f2cd8ca651aa",
-    "snapshot": "IN_PROGRESS_PR_152_TLS_SHAPE",
-    "tracked_files": 27,
-    "tracked_lines": 13294,
+    "snapshot": "C3_TLS_SHAPE_DELETED",
+    "tracked_files": 21,
+    "tracked_lines": 10246,
     "repository_owned_external_python_validators": 0,
     "workflow_scripts_references": 0
   },
@@ -276,8 +276,8 @@
         "tls-shape-reference.c"
       ],
       "disposition": "MERGE",
-      "replacement": "BenchmarkRunner tls-shape workload",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite tls-shape",
+      "status": "complete"
     },
     {
       "path": "scripts/benchmark-vision-direct.sh",
@@ -392,9 +392,9 @@
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
       "calls_scripts": [],
-      "disposition": "MOVE_HELPER",
-      "replacement": "tools/helpers (Rust cover-flight proxy)",
-      "status": "not-started"
+      "disposition": "MIGRATE",
+      "replacement": "cargo dev bench shape-proxy (hidden process boundary)",
+      "status": "complete"
     },
     {
       "path": "scripts/deploy-release-vps.sh",
@@ -631,8 +631,8 @@
       "invoked_by_check_sh": false,
       "calls_scripts": [],
       "disposition": "MERGE",
-      "replacement": "rr-dev evidence capture",
-      "status": "not-started"
+      "replacement": "tls_shape_suite::run_production_reader_gate",
+      "status": "complete"
     },
     {
       "path": "scripts/release-matrix.sh",
@@ -844,9 +844,9 @@
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
       "calls_scripts": [],
-      "disposition": "MOVE_DATA",
-      "replacement": "benchmarks/fixtures/ (generator kept as data-producing helper)",
-      "status": "not-started"
+      "disposition": "MIGRATE",
+      "replacement": "tls_shape::serve_delayed_cover delayed-record E2E",
+      "status": "complete"
     },
     {
       "path": "scripts/tls-shape-helper.py",
@@ -856,9 +856,9 @@
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
       "calls_scripts": [],
-      "disposition": "MOVE_HELPER",
-      "replacement": "tools/helpers (Rust tls-shape helper)",
-      "status": "not-started"
+      "disposition": "MIGRATE",
+      "replacement": "tls_shape_suite capture/replay/summarize",
+      "status": "complete"
     },
     {
       "path": "scripts/tls-shape-reference.c",
@@ -870,9 +870,9 @@
       "calls_scripts": [
         "benchmark-tls-shape.sh"
       ],
-      "disposition": "MOVE_DATA",
-      "replacement": "benchmarks/fixtures/tls-shape-reference.c",
-      "status": "not-started"
+      "disposition": "MOVE_HELPER",
+      "replacement": "tools/reference/tls-shape-openssl.c (dynamic independent reference boundary)",
+      "status": "complete"
     },
     {
       "path": "scripts/validate-deployment-netem.py",

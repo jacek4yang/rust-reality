@@ -16,5 +16,5 @@
 {"id":"resource-pressure","test":"runtime::admission::tests::pressure_refuses_fallback_first_then_handshake_then_everything","observation":"fail-fast admission order"},
 {"id":"close-notify","test":"protocol::reality::tls13::application_io::tests::decrypts_and_encrypts_application_records_without_plaintext_copy","observation":"authenticated close_notify is emitted and decoded"},
 {"id":"rst-teardown","test":"server::handoff::tests::line_completes_a_clean_session_when_the_client_resets_at_teardown","observation":"RST after unread close_notify preserves completed transfer semantics"}],
-"comparators":{"rustReality":"all cases","pinnedXray":"valid authentication and replayed first-flight shape in benchmark-tls-shape.sh","directCover":"first-flight and fallback-prefix shape in benchmark-tls-shape.sh"},
+"comparators":{"rustReality":"all cases","pinnedXray":"valid authentication and replayed first-flight shape in cargo dev bench run --suite tls-shape","directCover":"first-flight and fallback-prefix shape in cargo dev bench run --suite tls-shape"},
 "timingPolicy":"retain repeated raw samples and report distributions; never gate on microsecond equality","packetizationPolicy":"network-dependent observation, never an indistinguishability claim"}

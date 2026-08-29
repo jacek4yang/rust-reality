@@ -37,11 +37,14 @@ and rejection, replay, ClientHello fragmentation, ClientFinished failure and
 absence, cover timeout/refusal/malformed flight, exact fallback prefixes, and
 resource pressure.
 
-The separate `benchmark-tls-shape.sh` harness compares an identical captured
+`cargo dev bench run --suite tls-shape` compares an identical captured
 stock-Xray ClientHello against rust-reality, the pinned Xray server where
 applicable, and the direct local cover. It retains TLS record sequence,
 deterministically observable process-write segmentation, packet captures when
-available, exact prefixes, and repeated first-byte/flight timings. Deterministic
+available, exact prefixes, and repeated first-byte/flight timings, and drives
+the real candidate through a deterministic delayed-record cover matrix
+(already-buffered and absent-would-block fifth-record classifications at
+0/20/50/100/200 ms delays) with a production reader gate. Deterministic
 wire and closure differences fail; timing is reported as a distribution rather
 than fragile microsecond equality. Packetization remains network-dependent.
 These measurements do not establish indistinguishability.
