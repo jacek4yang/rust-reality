@@ -50,6 +50,7 @@ pub mod publication;
 pub mod relay;
 pub mod resolver;
 pub mod report;
+pub mod routing;
 pub mod runner;
 pub mod slot;
 pub mod suites;

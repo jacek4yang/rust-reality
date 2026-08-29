@@ -332,6 +332,9 @@ enum BenchCommand {
         /// Connections in the burst phase (dns suite).
         #[arg(long, default_value_t = 32)]
         burst_conns: usize,
+        /// Space-separated routing rule counts (routing suite).
+        #[arg(long, default_value = "10 100 1000 10000")]
+        rule_scales: String,
     },
 }
 
@@ -935,7 +938,22 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             manage_pipe_pages,
             warm_samples,
             burst_conns,
+            rule_scales,
         } => {
+            if suite == "routing" {
+                return run_bench_routing(
+                    repo,
+                    rust_bin,
+                    xray_bin,
+                    out_dir.as_deref(),
+                    run_id.as_deref(),
+                    rule_scales,
+                    *blocks,
+                    *samples,
+                    *connections,
+                    concurrencies,
+                );
+            }
             if suite == "dns" {
                 return run_bench_dns(
                     repo,
@@ -1200,6 +1218,78 @@ fn run_bench_dns(
         }
         Err(error) => {
             eprintln!("bench run dns: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Drives the routing-rule scaling comparison.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "these are the suite's command-line parameters, one per flag"
+)]
+fn run_bench_routing(
+    repo: &Path,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    out_dir: Option<&Path>,
+    run_id: Option<&str>,
+    rule_scales: &str,
+    blocks: usize,
+    samples: usize,
+    connections: usize,
+    concurrencies: &str,
+) -> ExitCode {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let run_id = run_id.map_or_else(
+        || {
+            format!(
+                "benchmark-routing-comparison-{stamp}-{}",
+                std::process::id()
+            )
+        },
+        str::to_owned,
+    );
+    let out_dir = out_dir.map_or_else(
+        || {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("benchmarks")
+                .join(&run_id)
+        },
+        Path::to_path_buf,
+    );
+    let suite = bench::routing::RoutingSuite {
+        repo: repo.to_path_buf(),
+        rust_bin: rust_bin.to_path_buf(),
+        xray_bin: xray_bin.to_path_buf(),
+        out_dir,
+        run_id,
+        scales: rule_scales
+            .split_whitespace()
+            .filter_map(|word| word.parse().ok())
+            .collect(),
+        blocks,
+        samples,
+        connections,
+        concurrency: concurrencies
+            .split_whitespace()
+            .find_map(|word| word.parse().ok())
+            .unwrap_or(8),
+    };
+    if let Err(error) = bench::routing::validate(&suite) {
+        eprintln!("bench run routing: {error}");
+        return ExitCode::from(2);
+    }
+    match bench::routing::run(&suite) {
+        Ok(outcome) => {
+            println!("routing comparison complete: {}", outcome.out_dir.display());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("bench run routing: {error}");
             ExitCode::FAILURE
         }
     }
