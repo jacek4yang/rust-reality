@@ -69,7 +69,10 @@ pub struct CoverLeg {
 /// Runs one privileged `ip`/`tc` command.
 fn privileged(args: &[&str]) -> Result<(), String> {
     let mut elevated = vec!["-n".to_owned()];
-    elevated.extend(args.iter().map(|arg| (*arg).to_owned()));
+    // Resolve the leading tool: sudo has its own secure_path, but being explicit
+    // keeps the recorded command and the executed one identical.
+    elevated.push(args.first().map_or_else(String::new, |first| iproute2(first)));
+    elevated.extend(args.iter().skip(1).map(|arg| (*arg).to_owned()));
     let outcome = Tool::new("sudo")
         .args(elevated)
         .probe()
@@ -83,6 +86,23 @@ fn privileged(args: &[&str]) -> Result<(), String> {
         outcome.code,
         outcome.stderr.trim_end()
     ))
+}
+
+/// Resolves an iproute2 tool, which lives in `/sbin` and is often off `PATH`.
+///
+/// `tc` in particular is not on a normal user's `PATH` on Debian, and silently
+/// skipping it would drop the qdisc line from the recorded evidence.
+fn iproute2(program: &str) -> String {
+    if Tool::exists(program) {
+        return program.to_owned();
+    }
+    for directory in ["/sbin", "/usr/sbin"] {
+        let candidate = Path::new(directory).join(program);
+        if candidate.is_file() {
+            return candidate.display().to_string();
+        }
+    }
+    program.to_owned()
 }
 
 /// Whether a network namespace of this name already exists.
@@ -105,7 +125,7 @@ impl CoverLeg {
     /// removes whatever was created.
     pub fn create(run_id: &str, rtt_ms: u32) -> Result<Self, String> {
         for program in ["ip", "tc", "setpriv"] {
-            if !Tool::exists(program) && !Path::new("/sbin").join(program).exists() {
+            if !Tool::exists(program) && !Path::new(&iproute2(program)).is_file() {
                 return Err(format!("COVER_NETEM_RTT_MS requires {program}"));
             }
         }
@@ -257,18 +277,26 @@ impl CoverLeg {
             "coverTarget={cover_target}\nrequestedCoverRttMs={}\n",
             self.rtt_ms
         );
-        for args in [
-            vec!["-brief", "address", "show", "dev", &self.names.host_veth],
-            vec!["qdisc", "show", "dev", &self.names.host_veth],
+        for (program, args) in [
+            (
+                "ip",
+                vec!["-brief", "address", "show", "dev", &self.names.host_veth],
+            ),
+            ("tc", vec!["qdisc", "show", "dev", &self.names.host_veth]),
         ] {
-            let program = if args[0] == "qdisc" { "tc" } else { "ip" };
-            if let Ok(outcome) = Tool::new(program)
+            let outcome = Tool::new(iproute2(program))
                 .args(args.iter().map(|arg| (*arg).to_owned()))
                 .probe()
-            {
-                text.push_str(outcome.trimmed_stdout());
-                text.push('\n');
+                .map_err(|error| format!("could not describe the shaped leg: {error}"))?;
+            if !outcome.success() {
+                return Err(format!(
+                    "{program} {} exited {:?}",
+                    args.join(" "),
+                    outcome.code
+                ));
             }
+            text.push_str(outcome.trimmed_stdout());
+            text.push('\n');
         }
         if let Ok(outcome) = Tool::new("ping")
             .args(["-n", "-c", "3", "-i", "0.1", "-w", "3", COVER_ADDRESS])
