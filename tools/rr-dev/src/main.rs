@@ -269,6 +269,13 @@ enum BenchCommand {
         #[arg(long, default_value = "")]
         tls_alpn: String,
     },
+    /// Internal process-owned TCP echo target for real socket gates.
+    #[command(hide = true)]
+    Echo {
+        /// Loopback listen port.
+        #[arg(long)]
+        port: u16,
+    },
     /// Run a tunnel A/B suite end to end (`real-path`, `xray`, or `vision-direct`).
     Run {
         /// Suite id: `real-path`, `xray`, or `vision-direct`.
@@ -438,6 +445,15 @@ enum BenchCommand {
         /// Host-global IPv6 address for the environmental phase.
         #[arg(long)]
         global_v6: Option<String>,
+        /// Equal hard/soft open-file limit for the descriptor-pressure suite.
+        #[arg(long, default_value_t = 192)]
+        nofile_limit: u64,
+        /// Maximum held streams attempted by the descriptor-pressure suite.
+        #[arg(long, default_value_t = 96)]
+        max_held_connections: usize,
+        /// Concurrent admission attempts while descriptor pressure is high.
+        #[arg(long, default_value_t = 12)]
+        storm_connections: usize,
     },
 }
 
@@ -1006,6 +1022,27 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                 }
             }
         }
+        BenchCommand::Echo { port } => {
+            let listener = match std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, *port))
+            {
+                Ok(listener) => listener,
+                Err(error) => {
+                    eprintln!("bench echo: could not bind 127.0.0.1:{port}: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            if let Ok(address) = listener.local_addr() {
+                println!("READY {address}");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+            }
+            match bench::echo::serve(&listener) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("bench echo: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         BenchCommand::Workload {
             socks_port,
             origin_port,
@@ -1157,6 +1194,9 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             tls_tcp_nodelay,
             ipv6_phases,
             global_v6,
+            nofile_limit,
+            max_held_connections,
+            storm_connections,
         } => {
             if suite == "tls-shape" {
                 return run_bench_tls_shape(
@@ -1201,6 +1241,19 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                     openssl_bin,
                     out_dir.as_deref(),
                     run_id.as_deref(),
+                );
+            }
+            if suite == "descriptor-pressure" {
+                return run_bench_pressure(
+                    repo,
+                    rust_bin,
+                    xray_bin,
+                    openssl_bin,
+                    out_dir.as_deref(),
+                    run_id.as_deref(),
+                    *nofile_limit,
+                    *max_held_connections,
+                    *storm_connections,
                 );
             }
             if suite == "xray-interop" {
@@ -1751,6 +1804,70 @@ fn run_bench_no_ccs(
         }
         Err(error) => {
             eprintln!("bench run no-ccs-interop: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Drives the real-socket descriptor-pressure recovery gate.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the bounded gate inputs are explicit command-line policy"
+)]
+fn run_bench_pressure(
+    repo: &Path,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    openssl_bin: &Path,
+    out_dir: Option<&Path>,
+    run_id: Option<&str>,
+    nofile_limit: u64,
+    max_held: usize,
+    storm_connections: usize,
+) -> ExitCode {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let run_id = run_id.map_or_else(
+        || format!("descriptor-pressure-{stamp}-{}", std::process::id()),
+        str::to_owned,
+    );
+    let out_dir = out_dir.map_or_else(
+        || {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("diagnostics/final")
+                .join(&run_id)
+        },
+        Path::to_path_buf,
+    );
+    let suite = bench::pressure::PressureSuite {
+        repo: repo.to_path_buf(),
+        rust_bin: rust_bin.to_path_buf(),
+        xray_bin: xray_bin.to_path_buf(),
+        openssl_bin: openssl_bin.to_path_buf(),
+        out_dir: out_dir.clone(),
+        run_id,
+        nofile_limit,
+        max_held,
+        storm_connections,
+    };
+    if let Err(error) = bench::pressure::validate(&suite) {
+        eprintln!("bench run descriptor-pressure: {error}");
+        return ExitCode::from(2);
+    }
+    match bench::pressure::run(&suite) {
+        Ok(result) => {
+            println!(
+                "descriptor-pressure recovery: PASS ({} held, {} storm failures; {})",
+                result.successful_held,
+                result.storm_failures,
+                out_dir.display()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("bench run descriptor-pressure: {error}");
             ExitCode::FAILURE
         }
     }

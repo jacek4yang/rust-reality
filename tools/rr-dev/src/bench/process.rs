@@ -77,6 +77,38 @@ impl Child {
         env: &[(String, String)],
         log: &Path,
     ) -> Result<Self, Error> {
+        Self::spawn_inner(label, program, args, cwd, env, log, false)
+    }
+
+    /// Spawns a child with only the explicitly supplied environment variables.
+    ///
+    /// Measurement children use this when inheriting proxy or trust-store state
+    /// would change the mechanism being exercised. The program and arguments are
+    /// still passed directly; no shell is involved.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Spawn`] under the same conditions as [`Self::spawn`].
+    pub fn spawn_isolated(
+        label: impl Into<String>,
+        program: &Path,
+        args: &[String],
+        cwd: &Path,
+        env: &[(String, String)],
+        log: &Path,
+    ) -> Result<Self, Error> {
+        Self::spawn_inner(label, program, args, cwd, env, log, true)
+    }
+
+    fn spawn_inner(
+        label: impl Into<String>,
+        program: &Path,
+        args: &[String],
+        cwd: &Path,
+        env: &[(String, String)],
+        log: &Path,
+        clear_environment: bool,
+    ) -> Result<Self, Error> {
         let label = label.into();
         let log_file = File::create(log).map_err(|error| Error::Spawn {
             program: program.display().to_string(),
@@ -86,10 +118,17 @@ impl Child {
             program: program.display().to_string(),
             detail: error.to_string(),
         })?;
-        let handle = Command::new(program)
+        let mut command = Command::new(program);
+        if clear_environment {
+            command.env_clear();
+        }
+        let handle = command
             .args(args)
             .current_dir(cwd)
-            .envs(env.iter().map(|(key, value)| (key.as_str(), value.as_str())))
+            .envs(
+                env.iter()
+                    .map(|(key, value)| (key.as_str(), value.as_str())),
+            )
             .stdin(Stdio::null())
             .stdout(Stdio::from(log_file))
             .stderr(Stdio::from(stderr))
@@ -254,15 +293,8 @@ mod tests {
         let log = scratch.join("sleep.log");
         let pid;
         {
-            let mut child = Child::spawn(
-                "sleep",
-                &sleep,
-                &["30".to_owned()],
-                &scratch,
-                &[],
-                &log,
-            )
-            .expect("sleep must start");
+            let mut child = Child::spawn("sleep", &sleep, &["30".to_owned()], &scratch, &[], &log)
+                .expect("sleep must start");
             pid = child.pid();
             assert!(child.is_alive(), "the child must be alive after spawn");
         }
@@ -283,8 +315,8 @@ mod tests {
         let scratch = std::env::temp_dir().join(format!("rr-bench-proc2-{}", std::process::id()));
         std::fs::create_dir_all(&scratch).unwrap();
         let log = scratch.join("true.log");
-        let mut child = Child::spawn("true", &true_bin, &[], &scratch, &[], &log)
-            .expect("true must start");
+        let mut child =
+            Child::spawn("true", &true_bin, &[], &scratch, &[], &log).expect("true must start");
         // `true` exits immediately; a port wait must report the exit, not hang.
         let result = child.wait_for_port(1, Duration::from_secs(2));
         assert!(result.is_err(), "a port wait on an exited child must fail");
@@ -299,5 +331,36 @@ mod tests {
         if cfg!(target_os = "linux") {
             assert!(mine.is_some(), "own start-time must be readable on Linux");
         }
+    }
+
+    #[test]
+    fn an_isolated_child_receives_only_explicit_environment() {
+        let Some(env_bin) = tool("env") else {
+            return;
+        };
+        let scratch =
+            std::env::temp_dir().join(format!("rr-bench-isolated-env-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).unwrap();
+        let log = scratch.join("env.log");
+        let mut child = Child::spawn_isolated(
+            "isolated-env",
+            &env_bin,
+            &[],
+            &scratch,
+            &[("RR_EXPLICIT_MARKER".to_owned(), "present".to_owned())],
+            &log,
+        )
+        .unwrap();
+        for _ in 0..100 {
+            if !child.is_alive() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        child.terminate();
+        let output = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(output, "RR_EXPLICIT_MARKER=present\n");
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 }
