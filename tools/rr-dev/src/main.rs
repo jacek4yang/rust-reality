@@ -352,7 +352,7 @@ enum BenchCommand {
         openssl_bin: PathBuf,
         /// IPv6 validation phase digits. The native migration currently exposes
         /// the completed local phases while global/transfer/resilience land.
-        #[arg(long, default_value = "012")]
+        #[arg(long, default_value = "01234")]
         ipv6_phases: String,
         /// Host-global IPv6 address for the environmental phase.
         #[arg(long)]

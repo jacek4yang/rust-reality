@@ -601,6 +601,37 @@ LISTEN 0      511          0.0.0.0:80          0.0.0.0:*";
         assert_eq!(written.lines().count(), 4);
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    #[test]
+    fn global_discovery_ignores_tentative_and_loopback_addresses() {
+        let output = concat!(
+            "1: lo inet6 ::1/128 scope host\n",
+            "2: eth0 inet6 2001:db8::bad/64 scope global tentative\n",
+            "2: eth0 inet6 240e:391::47/64 scope global dynamic\n",
+        );
+        assert_eq!(
+            discover_global_ipv6(output).as_deref(),
+            Some("240e:391::47")
+        );
+        assert_eq!(
+            discover_global_ipv6("1: lo inet6 ::1/128 scope host\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn access_integrity_reads_the_last_matching_method() {
+        let rows = concat!(
+            r#"{"server":"o","method":"GET","bytes":4,"sha256":"get"}"#,
+            "\n",
+            r#"{"server":"o","method":"PUT","bytes":8,"sha256":"first"}"#,
+            "\n",
+            r#"{"server":"o","method":"PUT","bytes":16,"sha256":"last"}"#,
+            "\n",
+        );
+        assert_eq!(access_integrity(rows, "PUT"), Some((16, "last".to_owned())));
+        assert_eq!(access_integrity(rows, "PATCH"), None);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1511,6 +1542,90 @@ fn direct_fallback_fetch(url: &str, destination: &Path) -> Result<Transfer, Stri
     transfer_from_outcome(&outcome, destination)
 }
 
+/// Runs one direct IPv6 download with ambient proxies disabled.
+fn direct_ipv6_fetch(url: &str, destination: &Path, max_time: u64) -> Result<Transfer, String> {
+    let outcome = clean_curl()
+        .args([
+            "--ipv6".to_owned(),
+            "--silent".to_owned(),
+            "--show-error".to_owned(),
+            "--noproxy".to_owned(),
+            "*".to_owned(),
+            "--max-time".to_owned(),
+            max_time.to_string(),
+            "--output".to_owned(),
+            destination.display().to_string(),
+            "--write-out".to_owned(),
+            "%{http_code} %{time_total}".to_owned(),
+            url.to_owned(),
+        ])
+        .probe()
+        .map_err(|error| format!("could not run direct IPv6 curl: {error}"))?;
+    transfer_from_outcome(&outcome, destination)
+}
+
+/// Runs one PUT through an Xray SOCKS listener.
+fn upload(socks_port: u16, url: &str, source: &Path, max_time: u64) -> Result<Transfer, String> {
+    let outcome = clean_curl()
+        .args([
+            "--silent".to_owned(),
+            "--show-error".to_owned(),
+            "--socks5-hostname".to_owned(),
+            format!("127.0.0.1:{socks_port}"),
+            "--max-time".to_owned(),
+            max_time.to_string(),
+            "--upload-file".to_owned(),
+            source.display().to_string(),
+            "--output".to_owned(),
+            "/dev/null".to_owned(),
+            "--write-out".to_owned(),
+            "%{http_code} %{time_total}".to_owned(),
+            url.to_owned(),
+        ])
+        .probe()
+        .map_err(|error| format!("could not run upload curl: {error}"))?;
+    let (http_code, seconds) = match parse_write_out(outcome.trimmed_stdout()) {
+        Ok(parsed) => parsed,
+        Err(_) if !outcome.success() => ("000".to_owned(), outcome.elapsed.as_secs_f64()),
+        Err(error) => return Err(error),
+    };
+    Ok(Transfer {
+        code: outcome.code.unwrap_or(-1),
+        http_code,
+        seconds,
+        sha256: crate::hash::sha256_file(source)?,
+    })
+}
+
+/// The bytes and digest recorded by an origin access-log row.
+fn access_integrity(rows: &str, method: &str) -> Option<(u64, String)> {
+    rows.lines().rev().find_map(|line| {
+        let value = crate::perf::json_in::parse(line).ok()?;
+        if value.str_field("access", "method").ok()? != method {
+            return None;
+        }
+        let bytes = value.int_field("access", "bytes").ok()?;
+        let bytes = u64::try_from(bytes).ok()?;
+        let digest = value.str_field("access", "sha256").ok()?.to_owned();
+        Some((bytes, digest))
+    })
+}
+
+/// Chooses the first non-tentative global address reported by `ip`.
+#[must_use]
+pub fn discover_global_ipv6(ip_output: &str) -> Option<String> {
+    ip_output.lines().find_map(|line| {
+        if line.contains(" tentative") || line.contains(" dadfailed") {
+            return None;
+        }
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        let position = fields.iter().position(|field| *field == "inet6")?;
+        let address = fields.get(position + 1)?.split('/').next()?;
+        let parsed = address.parse::<std::net::Ipv6Addr>().ok()?;
+        (!parsed.is_loopback() && !parsed.is_unspecified()).then(|| address.to_owned())
+    })
+}
+
 /// Records phase 2: real Xray/VLESS/REALITY/Vision sessions across both
 /// loopback families, including DNS policy, cover fallback and auth controls.
 #[expect(
@@ -1797,10 +1912,391 @@ pub fn run_session_phase(
     Ok(())
 }
 
+/// Records phase 3 without letting absent public IPv6 invalidate local policy
+/// proof. A configured-but-broken address is still a failure; automatic
+/// discovery finding no address is an honest `unavailable` observation.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the phase owns both binaries, origin, certificate and results"
+)]
+pub fn run_global_phase(
+    suite: &Ipv6Suite,
+    workspace: &crate::bench::workspace::Workspace,
+    run: &crate::bench::evidence::RunDirectory,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    origin_bin: &Path,
+    certificate: &crate::bench::no_ccs::CoverCertificate,
+    results: &mut Results,
+) -> Result<(), String> {
+    let discovered = if let Some(address) = &suite.global_ipv6 {
+        Some(address.clone())
+    } else {
+        let outcome = crate::process::Tool::new("ip")
+            .args(["-6", "-o", "addr", "show", "scope", "global"])
+            .probe()
+            .map_err(|error| format!("could not inspect global IPv6 addresses: {error}"))?;
+        if outcome.success() {
+            discover_global_ipv6(&outcome.stdout)
+        } else {
+            None
+        }
+    };
+    let Some(address) = discovered else {
+        for (case, classification, reason) in [
+            (
+                "bind-global-address",
+                Classification::HostGlobal,
+                "host has no non-tentative global IPv6 address",
+            ),
+            (
+                "real-internet-v6-egress",
+                Classification::HostGlobal,
+                "host has no global IPv6 address for direct/proxied comparison",
+            ),
+            (
+                "external-ingress",
+                Classification::External,
+                "no external IPv6 source under suite control",
+            ),
+        ] {
+            results.record(Record {
+                matrix: "3-global".to_owned(),
+                case: case.to_owned(),
+                classification,
+                status: Status::Unavailable,
+                detail: Json::object([("reason", Json::string(reason))]),
+                evidence: String::new(),
+            })?;
+        }
+        return Ok(());
+    };
+
+    let ports = crate::bench::workspace::reserve_ports(3)?;
+    let cover_port = ports[0];
+    std::fs::write(workspace.join("global-cover.bin"), b"global ipv6 cover\n")
+        .map_err(|error| format!("could not write global cover body: {error}"))?;
+    let _cover = crate::bench::origin_go::start(
+        origin_bin,
+        workspace,
+        &crate::bench::origin_go::OriginPlan {
+            label: "cover-global".to_owned(),
+            listen_address: "::1".to_owned(),
+            port: cover_port,
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("cover-global.put.jsonl"),
+            tls: Some((certificate.certificate.clone(), certificate.key.clone())),
+            access_log: None,
+            alpn: Some("h2,http/1.1".to_owned()),
+        },
+    )?;
+    let plan = ServerPlan {
+        name: "s3glob".to_owned(),
+        port: ports[1],
+        mode: ListenerMode::Ipv6Only,
+        ipv4: "0.0.0.0".to_owned(),
+        ipv6: address.clone(),
+        target: format!("[::1]:{cover_port}"),
+        dial: vec![("mode".to_owned(), Json::string("ipv6Only"))],
+    };
+    let server = materialize_server(workspace, rust_bin, &plan)?;
+    let mut server_child = start_server_raw(
+        workspace,
+        run,
+        rust_bin,
+        &server,
+        &certificate.ca_certificate,
+    )?;
+    let listen_address = socket_address(&address, server.port)?;
+    server_child
+        .wait_for_address(listen_address, std::time::Duration::from_secs(15))
+        .map_err(|error| error.to_string())?;
+    let table = socket_table()?;
+    let bound = listener_present(&table, &address, server.port)
+        && std::net::TcpStream::connect_timeout(
+            &listen_address,
+            std::time::Duration::from_millis(500),
+        )
+        .is_ok();
+    results.record(Record {
+        matrix: "3-global".to_owned(),
+        case: "bind-global-address".to_owned(),
+        classification: Classification::HostGlobal,
+        status: Status::from_met(bound),
+        detail: Json::object([
+            ("addr", Json::string(&address)),
+            ("port", Json::Int(i64::from(server.port))),
+        ]),
+        evidence: "s3glob.rust.log".to_owned(),
+    })?;
+
+    let mut xray = start_xray(
+        workspace,
+        run,
+        xray_bin,
+        "x3",
+        &[leg(ports[2], &address, &server)],
+    )?;
+    xray.wait_for_port(ports[2], std::time::Duration::from_secs(15))
+        .map_err(|error| error.to_string())?;
+    let direct = direct_ipv6_fetch(&suite.internet_url, &workspace.join("example.direct"), 20)?;
+    let proxied = download(
+        ports[2],
+        &suite.internet_url,
+        &workspace.join("example.proxied"),
+        30,
+    )?;
+    let internet_status = if direct.code != 0 {
+        Status::Unavailable
+    } else {
+        Status::from_met(proxied.code == 0 && direct.sha256 == proxied.sha256)
+    };
+    results.record(Record {
+        matrix: "3-global".to_owned(),
+        case: "real-internet-v6-egress".to_owned(),
+        classification: Classification::HostGlobal,
+        status: internet_status,
+        detail: Json::object([
+            (
+                "direct",
+                transfer_detail(&suite.internet_url, &direct, &direct.sha256),
+            ),
+            (
+                "proxied",
+                transfer_detail(&suite.internet_url, &proxied, &direct.sha256),
+            ),
+            (
+                "byteExact",
+                Json::Bool(
+                    direct.code == 0 && proxied.code == 0 && direct.sha256 == proxied.sha256,
+                ),
+            ),
+            (
+                "note",
+                Json::string("server dial ipv6Only forces real Internet AAAA egress"),
+            ),
+        ]),
+        evidence: "x3.xray.log".to_owned(),
+    })?;
+    results.record(Record {
+        matrix: "3-global".to_owned(),
+        case: "external-ingress".to_owned(),
+        classification: Classification::External,
+        status: Status::Unavailable,
+        detail: Json::object([(
+            "reason",
+            Json::string("no external IPv6 source under suite control"),
+        )]),
+        evidence: String::new(),
+    })?;
+    Ok(())
+}
+
+fn socket_address(address: &str, port: u16) -> Result<std::net::SocketAddr, String> {
+    let ip = address
+        .parse::<std::net::IpAddr>()
+        .map_err(|error| format!("invalid numeric address {address:?}: {error}"))?;
+    Ok(std::net::SocketAddr::new(ip, port))
+}
+
+/// Records phase 4's upload, download and simultaneous full-duplex integrity.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the phase owns both binaries, origin, certificate and results"
+)]
+pub fn run_transfer_phase(
+    suite: &Ipv6Suite,
+    workspace: &crate::bench::workspace::Workspace,
+    run: &crate::bench::evidence::RunDirectory,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    origin_bin: &Path,
+    certificate: &crate::bench::no_ccs::CoverCertificate,
+    results: &mut Results,
+) -> Result<(), String> {
+    let ports = crate::bench::workspace::reserve_ports(4)?;
+    let cover_port = ports[0];
+    let origin_port = ports[1];
+    std::fs::write(workspace.join("transfer-cover.bin"), b"transfer cover\n")
+        .map_err(|error| format!("could not write transfer cover body: {error}"))?;
+    let _cover = crate::bench::origin_go::start(
+        origin_bin,
+        workspace,
+        &crate::bench::origin_go::OriginPlan {
+            label: "cover-transfer".to_owned(),
+            listen_address: "::1".to_owned(),
+            port: cover_port,
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("cover-transfer.put.jsonl"),
+            tls: Some((certificate.certificate.clone(), certificate.key.clone())),
+            access_log: None,
+            alpn: Some("h2,http/1.1".to_owned()),
+        },
+    )?;
+    let payload =
+        crate::bench::origin_go::write_pattern_payload(workspace.path(), suite.transfer_mib)?;
+    let expected = crate::hash::sha256_file(&payload)?;
+    let expected_bytes = std::fs::metadata(&payload)
+        .map_err(|error| format!("could not stat {}: {error}", payload.display()))?
+        .len();
+    let access_log = workspace.join("origin-transfer.access.jsonl");
+    let _origin = crate::bench::origin_go::start(
+        origin_bin,
+        workspace,
+        &crate::bench::origin_go::OriginPlan {
+            label: "origin-transfer-v6".to_owned(),
+            listen_address: "::1".to_owned(),
+            port: origin_port,
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("origin-transfer.put.jsonl"),
+            tls: None,
+            access_log: Some(access_log.clone()),
+            alpn: None,
+        },
+    )?;
+    let plan = ServerPlan {
+        name: "s4".to_owned(),
+        port: ports[2],
+        mode: ListenerMode::Ipv6Only,
+        ipv4: "0.0.0.0".to_owned(),
+        ipv6: "::1".to_owned(),
+        target: format!("[::1]:{cover_port}"),
+        dial: Vec::new(),
+    };
+    let server = materialize_server(workspace, rust_bin, &plan)?;
+    let mut server_child = start_server_raw(
+        workspace,
+        run,
+        rust_bin,
+        &server,
+        &certificate.ca_certificate,
+    )?;
+    server_child
+        .wait_for_address(
+            std::net::SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], server.port)),
+            std::time::Duration::from_secs(15),
+        )
+        .map_err(|error| error.to_string())?;
+    let mut xray = start_xray(
+        workspace,
+        run,
+        xray_bin,
+        "x4",
+        &[leg(ports[3], "::1", &server)],
+    )?;
+    xray.wait_for_port(ports[3], std::time::Duration::from_secs(15))
+        .map_err(|error| error.to_string())?;
+    let payload_name = payload
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "transfer payload has no UTF-8 name".to_owned())?;
+    let download_url = format!("http://[::1]:{origin_port}/{payload_name}");
+    let upload_url = format!("http://[::1]:{origin_port}/up.received");
+
+    let mut mark = AccessLogMark::default();
+    mark.mark(&access_log)?;
+    let sent = upload(ports[3], &upload_url, &payload, 600)?;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let observed = access_integrity(&mark.since(&access_log)?, "PUT");
+    let upload_ok = sent.code == 0
+        && observed
+            .as_ref()
+            .is_some_and(|(bytes, digest)| *bytes == expected_bytes && digest == &expected);
+    results.record(Record {
+        matrix: "4-transfer".to_owned(),
+        case: format!("upload-{}mib-v6", suite.transfer_mib),
+        classification: Classification::Loopback,
+        status: Status::from_met(upload_ok),
+        detail: Json::object([
+            ("curl", Json::string(sent.curl_field())),
+            ("rc", Json::Int(i64::from(sent.code))),
+            (
+                "mib",
+                Json::Int(i64::try_from(suite.transfer_mib).unwrap_or(i64::MAX)),
+            ),
+            ("expectSha256", Json::string(&expected)),
+            (
+                "gotSha256",
+                Json::string(observed.as_ref().map_or("none", |row| row.1.as_str())),
+            ),
+            ("byteExact", Json::Bool(upload_ok)),
+        ]),
+        evidence: "x4.xray.log".to_owned(),
+    })?;
+
+    let received = download(
+        ports[3],
+        &download_url,
+        &workspace.join("download-large.bin"),
+        600,
+    )?;
+    results.record(Record {
+        matrix: "4-transfer".to_owned(),
+        case: format!("download-{}mib-v6", suite.transfer_mib),
+        classification: Classification::Loopback,
+        status: Status::from_met(received.byte_exact(&expected)),
+        detail: transfer_detail(&download_url, &received, &expected),
+        evidence: "x4.xray.log".to_owned(),
+    })?;
+
+    mark.mark(&access_log)?;
+    let duplex_upload_url = format!("http://[::1]:{origin_port}/duplex.received");
+    let duplex_download = workspace.join("download-duplex.bin");
+    let (sent, received) = std::thread::scope(|scope| {
+        let upload_job = scope.spawn(|| upload(ports[3], &duplex_upload_url, &payload, 600));
+        let download_job = scope.spawn(|| download(ports[3], &download_url, &duplex_download, 600));
+        let sent = upload_job
+            .join()
+            .map_err(|_| "full-duplex upload worker panicked".to_owned())??;
+        let received = download_job
+            .join()
+            .map_err(|_| "full-duplex download worker panicked".to_owned())??;
+        Ok::<_, String>((sent, received))
+    })?;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let observed = access_integrity(&mark.since(&access_log)?, "PUT");
+    let upload_ok = sent.code == 0
+        && observed
+            .as_ref()
+            .is_some_and(|(bytes, digest)| *bytes == expected_bytes && digest == &expected);
+    let download_ok = received.byte_exact(&expected);
+    results.record(Record {
+        matrix: "4-transfer".to_owned(),
+        case: format!("full-duplex-{}mib-v6", suite.transfer_mib),
+        classification: Classification::Loopback,
+        status: Status::from_met(upload_ok && download_ok),
+        detail: Json::object([
+            (
+                "mib",
+                Json::Int(i64::try_from(suite.transfer_mib).unwrap_or(i64::MAX)),
+            ),
+            ("concurrent", Json::Bool(true)),
+            ("curlUpload", Json::string(sent.curl_field())),
+            ("curlDownload", Json::string(received.curl_field())),
+            (
+                "upload",
+                Json::object([
+                    ("rc", Json::Int(i64::from(sent.code))),
+                    ("byteExact", Json::Bool(upload_ok)),
+                ]),
+            ),
+            (
+                "download",
+                Json::object([
+                    ("rc", Json::Int(i64::from(received.code))),
+                    ("byteExact", Json::Bool(download_ok)),
+                ]),
+            ),
+        ]),
+        evidence: "x4.xray.log".to_owned(),
+    })?;
+    Ok(())
+}
+
 /// Runs the currently materialized native phases and publishes their evidence.
 ///
-/// Phases 3–5 are deliberately rejected until their global-address, transfer
-/// and owned-namespace mechanisms land; accepting them early would create an
+/// Phase 5 is deliberately rejected until its owned-namespace mechanism lands;
+/// accepting it early would create an
 /// output directory that looked complete while silently omitting contracts.
 ///
 /// # Errors
@@ -1815,8 +2311,8 @@ pub fn run(suite: &Ipv6Suite) -> Result<Json, String> {
     };
 
     validate(suite)?;
-    if suite.phases.chars().any(|phase| matches!(phase, '3'..='5')) {
-        return Err("IPv6 phases 3, 4 and 5 are not materialized yet".to_owned());
+    if suite.phases.contains('5') {
+        return Err("IPv6 phase 5 is not materialized yet".to_owned());
     }
     for program in ["curl", "go", "ss"] {
         if !crate::process::Tool::exists(program) {
@@ -1831,7 +2327,7 @@ pub fn run(suite: &Ipv6Suite) -> Result<Json, String> {
     let certificate = cover_certificate(suite, &workspace)?;
     run.write_new("certificate-san.txt", &certificate.subject_alt_name)?;
     let mut results = Results::create(run.join("results.jsonl"))?;
-    let origin = if suite.phases.contains('2') {
+    let origin = if suite.phases.chars().any(|phase| matches!(phase, '2'..='4')) {
         Some(crate::bench::origin_go::build(&suite.repo, &workspace)?)
     } else {
         None
@@ -1858,7 +2354,31 @@ pub fn run(suite: &Ipv6Suite) -> Result<Json, String> {
                 &certificate,
                 &mut results,
             )?,
-            '3'..='5' => unreachable!("rejected before creating the run directory"),
+            '3' => run_global_phase(
+                suite,
+                &workspace,
+                &run,
+                &rust.path,
+                &xray.path,
+                origin
+                    .as_deref()
+                    .ok_or_else(|| "phase 3 origin was not built".to_owned())?,
+                &certificate,
+                &mut results,
+            )?,
+            '4' => run_transfer_phase(
+                suite,
+                &workspace,
+                &run,
+                &rust.path,
+                &xray.path,
+                origin
+                    .as_deref()
+                    .ok_or_else(|| "phase 4 origin was not built".to_owned())?,
+                &certificate,
+                &mut results,
+            )?,
+            '5' => unreachable!("rejected before creating the run directory"),
             _ => unreachable!("validated phase digit"),
         }
     }
