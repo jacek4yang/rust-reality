@@ -454,6 +454,18 @@ enum BenchCommand {
         /// Concurrent admission attempts while descriptor pressure is high.
         #[arg(long, default_value_t = 12)]
         storm_connections: usize,
+        /// Soak topology implementation (`rust` or the `xray` comparator).
+        #[arg(long, default_value = "rust")]
+        soak_implementation: String,
+        /// Timed soak workload window in seconds.
+        #[arg(long, default_value_t = 1800)]
+        soak_seconds: u64,
+        /// Delay between soak rounds in milliseconds.
+        #[arg(long, default_value_t = 5000)]
+        soak_round_sleep_ms: u64,
+        /// Minimum completed soak workload rounds.
+        #[arg(long, default_value_t = 1)]
+        soak_min_rounds: usize,
     },
 }
 
@@ -1197,6 +1209,10 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             nofile_limit,
             max_held_connections,
             storm_connections,
+            soak_implementation,
+            soak_seconds,
+            soak_round_sleep_ms,
+            soak_min_rounds,
         } => {
             if suite == "tls-shape" {
                 return run_bench_tls_shape(
@@ -1254,6 +1270,22 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                     *nofile_limit,
                     *max_held_connections,
                     *storm_connections,
+                );
+            }
+            if suite == "soak" {
+                if soak_implementation != "xray" {
+                    eprintln!(
+                        "bench run soak: --soak-implementation must be xray until the rust topology is selected"
+                    );
+                    return ExitCode::from(2);
+                }
+                return run_bench_soak_xray(
+                    xray_bin,
+                    out_dir.as_deref(),
+                    run_id.as_deref(),
+                    *soak_seconds,
+                    *soak_round_sleep_ms,
+                    *soak_min_rounds,
                 );
             }
             if suite == "xray-interop" {
@@ -1868,6 +1900,60 @@ fn run_bench_pressure(
         }
         Err(error) => {
             eprintln!("bench run descriptor-pressure: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Drives the Xray side of the shared mixed-traffic soak lifecycle.
+fn run_bench_soak_xray(
+    xray_bin: &Path,
+    out_dir: Option<&Path>,
+    run_id: Option<&str>,
+    duration_seconds: u64,
+    round_sleep_ms: u64,
+    minimum_rounds: usize,
+) -> ExitCode {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let run_id = run_id.map_or_else(
+        || format!("soak-xray-{stamp}-{}", std::process::id()),
+        str::to_owned,
+    );
+    let out_dir = out_dir.map_or_else(
+        || {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("benchmarks/final")
+                .join(&run_id)
+        },
+        Path::to_path_buf,
+    );
+    let plan = bench::soak::SoakPlan {
+        xray_bin: xray_bin.to_path_buf(),
+        out_dir: out_dir.clone(),
+        run_id,
+        duration: std::time::Duration::from_secs(duration_seconds),
+        round_sleep: std::time::Duration::from_millis(round_sleep_ms),
+        minimum_rounds,
+    };
+    if let Err(error) = bench::soak::validate(&plan) {
+        eprintln!("bench run soak: {error}");
+        return ExitCode::from(2);
+    }
+    match bench::soak::run_xray(&plan) {
+        Ok(outcome) => {
+            println!(
+                "Xray soak: PASS ({} rounds, RSS growth {:.1} MiB; {})",
+                outcome.rounds,
+                outcome.resources.rss_growth_mib,
+                out_dir.display()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("bench run soak: {error}");
             ExitCode::FAILURE
         }
     }

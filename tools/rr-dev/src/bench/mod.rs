@@ -60,6 +60,7 @@ pub mod report;
 pub mod routing;
 pub mod runner;
 pub mod slot;
+pub mod soak;
 pub mod suites;
 pub mod sysctl;
 pub mod throughput;
