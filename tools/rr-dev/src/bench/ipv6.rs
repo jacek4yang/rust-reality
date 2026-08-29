@@ -62,6 +62,8 @@ pub enum Status {
     Fail,
     /// The case could not run here, with a recorded reason.
     Skip,
+    /// The environment cannot supply the capability this observation needs.
+    Unavailable,
 }
 
 impl Status {
@@ -72,6 +74,7 @@ impl Status {
             Self::Pass => "pass",
             Self::Fail => "fail",
             Self::Skip => "skip",
+            Self::Unavailable => "unavailable",
         }
     }
 
@@ -107,10 +110,7 @@ impl Record {
             ("ts", Json::string(timestamp)),
             ("matrix", Json::string(&self.matrix)),
             ("case", Json::string(&self.case)),
-            (
-                "classification",
-                Json::string(self.classification.as_str()),
-            ),
+            ("classification", Json::string(self.classification.as_str())),
             ("status", Json::string(self.status.as_str())),
             ("detail", self.detail.clone()),
             ("evidence", Json::string(&self.evidence)),
@@ -189,6 +189,15 @@ impl Results {
             count(Status::Fail),
             count(Status::Skip),
         ]
+    }
+
+    /// Number of capability-dependent observations that were unavailable.
+    #[must_use]
+    pub fn unavailable(&self) -> usize {
+        self.rows
+            .iter()
+            .filter(|row| row.status == Status::Unavailable)
+            .count()
     }
 }
 
@@ -412,6 +421,7 @@ mod tests {
         assert_eq!(Status::from_met(true).as_str(), "pass");
         assert_eq!(Status::from_met(false).as_str(), "fail");
         assert_eq!(Status::Skip.as_str(), "skip");
+        assert_eq!(Status::Unavailable.as_str(), "unavailable");
     }
 
     #[test]
@@ -532,9 +542,15 @@ LISTEN 0      511          0.0.0.0:80          0.0.0.0:*";
 
     #[test]
     fn curl_write_out_is_parsed_or_rejected() {
-        assert_eq!(parse_write_out("200 0.123").unwrap(), ("200".to_owned(), 0.123));
+        assert_eq!(
+            parse_write_out("200 0.123").unwrap(),
+            ("200".to_owned(), 0.123)
+        );
         // A failed transfer still writes out, with a zero status.
-        assert_eq!(parse_write_out("000 5.001").unwrap(), ("000".to_owned(), 5.001));
+        assert_eq!(
+            parse_write_out("000 5.001").unwrap(),
+            ("000".to_owned(), 5.001)
+        );
         assert!(parse_write_out("200").is_err());
         assert!(parse_write_out("200 fast").is_err());
     }
@@ -579,6 +595,7 @@ LISTEN 0      511          0.0.0.0:80          0.0.0.0:*";
                 .unwrap();
         }
         assert_eq!(results.tally(), [2, 1, 1]);
+        assert_eq!(results.unavailable(), 0);
         assert_eq!(results.failures(), vec!["1-listeners/b".to_owned()]);
         let written = std::fs::read_to_string(dir.join("results.jsonl")).unwrap();
         assert_eq!(written.lines().count(), 4);
@@ -835,7 +852,10 @@ pub fn materialize_server(
 fn patch_server_config(raw: &str, plan: &ServerPlan, cache: &Path) -> Result<String, String> {
     use crate::perf::json_in::{self, Value};
 
-    fn object(value: Value, path: &str) -> Result<std::collections::BTreeMap<String, Value>, String> {
+    fn object(
+        value: Value,
+        path: &str,
+    ) -> Result<std::collections::BTreeMap<String, Value>, String> {
         let Value::Object(members) = value else {
             return Err(format!("generated rust config {path} is not an object"));
         };
@@ -876,7 +896,10 @@ fn patch_server_config(raw: &str, plan: &ServerPlan, cache: &Path) -> Result<Str
     reality.insert("target".to_owned(), Value::Str(plan.target.clone()));
     stream.insert("realitySettings".to_owned(), Value::Object(reality));
     inbound.insert("streamSettings".to_owned(), Value::Object(stream));
-    root.insert("inbounds".to_owned(), Value::Array(vec![Value::Object(inbound)]));
+    root.insert(
+        "inbounds".to_owned(),
+        Value::Array(vec![Value::Object(inbound)]),
+    );
 
     let mut assets = match root.remove("assets") {
         Some(value) => object(value, "assets")?,
@@ -925,11 +948,13 @@ mod config_tests {
 
     #[test]
     fn a_server_plan_patches_only_the_ipv6_runtime_fields() {
-        let plan = ServerPlan::dual_stack("s", 62_001, "[::1]:8443")
-            .dialling("preferIpv6");
+        let plan = ServerPlan::dual_stack("s", 62_001, "[::1]:8443").dialling("preferIpv6");
         let rendered = patch_server_config(GENERATED, &plan, Path::new("/run/assets-s")).unwrap();
         let value = json_in::parse(&rendered).unwrap();
-        assert_eq!(value.int_field("root", "untouched").unwrap_err().path, "root.untouched");
+        assert_eq!(
+            value.int_field("root", "untouched").unwrap_err().path,
+            "root.untouched"
+        );
         let inbound = &value.array_field("root", "inbounds").unwrap()[0];
         assert_eq!(inbound.int_field("inbound", "port").unwrap(), 62_001);
         let listen = inbound.field("inbound", "listen").unwrap();
@@ -938,11 +963,26 @@ mod config_tests {
         assert_eq!(listen.str_field("listen", "ipv6").unwrap(), "::1");
         let stream = inbound.field("inbound", "streamSettings").unwrap();
         let reality = stream.field("stream", "realitySettings").unwrap();
-        assert_eq!(reality.str_field("reality", "target").unwrap(), "[::1]:8443");
-        assert!(reality.field("reality", "keep").unwrap().as_bool("keep").unwrap());
+        assert_eq!(
+            reality.str_field("reality", "target").unwrap(),
+            "[::1]:8443"
+        );
+        assert!(
+            reality
+                .field("reality", "keep")
+                .unwrap()
+                .as_bool("keep")
+                .unwrap()
+        );
         let assets = value.field("root", "assets").unwrap();
-        assert_eq!(assets.str_field("assets", "cacheDirectory").unwrap(), "/run/assets-s");
-        assert_eq!(assets.int_field("assets", "requestTimeoutSeconds").unwrap(), 5);
+        assert_eq!(
+            assets.str_field("assets", "cacheDirectory").unwrap(),
+            "/run/assets-s"
+        );
+        assert_eq!(
+            assets.int_field("assets", "requestTimeoutSeconds").unwrap(),
+            5
+        );
         let dial = value
             .field("root", "network")
             .unwrap()
@@ -973,4 +1013,272 @@ mod config_tests {
         .unwrap_err();
         assert!(error.contains("expected exactly one"), "{error}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Runtime
+// ---------------------------------------------------------------------------
+
+/// Inputs to the native IPv6 end-to-end gate.
+#[derive(Debug, Clone)]
+pub struct Ipv6Suite {
+    /// Repository root, used to build the benchmark origin.
+    pub repo: PathBuf,
+    /// rust-reality binary under test.
+    pub rust_bin: PathBuf,
+    /// Unmodified Xray client binary.
+    pub xray_bin: PathBuf,
+    /// OpenSSL used only to create the ephemeral cover certificate.
+    pub openssl_bin: PathBuf,
+    /// Fresh durable evidence directory.
+    pub out_dir: PathBuf,
+    /// Safe run identifier.
+    pub run_id: String,
+    /// Selected phase digits, in execution order.
+    pub phases: String,
+    /// Explicit host-global IPv6 address, or automatic host discovery.
+    pub global_ipv6: Option<String>,
+    /// MiB transferred in each large-transfer direction.
+    pub transfer_mib: u64,
+    /// Public IPv6 URL used by phase 3.
+    pub internet_url: String,
+}
+
+/// Validates the IPv6 gate's operator inputs.
+///
+/// # Errors
+///
+/// Returns a message when a value would make evidence ambiguous or unsafe.
+pub fn validate(suite: &Ipv6Suite) -> Result<(), String> {
+    if suite.run_id.is_empty()
+        || !suite
+            .run_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err("RUN_ID is required and must be one safe component".to_owned());
+    }
+    if suite.phases.is_empty() || !suite.phases.chars().all(|phase| matches!(phase, '0'..='5')) {
+        return Err("IPv6 phases must be a non-empty string containing only 0..5".to_owned());
+    }
+    if suite.transfer_mib == 0 {
+        return Err("the IPv6 transfer size must be at least 1 MiB".to_owned());
+    }
+    if let Some(address) = &suite.global_ipv6 {
+        let parsed = address
+            .parse::<std::net::IpAddr>()
+            .map_err(|error| format!("global IPv6 address {address:?} is invalid: {error}"))?;
+        if !parsed.is_ipv6() {
+            return Err("--global-v6 must be an IPv6 address".to_owned());
+        }
+    }
+    Ok(())
+}
+
+/// Starts one materialized rust-reality server with the private cover CA.
+fn start_server(
+    workspace: &crate::bench::workspace::Workspace,
+    run: &crate::bench::evidence::RunDirectory,
+    rust_bin: &Path,
+    server: &MaterializedServer,
+    ca_certificate: &Path,
+) -> Result<crate::bench::process::Child, String> {
+    crate::bench::process::Child::spawn(
+        format!("rust-{}", server.name),
+        rust_bin,
+        &[
+            "serve".to_owned(),
+            "--config".to_owned(),
+            server.config_path.display().to_string(),
+        ],
+        workspace.path(),
+        &[(
+            "SSL_CERT_FILE".to_owned(),
+            ca_certificate.display().to_string(),
+        )],
+        &run.join(&format!("{}.rust.log", server.name)),
+    )
+    .map_err(|error| error.to_string())
+}
+
+/// Returns whether an address accepts a TCP connection within a short deadline.
+fn tcp_accepts(address: std::net::SocketAddr) -> bool {
+    std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_millis(500)).is_ok()
+}
+
+/// Waits for a child to exit, without ever signalling an unrelated PID.
+fn exits_within(child: &mut crate::bench::process::Child, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if !child.is_alive() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    !child.is_alive()
+}
+
+/// Reads the host TCP listener table.
+fn socket_table() -> Result<String, String> {
+    let outcome = crate::process::Tool::new("ss")
+        .args(["-lntH"])
+        .probe()
+        .map_err(|error| format!("could not inspect TCP listeners: {error}"))?;
+    if !outcome.success() {
+        return Err(format!(
+            "ss -lntH exited {:?}: {}",
+            outcome.code,
+            outcome.stderr.trim_end()
+        ));
+    }
+    Ok(outcome.stdout)
+}
+
+/// Records the non-privileged listener contract from phase 1.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the phase owns the run, workspace, identity, certificate and results"
+)]
+pub fn run_local_listener_phase(
+    workspace: &crate::bench::workspace::Workspace,
+    run: &crate::bench::evidence::RunDirectory,
+    rust_bin: &Path,
+    ca_certificate: &Path,
+    results: &mut Results,
+) -> Result<(), String> {
+    let ports = crate::bench::workspace::reserve_ports(7)?;
+    for (index, mode) in ListenerMode::ALL.into_iter().enumerate() {
+        let port = ports[index];
+        let plan = ServerPlan {
+            name: format!("l1-{}", mode.as_str()),
+            port,
+            mode,
+            ipv4: "127.0.0.1".to_owned(),
+            ipv6: "::1".to_owned(),
+            target: "[::1]:1".to_owned(),
+            dial: Vec::new(),
+        };
+        let materialized = materialize_server(workspace, rust_bin, &plan)?;
+        let mut child = start_server(workspace, run, rust_bin, &materialized, ca_certificate)?;
+        let readiness = if mode == ListenerMode::Ipv4Only {
+            std::net::SocketAddr::from(([127, 0, 0, 1], port))
+        } else {
+            std::net::SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port))
+        };
+        child
+            .wait_for_address(readiness, std::time::Duration::from_secs(10))
+            .map_err(|error| error.to_string())?;
+        let table = socket_table()?;
+        let v4_listen = listener_present(&table, "127.0.0.1", port);
+        let v6_listen = listener_present(&table, "::1", port);
+        let v4_accept = tcp_accepts(std::net::SocketAddr::from(([127, 0, 0, 1], port)));
+        let v6_accept = tcp_accepts(std::net::SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port)));
+        let expected = mode.expected_families();
+        let met = (v4_listen && v4_accept, v6_listen && v6_accept) == expected;
+        results.record(Record {
+            matrix: "1-listeners".to_owned(),
+            case: format!("mode-{}", mode.as_str()),
+            classification: Classification::Loopback,
+            status: Status::from_met(met),
+            detail: Json::object([
+                ("mode", Json::string(mode.as_str())),
+                ("port", Json::Int(i64::from(port))),
+                (
+                    "v4Listen",
+                    Json::string(if v4_listen { "present" } else { "absent" }),
+                ),
+                (
+                    "v6Listen",
+                    Json::string(if v6_listen { "present" } else { "absent" }),
+                ),
+                (
+                    "v4Accept",
+                    Json::string(if v4_accept { "accepted" } else { "refused" }),
+                ),
+                (
+                    "v6Accept",
+                    Json::string(if v6_accept { "accepted" } else { "refused" }),
+                ),
+                (
+                    "expectV4",
+                    Json::string(if expected.0 { "yes" } else { "no" }),
+                ),
+                (
+                    "expectV6",
+                    Json::string(if expected.1 { "yes" } else { "no" }),
+                ),
+            ]),
+            evidence: format!("{}.rust.log", materialized.name),
+        })?;
+        child.terminate();
+    }
+
+    let bad_plan = ServerPlan {
+        name: "l1-badaddr".to_owned(),
+        port: ports[4],
+        mode: ListenerMode::Auto,
+        ipv4: "127.0.0.1".to_owned(),
+        ipv6: "2001:db8::ffff".to_owned(),
+        target: "[::1]:1".to_owned(),
+        dial: Vec::new(),
+    };
+    let bad = materialize_server(workspace, rust_bin, &bad_plan)?;
+    let mut child = start_server(workspace, run, rust_bin, &bad, ca_certificate)?;
+    let failed = exits_within(&mut child, std::time::Duration::from_secs(8));
+    results.record(Record {
+        matrix: "1-listeners".to_owned(),
+        case: "auto-concrete-unassigned-v6-fatal".to_owned(),
+        classification: Classification::Loopback,
+        status: Status::from_met(failed),
+        detail: Json::object([(
+            "expect",
+            Json::string("serve exits non-zero: EADDRNOTAVAIL on a concrete address is fatal"),
+        )]),
+        evidence: format!("{}.rust.log", bad.name),
+    })?;
+    child.terminate();
+
+    let owner_plan = ServerPlan {
+        name: "l1-busy-a".to_owned(),
+        port: ports[5],
+        mode: ListenerMode::Ipv6Only,
+        ipv4: "0.0.0.0".to_owned(),
+        ipv6: "::1".to_owned(),
+        target: "[::1]:1".to_owned(),
+        dial: Vec::new(),
+    };
+    let owner = materialize_server(workspace, rust_bin, &owner_plan)?;
+    let mut owner_child = start_server(workspace, run, rust_bin, &owner, ca_certificate)?;
+    owner_child
+        .wait_for_address(
+            std::net::SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], ports[5])),
+            std::time::Duration::from_secs(10),
+        )
+        .map_err(|error| error.to_string())?;
+    let contender_plan = ServerPlan {
+        name: "l1-busy-b".to_owned(),
+        port: ports[5],
+        mode: ListenerMode::Auto,
+        ipv4: "127.0.0.1".to_owned(),
+        ipv6: "::1".to_owned(),
+        target: "[::1]:1".to_owned(),
+        dial: Vec::new(),
+    };
+    let contender = materialize_server(workspace, rust_bin, &contender_plan)?;
+    let mut contender_child = start_server(workspace, run, rust_bin, &contender, ca_certificate)?;
+    let failed = exits_within(&mut contender_child, std::time::Duration::from_secs(8));
+    results.record(Record {
+        matrix: "1-listeners".to_owned(),
+        case: "addr-in-use-fatal".to_owned(),
+        classification: Classification::Loopback,
+        status: Status::from_met(failed),
+        detail: Json::object([
+            ("port", Json::Int(i64::from(ports[5]))),
+            ("expect", Json::string("EADDRINUSE fatal even in auto mode")),
+        ]),
+        evidence: format!("{}.rust.log", contender.name),
+    })?;
+    contender_child.terminate();
+    owner_child.terminate();
+    Ok(())
 }
