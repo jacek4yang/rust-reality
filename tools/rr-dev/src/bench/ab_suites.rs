@@ -528,7 +528,7 @@ fn write_slot_identity(
 }
 
 /// Reads back the rows the workload child wrote.
-fn read_rows(path: &Path) -> Result<Vec<SampleRow>, String> {
+pub(crate) fn read_rows(path: &Path) -> Result<Vec<SampleRow>, String> {
     let raw = std::fs::read_to_string(path)
         .map_err(|error| format!("could not read {}: {error}", path.display()))?;
     let value = crate::perf::json_in::parse(&raw)

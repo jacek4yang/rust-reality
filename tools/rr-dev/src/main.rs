@@ -42,6 +42,10 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+// A clap subcommand enum is a parsed command line, constructed once per process.
+// Its variants are inherently uneven in size and boxing them would only obscure
+// the derive.
+#[allow(clippy::large_enum_variant)]
 enum Command {
     /// Diagnose the development and measurement environment without changing it.
     Doctor,
@@ -236,6 +240,21 @@ enum BenchCommand {
         /// Run identifier recorded in the completion marker.
         #[arg(long)]
         run_id: Option<String>,
+        /// Pinned baseline ELF (paired setup-rate / fallback suites).
+        #[arg(long)]
+        baseline_bin: Option<PathBuf>,
+        /// Baseline identity sidecar binding its commit and digest.
+        #[arg(long)]
+        baseline_identity: Option<PathBuf>,
+        /// Cover mode for the baseline side.
+        #[arg(long, default_value = "default")]
+        baseline_cover_mode: String,
+        /// Cover mode for the candidate side.
+        #[arg(long, default_value = "default")]
+        candidate_cover_mode: String,
+        /// One-leg netem delay in ms; shapes only the TLS cover target.
+        #[arg(long)]
+        cover_netem_rtt_ms: Option<u32>,
     },
 }
 
@@ -795,7 +814,34 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             abba_start,
             measure_mode,
             run_id,
+            baseline_bin,
+            baseline_identity,
+            baseline_cover_mode,
+            candidate_cover_mode,
+            cover_netem_rtt_ms,
         } => {
+            if suite == "setup-rate" {
+                return run_bench_setup_rate(
+                    repo,
+                    &SetupRateArgs {
+                        baseline_bin: baseline_bin.as_deref(),
+                        candidate_bin: rust_bin,
+                        xray_bin,
+                        baseline_identity: baseline_identity.as_deref(),
+                        out_dir: out_dir.as_deref(),
+                        run_id: run_id.as_deref(),
+                        blocks: *blocks,
+                        samples: *samples,
+                        connections: *connections,
+                        concurrencies,
+                        abba_start,
+                        baseline_cover_mode,
+                        candidate_cover_mode,
+                        measure_mode,
+                        cover_netem_rtt_ms: *cover_netem_rtt_ms,
+                    },
+                );
+            }
             if suite == "setup-rate-xray" {
                 return run_bench_setup_rate_xray(
                     repo,
@@ -870,6 +916,106 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                     ExitCode::from(2)
                 }
             }
+        }
+    }
+}
+
+/// The paired setup-rate suite's command-line inputs.
+struct SetupRateArgs<'a> {
+    baseline_bin: Option<&'a Path>,
+    candidate_bin: &'a Path,
+    xray_bin: &'a Path,
+    baseline_identity: Option<&'a Path>,
+    out_dir: Option<&'a Path>,
+    run_id: Option<&'a str>,
+    blocks: usize,
+    samples: usize,
+    connections: usize,
+    concurrencies: &'a str,
+    abba_start: &'a str,
+    baseline_cover_mode: &'a str,
+    candidate_cover_mode: &'a str,
+    measure_mode: &'a str,
+    cover_netem_rtt_ms: Option<u32>,
+}
+
+/// Drives the paired baseline-versus-candidate setup-rate suite.
+fn run_bench_setup_rate(repo: &Path, args: &SetupRateArgs<'_>) -> ExitCode {
+    let Some(baseline_bin) = args.baseline_bin else {
+        eprintln!("bench run setup-rate: --baseline-bin is required for a paired comparison");
+        return ExitCode::from(2);
+    };
+    let attribution = match args.measure_mode {
+        "perf" => bench::slot::Attribution::Perf(&bench::attribution::REQUIRED_EVENTS),
+        "wall" => bench::slot::Attribution::Wall,
+        other => {
+            eprintln!("bench run setup-rate: MEASURE_MODE must be perf or wall, got {other}");
+            return ExitCode::from(2);
+        }
+    };
+    let (Ok(baseline_cover_mode), Ok(candidate_cover_mode)) = (
+        bench::cover::CoverMode::parse(args.baseline_cover_mode),
+        bench::cover::CoverMode::parse(args.candidate_cover_mode),
+    ) else {
+        eprintln!(
+            "bench run setup-rate: cover modes must be default, cold, warm or prebuilt"
+        );
+        return ExitCode::from(2);
+    };
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let run_id = args.run_id.map_or_else(
+        || format!("benchmark-setup-rate-{stamp}-{}", std::process::id()),
+        str::to_owned,
+    );
+    let out_dir = args.out_dir.map_or_else(
+        || {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("benchmarks")
+                .join(&run_id)
+        },
+        Path::to_path_buf,
+    );
+    let suite = bench::paired::SetupRateSuite {
+        repo: repo.to_path_buf(),
+        baseline_bin: baseline_bin.to_path_buf(),
+        candidate_bin: args.candidate_bin.to_path_buf(),
+        xray_bin: args.xray_bin.to_path_buf(),
+        baseline_identity: args.baseline_identity.map(Path::to_path_buf),
+        out_dir,
+        run_id,
+        blocks: args.blocks,
+        samples: args.samples,
+        connections: args.connections,
+        concurrencies: args
+            .concurrencies
+            .split_whitespace()
+            .filter_map(|word| word.parse().ok())
+            .collect(),
+        abba_start: args.abba_start.to_owned(),
+        baseline_cover_mode,
+        candidate_cover_mode,
+        attribution,
+        cover_netem_rtt_ms: args.cover_netem_rtt_ms,
+    };
+    if let Err(error) = bench::paired::validate(&suite) {
+        eprintln!("bench run setup-rate: {error}");
+        return ExitCode::from(2);
+    }
+    match bench::paired::run_setup_rate(&suite) {
+        Ok(outcome) => {
+            println!(
+                "setup ABBA complete: {} ({} slots)",
+                outcome.out_dir.display(),
+                outcome.slot_count
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("bench run setup-rate: {error}");
+            ExitCode::FAILURE
         }
     }
 }

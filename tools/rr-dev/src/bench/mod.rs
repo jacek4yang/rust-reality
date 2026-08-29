@@ -38,6 +38,7 @@ pub mod loopback;
 pub mod origin;
 pub mod origin_go;
 pub mod origin_tls;
+pub mod paired;
 pub mod plan;
 pub mod process;
 pub mod publication;
