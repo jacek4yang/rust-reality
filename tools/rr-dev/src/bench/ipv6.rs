@@ -1818,6 +1818,149 @@ pub fn discover_global_ipv6(ip_output: &str) -> Option<String> {
     })
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the characterization owns both binaries, cover, origin and evidence"
+)]
+fn run_no_alpn_characterization(
+    workspace: &crate::bench::workspace::Workspace,
+    run: &crate::bench::evidence::RunDirectory,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    origin_bin: &Path,
+    certificate: &crate::bench::no_ccs::CoverCertificate,
+    results: &mut Results,
+) -> Result<(), String> {
+    let ports = crate::bench::workspace::reserve_ports(4)?;
+    let _cover = crate::bench::origin_go::start(
+        origin_bin,
+        workspace,
+        &crate::bench::origin_go::OriginPlan {
+            label: "cover-no-alpn".to_owned(),
+            listen_address: "127.0.0.1".to_owned(),
+            port: ports[0],
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("cover-no-alpn.put.jsonl"),
+            tls: Some((certificate.certificate.clone(), certificate.key.clone())),
+            access_log: None,
+            alpn: None,
+        },
+    )?;
+
+    let payload = workspace.join("no-alpn-payload.bin");
+    let body: Vec<u8> = (0..=255_u8).cycle().take(64 * 1024).collect();
+    std::fs::write(&payload, body)
+        .map_err(|error| format!("could not write {}: {error}", payload.display()))?;
+    let expected = crate::hash::sha256_file(&payload)?;
+    let _origin = crate::bench::origin_go::start(
+        origin_bin,
+        workspace,
+        &crate::bench::origin_go::OriginPlan {
+            label: "origin-no-alpn".to_owned(),
+            listen_address: "127.0.0.1".to_owned(),
+            port: ports[1],
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("origin-no-alpn.put.jsonl"),
+            tls: None,
+            access_log: None,
+            alpn: None,
+        },
+    )?;
+
+    let target = format!("127.0.0.1:{}", ports[0]);
+    let probe = crate::process::Tool::new(rust_bin.display().to_string())
+        .env(
+            "SSL_CERT_FILE",
+            certificate.ca_certificate.display().to_string(),
+        )
+        .args([
+            "probe-dest".to_owned(),
+            "--target".to_owned(),
+            target.clone(),
+            "--server-name".to_owned(),
+            COVER_SNI.to_owned(),
+        ])
+        .probe()
+        .map_err(|error| format!("could not run no-ALPN destination probe: {error}"))?;
+    if !probe.success() {
+        return Err(format!(
+            "no-ALPN destination probe exited {:?}: {}",
+            probe.code,
+            probe.stderr.trim_end()
+        ));
+    }
+    run.write_new("no-alpn-probe.json", probe.trimmed_stdout())?;
+    let probe_json = crate::perf::json_in::parse(probe.trimmed_stdout())
+        .map_err(|error| format!("no-ALPN probe output is invalid JSON: {error}"))?;
+    let compatible = probe_json
+        .field("probe", "compatible")
+        .and_then(|value| value.as_bool("probe.compatible"))
+        .map_err(|error| error.to_string())?;
+    let cipher = probe_json
+        .str_field("probe", "cipherSuite")
+        .map_err(|error| error.to_string())?;
+    let group = probe_json
+        .str_field("probe", "keyExchangeGroup")
+        .map_err(|error| error.to_string())?;
+
+    let server_plan = ServerPlan {
+        name: "s2-no-alpn".to_owned(),
+        port: ports[2],
+        mode: ListenerMode::Ipv4Only,
+        ipv4: "127.0.0.1".to_owned(),
+        ipv6: "::".to_owned(),
+        target,
+        dial: Vec::new(),
+    };
+    let server = materialize_server(workspace, rust_bin, &server_plan)?;
+    let mut server_child = start_server_raw(
+        workspace,
+        run,
+        rust_bin,
+        &server,
+        &certificate.ca_certificate,
+    )?;
+    server_child
+        .wait_for_address(
+            std::net::SocketAddr::from(([127, 0, 0, 1], server.port)),
+            std::time::Duration::from_secs(15),
+        )
+        .map_err(|error| error.to_string())?;
+    let mut xray = start_xray(
+        workspace,
+        run,
+        xray_bin,
+        "x2-no-alpn",
+        &[leg(ports[3], "127.0.0.1", &server)],
+    )?;
+    xray.wait_for_port(ports[3], std::time::Duration::from_secs(15))
+        .map_err(|error| error.to_string())?;
+    let url = format!("http://127.0.0.1:{}/no-alpn-payload.bin", ports[1]);
+    let transfer = download(ports[3], &url, &workspace.join("no-alpn-session.bin"), 10)?;
+    let session_failed = !transfer.byte_exact(&expected);
+    results.record(Record {
+        matrix: "2-sessions".to_owned(),
+        case: "i-no-alpn-cover-characterization".to_owned(),
+        classification: Classification::Loopback,
+        status: Status::from_met(compatible && session_failed),
+        detail: Json::object([
+            ("probeCompatible", Json::Bool(compatible)),
+            ("cipherSuite", Json::string(cipher)),
+            ("keyExchangeGroup", Json::string(group)),
+            ("session", transfer_detail(&url, &transfer, &expected)),
+            (
+                "expect",
+                Json::string(
+                    "probe sees a compatible ServerHello, but a no-ALPN cover cannot shape the authenticated session flight",
+                ),
+            ),
+            ("probeEvidence", Json::string("no-alpn-probe.json")),
+        ]),
+        evidence: "x2-no-alpn.xray.log".to_owned(),
+    })?;
+    Ok(())
+}
+
 /// Records phase 2: real Xray/VLESS/REALITY/Vision sessions across both
 /// loopback families, including DNS policy, cover fallback and auth controls.
 #[allow(
@@ -2101,7 +2244,15 @@ pub fn run_session_phase(
         ]),
         evidence: "x2bad.xray.log".to_owned(),
     })?;
-    Ok(())
+    run_no_alpn_characterization(
+        workspace,
+        run,
+        rust_bin,
+        xray_bin,
+        origin_bin,
+        certificate,
+        results,
+    )
 }
 
 /// Records phase 3 without letting absent public IPv6 invalidate local policy
