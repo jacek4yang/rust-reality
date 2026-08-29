@@ -259,7 +259,7 @@ bench_lock() { exec 9>"$BENCH_LOCK"; flock -x 9; log "acquired $BENCH_LOCK"; }
 bench_unlock() { flock -u 9 2>/dev/null || true; exec 9>&-; }
 
 # The REALITY cover-dial TLS client verifies the cover certificate chain
-# (see scripts/test-openssl-no-ccs-interop.sh): an ephemeral CA signs the
+# (see `cargo dev bench run --suite no-ccs-interop`): an ephemeral CA signs the
 # cover leaf, and only the rust-reality server child receives SSL_CERT_FILE.
 make_cover_cert() {
     [[ -f $WORK/cover.crt ]] && return 0

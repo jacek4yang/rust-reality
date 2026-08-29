@@ -764,9 +764,9 @@
       "calls_scripts": [
         "benchmark-contract.sh"
       ],
-      "disposition": "MERGE",
-      "replacement": "cargo dev bench interop",
-      "status": "not-started"
+      "disposition": "DELETE",
+      "replacement": "cargo dev bench run --suite no-ccs-interop",
+      "status": "deleted"
     },
     {
       "path": "scripts/test-package-release.sh",
@@ -893,9 +893,7 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "calls_scripts": [
-        "test-openssl-no-ccs-interop.sh"
-      ],
+      "calls_scripts": [],
       "disposition": "MERGE",
       "replacement": "cargo dev bench ipv6",
       "status": "not-started"

@@ -251,10 +251,76 @@ fn make_directory(path: &Path) -> Result<(), String> {
         .map_err(|error| format!("could not create {}: {error}", path.display()))
 }
 
+/// Formats Unix seconds as `%Y-%m-%dT%H:%M:%SZ`, matching `date -u`.
+///
+/// The evidence contracts these suites replace stamp themselves with
+/// `date -u +%Y-%m-%dT%H:%M:%SZ`, so the field has to keep that exact shape.
+#[must_use]
+pub fn utc_timestamp(unix_seconds: i64) -> String {
+    let days = unix_seconds.div_euclid(86_400);
+    let seconds = unix_seconds.rem_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    let (hour, minute, second) = (seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+/// Converts a count of days since the Unix epoch to a civil `(y, m, d)`.
+///
+/// This is Hinnant's `civil_from_days`, shifted to an era starting in March so
+/// the leap day lands at the end of a 146,097-day cycle.
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let shifted = days + 719_468;
+    let era = shifted.div_euclid(146_097);
+    let day_of_era = shifted.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let march_month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * march_month + 2) / 5 + 1;
+    let month = if march_month < 10 {
+        march_month + 3
+    } else {
+        march_month - 9
+    };
+    (if month <= 2 { year + 1 } else { year }, month, day)
+}
+
+/// Stamps the current wall-clock time in the legacy evidence format.
+///
+/// # Errors
+///
+/// Returns a message when the system clock is before the Unix epoch.
+pub fn now_utc() -> Result<String, String> {
+    let elapsed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("the system clock is before the Unix epoch: {error}"))?;
+    let seconds = i64::try_from(elapsed.as_secs())
+        .map_err(|error| format!("the system clock is unrepresentable: {error}"))?;
+    Ok(utc_timestamp(seconds))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::perf::{json_in, loader};
+
+    #[test]
+    fn the_utc_stamp_matches_date_minus_u() {
+        assert_eq!(utc_timestamp(0), "1970-01-01T00:00:00Z");
+        assert_eq!(utc_timestamp(1), "1970-01-01T00:00:01Z");
+        // `date -u -d @1787982607` on the host that recorded the legacy run.
+        assert_eq!(utc_timestamp(1_787_982_607), "2026-08-29T05:50:07Z");
+        // Leap day, and the day after, in a year divisible by 4 but not 100.
+        assert_eq!(utc_timestamp(1_709_164_800), "2024-02-29T00:00:00Z");
+        assert_eq!(utc_timestamp(1_709_251_199), "2024-02-29T23:59:59Z");
+        assert_eq!(utc_timestamp(1_709_251_200), "2024-03-01T00:00:00Z");
+        // 2000 is a leap year, 1900 was not: the century rules both matter.
+        assert_eq!(utc_timestamp(951_782_400), "2000-02-29T00:00:00Z");
+        assert_eq!(utc_timestamp(-2_208_988_800), "1900-01-01T00:00:00Z");
+        assert_eq!(utc_timestamp(-2_203_977_600), "1900-02-28T00:00:00Z");
+        assert_eq!(utc_timestamp(-2_203_891_200), "1900-03-01T00:00:00Z");
+    }
 
     struct Scratch(PathBuf);
 

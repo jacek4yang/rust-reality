@@ -225,8 +225,8 @@ pub fn summary_json(
     run_id: &str,
     rust: &crate::bench::identity::Binary,
     xray: &crate::bench::identity::Binary,
-    openssl_path: &Path,
-    openssl_identity: &str,
+    openssl: &crate::bench::identity::Binary,
+    completed_at: &str,
     ports: [u16; 4],
     payload_sha256: &str,
     mldsa_sha256: &str,
@@ -241,16 +241,19 @@ pub fn summary_json(
     Json::object([
         ("schemaVersion", Json::Int(1)),
         ("runId", Json::string(run_id)),
+        ("completedAt", Json::string(completed_at)),
         ("rustReality", binary(rust)),
         ("xray", binary(xray)),
         (
             "openssl",
             Json::object([
-                ("path", Json::string(openssl_path.display().to_string())),
+                ("path", Json::string(openssl.path.display().to_string())),
+                ("sha256", Json::string(openssl.sha256.clone())),
                 (
                     "version",
-                    Json::string(openssl_identity.lines().next().unwrap_or_default()),
+                    Json::string(openssl.identity.lines().next().unwrap_or_default()),
                 ),
+                ("identity", Json::string(openssl.identity.clone())),
                 ("tls", Json::string("1.3")),
                 ("middlebox", Json::Bool(false)),
                 (
@@ -304,6 +307,27 @@ pub fn summary_json(
         ("trace", Json::string("openssl-trace.log")),
         ("ok", Json::Bool(true)),
     ])
+}
+
+/// Resolves the OpenSSL command to a concrete file and hashes it.
+///
+/// # Errors
+///
+/// Returns a message when the command is not on `PATH` or cannot be hashed.
+fn resolve_openssl(
+    openssl_bin: &Path,
+    identity: String,
+) -> Result<crate::bench::identity::Binary, String> {
+    let requested = openssl_bin.display().to_string();
+    let path = crate::bench::origin_tls::which(&requested)
+        .ok_or_else(|| format!("{requested} is not on PATH"))?;
+    let sha256 = hash::sha256_file(&path)?;
+    Ok(crate::bench::identity::Binary {
+        label: "openssl".to_owned(),
+        path,
+        sha256,
+        identity,
+    })
 }
 
 /// Re-hashes a binary and confirms it did not change during the run.
@@ -410,6 +434,33 @@ mod tests {
         assert!(args.contains(&"h2,http/1.1".to_owned()));
     }
 
+    /// A generated config, trimmed to the members this adaptation touches.
+    const GENERATED: &str = r#"{"assets":{"cacheDirectory":"/w"},
+        "inbounds":[{"streamSettings":{"realitySettings":{
+        "coverOptimization":{"enabled":true,"warmTcp":true,"prebuiltProfiles":true}}}}]}"#;
+
+    #[test]
+    fn the_serial_cover_adaptation_relaxes_the_probe_and_stops_warm_pooling() {
+        let adapted = for_serial_cover(GENERATED, 15).unwrap();
+        assert!(adapted.contains(r#""requestTimeoutSeconds":15"#));
+        // The pool is the whole reason this suite hung against `s_server`.
+        assert!(adapted.contains(r#""warmTcp":false"#));
+        // Only `warmTcp` moves: the cover optimizations stay on, so the
+        // authenticated path this suite traces is still the optimized one.
+        assert!(adapted.contains(r#""enabled":true"#));
+        assert!(adapted.contains(r#""prebuiltProfiles":true"#));
+    }
+
+    #[test]
+    fn the_serial_cover_adaptation_fails_closed_on_an_unexpected_shape() {
+        // Silently skipping a renamed knob would resurrect a 20-second hang
+        // that looks like a REALITY fault rather than a config drift.
+        let error = for_serial_cover(r#"{"assets":{},"inbounds":[{}]}"#, 15).unwrap_err();
+        assert!(error.contains("streamSettings"), "{error}");
+        let error = for_serial_cover(r#"{"assets":{},"inbounds":[]}"#, 15).unwrap_err();
+        assert!(error.contains("first inbound"), "{error}");
+    }
+
     #[test]
     fn the_summary_records_both_assertions() {
         let binary = |label: &str| crate::bench::identity::Binary {
@@ -418,12 +469,18 @@ mod tests {
             sha256: "a".repeat(64),
             identity: "identity".to_owned(),
         };
+        let openssl = crate::bench::identity::Binary {
+            label: "openssl".to_owned(),
+            path: std::path::PathBuf::from("/usr/bin/openssl"),
+            sha256: "d".repeat(64),
+            identity: "OpenSSL 3.5.6 7 Apr 2026\nbuilt on: x\n".to_owned(),
+        };
         let rendered = summary_json(
             "run-1",
             &binary("rust-reality"),
             &binary("xray"),
-            Path::new("/usr/bin/openssl"),
-            "OpenSSL 3.5.6 7 Apr 2026\nbuilt on: x\n",
+            &openssl,
+            "2026-08-29T05:50:07Z",
             [1, 2, 3, 4],
             &"b".repeat(64),
             &"c".repeat(64),
@@ -434,7 +491,14 @@ mod tests {
         assert!(rendered.contains("\"middlebox\": false"));
         assert!(rendered.contains("\"payloadBytes\": 1048576"));
         assert!(rendered.contains("rust-reality child SSL_CERT_FILE only"));
+        // `version` is the first line; `identity` is the whole `version -a`
+        // block. The legacy contract records both, and they are not the same
+        // evidence: the block pins the build, the line pins the release.
         assert!(rendered.contains("\"version\": \"OpenSSL 3.5.6 7 Apr 2026\""));
+        assert!(rendered.contains("built on: x"));
+        assert!(rendered.contains("\"completedAt\": \"2026-08-29T05:50:07Z\""));
+        assert!(rendered.contains(&"d".repeat(64)));
+        assert!(rendered.contains("/usr/bin/openssl"));
     }
 }
 
@@ -459,12 +523,26 @@ pub struct NoCcsSuite {
     pub run_id: String,
 }
 
-/// Sets `assets.requestTimeoutSeconds` on a generated config.
+/// Adapts a generated config to an `openssl s_server` cover.
+///
+/// Two departures from the generated defaults, both forced by the external
+/// mechanism rather than by anything under test:
+///
+/// * `assets.requestTimeoutSeconds` is relaxed, because the default is tuned
+///   for a public cover and is too tight for the first local probe.
+/// * `coverOptimization.warmTcp` is disabled. `s_server` serves one connection
+///   at a time, so the warm pool's pre-opened sockets sit unaccepted in the
+///   listen backlog; a checked-out pooled socket is then one `s_server` will
+///   not read from until it finishes the connection it is on, and the REALITY
+///   handshake stalls until the client gives up. Pooling only decides *when*
+///   the cover socket is opened, never the handshake bytes this suite
+///   asserts on, so disabling it leaves the no-CCS claim intact. The pooled
+///   path stays covered by `--suite xray-interop` against a real cover.
 ///
 /// # Errors
 ///
 /// Returns a message when the config is not the expected object shape.
-fn with_asset_timeout(generated: &str, seconds: u64) -> Result<String, String> {
+fn for_serial_cover(generated: &str, seconds: u64) -> Result<String, String> {
     use crate::perf::json_in::{self, Value};
     let value = json_in::parse(generated)
         .map_err(|error| format!("the generated config is invalid JSON: {error}"))?;
@@ -478,7 +556,34 @@ fn with_asset_timeout(generated: &str, seconds: u64) -> Result<String, String> {
         "requestTimeoutSeconds".to_owned(),
         Value::Number(seconds.to_string()),
     );
+    disable_warm_tcp(&mut members)?;
     Ok(crate::bench::suites::render_compact(&Value::Object(members)))
+}
+
+/// Clears `warmTcp` on the first inbound's REALITY cover optimizations.
+///
+/// # Errors
+///
+/// Returns a message when the inbound is missing or is not the expected shape.
+fn disable_warm_tcp(
+    members: &mut std::collections::BTreeMap<String, crate::perf::json_in::Value>,
+) -> Result<(), String> {
+    use crate::perf::json_in::Value;
+    let Some(Value::Array(inbounds)) = members.get_mut("inbounds") else {
+        return Err("the generated config has no inbounds array".to_owned());
+    };
+    let Some(Value::Object(inbound)) = inbounds.first_mut() else {
+        return Err("the generated config has no first inbound object".to_owned());
+    };
+    let mut current = inbound;
+    for key in ["streamSettings", "realitySettings", "coverOptimization"] {
+        let Some(Value::Object(next)) = current.get_mut(key) else {
+            return Err(format!("the first inbound has no {key} object"));
+        };
+        current = next;
+    }
+    current.insert("warmTcp".to_owned(), Value::Bool(false));
+    Ok(())
 }
 
 /// Writes the 1 MiB payload, builds the Go origin and starts it.
@@ -526,11 +631,10 @@ fn start_tunnel(
     socks_port: u16,
 ) -> Result<(crate::bench::process::Child, crate::bench::process::Child), String> {
     use crate::bench::{config::RealityIdentity, process::Child, suites};
-    // Dial the cover by address, not by name. `localhost` can resolve to ::1
-    // first, while `s_server -accept 127.0.0.1:<port>` binds IPv4 only, and the
-    // outbound then fails with nothing but a rejected connection to show for it.
-    // The leaf carries an IP:127.0.0.1 SAN exactly so this works.
-    let target = format!("127.0.0.1:{cover_port}");
+    // The legacy harness names the cover, and the leaf carries both a
+    // DNS:localhost and an IP:127.0.0.1 SAN, so either form resolves and
+    // verifies. Keep the name for parity with the contract being replaced.
+    let target = format!("localhost:{cover_port}");
     let generated = suites::generate_rust_identity(
         workspace,
         &rust.path,
@@ -539,10 +643,7 @@ fn start_tunnel(
         "localhost",
         Some(&workspace.join("generate.log")),
     )?;
-    // The cover is a local `s_server` that has to be probed before the first
-    // session; the default asset timeout is tuned for a public target and is too
-    // tight here, so the probe fails and every connection is rejected outbound.
-    let server_json = with_asset_timeout(&generated.server_json, 15)?;
+    let server_json = for_serial_cover(&generated.server_json, 15)?;
     let server_path = workspace.join("server.json");
     std::fs::write(&server_path, &server_json)
         .map_err(|error| format!("could not write {}: {error}", server_path.display()))?;
@@ -618,6 +719,10 @@ pub fn run(suite: &NoCcsSuite) -> Result<Json, String> {
     }
     let openssl_identity = openssl(&suite.openssl_bin, &owned(&["version", "-a"]))?;
     check_openssl_version(&openssl_identity)?;
+    // OpenSSL is the pinned external mechanism, so the evidence has to name the
+    // exact file: resolve a bare command through PATH before hashing it, or the
+    // record would attest to whatever `openssl` happened to mean at the time.
+    let openssl_binary = resolve_openssl(&suite.openssl_bin, openssl_identity)?;
 
     let rust = identity::register("rust-reality", &suite.rust_bin, "", Kind::Rust)?;
     let xray = identity::register("xray", &suite.xray_bin, "", Kind::Xray)?;
@@ -683,7 +788,8 @@ pub fn run(suite: &NoCcsSuite) -> Result<Json, String> {
 
     assert_unchanged(&rust)?;
     assert_unchanged(&xray)?;
-    if openssl(&suite.openssl_bin, &owned(&["version", "-a"]))? != openssl_identity {
+    assert_unchanged(&openssl_binary)?;
+    if openssl(&suite.openssl_bin, &owned(&["version", "-a"]))? != openssl_binary.identity {
         return Err("OpenSSL identity changed during the run".to_owned());
     }
 
@@ -691,8 +797,8 @@ pub fn run(suite: &NoCcsSuite) -> Result<Json, String> {
         &suite.run_id,
         &rust,
         &xray,
-        &suite.openssl_bin,
-        &openssl_identity,
+        &openssl_binary,
+        &crate::bench::evidence::now_utc()?,
         ports,
         &observed_sha,
         &interop::verify_digest(&verify),
