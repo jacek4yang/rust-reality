@@ -178,6 +178,51 @@ impl PythonRandom {
         (f64::from(a) * 67_108_864.0 + f64::from(b)) * (1.0 / 9_007_199_254_740_992.0)
     }
 
+    /// Returns the next `bits` random bits, matching `CPython`'s `getrandbits`.
+    ///
+    /// For `bits <= 32` `CPython` takes one tempered word and shifts the unwanted
+    /// low bits away. This is a different consumption pattern from `random()`,
+    /// which draws two words, so a stream that mixes them only reproduces if both
+    /// are exact.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `bits` is zero or above 32, which no caller here does.
+    pub fn getrandbits(&mut self, bits: u32) -> u32 {
+        assert!(bits > 0 && bits <= 32, "getrandbits supports 1..=32 bits");
+        self.next_u32() >> (32 - bits)
+    }
+
+    /// Draws a value in `0..n`, matching `CPython`'s `_randbelow_with_getrandbits`.
+    ///
+    /// The rejection loop is what makes the draw uniform, and reproducing it
+    /// matters because a rejected value still consumes a word.
+    fn below(&mut self, n: u32) -> u32 {
+        if n == 0 {
+            return 0;
+        }
+        let bits = u32::BITS - n.leading_zeros();
+        loop {
+            let candidate = self.getrandbits(bits);
+            if candidate < n {
+                return candidate;
+            }
+        }
+    }
+
+    /// Shuffles in place, matching `random.shuffle`.
+    ///
+    /// `CPython` walks from the end, swapping each element with one drawn from the
+    /// prefix. It uses `_randbelow`, not `random()`, so this cannot be expressed
+    /// in terms of [`Self::choices`].
+    pub fn shuffle<T>(&mut self, items: &mut [T]) {
+        for index in (1..items.len()).rev() {
+            let target = u32::try_from(index + 1).unwrap_or(u32::MAX);
+            let swap = self.below(target) as usize;
+            items.swap(index, swap);
+        }
+    }
+
     /// Draws `count` values with replacement, matching `random.choices`.
     ///
     /// The unweighted path in `CPython` indexes with `floor(random() * n)` where `n`
@@ -650,5 +695,59 @@ mod tests {
     #[test]
     fn a_seeded_interval_still_refuses_fewer_than_three_blocks() {
         assert!(interval_with_seed(0x0046_42C0, "fallback:cpu", &[1.0, 1.1], 200).is_err());
+    }
+
+    /// `getrandbits` takes one word and shifts, unlike `random()` which takes two.
+    /// References from `CPython`:
+    ///   `r = random.Random(0x564C4553); [r.getrandbits(4) for _ in range(8)]`
+    ///   `r = random.Random(7); [r.getrandbits(3) for _ in range(8)]`
+    #[test]
+    fn getrandbits_matches_cpython() {
+        let mut generator = PythonRandom::seeded(0x0000_564C_4553);
+        let drawn: Vec<u32> = (0..8).map(|_| generator.getrandbits(4)).collect();
+        assert_eq!(drawn, [15, 9, 13, 9, 11, 2, 15, 3]);
+
+        let mut generator = PythonRandom::seeded(7);
+        let drawn: Vec<u32> = (0..8).map(|_| generator.getrandbits(3)).collect();
+        assert_eq!(drawn, [2, 7, 1, 3, 5, 0, 0, 6]);
+    }
+
+    /// The VLESS-encryption harness shuffles its measurement order with
+    /// `random.Random(0x564C4553)`, and records the result, so the order must
+    /// reproduce exactly. References from `CPython` for two and five samples.
+    #[test]
+    fn shuffle_matches_cpython_for_the_recorded_seed() {
+        let mut order: Vec<&str> = ["none", "vless-encryption"]
+            .into_iter()
+            .cycle()
+            .take(4)
+            .collect();
+        PythonRandom::seeded(0x0000_564C_4553).shuffle(&mut order);
+        assert_eq!(
+            order,
+            ["vless-encryption", "none", "none", "vless-encryption"]
+        );
+
+        let mut order: Vec<&str> = ["none", "vless-encryption"]
+            .into_iter()
+            .cycle()
+            .take(10)
+            .collect();
+        PythonRandom::seeded(0x0000_564C_4553).shuffle(&mut order);
+        assert_eq!(
+            order,
+            [
+                "vless-encryption",
+                "none",
+                "vless-encryption",
+                "vless-encryption",
+                "none",
+                "none",
+                "none",
+                "vless-encryption",
+                "none",
+                "vless-encryption",
+            ]
+        );
     }
 }

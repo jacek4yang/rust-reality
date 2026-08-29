@@ -161,14 +161,65 @@ fn int(value: usize) -> Json {
     Json::Int(i64::try_from(value).unwrap_or(i64::MAX))
 }
 
+/// Where a SOCKS5 `CONNECT` is aimed.
+///
+/// The distinction is the whole point of the DNS and routing comparisons: an
+/// IPv4 destination is resolved by the *client*, so the server never looks
+/// anything up. Only a `Domain` destination makes resolution happen server-side,
+/// where it can be measured.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Destination {
+    /// Loopback by address; no server-side resolution.
+    Loopback,
+    /// A name the server must resolve itself.
+    Domain(String),
+}
+
+impl Destination {
+    /// The SOCKS5 address bytes: `ATYP` followed by the address.
+    fn socks_bytes(&self) -> Vec<u8> {
+        match self {
+            Self::Loopback => {
+                let mut bytes = vec![0x01];
+                bytes.extend_from_slice(&Ipv4Addr::LOCALHOST.octets());
+                bytes
+            }
+            Self::Domain(name) => {
+                let encoded = name.as_bytes();
+                let mut bytes = vec![0x03, u8::try_from(encoded.len()).unwrap_or(u8::MAX)];
+                bytes.extend_from_slice(encoded);
+                bytes
+            }
+        }
+    }
+
+    /// The `Host` header a request to this destination carries.
+    fn host_header(&self, origin_port: u16) -> String {
+        match self {
+            Self::Loopback => format!("127.0.0.1:{origin_port}"),
+            Self::Domain(name) => name.clone(),
+        }
+    }
+}
+
 /// Opens one proxied connection and times setup through the first body byte.
 ///
 /// Returns `None` for any failure, which the caller counts. The steps are the
-/// driver's, in order: SOCKS5 no-auth greeting, `CONNECT` to the origin by IPv4,
-/// a ten-byte reply whose status byte must be zero, one HTTP/1.0 request, a `200`
-/// status line, and a first body byte of `x`.
+/// driver's, in order: SOCKS5 no-auth greeting, `CONNECT` to the destination, a
+/// reply whose status byte must be zero, one HTTP/1.0 request, a `200` status
+/// line, and a first body byte of `x`.
 #[must_use]
 pub fn one_connection(socks_port: u16, origin_port: u16) -> Option<Duration> {
+    connect_through(socks_port, &Destination::Loopback, origin_port)
+}
+
+/// The same handshake, to an explicit destination.
+#[must_use]
+pub fn connect_through(
+    socks_port: u16,
+    destination: &Destination,
+    origin_port: u16,
+) -> Option<Duration> {
     let started = Instant::now();
     let address = SocketAddr::from((Ipv4Addr::LOCALHOST, socks_port));
     let mut stream = TcpStream::connect_timeout(&address, CONNECTION_TIMEOUT).ok()?;
@@ -180,17 +231,27 @@ pub fn one_connection(socks_port: u16, origin_port: u16) -> Option<Duration> {
         return None;
     }
 
-    let mut request = vec![0x05, 0x01, 0x00, 0x01];
-    request.extend_from_slice(&Ipv4Addr::LOCALHOST.octets());
+    let mut request = vec![0x05, 0x01, 0x00];
+    request.extend_from_slice(&destination.socks_bytes());
     request.extend_from_slice(&origin_port.to_be_bytes());
     stream.write_all(&request).ok()?;
-    let reply = read_exact(&mut stream, 10)?;
-    if reply[1] != 0 {
+    // The bound address in the reply is whatever the proxy chose, so its length
+    // is read from the reply rather than assumed.
+    let head = read_exact(&mut stream, 4)?;
+    if head[1] != 0 {
         return None;
     }
+    let bound = match head[3] {
+        0x01 => 4,
+        0x04 => 16,
+        0x03 => usize::from(read_exact(&mut stream, 1)?[0]),
+        _ => return None,
+    };
+    read_exact(&mut stream, bound + 2)?;
 
     let get = format!(
-        "GET /payload.bin HTTP/1.0\r\nHost: 127.0.0.1:{origin_port}\r\n\r\n"
+        "GET /payload.bin HTTP/1.0\r\nHost: {}\r\n\r\n",
+        destination.host_header(origin_port)
     );
     stream.write_all(get.as_bytes()).ok()?;
 
@@ -449,8 +510,26 @@ mod tests {
                         if stream.write_all(&[0x05, 0x00]).is_err() {
                             return;
                         }
-                        let mut connect = [0_u8; 10];
-                        if stream.read_exact(&mut connect).is_err() {
+                        // Read the CONNECT head, then whatever address form it
+                        // carries, so a DOMAIN destination is accepted too.
+                        let mut head = [0_u8; 4];
+                        if stream.read_exact(&mut head).is_err() {
+                            return;
+                        }
+                        let rest = match head[3] {
+                            0x01 => 4,
+                            0x04 => 16,
+                            0x03 => {
+                                let mut length = [0_u8; 1];
+                                if stream.read_exact(&mut length).is_err() {
+                                    return;
+                                }
+                                usize::from(length[0])
+                            }
+                            _ => return,
+                        };
+                        let mut address = vec![0_u8; rest + 2];
+                        if stream.read_exact(&mut address).is_err() {
                             return;
                         }
                         if stream.write_all(&[0x05, 0x00, 0, 1, 127, 0, 0, 1, 0, 0]).is_err() {
@@ -736,5 +815,35 @@ mod tests {
         assert!(rendered.contains("\"connectionsPerSecond\": 4.0"));
         // With no latencies there are no percentiles to report.
         assert!(!rendered.contains("p50Seconds"));
+    }
+
+    /// A DOMAIN destination is what makes the server resolve a name, which is the
+    /// only way the DNS and routing comparisons can observe resolution at all.
+    #[test]
+    fn a_domain_destination_is_encoded_as_a_length_prefixed_name() {
+        let destination = Destination::Domain("cold-0.dnsbench".to_owned());
+        let bytes = destination.socks_bytes();
+        assert_eq!(bytes[0], 0x03, "ATYP DOMAIN");
+        assert_eq!(usize::from(bytes[1]), "cold-0.dnsbench".len());
+        assert_eq!(&bytes[2..], b"cold-0.dnsbench");
+        // The Host header carries the name, not the loopback address, or the
+        // origin would see a request for the wrong vhost.
+        assert_eq!(destination.host_header(8080), "cold-0.dnsbench");
+
+        let loopback = Destination::Loopback;
+        assert_eq!(loopback.socks_bytes(), vec![0x01, 127, 0, 0, 1]);
+        assert_eq!(loopback.host_header(8080), "127.0.0.1:8080");
+    }
+
+    #[test]
+    fn a_domain_connect_completes_against_a_real_socks_server() {
+        let server = FakeSocks::start(b"xpayload", "200 OK");
+        let elapsed = connect_through(
+            server.port,
+            &Destination::Domain("warm.dnsbench".to_owned()),
+            9,
+        )
+        .expect("the domain handshake completes");
+        assert!(elapsed > Duration::ZERO);
     }
 }

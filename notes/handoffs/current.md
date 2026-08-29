@@ -57,9 +57,8 @@ core A/B       cargo dev bench run --suite {setup-rate-xray,setup-rate,
    soak/profiles/resource-pressure/shared helpers (22 -> 12),
    deployment control plane (12 -> 7), hotspot/final cleanup (7 -> 0).
    - do not rebuild process/workspace/lock/identity/report lifecycle
-   - scripts/bench-origin is still consumed by validate-profiles.sh and
-     benchmark-dns-comparison.sh; it moves out of scripts/ with the
-     shared-helpers family
+   - scripts/bench-origin is still consumed by validate-profiles.sh; it
+     moves out of scripts/ with the shared-helpers family
 
 2. The deployment family has a gate: issue #147 requires staging-VPS
    acceptance, separately authorized LINE/LANDING acceptance, or an

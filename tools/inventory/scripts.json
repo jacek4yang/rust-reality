@@ -15,10 +15,10 @@
     "full CI green on the exact final head, then git rm -r scripts"
   ],
   "current_state": {
-    "base_main": "5df31954e0a3090287cfe2acb953e13ad16bcaf3",
-    "snapshot": "IN_PROGRESS_PR_150_CORE_AB_MATRIX",
-    "tracked_files": 37,
-    "tracked_lines": 16372,
+    "base_main": "473c3d84323bd2f9618eac983370c6b15f5853ad",
+    "snapshot": "IN_PROGRESS_PR_151_DNS_ROUTING_VLESS",
+    "tracked_files": 33,
+    "tracked_lines": 14932,
     "repository_owned_external_python_validators": 0,
     "workflow_scripts_references": 0
   },
@@ -171,8 +171,8 @@
         "dns-fake-server.py"
       ],
       "disposition": "MERGE",
-      "replacement": "cargo dev bench dns",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite dns",
+      "status": "deleted-after-parity in PR #151; cold/warm/burst accepted locally, warm cost zero upstream queries"
     },
     {
       "path": "scripts/benchmark-fallback-ab.sh",
@@ -229,8 +229,8 @@
         "dns-fake-server.py"
       ],
       "disposition": "MERGE",
-      "replacement": "cargo dev bench routing",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite routing",
+      "status": "deleted-after-parity in PR #151; rule-scale sweep accepted locally at 10 and 1000 rules"
     },
     {
       "path": "scripts/benchmark-setup-rate-xray.sh",
@@ -304,8 +304,8 @@
         "benchmark-contract.sh"
       ],
       "disposition": "MERGE",
-      "replacement": "BenchmarkRunner workload",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite vless-encryption",
+      "status": "deleted-after-parity in PR #151; both modes accepted locally with the recorded shuffled order"
     },
     {
       "path": "scripts/benchmark-xray.sh",
@@ -435,8 +435,8 @@
         "benchmark-routing-comparison.sh"
       ],
       "disposition": "MOVE_HELPER",
-      "replacement": "tools/helpers (Rust fake DNS origin)",
-      "status": "not-started"
+      "replacement": "bench::fake_dns",
+      "status": "deleted-after-parity in PR #151; the counted resolver is native and its counters are read in-process"
     },
     {
       "path": "scripts/evaluate-release-canary.py",

@@ -53,7 +53,7 @@ JSON；如果内核或 VPS 策略拒绝某个事件，则记录带原始诊断�
 | `scripts/soak-test.sh` | 可选的长期回环证据：warm Handoff/NXR/仅 TCP SOCKS5、中点 reload、逐进程 RSS 与汇总 PSS。它是计划任务/非阻塞证据；确需长期调查时用 `REQUIRE_LONG_HORIZON_QUALIFIED=1` 保持严格不可变二进制合约。 |
 | `cargo dev deploy canary` | 对约十分钟精确候选双 VPS 主动 canary 做 fail-closed 评估：部署、真实 WAN Handoff、stock Xray、完整性、churn、reload、LANDING 重启/恢复、有界 pool 与资源恢复包络。 |
 | `cargo dev bench run --suite real-path` | 真实互联网路径上与 Xray 的 A/B：崩溃与协议错误门禁；吞吐受路径最慢链路限制，不能用于区分带宽。 |
-| `scripts/benchmark-vless-encryption.sh` | Xray v26.7.28 下 `encryption:none` 与同一 REALITY + Vision 内叠加 VLESS Encryption 的 A/B；测吞吐、服务端 CPU/GiB 和预热后的 setup。 |
+| `cargo dev bench run --suite vless-encryption` | Xray v26.7.28 下 `encryption:none` 与同一 REALITY + Vision 内叠加 VLESS Encryption 的 A/B；测吞吐、服务端 CPU/GiB 和预热后的 setup，执行顺序为带种子且已记录的随机序。 |
 | `scripts/test-xray-interop.sh` | 兼容性门禁（见下），不是基准。 |
 
 ## v1.7 LINE→LANDING 证据契约
