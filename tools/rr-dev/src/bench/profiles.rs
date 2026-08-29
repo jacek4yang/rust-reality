@@ -1200,6 +1200,61 @@ fn host_preflight() -> Result<(), String> {
     Ok(())
 }
 
+fn is_profile_stray(argv: &[String]) -> bool {
+    let Some(program) = argv.first() else {
+        return false;
+    };
+    let name = Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(program);
+    match name {
+        "rust-reality" => argv.iter().skip(1).any(|arg| arg == "serve"),
+        "xray" => argv.iter().skip(1).any(|arg| arg == "run"),
+        "bench-origin" => argv.iter().skip(1).any(|arg| arg == "--port"),
+        _ => false,
+    }
+}
+
+fn refuse_stray_profile_processes() -> Result<(), String> {
+    let own_pid = std::process::id();
+    let entries = std::fs::read_dir("/proc")
+        .map_err(|error| format!("could not inspect /proc for stray profile processes: {error}"))?;
+    let mut strays = Vec::new();
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if pid == own_pid {
+            continue;
+        }
+        let Ok(raw) = std::fs::read(entry.path().join("cmdline")) else {
+            continue;
+        };
+        let argv: Vec<String> = raw
+            .split(|byte| *byte == 0)
+            .filter(|arg| !arg.is_empty())
+            .map(|arg| String::from_utf8_lossy(arg).into_owned())
+            .collect();
+        if is_profile_stray(&argv) {
+            strays.push(format!("{pid}: {}", argv.join(" ")));
+        }
+    }
+    strays.sort_unstable();
+    if strays.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "stray benchmark processes found; refusing a polluted profile window:\n{}",
+            strays.join("\n")
+        ))
+    }
+}
+
 fn absolute_from_repo(repo: &Path, path: &Path) -> Result<PathBuf, String> {
     let joined = if path.is_absolute() {
         path.to_path_buf()
@@ -1717,6 +1772,7 @@ pub fn run(plan: &Plan) -> Result<Outcome, String> {
     validate(plan)?;
     host_preflight()?;
     let lock = HostLock::acquire(&crate::bench::runner::default_lock_path())?;
+    refuse_stray_profile_processes()?;
     let rust = identity::register(
         "rust-reality",
         &plan.rust_bin,
@@ -1877,5 +1933,43 @@ mod tests {
         assert!(parse_classes(&plan).is_err());
         plan.classes = "1c1g:100:1G 1c1g:200:2G".to_owned();
         assert!(parse_classes(&plan).is_err());
+    }
+
+    #[test]
+    fn process_census_recognizes_only_profile_mechanisms() {
+        let argv = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert!(is_profile_stray(&argv(&[
+            "/readonly/rust-reality",
+            "serve",
+            "--config",
+            "/run/config.json",
+        ])));
+        assert!(is_profile_stray(&argv(&[
+            "/readonly/xray",
+            "run",
+            "-config",
+            "/run/xray.json",
+        ])));
+        assert!(is_profile_stray(&argv(&[
+            "/tmp/bench-origin",
+            "--port",
+            "8080",
+        ])));
+        assert!(!is_profile_stray(&argv(&[
+            "/readonly/rust-reality",
+            "check",
+            "--config",
+            "/run/config.json",
+        ])));
+        assert!(!is_profile_stray(&argv(&[
+            "/bin/bash",
+            "-lc",
+            "xray run -config /run/xray.json",
+        ])));
     }
 }
