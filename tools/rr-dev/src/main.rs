@@ -473,6 +473,9 @@ enum BenchCommand {
         /// Minimum completed soak workload rounds.
         #[arg(long, default_value_t = 1)]
         soak_min_rounds: usize,
+        /// Interval between distributed soak integrity attempts.
+        #[arg(long, default_value_t = 1800)]
+        soak_distributed_interval_seconds: u64,
     },
 }
 
@@ -1241,6 +1244,7 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             soak_seconds,
             soak_round_sleep_ms,
             soak_min_rounds,
+            soak_distributed_interval_seconds,
         } => {
             if suite == "tls-shape" {
                 return run_bench_tls_shape(
@@ -1308,12 +1312,15 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                     return ExitCode::from(2);
                 }
                 return run_bench_soak_xray(
+                    rust_bin,
                     xray_bin,
+                    openssl_bin,
                     out_dir.as_deref(),
                     run_id.as_deref(),
                     *soak_seconds,
                     *soak_round_sleep_ms,
                     *soak_min_rounds,
+                    *soak_distributed_interval_seconds,
                 );
             }
             if suite == "xray-interop" {
@@ -1935,12 +1942,15 @@ fn run_bench_pressure(
 
 /// Drives the Xray side of the shared mixed-traffic soak lifecycle.
 fn run_bench_soak_xray(
+    rust_bin: &Path,
     xray_bin: &Path,
+    openssl_bin: &Path,
     out_dir: Option<&Path>,
     run_id: Option<&str>,
     duration_seconds: u64,
     round_sleep_ms: u64,
     minimum_rounds: usize,
+    distributed_interval_seconds: u64,
 ) -> ExitCode {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1959,12 +1969,15 @@ fn run_bench_soak_xray(
         Path::to_path_buf,
     );
     let plan = bench::soak::SoakPlan {
+        rust_bin: rust_bin.to_path_buf(),
         xray_bin: xray_bin.to_path_buf(),
+        openssl_bin: openssl_bin.to_path_buf(),
         out_dir: out_dir.clone(),
         run_id,
         duration: std::time::Duration::from_secs(duration_seconds),
         round_sleep: std::time::Duration::from_millis(round_sleep_ms),
         minimum_rounds,
+        distributed_interval: std::time::Duration::from_secs(distributed_interval_seconds),
     };
     if let Err(error) = bench::soak::validate(&plan) {
         eprintln!("bench run soak: {error}");

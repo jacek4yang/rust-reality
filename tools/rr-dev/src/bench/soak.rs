@@ -36,8 +36,12 @@ const CHURN_CONNECTIONS: usize = 16;
 /// Bounded shared soak inputs.
 #[derive(Debug, Clone)]
 pub struct SoakPlan {
+    /// rust-reality binary used by the native multi-topology soak.
+    pub rust_bin: PathBuf,
     /// Xray binary used as server/client for the comparator topology.
     pub xray_bin: PathBuf,
+    /// OpenSSL used for the shaped Handoff cover certificate and server.
+    pub openssl_bin: PathBuf,
     /// Fresh output directory.
     pub out_dir: PathBuf,
     /// Safe evidence identifier.
@@ -48,6 +52,8 @@ pub struct SoakPlan {
     pub round_sleep: Duration,
     /// Minimum rounds required even when the timed window is very short.
     pub minimum_rounds: usize,
+    /// Interval between additional distributed correctness attempts.
+    pub distributed_interval: Duration,
 }
 
 /// One process's sampled Linux resource state.
@@ -97,6 +103,14 @@ pub struct ResourceSummary {
     pub rss_peak_growth_mib: f64,
     /// Least-squares RSS slope over the second half of samples.
     pub rss_tail_slope_mib_per_hour: f64,
+    /// Whether every snapshot exposed proportional-set size.
+    pub pss_available: bool,
+    /// End minus start PSS in MiB.
+    pub pss_growth_mib: Option<f64>,
+    /// Sampled PSS peak minus start in MiB.
+    pub pss_peak_growth_mib: Option<f64>,
+    /// PSS tail slope when available.
+    pub pss_tail_slope_mib_per_hour: Option<f64>,
 }
 
 /// Successful Xray comparator observations.
@@ -132,6 +146,20 @@ pub fn validate(plan: &SoakPlan) -> Result<(), String> {
     }
     if !(1..=100_000).contains(&plan.minimum_rounds) {
         return Err("soak minimum rounds must be in 1..100000".to_owned());
+    }
+    if plan.distributed_interval.is_zero() || plan.distributed_interval > Duration::from_mins(30) {
+        return Err("distributed interval must be in 1..1800 seconds".to_owned());
+    }
+    let planned_attempts = 3 + plan
+        .duration
+        .as_secs()
+        .saturating_sub(1)
+        .checked_div(plan.distributed_interval.as_secs())
+        .unwrap_or(0);
+    if planned_attempts > 145 {
+        return Err(format!(
+            "distributed attempt count {planned_attempts} exceeds hard limit 145"
+        ));
     }
     Ok(())
 }
@@ -561,6 +589,24 @@ pub fn summarize_resources(
             .map(|value| kib_to_mib(value.rss_kib))
             .collect::<Vec<_>>(),
     );
+    let pss_values: Option<Vec<f64>> = values
+        .iter()
+        .map(|value| value.pss_kib.map(kib_to_mib))
+        .collect();
+    let pss_summary = pss_values.as_ref().map(|pss| {
+        let tail_slope = linear_slope_per_hour(
+            &snapshots[tail_offset..]
+                .iter()
+                .map(|snapshot| snapshot.monotonic_seconds)
+                .collect::<Vec<_>>(),
+            &pss[tail_offset..],
+        );
+        (
+            pss[pss.len() - 1] - pss[0],
+            pss.iter().copied().fold(f64::NEG_INFINITY, f64::max) - pss[0],
+            tail_slope,
+        )
+    });
     Ok(ResourceSummary {
         fd_growth: difference(last.fds, first.fds),
         fd_peak_growth: difference(
@@ -577,6 +623,10 @@ pub fn summarize_resources(
             values.iter().map(|value| value.hwm_kib).max().unwrap_or(0),
         ) - kib_to_mib(first.hwm_kib),
         rss_tail_slope_mib_per_hour: slope,
+        pss_available: pss_summary.is_some(),
+        pss_growth_mib: pss_summary.map(|summary| summary.0),
+        pss_peak_growth_mib: pss_summary.map(|summary| summary.1),
+        pss_tail_slope_mib_per_hour: pss_summary.map(|summary| summary.2),
     })
 }
 
@@ -652,6 +702,21 @@ fn resource_summary_json(summary: &ResourceSummary) -> Json {
         (
             "rssTailSlopeMiBPerHour",
             Json::Float(summary.rss_tail_slope_mib_per_hour),
+        ),
+        ("pssAvailable", Json::Bool(summary.pss_available)),
+        (
+            "pssGrowthMiB",
+            summary.pss_growth_mib.map_or(Json::Null, Json::Float),
+        ),
+        (
+            "pssSampledPeakGrowthMiB",
+            summary.pss_peak_growth_mib.map_or(Json::Null, Json::Float),
+        ),
+        (
+            "pssTailSlopeMiBPerHour",
+            summary
+                .pss_tail_slope_mib_per_hour
+                .map_or(Json::Null, Json::Float),
         ),
     ])
 }
@@ -784,12 +849,15 @@ mod tests {
 
     fn plan() -> SoakPlan {
         SoakPlan {
+            rust_bin: PathBuf::from("rust-reality"),
             xray_bin: PathBuf::from("xray"),
+            openssl_bin: PathBuf::from("openssl"),
             out_dir: PathBuf::from("/out"),
             run_id: "soak-1".to_owned(),
             duration: Duration::from_mins(1),
             round_sleep: Duration::from_secs(5),
             minimum_rounds: 1,
+            distributed_interval: Duration::from_mins(30),
         }
     }
 
