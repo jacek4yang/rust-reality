@@ -751,8 +751,8 @@
         "benchmark-contract.sh"
       ],
       "disposition": "MERGE",
-      "replacement": "cargo dev bench pressure",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite descriptor-pressure",
+      "status": "deleted-after-parity; native prlimit/Xray/REALITY/Vision/echo recovery gate"
     },
     {
       "path": "scripts/test-openssl-no-ccs-interop.sh",

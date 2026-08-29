@@ -276,9 +276,9 @@ enum BenchCommand {
         #[arg(long)]
         port: u16,
     },
-    /// Run a tunnel A/B suite end to end (`real-path`, `xray`, or `vision-direct`).
+    /// Run a benchmark or mechanism suite end to end.
     Run {
-        /// Suite id: `real-path`, `xray`, or `vision-direct`.
+        /// Suite id (`cargo dev bench list` shows the catalogue).
         #[arg(long, default_value = "real-path")]
         suite: String,
         /// Path to the rust-reality release binary.

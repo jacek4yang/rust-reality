@@ -510,13 +510,13 @@ HTTPS URL。全部生成的配置和密钥保留在有界临时目录中，退�
 
 ### 低描述符上限恢复门禁
 
-`scripts/test-descriptor-pressure.sh` 是描述符耗尽的 fail-closed 回归门禁。它在
-一个软/硬 `RLIMIT_NOFILE` 相等且都很低的用户 systemd scope 中运行现有二进制，
+`cargo dev bench run --suite descriptor-pressure` 是描述符耗尽的 fail-closed
+回归门禁。它通过直接、类型化的 `prlimit` 参数运行现有二进制，并设置相等且很低的
+软/硬 `RLIMIT_NOFILE`，
 然后保持真实的 Xray -> REALITY -> Vision -> 本地回显会话，直到服务端的派生
 FD 预算耗尽。门禁要求以下全部证据：
 
-- 运行中的可执行文件哈希、PID、PID 启动时间、cgroup 成员身份和两个继承的
-  限制都与请求的测试身份一致；
+- 运行中的可执行文件哈希、精确的子进程身份和两个继承的限制都与请求的测试身份一致；
 - `descriptor_budget_report` 反映该低限制，且 `descriptor_pressure_changed`
   达到 `high`；
 - 精确的服务端进程存活，且在压力前建立的连接继续通过回显完整性检查；
@@ -524,13 +524,15 @@ FD 预算耗尽。门禁要求以下全部证据：
 - 保持的会话关闭后，压力回到 `normal`，且一次新的 64 KiB 回显流的
   SHA-256 匹配。
 
-该脚本绝不构建或下载二进制，绝不按进程名清理，并拒绝覆盖已有的证据目录：
+原生门禁绝不构建或下载被测二进制，通过 PID/启动时间 RAII 管理全部子进程，
+不经 shell 传递外部工具参数，并拒绝覆盖已有的证据目录：
 
 ```shell
-RUST_REALITY_BIN=/absolute/path/to/rust-reality \
-XRAY_BIN=/absolute/path/to/xray \
-OUT_DIR=diagnostics/final/descriptor-pressure-run-01 \
-scripts/test-descriptor-pressure.sh
+cargo dev bench run --suite descriptor-pressure \
+  --rust-bin /absolute/path/to/rust-reality \
+  --xray-bin /absolute/path/to/xray \
+  --run-id descriptor-pressure-run-01 \
+  --out-dir diagnostics/final/descriptor-pressure-run-01
 ```
 
 ## 限制

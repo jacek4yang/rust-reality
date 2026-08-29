@@ -706,14 +706,14 @@ carries no throughput signal.
 
 ### Low descriptor-limit recovery gate
 
-`scripts/test-descriptor-pressure.sh` is the fail-closed regression gate for
-descriptor exhaustion. It runs an existing binary in a user systemd scope with
-equal low soft and hard `RLIMIT_NOFILE` values, then holds real
+`cargo dev bench run --suite descriptor-pressure` is the fail-closed regression
+gate for descriptor exhaustion. It runs an existing binary through direct
+`prlimit` argv with equal low soft and hard `RLIMIT_NOFILE` values, then holds real
 Xray -> REALITY -> Vision -> local-echo sessions until the server's derived FD
 budget is exhausted. The gate requires all of the following evidence:
 
-- the running executable hash, PID, PID start time, cgroup membership, and both
-  inherited limits match the requested test identity;
+- the running executable hashes, exact child identities, and both inherited
+  limits match the requested test identity;
 - `descriptor_budget_report` reflects the low limit and
   `descriptor_pressure_changed` reaches `high`;
 - the exact server process survives and a connection established before
@@ -722,14 +722,16 @@ budget is exhausted. The gate requires all of the following evidence:
 - after held sessions close, pressure returns to `normal` and a fresh 64 KiB
   echo flow matches its SHA-256.
 
-The script never builds or downloads binaries, never uses process-name cleanup,
-and refuses to overwrite its evidence directory:
+The native gate never builds or downloads the tested binaries, owns every child
+through PID/start-time RAII, passes external-tool arguments without a shell, and
+refuses to overwrite its evidence directory:
 
 ```shell
-RUST_REALITY_BIN=/absolute/path/to/rust-reality \
-XRAY_BIN=/absolute/path/to/xray \
-OUT_DIR=diagnostics/final/descriptor-pressure-run-01 \
-scripts/test-descriptor-pressure.sh
+cargo dev bench run --suite descriptor-pressure \
+  --rust-bin /absolute/path/to/rust-reality \
+  --xray-bin /absolute/path/to/xray \
+  --run-id descriptor-pressure-run-01 \
+  --out-dir diagnostics/final/descriptor-pressure-run-01
 ```
 
 ## Limitations
