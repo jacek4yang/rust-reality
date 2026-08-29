@@ -56,12 +56,12 @@ core A/B       cargo dev bench run --suite {setup-rate-xray,setup-rate,
    DNS/routing/VLESS (37 -> 33)         DONE (PR #151)
    TLS-shape/interop/IPv6 (33 -> 21)    DONE (PR #152)
    soak/profiles/resource-pressure/
-     shared helpers (21 -> 12)          NEXT
-   deployment control plane (12 -> 7)
+     shared helpers (21 -> 12)          DONE (PR #153)
+   deployment control plane (12 -> 7)   NEXT
    hotspot/final cleanup (7 -> 0)
    - do not rebuild process/workspace/lock/identity/report lifecycle
-   - scripts/bench-origin is still consumed by validate-profiles.sh; it
-     moves out of scripts/ with the shared-helpers family
+   - scripts/bench-origin remains only for benchmark-deployment.sh and is
+     deleted with that final caller in the deployment family
 
 2. The deployment family has a gate: issue #147 requires staging-VPS
    acceptance, separately authorized LINE/LANDING acceptance, or an
