@@ -987,15 +987,15 @@ fn start_topology(
     })
 }
 
-/// Builds the Go origin and starts the plain and TLS listeners.
+/// Starts the native plain and TLS origin listeners.
 fn start_origins(
-    suite: &MatrixSuite,
+    _suite: &MatrixSuite,
     workspace: &crate::bench::workspace::Workspace,
     plain: u16,
     secure: u16,
 ) -> Result<Vec<crate::bench::process::Child>, String> {
     use crate::bench::{origin_go, origin_tls};
-    let binary = origin_go::build(&suite.repo, workspace)?;
+    let binary = origin_go::executable()?;
     let (cert, key) = origin_tls::generate_self_signed(workspace.path())?;
     let mut children = Vec::with_capacity(2);
     for (label, port, tls, put_log) in [
@@ -1176,7 +1176,7 @@ pub fn run(suite: &MatrixSuite) -> Result<MatrixOutcome, String> {
     };
 
     validate(suite)?;
-    for program in ["curl", "go"] {
+    for program in ["curl"] {
         if !Tool::exists(program) {
             return Err(format!("required program unavailable: {program}"));
         }

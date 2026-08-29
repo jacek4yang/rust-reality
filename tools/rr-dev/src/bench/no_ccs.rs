@@ -628,16 +628,16 @@ fn disable_warm_tcp(
     Ok(())
 }
 
-/// Writes the 1 MiB payload, builds the Go origin and starts it.
+/// Writes the 1 MiB payload and starts the native origin.
 fn start_origin(
-    suite: &NoCcsSuite,
+    _suite: &NoCcsSuite,
     workspace: &crate::bench::workspace::Workspace,
     origin_port: u16,
 ) -> Result<(crate::bench::process::Child, String), String> {
     use crate::bench::origin_go;
     let payload = origin_go::write_pattern_payload(workspace.path(), 1)?;
     let expected_sha = hash::sha256_file(&payload)?;
-    let binary = origin_go::build(&suite.repo, workspace)?;
+    let binary = origin_go::executable()?;
     let child = origin_go::start(
         &binary,
         workspace,

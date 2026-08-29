@@ -130,7 +130,7 @@ pub fn validate(plan: &ComparatorPlan) -> Result<(), String> {
 /// still stops the processes, removes the workspace, and releases the host lock.
 pub fn run_setup_rate_xray(plan: &ComparatorPlan) -> Result<ComparatorOutcome, String> {
     validate(plan)?;
-    for program in ["go", "openssl"] {
+    for program in ["openssl"] {
         if !Tool::exists(program) {
             return Err(format!("required program unavailable: {program}"));
         }
@@ -233,17 +233,17 @@ pub fn run_setup_rate_xray(plan: &ComparatorPlan) -> Result<ComparatorOutcome, S
     })
 }
 
-/// Builds the Go origin and starts both listeners, returning their RAII guards.
+/// Starts both native origin listeners, returning their RAII guards.
 ///
 /// The plain listener is the workload's destination; the TLS listener is the
 /// REALITY cover target every slot points at.
 fn start_origins(
-    plan: &ComparatorPlan,
+    _plan: &ComparatorPlan,
     workspace: &Workspace,
     plain_port: u16,
     tls_port: u16,
 ) -> Result<(Child, Child), String> {
-    let binary = origin_go::build(&plan.repo, workspace)?;
+    let binary = origin_go::executable()?;
     origin_go::write_setup_payload(workspace.path())?;
     let (cert, key) = origin_tls::generate_self_signed(workspace.path())?;
     let plain_origin = origin_go::start(

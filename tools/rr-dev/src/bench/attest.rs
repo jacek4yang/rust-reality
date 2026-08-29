@@ -2,24 +2,21 @@
 //!
 //! A benchmark number is only evidence if you can say what produced it. Each
 //! harness therefore pinned its inputs before measuring and re-checked them
-//! afterwards: the repository commit and cleanliness, a content manifest of the
-//! helper source tree, each binary's SHA-256 and GNU build ID, the claim that the
-//! candidate ELF actually embeds the commit it says it does, the baseline's
-//! identity sidecar, and — per slot — that the process being measured is really
-//! running the registered executable.
+//! afterwards: the repository commit and cleanliness, each binary's SHA-256 and
+//! GNU build ID, the claim that the candidate ELF actually embeds the commit it
+//! says it does, the baseline's identity sidecar, and — per slot — that the
+//! process being measured is really running the registered executable.
 //!
 //! ## Two definitions of "dirty"
 //!
 //! The family does not agree on what a dirty repository is, and the difference is
 //! load-bearing rather than accidental:
 //!
-//! * `benchmark-fallback-ab.sh` and `benchmark-setup-rate.sh` use
-//!   `git status --porcelain=v1 --untracked-files=normal`, so an **untracked** file
-//!   fails the run. They snapshot `scripts/bench-origin` by content, and an
-//!   untracked file there would change what gets built.
-//! * `benchmark-contract.sh` (and so `benchmark-setup-rate-xray.sh`) uses
-//!   `git diff --quiet` plus `git diff --cached --quiet`, which ignores untracked
-//!   files entirely.
+//! * The paired setup-rate and fallback suites use
+//!   `git status --porcelain=v1 --untracked-files=normal`, so an **untracked**
+//!   file fails the run.
+//! * The comparator suite uses `git diff --quiet` plus
+//!   `git diff --cached --quiet`, which ignores untracked files entirely.
 //!
 //! Collapsing these to one rule would change which runs are accepted, so
 //! [`Dirtiness`] keeps both.
@@ -27,74 +24,6 @@
 use std::path::Path;
 
 use crate::{hash, perf::json_in, process::Tool};
-
-/// A content manifest of a helper source tree.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TreeManifest {
-    /// Hex SHA-256 over every file's relative path and content digest.
-    pub sha256: String,
-    /// Number of regular files in the tree.
-    pub file_count: usize,
-}
-
-/// Snapshots a helper source tree by content.
-///
-/// Reproduces `harness_tree_snapshot`: walk the tree, refuse any symlink, collect
-/// regular files by POSIX-relative path, sort, and fold
-/// `path || NUL || sha256(contents)` into one digest. A symlink is refused rather
-/// than followed because a manifest that follows links does not describe what will
-/// actually be compiled.
-///
-/// # Errors
-///
-/// Returns a message when the tree cannot be walked, contains a symlink, or holds
-/// no files at all.
-pub fn snapshot_tree(root: &Path) -> Result<TreeManifest, String> {
-    let mut files = Vec::new();
-    collect(root, root, &mut files)?;
-    if files.is_empty() {
-        return Err(format!("empty harness tree: {}", root.display()));
-    }
-    files.sort();
-    let mut digest_input = Vec::new();
-    for relative in &files {
-        digest_input.extend_from_slice(relative.as_bytes());
-        digest_input.push(0);
-        let contents = std::fs::read(root.join(relative))
-            .map_err(|error| format!("could not read {relative}: {error}"))?;
-        digest_input.extend_from_slice(&hash::sha256(&contents));
-    }
-    Ok(TreeManifest {
-        sha256: hash::sha256_hex(&digest_input),
-        file_count: files.len(),
-    })
-}
-
-/// Walks `directory`, appending relative paths of regular files.
-fn collect(root: &Path, directory: &Path, files: &mut Vec<String>) -> Result<(), String> {
-    let entries = std::fs::read_dir(directory)
-        .map_err(|error| format!("could not read {}: {error}", directory.display()))?;
-    for entry in entries {
-        let entry =
-            entry.map_err(|error| format!("could not read {}: {error}", directory.display()))?;
-        let path = entry.path();
-        let kind = path
-            .symlink_metadata()
-            .map_err(|error| format!("could not stat {}: {error}", path.display()))?;
-        if kind.is_symlink() {
-            return Err(format!("symlink in harness tree: {}", path.display()));
-        }
-        if kind.is_dir() {
-            collect(root, &path, files)?;
-        } else if kind.is_file() {
-            let relative = path
-                .strip_prefix(root)
-                .map_err(|_| format!("{} is outside {}", path.display(), root.display()))?;
-            files.push(relative.to_string_lossy().into_owned());
-        }
-    }
-    Ok(())
-}
 
 /// Which working-tree changes count as dirty.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -340,75 +269,6 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
-    }
-
-    #[test]
-    fn a_tree_manifest_covers_content_and_path() {
-        let scratch = Scratch::new("tree");
-        scratch.write("go.mod", "module bench-origin\n");
-        scratch.write("main.go", "package main\n");
-        let first = snapshot_tree(&scratch.0).unwrap();
-        assert_eq!(first.file_count, 2);
-        assert_eq!(first.sha256.len(), 64);
-
-        // Re-snapshotting an unchanged tree reproduces the manifest.
-        assert_eq!(snapshot_tree(&scratch.0).unwrap(), first);
-
-        // A content change moves the digest.
-        scratch.write("main.go", "package main // edited\n");
-        assert_ne!(snapshot_tree(&scratch.0).unwrap().sha256, first.sha256);
-
-        // So does a rename that preserves content, because paths are hashed too.
-        let scratch2 = Scratch::new("tree2");
-        scratch2.write("go.mod", "module bench-origin\n");
-        scratch2.write("other.go", "package main\n");
-        assert_ne!(snapshot_tree(&scratch2.0).unwrap().sha256, first.sha256);
-    }
-
-    /// Golden parity with `harness_tree_snapshot`. The reference is the shell
-    /// function's own algorithm run over this exact tree:
-    ///
-    /// ```python
-    /// d = sha256()
-    /// for rel in sorted(["a/c.go", "b.go"]):
-    ///     d.update(rel.encode()); d.update(b"\0"); d.update(sha256(content).digest())
-    /// ```
-    #[test]
-    fn the_manifest_digest_matches_the_shell_algorithm() {
-        let scratch = Scratch::new("nested");
-        scratch.write("b.go", "b\n");
-        scratch.write("a/c.go", "c\n");
-        let manifest = snapshot_tree(&scratch.0).unwrap();
-        assert_eq!(manifest.file_count, 2);
-        assert_eq!(
-            manifest.sha256,
-            "8dafc9bcdc58b92080068a97b1af1df573c2a469a15b498c3b8ec1a882d1ce1c"
-        );
-
-        // Directory iteration order must not matter: build the same tree in the
-        // other order and get the same digest.
-        let mirror = Scratch::new("nested-mirror");
-        mirror.write("a/c.go", "c\n");
-        mirror.write("b.go", "b\n");
-        assert_eq!(snapshot_tree(&mirror.0).unwrap(), manifest);
-    }
-
-    /// Following a symlink would describe something other than what gets built.
-    #[cfg(unix)]
-    #[test]
-    fn a_symlink_in_the_tree_is_refused() {
-        let scratch = Scratch::new("symlink");
-        scratch.write("main.go", "package main\n");
-        std::os::unix::fs::symlink(scratch.0.join("main.go"), scratch.0.join("link.go")).unwrap();
-        let error = snapshot_tree(&scratch.0).unwrap_err();
-        assert!(error.contains("symlink in harness tree"), "{error}");
-    }
-
-    #[test]
-    fn an_empty_tree_is_refused() {
-        let scratch = Scratch::new("empty");
-        let error = snapshot_tree(&scratch.0).unwrap_err();
-        assert!(error.contains("empty harness tree"), "{error}");
     }
 
     #[test]

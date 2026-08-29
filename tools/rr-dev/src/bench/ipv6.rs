@@ -3163,7 +3163,7 @@ pub fn run(suite: &Ipv6Suite) -> Result<Json, String> {
     };
 
     validate(suite)?;
-    for program in ["curl", "go", "ss"] {
+    for program in ["curl", "ss"] {
         if !crate::process::Tool::exists(program) {
             return Err(format!("required program unavailable: {program}"));
         }
@@ -3177,7 +3177,7 @@ pub fn run(suite: &Ipv6Suite) -> Result<Json, String> {
     run.write_new("certificate-san.txt", &certificate.subject_alt_name)?;
     let mut results = Results::create(run.join("results.jsonl"))?;
     let origin = if suite.phases.chars().any(|phase| matches!(phase, '2'..='5')) {
-        Some(crate::bench::origin_go::build(&suite.repo, &workspace)?)
+        Some(crate::bench::origin_go::executable()?)
     } else {
         None
     };

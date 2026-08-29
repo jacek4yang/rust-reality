@@ -236,7 +236,7 @@ fn register_binaries(suite: &SetupRateSuite) -> Result<PairedBinaries, String> {
 /// still stops the processes, removes the workspace, and releases the host lock.
 pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
     validate(suite)?;
-    for program in ["go", "openssl"] {
+    for program in ["openssl"] {
         if !Tool::exists(program) {
             return Err(format!("required program unavailable: {program}"));
         }
@@ -263,7 +263,6 @@ pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
     check_ephemeral_range(port_base, port_count)?;
     let (plain_port, tls_port) = (port_base, port_base + 1);
 
-    let origin_manifest = attest::snapshot_tree(&suite.repo.join(origin_go::SOURCE_RELATIVE))?;
     let leg = match suite.cover_netem_rtt_ms {
         None => None,
         Some(rtt) => Some(netns::CoverLeg::create(&suite.run_id, rtt)?),
@@ -292,7 +291,6 @@ pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
         suite,
         &binaries,
         &repository,
-        &origin_manifest,
         &lock,
         port_base,
         port_count,
@@ -346,19 +344,19 @@ pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
     })
 }
 
-/// Builds the Go origin and starts both listeners, returning their RAII guards.
+/// Starts both native origin listeners, returning their RAII guards.
 ///
 /// With a shaped leg the TLS cover origin moves into the namespace and binds the
 /// namespace address; the plain origin the workload talks to stays on loopback, so
 /// exactly one leg carries the delay.
 fn start_origins(
-    suite: &SetupRateSuite,
+    _suite: &SetupRateSuite,
     workspace: &Workspace,
     plain_port: u16,
     tls_port: u16,
     leg: Option<&netns::CoverLeg>,
 ) -> Result<(Child, Child), String> {
-    let binary = origin_go::build(&suite.repo, workspace)?;
+    let binary = origin_go::executable()?;
     origin_go::write_setup_payload(workspace.path())?;
     let (cert, key) = origin_tls::generate_self_signed(workspace.path())?;
     let plain_origin = origin_go::start(
@@ -974,15 +972,10 @@ fn cpu_summary(suite: &SetupRateSuite, measured: &[MeasuredSlot]) -> Result<Json
 }
 
 /// Builds the paired `environment.json` (schema 2).
-#[expect(
-    clippy::too_many_arguments,
-    reason = "these are exactly the fields the recorded environment carries"
-)]
 fn environment_json(
     suite: &SetupRateSuite,
     binaries: &PairedBinaries,
     repository: &attest::RepositoryState,
-    origin_manifest: &attest::TreeManifest,
     lock: &HostLock,
     port_base: u16,
     port_count: usize,
@@ -1071,7 +1064,7 @@ fn environment_json(
             binary_json(&binaries.candidate, &binaries.candidate_build_id),
         ),
         ("xray", binary_json(&binaries.xray, &binaries.xray_build_id)),
-        ("harness", harness_block(&suite.repo, origin_manifest)),
+        ("harness", harness_block()),
         ("hostExclusiveLock", lock_json(lock)),
     ])
 }
@@ -1331,10 +1324,6 @@ mod tests {
             head: "c".repeat(40),
             dirty: false,
         };
-        let manifest = attest::TreeManifest {
-            sha256: "d".repeat(64),
-            file_count: 2,
-        };
         let lock_base = std::env::temp_dir().join(format!(
             "rr-paired-env-{}-{}",
             std::process::id(),
@@ -1348,7 +1337,6 @@ mod tests {
             &suite(),
             &binaries,
             &repository,
-            &manifest,
             &lock,
             20_000,
             26,
@@ -1363,7 +1351,8 @@ mod tests {
         assert!(rendered.contains("\"model\": \"loopback\""));
         assert!(rendered.contains("\"netemRttMs\": null"));
         assert!(rendered.contains("\"buildId\": \"b1\""));
-        assert!(rendered.contains("\"manifestSha256\""));
+        assert!(rendered.contains("\"benchOrigin\""));
+        assert!(rendered.contains("\"embedded\": true"));
         assert!(rendered.contains("\"contract\": null"));
         assert!(rendered.contains("\"keeperHelper\": null"));
         assert!(rendered.contains("\"mode\": \"lockDirectory\""));
@@ -1375,7 +1364,6 @@ mod tests {
             &shaped,
             &binaries,
             &repository,
-            &manifest,
             &lock,
             20_000,
             26,
@@ -1487,7 +1475,7 @@ struct FallbackSlot {
 /// Returns the first failure; every resource is RAII-owned.
 pub fn run_fallback(suite: &FallbackSuite) -> Result<SuiteOutcome, String> {
     validate_fallback(suite)?;
-    for program in ["go", "curl"] {
+    for program in ["curl"] {
         if !Tool::exists(program) {
             return Err(format!("required program unavailable: {program}"));
         }
@@ -1509,10 +1497,9 @@ pub fn run_fallback(suite: &FallbackSuite) -> Result<SuiteOutcome, String> {
     let port_base = crate::bench::workspace::reserve_block(port_count)?;
     check_ephemeral_range(port_base, port_count)?;
 
-    let origin_binary = origin_go::build(&suite.repo, &workspace)?;
+    let origin_binary = origin_go::executable()?;
     let payload = origin_go::write_pattern_payload(workspace.path(), suite.payload_mib)?;
     let payload_sha = hash::sha256_file(&payload)?;
-    let origin_manifest = attest::snapshot_tree(&suite.repo.join(origin_go::SOURCE_RELATIVE))?;
     let _origin = origin_go::start(
         &origin_binary,
         &workspace,
@@ -1546,7 +1533,6 @@ pub fn run_fallback(suite: &FallbackSuite) -> Result<SuiteOutcome, String> {
         &baseline_build_id,
         &candidate_build_id,
         &repository,
-        &origin_manifest,
         &lock,
         port_base,
         port_count,
@@ -2014,7 +2000,6 @@ fn fallback_environment_json(
     baseline_build_id: &str,
     candidate_build_id: &str,
     repository: &attest::RepositoryState,
-    origin_manifest: &attest::TreeManifest,
     lock: &HostLock,
     port_base: u16,
     port_count: usize,
@@ -2085,10 +2070,7 @@ fn fallback_environment_json(
         ),
         ("baseline", binary_json(baseline, baseline_build_id)),
         ("candidate", binary_json(candidate, candidate_build_id)),
-        (
-            "harness",
-            harness_block(&suite.repo, origin_manifest),
-        ),
+        ("harness", harness_block()),
         ("hostExclusiveLock", lock_json(lock)),
     ])
 }
@@ -2096,7 +2078,7 @@ fn fallback_environment_json(
 /// The harness attestation block, shared by both paired environments.
 ///
 /// `contract` and `keeperHelper` are `null`: see the module note.
-fn harness_block(repo: &Path, origin_manifest: &attest::TreeManifest) -> Json {
+fn harness_block() -> Json {
     let entrypoint = std::env::current_exe().unwrap_or_default();
     let entrypoint_sha = hash::sha256_file(&entrypoint).unwrap_or_default();
     Json::object([
@@ -2104,7 +2086,7 @@ fn harness_block(repo: &Path, origin_manifest: &attest::TreeManifest) -> Json {
             "entrypoint",
             Json::object([
                 ("path", Json::string(entrypoint.display().to_string())),
-                ("sha256", Json::string(entrypoint_sha)),
+                ("sha256", Json::string(&entrypoint_sha)),
             ]),
         ),
         ("contract", Json::Null),
@@ -2112,18 +2094,9 @@ fn harness_block(repo: &Path, origin_manifest: &attest::TreeManifest) -> Json {
         (
             "benchOrigin",
             Json::object([
-                (
-                    "path",
-                    Json::string(repo.join(origin_go::SOURCE_RELATIVE).display().to_string()),
-                ),
-                (
-                    "manifestSha256",
-                    Json::string(origin_manifest.sha256.clone()),
-                ),
-                (
-                    "fileCount",
-                    Json::Int(i64::try_from(origin_manifest.file_count).unwrap_or(i64::MAX)),
-                ),
+                ("path", Json::string(entrypoint.display().to_string())),
+                ("sha256", Json::string(entrypoint_sha)),
+                ("embedded", Json::Bool(true)),
             ]),
         ),
     ])

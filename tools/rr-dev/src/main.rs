@@ -937,10 +937,8 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             let tls = match (tls_cert, tls_key) {
                 (None, None) => None,
                 (Some(cert), Some(key)) => {
-                    let (certificate_pem, key_pem) = match (
-                        std::fs::read(cert),
-                        std::fs::read(key),
-                    ) {
+                    let (certificate_pem, key_pem) = match (std::fs::read(cert), std::fs::read(key))
+                    {
                         (Ok(certificate_pem), Ok(key_pem)) => (certificate_pem, key_pem),
                         (error, other) => {
                             let failed = match (error.is_err(), other.is_err()) {
@@ -976,6 +974,12 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
+            if let Some(options) = tls.as_ref()
+                && let Err(error) = bench::origin_server::tls_acceptor(options)
+            {
+                eprintln!("bench origin: {error}");
+                return ExitCode::from(2);
+            }
             let listener = match std::net::TcpListener::bind((address, *port)) {
                 Ok(listener) => listener,
                 Err(error) => {
@@ -988,11 +992,11 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                 let _ = std::io::Write::flush(&mut std::io::stdout());
             }
             match bench::origin_server::serve_with_tls(
-                listener,
-                &payload_dir,
-                Some(&put_log),
+                &listener,
+                payload_dir,
+                Some(put_log),
                 access_log.as_deref(),
-                &label,
+                label,
                 tls.as_ref(),
             ) {
                 Ok(()) => ExitCode::SUCCESS,

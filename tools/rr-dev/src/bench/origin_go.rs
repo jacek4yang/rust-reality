@@ -1,81 +1,35 @@
-//! The compiled Go benchmark origin, built and owned by the run.
+//! The native benchmark origin process, owned by the run.
 //!
-//! `scripts/bench-origin` exists because the embedded Python origin it replaced
-//! collapsed under concurrency-32 TLS workloads and invalidated whole matrix cells
-//! for *every* implementation — the origin, not the proxy, was the bottleneck. It
-//! is therefore part of the measurement apparatus, and the harnesses treat it that
-//! way: they snapshot its source tree by content ([`crate::bench::attest`]) and
-//! rebuild it per run rather than trusting a stale artifact.
-//!
-//! This module keeps that arrangement. It is deliberately *not* a rewrite of the
-//! origin in Rust: reimplementing it would change the thing every archived
-//! measurement was taken against, which is a bigger claim than this migration is
-//! entitled to make. `scripts/bench-origin` moves out of `scripts/` in a later
-//! family, once the shell harnesses that also depend on it are gone.
-//!
-//! Build stamping is disabled with `-buildvcs=false`. Go's VCS discovery follows a
-//! linked worktree's common git directory and would otherwise inspect the
-//! non-repository workspace parent; the run's own content manifest is the identity
-//! that matters here.
+//! The origin must remain a separate process: if the high-concurrency HTTP/TLS
+//! measurement apparatus wedges, the suite must be able to terminate it without
+//! affecting its own control plane. The hidden `bench origin` child is embedded in
+//! the same attested `rr-dev` executable as the harness, and [`Child`] owns its
+//! lifetime. Its wire contract lives in [`crate::bench::origin_server`].
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::{
-    bench::{process::Child, workspace::Workspace},
-    process::Tool,
-};
+use crate::bench::{process::Child, workspace::Workspace};
 
 /// Readiness deadline for an origin listener.
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Path of the origin source tree relative to the repository root.
-pub const SOURCE_RELATIVE: &str = "scripts/bench-origin";
-
-/// Builds `scripts/bench-origin` into the run workspace.
+/// Resolves the current `rr-dev` executable for the origin child.
 ///
 /// # Errors
 ///
-/// Returns a message when the toolchain is missing, the source tree is absent, or
-/// the build fails.
-pub fn build(repo: &Path, workspace: &Workspace) -> Result<PathBuf, String> {
-    let source = repo.join(SOURCE_RELATIVE);
-    if !source.is_dir() {
-        return Err(format!(
-            "the benchmark origin source is missing: {}",
-            source.display()
-        ));
-    }
-    if !Tool::exists("go") {
-        return Err("go is required to build the benchmark origin".to_owned());
-    }
-    let binary = workspace.join("bench-origin");
-    let outcome = Tool::new("go")
-        .current_dir(&source)
-        .env("GOFLAGS", "-buildvcs=false")
-        .args(["build", "-o", &binary.display().to_string(), "."])
-        .probe()
-        .map_err(|error| format!("could not build the benchmark origin: {error}"))?;
-    if !outcome.success() {
-        return Err(format!(
-            "go build exited {:?}: {}",
-            outcome.code,
-            outcome.stderr.trim_end()
-        ));
-    }
-    if !binary.is_file() {
-        return Err(format!(
-            "go build produced no binary at {}",
-            binary.display()
-        ));
-    }
-    Ok(binary)
+/// Returns a message when the operating system cannot resolve the executable.
+pub fn executable() -> Result<PathBuf, String> {
+    std::env::current_exe()
+        .map_err(|error| format!("could not resolve the rr-dev executable: {error}"))
 }
 
 /// The origin's own argv for a listener plan.
 pub(crate) fn listener_args(plan: &OriginPlan) -> Vec<String> {
     let mut args = vec![
+        "bench".to_owned(),
+        "origin".to_owned(),
         "--listen-address".to_owned(),
         plan.listen_address.clone(),
         "--port".to_owned(),
@@ -255,15 +209,6 @@ pub fn write_pattern_payload(directory: &Path, mebibytes: u64) -> Result<PathBuf
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Read as _;
-    use std::net::{Ipv4Addr, TcpStream};
-
-    #[test]
-    fn a_missing_source_tree_fails_closed() {
-        let workspace = Workspace::create("origin-missing").unwrap();
-        let error = build(Path::new("/nonexistent/repo"), &workspace).unwrap_err();
-        assert!(error.contains("origin source is missing"), "{error}");
-    }
 
     #[test]
     fn the_setup_payload_is_the_256_byte_marker_body() {
@@ -291,72 +236,6 @@ mod tests {
         assert_eq!(path.file_name().unwrap(), "payload-1.bin");
     }
 
-    /// The repository root, two levels above this crate's manifest.
-    fn repo_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .expect("tools/rr-dev sits two levels below the repository root")
-            .to_path_buf()
-    }
-
-    /// Builds and serves from the real origin. This is the apparatus every
-    /// setup-rate slot depends on, so it is worth proving end to end rather than
-    /// discovering a build or flag mismatch inside a benchmark run.
-    #[test]
-    fn the_real_origin_builds_and_serves_its_payload() {
-        if !Tool::exists("go") {
-            return;
-        }
-        let workspace = Workspace::create("origin-integration").unwrap();
-        let binary = match build(&repo_root(), &workspace) {
-            Ok(binary) => binary,
-            // A sandbox without a writable Go build cache cannot compile; that is
-            // an environment limitation, not a contract failure.
-            Err(error) if error.contains("go build exited") => return,
-            Err(error) => panic!("{error}"),
-        };
-        write_setup_payload(workspace.path()).unwrap();
-        let port = crate::bench::workspace::reserve_ports(1).unwrap()[0];
-        let plan = OriginPlan {
-            label: "origin-http".to_owned(),
-            listen_address: "127.0.0.1".to_owned(),
-            port,
-            payload_dir: workspace.path().to_path_buf(),
-            put_log: workspace.join("http-put.jsonl"),
-            tls: None,
-            access_log: None,
-            alpn: None,
-        };
-        let child = start(&binary, &workspace, &plan).expect("the origin becomes ready");
-
-        // Fetch exactly what the workload fetches, without a proxy in the way.
-        let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
-        stream
-            .write_all(
-                format!("GET /payload.bin HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\n\r\n").as_bytes(),
-            )
-            .unwrap();
-        let mut response = Vec::new();
-        stream.read_to_end(&mut response).unwrap();
-        let text = String::from_utf8_lossy(&response);
-        assert!(
-            text.starts_with("HTTP/1.0 200"),
-            "{}",
-            &text[..40.min(text.len())]
-        );
-        assert!(
-            text.contains("Content-Length: 256"),
-            "the 256-byte marker body"
-        );
-        assert!(
-            text.ends_with(&"x".repeat(256)),
-            "the body is the marker payload"
-        );
-
-        drop(child);
-    }
-
     /// The listener plan is argv, not a shell string; TLS is opt-in by cert+key.
     #[test]
     fn the_tls_flags_appear_only_with_a_certificate() {
@@ -370,6 +249,7 @@ mod tests {
             access_log: None,
             alpn: None,
         };
+        assert_eq!(&listener_args(&plan)[..2], ["bench", "origin"]);
         assert!(plan.tls.is_none());
         let tls = OriginPlan {
             tls: Some((

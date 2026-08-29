@@ -262,7 +262,7 @@ pub fn run(suite: &InteropSuite) -> Result<InteropReport, String> {
     };
 
     validate(suite)?;
-    for program in ["curl", "go"] {
+    for program in ["curl"] {
         if !Tool::exists(program) {
             return Err(format!("required program unavailable: {program}"));
         }
@@ -279,7 +279,7 @@ pub fn run(suite: &InteropSuite) -> Result<InteropReport, String> {
     // One MiB of the repeating 0..=255 pattern, which is what the gate compares.
     let payload = origin_go::write_pattern_payload(workspace.path(), 1)?;
     let expected_sha = hash::sha256_file(&payload)?;
-    let origin_binary = origin_go::build(&suite.repo, &workspace)?;
+    let origin_binary = origin_go::executable()?;
     let _origin = origin_go::start(
         &origin_binary,
         &workspace,

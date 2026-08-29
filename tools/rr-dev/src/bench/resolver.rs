@@ -447,19 +447,19 @@ fn xray_inbound(identity: &RealityIdentity, listen_port: u16, private_key: &str)
     ])
 }
 
-/// Builds the Go origin and starts the plain and TLS listeners a leg needs.
+/// Starts the native plain and TLS origin listeners a leg needs.
 ///
 /// # Errors
 ///
 /// Returns the first failure; the guards stop whatever started.
 pub fn start_origins(
-    repo: &Path,
+    _repo: &Path,
     workspace: &Workspace,
     plain_port: u16,
     tls_port: u16,
 ) -> Result<(Child, Child), String> {
     use crate::bench::{origin_go, origin_tls};
-    let binary = origin_go::build(repo, workspace)?;
+    let binary = origin_go::executable()?;
     origin_go::write_setup_payload(workspace.path())?;
     let (cert, key) = origin_tls::generate_self_signed(workspace.path())?;
     let plain = origin_go::start(
