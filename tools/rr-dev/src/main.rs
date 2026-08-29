@@ -1305,13 +1305,12 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                 );
             }
             if suite == "soak" {
-                if soak_implementation != "xray" {
-                    eprintln!(
-                        "bench run soak: --soak-implementation must be xray until the rust topology is selected"
-                    );
+                if !matches!(soak_implementation.as_str(), "rust" | "xray") {
+                    eprintln!("bench run soak: --soak-implementation must be rust or xray");
                     return ExitCode::from(2);
                 }
-                return run_bench_soak_xray(
+                return run_bench_soak(
+                    soak_implementation,
                     rust_bin,
                     xray_bin,
                     openssl_bin,
@@ -1940,8 +1939,13 @@ fn run_bench_pressure(
     }
 }
 
-/// Drives the Xray side of the shared mixed-traffic soak lifecycle.
-fn run_bench_soak_xray(
+/// Drives the selected side of the shared mixed-traffic soak lifecycle.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the soak CLI fields map directly to the bounded native plan"
+)]
+fn run_bench_soak(
+    implementation: &str,
     rust_bin: &Path,
     xray_bin: &Path,
     openssl_bin: &Path,
@@ -1983,19 +1987,41 @@ fn run_bench_soak_xray(
         eprintln!("bench run soak: {error}");
         return ExitCode::from(2);
     }
-    match bench::soak::run_xray(&plan) {
-        Ok(outcome) => {
-            println!(
-                "Xray soak: PASS ({} rounds, RSS growth {:.1} MiB; {})",
-                outcome.rounds,
-                outcome.resources.rss_growth_mib,
-                out_dir.display()
-            );
-            ExitCode::SUCCESS
+    if implementation == "rust" {
+        match bench::soak::run_rust(&plan) {
+            Ok(outcome) => {
+                println!(
+                    "rust-reality soak: PASS ({} rounds, {} distributed attempts, aggregate PSS/RSS growth {:.1} MiB; {})",
+                    outcome.rounds,
+                    outcome.distributed_attempts,
+                    outcome
+                        .resources
+                        .pss_growth_mib
+                        .unwrap_or(outcome.resources.rss_growth_mib),
+                    out_dir.display()
+                );
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("bench run soak: {error}");
+                ExitCode::FAILURE
+            }
         }
-        Err(error) => {
-            eprintln!("bench run soak: {error}");
-            ExitCode::FAILURE
+    } else {
+        match bench::soak::run_xray(&plan) {
+            Ok(outcome) => {
+                println!(
+                    "Xray soak: PASS ({} rounds, RSS growth {:.1} MiB; {})",
+                    outcome.rounds,
+                    outcome.resources.rss_growth_mib,
+                    out_dir.display()
+                );
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("bench run soak: {error}");
+                ExitCode::FAILURE
+            }
         }
     }
 }

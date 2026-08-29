@@ -18,6 +18,7 @@ use crate::{
         evidence::{self, Publication, RunDirectory},
         host_lock::HostLock,
         identity::{self, Binary, Kind},
+        no_ccs,
         origin_go::{self, OriginPlan},
         origin_tls,
         process::{Child, proc_starttime},
@@ -25,7 +26,7 @@ use crate::{
         workspace::{self, Workspace},
     },
     hash,
-    perf::json_out::Json,
+    perf::{json_in, json_out::Json},
     process::Tool,
 };
 
@@ -101,6 +102,8 @@ pub struct ResourceSummary {
     pub rss_growth_mib: f64,
     /// HWM peak minus start HWM in MiB.
     pub rss_peak_growth_mib: f64,
+    /// Sampled RSS peak minus start RSS in MiB.
+    pub rss_sampled_peak_growth_mib: f64,
     /// Least-squares RSS slope over the second half of samples.
     pub rss_tail_slope_mib_per_hour: f64,
     /// Whether every snapshot exposed proportional-set size.
@@ -122,6 +125,145 @@ pub struct XraySoakOutcome {
     pub transfer_failures: usize,
     /// Server resource growth.
     pub resources: ResourceSummary,
+}
+
+/// Successful native rust-reality soak observations.
+#[derive(Debug, Clone)]
+pub struct RustSoakOutcome {
+    /// Completed mixed-traffic rounds.
+    pub rounds: usize,
+    /// Failed transfers or churn operations.
+    pub transfer_failures: usize,
+    /// Completed Handoff/NXR/SOCKS5 integrity attempts.
+    pub distributed_attempts: usize,
+    /// Aggregate resource growth across all six rust-reality processes.
+    pub resources: ResourceSummary,
+}
+
+#[derive(Debug, Clone)]
+struct GeneratedPublicConfig {
+    public_key: String,
+    uuid: String,
+    short_id: String,
+    json: String,
+}
+
+#[derive(Debug, Clone)]
+struct DistributedSample {
+    attempt: usize,
+    trigger: &'static str,
+    path: &'static str,
+    success: bool,
+    failure_class: Option<String>,
+    bytes: u64,
+    sha256: Option<String>,
+    server_sequence: Option<i64>,
+    output: String,
+    monotonic_seconds: f64,
+}
+
+struct DistributedRun<'a> {
+    run: &'a RunDirectory,
+    started: Instant,
+    http_origin_port: u16,
+    socks_ports: [u16; 3],
+    expected_sha256: String,
+    handoff_log: PathBuf,
+    attempts: usize,
+    samples: Vec<DistributedSample>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct NativePorts {
+    standalone: u16,
+    standalone_socks: u16,
+    https_origin: u16,
+    http_origin: u16,
+    handoff_cover_upstream: u16,
+    handoff_cover: u16,
+    handoff_line: u16,
+    handoff_landing: u16,
+    handoff_socks: u16,
+    nxr_line: u16,
+    nxr_landing: u16,
+    nxr_socks: u16,
+    socks_line: u16,
+    socks_upstream: u16,
+    socks_client: u16,
+}
+
+impl NativePorts {
+    fn reserve() -> Result<Self, String> {
+        let ports = workspace::reserve_ports(15)?;
+        let [
+            standalone,
+            standalone_socks,
+            tls_origin_port,
+            clear_origin_port,
+            handoff_cover_upstream,
+            handoff_cover,
+            handoff_line,
+            handoff_landing,
+            handoff_socks,
+            nxr_line,
+            nxr_landing,
+            nxr_socks,
+            socks_line,
+            socks_upstream,
+            socks_client,
+        ] = <[u16; 15]>::try_from(ports)
+            .map_err(|_| "could not reserve the native soak port set".to_owned())?;
+        Ok(Self {
+            standalone,
+            standalone_socks,
+            https_origin: tls_origin_port,
+            http_origin: clear_origin_port,
+            handoff_cover_upstream,
+            handoff_cover,
+            handoff_line,
+            handoff_landing,
+            handoff_socks,
+            nxr_line,
+            nxr_landing,
+            nxr_socks,
+            socks_line,
+            socks_upstream,
+            socks_client,
+        })
+    }
+
+    fn as_array(self) -> [u16; 15] {
+        [
+            self.standalone,
+            self.standalone_socks,
+            self.https_origin,
+            self.http_origin,
+            self.handoff_cover_upstream,
+            self.handoff_cover,
+            self.handoff_line,
+            self.handoff_landing,
+            self.handoff_socks,
+            self.nxr_line,
+            self.nxr_landing,
+            self.nxr_socks,
+            self.socks_line,
+            self.socks_upstream,
+            self.socks_client,
+        ]
+    }
+}
+
+struct NativeConfigs {
+    standalone: PathBuf,
+    standalone_client: PathBuf,
+    handoff_line: PathBuf,
+    handoff_landing: PathBuf,
+    handoff_client: PathBuf,
+    nxr_line: PathBuf,
+    nxr_landing: PathBuf,
+    nxr_client: PathBuf,
+    socks_line: PathBuf,
+    socks_client: PathBuf,
 }
 
 /// Validates the bounded native plan.
@@ -162,6 +304,1580 @@ pub fn validate(plan: &SoakPlan) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn generated_public_config(
+    rust_bin: &Path,
+    args: Vec<String>,
+    workspace: &Workspace,
+    cache_label: &str,
+) -> Result<GeneratedPublicConfig, String> {
+    let outcome = Tool::new(rust_bin.display().to_string())
+        .args(args)
+        .probe()
+        .map_err(|error| format!("rust-reality config generate failed: {error}"))?;
+    if !outcome.success() {
+        return Err(format!(
+            "rust-reality config generate exited {:?}: {}",
+            outcome.code,
+            outcome.stderr.trim_end()
+        ));
+    }
+    let public_key = outcome
+        .stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("REALITY public key for the client: "))
+        .ok_or_else(|| "rust-reality config generate printed no REALITY public key".to_owned())?
+        .to_owned();
+    let raw = outcome.trimmed_stdout();
+    let value = json_in::parse(raw)
+        .map_err(|error| format!("generated rust config is invalid JSON: {error}"))?;
+    let inbound = value
+        .array_field("", "inbounds")
+        .map_err(|error| error.to_string())?
+        .first()
+        .ok_or_else(|| "generated rust config has no inbound".to_owned())?;
+    let client = inbound
+        .field("inbounds[0]", "settings")
+        .and_then(|settings| settings.array_field("inbounds[0].settings", "clients"))
+        .map_err(|error| error.to_string())?
+        .first()
+        .ok_or_else(|| "generated rust config has no client".to_owned())?;
+    let uuid = client
+        .str_field("inbounds[0].settings.clients[0]", "id")
+        .map_err(|error| error.to_string())?
+        .to_owned();
+    let short_id = client
+        .array_field("inbounds[0].settings.clients[0]", "shortIds")
+        .map_err(|error| error.to_string())?
+        .first()
+        .ok_or_else(|| "generated rust config client has no short id".to_owned())?
+        .as_str("inbounds[0].settings.clients[0].shortIds[0]")
+        .map_err(|error| error.to_string())?
+        .to_owned();
+    Ok(GeneratedPublicConfig {
+        public_key,
+        uuid,
+        short_id,
+        json: patch_server_config(raw, workspace, cache_label, false)?,
+    })
+}
+
+fn patch_server_config(
+    raw: &str,
+    workspace: &Workspace,
+    cache_label: &str,
+    serial_cover: bool,
+) -> Result<String, String> {
+    use json_in::Value;
+    let value = json_in::parse(raw)
+        .map_err(|error| format!("generated rust config is invalid JSON: {error}"))?;
+    let Value::Object(mut root) = value else {
+        return Err("generated rust config is not an object".to_owned());
+    };
+    let Some(Value::Object(log)) = root.get_mut("log") else {
+        return Err("generated rust config has no log object".to_owned());
+    };
+    log.insert("level".to_owned(), Value::Str("debug".to_owned()));
+    let Some(Value::Object(assets)) = root.get_mut("assets") else {
+        return Err("generated rust config has no assets object".to_owned());
+    };
+    assets.insert(
+        "cacheDirectory".to_owned(),
+        Value::Str(workspace.join(cache_label).display().to_string()),
+    );
+    if serial_cover {
+        let Some(Value::Array(inbounds)) = root.get_mut("inbounds") else {
+            return Err("generated rust config has no inbounds array".to_owned());
+        };
+        let Some(Value::Object(inbound)) = inbounds.first_mut() else {
+            return Err("generated rust config has no first inbound".to_owned());
+        };
+        let Some(Value::Object(stream)) = inbound.get_mut("streamSettings") else {
+            return Err("generated rust config has no streamSettings".to_owned());
+        };
+        let Some(Value::Object(reality)) = stream.get_mut("realitySettings") else {
+            return Err("generated rust config has no realitySettings".to_owned());
+        };
+        let Some(Value::Object(optimization)) = reality.get_mut("coverOptimization") else {
+            return Err("generated rust config has no coverOptimization".to_owned());
+        };
+        optimization.insert("warmTcp".to_owned(), Value::Bool(false));
+        optimization.insert("prebuiltProfiles".to_owned(), Value::Bool(false));
+    }
+    Ok(suites::render_compact(&Value::Object(root)))
+}
+
+fn patch_xray_socks_port(raw: &str, port: u16) -> Result<String, String> {
+    use json_in::Value;
+    let value = json_in::parse(raw)
+        .map_err(|error| format!("generated Xray config is invalid JSON: {error}"))?;
+    let Value::Object(mut root) = value else {
+        return Err("generated Xray config is not an object".to_owned());
+    };
+    let Some(Value::Array(inbounds)) = root.get_mut("inbounds") else {
+        return Err("generated Xray config has no inbounds array".to_owned());
+    };
+    let Some(Value::Object(inbound)) = inbounds.first_mut() else {
+        return Err("generated Xray config has no first inbound".to_owned());
+    };
+    inbound.insert("port".to_owned(), Value::Number(port.to_string()));
+    Ok(suites::render_compact(&Value::Object(root)))
+}
+
+fn patch_socks_outbound(raw: &str, upstream_port: u16) -> Result<String, String> {
+    use json_in::Value;
+    let value = json_in::parse(raw)
+        .map_err(|error| format!("generated SOCKS line config is invalid JSON: {error}"))?;
+    let Value::Object(mut root) = value else {
+        return Err("generated SOCKS line config is not an object".to_owned());
+    };
+    let Some(Value::Array(outbounds)) = root.get_mut("outbounds") else {
+        return Err("generated SOCKS line config has no outbounds array".to_owned());
+    };
+    outbounds.retain(
+        |outbound| match outbound.str_field("outbounds[]", "protocol") {
+            Ok(protocol) => protocol != "nxr",
+            Err(_) => true,
+        },
+    );
+    outbounds.push(Value::Object(
+        [
+            ("protocol".to_owned(), Value::Str("socks5".to_owned())),
+            ("tag".to_owned(), Value::Str("via-socks".to_owned())),
+            (
+                "settings".to_owned(),
+                Value::Object(
+                    [
+                        ("address".to_owned(), Value::Str("127.0.0.1".to_owned())),
+                        ("port".to_owned(), Value::Number(upstream_port.to_string())),
+                        ("warmTcp".to_owned(), Value::Bool(true)),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    ));
+    let Some(Value::Object(routing)) = root.get_mut("routing") else {
+        return Err("generated SOCKS line config has no routing object".to_owned());
+    };
+    let Some(Value::Array(users)) = routing.get_mut("users") else {
+        return Err("generated SOCKS line config has no routing users".to_owned());
+    };
+    let Some(Value::Object(user)) = users.first_mut() else {
+        return Err("generated SOCKS line config has no first routing user".to_owned());
+    };
+    user.insert(
+        "defaultOutbound".to_owned(),
+        Value::Str("via-socks".to_owned()),
+    );
+    Ok(suites::render_compact(&Value::Object(root)))
+}
+
+fn node_key(rust_bin: &Path) -> Result<String, String> {
+    let outcome = Tool::new(rust_bin.display().to_string())
+        .arg("node-keygen")
+        .probe()
+        .map_err(|error| format!("rust-reality node-keygen failed: {error}"))?;
+    if !outcome.success() {
+        return Err(format!(
+            "rust-reality node-keygen exited {:?}: {}",
+            outcome.code,
+            outcome.stderr.trim_end()
+        ));
+    }
+    json_in::parse(outcome.trimmed_stdout())
+        .map_err(|error| format!("node-keygen output is invalid JSON: {error}"))?
+        .str_field("", "preSharedKey")
+        .map(str::to_owned)
+        .map_err(|error| error.to_string())
+}
+
+fn check_config(rust_bin: &Path, config: &Path) -> Result<(), String> {
+    let outcome = Tool::new(rust_bin.display().to_string())
+        .args(["check", "--config", &config.display().to_string()])
+        .probe()
+        .map_err(|error| format!("rust-reality check failed: {error}"))?;
+    if outcome.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "rust-reality check rejected {}: {}",
+            config.display(),
+            outcome.stderr.trim_end()
+        ))
+    }
+}
+
+fn write_config(path: &Path, contents: &str) -> Result<(), String> {
+    std::fs::write(path, contents)
+        .map_err(|error| format!("could not write {}: {error}", path.display()))
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "one transaction materializes and production-checks the four soak topologies"
+)]
+fn materialize_native_configs(
+    plan: &SoakPlan,
+    workspace: &Workspace,
+    ports: NativePorts,
+) -> Result<NativeConfigs, String> {
+    let target = format!("127.0.0.1:{}", ports.https_origin);
+    let standalone = generated_public_config(
+        &plan.rust_bin,
+        vec![
+            "config".to_owned(),
+            "generate".to_owned(),
+            "standalone".to_owned(),
+            "--listen".to_owned(),
+            "127.0.0.1".to_owned(),
+            "--port".to_owned(),
+            ports.standalone.to_string(),
+            "--target".to_owned(),
+            target.clone(),
+            "--server-name".to_owned(),
+            "localhost".to_owned(),
+        ],
+        workspace,
+        "assets-standalone",
+    )?;
+    let standalone_path = workspace.join("standalone.json");
+    write_config(&standalone_path, &standalone.json)?;
+    let standalone_client_path = workspace.join("standalone-client.json");
+    write_config(
+        &standalone_client_path,
+        &config::xray_client(
+            &RealityIdentity {
+                uuid: standalone.uuid,
+                short_id: standalone.short_id,
+                server_name: "localhost".to_owned(),
+                target: target.clone(),
+            },
+            ports.standalone,
+            ports.standalone_socks,
+            &standalone.public_key,
+        )
+        .to_python_json(),
+    )?;
+
+    let handoff_dir = workspace.join("handoff-generated");
+    let handoff = Tool::new(plan.rust_bin.display().to_string())
+        .args([
+            "config",
+            "generate",
+            "handoff",
+            "--listen",
+            "127.0.0.1",
+            "--port",
+            &ports.handoff_line.to_string(),
+            "--server-address",
+            "127.0.0.1",
+            "--target",
+            &format!("localhost:{}", ports.handoff_cover),
+            "--server-name",
+            "localhost",
+            "--landing-address",
+            "127.0.0.1",
+            "--landing-port",
+            &ports.handoff_landing.to_string(),
+            "--output-dir",
+            &handoff_dir.display().to_string(),
+        ])
+        .probe()
+        .map_err(|error| format!("handoff config generation failed: {error}"))?;
+    if !handoff.success() {
+        return Err(format!(
+            "handoff config generation exited {:?}: {}",
+            handoff.code,
+            handoff.stderr.trim_end()
+        ));
+    }
+    let handoff_line = handoff_dir.join("line.json");
+    let handoff_landing = handoff_dir.join("landing.json");
+    let handoff_client = handoff_dir.join("xray-client.json");
+    write_config(
+        &handoff_line,
+        &patch_server_config(
+            &std::fs::read_to_string(&handoff_line)
+                .map_err(|error| format!("could not read handoff line config: {error}"))?,
+            workspace,
+            "assets-handoff-line",
+            true,
+        )?,
+    )?;
+    write_config(
+        &handoff_landing,
+        &patch_server_config(
+            &std::fs::read_to_string(&handoff_landing)
+                .map_err(|error| format!("could not read handoff landing config: {error}"))?,
+            workspace,
+            "assets-handoff-landing",
+            false,
+        )?,
+    )?;
+    write_config(
+        &handoff_client,
+        &patch_xray_socks_port(
+            &std::fs::read_to_string(&handoff_client)
+                .map_err(|error| format!("could not read handoff Xray config: {error}"))?,
+            ports.handoff_socks,
+        )?,
+    )?;
+
+    let nxr_key = node_key(&plan.rust_bin)?;
+    let nxr_line_generated = generated_public_config(
+        &plan.rust_bin,
+        vec![
+            "config".to_owned(),
+            "generate".to_owned(),
+            "line".to_owned(),
+            "--listen".to_owned(),
+            "127.0.0.1".to_owned(),
+            "--port".to_owned(),
+            ports.nxr_line.to_string(),
+            "--target".to_owned(),
+            target.clone(),
+            "--server-name".to_owned(),
+            "localhost".to_owned(),
+            "--nxr-address".to_owned(),
+            "127.0.0.1".to_owned(),
+            "--nxr-port".to_owned(),
+            ports.nxr_landing.to_string(),
+            "--nxr-key".to_owned(),
+            nxr_key.clone(),
+        ],
+        workspace,
+        "assets-nxr-line",
+    )?;
+    let nxr_line = workspace.join("nxr-line.json");
+    write_config(&nxr_line, &nxr_line_generated.json)?;
+    let nxr_landing_outcome = Tool::new(plan.rust_bin.display().to_string())
+        .args([
+            "config",
+            "generate",
+            "landing",
+            "--listen",
+            "127.0.0.1",
+            "--port",
+            &ports.nxr_landing.to_string(),
+            "--nxr-key",
+            &nxr_key,
+        ])
+        .probe()
+        .map_err(|error| format!("NXR landing config generation failed: {error}"))?;
+    if !nxr_landing_outcome.success() {
+        return Err(format!(
+            "NXR landing config generation exited {:?}: {}",
+            nxr_landing_outcome.code,
+            nxr_landing_outcome.stderr.trim_end()
+        ));
+    }
+    let nxr_landing = workspace.join("nxr-landing.json");
+    write_config(
+        &nxr_landing,
+        &patch_server_config(
+            nxr_landing_outcome.trimmed_stdout(),
+            workspace,
+            "assets-nxr-landing",
+            false,
+        )?,
+    )?;
+    let nxr_client = workspace.join("nxr-client.json");
+    write_config(
+        &nxr_client,
+        &config::xray_client(
+            &RealityIdentity {
+                uuid: nxr_line_generated.uuid,
+                short_id: nxr_line_generated.short_id,
+                server_name: "localhost".to_owned(),
+                target: target.clone(),
+            },
+            ports.nxr_line,
+            ports.nxr_socks,
+            &nxr_line_generated.public_key,
+        )
+        .to_python_json(),
+    )?;
+
+    let socks_generated = generated_public_config(
+        &plan.rust_bin,
+        vec![
+            "config".to_owned(),
+            "generate".to_owned(),
+            "line".to_owned(),
+            "--listen".to_owned(),
+            "127.0.0.1".to_owned(),
+            "--port".to_owned(),
+            ports.socks_line.to_string(),
+            "--target".to_owned(),
+            target,
+            "--server-name".to_owned(),
+            "localhost".to_owned(),
+            "--nxr-address".to_owned(),
+            "127.0.0.1".to_owned(),
+            "--nxr-port".to_owned(),
+            "9".to_owned(),
+            "--nxr-key".to_owned(),
+            nxr_key,
+        ],
+        workspace,
+        "assets-socks-line",
+    )?;
+    let socks_line = workspace.join("socks-line.json");
+    write_config(
+        &socks_line,
+        &patch_socks_outbound(&socks_generated.json, ports.socks_upstream)?,
+    )?;
+    let socks_client = workspace.join("socks-client.json");
+    write_config(
+        &socks_client,
+        &config::xray_client(
+            &RealityIdentity {
+                uuid: socks_generated.uuid,
+                short_id: socks_generated.short_id,
+                server_name: "localhost".to_owned(),
+                target: format!("127.0.0.1:{}", ports.https_origin),
+            },
+            ports.socks_line,
+            ports.socks_client,
+            &socks_generated.public_key,
+        )
+        .to_python_json(),
+    )?;
+
+    for path in [
+        &standalone_path,
+        &handoff_line,
+        &handoff_landing,
+        &nxr_line,
+        &nxr_landing,
+        &socks_line,
+    ] {
+        check_config(&plan.rust_bin, path)?;
+    }
+    Ok(NativeConfigs {
+        standalone: standalone_path,
+        standalone_client: standalone_client_path,
+        handoff_line,
+        handoff_landing,
+        handoff_client,
+        nxr_line,
+        nxr_landing,
+        nxr_client,
+        socks_line,
+        socks_client,
+    })
+}
+
+fn external_binary(label: &str, path: &Path, args: &[&str]) -> Result<Binary, String> {
+    let resolved = if path.components().count() > 1 {
+        path.to_path_buf()
+    } else {
+        origin_tls::which(&path.display().to_string())
+            .ok_or_else(|| format!("{label} is unavailable: {}", path.display()))?
+    };
+    let canonical = std::fs::canonicalize(&resolved)
+        .map_err(|error| format!("could not resolve {}: {error}", resolved.display()))?;
+    let outcome = Tool::new(canonical.display().to_string())
+        .args(args.iter().copied())
+        .probe()
+        .map_err(|error| format!("could not identify {label}: {error}"))?;
+    if !outcome.success() {
+        return Err(format!(
+            "{label} identity exited {:?}: {}",
+            outcome.code,
+            outcome.stderr.trim_end()
+        ));
+    }
+    let mut identity = outcome.stdout;
+    identity.push_str(&outcome.stderr);
+    Ok(Binary {
+        label: label.to_owned(),
+        sha256: hash::sha256_file(&canonical)?,
+        path: canonical,
+        identity: identity.trim().to_owned(),
+    })
+}
+
+fn spawn_rust(
+    label: &str,
+    rust: &Binary,
+    config: &Path,
+    workspace: &Workspace,
+    environment: &[(String, String)],
+    log: &Path,
+    port: u16,
+) -> Result<Child, String> {
+    let mut child = Child::spawn_isolated(
+        label,
+        &rust.path,
+        &[
+            "serve".to_owned(),
+            "--config".to_owned(),
+            config.display().to_string(),
+        ],
+        workspace.path(),
+        environment,
+        log,
+    )
+    .map_err(|error| error.to_string())?;
+    child
+        .wait_for_port(port, READY_TIMEOUT)
+        .map_err(|error| error.to_string())?;
+    Ok(child)
+}
+
+fn spawn_xray_client(
+    label: &str,
+    xray: &Binary,
+    config: &Path,
+    workspace: &Workspace,
+    log: &Path,
+    port: u16,
+) -> Result<Child, String> {
+    let mut child = Child::spawn_isolated(
+        label,
+        &xray.path,
+        &[
+            "run".to_owned(),
+            "-config".to_owned(),
+            config.display().to_string(),
+        ],
+        workspace.path(),
+        &[("PATH".to_owned(), "/usr/local/bin:/usr/bin:/bin".to_owned())],
+        log,
+    )
+    .map_err(|error| error.to_string())?;
+    child
+        .wait_for_port(port, READY_TIMEOUT)
+        .map_err(|error| error.to_string())?;
+    Ok(child)
+}
+
+fn exact_processes(processes: &[(&str, u32)]) -> Result<Vec<(String, u32, String)>, String> {
+    processes
+        .iter()
+        .map(|(name, pid)| {
+            proc_starttime(*pid)
+                .ok_or_else(|| format!("could not identify {name} process {pid}"))
+                .map(|starttime| ((*name).to_owned(), *pid, starttime))
+        })
+        .collect()
+}
+
+impl DistributedRun<'_> {
+    fn attempt(&mut self, trigger: &'static str) {
+        self.attempts += 1;
+        let attempt = self.attempts;
+        let url = format!("http://127.0.0.1:{}/payload-1.bin", self.http_origin_port);
+        for (path, socks_port) in [
+            ("handoff-seq1", self.socks_ports[0]),
+            ("nxr-byte-integrity", self.socks_ports[1]),
+            ("socks5-byte-integrity", self.socks_ports[2]),
+        ] {
+            let relative = format!("distributed/{path}-{attempt:04}.bin");
+            let output = self.run.join(&relative);
+            let transfer = fetch(
+                &url,
+                Some(socks_port),
+                false,
+                &output,
+                Some(&self.expected_sha256),
+            );
+            let bytes = output.metadata().map_or(0, |metadata| metadata.len());
+            let sha256 = output
+                .is_file()
+                .then(|| hash::sha256_file(&output).ok())
+                .flatten();
+            let mut failure_class = transfer.err().map(|_| "transfer".to_owned());
+            if failure_class.is_none() && bytes != 1_048_576 {
+                failure_class = Some("size_mismatch".to_owned());
+            }
+            if failure_class.is_none() && sha256.as_deref() != Some(&self.expected_sha256) {
+                failure_class = Some("sha256_mismatch".to_owned());
+            }
+            let server_sequence = if path == "handoff-seq1" {
+                if let Ok(sequence) = wait_handoff_sequence(&self.handoff_log, attempt) {
+                    Some(sequence)
+                } else {
+                    failure_class.get_or_insert_with(|| "server_sequence_missing".to_owned());
+                    None
+                }
+            } else {
+                None
+            };
+            if path == "handoff-seq1" && server_sequence.is_some_and(|sequence| sequence != 1) {
+                failure_class = Some("server_sequence_mismatch".to_owned());
+            }
+            self.samples.push(DistributedSample {
+                attempt,
+                trigger,
+                path,
+                success: failure_class.is_none(),
+                failure_class,
+                bytes,
+                sha256,
+                server_sequence,
+                output: relative,
+                monotonic_seconds: self.started.elapsed().as_secs_f64(),
+            });
+        }
+    }
+}
+
+impl DistributedSample {
+    fn to_json(&self, expected_sha256: &str) -> Json {
+        Json::object([
+            ("attempt", usize_json(self.attempt)),
+            ("trigger", Json::string(self.trigger)),
+            ("path", Json::string(self.path)),
+            ("success", Json::Bool(self.success)),
+            (
+                "failureClass",
+                self.failure_class.as_ref().map_or(Json::Null, Json::string),
+            ),
+            ("bytes", int(self.bytes)),
+            (
+                "sha256",
+                self.sha256.as_ref().map_or(Json::Null, Json::string),
+            ),
+            ("expectedBytes", int(1_048_576)),
+            ("expectedSha256", Json::string(expected_sha256)),
+            (
+                "serverSequence",
+                self.server_sequence.map_or(Json::Null, Json::Int),
+            ),
+            ("output", Json::string(&self.output)),
+            ("monotonicSeconds", Json::Float(self.monotonic_seconds)),
+        ])
+    }
+}
+
+fn wait_handoff_sequence(log: &Path, expected_index: usize) -> Result<i64, String> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        let text = std::fs::read_to_string(log).unwrap_or_default();
+        let sequences = text
+            .lines()
+            .filter_map(|line| json_in::parse(line).ok())
+            .filter(|event| {
+                event
+                    .str_field("event", "event")
+                    .is_ok_and(|name| name == "connection_completed")
+            })
+            .filter_map(|event| event.int_field("event", "handoff_server_sequence").ok())
+            .collect::<Vec<_>>();
+        if let Some(sequence) = sequences.get(expected_index.saturating_sub(1)) {
+            return Ok(*sequence);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    Err(format!(
+        "missing Handoff completion {expected_index} in {}",
+        log.display()
+    ))
+}
+
+fn wait_for_generation(child: &mut Child, log: &Path, generation: i64) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        let text = std::fs::read_to_string(log).unwrap_or_default();
+        let found = text
+            .lines()
+            .filter_map(|line| json_in::parse(line).ok())
+            .any(|event| {
+                event
+                    .str_field("event", "event")
+                    .is_ok_and(|name| name == "configuration_published")
+                    && event
+                        .int_field("event", "generation")
+                        .is_ok_and(|observed| observed == generation)
+            });
+        if found {
+            return Ok(());
+        }
+        if !child.is_alive() {
+            return Err(format!("{} exited while waiting for reload", child.label()));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    Err(format!(
+        "{} recorded no configuration generation {generation}",
+        log.display()
+    ))
+}
+
+fn reload_topology(processes: &mut [(&mut Child, &Path)]) -> Result<(), String> {
+    for (child, _) in processes.iter_mut() {
+        child.reload()?;
+    }
+    for (child, log) in processes.iter_mut() {
+        wait_for_generation(child, log, 1)?;
+    }
+    Ok(())
+}
+
+fn wait_for_proxy_completion(
+    proxy: &mut Child,
+    log: &Path,
+    expected_shaped: usize,
+) -> Result<usize, String> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        let text = std::fs::read_to_string(log).unwrap_or_default();
+        for event in text.lines().filter_map(|line| json_in::parse(line).ok()) {
+            if event
+                .str_field("event", "event")
+                .is_ok_and(|name| name == "proxy_complete")
+            {
+                let shaped = event
+                    .int_field("event", "shaped")
+                    .map_err(|error| error.to_string())?;
+                let shaped = usize::try_from(shaped)
+                    .map_err(|_| "shape proxy reported a negative count".to_owned())?;
+                return if shaped == expected_shaped {
+                    Ok(shaped)
+                } else {
+                    Err(format!(
+                        "shape proxy completed {shaped} flights, expected {expected_shaped}"
+                    ))
+                };
+            }
+        }
+        if !proxy.is_alive() {
+            return Err("shape proxy exited without a completion event".to_owned());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    Err("shape proxy did not publish completion".to_owned())
+}
+
+fn connection_rejections(log: &Path) -> Result<BTreeMap<String, usize>, String> {
+    let text = std::fs::read_to_string(log)
+        .map_err(|error| format!("could not read {}: {error}", log.display()))?;
+    let mut reasons = BTreeMap::new();
+    for event in text.lines().filter_map(|line| json_in::parse(line).ok()) {
+        if event
+            .str_field("event", "event")
+            .is_ok_and(|name| name == "connection_rejected")
+        {
+            let reason = event
+                .str_field("event", "reason")
+                .unwrap_or("unclassified")
+                .to_owned();
+            *reasons.entry(reason).or_default() += 1;
+        }
+    }
+    Ok(reasons)
+}
+
+fn validate_distributed(
+    run: &DistributedRun<'_>,
+    required_attempts: usize,
+    shaped: usize,
+    handoff_rejections: &BTreeMap<String, usize>,
+    nxr_rejections: &BTreeMap<String, usize>,
+) -> Result<(), String> {
+    if run.attempts < required_attempts || run.samples.len() != run.attempts * 3 {
+        return Err(format!(
+            "distributed soak completed {} attempts/{} samples, requires {required_attempts} complete attempts",
+            run.attempts,
+            run.samples.len()
+        ));
+    }
+    if let Some(sample) = run.samples.iter().find(|sample| !sample.success) {
+        return Err(format!(
+            "distributed {} attempt {} failed: {}",
+            sample.path,
+            sample.attempt,
+            sample.failure_class.as_deref().unwrap_or("unclassified")
+        ));
+    }
+    for trigger in ["start", "reload", "end"] {
+        if run
+            .samples
+            .iter()
+            .filter(|sample| sample.path == "handoff-seq1" && sample.trigger == trigger)
+            .count()
+            != 1
+        {
+            return Err(format!(
+                "distributed soak did not record one {trigger} trigger"
+            ));
+        }
+    }
+    if shaped != run.attempts {
+        return Err(format!(
+            "shape proxy completed {shaped} flights for {} attempts",
+            run.attempts
+        ));
+    }
+    if !handoff_rejections.is_empty() || !nxr_rejections.is_empty() {
+        return Err(format!(
+            "landing rejected soak connections: handoff={handoff_rejections:?}, nxr={nxr_rejections:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn run_reload_phase(
+    started: Instant,
+    snapshots: &mut Vec<ResourceSnapshot>,
+    identities: &[(String, u32, String)],
+    distributed: &mut DistributedRun<'_>,
+    processes: &mut [(&mut Child, &Path)],
+) -> Result<(), String> {
+    snapshots.push(capture_processes(
+        "before-reload",
+        started.elapsed(),
+        identities,
+    )?);
+    reload_topology(processes)?;
+    distributed.attempt("reload");
+    snapshots.push(capture_processes(
+        "after-reload",
+        started.elapsed(),
+        identities,
+    )?);
+    Ok(())
+}
+
+fn publish_final_downloads(run: &DistributedRun<'_>) -> Result<(), String> {
+    for (path, destination) in [
+        ("handoff-seq1", "handoff-download.bin"),
+        ("nxr-byte-integrity", "nxr-download.bin"),
+        ("socks5-byte-integrity", "socks-download.bin"),
+    ] {
+        let sample = run
+            .samples
+            .iter()
+            .rev()
+            .find(|sample| sample.path == path)
+            .ok_or_else(|| format!("distributed soak has no {path} download"))?;
+        std::fs::copy(run.run.join(&sample.output), run.run.join(destination))
+            .map_err(|error| format!("could not publish final {path} download: {error}"))?;
+    }
+    Ok(())
+}
+
+fn distributed_summary_json(
+    run: &DistributedRun<'_>,
+    interval: Duration,
+    required_attempts: usize,
+    shaped: usize,
+) -> Json {
+    let path_summary = |path: &str, sequence: bool| {
+        let samples = run
+            .samples
+            .iter()
+            .filter(|sample| sample.path == path)
+            .collect::<Vec<_>>();
+        Json::object([
+            ("attempts", usize_json(samples.len())),
+            (
+                "successes",
+                usize_json(samples.iter().filter(|sample| sample.success).count()),
+            ),
+            (
+                "failures",
+                usize_json(samples.iter().filter(|sample| !sample.success).count()),
+            ),
+            (
+                "allPayloadBytes",
+                Json::Bool(samples.iter().all(|sample| sample.bytes == 1_048_576)),
+            ),
+            (
+                "allPayloadSha256",
+                Json::Bool(
+                    samples
+                        .iter()
+                        .all(|sample| sample.sha256.as_deref() == Some(&run.expected_sha256)),
+                ),
+            ),
+            (
+                "allServerSequenceOne",
+                if sequence {
+                    Json::Bool(
+                        samples
+                            .iter()
+                            .all(|sample| sample.server_sequence == Some(1)),
+                    )
+                } else {
+                    Json::Null
+                },
+            ),
+        ])
+    };
+    Json::object([
+        ("schemaVersion", Json::Int(3)),
+        ("payloadBytes", int(1_048_576)),
+        ("payloadSha256", Json::string(&run.expected_sha256)),
+        ("intervalSeconds", int(interval.as_secs())),
+        ("attempts", usize_json(run.attempts)),
+        ("requiredAttempts", usize_json(required_attempts)),
+        (
+            "reload",
+            Json::object([
+                (
+                    "triggerAttempts",
+                    usize_json(
+                        run.samples
+                            .iter()
+                            .filter(|sample| {
+                                sample.path == "handoff-seq1" && sample.trigger == "reload"
+                            })
+                            .count(),
+                    ),
+                ),
+                ("expectedGeneration", Json::Int(1)),
+            ]),
+        ),
+        ("handoffSeq1", path_summary("handoff-seq1", true)),
+        (
+            "nxrByteIntegrity",
+            path_summary("nxr-byte-integrity", false),
+        ),
+        (
+            "socks5ByteIntegrity",
+            path_summary("socks5-byte-integrity", false),
+        ),
+        (
+            "proxy",
+            Json::object([
+                ("shaped", usize_json(shaped)),
+                (
+                    "appendedWireLength",
+                    usize_json(crate::bench::tls_shape::SHAPED_FIFTH_RECORD_BYTES),
+                ),
+            ]),
+        ),
+        ("ok", Json::Bool(true)),
+    ])
+}
+
+fn ports_json(ports: NativePorts) -> Json {
+    Json::object([
+        ("standalone", Json::Int(i64::from(ports.standalone))),
+        (
+            "standaloneSocks",
+            Json::Int(i64::from(ports.standalone_socks)),
+        ),
+        ("httpsOrigin", Json::Int(i64::from(ports.https_origin))),
+        ("httpOrigin", Json::Int(i64::from(ports.http_origin))),
+        (
+            "handoffCoverUpstream",
+            Json::Int(i64::from(ports.handoff_cover_upstream)),
+        ),
+        ("handoffCover", Json::Int(i64::from(ports.handoff_cover))),
+        ("handoffLine", Json::Int(i64::from(ports.handoff_line))),
+        (
+            "handoffLanding",
+            Json::Int(i64::from(ports.handoff_landing)),
+        ),
+        ("handoffSocks", Json::Int(i64::from(ports.handoff_socks))),
+        ("nxrLine", Json::Int(i64::from(ports.nxr_line))),
+        ("nxrLanding", Json::Int(i64::from(ports.nxr_landing))),
+        ("nxrSocks", Json::Int(i64::from(ports.nxr_socks))),
+        ("socksLine", Json::Int(i64::from(ports.socks_line))),
+        ("socksUpstream", Json::Int(i64::from(ports.socks_upstream))),
+        ("socksClient", Json::Int(i64::from(ports.socks_client))),
+    ])
+}
+
+/// Runs the native standalone + Handoff + NXR + SOCKS5 soak topology.
+///
+/// # Errors
+///
+/// Returns the first identity, generation, process, integrity, reload, resource,
+/// or publication failure. Every child and the workspace are RAII-owned.
+#[allow(clippy::too_many_lines)]
+pub fn run_rust(plan: &SoakPlan) -> Result<RustSoakOutcome, String> {
+    validate(plan)?;
+    let rust = identity::register("rust-reality", &plan.rust_bin, "", Kind::Rust)?;
+    let xray = identity::register("xray", &plan.xray_bin, "", Kind::Xray)?;
+    let openssl = external_binary("openssl", &plan.openssl_bin, &["version", "-a"])?;
+    let rr_dev = std::env::current_exe()
+        .map_err(|error| format!("could not resolve the rr-dev executable: {error}"))?;
+    let rr_dev_sha256 = hash::sha256_file(&rr_dev)?;
+    let _lock = HostLock::acquire(&runner::default_lock_path())?;
+    let run = RunDirectory::create(&plan.out_dir)?;
+    std::fs::create_dir(run.join("distributed"))
+        .map_err(|error| format!("could not create distributed evidence directory: {error}"))?;
+    let workspace = Workspace::create("soak-rust")?;
+    let ports = NativePorts::reserve()?;
+    let mut resolved_plan = plan.clone();
+    resolved_plan.rust_bin.clone_from(&rust.path);
+    resolved_plan.xray_bin.clone_from(&xray.path);
+    resolved_plan.openssl_bin.clone_from(&openssl.path);
+    let configs = materialize_native_configs(&resolved_plan, &workspace, ports)?;
+
+    let payload = origin_go::write_pattern_payload(workspace.path(), PAYLOAD_MIB)?;
+    let payload_sha256 = hash::sha256_file(&payload)?;
+    let distributed_payload = origin_go::write_pattern_payload(workspace.path(), 1)?;
+    let distributed_payload_sha256 = hash::sha256_file(&distributed_payload)?;
+    let certificate =
+        no_ccs::build_cover_certificate(&openssl.path, workspace.path(), &plan.run_id)?;
+    run.write_new(
+        "handoff-cover-certificate-san.txt",
+        &certificate.subject_alt_name,
+    )?;
+
+    let mut tls_origin = origin_go::start(
+        &rr_dev,
+        &workspace,
+        &OriginPlan {
+            label: "soak-origin-https".to_owned(),
+            listen_address: "127.0.0.1".to_owned(),
+            port: ports.https_origin,
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("https-put.jsonl"),
+            tls: Some((certificate.certificate.clone(), certificate.key.clone())),
+            access_log: None,
+            alpn: None,
+        },
+    )?;
+    let mut clear_origin = origin_go::start(
+        &rr_dev,
+        &workspace,
+        &OriginPlan {
+            label: "soak-origin-http".to_owned(),
+            listen_address: "127.0.0.1".to_owned(),
+            port: ports.http_origin,
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("http-put.jsonl"),
+            tls: None,
+            access_log: None,
+            alpn: None,
+        },
+    )?;
+
+    let cover_log = run.join("handoff-cover-trace.log");
+    let cover_args = vec![
+        "s_server".to_owned(),
+        "-accept".to_owned(),
+        format!("127.0.0.1:{}", ports.handoff_cover_upstream),
+        "-www".to_owned(),
+        "-ign_eof".to_owned(),
+        "-tls1_3".to_owned(),
+        "-cert".to_owned(),
+        certificate.certificate.display().to_string(),
+        "-key".to_owned(),
+        certificate.key.display().to_string(),
+        "-alpn".to_owned(),
+        "h2,http/1.1".to_owned(),
+        "-trace".to_owned(),
+        "-msg".to_owned(),
+        "-state".to_owned(),
+    ];
+    let mut cover = Child::spawn_isolated(
+        "soak-handoff-cover",
+        &openssl.path,
+        &cover_args,
+        workspace.path(),
+        &[("PATH".to_owned(), "/usr/local/bin:/usr/bin:/bin".to_owned())],
+        &cover_log,
+    )
+    .map_err(|error| error.to_string())?;
+    cover
+        .wait_for_port(ports.handoff_cover_upstream, READY_TIMEOUT)
+        .map_err(|error| error.to_string())?;
+
+    let planned_attempts = usize::try_from(
+        3 + plan
+            .duration
+            .as_secs()
+            .saturating_sub(1)
+            .checked_div(plan.distributed_interval.as_secs())
+            .unwrap_or(0),
+    )
+    .map_err(|_| "distributed attempt count is unrepresentable".to_owned())?;
+    let shape_log = run.join("handoff-cover-shape-proxy.log");
+    let mut shape_proxy = Child::spawn_isolated(
+        "soak-handoff-shape-proxy",
+        &rr_dev,
+        &[
+            "bench".to_owned(),
+            "shape-proxy".to_owned(),
+            "--listen-port".to_owned(),
+            ports.handoff_cover.to_string(),
+            "--upstream-port".to_owned(),
+            ports.handoff_cover_upstream.to_string(),
+            "--max-shaped".to_owned(),
+            planned_attempts.to_string(),
+            "--max-accepted".to_owned(),
+            (planned_attempts + 16).to_string(),
+        ],
+        workspace.path(),
+        &[("PATH".to_owned(), "/usr/local/bin:/usr/bin:/bin".to_owned())],
+        &shape_log,
+    )
+    .map_err(|error| error.to_string())?;
+    shape_proxy
+        .wait_for_port(ports.handoff_cover, READY_TIMEOUT)
+        .map_err(|error| error.to_string())?;
+
+    let clean_environment = [("PATH".to_owned(), "/usr/local/bin:/usr/bin:/bin".to_owned())];
+    let handoff_environment = [
+        ("PATH".to_owned(), "/usr/local/bin:/usr/bin:/bin".to_owned()),
+        (
+            "SSL_CERT_FILE".to_owned(),
+            certificate.ca_certificate.display().to_string(),
+        ),
+    ];
+    let handoff_landing_log = run.join("handoff-landing.log");
+    let mut handoff_landing = spawn_rust(
+        "soak-handoff-landing",
+        &rust,
+        &configs.handoff_landing,
+        &workspace,
+        &clean_environment,
+        &handoff_landing_log,
+        ports.handoff_landing,
+    )?;
+    let handoff_line_log = run.join("handoff-line.log");
+    let mut handoff_line = spawn_rust(
+        "soak-handoff-line",
+        &rust,
+        &configs.handoff_line,
+        &workspace,
+        &handoff_environment,
+        &handoff_line_log,
+        ports.handoff_line,
+    )?;
+    let mut handoff_xray = spawn_xray_client(
+        "soak-handoff-xray",
+        &xray,
+        &configs.handoff_client,
+        &workspace,
+        &run.join("handoff-xray.log"),
+        ports.handoff_socks,
+    )?;
+
+    let nxr_landing_log = run.join("nxr-landing.log");
+    let mut nxr_landing = spawn_rust(
+        "soak-nxr-landing",
+        &rust,
+        &configs.nxr_landing,
+        &workspace,
+        &clean_environment,
+        &nxr_landing_log,
+        ports.nxr_landing,
+    )?;
+    let nxr_line_log = run.join("nxr-line.log");
+    let mut nxr_line = spawn_rust(
+        "soak-nxr-line",
+        &rust,
+        &configs.nxr_line,
+        &workspace,
+        &clean_environment,
+        &nxr_line_log,
+        ports.nxr_line,
+    )?;
+    let mut nxr_xray = spawn_xray_client(
+        "soak-nxr-xray",
+        &xray,
+        &configs.nxr_client,
+        &workspace,
+        &run.join("nxr-xray.log"),
+        ports.nxr_socks,
+    )?;
+
+    let socks_upstream_log = run.join("socks-upstream.log");
+    let mut socks_upstream = Child::spawn_isolated(
+        "soak-socks-upstream",
+        &rr_dev,
+        &[
+            "bench".to_owned(),
+            "socks-server".to_owned(),
+            "--port".to_owned(),
+            ports.socks_upstream.to_string(),
+        ],
+        workspace.path(),
+        &clean_environment,
+        &socks_upstream_log,
+    )
+    .map_err(|error| error.to_string())?;
+    socks_upstream
+        .wait_for_port(ports.socks_upstream, READY_TIMEOUT)
+        .map_err(|error| error.to_string())?;
+    let socks_line_log = run.join("socks-line.log");
+    let mut socks_line = spawn_rust(
+        "soak-socks-line",
+        &rust,
+        &configs.socks_line,
+        &workspace,
+        &clean_environment,
+        &socks_line_log,
+        ports.socks_line,
+    )?;
+    let mut socks_xray = spawn_xray_client(
+        "soak-socks-xray",
+        &xray,
+        &configs.socks_client,
+        &workspace,
+        &run.join("socks-xray.log"),
+        ports.socks_client,
+    )?;
+
+    let standalone_log = run.join("standalone.log");
+    let mut standalone = spawn_rust(
+        "soak-standalone",
+        &rust,
+        &configs.standalone,
+        &workspace,
+        &clean_environment,
+        &standalone_log,
+        ports.standalone,
+    )?;
+    let mut standalone_xray = spawn_xray_client(
+        "soak-standalone-xray",
+        &xray,
+        &configs.standalone_client,
+        &workspace,
+        &run.join("standalone-xray.log"),
+        ports.standalone_socks,
+    )?;
+
+    let identities = exact_processes(&[
+        ("standalone", standalone.pid()),
+        ("handoff-line", handoff_line.pid()),
+        ("handoff-landing", handoff_landing.pid()),
+        ("nxr-line", nxr_line.pid()),
+        ("nxr-landing", nxr_landing.pid()),
+        ("socks-line", socks_line.pid()),
+    ])?;
+    let started = Instant::now();
+    let mut distributed = DistributedRun {
+        run: &run,
+        started,
+        http_origin_port: ports.http_origin,
+        socks_ports: [ports.handoff_socks, ports.nxr_socks, ports.socks_client],
+        expected_sha256: distributed_payload_sha256,
+        handoff_log: handoff_line_log.clone(),
+        attempts: 0,
+        samples: Vec::with_capacity(planned_attempts * 3),
+    };
+    distributed.attempt("start");
+    let mut snapshots = vec![capture_processes("start", started.elapsed(), &identities)?];
+    let mut rounds = 0;
+    let mut failures = 0;
+    let reload_at = plan.duration.div_f64(2.0);
+    let mut reload_triggered = false;
+    let mut next_distributed = plan.distributed_interval;
+    while started.elapsed() < plan.duration {
+        if !reload_triggered && started.elapsed() >= reload_at {
+            let mut reload_processes = [
+                (&mut handoff_line, handoff_line_log.as_path()),
+                (&mut handoff_landing, handoff_landing_log.as_path()),
+                (&mut nxr_line, nxr_line_log.as_path()),
+                (&mut nxr_landing, nxr_landing_log.as_path()),
+                (&mut socks_line, socks_line_log.as_path()),
+            ];
+            run_reload_phase(
+                started,
+                &mut snapshots,
+                &identities,
+                &mut distributed,
+                &mut reload_processes,
+            )?;
+            reload_triggered = true;
+        }
+        rounds += 1;
+        failures += run_round(
+            &workspace,
+            rounds,
+            ports.standalone_socks,
+            ports.standalone,
+            ports.https_origin,
+            ports.http_origin,
+            &payload_sha256,
+        );
+        while next_distributed < plan.duration && started.elapsed() >= next_distributed {
+            distributed.attempt("interval");
+            next_distributed += plan.distributed_interval;
+        }
+        snapshots.push(capture_processes(
+            &format!("round-{rounds}"),
+            started.elapsed(),
+            &identities,
+        )?);
+        if started.elapsed() < plan.duration && !plan.round_sleep.is_zero() {
+            std::thread::sleep(plan.round_sleep);
+        }
+    }
+    if !reload_triggered {
+        let mut reload_processes = [
+            (&mut handoff_line, handoff_line_log.as_path()),
+            (&mut handoff_landing, handoff_landing_log.as_path()),
+            (&mut nxr_line, nxr_line_log.as_path()),
+            (&mut nxr_landing, nxr_landing_log.as_path()),
+            (&mut socks_line, socks_line_log.as_path()),
+        ];
+        run_reload_phase(
+            started,
+            &mut snapshots,
+            &identities,
+            &mut distributed,
+            &mut reload_processes,
+        )?;
+    }
+    while next_distributed < plan.duration && started.elapsed() >= next_distributed {
+        distributed.attempt("interval");
+        next_distributed += plan.distributed_interval;
+    }
+    distributed.attempt("end");
+    publish_final_downloads(&distributed)?;
+    std::thread::sleep(Duration::from_secs(5));
+    snapshots.push(capture_processes("end", started.elapsed(), &identities)?);
+
+    let shaped = wait_for_proxy_completion(&mut shape_proxy, &shape_log, distributed.attempts)?;
+    let handoff_rejections = connection_rejections(&handoff_landing_log)?;
+    let nxr_rejections = connection_rejections(&nxr_landing_log)?;
+    validate_distributed(
+        &distributed,
+        planned_attempts,
+        shaped,
+        &handoff_rejections,
+        &nxr_rejections,
+    )?;
+    if rounds < plan.minimum_rounds {
+        return Err(format!(
+            "soak completed {rounds} rounds, requires {}",
+            plan.minimum_rounds
+        ));
+    }
+    if failures != 0 {
+        return Err(format!("soak observed {failures} transfer failure(s)"));
+    }
+    let resources = summarize_aggregate_resources(&snapshots)?;
+    let resources_by_process = summarize_each_process(&snapshots)?;
+    let slope_gate_applied = plan.duration >= Duration::from_mins(30);
+    if !resources_within_limits(&resources, slope_gate_applied, true) {
+        return Err(format!(
+            "aggregate soak resources exceeded bounds: {resources:?}"
+        ));
+    }
+    if let Some((name, summary)) = resources_by_process
+        .iter()
+        .find(|(_, summary)| !resources_within_limits(summary, slope_gate_applied, false))
+    {
+        return Err(format!(
+            "{name} soak resources exceeded bounds: {summary:?}"
+        ));
+    }
+
+    for (pid, label) in [
+        (standalone.pid(), "standalone"),
+        (handoff_line.pid(), "handoff line"),
+        (handoff_landing.pid(), "handoff landing"),
+        (nxr_line.pid(), "NXR line"),
+        (nxr_landing.pid(), "NXR landing"),
+        (socks_line.pid(), "SOCKS line"),
+    ] {
+        crate::bench::slot::verify_running_image(pid, &rust.sha256, label)?;
+    }
+    for (pid, label) in [
+        (standalone_xray.pid(), "standalone Xray"),
+        (handoff_xray.pid(), "handoff Xray"),
+        (nxr_xray.pid(), "NXR Xray"),
+        (socks_xray.pid(), "SOCKS Xray"),
+    ] {
+        crate::bench::slot::verify_running_image(pid, &xray.sha256, label)?;
+    }
+    for (pid, label) in [
+        (tls_origin.pid(), "HTTPS origin"),
+        (clear_origin.pid(), "HTTP origin"),
+        (socks_upstream.pid(), "SOCKS5 upstream"),
+    ] {
+        crate::bench::slot::verify_running_image(pid, &rr_dev_sha256, label)?;
+    }
+    crate::bench::slot::verify_running_image(cover.pid(), &openssl.sha256, "OpenSSL cover")?;
+    no_ccs::assert_unchanged(&rust)?;
+    no_ccs::assert_unchanged(&xray)?;
+    if hash::sha256_file(&openssl.path)? != openssl.sha256 {
+        return Err("OpenSSL changed during the soak".to_owned());
+    }
+    if hash::sha256_file(&rr_dev)? != rr_dev_sha256 {
+        return Err("rr-dev changed during the soak".to_owned());
+    }
+
+    let resource_rows = snapshots
+        .iter()
+        .map(|snapshot| snapshot_json(snapshot).to_compact_json())
+        .collect::<Vec<_>>();
+    run.write_jsonl("resources.jsonl", &resource_rows)?;
+    let distributed_rows = distributed
+        .samples
+        .iter()
+        .map(|sample| sample.to_json(&distributed.expected_sha256).to_jq_json())
+        .collect::<Vec<_>>();
+    run.write_jsonl("distributed-samples.jsonl", &distributed_rows)?;
+    let distributed_json = distributed_summary_json(
+        &distributed,
+        plan.distributed_interval,
+        planned_attempts,
+        shaped,
+    );
+    run.write_new("distributed-gates.json", &distributed_json.to_python_json())?;
+    let resource_by_process_json = Json::object(
+        resources_by_process
+            .iter()
+            .map(|(name, summary)| (name.clone(), resource_summary_json(summary))),
+    );
+    let config_sha256 = Json::object([
+        (
+            "standalone",
+            Json::string(hash::sha256_file(&configs.standalone)?),
+        ),
+        (
+            "handoffLine",
+            Json::string(hash::sha256_file(&configs.handoff_line)?),
+        ),
+        (
+            "handoffLanding",
+            Json::string(hash::sha256_file(&configs.handoff_landing)?),
+        ),
+        (
+            "nxrLine",
+            Json::string(hash::sha256_file(&configs.nxr_line)?),
+        ),
+        (
+            "nxrLanding",
+            Json::string(hash::sha256_file(&configs.nxr_landing)?),
+        ),
+        (
+            "socksLine",
+            Json::string(hash::sha256_file(&configs.socks_line)?),
+        ),
+    ]);
+    let long_horizon_qualified = plan.duration == Duration::from_hours(12)
+        && started.elapsed() >= Duration::from_hours(12)
+        && resources.pss_available
+        && slope_gate_applied
+        && (Duration::from_mins(5)..=Duration::from_mins(30)).contains(&plan.distributed_interval)
+        && distributed.attempts >= 25;
+    let summary = Json::object([
+        ("schemaVersion", Json::Int(3)),
+        ("harness", Json::string("soak")),
+        ("implementation", Json::string("rust-reality")),
+        ("runId", Json::string(&plan.run_id)),
+        ("completedAt", Json::string(evidence::now_utc()?)),
+        ("durationSeconds", Json::Float(plan.duration.as_secs_f64())),
+        (
+            "elapsedSeconds",
+            Json::Float(started.elapsed().as_secs_f64()),
+        ),
+        ("rounds", usize_json(rounds)),
+        ("minimumRounds", usize_json(plan.minimum_rounds)),
+        ("transferFailures", usize_json(failures)),
+        ("payloadBytes", int(PAYLOAD_MIB * 1024 * 1024)),
+        ("payloadSha256", Json::string(&payload_sha256)),
+        (
+            "binaries",
+            Json::object([
+                (
+                    "rustReality",
+                    Json::object([
+                        ("path", Json::string(rust.path.display().to_string())),
+                        ("sha256", Json::string(&rust.sha256)),
+                        ("identity", Json::string(&rust.identity)),
+                    ]),
+                ),
+                (
+                    "xray",
+                    Json::object([
+                        ("path", Json::string(xray.path.display().to_string())),
+                        ("sha256", Json::string(&xray.sha256)),
+                        ("identity", Json::string(&xray.identity)),
+                    ]),
+                ),
+                (
+                    "openssl",
+                    Json::object([
+                        ("path", Json::string(openssl.path.display().to_string())),
+                        ("sha256", Json::string(&openssl.sha256)),
+                        ("identity", Json::string(&openssl.identity)),
+                    ]),
+                ),
+                (
+                    "rrDevHelpers",
+                    Json::object([
+                        ("path", Json::string(rr_dev.display().to_string())),
+                        ("sha256", Json::string(&rr_dev_sha256)),
+                    ]),
+                ),
+            ]),
+        ),
+        ("ports", ports_json(ports)),
+        (
+            "portBlock",
+            Json::Array(
+                ports
+                    .as_array()
+                    .into_iter()
+                    .map(|port| Json::Int(i64::from(port)))
+                    .collect(),
+            ),
+        ),
+        ("configSha256", config_sha256),
+        ("resources", resource_summary_json(&resources)),
+        ("resourceAggregate", resource_summary_json(&resources)),
+        ("resourceByProcess", resource_by_process_json),
+        ("memoryTailSlopeGateApplied", Json::Bool(slope_gate_applied)),
+        (
+            "memorySlopeGateBasis",
+            Json::object([
+                (
+                    "aggregate",
+                    Json::string(if resources.pss_available {
+                        "pss"
+                    } else {
+                        "rss-fallback"
+                    }),
+                ),
+                ("perProcess", Json::string("rss")),
+            ]),
+        ),
+        ("longHorizonQualified", Json::Bool(long_horizon_qualified)),
+        ("distributedGates", distributed_json),
+        ("ok", Json::Bool(true)),
+    ]);
+    let document = summary.to_python_json();
+    run.write_new("soak-summary.json", &document)?;
+
+    standalone_xray.terminate();
+    socks_xray.terminate();
+    nxr_xray.terminate();
+    handoff_xray.terminate();
+    standalone.terminate();
+    socks_line.terminate();
+    nxr_line.terminate();
+    nxr_landing.terminate();
+    handoff_line.terminate();
+    handoff_landing.terminate();
+    socks_upstream.terminate();
+    shape_proxy.terminate();
+    cover.terminate();
+    clear_origin.terminate();
+    tls_origin.terminate();
+    copy_origin_log(&workspace, &run, "soak-origin-http", "origin-http.log")?;
+    copy_origin_log(&workspace, &run, "soak-origin-https", "origin-https.log")?;
+    run.publish(
+        Publication::Environment,
+        &document,
+        &plan.run_id,
+        "soak-rust-native",
+    )?;
+    Ok(RustSoakOutcome {
+        rounds,
+        transfer_failures: failures,
+        distributed_attempts: distributed.attempts,
+        resources,
+    })
 }
 
 /// Runs the Xray comparator under the soak workload and publishes evidence.
@@ -514,6 +2230,25 @@ fn capture_snapshot(
     })
 }
 
+/// Captures one exact-identity snapshot for every named process.
+fn capture_processes(
+    label: &str,
+    elapsed: Duration,
+    processes: &[(String, u32, String)],
+) -> Result<ResourceSnapshot, String> {
+    let resources = processes
+        .iter()
+        .map(|(name, pid, starttime)| {
+            process_resources(*pid, starttime).map(|resources| (name.clone(), resources))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    Ok(ResourceSnapshot {
+        label: label.to_owned(),
+        monotonic_seconds: elapsed.as_secs_f64(),
+        processes: resources,
+    })
+}
+
 fn process_resources(pid: u32, expected_starttime: &str) -> Result<ProcessResources, String> {
     let observed = proc_starttime(pid).ok_or_else(|| format!("process {pid} exited"))?;
     if observed != expected_starttime {
@@ -622,12 +2357,85 @@ pub fn summarize_resources(
         rss_peak_growth_mib: kib_to_mib(
             values.iter().map(|value| value.hwm_kib).max().unwrap_or(0),
         ) - kib_to_mib(first.hwm_kib),
+        rss_sampled_peak_growth_mib: kib_to_mib(
+            values.iter().map(|value| value.rss_kib).max().unwrap_or(0),
+        ) - kib_to_mib(first.rss_kib),
         rss_tail_slope_mib_per_hour: slope,
         pss_available: pss_summary.is_some(),
         pss_growth_mib: pss_summary.map(|summary| summary.0),
         pss_peak_growth_mib: pss_summary.map(|summary| summary.1),
         pss_tail_slope_mib_per_hour: pss_summary.map(|summary| summary.2),
     })
+}
+
+fn summarize_aggregate_resources(
+    snapshots: &[ResourceSnapshot],
+) -> Result<ResourceSummary, String> {
+    let aggregate = snapshots
+        .iter()
+        .map(|snapshot| {
+            let totals = totals(&snapshot.processes);
+            ResourceSnapshot {
+                label: snapshot.label.clone(),
+                monotonic_seconds: snapshot.monotonic_seconds,
+                processes: [(
+                    "aggregate".to_owned(),
+                    ProcessResources {
+                        pid: 0,
+                        starttime: "aggregate".to_owned(),
+                        fds: totals.fds,
+                        rss_kib: totals.rss_kib,
+                        pss_kib: totals.pss_kib,
+                        hwm_kib: totals.hwm_kib,
+                        threads: totals.threads,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            }
+        })
+        .collect::<Vec<_>>();
+    summarize_resources(&aggregate, "aggregate")
+}
+
+fn summarize_each_process(
+    snapshots: &[ResourceSnapshot],
+) -> Result<BTreeMap<String, ResourceSummary>, String> {
+    let first = snapshots
+        .first()
+        .ok_or_else(|| "resource summary needs at least one snapshot".to_owned())?;
+    if snapshots
+        .iter()
+        .any(|snapshot| snapshot.processes.keys().ne(first.processes.keys()))
+    {
+        return Err("rust process set changed during soak".to_owned());
+    }
+    first
+        .processes
+        .keys()
+        .map(|name| summarize_resources(snapshots, name).map(|summary| (name.clone(), summary)))
+        .collect()
+}
+
+fn resources_within_limits(
+    summary: &ResourceSummary,
+    slope_gate_applied: bool,
+    aggregate: bool,
+) -> bool {
+    let tail_slope = if aggregate {
+        summary
+            .pss_tail_slope_mib_per_hour
+            .unwrap_or(summary.rss_tail_slope_mib_per_hour)
+    } else {
+        summary.rss_tail_slope_mib_per_hour
+    };
+    summary.fd_growth <= 32
+        && summary.thread_growth <= 8
+        && summary.rss_growth_mib <= 32.0
+        && summary.fd_peak_growth <= 128
+        && summary.thread_peak_growth <= 8
+        && summary.rss_peak_growth_mib <= 64.0
+        && (!slope_gate_applied || tail_slope <= 2.0)
 }
 
 fn linear_slope_per_hour(xs: &[f64], ys: &[f64]) -> f64 {
@@ -702,6 +2510,10 @@ fn resource_summary_json(summary: &ResourceSummary) -> Json {
         (
             "rssTailSlopeMiBPerHour",
             Json::Float(summary.rss_tail_slope_mib_per_hour),
+        ),
+        (
+            "rssSampledPeakGrowthMiB",
+            Json::Float(summary.rss_sampled_peak_growth_mib),
         ),
         ("pssAvailable", Json::Bool(summary.pss_available)),
         (
@@ -909,7 +2721,10 @@ mod tests {
         assert_eq!(summary.thread_growth, 1);
         assert!((summary.rss_growth_mib - 3.0).abs() < f64::EPSILON);
         assert!((summary.rss_peak_growth_mib - 4.0).abs() < f64::EPSILON);
+        assert!((summary.rss_sampled_peak_growth_mib - 3.0).abs() < f64::EPSILON);
         assert!((summary.rss_tail_slope_mib_per_hour - 360.0).abs() < 0.001);
+        assert!(summary.pss_available);
+        assert!((summary.pss_growth_mib.unwrap() - 1.5).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -923,5 +2738,37 @@ mod tests {
             },
         ];
         assert!(summarize_resources(&snapshots, "server").is_err());
+        assert!(summarize_each_process(&snapshots).is_err());
+    }
+
+    #[test]
+    fn aggregate_summary_uses_pss_without_double_counting_shared_pages() {
+        let snapshots = [
+            ResourceSnapshot {
+                label: "start".to_owned(),
+                monotonic_seconds: 0.0,
+                processes: [
+                    ("line".to_owned(), process(10, 10_240, 10_240, 2)),
+                    ("landing".to_owned(), process(10, 10_240, 10_240, 2)),
+                ]
+                .into_iter()
+                .collect(),
+            },
+            ResourceSnapshot {
+                label: "end".to_owned(),
+                monotonic_seconds: 10.0,
+                processes: [
+                    ("line".to_owned(), process(11, 12_288, 12_288, 2)),
+                    ("landing".to_owned(), process(11, 12_288, 12_288, 2)),
+                ]
+                .into_iter()
+                .collect(),
+            },
+        ];
+        let summary = summarize_aggregate_resources(&snapshots).unwrap();
+        assert_eq!(summary.fd_growth, 2);
+        assert!((summary.rss_growth_mib - 4.0).abs() < f64::EPSILON);
+        assert!((summary.pss_growth_mib.unwrap() - 2.0).abs() < f64::EPSILON);
+        assert!(resources_within_limits(&summary, false, true));
     }
 }
