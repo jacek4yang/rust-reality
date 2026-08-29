@@ -366,3 +366,221 @@ mod tests {
         assert!(limits.contains("not a universal performance claim"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// The runner
+// ---------------------------------------------------------------------------
+
+/// The four ports one leg occupies.
+#[derive(Debug, Clone, Copy)]
+struct LegPorts {
+    origin: u16,
+    cover: u16,
+    server: u16,
+    socks: u16,
+}
+
+/// Runs all three phases for one implementation.
+fn measure_leg(
+    suite: &DnsSuite,
+    workspace: &crate::bench::workspace::Workspace,
+    rust_bin: &std::path::Path,
+    xray_bin: &std::path::Path,
+    implementation: crate::bench::resolver::Implementation,
+    ports: LegPorts,
+) -> Result<Json, String> {
+    use crate::bench::resolver::{self, LegInputs, ServerPolicy};
+    let label = implementation.as_str();
+    let leg = resolver::start_leg(&LegInputs {
+        implementation,
+        workspace,
+        rust_bin,
+        xray_bin,
+        tls_origin_port: ports.cover,
+        server_port: ports.server,
+        socks_port: ports.socks,
+        policy: &ServerPolicy::default(),
+    })?;
+
+    // One throwaway connection proves the path before any measured phase.
+    run_phase(
+        leg.socks_port,
+        ports.origin,
+        &[format!("warmup-{label}.dnsbench")],
+        1,
+        &leg.dns,
+    )?;
+
+    let mut cold = Vec::with_capacity(suite.samples);
+    for round in 0..suite.samples {
+        let names = cold_names(label, round, suite.connections);
+        cold.push(run_phase(
+            leg.socks_port,
+            ports.origin,
+            &names,
+            suite.concurrency,
+            &leg.dns,
+        )?);
+    }
+    // Warm repeats the final cold round's names, which are certainly cached.
+    let warm_names = cold_names(label, suite.samples - 1, suite.connections);
+    let mut warm = Vec::with_capacity(suite.warm_samples);
+    for _ in 0..suite.warm_samples {
+        warm.push(run_phase(
+            leg.socks_port,
+            ports.origin,
+            &warm_names,
+            suite.concurrency,
+            &leg.dns,
+        )?);
+    }
+    let burst = run_phase(
+        leg.socks_port,
+        ports.origin,
+        &burst_names(label, suite.burst_connections),
+        suite.burst_connections,
+        &leg.dns,
+    )?;
+    implementation_json(&cold, &warm, &burst, suite.samples * suite.connections)
+}
+
+/// Everything a DNS comparison run needs.
+#[derive(Debug, Clone)]
+pub struct DnsSuite {
+    /// Repository root, for the Go origin.
+    pub repo: std::path::PathBuf,
+    /// The rust-reality binary.
+    pub rust_bin: std::path::PathBuf,
+    /// The Xray binary: comparator server and both clients.
+    pub xray_bin: std::path::PathBuf,
+    /// Output directory; must not already exist.
+    pub out_dir: std::path::PathBuf,
+    /// Run identifier.
+    pub run_id: String,
+    /// Cold rounds per implementation.
+    pub samples: usize,
+    /// Warm rounds per implementation.
+    pub warm_samples: usize,
+    /// Connections per cold or warm round.
+    pub connections: usize,
+    /// Concurrency for the cold and warm phases.
+    pub concurrency: usize,
+    /// Connections in the burst phase.
+    pub burst_connections: usize,
+}
+
+/// Validates the DNS parameters.
+///
+/// # Errors
+///
+/// Returns the first violated guard.
+pub fn validate(suite: &DnsSuite) -> Result<(), String> {
+    for (name, value) in [
+        ("SAMPLES", suite.samples),
+        ("WARM_SAMPLES", suite.warm_samples),
+        ("CONNS", suite.connections),
+        ("CONCURRENCY", suite.concurrency),
+        ("BURST_CONNS", suite.burst_connections),
+    ] {
+        if value == 0 {
+            return Err(format!("{name} must be a positive integer"));
+        }
+    }
+    if suite.run_id.is_empty()
+        || !suite
+            .run_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err("RUN_ID is required and must be one safe component".to_owned());
+    }
+    Ok(())
+}
+
+/// Runs the DNS comparison end to end.
+///
+/// # Errors
+///
+/// Returns the first failure; every resource is RAII-owned.
+pub fn run(suite: &DnsSuite) -> Result<crate::bench::paired::SuiteOutcome, String> {
+    use crate::bench::{
+        evidence::{Publication, RunDirectory},
+        host_lock::HostLock,
+        identity::{self, Kind},
+        resolver::Implementation,
+        workspace::Workspace,
+    };
+
+    validate(suite)?;
+    for program in ["go", "openssl"] {
+        if !crate::process::Tool::exists(program) {
+            return Err(format!("required program unavailable: {program}"));
+        }
+    }
+    let rust = identity::register("rust-reality", &suite.rust_bin, "", Kind::Rust)?;
+    let xray = identity::register("xray", &suite.xray_bin, "", Kind::Xray)?;
+    let _lock = HostLock::acquire(&crate::bench::runner::default_lock_path())?;
+    let run = RunDirectory::create(&suite.out_dir)?;
+    let workspace = Workspace::create("benchmark-dns-comparison")?;
+
+    // Two origins plus a server/SOCKS pair per implementation.
+    let port_base = crate::bench::workspace::reserve_block(6)?;
+    let (origin_port, cover_port) = (port_base, port_base + 1);
+    let _origins =
+        crate::bench::resolver::start_origins(suite.repo.as_path(), &workspace, origin_port, cover_port)?;
+
+    let mut summary: Vec<(String, Json)> = Vec::with_capacity(2);
+    for (index, implementation) in [Implementation::Rust, Implementation::Xray]
+        .into_iter()
+        .enumerate()
+    {
+        let offset = u16::try_from(index * 2).map_err(|_| "too many legs".to_owned())?;
+        summary.push((
+            implementation.as_str().to_owned(),
+            measure_leg(
+                suite,
+                &workspace,
+                &rust.path,
+                &xray.path,
+                implementation,
+                LegPorts {
+                    origin: origin_port,
+                    cover: cover_port,
+                    server: port_base + 2 + offset,
+                    socks: port_base + 3 + offset,
+                },
+            )?,
+        ));
+    }
+
+    let report = Json::object([
+        ("schemaVersion", Json::Int(1)),
+        ("harness", Json::string("benchmark-dns-comparison")),
+        ("status", Json::string("COMPLETE")),
+        ("performanceVerdict", Json::string("NOT_EVALUATED")),
+        (
+            "method",
+            method_json(
+                suite.samples,
+                suite.warm_samples,
+                suite.connections,
+                suite.burst_connections,
+            ),
+        ),
+        ("summary", Json::object(summary)),
+        ("limitations", limitations_json()),
+    ]);
+    let summary_json = report.to_python_json();
+    run.write_new("summary.json", &summary_json)?;
+    run.publish(
+        Publication::Environment,
+        &summary_json,
+        &suite.run_id,
+        "benchmark-dns-comparison",
+    )?;
+    Ok(crate::bench::paired::SuiteOutcome {
+        out_dir: suite.out_dir.clone(),
+        summary_json,
+        slot_count: 2,
+    })
+}

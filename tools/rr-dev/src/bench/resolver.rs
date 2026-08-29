@@ -414,6 +414,48 @@ fn xray_inbound(identity: &RealityIdentity, listen_port: u16, private_key: &str)
     ])
 }
 
+/// Builds the Go origin and starts the plain and TLS listeners a leg needs.
+///
+/// # Errors
+///
+/// Returns the first failure; the guards stop whatever started.
+pub fn start_origins(
+    repo: &Path,
+    workspace: &Workspace,
+    plain_port: u16,
+    tls_port: u16,
+) -> Result<(Child, Child), String> {
+    use crate::bench::{origin_go, origin_tls};
+    let binary = origin_go::build(repo, workspace)?;
+    origin_go::write_setup_payload(workspace.path())?;
+    let (cert, key) = origin_tls::generate_self_signed(workspace.path())?;
+    let plain = origin_go::start(
+        &binary,
+        workspace,
+        &origin_go::OriginPlan {
+            label: "origin-http".to_owned(),
+            listen_address: "127.0.0.1".to_owned(),
+            port: plain_port,
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("http-put.jsonl"),
+            tls: None,
+        },
+    )?;
+    let secure = origin_go::start(
+        &binary,
+        workspace,
+        &origin_go::OriginPlan {
+            label: "origin-https".to_owned(),
+            listen_address: "127.0.0.1".to_owned(),
+            port: tls_port,
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("https-put.jsonl"),
+            tls: Some((cert, key)),
+        },
+    )?;
+    Ok((plain, secure))
+}
+
 /// The domain rule list for a scale point, in first-match order.
 ///
 /// The measured destination is the *last* rule, so every connection walks the

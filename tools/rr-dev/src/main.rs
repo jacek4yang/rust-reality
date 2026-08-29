@@ -326,6 +326,12 @@ enum BenchCommand {
         /// Raise `fs.pipe-user-pages-soft` for the run and restore it after.
         #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         manage_pipe_pages: bool,
+        /// Warm rounds per implementation (dns suite).
+        #[arg(long, default_value_t = 2)]
+        warm_samples: usize,
+        /// Connections in the burst phase (dns suite).
+        #[arg(long, default_value_t = 32)]
+        burst_conns: usize,
     },
 }
 
@@ -927,7 +933,23 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             cells,
             skip,
             manage_pipe_pages,
+            warm_samples,
+            burst_conns,
         } => {
+            if suite == "dns" {
+                return run_bench_dns(
+                    repo,
+                    rust_bin,
+                    xray_bin,
+                    out_dir.as_deref(),
+                    run_id.as_deref(),
+                    *samples,
+                    *warm_samples,
+                    *connections,
+                    concurrencies,
+                    *burst_conns,
+                );
+            }
             if suite == "matrix" {
                 return run_bench_matrix(
                     repo,
@@ -1112,6 +1134,72 @@ fn run_bench_fallback_workload(
                 "bench fallback-workload: could not write {}: {error}",
                 output.display()
             );
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Drives the DNS cold/warm/burst comparison.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "these are the suite's command-line parameters, one per flag"
+)]
+fn run_bench_dns(
+    repo: &Path,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    out_dir: Option<&Path>,
+    run_id: Option<&str>,
+    samples: usize,
+    warm_samples: usize,
+    connections: usize,
+    concurrencies: &str,
+    burst_conns: usize,
+) -> ExitCode {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let run_id = run_id.map_or_else(
+        || format!("benchmark-dns-comparison-{stamp}-{}", std::process::id()),
+        str::to_owned,
+    );
+    let out_dir = out_dir.map_or_else(
+        || {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("benchmarks")
+                .join(&run_id)
+        },
+        Path::to_path_buf,
+    );
+    // The DNS phases run at one concurrency; the first value is the one used.
+    let concurrency = concurrencies
+        .split_whitespace()
+        .find_map(|word| word.parse().ok())
+        .unwrap_or(8);
+    let suite = bench::dns::DnsSuite {
+        repo: repo.to_path_buf(),
+        rust_bin: rust_bin.to_path_buf(),
+        xray_bin: xray_bin.to_path_buf(),
+        out_dir,
+        run_id,
+        samples,
+        warm_samples,
+        connections,
+        concurrency,
+        burst_connections: burst_conns,
+    };
+    if let Err(error) = bench::dns::validate(&suite) {
+        eprintln!("bench run dns: {error}");
+        return ExitCode::from(2);
+    }
+    match bench::dns::run(&suite) {
+        Ok(outcome) => {
+            println!("dns comparison complete: {}", outcome.out_dir.display());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("bench run dns: {error}");
             ExitCode::FAILURE
         }
     }
