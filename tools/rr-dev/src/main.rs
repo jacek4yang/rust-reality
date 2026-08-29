@@ -370,6 +370,33 @@ enum BenchCommand {
         /// The pinned OpenSSL that serves the no-CCS cover target.
         #[arg(long, default_value = "openssl")]
         openssl_bin: PathBuf,
+        /// Sequential TLS-shape samples per implementation.
+        #[arg(long, default_value_t = 3)]
+        tls_shape_samples: usize,
+        /// TLS 1.3 reference cipher-suite list.
+        #[arg(long, default_value = "TLS_AES_128_GCM_SHA256")]
+        tls_ciphersuites: String,
+        /// OpenSSL TLS group list for the dynamic reference.
+        #[arg(long, default_value = "X25519MLKEM768:X25519")]
+        tls_groups: String,
+        /// ALPN selected by the dynamic reference; empty selects none.
+        #[arg(long, default_value = "h2")]
+        tls_alpn: String,
+        /// Emit the TLS 1.3 middlebox compatibility CCS.
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        tls_middlebox: bool,
+        /// OpenSSL maximum send fragment; zero keeps its default.
+        #[arg(long, default_value_t = 0)]
+        tls_max_fragment: u16,
+        /// OpenSSL split send fragment; zero keeps its default.
+        #[arg(long, default_value_t = 0)]
+        tls_split_fragment: u16,
+        /// Fixed TLS 1.3 reference record padding bytes.
+        #[arg(long, default_value_t = 0)]
+        tls_padding: u16,
+        /// Apply `TCP_NODELAY` to the accepted reference socket.
+        #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
+        tls_tcp_nodelay: bool,
         /// IPv6 validation phase digits.
         #[arg(long, default_value = "012345")]
         ipv6_phases: String,
@@ -1001,9 +1028,39 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             setup_concurrency,
             internet_url,
             openssl_bin,
+            tls_shape_samples,
+            tls_ciphersuites,
+            tls_groups,
+            tls_alpn,
+            tls_middlebox,
+            tls_max_fragment,
+            tls_split_fragment,
+            tls_padding,
+            tls_tcp_nodelay,
             ipv6_phases,
             global_v6,
         } => {
+            if suite == "tls-shape" {
+                return run_bench_tls_shape(
+                    repo,
+                    rust_bin,
+                    xray_bin,
+                    openssl_bin,
+                    out_dir.as_deref(),
+                    run_id.as_deref(),
+                    *tls_shape_samples,
+                    bench::tls_shape_suite::ReferenceOptions {
+                        ciphersuites: tls_ciphersuites.clone(),
+                        groups: tls_groups.clone(),
+                        alpn: tls_alpn.clone(),
+                        middlebox: *tls_middlebox,
+                        max_fragment: *tls_max_fragment,
+                        split_fragment: *tls_split_fragment,
+                        padding: *tls_padding,
+                        tcp_nodelay: *tls_tcp_nodelay,
+                    },
+                );
+            }
             if suite == "ipv6" {
                 return run_bench_ipv6(
                     repo,
@@ -1576,6 +1633,62 @@ fn run_bench_no_ccs(
         }
         Err(error) => {
             eprintln!("bench run no-ccs-interop: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Drives the dynamic TLS first-flight shape suite.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the suite's CLI inputs map one-for-one to these typed fields"
+)]
+fn run_bench_tls_shape(
+    repo: &Path,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    openssl_bin: &Path,
+    out_dir: Option<&Path>,
+    run_id: Option<&str>,
+    samples: usize,
+    reference: bench::tls_shape_suite::ReferenceOptions,
+) -> ExitCode {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let run_id = run_id.map_or_else(
+        || format!("benchmark-tls-shape-{stamp}-{}", std::process::id()),
+        str::to_owned,
+    );
+    let out_dir = out_dir.map_or_else(
+        || {
+            bench::workspace::cache_root()
+                .join("evidence/tls-shape")
+                .join(&run_id)
+        },
+        Path::to_path_buf,
+    );
+    let suite = bench::tls_shape_suite::TlsShapeSuite {
+        repo: repo.to_path_buf(),
+        rust_bin: rust_bin.to_path_buf(),
+        xray_bin: xray_bin.to_path_buf(),
+        openssl_bin: openssl_bin.to_path_buf(),
+        out_dir: out_dir.clone(),
+        run_id,
+        samples,
+        reference,
+    };
+    if let Err(error) = bench::tls_shape_suite::validate(&suite) {
+        eprintln!("bench run tls-shape: {error}");
+        return ExitCode::from(2);
+    }
+    match bench::tls_shape_suite::run(&suite) {
+        Ok(_) => {
+            println!("TLS shape: PASS ({})", out_dir.display());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("bench run tls-shape: {error}");
             ExitCode::FAILURE
         }
     }

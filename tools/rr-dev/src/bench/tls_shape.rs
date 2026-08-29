@@ -431,6 +431,21 @@ pub fn compare(reference: &Flight, candidate: &Flight) -> ShapeComparison {
 pub fn capture_one(listen_port: u16, upstream_port: u16) -> Result<Vec<u8>, String> {
     let listener = TcpListener::bind(("127.0.0.1", listen_port))
         .map_err(|error| format!("capture proxy could not bind: {error}"))?;
+    capture_one_from_listener(&listener, upstream_port)
+}
+
+/// Captures through a listener bound before the client process starts.
+///
+/// Binding in the orchestrator removes the readiness race without consuming a
+/// TLS connection merely to probe the port.
+///
+/// # Errors
+///
+/// Returns the same bounded forwarding diagnostics as [`capture_one`].
+pub fn capture_one_from_listener(
+    listener: &TcpListener,
+    upstream_port: u16,
+) -> Result<Vec<u8>, String> {
     listener
         .set_nonblocking(false)
         .map_err(|error| format!("capture proxy could not become blocking: {error}"))?;
@@ -462,11 +477,30 @@ pub fn capture_one(listen_port: u16, upstream_port: u16) -> Result<Vec<u8>, Stri
         .try_clone()
         .map_err(|error| format!("capture proxy could not clone upstream: {error}"))?;
     let uplink = std::thread::spawn(move || std::io::copy(&mut client_read, &mut upstream_write));
-    std::io::copy(&mut upstream, &mut client)
-        .map_err(|error| format!("capture proxy downlink failed: {error}"))?;
+    if let Err(error) = std::io::copy(&mut upstream, &mut client)
+        && !matches!(
+            error.kind(),
+            std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::TimedOut
+                | std::io::ErrorKind::WouldBlock
+                | std::io::ErrorKind::ConnectionReset
+        )
+    {
+        return Err(format!("capture proxy downlink failed: {error}"));
+    }
     match uplink.join() {
         Ok(Ok(_)) => Ok(hello),
-        Ok(Err(error)) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(hello),
+        Ok(Err(error))
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::TimedOut
+                    | std::io::ErrorKind::WouldBlock
+                    | std::io::ErrorKind::ConnectionReset
+            ) =>
+        {
+            Ok(hello)
+        }
         Ok(Err(error)) => Err(format!("capture proxy uplink failed: {error}")),
         Err(_) => Err("capture proxy uplink thread panicked".to_owned()),
     }
