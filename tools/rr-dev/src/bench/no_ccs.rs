@@ -459,6 +459,28 @@ pub struct NoCcsSuite {
     pub run_id: String,
 }
 
+/// Sets `assets.requestTimeoutSeconds` on a generated config.
+///
+/// # Errors
+///
+/// Returns a message when the config is not the expected object shape.
+fn with_asset_timeout(generated: &str, seconds: u64) -> Result<String, String> {
+    use crate::perf::json_in::{self, Value};
+    let value = json_in::parse(generated)
+        .map_err(|error| format!("the generated config is invalid JSON: {error}"))?;
+    let Value::Object(mut members) = value else {
+        return Err("the generated config is not an object".to_owned());
+    };
+    let Some(Value::Object(assets)) = members.get_mut("assets") else {
+        return Err("the generated config has no assets object".to_owned());
+    };
+    assets.insert(
+        "requestTimeoutSeconds".to_owned(),
+        Value::Number(seconds.to_string()),
+    );
+    Ok(crate::bench::suites::render_compact(&Value::Object(members)))
+}
+
 /// Writes the 1 MiB payload, builds the Go origin and starts it.
 fn start_origin(
     suite: &NoCcsSuite,
@@ -504,7 +526,11 @@ fn start_tunnel(
     socks_port: u16,
 ) -> Result<(crate::bench::process::Child, crate::bench::process::Child), String> {
     use crate::bench::{config::RealityIdentity, process::Child, suites};
-    let target = format!("localhost:{cover_port}");
+    // Dial the cover by address, not by name. `localhost` can resolve to ::1
+    // first, while `s_server -accept 127.0.0.1:<port>` binds IPv4 only, and the
+    // outbound then fails with nothing but a rejected connection to show for it.
+    // The leaf carries an IP:127.0.0.1 SAN exactly so this works.
+    let target = format!("127.0.0.1:{cover_port}");
     let generated = suites::generate_rust_identity(
         workspace,
         &rust.path,
@@ -513,8 +539,12 @@ fn start_tunnel(
         "localhost",
         Some(&workspace.join("generate.log")),
     )?;
+    // The cover is a local `s_server` that has to be probed before the first
+    // session; the default asset timeout is tuned for a public target and is too
+    // tight here, so the probe fails and every connection is rejected outbound.
+    let server_json = with_asset_timeout(&generated.server_json, 15)?;
     let server_path = workspace.join("server.json");
-    std::fs::write(&server_path, &generated.server_json)
+    std::fs::write(&server_path, &server_json)
         .map_err(|error| format!("could not write {}: {error}", server_path.display()))?;
     let server = Child::spawn(
         "rust-server",
