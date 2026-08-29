@@ -69,7 +69,8 @@ record "docs-links" cargo dev docs check || failures=$((failures + 1))
 if (( skip_benchmarks == 0 )); then
     xray=${XRAY_BIN:-xray}
     if command -v "$xray" >/dev/null 2>&1; then
-        record "xray-interop" env XRAY_BIN="$xray" scripts/test-xray-interop.sh || failures=$((failures + 1))
+        record "xray-interop" cargo dev bench run --suite xray-interop \
+            --xray-bin "$xray" || failures=$((failures + 1))
         if [[ -n ${RUST_REALITY_BASELINE_BIN:-} ]]; then
             record "benchmark-matrix" cargo dev bench run --suite matrix \
                 --xray-bin "$xray" \

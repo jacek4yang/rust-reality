@@ -15,10 +15,10 @@
     "full CI green on the exact final head, then git rm -r scripts"
   ],
   "current_state": {
-    "base_main": "473c3d84323bd2f9618eac983370c6b15f5853ad",
-    "snapshot": "IN_PROGRESS_PR_151_DNS_ROUTING_VLESS",
-    "tracked_files": 33,
-    "tracked_lines": 14932,
+    "base_main": "d818ded524691bfe445c432241d8f2cd8ca651aa",
+    "snapshot": "IN_PROGRESS_PR_152_TLS_INTEROP_IPV6",
+    "tracked_files": 32,
+    "tracked_lines": 14722,
     "repository_owned_external_python_validators": 0,
     "workflow_scripts_references": 0
   },
@@ -670,14 +670,13 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "calls_scripts": [
-        "test-xray-interop.sh"
-      ],
+      "calls_scripts": [],
       "disposition": "MERGE",
       "replacement": "cargo dev check --all on target host",
       "status": "not-started",
       "calls_cargo_dev": [
-        "cargo dev bench run --suite matrix"
+        "cargo dev bench run --suite matrix",
+        "cargo dev bench run --suite xray-interop"
       ]
     },
     {
@@ -834,8 +833,8 @@
         "benchmark-contract.sh"
       ],
       "disposition": "MERGE",
-      "replacement": "cargo dev bench xray (interop workload)",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite xray-interop",
+      "status": "deleted-after-parity in PR #152; accepted locally with a 1 MiB digest-verified transfer through an unmodified Xray and an agreed ML-DSA-65 verification key"
     },
     {
       "path": "scripts/tls-record-delay-fixture.py",
