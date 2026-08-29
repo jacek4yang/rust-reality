@@ -56,5 +56,6 @@ pub mod slot;
 pub mod suites;
 pub mod sysctl;
 pub mod throughput;
+pub mod vless;
 pub mod workload;
 pub mod workspace;
