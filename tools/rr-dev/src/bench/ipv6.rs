@@ -1937,12 +1937,12 @@ fn run_no_alpn_characterization(
         .map_err(|error| error.to_string())?;
     let url = format!("http://127.0.0.1:{}/no-alpn-payload.bin", ports[1]);
     let transfer = download(ports[3], &url, &workspace.join("no-alpn-session.bin"), 10)?;
-    let session_failed = !transfer.byte_exact(&expected);
+    let session_established = transfer.byte_exact(&expected);
     results.record(Record {
         matrix: "2-sessions".to_owned(),
-        case: "i-no-alpn-cover-characterization".to_owned(),
+        case: "i-no-alpn-cover-session".to_owned(),
         classification: Classification::Loopback,
-        status: Status::from_met(compatible && session_failed),
+        status: Status::from_met(compatible && session_established),
         detail: Json::object([
             ("probeCompatible", Json::Bool(compatible)),
             ("cipherSuite", Json::string(cipher)),
@@ -1951,7 +1951,7 @@ fn run_no_alpn_characterization(
             (
                 "expect",
                 Json::string(
-                    "probe sees a compatible ServerHello, but a no-ALPN cover cannot shape the authenticated session flight",
+                    "probe reports a compatible ServerHello and the authenticated session remains byte-exact when the cover negotiates no ALPN",
                 ),
             ),
             ("probeEvidence", Json::string("no-alpn-probe.json")),
