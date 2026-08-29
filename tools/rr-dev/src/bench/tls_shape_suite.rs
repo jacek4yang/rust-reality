@@ -1467,19 +1467,19 @@ fn verify_delay_event(
             expected.encrypted_wire_lengths
         ));
     }
-    let nst = event
-        .field("cover_flight_selected", "nst_wire_len")
-        .map_err(|error| error.to_string())?;
-    let observed_nst = match nst {
-        json_in::Value::Null => None,
-        _ => Some(
-            usize::try_from(
-                nst.as_int("nst_wire_len")
-                    .map_err(|error| error.to_string())?,
+    // The candidate omits `nst_wire_len` entirely when no ticket is retained.
+    let observed_nst = event
+        .optional("nst_wire_len")
+        .and_then(|value| match value {
+            json_in::Value::Null => None,
+            _ => usize::try_from(
+                value
+                    .as_int("nst_wire_len")
+                    .map_err(|error| error.to_string())
+                    .ok()?,
             )
-            .map_err(|error| format!("invalid nst_wire_len: {error}"))?,
-        ),
-    };
+            .ok(),
+        });
     if observed_nst != expected.nst_wire_length
         || usize::try_from(int_field("retained_prefix_bytes")?).ok()
             != Some(expected.retained_prefix_bytes)
