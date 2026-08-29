@@ -6,7 +6,13 @@
 //! generation, checksums, failure state and final publication. `perf`, `readelf`
 //! and `sudo` remain external mechanisms invoked with typed argv.
 
+#![allow(
+    clippy::too_many_lines,
+    reason = "the capture lifecycle and its bounded evidence schemas are intentionally explicit"
+)]
+
 use std::{
+    fmt::Write as _,
     os::unix::fs::PermissionsExt as _,
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -236,7 +242,7 @@ fn tool_stdout(program: &str, args: &[&str]) -> String {
         .args(args.iter().copied())
         .probe()
         .ok()
-        .filter(|outcome| outcome.success())
+        .filter(crate::process::Outcome::success)
         .map_or_else(String::new, |outcome| outcome.trimmed_stdout().to_owned())
 }
 
@@ -286,7 +292,10 @@ fn metadata(
         ),
         ("runId", Json::string(&plan.run_id)),
         ("mode", Json::string(plan.mode.as_str())),
-        ("updatedAt", Json::string(utc_timestamp(now as i64))),
+        (
+            "updatedAt",
+            Json::string(utc_timestamp(i64::try_from(now).unwrap_or(i64::MAX))),
+        ),
         ("sourceBinary", Json::string(binary.path.display().to_string())),
         ("archivedBinary", Json::string(archived.display().to_string())),
         ("binarySha256", Json::string(&binary.sha256)),
@@ -610,11 +619,12 @@ fn execute(
     ];
     let mut checksums = String::new();
     for path in checksum_files {
-        checksums.push_str(&format!(
-            "{}  {}\n",
+        let _ = writeln!(
+            checksums,
+            "{}  {}",
             hash::sha256_file(path)?,
             path.display()
-        ));
+        );
     }
     run_dir.write_new("SHA256SUMS", &checksums)?;
     Ok(())

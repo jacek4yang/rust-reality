@@ -1343,9 +1343,9 @@ pub fn cross_class_markdown(
         let churn = object(&value, "churn");
         let churn8 = churn.and_then(|value| object(value, "c8"));
         let churn32 = churn.and_then(|value| object(value, "c32"));
-        let downloads = object(&value, "download512MiB");
-        let download1 = downloads.and_then(|value| object(value, "c1"));
-        let download32 = downloads.and_then(|value| object(value, "c32"));
+        let download_summaries = object(&value, "download512MiB");
+        let download_c1 = download_summaries.and_then(|value| object(value, "c1"));
+        let download_c32 = download_summaries.and_then(|value| object(value, "c32"));
         let ladder = object(&value, "ladder");
         let tuned = object(&value, "ladderTuned");
         let peaks = object(&value, "peaks");
@@ -1366,10 +1366,10 @@ pub fn cross_class_markdown(
             fmt_optional(churn32.and_then(|value| number(value, "connectionsPerSecondMedian"))),
             fmt_optional(churn32.and_then(|value| number(value, "p99MsWorst"))),
             fmt_optional(
-                download1.and_then(|value| number(value, "throughputMiBPerSecondMedian"))
+                download_c1.and_then(|value| number(value, "throughputMiBPerSecondMedian"))
             ),
             fmt_optional(
-                download32.and_then(|value| number(value, "throughputMiBPerSecondMedian"))
+                download_c32.and_then(|value| number(value, "throughputMiBPerSecondMedian"))
             ),
             ladder
                 .and_then(|value| integer(value, "maxCleanLevel"))
