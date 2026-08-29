@@ -68,7 +68,7 @@ exact diagnostic instead of manufacturing a measurement.
 | `scripts/soak-test.sh` | Optional long-horizon loopback evidence with warm Handoff, NXR, and TCP-only SOCKS5, midpoint reload, per-process RSS, and aggregate PSS. It is scheduled/non-blocking; `REQUIRE_LONG_HORIZON_QUALIFIED=1` preserves a strict immutable-binary contract for a requested long investigation. |
 | `cargo dev deploy canary` | Fail-closed evaluator for the approximately ten-minute exact-candidate dual-VPS active canary: deployment, real-WAN Handoff, stock Xray, integrity, churn, reload, LANDING restart/recovery, bounded pools, and recovering resource envelopes. |
 | `cargo dev bench run --suite real-path` | Real-Internet A/B against Xray: crash and protocol-error gates on a real path; throughput is capped by the slowest link, so it does not discriminate bandwidth. |
-| `scripts/benchmark-vless-encryption.sh` | Xray v26.7.28 A/B for `encryption:none` versus VLESS Encryption inside the same REALITY + Vision stack; measures throughput, server CPU/GiB, and warmed setup. |
+| `cargo dev bench run --suite vless-encryption` | Xray v26.7.28 A/B for `encryption:none` versus VLESS Encryption inside the same REALITY + Vision stack; measures throughput, server CPU/GiB, and warmed setup in a seeded, recorded random order. |
 | `scripts/test-xray-interop.sh` | Compatibility gate (below), not a benchmark. |
 
 ## v1.7 LINE-to-LANDING evidence contract

@@ -32,7 +32,7 @@ other wrapper's authentication state.
 
 ## Evidence
 
-`scripts/benchmark-vless-encryption.sh` compares the two modes with the same
+`cargo dev bench run --suite vless-encryption` compares the two modes with the same
 Xray v26.7.28 build, REALITY, Vision, client, loopback TLS 1.3 origin, and
 randomized execution order. VLESS Encryption uses `native` and is warmed first,
 so connection setup receives its intended best-case 0-RTT ticket path.

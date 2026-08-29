@@ -672,29 +672,43 @@ fn setup_sample(
 ///
 /// The setup phase fetches a tiny body so its cost is connection establishment
 /// rather than transfer; the throughput phase fetches the large one.
-fn start_origin(
+fn start_origins(
     suite: &VlessSuite,
     workspace: &crate::bench::workspace::Workspace,
-    origin_port: u16,
-) -> Result<crate::bench::process::Child, String> {
+    plain_port: u16,
+    tls_port: u16,
+) -> Result<(crate::bench::process::Child, crate::bench::process::Child), String> {
     use crate::bench::{origin_go, origin_tls};
     origin_go::write_pattern_payload(workspace.path(), suite.payload_mib)?;
     std::fs::write(workspace.join("payload.bin"), vec![b'x'; 256])
         .map_err(|error| format!("could not write the setup payload: {error}"))?;
     let binary = origin_go::build(&suite.repo, workspace)?;
     let (cert, key) = origin_tls::generate_self_signed(workspace.path())?;
-    origin_go::start(
+    let plain = origin_go::start(
+        &binary,
+        workspace,
+        &origin_go::OriginPlan {
+            label: "origin-http".to_owned(),
+            listen_address: "127.0.0.1".to_owned(),
+            port: plain_port,
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("http-put.jsonl"),
+            tls: None,
+        },
+    )?;
+    let secure = origin_go::start(
         &binary,
         workspace,
         &origin_go::OriginPlan {
             label: "origin-https".to_owned(),
             listen_address: "127.0.0.1".to_owned(),
-            port: origin_port,
+            port: tls_port,
             payload_dir: workspace.path().to_path_buf(),
             put_log: workspace.join("https-put.jsonl"),
             tls: Some((cert, key)),
         },
-    )
+    )?;
+    Ok((plain, secure))
 }
 
 /// Starts one mode's server and client, sharing the run's identity and keypair.
@@ -790,7 +804,8 @@ fn start_mode(
 fn measure_in_order(
     suite: &VlessSuite,
     legs: &[ModeLeg],
-    origin_port: u16,
+    plain_port: u16,
+    tls_port: u16,
     order: &[String],
 ) -> Result<(Vec<ModeSample>, Vec<ModeSample>), String> {
     let leg_for = |mode: &str| {
@@ -802,7 +817,7 @@ fn measure_in_order(
     for mode in order {
         throughput.push(throughput_sample(
             leg_for(mode)?,
-            origin_port,
+            tls_port,
             suite.payload_mib,
             suite.concurrency,
         )?);
@@ -811,7 +826,7 @@ fn measure_in_order(
     for mode in order {
         setup.push(setup_sample(
             leg_for(mode)?,
-            origin_port,
+            plain_port,
             suite.setup_connections,
             suite.setup_concurrency,
         )?);
@@ -903,10 +918,13 @@ pub fn run(suite: &VlessSuite) -> Result<crate::bench::paired::SuiteOutcome, Str
     let run = RunDirectory::create(&suite.out_dir)?;
     let workspace = Workspace::create("benchmark-vless-encryption")?;
 
-    // One TLS origin plus a server/SOCKS pair per mode.
-    let port_base = crate::bench::workspace::reserve_block(5)?;
-    let origin_port = port_base;
-    let _origin = start_origin(suite, &workspace, origin_port)?;
+    // A plain and a TLS origin, plus a server/SOCKS pair per mode. The
+    // throughput phase needs TLS so Vision reaches Direct; the setup phase
+    // speaks plain HTTP, because its cost must be connection establishment
+    // rather than a second TLS handshake inside the tunnel.
+    let port_base = crate::bench::workspace::reserve_block(6)?;
+    let (plain_port, tls_port) = (port_base, port_base + 1);
+    let _origins = start_origins(suite, &workspace, plain_port, tls_port)?;
 
     // One identity and one REALITY keypair, shared by both modes: only the
     // encryption layer may differ.
@@ -929,20 +947,20 @@ pub fn run(suite: &VlessSuite) -> Result<crate::bench::paired::SuiteOutcome, Str
             &keys,
             &encryption,
             mode,
-            port_base + 1 + offset,
             port_base + 2 + offset,
+            port_base + 3 + offset,
         )?);
     }
 
     // Warm both paths. For VLESS Encryption this also obtains the reusable
     // ticket, so the measured setup path is its intended 0-RTT mode.
     for leg in &legs {
-        throughput_sample(leg, origin_port, suite.payload_mib, 1)?;
-        setup_sample(leg, origin_port, 1, 1)?;
+        throughput_sample(leg, tls_port, suite.payload_mib, 1)?;
+        setup_sample(leg, plain_port, 1, 1)?;
     }
 
     let order = measurement_order(suite.samples);
-    let (throughput, setup) = measure_in_order(suite, &legs, origin_port, &order)?;
+    let (throughput, setup) = measure_in_order(suite, &legs, plain_port, tls_port, &order)?;
 
     let summary = summarise_modes(&throughput, &setup)?;
     let ratios = ratios_json(&summary)?;
