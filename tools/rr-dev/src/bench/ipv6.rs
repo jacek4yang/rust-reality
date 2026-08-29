@@ -1015,6 +1015,79 @@ mod config_tests {
     }
 }
 
+fn cover_certificate(
+    suite: &Ipv6Suite,
+    workspace: &crate::bench::workspace::Workspace,
+) -> Result<crate::bench::no_ccs::CoverCertificate, String> {
+    crate::bench::no_ccs::build_certificate(
+        &suite.openssl_bin,
+        workspace.path(),
+        &crate::bench::no_ccs::CertificatePlan {
+            ca_subject: format!("/CN=rust-reality IPv6 validation CA {}", suite.run_id),
+            leaf_subject: format!("/CN={COVER_SNI}"),
+            subject_alt_name: "DNS:cover.test,IP:127.0.0.1,IP:::1".to_owned(),
+            verify_hostname: Some(COVER_SNI.to_owned()),
+        },
+    )
+}
+
+fn tool_capture(title: &str, program: &str, args: &[&str]) -> String {
+    match crate::process::Tool::new(program)
+        .args(args.iter().copied())
+        .probe()
+    {
+        Ok(outcome) => format!("=== {title} ===\n{}{}", outcome.stdout, outcome.stderr),
+        Err(error) => format!("=== {title} ===\nUNAVAILABLE: {error}\n"),
+    }
+}
+
+fn phase0(
+    suite: &Ipv6Suite,
+    run: &crate::bench::evidence::RunDirectory,
+    results: &mut Results,
+) -> Result<(), String> {
+    let mut environment = String::new();
+    environment.push_str(&tool_capture("uname", "uname", &["-a"]));
+    environment.push_str(&tool_capture(
+        "rust-reality",
+        &suite.rust_bin.display().to_string(),
+        &["--version"],
+    ));
+    environment.push_str(&tool_capture(
+        "xray",
+        &suite.xray_bin.display().to_string(),
+        &["version"],
+    ));
+    for (title, args) in [
+        ("ip -6 addr", &["-6", "addr"][..]),
+        ("ip -6 route", &["-6", "route"][..]),
+        ("ip -6 rule", &["-6", "rule"][..]),
+        ("ip -4 route", &["-4", "route"][..]),
+    ] {
+        environment.push_str(&tool_capture(title, "ip", args));
+    }
+    environment.push_str(&tool_capture(
+        "sysctl",
+        "sysctl",
+        &[
+            "net.ipv6.conf.all.disable_ipv6",
+            "net.ipv6.conf.default.disable_ipv6",
+            "net.ipv6.bindv6only",
+            "net.ipv6.conf.all.forwarding",
+            "net.ipv4.ip_forward",
+        ],
+    ));
+    run.write_new("environment.txt", &environment)?;
+    results.record(Record {
+        matrix: "0-environment".to_owned(),
+        case: "capture".to_owned(),
+        classification: Classification::Loopback,
+        status: Status::Pass,
+        detail: Json::object([("path", Json::string("environment.txt"))]),
+        evidence: "environment.txt".to_owned(),
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Runtime
 // ---------------------------------------------------------------------------
@@ -1076,7 +1149,7 @@ pub fn validate(suite: &Ipv6Suite) -> Result<(), String> {
 }
 
 /// Starts one materialized rust-reality server with the private cover CA.
-fn start_server(
+fn start_server_raw(
     workspace: &crate::bench::workspace::Workspace,
     run: &crate::bench::evidence::RunDirectory,
     rust_bin: &Path,
@@ -1159,7 +1232,7 @@ pub fn run_local_listener_phase(
             dial: Vec::new(),
         };
         let materialized = materialize_server(workspace, rust_bin, &plan)?;
-        let mut child = start_server(workspace, run, rust_bin, &materialized, ca_certificate)?;
+        let mut child = start_server_raw(workspace, run, rust_bin, &materialized, ca_certificate)?;
         let readiness = if mode == ListenerMode::Ipv4Only {
             std::net::SocketAddr::from(([127, 0, 0, 1], port))
         } else {
@@ -1223,7 +1296,7 @@ pub fn run_local_listener_phase(
         dial: Vec::new(),
     };
     let bad = materialize_server(workspace, rust_bin, &bad_plan)?;
-    let mut child = start_server(workspace, run, rust_bin, &bad, ca_certificate)?;
+    let mut child = start_server_raw(workspace, run, rust_bin, &bad, ca_certificate)?;
     let failed = exits_within(&mut child, std::time::Duration::from_secs(8));
     results.record(Record {
         matrix: "1-listeners".to_owned(),
@@ -1248,7 +1321,7 @@ pub fn run_local_listener_phase(
         dial: Vec::new(),
     };
     let owner = materialize_server(workspace, rust_bin, &owner_plan)?;
-    let mut owner_child = start_server(workspace, run, rust_bin, &owner, ca_certificate)?;
+    let mut owner_child = start_server_raw(workspace, run, rust_bin, &owner, ca_certificate)?;
     owner_child
         .wait_for_address(
             std::net::SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], ports[5])),
@@ -1265,7 +1338,8 @@ pub fn run_local_listener_phase(
         dial: Vec::new(),
     };
     let contender = materialize_server(workspace, rust_bin, &contender_plan)?;
-    let mut contender_child = start_server(workspace, run, rust_bin, &contender, ca_certificate)?;
+    let mut contender_child =
+        start_server_raw(workspace, run, rust_bin, &contender, ca_certificate)?;
     let failed = exits_within(&mut contender_child, std::time::Duration::from_secs(8));
     results.record(Record {
         matrix: "1-listeners".to_owned(),
@@ -1281,4 +1355,568 @@ pub fn run_local_listener_phase(
     contender_child.terminate();
     owner_child.terminate();
     Ok(())
+}
+
+/// A curl command with every ambient proxy variable cleared.
+fn clean_curl() -> crate::process::Tool {
+    let mut curl = crate::process::Tool::new("curl");
+    for name in [
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "NO_PROXY",
+        "no_proxy",
+    ] {
+        curl = curl.env(name, "");
+    }
+    curl
+}
+
+/// Runs one download through an Xray SOCKS listener.
+fn download(
+    socks_port: u16,
+    url: &str,
+    destination: &Path,
+    max_time: u64,
+) -> Result<Transfer, String> {
+    let outcome = clean_curl()
+        .args([
+            "--silent".to_owned(),
+            "--show-error".to_owned(),
+            "--socks5-hostname".to_owned(),
+            format!("127.0.0.1:{socks_port}"),
+            "--max-time".to_owned(),
+            max_time.to_string(),
+            "--output".to_owned(),
+            destination.display().to_string(),
+            "--write-out".to_owned(),
+            "%{http_code} %{time_total}".to_owned(),
+            url.to_owned(),
+        ])
+        .probe()
+        .map_err(|error| format!("could not run curl: {error}"))?;
+    transfer_from_outcome(&outcome, destination)
+}
+
+/// Converts curl's process result and body file into typed transfer evidence.
+fn transfer_from_outcome(
+    outcome: &crate::process::Outcome,
+    destination: &Path,
+) -> Result<Transfer, String> {
+    let (http_code, seconds) = match parse_write_out(outcome.trimmed_stdout()) {
+        Ok(parsed) => parsed,
+        Err(_) if !outcome.success() => ("000".to_owned(), outcome.elapsed.as_secs_f64()),
+        Err(error) => return Err(error),
+    };
+    let sha256 = if destination.is_file() {
+        crate::hash::sha256_file(destination)?
+    } else {
+        "none".to_owned()
+    };
+    Ok(Transfer {
+        code: outcome.code.unwrap_or(-1),
+        http_code,
+        seconds,
+        sha256,
+    })
+}
+
+/// Renders the common per-transfer detail object.
+fn transfer_detail(url: &str, transfer: &Transfer, expected: &str) -> Json {
+    Json::object([
+        ("url", Json::string(url)),
+        ("curl", Json::string(transfer.curl_field())),
+        ("rc", Json::Int(i64::from(transfer.code))),
+        ("sha256", Json::string(&transfer.sha256)),
+        ("expectSha256", Json::string(expected)),
+        ("elapsedS", Json::Float(transfer.seconds)),
+        ("byteExact", Json::Bool(transfer.byte_exact(expected))),
+    ])
+}
+
+/// Starts an Xray client from a typed multi-leg plan.
+fn start_xray(
+    workspace: &crate::bench::workspace::Workspace,
+    run: &crate::bench::evidence::RunDirectory,
+    xray_bin: &Path,
+    name: &str,
+    legs: &[Leg],
+) -> Result<crate::bench::process::Child, String> {
+    let path = workspace.join(&format!("{name}.xray.json"));
+    std::fs::write(&path, xray_config(legs).to_python_json())
+        .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+    crate::bench::process::Child::spawn(
+        format!("xray-{name}"),
+        xray_bin,
+        &[
+            "run".to_owned(),
+            "-config".to_owned(),
+            path.display().to_string(),
+        ],
+        workspace.path(),
+        &[],
+        &run.join(&format!("{name}.xray.log")),
+    )
+    .map_err(|error| error.to_string())
+}
+
+/// Converts a materialized server into one Xray client leg.
+fn leg(socks_port: u16, server_address: &str, server: &MaterializedServer) -> Leg {
+    Leg {
+        socks_port,
+        server_address: server_address.to_owned(),
+        server_port: server.port,
+        public_key: server.public_key.clone(),
+        uuid: server.uuid.clone(),
+        short_id: server.short_id.clone(),
+    }
+}
+
+/// Reads only the access-log rows appended after a pair of marks.
+fn attributed_origins(
+    mark4: &AccessLogMark,
+    log4: &Path,
+    mark6: &AccessLogMark,
+    log6: &Path,
+) -> Result<String, String> {
+    let mut rows = mark4.since(log4)?;
+    rows.push_str(&mark6.since(log6)?);
+    Ok(egress_servers(&rows))
+}
+
+/// Runs a curl GET directly, with TLS verification disabled only for fallback
+/// byte comparison against the intentionally private test certificate.
+fn direct_fallback_fetch(url: &str, destination: &Path) -> Result<Transfer, String> {
+    let outcome = clean_curl()
+        .args([
+            "--silent".to_owned(),
+            "--show-error".to_owned(),
+            "--insecure".to_owned(),
+            "--http1.1".to_owned(),
+            "--noproxy".to_owned(),
+            "*".to_owned(),
+            "--max-time".to_owned(),
+            "10".to_owned(),
+            "--output".to_owned(),
+            destination.display().to_string(),
+            "--write-out".to_owned(),
+            "%{http_code} %{time_total}".to_owned(),
+            url.to_owned(),
+        ])
+        .probe()
+        .map_err(|error| format!("could not run fallback curl: {error}"))?;
+    transfer_from_outcome(&outcome, destination)
+}
+
+/// Records phase 2: real Xray/VLESS/REALITY/Vision sessions across both
+/// loopback families, including DNS policy, cover fallback and auth controls.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the phase owns the two binaries, origin, certificate and evidence"
+)]
+pub fn run_session_phase(
+    workspace: &crate::bench::workspace::Workspace,
+    run: &crate::bench::evidence::RunDirectory,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    origin_bin: &Path,
+    certificate: &crate::bench::no_ccs::CoverCertificate,
+    results: &mut Results,
+) -> Result<(), String> {
+    let ports = crate::bench::workspace::reserve_ports(13)?;
+    let cover_port = ports[0];
+    let origin_port = ports[1];
+
+    std::fs::write(
+        workspace.join("cover.bin"),
+        b"rust-reality ipv6 validation cover\n",
+    )
+    .map_err(|error| format!("could not write the cover body: {error}"))?;
+    let _cover = crate::bench::origin_go::start(
+        origin_bin,
+        workspace,
+        &crate::bench::origin_go::OriginPlan {
+            label: "cover-v6".to_owned(),
+            listen_address: "::1".to_owned(),
+            port: cover_port,
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("cover-put.jsonl"),
+            tls: Some((certificate.certificate.clone(), certificate.key.clone())),
+            access_log: None,
+            alpn: Some("h2,http/1.1".to_owned()),
+        },
+    )?;
+
+    let payload = crate::bench::origin_go::write_pattern_payload(workspace.path(), 1)?;
+    let expected = crate::hash::sha256_file(&payload)?;
+    let log4 = workspace.join("origin-v4.access.jsonl");
+    let log6 = workspace.join("origin-v6.access.jsonl");
+    let _origin4 = crate::bench::origin_go::start(
+        origin_bin,
+        workspace,
+        &crate::bench::origin_go::OriginPlan {
+            label: "origin-v4".to_owned(),
+            listen_address: "127.0.0.1".to_owned(),
+            port: origin_port,
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("origin-v4.put.jsonl"),
+            tls: None,
+            access_log: Some(log4.clone()),
+            alpn: None,
+        },
+    )?;
+    let _origin6 = crate::bench::origin_go::start(
+        origin_bin,
+        workspace,
+        &crate::bench::origin_go::OriginPlan {
+            label: "origin-v6".to_owned(),
+            listen_address: "::1".to_owned(),
+            port: origin_port,
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("origin-v6.put.jsonl"),
+            tls: None,
+            access_log: Some(log6.clone()),
+            alpn: None,
+        },
+    )?;
+
+    let cover_target = format!("[::1]:{cover_port}");
+    let plans = [
+        ServerPlan::dual_stack("s2auto", ports[2], &cover_target),
+        ServerPlan::dual_stack("s2pref6", ports[3], &cover_target).dialling("preferIpv6"),
+        ServerPlan::dual_stack("s2pref4", ports[4], &cover_target).dialling("preferIpv4"),
+        ServerPlan::dual_stack("s2dial6", ports[5], &cover_target).dialling("ipv6Only"),
+    ];
+    let mut servers = Vec::new();
+    let mut children = Vec::new();
+    for plan in &plans {
+        let server = materialize_server(workspace, rust_bin, plan)?;
+        let child = start_server_raw(
+            workspace,
+            run,
+            rust_bin,
+            &server,
+            &certificate.ca_certificate,
+        )?;
+        servers.push(server);
+        children.push(child);
+    }
+    for (child, server) in children.iter_mut().zip(&servers) {
+        child
+            .wait_for_address(
+                std::net::SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], server.port)),
+                std::time::Duration::from_secs(15),
+            )
+            .map_err(|error| error.to_string())?;
+    }
+
+    let socks = &ports[6..11];
+    let legs = [
+        leg(socks[0], "::1", &servers[0]),
+        leg(socks[1], "127.0.0.1", &servers[0]),
+        leg(socks[2], "::1", &servers[1]),
+        leg(socks[3], "::1", &servers[2]),
+        leg(socks[4], "::1", &servers[3]),
+    ];
+    let mut xray = start_xray(workspace, run, xray_bin, "x2", &legs)?;
+    for port in socks {
+        xray.wait_for_port(*port, std::time::Duration::from_secs(15))
+            .map_err(|error| error.to_string())?;
+    }
+
+    let downloads = workspace.join("phase2-downloads");
+    std::fs::create_dir_all(&downloads)
+        .map_err(|error| format!("could not create {}: {error}", downloads.display()))?;
+    let url6 = format!("http://[::1]:{origin_port}/payload-1.bin");
+    let url4 = format!("http://127.0.0.1:{origin_port}/payload-1.bin");
+    let url_dns = format!("http://localhost:{origin_port}/payload-1.bin");
+
+    let transfer = download(socks[0], &url6, &downloads.join("2a.bin"), 30)?;
+    results.record(Record {
+        matrix: "2-sessions".to_owned(),
+        case: "a-v6in-v6egress-literal".to_owned(),
+        classification: Classification::Loopback,
+        status: Status::from_met(transfer.byte_exact(&expected)),
+        detail: transfer_detail(&url6, &transfer, &expected),
+        evidence: "x2.xray.log".to_owned(),
+    })?;
+
+    let mut mark4 = AccessLogMark::default();
+    let mut mark6 = AccessLogMark::default();
+    mark4.mark(&log4)?;
+    mark6.mark(&log6)?;
+    let transfer = download(socks[0], &url4, &downloads.join("2b.bin"), 30)?;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let family = attributed_origins(&mark4, &log4, &mark6, &log6)?;
+    results.record(Record {
+        matrix: "2-sessions".to_owned(),
+        case: "b-v6in-v4egress".to_owned(),
+        classification: Classification::Loopback,
+        status: Status::from_met(transfer.byte_exact(&expected) && family == "origin-v4"),
+        detail: Json::object([
+            ("transfer", transfer_detail(&url4, &transfer, &expected)),
+            ("egressServer", Json::string(&family)),
+        ]),
+        evidence: "x2.xray.log".to_owned(),
+    })?;
+
+    mark4.mark(&log4)?;
+    mark6.mark(&log6)?;
+    let transfer = download(socks[1], &url6, &downloads.join("2c.bin"), 30)?;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let family = attributed_origins(&mark4, &log4, &mark6, &log6)?;
+    results.record(Record {
+        matrix: "2-sessions".to_owned(),
+        case: "c-v4in-v6egress".to_owned(),
+        classification: Classification::Loopback,
+        status: Status::from_met(transfer.byte_exact(&expected) && family == "origin-v6"),
+        detail: Json::object([
+            ("transfer", transfer_detail(&url6, &transfer, &expected)),
+            ("egressServer", Json::string(&family)),
+        ]),
+        evidence: "x2.xray.log".to_owned(),
+    })?;
+
+    let transfer = download(socks[0], &url_dns, &downloads.join("2d.bin"), 30)?;
+    results.record(Record {
+        matrix: "2-sessions".to_owned(),
+        case: "d-mixed-a-aaaa".to_owned(),
+        classification: Classification::Loopback,
+        status: Status::from_met(transfer.byte_exact(&expected)),
+        detail: transfer_detail(&url_dns, &transfer, &expected),
+        evidence: "x2.xray.log".to_owned(),
+    })?;
+
+    for (case, port, wanted, dial) in [
+        ("e-dns-selected-v6", socks[2], "origin-v6", "preferIpv6"),
+        (
+            "e-dns-selected-v4-control",
+            socks[3],
+            "origin-v4",
+            "preferIpv4",
+        ),
+    ] {
+        mark4.mark(&log4)?;
+        mark6.mark(&log6)?;
+        let transfer = download(port, &url_dns, &downloads.join(format!("{case}.bin")), 30)?;
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let family = attributed_origins(&mark4, &log4, &mark6, &log6)?;
+        results.record(Record {
+            matrix: "2-sessions".to_owned(),
+            case: case.to_owned(),
+            classification: Classification::Loopback,
+            status: Status::from_met(transfer.byte_exact(&expected) && family == wanted),
+            detail: Json::object([
+                ("transfer", transfer_detail(&url_dns, &transfer, &expected)),
+                ("egressServer", Json::string(&family)),
+                ("dial", Json::string(dial)),
+            ]),
+            evidence: "x2.xray.log".to_owned(),
+        })?;
+    }
+
+    let literal = download(socks[4], &url6, &downloads.join("2f.bin"), 30)?;
+    let negative = download(socks[4], &url4, &downloads.join("2f-negative.bin"), 15)?;
+    results.record(Record {
+        matrix: "2-sessions".to_owned(),
+        case: "f-literal-v6-dial-ipv6only".to_owned(),
+        classification: Classification::Loopback,
+        status: Status::from_met(literal.byte_exact(&expected) && negative.code != 0),
+        detail: Json::object([
+            ("literalV6", transfer_detail(&url6, &literal, &expected)),
+            (
+                "v4UnderIpv6OnlyDial",
+                transfer_detail(&url4, &negative, &expected),
+            ),
+            (
+                "note",
+                Json::string("v4 destination under ipv6Only dial must fail (rc!=0)"),
+            ),
+        ]),
+        evidence: "x2.xray.log".to_owned(),
+    })?;
+
+    let direct = direct_fallback_fetch(
+        &format!("https://[::1]:{cover_port}/cover.bin"),
+        &downloads.join("cover-direct.bin"),
+    )?;
+    let fallback = direct_fallback_fetch(
+        &format!("https://[::1]:{}/cover.bin", servers[0].port),
+        &downloads.join("cover-fallback.bin"),
+    )?;
+    let fallback_matches = direct.code == 0
+        && fallback.code == 0
+        && direct.sha256 != "none"
+        && direct.sha256 == fallback.sha256;
+    results.record(Record {
+        matrix: "2-sessions".to_owned(),
+        case: "g-bracketed-v6-cover-fallback".to_owned(),
+        classification: Classification::Loopback,
+        status: Status::from_met(fallback_matches),
+        detail: Json::object([
+            ("coverTarget", Json::string(&cover_target)),
+            ("directSha256", Json::string(&direct.sha256)),
+            ("fallbackSha256", Json::string(&fallback.sha256)),
+            ("fallbackMatchesDirect", Json::Bool(fallback_matches)),
+        ]),
+        evidence: "s2auto.rust.log".to_owned(),
+    })?;
+
+    let mut bad_leg = leg(ports[11], "::1", &servers[0]);
+    let replacement = if bad_leg.short_id.starts_with('0') {
+        '1'
+    } else {
+        '0'
+    };
+    bad_leg
+        .short_id
+        .replace_range(..1, &replacement.to_string());
+    let mut bad_xray = start_xray(workspace, run, xray_bin, "x2bad", &[bad_leg.clone()])?;
+    bad_xray
+        .wait_for_port(ports[11], std::time::Duration::from_secs(15))
+        .map_err(|error| error.to_string())?;
+    let rejected = download(ports[11], &url6, &downloads.join("2h-negative.bin"), 15)?;
+    results.record(Record {
+        matrix: "2-sessions".to_owned(),
+        case: "h-negative-auth-control".to_owned(),
+        classification: Classification::Loopback,
+        status: Status::from_met(rejected.code != 0),
+        detail: Json::object([
+            ("transfer", transfer_detail(&url6, &rejected, &expected)),
+            ("wrongShortId", Json::string(&bad_leg.short_id)),
+            (
+                "expect",
+                Json::string("fetch fails: REALITY auth rejects the session"),
+            ),
+        ]),
+        evidence: "x2bad.xray.log".to_owned(),
+    })?;
+    Ok(())
+}
+
+/// Runs the currently materialized native phases and publishes their evidence.
+///
+/// Phases 3–5 are deliberately rejected until their global-address, transfer
+/// and owned-namespace mechanisms land; accepting them early would create an
+/// output directory that looked complete while silently omitting contracts.
+///
+/// # Errors
+///
+/// Returns the first setup, runtime, integrity or publication failure.
+pub fn run(suite: &Ipv6Suite) -> Result<Json, String> {
+    use crate::bench::{
+        evidence::{Publication, RunDirectory},
+        host_lock::HostLock,
+        identity::{self, Kind},
+        workspace::Workspace,
+    };
+
+    validate(suite)?;
+    if suite.phases.chars().any(|phase| matches!(phase, '3'..='5')) {
+        return Err("IPv6 phases 3, 4 and 5 are not materialized yet".to_owned());
+    }
+    for program in ["curl", "go", "ss"] {
+        if !crate::process::Tool::exists(program) {
+            return Err(format!("required program unavailable: {program}"));
+        }
+    }
+    let rust = identity::register("rust-reality", &suite.rust_bin, "", Kind::Rust)?;
+    let xray = identity::register("xray", &suite.xray_bin, "", Kind::Xray)?;
+    let _lock = HostLock::acquire(&crate::bench::runner::default_lock_path())?;
+    let run = RunDirectory::create(&suite.out_dir)?;
+    let workspace = Workspace::create("validate-ipv6-e2e")?;
+    let certificate = cover_certificate(suite, &workspace)?;
+    run.write_new("certificate-san.txt", &certificate.subject_alt_name)?;
+    let mut results = Results::create(run.join("results.jsonl"))?;
+    let origin = if suite.phases.contains('2') {
+        Some(crate::bench::origin_go::build(&suite.repo, &workspace)?)
+    } else {
+        None
+    };
+
+    for phase in suite.phases.chars() {
+        match phase {
+            '0' => phase0(suite, &run, &mut results)?,
+            '1' => run_local_listener_phase(
+                &workspace,
+                &run,
+                &rust.path,
+                &certificate.ca_certificate,
+                &mut results,
+            )?,
+            '2' => run_session_phase(
+                &workspace,
+                &run,
+                &rust.path,
+                &xray.path,
+                origin
+                    .as_deref()
+                    .ok_or_else(|| "phase 2 origin was not built".to_owned())?,
+                &certificate,
+                &mut results,
+            )?,
+            '3'..='5' => unreachable!("rejected before creating the run directory"),
+            _ => unreachable!("validated phase digit"),
+        }
+    }
+    let [passed, failed, skipped] = results.tally();
+    let summary = Json::object([
+        ("runId", Json::string(&suite.run_id)),
+        ("phases", Json::string(&suite.phases)),
+        ("pass", Json::Int(i64::try_from(passed).unwrap_or(i64::MAX))),
+        ("fail", Json::Int(i64::try_from(failed).unwrap_or(i64::MAX))),
+        (
+            "skip",
+            Json::Int(i64::try_from(skipped).unwrap_or(i64::MAX)),
+        ),
+        (
+            "unavailable",
+            Json::Int(i64::try_from(results.unavailable()).unwrap_or(i64::MAX)),
+        ),
+        (
+            "failures",
+            Json::Array(results.failures().iter().map(Json::string).collect()),
+        ),
+        (
+            "binaries",
+            Json::object([
+                (
+                    "rustReality",
+                    Json::object([
+                        ("path", Json::string(rust.path.display().to_string())),
+                        ("sha256", Json::string(&rust.sha256)),
+                        ("identity", Json::string(&rust.identity)),
+                    ]),
+                ),
+                (
+                    "xray",
+                    Json::object([
+                        ("path", Json::string(xray.path.display().to_string())),
+                        ("sha256", Json::string(&xray.sha256)),
+                        ("identity", Json::string(&xray.identity)),
+                    ]),
+                ),
+            ]),
+        ),
+        ("complete", Json::Bool(failed == 0)),
+    ]);
+    let document = summary.to_python_json();
+    run.write_new("summary.json", &document)?;
+    if failed == 0 {
+        run.publish(
+            Publication::Environment,
+            &document,
+            &suite.run_id,
+            "validate-ipv6-e2e",
+        )?;
+        Ok(summary)
+    } else {
+        Err(format!(
+            "IPv6 validation failed: {}",
+            results.failures().join(", ")
+        ))
+    }
 }

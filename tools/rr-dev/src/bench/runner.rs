@@ -30,22 +30,87 @@ pub struct Suite {
 }
 
 /// The catalogue of benchmark suites, in migration order.
-pub const SUITES: [Suite; 15] = [
-    Suite { id: "real-path", summary: "real-network A/B download through rust-reality and Xray tunnels", supersedes: "benchmark-real-path.sh" },
-    Suite { id: "matrix", summary: "the protected-metric performance matrix across concurrency and policy", supersedes: "benchmark-matrix.sh" },
-    Suite { id: "setup-rate", summary: "connection setup rate and CPU per connection", supersedes: "benchmark-setup-rate.sh" },
-    Suite { id: "setup-rate-xray", summary: "setup rate with Xray serving one leg", supersedes: "benchmark-setup-rate-xray.sh" },
-    Suite { id: "tls-shape", summary: "TLS record and closure shape versus a pinned Xray ClientHello", supersedes: "benchmark-tls-shape.sh" },
-    Suite { id: "dns", summary: "DNS cold/warm/burst resolution versus Xray", supersedes: "benchmark-dns-comparison.sh" },
-    Suite { id: "routing", summary: "routing-rule scaling versus Xray", supersedes: "benchmark-routing-comparison.sh" },
-    Suite { id: "fallback", summary: "fallback A/B behaviour under cover", supersedes: "benchmark-fallback-ab.sh" },
-    Suite { id: "vision-direct", summary: "Vision direct-copy datapath", supersedes: "benchmark-vision-direct.sh" },
-    Suite { id: "vless-encryption", summary: "VLESS encryption datapath", supersedes: "benchmark-vless-encryption.sh" },
-    Suite { id: "xray", summary: "Xray comparator baseline", supersedes: "benchmark-xray.sh" },
-    Suite { id: "soak", summary: "long-duration soak with resource sampling", supersedes: "soak-test.sh" },
-    Suite { id: "xray-interop", summary: "unmodified-Xray interoperability and the ML-DSA differential", supersedes: "test-xray-interop.sh" },
-    Suite { id: "no-ccs-interop", summary: "interoperability with a TLS 1.3 cover that omits the server CCS", supersedes: "test-openssl-no-ccs-interop.sh" },
-    Suite { id: "descriptor-pressure", summary: "file-descriptor pressure behaviour", supersedes: "test-descriptor-pressure.sh" },
+pub const SUITES: [Suite; 16] = [
+    Suite {
+        id: "real-path",
+        summary: "real-network A/B download through rust-reality and Xray tunnels",
+        supersedes: "benchmark-real-path.sh",
+    },
+    Suite {
+        id: "matrix",
+        summary: "the protected-metric performance matrix across concurrency and policy",
+        supersedes: "benchmark-matrix.sh",
+    },
+    Suite {
+        id: "setup-rate",
+        summary: "connection setup rate and CPU per connection",
+        supersedes: "benchmark-setup-rate.sh",
+    },
+    Suite {
+        id: "setup-rate-xray",
+        summary: "setup rate with Xray serving one leg",
+        supersedes: "benchmark-setup-rate-xray.sh",
+    },
+    Suite {
+        id: "tls-shape",
+        summary: "TLS record and closure shape versus a pinned Xray ClientHello",
+        supersedes: "benchmark-tls-shape.sh",
+    },
+    Suite {
+        id: "dns",
+        summary: "DNS cold/warm/burst resolution versus Xray",
+        supersedes: "benchmark-dns-comparison.sh",
+    },
+    Suite {
+        id: "routing",
+        summary: "routing-rule scaling versus Xray",
+        supersedes: "benchmark-routing-comparison.sh",
+    },
+    Suite {
+        id: "fallback",
+        summary: "fallback A/B behaviour under cover",
+        supersedes: "benchmark-fallback-ab.sh",
+    },
+    Suite {
+        id: "vision-direct",
+        summary: "Vision direct-copy datapath",
+        supersedes: "benchmark-vision-direct.sh",
+    },
+    Suite {
+        id: "vless-encryption",
+        summary: "VLESS encryption datapath",
+        supersedes: "benchmark-vless-encryption.sh",
+    },
+    Suite {
+        id: "xray",
+        summary: "Xray comparator baseline",
+        supersedes: "benchmark-xray.sh",
+    },
+    Suite {
+        id: "soak",
+        summary: "long-duration soak with resource sampling",
+        supersedes: "soak-test.sh",
+    },
+    Suite {
+        id: "xray-interop",
+        summary: "unmodified-Xray interoperability and the ML-DSA differential",
+        supersedes: "test-xray-interop.sh",
+    },
+    Suite {
+        id: "no-ccs-interop",
+        summary: "interoperability with a TLS 1.3 cover that omits the server CCS",
+        supersedes: "test-openssl-no-ccs-interop.sh",
+    },
+    Suite {
+        id: "ipv6",
+        summary: "IPv4/IPv6 listener, session, transfer and resilience validation",
+        supersedes: "validate-ipv6-e2e.sh",
+    },
+    Suite {
+        id: "descriptor-pressure",
+        summary: "file-descriptor pressure behaviour",
+        supersedes: "test-descriptor-pressure.sh",
+    },
 ];
 
 /// Resolves a suite by id.
@@ -56,7 +121,10 @@ pub const SUITES: [Suite; 15] = [
 pub fn resolve(id: &str) -> Result<&'static Suite, String> {
     SUITES.iter().find(|suite| suite.id == id).ok_or_else(|| {
         let known: Vec<&str> = SUITES.iter().map(|suite| suite.id).collect();
-        format!("unknown benchmark suite: {id} (known: {})", known.join(", "))
+        format!(
+            "unknown benchmark suite: {id} (known: {})",
+            known.join(", ")
+        )
     })
 }
 
@@ -120,8 +188,7 @@ pub fn preflight(required_tools: &[&str]) -> Preflight {
 
     let (workspace_ok, reserved_ports) = match Workspace::create("preflight") {
         Ok(workspace) => {
-            let ports = crate::bench::workspace::reserve_ports(2)
-                .map_or(0, |ports| ports.len());
+            let ports = crate::bench::workspace::reserve_ports(2).map_or(0, |ports| ports.len());
             // Prove the process guard launches and cleans up a child on this host.
             let process_ok = self_check_process(&workspace).is_ok();
             drop(workspace);
@@ -201,7 +268,12 @@ mod tests {
     #[test]
     fn preflight_reports_missing_tools() {
         let report = preflight(&["definitely-not-a-real-tool-xyz"]);
-        assert!(report.missing_tools.iter().any(|t| t.contains("real-tool-xyz")));
+        assert!(
+            report
+                .missing_tools
+                .iter()
+                .any(|t| t.contains("real-tool-xyz"))
+        );
         assert!(!report.is_ready(), "a missing tool must block readiness");
     }
 
@@ -210,9 +282,15 @@ mod tests {
         // With no required tools, readiness depends only on lock + workspace.
         let report = preflight(&[]);
         assert!(report.lock_ok, "the host lock must acquire in preflight");
-        assert!(report.workspace_ok, "the workspace must create in preflight");
+        assert!(
+            report.workspace_ok,
+            "the workspace must create in preflight"
+        );
         // The lock was released, so a second preflight also succeeds.
         let again = preflight(&[]);
-        assert!(again.lock_ok, "the host lock must be released after preflight");
+        assert!(
+            again.lock_ok,
+            "the host lock must be released after preflight"
+        );
     }
 }
