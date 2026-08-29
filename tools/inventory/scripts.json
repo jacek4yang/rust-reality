@@ -16,9 +16,9 @@
   ],
   "current_state": {
     "base_main": "d818ded524691bfe445c432241d8f2cd8ca651aa",
-    "snapshot": "IN_PROGRESS_PR_152_TLS_INTEROP_IPV6",
-    "tracked_files": 32,
-    "tracked_lines": 14722,
+    "snapshot": "IN_PROGRESS_PR_152_TLS_SHAPE",
+    "tracked_files": 27,
+    "tracked_lines": 13294,
     "repository_owned_external_python_validators": 0,
     "workflow_scripts_references": 0
   },
@@ -895,8 +895,8 @@
       "invoked_by_check_sh": false,
       "calls_scripts": [],
       "disposition": "MERGE",
-      "replacement": "cargo dev bench ipv6",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite ipv6",
+      "status": "deleted-after-parity in PR #152; native phases preserve listener, session, DNS/family, global, 64 MiB transfer, no-ALPN, netns/netem, route-loss/recovery, and cleanup contracts"
     },
     {
       "path": "scripts/validate-profiles.sh",
@@ -962,7 +962,7 @@
     "subdirectories": {
       "scripts/__pycache__": "build artifact, must be removed and ignored",
       "scripts/bench-origin": "benchmark origin helper (2 files)",
-      "scripts/ipv6-e2e": "IPv6 end-to-end helpers (1 sh, 2 py)",
+      "scripts/ipv6-e2e": "deleted-after-parity in PR #152; active orchestration and helper behavior absorbed by typed rr-dev IPv6 modules",
       "scripts/v150-release-gates": "MOVED to notes/history/release-gates/v150-release-gates/ as inert historical evidence (was already non-runnable: calls deleted evaluate-release-performance.py)",
       "scripts/v151-release-gates": "MOVED to notes/history/release-gates/v151-release-gates/ as inert historical evidence (was already non-runnable: calls deleted evaluate-release-performance.py)",
       "scripts/v16-release-gates": "MOVED to notes/history/release-gates/v16-release-gates/ as inert historical evidence (was already non-runnable: calls deleted evaluate-release-performance.py)"
