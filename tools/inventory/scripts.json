@@ -15,10 +15,10 @@
     "full CI green on the exact final head, then git rm -r scripts"
   ],
   "current_state": {
-    "base_main": "473c3d84323bd2f9618eac983370c6b15f5853ad",
-    "snapshot": "IN_PROGRESS_PR_151_DNS_ROUTING_VLESS",
-    "tracked_files": 33,
-    "tracked_lines": 14932,
+    "base_main": "d818ded524691bfe445c432241d8f2cd8ca651aa",
+    "snapshot": "C3_TLS_SHAPE_DELETED",
+    "tracked_files": 21,
+    "tracked_lines": 10246,
     "repository_owned_external_python_validators": 0,
     "workflow_scripts_references": 0
   },
@@ -276,8 +276,8 @@
         "tls-shape-reference.c"
       ],
       "disposition": "MERGE",
-      "replacement": "BenchmarkRunner tls-shape workload",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite tls-shape",
+      "status": "complete"
     },
     {
       "path": "scripts/benchmark-vision-direct.sh",
@@ -392,9 +392,9 @@
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
       "calls_scripts": [],
-      "disposition": "MOVE_HELPER",
-      "replacement": "tools/helpers (Rust cover-flight proxy)",
-      "status": "not-started"
+      "disposition": "MIGRATE",
+      "replacement": "cargo dev bench shape-proxy (hidden process boundary)",
+      "status": "complete"
     },
     {
       "path": "scripts/deploy-release-vps.sh",
@@ -631,8 +631,8 @@
       "invoked_by_check_sh": false,
       "calls_scripts": [],
       "disposition": "MERGE",
-      "replacement": "rr-dev evidence capture",
-      "status": "not-started"
+      "replacement": "tls_shape_suite::run_production_reader_gate",
+      "status": "complete"
     },
     {
       "path": "scripts/release-matrix.sh",
@@ -670,14 +670,13 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "calls_scripts": [
-        "test-xray-interop.sh"
-      ],
+      "calls_scripts": [],
       "disposition": "MERGE",
       "replacement": "cargo dev check --all on target host",
       "status": "not-started",
       "calls_cargo_dev": [
-        "cargo dev bench run --suite matrix"
+        "cargo dev bench run --suite matrix",
+        "cargo dev bench run --suite xray-interop"
       ]
     },
     {
@@ -765,9 +764,9 @@
       "calls_scripts": [
         "benchmark-contract.sh"
       ],
-      "disposition": "MERGE",
-      "replacement": "cargo dev bench interop",
-      "status": "not-started"
+      "disposition": "DELETE",
+      "replacement": "cargo dev bench run --suite no-ccs-interop",
+      "status": "deleted"
     },
     {
       "path": "scripts/test-package-release.sh",
@@ -834,8 +833,8 @@
         "benchmark-contract.sh"
       ],
       "disposition": "MERGE",
-      "replacement": "cargo dev bench xray (interop workload)",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite xray-interop",
+      "status": "deleted-after-parity in PR #152; accepted locally with a 1 MiB digest-verified transfer through an unmodified Xray and an agreed ML-DSA-65 verification key"
     },
     {
       "path": "scripts/tls-record-delay-fixture.py",
@@ -845,9 +844,9 @@
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
       "calls_scripts": [],
-      "disposition": "MOVE_DATA",
-      "replacement": "benchmarks/fixtures/ (generator kept as data-producing helper)",
-      "status": "not-started"
+      "disposition": "MIGRATE",
+      "replacement": "tls_shape::serve_delayed_cover delayed-record E2E",
+      "status": "complete"
     },
     {
       "path": "scripts/tls-shape-helper.py",
@@ -857,9 +856,9 @@
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
       "calls_scripts": [],
-      "disposition": "MOVE_HELPER",
-      "replacement": "tools/helpers (Rust tls-shape helper)",
-      "status": "not-started"
+      "disposition": "MIGRATE",
+      "replacement": "tls_shape_suite capture/replay/summarize",
+      "status": "complete"
     },
     {
       "path": "scripts/tls-shape-reference.c",
@@ -871,9 +870,9 @@
       "calls_scripts": [
         "benchmark-tls-shape.sh"
       ],
-      "disposition": "MOVE_DATA",
-      "replacement": "benchmarks/fixtures/tls-shape-reference.c",
-      "status": "not-started"
+      "disposition": "MOVE_HELPER",
+      "replacement": "tools/reference/tls-shape-openssl.c (dynamic independent reference boundary)",
+      "status": "complete"
     },
     {
       "path": "scripts/validate-deployment-netem.py",
@@ -894,12 +893,10 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "calls_scripts": [
-        "test-openssl-no-ccs-interop.sh"
-      ],
+      "calls_scripts": [],
       "disposition": "MERGE",
-      "replacement": "cargo dev bench ipv6",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite ipv6",
+      "status": "deleted-after-parity in PR #152; native phases preserve listener, session, DNS/family, global, 64 MiB transfer, no-ALPN, netns/netem, route-loss/recovery, and cleanup contracts"
     },
     {
       "path": "scripts/validate-profiles.sh",
@@ -965,7 +962,7 @@
     "subdirectories": {
       "scripts/__pycache__": "build artifact, must be removed and ignored",
       "scripts/bench-origin": "benchmark origin helper (2 files)",
-      "scripts/ipv6-e2e": "IPv6 end-to-end helpers (1 sh, 2 py)",
+      "scripts/ipv6-e2e": "deleted-after-parity in PR #152; active orchestration and helper behavior absorbed by typed rr-dev IPv6 modules",
       "scripts/v150-release-gates": "MOVED to notes/history/release-gates/v150-release-gates/ as inert historical evidence (was already non-runnable: calls deleted evaluate-release-performance.py)",
       "scripts/v151-release-gates": "MOVED to notes/history/release-gates/v151-release-gates/ as inert historical evidence (was already non-runnable: calls deleted evaluate-release-performance.py)",
       "scripts/v16-release-gates": "MOVED to notes/history/release-gates/v16-release-gates/ as inert historical evidence (was already non-runnable: calls deleted evaluate-release-performance.py)"

@@ -12,7 +12,7 @@
 
 use std::{
     fs::File,
-    net::TcpStream,
+    net::{SocketAddr, TcpStream},
     path::Path,
     process::{Child as StdChild, Command, Stdio},
     time::{Duration, Instant},
@@ -145,25 +145,39 @@ impl Child {
     /// Returns [`Error::Readiness`] if the port never accepts, or if the child
     /// exits before it does.
     pub fn wait_for_port(&mut self, port: u16, timeout: Duration) -> Result<(), Error> {
-        let address = format!("127.0.0.1:{port}");
-        let socket = address
-            .parse()
-            .map_err(|_| Error::Readiness(format!("invalid loopback address {address}")))?;
+        self.wait_for_address(SocketAddr::from(([127, 0, 0, 1], port)), timeout)
+    }
+
+    /// Waits until `address` accepts a TCP connection or the timeout elapses.
+    ///
+    /// Unlike [`Self::wait_for_port`], this supports explicit IPv6 listeners.
+    /// Keeping readiness in the child guard means an early process exit is still
+    /// reported immediately instead of being mistaken for a slow bind.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Readiness`] if the address never accepts, or if the child
+    /// exits before it does.
+    pub fn wait_for_address(
+        &mut self,
+        address: SocketAddr,
+        timeout: Duration,
+    ) -> Result<(), Error> {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
-            if TcpStream::connect_timeout(&socket, Duration::from_millis(100)).is_ok() {
+            if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
                 return Ok(());
             }
             if !self.is_alive() {
                 return Err(Error::Readiness(format!(
-                    "{} exited before port {port} became ready",
+                    "{} exited before {address} became ready",
                     self.label
                 )));
             }
             std::thread::sleep(Duration::from_millis(20));
         }
         Err(Error::Readiness(format!(
-            "{} port {port} did not become ready within {:.1}s",
+            "{} address {address} did not become ready within {:.1}s",
             self.label,
             timeout.as_secs_f64()
         )))

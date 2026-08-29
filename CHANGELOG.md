@@ -519,7 +519,7 @@ strict decoding as unknown or invalid values.
   passed. Each gate verified an exact 1 MiB SHA-256 payload and ML-DSA-65 key
   compatibility; these are interoperability results, not throughput claims.
 - Real global IPv6 and real IPv6 Internet egress were validated end to end
-  (`scripts/validate-ipv6-e2e.sh`): 29 pass, 0 fail, 1 skip — the skip is the
+  (now retained by `cargo dev bench run --suite ipv6`): 29 pass, 0 fail, 1 skip — the skip is the
   external-ingress case, for which no outside IPv6 source was available on the
   validation host. Coverage includes all listener modes, Xray client sessions
   over every address-family combination (mixed A/AAAA, DNS-selected family,

@@ -74,7 +74,7 @@ pub fn build(repo: &Path, workspace: &Workspace) -> Result<PathBuf, String> {
 }
 
 /// The origin's own argv for a listener plan.
-fn listener_args(plan: &OriginPlan) -> Vec<String> {
+pub(crate) fn listener_args(plan: &OriginPlan) -> Vec<String> {
     let mut args = vec![
         "--listen-address".to_owned(),
         plan.listen_address.clone(),
@@ -91,6 +91,17 @@ fn listener_args(plan: &OriginPlan) -> Vec<String> {
             cert.display().to_string(),
             "--tls-key".to_owned(),
             key.display().to_string(),
+        ]);
+    }
+    if let Some(alpn) = &plan.alpn {
+        args.extend(["--tls-alpn".to_owned(), alpn.clone()]);
+    }
+    if let Some(access_log) = &plan.access_log {
+        args.extend([
+            "--access-log".to_owned(),
+            access_log.display().to_string(),
+            "--label".to_owned(),
+            plan.label.clone(),
         ]);
     }
     args
@@ -111,6 +122,14 @@ pub struct OriginPlan {
     pub put_log: PathBuf,
     /// Certificate and key, which switch the listener to TLS 1.3 only.
     pub tls: Option<(PathBuf, PathBuf)>,
+    /// Per-request JSONL log, tagged with `label`.
+    ///
+    /// The IPv6 suite runs two origins on the same port in different address
+    /// families; which one served a request is its evidence of the family an
+    /// egress dial chose. Leaving this unset also leaves request hashing off.
+    pub access_log: Option<PathBuf>,
+    /// ALPN protocols the TLS listener offers. `None` negotiates none.
+    pub alpn: Option<String>,
 }
 
 /// Launches one origin listener and waits for it to accept connections.
@@ -126,10 +145,19 @@ pub fn start(binary: &Path, workspace: &Workspace, plan: &OriginPlan) -> Result<
     let log = workspace.join(&format!("{}.log", plan.label));
     let mut child = Child::spawn(&plan.label, binary, &args, workspace.path(), &[], &log)
         .map_err(|error| error.to_string())?;
+    let address = format_socket_address(&plan.listen_address, plan.port)?;
     child
-        .wait_for_port(plan.port, READY_TIMEOUT)
+        .wait_for_address(address, READY_TIMEOUT)
         .map_err(|error| error.to_string())?;
     Ok(child)
+}
+
+/// Parses a numeric listener address into the socket the readiness probe uses.
+fn format_socket_address(address: &str, port: u16) -> Result<std::net::SocketAddr, String> {
+    let ip = address
+        .parse::<std::net::IpAddr>()
+        .map_err(|error| format!("origin listen address {address:?} is not numeric: {error}"))?;
+    Ok(std::net::SocketAddr::new(ip, port))
 }
 
 /// Launches an origin listener inside a shaped network namespace.
@@ -166,9 +194,9 @@ pub fn start_in_namespace(
         || {
             std::net::TcpStream::connect_timeout(
                 &std::net::SocketAddr::new(
-                    plan.listen_address.parse().unwrap_or(std::net::IpAddr::V4(
-                        std::net::Ipv4Addr::LOCALHOST,
-                    )),
+                    plan.listen_address
+                        .parse()
+                        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
                     plan.port,
                 ),
                 Duration::from_millis(200),
@@ -297,6 +325,8 @@ mod tests {
             payload_dir: workspace.path().to_path_buf(),
             put_log: workspace.join("http-put.jsonl"),
             tls: None,
+            access_log: None,
+            alpn: None,
         };
         let child = start(&binary, &workspace, &plan).expect("the origin becomes ready");
 
@@ -310,9 +340,19 @@ mod tests {
         let mut response = Vec::new();
         stream.read_to_end(&mut response).unwrap();
         let text = String::from_utf8_lossy(&response);
-        assert!(text.starts_with("HTTP/1.0 200"), "{}", &text[..40.min(text.len())]);
-        assert!(text.contains("Content-Length: 256"), "the 256-byte marker body");
-        assert!(text.ends_with(&"x".repeat(256)), "the body is the marker payload");
+        assert!(
+            text.starts_with("HTTP/1.0 200"),
+            "{}",
+            &text[..40.min(text.len())]
+        );
+        assert!(
+            text.contains("Content-Length: 256"),
+            "the 256-byte marker body"
+        );
+        assert!(
+            text.ends_with(&"x".repeat(256)),
+            "the body is the marker payload"
+        );
 
         drop(child);
     }
@@ -327,12 +367,50 @@ mod tests {
             payload_dir: PathBuf::from("/w"),
             put_log: PathBuf::from("/w/http-put.jsonl"),
             tls: None,
+            access_log: None,
+            alpn: None,
         };
         assert!(plan.tls.is_none());
         let tls = OriginPlan {
-            tls: Some((PathBuf::from("/w/origin.crt"), PathBuf::from("/w/origin.key"))),
+            tls: Some((
+                PathBuf::from("/w/origin.crt"),
+                PathBuf::from("/w/origin.key"),
+            )),
             ..plan
         };
         assert!(tls.tls.is_some());
+        assert!(!listener_args(&tls).contains(&"--tls-alpn".to_owned()));
+    }
+
+    /// The access log carries the label, and hashing follows the log.
+    #[test]
+    fn the_access_log_and_alpn_flags_are_opt_in() {
+        let plan = OriginPlan {
+            label: "origin-v6".to_owned(),
+            listen_address: "::1".to_owned(),
+            port: 8080,
+            payload_dir: PathBuf::from("/w"),
+            put_log: PathBuf::from("/w/http-put.jsonl"),
+            tls: None,
+            access_log: None,
+            alpn: None,
+        };
+        let bare = listener_args(&plan);
+        assert!(!bare.contains(&"--access-log".to_owned()));
+        assert!(!bare.contains(&"--label".to_owned()));
+
+        let logged = OriginPlan {
+            access_log: Some(PathBuf::from("/w/access.jsonl")),
+            alpn: Some("h2,http/1.1".to_owned()),
+            ..plan
+        };
+        let args = listener_args(&logged);
+        assert!(args.contains(&"--access-log".to_owned()));
+        // Without the label the rows cannot attribute an egress family, which
+        // is the only reason this origin logs requests at all.
+        let label = args.iter().position(|arg| arg == "--label").unwrap();
+        assert_eq!(args[label + 1], "origin-v6");
+        let alpn = args.iter().position(|arg| arg == "--tls-alpn").unwrap();
+        assert_eq!(args[alpn + 1], "h2,http/1.1");
     }
 }

@@ -1,4 +1,10 @@
-// Minimal libssl TLS 1.3 reference server for benchmark-tls-shape.sh.
+// Deliberate dynamic reference-tool boundary for rr-dev's TLS-shape suite.
+//
+// This remains independent libssl code because the proof varies cipher suites,
+// groups, ALPN, middlebox CCS, fragmentation, padding, and TCP_NODELAY per run.
+// A static fixture would freeze those inputs; a Rust TLS implementation would
+// cease to be independent from the implementation being compared.
+//
 #define _POSIX_C_SOURCE 200809L
 
 #include <arpa/inet.h>
@@ -278,3 +284,4 @@ int main(int argc, char **argv) {
     OSSL_PROVIDER_unload(provider);
     return 0;
 }
+

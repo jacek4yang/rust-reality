@@ -338,7 +338,7 @@ Same validation host and methodology caveats as above (Intel i3-8100, Linux
   first-match semantics. Measured P95 decision latency fell 31–57% at 1,000
   rules and 31–55% at 10,000 rules; small rule sets are unchanged on the
   linear path.
-- **Real IPv6 validation.** `scripts/validate-ipv6-e2e.sh` ran end to end
+- **Real IPv6 validation.** The native `cargo dev bench run --suite ipv6` gate ran end to end
   over real global IPv6 with real IPv6 Internet egress: 29 pass, 0 fail,
   1 skip. The skip is the external-ingress case — no outside IPv6 source was
   available on the validation host, so inbound IPv6 from the public Internet

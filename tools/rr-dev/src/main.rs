@@ -13,7 +13,10 @@
 //! cargo dev check --all
 //! ```
 
-use std::{path::{Path, PathBuf}, process::ExitCode};
+use std::{
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
 use clap::{Parser, Subcommand};
 
@@ -211,6 +214,26 @@ enum BenchCommand {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    /// Internal TCP boundary for deterministic handoff cover-flight shaping.
+    ///
+    /// This is a separate process because a soak run must put the shaper between
+    /// the measured LINE process and its OpenSSL cover. It is hidden from normal
+    /// CLI help: operator policy remains `bench run --suite soak`.
+    #[command(hide = true)]
+    ShapeProxy {
+        /// Loopback port accepting the measured client's TLS connection.
+        #[arg(long)]
+        listen_port: u16,
+        /// Loopback OpenSSL cover port.
+        #[arg(long)]
+        upstream_port: u16,
+        /// Number of valid flights to shape before exiting.
+        #[arg(long, default_value_t = 1)]
+        max_shaped: usize,
+        /// Maximum accepted sockets, including readiness probes.
+        #[arg(long, default_value_t = 8)]
+        max_accepted: usize,
+    },
     /// Run a tunnel A/B suite end to end (`real-path`, `xray`, or `vision-direct`).
     Run {
         /// Suite id: `real-path`, `xray`, or `vision-direct`.
@@ -341,6 +364,45 @@ enum BenchCommand {
         /// Concurrency for the setup sample (vless-encryption suite).
         #[arg(long, default_value_t = 8)]
         setup_concurrency: usize,
+        /// A URL fetched through the tunnel to prove reachability (interop).
+        #[arg(long)]
+        internet_url: Option<String>,
+        /// The pinned OpenSSL that serves the no-CCS cover target.
+        #[arg(long, default_value = "openssl")]
+        openssl_bin: PathBuf,
+        /// Sequential TLS-shape samples per implementation.
+        #[arg(long, default_value_t = 3)]
+        tls_shape_samples: usize,
+        /// TLS 1.3 reference cipher-suite list.
+        #[arg(long, default_value = "TLS_AES_128_GCM_SHA256")]
+        tls_ciphersuites: String,
+        /// OpenSSL TLS group list for the dynamic reference.
+        #[arg(long, default_value = "X25519MLKEM768:X25519")]
+        tls_groups: String,
+        /// ALPN selected by the dynamic reference; empty selects none.
+        #[arg(long, default_value = "h2")]
+        tls_alpn: String,
+        /// Emit the TLS 1.3 middlebox compatibility CCS.
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        tls_middlebox: bool,
+        /// OpenSSL maximum send fragment; zero keeps its default.
+        #[arg(long, default_value_t = 0)]
+        tls_max_fragment: u16,
+        /// OpenSSL split send fragment; zero keeps its default.
+        #[arg(long, default_value_t = 0)]
+        tls_split_fragment: u16,
+        /// Fixed TLS 1.3 reference record padding bytes.
+        #[arg(long, default_value_t = 0)]
+        tls_padding: u16,
+        /// Apply `TCP_NODELAY` to the accepted reference socket.
+        #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
+        tls_tcp_nodelay: bool,
+        /// IPv6 validation phase digits.
+        #[arg(long, default_value = "012345")]
+        ipv6_phases: String,
+        /// Host-global IPv6 address for the environmental phase.
+        #[arg(long)]
+        global_v6: Option<String>,
     },
 }
 
@@ -809,6 +871,23 @@ fn resolve_targets(
 #[allow(clippy::too_many_lines)]
 fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
     match command {
+        BenchCommand::ShapeProxy {
+            listen_port,
+            upstream_port,
+            max_shaped,
+            max_accepted,
+        } => match bench::tls_shape::run_shape_proxy(
+            *listen_port,
+            *upstream_port,
+            *max_shaped,
+            *max_accepted,
+        ) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("bench shape-proxy: {error}");
+                ExitCode::FAILURE
+            }
+        },
         BenchCommand::Workload {
             socks_port,
             origin_port,
@@ -947,7 +1026,77 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             rule_scales,
             setup_connections,
             setup_concurrency,
+            internet_url,
+            openssl_bin,
+            tls_shape_samples,
+            tls_ciphersuites,
+            tls_groups,
+            tls_alpn,
+            tls_middlebox,
+            tls_max_fragment,
+            tls_split_fragment,
+            tls_padding,
+            tls_tcp_nodelay,
+            ipv6_phases,
+            global_v6,
         } => {
+            if suite == "tls-shape" {
+                return run_bench_tls_shape(
+                    repo,
+                    rust_bin,
+                    xray_bin,
+                    openssl_bin,
+                    out_dir.as_deref(),
+                    run_id.as_deref(),
+                    *tls_shape_samples,
+                    bench::tls_shape_suite::ReferenceOptions {
+                        ciphersuites: tls_ciphersuites.clone(),
+                        groups: tls_groups.clone(),
+                        alpn: tls_alpn.clone(),
+                        middlebox: *tls_middlebox,
+                        max_fragment: *tls_max_fragment,
+                        split_fragment: *tls_split_fragment,
+                        padding: *tls_padding,
+                        tcp_nodelay: *tls_tcp_nodelay,
+                    },
+                );
+            }
+            if suite == "ipv6" {
+                return run_bench_ipv6(
+                    repo,
+                    rust_bin,
+                    xray_bin,
+                    openssl_bin,
+                    out_dir.as_deref(),
+                    run_id.as_deref(),
+                    ipv6_phases,
+                    global_v6.as_deref(),
+                    *payload_mib,
+                    internet_url.as_deref(),
+                );
+            }
+            if suite == "no-ccs-interop" {
+                return run_bench_no_ccs(
+                    repo,
+                    rust_bin,
+                    xray_bin,
+                    openssl_bin,
+                    out_dir.as_deref(),
+                    run_id.as_deref(),
+                );
+            }
+            if suite == "xray-interop" {
+                return run_bench_interop(
+                    repo,
+                    rust_bin,
+                    xray_bin,
+                    out_dir.as_deref(),
+                    run_id.as_deref(),
+                    cover_target,
+                    cover_sni,
+                    internet_url.as_deref(),
+                );
+            }
             if suite == "vless-encryption" {
                 return run_bench_vless(
                     repo,
@@ -1384,6 +1533,228 @@ fn run_bench_vless(
     }
 }
 
+/// Drives the Xray interoperability gate.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "these are the gate's command-line parameters, one per flag"
+)]
+fn run_bench_interop(
+    repo: &Path,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    out_dir: Option<&Path>,
+    run_id: Option<&str>,
+    cover_target: &str,
+    cover_sni: &str,
+    internet_url: Option<&str>,
+) -> ExitCode {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let run_id = run_id.map_or_else(
+        || format!("test-xray-interop-{stamp}-{}", std::process::id()),
+        str::to_owned,
+    );
+    let out_dir = out_dir.map_or_else(
+        || {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("diagnostics")
+                .join(&run_id)
+        },
+        Path::to_path_buf,
+    );
+    let suite = bench::interop::InteropSuite {
+        repo: repo.to_path_buf(),
+        rust_bin: rust_bin.to_path_buf(),
+        xray_bin: xray_bin.to_path_buf(),
+        out_dir,
+        run_id,
+        cover_target: cover_target.to_owned(),
+        cover_sni: cover_sni.to_owned(),
+        internet_url: internet_url.map(str::to_owned),
+    };
+    if let Err(error) = bench::interop::validate(&suite) {
+        eprintln!("bench run xray-interop: {error}");
+        return ExitCode::from(2);
+    }
+    match bench::interop::run(&suite) {
+        Ok(report) => {
+            println!(
+                "Xray interoperability: PASS ({} bytes, internet {})",
+                report.local_bytes, report.internet
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("bench run xray-interop: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Drives the no-CCS interoperability gate.
+fn run_bench_no_ccs(
+    repo: &Path,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    openssl_bin: &Path,
+    out_dir: Option<&Path>,
+    run_id: Option<&str>,
+) -> ExitCode {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let run_id = run_id.map_or_else(
+        || format!("test-openssl-no-ccs-interop-{stamp}-{}", std::process::id()),
+        str::to_owned,
+    );
+    let out_dir = out_dir.map_or_else(
+        || {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("diagnostics")
+                .join(&run_id)
+        },
+        Path::to_path_buf,
+    );
+    let suite = bench::no_ccs::NoCcsSuite {
+        repo: repo.to_path_buf(),
+        rust_bin: rust_bin.to_path_buf(),
+        xray_bin: xray_bin.to_path_buf(),
+        openssl_bin: openssl_bin.to_path_buf(),
+        out_dir,
+        run_id,
+    };
+    match bench::no_ccs::run(&suite) {
+        Ok(_) => {
+            println!("no-CCS interoperability: PASS");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("bench run no-ccs-interop: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Drives the dynamic TLS first-flight shape suite.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the suite's CLI inputs map one-for-one to these typed fields"
+)]
+fn run_bench_tls_shape(
+    repo: &Path,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    openssl_bin: &Path,
+    out_dir: Option<&Path>,
+    run_id: Option<&str>,
+    samples: usize,
+    reference: bench::tls_shape_suite::ReferenceOptions,
+) -> ExitCode {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let run_id = run_id.map_or_else(
+        || format!("benchmark-tls-shape-{stamp}-{}", std::process::id()),
+        str::to_owned,
+    );
+    let out_dir = out_dir.map_or_else(
+        || {
+            bench::workspace::cache_root()
+                .join("evidence/tls-shape")
+                .join(&run_id)
+        },
+        Path::to_path_buf,
+    );
+    let suite = bench::tls_shape_suite::TlsShapeSuite {
+        repo: repo.to_path_buf(),
+        rust_bin: rust_bin.to_path_buf(),
+        xray_bin: xray_bin.to_path_buf(),
+        openssl_bin: openssl_bin.to_path_buf(),
+        out_dir: out_dir.clone(),
+        run_id,
+        samples,
+        reference,
+    };
+    if let Err(error) = bench::tls_shape_suite::validate(&suite) {
+        eprintln!("bench run tls-shape: {error}");
+        return ExitCode::from(2);
+    }
+    match bench::tls_shape_suite::run(&suite) {
+        Ok(_) => {
+            println!("TLS shape: PASS ({})", out_dir.display());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("bench run tls-shape: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Drives the IPv6 end-to-end gate.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "these are the IPv6 gate's command-line parameters"
+)]
+fn run_bench_ipv6(
+    repo: &Path,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    openssl_bin: &Path,
+    out_dir: Option<&Path>,
+    run_id: Option<&str>,
+    phases: &str,
+    global_v6: Option<&str>,
+    transfer_mib: u64,
+    internet_url: Option<&str>,
+) -> ExitCode {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let run_id = run_id.map_or_else(
+        || format!("validate-ipv6-e2e-{stamp}-{}", std::process::id()),
+        str::to_owned,
+    );
+    let out_dir = out_dir.map_or_else(
+        || {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("diagnostics")
+                .join(&run_id)
+        },
+        Path::to_path_buf,
+    );
+    let suite = bench::ipv6::Ipv6Suite {
+        repo: repo.to_path_buf(),
+        rust_bin: rust_bin.to_path_buf(),
+        xray_bin: xray_bin.to_path_buf(),
+        openssl_bin: openssl_bin.to_path_buf(),
+        out_dir: out_dir.clone(),
+        run_id,
+        phases: phases.to_owned(),
+        global_ipv6: global_v6.map(str::to_owned),
+        transfer_mib,
+        internet_url: internet_url.unwrap_or("https://example.com/").to_owned(),
+    };
+    match bench::ipv6::run(&suite) {
+        Ok(summary) => {
+            println!(
+                "IPv6 validation: PASS ({}; evidence {})",
+                summary.to_python_json(),
+                out_dir.display()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("bench run ipv6: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// The matrix suite's command-line inputs.
 struct MatrixArgs<'a> {
     baseline_bin: Option<&'a Path>,
@@ -1631,9 +2002,7 @@ fn run_bench_setup_rate(repo: &Path, args: &SetupRateArgs<'_>) -> ExitCode {
         bench::cover::CoverMode::parse(args.baseline_cover_mode),
         bench::cover::CoverMode::parse(args.candidate_cover_mode),
     ) else {
-        eprintln!(
-            "bench run setup-rate: cover modes must be default, cold, warm or prebuilt"
-        );
+        eprintln!("bench run setup-rate: cover modes must be default, cold, warm or prebuilt");
         return ExitCode::from(2);
     };
     let stamp = std::time::SystemTime::now()
@@ -1821,7 +2190,10 @@ fn run_bench_workload(
     match std::fs::write(output, document) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("bench workload: could not write {}: {error}", output.display());
+            eprintln!(
+                "bench workload: could not write {}: {error}",
+                output.display()
+            );
             ExitCode::FAILURE
         }
     }
@@ -1968,7 +2340,10 @@ fn run_deploy_netem(
     match deploy::netem::validate(&args) {
         Ok(report) => {
             if let Err(error) = std::fs::write(output, &report.json) {
-                eprintln!("deploy netem: could not write {}: {error}", output.display());
+                eprintln!(
+                    "deploy netem: could not write {}: {error}",
+                    output.display()
+                );
                 return ExitCode::from(2);
             }
             print!("{}", report.json);

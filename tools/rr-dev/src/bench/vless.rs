@@ -694,6 +694,8 @@ fn start_origins(
             payload_dir: workspace.path().to_path_buf(),
             put_log: workspace.join("http-put.jsonl"),
             tls: None,
+            access_log: None,
+            alpn: None,
         },
     )?;
     let secure = origin_go::start(
@@ -706,6 +708,8 @@ fn start_origins(
             payload_dir: workspace.path().to_path_buf(),
             put_log: workspace.join("https-put.jsonl"),
             tls: Some((cert, key)),
+            access_log: None,
+            alpn: None,
         },
     )?;
     Ok((plain, secure))

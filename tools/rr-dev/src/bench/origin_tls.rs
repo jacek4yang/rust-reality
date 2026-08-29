@@ -107,7 +107,14 @@ pub fn launch_https(
     })
 }
 
-fn which(program: &str) -> Option<PathBuf> {
+/// Resolves a bare program name against `PATH`.
+///
+/// A path that already names a directory component is returned unchanged, so
+/// callers can pass either an operator-supplied path or a bare command.
+pub fn which(program: &str) -> Option<PathBuf> {
+    if program.contains(std::path::MAIN_SEPARATOR) {
+        return Some(PathBuf::from(program));
+    }
     std::env::split_paths(&std::env::var_os("PATH")?)
         .map(|dir| dir.join(program))
         .find(|candidate| candidate.is_file())

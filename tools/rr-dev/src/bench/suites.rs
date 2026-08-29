@@ -150,6 +150,8 @@ pub struct RustIdentity {
     pub uuid: String,
     /// The REALITY short id from the generated config.
     pub short_id: String,
+    /// The generated server private key, retained only in ephemeral suite state.
+    pub private_key: String,
     /// The final server config JSON with the assets cache and warn logging applied.
     pub server_json: String,
 }
@@ -357,6 +359,14 @@ pub fn generate_rust_identity(
         .as_str("shortIds[0]")
         .map_err(|error| format!("generated rust config: {error}"))?
         .to_owned();
+    let private_key = inbound
+        .field("inbound", "streamSettings")
+        .and_then(|settings| settings.field("inbound.streamSettings", "realitySettings"))
+        .and_then(|reality| {
+            reality.str_field("inbound.streamSettings.realitySettings", "privateKey")
+        })
+        .map_err(|error| format!("generated rust config: {error}"))?
+        .to_owned();
 
     // Patch the generated rust config: warn logging and an ephemeral assets
     // cache inside the workspace, exactly as the legacy `jq` postprocessing did.
@@ -365,6 +375,7 @@ pub fn generate_rust_identity(
         public_key,
         uuid,
         short_id,
+        private_key,
         server_json,
     })
 }

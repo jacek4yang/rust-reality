@@ -25,10 +25,12 @@
 与拒绝、重放、ClientHello 分片、ClientFinished 畸形或缺失、cover 超时/拒绝/畸形
 flight、精确 fallback 前缀和资源压力。
 
-独立的 `benchmark-tls-shape.sh` 会把同一个由原版 Xray 生成并捕获的 ClientHello，
+`cargo dev bench run --suite tls-shape` 会把同一个由原版 Xray 生成并捕获的 ClientHello，
 分别交给 rust-reality、适用时的固定 Xray 服务端以及本地 cover 直接入口。它保留 TLS
 record 序列、可确定观测的进程 write 分段、可用时的抓包、精确前缀，以及重复测量的
-首字节/flight 完成时间。确定性的 wire 或关闭语义差异会失败；时间仅按分布报告，不以
+首字节/flight 完成时间，并通过确定性的延迟 record cover 矩阵（already-buffered 与
+absent-would-block 两种第五 record 分类，0/20/50/100/200 ms 延迟）驱动真实候选，
+同时执行生产 reader 门禁。确定性的 wire 或关闭语义差异会失败；时间仅按分布报告，不以
 脆弱的微秒相等作为门禁。分包行为仍依赖网络环境。这些测量不能证明各实现的网络观测
 完全相同。
 
@@ -445,7 +447,7 @@ SHA-256 和 ML-DSA-65 兼容校验。它是协议门禁，不携带计时结论�
 - **路由索引：** 在实测的 64 条规则交叉点，编译后的候选索引每条约占 53
   字节，并保持精确的有序 first-match 语义。P95 决策时延在 1,000 条规则时
   下降 31–57%，在 10,000 条时下降 31–55%；低于阈值的列表保持线性路径。
-- **IPv6：** `scripts/validate-ipv6-e2e.sh` 在真实全球 IPv6 与真实 IPv6
+- **IPv6：** 原生 `cargo dev bench run --suite ipv6` 门禁在真实全球 IPv6 与真实 IPv6
   互联网出方向上运行，结果为 29 通过 / 0 失败 / 1 跳过；跳过项是外部
   入方向用例（验证主机上没有外部 IPv6 来源），因此公网入方向 IPv6 没有
   外部 attest。已覆盖：监听模式、全部客户端/服务端地址族组合、逐字节

@@ -1012,6 +1012,8 @@ fn start_origins(
                 payload_dir: workspace.path().to_path_buf(),
                 put_log: workspace.join(put_log),
                 tls,
+            access_log: None,
+            alpn: None,
             },
         )?);
     }

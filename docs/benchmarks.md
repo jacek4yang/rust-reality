@@ -37,11 +37,14 @@ and rejection, replay, ClientHello fragmentation, ClientFinished failure and
 absence, cover timeout/refusal/malformed flight, exact fallback prefixes, and
 resource pressure.
 
-The separate `benchmark-tls-shape.sh` harness compares an identical captured
+`cargo dev bench run --suite tls-shape` compares an identical captured
 stock-Xray ClientHello against rust-reality, the pinned Xray server where
 applicable, and the direct local cover. It retains TLS record sequence,
 deterministically observable process-write segmentation, packet captures when
-available, exact prefixes, and repeated first-byte/flight timings. Deterministic
+available, exact prefixes, and repeated first-byte/flight timings, and drives
+the real candidate through a deterministic delayed-record cover matrix
+(already-buffered and absent-would-block fifth-record classifications at
+0/20/50/100/200 ms delays) with a production reader gate. Deterministic
 wire and closure differences fail; timing is reported as a distribution rather
 than fragile microsecond equality. Packetization remains network-dependent.
 These measurements do not establish indistinguishability.
@@ -626,7 +629,7 @@ Same host class and caveats as the rest of this document (i3-8100, Linux
   candidate index costs ≈53 bytes per rule and preserves exact ordered
   first-match semantics. P95 decision latency fell 31–57% at 1,000 rules and
   31–55% at 10,000 rules; lists below the threshold keep the linear path.
-- **IPv6:** `scripts/validate-ipv6-e2e.sh` over real global IPv6 and real
+- **IPv6:** the native `cargo dev bench run --suite ipv6` gate over real global IPv6 and real
   IPv6 Internet egress finished 29 pass / 0 fail / 1 skip; the skip is the
   external-ingress case (no outside IPv6 source on the validation host), so
   public-Internet inbound IPv6 is not externally attested. Covered: listener
