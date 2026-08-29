@@ -214,6 +214,26 @@ enum BenchCommand {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    /// Internal TCP boundary for deterministic handoff cover-flight shaping.
+    ///
+    /// This is a separate process because a soak run must put the shaper between
+    /// the measured LINE process and its OpenSSL cover. It is hidden from normal
+    /// CLI help: operator policy remains `bench run --suite soak`.
+    #[command(hide = true)]
+    ShapeProxy {
+        /// Loopback port accepting the measured client's TLS connection.
+        #[arg(long)]
+        listen_port: u16,
+        /// Loopback OpenSSL cover port.
+        #[arg(long)]
+        upstream_port: u16,
+        /// Number of valid flights to shape before exiting.
+        #[arg(long, default_value_t = 1)]
+        max_shaped: usize,
+        /// Maximum accepted sockets, including readiness probes.
+        #[arg(long, default_value_t = 8)]
+        max_accepted: usize,
+    },
     /// Run a tunnel A/B suite end to end (`real-path`, `xray`, or `vision-direct`).
     Run {
         /// Suite id: `real-path`, `xray`, or `vision-direct`.
@@ -824,6 +844,23 @@ fn resolve_targets(
 #[allow(clippy::too_many_lines)]
 fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
     match command {
+        BenchCommand::ShapeProxy {
+            listen_port,
+            upstream_port,
+            max_shaped,
+            max_accepted,
+        } => match bench::tls_shape::run_shape_proxy(
+            *listen_port,
+            *upstream_port,
+            *max_shaped,
+            *max_accepted,
+        ) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("bench shape-proxy: {error}");
+                ExitCode::FAILURE
+            }
+        },
         BenchCommand::Workload {
             socks_port,
             origin_port,
