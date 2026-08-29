@@ -30,6 +30,7 @@ pub mod attest;
 pub mod attribution;
 pub mod config;
 pub mod cover;
+pub mod dns;
 pub mod engine;
 pub mod evidence;
 pub mod fake_dns;
