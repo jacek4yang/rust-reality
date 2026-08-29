@@ -341,6 +341,9 @@ enum BenchCommand {
         /// Concurrency for the setup sample (vless-encryption suite).
         #[arg(long, default_value_t = 8)]
         setup_concurrency: usize,
+        /// A URL fetched through the tunnel to prove reachability (interop).
+        #[arg(long)]
+        internet_url: Option<String>,
     },
 }
 
@@ -947,7 +950,20 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             rule_scales,
             setup_connections,
             setup_concurrency,
+            internet_url,
         } => {
+            if suite == "xray-interop" {
+                return run_bench_interop(
+                    repo,
+                    rust_bin,
+                    xray_bin,
+                    out_dir.as_deref(),
+                    run_id.as_deref(),
+                    cover_target,
+                    cover_sni,
+                    internet_url.as_deref(),
+                );
+            }
             if suite == "vless-encryption" {
                 return run_bench_vless(
                     repo,
@@ -1379,6 +1395,66 @@ fn run_bench_vless(
         }
         Err(error) => {
             eprintln!("bench run vless-encryption: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Drives the Xray interoperability gate.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "these are the gate's command-line parameters, one per flag"
+)]
+fn run_bench_interop(
+    repo: &Path,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    out_dir: Option<&Path>,
+    run_id: Option<&str>,
+    cover_target: &str,
+    cover_sni: &str,
+    internet_url: Option<&str>,
+) -> ExitCode {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let run_id = run_id.map_or_else(
+        || format!("test-xray-interop-{stamp}-{}", std::process::id()),
+        str::to_owned,
+    );
+    let out_dir = out_dir.map_or_else(
+        || {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("diagnostics")
+                .join(&run_id)
+        },
+        Path::to_path_buf,
+    );
+    let suite = bench::interop::InteropSuite {
+        repo: repo.to_path_buf(),
+        rust_bin: rust_bin.to_path_buf(),
+        xray_bin: xray_bin.to_path_buf(),
+        out_dir,
+        run_id,
+        cover_target: cover_target.to_owned(),
+        cover_sni: cover_sni.to_owned(),
+        internet_url: internet_url.map(str::to_owned),
+    };
+    if let Err(error) = bench::interop::validate(&suite) {
+        eprintln!("bench run xray-interop: {error}");
+        return ExitCode::from(2);
+    }
+    match bench::interop::run(&suite) {
+        Ok(report) => {
+            println!(
+                "Xray interoperability: PASS ({} bytes, internet {})",
+                report.local_bytes, report.internet
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("bench run xray-interop: {error}");
             ExitCode::FAILURE
         }
     }
