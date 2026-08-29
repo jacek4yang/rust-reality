@@ -742,11 +742,14 @@ fn first_startup<'a>(cells: &'a [Value], run: &str) -> Option<&'a Value> {
     })
 }
 
-fn startup_report(cells: &[Value], name: &str) -> Json {
+fn startup_value<'a>(cells: &'a [Value], name: &str) -> Option<&'a Value> {
     first_startup(cells, "geo")
         .and_then(|startup| field(startup, name))
         .or_else(|| first_startup(cells, "nogeo").and_then(|startup| field(startup, name)))
-        .map_or(Json::Null, input_to_json)
+}
+
+fn startup_report(cells: &[Value], name: &str) -> Json {
+    startup_value(cells, name).map_or(Json::Null, input_to_json)
 }
 
 fn idle_report(cells: &[Value], run: &str) -> Json {
@@ -1007,6 +1010,90 @@ pub fn summarize(request: &Request) -> Result<Outcome, String> {
         request.memory_max,
         request.memory_swap_max_bytes
     );
+    let machine = startup_value(&cells, "machineReport");
+    let descriptor = startup_value(&cells, "descriptorBudgetReport");
+    let relays = startup_value(&cells, "relayBackendReport")
+        .and_then(|report| field(report, "backends"))
+        .and_then(|backends| backends.as_array("relayBackendReport.backends").ok());
+    let relay_available = |name: &str| {
+        relays.and_then(|backends| {
+            backends.iter().find_map(|backend| {
+                (string(backend, "backend").as_deref() == Some(name))
+                    .then(|| boolean(backend, "available"))
+                    .flatten()
+            })
+        })
+    };
+    markdown.push_str("Derived budgets (machine_report / descriptor_budget_report):\n\n");
+    let _ = writeln!(
+        markdown,
+        "- cpus visible: {}, cpu.max quota: {}/{} us",
+        machine
+            .and_then(|value| integer(value, "available_cpus"))
+            .unwrap_or(0),
+        machine
+            .and_then(|value| integer(value, "cpu_quota_us"))
+            .unwrap_or(0),
+        machine
+            .and_then(|value| integer(value, "cpu_period_us"))
+            .unwrap_or(0)
+    );
+    let _ = writeln!(
+        markdown,
+        "- memory: source={} max={:.1} MiB total={:.1} MiB",
+        machine
+            .and_then(|value| string(value, "memory_source"))
+            .unwrap_or_default(),
+        mib(machine
+            .and_then(|value| integer(value, "memory_max"))
+            .unwrap_or(0)),
+        mib(machine
+            .and_then(|value| integer(value, "memory_total"))
+            .unwrap_or(0))
+    );
+    let _ = writeln!(
+        markdown,
+        "- fd: soft {} -> effective {} (raised: {})",
+        machine
+            .and_then(|value| integer(value, "fd_soft_limit"))
+            .unwrap_or(0),
+        machine
+            .and_then(|value| integer(value, "fd_effective_soft_limit"))
+            .unwrap_or(0),
+        machine
+            .and_then(|value| boolean(value, "fd_soft_limit_raised"))
+            .unwrap_or(false)
+    );
+    let _ = writeln!(
+        markdown,
+        "- fd budget: reserve {} + headroom {} -> effective {} (clamped: {})",
+        descriptor
+            .and_then(|value| integer(value, "fd_fixed_reserve"))
+            .unwrap_or(0),
+        descriptor
+            .and_then(|value| integer(value, "fd_safety_headroom"))
+            .unwrap_or(0),
+        descriptor
+            .and_then(|value| integer(value, "fd_effective_budget"))
+            .unwrap_or(0),
+        descriptor
+            .and_then(|value| boolean(value, "fd_clamped"))
+            .unwrap_or(false)
+    );
+    let _ = writeln!(
+        markdown,
+        "- relay backends: buffered={}, splice={}\n",
+        if relay_available("buffered") == Some(true) {
+            "ok"
+        } else {
+            "unavailable"
+        },
+        if relay_available("splice") == Some(true) {
+            "ok"
+        } else {
+            "unavailable"
+        }
+    );
     markdown.push_str("| metric | value |\n|---|---|\n");
     let _ = writeln!(
         markdown,
@@ -1055,14 +1142,14 @@ pub fn summarize(request: &Request) -> Result<Outcome, String> {
     if let Some(download) = &download1 {
         let _ = writeln!(
             markdown,
-            "| download c1 | {} MiB/s |",
+            "| 512 MiB download c1 | {} MiB/s |",
             fmt_optional(download.throughput_median)
         );
     }
     if let Some(download) = &download32 {
         let _ = writeln!(
             markdown,
-            "| download c32 | {} MiB/s |",
+            "| 512 MiB download c32 | {} MiB/s |",
             fmt_optional(download.throughput_median)
         );
     }
@@ -1072,6 +1159,18 @@ pub fn summarize(request: &Request) -> Result<Outcome, String> {
             "| max clean idle-connection level (default policy) | {} |",
             ladder.max_clean_level
         );
+        let _ = writeln!(
+            markdown,
+            "| first pressure level (default policy) | {} |",
+            ladder
+                .first_pressure_level
+                .map_or_else(|| "None".to_owned(), |level| level.to_string())
+        );
+        let _ = writeln!(
+            markdown,
+            "| max established sessions (default policy) | {} |",
+            ladder.max_established
+        );
     }
     if let Some(tuned) = &tuned {
         let _ = writeln!(
@@ -1079,17 +1178,46 @@ pub fn summarize(request: &Request) -> Result<Outcome, String> {
             "| max clean idle-connection level (tuned policy) | {} |",
             tuned.max_clean_level
         );
+        let _ = writeln!(
+            markdown,
+            "| first pressure level (tuned policy) | {} |",
+            tuned
+                .first_pressure_level
+                .map_or_else(|| "None".to_owned(), |level| level.to_string())
+        );
+        let _ = writeln!(
+            markdown,
+            "| max established sessions (tuned policy) | {} |",
+            tuned.max_established
+        );
+        let _ = writeln!(
+            markdown,
+            "| tuned ladder completed | {} ({}) |",
+            tuned.completed,
+            tuned.abort_reason.as_deref().unwrap_or("no abort")
+        );
     }
     let _ = writeln!(markdown, "| oom_kills | {} |", oom_kills.unwrap_or(-1));
     let _ = writeln!(
         markdown,
-        "| cgroup resource-boundary evidence | {boundaries_pass} |"
+        "| cgroup resource-boundary evidence | {boundaries_pass} ({} scopes) |",
+        EXPECTED_RUNS.len()
     );
-    let _ = writeln!(markdown, "| swap.current evidence | {swap_pass} |");
+    let _ = writeln!(
+        markdown,
+        "| swap.current evidence | {swap_pass} (cells max {:.1} MiB, series max {:.1} MiB) |",
+        mib(swap_cell_max.unwrap_or(0)),
+        mib(peaks.swap_current_max)
+    );
     let _ = writeln!(
         markdown,
         "| peak cgroup memory.current | {:.1} MiB |",
         mib(peaks.memory_current_max)
+    );
+    let _ = writeln!(
+        markdown,
+        "| peak cgroup memory.peak | {:.1} MiB |",
+        mib(cgroup_memory_peak.unwrap_or(0))
     );
     let _ = writeln!(
         markdown,
@@ -1187,14 +1315,24 @@ pub fn cross_class_markdown(
         );
         let _ = writeln!(
             out,
-            "- host: {}, kernel {}, client {}\n",
+            "- host: {}, kernel {}, client {}",
             string(environment, "host").unwrap_or_default(),
             string(environment, "kernel").unwrap_or_default(),
             string(environment, "xray").unwrap_or_default()
         );
+        let _ = writeln!(
+            out,
+            "- measured: {} — {}\n",
+            string(environment, "dateUtc").unwrap_or_default(),
+            string(environment, "note").unwrap_or_default()
+        );
     }
-    out.push_str("| class | mode | pass | idle RSS MiB | assets RSS MiB | peak FDs |\n");
-    out.push_str("|---|---|---|---|---|---|\n");
+    out.push_str(
+        "| class | mode | pass | idle RSS MiB | assets RSS MiB | churn c8 conn/s (p99 ms) | churn c32 conn/s (p99 ms) | 512MiB c1 MiB/s | 512MiB c32 MiB/s | clean lvl (default) | clean lvl (tuned) | first pressure (tuned) | oom | peak cgroup MiB | peak FDs |\n",
+    );
+    out.push_str(
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n",
+    );
     for (_, outcome) in class_rows {
         let rendered = outcome.json.to_python_json();
         let Ok(value) = json_in::parse(&rendered) else {
@@ -1202,10 +1340,18 @@ pub fn cross_class_markdown(
         };
         let idle = object(&value, "idle");
         let assets = object(&value, "assets");
+        let churn = object(&value, "churn");
+        let churn8 = churn.and_then(|value| object(value, "c8"));
+        let churn32 = churn.and_then(|value| object(value, "c32"));
+        let downloads = object(&value, "download512MiB");
+        let download1 = downloads.and_then(|value| object(value, "c1"));
+        let download32 = downloads.and_then(|value| object(value, "c32"));
+        let ladder = object(&value, "ladder");
+        let tuned = object(&value, "ladderTuned");
         let peaks = object(&value, "peaks");
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {:.1} | {:.1} | {} |",
+            "| {} | {} | {} | {:.1} | {:.1} | {} ({}) | {} ({}) | {} | {} | {} | {} | {} | {} | {:.1} | {} |",
             string(&value, "class").unwrap_or_default(),
             string(&value, "resourceMode").unwrap_or_default(),
             boolean(&value, "pass").unwrap_or(false),
@@ -1215,9 +1361,77 @@ pub fn cross_class_markdown(
             mib(assets
                 .and_then(|value| integer(value, "serverRssBytes"))
                 .unwrap_or(0)),
+            fmt_optional(churn8.and_then(|value| number(value, "connectionsPerSecondMedian"))),
+            fmt_optional(churn8.and_then(|value| number(value, "p99MsWorst"))),
+            fmt_optional(churn32.and_then(|value| number(value, "connectionsPerSecondMedian"))),
+            fmt_optional(churn32.and_then(|value| number(value, "p99MsWorst"))),
+            fmt_optional(
+                download1.and_then(|value| number(value, "throughputMiBPerSecondMedian"))
+            ),
+            fmt_optional(
+                download32.and_then(|value| number(value, "throughputMiBPerSecondMedian"))
+            ),
+            ladder
+                .and_then(|value| integer(value, "maxCleanLevel"))
+                .unwrap_or(0),
+            tuned
+                .and_then(|value| integer(value, "maxCleanLevel"))
+                .unwrap_or(0),
+            tuned
+                .and_then(|value| integer(value, "firstPressureLevel"))
+                .map_or_else(|| "None".to_owned(), |value| value.to_string()),
+            peaks
+                .and_then(|value| integer(value, "cgroupOomKills"))
+                .map_or_else(|| "unknown".to_owned(), |value| value.to_string()),
+            mib(peaks
+                .and_then(|value| integer(value, "cgroupMemoryPeak"))
+                .unwrap_or(0)),
             peaks
                 .and_then(|value| integer(value, "serverFdMax"))
                 .unwrap_or(0)
+        );
+    }
+    out.push_str("\n## Derived budgets per class\n\n");
+    out.push_str(
+        "| class | cpus seen | cpu.max us | memory total MiB | fd soft -> effective | fd budget | fd clamped |\n",
+    );
+    out.push_str("|---|---|---|---|---|---|---|\n");
+    for (_, outcome) in class_rows {
+        let rendered = outcome.json.to_python_json();
+        let Ok(value) = json_in::parse(&rendered) else {
+            continue;
+        };
+        let budgets = object(&value, "derivedBudgets");
+        let machine = budgets.and_then(|value| object(value, "machineReport"));
+        let descriptor = budgets.and_then(|value| object(value, "descriptorBudgetReport"));
+        let _ = writeln!(
+            out,
+            "| {} | {} | {}/{} | {:.1} | {} -> {} | {} | {} |",
+            string(&value, "class").unwrap_or_default(),
+            machine
+                .and_then(|value| integer(value, "available_cpus"))
+                .unwrap_or(0),
+            machine
+                .and_then(|value| integer(value, "cpu_quota_us"))
+                .unwrap_or(0),
+            machine
+                .and_then(|value| integer(value, "cpu_period_us"))
+                .unwrap_or(0),
+            mib(machine
+                .and_then(|value| integer(value, "memory_total"))
+                .unwrap_or(0)),
+            machine
+                .and_then(|value| integer(value, "fd_soft_limit"))
+                .unwrap_or(0),
+            machine
+                .and_then(|value| integer(value, "fd_effective_soft_limit"))
+                .unwrap_or(0),
+            descriptor
+                .and_then(|value| integer(value, "fd_effective_budget"))
+                .unwrap_or(0),
+            descriptor
+                .and_then(|value| boolean(value, "fd_clamped"))
+                .unwrap_or(false)
         );
     }
     out
