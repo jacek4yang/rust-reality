@@ -74,7 +74,7 @@ pub fn build(repo: &Path, workspace: &Workspace) -> Result<PathBuf, String> {
 }
 
 /// The origin's own argv for a listener plan.
-fn listener_args(plan: &OriginPlan) -> Vec<String> {
+pub(crate) fn listener_args(plan: &OriginPlan) -> Vec<String> {
     let mut args = vec![
         "--listen-address".to_owned(),
         plan.listen_address.clone(),
@@ -194,9 +194,9 @@ pub fn start_in_namespace(
         || {
             std::net::TcpStream::connect_timeout(
                 &std::net::SocketAddr::new(
-                    plan.listen_address.parse().unwrap_or(std::net::IpAddr::V4(
-                        std::net::Ipv4Addr::LOCALHOST,
-                    )),
+                    plan.listen_address
+                        .parse()
+                        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
                     plan.port,
                 ),
                 Duration::from_millis(200),
@@ -340,9 +340,19 @@ mod tests {
         let mut response = Vec::new();
         stream.read_to_end(&mut response).unwrap();
         let text = String::from_utf8_lossy(&response);
-        assert!(text.starts_with("HTTP/1.0 200"), "{}", &text[..40.min(text.len())]);
-        assert!(text.contains("Content-Length: 256"), "the 256-byte marker body");
-        assert!(text.ends_with(&"x".repeat(256)), "the body is the marker payload");
+        assert!(
+            text.starts_with("HTTP/1.0 200"),
+            "{}",
+            &text[..40.min(text.len())]
+        );
+        assert!(
+            text.contains("Content-Length: 256"),
+            "the 256-byte marker body"
+        );
+        assert!(
+            text.ends_with(&"x".repeat(256)),
+            "the body is the marker payload"
+        );
 
         drop(child);
     }
@@ -362,7 +372,10 @@ mod tests {
         };
         assert!(plan.tls.is_none());
         let tls = OriginPlan {
-            tls: Some((PathBuf::from("/w/origin.crt"), PathBuf::from("/w/origin.key"))),
+            tls: Some((
+                PathBuf::from("/w/origin.crt"),
+                PathBuf::from("/w/origin.key"),
+            )),
             ..plan
         };
         assert!(tls.tls.is_some());

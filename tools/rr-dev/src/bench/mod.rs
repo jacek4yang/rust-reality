@@ -39,6 +39,7 @@ pub mod host_lock;
 pub mod identity;
 pub mod interop;
 pub mod ipv6;
+pub mod ipv6_netns;
 pub mod loopback;
 pub mod matrix;
 pub mod netns;

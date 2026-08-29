@@ -1238,19 +1238,203 @@ fn socket_table() -> Result<String, String> {
     Ok(outcome.stdout)
 }
 
+fn namespace_socket_table(namespace: &str) -> Result<String, String> {
+    let outcome = crate::bench::ipv6_netns::command_in(
+        namespace,
+        Path::new("ss"),
+        &["-lntH".to_owned()],
+        &[],
+    )?;
+    if !outcome.success() {
+        return Err(format!(
+            "ss -lntH in {namespace} exited {:?}: {}",
+            outcome.code,
+            outcome.stderr.trim_end()
+        ));
+    }
+    Ok(outcome.stdout)
+}
+
+fn namespace_tcp_connected(namespace: &str, address: &str, port: u16) -> Result<bool, String> {
+    let url = if address.contains(':') {
+        format!("http://[{address}]:{port}/")
+    } else {
+        format!("http://{address}:{port}/")
+    };
+    let args = vec![
+        "--silent".to_owned(),
+        "--output".to_owned(),
+        "/dev/null".to_owned(),
+        "--connect-timeout".to_owned(),
+        "1".to_owned(),
+        "--max-time".to_owned(),
+        "1".to_owned(),
+        "--write-out".to_owned(),
+        "%{time_connect}".to_owned(),
+        url,
+    ];
+    let env = [
+        ("ALL_PROXY".to_owned(), String::new()),
+        ("all_proxy".to_owned(), String::new()),
+        ("HTTP_PROXY".to_owned(), String::new()),
+        ("http_proxy".to_owned(), String::new()),
+        ("HTTPS_PROXY".to_owned(), String::new()),
+        ("https_proxy".to_owned(), String::new()),
+        ("NO_PROXY".to_owned(), String::new()),
+        ("no_proxy".to_owned(), String::new()),
+    ];
+    let outcome = crate::bench::ipv6_netns::command_in(namespace, Path::new("curl"), &args, &env)?;
+    Ok(outcome
+        .trimmed_stdout()
+        .parse::<f64>()
+        .is_ok_and(|seconds| seconds > 0.0))
+}
+
+fn start_server_in_namespace(
+    namespace: &str,
+    workspace: &crate::bench::workspace::Workspace,
+    run: &crate::bench::evidence::RunDirectory,
+    rust_bin: &Path,
+    server: &MaterializedServer,
+    ca_certificate: &Path,
+) -> Result<crate::bench::process::Child, String> {
+    crate::bench::ipv6_netns::spawn_in(
+        namespace,
+        &format!("rust-{}", server.name),
+        rust_bin,
+        &[
+            "serve".to_owned(),
+            "--config".to_owned(),
+            server.config_path.display().to_string(),
+        ],
+        workspace.path(),
+        &[(
+            "SSL_CERT_FILE".to_owned(),
+            ca_certificate.display().to_string(),
+        )],
+        &run.join(&format!("{}.rust.log", server.name)),
+    )
+}
+
+fn run_disabled_ipv6_listener_cases(
+    run_id: &str,
+    workspace: &crate::bench::workspace::Workspace,
+    run: &crate::bench::evidence::RunDirectory,
+    rust_bin: &Path,
+    ca_certificate: &Path,
+    ports: &[u16],
+    results: &mut Results,
+) -> Result<(), String> {
+    if !crate::bench::ipv6_netns::sudo_available() {
+        return results.record(Record {
+            matrix: "1-listeners".to_owned(),
+            case: "no-ipv6-ns".to_owned(),
+            classification: Classification::Namespace,
+            status: Status::Unavailable,
+            detail: Json::object([("reason", Json::string("no passwordless sudo"))]),
+            evidence: String::new(),
+        });
+    }
+
+    let disabled = crate::bench::ipv6_netns::DisabledIpv6::create(run_id)?;
+    let namespace = disabled.name().to_owned();
+    let outcome = (|| {
+        let ipv6_only_plan = ServerPlan {
+            name: "l1-no6-v6only".to_owned(),
+            port: ports[0],
+            mode: ListenerMode::Ipv6Only,
+            ipv4: "0.0.0.0".to_owned(),
+            ipv6: "::1".to_owned(),
+            target: "[::1]:1".to_owned(),
+            dial: Vec::new(),
+        };
+        let ipv6_only = materialize_server(workspace, rust_bin, &ipv6_only_plan)?;
+        let mut child = start_server_in_namespace(
+            &namespace,
+            workspace,
+            run,
+            rust_bin,
+            &ipv6_only,
+            ca_certificate,
+        )?;
+        let failed = exits_within(&mut child, std::time::Duration::from_secs(8));
+        results.record(Record {
+            matrix: "1-listeners".to_owned(),
+            case: "no-ipv6-ns-ipv6only-fails".to_owned(),
+            classification: Classification::Namespace,
+            status: Status::from_met(failed),
+            detail: Json::object([
+                ("ns", Json::string("disable_ipv6=1")),
+                (
+                    "expect",
+                    Json::string("EADDRNOTAVAIL on concrete ::1 is fatal"),
+                ),
+            ]),
+            evidence: format!("{}.rust.log", ipv6_only.name),
+        })?;
+        child.terminate();
+
+        let auto_plan = ServerPlan {
+            name: "l1-no6-auto".to_owned(),
+            port: ports[1],
+            mode: ListenerMode::Auto,
+            ipv4: "127.0.0.1".to_owned(),
+            ipv6: "::".to_owned(),
+            target: "[::1]:1".to_owned(),
+            dial: Vec::new(),
+        };
+        let auto = materialize_server(workspace, rust_bin, &auto_plan)?;
+        let mut child =
+            start_server_in_namespace(&namespace, workspace, run, rust_bin, &auto, ca_certificate)?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut served_ipv4 = false;
+        while std::time::Instant::now() < deadline && child.is_alive() {
+            let listening = namespace_socket_table(&namespace)
+                .is_ok_and(|table| listener_present(&table, "127.0.0.1", auto.port));
+            if listening && namespace_tcp_connected(&namespace, "127.0.0.1", auto.port)? {
+                served_ipv4 = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        results.record(Record {
+            matrix: "1-listeners".to_owned(),
+            case: "no-ipv6-ns-auto-serves-v4".to_owned(),
+            classification: Classification::Namespace,
+            status: Status::from_met(served_ipv4),
+            detail: Json::object([
+                ("port", Json::Int(i64::from(auto.port))),
+                (
+                    "note",
+                    Json::string(
+                        "wildcard [::] bind remains optional in auto mode; IPv4 acceptance verified",
+                    ),
+                ),
+            ]),
+            evidence: format!("{}.rust.log", auto.name),
+        })?;
+        child.terminate();
+        Ok(())
+    })();
+    drop(disabled);
+    crate::bench::ipv6_netns::DisabledIpv6::verify_removed(&namespace)?;
+    outcome
+}
+
 /// Records the non-privileged listener contract from phase 1.
-#[expect(
-    clippy::too_many_arguments,
+#[allow(
+    clippy::too_many_lines,
     reason = "the phase owns the run, workspace, identity, certificate and results"
 )]
 pub fn run_local_listener_phase(
+    run_id: &str,
     workspace: &crate::bench::workspace::Workspace,
     run: &crate::bench::evidence::RunDirectory,
     rust_bin: &Path,
     ca_certificate: &Path,
     results: &mut Results,
 ) -> Result<(), String> {
-    let ports = crate::bench::workspace::reserve_ports(7)?;
+    let ports = crate::bench::workspace::reserve_ports(8)?;
     for (index, mode) in ListenerMode::ALL.into_iter().enumerate() {
         let port = ports[index];
         let plan = ServerPlan {
@@ -1385,7 +1569,15 @@ pub fn run_local_listener_phase(
     })?;
     contender_child.terminate();
     owner_child.terminate();
-    Ok(())
+    run_disabled_ipv6_listener_cases(
+        run_id,
+        workspace,
+        run,
+        rust_bin,
+        ca_certificate,
+        &ports[6..8],
+        results,
+    )
 }
 
 /// A curl command with every ambient proxy variable cleared.
@@ -1628,8 +1820,8 @@ pub fn discover_global_ipv6(ip_output: &str) -> Option<String> {
 
 /// Records phase 2: real Xray/VLESS/REALITY/Vision sessions across both
 /// loopback families, including DNS policy, cover fallback and auth controls.
-#[expect(
-    clippy::too_many_arguments,
+#[allow(
+    clippy::too_many_lines,
     reason = "the phase owns the two binaries, origin, certificate and evidence"
 )]
 pub fn run_session_phase(
@@ -1915,8 +2107,9 @@ pub fn run_session_phase(
 /// Records phase 3 without letting absent public IPv6 invalidate local policy
 /// proof. A configured-but-broken address is still a failure; automatic
 /// discovery finding no address is an honest `unavailable` observation.
-#[expect(
+#[allow(
     clippy::too_many_arguments,
+    clippy::too_many_lines,
     reason = "the phase owns both binaries, origin, certificate and results"
 )]
 pub fn run_global_phase(
@@ -2100,8 +2293,9 @@ fn socket_address(address: &str, port: u16) -> Result<std::net::SocketAddr, Stri
 }
 
 /// Records phase 4's upload, download and simultaneous full-duplex integrity.
-#[expect(
+#[allow(
     clippy::too_many_arguments,
+    clippy::too_many_lines,
     reason = "the phase owns both binaries, origin, certificate and results"
 )]
 pub fn run_transfer_phase(
@@ -2293,15 +2487,522 @@ pub fn run_transfer_phase(
     Ok(())
 }
 
-/// Runs the currently materialized native phases and publishes their evidence.
-///
-/// Phase 5 is deliberately rejected until its owned-namespace mechanism lands;
-/// accepting it early would create an
-/// output directory that looked complete while silently omitting contracts.
+fn wait_for_namespace_listener(
+    namespace: &str,
+    address: &str,
+    port: u16,
+    child: &mut crate::bench::process::Child,
+) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while std::time::Instant::now() < deadline {
+        if namespace_socket_table(namespace)
+            .is_ok_and(|table| listener_present(&table, address, port))
+        {
+            return Ok(());
+        }
+        if !child.is_alive() {
+            return Err(format!(
+                "{} exited before {address}:{port} listened in {namespace}",
+                child.label()
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    Err(format!(
+        "{} did not listen on {address}:{port} in {namespace} within 15s",
+        child.label()
+    ))
+}
+
+fn start_origin_in_namespace(
+    namespace: &str,
+    workspace: &crate::bench::workspace::Workspace,
+    run: &crate::bench::evidence::RunDirectory,
+    binary: &Path,
+    plan: &crate::bench::origin_go::OriginPlan,
+) -> Result<crate::bench::process::Child, String> {
+    let mut child = crate::bench::ipv6_netns::spawn_in(
+        namespace,
+        &plan.label,
+        binary,
+        &crate::bench::origin_go::listener_args(plan),
+        workspace.path(),
+        &[],
+        &run.join(&format!("{}.log", plan.label)),
+    )?;
+    wait_for_namespace_listener(namespace, &plan.listen_address, plan.port, &mut child)?;
+    Ok(child)
+}
+
+fn start_xray_in_namespace(
+    namespace: &str,
+    workspace: &crate::bench::workspace::Workspace,
+    run: &crate::bench::evidence::RunDirectory,
+    xray_bin: &Path,
+    name: &str,
+    legs: &[Leg],
+) -> Result<crate::bench::process::Child, String> {
+    let config = workspace.join(&format!("{name}.xray.json"));
+    std::fs::write(&config, xray_config(legs).to_python_json())
+        .map_err(|error| format!("could not write {}: {error}", config.display()))?;
+    let mut child = crate::bench::ipv6_netns::spawn_in(
+        namespace,
+        &format!("xray-{name}"),
+        xray_bin,
+        &[
+            "run".to_owned(),
+            "-config".to_owned(),
+            config.display().to_string(),
+        ],
+        workspace.path(),
+        &[],
+        &run.join(&format!("{name}.xray.log")),
+    )?;
+    for leg in legs {
+        wait_for_namespace_listener(namespace, "127.0.0.1", leg.socks_port, &mut child)?;
+    }
+    Ok(child)
+}
+
+fn namespace_download(
+    namespace: &str,
+    socks_port: u16,
+    url: &str,
+    destination: &Path,
+    max_time: u64,
+) -> Result<Transfer, String> {
+    let _ = std::fs::remove_file(destination);
+    let args = vec![
+        "--silent".to_owned(),
+        "--show-error".to_owned(),
+        "--socks5-hostname".to_owned(),
+        format!("127.0.0.1:{socks_port}"),
+        "--max-time".to_owned(),
+        max_time.to_string(),
+        "--output".to_owned(),
+        destination.display().to_string(),
+        "--write-out".to_owned(),
+        "%{http_code} %{time_total}".to_owned(),
+        url.to_owned(),
+    ];
+    let env = [
+        ("ALL_PROXY".to_owned(), String::new()),
+        ("all_proxy".to_owned(), String::new()),
+        ("HTTP_PROXY".to_owned(), String::new()),
+        ("http_proxy".to_owned(), String::new()),
+        ("HTTPS_PROXY".to_owned(), String::new()),
+        ("https_proxy".to_owned(), String::new()),
+        ("NO_PROXY".to_owned(), String::new()),
+        ("no_proxy".to_owned(), String::new()),
+    ];
+    let outcome = crate::bench::ipv6_netns::command_in(namespace, Path::new("curl"), &args, &env)?;
+    transfer_from_outcome(&outcome, destination)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "the resilience transaction owns three namespaces and every child in them"
+)]
+fn run_namespace_resilience(
+    suite: &Ipv6Suite,
+    workspace: &crate::bench::workspace::Workspace,
+    run: &crate::bench::evidence::RunDirectory,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    origin_bin: &Path,
+    certificate: &crate::bench::no_ccs::CoverCertificate,
+    ports: &[u16],
+    results: &mut Results,
+) -> Result<(), String> {
+    if !crate::bench::ipv6_netns::sudo_available() {
+        return results.record(Record {
+            matrix: "5-resilience".to_owned(),
+            case: "netem-and-route-loss".to_owned(),
+            classification: Classification::Namespace,
+            status: Status::Unavailable,
+            detail: Json::object([("reason", Json::string("no passwordless sudo"))]),
+            evidence: String::new(),
+        });
+    }
+
+    let mut topology = crate::bench::ipv6_netns::Topology::create(&suite.run_id)?;
+    let names = topology.names().clone();
+    let outcome = (|| {
+        topology.wait_for_dad()?;
+        let payload = crate::bench::origin_go::write_pattern_payload(workspace.path(), 1)?;
+        let expected = crate::hash::sha256_file(&payload)?;
+        let payload_name = payload
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| "phase-5 payload has no UTF-8 name".to_owned())?;
+
+        let cover_plan = crate::bench::origin_go::OriginPlan {
+            label: "cover5".to_owned(),
+            listen_address: "::1".to_owned(),
+            port: ports[0],
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("cover5.put.jsonl"),
+            tls: Some((certificate.certificate.clone(), certificate.key.clone())),
+            access_log: None,
+            alpn: Some("h2,http/1.1".to_owned()),
+        };
+        let mut cover = start_origin_in_namespace(
+            &names.server_namespace,
+            workspace,
+            run,
+            origin_bin,
+            &cover_plan,
+        )?;
+        let origin_plan = crate::bench::origin_go::OriginPlan {
+            label: "origin5-v6".to_owned(),
+            listen_address: "2001:db8:b::1".to_owned(),
+            port: ports[1],
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("origin5.put.jsonl"),
+            tls: None,
+            access_log: None,
+            alpn: None,
+        };
+        let mut origin = start_origin_in_namespace(
+            &names.origin_namespace,
+            workspace,
+            run,
+            origin_bin,
+            &origin_plan,
+        )?;
+        let server_plan = ServerPlan {
+            name: "s5".to_owned(),
+            port: ports[2],
+            mode: ListenerMode::Ipv6Only,
+            ipv4: "0.0.0.0".to_owned(),
+            ipv6: "2001:db8:a::2".to_owned(),
+            target: format!("[::1]:{}", ports[0]),
+            dial: vec![
+                ("mode".to_owned(), Json::string("auto")),
+                ("routeRefreshSeconds".to_owned(), Json::Int(2)),
+                ("hardFailurePenaltySeconds".to_owned(), Json::Int(3)),
+            ],
+        };
+        let server = materialize_server(workspace, rust_bin, &server_plan)?;
+        let mut server_child = start_server_in_namespace(
+            &names.server_namespace,
+            workspace,
+            run,
+            rust_bin,
+            &server,
+            &certificate.ca_certificate,
+        )?;
+        wait_for_namespace_listener(
+            &names.server_namespace,
+            "2001:db8:a::2",
+            server.port,
+            &mut server_child,
+        )?;
+        let mut xray = start_xray_in_namespace(
+            &names.client_namespace,
+            workspace,
+            run,
+            xray_bin,
+            "x5",
+            &[leg(ports[3], "2001:db8:a::2", &server)],
+        )?;
+        let url = format!("http://[2001:db8:b::1]:{}/{payload_name}", ports[1]);
+
+        if crate::bench::ipv6_netns::tc_available() {
+            topology.add_netem()?;
+            let transfer = namespace_download(
+                &names.client_namespace,
+                ports[3],
+                &url,
+                &workspace.join("p5a.out"),
+                120,
+            );
+            let removal = topology.remove_netem();
+            removal?;
+            let transfer = transfer?;
+            results.record(Record {
+                matrix: "5-resilience".to_owned(),
+                case: "netem-100ms-1pct-session".to_owned(),
+                classification: Classification::Namespace,
+                status: Status::from_met(transfer.byte_exact(&expected)),
+                detail: Json::object([
+                    (
+                        "netem",
+                        Json::string("delay 100ms loss 1% (client-leg egress)"),
+                    ),
+                    ("curl", Json::string(transfer.curl_field())),
+                    ("rc", Json::Int(i64::from(transfer.code))),
+                    ("byteExact", Json::Bool(transfer.byte_exact(&expected))),
+                ]),
+                evidence: "x5.xray.log".to_owned(),
+            })?;
+        } else {
+            results.record(Record {
+                matrix: "5-resilience".to_owned(),
+                case: "netem-100ms-1pct-session".to_owned(),
+                classification: Classification::Namespace,
+                status: Status::Unavailable,
+                detail: Json::object([("reason", Json::string("tc unavailable"))]),
+                evidence: String::new(),
+            })?;
+        }
+
+        let baseline = namespace_download(
+            &names.client_namespace,
+            ports[3],
+            &url,
+            &workspace.join("p5b0.out"),
+            60,
+        )?;
+        results.record(Record {
+            matrix: "5-resilience".to_owned(),
+            case: "route-loss-baseline".to_owned(),
+            classification: Classification::Namespace,
+            status: Status::from_met(baseline.byte_exact(&expected)),
+            detail: transfer_detail(&url, &baseline, &expected),
+            evidence: "x5.xray.log".to_owned(),
+        })?;
+
+        topology.remove_origin_route()?;
+        let failed = namespace_download(
+            &names.client_namespace,
+            ports[3],
+            &url,
+            &workspace.join("p5b1.out"),
+            30,
+        );
+        let restoration = topology.restore_origin_route();
+        restoration?;
+        let failed = failed?;
+        results.record(Record {
+            matrix: "5-resilience".to_owned(),
+            case: "route-loss-fails-fast".to_owned(),
+            classification: Classification::Namespace,
+            status: Status::from_met(failed.code != 0),
+            detail: Json::object([
+                (
+                    "expect",
+                    Json::string("fetch fails while the egress route is deleted"),
+                ),
+                ("curl", Json::string(failed.curl_field())),
+                ("rc", Json::Int(i64::from(failed.code))),
+            ]),
+            evidence: "s5.rust.log".to_owned(),
+        })?;
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+        let mut attempts = 0_i64;
+        let mut recovered = None;
+        while std::time::Instant::now() < deadline {
+            attempts += 1;
+            let transfer = namespace_download(
+                &names.client_namespace,
+                ports[3],
+                &url,
+                &workspace.join("p5b2.out"),
+                30,
+            )?;
+            if transfer.byte_exact(&expected) {
+                recovered = Some(transfer);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+        let server_alive = server_child.is_alive();
+        results.record(Record {
+            matrix: "5-resilience".to_owned(),
+            case: "route-recovery-while-running".to_owned(),
+            classification: Classification::Namespace,
+            status: Status::from_met(recovered.is_some()),
+            detail: Json::object([
+                ("attempts", Json::Int(attempts)),
+                (
+                    "curl",
+                    Json::string(
+                        recovered
+                            .as_ref()
+                            .map_or_else(String::new, Transfer::curl_field),
+                    ),
+                ),
+                (
+                    "rc",
+                    Json::Int(i64::from(recovered.as_ref().map_or(-1, |row| row.code))),
+                ),
+                (
+                    "serverProcess",
+                    Json::string(if server_alive { "alive" } else { "dead" }),
+                ),
+                (
+                    "note",
+                    Json::string("routeRefreshSeconds=2, hardFailurePenaltySeconds=3"),
+                ),
+            ]),
+            evidence: "s5.rust.log".to_owned(),
+        })?;
+        results.record(Record {
+            matrix: "5-resilience".to_owned(),
+            case: "server-process-stability".to_owned(),
+            classification: Classification::Namespace,
+            status: Status::from_met(server_alive),
+            detail: Json::object([("pid", Json::Int(i64::from(server_child.pid())))]),
+            evidence: "s5.rust.log".to_owned(),
+        })?;
+
+        xray.terminate();
+        server_child.terminate();
+        origin.terminate();
+        cover.terminate();
+        Ok(())
+    })();
+    drop(topology);
+    crate::bench::ipv6_netns::Topology::verify_removed(&names)?;
+    outcome
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the fallback case owns both implementations, two origins and evidence"
+)]
+fn run_fast_fallback(
+    workspace: &crate::bench::workspace::Workspace,
+    run: &crate::bench::evidence::RunDirectory,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    origin_bin: &Path,
+    certificate: &crate::bench::no_ccs::CoverCertificate,
+    ports: &[u16],
+    results: &mut Results,
+) -> Result<(), String> {
+    let _cover = crate::bench::origin_go::start(
+        origin_bin,
+        workspace,
+        &crate::bench::origin_go::OriginPlan {
+            label: "cover5-fast".to_owned(),
+            listen_address: "::1".to_owned(),
+            port: ports[0],
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("cover5-fast.put.jsonl"),
+            tls: Some((certificate.certificate.clone(), certificate.key.clone())),
+            access_log: None,
+            alpn: Some("h2,http/1.1".to_owned()),
+        },
+    )?;
+    let payload = workspace.join("phase5-fast-payload.bin");
+    let body: Vec<u8> = (0..=255_u8).cycle().take(256 * 1024).collect();
+    std::fs::write(&payload, body)
+        .map_err(|error| format!("could not write {}: {error}", payload.display()))?;
+    let expected = crate::hash::sha256_file(&payload)?;
+    let _origin = crate::bench::origin_go::start(
+        origin_bin,
+        workspace,
+        &crate::bench::origin_go::OriginPlan {
+            label: "origin5-v4only".to_owned(),
+            listen_address: "127.0.0.1".to_owned(),
+            port: ports[1],
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("origin5-fast.put.jsonl"),
+            tls: None,
+            access_log: None,
+            alpn: None,
+        },
+    )?;
+    let plan = ServerPlan::dual_stack("s5c", ports[2], &format!("[::1]:{}", ports[0]))
+        .dialling("preferIpv6");
+    let server = materialize_server(workspace, rust_bin, &plan)?;
+    let mut server_child = start_server_raw(
+        workspace,
+        run,
+        rust_bin,
+        &server,
+        &certificate.ca_certificate,
+    )?;
+    server_child
+        .wait_for_address(
+            std::net::SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], server.port)),
+            std::time::Duration::from_secs(15),
+        )
+        .map_err(|error| error.to_string())?;
+    let mut xray = start_xray(
+        workspace,
+        run,
+        xray_bin,
+        "x5c",
+        &[leg(ports[3], "::1", &server)],
+    )?;
+    xray.wait_for_port(ports[3], std::time::Duration::from_secs(15))
+        .map_err(|error| error.to_string())?;
+    let url = format!("http://localhost:{}/phase5-fast-payload.bin", ports[1]);
+    let transfer = download(ports[3], &url, &workspace.join("p5c.out"), 30)?;
+    let met = transfer.byte_exact(&expected) && transfer.seconds < 3.0;
+    results.record(Record {
+        matrix: "5-resilience".to_owned(),
+        case: "refused-v6-fast-fallback".to_owned(),
+        classification: Classification::Loopback,
+        status: Status::from_met(met),
+        detail: Json::object([
+            ("dial", Json::string("preferIpv6")),
+            ("v6", Json::string("connection-refused")),
+            ("curl", Json::string(transfer.curl_field())),
+            ("rc", Json::Int(i64::from(transfer.code))),
+            ("timeTotalS", Json::Float(transfer.seconds)),
+            ("thresholdS", Json::Float(3.0)),
+            ("byteExact", Json::Bool(transfer.byte_exact(&expected))),
+        ]),
+        evidence: "s5c.rust.log".to_owned(),
+    })?;
+    Ok(())
+}
+
+/// Records phase 5's owned-namespace netem/route-loss transaction and the
+/// loopback immediate-family-failure control.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the phase owns both binaries, origin, certificate and results"
+)]
+pub fn run_resilience_phase(
+    suite: &Ipv6Suite,
+    workspace: &crate::bench::workspace::Workspace,
+    run: &crate::bench::evidence::RunDirectory,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    origin_bin: &Path,
+    certificate: &crate::bench::no_ccs::CoverCertificate,
+    results: &mut Results,
+) -> Result<(), String> {
+    let ports = crate::bench::workspace::reserve_ports(8)?;
+    run_namespace_resilience(
+        suite,
+        workspace,
+        run,
+        rust_bin,
+        xray_bin,
+        origin_bin,
+        certificate,
+        &ports[..4],
+        results,
+    )?;
+    run_fast_fallback(
+        workspace,
+        run,
+        rust_bin,
+        xray_bin,
+        origin_bin,
+        certificate,
+        &ports[4..8],
+        results,
+    )
+}
+
+/// Runs the native phases and publishes their evidence.
 ///
 /// # Errors
 ///
 /// Returns the first setup, runtime, integrity or publication failure.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the dispatcher keeps phase ownership and publication in one transaction"
+)]
 pub fn run(suite: &Ipv6Suite) -> Result<Json, String> {
     use crate::bench::{
         evidence::{Publication, RunDirectory},
@@ -2311,9 +3012,6 @@ pub fn run(suite: &Ipv6Suite) -> Result<Json, String> {
     };
 
     validate(suite)?;
-    if suite.phases.contains('5') {
-        return Err("IPv6 phase 5 is not materialized yet".to_owned());
-    }
     for program in ["curl", "go", "ss"] {
         if !crate::process::Tool::exists(program) {
             return Err(format!("required program unavailable: {program}"));
@@ -2327,7 +3025,7 @@ pub fn run(suite: &Ipv6Suite) -> Result<Json, String> {
     let certificate = cover_certificate(suite, &workspace)?;
     run.write_new("certificate-san.txt", &certificate.subject_alt_name)?;
     let mut results = Results::create(run.join("results.jsonl"))?;
-    let origin = if suite.phases.chars().any(|phase| matches!(phase, '2'..='4')) {
+    let origin = if suite.phases.chars().any(|phase| matches!(phase, '2'..='5')) {
         Some(crate::bench::origin_go::build(&suite.repo, &workspace)?)
     } else {
         None
@@ -2337,6 +3035,7 @@ pub fn run(suite: &Ipv6Suite) -> Result<Json, String> {
         match phase {
             '0' => phase0(suite, &run, &mut results)?,
             '1' => run_local_listener_phase(
+                &suite.run_id,
                 &workspace,
                 &run,
                 &rust.path,
@@ -2378,7 +3077,18 @@ pub fn run(suite: &Ipv6Suite) -> Result<Json, String> {
                 &certificate,
                 &mut results,
             )?,
-            '5' => unreachable!("rejected before creating the run directory"),
+            '5' => run_resilience_phase(
+                suite,
+                &workspace,
+                &run,
+                &rust.path,
+                &xray.path,
+                origin
+                    .as_deref()
+                    .ok_or_else(|| "phase 5 origin was not built".to_owned())?,
+                &certificate,
+                &mut results,
+            )?,
             _ => unreachable!("validated phase digit"),
         }
     }
