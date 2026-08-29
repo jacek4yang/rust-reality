@@ -346,7 +346,7 @@ mod tests {
         assert!(error.contains("server-direction ChangeCipherSpec"), "{error}");
     }
 
-    /// A trace with no ServerHello means the handshake never happened, so an
+    /// A trace with no `ServerHello` means the handshake never happened, so an
     /// absent CCS proves nothing.
     #[test]
     fn a_handshake_that_never_happened_is_not_a_pass() {
