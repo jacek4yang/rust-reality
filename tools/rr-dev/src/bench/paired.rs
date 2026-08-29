@@ -371,6 +371,8 @@ fn start_origins(
             payload_dir: workspace.path().to_path_buf(),
             put_log: workspace.join("http-put.jsonl"),
             tls: None,
+            access_log: None,
+            alpn: None,
         },
     )?;
     let tls_plan = origin_go::OriginPlan {
@@ -381,6 +383,8 @@ fn start_origins(
         payload_dir: workspace.path().to_path_buf(),
         put_log: workspace.join("https-put.jsonl"),
         tls: Some((cert, key)),
+            access_log: None,
+            alpn: None,
     };
     let tls_origin = match leg {
         None => origin_go::start(&binary, workspace, &tls_plan)?,
@@ -1519,6 +1523,8 @@ pub fn run_fallback(suite: &FallbackSuite) -> Result<SuiteOutcome, String> {
             payload_dir: workspace.path().to_path_buf(),
             put_log: workspace.join("http-put.jsonl"),
             tls: None,
+            access_log: None,
+            alpn: None,
         },
     )?;
     // The cover target *is* the origin, so a direct request with no REALITY

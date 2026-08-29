@@ -606,6 +606,8 @@ fn start_origin(
             payload_dir: workspace.path().to_path_buf(),
             put_log: workspace.join("http-put.jsonl"),
             tls: None,
+            access_log: None,
+            alpn: None,
         },
     )?;
     Ok((child, expected_sha))

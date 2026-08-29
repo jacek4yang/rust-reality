@@ -93,6 +93,17 @@ fn listener_args(plan: &OriginPlan) -> Vec<String> {
             key.display().to_string(),
         ]);
     }
+    if let Some(alpn) = &plan.alpn {
+        args.extend(["--tls-alpn".to_owned(), alpn.clone()]);
+    }
+    if let Some(access_log) = &plan.access_log {
+        args.extend([
+            "--access-log".to_owned(),
+            access_log.display().to_string(),
+            "--label".to_owned(),
+            plan.label.clone(),
+        ]);
+    }
     args
 }
 
@@ -111,6 +122,14 @@ pub struct OriginPlan {
     pub put_log: PathBuf,
     /// Certificate and key, which switch the listener to TLS 1.3 only.
     pub tls: Option<(PathBuf, PathBuf)>,
+    /// Per-request JSONL log, tagged with `label`.
+    ///
+    /// The IPv6 suite runs two origins on the same port in different address
+    /// families; which one served a request is its evidence of the family an
+    /// egress dial chose. Leaving this unset also leaves request hashing off.
+    pub access_log: Option<PathBuf>,
+    /// ALPN protocols the TLS listener offers. `None` negotiates none.
+    pub alpn: Option<String>,
 }
 
 /// Launches one origin listener and waits for it to accept connections.
@@ -297,6 +316,8 @@ mod tests {
             payload_dir: workspace.path().to_path_buf(),
             put_log: workspace.join("http-put.jsonl"),
             tls: None,
+            access_log: None,
+            alpn: None,
         };
         let child = start(&binary, &workspace, &plan).expect("the origin becomes ready");
 
@@ -327,6 +348,8 @@ mod tests {
             payload_dir: PathBuf::from("/w"),
             put_log: PathBuf::from("/w/http-put.jsonl"),
             tls: None,
+            access_log: None,
+            alpn: None,
         };
         assert!(plan.tls.is_none());
         let tls = OriginPlan {
@@ -334,5 +357,38 @@ mod tests {
             ..plan
         };
         assert!(tls.tls.is_some());
+        assert!(!listener_args(&tls).contains(&"--tls-alpn".to_owned()));
+    }
+
+    /// The access log carries the label, and hashing follows the log.
+    #[test]
+    fn the_access_log_and_alpn_flags_are_opt_in() {
+        let plan = OriginPlan {
+            label: "origin-v6".to_owned(),
+            listen_address: "::1".to_owned(),
+            port: 8080,
+            payload_dir: PathBuf::from("/w"),
+            put_log: PathBuf::from("/w/http-put.jsonl"),
+            tls: None,
+            access_log: None,
+            alpn: None,
+        };
+        let bare = listener_args(&plan);
+        assert!(!bare.contains(&"--access-log".to_owned()));
+        assert!(!bare.contains(&"--label".to_owned()));
+
+        let logged = OriginPlan {
+            access_log: Some(PathBuf::from("/w/access.jsonl")),
+            alpn: Some("h2,http/1.1".to_owned()),
+            ..plan
+        };
+        let args = listener_args(&logged);
+        assert!(args.contains(&"--access-log".to_owned()));
+        // Without the label the rows cannot attribute an egress family, which
+        // is the only reason this origin logs requests at all.
+        let label = args.iter().position(|arg| arg == "--label").unwrap();
+        assert_eq!(args[label + 1], "origin-v6");
+        let alpn = args.iter().position(|arg| arg == "--tls-alpn").unwrap();
+        assert_eq!(args[alpn + 1], "h2,http/1.1");
     }
 }

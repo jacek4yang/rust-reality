@@ -290,6 +290,8 @@ pub fn run(suite: &InteropSuite) -> Result<InteropReport, String> {
             payload_dir: workspace.path().to_path_buf(),
             put_log: workspace.join("http-put.jsonl"),
             tls: None,
+            access_log: None,
+            alpn: None,
         },
     )?;
 
