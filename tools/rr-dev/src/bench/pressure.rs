@@ -144,7 +144,7 @@ pub fn run(suite: &PressureSuite) -> Result<PressureResult, String> {
         &openssl.path,
         workspace.path(),
         &CertificatePlan {
-            ca_subject: format!("/CN=rust-reality descriptor gate CA {}", suite.run_id),
+            ca_subject: certificate_authority_subject(&suite.run_id),
             leaf_subject: "/CN=localhost".to_owned(),
             subject_alt_name: "DNS:localhost,IP:127.0.0.1".to_owned(),
             verify_hostname: Some("localhost".to_owned()),
@@ -657,6 +657,11 @@ fn check_config(rust_bin: &Path, config: &Path) -> Result<(), String> {
     }
 }
 
+fn certificate_authority_subject(run_id: &str) -> String {
+    let identity = hash::sha256_hex(run_id.as_bytes());
+    format!("/CN=rr descriptor gate CA {}", &identity[..16])
+}
+
 fn resolve_program(program: &Path) -> Result<PathBuf, String> {
     crate::bench::origin_tls::which(&program.display().to_string())
         .ok_or_else(|| format!("{} is not on PATH", program.display()))
@@ -859,6 +864,15 @@ mod tests {
         let mut invalid = suite();
         invalid.run_id = "../escape".to_owned();
         assert!(validate(&invalid).is_err());
+    }
+
+    #[test]
+    fn certificate_subject_is_bounded_and_run_specific() {
+        let first = certificate_authority_subject(&"a".repeat(200));
+        let second = certificate_authority_subject(&"b".repeat(200));
+        assert!(first.len() <= 64);
+        assert_ne!(first, second);
+        assert_eq!(first, certificate_authority_subject(&"a".repeat(200)));
     }
 
     #[test]
