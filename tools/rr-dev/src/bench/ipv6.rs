@@ -773,3 +773,204 @@ impl ServerPlan {
         ])
     }
 }
+
+/// The generated credentials and config for one rust-reality server.
+#[derive(Debug, Clone)]
+pub struct MaterializedServer {
+    /// Short name inherited from the plan.
+    pub name: String,
+    /// Inbound port inherited from the plan.
+    pub port: u16,
+    /// REALITY public key consumed by Xray.
+    pub public_key: String,
+    /// VLESS client UUID consumed by Xray.
+    pub uuid: String,
+    /// REALITY short id consumed by Xray.
+    pub short_id: String,
+    /// Path to the finished rust-reality config.
+    pub config_path: PathBuf,
+}
+
+/// Generates and materializes one rust-reality server plan.
+///
+/// Generation remains delegated to the product CLI so the suite cannot invent a
+/// second identity/configuration model. The typed patch below changes only the
+/// listener, target, asset deadline and outbound dial policy exercised here.
+///
+/// # Errors
+///
+/// Returns a message when generation, structural patching or writing fails.
+pub fn materialize_server(
+    workspace: &crate::bench::workspace::Workspace,
+    rust_bin: &Path,
+    plan: &ServerPlan,
+) -> Result<MaterializedServer, String> {
+    let generated = crate::bench::suites::generate_rust_identity(
+        workspace,
+        rust_bin,
+        plan.port,
+        &plan.target,
+        COVER_SNI,
+        Some(&workspace.join(&format!("{}.generate.log", plan.name))),
+    )?;
+    let config = patch_server_config(
+        &generated.server_json,
+        plan,
+        &workspace.join(&format!("assets-{}", plan.name)),
+    )?;
+    let config_path = workspace.join(&format!("{}.server.json", plan.name));
+    std::fs::write(&config_path, config)
+        .map_err(|error| format!("could not write {}: {error}", config_path.display()))?;
+    Ok(MaterializedServer {
+        name: plan.name.clone(),
+        port: plan.port,
+        public_key: generated.public_key,
+        uuid: generated.uuid,
+        short_id: generated.short_id,
+        config_path,
+    })
+}
+
+/// Applies an IPv6 server plan to a generated standalone config.
+fn patch_server_config(raw: &str, plan: &ServerPlan, cache: &Path) -> Result<String, String> {
+    use crate::perf::json_in::{self, Value};
+
+    fn object(value: Value, path: &str) -> Result<std::collections::BTreeMap<String, Value>, String> {
+        let Value::Object(members) = value else {
+            return Err(format!("generated rust config {path} is not an object"));
+        };
+        Ok(members)
+    }
+
+    let value = json_in::parse(raw)
+        .map_err(|error| format!("generated rust config is invalid JSON: {error}"))?;
+    let mut root = object(value, "root")?;
+    let inbounds = root
+        .remove("inbounds")
+        .ok_or_else(|| "generated rust config has no inbounds".to_owned())?;
+    let Value::Array(mut inbounds) = inbounds else {
+        return Err("generated rust config inbounds is not an array".to_owned());
+    };
+    if inbounds.len() != 1 {
+        return Err(format!(
+            "generated rust config has {} inbounds, expected exactly one",
+            inbounds.len()
+        ));
+    }
+    let mut inbound = object(inbounds.remove(0), "inbounds[0]")?;
+    inbound.insert(
+        "listen".to_owned(),
+        json_in::parse(&plan.listen_json().to_jq_json())
+            .map_err(|error| format!("listener plan is invalid JSON: {error}"))?,
+    );
+    inbound.insert("port".to_owned(), Value::Number(plan.port.to_string()));
+
+    let stream = inbound
+        .remove("streamSettings")
+        .ok_or_else(|| "generated rust config has no inbounds[0].streamSettings".to_owned())?;
+    let mut stream = object(stream, "inbounds[0].streamSettings")?;
+    let reality = stream.remove("realitySettings").ok_or_else(|| {
+        "generated rust config has no inbounds[0].streamSettings.realitySettings".to_owned()
+    })?;
+    let mut reality = object(reality, "inbounds[0].streamSettings.realitySettings")?;
+    reality.insert("target".to_owned(), Value::Str(plan.target.clone()));
+    stream.insert("realitySettings".to_owned(), Value::Object(reality));
+    inbound.insert("streamSettings".to_owned(), Value::Object(stream));
+    root.insert("inbounds".to_owned(), Value::Array(vec![Value::Object(inbound)]));
+
+    let mut assets = match root.remove("assets") {
+        Some(value) => object(value, "assets")?,
+        None => std::collections::BTreeMap::new(),
+    };
+    assets.insert(
+        "cacheDirectory".to_owned(),
+        Value::Str(cache.display().to_string()),
+    );
+    assets.insert(
+        "requestTimeoutSeconds".to_owned(),
+        Value::Number("5".to_owned()),
+    );
+    root.insert("assets".to_owned(), Value::Object(assets));
+
+    let network = root
+        .remove("network")
+        .ok_or_else(|| "generated rust config has no network".to_owned())?;
+    let mut network = object(network, "network")?;
+    let dial = network
+        .remove("dial")
+        .ok_or_else(|| "generated rust config has no network.dial".to_owned())?;
+    let mut dial = object(dial, "network.dial")?;
+    for (name, value) in &plan.dial {
+        let value = json_in::parse(&value.to_jq_json())
+            .map_err(|error| format!("dial plan field {name} is invalid JSON: {error}"))?;
+        dial.insert(name.clone(), value);
+    }
+    network.insert("dial".to_owned(), Value::Object(dial));
+    root.insert("network".to_owned(), Value::Object(network));
+    Ok(crate::bench::suites::render_compact(&Value::Object(root)))
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+    use crate::perf::json_in;
+
+    const GENERATED: &str = r#"{
+      "inbounds":[{"listen":"127.0.0.1","port":1,
+        "streamSettings":{"realitySettings":{"target":"old.test:443","keep":true}}}],
+      "assets":{"cacheDirectory":"old"},
+      "network":{"dial":{"mode":"auto","routeRefreshSeconds":30}},
+      "untouched":{"value":7}
+    }"#;
+
+    #[test]
+    fn a_server_plan_patches_only_the_ipv6_runtime_fields() {
+        let plan = ServerPlan::dual_stack("s", 62_001, "[::1]:8443")
+            .dialling("preferIpv6");
+        let rendered = patch_server_config(GENERATED, &plan, Path::new("/run/assets-s")).unwrap();
+        let value = json_in::parse(&rendered).unwrap();
+        assert_eq!(value.int_field("root", "untouched").unwrap_err().path, "root.untouched");
+        let inbound = &value.array_field("root", "inbounds").unwrap()[0];
+        assert_eq!(inbound.int_field("inbound", "port").unwrap(), 62_001);
+        let listen = inbound.field("inbound", "listen").unwrap();
+        assert_eq!(listen.str_field("listen", "mode").unwrap(), "dualStack");
+        assert_eq!(listen.str_field("listen", "ipv4").unwrap(), "127.0.0.1");
+        assert_eq!(listen.str_field("listen", "ipv6").unwrap(), "::1");
+        let stream = inbound.field("inbound", "streamSettings").unwrap();
+        let reality = stream.field("stream", "realitySettings").unwrap();
+        assert_eq!(reality.str_field("reality", "target").unwrap(), "[::1]:8443");
+        assert!(reality.field("reality", "keep").unwrap().as_bool("keep").unwrap());
+        let assets = value.field("root", "assets").unwrap();
+        assert_eq!(assets.str_field("assets", "cacheDirectory").unwrap(), "/run/assets-s");
+        assert_eq!(assets.int_field("assets", "requestTimeoutSeconds").unwrap(), 5);
+        let dial = value
+            .field("root", "network")
+            .unwrap()
+            .field("network", "dial")
+            .unwrap();
+        assert_eq!(dial.str_field("dial", "mode").unwrap(), "preferIpv6");
+        assert_eq!(dial.int_field("dial", "routeRefreshSeconds").unwrap(), 30);
+        assert_eq!(
+            value
+                .field("root", "untouched")
+                .unwrap()
+                .int_field("untouched", "value")
+                .unwrap(),
+            7
+        );
+    }
+
+    #[test]
+    fn config_shape_drift_fails_closed() {
+        let plan = ServerPlan::dual_stack("s", 62_001, "[::1]:8443");
+        let error = patch_server_config("{}", &plan, Path::new("/run/assets")).unwrap_err();
+        assert!(error.contains("no inbounds"), "{error}");
+        let error = patch_server_config(
+            r#"{"inbounds":[],"network":{"dial":{}}}"#,
+            &plan,
+            Path::new("/run/assets"),
+        )
+        .unwrap_err();
+        assert!(error.contains("expected exactly one"), "{error}");
+    }
+}
