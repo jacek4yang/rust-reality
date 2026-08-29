@@ -32,6 +32,7 @@ pub mod config;
 pub mod cover;
 pub mod engine;
 pub mod evidence;
+pub mod guards;
 pub mod host_lock;
 pub mod identity;
 pub mod loopback;
