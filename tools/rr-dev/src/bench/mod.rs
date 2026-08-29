@@ -24,16 +24,30 @@
 //! allowed here: the API is deliberately staged, not unused.
 #![allow(dead_code)]
 
+pub mod ab_suites;
+pub mod aggregate;
+pub mod attest;
+pub mod attribution;
 pub mod config;
+pub mod cover;
 pub mod engine;
+pub mod evidence;
 pub mod host_lock;
 pub mod identity;
 pub mod loopback;
+pub mod netns;
 pub mod origin;
+pub mod origin_go;
 pub mod origin_tls;
+pub mod paired;
+pub mod plan;
 pub mod process;
 pub mod publication;
+pub mod relay;
 pub mod report;
 pub mod runner;
+pub mod slot;
 pub mod suites;
+pub mod throughput;
+pub mod workload;
 pub mod workspace;

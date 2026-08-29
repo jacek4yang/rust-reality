@@ -257,7 +257,44 @@ pub fn generate_identities(
     context: &SuiteContext<'_>,
     rust_port: u16,
 ) -> Result<(RustIdentity, XrayKeys), String> {
-    let outcome = Tool::new(context.rust_bin.display().to_string())
+    let rust_identity = generate_rust_identity(
+        workspace,
+        context.rust_bin,
+        rust_port,
+        &context.cover_target,
+        &context.cover_sni,
+        None,
+    )?;
+    let xray_keys = generate_xray_keys(context.xray_bin)?;
+    Ok((rust_identity, xray_keys))
+}
+
+/// Generates one rust-reality server identity for a slot.
+///
+/// Runs `config generate standalone`, captures the REALITY public key from
+/// stderr, reads the client UUID and short id out of the generated config, and
+/// applies the warn-logging and workspace asset-cache patches the harnesses did
+/// with `jq`. Split out from [`generate_identities`] because the ABBA harnesses
+/// generate a *fresh* identity per slot, while the tunnel suites generate one for
+/// the whole run.
+///
+/// `stderr_log` archives the generator's stderr, which the slot-based harnesses
+/// kept as `generate.log` beside the slot's other evidence — it is where the
+/// REALITY public key is announced, so a slot that failed to produce one leaves
+/// the reason on disk.
+///
+/// # Errors
+///
+/// Returns the first failure in generation order.
+pub fn generate_rust_identity(
+    workspace: &Workspace,
+    rust_bin: &std::path::Path,
+    rust_port: u16,
+    cover_target: &str,
+    cover_sni: &str,
+    stderr_log: Option<&std::path::Path>,
+) -> Result<RustIdentity, String> {
+    let outcome = Tool::new(rust_bin.display().to_string())
         .args([
             "config",
             "generate",
@@ -267,12 +304,16 @@ pub fn generate_identities(
             "--port",
             &rust_port.to_string(),
             "--target",
-            &context.cover_target,
+            cover_target,
             "--server-name",
-            &context.cover_sni,
+            cover_sni,
         ])
         .probe()
         .map_err(|error| format!("rust-reality config generate failed: {error}"))?;
+    if let Some(path) = stderr_log {
+        std::fs::write(path, &outcome.stderr)
+            .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+    }
     if !outcome.success() {
         return Err(format!(
             "rust-reality config generate exited {:?}: {}",
@@ -317,7 +358,24 @@ pub fn generate_identities(
         .map_err(|error| format!("generated rust config: {error}"))?
         .to_owned();
 
-    let outcome = Tool::new(context.xray_bin.display().to_string())
+    // Patch the generated rust config: warn logging and an ephemeral assets
+    // cache inside the workspace, exactly as the legacy `jq` postprocessing did.
+    let server_json = patch_rust_config(raw, workspace)?;
+    Ok(RustIdentity {
+        public_key,
+        uuid,
+        short_id,
+        server_json,
+    })
+}
+
+/// Generates the Xray `x25519` keypair for a REALITY server.
+///
+/// # Errors
+///
+/// Returns a message when `xray x25519` fails or prints no key pair.
+pub fn generate_xray_keys(xray_bin: &std::path::Path) -> Result<XrayKeys, String> {
+    let outcome = Tool::new(xray_bin.display().to_string())
         .arg("x25519")
         .probe()
         .map_err(|error| format!("xray x25519 failed: {error}"))?;
@@ -341,19 +399,7 @@ pub fn generate_identities(
     let (Some(private), Some(public)) = (private, public) else {
         return Err("xray x25519 output is missing the key fields".to_owned());
     };
-
-    // Patch the generated rust config: warn logging and an ephemeral assets
-    // cache inside the workspace, exactly as the legacy `jq` postprocessing did.
-    let server_json = patch_rust_config(raw, workspace)?;
-    Ok((
-        RustIdentity {
-            public_key,
-            uuid,
-            short_id,
-            server_json,
-        },
-        XrayKeys { private, public },
-    ))
+    Ok(XrayKeys { private, public })
 }
 
 /// Rewrites the generated rust config with warn logging and the workspace asset
@@ -388,7 +434,7 @@ fn patch_rust_config(raw: &str, workspace: &Workspace) -> Result<String, String>
 
 /// Renders a parsed JSON value as compact one-line JSON. The children only parse
 /// the config, so the canonical evidence form stays deterministic and small.
-fn render_compact(value: &json_in::Value) -> String {
+pub fn render_compact(value: &json_in::Value) -> String {
     match value {
         json_in::Value::Null => "null".to_owned(),
         json_in::Value::Bool(flag) => flag.to_string(),

@@ -34,6 +34,15 @@ pub enum Kind {
     Rust,
     /// An `xray` binary: identity is the first line of `xray version`.
     Xray,
+    /// A pinned historical ELF whose provenance comes from its sidecar.
+    ///
+    /// The ABBA harnesses compare against a baseline built long ago, often
+    /// before the build stamped its commit — `rust-reality-baseline-717e69b`
+    /// reports `gitCommit: "unknown"`. Demanding a self-reported commit from it
+    /// would reject exactly the artifact the comparison exists to use. Its
+    /// provenance is the identity sidecar plus the GNU build ID, which is what
+    /// the legacy harnesses required of it too.
+    Prebuilt,
 }
 
 impl Kind {
@@ -41,6 +50,7 @@ impl Kind {
         match self {
             Self::Rust => "rust",
             Self::Xray => "xray",
+            Self::Prebuilt => "prebuilt",
         }
     }
 }
@@ -84,6 +94,9 @@ pub fn register(
     let identity = match kind {
         Kind::Rust => rust_identity(&path)?,
         Kind::Xray => xray_identity(&path)?,
+        // A prebuilt baseline is identified by content and by its sidecar; it is
+        // never asked to describe itself.
+        Kind::Prebuilt => String::new(),
     };
     Ok(Binary {
         label: label.to_owned(),

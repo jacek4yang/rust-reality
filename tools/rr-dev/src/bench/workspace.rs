@@ -132,6 +132,54 @@ pub fn reserve_ports(count: usize) -> Result<Vec<u16>, String> {
     Ok(ports)
 }
 
+/// Reserves a contiguous loopback port block **above** the ephemeral range.
+///
+/// [`reserve_ports`] asks the kernel for arbitrary free ports, which come from
+/// `ip_local_port_range` — the same pool the benchmark's own load driver draws its
+/// outbound source ports from. A block allocated there can collide mid-run with a
+/// socket the driver wanted, which does not fail cleanly.
+///
+/// So this scans upward from 61000 in the stride the harnesses used, binding every
+/// port of a candidate block before accepting it. The whole block is held until
+/// this returns, so a partially-free block is never reported as free.
+///
+/// # Errors
+///
+/// Returns a message when no block of `width` ports is available above the range.
+pub fn reserve_block(width: usize) -> Result<u16, String> {
+    /// First port considered; above the default `ip_local_port_range` ceiling.
+    const FLOOR: u32 = 61_000;
+    /// Stride between candidate bases, as `benchmark-setup-rate-xray.sh` used.
+    const STRIDE: u32 = 37;
+
+    if width == 0 {
+        return Err("a port block needs at least one port".to_owned());
+    }
+    let width32 = u32::try_from(width).unwrap_or(u32::MAX);
+    let mut base = FLOOR;
+    while base + width32 <= 65_536 {
+        let mut held = Vec::with_capacity(width);
+        let mut usable = true;
+        for offset in 0..width32 {
+            let port = u16::try_from(base + offset).unwrap_or(u16::MAX);
+            if let Ok(listener) = TcpListener::bind(("127.0.0.1", port)) {
+                held.push(listener);
+            } else {
+                usable = false;
+                break;
+            }
+        }
+        drop(held);
+        if usable {
+            return Ok(u16::try_from(base).unwrap_or(u16::MAX));
+        }
+        base += STRIDE;
+    }
+    Err(format!(
+        "no free loopback port block of {width} ports above {FLOOR}"
+    ))
+}
+
 /// A per-user namespace component for the fallback runtime root.
 ///
 /// Uses `$USER`, falling back to the process id, so two users on one host do not
@@ -198,5 +246,22 @@ mod tests {
             "runtime root must be namespaced: {}",
             root.display()
         );
+    }
+
+    /// The block must sit above the ephemeral range the load driver draws from,
+    /// and must be contiguous and actually bindable.
+    #[test]
+    fn a_reserved_block_is_contiguous_and_above_the_ephemeral_range() {
+        let base = reserve_block(8).expect("a block of eight ports is available");
+        assert!(base >= 61_000, "base {base} must sit above the ephemeral range");
+        assert!(u32::from(base) + 8 <= 65_536);
+        // Every port in the block binds now that the probe released them.
+        let held: Vec<TcpListener> = (0..8)
+            .map(|offset| TcpListener::bind(("127.0.0.1", base + offset)).unwrap())
+            .collect();
+        assert_eq!(held.len(), 8);
+
+        assert!(reserve_block(0).is_err());
+        assert!(reserve_block(70_000).is_err());
     }
 }

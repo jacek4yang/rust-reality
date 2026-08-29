@@ -230,13 +230,36 @@ pub fn seed_from_label(label: &str) -> u64 {
 /// Returns [`StatsError::BootstrapSample`] with fewer than three blocks, matching
 /// the original's refusal to interval-estimate from almost no data.
 pub fn interval(label: &str, ratios: &[f64], iterations: usize) -> Result<[f64; 2], StatsError> {
+    interval_with_seed(seed_from_label(label), label, ratios, iterations)
+}
+
+/// The same interval, with the seed supplied directly.
+///
+/// The evaluator derives its seed from a metric label, but the ABBA benchmark
+/// harnesses seed with a literal integer instead — `random.Random(0x464200 + conc)`
+/// and `random.Random(0x4642C0)` in `benchmark-fallback-ab.sh`, `0x525200 + conc`
+/// and `0x5252C0` in `benchmark-setup-rate.sh`. Their archived `summary.json`
+/// intervals only reproduce when the generator is seeded with that exact integer,
+/// so the seed is an input here rather than something derived from a name.
+///
+/// `label` names the metric in the error only.
+///
+/// # Errors
+///
+/// Returns [`StatsError::BootstrapSample`] with fewer than three blocks.
+pub fn interval_with_seed(
+    seed: u64,
+    label: &str,
+    ratios: &[f64],
+    iterations: usize,
+) -> Result<[f64; 2], StatsError> {
     if ratios.len() < 3 {
         return Err(StatsError::BootstrapSample {
             metric: label.to_owned(),
             found: ratios.len(),
         });
     }
-    let mut generator = PythonRandom::seeded(seed_from_label(label));
+    let mut generator = PythonRandom::seeded(seed);
     let mut medians = Vec::with_capacity(iterations);
     for _ in 0..iterations {
         let resample = generator.choices(ratios, ratios.len());
@@ -567,5 +590,65 @@ mod tests {
         // With 20000 iterations the bounds are elements 500 and 19499.
         assert_eq!(DEFAULT_ITERATIONS / 40, 500);
         assert_eq!((DEFAULT_ITERATIONS * 39) / 40 - 1, 19_499);
+    }
+
+    /// The ABBA harnesses seed with a literal integer, so the resample stream for
+    /// those exact seeds must match `CPython`. References from:
+    ///   `random.Random(0x4642C0).choices([0.0..6.0], k=7)`
+    ///   `random.Random(0x525201).choices([0.0..6.0], k=7)`
+    #[test]
+    fn the_legacy_integer_seeds_reproduce_the_cpython_stream() {
+        let population = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        assert_eq!(
+            PythonRandom::seeded(0x0046_42C0).choices(&population, 7),
+            [1.0, 0.0, 2.0, 4.0, 5.0, 4.0, 3.0],
+            "benchmark-fallback-ab.sh CPU seed 0x4642C0"
+        );
+        assert_eq!(
+            PythonRandom::seeded(0x0052_5201).choices(&population, 7),
+            [5.0, 3.0, 6.0, 2.0, 5.0, 3.0, 1.0],
+            "benchmark-setup-rate.sh concurrency-1 seed 0x525200 + 1"
+        );
+    }
+
+    /// The interval must follow the supplied integer seed, not a label digest.
+    /// References computed with the legacy expression at 200 iterations, where the
+    /// empirical distribution has not yet converged and the seeds are separable:
+    ///   `sorted(median(Random(s).choices(r, k=len(r))) for _ in range(200))[5], [194]`
+    #[test]
+    fn an_integer_seeded_interval_follows_that_seed() {
+        let ratios = [0.80, 0.88, 0.95, 1.00, 1.06, 1.14, 1.25];
+        assert_eq!(
+            interval_with_seed(0x0052_52C0, "setup-rate:cpu", &ratios, 200).unwrap(),
+            [0.88, 1.25],
+            "benchmark-setup-rate.sh CPU seed 0x5252C0"
+        );
+        assert_eq!(
+            interval_with_seed(0x0052_5201, "setup-rate:c1", &ratios, 200).unwrap(),
+            [0.80, 1.14],
+            "benchmark-setup-rate.sh concurrency-1 seed"
+        );
+        assert_eq!(
+            interval_with_seed(0x0046_42C0, "fallback:cpu", &ratios, 200).unwrap(),
+            [0.88, 1.14],
+            "benchmark-fallback-ab.sh CPU seed 0x4642C0"
+        );
+    }
+
+    /// The label-seeded entry point is the same procedure with a derived seed, so
+    /// the evaluator's recorded intervals cannot drift from this refactoring.
+    #[test]
+    fn the_label_interval_delegates_to_the_seeded_one() {
+        let ratios = [0.9, 0.95, 1.0, 1.05, 1.1];
+        let label = "matrix-c1:direct-upload_32_1:p99-latency";
+        assert_eq!(
+            interval(label, &ratios, 2_000).unwrap(),
+            interval_with_seed(seed_from_label(label), label, &ratios, 2_000).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_seeded_interval_still_refuses_fewer_than_three_blocks() {
+        assert!(interval_with_seed(0x0046_42C0, "fallback:cpu", &[1.0, 1.1], 200).is_err());
     }
 }

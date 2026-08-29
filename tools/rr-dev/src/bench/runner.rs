@@ -30,10 +30,11 @@ pub struct Suite {
 }
 
 /// The catalogue of benchmark suites, in migration order.
-pub const SUITES: [Suite; 12] = [
+pub const SUITES: [Suite; 13] = [
     Suite { id: "real-path", summary: "real-network A/B download through rust-reality and Xray tunnels", supersedes: "benchmark-real-path.sh" },
     Suite { id: "matrix", summary: "the protected-metric performance matrix across concurrency and policy", supersedes: "benchmark-matrix.sh" },
     Suite { id: "setup-rate", summary: "connection setup rate and CPU per connection", supersedes: "benchmark-setup-rate.sh" },
+    Suite { id: "setup-rate-xray", summary: "setup rate with Xray serving one leg", supersedes: "benchmark-setup-rate-xray.sh" },
     Suite { id: "tls-shape", summary: "TLS record and closure shape versus a pinned Xray ClientHello", supersedes: "benchmark-tls-shape.sh" },
     Suite { id: "dns", summary: "DNS cold/warm/burst resolution versus Xray", supersedes: "benchmark-dns-comparison.sh" },
     Suite { id: "routing", summary: "routing-rule scaling versus Xray", supersedes: "benchmark-routing-comparison.sh" },
