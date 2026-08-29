@@ -231,8 +231,9 @@ enum BenchCommand {
         /// Space-separated concurrency levels (setup-rate suites).
         #[arg(long, default_value = "1 8 32")]
         concurrencies: String,
-        /// Which implementation leads block one (setup-rate suites).
-        #[arg(long, default_value = "rust")]
+        /// Which implementation leads block one; defaults to the suite's first
+        /// label (`baseline` for the paired suites, `rust` for the comparator).
+        #[arg(long, default_value = "")]
         abba_start: String,
         /// `perf` attributes server CPU; `wall` records rates only.
         #[arg(long, default_value = "perf")]
@@ -246,6 +247,9 @@ enum BenchCommand {
         /// Baseline identity sidecar binding its commit and digest.
         #[arg(long)]
         baseline_identity: Option<PathBuf>,
+        /// The commit the baseline sidecar must name.
+        #[arg(long)]
+        baseline_commit: Option<String>,
         /// Cover mode for the baseline side.
         #[arg(long, default_value = "default")]
         baseline_cover_mode: String,
@@ -816,6 +820,7 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             run_id,
             baseline_bin,
             baseline_identity,
+            baseline_commit,
             baseline_cover_mode,
             candidate_cover_mode,
             cover_netem_rtt_ms,
@@ -828,6 +833,7 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                         candidate_bin: rust_bin,
                         xray_bin,
                         baseline_identity: baseline_identity.as_deref(),
+                        baseline_commit: baseline_commit.as_deref(),
                         out_dir: out_dir.as_deref(),
                         run_id: run_id.as_deref(),
                         blocks: *blocks,
@@ -926,6 +932,7 @@ struct SetupRateArgs<'a> {
     candidate_bin: &'a Path,
     xray_bin: &'a Path,
     baseline_identity: Option<&'a Path>,
+    baseline_commit: Option<&'a str>,
     out_dir: Option<&'a Path>,
     run_id: Option<&'a str>,
     blocks: usize,
@@ -984,6 +991,7 @@ fn run_bench_setup_rate(repo: &Path, args: &SetupRateArgs<'_>) -> ExitCode {
         candidate_bin: args.candidate_bin.to_path_buf(),
         xray_bin: args.xray_bin.to_path_buf(),
         baseline_identity: args.baseline_identity.map(Path::to_path_buf),
+        baseline_commit: args.baseline_commit.map(str::to_owned),
         out_dir,
         run_id,
         blocks: args.blocks,
@@ -994,7 +1002,11 @@ fn run_bench_setup_rate(repo: &Path, args: &SetupRateArgs<'_>) -> ExitCode {
             .split_whitespace()
             .filter_map(|word| word.parse().ok())
             .collect(),
-        abba_start: args.abba_start.to_owned(),
+        abba_start: if args.abba_start.is_empty() {
+            "baseline".to_owned()
+        } else {
+            args.abba_start.to_owned()
+        },
         baseline_cover_mode,
         candidate_cover_mode,
         attribution,
@@ -1078,7 +1090,11 @@ fn run_bench_setup_rate_xray(
             .split_whitespace()
             .filter_map(|word| word.parse().ok())
             .collect(),
-        abba_start: abba_start.to_owned(),
+        abba_start: if abba_start.is_empty() {
+            "rust".to_owned()
+        } else {
+            abba_start.to_owned()
+        },
         attribution,
     };
     if let Err(error) = bench::ab_suites::validate(&plan) {

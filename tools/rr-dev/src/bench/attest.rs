@@ -232,8 +232,11 @@ pub fn embeds_commit(binary: &Path, commit: &str) -> Result<bool, String> {
 /// Verifies a baseline identity sidecar binds the requested commit and binary.
 ///
 /// The sidecar is how a prebuilt baseline ELF — one whose source is no longer
-/// checked out — stays attributable. It must name the same commit, the same binary
-/// digest, and assert that its own `sha256sums` were verified when it was made.
+/// checked out — stays attributable. It must name the same binary digest and
+/// assert that its own `sha256sums` were verified when it was made. The commit is
+/// checked only when the caller supplies one to check against, because a prebuilt
+/// baseline cannot be asked for its own commit: the sidecar is the source of that
+/// fact, not a second opinion on it.
 ///
 /// # Errors
 ///
@@ -241,7 +244,7 @@ pub fn embeds_commit(binary: &Path, commit: &str) -> Result<bool, String> {
 /// both the commit and the digest.
 pub fn verify_identity_sidecar(
     sidecar: &Path,
-    expected_commit: &str,
+    expected_commit: Option<&str>,
     expected_sha256: &str,
 ) -> Result<(), String> {
     let kind = sidecar
@@ -269,7 +272,9 @@ pub fn verify_identity_sidecar(
         value.field("identity", "sha256sumsVerified"),
         Ok(json_in::Value::Bool(true))
     );
-    if !source_commit.eq_ignore_ascii_case(expected_commit) {
+    if let Some(expected_commit) = expected_commit
+        && !source_commit.eq_ignore_ascii_case(expected_commit)
+    {
         return Err(format!(
             "baseline identity names commit {source_commit}, expected {expected_commit}"
         ));
@@ -420,10 +425,14 @@ mod tests {
             ),
         );
         // Case-insensitive on both hex fields, as the jq `ascii_downcase` was.
-        verify_identity_sidecar(&good, &commit, &sha).expect("an uppercase sidecar still binds");
+        verify_identity_sidecar(&good, Some(&commit), &sha)
+            .expect("an uppercase sidecar still binds");
 
-        assert!(verify_identity_sidecar(&good, &"c".repeat(40), &sha).is_err());
-        assert!(verify_identity_sidecar(&good, &commit, &"d".repeat(64)).is_err());
+        assert!(verify_identity_sidecar(&good, Some(&"c".repeat(40)), &sha).is_err());
+        assert!(verify_identity_sidecar(&good, Some(&commit), &"d".repeat(64)).is_err());
+        // With no commit to check against, the digest binding still applies.
+        verify_identity_sidecar(&good, None, &sha).expect("the digest still binds");
+        assert!(verify_identity_sidecar(&good, None, &"d".repeat(64)).is_err());
 
         let unverified = scratch.write(
             "unverified.json",
@@ -432,11 +441,11 @@ mod tests {
                  \"sha256sumsVerified\":false}}"
             ),
         );
-        let error = verify_identity_sidecar(&unverified, &commit, &sha).unwrap_err();
+        let error = verify_identity_sidecar(&unverified, Some(&commit), &sha).unwrap_err();
         assert!(error.contains("sha256sumsVerified"), "{error}");
 
         let missing = scratch.write("missing.json", "{}");
-        assert!(verify_identity_sidecar(&missing, &commit, &sha).is_err());
+        assert!(verify_identity_sidecar(&missing, Some(&commit), &sha).is_err());
     }
 
     #[test]

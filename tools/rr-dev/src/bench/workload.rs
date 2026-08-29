@@ -93,9 +93,14 @@ pub struct SampleRow {
 
 impl SampleRow {
     /// Connections per second, absent when nothing succeeded.
+    ///
+    /// The guard is the success *count*, not the latency vector. `setup-rate`
+    /// does not serialise `latenciesSeconds`, so a row read back from its
+    /// `samples.json` has none — and a rate that vanished on the round trip would
+    /// silently empty every block.
     #[must_use]
     pub fn connections_per_second(&self) -> Option<f64> {
-        if self.latencies_seconds.is_empty() || self.wall_seconds <= 0.0 {
+        if self.connections == 0 || self.wall_seconds <= 0.0 {
             return None;
         }
         #[expect(
@@ -709,5 +714,27 @@ mod tests {
         assert!(!rendered.contains("p50Seconds"));
         assert!(rendered.contains("\"failed\": 4"));
         assert_eq!(row.connections_per_second(), None);
+    }
+
+    /// A row that carries no latency vector — which is how `setup-rate` records
+    /// them — must still report its rate, or every block would come back empty.
+    #[test]
+    fn a_row_without_latencies_still_reports_its_rate() {
+        let row = SampleRow {
+            block: 1,
+            position: 1,
+            implementation: "baseline".to_owned(),
+            concurrency: 1,
+            sample_index: 0,
+            connections: 8,
+            failed: 0,
+            wall_seconds: 2.0,
+            latencies_seconds: Vec::new(),
+        };
+        assert_eq!(row.connections_per_second(), Some(4.0));
+        let rendered = row.to_json(false).to_python_json();
+        assert!(rendered.contains("\"connectionsPerSecond\": 4.0"));
+        // With no latencies there are no percentiles to report.
+        assert!(!rendered.contains("p50Seconds"));
     }
 }

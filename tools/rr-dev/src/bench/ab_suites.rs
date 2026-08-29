@@ -145,10 +145,12 @@ pub fn run_setup_rate_xray(plan: &ComparatorPlan) -> Result<ComparatorOutcome, S
     let run = RunDirectory::create(&plan.out_dir)?;
     let workspace = Workspace::create("benchmark-setup-rate-xray")?;
 
-    // Two origin ports plus a server/SOCKS pair per slot.
+    // Two origin ports plus a server/SOCKS pair per slot, taken as one block
+    // above the ephemeral range the load driver's own sockets come from.
     let slot_count = plan.blocks * 4;
-    let ports = crate::bench::workspace::reserve_ports(2 + slot_count * 2)?;
-    let (plain_port, tls_port) = (ports[0], ports[1]);
+    let port_count = 2 + slot_count * 2;
+    let port_base = crate::bench::workspace::reserve_block(port_count)?;
+    let (plain_port, tls_port) = (port_base, port_base + 1);
 
     let _origins = start_origins(plan, &workspace, plain_port, tls_port)?;
 
@@ -166,8 +168,9 @@ pub fn run_setup_rate_xray(plan: &ComparatorPlan) -> Result<ComparatorOutcome, S
     let cover_target = format!("127.0.0.1:{tls_port}");
     let mut measured = Vec::with_capacity(slot_count);
     for (index, entry) in slots.iter().enumerate() {
-        let server_port = ports[2 + index * 2];
-        let socks_port = ports[3 + index * 2];
+        let offset = u16::try_from(index * 2).map_err(|_| "too many slots".to_owned())?;
+        let server_port = port_base + 2 + offset;
+        let socks_port = port_base + 3 + offset;
         let binary = if entry.implementation == "rust" {
             &rust.path
         } else {

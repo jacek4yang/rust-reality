@@ -71,6 +71,8 @@ pub struct SetupRateSuite {
     pub xray_bin: PathBuf,
     /// The baseline's identity sidecar, binding its commit and digest.
     pub baseline_identity: Option<PathBuf>,
+    /// The commit the sidecar must name, when the caller pins one.
+    pub baseline_commit: Option<String>,
     /// Output directory; must not already exist.
     pub out_dir: PathBuf,
     /// Run identifier.
@@ -195,18 +197,23 @@ impl PairedBinaries {
 
 /// Registers and attests every binary the run measures.
 fn register_binaries(suite: &SetupRateSuite) -> Result<PairedBinaries, String> {
-    let baseline = identity::register("baseline", &suite.baseline_bin, "", Kind::Rust)?;
+    // The baseline is a pinned historical ELF; its provenance is the sidecar and
+    // the build ID, never a commit it reports about itself.
+    let baseline = identity::register("baseline", &suite.baseline_bin, "", Kind::Prebuilt)?;
     let candidate = identity::register("candidate", &suite.candidate_bin, "", Kind::Rust)?;
     let xray = identity::register("xray", &suite.xray_bin, "", Kind::Xray)?;
     let baseline_build_id = attest::build_id(&baseline.path)?;
     let candidate_build_id = attest::build_id(&candidate.path)?;
     let xray_build_id = attest::build_id(&xray.path)?;
     if let Some(sidecar) = &suite.baseline_identity {
-        // The sidecar names the commit the baseline was built from. It is the only
-        // way a prebuilt ELF whose source is no longer checked out stays
-        // attributable, so a mismatch is fatal rather than advisory.
-        let commit = rust_commit(&baseline)?;
-        attest::verify_identity_sidecar(sidecar, &commit, &baseline.sha256)?;
+        // The sidecar is the only way a prebuilt ELF whose source is no longer
+        // checked out stays attributable, so a mismatch is fatal rather than
+        // advisory. `--baseline-commit` pins which commit it must name.
+        attest::verify_identity_sidecar(
+            sidecar,
+            suite.baseline_commit.as_deref(),
+            &baseline.sha256,
+        )?;
     }
     Ok(PairedBinaries {
         baseline,
@@ -216,17 +223,6 @@ fn register_binaries(suite: &SetupRateSuite) -> Result<PairedBinaries, String> {
         candidate_build_id,
         xray_build_id,
     })
-}
-
-/// Reads the 40-hex commit out of a registered rust binary's identity JSON.
-fn rust_commit(binary: &Binary) -> Result<String, String> {
-    let value = crate::perf::json_in::parse(&binary.identity)
-        .map_err(|error| format!("{} identity is invalid JSON: {error}", binary.label))?;
-    value
-        .field("environment", "gitCommit")
-        .and_then(|field| field.as_str("environment.gitCommit"))
-        .map(str::to_owned)
-        .map_err(|error| format!("{} identity: {error}", binary.label))
 }
 
 /// Runs the paired setup-rate suite end to end.
@@ -257,9 +253,9 @@ pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
 
     let slot_count = suite.blocks * 4;
     let port_count = 2 + slot_count * 2;
-    let ports = crate::bench::workspace::reserve_ports(port_count)?;
-    check_ephemeral_range(ports[0], port_count)?;
-    let (plain_port, tls_port) = (ports[0], ports[1]);
+    let port_base = crate::bench::workspace::reserve_block(port_count)?;
+    check_ephemeral_range(port_base, port_count)?;
+    let (plain_port, tls_port) = (port_base, port_base + 1);
 
     let origin_manifest = attest::snapshot_tree(&suite.repo.join(origin_go::SOURCE_RELATIVE))?;
     let _origins = start_origins(suite, &workspace, plain_port, tls_port)?;
@@ -269,7 +265,7 @@ pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
         PAIRED_LABELS,
         &suite.abba_start,
         suite.blocks,
-        PortLayout::ServerAndSocksAfterTwoOrigins { base: plain_port },
+        PortLayout::ServerAndSocksAfterTwoOrigins { base: port_base },
     )?;
     run.write_new("order.json", &plan::order_json(&slots).to_python_json())?;
 
@@ -281,7 +277,7 @@ pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
         &repository,
         &origin_manifest,
         &lock,
-        plain_port,
+        port_base,
         port_count,
         &cover_target,
     );
@@ -1038,6 +1034,7 @@ mod tests {
             candidate_bin: PathBuf::from("/bin/candidate"),
             xray_bin: PathBuf::from("/bin/xray"),
             baseline_identity: None,
+            baseline_commit: None,
             out_dir: PathBuf::from("/out/run"),
             run_id: "setup-rate-1".to_owned(),
             blocks: 3,
