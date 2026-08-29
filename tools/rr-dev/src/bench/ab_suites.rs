@@ -138,6 +138,9 @@ pub fn run_setup_rate_xray(plan: &ComparatorPlan) -> Result<ComparatorOutcome, S
     if matches!(plan.attribution, Attribution::Perf(_)) && !Tool::exists("perf") {
         return Err("MEASURE_MODE=perf requires perf".to_owned());
     }
+    if matches!(plan.attribution, Attribution::Strace) {
+        return Err("the Xray comparator supports MEASURE_MODE perf or wall only".to_owned());
+    }
 
     let rust = identity::register("rust-reality", &plan.rust_bin, "", Kind::Rust)?;
     let xray = identity::register("xray", &plan.xray_bin, "", Kind::Xray)?;
@@ -467,7 +470,8 @@ fn measure_slot(plan: &ComparatorPlan, inputs: &SlotInputs<'_>) -> Result<Measur
     )?;
 
     let task_clock_ms = match plan.attribution {
-        Attribution::Wall => None,
+        // The comparator never had a strace mode; its guard rejects it up front.
+        Attribution::Wall | Attribution::Strace => None,
         Attribution::Perf(_) => {
             let raw = std::fs::read_to_string(&perf_csv)
                 .map_err(|error| format!("could not read {}: {error}", perf_csv.display()))?;
@@ -677,7 +681,7 @@ fn summarise(plan: &ComparatorPlan, measured: &[MeasuredSlot]) -> Result<Json, S
 
 /// The per-connection CPU comparison, absent outside `perf` mode.
 fn cpu_summary(plan: &ComparatorPlan, measured: &[MeasuredSlot]) -> Result<Json, String> {
-    if matches!(plan.attribution, Attribution::Wall) {
+    if !matches!(plan.attribution, Attribution::Perf(_)) {
         return Ok(Json::Null);
     }
     #[expect(
@@ -768,6 +772,7 @@ fn contract_json(
             Json::string(match plan.attribution {
                 Attribution::Wall => "wall",
                 Attribution::Perf(_) => "perf",
+                Attribution::Strace => "strace",
             }),
         ),
         (
@@ -972,7 +977,7 @@ mod tests {
                     socks_port: 2,
                     server_pid: 3,
                     task_clock_ms: match attribution {
-                        Attribution::Wall => None,
+                        Attribution::Wall | Attribution::Strace => None,
                         Attribution::Perf(_) => Some(if scale > 1.0 { 100.0 } else { 200.0 }),
                     },
                     rows,

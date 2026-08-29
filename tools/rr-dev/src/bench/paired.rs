@@ -242,6 +242,9 @@ pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
         Attribution::Perf(_) if !Tool::exists("perf") => {
             return Err("MEASURE_MODE=perf requires perf".to_owned());
         }
+        Attribution::Strace if !Tool::exists("strace") => {
+            return Err("MEASURE_MODE=strace requires strace".to_owned());
+        }
         _ => {}
     }
 
@@ -435,6 +438,17 @@ fn write_slot_configs(
         .map_err(|error| format!("could not write {}: {error}", client_path.display()))
 }
 
+/// A slot's launched processes and the pid that is actually the server.
+///
+/// Under `strace` the spawned child is the tracer, not the server, so the pid the
+/// run measures, verifies and signals is a different one.
+struct SlotProcesses {
+    server: Child,
+    client: Child,
+    server_pid: u32,
+    traced: bool,
+}
+
 /// Launches a slot's rust server and its Xray SOCKS client, waiting for both.
 fn launch_slot(
     suite: &SetupRateSuite,
@@ -444,23 +458,35 @@ fn launch_slot(
     binary: &Binary,
     server_port: u16,
     socks_port: u16,
-) -> Result<(Child, Child), String> {
+) -> Result<SlotProcesses, String> {
+    let server_args = vec![
+        "serve".to_owned(),
+        "--config".to_owned(),
+        workspace
+            .join(&format!("{name}.server.json"))
+            .display()
+            .to_string(),
+    ];
+    let traced = matches!(suite.attribution, Attribution::Strace);
+    let (program, args) = if traced {
+        slot::strace_command(&slot_dir.join("strace.txt"), &binary.path, &server_args)
+    } else {
+        (binary.path.display().to_string(), server_args)
+    };
     let mut server = Child::spawn(
         format!("{name}-server"),
-        &binary.path,
-        &[
-            "serve".to_owned(),
-            "--config".to_owned(),
-            workspace
-                .join(&format!("{name}.server.json"))
-                .display()
-                .to_string(),
-        ],
+        Path::new(&program),
+        &args,
         workspace.path(),
         &[],
         &slot_dir.join("server.log"),
     )
     .map_err(|error| error.to_string())?;
+    let server_pid = if traced {
+        slot::find_traced_child(server.pid(), &binary.path, READY_TIMEOUT)?
+    } else {
+        server.pid()
+    };
     let mut client = Child::spawn(
         format!("{name}-client"),
         &suite.xray_bin,
@@ -483,7 +509,38 @@ fn launch_slot(
     client
         .wait_for_port(socks_port, READY_TIMEOUT)
         .map_err(|error| error.to_string())?;
-    Ok((server, client))
+    Ok(SlotProcesses {
+        server,
+        client,
+        server_pid,
+        traced,
+    })
+}
+
+/// Stops a slot's processes in the order the evidence depends on.
+///
+/// The client goes first so the server sees clean closes rather than resets.
+/// Under `strace` the *tracee* is then signalled and the tracer is left to exit on
+/// its own: terminating the tracer directly can leave its `-c` summary file empty,
+/// which is the difference between having syscall evidence and having none.
+fn stop_slot(processes: &mut SlotProcesses) {
+    processes.client.terminate();
+    if processes.traced {
+        let _ = std::process::Command::new("kill")
+            .arg("-TERM")
+            .arg(processes.server_pid.to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        for _ in 0..50 {
+            if !processes.server.is_alive() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    processes.server.terminate();
 }
 
 /// Runs one paired slot: configure, launch, warm up, measure, record, tear down.
@@ -510,7 +567,7 @@ fn measure_slot(
     write_slot_configs(
         suite, workspace, &slot_dir, &name, binary, role, server_port, socks_port, cover_target,
     )?;
-    let (mut server, mut client) = launch_slot(
+    let mut processes = launch_slot(
         suite,
         workspace,
         &slot_dir,
@@ -519,7 +576,7 @@ fn measure_slot(
         server_port,
         socks_port,
     )?;
-    let server_pid = server.pid();
+    let server_pid = processes.server_pid;
     slot::verify_running_image(server_pid, &binary.sha256, &entry.implementation)?;
 
     let workload = SetupRatePlan {
@@ -549,7 +606,7 @@ fn measure_slot(
     )?;
 
     let task_clock_ms = match suite.attribution {
-        Attribution::Wall => None,
+        Attribution::Wall | Attribution::Strace => None,
         Attribution::Perf(_) => {
             let raw = std::fs::read_to_string(&perf_csv)
                 .map_err(|error| format!("could not read {}: {error}", perf_csv.display()))?;
@@ -572,8 +629,17 @@ fn measure_slot(
         socks_port,
     )?;
 
-    client.terminate();
-    server.terminate();
+    stop_slot(&mut processes);
+
+    if matches!(suite.attribution, Attribution::Strace) {
+        // An empty summary means the tracer was killed before it flushed, so the
+        // slot has no syscall evidence at all.
+        let strace = slot_dir.join("strace.txt");
+        let empty = std::fs::metadata(&strace).is_ok_and(|meta| meta.len() == 0);
+        if empty || !strace.is_file() {
+            return Err(format!("missing strace evidence in {name}"));
+        }
+    }
 
     // The cover counters only exist on a candidate slot under the shaped leg,
     // which is the only configuration that both emits and requires them.
@@ -805,7 +871,7 @@ fn collect_blocks(
 
 /// The per-connection CPU comparison, absent outside `perf` mode.
 fn cpu_summary(suite: &SetupRateSuite, measured: &[MeasuredSlot]) -> Result<Json, String> {
-    if matches!(suite.attribution, Attribution::Wall) {
+    if !matches!(suite.attribution, Attribution::Perf(_)) {
         return Ok(Json::Null);
     }
     #[expect(
@@ -902,6 +968,7 @@ fn environment_json(
             Json::string(match suite.attribution {
                 Attribution::Wall => "wall",
                 Attribution::Perf(_) => "perf",
+                Attribution::Strace => "strace",
             }),
         ),
         (

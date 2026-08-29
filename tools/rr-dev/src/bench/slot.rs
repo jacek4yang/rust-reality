@@ -36,6 +36,11 @@ pub enum Attribution {
     Wall,
     /// `perf stat` over the given events, attached to the server process.
     Perf(&'static [&'static str]),
+    /// The server runs *under* `strace -c`, counting its receive syscalls.
+    ///
+    /// Unlike `perf`, this wraps the server rather than the workload, so the
+    /// workload itself runs unwrapped.
+    Strace,
 }
 
 /// Builds the argv for the workload child.
@@ -159,11 +164,79 @@ pub fn drive(
 ) -> Result<(), String> {
     let argv = workload_argv(plan, Some(output))?;
     match attribution {
-        Attribution::Wall => run_workload(&argv, cwd),
+        // strace wraps the server, not the workload, so the workload runs plain.
+        Attribution::Wall | Attribution::Strace => run_workload(&argv, cwd),
         Attribution::Perf(events) => {
             run_workload_under_perf(&argv, server_pid, events, perf_csv, cwd)
         }
     }
+}
+
+/// The `strace` argv that wraps a server process.
+///
+/// `--kill-on-exit` stops a tracee outliving the tracer, `-f` follows threads,
+/// `-qq` suppresses the exit-status chatter, `-c` asks for the counting summary
+/// rather than a line per call, and the traced set is exactly the receive path the
+/// harness reasons about.
+#[must_use]
+pub fn strace_command(
+    output: &Path,
+    program: &Path,
+    program_args: &[String],
+) -> (String, Vec<String>) {
+    let mut args = vec![
+        "--kill-on-exit".to_owned(),
+        "-f".to_owned(),
+        "-qq".to_owned(),
+        "-c".to_owned(),
+        "-e".to_owned(),
+        "trace=recvfrom,recvmsg,read".to_owned(),
+        "-o".to_owned(),
+        output.display().to_string(),
+        program.display().to_string(),
+    ];
+    args.extend_from_slice(program_args);
+    ("strace".to_owned(), args)
+}
+
+/// Finds the traced server beneath an `strace` wrapper.
+///
+/// `strace` execs the tracee as its own child, so the pid the harness must
+/// measure and signal is not the pid it spawned. The child is matched by resolved
+/// executable rather than by position, because the wrapper may briefly have
+/// others.
+///
+/// # Errors
+///
+/// Returns a message when no child running `binary` appears before `timeout`.
+pub fn find_traced_child(
+    wrapper_pid: u32,
+    binary: &Path,
+    timeout: std::time::Duration,
+) -> Result<u32, String> {
+    let expected = binary
+        .canonicalize()
+        .map_err(|error| format!("could not resolve {}: {error}", binary.display()))?;
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        let path = format!("/proc/{wrapper_pid}/task/{wrapper_pid}/children");
+        if let Ok(raw) = std::fs::read_to_string(&path) {
+            for field in raw.split_whitespace() {
+                let Ok(child) = field.parse::<u32>() else {
+                    continue;
+                };
+                if std::fs::canonicalize(format!("/proc/{child}/exe"))
+                    .is_ok_and(|actual| actual == expected)
+                {
+                    return Ok(child);
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    Err(format!(
+        "cannot identify the straced server beneath PID {wrapper_pid}"
+    ))
 }
 
 /// Warms the slot's path up before it is measured.
@@ -303,5 +376,45 @@ mod tests {
         verify_running_image(std::process::id(), &own, "test").expect("the image matches");
         let error = verify_running_image(std::process::id(), &"0".repeat(64), "test").unwrap_err();
         assert!(error.contains("server ELF mismatch"), "{error}");
+    }
+
+    #[test]
+    fn the_strace_command_traces_only_the_receive_path() {
+        let (program, args) = strace_command(
+            Path::new("/out/slot/strace.txt"),
+            Path::new("/bin/rust-reality"),
+            &["serve".to_owned(), "--config".to_owned(), "/w/s.json".to_owned()],
+        );
+        assert_eq!(program, "strace");
+        assert_eq!(
+            args,
+            [
+                "--kill-on-exit",
+                "-f",
+                "-qq",
+                "-c",
+                "-e",
+                "trace=recvfrom,recvmsg,read",
+                "-o",
+                "/out/slot/strace.txt",
+                "/bin/rust-reality",
+                "serve",
+                "--config",
+                "/w/s.json",
+            ]
+        );
+    }
+
+    /// A wrapper with no matching child must time out rather than return a pid it
+    /// has not identified.
+    #[test]
+    fn an_absent_traced_child_fails_closed() {
+        let error = find_traced_child(
+            std::process::id(),
+            &std::env::current_exe().unwrap(),
+            std::time::Duration::from_millis(60),
+        )
+        .unwrap_err();
+        assert!(error.contains("cannot identify the straced server"), "{error}");
     }
 }

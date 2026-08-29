@@ -235,7 +235,8 @@ enum BenchCommand {
         /// label (`baseline` for the paired suites, `rust` for the comparator).
         #[arg(long, default_value = "")]
         abba_start: String,
-        /// `perf` attributes server CPU; `wall` records rates only.
+        /// `perf` attributes server CPU, `strace` counts receive syscalls, and
+        /// `wall` records rates only.
         #[arg(long, default_value = "perf")]
         measure_mode: String,
         /// Run identifier recorded in the completion marker.
@@ -955,8 +956,11 @@ fn run_bench_setup_rate(repo: &Path, args: &SetupRateArgs<'_>) -> ExitCode {
     let attribution = match args.measure_mode {
         "perf" => bench::slot::Attribution::Perf(&bench::attribution::REQUIRED_EVENTS),
         "wall" => bench::slot::Attribution::Wall,
+        "strace" => bench::slot::Attribution::Strace,
         other => {
-            eprintln!("bench run setup-rate: MEASURE_MODE must be perf or wall, got {other}");
+            eprintln!(
+                "bench run setup-rate: MEASURE_MODE must be perf, strace or wall, got {other}"
+            );
             return ExitCode::from(2);
         }
     };
