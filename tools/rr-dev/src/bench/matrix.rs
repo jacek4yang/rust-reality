@@ -762,3 +762,390 @@ mod tests {
         assert!(rendered.contains("\"throughputMiBPerSecond\": null"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// The runner
+// ---------------------------------------------------------------------------
+
+/// Everything a matrix run needs.
+#[derive(Debug, Clone)]
+pub struct MatrixSuite {
+    /// Repository root.
+    pub repo: std::path::PathBuf,
+    /// The pinned baseline ELF.
+    pub baseline_bin: std::path::PathBuf,
+    /// The candidate ELF.
+    pub final_bin: std::path::PathBuf,
+    /// The Xray binary: comparator server and every SOCKS client.
+    pub xray_bin: std::path::PathBuf,
+    /// Output directory; must not already exist.
+    pub out_dir: std::path::PathBuf,
+    /// Run identifier.
+    pub run_id: String,
+    /// The REALITY cover target the tunnel servers use, as in production.
+    pub cover_target: String,
+    /// The cover SNI.
+    pub cover_sni: String,
+    /// The cell plan.
+    pub plan: CellPlan,
+    /// Samples per implementation for payloads below the large threshold.
+    pub samples: usize,
+    /// Samples per implementation at or above it.
+    pub samples_large: usize,
+    /// Payload size for the end-to-end integrity run; `0` skips it.
+    pub integrity_mib: u64,
+    /// Which rust build leads block one.
+    pub abba_start: String,
+    /// Whether to raise `fs.pipe-user-pages-soft` for the run.
+    pub manage_pipe_pages: bool,
+}
+
+/// What a matrix run produced.
+#[derive(Debug)]
+pub struct MatrixOutcome {
+    /// The published output directory.
+    pub out_dir: std::path::PathBuf,
+    /// The `summary.json` document.
+    pub summary_json: String,
+    /// Cells measured.
+    pub cells: usize,
+    /// Samples recorded.
+    pub samples: usize,
+    /// Samples marked invalid.
+    pub invalid: usize,
+}
+
+/// Validates the matrix parameters.
+///
+/// # Errors
+///
+/// Returns the first violated guard.
+pub fn validate(suite: &MatrixSuite) -> Result<(), String> {
+    if suite.samples == 0 || suite.samples_large == 0 {
+        return Err("SAMPLES and SAMPLES_LARGE must be positive".to_owned());
+    }
+    if suite.plan.payloads_mib.is_empty() || suite.plan.payloads_mib.contains(&0) {
+        return Err("every payload size must be a positive integer".to_owned());
+    }
+    for levels in [&suite.plan.concurrencies, &suite.plan.large_concurrencies] {
+        if levels.is_empty() || levels.contains(&0) {
+            return Err("every concurrency must be a positive integer".to_owned());
+        }
+    }
+    if !RUST_LABELS.contains(&suite.abba_start.as_str()) {
+        return Err(format!(
+            "ABBA_START must be baseline or final, got {}",
+            suite.abba_start
+        ));
+    }
+    if suite.run_id.is_empty()
+        || !suite
+            .run_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err("RUN_ID is required and must be one safe component".to_owned());
+    }
+    if suite.plan.cells().is_empty() {
+        return Err("the cell filters selected no cells".to_owned());
+    }
+    Ok(())
+}
+
+/// The peak concurrency a plan reaches, which sizes the pipe-page budget.
+#[must_use]
+pub fn peak_concurrency(plan: &CellPlan) -> u64 {
+    plan.concurrencies
+        .iter()
+        .chain(plan.large_concurrencies.iter())
+        .copied()
+        .max()
+        .and_then(|value| u64::try_from(value).ok())
+        .unwrap_or(1)
+}
+
+/// The nine proxy processes and two origins a matrix run owns.
+///
+/// Each implementation gets a *tunnel* server whose REALITY cover is the public
+/// target, a *fallback* server whose cover is the local plain origin, and an Xray
+/// SOCKS client in front of the tunnel. Dropping this stops all of them.
+struct Topology {
+    _children: Vec<crate::bench::process::Child>,
+    endpoints: std::collections::BTreeMap<String, Endpoints>,
+    log_paths: std::collections::BTreeMap<String, (std::path::PathBuf, std::path::PathBuf)>,
+    http_port: u16,
+    https_port: u16,
+}
+
+/// The ports one implementation occupies.
+struct ImplementationPorts {
+    tunnel: u16,
+    fallback: u16,
+    socks: u16,
+}
+
+/// Brings up both origins and all nine proxy processes.
+fn start_topology(
+    suite: &MatrixSuite,
+    workspace: &crate::bench::workspace::Workspace,
+    binaries: &std::collections::BTreeMap<String, crate::bench::identity::Binary>,
+    port_base: u16,
+) -> Result<Topology, String> {
+    use crate::bench::{config::RealityIdentity, process::Child, suites};
+
+    let plain = port_base;
+    let secure = port_base + 1;
+    let mut children = start_origins(suite, workspace, plain, secure)?;
+
+    // One shared Xray identity for the comparator, as the script fixed it.
+    let xray_keys = suites::generate_xray_keys(&suite.xray_bin)?;
+    let xray_identity = RealityIdentity {
+        uuid: "11111111-1111-1111-1111-111111111111".to_owned(),
+        short_id: "0123456789abcdef".to_owned(),
+        server_name: suite.cover_sni.clone(),
+        target: suite.cover_target.clone(),
+    };
+
+    let mut endpoints = std::collections::BTreeMap::new();
+    let mut log_paths = std::collections::BTreeMap::new();
+    let mut clients = Vec::new();
+    for (index, label) in IMPLEMENTATIONS.iter().enumerate() {
+        let offset = u16::try_from(index * 3).map_err(|_| "too many implementations".to_owned())?;
+        let ports = ImplementationPorts {
+            tunnel: port_base + 2 + offset,
+            fallback: port_base + 3 + offset,
+            socks: port_base + 4 + offset,
+        };
+        let (public_key, identity) = if *label == COMPARATOR {
+            start_xray_pair(
+                suite,
+                workspace,
+                &xray_identity,
+                &xray_keys,
+                &ports,
+                plain,
+                &mut children,
+            )?;
+            (xray_keys.public.clone(), xray_identity.clone())
+        } else {
+            start_rust_pair(suite, workspace, binaries, label, &ports, plain, &mut children)?
+        };
+
+        let client_config =
+            crate::bench::config::xray_client(&identity, ports.tunnel, ports.socks, &public_key)
+                .to_python_json();
+        let client_path = workspace.join(&format!("{label}-client.json"));
+        std::fs::write(&client_path, &client_config)
+            .map_err(|error| format!("could not write {}: {error}", client_path.display()))?;
+        clients.push((label, ports.socks, client_path));
+
+        endpoints.insert(
+            (*label).to_owned(),
+            Endpoints {
+                socks: ports.socks,
+                fallback: ports.fallback,
+                http: plain,
+                https: secure,
+            },
+        );
+        log_paths.insert(
+            (*label).to_owned(),
+            (
+                workspace.join(&format!("{label}.log")),
+                workspace.join(&format!("{label}-fallback.log")),
+            ),
+        );
+    }
+
+    // Clients start after every server is listening, as the script ordered them.
+    for (label, socks, config) in clients {
+        let mut child = Child::spawn(
+            format!("{label}-client"),
+            &suite.xray_bin,
+            &[
+                "run".to_owned(),
+                "-config".to_owned(),
+                config.display().to_string(),
+            ],
+            workspace.path(),
+            &[],
+            &workspace.join(&format!("{label}-client.log")),
+        )
+        .map_err(|error| error.to_string())?;
+        child
+            .wait_for_port(socks, std::time::Duration::from_secs(30))
+            .map_err(|error| error.to_string())?;
+        children.push(child);
+    }
+
+    Ok(Topology {
+        _children: children,
+        endpoints,
+        log_paths,
+        http_port: plain,
+        https_port: secure,
+    })
+}
+
+/// Builds the Go origin and starts the plain and TLS listeners.
+fn start_origins(
+    suite: &MatrixSuite,
+    workspace: &crate::bench::workspace::Workspace,
+    plain: u16,
+    secure: u16,
+) -> Result<Vec<crate::bench::process::Child>, String> {
+    use crate::bench::{origin_go, origin_tls};
+    let binary = origin_go::build(&suite.repo, workspace)?;
+    let (cert, key) = origin_tls::generate_self_signed(workspace.path())?;
+    let mut children = Vec::with_capacity(2);
+    for (label, port, tls, put_log) in [
+        ("origin-http", plain, None, "http-put.jsonl"),
+        ("origin-https", secure, Some((cert, key)), "https-put.jsonl"),
+    ] {
+        children.push(origin_go::start(
+            &binary,
+            workspace,
+            &origin_go::OriginPlan {
+                label: label.to_owned(),
+                listen_address: "127.0.0.1".to_owned(),
+                port,
+                payload_dir: workspace.path().to_path_buf(),
+                put_log: workspace.join(put_log),
+                tls,
+            },
+        )?);
+    }
+    Ok(children)
+}
+
+/// Starts one rust implementation's tunnel and fallback servers.
+fn start_rust_pair(
+    suite: &MatrixSuite,
+    workspace: &crate::bench::workspace::Workspace,
+    binaries: &std::collections::BTreeMap<String, crate::bench::identity::Binary>,
+    label: &str,
+    ports: &ImplementationPorts,
+    http_port: u16,
+    children: &mut Vec<crate::bench::process::Child>,
+) -> Result<(String, crate::bench::config::RealityIdentity), String> {
+    use crate::bench::{config::RealityIdentity, process::Child, suites};
+
+    let binary = binaries
+        .get(label)
+        .ok_or_else(|| format!("{label} was never registered"))?;
+    // The tunnel server's cover is the public target, exactly like production.
+    let tunnel = suites::generate_rust_identity(
+        workspace,
+        &binary.path,
+        ports.tunnel,
+        &suite.cover_target,
+        &suite.cover_sni,
+        None,
+    )?;
+    // The fallback server's cover is the local origin, so a direct request with
+    // no REALITY handshake is relayed to it.
+    let fallback = suites::generate_rust_identity(
+        workspace,
+        &binary.path,
+        ports.fallback,
+        &format!("127.0.0.1:{http_port}"),
+        "localhost",
+        None,
+    )?;
+    for (suffix, port, json) in [
+        ("", ports.tunnel, &tunnel.server_json),
+        ("-fallback", ports.fallback, &fallback.server_json),
+    ] {
+        let path = workspace.join(&format!("{label}{suffix}.json"));
+        std::fs::write(&path, json)
+            .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+        let mut child = Child::spawn(
+            format!("{label}{suffix}-server"),
+            &binary.path,
+            &[
+                "serve".to_owned(),
+                "--config".to_owned(),
+                path.display().to_string(),
+            ],
+            workspace.path(),
+            &[],
+            &workspace.join(&format!("{label}{suffix}.log")),
+        )
+        .map_err(|error| error.to_string())?;
+        child
+            .wait_for_port(port, std::time::Duration::from_secs(30))
+            .map_err(|error| error.to_string())?;
+        children.push(child);
+    }
+    Ok((
+        tunnel.public_key.clone(),
+        RealityIdentity {
+            uuid: tunnel.uuid.clone(),
+            short_id: tunnel.short_id.clone(),
+            server_name: suite.cover_sni.clone(),
+            target: suite.cover_target.clone(),
+        },
+    ))
+}
+
+/// Starts the Xray comparator's tunnel and fallback servers.
+fn start_xray_pair(
+    suite: &MatrixSuite,
+    workspace: &crate::bench::workspace::Workspace,
+    identity: &crate::bench::config::RealityIdentity,
+    keys: &crate::bench::suites::XrayKeys,
+    ports: &ImplementationPorts,
+    http_port: u16,
+    children: &mut Vec<crate::bench::process::Child>,
+) -> Result<(), String> {
+    use crate::bench::{config, config::RealityIdentity, process::Child};
+
+    let fallback_identity = RealityIdentity {
+        server_name: "localhost".to_owned(),
+        target: format!("127.0.0.1:{http_port}"),
+        ..identity.clone()
+    };
+    let configs = [
+        (
+            "",
+            ports.tunnel,
+            config::xray_server(identity, ports.tunnel, &keys.private, true),
+        ),
+        (
+            "-fallback",
+            ports.fallback,
+            // Xray must be told where an unauthenticated connection goes; rust
+            // falls back on its own.
+            config::xray_server_with_fallback(
+                &fallback_identity,
+                ports.fallback,
+                &keys.private,
+                true,
+                Some(&format!("127.0.0.1:{http_port}")),
+            ),
+        ),
+    ];
+    for (suffix, port, document) in configs {
+        let path = workspace.join(&format!("{COMPARATOR}{suffix}-server.json"));
+        std::fs::write(&path, document.to_python_json())
+            .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+        let mut child = Child::spawn(
+            format!("{COMPARATOR}{suffix}-server"),
+            &suite.xray_bin,
+            &[
+                "run".to_owned(),
+                "-config".to_owned(),
+                path.display().to_string(),
+            ],
+            workspace.path(),
+            &[],
+            &workspace.join(&format!("{COMPARATOR}{suffix}.log")),
+        )
+        .map_err(|error| error.to_string())?;
+        child
+            .wait_for_port(port, std::time::Duration::from_secs(30))
+            .map_err(|error| error.to_string())?;
+        children.push(child);
+    }
+    Ok(())
+}
