@@ -71,11 +71,10 @@ if (( skip_benchmarks == 0 )); then
     if command -v "$xray" >/dev/null 2>&1; then
         record "xray-interop" env XRAY_BIN="$xray" scripts/test-xray-interop.sh || failures=$((failures + 1))
         if [[ -n ${RUST_REALITY_BASELINE_BIN:-} ]]; then
-            record "benchmark-matrix" env \
-                XRAY_BIN="$xray" \
-                RUST_REALITY_BASELINE_BIN="$RUST_REALITY_BASELINE_BIN" \
-                OUT_DIR="$out_dir/matrix" \
-                scripts/benchmark-matrix.sh || failures=$((failures + 1))
+            record "benchmark-matrix" cargo dev bench run --suite matrix \
+                --xray-bin "$xray" \
+                --baseline-bin "$RUST_REALITY_BASELINE_BIN" \
+                --out-dir "$out_dir/matrix" || failures=$((failures + 1))
         else
             step "benchmark-matrix: SKIPPED (RUST_REALITY_BASELINE_BIN unset)"
         fi

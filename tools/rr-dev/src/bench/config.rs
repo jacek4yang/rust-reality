@@ -36,6 +36,23 @@ pub fn xray_server(
     private_key: &str,
     allow_private: bool,
 ) -> Json {
+    xray_server_with_fallback(identity, listen_port, private_key, allow_private, None)
+}
+
+/// The same server, optionally carrying an explicit VLESS `fallbacks` entry.
+///
+/// rust-reality falls back automatically when REALITY authentication fails; Xray
+/// needs to be told where to send such a connection. The matrix's fallback
+/// servers therefore differ between the two implementations in configuration
+/// only, so that both are measured on the same behaviour.
+#[must_use]
+pub fn xray_server_with_fallback(
+    identity: &RealityIdentity,
+    listen_port: u16,
+    private_key: &str,
+    allow_private: bool,
+    fallback_dest: Option<&str>,
+) -> Json {
     let outbound = if allow_private {
         Json::object([
             ("tag", Json::string("direct")),
@@ -64,16 +81,7 @@ pub fn xray_server(
                 ("protocol", Json::string("vless")),
                 (
                     "settings",
-                    Json::object([
-                        (
-                            "clients",
-                            Json::Array(vec![Json::object([
-                                ("id", Json::string(identity.uuid.clone())),
-                                ("flow", Json::string("xtls-rprx-vision")),
-                            ])]),
-                        ),
-                        ("decryption", Json::string("none")),
-                    ]),
+                    Json::object(settings_entries(identity, fallback_dest)),
                 ),
                 (
                     "streamSettings",
@@ -103,6 +111,30 @@ pub fn xray_server(
         ),
         ("outbounds", Json::Array(vec![outbound])),
     ])
+}
+
+/// The VLESS inbound settings, with `fallbacks` only when one is requested.
+fn settings_entries(
+    identity: &RealityIdentity,
+    fallback_dest: Option<&str>,
+) -> Vec<(String, Json)> {
+    let mut entries = vec![
+        (
+            "clients".to_owned(),
+            Json::Array(vec![Json::object([
+                ("id", Json::string(identity.uuid.clone())),
+                ("flow", Json::string("xtls-rprx-vision")),
+            ])]),
+        ),
+        ("decryption".to_owned(), Json::string("none")),
+    ];
+    if let Some(dest) = fallback_dest {
+        entries.push((
+            "fallbacks".to_owned(),
+            Json::Array(vec![Json::object([("dest", Json::string(dest))])]),
+        ));
+    }
+    entries
 }
 
 /// Builds the Xray VLESS + REALITY client config with a local SOCKS inbound.
@@ -215,5 +247,28 @@ mod tests {
         assert!(rendered.contains("\"port\": 1080"));
         assert!(rendered.contains("\"port\": 8443"));
         assert!(rendered.contains("\"fingerprint\": \"chrome\""));
+    }
+
+    /// rust-reality falls back automatically on an auth failure; Xray has to be
+    /// told where to send such a connection, so the matrix's Xray fallback server
+    /// carries an explicit entry while the rust one does not.
+    #[test]
+    fn a_fallback_destination_is_emitted_only_when_requested() {
+        let plain = xray_server(&identity(), 8443, "PRIVKEY", true).to_python_json();
+        assert!(!plain.contains("fallbacks"));
+
+        let with_fallback = xray_server_with_fallback(
+            &identity(),
+            8443,
+            "PRIVKEY",
+            true,
+            Some("127.0.0.1:8080"),
+        )
+        .to_python_json();
+        assert!(with_fallback.contains("\"fallbacks\""));
+        assert!(with_fallback.contains("\"dest\": \"127.0.0.1:8080\""));
+        // Everything else is unchanged.
+        assert!(with_fallback.contains("\"decryption\": \"none\""));
+        assert!(with_fallback.contains("xtls-rprx-vision"));
     }
 }

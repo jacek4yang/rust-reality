@@ -45,7 +45,7 @@ JSON；如果内核或 VPS 策略拒绝某个事件，则记录带原始诊断�
 |---|---|
 | `rust-reality benchmark`（内置） | 有界、机器可读的进程内协议测量（VLESS 解码、Vision framing、NXR 认证）。 |
 | `cargo bench`（criterion） | VLESS 解码、Vision framing、relay 后端、双栈规划/setup/fallback、自适应 short-ID/身份/tag 查找、REALITY digest 哈希、重放过期/reserve 和 direct admission 争用的回归分析，带基线和图表。 |
-| `scripts/benchmark-matrix.sh` | 完整 A/B/C loopback 矩阵（baseline/final/Xray），覆盖 方向 × 载荷 × 并发。 |
+| `cargo dev bench run --suite matrix` | 完整 A/B/C loopback 矩阵（baseline/final/Xray），覆盖 方向 × 载荷 × 并发；每个 cell 都有 origin 饱和、上传计量与隧道绕过守卫，并含端到端完整性校验。`--cells`/`--skip` 可裁剪计划。 |
 | `cargo dev bench run --suite fallback` | 在固定基线 ELF 与候选之间做干净的 fallback A/B：两侧 warn 级日志、直连 listener，两侧固定相同的 relay splice/pipe-pool/buffer 策略，并在计时前逐 slot 校验载荷完整性。 |
 | `cargo dev bench run --suite setup-rate` | 在固定基线 ELF 与候选之间做平衡 setup 速率 A/B（accept → 第一次 Vision 转换）。设置 `--cover-netem-rtt-ms` 时只把 TLS 伪装目标移到 veth/netns 后并施加有记录的单向延迟，同时保留 pool hit/miss 汇总。`--measure-mode perf` 在 warmup 后归因 task-clock/指令/context switch；`strace` 记录有界的 read/receive syscall 集，并先优雅停止 tracee，避免静默产生空汇总。 |
 | `cargo dev bench run --suite vision-direct`、`cargo dev bench run --suite xray` | 聚焦的 Vision-Direct 与 Xray 对比。 |

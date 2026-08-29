@@ -302,6 +302,30 @@ enum BenchCommand {
         /// Pin the relay buffer size in KiB (fallback suite).
         #[arg(long, default_value_t = 32)]
         relay_buffer_kib: u32,
+        /// Space-separated payload sizes in MiB (matrix suite).
+        #[arg(long, default_value = "1 32 512")]
+        payloads: String,
+        /// Concurrencies for payloads below the large threshold (matrix suite).
+        #[arg(long, default_value = "1 32")]
+        large_concurrencies: String,
+        /// The payload size at which the large plan takes over (matrix suite).
+        #[arg(long, default_value_t = 512)]
+        large_payload_mib: u64,
+        /// Samples per implementation for large payloads (matrix suite).
+        #[arg(long, default_value_t = 3)]
+        samples_large: usize,
+        /// Payload size in MiB for the end-to-end integrity run; 0 skips it.
+        #[arg(long, default_value_t = 2048)]
+        integrity_mib: u64,
+        /// Comma- or space-separated cell include patterns (matrix suite).
+        #[arg(long, default_value = "")]
+        cells: String,
+        /// Comma- or space-separated cell skip patterns (matrix suite).
+        #[arg(long, default_value = "")]
+        skip: String,
+        /// Raise `fs.pipe-user-pages-soft` for the run and restore it after.
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        manage_pipe_pages: bool,
     },
 }
 
@@ -895,7 +919,40 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             relay_splice,
             relay_pipe_pool,
             relay_buffer_kib,
+            payloads,
+            large_concurrencies,
+            large_payload_mib,
+            samples_large,
+            integrity_mib,
+            cells,
+            skip,
+            manage_pipe_pages,
         } => {
+            if suite == "matrix" {
+                return run_bench_matrix(
+                    repo,
+                    &MatrixArgs {
+                        baseline_bin: baseline_bin.as_deref(),
+                        final_bin: rust_bin,
+                        xray_bin,
+                        out_dir: out_dir.as_deref(),
+                        run_id: run_id.as_deref(),
+                        cover_target,
+                        cover_sni,
+                        payloads,
+                        concurrencies,
+                        large_concurrencies,
+                        large_payload_mib: *large_payload_mib,
+                        samples: *samples,
+                        samples_large: *samples_large,
+                        integrity_mib: *integrity_mib,
+                        cells,
+                        skip,
+                        abba_start,
+                        manage_pipe_pages: *manage_pipe_pages,
+                    },
+                );
+            }
             if suite == "fallback" {
                 return run_bench_fallback(
                     repo,
@@ -1055,6 +1112,115 @@ fn run_bench_fallback_workload(
                 "bench fallback-workload: could not write {}: {error}",
                 output.display()
             );
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The matrix suite's command-line inputs.
+struct MatrixArgs<'a> {
+    baseline_bin: Option<&'a Path>,
+    final_bin: &'a Path,
+    xray_bin: &'a Path,
+    out_dir: Option<&'a Path>,
+    run_id: Option<&'a str>,
+    cover_target: &'a str,
+    cover_sni: &'a str,
+    payloads: &'a str,
+    concurrencies: &'a str,
+    large_concurrencies: &'a str,
+    large_payload_mib: u64,
+    samples: usize,
+    samples_large: usize,
+    integrity_mib: u64,
+    cells: &'a str,
+    skip: &'a str,
+    abba_start: &'a str,
+    manage_pipe_pages: bool,
+}
+
+/// Splits a comma- or space-separated pattern list.
+fn pattern_list(raw: &str) -> Vec<String> {
+    raw.split([',', ' '])
+        .filter(|word| !word.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Drives the three-implementation matrix.
+fn run_bench_matrix(repo: &Path, args: &MatrixArgs<'_>) -> ExitCode {
+    let Some(baseline_bin) = args.baseline_bin else {
+        eprintln!("bench run matrix: --baseline-bin is required");
+        return ExitCode::from(2);
+    };
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let run_id = args.run_id.map_or_else(
+        || format!("benchmark-matrix-{stamp}-{}", std::process::id()),
+        str::to_owned,
+    );
+    let out_dir = args.out_dir.map_or_else(
+        || {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("benchmarks")
+                .join(&run_id)
+        },
+        Path::to_path_buf,
+    );
+    let numbers = |raw: &str| -> Vec<usize> {
+        raw.split_whitespace()
+            .filter_map(|word| word.parse().ok())
+            .collect()
+    };
+    let suite = bench::matrix::MatrixSuite {
+        repo: repo.to_path_buf(),
+        baseline_bin: baseline_bin.to_path_buf(),
+        final_bin: args.final_bin.to_path_buf(),
+        xray_bin: args.xray_bin.to_path_buf(),
+        out_dir,
+        run_id,
+        cover_target: args.cover_target.to_owned(),
+        cover_sni: args.cover_sni.to_owned(),
+        plan: bench::matrix::CellPlan {
+            payloads_mib: args
+                .payloads
+                .split_whitespace()
+                .filter_map(|word| word.parse().ok())
+                .collect(),
+            concurrencies: numbers(args.concurrencies),
+            large_concurrencies: numbers(args.large_concurrencies),
+            large_payload_mib: args.large_payload_mib,
+            include: pattern_list(args.cells),
+            exclude: pattern_list(args.skip),
+        },
+        samples: args.samples,
+        samples_large: args.samples_large,
+        integrity_mib: args.integrity_mib,
+        abba_start: if args.abba_start.is_empty() {
+            "baseline".to_owned()
+        } else {
+            args.abba_start.to_owned()
+        },
+        manage_pipe_pages: args.manage_pipe_pages,
+    };
+    if let Err(error) = bench::matrix::validate(&suite) {
+        eprintln!("bench run matrix: {error}");
+        return ExitCode::from(2);
+    }
+    match bench::matrix::run(&suite) {
+        Ok(outcome) => {
+            println!(
+                "matrix complete: {} samples, {} invalid -> {}",
+                outcome.samples,
+                outcome.invalid,
+                outcome.out_dir.display()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("bench run matrix: {error}");
             ExitCode::FAILURE
         }
     }
