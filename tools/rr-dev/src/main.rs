@@ -658,6 +658,49 @@ enum PerfCommand {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Capture an identity-bound hotspot profile from the built-in benchmark or
+    /// an already-running server.
+    Hotspot {
+        /// Process lifecycle used for the capture.
+        #[arg(long, value_enum)]
+        mode: HotspotMode,
+        /// Exact rust-reality binary to archive and measure.
+        #[arg(long)]
+        binary: PathBuf,
+        /// Required lowercase-hex SHA-256 of the binary.
+        #[arg(long)]
+        binary_sha256: String,
+        /// Required source commit embedded in the binary.
+        #[arg(long)]
+        expected_source_commit: String,
+        /// Existing rust-reality server PID for attach mode.
+        #[arg(long)]
+        pid: Option<u32>,
+        /// New absolute evidence directory.
+        #[arg(long)]
+        out_dir: PathBuf,
+        /// Stable run identifier written into the publication marker.
+        #[arg(long)]
+        run_id: String,
+        /// Maximum seconds spent recording.
+        #[arg(long, default_value_t = 35)]
+        record_seconds: u64,
+        /// Built-in benchmark case duration.
+        #[arg(long, default_value_t = 10_000)]
+        duration_ms: u64,
+        /// Built-in benchmark warmup duration.
+        #[arg(long, default_value_t = 1_000)]
+        warmup_ms: u64,
+        /// `perf record` event selector.
+        #[arg(long, default_value = "cycles:u")]
+        event: String,
+        /// `perf record` sample frequency.
+        #[arg(long, default_value_t = 999)]
+        frequency: u32,
+        /// `perf record --call-graph` value.
+        #[arg(long, default_value = "fp")]
+        call_graph: String,
+    },
     /// Capture identity-bound perf-stat or perf-c2c environment evidence.
     ///
     /// The workload command follows `--` and its argv[0] must be the identified
@@ -690,6 +733,14 @@ enum EnvironmentTool {
     C2c,
 }
 
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum HotspotMode {
+    /// Launch and own the built-in benchmark.
+    BuiltIn,
+    /// Attach to an existing exactly identified server.
+    AttachServer,
+}
+
 #[derive(Subcommand)]
 enum DocsCommand {
     /// Validate bilingual coverage, local links, stale wording and release headlines.
@@ -702,7 +753,7 @@ fn main() -> ExitCode {
 
     match cli.command {
         Command::Doctor => run_doctor(),
-        Command::Perf { command } => run_perf(command),
+        Command::Perf { command } => run_perf(&repo, command),
         Command::Release { command } => run_release(&repo, command),
         Command::Fuzz { command } => run_fuzz(&repo, command),
         Command::Config { command } => match command {
@@ -811,7 +862,7 @@ fn run_doctor() -> ExitCode {
 }
 
 /// Dispatches a `cargo dev perf` subcommand.
-fn run_perf(command: PerfCommand) -> ExitCode {
+fn run_perf(repo: &std::path::Path, command: PerfCommand) -> ExitCode {
     match command {
         PerfCommand::Evaluate { manifest, output } => {
             match perf::report::evaluate_to_file(&manifest, &output) {
@@ -824,6 +875,51 @@ fn run_perf(command: PerfCommand) -> ExitCode {
                     // evidence: no report is produced at all.
                     eprintln!("perf evaluate: {error}");
                     ExitCode::from(2)
+                }
+            }
+        }
+        PerfCommand::Hotspot {
+            mode,
+            binary,
+            binary_sha256,
+            expected_source_commit,
+            pid,
+            out_dir,
+            run_id,
+            record_seconds,
+            duration_ms,
+            warmup_ms,
+            event,
+            frequency,
+            call_graph,
+        } => {
+            let mode = match mode {
+                HotspotMode::BuiltIn => perf::hotspot::Mode::BuiltIn,
+                HotspotMode::AttachServer => perf::hotspot::Mode::AttachServer,
+            };
+            match perf::hotspot::run(&perf::hotspot::Plan {
+                repo: repo.to_path_buf(),
+                mode,
+                binary,
+                binary_sha256,
+                expected_source_commit,
+                server_pid: pid,
+                out_dir,
+                run_id,
+                record_seconds,
+                duration_ms,
+                warmup_ms,
+                event,
+                frequency,
+                call_graph,
+            }) {
+                Ok(message) => {
+                    println!("{message}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("perf hotspot: {error}");
+                    ExitCode::FAILURE
                 }
             }
         }

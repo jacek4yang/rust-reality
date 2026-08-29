@@ -100,6 +100,61 @@ impl Child {
         Self::spawn_inner(label, program, args, cwd, env, log, true)
     }
 
+    /// Spawns a child with separate stdout and stderr files and an isolated
+    /// environment.
+    ///
+    /// Profile capture keeps the benchmark JSON distinct from its diagnostics;
+    /// both paths are created before the child starts and no shell redirection is
+    /// involved.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Spawn`] when either output cannot be created or the child
+    /// cannot be started.
+    pub fn spawn_split_isolated(
+        label: impl Into<String>,
+        program: &Path,
+        args: &[String],
+        cwd: &Path,
+        env: &[(String, String)],
+        stdout: &Path,
+        stderr: &Path,
+    ) -> Result<Self, Error> {
+        let label = label.into();
+        let stdout_file = File::create(stdout).map_err(|error| Error::Spawn {
+            program: program.display().to_string(),
+            detail: format!("stdout {}: {error}", stdout.display()),
+        })?;
+        let stderr_file = File::create(stderr).map_err(|error| Error::Spawn {
+            program: program.display().to_string(),
+            detail: format!("stderr {}: {error}", stderr.display()),
+        })?;
+        let handle = Command::new(program)
+            .args(args)
+            .current_dir(cwd)
+            .env_clear()
+            .envs(
+                env.iter()
+                    .map(|(key, value)| (key.as_str(), value.as_str())),
+            )
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(stdout_file))
+            .stderr(Stdio::from(stderr_file))
+            .spawn()
+            .map_err(|error| Error::Spawn {
+                program: program.display().to_string(),
+                detail: error.to_string(),
+            })?;
+        let pid = handle.id();
+        let starttime = proc_starttime(pid);
+        Ok(Self {
+            label,
+            pid,
+            starttime,
+            handle: Some(handle),
+        })
+    }
+
     fn spawn_inner(
         label: impl Into<String>,
         program: &Path,
@@ -251,6 +306,25 @@ impl Child {
             let _ = handle.kill();
             let _ = handle.wait();
         }
+    }
+
+    /// Waits for the owned child and returns its numeric exit status.
+    ///
+    /// # Errors
+    ///
+    /// Returns a diagnostic if the child was already consumed, could not be
+    /// waited, or exited because of a signal.
+    pub fn wait(&mut self) -> Result<i32, String> {
+        let mut handle = self
+            .handle
+            .take()
+            .ok_or_else(|| format!("{} no longer has an owned process", self.label))?;
+        let status = handle
+            .wait()
+            .map_err(|error| format!("could not wait for {}: {error}", self.label))?;
+        status
+            .code()
+            .ok_or_else(|| format!("{} exited because of a signal", self.label))
     }
 
     /// Sends `SIGHUP` to the exact owned process for configuration reload.
