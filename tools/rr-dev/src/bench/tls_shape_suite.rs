@@ -97,6 +97,114 @@ struct ReferenceBinary {
 struct Measurement {
     flight: crate::bench::tls_shape::Flight,
     process_write: Option<Json>,
+    packet_shape: PacketObservation,
+}
+
+#[derive(Debug, Clone)]
+enum PacketCaptureCapability {
+    Available {
+        tcpdump: PathBuf,
+        sudo: Option<PathBuf>,
+        uid: String,
+        gid: String,
+    },
+    Unavailable {
+        reason: String,
+    },
+}
+
+impl PacketCaptureCapability {
+    fn to_json(&self) -> Json {
+        match self {
+            Self::Available { tcpdump, sudo, .. } => Json::object([
+                (
+                    "executor",
+                    Json::string(if sudo.is_some() { "sudo" } else { "direct" }),
+                ),
+                ("status", Json::string("AVAILABLE")),
+                ("tcpdumpPath", Json::string(tcpdump.display().to_string())),
+            ]),
+            Self::Unavailable { reason } => Json::object([
+                ("reason", Json::string(reason.clone())),
+                ("status", Json::string("UNAVAILABLE")),
+            ]),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PacketEvent {
+    payload_bytes: usize,
+    flags: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+enum PacketObservation {
+    Available {
+        packets: Vec<PacketEvent>,
+        total_bytes: usize,
+        complete: bool,
+        pcap_sha256: String,
+    },
+    Unavailable {
+        reason: String,
+    },
+}
+
+impl PacketObservation {
+    fn unavailable(reason: impl Into<String>) -> Self {
+        Self::Unavailable {
+            reason: reason.into(),
+        }
+    }
+
+    fn to_json(&self) -> Json {
+        match self {
+            Self::Available {
+                packets,
+                total_bytes,
+                complete,
+                pcap_sha256,
+            } => Json::object([
+                ("captureStatus", Json::string("AVAILABLE")),
+                ("classification", Json::string("NETWORK_DEPENDENT")),
+                ("complete", Json::Bool(*complete)),
+                (
+                    "packets",
+                    Json::Array(
+                        packets
+                            .iter()
+                            .map(|packet| {
+                                Json::object([
+                                    (
+                                        "flags",
+                                        packet.flags.as_ref().map_or(Json::Null, |flags| {
+                                            Json::string(flags.clone())
+                                        }),
+                                    ),
+                                    (
+                                        "payloadBytes",
+                                        Json::Int(
+                                            i64::try_from(packet.payload_bytes).unwrap_or(i64::MAX),
+                                        ),
+                                    ),
+                                ])
+                            })
+                            .collect(),
+                    ),
+                ),
+                ("pcapSha256", Json::string(pcap_sha256.clone())),
+                (
+                    "totalBytes",
+                    Json::Int(i64::try_from(*total_bytes).unwrap_or(i64::MAX)),
+                ),
+            ]),
+            Self::Unavailable { reason } => Json::object([
+                ("captureStatus", Json::string("UNAVAILABLE")),
+                ("reason", Json::string(reason.clone())),
+            ]),
+        }
+    }
 }
 
 /// Immutable material shared by the sequential samples.
@@ -112,6 +220,7 @@ struct RunContext<'a> {
     xray_server_config: &'a Path,
     client_hello: &'a [u8],
     strace: Option<&'a Path>,
+    packet_capture: &'a PacketCaptureCapability,
     ports: [u16; 8],
 }
 
@@ -297,7 +406,8 @@ fn require_matching_openssl(reference: &str, cli: &str) -> Result<(), String> {
         .str_field("reference", "opensslRuntimeVersion")
         .map_err(|error| error.to_string())?;
     let cli_first = cli.lines().next().unwrap_or_default();
-    if runtime == cli_first {
+    let annotated = format!("{runtime} (Library: {runtime})");
+    if runtime == cli_first || annotated == cli_first {
         Ok(())
     } else {
         Err(format!(
@@ -353,6 +463,21 @@ fn serial_rust_config(generated: &RustIdentity, target: &str) -> Result<String, 
     Ok(crate::bench::suites::render_compact(&Value::Object(root)))
 }
 
+fn record_delay_rust_config(generated: &RustIdentity, target: &str) -> Result<String, String> {
+    use json_in::Value;
+    let serial = serial_rust_config(generated, target)?;
+    let value = json_in::parse(&serial)
+        .map_err(|error| format!("record-delay rust config is invalid JSON: {error}"))?;
+    let Value::Object(mut root) = value else {
+        return Err("record-delay rust config is not an object".to_owned());
+    };
+    let Some(Value::Object(log)) = root.get_mut("log") else {
+        return Err("record-delay rust config has no log object".to_owned());
+    };
+    log.insert("level".to_owned(), Value::Str("debug".to_owned()));
+    Ok(crate::bench::suites::render_compact(&Value::Object(root)))
+}
+
 fn spawn_reference(
     reference: &ReferenceBinary,
     options: &ReferenceOptions,
@@ -392,6 +517,319 @@ fn wait_for_log(child: &mut Child, log: &Path, marker: &str) -> Result<(), Strin
         "{} did not emit readiness marker {marker:?} within 10s",
         child.label()
     ))
+}
+
+fn detect_packet_capture() -> PacketCaptureCapability {
+    let Some(tcpdump) = process::which("tcpdump") else {
+        return PacketCaptureCapability::Unavailable {
+            reason: "tcpdump is not installed".to_owned(),
+        };
+    };
+    let uid = Tool::new("id")
+        .arg("-u")
+        .run()
+        .map(|outcome| outcome.trimmed_stdout().to_owned());
+    let gid = Tool::new("id")
+        .arg("-g")
+        .run()
+        .map(|outcome| outcome.trimmed_stdout().to_owned());
+    let (Ok(uid), Ok(gid)) = (uid, gid) else {
+        return PacketCaptureCapability::Unavailable {
+            reason: "could not identify the capture owner".to_owned(),
+        };
+    };
+    if uid == "0" {
+        return PacketCaptureCapability::Available {
+            tcpdump,
+            sudo: None,
+            uid,
+            gid,
+        };
+    }
+    let Some(sudo) = process::which("sudo") else {
+        return PacketCaptureCapability::Unavailable {
+            reason: "packet capture requires root and sudo is unavailable".to_owned(),
+        };
+    };
+    if Tool::new(sudo.display().to_string())
+        .args(["-n", "true"])
+        .run()
+        .is_err()
+    {
+        return PacketCaptureCapability::Unavailable {
+            reason: "non-interactive packet-capture privilege is unavailable".to_owned(),
+        };
+    }
+    PacketCaptureCapability::Available {
+        tcpdump,
+        sudo: Some(sudo),
+        uid,
+        gid,
+    }
+}
+
+struct ActivePacketCapture {
+    child: Child,
+    parent_starttime: Option<String>,
+    tcpdump: PathBuf,
+    sudo: Option<PathBuf>,
+    uid: String,
+    gid: String,
+    pcap: PathBuf,
+    packets_text: PathBuf,
+    port: u16,
+}
+
+enum PacketCapture {
+    Active(Box<ActivePacketCapture>),
+    Unavailable(String),
+}
+
+fn begin_packet_capture(context: &RunContext<'_>, stem: &str, port: u16) -> PacketCapture {
+    let PacketCaptureCapability::Available {
+        tcpdump,
+        sudo,
+        uid,
+        gid,
+    } = context.packet_capture
+    else {
+        let PacketCaptureCapability::Unavailable { reason } = context.packet_capture else {
+            unreachable!()
+        };
+        return PacketCapture::Unavailable(reason.clone());
+    };
+    let pcap = context.run.join(&format!("{stem}.pcap"));
+    let log = context.run.join(&format!("{stem}.tcpdump.log"));
+    let packets_text = context.run.join(&format!("{stem}.packets.txt"));
+    let capture_args = [
+        "--immediate-mode".to_owned(),
+        "-i".to_owned(),
+        "lo".to_owned(),
+        "-U".to_owned(),
+        "-s".to_owned(),
+        "0".to_owned(),
+        "-w".to_owned(),
+        pcap.display().to_string(),
+        format!("tcp port {port}"),
+    ];
+    let (program, args) = if let Some(sudo) = sudo {
+        let mut args = vec!["-n".to_owned(), tcpdump.display().to_string()];
+        args.extend(capture_args);
+        (sudo, args)
+    } else {
+        (tcpdump, capture_args.into())
+    };
+    let mut child = match Child::spawn(
+        format!("tls-shape-tcpdump-{port}"),
+        program,
+        &args,
+        context.workspace.path(),
+        &[],
+        &log,
+    ) {
+        Ok(child) => child,
+        Err(error) => return PacketCapture::Unavailable(error.to_string()),
+    };
+    let parent_starttime = crate::bench::process::proc_starttime(child.pid());
+    if let Err(error) = wait_for_log(&mut child, &log, "listening on") {
+        child.terminate();
+        let _ = normalize_capture(&pcap, sudo.as_ref(), uid, gid);
+        return PacketCapture::Unavailable(error);
+    }
+    PacketCapture::Active(Box::new(ActivePacketCapture {
+        child,
+        parent_starttime,
+        tcpdump: tcpdump.clone(),
+        sudo: sudo.clone(),
+        uid: uid.clone(),
+        gid: gid.clone(),
+        pcap,
+        packets_text,
+        port,
+    }))
+}
+
+fn proc_children(pid: u32) -> Vec<(u32, Option<String>)> {
+    std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/children"))
+        .unwrap_or_default()
+        .split_whitespace()
+        .filter_map(|text| text.parse::<u32>().ok())
+        .map(|child| (child, crate::bench::process::proc_starttime(child)))
+        .collect()
+}
+
+fn signal_exact(
+    pid: u32,
+    starttime: Option<&str>,
+    sudo: Option<&Path>,
+) -> Result<(), String> {
+    if starttime.is_some() && crate::bench::process::proc_starttime(pid).as_deref() != starttime {
+        return Err(format!(
+            "capture process {pid} identity changed before SIGINT"
+        ));
+    }
+    let outcome = if let Some(sudo) = sudo {
+        Tool::new(sudo.display().to_string()).args([
+            "-n".to_owned(),
+            "kill".to_owned(),
+            "-INT".to_owned(),
+            pid.to_string(),
+        ])
+    } else {
+        Tool::new("kill").args(["-INT".to_owned(), pid.to_string()])
+    }
+    .run();
+    outcome
+        .map(|_| ())
+        .map_err(|error| format!("could not interrupt capture process {pid}: {error}"))
+}
+
+fn normalize_capture(
+    pcap: &Path,
+    sudo: Option<&PathBuf>,
+    uid: &str,
+    gid: &str,
+) -> Result<(), String> {
+    if !pcap.exists() {
+        return Err(format!("capture did not create {}", pcap.display()));
+    }
+    if let Some(sudo) = sudo {
+        Tool::new(sudo.display().to_string())
+            .args([
+                "-n".to_owned(),
+                "chown".to_owned(),
+                "--".to_owned(),
+                format!("{uid}:{gid}"),
+                pcap.display().to_string(),
+            ])
+            .run()
+            .map_err(|error| format!("could not normalize {} owner: {error}", pcap.display()))?;
+    }
+    Tool::new("chmod")
+        .args(["600".to_owned(), pcap.display().to_string()])
+        .run()
+        .map(|_| ())
+        .map_err(|error| format!("could not normalize {} mode: {error}", pcap.display()))
+}
+
+impl ActivePacketCapture {
+    fn finish(mut self, expected_bytes: usize) -> Result<PacketObservation, String> {
+        if self.sudo.is_some() {
+            let children = proc_children(self.child.pid());
+            if children.is_empty() {
+                return Err("privileged tcpdump process had no observable child".to_owned());
+            }
+            for (pid, starttime) in children {
+                signal_exact(pid, starttime.as_deref(), self.sudo.as_deref())?;
+            }
+        } else {
+            signal_exact(self.child.pid(), self.parent_starttime.as_deref(), None)?;
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline && self.child.is_alive() {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        self.child.terminate();
+        normalize_capture(&self.pcap, self.sudo.as_ref(), &self.uid, &self.gid)?;
+        let decoded = Tool::new(self.tcpdump.display().to_string())
+            .args([
+                "-nn".to_owned(),
+                "-tt".to_owned(),
+                "-r".to_owned(),
+                self.pcap.display().to_string(),
+            ])
+            .run()
+            .map_err(|error| format!("could not decode {}: {error}", self.pcap.display()))?
+            .stdout;
+        std::fs::write(&self.packets_text, &decoded).map_err(|error| {
+            format!(
+                "could not write decoded packet evidence {}: {error}",
+                self.packets_text.display()
+            )
+        })?;
+        Ok(parse_packet_shape(
+            &decoded,
+            self.port,
+            expected_bytes,
+            hash::sha256_file(&self.pcap)?,
+        ))
+    }
+}
+
+impl PacketCapture {
+    fn finish(self, expected_bytes: usize) -> PacketObservation {
+        match self {
+            Self::Active(capture) => capture
+                .finish(expected_bytes)
+                .unwrap_or_else(PacketObservation::unavailable),
+            Self::Unavailable(reason) => PacketObservation::unavailable(reason),
+        }
+    }
+}
+
+fn parse_packet_shape(
+    text: &str,
+    port: u16,
+    expected_bytes: usize,
+    pcap_sha256: String,
+) -> PacketObservation {
+    let source = format!(".{port} >");
+    let all = text
+        .lines()
+        .filter(|line| line.contains(&source))
+        .filter_map(|line| {
+            let payload_bytes = line
+                .rsplit_once("length ")?
+                .1
+                .trim()
+                .parse::<usize>()
+                .ok()?;
+            if payload_bytes == 0 {
+                return None;
+            }
+            let flags = line
+                .split_once("Flags [")
+                .and_then(|(_, rest)| rest.split_once(']'))
+                .map(|(flags, _)| flags.to_owned());
+            Some(PacketEvent {
+                payload_bytes,
+                flags,
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut selected = Vec::new();
+    let mut total_bytes = 0;
+    for start in 0..all.len() {
+        let mut candidate = Vec::new();
+        let mut total = 0;
+        for packet in &all[start..] {
+            candidate.push(packet.clone());
+            total += packet.payload_bytes;
+            if total >= expected_bytes {
+                break;
+            }
+        }
+        if total == expected_bytes {
+            selected = candidate;
+            total_bytes = total;
+            break;
+        }
+    }
+    if selected.is_empty() {
+        for packet in all {
+            total_bytes += packet.payload_bytes;
+            selected.push(packet);
+            if total_bytes >= expected_bytes {
+                break;
+            }
+        }
+    }
+    PacketObservation::Available {
+        packets: selected,
+        total_bytes,
+        complete: total_bytes == expected_bytes,
+        pcap_sha256,
+    }
 }
 
 #[expect(
@@ -537,6 +975,7 @@ fn measurement_json(measurement: &Measurement, client_hello: &[u8]) -> Json {
         "processWriteShape".to_owned(),
         measurement.process_write.clone().unwrap_or(Json::Null),
     );
+    members.insert("packetShape".to_owned(), measurement.packet_shape.to_json());
     members.insert(
         "timingMeasurement".to_owned(),
         Json::object([
@@ -557,11 +996,119 @@ fn measurement_json(measurement: &Measurement, client_hello: &[u8]) -> Json {
     Json::Object(members)
 }
 
+fn packet_sequence_delta(reference: &[PacketEvent], candidate: &[PacketEvent]) -> Json {
+    Json::Array(
+        (0..reference.len().max(candidate.len()))
+            .map(|position| {
+                let left = reference.get(position).map(|packet| packet.payload_bytes);
+                let right = candidate.get(position).map(|packet| packet.payload_bytes);
+                Json::object([
+                    (
+                        "candidate",
+                        right.map_or(Json::Null, |bytes| {
+                            Json::Int(i64::try_from(bytes).unwrap_or(i64::MAX))
+                        }),
+                    ),
+                    (
+                        "delta",
+                        left.zip(right).map_or(Json::Null, |(left, right)| {
+                            Json::Int(
+                                i64::try_from(right).unwrap_or(i64::MAX)
+                                    - i64::try_from(left).unwrap_or(i64::MAX),
+                            )
+                        }),
+                    ),
+                    (
+                        "position",
+                        Json::Int(i64::try_from(position).unwrap_or(i64::MAX)),
+                    ),
+                    (
+                        "reference",
+                        left.map_or(Json::Null, |bytes| {
+                            Json::Int(i64::try_from(bytes).unwrap_or(i64::MAX))
+                        }),
+                    ),
+                ])
+            })
+            .collect(),
+    )
+}
+
+fn comparison_json(reference: &Measurement, candidate: &Measurement) -> Json {
+    let Json::Object(mut members) =
+        crate::bench::tls_shape::compare(&reference.flight, &candidate.flight).to_json()
+    else {
+        unreachable!("shape comparison is always an object")
+    };
+    let (
+        PacketObservation::Available {
+            packets: reference_packets,
+            complete: reference_complete,
+            ..
+        },
+        PacketObservation::Available {
+            packets: candidate_packets,
+            complete: candidate_complete,
+            ..
+        },
+    ) = (&reference.packet_shape, &candidate.packet_shape)
+    else {
+        members.insert("observedPacketShapeEqual".to_owned(), Json::Null);
+        members.insert("packetCountDifference".to_owned(), Json::Null);
+        members.insert("packetPayloadSizeDelta".to_owned(), Json::Null);
+        members.insert(
+            "packetShapeClassification".to_owned(),
+            Json::string("UNAVAILABLE"),
+        );
+        return Json::Object(members);
+    };
+    {
+        let comparable = *reference_complete && *candidate_complete;
+        members.insert(
+            "observedPacketShapeEqual".to_owned(),
+            if comparable {
+                Json::Bool(reference_packets == candidate_packets)
+            } else {
+                Json::Null
+            },
+        );
+        members.insert(
+            "packetCountDifference".to_owned(),
+            if comparable {
+                Json::Int(
+                    i64::try_from(candidate_packets.len()).unwrap_or(i64::MAX)
+                        - i64::try_from(reference_packets.len()).unwrap_or(i64::MAX),
+                )
+            } else {
+                Json::Null
+            },
+        );
+        members.insert(
+            "packetPayloadSizeDelta".to_owned(),
+            if comparable {
+                packet_sequence_delta(reference_packets, candidate_packets)
+            } else {
+                Json::Null
+            },
+        );
+        members.insert(
+            "packetShapeClassification".to_owned(),
+            Json::string(if comparable {
+                "NETWORK_DEPENDENT"
+            } else {
+                "NOT_COMPARABLE"
+            }),
+        );
+    }
+    Json::Object(members)
+}
+
 fn run_reference_sample(context: &RunContext<'_>, sample: usize) -> Result<Measurement, String> {
     let port = context.ports[5];
     let stem = format!("samples/{sample:03}/reference");
     let log = context.run.join(&format!("{stem}.log"));
     let trace = context.run.join(&format!("{stem}.strace"));
+    let capture = begin_packet_capture(context, &stem, port);
     let mut child = spawn_measured(
         "tls-shape-reference",
         &context.reference.path,
@@ -578,9 +1125,11 @@ fn run_reference_sample(context: &RunContext<'_>, sample: usize) -> Result<Measu
     let process_write = context
         .strace
         .and_then(|_| parse_strace_shape(&trace, port, flight.wire.len()));
+    let packet_shape = capture.finish(flight.wire.len());
     Ok(Measurement {
         flight,
         process_write,
+        packet_shape,
     })
 }
 
@@ -589,6 +1138,7 @@ fn run_rust_sample(context: &RunContext<'_>, sample: usize) -> Result<Measuremen
     let stem = format!("samples/{sample:03}/rust");
     let log = context.run.join(&format!("{stem}.log"));
     let trace = context.run.join(&format!("{stem}.strace"));
+    let capture = begin_packet_capture(context, &stem, server_port);
     let mut server = spawn_measured(
         "tls-shape-rust-reality",
         &context.rust.path,
@@ -625,9 +1175,11 @@ fn run_rust_sample(context: &RunContext<'_>, sample: usize) -> Result<Measuremen
     let process_write = context
         .strace
         .and_then(|_| parse_strace_shape(&trace, server_port, flight.wire.len()));
+    let packet_shape = capture.finish(flight.wire.len());
     Ok(Measurement {
         flight,
         process_write,
+        packet_shape,
     })
 }
 
@@ -636,6 +1188,7 @@ fn run_xray_sample(context: &RunContext<'_>, sample: usize) -> Result<Measuremen
     let stem = format!("samples/{sample:03}/xray");
     let log = context.run.join(&format!("{stem}.log"));
     let trace = context.run.join(&format!("{stem}.strace"));
+    let capture = begin_packet_capture(context, &stem, server_port);
     let mut server = spawn_measured(
         "tls-shape-xray",
         &context.xray.path,
@@ -669,9 +1222,11 @@ fn run_xray_sample(context: &RunContext<'_>, sample: usize) -> Result<Measuremen
     let process_write = context
         .strace
         .and_then(|_| parse_strace_shape(&trace, server_port, flight.wire.len()));
+    let packet_shape = capture.finish(flight.wire.len());
     Ok(Measurement {
         flight,
         process_write,
+        packet_shape,
     })
 }
 
@@ -827,6 +1382,285 @@ fn write_measurement(
     Ok(json)
 }
 
+fn find_event(path: &Path, event_name: &str) -> Result<json_in::Value, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let mut matches = Vec::new();
+    for line in text.lines() {
+        let Ok(value) = json_in::parse(line) else {
+            continue;
+        };
+        if value
+            .str_field("log", "event")
+            .is_ok_and(|event| event == event_name)
+        {
+            matches.push(value);
+        }
+    }
+    if matches.len() == 1 {
+        return Ok(matches.remove(0));
+    }
+    Err(format!(
+        "{} contains {} {event_name:?} events, expected exactly one",
+        path.display(),
+        matches.len()
+    ))
+}
+
+fn json_value(value: &json_in::Value) -> Json {
+    match value {
+        json_in::Value::Null => Json::Null,
+        json_in::Value::Bool(flag) => Json::Bool(*flag),
+        json_in::Value::Number(text) => text.parse::<i64>().map_or(Json::Null, Json::Int),
+        json_in::Value::Str(text) => Json::string(text.clone()),
+        json_in::Value::Array(items) => Json::Array(items.iter().map(json_value).collect()),
+        json_in::Value::Object(members) => Json::object(
+            members
+                .iter()
+                .map(|(key, value)| (key.clone(), json_value(value))),
+        ),
+    }
+}
+
+fn verify_delay_event(
+    event: &json_in::Value,
+    expected: &crate::bench::tls_shape::DelayCoverEvidence,
+) -> Result<(), String> {
+    let bool_field = |name| {
+        event
+            .field("cover_flight_selected", name)
+            .and_then(|value| value.as_bool(&format!("cover_flight_selected.{name}")))
+            .map_err(|error| error.to_string())
+    };
+    let int_field = |name| {
+        event
+            .int_field("cover_flight_selected", name)
+            .map_err(|error| error.to_string())
+    };
+    if !bool_field("emit_ccs")? || !expected.emit_ccs {
+        return Err("record-delay candidate did not select the expected CCS".to_owned());
+    }
+    if event
+        .str_field("cover_flight_selected", "layout")
+        .map_err(|error| error.to_string())?
+        != "positional"
+    {
+        return Err("record-delay candidate did not select positional layout".to_owned());
+    }
+    let wire_lengths = event
+        .array_field("cover_flight_selected", "wire_lens")
+        .map_err(|error| error.to_string())?
+        .iter()
+        .map(|value| {
+            value.as_int("wire_lens[]").and_then(|number| {
+                usize::try_from(number).map_err(|_| json_in::FieldError {
+                    path: "wire_lens[]".to_owned(),
+                    expected: "a non-negative usize".to_owned(),
+                })
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    if wire_lengths != expected.encrypted_wire_lengths {
+        return Err(format!(
+            "record-delay candidate wire lengths {wire_lengths:?} != {:?}",
+            expected.encrypted_wire_lengths
+        ));
+    }
+    let nst = event
+        .field("cover_flight_selected", "nst_wire_len")
+        .map_err(|error| error.to_string())?;
+    let observed_nst = match nst {
+        json_in::Value::Null => None,
+        _ => Some(
+            usize::try_from(
+                nst.as_int("nst_wire_len")
+                    .map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| format!("invalid nst_wire_len: {error}"))?,
+        ),
+    };
+    if observed_nst != expected.nst_wire_length
+        || usize::try_from(int_field("retained_prefix_bytes")?).ok()
+            != Some(expected.retained_prefix_bytes)
+        || event
+            .str_field("cover_flight_selected", "retained_prefix_sha256")
+            .map_err(|error| error.to_string())?
+            != expected.retained_prefix_sha256
+    {
+        return Err("record-delay candidate retained-prefix evidence differs".to_owned());
+    }
+    Ok(())
+}
+
+fn run_record_delay_e2e(
+    context: &RunContext<'_>,
+    generated: &RustIdentity,
+    origin_port: u16,
+    expected_payload_sha256: &str,
+) -> Result<Json, String> {
+    use crate::bench::{config::RealityIdentity, tls_shape::DelayProbeCase};
+    let reality = RealityIdentity {
+        uuid: generated.uuid.clone(),
+        short_id: generated.short_id.clone(),
+        server_name: "localhost".to_owned(),
+        target: "record-delay-fixture".to_owned(),
+    };
+    let client_config = context.workspace.join("xray-record-delay.json");
+    std::fs::write(
+        &client_config,
+        crate::bench::config::xray_client(
+            &reality,
+            context.ports[1],
+            context.ports[3],
+            &generated.public_key,
+        )
+        .to_python_json(),
+    )
+    .map_err(|error| format!("could not write record-delay Xray config: {error}"))?;
+    let mut cases = Vec::new();
+    for delay_ms in [0_u64, 20, 50, 100, 200] {
+        for probe_case in [
+            DelayProbeCase::AlreadyBuffered,
+            DelayProbeCase::AbsentWouldBlock,
+        ] {
+            cases.push(run_record_delay_case(
+                context,
+                generated,
+                &client_config,
+                delay_ms,
+                probe_case,
+                origin_port,
+                expected_payload_sha256,
+            )?);
+        }
+    }
+    Ok(Json::object([
+        (
+            "caseCount",
+            Json::Int(i64::try_from(cases.len()).unwrap_or(i64::MAX)),
+        ),
+        (
+            "classifications",
+            Json::Array(vec![
+                Json::string("absent-would-block"),
+                Json::string("already-buffered"),
+            ]),
+        ),
+        (
+            "delaysMs",
+            Json::Array(
+                [0_i64, 20, 50, 100, 200]
+                    .into_iter()
+                    .map(Json::Int)
+                    .collect(),
+            ),
+        ),
+        ("cases", Json::Array(cases)),
+        ("status", Json::string("PASS")),
+    ]))
+}
+
+fn run_record_delay_case(
+    context: &RunContext<'_>,
+    generated: &RustIdentity,
+    client_config: &Path,
+    delay_ms: u64,
+    probe_case: crate::bench::tls_shape::DelayProbeCase,
+    origin_port: u16,
+    expected_payload_sha256: &str,
+) -> Result<Json, String> {
+    let case_id = format!("delay-{delay_ms:03}-{}", probe_case.label());
+    let case_dir = context.run.join(&format!("record-delay-e2e/{case_id}"));
+    std::fs::create_dir_all(&case_dir)
+        .map_err(|error| format!("could not create {case_id}: {error}"))?;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .map_err(|error| format!("could not bind {case_id} cover: {error}"))?;
+    let cover_port = listener
+        .local_addr()
+        .map_err(|error| format!("could not identify {case_id} cover: {error}"))?
+        .port();
+    let server_config = context.workspace.join(&format!("rust-{case_id}.json"));
+    std::fs::write(
+        &server_config,
+        record_delay_rust_config(generated, &format!("127.0.0.1:{cover_port}"))?,
+    )
+    .map_err(|error| format!("could not write {case_id} server config: {error}"))?;
+    let server_log = case_dir.join("candidate.log");
+    let mut server = Child::spawn(
+        format!("record-delay-rust-{case_id}"),
+        &context.rust.path,
+        &[
+            "serve".to_owned(),
+            "--config".to_owned(),
+            server_config.display().to_string(),
+        ],
+        context.workspace.path(),
+        &[],
+        &server_log,
+    )
+    .map_err(|error| error.to_string())?;
+    wait_for_log(&mut server, &server_log, "listener_started")?;
+    let cover = std::thread::spawn(move || {
+        crate::bench::tls_shape::serve_delayed_cover(&listener, delay_ms, probe_case)
+    });
+    let client_log = case_dir.join("xray.log");
+    let mut client = Child::spawn(
+        format!("record-delay-xray-{case_id}"),
+        &context.xray.path,
+        &[
+            "run".to_owned(),
+            "-config".to_owned(),
+            client_config.display().to_string(),
+        ],
+        context.workspace.path(),
+        &[],
+        &client_log,
+    )
+    .map_err(|error| error.to_string())?;
+    client
+        .wait_for_port(context.ports[3], Duration::from_secs(30))
+        .map_err(|error| error.to_string())?;
+    let payload = case_dir.join("payload.bin");
+    crate::bench::interop::fetch_payload(context.ports[3], origin_port, &payload)?;
+    wait_for_log(&mut server, &server_log, "connection_completed")?;
+    client.terminate();
+    server.terminate();
+    let fixture = cover
+        .join()
+        .map_err(|_| format!("{case_id} cover thread panicked"))??;
+    let selected = find_event(&server_log, "cover_flight_selected")?;
+    let completed = find_event(&server_log, "connection_completed")?;
+    verify_delay_event(&selected, &fixture)?;
+    if completed
+        .int_field("connection_completed", "uplink_bytes")
+        .map_err(|error| error.to_string())?
+        <= 0
+        || completed
+            .int_field("connection_completed", "downlink_bytes")
+            .map_err(|error| error.to_string())?
+            <= 0
+    {
+        return Err(format!("{case_id} transferred no authenticated bytes"));
+    }
+    let payload_sha256 = hash::sha256_file(&payload)?;
+    if payload_sha256 != expected_payload_sha256 {
+        return Err(format!("{case_id} payload SHA-256 mismatch"));
+    }
+    Ok(Json::object([
+        ("candidateConnectionCompleted", json_value(&completed)),
+        ("candidateCoverFlightSelected", json_value(&selected)),
+        (
+            "candidateLogSha256",
+            Json::string(hash::sha256_file(&server_log)?),
+        ),
+        ("case", Json::string(case_id)),
+        ("fixture", fixture.to_json()),
+        ("payloadSha256", Json::string(payload_sha256)),
+        ("status", Json::string("PASS")),
+    ]))
+}
+
 fn binary_json(binary: &Binary) -> Json {
     Json::object([
         ("identity", Json::string(binary.identity.clone())),
@@ -944,6 +1778,7 @@ pub fn run(suite: &TlsShapeSuite) -> Result<Json, String> {
         },
     )?;
     let strace = process::which("strace");
+    let packet_capture = detect_packet_capture();
     let empty_hello = [];
     let capture_context = RunContext {
         suite,
@@ -957,6 +1792,7 @@ pub fn run(suite: &TlsShapeSuite) -> Result<Json, String> {
         xray_server_config: &xray_server_config,
         client_hello: &empty_hello,
         strace: strace.as_deref(),
+        packet_capture: &packet_capture,
         ports,
     };
     let client_hello = capture_stock_xray_hello(
@@ -973,6 +1809,7 @@ pub fn run(suite: &TlsShapeSuite) -> Result<Json, String> {
         client_hello: &client_hello,
         ..capture_context
     };
+    let record_delay_e2e = run_record_delay_e2e(&context, &generated, ports[4], &payload_sha256)?;
     let mut samples = Vec::new();
     for sample in 1..=suite.samples {
         std::fs::create_dir_all(run.join(&format!("samples/{sample:03}")))
@@ -997,19 +1834,11 @@ pub fn run(suite: &TlsShapeSuite) -> Result<Json, String> {
                 Json::object([
                     (
                         "rustRealityVsOpenSslReference",
-                        crate::bench::tls_shape::compare(
-                            &reference_measurement.flight,
-                            &rust_measurement.flight,
-                        )
-                        .to_json(),
+                        comparison_json(&reference_measurement, &rust_measurement),
                     ),
                     (
                         "xrayVsOpenSslReference",
-                        crate::bench::tls_shape::compare(
-                            &reference_measurement.flight,
-                            &xray_measurement.flight,
-                        )
-                        .to_json(),
+                        comparison_json(&reference_measurement, &xray_measurement),
                     ),
                 ]),
             ),
@@ -1036,11 +1865,13 @@ pub fn run(suite: &TlsShapeSuite) -> Result<Json, String> {
                         .as_ref()
                         .map_or(Json::Null, |path| Json::string(path.display().to_string())),
                 ),
+                ("tcpdump", packet_capture.to_json()),
                 ("xray", binary_json(&xray)),
             ]),
         ),
         ("invalidSampleCount", Json::Int(0)),
         ("performanceVerdict", Json::string("NOT_EVALUATED")),
+        ("recordDelayCandidateE2e", record_delay_e2e),
         ("recordDelayProductionReaderTest", reader_gate),
         (
             "sampleCount",
@@ -1172,5 +2003,22 @@ mod tests {
             validate_reference_identity(&good.replace("NO_LOAD_CONFIG", "LOAD_CONFIG")).is_err()
         );
         assert!(validate_reference_identity(&good.replace("default", "legacy")).is_err());
+    }
+
+    #[test]
+    fn openssl_cli_library_annotation_must_repeat_the_exact_runtime() {
+        let reference = r#"{"opensslRuntimeVersion":"OpenSSL 3.5.6 7 Apr 2026"}"#;
+        require_matching_openssl(
+            reference,
+            "OpenSSL 3.5.6 7 Apr 2026 (Library: OpenSSL 3.5.6 7 Apr 2026)\n",
+        )
+        .unwrap();
+        assert!(
+            require_matching_openssl(
+                reference,
+                "OpenSSL 3.5.6 7 Apr 2026 (Library: OpenSSL 3.5.5 10 Mar 2026)\n",
+            )
+            .is_err()
+        );
     }
 }

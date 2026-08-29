@@ -25,6 +25,88 @@ pub const MAX_FIRST_FLIGHT_BYTES: usize = 1024 * 1024;
 /// Deterministic opaque record appended by the handoff flight shaper.
 pub const SHAPED_FIFTH_RECORD_BYTES: usize = 139;
 
+/// The two fifth-record states exercised through the real candidate and Xray.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DelayProbeCase {
+    /// The ticket header arrives in the same socket write as encrypted record four.
+    AlreadyBuffered,
+    /// No ticket is readable after encrypted record four.
+    AbsentWouldBlock,
+}
+
+impl DelayProbeCase {
+    /// Stable evidence label.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::AlreadyBuffered => "already-buffered",
+            Self::AbsentWouldBlock => "absent-would-block",
+        }
+    }
+}
+
+/// Expected candidate observation from one deterministic delayed cover flight.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DelayCoverEvidence {
+    /// Delay inserted between the outer records.
+    pub delay_ms: u64,
+    /// Fifth-record classification constructed by the fixture.
+    pub case: DelayProbeCase,
+    /// Whether the cover emitted a middlebox CCS.
+    pub emit_ccs: bool,
+    /// Complete encrypted record wire lengths.
+    pub encrypted_wire_lengths: [usize; 4],
+    /// Fifth ticket wire length when present.
+    pub nst_wire_length: Option<usize>,
+    /// Bytes the candidate is expected to retain.
+    pub retained_prefix_bytes: usize,
+    /// Digest of the expected retained bytes.
+    pub retained_prefix_sha256: String,
+    /// Exact received stock-Xray `ClientHello` digest.
+    pub client_hello_sha256: String,
+}
+
+impl DelayCoverEvidence {
+    /// Renders fixture expectations into the case evidence.
+    #[must_use]
+    pub fn to_json(&self) -> Json {
+        Json::object([
+            ("classification", Json::string(self.case.label())),
+            (
+                "clientHelloSha256",
+                Json::string(self.client_hello_sha256.clone()),
+            ),
+            (
+                "delayMs",
+                Json::Int(i64::try_from(self.delay_ms).unwrap_or(i64::MAX)),
+            ),
+            ("emitCcs", Json::Bool(self.emit_ccs)),
+            (
+                "encryptedRecordWireLengths",
+                Json::Array(
+                    self.encrypted_wire_lengths
+                        .iter()
+                        .map(|length| Json::Int(to_i64(*length)))
+                        .collect(),
+                ),
+            ),
+            (
+                "nstWireLength",
+                self.nst_wire_length
+                    .map_or(Json::Null, |length| Json::Int(to_i64(length))),
+            ),
+            (
+                "retainedPrefixBytes",
+                Json::Int(to_i64(self.retained_prefix_bytes)),
+            ),
+            (
+                "retainedPrefixSha256",
+                Json::string(self.retained_prefix_sha256.clone()),
+            ),
+        ])
+    }
+}
+
 /// One complete outer TLS record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsRecord {
@@ -573,6 +655,179 @@ pub fn run_shape_proxy(
     }
 }
 
+/// Serves one deterministic TLS 1.3 cover flight over a pre-bound listener.
+///
+/// The four encrypted records have wire lengths `[37, 838, 286, 58]`, large
+/// enough for a real generated TLS handshake to select the positional path. The
+/// ticket is either co-written with record four or absent; the one-shot
+/// `single-probe-present` race is covered by the production reader test instead.
+///
+/// # Errors
+///
+/// Returns a bounded diagnostic for malformed `ClientHello` input or socket I/O.
+pub fn serve_delayed_cover(
+    listener: &TcpListener,
+    delay_ms: u64,
+    case: DelayProbeCase,
+) -> Result<DelayCoverEvidence, String> {
+    if ![0, 20, 50, 100, 200].contains(&delay_ms) {
+        return Err(format!("unsupported TLS record delay: {delay_ms}ms"));
+    }
+    let (mut stream, _) = listener
+        .accept()
+        .map_err(|error| format!("delayed cover accept failed: {error}"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(15)))
+        .map_err(|error| format!("could not bound delayed cover reads: {error}"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(15)))
+        .map_err(|error| format!("could not bound delayed cover writes: {error}"))?;
+    let client_hello = read_record(&mut stream, MAX_CLIENT_HELLO_BYTES)?;
+    let (session_id, cipher) = parse_client_hello_echo(&client_hello)?;
+    let records = delayed_cover_records(&session_id, cipher)?;
+    let ticket = records
+        .last()
+        .ok_or_else(|| "delayed cover constructed no ticket record".to_owned())?;
+    let before_ticket = &records[..records.len() - 1];
+    for (index, record) in before_ticket.iter().enumerate() {
+        if index > 0 {
+            std::thread::sleep(Duration::from_millis(delay_ms));
+        }
+        if index + 1 == before_ticket.len() && case == DelayProbeCase::AlreadyBuffered {
+            let mut combined = record.clone();
+            combined.extend_from_slice(ticket);
+            stream
+                .write_all(&combined)
+                .map_err(|error| format!("delayed cover combined write failed: {error}"))?;
+        } else {
+            stream
+                .write_all(record)
+                .map_err(|error| format!("delayed cover record write failed: {error}"))?;
+        }
+    }
+    let mut retained = before_ticket.concat();
+    if case == DelayProbeCase::AlreadyBuffered {
+        retained.extend_from_slice(&ticket[..5]);
+    }
+    // Keep the target socket alive until the measured peer finishes or the
+    // absolute case bound elapses. Timeout/reset is expected after the REALITY
+    // session switches to its authenticated origin path.
+    let mut drain = [0_u8; 512];
+    loop {
+        match stream.read(&mut drain) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::TimedOut
+                        | std::io::ErrorKind::WouldBlock
+                        | std::io::ErrorKind::ConnectionReset
+                ) =>
+            {
+                break;
+            }
+            Err(error) => return Err(format!("delayed cover drain failed: {error}")),
+        }
+    }
+    let encrypted = std::array::from_fn(|index| records[2 + index].len());
+    Ok(DelayCoverEvidence {
+        delay_ms,
+        case,
+        emit_ccs: true,
+        encrypted_wire_lengths: encrypted,
+        nst_wire_length: (case == DelayProbeCase::AlreadyBuffered).then_some(ticket.len()),
+        retained_prefix_bytes: retained.len(),
+        retained_prefix_sha256: hash::sha256_hex(&retained),
+        client_hello_sha256: hash::sha256_hex(&client_hello),
+    })
+}
+
+fn parse_client_hello_echo(wire: &[u8]) -> Result<(Vec<u8>, [u8; 2]), String> {
+    validate_client_hello(wire)?;
+    let body = &wire[5..];
+    let mut cursor = 4 + 2 + 32;
+    let session_bytes = usize::from(
+        *body
+            .get(cursor)
+            .ok_or_else(|| "ClientHello ends before its session id".to_owned())?,
+    );
+    cursor += 1;
+    if session_bytes > 32 || cursor + session_bytes + 2 > body.len() {
+        return Err("ClientHello legacy session id is malformed".to_owned());
+    }
+    let session_id = body[cursor..cursor + session_bytes].to_vec();
+    cursor += session_bytes;
+    let suites_bytes = usize::from(u16::from_be_bytes([body[cursor], body[cursor + 1]]));
+    cursor += 2;
+    if suites_bytes < 2 || suites_bytes % 2 != 0 || cursor + suites_bytes > body.len() {
+        return Err("ClientHello cipher-suite vector is malformed".to_owned());
+    }
+    let suites = body[cursor..cursor + suites_bytes]
+        .chunks_exact(2)
+        .map(|suite| [suite[0], suite[1]])
+        .collect::<Vec<_>>();
+    let cipher = [[0x13, 1], [0x13, 2], [0x13, 3]]
+        .into_iter()
+        .find(|candidate| suites.contains(candidate))
+        .ok_or_else(|| "ClientHello offered no supported TLS 1.3 cipher".to_owned())?;
+    Ok((session_id, cipher))
+}
+
+fn delayed_cover_records(session_id: &[u8], cipher: [u8; 2]) -> Result<Vec<Vec<u8>>, String> {
+    if session_id.len() > 32 {
+        return Err("delayed cover session id exceeds 32 bytes".to_owned());
+    }
+    let key_share = [
+        0, 0x1d, 0, 0x20, 0x5a, 0x5b, 0x58, 0x59, 0x5e, 0x5f, 0x5c, 0x5d, 0x52, 0x53, 0x50, 0x51,
+        0x56, 0x57, 0x54, 0x55, 0x4a, 0x4b, 0x48, 0x49, 0x4e, 0x4f, 0x4c, 0x4d, 0x42, 0x43, 0x40,
+        0x41, 0x46, 0x47, 0x44, 0x45,
+    ];
+    let mut extensions = vec![0, 0x2b, 0, 2, 3, 4, 0, 0x33, 0, 0x24];
+    extensions.extend_from_slice(&key_share);
+    let mut body = vec![3, 3];
+    body.extend((0_u8..32).map(|index| index ^ 0xa5));
+    body.push(u8::try_from(session_id.len()).map_err(|error| error.to_string())?);
+    body.extend_from_slice(session_id);
+    body.extend_from_slice(&cipher);
+    body.push(0);
+    body.extend_from_slice(
+        &u16::try_from(extensions.len())
+            .map_err(|error| error.to_string())?
+            .to_be_bytes(),
+    );
+    body.extend_from_slice(&extensions);
+    let mut handshake = vec![2];
+    let body_len = u32::try_from(body.len())
+        .map_err(|error| error.to_string())?
+        .to_be_bytes();
+    handshake.extend_from_slice(&body_len[1..]);
+    handshake.extend_from_slice(&body);
+    let mut records = vec![tls_record(22, &handshake)?, tls_record(20, &[1])?];
+    for (position, body_bytes) in [32_usize, 833, 281, 53].into_iter().enumerate() {
+        records.push(tls_record(
+            23,
+            &vec![0x31 + u8::try_from(position).unwrap_or(0); body_bytes],
+        )?);
+    }
+    records.push(tls_record(23, &[0xf5; 24])?);
+    Ok(records)
+}
+
+fn tls_record(content_type: u8, payload: &[u8]) -> Result<Vec<u8>, String> {
+    if payload.is_empty() || payload.len() > MAX_TLS_CIPHERTEXT_BYTES {
+        return Err("fixture TLS record payload is outside its bound".to_owned());
+    }
+    let mut record = vec![content_type, 3, 3];
+    record.extend_from_slice(
+        &u16::try_from(payload.len())
+            .map_err(|error| error.to_string())?
+            .to_be_bytes(),
+    );
+    record.extend_from_slice(payload);
+    Ok(record)
+}
+
 fn shape_connection(client: &mut TcpStream, upstream_port: u16) -> Result<(), String> {
     client
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -720,6 +975,22 @@ mod tests {
         wire
     }
 
+    fn sample_client_hello() -> Vec<u8> {
+        let mut body = vec![3, 3];
+        body.extend_from_slice(&[0x44; 32]);
+        body.push(32);
+        body.extend(0_u8..32);
+        body.extend_from_slice(&[0, 2, 0x13, 1]);
+        let mut message = vec![1];
+        let len = u32::try_from(body.len()).unwrap().to_be_bytes();
+        message.extend_from_slice(&len[1..]);
+        message.extend_from_slice(&body);
+        let mut wire = vec![22, 3, 1];
+        wire.extend_from_slice(&u16::try_from(message.len()).unwrap().to_be_bytes());
+        wire.extend_from_slice(&message);
+        wire
+    }
+
     #[test]
     fn parses_the_complete_outer_sequence_and_server_hello() {
         let wire = sample_server_flight();
@@ -820,5 +1091,38 @@ mod tests {
         let records = parse_records(&shaped).unwrap();
         assert_eq!(records.len(), 5);
         assert_eq!(records.last().unwrap().wire_bytes(), 139);
+    }
+
+    #[test]
+    fn delayed_cover_emits_the_two_real_candidate_fixture_shapes() {
+        for case in [
+            DelayProbeCase::AlreadyBuffered,
+            DelayProbeCase::AbsentWouldBlock,
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || serve_delayed_cover(&listener, 0, case));
+            let mut client = TcpStream::connect(address).unwrap();
+            let hello = sample_client_hello();
+            client.write_all(&hello).unwrap();
+            let record_count = 6 + usize::from(case == DelayProbeCase::AlreadyBuffered);
+            let mut received = Vec::new();
+            for _ in 0..record_count {
+                received.extend_from_slice(
+                    &read_record(&mut client, 5 + MAX_TLS_CIPHERTEXT_BYTES).unwrap(),
+                );
+            }
+            drop(client);
+            let evidence = server.join().unwrap().unwrap();
+            let records = parse_records(&received).unwrap();
+            assert_eq!(records.len(), record_count);
+            assert_eq!(evidence.encrypted_wire_lengths, [37, 838, 286, 58]);
+            assert_eq!(
+                evidence.nst_wire_length,
+                (case == DelayProbeCase::AlreadyBuffered).then_some(29)
+            );
+            assert_eq!(evidence.client_hello_sha256, hash::sha256_hex(&hello));
+            assert!(evidence.emit_ccs);
+        }
     }
 }
