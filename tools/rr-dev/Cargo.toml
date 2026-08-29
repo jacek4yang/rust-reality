@@ -9,6 +9,10 @@ publish = false
 
 [dependencies]
 clap = { version = "4.6.5", default-features = false, features = ["derive", "error-context", "help", "std", "suggestions", "usage"] }
+# The TLS origin's server side. `ring` is the provider the production crate
+# already standardises on, so the dev plane exercises the same crypto backend.
+rustls = { version = "0.23.43", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = { version = "2.2.0", default-features = false, features = ["std"] }
 
 [lints.rust]
 missing_docs = "warn"

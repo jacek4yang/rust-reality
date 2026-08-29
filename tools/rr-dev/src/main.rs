@@ -234,6 +234,41 @@ enum BenchCommand {
         #[arg(long, default_value_t = 8)]
         max_accepted: usize,
     },
+    /// Loopback HTTP/1.1 and TLS 1.3 payload origin.
+    ///
+    /// A separate process so a wedged listener takes down nothing but itself;
+    /// the harnesses own its lifetime through RAII children. Hidden from normal
+    /// CLI help: operator policy remains the suite commands.
+    #[command(hide = true)]
+    Origin {
+        /// Numeric listen address.
+        #[arg(long, default_value = "127.0.0.1")]
+        listen_address: String,
+        /// Listen port; 0 binds an ephemeral port.
+        #[arg(long)]
+        port: u16,
+        /// Directory holding the payload files.
+        #[arg(long)]
+        payload_dir: PathBuf,
+        /// Path of the per-PUT JSONL log the origin appends to.
+        #[arg(long)]
+        put_log: PathBuf,
+        /// Per-request JSONL log; leaving it unset also leaves hashing off.
+        #[arg(long)]
+        access_log: Option<PathBuf>,
+        /// Instance name recorded in access-log rows.
+        #[arg(long, default_value = "")]
+        label: String,
+        /// TLS 1.3-only PEM certificate; requires `--tls-key`.
+        #[arg(long)]
+        tls_cert: Option<PathBuf>,
+        /// TLS 1.3-only PEM private key; requires `--tls-cert`.
+        #[arg(long)]
+        tls_key: Option<PathBuf>,
+        /// Comma-separated ALPN protocols the TLS listener offers.
+        #[arg(long, default_value = "")]
+        tls_alpn: String,
+    },
     /// Run a tunnel A/B suite end to end (`real-path`, `xray`, or `vision-direct`).
     Run {
         /// Suite id: `real-path`, `xray`, or `vision-direct`.
@@ -888,6 +923,85 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        BenchCommand::Origin {
+            listen_address,
+            port,
+            payload_dir,
+            put_log,
+            access_log,
+            label,
+            tls_cert,
+            tls_key,
+            tls_alpn,
+        } => {
+            let tls = match (tls_cert, tls_key) {
+                (None, None) => None,
+                (Some(cert), Some(key)) => {
+                    let (certificate_pem, key_pem) = match (
+                        std::fs::read(cert),
+                        std::fs::read(key),
+                    ) {
+                        (Ok(certificate_pem), Ok(key_pem)) => (certificate_pem, key_pem),
+                        (error, other) => {
+                            let failed = match (error.is_err(), other.is_err()) {
+                                (true, _) => error.unwrap_err(),
+                                (_, true) => other.unwrap_err(),
+                                _ => std::io::Error::other("unreadable TLS material"),
+                            };
+                            eprintln!("bench origin: could not read TLS material: {failed}");
+                            return ExitCode::FAILURE;
+                        }
+                    };
+                    let alpn = tls_alpn
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|protocol| !protocol.is_empty())
+                        .map(str::to_owned)
+                        .collect();
+                    Some(bench::origin_server::TlsOptions {
+                        certificate_pem,
+                        key_pem,
+                        alpn,
+                    })
+                }
+                _ => {
+                    eprintln!("bench origin: --tls-cert and --tls-key must be given together");
+                    return ExitCode::from(2);
+                }
+            };
+            let address = match listen_address.parse::<std::net::IpAddr>() {
+                Ok(address) => address,
+                Err(error) => {
+                    eprintln!("bench origin: --listen-address must be numeric: {error}");
+                    return ExitCode::from(2);
+                }
+            };
+            let listener = match std::net::TcpListener::bind((address, *port)) {
+                Ok(listener) => listener,
+                Err(error) => {
+                    eprintln!("bench origin: could not bind {address}:{port}: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            if let Ok(address) = listener.local_addr() {
+                println!("READY {address}");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+            }
+            match bench::origin_server::serve_with_tls(
+                listener,
+                &payload_dir,
+                Some(&put_log),
+                access_log.as_deref(),
+                &label,
+                tls.as_ref(),
+            ) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("bench origin: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         BenchCommand::Workload {
             socks_port,
             origin_port,

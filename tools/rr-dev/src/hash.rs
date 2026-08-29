@@ -1,11 +1,15 @@
 //! A small, dependency-free SHA-256.
 //!
+//! Uses `std::fmt::Write` for hex rendering.
+//!
 //! The release stages hash whole files with the external `sha256sum`, but the
 //! config-identity fingerprint hashes many small in-memory JSON values, so a
 //! per-value subprocess would be absurd. Rather than pull `sha2` and its
 //! `digest`/`generic-array`/`cpufeatures` graph into the otherwise minimal tools
 //! workspace, this implements FIPS 180-4 SHA-256 directly. It is verified against
 //! the standard test vectors.
+
+use std::fmt::Write as _;
 
 const H0: [u32; 8] = [
     0x6a09_e667, 0xbb67_ae85, 0x3c6e_f372, 0xa54f_f53a, 0x510e_527f, 0x9b05_688c, 0x1f83_d9ab,
@@ -112,6 +116,136 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
     out
 }
 
+
+/// An incremental SHA-256 for streaming bodies.
+///
+/// The origin's access log hashes request bodies that arrive in 256 KiB reads;
+/// buffering a whole multi-MiB upload to hash it once would double the memory
+/// the heaviest cells push through the origin.
+pub struct Sha256 {
+    state: [u32; 8],
+    buffered: [u8; 64],
+    buffered_len: usize,
+    total_len: u64,
+}
+
+impl Sha256 {
+    /// Starts a fresh digest.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            state: H0,
+            buffered: [0; 64],
+            buffered_len: 0,
+            total_len: 0,
+        }
+    }
+
+    /// Absorbs one more slice of the message.
+    pub fn update(&mut self, data: &[u8]) {
+        self.total_len = self.total_len.wrapping_add(data.len() as u64);
+        let mut rest = data;
+        if self.buffered_len > 0 {
+            let take = (64 - self.buffered_len).min(rest.len());
+            self.buffered[self.buffered_len..self.buffered_len + take]
+                .copy_from_slice(&rest[..take]);
+            self.buffered_len += take;
+            rest = &rest[take..];
+            if self.buffered_len == 64 {
+                let block = self.buffered;
+                Self::compress(&mut self.state, &block);
+                self.buffered_len = 0;
+            }
+        }
+        for chunk in rest.chunks_exact(64) {
+            if let Ok(block) = chunk.try_into() {
+                Self::compress(&mut self.state, block);
+            }
+        }
+        // Only overwrite the buffer when this call actually brought bytes; an
+        // empty update must leave previously buffered data alone.
+        if !rest.is_empty() {
+            let tail = rest.len() - rest.len() / 64 * 64;
+            self.buffered[..tail].copy_from_slice(&rest[rest.len() - tail..]);
+            self.buffered_len = tail;
+        }
+    }
+
+    /// Finishes the digest and renders it as lowercase hex.
+    #[must_use]
+    pub fn finish_hex(self) -> String {
+        let mut block = [0_u8; 128];
+        block[..self.buffered_len].copy_from_slice(&self.buffered[..self.buffered_len]);
+        block[self.buffered_len] = 0x80;
+        let head = self.buffered_len + 1;
+        let tail = if head <= 56 { 56 } else { 120 };
+        let bit_len = self.total_len.wrapping_mul(8).to_be_bytes();
+        block[tail..tail + 8].copy_from_slice(&bit_len);
+        let mut state = self.state;
+        for chunk in block[..tail + 8].chunks_exact(64) {
+            if let Ok(block) = chunk.try_into() {
+                Self::compress(&mut state, block);
+            }
+        }
+        let mut out = String::with_capacity(64);
+        for word in state {
+            for byte in word.to_be_bytes() {
+                let _ = write!(out, "{byte:02x}");
+            }
+        }
+        out
+    }
+
+    fn compress(state: &mut [u32; 8], block: &[u8; 64]) {
+        let mut w = [0_u32; 64];
+        for (index, word) in block.chunks_exact(4).enumerate() {
+            w[index] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
+        }
+        for index in 16..64 {
+            let s0 = w[index - 15].rotate_right(7)
+                ^ w[index - 15].rotate_right(18)
+                ^ (w[index - 15] >> 3);
+            let s1 = w[index - 2].rotate_right(17)
+                ^ w[index - 2].rotate_right(19)
+                ^ (w[index - 2] >> 10);
+            w[index] = w[index - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[index - 7])
+                .wrapping_add(s1);
+        }
+        let mut v = *state;
+        for index in 0..64 {
+            let s1 = v[4].rotate_right(6) ^ v[4].rotate_right(11) ^ v[4].rotate_right(25);
+            let ch = (v[4] & v[5]) ^ ((!v[4]) & v[6]);
+            let temp1 = v[7]
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(K[index])
+                .wrapping_add(w[index]);
+            let s0 = v[0].rotate_right(2) ^ v[0].rotate_right(13) ^ v[0].rotate_right(22);
+            let maj = (v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]);
+            let temp2 = s0.wrapping_add(maj);
+            v[7] = v[6];
+            v[6] = v[5];
+            v[5] = v[4];
+            v[4] = v[3].wrapping_add(temp1);
+            v[3] = v[2];
+            v[2] = v[1];
+            v[1] = v[0];
+            v[0] = temp1.wrapping_add(temp2);
+        }
+        for (slot, value) in state.iter_mut().zip(v) {
+            *slot = slot.wrapping_add(value);
+        }
+    }
+}
+
+impl Default for Sha256 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,5 +274,61 @@ mod tests {
             sha256_hex(&input),
             "b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a"
         );
+    }
+    #[test]
+    fn every_prefix_length_matches_one_shot() {
+        // Every message length 0..=200 in one update, then in two splits,
+        // must reproduce the one-shot digest; the first divergence names the
+        // broken code path.
+        for total in 0..=200_usize {
+            let message: Vec<u8> = (0..total).map(|index| (index * 7 + 3) as u8).collect();
+            let expected = sha256_hex(&message);
+            let mut single = Sha256::new();
+            single.update(&message);
+            assert_eq!(single.finish_hex(), expected, "single update, total={total}");
+            for split in 0..=total {
+                if total == 1 && split == 1 {
+                    let mut probe = Sha256::new();
+                    probe.update(&message[..1]);
+                    let after_first = probe.finish_hex();
+                    let mut probe = Sha256::new();
+                    probe.update(&message[..1]);
+                    probe.update(&message[1..]);
+                    assert_eq!(after_first, expected, "first-update digest already wrong");
+                }
+                let mut parts = Sha256::new();
+                parts.update(&message[..split]);
+                parts.update(&message[split..]);
+                assert_eq!(parts.finish_hex(), expected, "split {split}/{total}");
+            }
+        }
+    }
+
+    #[test]
+    fn incremental_hashing_matches_one_shot() {
+        let mut incremental = Sha256::new();
+        let mut one_shot = Vec::new();
+        let mut seed = 0x1234_5678_u32;
+        for _ in 0..1000 {
+            let length = (seed % 300) as usize;
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let chunk: Vec<u8> = (0..length).map(|index| (index as u8) ^ seed as u8).collect();
+            incremental.update(&chunk);
+            one_shot.extend_from_slice(&chunk);
+        }
+        assert_eq!(incremental.finish_hex(), sha256_hex(&one_shot));
+    }
+
+    #[test]
+    fn empty_and_exact_block_boundaries_match_one_shot() {
+        assert_eq!(Sha256::new().finish_hex(), sha256_hex(b""));
+        let exact = vec![7_u8; 64];
+        let mut incremental = Sha256::new();
+        incremental.update(&exact);
+        assert_eq!(incremental.finish_hex(), sha256_hex(&exact));
+        let mut incremental = Sha256::new();
+        incremental.update(&exact);
+        incremental.update(&exact);
+        assert_eq!(incremental.finish_hex(), sha256_hex(&[7_u8; 128]));
     }
 }
