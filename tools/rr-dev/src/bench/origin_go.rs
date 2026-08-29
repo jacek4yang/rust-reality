@@ -145,10 +145,19 @@ pub fn start(binary: &Path, workspace: &Workspace, plan: &OriginPlan) -> Result<
     let log = workspace.join(&format!("{}.log", plan.label));
     let mut child = Child::spawn(&plan.label, binary, &args, workspace.path(), &[], &log)
         .map_err(|error| error.to_string())?;
+    let address = format_socket_address(&plan.listen_address, plan.port)?;
     child
-        .wait_for_port(plan.port, READY_TIMEOUT)
+        .wait_for_address(address, READY_TIMEOUT)
         .map_err(|error| error.to_string())?;
     Ok(child)
+}
+
+/// Parses a numeric listener address into the socket the readiness probe uses.
+fn format_socket_address(address: &str, port: u16) -> Result<std::net::SocketAddr, String> {
+    let ip = address
+        .parse::<std::net::IpAddr>()
+        .map_err(|error| format!("origin listen address {address:?} is not numeric: {error}"))?;
+    Ok(std::net::SocketAddr::new(ip, port))
 }
 
 /// Launches an origin listener inside a shaped network namespace.
