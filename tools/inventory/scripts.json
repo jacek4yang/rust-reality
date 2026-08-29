@@ -17,8 +17,8 @@
   "current_state": {
     "base_main": "996e8ad0b9224609151722b4c78535b65585e1d3",
     "snapshot": "IN_PROGRESS_PR_149_CORE_AB_ABBA",
-    "tracked_files": 39,
-    "tracked_lines": 18603,
+    "tracked_files": 38,
+    "tracked_lines": 18088,
     "repository_owned_external_python_validators": 0,
     "workflow_scripts_references": 0
   },
@@ -185,8 +185,8 @@
         "benchmark-contract.sh"
       ],
       "disposition": "MERGE",
-      "replacement": "cargo dev bench fallback",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite fallback",
+      "status": "deleted-after-parity in PR #149; perf mechanism accepted locally with per-slot payload integrity and pinned relay policy"
     },
     {
       "path": "scripts/benchmark-matrix.sh",
