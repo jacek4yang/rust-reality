@@ -252,6 +252,30 @@ impl Child {
             let _ = handle.wait();
         }
     }
+
+    /// Sends `SIGHUP` to the exact owned process for configuration reload.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the child has exited or `kill` rejects the signal.
+    pub fn reload(&mut self) -> Result<(), String> {
+        if !self.is_alive() {
+            return Err(format!("{} exited before reload", self.label));
+        }
+        let status = std::process::Command::new("kill")
+            .arg("-HUP")
+            .arg(self.pid.to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|error| format!("could not signal {}: {error}", self.label))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("could not reload {}: {status}", self.label))
+        }
+    }
 }
 
 impl Drop for Child {

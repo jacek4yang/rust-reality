@@ -276,6 +276,13 @@ enum BenchCommand {
         #[arg(long)]
         port: u16,
     },
+    /// Internal TCP-only no-auth SOCKS5 upstream for outbound-pool gates.
+    #[command(hide = true)]
+    SocksServer {
+        /// Loopback listen port.
+        #[arg(long)]
+        port: u16,
+    },
     /// Run a benchmark or mechanism suite end to end.
     Run {
         /// Suite id (`cargo dev bench list` shows the catalogue).
@@ -1051,6 +1058,27 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("bench echo: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        BenchCommand::SocksServer { port } => {
+            let listener = match std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, *port))
+            {
+                Ok(listener) => listener,
+                Err(error) => {
+                    eprintln!("bench socks-server: could not bind 127.0.0.1:{port}: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            if let Ok(address) = listener.local_addr() {
+                println!("READY {address}");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+            }
+            match bench::socks_server::serve(&listener) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("bench socks-server: {error}");
                     ExitCode::FAILURE
                 }
             }
