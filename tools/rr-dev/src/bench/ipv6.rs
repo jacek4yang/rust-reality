@@ -585,3 +585,191 @@ LISTEN 0      511          0.0.0.0:80          0.0.0.0:*";
         std::fs::remove_dir_all(&dir).ok();
     }
 }
+
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+/// One `socks -> vless` path through an Xray client.
+///
+/// The IPv6 phases need several paths at once — different inbound families,
+/// different servers, different dial policies — and starting one Xray per path
+/// would multiply the processes without changing what is measured. A single
+/// client with per-inbound routing keeps the client constant across cases.
+#[derive(Debug, Clone)]
+pub struct Leg {
+    /// SOCKS port this leg listens on.
+    pub socks_port: u16,
+    /// Address of the REALITY server, literal or bracketed-free IPv6.
+    pub server_address: String,
+    /// Port of the REALITY server.
+    pub server_port: u16,
+    /// REALITY public key.
+    pub public_key: String,
+    /// Client UUID.
+    pub uuid: String,
+    /// REALITY short id.
+    pub short_id: String,
+}
+
+/// Builds a multi-leg Xray client configuration.
+///
+/// Each leg gets its own inbound tag and a routing rule binding that tag to its
+/// own outbound, so a request's SOCKS port alone determines which server and
+/// dial policy it exercises.
+#[must_use]
+pub fn xray_config(legs: &[Leg]) -> Json {
+    let inbound_tag = |leg: &Leg| format!("s{}", leg.socks_port);
+    let outbound_tag = |leg: &Leg| format!("v{}", leg.socks_port);
+    Json::object([
+        ("log", Json::object([("loglevel", Json::string("warning"))])),
+        (
+            "inbounds",
+            Json::Array(
+                legs.iter()
+                    .map(|leg| {
+                        Json::object([
+                            ("tag", Json::string(inbound_tag(leg))),
+                            ("listen", Json::string("127.0.0.1")),
+                            ("port", Json::Int(i64::from(leg.socks_port))),
+                            ("protocol", Json::string("socks")),
+                            (
+                                "settings",
+                                Json::object([
+                                    ("auth", Json::string("noauth")),
+                                    ("udp", Json::Bool(false)),
+                                ]),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            "outbounds",
+            Json::Array(
+                legs.iter()
+                    .map(|leg| {
+                        Json::object([
+                            ("tag", Json::string(outbound_tag(leg))),
+                            ("protocol", Json::string("vless")),
+                            (
+                                "settings",
+                                Json::object([(
+                                    "vnext",
+                                    Json::Array(vec![Json::object([
+                                        ("address", Json::string(&leg.server_address)),
+                                        ("port", Json::Int(i64::from(leg.server_port))),
+                                        (
+                                            "users",
+                                            Json::Array(vec![Json::object([
+                                                ("id", Json::string(&leg.uuid)),
+                                                ("encryption", Json::string("none")),
+                                                ("flow", Json::string("xtls-rprx-vision")),
+                                            ])]),
+                                        ),
+                                    ])]),
+                                )]),
+                            ),
+                            (
+                                "streamSettings",
+                                Json::object([
+                                    ("network", Json::string("tcp")),
+                                    ("security", Json::string("reality")),
+                                    (
+                                        "realitySettings",
+                                        Json::object([
+                                            ("fingerprint", Json::string("chrome")),
+                                            ("serverName", Json::string(COVER_SNI)),
+                                            ("publicKey", Json::string(&leg.public_key)),
+                                            ("shortId", Json::string(&leg.short_id)),
+                                            ("spiderX", Json::string("/")),
+                                        ]),
+                                    ),
+                                ]),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            "routing",
+            Json::object([
+                ("domainStrategy", Json::string("AsIs")),
+                (
+                    "rules",
+                    Json::Array(
+                        legs.iter()
+                            .map(|leg| {
+                                Json::object([
+                                    ("type", Json::string("field")),
+                                    (
+                                        "inboundTag",
+                                        Json::Array(vec![Json::string(inbound_tag(leg))]),
+                                    ),
+                                    ("outboundTag", Json::string(outbound_tag(leg))),
+                                ])
+                            })
+                            .collect(),
+                    ),
+                ),
+            ]),
+        ),
+    ])
+}
+
+/// The SNI every REALITY leg in this suite presents.
+pub const COVER_SNI: &str = "cover.test";
+
+/// How a server's listener and outbound dialling are configured.
+#[derive(Debug, Clone)]
+pub struct ServerPlan {
+    /// Short name; also the config and log file stem.
+    pub name: String,
+    /// Inbound port.
+    pub port: u16,
+    /// `listen.mode`.
+    pub mode: ListenerMode,
+    /// `listen.ipv4`.
+    pub ipv4: String,
+    /// `listen.ipv6`.
+    pub ipv6: String,
+    /// Cover target, `host:port` with IPv6 bracketed.
+    pub target: String,
+    /// Extra `network.dial` members, merged over the generated defaults.
+    pub dial: Vec<(String, Json)>,
+}
+
+impl ServerPlan {
+    /// A loopback dual-stack plan, which most cases start from.
+    #[must_use]
+    pub fn dual_stack(name: &str, port: u16, target: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            port,
+            mode: ListenerMode::DualStack,
+            ipv4: "127.0.0.1".to_owned(),
+            ipv6: "::1".to_owned(),
+            target: target.to_owned(),
+            dial: Vec::new(),
+        }
+    }
+
+    /// Sets `network.dial.mode`.
+    #[must_use]
+    pub fn dialling(mut self, mode: &str) -> Self {
+        self.dial.push(("mode".to_owned(), Json::string(mode)));
+        self
+    }
+
+    /// The `listen` object this plan describes.
+    #[must_use]
+    pub fn listen_json(&self) -> Json {
+        Json::object([
+            ("mode", Json::string(self.mode.as_str())),
+            ("ipv4", Json::string(&self.ipv4)),
+            ("ipv6", Json::string(&self.ipv6)),
+        ])
+    }
+}

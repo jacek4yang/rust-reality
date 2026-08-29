@@ -103,12 +103,53 @@ pub fn build_cover_certificate(
     directory: &Path,
     run_id: &str,
 ) -> Result<CoverCertificate, String> {
+    let certificate = build_certificate(
+        openssl_bin,
+        directory,
+        &CertificatePlan {
+            ca_subject: format!("/CN=rust-reality no-CCS test CA {run_id}"),
+            leaf_subject: "/CN=localhost".to_owned(),
+            subject_alt_name: "DNS:localhost,IP:127.0.0.1".to_owned(),
+            verify_hostname: Some("localhost".to_owned()),
+        },
+    )?;
+    check_subject_alt_name(&certificate.subject_alt_name)?;
+    Ok(certificate)
+}
+
+/// What an ephemeral CA and leaf should attest to.
+#[derive(Debug, Clone)]
+pub struct CertificatePlan {
+    /// Subject of the ephemeral CA.
+    pub ca_subject: String,
+    /// Subject of the leaf.
+    pub leaf_subject: String,
+    /// The leaf's `subjectAltName` value, e.g. `DNS:cover.test,IP:::1`.
+    pub subject_alt_name: String,
+    /// Hostname to verify the finished chain against, when one applies.
+    pub verify_hostname: Option<String>,
+}
+
+/// Builds an ephemeral CA and a leaf it signs.
+///
+/// The CA is written to `ca.crt`, the leaf to `server.crt`. Nothing here is ever
+/// added to a host trust store: the one process that must trust the CA receives
+/// it through `SSL_CERT_FILE` in its own environment.
+///
+/// # Errors
+///
+/// Returns the first OpenSSL failure.
+pub fn build_certificate(
+    openssl_bin: &Path,
+    directory: &Path,
+    plan: &CertificatePlan,
+) -> Result<CoverCertificate, String> {
     let path = |name: &str| directory.join(name).display().to_string();
     let run = |args: Vec<String>| openssl(openssl_bin, &args);
 
     run(owned(&[
         "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256", "-days", "1",
-        "-subj", &format!("/CN=rust-reality no-CCS test CA {run_id}"),
+        "-subj", &plan.ca_subject,
         "-addext", "basicConstraints=critical,CA:TRUE",
         "-addext", "keyUsage=critical,keyCertSign,cRLSign",
         "-keyout", &path("ca.key"), "-out", &path("ca.crt"),
@@ -116,11 +157,11 @@ pub fn build_cover_certificate(
 
     run(owned(&[
         "req", "-new", "-newkey", "rsa:2048", "-nodes", "-sha256",
-        "-subj", "/CN=localhost",
+        "-subj", &plan.leaf_subject,
         "-addext", "basicConstraints=critical,CA:FALSE",
         "-addext", "keyUsage=critical,digitalSignature,keyEncipherment",
         "-addext", "extendedKeyUsage=serverAuth",
-        "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
+        "-addext", &format!("subjectAltName={}", plan.subject_alt_name),
         "-keyout", &path("server.key"), "-out", &path("server.csr"),
     ]))?;
 
@@ -132,15 +173,16 @@ pub fn build_cover_certificate(
         "-out", &path("server.crt"),
     ]))?;
 
-    run(owned(&[
-        "verify", "-CAfile", &path("ca.crt"),
-        "-verify_hostname", "localhost", &path("server.crt"),
-    ]))?;
+    if let Some(hostname) = &plan.verify_hostname {
+        run(owned(&[
+            "verify", "-CAfile", &path("ca.crt"),
+            "-verify_hostname", hostname, &path("server.crt"),
+        ]))?;
+    }
 
     let subject_alt_name = run(owned(&[
         "x509", "-in", &path("server.crt"), "-noout", "-ext", "subjectAltName",
     ]))?;
-    check_subject_alt_name(&subject_alt_name)?;
 
     Ok(CoverCertificate {
         ca_certificate: directory.join("ca.crt"),
