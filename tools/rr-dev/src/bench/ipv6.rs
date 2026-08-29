@@ -1,0 +1,587 @@
+//! IPv6 end-to-end validation.
+//!
+//! Six phases, each appending rows to `results.jsonl`: environment capture,
+//! listener bind/accept modes, VLESS+REALITY+Vision sessions over IPv6, a
+//! host-global address with real Internet egress, large byte-exact transfers,
+//! and a resilience phase over shaped namespace links.
+//!
+//! ## Why every row carries a classification
+//!
+//! An IPv6 claim is only as strong as the network it was made on. A session
+//! that works over `::1` says nothing about a session over a routed global
+//! address, and neither says anything about ingress from another host. The
+//! legacy harness therefore tagged every row `loopback`, `namespace`,
+//! `host-global` or `external`, and refused to let a loopback pass stand in for
+//! anything else. That honesty is the reason this evidence is worth keeping, so
+//! the classification is part of the row type rather than a free-text note.
+//!
+//! ## Egress family attribution
+//!
+//! Several cases turn on *which address family the server dialled*, which the
+//! server does not log. The harness proves it the only way available: two
+//! origins bound to the same port, one on `127.0.0.1` and one on `::1`, each
+//! labelling its own access-log rows. Whichever one served the request is the
+//! family that was chosen.
+
+use std::path::{Path, PathBuf};
+
+use crate::perf::json_out::Json;
+
+/// How far the network under a result actually reaches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Classification {
+    /// Loopback only: `::1` and `127.0.0.1`.
+    Loopback,
+    /// Inside network namespaces joined by veth links.
+    Namespace,
+    /// A real global address on this host.
+    HostGlobal,
+    /// Ingress from a host we do not control.
+    External,
+}
+
+impl Classification {
+    /// The wire name recorded in `results.jsonl`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Loopback => "loopback",
+            Self::Namespace => "namespace",
+            Self::HostGlobal => "host-global",
+            Self::External => "external",
+        }
+    }
+}
+
+/// The outcome of one recorded case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    /// The case ran and met its expectation.
+    Pass,
+    /// The case ran and did not.
+    Fail,
+    /// The case could not run here, with a recorded reason.
+    Skip,
+}
+
+impl Status {
+    /// The wire name recorded in `results.jsonl`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Fail => "fail",
+            Self::Skip => "skip",
+        }
+    }
+
+    /// Turns a boolean expectation into a status.
+    #[must_use]
+    pub const fn from_met(met: bool) -> Self {
+        if met { Self::Pass } else { Self::Fail }
+    }
+}
+
+/// One row of `results.jsonl`.
+#[derive(Debug, Clone)]
+pub struct Record {
+    /// Phase name, e.g. `2-sessions`.
+    pub matrix: String,
+    /// Case name within the phase.
+    pub case: String,
+    /// How far this result reaches.
+    pub classification: Classification,
+    /// Whether the expectation was met.
+    pub status: Status,
+    /// Case-specific evidence.
+    pub detail: Json,
+    /// Relative path of a log supporting the row; empty when there is none.
+    pub evidence: String,
+}
+
+impl Record {
+    /// Renders the row in the legacy `results.jsonl` shape.
+    #[must_use]
+    pub fn to_json(&self, timestamp: &str) -> Json {
+        Json::object([
+            ("ts", Json::string(timestamp)),
+            ("matrix", Json::string(&self.matrix)),
+            ("case", Json::string(&self.case)),
+            (
+                "classification",
+                Json::string(self.classification.as_str()),
+            ),
+            ("status", Json::string(self.status.as_str())),
+            ("detail", self.detail.clone()),
+            ("evidence", Json::string(&self.evidence)),
+        ])
+    }
+}
+
+/// Appends rows to `results.jsonl` and keeps a tally for the final gate.
+#[derive(Debug)]
+pub struct Results {
+    /// Where rows are appended.
+    path: PathBuf,
+    /// Every row recorded so far.
+    rows: Vec<Record>,
+}
+
+impl Results {
+    /// Opens (creating) the results file.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the file cannot be created.
+    pub fn create(path: PathBuf) -> Result<Self, String> {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|error| format!("could not open {}: {error}", path.display()))?;
+        Ok(Self {
+            path,
+            rows: Vec::new(),
+        })
+    }
+
+    /// Appends one row.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the row cannot be written.
+    pub fn record(&mut self, record: Record) -> Result<(), String> {
+        use std::io::Write as _;
+        let timestamp = crate::bench::evidence::now_utc()?;
+        let line = record.to_json(&timestamp).to_jq_json();
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&self.path)
+            .map_err(|error| format!("could not open {}: {error}", self.path.display()))?;
+        writeln!(file, "{line}")
+            .map_err(|error| format!("could not append to {}: {error}", self.path.display()))?;
+        self.rows.push(record);
+        Ok(())
+    }
+
+    /// Every row recorded so far.
+    #[must_use]
+    pub fn rows(&self) -> &[Record] {
+        &self.rows
+    }
+
+    /// The names of the cases that failed.
+    #[must_use]
+    pub fn failures(&self) -> Vec<String> {
+        self.rows
+            .iter()
+            .filter(|row| row.status == Status::Fail)
+            .map(|row| format!("{}/{}", row.matrix, row.case))
+            .collect()
+    }
+
+    /// A `pass/fail/skip` tally.
+    #[must_use]
+    pub fn tally(&self) -> [usize; 3] {
+        let count = |wanted: Status| self.rows.iter().filter(|row| row.status == wanted).count();
+        [
+            count(Status::Pass),
+            count(Status::Fail),
+            count(Status::Skip),
+        ]
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Listener modes
+// ---------------------------------------------------------------------------
+
+/// The four listener modes the server accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListenerMode {
+    /// Bind whatever is available.
+    Auto,
+    /// Bind both families, failing if either is unavailable.
+    DualStack,
+    /// Bind IPv4 only.
+    Ipv4Only,
+    /// Bind IPv6 only.
+    Ipv6Only,
+}
+
+impl ListenerMode {
+    /// Every mode, in the order the phase exercises them.
+    pub const ALL: [Self; 4] = [Self::Auto, Self::DualStack, Self::Ipv4Only, Self::Ipv6Only];
+
+    /// The `listen.mode` value in the config.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::DualStack => "dualStack",
+            Self::Ipv4Only => "ipv4Only",
+            Self::Ipv6Only => "ipv6Only",
+        }
+    }
+
+    /// Which families must both listen and accept, on a dual-stack loopback.
+    ///
+    /// `auto` is expected to bind both here precisely because both are
+    /// available: the interesting `auto` cases are the ones where a family is
+    /// missing, and those are exercised in a namespace instead.
+    #[must_use]
+    pub const fn expected_families(self) -> (bool, bool) {
+        match self {
+            Self::Auto | Self::DualStack => (true, true),
+            Self::Ipv4Only => (true, false),
+            Self::Ipv6Only => (false, true),
+        }
+    }
+}
+
+/// Reports whether `ss -lntH` output shows a listener on this address and port.
+///
+/// `ss` renders IPv6 addresses bracketed, and a bare substring search would let
+/// port 8080 match 18080, so the needle is built and compared per column.
+#[must_use]
+pub fn listener_present(ss_output: &str, address: &str, port: u16) -> bool {
+    let needle = if address.contains(':') {
+        format!("[{address}]:{port}")
+    } else {
+        format!("{address}:{port}")
+    };
+    ss_output
+        .lines()
+        .filter_map(|line| line.split_whitespace().nth(3))
+        .any(|local| local == needle)
+}
+
+/// Counts addresses still failing Duplicate Address Detection.
+///
+/// A freshly added IPv6 address is `tentative` until DAD completes, and binding
+/// a concrete tentative address fails `EADDRNOTAVAIL`. Starting a server before
+/// DAD finishes produces a bind failure that looks exactly like a
+/// misconfiguration, so the topology waits this out rather than racing it.
+#[must_use]
+pub fn tentative_addresses(ip_output: &str) -> usize {
+    ip_output
+        .lines()
+        .filter(|line| line.contains("tentative"))
+        .count()
+}
+
+// ---------------------------------------------------------------------------
+// Egress family attribution
+// ---------------------------------------------------------------------------
+
+/// The distinct origin labels that served a `GET` in `rows`.
+///
+/// Returned sorted and comma-joined, matching the legacy `unique | join(",")`.
+/// An empty result means no origin served a request, which is itself a failure
+/// signal rather than an absence of evidence.
+#[must_use]
+pub fn egress_servers(rows: &str) -> String {
+    let mut labels: Vec<String> = rows
+        .lines()
+        .filter_map(|line| crate::perf::json_in::parse(line).ok())
+        .filter_map(|value| {
+            let crate::perf::json_in::Value::Object(members) = value else {
+                return None;
+            };
+            let method = members.get("method")?.as_str("method").ok()?;
+            if method != "GET" {
+                return None;
+            }
+            Some(members.get("server")?.as_str("server").ok()?.to_owned())
+        })
+        .collect();
+    labels.sort_unstable();
+    labels.dedup();
+    labels.join(",")
+}
+
+/// Tracks how much of an access log has already been attributed.
+///
+/// Attribution is per case, so each case marks the log first and reads only the
+/// rows that appear afterwards. Reading the whole file instead would credit
+/// every later case with every earlier case's origins.
+#[derive(Debug, Default)]
+pub struct AccessLogMark {
+    /// Bytes already consumed.
+    offset: u64,
+}
+
+impl AccessLogMark {
+    /// Moves the mark to the current end of `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the file cannot be inspected.
+    pub fn mark(&mut self, path: &Path) -> Result<(), String> {
+        self.offset = match std::fs::metadata(path) {
+            Ok(metadata) => metadata.len(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(error) => return Err(format!("could not stat {}: {error}", path.display())),
+        };
+        Ok(())
+    }
+
+    /// Reads everything appended since the mark.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the file cannot be read.
+    pub fn since(&self, path: &Path) -> Result<String, String> {
+        use std::io::{Read as _, Seek as _};
+        let mut file = match std::fs::File::open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+            Err(error) => return Err(format!("could not open {}: {error}", path.display())),
+        };
+        file.seek(std::io::SeekFrom::Start(self.offset))
+            .map_err(|error| format!("could not seek {}: {error}", path.display()))?;
+        let mut text = String::new();
+        file.read_to_string(&mut text)
+            .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+        Ok(text)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// curl
+// ---------------------------------------------------------------------------
+
+/// What one `curl` transfer reported.
+#[derive(Debug, Clone)]
+pub struct Transfer {
+    /// `curl`'s exit code; zero on success.
+    pub code: i32,
+    /// The HTTP status, when one was received.
+    pub http_code: String,
+    /// Wall time `curl` measured, in seconds.
+    pub seconds: f64,
+    /// SHA-256 of the body written, or `none`.
+    pub sha256: String,
+}
+
+impl Transfer {
+    /// Whether the transfer succeeded and matched `expected`.
+    #[must_use]
+    pub fn byte_exact(&self, expected: &str) -> bool {
+        self.code == 0 && self.sha256 == expected
+    }
+
+    /// The `{http_code} {time_total}` pair the legacy rows record verbatim.
+    #[must_use]
+    pub fn curl_field(&self) -> String {
+        format!("{} {}", self.http_code, self.seconds)
+    }
+}
+
+/// Parses curl's `%{http_code} %{time_total}` write-out.
+///
+/// A failed transfer still prints a write-out, so a parse failure here means
+/// something other than the transfer went wrong and must not be read as zero.
+///
+/// # Errors
+///
+/// Returns a message when the write-out is not the expected two fields.
+pub fn parse_write_out(text: &str) -> Result<(String, f64), String> {
+    let mut fields = text.split_whitespace();
+    let (Some(code), Some(seconds)) = (fields.next(), fields.next()) else {
+        return Err(format!("curl write-out is not two fields: {text:?}"));
+    };
+    let seconds = seconds
+        .parse::<f64>()
+        .map_err(|error| format!("curl reported an unparsable time {seconds:?}: {error}"))?;
+    Ok((code.to_owned(), seconds))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifications_and_statuses_keep_their_wire_names() {
+        // These strings are the evidence contract; renaming a variant must not
+        // silently rename a recorded classification.
+        assert_eq!(Classification::Loopback.as_str(), "loopback");
+        assert_eq!(Classification::Namespace.as_str(), "namespace");
+        assert_eq!(Classification::HostGlobal.as_str(), "host-global");
+        assert_eq!(Classification::External.as_str(), "external");
+        assert_eq!(Status::from_met(true).as_str(), "pass");
+        assert_eq!(Status::from_met(false).as_str(), "fail");
+        assert_eq!(Status::Skip.as_str(), "skip");
+    }
+
+    #[test]
+    fn a_row_renders_the_legacy_shape() {
+        let record = Record {
+            matrix: "2-sessions".to_owned(),
+            case: "a-v6in-v6egress-literal".to_owned(),
+            classification: Classification::Loopback,
+            status: Status::Pass,
+            detail: Json::object([("byteExact", Json::Bool(true))]),
+            evidence: "run/x/x2.xray.log".to_owned(),
+        };
+        let rendered = record.to_json("2026-08-29T05:50:07Z").to_jq_json();
+        assert_eq!(
+            rendered,
+            r#"{"case":"a-v6in-v6egress-literal","classification":"loopback","detail":{"byteExact":true},"evidence":"run/x/x2.xray.log","matrix":"2-sessions","status":"pass","ts":"2026-08-29T05:50:07Z"}"#
+        );
+    }
+
+    #[test]
+    fn listener_modes_expect_the_families_they_name() {
+        assert_eq!(ListenerMode::Auto.expected_families(), (true, true));
+        assert_eq!(ListenerMode::DualStack.expected_families(), (true, true));
+        assert_eq!(ListenerMode::Ipv4Only.expected_families(), (true, false));
+        assert_eq!(ListenerMode::Ipv6Only.expected_families(), (false, true));
+        assert_eq!(ListenerMode::DualStack.as_str(), "dualStack");
+    }
+
+    /// Real `ss -lntH` output, including a port that shares a prefix.
+    const SS: &str = "\
+LISTEN 0      4096       127.0.0.1:8080       0.0.0.0:*
+LISTEN 0      4096           [::1]:8080          [::]:*
+LISTEN 0      4096       127.0.0.1:18080      0.0.0.0:*
+LISTEN 0      511          0.0.0.0:80          0.0.0.0:*";
+
+    #[test]
+    fn a_listener_is_matched_by_column_not_by_substring() {
+        assert!(listener_present(SS, "127.0.0.1", 8080));
+        assert!(listener_present(SS, "::1", 8080));
+        // 8080 must not match 18080, and 80 must not match 8080.
+        assert!(!listener_present(SS, "127.0.0.1", 808));
+        assert!(!listener_present(SS, "::1", 18080));
+        assert!(listener_present(SS, "0.0.0.0", 80));
+        assert!(!listener_present(SS, "127.0.0.1", 9999));
+    }
+
+    #[test]
+    fn tentative_addresses_are_counted_for_the_dad_wait() {
+        let output = "\
+    inet6 2001:db8:a::1/64 scope global tentative
+       valid_lft forever preferred_lft forever
+    inet6 fe80::1/64 scope link tentative";
+        assert_eq!(tentative_addresses(output), 2);
+        assert_eq!(tentative_addresses("inet6 ::1/128 scope host"), 0);
+    }
+
+    #[test]
+    fn egress_attribution_reads_only_get_rows() {
+        let rows = concat!(
+            r#"{"server":"origin-v6","method":"GET","path":"/p.bin","bytes":4,"sha256":"a"}"#,
+            "\n",
+            r#"{"server":"origin-v4","method":"PUT","path":"/u","bytes":4,"sha256":"b"}"#,
+            "\n",
+            r#"{"server":"origin-v6","method":"GET","path":"/p.bin","bytes":4,"sha256":"a"}"#,
+            "\n",
+        );
+        // The PUT row must not contribute: uploads and downloads can take
+        // different families, and this attributes the download.
+        assert_eq!(egress_servers(rows), "origin-v6");
+        assert_eq!(egress_servers(""), "");
+    }
+
+    #[test]
+    fn egress_attribution_reports_every_family_that_served() {
+        let rows = concat!(
+            r#"{"server":"origin-v4","method":"GET","path":"/p","bytes":1,"sha256":"a"}"#,
+            "\n",
+            r#"{"server":"origin-v6","method":"GET","path":"/p","bytes":1,"sha256":"a"}"#,
+            "\n",
+        );
+        // A case that expects one family must see exactly that one, so a split
+        // across both has to be visible rather than collapsed to the first.
+        assert_eq!(egress_servers(rows), "origin-v4,origin-v6");
+    }
+
+    #[test]
+    fn a_truncated_access_log_line_is_ignored_rather_than_fatal() {
+        // The origin appends whole lines, but a read can still land mid-write.
+        let rows = concat!(
+            r#"{"server":"origin-v6","method":"GET","path":"/p","bytes":1,"sha256":"a"}"#,
+            "\n",
+            r#"{"server":"origin-v4","meth"#,
+        );
+        assert_eq!(egress_servers(rows), "origin-v6");
+    }
+
+    #[test]
+    fn the_access_log_mark_reads_only_what_followed_it() {
+        let dir = std::env::temp_dir().join(format!("rr-ipv6-mark-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("access.jsonl");
+        std::fs::write(&path, "first\n").unwrap();
+        let mut mark = AccessLogMark::default();
+        mark.mark(&path).unwrap();
+        assert_eq!(mark.since(&path).unwrap(), "");
+        std::fs::write(&path, "first\nsecond\n").unwrap();
+        assert_eq!(mark.since(&path).unwrap(), "second\n");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_mark_on_a_missing_log_starts_at_zero() {
+        let mut mark = AccessLogMark::default();
+        let missing = std::path::Path::new("/nonexistent/access.jsonl");
+        mark.mark(missing).unwrap();
+        assert_eq!(mark.since(missing).unwrap(), "");
+    }
+
+    #[test]
+    fn curl_write_out_is_parsed_or_rejected() {
+        assert_eq!(parse_write_out("200 0.123").unwrap(), ("200".to_owned(), 0.123));
+        // A failed transfer still writes out, with a zero status.
+        assert_eq!(parse_write_out("000 5.001").unwrap(), ("000".to_owned(), 5.001));
+        assert!(parse_write_out("200").is_err());
+        assert!(parse_write_out("200 fast").is_err());
+    }
+
+    #[test]
+    fn a_transfer_is_byte_exact_only_when_curl_also_succeeded() {
+        let ok = Transfer {
+            code: 0,
+            http_code: "200".to_owned(),
+            seconds: 0.5,
+            sha256: "abc".to_owned(),
+        };
+        assert!(ok.byte_exact("abc"));
+        assert!(!ok.byte_exact("def"));
+        assert_eq!(ok.curl_field(), "200 0.5");
+        // A non-zero curl exit with a matching digest is still a failure: the
+        // body may be complete but the session was not.
+        let failed = Transfer { code: 28, ..ok };
+        assert!(!failed.byte_exact("abc"));
+    }
+
+    #[test]
+    fn the_tally_counts_each_status() {
+        let dir = std::env::temp_dir().join(format!("rr-ipv6-tally-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut results = Results::create(dir.join("results.jsonl")).unwrap();
+        for (case, status) in [
+            ("a", Status::Pass),
+            ("b", Status::Fail),
+            ("c", Status::Skip),
+            ("d", Status::Pass),
+        ] {
+            results
+                .record(Record {
+                    matrix: "1-listeners".to_owned(),
+                    case: case.to_owned(),
+                    classification: Classification::Loopback,
+                    status,
+                    detail: Json::Null,
+                    evidence: String::new(),
+                })
+                .unwrap();
+        }
+        assert_eq!(results.tally(), [2, 1, 1]);
+        assert_eq!(results.failures(), vec!["1-listeners/b".to_owned()]);
+        let written = std::fs::read_to_string(dir.join("results.jsonl")).unwrap();
+        assert_eq!(written.lines().count(), 4);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}

@@ -95,11 +95,23 @@ impl Json {
     #[must_use]
     pub fn to_compact_json(&self) -> String {
         let mut out = String::new();
-        self.write_compact(&mut out);
+        self.write_compact(&mut out, ", ", ": ");
         out
     }
 
-    fn write_compact(&self, out: &mut String) {
+    /// Renders the document as `jq -c` does: one line, no separator spaces.
+    ///
+    /// The IPv6 harness builds `results.jsonl` with `jq -cn`, so its rows are
+    /// byte-for-byte narrower than Python's. Both forms parse identically, but
+    /// only one of them reproduces the recorded evidence.
+    #[must_use]
+    pub fn to_jq_json(&self) -> String {
+        let mut out = String::new();
+        self.write_compact(&mut out, ",", ":");
+        out
+    }
+
+    fn write_compact(&self, out: &mut String, item_separator: &str, key_separator: &str) {
         match self {
             Self::Null => out.push_str("null"),
             Self::Bool(true) => out.push_str("true"),
@@ -113,9 +125,9 @@ impl Json {
                 out.push('[');
                 for (index, item) in items.iter().enumerate() {
                     if index > 0 {
-                        out.push_str(", ");
+                        out.push_str(item_separator);
                     }
-                    item.write_compact(out);
+                    item.write_compact(out, item_separator, key_separator);
                 }
                 out.push(']');
             }
@@ -123,11 +135,11 @@ impl Json {
                 out.push('{');
                 for (index, (key, value)) in members.iter().enumerate() {
                     if index > 0 {
-                        out.push_str(", ");
+                        out.push_str(item_separator);
                     }
                     out.push_str(&escape(key));
-                    out.push_str(": ");
-                    value.write_compact(out);
+                    out.push_str(key_separator);
+                    value.write_compact(out, item_separator, key_separator);
                 }
                 out.push('}');
             }
@@ -571,5 +583,32 @@ mod tests {
             ("list", Json::Array(vec![])),
         ]);
         assert_eq!(empties.to_compact_json(), r#"{"empty": {}, "list": []}"#);
+        // The same documents under `jq -c`, which uses no separator spaces.
+        assert_eq!(
+            document.to_jq_json(),
+            r#"{"a":[1,2],"b":2,"c":{"d":null},"e":1.5,"f":"x"}"#
+        );
+        assert_eq!(empties.to_jq_json(), r#"{"empty":{},"list":[]}"#);
+        // Verified against the real thing:
+        //   jq -cn '{ts:"2026-01-01T00:00:00Z",matrix:"1-listeners",
+        //            detail:{a:1,b:[1,2],c:null,d:true},evidence:""}'
+        let row = Json::object([
+            ("ts", Json::string("2026-01-01T00:00:00Z")),
+            ("matrix", Json::string("1-listeners")),
+            (
+                "detail",
+                Json::object([
+                    ("a", Json::Int(1)),
+                    ("b", Json::Array(vec![Json::Int(1), Json::Int(2)])),
+                    ("c", Json::Null),
+                    ("d", Json::Bool(true)),
+                ]),
+            ),
+            ("evidence", Json::string("")),
+        ]);
+        assert_eq!(
+            row.to_jq_json(),
+            r#"{"detail":{"a":1,"b":[1,2],"c":null,"d":true},"evidence":"","matrix":"1-listeners","ts":"2026-01-01T00:00:00Z"}"#
+        );
     }
 }
