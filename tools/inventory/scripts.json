@@ -15,10 +15,10 @@
     "full CI green on the exact final head, then git rm -r scripts"
   ],
   "current_state": {
-    "base_main": "996e8ad0b9224609151722b4c78535b65585e1d3",
-    "snapshot": "IN_PROGRESS_PR_149_CORE_AB_ABBA",
-    "tracked_files": 38,
-    "tracked_lines": 18088,
+    "base_main": "5df31954e0a3090287cfe2acb953e13ad16bcaf3",
+    "snapshot": "IN_PROGRESS_PR_150_CORE_AB_MATRIX",
+    "tracked_files": 37,
+    "tracked_lines": 16372,
     "repository_owned_external_python_validators": 0,
     "workflow_scripts_references": 0
   },
@@ -200,8 +200,8 @@
         "benchmark-xray.sh"
       ],
       "disposition": "MERGE",
-      "replacement": "cargo dev bench matrix (BenchmarkRunner)",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite matrix",
+      "status": "deleted-after-parity in PR #150; trimmed mechanism-complete acceptance covered all six scenarios, integrity, the origin/PUT/connection guards, and the pipe-page raise with verified restore"
     },
     {
       "path": "scripts/benchmark-real-path.sh",
@@ -671,12 +671,14 @@
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
       "calls_scripts": [
-        "benchmark-matrix.sh",
         "test-xray-interop.sh"
       ],
       "disposition": "MERGE",
       "replacement": "cargo dev check --all on target host",
-      "status": "not-started"
+      "status": "not-started",
+      "calls_cargo_dev": [
+        "cargo dev bench run --suite matrix"
+      ]
     },
     {
       "path": "scripts/sampling-xray-resources.sh",
