@@ -257,16 +257,13 @@ pub fn rust_server_config(
     let string = |text: &str| json_in::Value::Str(text.to_owned());
     let number = |value: u64| json_in::Value::Number(value.to_string());
 
-    let mut cache = std::collections::BTreeMap::new();
-    cache.insert("minTtlSeconds".to_owned(), number(5));
-    cache.insert("maxTtlSeconds".to_owned(), number(3600));
-    let mut dns = std::collections::BTreeMap::new();
-    dns.insert(
-        "servers".to_owned(),
+    set_path(
+        &mut members,
+        &["dns", "servers"],
         json_in::Value::Array(vec![string(&format!("127.0.0.1:{dns_port}"))]),
-    );
-    dns.insert("cache".to_owned(), json_in::Value::Object(cache));
-    members.insert("dns".to_owned(), json_in::Value::Object(dns));
+    )?;
+    set_path(&mut members, &["dns", "cache", "minTtlSeconds"], number(5))?;
+    set_path(&mut members, &["dns", "cache", "maxTtlSeconds"], number(3600))?;
 
     if !policy.domain_rules.is_empty() {
         let rules: Vec<json_in::Value> = policy
@@ -284,12 +281,48 @@ pub fn rust_server_config(
                 json_in::Value::Object(rule)
             })
             .collect();
-        let mut routing = std::collections::BTreeMap::new();
-        routing.insert("domainStrategy".to_owned(), string("AsIs"));
-        routing.insert("globalRules".to_owned(), json_in::Value::Array(rules));
-        members.insert("routing".to_owned(), json_in::Value::Object(routing));
+        set_path(&mut members, &["routing", "domainStrategy"], string("AsIs"))?;
+        set_path(
+            &mut members,
+            &["routing", "globalRules"],
+            json_in::Value::Array(rules),
+        )?;
     }
     Ok(suites::render_compact(&json_in::Value::Object(members)))
+}
+
+/// Sets one leaf of a nested object, creating intermediate objects as needed.
+///
+/// This is `jq`'s `.a.b = c`, and the distinction from replacing `.a` outright is
+/// load-bearing: the generated config's `routing` carries a `users` block that
+/// binds the client UUID to an outbound, and its `dns` carries timeouts and
+/// negative-cache bounds. Replacing either object drops those — the server then
+/// refuses to start, or silently runs with different cache behaviour than the
+/// harness intended.
+///
+/// # Errors
+///
+/// Returns a message when an intermediate value exists but is not an object.
+fn set_path(
+    members: &mut std::collections::BTreeMap<String, json_in::Value>,
+    path: &[&str],
+    value: json_in::Value,
+) -> Result<(), String> {
+    let Some((leaf, parents)) = path.split_last() else {
+        return Err("an empty path cannot be set".to_owned());
+    };
+    let mut current = members;
+    for key in parents {
+        let entry = current
+            .entry((*key).to_owned())
+            .or_insert_with(|| json_in::Value::Object(std::collections::BTreeMap::new()));
+        let json_in::Value::Object(next) = entry else {
+            return Err(format!("{key} is not an object in the generated config"));
+        };
+        current = next;
+    }
+    current.insert((*leaf).to_owned(), value);
+    Ok(())
 }
 
 /// Builds the Xray server config with the same resolver and rules.
@@ -478,7 +511,13 @@ pub fn worst_case_target(count: usize) -> String {
 mod tests {
     use super::*;
 
+    /// A generated config carries more than the harness sets: `routing.users`
+    /// binds the client UUID to an outbound, and `dns` carries timeouts.
     const GENERATED: &str = r#"{"log":{"level":"warn"},"assets":{"cacheDirectory":"/w"},
+        "dns":{"servers":["system"],"timeoutMs":5000,
+               "cache":{"maxEntries":1024,"minTtlSeconds":5,"negativeTtlSeconds":60}},
+        "routing":{"domainStrategy":"IPIfNonMatch","globalRules":[],
+                   "users":[{"name":"direct-users","defaultOutbound":"direct"}]},
         "inbounds":[{"port":443,"streamSettings":{"realitySettings":{}}}]}"#;
 
     #[test]
@@ -489,7 +528,15 @@ mod tests {
         // lookup is a genuine cache hit.
         assert!(patched.contains(r#""minTtlSeconds":5"#));
         assert!(patched.contains(r#""maxTtlSeconds":3600"#));
-        assert!(!patched.contains("routing"), "no rules were requested");
+        // Merging, not replacing: everything else the generator emitted survives.
+        assert!(patched.contains(r#""timeoutMs":5000"#));
+        assert!(patched.contains(r#""negativeTtlSeconds":60"#));
+        assert!(patched.contains(r#""maxEntries":1024"#));
+        assert!(
+            patched.contains("direct-users"),
+            "routing.users binds the client to an outbound and must survive"
+        );
+        assert!(patched.contains(r#""domainStrategy":"IPIfNonMatch""#));
     }
 
     #[test]
@@ -501,6 +548,8 @@ mod tests {
         assert!(rust.contains(r#""domainStrategy":"AsIs""#));
         assert!(rust.contains(r#""name":"r0""#));
         assert!(rust.contains(r#""rule-2.routingbench""#));
+        // The user binding survives the routing patch, or the server will not start.
+        assert!(rust.contains("direct-users"));
 
         let identity = RealityIdentity {
             uuid: "u".to_owned(),
