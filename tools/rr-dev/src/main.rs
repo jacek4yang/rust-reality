@@ -335,6 +335,12 @@ enum BenchCommand {
         /// Space-separated routing rule counts (routing suite).
         #[arg(long, default_value = "10 100 1000 10000")]
         rule_scales: String,
+        /// Fresh connections per setup sample (vless-encryption suite).
+        #[arg(long, default_value_t = 128)]
+        setup_connections: usize,
+        /// Concurrency for the setup sample (vless-encryption suite).
+        #[arg(long, default_value_t = 8)]
+        setup_concurrency: usize,
     },
 }
 
@@ -939,7 +945,24 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             warm_samples,
             burst_conns,
             rule_scales,
+            setup_connections,
+            setup_concurrency,
         } => {
+            if suite == "vless-encryption" {
+                return run_bench_vless(
+                    repo,
+                    xray_bin,
+                    out_dir.as_deref(),
+                    run_id.as_deref(),
+                    *samples,
+                    *concurrency,
+                    *payload_mib,
+                    *setup_connections,
+                    *setup_concurrency,
+                    cover_target,
+                    cover_sni,
+                );
+            }
             if suite == "routing" {
                 return run_bench_routing(
                     repo,
@@ -1290,6 +1313,72 @@ fn run_bench_routing(
         }
         Err(error) => {
             eprintln!("bench run routing: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Drives the VLESS-encryption A/B.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "these are the suite's command-line parameters, one per flag"
+)]
+fn run_bench_vless(
+    repo: &Path,
+    xray_bin: &Path,
+    out_dir: Option<&Path>,
+    run_id: Option<&str>,
+    samples: usize,
+    concurrency: usize,
+    payload_mib: u64,
+    setup_connections: usize,
+    setup_concurrency: usize,
+    cover_target: &str,
+    cover_sni: &str,
+) -> ExitCode {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let run_id = run_id.map_or_else(
+        || format!("benchmark-vless-encryption-{stamp}-{}", std::process::id()),
+        str::to_owned,
+    );
+    let out_dir = out_dir.map_or_else(
+        || {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("benchmarks")
+                .join(&run_id)
+        },
+        Path::to_path_buf,
+    );
+    let suite = bench::vless::VlessSuite {
+        repo: repo.to_path_buf(),
+        xray_bin: xray_bin.to_path_buf(),
+        out_dir,
+        run_id,
+        samples,
+        concurrency,
+        payload_mib,
+        setup_connections,
+        setup_concurrency,
+        cover_target: cover_target.to_owned(),
+        cover_sni: cover_sni.to_owned(),
+    };
+    if let Err(error) = bench::vless::validate(&suite) {
+        eprintln!("bench run vless-encryption: {error}");
+        return ExitCode::from(2);
+    }
+    match bench::vless::run(&suite) {
+        Ok(outcome) => {
+            println!(
+                "vless encryption comparison complete: {}",
+                outcome.out_dir.display()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("bench run vless-encryption: {error}");
             ExitCode::FAILURE
         }
     }

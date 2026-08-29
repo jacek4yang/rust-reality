@@ -341,3 +341,637 @@ mod tests {
         assert!(rendered.contains("server CPU excludes client-side encryption"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// The runner
+// ---------------------------------------------------------------------------
+
+/// Everything a VLESS-encryption run needs.
+#[derive(Debug, Clone)]
+pub struct VlessSuite {
+    /// Repository root, for the Go origin.
+    pub repo: std::path::PathBuf,
+    /// The Xray binary; both modes are the same build.
+    pub xray_bin: std::path::PathBuf,
+    /// Output directory; must not already exist.
+    pub out_dir: std::path::PathBuf,
+    /// Run identifier.
+    pub run_id: String,
+    /// Samples per mode.
+    pub samples: usize,
+    /// Concurrent transfers per throughput sample.
+    pub concurrency: usize,
+    /// Payload size in MiB per transfer.
+    pub payload_mib: u64,
+    /// Fresh connections per setup sample.
+    pub setup_connections: usize,
+    /// Concurrency for the setup sample.
+    pub setup_concurrency: usize,
+    /// The REALITY cover target.
+    pub cover_target: String,
+    /// The REALITY cover SNI.
+    pub cover_sni: String,
+}
+
+/// Validates the VLESS parameters.
+///
+/// # Errors
+///
+/// Returns the first violated guard.
+pub fn validate(suite: &VlessSuite) -> Result<(), String> {
+    for (name, value) in [
+        ("SAMPLES", suite.samples),
+        ("CONCURRENCY", suite.concurrency),
+        ("SETUP_CONNECTIONS", suite.setup_connections),
+        ("SETUP_CONCURRENCY", suite.setup_concurrency),
+    ] {
+        if value == 0 {
+            return Err(format!("{name} must be a positive integer"));
+        }
+    }
+    if suite.payload_mib == 0 {
+        return Err("PAYLOAD_MIB must be a positive integer".to_owned());
+    }
+    if suite.run_id.is_empty()
+        || !suite
+            .run_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err("RUN_ID is required and must be one safe component".to_owned());
+    }
+    Ok(())
+}
+
+/// Builds one mode's server config.
+fn server_config(
+    identity: &crate::bench::config::RealityIdentity,
+    listen_port: u16,
+    private_key: &str,
+    decryption: &str,
+) -> Json {
+    Json::object([
+        ("log", Json::object([("loglevel", Json::string("warning"))])),
+        (
+            "inbounds",
+            Json::Array(vec![Json::object([
+                ("listen", Json::string("127.0.0.1")),
+                ("port", Json::Int(i64::from(listen_port))),
+                ("protocol", Json::string("vless")),
+                (
+                    "settings",
+                    Json::object([
+                        (
+                            "clients",
+                            Json::Array(vec![Json::object([
+                                ("id", Json::string(identity.uuid.clone())),
+                                ("flow", Json::string("xtls-rprx-vision")),
+                            ])]),
+                        ),
+                        ("decryption", Json::string(decryption)),
+                    ]),
+                ),
+                (
+                    "streamSettings",
+                    Json::object([
+                        ("network", Json::string("tcp")),
+                        ("security", Json::string("reality")),
+                        (
+                            "realitySettings",
+                            Json::object([
+                                ("show", Json::Bool(false)),
+                                ("target", Json::string(identity.target.clone())),
+                                ("xver", Json::Int(0)),
+                                (
+                                    "serverNames",
+                                    Json::Array(vec![Json::string(identity.server_name.clone())]),
+                                ),
+                                ("privateKey", Json::string(private_key.to_owned())),
+                                (
+                                    "shortIds",
+                                    Json::Array(vec![Json::string(identity.short_id.clone())]),
+                                ),
+                            ]),
+                        ),
+                    ]),
+                ),
+            ])]),
+        ),
+        (
+            "outbounds",
+            Json::Array(vec![Json::object([
+                ("tag", Json::string("direct")),
+                ("protocol", Json::string("freedom")),
+                (
+                    "settings",
+                    Json::object([(
+                        "finalRules",
+                        Json::Array(vec![Json::object([("action", Json::string("allow"))])]),
+                    )]),
+                ),
+            ])]),
+        ),
+    ])
+}
+
+/// Builds one mode's client config, pinned to its `encryption` string.
+fn client_config(
+    identity: &crate::bench::config::RealityIdentity,
+    server_port: u16,
+    socks_port: u16,
+    public_key: &str,
+    encryption: &str,
+) -> Json {
+    Json::object([
+        ("log", Json::object([("loglevel", Json::string("warning"))])),
+        (
+            "inbounds",
+            Json::Array(vec![Json::object([
+                ("listen", Json::string("127.0.0.1")),
+                ("port", Json::Int(i64::from(socks_port))),
+                ("protocol", Json::string("socks")),
+                (
+                    "settings",
+                    Json::object([
+                        ("auth", Json::string("noauth")),
+                        ("udp", Json::Bool(false)),
+                    ]),
+                ),
+            ])]),
+        ),
+        (
+            "outbounds",
+            Json::Array(vec![Json::object([
+                ("protocol", Json::string("vless")),
+                (
+                    "settings",
+                    Json::object([(
+                        "vnext",
+                        Json::Array(vec![Json::object([
+                            ("address", Json::string("127.0.0.1")),
+                            ("port", Json::Int(i64::from(server_port))),
+                            (
+                                "users",
+                                Json::Array(vec![Json::object([
+                                    ("id", Json::string(identity.uuid.clone())),
+                                    ("encryption", Json::string(encryption)),
+                                    ("flow", Json::string("xtls-rprx-vision")),
+                                ])]),
+                            ),
+                        ])]),
+                    )]),
+                ),
+                (
+                    "streamSettings",
+                    Json::object([
+                        ("network", Json::string("tcp")),
+                        ("security", Json::string("reality")),
+                        (
+                            "realitySettings",
+                            Json::object([
+                                ("fingerprint", Json::string("chrome")),
+                                (
+                                    "serverName",
+                                    Json::string(identity.server_name.clone()),
+                                ),
+                                ("publicKey", Json::string(public_key)),
+                                ("shortId", Json::string(identity.short_id.clone())),
+                                ("spiderX", Json::string("/")),
+                            ]),
+                        ),
+                    ]),
+                ),
+            ])]),
+        ),
+    ])
+}
+
+/// One mode's running server and client, plus what the sampler needs.
+struct ModeLeg {
+    mode: &'static str,
+    socks_port: u16,
+    server_pid: u32,
+    _server: crate::bench::process::Child,
+    _client: crate::bench::process::Child,
+}
+
+/// Measures one throughput sample: `concurrency` transfers and the server CPU.
+fn throughput_sample(
+    leg: &ModeLeg,
+    origin_port: u16,
+    payload_mib: u64,
+    concurrency: usize,
+) -> Result<ModeSample, String> {
+    let before = cpu_seconds(leg.server_pid)?;
+    let started = std::time::Instant::now();
+    let outcome = crate::bench::matrix::run_workload(
+        crate::bench::matrix::Scenario::DirectDownload,
+        crate::bench::matrix::Endpoints {
+            socks: leg.socks_port,
+            fallback: 0,
+            http: origin_port,
+            https: origin_port,
+        },
+        payload_mib,
+        concurrency,
+        std::path::Path::new("."),
+    )?;
+    let wall = started.elapsed().as_secs_f64();
+    let cpu = cpu_seconds(leg.server_pid)? - before;
+    if wall <= 0.0 {
+        return Err("non-positive throughput wall time".to_owned());
+    }
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "request counts and payload sizes here are far below 2^53"
+    )]
+    let moved_mib = (payload_mib as f64) * (outcome.requests as f64);
+    Ok(ModeSample {
+        mode: leg.mode.to_owned(),
+        values: vec![
+            ("throughputMiBPerSecond".to_owned(), moved_mib / wall),
+            (
+                "serverCpuSecondsPerGiB".to_owned(),
+                cpu / (moved_mib / 1024.0),
+            ),
+        ],
+    })
+}
+
+/// Measures one setup sample: fresh connections and the server CPU they cost.
+fn setup_sample(
+    leg: &ModeLeg,
+    origin_port: u16,
+    connections: usize,
+    concurrency: usize,
+) -> Result<ModeSample, String> {
+    let before = cpu_seconds(leg.server_pid)?;
+    // No resolver is involved: this phase measures connection setup, and the
+    // destination is loopback by address so nothing is ever looked up.
+    let mut latencies = Vec::with_capacity(connections);
+    let started = std::time::Instant::now();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut failed = 0_usize;
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..concurrency.clamp(1, connections.max(1)))
+            .map(|_| {
+                let next = &next;
+                scope.spawn(move || {
+                    let mut mine = Vec::new();
+                    let mut failures = 0_usize;
+                    while next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < connections {
+                        match crate::bench::workload::one_connection(leg.socks_port, origin_port) {
+                            Some(elapsed) => mine.push(elapsed.as_secs_f64()),
+                            None => failures += 1,
+                        }
+                    }
+                    (mine, failures)
+                })
+            })
+            .collect();
+        for handle in handles {
+            if let Ok((mine, failures)) = handle.join() {
+                latencies.extend(mine);
+                failed += failures;
+            } else {
+                failed += 1;
+            }
+        }
+    });
+    let wall = started.elapsed().as_secs_f64();
+    let cpu = cpu_seconds(leg.server_pid)? - before;
+    if failed > 0 || latencies.is_empty() || wall <= 0.0 {
+        return Err(format!(
+            "setup sample failed: {failed} of {connections} connections did not complete"
+        ));
+    }
+    latencies.sort_unstable_by(f64::total_cmp);
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "connection counts here are small integers"
+    )]
+    let count = latencies.len() as f64;
+    let percentile = |fraction: f64| {
+        stats::nearest_rank(&latencies, fraction).unwrap_or(0.0) * 1000.0
+    };
+    Ok(ModeSample {
+        mode: leg.mode.to_owned(),
+        values: vec![
+            ("connectionsPerSecond".to_owned(), count / wall),
+            ("p50Milliseconds".to_owned(), percentile(0.50)),
+            ("p95Milliseconds".to_owned(), percentile(0.95)),
+            (
+                "serverCpuMicrosecondsPerConnection".to_owned(),
+                cpu * 1_000_000.0 / count,
+            ),
+        ],
+    })
+}
+
+/// Writes both payloads and starts the TLS origin.
+///
+/// The setup phase fetches a tiny body so its cost is connection establishment
+/// rather than transfer; the throughput phase fetches the large one.
+fn start_origin(
+    suite: &VlessSuite,
+    workspace: &crate::bench::workspace::Workspace,
+    origin_port: u16,
+) -> Result<crate::bench::process::Child, String> {
+    use crate::bench::{origin_go, origin_tls};
+    origin_go::write_pattern_payload(workspace.path(), suite.payload_mib)?;
+    std::fs::write(workspace.join("payload.bin"), vec![b'x'; 256])
+        .map_err(|error| format!("could not write the setup payload: {error}"))?;
+    let binary = origin_go::build(&suite.repo, workspace)?;
+    let (cert, key) = origin_tls::generate_self_signed(workspace.path())?;
+    origin_go::start(
+        &binary,
+        workspace,
+        &origin_go::OriginPlan {
+            label: "origin-https".to_owned(),
+            listen_address: "127.0.0.1".to_owned(),
+            port: origin_port,
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("https-put.jsonl"),
+            tls: Some((cert, key)),
+        },
+    )
+}
+
+/// Starts one mode's server and client, sharing the run's identity and keypair.
+///
+/// Only the encryption layer may differ between the modes, so everything else --
+/// UUID, short id, REALITY keypair, cover target -- is the same object.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a mode's inputs are exactly these"
+)]
+fn start_mode(
+    suite: &VlessSuite,
+    workspace: &crate::bench::workspace::Workspace,
+    identity: &crate::bench::config::RealityIdentity,
+    keys: &crate::bench::suites::XrayKeys,
+    encryption: &EncryptionKeys,
+    mode: &'static str,
+    server_port: u16,
+    socks_port: u16,
+) -> Result<ModeLeg, String> {
+    use crate::bench::process::Child;
+    let (decryption, client_encryption) = if mode == "none" {
+        ("none".to_owned(), "none".to_owned())
+    } else {
+        (encryption.decryption.clone(), encryption.encryption.clone())
+    };
+    let server_path = workspace.join(&format!("server-{mode}.json"));
+    std::fs::write(
+        &server_path,
+        server_config(identity, server_port, &keys.private, &decryption).to_python_json(),
+    )
+    .map_err(|error| format!("could not write {}: {error}", server_path.display()))?;
+    let client_path = workspace.join(&format!("client-{mode}.json"));
+    std::fs::write(
+        &client_path,
+        client_config(
+            identity,
+            server_port,
+            socks_port,
+            &keys.public,
+            &client_encryption,
+        )
+        .to_python_json(),
+    )
+    .map_err(|error| format!("could not write {}: {error}", client_path.display()))?;
+
+    let mut server = Child::spawn(
+        format!("server-{mode}"),
+        &suite.xray_bin,
+        &[
+            "run".to_owned(),
+            "-config".to_owned(),
+            server_path.display().to_string(),
+        ],
+        workspace.path(),
+        &[],
+        &workspace.join(&format!("server-{mode}.log")),
+    )
+    .map_err(|error| error.to_string())?;
+    let server_pid = server.pid();
+    let mut client = Child::spawn(
+        format!("client-{mode}"),
+        &suite.xray_bin,
+        &[
+            "run".to_owned(),
+            "-config".to_owned(),
+            client_path.display().to_string(),
+        ],
+        workspace.path(),
+        &[],
+        &workspace.join(&format!("client-{mode}.log")),
+    )
+    .map_err(|error| error.to_string())?;
+    server
+        .wait_for_port(server_port, std::time::Duration::from_secs(30))
+        .map_err(|error| error.to_string())?;
+    client
+        .wait_for_port(socks_port, std::time::Duration::from_secs(30))
+        .map_err(|error| error.to_string())?;
+    Ok(ModeLeg {
+        mode,
+        socks_port,
+        server_pid,
+        _server: server,
+        _client: client,
+    })
+}
+
+/// Runs every sample in the shuffled order, throughput first then setup.
+///
+/// The order is shuffled rather than grouped by mode so a machine that drifts
+/// over the run cannot systematically favour whichever mode went first.
+fn measure_in_order(
+    suite: &VlessSuite,
+    legs: &[ModeLeg],
+    origin_port: u16,
+    order: &[String],
+) -> Result<(Vec<ModeSample>, Vec<ModeSample>), String> {
+    let leg_for = |mode: &str| {
+        legs.iter()
+            .find(|leg| leg.mode == mode)
+            .ok_or_else(|| format!("{mode} has no leg"))
+    };
+    let mut throughput = Vec::with_capacity(order.len());
+    for mode in order {
+        throughput.push(throughput_sample(
+            leg_for(mode)?,
+            origin_port,
+            suite.payload_mib,
+            suite.concurrency,
+        )?);
+    }
+    let mut setup = Vec::with_capacity(order.len());
+    for mode in order {
+        setup.push(setup_sample(
+            leg_for(mode)?,
+            origin_port,
+            suite.setup_connections,
+            suite.setup_concurrency,
+        )?);
+    }
+    Ok((throughput, setup))
+}
+
+/// Summarises every field for both modes.
+fn summarise_modes(throughput: &[ModeSample], setup: &[ModeSample]) -> Result<Json, String> {
+    let mut summary: Vec<(String, Json)> = Vec::with_capacity(MODES.len());
+    for mode in MODES {
+        summary.push((
+            mode.to_owned(),
+            Json::object([
+                (
+                    "throughputMiBPerSecond",
+                    summarise_field(throughput, mode, "throughputMiBPerSecond")?,
+                ),
+                (
+                    "serverCpuSecondsPerGiB",
+                    summarise_field(throughput, mode, "serverCpuSecondsPerGiB")?,
+                ),
+                (
+                    "connectionsPerSecond",
+                    summarise_field(setup, mode, "connectionsPerSecond")?,
+                ),
+                (
+                    "setupP50Milliseconds",
+                    summarise_field(setup, mode, "p50Milliseconds")?,
+                ),
+                (
+                    "serverCpuMicrosecondsPerConnection",
+                    summarise_field(setup, mode, "serverCpuMicrosecondsPerConnection")?,
+                ),
+            ]),
+        ));
+    }
+    Ok(Json::object(summary))
+}
+
+/// The method block the report records.
+fn method_json(suite: &VlessSuite, order: &[String]) -> Json {
+    let count = |value: usize| Json::Int(i64::try_from(value).unwrap_or(i64::MAX));
+    Json::object([
+        ("outerTransport", Json::string("REALITY")),
+        ("flow", Json::string("xtls-rprx-vision")),
+        (
+            "encryptedMode",
+            Json::string("mlkem768x25519plus.native.0rtt after warm-up"),
+        ),
+        ("samplesPerMode", count(suite.samples)),
+        ("concurrency", count(suite.concurrency)),
+        (
+            "payloadMiBPerRequest",
+            Json::Int(i64::try_from(suite.payload_mib).unwrap_or(i64::MAX)),
+        ),
+        ("setupConnectionsPerSample", count(suite.setup_connections)),
+        ("setupConcurrency", count(suite.setup_concurrency)),
+        (
+            "randomizedOrder",
+            Json::Array(order.iter().cloned().map(Json::string).collect()),
+        ),
+    ])
+}
+
+/// Runs the VLESS-encryption A/B end to end.
+///
+/// # Errors
+///
+/// Returns the first failure; every resource is RAII-owned.
+pub fn run(suite: &VlessSuite) -> Result<crate::bench::paired::SuiteOutcome, String> {
+    use crate::bench::{
+        config::RealityIdentity,
+        evidence::{Publication, RunDirectory},
+        host_lock::HostLock,
+        identity::{self, Kind},
+        suites,
+        workspace::Workspace,
+    };
+
+    validate(suite)?;
+    for program in ["go", "curl"] {
+        if !Tool::exists(program) {
+            return Err(format!("required program unavailable: {program}"));
+        }
+    }
+    let xray = identity::register("xray", &suite.xray_bin, "", Kind::Xray)?;
+    let _lock = HostLock::acquire(&crate::bench::runner::default_lock_path())?;
+    let run = RunDirectory::create(&suite.out_dir)?;
+    let workspace = Workspace::create("benchmark-vless-encryption")?;
+
+    // One TLS origin plus a server/SOCKS pair per mode.
+    let port_base = crate::bench::workspace::reserve_block(5)?;
+    let origin_port = port_base;
+    let _origin = start_origin(suite, &workspace, origin_port)?;
+
+    // One identity and one REALITY keypair, shared by both modes: only the
+    // encryption layer may differ.
+    let keys = suites::generate_xray_keys(&suite.xray_bin)?;
+    let encryption = generate_encryption_keys(&suite.xray_bin)?;
+    let identity = RealityIdentity {
+        uuid: crate::bench::ab_suites::random_uuid_v4()?,
+        short_id: crate::bench::ab_suites::random_short_id()?,
+        server_name: suite.cover_sni.clone(),
+        target: suite.cover_target.clone(),
+    };
+
+    let mut legs = Vec::with_capacity(2);
+    for (index, mode) in MODES.into_iter().enumerate() {
+        let offset = u16::try_from(index * 2).map_err(|_| "too many modes".to_owned())?;
+        legs.push(start_mode(
+            suite,
+            &workspace,
+            &identity,
+            &keys,
+            &encryption,
+            mode,
+            port_base + 1 + offset,
+            port_base + 2 + offset,
+        )?);
+    }
+
+    // Warm both paths. For VLESS Encryption this also obtains the reusable
+    // ticket, so the measured setup path is its intended 0-RTT mode.
+    for leg in &legs {
+        throughput_sample(leg, origin_port, suite.payload_mib, 1)?;
+        setup_sample(leg, origin_port, 1, 1)?;
+    }
+
+    let order = measurement_order(suite.samples);
+    let (throughput, setup) = measure_in_order(suite, &legs, origin_port, &order)?;
+
+    let summary = summarise_modes(&throughput, &setup)?;
+    let ratios = ratios_json(&summary)?;
+
+    let report = Json::object([
+        ("schemaVersion", Json::Int(1)),
+        ("harness", Json::string("benchmark-vless-encryption")),
+        ("status", Json::string("COMPLETE")),
+        ("performanceVerdict", Json::string("NOT_EVALUATED")),
+        (
+            "environment",
+            Json::object([("xrayVersion", Json::string(xray.identity.clone()))]),
+        ),
+        ("method", method_json(suite, &order)),
+        ("summary", summary),
+        ("ratios", ratios),
+        ("limitations", limitations_json()),
+    ]);
+    let summary_json = report.to_python_json();
+    run.write_new("summary.json", &summary_json)?;
+    run.publish(
+        Publication::Environment,
+        &summary_json,
+        &suite.run_id,
+        "benchmark-vless-encryption",
+    )?;
+    Ok(crate::bench::paired::SuiteOutcome {
+        out_dir: suite.out_dir.clone(),
+        summary_json,
+        slot_count: order.len(),
+    })
+}
