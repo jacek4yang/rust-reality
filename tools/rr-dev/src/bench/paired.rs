@@ -37,6 +37,7 @@ use crate::{
         evidence::{Publication, RunDirectory},
         host_lock::HostLock,
         identity::{self, Binary, Kind},
+        netns,
         origin_go, origin_tls,
         plan::{self, PortLayout, Slot},
         process::Child,
@@ -261,8 +262,19 @@ pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
     let (plain_port, tls_port) = (port_base, port_base + 1);
 
     let origin_manifest = attest::snapshot_tree(&suite.repo.join(origin_go::SOURCE_RELATIVE))?;
-    let _origins = start_origins(suite, &workspace, plain_port, tls_port)?;
-    let cover_target = format!("127.0.0.1:{tls_port}");
+    let leg = match suite.cover_netem_rtt_ms {
+        None => None,
+        Some(rtt) => Some(netns::CoverLeg::create(&suite.run_id, rtt)?),
+    };
+    let leg_names = leg.as_ref().map(|leg| leg.names().clone());
+    let cover_target = leg.as_ref().map_or_else(
+        || format!("127.0.0.1:{tls_port}"),
+        |_| format!("{}:{tls_port}", netns::COVER_ADDRESS),
+    );
+    let _origins = start_origins(suite, &workspace, plain_port, tls_port, leg.as_ref())?;
+    if let Some(leg) = leg.as_ref() {
+        leg.describe(&cover_target, &run.join("cover-netem.txt"))?;
+    }
 
     let slots = plan::abba_slots(
         PAIRED_LABELS,
@@ -324,6 +336,14 @@ pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
         "benchmark-setup-rate",
     )?;
 
+    // Drop the leg before asserting it is gone: restoration is verified, not
+    // assumed, so an `ip` command that reported success but left state behind is
+    // caught here rather than by the next run's name collision.
+    drop(leg);
+    if let Some(names) = leg_names {
+        netns::CoverLeg::verify_removed(&names)?;
+    }
+
     Ok(SuiteOutcome {
         out_dir: suite.out_dir.clone(),
         summary_json,
@@ -332,11 +352,16 @@ pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
 }
 
 /// Builds the Go origin and starts both listeners, returning their RAII guards.
+///
+/// With a shaped leg the TLS cover origin moves into the namespace and binds the
+/// namespace address; the plain origin the workload talks to stays on loopback, so
+/// exactly one leg carries the delay.
 fn start_origins(
     suite: &SetupRateSuite,
     workspace: &Workspace,
     plain_port: u16,
     tls_port: u16,
+    leg: Option<&netns::CoverLeg>,
 ) -> Result<(Child, Child), String> {
     let binary = origin_go::build(&suite.repo, workspace)?;
     origin_go::write_setup_payload(workspace.path())?;
@@ -353,18 +378,19 @@ fn start_origins(
             tls: None,
         },
     )?;
-    let tls_origin = origin_go::start(
-        &binary,
-        workspace,
-        &origin_go::OriginPlan {
-            label: "origin-https".to_owned(),
-            listen_address: "127.0.0.1".to_owned(),
-            port: tls_port,
-            payload_dir: workspace.path().to_path_buf(),
-            put_log: workspace.join("https-put.jsonl"),
-            tls: Some((cert, key)),
-        },
-    )?;
+    let tls_plan = origin_go::OriginPlan {
+        label: "origin-https".to_owned(),
+        listen_address: leg
+            .map_or_else(|| "127.0.0.1".to_owned(), |_| netns::COVER_ADDRESS.to_owned()),
+        port: tls_port,
+        payload_dir: workspace.path().to_path_buf(),
+        put_log: workspace.join("https-put.jsonl"),
+        tls: Some((cert, key)),
+    };
+    let tls_origin = match leg {
+        None => origin_go::start(&binary, workspace, &tls_plan)?,
+        Some(leg) => origin_go::start_in_namespace(&binary, workspace, &tls_plan, leg)?,
+    };
     Ok((plain_origin, tls_origin))
 }
 
@@ -592,7 +618,7 @@ fn measure_slot(
         // latency vectors are not carried into its evidence.
         record_latencies: false,
     };
-    slot::warm_up(&workload, workspace.path())?;
+    warm_up_slot(suite, &workload, &slot_dir, workspace)?;
 
     let samples_path = slot_dir.join("samples.json");
     let perf_csv = slot_dir.join("perf.csv");
@@ -721,6 +747,47 @@ fn profile_json(profile: &ProfileSummary) -> Json {
         ("cover_profile_validated", Json::Int(profile.validated)),
         ("profileHitRatio", Json::Float(profile.profile_hit_ratio())),
     ])
+}
+
+/// Warms a slot's path before it is measured.
+///
+/// On loopback this is the plain three-connection warm-up. Behind the shaped leg
+/// it is a *measured* warm-up instead, and deliberately so: Chrome 133 rotates
+/// among four GREASE-ECH payload lengths, so every implementation has to be
+/// preconditioned symmetrically with enough sessions to characterise that bounded
+/// corpus before the measurement starts — otherwise whichever side runs first pays
+/// for populating it. The settle wait afterwards lets the last shaped round trip
+/// drain, so it cannot land inside the measured window.
+fn warm_up_slot(
+    suite: &SetupRateSuite,
+    workload: &SetupRatePlan,
+    slot_dir: &Path,
+    workspace: &Workspace,
+) -> Result<(), String> {
+    let Some(rtt) = suite.cover_netem_rtt_ms else {
+        return slot::warm_up(workload, workspace.path());
+    };
+    let concurrency = suite.concurrencies.iter().copied().max().unwrap_or(1);
+    let mut connections = concurrency * 2;
+    if matches!(
+        suite.candidate_cover_mode,
+        CoverMode::Prebuilt | CoverMode::Default
+    ) && connections < 32
+    {
+        connections = 32;
+    }
+    connections = connections.min(64);
+
+    let warm = SetupRatePlan {
+        connections,
+        concurrencies: vec![concurrency],
+        samples: 1,
+        ..workload.clone()
+    };
+    let argv = slot::workload_argv(&warm, Some(&slot_dir.join("warmup.json")))?;
+    slot::run_workload(&argv, workspace.path())?;
+    std::thread::sleep(Duration::from_millis(u64::from(rtt) * 2 + 100));
+    Ok(())
 }
 
 /// Writes the paired slot's `identity.json`.

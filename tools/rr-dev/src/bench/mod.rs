@@ -35,6 +35,7 @@ pub mod evidence;
 pub mod host_lock;
 pub mod identity;
 pub mod loopback;
+pub mod netns;
 pub mod origin;
 pub mod origin_go;
 pub mod origin_tls;

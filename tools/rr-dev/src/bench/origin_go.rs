@@ -73,6 +73,29 @@ pub fn build(repo: &Path, workspace: &Workspace) -> Result<PathBuf, String> {
     Ok(binary)
 }
 
+/// The origin's own argv for a listener plan.
+fn listener_args(plan: &OriginPlan) -> Vec<String> {
+    let mut args = vec![
+        "--listen-address".to_owned(),
+        plan.listen_address.clone(),
+        "--port".to_owned(),
+        plan.port.to_string(),
+        "--payload-dir".to_owned(),
+        plan.payload_dir.display().to_string(),
+        "--put-log".to_owned(),
+        plan.put_log.display().to_string(),
+    ];
+    if let Some((cert, key)) = &plan.tls {
+        args.extend([
+            "--tls-cert".to_owned(),
+            cert.display().to_string(),
+            "--tls-key".to_owned(),
+            key.display().to_string(),
+        ]);
+    }
+    args
+}
+
 /// How an origin listener is exposed.
 #[derive(Debug, Clone)]
 pub struct OriginPlan {
@@ -99,30 +122,63 @@ pub struct OriginPlan {
 ///
 /// Returns a message when the process cannot start or never becomes ready.
 pub fn start(binary: &Path, workspace: &Workspace, plan: &OriginPlan) -> Result<Child, String> {
-    let mut args = vec![
-        "--listen-address".to_owned(),
-        plan.listen_address.clone(),
-        "--port".to_owned(),
-        plan.port.to_string(),
-        "--payload-dir".to_owned(),
-        plan.payload_dir.display().to_string(),
-        "--put-log".to_owned(),
-        plan.put_log.display().to_string(),
-    ];
-    if let Some((cert, key)) = &plan.tls {
-        args.extend([
-            "--tls-cert".to_owned(),
-            cert.display().to_string(),
-            "--tls-key".to_owned(),
-            key.display().to_string(),
-        ]);
-    }
+    let args = listener_args(plan);
     let log = workspace.join(&format!("{}.log", plan.label));
     let mut child = Child::spawn(&plan.label, binary, &args, workspace.path(), &[], &log)
         .map_err(|error| error.to_string())?;
     child
         .wait_for_port(plan.port, READY_TIMEOUT)
         .map_err(|error| error.to_string())?;
+    Ok(child)
+}
+
+/// Launches an origin listener inside a shaped network namespace.
+///
+/// `ip netns exec` needs root, but the origin itself must not run as root just
+/// because the namespace did; `setpriv` drops back to the invoking user before it
+/// execs.
+///
+/// # Errors
+///
+/// Returns a message when the process cannot start or never becomes ready.
+pub fn start_in_namespace(
+    binary: &Path,
+    workspace: &Workspace,
+    plan: &OriginPlan,
+    leg: &crate::bench::netns::CoverLeg,
+) -> Result<Child, String> {
+    let mut args = leg.exec_prefix()?;
+    args.push(binary.display().to_string());
+    args.extend(listener_args(plan));
+    let log = workspace.join(&format!("{}.log", plan.label));
+    let mut child = Child::spawn(
+        &plan.label,
+        Path::new("sudo"),
+        &args,
+        workspace.path(),
+        &[],
+        &log,
+    )
+    .map_err(|error| error.to_string())?;
+    // The listener is in the namespace, so readiness is proved by connecting to
+    // its namespace address rather than to loopback.
+    crate::bench::engine::wait_until(
+        || {
+            std::net::TcpStream::connect_timeout(
+                &std::net::SocketAddr::new(
+                    plan.listen_address.parse().unwrap_or(std::net::IpAddr::V4(
+                        std::net::Ipv4Addr::LOCALHOST,
+                    )),
+                    plan.port,
+                ),
+                Duration::from_millis(200),
+            )
+            .is_ok()
+        },
+        READY_TIMEOUT,
+        &format!("{} on {}:{}", plan.label, plan.listen_address, plan.port),
+    )?;
+    let _ = child.is_alive();
     Ok(child)
 }
 
