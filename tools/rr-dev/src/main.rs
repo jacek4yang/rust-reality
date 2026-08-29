@@ -283,6 +283,75 @@ enum BenchCommand {
         #[arg(long)]
         port: u16,
     },
+    /// Validate bounded machine profiles under exact cgroup-v2 limits.
+    Profiles {
+        /// Path to the exact rust-reality release binary under test.
+        #[arg(long, default_value = "target/release/rust-reality")]
+        rust_bin: PathBuf,
+        /// Expected lowercase SHA-256 of the rust-reality binary.
+        #[arg(long)]
+        rust_sha256: String,
+        /// Full source commit embedded in the rust-reality binary.
+        #[arg(long)]
+        expected_source_commit: String,
+        /// Path to the exact stock Xray client binary.
+        #[arg(long)]
+        xray_bin: PathBuf,
+        /// Expected lowercase SHA-256 of the Xray binary.
+        #[arg(long)]
+        xray_sha256: String,
+        /// New durable evidence directory; it must not already exist.
+        #[arg(long)]
+        out_dir: PathBuf,
+        /// Stable run identifier written into the completion marker.
+        #[arg(long)]
+        run_id: String,
+        /// Reusable directory containing geoip.dat and geosite.dat.
+        #[arg(long, default_value = "benchmarks/profile-validation/.asset-cache")]
+        asset_cache_dir: PathBuf,
+        /// Space-separated `name:cpu-percent:memory` class specifications.
+        #[arg(
+            long,
+            default_value = "1c1g:100:1G 1c2g:100:2G 2c2g:200:2G 2c4g:200:4G 4c4g:400:4G 4c8g:400:8G"
+        )]
+        classes: String,
+        /// Run only this class name.
+        #[arg(long)]
+        only: Option<String>,
+        /// Add the 1c1g standard/shared comparison.
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        standard_comparison: bool,
+        /// Fresh connections in each churn sample.
+        #[arg(long, default_value_t = 96)]
+        connections: usize,
+        /// Churn samples at each concurrency.
+        #[arg(long, default_value_t = 3)]
+        churn_samples: usize,
+        /// Download samples at each concurrency.
+        #[arg(long, default_value_t = 2)]
+        download_samples: usize,
+        /// Download payload size in MiB.
+        #[arg(long, default_value_t = 512)]
+        download_mib: u64,
+        /// Seconds to hold each connection-ladder level.
+        #[arg(long, default_value_t = 8)]
+        hold_seconds: u64,
+        /// Seconds to settle before sampling each ladder level.
+        #[arg(long, default_value_t = 3)]
+        settle_seconds: u64,
+        /// Optional comma-separated default-policy ladder levels.
+        #[arg(long)]
+        ladder_levels: Option<String>,
+        /// Optional comma-separated tuned-policy ladder levels.
+        #[arg(long)]
+        tuned_levels: Option<String>,
+        /// Verify identities and host prerequisites without producing evidence.
+        #[arg(long)]
+        identity_check_only: bool,
+        /// Keep the ephemeral workspace after the run.
+        #[arg(long)]
+        keep_work: bool,
+    },
     /// Run a benchmark or mechanism suite end to end.
     Run {
         /// Suite id (`cargo dev bench list` shows the catalogue).
@@ -1086,6 +1155,52 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                 }
             }
         }
+        BenchCommand::Profiles {
+            rust_bin,
+            rust_sha256,
+            expected_source_commit,
+            xray_bin,
+            xray_sha256,
+            out_dir,
+            run_id,
+            asset_cache_dir,
+            classes,
+            only,
+            standard_comparison,
+            connections,
+            churn_samples,
+            download_samples,
+            download_mib,
+            hold_seconds,
+            settle_seconds,
+            ladder_levels,
+            tuned_levels,
+            identity_check_only,
+            keep_work,
+        } => run_bench_profiles(&bench::profiles::Plan {
+            repo: repo.to_path_buf(),
+            rust_bin: rust_bin.clone(),
+            rust_sha256: rust_sha256.clone(),
+            expected_source_commit: expected_source_commit.clone(),
+            xray_bin: xray_bin.clone(),
+            xray_sha256: xray_sha256.clone(),
+            out_dir: out_dir.clone(),
+            run_id: run_id.clone(),
+            asset_cache_dir: asset_cache_dir.clone(),
+            classes: classes.clone(),
+            only: only.clone(),
+            standard_comparison: *standard_comparison,
+            connections: *connections,
+            churn_samples: *churn_samples,
+            download_samples: *download_samples,
+            download_mib: *download_mib,
+            hold_seconds: *hold_seconds,
+            settle_seconds: *settle_seconds,
+            ladder_levels: ladder_levels.clone(),
+            tuned_levels: tuned_levels.clone(),
+            identity_check_only: *identity_check_only,
+            keep_work: *keep_work,
+        }),
         BenchCommand::Workload {
             socks_port,
             origin_port,
@@ -1521,6 +1636,36 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                     ExitCode::from(2)
                 }
             }
+        }
+    }
+}
+
+fn run_bench_profiles(plan: &bench::profiles::Plan) -> ExitCode {
+    if let Err(error) = bench::profiles::validate(plan) {
+        eprintln!("bench profiles: {error}");
+        return ExitCode::from(2);
+    }
+    match bench::profiles::run(plan) {
+        Ok(outcome) if outcome.identity_only => {
+            println!("profile identity preflight: PASS");
+            ExitCode::SUCCESS
+        }
+        Ok(outcome) => {
+            println!(
+                "profile validation: {} ({} classes) -> {}",
+                if outcome.passed { "PASS" } else { "FAIL" },
+                outcome.classes,
+                outcome.out_dir.display()
+            );
+            if outcome.passed {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => {
+            eprintln!("bench profiles: {error}");
+            ExitCode::FAILURE
         }
     }
 }
