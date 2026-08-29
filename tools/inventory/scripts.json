@@ -691,8 +691,8 @@
         "soak-test.sh"
       ],
       "disposition": "MERGE",
-      "replacement": "BenchmarkRunner provenance capture",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite soak --soak-implementation xray",
+      "status": "deleted-after-parity; native mixed-traffic Xray resource sampler"
     },
     {
       "path": "scripts/smoke-release-assets.sh",
