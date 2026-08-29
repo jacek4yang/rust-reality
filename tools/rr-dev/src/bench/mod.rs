@@ -47,6 +47,7 @@ pub mod plan;
 pub mod process;
 pub mod publication;
 pub mod relay;
+pub mod resolver;
 pub mod report;
 pub mod runner;
 pub mod slot;
