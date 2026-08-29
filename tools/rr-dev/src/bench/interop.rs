@@ -296,7 +296,7 @@ pub fn run(suite: &InteropSuite) -> Result<InteropReport, String> {
     let (_server, _client) = start_tunnel(suite, &workspace, &rust, &xray, server_port, socks_port)?;
 
     let downloaded = workspace.join("download.bin");
-    fetch_through(socks_port, origin_port, &downloaded)?;
+    fetch_payload(socks_port, origin_port, &downloaded)?;
     let observed_sha = hash::sha256_file(&downloaded)?;
     if observed_sha != expected_sha {
         return Err("local Xray interoperability payload hash mismatch".to_owned());
@@ -405,7 +405,11 @@ fn start_tunnel(
 }
 
 /// Downloads the payload through the tunnel into `destination`.
-fn fetch_through(
+///
+/// # Errors
+///
+/// Returns the curl failure.
+pub fn fetch_payload(
     socks_port: u16,
     origin_port: u16,
     destination: &Path,

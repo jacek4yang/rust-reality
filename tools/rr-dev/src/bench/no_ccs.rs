@@ -437,3 +437,243 @@ mod tests {
         assert!(rendered.contains("\"version\": \"OpenSSL 3.5.6 7 Apr 2026\""));
     }
 }
+
+// ---------------------------------------------------------------------------
+// The runner
+// ---------------------------------------------------------------------------
+
+/// Everything the no-CCS gate needs.
+#[derive(Debug, Clone)]
+pub struct NoCcsSuite {
+    /// Repository root, for the Go origin.
+    pub repo: std::path::PathBuf,
+    /// The rust-reality binary under test.
+    pub rust_bin: std::path::PathBuf,
+    /// The unmodified Xray client.
+    pub xray_bin: std::path::PathBuf,
+    /// The pinned OpenSSL build that serves the cover.
+    pub openssl_bin: std::path::PathBuf,
+    /// Output directory; must not already exist.
+    pub out_dir: std::path::PathBuf,
+    /// Run identifier.
+    pub run_id: String,
+}
+
+/// Writes the 1 MiB payload, builds the Go origin and starts it.
+fn start_origin(
+    suite: &NoCcsSuite,
+    workspace: &crate::bench::workspace::Workspace,
+    origin_port: u16,
+) -> Result<(crate::bench::process::Child, String), String> {
+    use crate::bench::origin_go;
+    let payload = origin_go::write_pattern_payload(workspace.path(), 1)?;
+    let expected_sha = hash::sha256_file(&payload)?;
+    let binary = origin_go::build(&suite.repo, workspace)?;
+    let child = origin_go::start(
+        &binary,
+        workspace,
+        &origin_go::OriginPlan {
+            label: "origin-http".to_owned(),
+            listen_address: "127.0.0.1".to_owned(),
+            port: origin_port,
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("http-put.jsonl"),
+            tls: None,
+        },
+    )?;
+    Ok((child, expected_sha))
+}
+
+/// Starts the rust-reality server against the no-CCS cover, and its Xray client.
+///
+/// The private trust root reaches the rust-reality child through its own
+/// environment and nothing else: a sibling inheriting it would weaken the host's
+/// trust configuration for the lifetime of the run.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the tunnel's inputs are exactly these"
+)]
+fn start_tunnel(
+    workspace: &crate::bench::workspace::Workspace,
+    run: &crate::bench::evidence::RunDirectory,
+    rust: &crate::bench::identity::Binary,
+    xray: &crate::bench::identity::Binary,
+    certificate: &CoverCertificate,
+    cover_port: u16,
+    server_port: u16,
+    socks_port: u16,
+) -> Result<(crate::bench::process::Child, crate::bench::process::Child), String> {
+    use crate::bench::{config::RealityIdentity, process::Child, suites};
+    let target = format!("localhost:{cover_port}");
+    let generated = suites::generate_rust_identity(
+        workspace,
+        &rust.path,
+        server_port,
+        &target,
+        "localhost",
+        Some(&workspace.join("generate.log")),
+    )?;
+    let server_path = workspace.join("server.json");
+    std::fs::write(&server_path, &generated.server_json)
+        .map_err(|error| format!("could not write {}: {error}", server_path.display()))?;
+    let server = Child::spawn(
+        "rust-server",
+        &rust.path,
+        &[
+            "serve".to_owned(),
+            "--config".to_owned(),
+            server_path.display().to_string(),
+        ],
+        workspace.path(),
+        &[(
+            "SSL_CERT_FILE".to_owned(),
+            certificate.ca_certificate.display().to_string(),
+        )],
+        &run.join("rust-reality.log"),
+    )
+    .map_err(|error| error.to_string())?;
+
+    let reality = RealityIdentity {
+        uuid: generated.uuid.clone(),
+        short_id: generated.short_id.clone(),
+        server_name: "localhost".to_owned(),
+        target,
+    };
+    let client_path = workspace.join("xray.json");
+    std::fs::write(
+        &client_path,
+        crate::bench::config::xray_client(&reality, server_port, socks_port, &generated.public_key)
+            .to_python_json(),
+    )
+    .map_err(|error| format!("could not write {}: {error}", client_path.display()))?;
+    let client = Child::spawn(
+        "xray-client",
+        &xray.path,
+        &[
+            "run".to_owned(),
+            "-config".to_owned(),
+            client_path.display().to_string(),
+        ],
+        workspace.path(),
+        &[],
+        &run.join("xray.log"),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok((server, client))
+}
+
+/// Runs the no-CCS interoperability gate.
+///
+/// # Errors
+///
+/// Returns the first failure. A server-direction `ChangeCipherSpec`, a digest
+/// mismatch, or a binary that changed mid-run are all gate failures.
+pub fn run(suite: &NoCcsSuite) -> Result<Json, String> {
+    use crate::bench::{
+        evidence::{Publication, RunDirectory},
+        host_lock::HostLock,
+        identity::{self, Kind},
+        interop,
+        process::Child,
+        workspace::Workspace,
+    };
+
+    if suite.run_id.is_empty()
+        || !suite
+            .run_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err("RUN_ID is required and must be one safe component".to_owned());
+    }
+    let openssl_identity = openssl(&suite.openssl_bin, &owned(&["version", "-a"]))?;
+    check_openssl_version(&openssl_identity)?;
+
+    let rust = identity::register("rust-reality", &suite.rust_bin, "", Kind::Rust)?;
+    let xray = identity::register("xray", &suite.xray_bin, "", Kind::Xray)?;
+    let _lock = HostLock::acquire(&crate::bench::runner::default_lock_path())?;
+    let run = RunDirectory::create(&suite.out_dir)?;
+    let workspace = Workspace::create("test-openssl-no-ccs-interop")?;
+
+    let port_base = crate::bench::workspace::reserve_block(4)?;
+    let ports = [port_base, port_base + 1, port_base + 2, port_base + 3];
+    let (cover_port, server_port, socks_port, origin_port) =
+        (ports[0], ports[1], ports[2], ports[3]);
+
+    let certificate = build_cover_certificate(&suite.openssl_bin, workspace.path(), &suite.run_id)?;
+    std::fs::write(run.join("certificate-san.txt"), &certificate.subject_alt_name)
+        .map_err(|error| format!("could not record the leaf SAN: {error}"))?;
+
+    let trace_path = run.join("openssl-trace.log");
+    let mut cover = Child::spawn(
+        "openssl-cover",
+        &suite.openssl_bin,
+        &cover_server_args(cover_port, &certificate),
+        workspace.path(),
+        &[],
+        &trace_path,
+    )
+    .map_err(|error| error.to_string())?;
+    cover
+        .wait_for_port(cover_port, std::time::Duration::from_secs(30))
+        .map_err(|error| error.to_string())?;
+
+    let (mut server, mut client) = start_tunnel(
+        &workspace,
+        &run,
+        &rust,
+        &xray,
+        &certificate,
+        cover_port,
+        server_port,
+        socks_port,
+    )?;
+
+    let (_origin, expected_sha) = start_origin(suite, &workspace, origin_port)?;
+    server
+        .wait_for_port(server_port, std::time::Duration::from_secs(30))
+        .map_err(|error| error.to_string())?;
+    client
+        .wait_for_port(socks_port, std::time::Duration::from_secs(30))
+        .map_err(|error| error.to_string())?;
+
+    let downloaded = workspace.join("download.bin");
+    interop::fetch_payload(socks_port, origin_port, &downloaded)?;
+    let observed_sha = hash::sha256_file(&downloaded)?;
+    if observed_sha != expected_sha {
+        return Err("Xray interoperability payload SHA-256 mismatch".to_owned());
+    }
+    let verify = interop::mldsa65_differential(&rust.path, &xray.path, interop::MLDSA_SEED)?;
+
+    // Stop the cover explicitly so its trace is flushed before it is read.
+    cover.terminate();
+    let trace = std::fs::read_to_string(&trace_path)
+        .map_err(|error| format!("could not read the OpenSSL trace: {error}"))?;
+    assert_no_server_ccs(&trace)?;
+
+    assert_unchanged(&rust)?;
+    assert_unchanged(&xray)?;
+    if openssl(&suite.openssl_bin, &owned(&["version", "-a"]))? != openssl_identity {
+        return Err("OpenSSL identity changed during the run".to_owned());
+    }
+
+    let summary = summary_json(
+        &suite.run_id,
+        &rust,
+        &xray,
+        &suite.openssl_bin,
+        &openssl_identity,
+        ports,
+        &observed_sha,
+        &interop::verify_digest(&verify),
+    );
+    let document = summary.to_python_json();
+    run.write_new("summary.json", &document)?;
+    run.publish(
+        Publication::Environment,
+        &document,
+        &suite.run_id,
+        "test-openssl-no-ccs-interop",
+    )?;
+    Ok(summary)
+}

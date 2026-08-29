@@ -30,7 +30,7 @@ pub struct Suite {
 }
 
 /// The catalogue of benchmark suites, in migration order.
-pub const SUITES: [Suite; 14] = [
+pub const SUITES: [Suite; 15] = [
     Suite { id: "real-path", summary: "real-network A/B download through rust-reality and Xray tunnels", supersedes: "benchmark-real-path.sh" },
     Suite { id: "matrix", summary: "the protected-metric performance matrix across concurrency and policy", supersedes: "benchmark-matrix.sh" },
     Suite { id: "setup-rate", summary: "connection setup rate and CPU per connection", supersedes: "benchmark-setup-rate.sh" },
@@ -44,6 +44,7 @@ pub const SUITES: [Suite; 14] = [
     Suite { id: "xray", summary: "Xray comparator baseline", supersedes: "benchmark-xray.sh" },
     Suite { id: "soak", summary: "long-duration soak with resource sampling", supersedes: "soak-test.sh" },
     Suite { id: "xray-interop", summary: "unmodified-Xray interoperability and the ML-DSA differential", supersedes: "test-xray-interop.sh" },
+    Suite { id: "no-ccs-interop", summary: "interoperability with a TLS 1.3 cover that omits the server CCS", supersedes: "test-openssl-no-ccs-interop.sh" },
     Suite { id: "descriptor-pressure", summary: "file-descriptor pressure behaviour", supersedes: "test-descriptor-pressure.sh" },
 ];
 

@@ -344,6 +344,9 @@ enum BenchCommand {
         /// A URL fetched through the tunnel to prove reachability (interop).
         #[arg(long)]
         internet_url: Option<String>,
+        /// The pinned OpenSSL that serves the no-CCS cover target.
+        #[arg(long, default_value = "openssl")]
+        openssl_bin: PathBuf,
     },
 }
 
@@ -951,7 +954,18 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             setup_connections,
             setup_concurrency,
             internet_url,
+            openssl_bin,
         } => {
+            if suite == "no-ccs-interop" {
+                return run_bench_no_ccs(
+                    repo,
+                    rust_bin,
+                    xray_bin,
+                    openssl_bin,
+                    out_dir.as_deref(),
+                    run_id.as_deref(),
+                );
+            }
             if suite == "xray-interop" {
                 return run_bench_interop(
                     repo,
@@ -1455,6 +1469,56 @@ fn run_bench_interop(
         }
         Err(error) => {
             eprintln!("bench run xray-interop: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Drives the no-CCS interoperability gate.
+fn run_bench_no_ccs(
+    repo: &Path,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    openssl_bin: &Path,
+    out_dir: Option<&Path>,
+    run_id: Option<&str>,
+) -> ExitCode {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let run_id = run_id.map_or_else(
+        || {
+            format!(
+                "test-openssl-no-ccs-interop-{stamp}-{}",
+                std::process::id()
+            )
+        },
+        str::to_owned,
+    );
+    let out_dir = out_dir.map_or_else(
+        || {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("diagnostics")
+                .join(&run_id)
+        },
+        Path::to_path_buf,
+    );
+    let suite = bench::no_ccs::NoCcsSuite {
+        repo: repo.to_path_buf(),
+        rust_bin: rust_bin.to_path_buf(),
+        xray_bin: xray_bin.to_path_buf(),
+        openssl_bin: openssl_bin.to_path_buf(),
+        out_dir,
+        run_id,
+    };
+    match bench::no_ccs::run(&suite) {
+        Ok(_) => {
+            println!("no-CCS interoperability: PASS");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("bench run no-ccs-interop: {error}");
             ExitCode::FAILURE
         }
     }
