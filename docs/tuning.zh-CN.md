@@ -1151,8 +1151,7 @@ LimitNOFILE=1048576  # 覆盖 3 个 setup FD × 计划会话数再加预留（§
 §4 的档位正是这样找到的；在你的主机上重复一遍：
 
 1. 阶梯式抬升代表性负载（建连 churn，然后并发批量流，然后空闲会话
-   阶梯——用你自己的客户端，或项目的测试框架
-   `scripts/validate-profiles.sh`）。
+   阶梯——用你自己的客户端，或 `cargo dev bench profiles`）。
 2. 每一档记录：吞吐、每秒新建连接数、建连 p50/p95/p99（`curl -w`，
    §13）、CPU（`pidstat`）、steal（`vmstat` 的 `st`）、RSS 和
    `memory.current`、FD 数（`ls /proc/PID/fd | wc -l`）、重传

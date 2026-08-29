@@ -512,7 +512,7 @@ pub fn run(suite: &DnsSuite) -> Result<crate::bench::paired::SuiteOutcome, Strin
     };
 
     validate(suite)?;
-    for program in ["go", "openssl"] {
+    for program in ["openssl"] {
         if !crate::process::Tool::exists(program) {
             return Err(format!("required program unavailable: {program}"));
         }

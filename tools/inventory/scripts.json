@@ -106,7 +106,11 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "calls_scripts": [],
+      "calls_scripts": [
+        "benchmark-matrix.sh",
+        "benchmark-setup-rate.sh",
+        "validate-profiles.sh"
+      ],
       "disposition": "MIGRATE",
       "replacement": "cargo dev perf aggregate",
       "status": "not-started"
@@ -561,12 +565,10 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "calls_scripts": [
-        "profile-forensics.sh"
-      ],
+      "calls_scripts": [],
       "disposition": "MERGE",
-      "replacement": "cargo dev bench (built-in)",
-      "status": "not-started"
+      "replacement": "cargo dev perf hotspot --mode built-in",
+      "status": "deleted-after-parity in PR #153; native capture owns exact binary/PID identity, bounded perf argv, archival, reporting, checksums and cleanup"
     },
     {
       "path": "scripts/profile-driver.py",
@@ -575,14 +577,10 @@
       "executable": true,
       "invoked_by_ci": false,
       "invoked_by_check_sh": false,
-      "calls_scripts": [
-        "benchmark-matrix.sh",
-        "benchmark-setup-rate.sh",
-        "validate-profiles.sh"
-      ],
+      "calls_scripts": [],
       "disposition": "MERGE",
-      "replacement": "cargo dev perf hotspot",
-      "status": "not-started"
+      "replacement": "profile_workload (cargo dev bench profiles)",
+      "status": "deleted-after-parity in PR #153; native workload owns churn/download/idle-session ladders, exact process resources, cgroup deltas and absolute log counters with explicit per-ladder baselines"
     },
     {
       "path": "scripts/profile-forensics.sh",
@@ -596,7 +594,7 @@
       ],
       "disposition": "MERGE",
       "replacement": "cargo dev perf hotspot",
-      "status": "not-started"
+      "status": "deleted-after-parity in PR #153; real built-in cycles:u capture published hash-bound perf data/report/build IDs with exact process identity and clean teardown"
     },
     {
       "path": "scripts/profile-report.py",
@@ -607,8 +605,8 @@
       "invoked_by_check_sh": false,
       "calls_scripts": [],
       "disposition": "MERGE",
-      "replacement": "cargo dev perf hotspot",
-      "status": "not-started"
+      "replacement": "profile_summary::cross_class_markdown (cargo dev bench profiles)",
+      "status": "deleted-after-parity in PR #153; native cross-class report preserves environment, workload, ladder, OOM, peak resource and derived-budget fields"
     },
     {
       "path": "scripts/profile-summarize.py",
@@ -619,8 +617,8 @@
       "invoked_by_check_sh": false,
       "calls_scripts": [],
       "disposition": "MIGRATE",
-      "replacement": "cargo dev perf hotspot",
-      "status": "not-started"
+      "replacement": "profile_summary (cargo dev bench profiles)",
+      "status": "deleted-after-parity in PR #153; native fail-closed summary preserves resource-boundary, swap/OOM, workload, ladder, pressure and report semantics"
     },
     {
       "path": "scripts/record-delay-reader-test-evidence.sh",
@@ -691,8 +689,8 @@
         "soak-test.sh"
       ],
       "disposition": "MERGE",
-      "replacement": "BenchmarkRunner provenance capture",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite soak --soak-implementation xray",
+      "status": "deleted-after-parity; native mixed-traffic Xray resource sampler"
     },
     {
       "path": "scripts/smoke-release-assets.sh",
@@ -723,8 +721,8 @@
         "deployment_driver.py"
       ],
       "disposition": "MERGE",
-      "replacement": "cargo dev bench soak",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite soak --soak-implementation rust",
+      "status": "deleted-after-parity; native standalone/Handoff/NXR/SOCKS5 topology, exact-identity resource sampling, midpoint reload, and hash-bound integrity evidence"
     },
     {
       "path": "scripts/test-config-identity-fingerprint.py",
@@ -751,8 +749,8 @@
         "benchmark-contract.sh"
       ],
       "disposition": "MERGE",
-      "replacement": "cargo dev bench pressure",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite descriptor-pressure",
+      "status": "deleted-after-parity; native prlimit/Xray/REALITY/Vision/echo recovery gate"
     },
     {
       "path": "scripts/test-openssl-no-ccs-interop.sh",
@@ -913,7 +911,7 @@
       ],
       "disposition": "MERGE",
       "replacement": "cargo dev bench profiles",
-      "status": "not-started"
+      "status": "deleted-after-parity in PR #153; real 1c1g acceptance passed exact cgroup CPU/memory/swap identity, churn, 512 MiB downloads, default/tuned ladders, zero OOM, publication and cleanup"
     },
     {
       "path": "scripts/verify-release-tag.sh",
@@ -981,7 +979,7 @@
         "profile-built-in-benchmark.sh"
       ],
       "ci_or_gate_references": 0,
-      "finding": "the entire family is manual investigation tooling with no CI, gate or release caller; it is reachable only by hand. Disposition remains MERGE into cargo dev perf hotspot, but the family carries no blocking dependency, so it can be migrated or deleted late in the programme without risk to CI or release."
+      "finding": "the family is manual investigation tooling with no CI, gate or release caller. PR #153 migrated and deleted the built-in wrapper and forensic capture authority; aggregation, bundle export and the IDALib mechanism remain in the later hotspot transaction."
     }
   }
 }

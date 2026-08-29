@@ -466,7 +466,7 @@ pub fn run(suite: &RoutingSuite) -> Result<crate::bench::paired::SuiteOutcome, S
     };
 
     validate(suite)?;
-    for program in ["go", "openssl"] {
+    for program in ["openssl"] {
         if !crate::process::Tool::exists(program) {
             return Err(format!("required program unavailable: {program}"));
         }

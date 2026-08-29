@@ -234,9 +234,127 @@ enum BenchCommand {
         #[arg(long, default_value_t = 8)]
         max_accepted: usize,
     },
-    /// Run a tunnel A/B suite end to end (`real-path`, `xray`, or `vision-direct`).
+    /// Loopback HTTP/1.1 and TLS 1.3 payload origin.
+    ///
+    /// A separate process so a wedged listener takes down nothing but itself;
+    /// the harnesses own its lifetime through RAII children. Hidden from normal
+    /// CLI help: operator policy remains the suite commands.
+    #[command(hide = true)]
+    Origin {
+        /// Numeric listen address.
+        #[arg(long, default_value = "127.0.0.1")]
+        listen_address: String,
+        /// Listen port; 0 binds an ephemeral port.
+        #[arg(long)]
+        port: u16,
+        /// Directory holding the payload files.
+        #[arg(long)]
+        payload_dir: PathBuf,
+        /// Path of the per-PUT JSONL log the origin appends to.
+        #[arg(long)]
+        put_log: PathBuf,
+        /// Per-request JSONL log; leaving it unset also leaves hashing off.
+        #[arg(long)]
+        access_log: Option<PathBuf>,
+        /// Instance name recorded in access-log rows.
+        #[arg(long, default_value = "")]
+        label: String,
+        /// TLS 1.3-only PEM certificate; requires `--tls-key`.
+        #[arg(long)]
+        tls_cert: Option<PathBuf>,
+        /// TLS 1.3-only PEM private key; requires `--tls-cert`.
+        #[arg(long)]
+        tls_key: Option<PathBuf>,
+        /// Comma-separated ALPN protocols the TLS listener offers.
+        #[arg(long, default_value = "")]
+        tls_alpn: String,
+    },
+    /// Internal process-owned TCP echo target for real socket gates.
+    #[command(hide = true)]
+    Echo {
+        /// Loopback listen port.
+        #[arg(long)]
+        port: u16,
+    },
+    /// Internal TCP-only no-auth SOCKS5 upstream for outbound-pool gates.
+    #[command(hide = true)]
+    SocksServer {
+        /// Loopback listen port.
+        #[arg(long)]
+        port: u16,
+    },
+    /// Validate bounded machine profiles under exact cgroup-v2 limits.
+    Profiles {
+        /// Path to the exact rust-reality release binary under test.
+        #[arg(long, default_value = "target/release/rust-reality")]
+        rust_bin: PathBuf,
+        /// Expected lowercase SHA-256 of the rust-reality binary.
+        #[arg(long)]
+        rust_sha256: String,
+        /// Full source commit embedded in the rust-reality binary.
+        #[arg(long)]
+        expected_source_commit: String,
+        /// Path to the exact stock Xray client binary.
+        #[arg(long)]
+        xray_bin: PathBuf,
+        /// Expected lowercase SHA-256 of the Xray binary.
+        #[arg(long)]
+        xray_sha256: String,
+        /// New durable evidence directory; it must not already exist.
+        #[arg(long)]
+        out_dir: PathBuf,
+        /// Stable run identifier written into the completion marker.
+        #[arg(long)]
+        run_id: String,
+        /// Reusable directory containing geoip.dat and geosite.dat.
+        #[arg(long, default_value = "benchmarks/profile-validation/.asset-cache")]
+        asset_cache_dir: PathBuf,
+        /// Space-separated `name:cpu-percent:memory` class specifications.
+        #[arg(
+            long,
+            default_value = "1c1g:100:1G 1c2g:100:2G 2c2g:200:2G 2c4g:200:4G 4c4g:400:4G 4c8g:400:8G"
+        )]
+        classes: String,
+        /// Run only this class name.
+        #[arg(long)]
+        only: Option<String>,
+        /// Add the 1c1g standard/shared comparison.
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        standard_comparison: bool,
+        /// Fresh connections in each churn sample.
+        #[arg(long, default_value_t = 96)]
+        connections: usize,
+        /// Churn samples at each concurrency.
+        #[arg(long, default_value_t = 3)]
+        churn_samples: usize,
+        /// Download samples at each concurrency.
+        #[arg(long, default_value_t = 2)]
+        download_samples: usize,
+        /// Download payload size in MiB.
+        #[arg(long, default_value_t = 512)]
+        download_mib: u64,
+        /// Seconds to hold each connection-ladder level.
+        #[arg(long, default_value_t = 8)]
+        hold_seconds: u64,
+        /// Seconds to settle before sampling each ladder level.
+        #[arg(long, default_value_t = 3)]
+        settle_seconds: u64,
+        /// Optional comma-separated default-policy ladder levels.
+        #[arg(long)]
+        ladder_levels: Option<String>,
+        /// Optional comma-separated tuned-policy ladder levels.
+        #[arg(long)]
+        tuned_levels: Option<String>,
+        /// Verify identities and host prerequisites without producing evidence.
+        #[arg(long)]
+        identity_check_only: bool,
+        /// Keep the ephemeral workspace after the run.
+        #[arg(long)]
+        keep_work: bool,
+    },
+    /// Run a benchmark or mechanism suite end to end.
     Run {
-        /// Suite id: `real-path`, `xray`, or `vision-direct`.
+        /// Suite id (`cargo dev bench list` shows the catalogue).
         #[arg(long, default_value = "real-path")]
         suite: String,
         /// Path to the rust-reality release binary.
@@ -403,6 +521,30 @@ enum BenchCommand {
         /// Host-global IPv6 address for the environmental phase.
         #[arg(long)]
         global_v6: Option<String>,
+        /// Equal hard/soft open-file limit for the descriptor-pressure suite.
+        #[arg(long, default_value_t = 192)]
+        nofile_limit: u64,
+        /// Maximum held streams attempted by the descriptor-pressure suite.
+        #[arg(long, default_value_t = 96)]
+        max_held_connections: usize,
+        /// Concurrent admission attempts while descriptor pressure is high.
+        #[arg(long, default_value_t = 12)]
+        storm_connections: usize,
+        /// Soak topology implementation (`rust` or the `xray` comparator).
+        #[arg(long, default_value = "rust")]
+        soak_implementation: String,
+        /// Timed soak workload window in seconds.
+        #[arg(long, default_value_t = 1800)]
+        soak_seconds: u64,
+        /// Delay between soak rounds in milliseconds.
+        #[arg(long, default_value_t = 5000)]
+        soak_round_sleep_ms: u64,
+        /// Minimum completed soak workload rounds.
+        #[arg(long, default_value_t = 1)]
+        soak_min_rounds: usize,
+        /// Interval between distributed soak integrity attempts.
+        #[arg(long, default_value_t = 1800)]
+        soak_distributed_interval_seconds: u64,
     },
 }
 
@@ -516,6 +658,49 @@ enum PerfCommand {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Capture an identity-bound hotspot profile from the built-in benchmark or
+    /// an already-running server.
+    Hotspot {
+        /// Process lifecycle used for the capture.
+        #[arg(long, value_enum)]
+        mode: HotspotMode,
+        /// Exact rust-reality binary to archive and measure.
+        #[arg(long)]
+        binary: PathBuf,
+        /// Required lowercase-hex SHA-256 of the binary.
+        #[arg(long)]
+        binary_sha256: String,
+        /// Required source commit embedded in the binary.
+        #[arg(long)]
+        expected_source_commit: String,
+        /// Existing rust-reality server PID for attach mode.
+        #[arg(long)]
+        pid: Option<u32>,
+        /// New absolute evidence directory.
+        #[arg(long)]
+        out_dir: PathBuf,
+        /// Stable run identifier written into the publication marker.
+        #[arg(long)]
+        run_id: String,
+        /// Maximum seconds spent recording.
+        #[arg(long, default_value_t = 35)]
+        record_seconds: u64,
+        /// Built-in benchmark case duration.
+        #[arg(long, default_value_t = 10_000)]
+        duration_ms: u64,
+        /// Built-in benchmark warmup duration.
+        #[arg(long, default_value_t = 1_000)]
+        warmup_ms: u64,
+        /// `perf record` event selector.
+        #[arg(long, default_value = "cycles:u")]
+        event: String,
+        /// `perf record` sample frequency.
+        #[arg(long, default_value_t = 999)]
+        frequency: u32,
+        /// `perf record --call-graph` value.
+        #[arg(long, default_value = "fp")]
+        call_graph: String,
+    },
     /// Capture identity-bound perf-stat or perf-c2c environment evidence.
     ///
     /// The workload command follows `--` and its argv[0] must be the identified
@@ -548,6 +733,14 @@ enum EnvironmentTool {
     C2c,
 }
 
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum HotspotMode {
+    /// Launch and own the built-in benchmark.
+    BuiltIn,
+    /// Attach to an existing exactly identified server.
+    AttachServer,
+}
+
 #[derive(Subcommand)]
 enum DocsCommand {
     /// Validate bilingual coverage, local links, stale wording and release headlines.
@@ -560,7 +753,7 @@ fn main() -> ExitCode {
 
     match cli.command {
         Command::Doctor => run_doctor(),
-        Command::Perf { command } => run_perf(command),
+        Command::Perf { command } => run_perf(&repo, command),
         Command::Release { command } => run_release(&repo, command),
         Command::Fuzz { command } => run_fuzz(&repo, command),
         Command::Config { command } => match command {
@@ -669,7 +862,7 @@ fn run_doctor() -> ExitCode {
 }
 
 /// Dispatches a `cargo dev perf` subcommand.
-fn run_perf(command: PerfCommand) -> ExitCode {
+fn run_perf(repo: &std::path::Path, command: PerfCommand) -> ExitCode {
     match command {
         PerfCommand::Evaluate { manifest, output } => {
             match perf::report::evaluate_to_file(&manifest, &output) {
@@ -682,6 +875,51 @@ fn run_perf(command: PerfCommand) -> ExitCode {
                     // evidence: no report is produced at all.
                     eprintln!("perf evaluate: {error}");
                     ExitCode::from(2)
+                }
+            }
+        }
+        PerfCommand::Hotspot {
+            mode,
+            binary,
+            binary_sha256,
+            expected_source_commit,
+            pid,
+            out_dir,
+            run_id,
+            record_seconds,
+            duration_ms,
+            warmup_ms,
+            event,
+            frequency,
+            call_graph,
+        } => {
+            let mode = match mode {
+                HotspotMode::BuiltIn => perf::hotspot::Mode::BuiltIn,
+                HotspotMode::AttachServer => perf::hotspot::Mode::AttachServer,
+            };
+            match perf::hotspot::run(&perf::hotspot::Plan {
+                repo: repo.to_path_buf(),
+                mode,
+                binary,
+                binary_sha256,
+                expected_source_commit,
+                server_pid: pid,
+                out_dir,
+                run_id,
+                record_seconds,
+                duration_ms,
+                warmup_ms,
+                event,
+                frequency,
+                call_graph,
+            }) {
+                Ok(message) => {
+                    println!("{message}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("perf hotspot: {error}");
+                    ExitCode::FAILURE
                 }
             }
         }
@@ -888,6 +1126,177 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        BenchCommand::Origin {
+            listen_address,
+            port,
+            payload_dir,
+            put_log,
+            access_log,
+            label,
+            tls_cert,
+            tls_key,
+            tls_alpn,
+        } => {
+            let tls = match (tls_cert, tls_key) {
+                (None, None) => None,
+                (Some(cert), Some(key)) => {
+                    let (certificate_pem, key_pem) = match (std::fs::read(cert), std::fs::read(key))
+                    {
+                        (Ok(certificate_pem), Ok(key_pem)) => (certificate_pem, key_pem),
+                        (error, other) => {
+                            let failed = match (error.is_err(), other.is_err()) {
+                                (true, _) => error.unwrap_err(),
+                                (_, true) => other.unwrap_err(),
+                                _ => std::io::Error::other("unreadable TLS material"),
+                            };
+                            eprintln!("bench origin: could not read TLS material: {failed}");
+                            return ExitCode::FAILURE;
+                        }
+                    };
+                    let alpn = tls_alpn
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|protocol| !protocol.is_empty())
+                        .map(str::to_owned)
+                        .collect();
+                    Some(bench::origin_server::TlsOptions {
+                        certificate_pem,
+                        key_pem,
+                        alpn,
+                    })
+                }
+                _ => {
+                    eprintln!("bench origin: --tls-cert and --tls-key must be given together");
+                    return ExitCode::from(2);
+                }
+            };
+            let address = match listen_address.parse::<std::net::IpAddr>() {
+                Ok(address) => address,
+                Err(error) => {
+                    eprintln!("bench origin: --listen-address must be numeric: {error}");
+                    return ExitCode::from(2);
+                }
+            };
+            if let Some(options) = tls.as_ref()
+                && let Err(error) = bench::origin_server::tls_acceptor(options)
+            {
+                eprintln!("bench origin: {error}");
+                return ExitCode::from(2);
+            }
+            let listener = match std::net::TcpListener::bind((address, *port)) {
+                Ok(listener) => listener,
+                Err(error) => {
+                    eprintln!("bench origin: could not bind {address}:{port}: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            if let Ok(address) = listener.local_addr() {
+                println!("READY {address}");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+            }
+            match bench::origin_server::serve_with_tls(
+                &listener,
+                payload_dir,
+                Some(put_log),
+                access_log.as_deref(),
+                label,
+                tls.as_ref(),
+            ) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("bench origin: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        BenchCommand::Echo { port } => {
+            let listener = match std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, *port))
+            {
+                Ok(listener) => listener,
+                Err(error) => {
+                    eprintln!("bench echo: could not bind 127.0.0.1:{port}: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            if let Ok(address) = listener.local_addr() {
+                println!("READY {address}");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+            }
+            match bench::echo::serve(&listener) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("bench echo: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        BenchCommand::SocksServer { port } => {
+            let listener = match std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, *port))
+            {
+                Ok(listener) => listener,
+                Err(error) => {
+                    eprintln!("bench socks-server: could not bind 127.0.0.1:{port}: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            if let Ok(address) = listener.local_addr() {
+                println!("READY {address}");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+            }
+            match bench::socks_server::serve(&listener) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("bench socks-server: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        BenchCommand::Profiles {
+            rust_bin,
+            rust_sha256,
+            expected_source_commit,
+            xray_bin,
+            xray_sha256,
+            out_dir,
+            run_id,
+            asset_cache_dir,
+            classes,
+            only,
+            standard_comparison,
+            connections,
+            churn_samples,
+            download_samples,
+            download_mib,
+            hold_seconds,
+            settle_seconds,
+            ladder_levels,
+            tuned_levels,
+            identity_check_only,
+            keep_work,
+        } => run_bench_profiles(&bench::profiles::Plan {
+            repo: repo.to_path_buf(),
+            rust_bin: rust_bin.clone(),
+            rust_sha256: rust_sha256.clone(),
+            expected_source_commit: expected_source_commit.clone(),
+            xray_bin: xray_bin.clone(),
+            xray_sha256: xray_sha256.clone(),
+            out_dir: out_dir.clone(),
+            run_id: run_id.clone(),
+            asset_cache_dir: asset_cache_dir.clone(),
+            classes: classes.clone(),
+            only: only.clone(),
+            standard_comparison: *standard_comparison,
+            connections: *connections,
+            churn_samples: *churn_samples,
+            download_samples: *download_samples,
+            download_mib: *download_mib,
+            hold_seconds: *hold_seconds,
+            settle_seconds: *settle_seconds,
+            ladder_levels: ladder_levels.clone(),
+            tuned_levels: tuned_levels.clone(),
+            identity_check_only: *identity_check_only,
+            keep_work: *keep_work,
+        }),
         BenchCommand::Workload {
             socks_port,
             origin_port,
@@ -1039,6 +1448,14 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             tls_tcp_nodelay,
             ipv6_phases,
             global_v6,
+            nofile_limit,
+            max_held_connections,
+            storm_connections,
+            soak_implementation,
+            soak_seconds,
+            soak_round_sleep_ms,
+            soak_min_rounds,
+            soak_distributed_interval_seconds,
         } => {
             if suite == "tls-shape" {
                 return run_bench_tls_shape(
@@ -1083,6 +1500,37 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                     openssl_bin,
                     out_dir.as_deref(),
                     run_id.as_deref(),
+                );
+            }
+            if suite == "descriptor-pressure" {
+                return run_bench_pressure(
+                    repo,
+                    rust_bin,
+                    xray_bin,
+                    openssl_bin,
+                    out_dir.as_deref(),
+                    run_id.as_deref(),
+                    *nofile_limit,
+                    *max_held_connections,
+                    *storm_connections,
+                );
+            }
+            if suite == "soak" {
+                if !matches!(soak_implementation.as_str(), "rust" | "xray") {
+                    eprintln!("bench run soak: --soak-implementation must be rust or xray");
+                    return ExitCode::from(2);
+                }
+                return run_bench_soak(
+                    soak_implementation,
+                    rust_bin,
+                    xray_bin,
+                    openssl_bin,
+                    out_dir.as_deref(),
+                    run_id.as_deref(),
+                    *soak_seconds,
+                    *soak_round_sleep_ms,
+                    *soak_min_rounds,
+                    *soak_distributed_interval_seconds,
                 );
             }
             if suite == "xray-interop" {
@@ -1284,6 +1732,36 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                     ExitCode::from(2)
                 }
             }
+        }
+    }
+}
+
+fn run_bench_profiles(plan: &bench::profiles::Plan) -> ExitCode {
+    if let Err(error) = bench::profiles::validate(plan) {
+        eprintln!("bench profiles: {error}");
+        return ExitCode::from(2);
+    }
+    match bench::profiles::run(plan) {
+        Ok(outcome) if outcome.identity_only => {
+            println!("profile identity preflight: PASS");
+            ExitCode::SUCCESS
+        }
+        Ok(outcome) => {
+            println!(
+                "profile validation: {} ({} classes) -> {}",
+                if outcome.passed { "PASS" } else { "FAIL" },
+                outcome.classes,
+                outcome.out_dir.display()
+            );
+            if outcome.passed {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => {
+            eprintln!("bench profiles: {error}");
+            ExitCode::FAILURE
         }
     }
 }
@@ -1634,6 +2112,157 @@ fn run_bench_no_ccs(
         Err(error) => {
             eprintln!("bench run no-ccs-interop: {error}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+/// Drives the real-socket descriptor-pressure recovery gate.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the bounded gate inputs are explicit command-line policy"
+)]
+fn run_bench_pressure(
+    repo: &Path,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    openssl_bin: &Path,
+    out_dir: Option<&Path>,
+    run_id: Option<&str>,
+    nofile_limit: u64,
+    max_held: usize,
+    storm_connections: usize,
+) -> ExitCode {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let run_id = run_id.map_or_else(
+        || format!("descriptor-pressure-{stamp}-{}", std::process::id()),
+        str::to_owned,
+    );
+    let out_dir = out_dir.map_or_else(
+        || {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("diagnostics/final")
+                .join(&run_id)
+        },
+        Path::to_path_buf,
+    );
+    let suite = bench::pressure::PressureSuite {
+        repo: repo.to_path_buf(),
+        rust_bin: rust_bin.to_path_buf(),
+        xray_bin: xray_bin.to_path_buf(),
+        openssl_bin: openssl_bin.to_path_buf(),
+        out_dir: out_dir.clone(),
+        run_id,
+        nofile_limit,
+        max_held,
+        storm_connections,
+    };
+    if let Err(error) = bench::pressure::validate(&suite) {
+        eprintln!("bench run descriptor-pressure: {error}");
+        return ExitCode::from(2);
+    }
+    match bench::pressure::run(&suite) {
+        Ok(result) => {
+            println!(
+                "descriptor-pressure recovery: PASS ({} held, {} storm failures; {})",
+                result.successful_held,
+                result.storm_failures,
+                out_dir.display()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("bench run descriptor-pressure: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Drives the selected side of the shared mixed-traffic soak lifecycle.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the soak CLI fields map directly to the bounded native plan"
+)]
+fn run_bench_soak(
+    implementation: &str,
+    rust_bin: &Path,
+    xray_bin: &Path,
+    openssl_bin: &Path,
+    out_dir: Option<&Path>,
+    run_id: Option<&str>,
+    duration_seconds: u64,
+    round_sleep_ms: u64,
+    minimum_rounds: usize,
+    distributed_interval_seconds: u64,
+) -> ExitCode {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let run_id = run_id.map_or_else(
+        || format!("soak-xray-{stamp}-{}", std::process::id()),
+        str::to_owned,
+    );
+    let out_dir = out_dir.map_or_else(
+        || {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("benchmarks/final")
+                .join(&run_id)
+        },
+        Path::to_path_buf,
+    );
+    let plan = bench::soak::SoakPlan {
+        rust_bin: rust_bin.to_path_buf(),
+        xray_bin: xray_bin.to_path_buf(),
+        openssl_bin: openssl_bin.to_path_buf(),
+        out_dir: out_dir.clone(),
+        run_id,
+        duration: std::time::Duration::from_secs(duration_seconds),
+        round_sleep: std::time::Duration::from_millis(round_sleep_ms),
+        minimum_rounds,
+        distributed_interval: std::time::Duration::from_secs(distributed_interval_seconds),
+    };
+    if let Err(error) = bench::soak::validate(&plan) {
+        eprintln!("bench run soak: {error}");
+        return ExitCode::from(2);
+    }
+    if implementation == "rust" {
+        match bench::soak::run_rust(&plan) {
+            Ok(outcome) => {
+                println!(
+                    "rust-reality soak: PASS ({} rounds, {} distributed attempts, aggregate PSS/RSS growth {:.1} MiB; {})",
+                    outcome.rounds,
+                    outcome.distributed_attempts,
+                    outcome
+                        .resources
+                        .pss_growth_mib
+                        .unwrap_or(outcome.resources.rss_growth_mib),
+                    out_dir.display()
+                );
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("bench run soak: {error}");
+                ExitCode::FAILURE
+            }
+        }
+    } else {
+        match bench::soak::run_xray(&plan) {
+            Ok(outcome) => {
+                println!(
+                    "Xray soak: PASS ({} rounds, RSS growth {:.1} MiB; {})",
+                    outcome.rounds,
+                    outcome.resources.rss_growth_mib,
+                    out_dir.display()
+                );
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("bench run soak: {error}");
+                ExitCode::FAILURE
+            }
         }
     }
 }

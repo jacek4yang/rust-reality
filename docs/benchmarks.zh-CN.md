@@ -52,7 +52,9 @@ JSON；如果内核或 VPS 策略拒绝某个事件，则记录带原始诊断�
 | `cargo dev bench run --suite setup-rate` | 在固定基线 ELF 与候选之间做平衡 setup 速率 A/B（accept → 第一次 Vision 转换）。设置 `--cover-netem-rtt-ms` 时只把 TLS 伪装目标移到 veth/netns 后并施加有记录的单向延迟，同时保留 pool hit/miss 汇总。`--measure-mode perf` 在 warmup 后归因 task-clock/指令/context switch；`strace` 记录有界的 read/receive syscall 集，并先优雅停止 tracee，避免静默产生空汇总。 |
 | `cargo dev bench run --suite vision-direct`、`cargo dev bench run --suite xray` | 聚焦的 Vision-Direct 与 Xray 对比。 |
 | `scripts/benchmark-deployment.sh` | 部署特征化：路由正确性证明、路由决策成本（含 DNS 策略）、NXR 拓扑（direct/NXR/SOCKS5/Xray）、长连接 relay 证据，以及正式单跳 netem matrix。RTT 段保留精确生产构建在 1/10/50/100/200 ms、c1/8/32/128/512 下 Handoff/NXR/SOCKS5 的 ABBA cold/warm 样本与无秘密 pool retirement summary。 |
-| `scripts/soak-test.sh` | 可选的长期回环证据：warm Handoff/NXR/仅 TCP SOCKS5、中点 reload、逐进程 RSS 与汇总 PSS。它是计划任务/非阻塞证据；确需长期调查时用 `REQUIRE_LONG_HORIZON_QUALIFIED=1` 保持严格不可变二进制合约。 |
+| `cargo dev bench run --suite soak` | 可选长期回环证据：standalone 混合流量加 Handoff、NXR、仅 TCP SOCKS5、中点 reload、精确进程身份下的逐进程 RSS、汇总 PSS，以及带哈希绑定的 start/interval/reload/end 完整性尝试。`--soak-implementation xray` 选择保留的对照端。默认原生运行是计划任务/非阻塞证据；精确 12 小时且分布式间隔为 5–30 分钟的运行会记录是否满足严格长期资格。 |
+| `cargo dev bench profiles` | 在精确 cgroup-v2 CPU、内存与零 swap 边界下执行 fail-closed 机器档位验证。它负责候选/Xray 身份、scope 进程清理、churn 与 512 MiB 下载、默认/调优空闲会话阶梯、RSS/FD/cgroup/OOM 采样、带逐阶梯基线的绝对日志计数、逐档汇总与聚合发布。 |
+| `cargo dev perf hotspot` | 对内建 benchmark 或既有 server PID 进行身份绑定的 `perf record` 采集。Rust 负责参数边界、精确 PID/start-time/可执行文件身份、只读二进制归档、report/build-ID 校验、校验和、发布与清理；`perf`、`readelf`、`sudo` 仅作为带类型 argv 的外部机制。 |
 | `cargo dev deploy canary` | 对约十分钟精确候选双 VPS 主动 canary 做 fail-closed 评估：部署、真实 WAN Handoff、stock Xray、完整性、churn、reload、LANDING 重启/恢复、有界 pool 与资源恢复包络。 |
 | `cargo dev bench run --suite real-path` | 真实互联网路径上与 Xray 的 A/B：崩溃与协议错误门禁；吞吐受路径最慢链路限制，不能用于区分带宽。 |
 | `cargo dev bench run --suite vless-encryption` | Xray v26.7.28 下 `encryption:none` 与同一 REALITY + Vision 内叠加 VLESS Encryption 的 A/B；测吞吐、服务端 CPU/GiB 和预热后的 setup，执行顺序为带种子且已记录的随机序。 |
@@ -510,13 +512,13 @@ HTTPS URL。全部生成的配置和密钥保留在有界临时目录中，退�
 
 ### 低描述符上限恢复门禁
 
-`scripts/test-descriptor-pressure.sh` 是描述符耗尽的 fail-closed 回归门禁。它在
-一个软/硬 `RLIMIT_NOFILE` 相等且都很低的用户 systemd scope 中运行现有二进制，
+`cargo dev bench run --suite descriptor-pressure` 是描述符耗尽的 fail-closed
+回归门禁。它通过直接、类型化的 `prlimit` 参数运行现有二进制，并设置相等且很低的
+软/硬 `RLIMIT_NOFILE`，
 然后保持真实的 Xray -> REALITY -> Vision -> 本地回显会话，直到服务端的派生
 FD 预算耗尽。门禁要求以下全部证据：
 
-- 运行中的可执行文件哈希、PID、PID 启动时间、cgroup 成员身份和两个继承的
-  限制都与请求的测试身份一致；
+- 运行中的可执行文件哈希、精确的子进程身份和两个继承的限制都与请求的测试身份一致；
 - `descriptor_budget_report` 反映该低限制，且 `descriptor_pressure_changed`
   达到 `high`；
 - 精确的服务端进程存活，且在压力前建立的连接继续通过回显完整性检查；
@@ -524,13 +526,15 @@ FD 预算耗尽。门禁要求以下全部证据：
 - 保持的会话关闭后，压力回到 `normal`，且一次新的 64 KiB 回显流的
   SHA-256 匹配。
 
-该脚本绝不构建或下载二进制，绝不按进程名清理，并拒绝覆盖已有的证据目录：
+原生门禁绝不构建或下载被测二进制，通过 PID/启动时间 RAII 管理全部子进程，
+不经 shell 传递外部工具参数，并拒绝覆盖已有的证据目录：
 
 ```shell
-RUST_REALITY_BIN=/absolute/path/to/rust-reality \
-XRAY_BIN=/absolute/path/to/xray \
-OUT_DIR=diagnostics/final/descriptor-pressure-run-01 \
-scripts/test-descriptor-pressure.sh
+cargo dev bench run --suite descriptor-pressure \
+  --rust-bin /absolute/path/to/rust-reality \
+  --xray-bin /absolute/path/to/xray \
+  --run-id descriptor-pressure-run-01 \
+  --out-dir diagnostics/final/descriptor-pressure-run-01
 ```
 
 ## 限制

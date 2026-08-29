@@ -443,6 +443,31 @@ fn patch_rust_config(raw: &str, workspace: &Workspace) -> Result<String, String>
     Ok(render_compact(&json_in::Value::Object(members)))
 }
 
+/// Changes only the generated server's log level.
+///
+/// Gates that assert structured runtime events need `info`; ordinary benchmark
+/// slots stay at `warn` to avoid perturbing measurements.
+///
+/// # Errors
+///
+/// Returns a message when the generated document has no object-shaped log field.
+pub fn set_rust_log_level(raw: &str, level: &str) -> Result<String, String> {
+    let value = json_in::parse(raw)
+        .map_err(|error| format!("generated rust config is invalid JSON: {error}"))?;
+    let json_in::Value::Object(mut members) = value else {
+        return Err("generated rust config is not an object".to_owned());
+    };
+    let log = members
+        .get("log")
+        .ok_or_else(|| "generated rust config has no log object".to_owned())?;
+    let json_in::Value::Object(mut log_fields) = log.clone() else {
+        return Err("generated rust config log is not an object".to_owned());
+    };
+    log_fields.insert("level".to_owned(), json_in::Value::Str(level.to_owned()));
+    members.insert("log".to_owned(), json_in::Value::Object(log_fields));
+    Ok(render_compact(&json_in::Value::Object(members)))
+}
+
 /// Renders a parsed JSON value as compact one-line JSON. The children only parse
 /// the config, so the canonical evidence form stays deterministic and small.
 pub fn render_compact(value: &json_in::Value) -> String {

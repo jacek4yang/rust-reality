@@ -708,11 +708,11 @@ mod tests {
         let Some(xray) = std::env::var_os("RR_DEV_TEST_XRAY_BIN").map(PathBuf::from) else {
             return;
         };
-        if !xray.is_file() || !crate::process::Tool::exists("go") {
+        if !xray.is_file() {
             return;
         }
         let workspace = Workspace::create("workload-xray").unwrap();
-        let Ok(origin_binary) = origin_go::build(&repo_root(), &workspace) else {
+        let Ok(origin_binary) = origin_go::executable() else {
             return;
         };
         origin_go::write_setup_payload(workspace.path()).unwrap();

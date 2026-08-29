@@ -68,7 +68,9 @@ exact diagnostic instead of manufacturing a measurement.
 | `cargo dev bench run --suite setup-rate` | Balanced setup-rate A/B (accept → first Vision transition) between a pinned baseline ELF and the candidate. `--cover-netem-rtt-ms` moves only the TLS cover behind a veth/netns and applies a recorded one-leg delay, retaining pool hit/miss summaries. `--measure-mode perf` attributes task-clock/instructions/context switches after warmup; `strace` records the bounded read/receive syscall set and gracefully stops the tracee so summaries cannot be silently empty. |
 | `cargo dev bench run --suite vision-direct`, `cargo dev bench run --suite xray` | Focused Vision-Direct and Xray comparisons. |
 | `scripts/benchmark-deployment.sh` | Deployment characterization: routing correctness proof, routing decision cost (incl. DNS strategies), NXR topologies (direct/NXR/SOCKS5/Xray), long-flow relay evidence, and a formal one-leg netem matrix. The RTT section retains production-build ABBA cold/warm samples for Handoff/NXR/SOCKS5 at 1/10/50/100/200 ms, c1/8/32/128/512, plus secret-free pool retirement summaries. |
-| `scripts/soak-test.sh` | Optional long-horizon loopback evidence with warm Handoff, NXR, and TCP-only SOCKS5, midpoint reload, per-process RSS, and aggregate PSS. It is scheduled/non-blocking; `REQUIRE_LONG_HORIZON_QUALIFIED=1` preserves a strict immutable-binary contract for a requested long investigation. |
+| `cargo dev bench run --suite soak` | Optional long-horizon loopback evidence with standalone mixed traffic plus Handoff, NXR, and TCP-only SOCKS5, midpoint reload, exact per-process RSS identities, aggregate PSS, and hash-bound start/interval/reload/end integrity attempts. `--soak-implementation xray` selects the retained comparator. The default native run is scheduled/non-blocking; an exact 12-hour run with a 5–30 minute distributed interval records whether it meets the strict long-horizon qualification. |
+| `cargo dev bench profiles` | Fail-closed machine-profile validation under exact cgroup-v2 CPU, memory and zero-swap boundaries. It owns candidate/Xray identity, scoped process cleanup, churn and 512 MiB downloads, default/tuned idle-session ladders, RSS/FD/cgroup/OOM samples, absolute log counters with per-ladder baselines, class summaries, and aggregate publication. |
+| `cargo dev perf hotspot` | Identity-bound `perf record` capture for either the built-in benchmark or an existing server PID. Rust owns argument bounds, exact PID/start-time/executable identity, read-only binary archival, report/build-ID checks, checksums, publication, and cleanup; `perf`, `readelf`, and `sudo` remain typed external mechanisms. |
 | `cargo dev deploy canary` | Fail-closed evaluator for the approximately ten-minute exact-candidate dual-VPS active canary: deployment, real-WAN Handoff, stock Xray, integrity, churn, reload, LANDING restart/recovery, bounded pools, and recovering resource envelopes. |
 | `cargo dev bench run --suite real-path` | Real-Internet A/B against Xray: crash and protocol-error gates on a real path; throughput is capped by the slowest link, so it does not discriminate bandwidth. |
 | `cargo dev bench run --suite vless-encryption` | Xray v26.7.28 A/B for `encryption:none` versus VLESS Encryption inside the same REALITY + Vision stack; measures throughput, server CPU/GiB, and warmed setup in a seeded, recorded random order. |
@@ -706,14 +708,14 @@ carries no throughput signal.
 
 ### Low descriptor-limit recovery gate
 
-`scripts/test-descriptor-pressure.sh` is the fail-closed regression gate for
-descriptor exhaustion. It runs an existing binary in a user systemd scope with
-equal low soft and hard `RLIMIT_NOFILE` values, then holds real
+`cargo dev bench run --suite descriptor-pressure` is the fail-closed regression
+gate for descriptor exhaustion. It runs an existing binary through direct
+`prlimit` argv with equal low soft and hard `RLIMIT_NOFILE` values, then holds real
 Xray -> REALITY -> Vision -> local-echo sessions until the server's derived FD
 budget is exhausted. The gate requires all of the following evidence:
 
-- the running executable hash, PID, PID start time, cgroup membership, and both
-  inherited limits match the requested test identity;
+- the running executable hashes, exact child identities, and both inherited
+  limits match the requested test identity;
 - `descriptor_budget_report` reflects the low limit and
   `descriptor_pressure_changed` reaches `high`;
 - the exact server process survives and a connection established before
@@ -722,14 +724,16 @@ budget is exhausted. The gate requires all of the following evidence:
 - after held sessions close, pressure returns to `normal` and a fresh 64 KiB
   echo flow matches its SHA-256.
 
-The script never builds or downloads binaries, never uses process-name cleanup,
-and refuses to overwrite its evidence directory:
+The native gate never builds or downloads the tested binaries, owns every child
+through PID/start-time RAII, passes external-tool arguments without a shell, and
+refuses to overwrite its evidence directory:
 
 ```shell
-RUST_REALITY_BIN=/absolute/path/to/rust-reality \
-XRAY_BIN=/absolute/path/to/xray \
-OUT_DIR=diagnostics/final/descriptor-pressure-run-01 \
-scripts/test-descriptor-pressure.sh
+cargo dev bench run --suite descriptor-pressure \
+  --rust-bin /absolute/path/to/rust-reality \
+  --xray-bin /absolute/path/to/xray \
+  --run-id descriptor-pressure-run-01 \
+  --out-dir diagnostics/final/descriptor-pressure-run-01
 ```
 
 ## Limitations

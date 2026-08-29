@@ -682,7 +682,7 @@ fn start_origins(
     origin_go::write_pattern_payload(workspace.path(), suite.payload_mib)?;
     std::fs::write(workspace.join("payload.bin"), vec![b'x'; 256])
         .map_err(|error| format!("could not write the setup payload: {error}"))?;
-    let binary = origin_go::build(&suite.repo, workspace)?;
+    let binary = origin_go::executable()?;
     let (cert, key) = origin_tls::generate_self_signed(workspace.path())?;
     let plain = origin_go::start(
         &binary,
@@ -912,7 +912,7 @@ pub fn run(suite: &VlessSuite) -> Result<crate::bench::paired::SuiteOutcome, Str
     };
 
     validate(suite)?;
-    for program in ["go", "curl"] {
+    for program in ["curl"] {
         if !Tool::exists(program) {
             return Err(format!("required program unavailable: {program}"));
         }

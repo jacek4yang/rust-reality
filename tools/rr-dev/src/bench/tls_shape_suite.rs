@@ -1706,7 +1706,7 @@ pub fn run(suite: &TlsShapeSuite) -> Result<Json, String> {
     };
 
     validate(suite)?;
-    for program in ["cargo", "cc", "curl", "go", "pkg-config"] {
+    for program in ["cargo", "cc", "curl", "pkg-config"] {
         if !Tool::exists(program) {
             return Err(format!("required program unavailable: {program}"));
         }
@@ -1762,7 +1762,7 @@ pub fn run(suite: &TlsShapeSuite) -> Result<Json, String> {
 
     let payload = origin_go::write_pattern_payload(workspace.path(), 1)?;
     let payload_sha256 = hash::sha256_file(&payload)?;
-    let origin_binary = origin_go::build(&suite.repo, &workspace)?;
+    let origin_binary = origin_go::executable()?;
     let _origin = origin_go::start(
         &origin_binary,
         &workspace,

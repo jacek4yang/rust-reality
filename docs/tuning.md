@@ -1288,8 +1288,8 @@ it if the proxy must win CPU fights with the co-tenants.
 The profiles in §4 were found exactly this way; repeat it on your host:
 
 1. Raise a representative load stepwise (connection churn, then concurrent
-   bulk flows, then an idle-session ladder — your own clients, or the
-   project's harness `scripts/validate-profiles.sh`).
+   bulk flows, then an idle-session ladder — your own clients, or
+   `cargo dev bench profiles`).
 2. At each step record: throughput, new connections/s, setup p50/p95/p99
    (`curl -w`, §13), CPU (`pidstat`), steal (`vmstat` `st`), RSS and
    `memory.current`, FD count (`ls /proc/PID/fd | wc -l`), retransmits
