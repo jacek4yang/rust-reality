@@ -37,6 +37,7 @@ pub mod fake_dns;
 pub mod guards;
 pub mod host_lock;
 pub mod identity;
+pub mod interop;
 pub mod loopback;
 pub mod matrix;
 pub mod netns;
