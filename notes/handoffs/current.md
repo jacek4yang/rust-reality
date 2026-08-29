@@ -1,4 +1,4 @@
-# Engineering handoff — expected post-merge state for PR #150
+# Engineering handoff — expected post-merge state for PR #152
 
 This file describes the repository tree expected after PR #150 merges. While the
 PR is open, `main` remains the authoritative merged state and the PR body is the
@@ -8,8 +8,8 @@ environment fact before relying on it.
 ## Repository
 
 ```text
-base main           5df3195   (verify: git rev-parse origin/main)
-candidate           PR #150   (verify its head/state with GitHub)
+base main           d818ded   (verify: git rev-parse origin/main)
+candidate           PR #152   (verify its head/state with GitHub)
 latest release      v1.8.0    (tag on 6618e9d)
 tracking issue      #147      (durable scripts-elimination execution state)
 ```
@@ -17,7 +17,7 @@ tracking issue      #147      (durable scripts-elimination execution state)
 ## scripts/ elimination milestone — in progress
 
 ```text
-scripts/ recursively tracked        37 (verify: git ls-files scripts/ | wc -l)
+scripts/ recursively tracked        21 (verify: git ls-files scripts/ | wc -l)
 workflow scripts/ references        0
 session start                       46
 deleted this session                benchmark-real-path.sh, benchmark-xray.sh,
@@ -53,9 +53,12 @@ core A/B       cargo dev bench run --suite {setup-rate-xray,setup-rate,
 
 ```text
 1. Continue the approved sequence from issue #147:
-   DNS/routing/VLESS (37 -> 33), TLS-shape/interop/IPv6 (33 -> 22),
-   soak/profiles/resource-pressure/shared helpers (22 -> 12),
-   deployment control plane (12 -> 7), hotspot/final cleanup (7 -> 0).
+   DNS/routing/VLESS (37 -> 33)         DONE (PR #151)
+   TLS-shape/interop/IPv6 (33 -> 21)    DONE (PR #152)
+   soak/profiles/resource-pressure/
+     shared helpers (21 -> 12)          NEXT
+   deployment control plane (12 -> 7)
+   hotspot/final cleanup (7 -> 0)
    - do not rebuild process/workspace/lock/identity/report lifecycle
    - scripts/bench-origin is still consumed by validate-profiles.sh; it
      moves out of scripts/ with the shared-helpers family
