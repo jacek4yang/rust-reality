@@ -23,9 +23,12 @@
 package main
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
+	"hash"
 	"io"
 	"log"
 	"net"
@@ -50,6 +53,9 @@ var (
 	putLogPath = flag.String("put-log", "", "path of the per-PUT JSONL log")
 	tlsCert    = flag.String("tls-cert", "", "TLS certificate (with --tls-key enables TLS 1.3 only)")
 	tlsKey     = flag.String("tls-key", "", "TLS private key (with --tls-cert enables TLS 1.3 only)")
+	tlsALPN    = flag.String("tls-alpn", "", "comma-separated ALPN protocols; empty negotiates none")
+	label      = flag.String("label", "", "instance name recorded in --access-log rows")
+	accessLog  = flag.String("access-log", "", "path of the per-request JSONL log")
 
 	gets     atomic.Int64
 	puts     atomic.Int64
@@ -57,8 +63,56 @@ var (
 	putBytes atomic.Int64
 	errors   atomic.Int64
 
-	putLogMu sync.Mutex
+	putLogMu    sync.Mutex
+	accessLogMu sync.Mutex
 )
+
+// recordAccess appends one request row when --access-log is set.
+//
+// The row names the instance, so two origins bound to the same port on
+// different address families can be told apart by which one served a request.
+// That is the only available evidence of which family an egress dial chose.
+func recordAccess(r *http.Request, method string, bytes int64, digest string) {
+	if *accessLog == "" {
+		return
+	}
+	client, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		client = r.RemoteAddr
+	}
+	line, _ := json.Marshal(map[string]any{
+		"server": *label,
+		"method": method,
+		"path":   r.URL.RequestURI(),
+		"client": client,
+		"bytes":  bytes,
+		"sha256": digest,
+	})
+	accessLogMu.Lock()
+	defer accessLogMu.Unlock()
+	if file, openErr := os.OpenFile(*accessLog, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); openErr == nil {
+		_, _ = file.Write(append(line, '\n'))
+		_ = file.Close()
+	}
+}
+
+// hashingWriter tees a response body through SHA-256.
+//
+// Digests are computed only when --access-log is set: the throughput suites
+// move gigabytes through this origin and must not pay for a hash they never
+// read.
+type hashingWriter struct {
+	inner  io.Writer
+	digest hash.Hash
+}
+
+func (h *hashingWriter) Write(p []byte) (int, error) {
+	written, err := h.inner.Write(p)
+	if written > 0 {
+		h.digest.Write(p[:written])
+	}
+	return written, err
+}
 
 func main() {
 	log.SetOutput(os.Stderr)
@@ -84,6 +138,9 @@ func main() {
 			MinVersion: tls.VersionTLS13,
 			MaxVersion: tls.VersionTLS13,
 		}
+		if *tlsALPN != "" {
+			server.TLSConfig.NextProtos = strings.Split(*tlsALPN, ",")
+		}
 		err = server.ListenAndServeTLS(*tlsCert, *tlsKey)
 	} else {
 		err = server.ListenAndServe()
@@ -97,7 +154,9 @@ func route(w http.ResponseWriter, r *http.Request) {
 		serveStats(w)
 	case r.Method == http.MethodGet:
 		servePayload(w, r)
-	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/upload/"):
+	// The throughput suites upload under /upload/; the IPv6 transfer cases use
+	// a bare name. Both are the same sink, so accept any PUT path.
+	case r.Method == http.MethodPut:
 		serveUpload(w, r)
 	default:
 		http.Error(w, "not found", http.StatusNotFound)
@@ -119,7 +178,13 @@ func servePayload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
-	written, err := io.CopyBuffer(w, file, make([]byte, copyBufferSize))
+	var sink io.Writer = w
+	var digest hash.Hash
+	if *accessLog != "" {
+		digest = sha256.New()
+		sink = &hashingWriter{inner: w, digest: digest}
+	}
+	written, err := io.CopyBuffer(sink, file, make([]byte, copyBufferSize))
 	gets.Add(1)
 	getBytes.Add(written)
 	if err != nil {
@@ -127,6 +192,15 @@ func servePayload(w http.ResponseWriter, r *http.Request) {
 		// so there is nothing to send back — just count it and keep serving.
 		errors.Add(1)
 	}
+	recordAccess(r, "GET", written, hexDigest(digest))
+}
+
+// hexDigest renders an optional running digest, empty when hashing was off.
+func hexDigest(digest hash.Hash) string {
+	if digest == nil {
+		return ""
+	}
+	return hex.EncodeToString(digest.Sum(nil))
 }
 
 func serveUpload(w http.ResponseWriter, r *http.Request) {
@@ -134,10 +208,17 @@ func serveUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Content-Length required", http.StatusLengthRequired)
 		return
 	}
-	received, err := io.CopyBuffer(io.Discard, r.Body, make([]byte, copyBufferSize))
+	var sink io.Writer = io.Discard
+	var digest hash.Hash
+	if *accessLog != "" {
+		digest = sha256.New()
+		sink = digest
+	}
+	received, err := io.CopyBuffer(sink, r.Body, make([]byte, copyBufferSize))
 	if err != nil || received != r.ContentLength {
 		errors.Add(1)
 	}
+	recordAccess(r, "PUT", received, hexDigest(digest))
 	puts.Add(1)
 	putBytes.Add(received)
 	putLogMu.Lock()
