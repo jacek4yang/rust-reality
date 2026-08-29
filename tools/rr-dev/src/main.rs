@@ -181,6 +181,36 @@ enum BenchCommand {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    /// Drive one fallback slot's throughput set and write its samples.
+    ///
+    /// Run as a child so `perf stat -- <workload>` brackets exactly the window
+    /// whose samples are recorded. Not normally invoked by hand.
+    FallbackWorkload {
+        /// The server listener to fetch through.
+        #[arg(long)]
+        server_port: u16,
+        /// Payload size in MiB.
+        #[arg(long)]
+        payload_mib: u64,
+        /// Space-separated concurrency levels.
+        #[arg(long)]
+        concurrencies: String,
+        /// Samples per concurrency level; `0` performs warm-up only.
+        #[arg(long)]
+        samples: usize,
+        /// Implementation label recorded on every row.
+        #[arg(long)]
+        implementation: String,
+        /// Block number.
+        #[arg(long)]
+        block: usize,
+        /// Position within the block.
+        #[arg(long)]
+        position: usize,
+        /// Where to write `samples.json`; omitted for a warm-up-only run.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     /// Run a tunnel A/B suite end to end (`real-path`, `xray`, or `vision-direct`).
     Run {
         /// Suite id: `real-path`, `xray`, or `vision-direct`.
@@ -260,6 +290,18 @@ enum BenchCommand {
         /// One-leg netem delay in ms; shapes only the TLS cover target.
         #[arg(long)]
         cover_netem_rtt_ms: Option<u32>,
+        /// Payload size in MiB for the fallback suite.
+        #[arg(long, default_value_t = 32)]
+        payload_mib_fallback: u64,
+        /// Pin the relay `splice` policy (fallback suite).
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        relay_splice: bool,
+        /// Pin the relay pipe-pool policy (fallback suite).
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        relay_pipe_pool: bool,
+        /// Pin the relay buffer size in KiB (fallback suite).
+        #[arg(long, default_value_t = 32)]
+        relay_buffer_kib: u32,
     },
 }
 
@@ -756,6 +798,30 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             },
             output.as_deref(),
         ),
+        BenchCommand::FallbackWorkload {
+            server_port,
+            payload_mib,
+            concurrencies,
+            samples,
+            implementation,
+            block,
+            position,
+            output,
+        } => run_bench_fallback_workload(
+            &bench::throughput::ThroughputPlan {
+                server_port: *server_port,
+                payload_mib: *payload_mib,
+                concurrencies: concurrencies
+                    .split_whitespace()
+                    .filter_map(|word| word.parse().ok())
+                    .collect(),
+                samples: *samples,
+                implementation: implementation.clone(),
+                block: *block,
+                position: *position,
+            },
+            output.as_deref(),
+        ),
         BenchCommand::List => {
             println!("{:<20} supersedes            summary", "suite");
             println!("{}", "-".repeat(80));
@@ -825,7 +891,33 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             baseline_cover_mode,
             candidate_cover_mode,
             cover_netem_rtt_ms,
+            payload_mib_fallback,
+            relay_splice,
+            relay_pipe_pool,
+            relay_buffer_kib,
         } => {
+            if suite == "fallback" {
+                return run_bench_fallback(
+                    repo,
+                    &FallbackArgs {
+                        baseline_bin: baseline_bin.as_deref(),
+                        candidate_bin: rust_bin,
+                        baseline_identity: baseline_identity.as_deref(),
+                        baseline_commit: baseline_commit.as_deref(),
+                        out_dir: out_dir.as_deref(),
+                        run_id: run_id.as_deref(),
+                        blocks: *blocks,
+                        samples: *samples,
+                        concurrencies,
+                        payload_mib: *payload_mib_fallback,
+                        abba_start,
+                        measure_mode,
+                        relay_splice: *relay_splice,
+                        relay_pipe_pool: *relay_pipe_pool,
+                        relay_buffer_kib: *relay_buffer_kib,
+                    },
+                );
+            }
             if suite == "setup-rate" {
                 return run_bench_setup_rate(
                     repo,
@@ -923,6 +1015,144 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                     ExitCode::from(2)
                 }
             }
+        }
+    }
+}
+
+/// Drives one fallback slot's throughput set as a child process.
+fn run_bench_fallback_workload(
+    plan: &bench::throughput::ThroughputPlan,
+    output: Option<&std::path::Path>,
+) -> ExitCode {
+    if plan.concurrencies.is_empty() {
+        eprintln!("bench fallback-workload: at least one concurrency level is required");
+        return ExitCode::from(2);
+    }
+    if plan.samples == 0 {
+        return match bench::throughput::warm_up(plan) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("bench fallback-workload: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    let rows = match bench::throughput::run_slot(plan) {
+        Ok(rows) => rows,
+        Err(error) => {
+            eprintln!("bench fallback-workload: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let Some(output) = output else {
+        eprintln!("bench fallback-workload: --output is required when samples are measured");
+        return ExitCode::from(2);
+    };
+    match std::fs::write(output, bench::throughput::rows_json(&rows).to_python_json()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!(
+                "bench fallback-workload: could not write {}: {error}",
+                output.display()
+            );
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The paired fallback suite's command-line inputs.
+struct FallbackArgs<'a> {
+    baseline_bin: Option<&'a Path>,
+    candidate_bin: &'a Path,
+    baseline_identity: Option<&'a Path>,
+    baseline_commit: Option<&'a str>,
+    out_dir: Option<&'a Path>,
+    run_id: Option<&'a str>,
+    blocks: usize,
+    samples: usize,
+    concurrencies: &'a str,
+    payload_mib: u64,
+    abba_start: &'a str,
+    measure_mode: &'a str,
+    relay_splice: bool,
+    relay_pipe_pool: bool,
+    relay_buffer_kib: u32,
+}
+
+/// Drives the paired fallback A/B suite.
+fn run_bench_fallback(repo: &Path, args: &FallbackArgs<'_>) -> ExitCode {
+    let Some(baseline_bin) = args.baseline_bin else {
+        eprintln!("bench run fallback: --baseline-bin is required for a paired comparison");
+        return ExitCode::from(2);
+    };
+    let attribution = match args.measure_mode {
+        "perf" => bench::slot::Attribution::Perf(&bench::attribution::REQUIRED_EVENTS),
+        "wall" => bench::slot::Attribution::Wall,
+        other => {
+            eprintln!("bench run fallback: MEASURE_MODE must be perf or wall, got {other}");
+            return ExitCode::from(2);
+        }
+    };
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let run_id = args.run_id.map_or_else(
+        || format!("benchmark-fallback-ab-{stamp}-{}", std::process::id()),
+        str::to_owned,
+    );
+    let out_dir = args.out_dir.map_or_else(
+        || {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("benchmarks")
+                .join(&run_id)
+        },
+        Path::to_path_buf,
+    );
+    let suite = bench::paired::FallbackSuite {
+        repo: repo.to_path_buf(),
+        baseline_bin: baseline_bin.to_path_buf(),
+        candidate_bin: args.candidate_bin.to_path_buf(),
+        baseline_identity: args.baseline_identity.map(Path::to_path_buf),
+        baseline_commit: args.baseline_commit.map(str::to_owned),
+        out_dir,
+        run_id,
+        blocks: args.blocks,
+        samples: args.samples,
+        concurrencies: args
+            .concurrencies
+            .split_whitespace()
+            .filter_map(|word| word.parse().ok())
+            .collect(),
+        payload_mib: args.payload_mib,
+        abba_start: if args.abba_start.is_empty() {
+            "baseline".to_owned()
+        } else {
+            args.abba_start.to_owned()
+        },
+        relay: bench::relay::RelayPolicy {
+            splice: args.relay_splice,
+            pipe_pool: args.relay_pipe_pool,
+            buffer_kib: args.relay_buffer_kib,
+        },
+        attribution,
+    };
+    if let Err(error) = bench::paired::validate_fallback(&suite) {
+        eprintln!("bench run fallback: {error}");
+        return ExitCode::from(2);
+    }
+    match bench::paired::run_fallback(&suite) {
+        Ok(outcome) => {
+            println!(
+                "fallback ABBA complete: {} ({} slots)",
+                outcome.out_dir.display(),
+                outcome.slot_count
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("bench run fallback: {error}");
+            ExitCode::FAILURE
         }
     }
 }

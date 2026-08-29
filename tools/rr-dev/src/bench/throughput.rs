@@ -315,6 +315,84 @@ pub fn run_slot(plan: &ThroughputPlan) -> Result<Vec<ThroughputRow>, String> {
     Ok(rows)
 }
 
+/// Reads rows back from a slot's `samples.json`.
+///
+/// # Errors
+///
+/// Returns a message when the file is missing or not an array of rows.
+pub fn read_rows(path: &std::path::Path) -> Result<Vec<ThroughputRow>, String> {
+    use crate::perf::json_in::{self, Value};
+    let raw = std::fs::read_to_string(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let Ok(Value::Array(items)) = json_in::parse(&raw) else {
+        return Err(format!("{} is not an array of rows", path.display()));
+    };
+    items
+        .iter()
+        .map(|item| {
+            let number = |name: &str| -> Result<f64, String> {
+                match item.field("row", name) {
+                    Ok(Value::Number(text)) => text
+                        .parse::<f64>()
+                        .map_err(|error| format!("row.{name} is not a number: {error}")),
+                    _ => Err(format!("row.{name} is missing or not a number")),
+                }
+            };
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "row counters are small non-negative integers"
+            )]
+            let count = |name: &str| -> Result<usize, String> { Ok(number(name)? as usize) };
+            let numbers = |name: &str| -> Vec<f64> {
+                match item.field("row", name) {
+                    Ok(Value::Array(values)) => values
+                        .iter()
+                        .filter_map(|value| match value {
+                            Value::Number(text) => text.parse::<f64>().ok(),
+                            _ => None,
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                }
+            };
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "byte counts here are far below 2^53"
+            )]
+            let observed = numbers("bytesObserved")
+                .into_iter()
+                .map(|value| value as u64)
+                .collect();
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "byte counts here are far below 2^53"
+            )]
+            let expected = number("bytesExpectedPerRequest")? as u64;
+            Ok(ThroughputRow {
+                block: count("block")?,
+                position: count("position")?,
+                implementation: item
+                    .field("row", "implementation")
+                    .and_then(|field| field.as_str("row.implementation"))
+                    .map_err(|error| error.to_string())?
+                    .to_owned(),
+                concurrency: count("concurrency")?,
+                sample_index: count("sampleIndex")?,
+                requests: count("requests")?,
+                failed: count("failed")?,
+                bytes_expected_per_request: expected,
+                bytes_observed: observed,
+                wall_seconds: number("wallSeconds")?,
+                throughput_mib_per_second: number("throughputMiBPerSecond")?,
+                per_request_seconds: numbers("perRequestSeconds"),
+            })
+        })
+        .collect()
+}
+
 /// Renders a slot's rows as the driver's `samples.json`.
 #[must_use]
 pub fn rows_json(rows: &[ThroughputRow]) -> Json {

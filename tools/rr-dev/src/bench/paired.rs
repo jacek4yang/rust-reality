@@ -42,6 +42,8 @@ use crate::{
         plan::{self, PortLayout, Slot},
         process::Child,
         slot::{self, Attribution},
+        relay::{self, RelayPolicy},
+        throughput::{self, ThroughputRow},
         workload::{SampleRow, SetupRatePlan},
         workspace::Workspace,
     },
@@ -311,14 +313,7 @@ pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
         )?);
     }
 
-    // Re-hash every binary: a build that changed mid-run would attribute one
-    // side's numbers to the other's artifact.
-    for binary in [&binaries.baseline, &binaries.candidate, &binaries.xray] {
-        let observed = hash::sha256_file(&binary.path)?;
-        if observed != binary.sha256 {
-            return Err(format!("{} binary changed during run", binary.label));
-        }
-    }
+    verify_binaries_unchanged(&[&binaries.baseline, &binaries.candidate, &binaries.xray])?;
 
     let summary = summarise(suite, &measured)?;
     let summary_json = summary.to_python_json();
@@ -1072,7 +1067,7 @@ fn environment_json(
             binary_json(&binaries.candidate, &binaries.candidate_build_id),
         ),
         ("xray", binary_json(&binaries.xray, &binaries.xray_build_id)),
-        ("harness", harness_json(suite, origin_manifest)),
+        ("harness", harness_block(&suite.repo, origin_manifest)),
         ("hostExclusiveLock", lock_json(lock)),
     ])
 }
@@ -1098,49 +1093,6 @@ fn cover_network_json(suite: &SetupRateSuite, cover_target: &str) -> Json {
     ])
 }
 
-/// The harness block: what produced the measurement, by content.
-///
-/// `contract` and `keeperHelper` are `null` because the shell contract and its
-/// keeper process no longer exist; see the module note. A hash for an absent file
-/// would be a false attestation.
-fn harness_json(suite: &SetupRateSuite, origin_manifest: &attest::TreeManifest) -> Json {
-    let entrypoint = std::env::current_exe().unwrap_or_default();
-    let entrypoint_sha = hash::sha256_file(&entrypoint).unwrap_or_default();
-    Json::object([
-        (
-            "entrypoint",
-            Json::object([
-                ("path", Json::string(entrypoint.display().to_string())),
-                ("sha256", Json::string(entrypoint_sha)),
-            ]),
-        ),
-        ("contract", Json::Null),
-        ("keeperHelper", Json::Null),
-        (
-            "benchOrigin",
-            Json::object([
-                (
-                    "path",
-                    Json::string(
-                        suite
-                            .repo
-                            .join(origin_go::SOURCE_RELATIVE)
-                            .display()
-                            .to_string(),
-                    ),
-                ),
-                (
-                    "manifestSha256",
-                    Json::string(origin_manifest.sha256.clone()),
-                ),
-                (
-                    "fileCount",
-                    Json::Int(i64::try_from(origin_manifest.file_count).unwrap_or(i64::MAX)),
-                ),
-            ]),
-        ),
-    ])
-}
 
 /// The host-exclusive lock attestation.
 ///
@@ -1430,4 +1382,743 @@ mod tests {
         assert!(rendered.contains("\"netemRttMs\": 50"));
         assert!(rendered.contains("\"candidate\": \"prebuilt\""));
     }
+}
+
+
+// ---------------------------------------------------------------------------
+// The fallback A/B suite
+// ---------------------------------------------------------------------------
+
+/// Everything the paired fallback A/B suite needs.
+///
+/// It shares the paired lifecycle with setup-rate and differs in three declarative
+/// ways: the client talks straight to the server listener instead of through a
+/// SOCKS proxy, the cover target is the local plain-HTTP origin so that direct
+/// traffic is relayed to it, and the statistic is throughput rather than setup
+/// rate.
+#[derive(Debug, Clone)]
+pub struct FallbackSuite {
+    /// Repository root.
+    pub repo: PathBuf,
+    /// The pinned baseline ELF.
+    pub baseline_bin: PathBuf,
+    /// The candidate ELF under test.
+    pub candidate_bin: PathBuf,
+    /// The baseline's identity sidecar.
+    pub baseline_identity: Option<PathBuf>,
+    /// The commit the sidecar must name, when the caller pins one.
+    pub baseline_commit: Option<String>,
+    /// Output directory; must not already exist.
+    pub out_dir: PathBuf,
+    /// Run identifier.
+    pub run_id: String,
+    /// ABBA blocks, 3..=20.
+    pub blocks: usize,
+    /// Samples per concurrency level per slot.
+    pub samples: usize,
+    /// Concurrency levels; each is also the transfer count of a sample.
+    pub concurrencies: Vec<usize>,
+    /// Payload size in MiB, 1..=4096.
+    pub payload_mib: u64,
+    /// Which label leads block one.
+    pub abba_start: String,
+    /// The relay knobs pinned identically on both sides.
+    pub relay: RelayPolicy,
+    /// How the server's CPU is attributed; the script supported `perf` only.
+    pub attribution: Attribution,
+}
+
+/// Validates the fallback parameters, reproducing the script's guards.
+///
+/// # Errors
+///
+/// Returns the first violated guard.
+pub fn validate_fallback(suite: &FallbackSuite) -> Result<(), String> {
+    if !(3..=20).contains(&suite.blocks) {
+        return Err(format!("BLOCKS must be in 3..20, got {}", suite.blocks));
+    }
+    if suite.samples == 0 {
+        return Err("SAMPLES must be positive".to_owned());
+    }
+    if suite.payload_mib == 0 || suite.payload_mib > 4096 {
+        return Err("PAYLOAD_MIB must be in 1..4096".to_owned());
+    }
+    if suite.relay.buffer_kib == 0 {
+        return Err("RELAY_BUFFER_KIB must be positive".to_owned());
+    }
+    if !PAIRED_LABELS.contains(&suite.abba_start.as_str()) {
+        return Err(format!(
+            "ABBA_START must be baseline or candidate, got {}",
+            suite.abba_start
+        ));
+    }
+    if suite.concurrencies.is_empty() || suite.concurrencies.contains(&0) {
+        return Err("every concurrency must be a positive integer".to_owned());
+    }
+    if !matches!(suite.attribution, Attribution::Perf(_) | Attribution::Wall) {
+        return Err("MEASURE_MODE must be perf; use wall for a non-authoritative check".to_owned());
+    }
+    if suite.run_id.is_empty()
+        || !suite
+            .run_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err("RUN_ID is required and must be one safe component".to_owned());
+    }
+    Ok(())
+}
+
+/// What one measured fallback slot contributed.
+struct FallbackSlot {
+    slot: Slot,
+    task_clock_ms: Option<f64>,
+    rows: Vec<ThroughputRow>,
+}
+
+/// Runs the paired fallback A/B suite end to end.
+///
+/// # Errors
+///
+/// Returns the first failure; every resource is RAII-owned.
+pub fn run_fallback(suite: &FallbackSuite) -> Result<SuiteOutcome, String> {
+    validate_fallback(suite)?;
+    for program in ["go", "curl"] {
+        if !Tool::exists(program) {
+            return Err(format!("required program unavailable: {program}"));
+        }
+    }
+    if matches!(suite.attribution, Attribution::Perf(_)) && !Tool::exists("perf") {
+        return Err("MEASURE_MODE=perf requires perf".to_owned());
+    }
+
+    let (baseline, candidate, baseline_build_id, candidate_build_id) =
+        register_fallback_binaries(suite)?;
+    let repository = attest::repository_state(&suite.repo, attest::Dirtiness::IncludingUntracked)?;
+    let lock = HostLock::acquire(&crate::bench::runner::default_lock_path())?;
+    let run = RunDirectory::create(&suite.out_dir)?;
+    let workspace = Workspace::create("benchmark-fallback-ab")?;
+
+    // One origin port, then one server port per slot.
+    let slot_count = suite.blocks * 4;
+    let port_count = 1 + slot_count;
+    let port_base = crate::bench::workspace::reserve_block(port_count)?;
+    check_ephemeral_range(port_base, port_count)?;
+
+    let origin_binary = origin_go::build(&suite.repo, &workspace)?;
+    let payload = origin_go::write_pattern_payload(workspace.path(), suite.payload_mib)?;
+    let payload_sha = hash::sha256_file(&payload)?;
+    let origin_manifest = attest::snapshot_tree(&suite.repo.join(origin_go::SOURCE_RELATIVE))?;
+    let _origin = origin_go::start(
+        &origin_binary,
+        &workspace,
+        &origin_go::OriginPlan {
+            label: "origin".to_owned(),
+            listen_address: "127.0.0.1".to_owned(),
+            port: port_base,
+            payload_dir: workspace.path().to_path_buf(),
+            put_log: workspace.join("http-put.jsonl"),
+            tls: None,
+        },
+    )?;
+    // The cover target *is* the origin, so a direct request with no REALITY
+    // handshake is relayed to it — which is the path under measurement.
+    let cover_target = format!("127.0.0.1:{port_base}");
+
+    let slots = plan::abba_slots(
+        PAIRED_LABELS,
+        &suite.abba_start,
+        suite.blocks,
+        PortLayout::ServerAfterOneOrigin { base: port_base },
+    )?;
+    run.write_new("order.json", &plan::order_json(&slots).to_python_json())?;
+
+    let environment = fallback_environment_json(
+        suite,
+        &baseline,
+        &candidate,
+        &baseline_build_id,
+        &candidate_build_id,
+        &repository,
+        &origin_manifest,
+        &lock,
+        port_base,
+        port_count,
+        &payload_sha,
+    );
+    run.write_new("environment.json", &environment.to_python_json())?;
+
+    let mut measured = Vec::with_capacity(slot_count);
+    for entry in &slots {
+        let role = role_of(&entry.implementation);
+        let (binary, build_id) = match role {
+            Role::Baseline => (&baseline, &baseline_build_id),
+            Role::Candidate => (&candidate, &candidate_build_id),
+        };
+        measured.push(measure_fallback_slot(
+            suite,
+            &run,
+            &workspace,
+            entry,
+            binary,
+            build_id,
+            &cover_target,
+            &payload_sha,
+        )?);
+    }
+
+    verify_binaries_unchanged(&[&baseline, &candidate])?;
+
+    let summary = summarise_fallback(suite, &measured)?;
+    let summary_json = summary.to_python_json();
+    run.write_new("summary.json", &summary_json)?;
+    let raw: Vec<String> = measured
+        .iter()
+        .flat_map(|slot| slot.rows.iter())
+        .map(|row| row.to_json().to_compact_json())
+        .collect();
+    run.write_jsonl("raw-samples.jsonl", &raw)?;
+    run.publish(
+        Publication::Environment,
+        &environment.to_python_json(),
+        &suite.run_id,
+        "benchmark-fallback-ab",
+    )?;
+
+    Ok(SuiteOutcome {
+        out_dir: suite.out_dir.clone(),
+        summary_json,
+        slot_count,
+    })
+}
+
+/// Re-hashes every measured binary after the run.
+///
+/// A build that changed mid-run would attribute one side's numbers to the other's
+/// artifact, which no amount of blocking would catch.
+fn verify_binaries_unchanged(binaries: &[&Binary]) -> Result<(), String> {
+    for binary in binaries {
+        let observed = hash::sha256_file(&binary.path)?;
+        if observed != binary.sha256 {
+            return Err(format!("{} binary changed during run", binary.label));
+        }
+    }
+    Ok(())
+}
+
+/// Registers and attests the two ELFs a fallback run compares.
+fn register_fallback_binaries(
+    suite: &FallbackSuite,
+) -> Result<(Binary, Binary, String, String), String> {
+    let baseline = identity::register("baseline", &suite.baseline_bin, "", Kind::Prebuilt)?;
+    let candidate = identity::register("candidate", &suite.candidate_bin, "", Kind::Rust)?;
+    let baseline_build_id = attest::build_id(&baseline.path)?;
+    let candidate_build_id = attest::build_id(&candidate.path)?;
+    if let Some(sidecar) = &suite.baseline_identity {
+        attest::verify_identity_sidecar(
+            sidecar,
+            suite.baseline_commit.as_deref(),
+            &baseline.sha256,
+        )?;
+    }
+    Ok((baseline, candidate, baseline_build_id, candidate_build_id))
+}
+
+/// Runs one fallback slot.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a slot's inputs are exactly these"
+)]
+fn measure_fallback_slot(
+    suite: &FallbackSuite,
+    run: &RunDirectory,
+    workspace: &Workspace,
+    entry: &Slot,
+    binary: &Binary,
+    build_id: &str,
+    cover_target: &str,
+    payload_sha: &str,
+) -> Result<FallbackSlot, String> {
+    let name = entry.directory_name();
+    let slot_dir = run.slot_directory(&name)?;
+    let server_port = entry
+        .server_port
+        .ok_or_else(|| format!("{name} has no planned server port"))?;
+
+    let rust_identity = crate::bench::suites::generate_rust_identity(
+        workspace,
+        &binary.path,
+        server_port,
+        cover_target,
+        "localhost",
+        Some(&slot_dir.join("generate.log")),
+    )?;
+    let server_config = relay::apply(&rust_identity.server_json, suite.relay)?;
+    let server_path = workspace.join(&format!("{name}.server.json"));
+    std::fs::write(&server_path, &server_config)
+        .map_err(|error| format!("could not write {}: {error}", server_path.display()))?;
+
+    let mut server = Child::spawn(
+        format!("{name}-server"),
+        &binary.path,
+        &[
+            "serve".to_owned(),
+            "--config".to_owned(),
+            server_path.display().to_string(),
+        ],
+        workspace.path(),
+        &[],
+        &slot_dir.join("server.log"),
+    )
+    .map_err(|error| error.to_string())?;
+    let server_pid = server.pid();
+    server
+        .wait_for_port(server_port, READY_TIMEOUT)
+        .map_err(|error| error.to_string())?;
+    slot::verify_running_image(server_pid, &binary.sha256, &entry.implementation)?;
+
+    let plan = throughput::ThroughputPlan {
+        server_port,
+        payload_mib: suite.payload_mib,
+        concurrencies: suite.concurrencies.clone(),
+        samples: suite.samples,
+        implementation: entry.implementation.clone(),
+        block: entry.block,
+        position: entry.position,
+    };
+
+    // Integrity first: fetch the payload once through the relay and compare its
+    // digest, so a slot that corrupts bytes is rejected before it is timed.
+    let integrity = slot_dir.join("integrity.bin");
+    fetch_for_integrity(&plan, &integrity, payload_sha, &name)?;
+    let _ = std::fs::remove_file(&integrity);
+
+    // Warm up, then measure once. The measured set is the child, so `perf stat
+    // -- <child>` brackets exactly the window whose samples are recorded; running
+    // it twice would double the slot and decouple the CPU figure from the rows.
+    let warm = throughput::ThroughputPlan {
+        samples: 0,
+        ..plan.clone()
+    };
+    slot::run_workload(&throughput_argv(&warm, None)?, workspace.path())?;
+
+    let samples_path = slot_dir.join("samples.json");
+    let argv = throughput_argv(&plan, Some(&samples_path))?;
+    let task_clock_ms = match suite.attribution {
+        Attribution::Wall | Attribution::Strace => {
+            slot::run_workload(&argv, workspace.path())?;
+            None
+        }
+        Attribution::Perf(events) => {
+            let csv = slot_dir.join("perf.csv");
+            slot::run_workload_under_perf(&argv, server_pid, events, &csv, workspace.path())?;
+            let raw = std::fs::read_to_string(&csv)
+                .map_err(|error| format!("could not read {}: {error}", csv.display()))?;
+            let record = attribution::parse_csv(&raw, &attribution::REQUIRED_EVENTS)?;
+            std::fs::write(slot_dir.join("perf.json"), record.to_json().to_python_json())
+                .map_err(|error| format!("could not write the slot perf record: {error}"))?;
+            Some(record.task_clock_milliseconds)
+        }
+    };
+    let rows = throughput::read_rows(&samples_path)?;
+
+    write_fallback_identity(
+        &slot_dir,
+        entry,
+        &binary.path,
+        &binary.sha256,
+        build_id,
+        server_pid,
+        server_port,
+        payload_sha,
+    )?;
+    server.terminate();
+
+    Ok(FallbackSlot {
+        slot: entry.clone(),
+        task_clock_ms,
+        rows,
+    })
+}
+
+/// The argv that re-drives a fallback slot's measured set as a child.
+fn throughput_argv(
+    plan: &throughput::ThroughputPlan,
+    output: Option<&Path>,
+) -> Result<Vec<String>, String> {
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("could not resolve the rr-dev executable: {error}"))?;
+    let mut argv = vec![
+        executable.display().to_string(),
+        "bench".to_owned(),
+        "fallback-workload".to_owned(),
+        "--server-port".to_owned(),
+        plan.server_port.to_string(),
+        "--payload-mib".to_owned(),
+        plan.payload_mib.to_string(),
+        "--concurrencies".to_owned(),
+        plan.concurrencies
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(" "),
+        "--samples".to_owned(),
+        plan.samples.to_string(),
+        "--implementation".to_owned(),
+        plan.implementation.clone(),
+        "--block".to_owned(),
+        plan.block.to_string(),
+        "--position".to_owned(),
+        plan.position.to_string(),
+    ];
+    if let Some(output) = output {
+        argv.push("--output".to_owned());
+        argv.push(output.display().to_string());
+    }
+    Ok(argv)
+}
+
+/// Fetches the payload once through the relay and verifies its digest.
+fn fetch_for_integrity(
+    plan: &throughput::ThroughputPlan,
+    destination: &Path,
+    expected_sha: &str,
+    name: &str,
+) -> Result<(), String> {
+    let mut curl = Tool::new("curl");
+    for variable in [
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "NO_PROXY",
+        "no_proxy",
+    ] {
+        curl = curl.env(variable, "");
+    }
+    let outcome = curl
+        .args([
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            "300",
+            "-o",
+            &destination.display().to_string(),
+            &plan.url(),
+        ])
+        .probe()
+        .map_err(|error| format!("integrity fetch failed in {name}: {error}"))?;
+    if !outcome.success() {
+        return Err(format!(
+            "integrity fetch failed in {name}: curl exited {:?}",
+            outcome.code
+        ));
+    }
+    let length = std::fs::metadata(destination)
+        .map_err(|error| format!("integrity fetch failed in {name}: {error}"))?
+        .len();
+    if length != plan.expected_bytes() {
+        return Err(format!(
+            "integrity length mismatch in {name}: {length} of {} bytes",
+            plan.expected_bytes()
+        ));
+    }
+    let observed = hash::sha256_file(destination)?;
+    if observed != expected_sha {
+        return Err(format!("integrity hash mismatch in {name}"));
+    }
+    Ok(())
+}
+
+/// Writes a fallback slot's `identity.json`, which records the integrity result.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "these are exactly the fields the recorded identity carries"
+)]
+fn write_fallback_identity(
+    slot_dir: &Path,
+    entry: &Slot,
+    binary: &Path,
+    sha256: &str,
+    build_id: &str,
+    server_pid: u32,
+    server_port: u16,
+    payload_sha: &str,
+) -> Result<(), String> {
+    let int = |value: usize| Json::Int(i64::try_from(value).unwrap_or(i64::MAX));
+    let document = Json::object([
+        ("block", int(entry.block)),
+        ("position", int(entry.position)),
+        (
+            "implementation",
+            Json::string(entry.implementation.clone()),
+        ),
+        (
+            "binary",
+            Json::object([
+                ("path", Json::string(binary.display().to_string())),
+                ("sha256", Json::string(sha256)),
+                ("buildId", Json::string(build_id)),
+            ]),
+        ),
+        (
+            "process",
+            Json::object([("serverPid", Json::Int(i64::from(server_pid)))]),
+        ),
+        (
+            "ports",
+            Json::object([("server", Json::Int(i64::from(server_port)))]),
+        ),
+        (
+            "integrity",
+            Json::object([
+                ("sha256", Json::string(payload_sha)),
+                ("match", Json::Bool(true)),
+            ]),
+        ),
+    ]);
+    std::fs::write(slot_dir.join("identity.json"), document.to_python_json())
+        .map_err(|error| format!("could not write the slot identity: {error}"))
+}
+
+/// Aggregates the fallback slots into `summary.json` schema 2.
+fn summarise_fallback(suite: &FallbackSuite, measured: &[FallbackSlot]) -> Result<Json, String> {
+    let expected_slots = suite.blocks * 4;
+    if measured.len() != expected_slots {
+        return Err(format!(
+            "missing ABBA slots: expected {expected_slots}, measured {}",
+            measured.len()
+        ));
+    }
+    let expected_rows = suite.samples * suite.concurrencies.len();
+    let expected_bytes = suite.payload_mib * 1024 * 1024;
+    for slot in measured {
+        if slot.rows.len() != expected_rows {
+            return Err(format!("incomplete slot: {}", slot.slot.directory_name()));
+        }
+        if slot.rows.iter().any(|row| {
+            row.failed > 0
+                || row.requests != row.concurrency
+                || row.bytes_observed.iter().any(|bytes| *bytes != expected_bytes)
+        }) {
+            return Err(format!("corrupt sample: {}", slot.slot.directory_name()));
+        }
+    }
+
+    let mut cells: Vec<(String, Json)> = Vec::with_capacity(suite.concurrencies.len());
+    for concurrency in &suite.concurrencies {
+        let blocks = collect_fallback_blocks(suite, measured, |slot| {
+            slot.rows
+                .iter()
+                .filter(|row| row.concurrency == *concurrency)
+                .map(|row| row.throughput_mib_per_second)
+                .collect()
+        });
+        let seed = aggregate::FALLBACK_CELL_SEED_BASE + u64::try_from(*concurrency).unwrap_or(0);
+        let label = format!("fallback:c{concurrency}");
+        let cell = aggregate::paired_cell(&blocks, 2 * suite.samples, seed, &label)?;
+        cells.push((
+            concurrency.to_string(),
+            aggregate::paired_cell_json(&cell, None),
+        ));
+    }
+
+    let cpu = fallback_cpu_summary(suite, measured)?;
+    let rows: usize = measured.iter().map(|slot| slot.rows.len()).sum();
+    Ok(aggregate::summary_document(
+        2,
+        aggregate::PAIRED_METHOD,
+        measured.len(),
+        rows,
+        [
+            ("cells".to_owned(), Json::object(cells)),
+            ("serverCpuPerGiB".to_owned(), cpu),
+        ],
+    ))
+}
+
+/// Gathers per-block observations for both sides of a fallback comparison.
+fn collect_fallback_blocks(
+    suite: &FallbackSuite,
+    measured: &[FallbackSlot],
+    extract: impl Fn(&FallbackSlot) -> Vec<f64>,
+) -> Vec<aggregate::BlockObservations> {
+    (1..=suite.blocks)
+        .map(|block| {
+            let mut observations = aggregate::BlockObservations::default();
+            for slot in measured.iter().filter(|slot| slot.slot.block == block) {
+                let values = extract(slot);
+                if slot.slot.implementation == "baseline" {
+                    observations.baseline.extend(values);
+                } else {
+                    observations.candidate.extend(values);
+                }
+            }
+            observations
+        })
+        .collect()
+}
+
+/// The CPU-per-GiB comparison, absent outside `perf` mode.
+///
+/// The denominator is the volume a slot actually moved, so the figure is
+/// comparable across cell plans rather than being per-slot seconds.
+fn fallback_cpu_summary(suite: &FallbackSuite, measured: &[FallbackSlot]) -> Result<Json, String> {
+    if !matches!(suite.attribution, Attribution::Perf(_)) {
+        return Ok(Json::Null);
+    }
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "transfer volumes here are far below 2^53"
+    )]
+    let transferred_gib = (suite.samples * suite.concurrencies.iter().sum::<usize>()) as f64
+        * (suite.payload_mib as f64)
+        / 1024.0;
+    if transferred_gib <= 0.0 {
+        return Err("invalid measured transfer volume".to_owned());
+    }
+    for slot in measured {
+        if slot.task_clock_ms.is_none() {
+            return Err(format!(
+                "{} has no task-clock, so CPU cannot be attributed",
+                slot.slot.directory_name()
+            ));
+        }
+    }
+    let blocks = collect_fallback_blocks(suite, measured, |slot| {
+        slot.task_clock_ms
+            .map_or_else(Vec::new, |ms| vec![ms / 1000.0 / transferred_gib])
+    });
+    let cell = aggregate::paired_cell(&blocks, 2, aggregate::FALLBACK_CPU_SEED, "fallback:cpu")?;
+    Ok(aggregate::paired_cell_json(&cell, Some("secondsPerGiB")))
+}
+
+/// Builds the fallback `environment.json` (schema 2).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "these are exactly the fields the recorded environment carries"
+)]
+fn fallback_environment_json(
+    suite: &FallbackSuite,
+    baseline: &Binary,
+    candidate: &Binary,
+    baseline_build_id: &str,
+    candidate_build_id: &str,
+    repository: &attest::RepositoryState,
+    origin_manifest: &attest::TreeManifest,
+    lock: &HostLock,
+    port_base: u16,
+    port_count: usize,
+    payload_sha: &str,
+) -> Json {
+    let int = |value: usize| Json::Int(i64::try_from(value).unwrap_or(i64::MAX));
+    let binary_json = |binary: &Binary, build_id: &str| {
+        Json::object([
+            ("path", Json::string(binary.path.display().to_string())),
+            ("sha256", Json::string(binary.sha256.clone())),
+            ("buildId", Json::string(build_id)),
+        ])
+    };
+    Json::object([
+        ("schemaVersion", Json::Int(2)),
+        ("runId", Json::string(suite.run_id.clone())),
+        (
+            "repository",
+            Json::object([
+                ("head", Json::string(repository.head.clone())),
+                ("dirty", Json::Bool(repository.dirty)),
+            ]),
+        ),
+        ("method", Json::string(ENVIRONMENT_METHOD)),
+        ("blocks", int(suite.blocks)),
+        ("samplesPerSlot", int(suite.samples)),
+        (
+            "concurrencies",
+            Json::string(
+                suite
+                    .concurrencies
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ),
+        ),
+        (
+            "payloadMiB",
+            Json::Int(i64::try_from(suite.payload_mib).unwrap_or(i64::MAX)),
+        ),
+        ("payloadSha256", Json::string(payload_sha)),
+        (
+            "measureMode",
+            Json::string(match suite.attribution {
+                Attribution::Perf(_) => "perf",
+                _ => "wall",
+            }),
+        ),
+        (
+            "ports",
+            Json::object([
+                ("address", Json::string("127.0.0.1")),
+                ("base", Json::Int(i64::from(port_base))),
+                ("count", int(port_count)),
+            ]),
+        ),
+        (
+            "relay",
+            Json::object([
+                ("splice", Json::Bool(suite.relay.splice)),
+                ("pipePool", Json::Bool(suite.relay.pipe_pool)),
+                (
+                    "bufferKiB",
+                    Json::Int(i64::from(suite.relay.buffer_kib)),
+                ),
+            ]),
+        ),
+        ("baseline", binary_json(baseline, baseline_build_id)),
+        ("candidate", binary_json(candidate, candidate_build_id)),
+        (
+            "harness",
+            harness_block(&suite.repo, origin_manifest),
+        ),
+        ("hostExclusiveLock", lock_json(lock)),
+    ])
+}
+
+/// The harness attestation block, shared by both paired environments.
+///
+/// `contract` and `keeperHelper` are `null`: see the module note.
+fn harness_block(repo: &Path, origin_manifest: &attest::TreeManifest) -> Json {
+    let entrypoint = std::env::current_exe().unwrap_or_default();
+    let entrypoint_sha = hash::sha256_file(&entrypoint).unwrap_or_default();
+    Json::object([
+        (
+            "entrypoint",
+            Json::object([
+                ("path", Json::string(entrypoint.display().to_string())),
+                ("sha256", Json::string(entrypoint_sha)),
+            ]),
+        ),
+        ("contract", Json::Null),
+        ("keeperHelper", Json::Null),
+        (
+            "benchOrigin",
+            Json::object([
+                (
+                    "path",
+                    Json::string(repo.join(origin_go::SOURCE_RELATIVE).display().to_string()),
+                ),
+                (
+                    "manifestSha256",
+                    Json::string(origin_manifest.sha256.clone()),
+                ),
+                (
+                    "fileCount",
+                    Json::Int(i64::try_from(origin_manifest.file_count).unwrap_or(i64::MAX)),
+                ),
+            ]),
+        ),
+    ])
 }
