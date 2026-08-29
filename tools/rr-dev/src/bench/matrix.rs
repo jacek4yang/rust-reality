@@ -1149,3 +1149,816 @@ fn start_xray_pair(
     }
     Ok(())
 }
+
+/// Per-cell results, kept for the summary.
+struct CellResult {
+    cell: Cell,
+    order: Vec<String>,
+    records: Vec<SampleRecord>,
+}
+
+/// Runs the matrix end to end.
+///
+/// # Errors
+///
+/// Returns the first setup failure. Measurement failures do not abort the run:
+/// they are recorded as invalid samples and the final gate refuses the report, so
+/// one bad cell still yields evidence about every other one.
+pub fn run(suite: &MatrixSuite) -> Result<MatrixOutcome, String> {
+    use crate::bench::{
+        evidence::{Publication, RunDirectory},
+        host_lock::HostLock,
+        identity::{self, Kind},
+        sysctl,
+        workspace::Workspace,
+    };
+
+    validate(suite)?;
+    for program in ["curl", "go"] {
+        if !Tool::exists(program) {
+            return Err(format!("required program unavailable: {program}"));
+        }
+    }
+
+    let mut binaries = std::collections::BTreeMap::new();
+    binaries.insert(
+        "baseline".to_owned(),
+        identity::register("baseline", &suite.baseline_bin, "", Kind::Prebuilt)?,
+    );
+    binaries.insert(
+        "final".to_owned(),
+        identity::register("final", &suite.final_bin, "", Kind::Rust)?,
+    );
+    binaries.insert(
+        COMPARATOR.to_owned(),
+        identity::register(COMPARATOR, &suite.xray_bin, "", Kind::Xray)?,
+    );
+    let repository = crate::bench::attest::repository_state(
+        &suite.repo,
+        crate::bench::attest::Dirtiness::TrackedAndStagedOnly,
+    )?;
+
+    // The pipe-page budget is sized from the plan's peak concurrency, and the
+    // guard restores the original on every path.
+    let page_size = page_size();
+    let budget = crate::checks::pipe_budget::compute(page_size, peak_concurrency(&suite.plan));
+    let pages = if suite.manage_pipe_pages {
+        Some(sysctl::PipePagesGuard::raise_to(budget.required)?)
+    } else {
+        None
+    };
+    let original_pages = pages.as_ref().map(sysctl::PipePagesGuard::original);
+
+    let _lock = HostLock::acquire(&crate::bench::runner::default_lock_path())?;
+    let run = RunDirectory::create(&suite.out_dir)?;
+    let workspace = Workspace::create("benchmark-matrix")?;
+
+    // Two origins plus three ports per implementation.
+    let port_count = 2 + IMPLEMENTATIONS.len() * 3;
+    let port_base = crate::bench::workspace::reserve_block(port_count)?;
+
+    let cells = suite.plan.cells();
+    let (payloads, payload_digests) = write_payloads(suite, &cells, &workspace)?;
+
+    let topology = start_topology(suite, &workspace, &binaries, port_base)?;
+    let mut trackers = Trackers::new(&workspace, &topology);
+    warm_up(suite, &topology, &workspace, payloads[0]);
+    trackers.drain();
+
+    let mut results = Vec::with_capacity(cells.len());
+    for cell in &cells {
+        results.push(measure_cell(
+            suite,
+            &topology,
+            &workspace,
+            &mut trackers,
+            *cell,
+            &repository.head,
+        )?);
+    }
+
+    let integrity = run_integrity(suite, &topology, &payload_digests, &repository.head);
+
+    let samples: Vec<String> = results
+        .iter()
+        .flat_map(|result| result.records.iter())
+        .chain(integrity.iter())
+        .map(|record| record.to_json().to_compact_json())
+        .collect();
+    run.write_jsonl("samples.jsonl", &samples)?;
+
+    let summary = summarise(suite, &results, &integrity, &repository.head, &binaries);
+    let summary_json = summary.document.to_python_json();
+    run.write_new("summary.json", &summary_json)?;
+    let environment = environment_json(suite, &repository, &binaries, port_base, port_count, &budget);
+    run.write_new("environment.json", &environment.to_python_json())?;
+    run.publish(
+        Publication::Environment,
+        &environment.to_python_json(),
+        &suite.run_id,
+        "benchmark-matrix",
+    )?;
+
+    drop(pages);
+    if let Some(original) = original_pages {
+        sysctl::PipePagesGuard::verify_restored(original)?;
+    }
+
+    if summary.invalid > 0 {
+        return Err(format!(
+            "matrix contains incomplete, invalid, or corrupt samples: {} of {} samples invalid",
+            summary.invalid, summary.total
+        ));
+    }
+    Ok(MatrixOutcome {
+        out_dir: suite.out_dir.clone(),
+        summary_json,
+        cells: results.len(),
+        samples: summary.total,
+        invalid: summary.invalid,
+    })
+}
+
+/// Generates every payload the plan needs and records their digests.
+///
+/// The integrity payload is included even when no cell uses that size, because
+/// the integrity run downloads it and compares its SHA-256 end to end.
+fn write_payloads(
+    suite: &MatrixSuite,
+    cells: &[Cell],
+    workspace: &crate::bench::workspace::Workspace,
+) -> Result<(Vec<u64>, std::collections::BTreeMap<u64, String>), String> {
+    let mut payloads: Vec<u64> = cells.iter().map(|cell| cell.payload_mib).collect();
+    if suite.integrity_mib > 0 {
+        payloads.push(suite.integrity_mib);
+    }
+    payloads.sort_unstable();
+    payloads.dedup();
+    let mut digests = std::collections::BTreeMap::new();
+    for mib in &payloads {
+        let path = crate::bench::origin_go::write_pattern_payload(workspace.path(), *mib)?;
+        digests.insert(*mib, crate::hash::sha256_file(&path)?);
+    }
+    Ok((payloads, digests))
+}
+
+/// The host page size, which sizes the pipe-page budget.
+fn page_size() -> u64 {
+    Tool::new("getconf")
+        .arg("PAGESIZE")
+        .probe()
+        .ok()
+        .and_then(|outcome| outcome.trimmed_stdout().parse().ok())
+        .unwrap_or(4096)
+}
+
+/// The incremental readers a run keeps over the origin and server logs.
+struct Trackers {
+    put: std::collections::BTreeMap<&'static str, crate::bench::guards::LineTracker>,
+    logs: std::collections::BTreeMap<String, (crate::bench::guards::LineTracker, crate::bench::guards::LineTracker)>,
+}
+
+impl Trackers {
+    fn new(workspace: &crate::bench::workspace::Workspace, topology: &Topology) -> Self {
+        use crate::bench::guards::LineTracker;
+        let mut put = std::collections::BTreeMap::new();
+        put.insert("http", LineTracker::new(workspace.join("http-put.jsonl")));
+        put.insert("https", LineTracker::new(workspace.join("https-put.jsonl")));
+        let logs = topology
+            .log_paths
+            .iter()
+            .map(|(label, (tunnel, fallback))| {
+                (
+                    label.clone(),
+                    (LineTracker::new(tunnel), LineTracker::new(fallback)),
+                )
+            })
+            .collect();
+        Self { put, logs }
+    }
+
+    fn drain(&mut self) {
+        for tracker in self.put.values_mut() {
+            tracker.drain();
+        }
+        for (tunnel, fallback) in self.logs.values_mut() {
+            tunnel.drain();
+            fallback.drain();
+        }
+    }
+}
+
+/// Warms every implementation and path once, discarding the results.
+///
+/// Without it the first measured sample of each cell absorbs one-time client and
+/// server setup, which lands entirely on whichever implementation runs first.
+fn warm_up(
+    suite: &MatrixSuite,
+    topology: &Topology,
+    workspace: &crate::bench::workspace::Workspace,
+    payload_mib: u64,
+) {
+    for label in IMPLEMENTATIONS {
+        let Some(endpoints) = topology.endpoints.get(label) else {
+            continue;
+        };
+        for scenario in SCENARIOS {
+            let _ = run_workload(scenario, *endpoints, payload_mib, 1, workspace.path());
+        }
+    }
+    let _ = suite;
+}
+
+/// Measures one cell: the interleaved order, then the cell-level guards.
+fn measure_cell(
+    suite: &MatrixSuite,
+    topology: &Topology,
+    workspace: &crate::bench::workspace::Workspace,
+    trackers: &mut Trackers,
+    cell: Cell,
+    commit: &str,
+) -> Result<CellResult, String> {
+    use crate::bench::{guards, plan};
+
+    let samples = suite
+        .plan
+        .samples_for(cell.payload_mib, suite.samples, suite.samples_large);
+    let order = plan::interleaved_order(RUST_LABELS, &suite.abba_start, COMPARATOR, samples)?;
+    let scheme = cell.scenario.origin_scheme();
+    let stats_port = if scheme == "https" {
+        topology.https_port
+    } else {
+        topology.http_port
+    };
+    let before = guards::fetch_origin_stats(stats_port, scheme);
+
+    let mut counters: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    let mut records = Vec::with_capacity(order.len());
+    for label in &order {
+        let index = counters.entry(label.as_str()).or_default();
+        let sample_index = *index;
+        *index += 1;
+        records.push(measure_sample(
+            topology,
+            workspace,
+            trackers,
+            cell,
+            label,
+            sample_index,
+            commit,
+        ));
+    }
+
+    // The origin's own error counter is a cell-level fact: if it moved, the
+    // origin was the bottleneck and no sample in the cell means anything, for
+    // any implementation.
+    let after = guards::fetch_origin_stats(stats_port, scheme);
+    if let Some(delta) = guards::origin_error_delta(before, after) {
+        let reason =
+            format!("origin error: {scheme} origin reported {delta} new error(s) during the cell");
+        for record in &mut records {
+            record.invalidate(&reason);
+        }
+    }
+    Ok(CellResult {
+        cell,
+        order,
+        records,
+    })
+}
+
+/// Measures one sample and applies the per-sample guards.
+fn measure_sample(
+    topology: &Topology,
+    workspace: &crate::bench::workspace::Workspace,
+    trackers: &mut Trackers,
+    cell: Cell,
+    label: &str,
+    sample_index: usize,
+    commit: &str,
+) -> SampleRecord {
+    use crate::bench::guards;
+
+    let mut record = SampleRecord {
+        commit: commit.to_owned(),
+        implementation: label.to_owned(),
+        cell,
+        sample_index,
+        wall_seconds: None,
+        throughput_mib_per_second: None,
+        per_request_seconds: Vec::new(),
+        bytes_verified: false,
+        invalid: false,
+        invalid_reason: None,
+    };
+    let Some(endpoints) = topology.endpoints.get(label) else {
+        record.invalidate(&format!("{label} has no endpoints"));
+        return record;
+    };
+    match run_workload(
+        cell.scenario,
+        *endpoints,
+        cell.payload_mib,
+        cell.concurrency,
+        workspace.path(),
+    ) {
+        Ok(outcome) => {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "request counts and payload sizes here are far below 2^53"
+            )]
+            let throughput = if outcome.wall_seconds > 0.0 {
+                (cell.payload_mib as f64) * (outcome.requests as f64) / outcome.wall_seconds
+            } else {
+                0.0
+            };
+            record.wall_seconds = Some(outcome.wall_seconds);
+            record.throughput_mib_per_second = Some(throughput);
+            record.per_request_seconds = outcome.per_request_seconds;
+            record.bytes_verified = true;
+        }
+        Err(reason) => record.invalidate(&reason),
+    }
+
+    // Let the server finish writing its events before they are counted.
+    std::thread::sleep(std::time::Duration::from_millis(250));
+
+    if let Some((tunnel, fallback)) = trackers.logs.get_mut(label) {
+        let lines = if cell.scenario == Scenario::Fallback {
+            fallback.new_lines()
+        } else {
+            tunnel.new_lines()
+        };
+        // Only rust servers emit these events, and only at debug level; an empty
+        // log means the check does not apply rather than that it failed.
+        let accepted = guards::accepted_connections(&lines);
+        if accepted > 0
+            && let Err(problem) =
+                guards::verify_not_bypassed(accepted, cell.scenario.connections(cell.concurrency))
+        {
+            record.invalidate(&problem);
+        }
+    }
+
+    if record.bytes_verified && cell.scenario.uploads() {
+        let scheme = cell.scenario.origin_scheme();
+        if let Some(tracker) = trackers.put.get_mut(scheme) {
+            let lines = tracker.new_lines();
+            let expected_bytes = i64::try_from(cell.payload_mib * 1024 * 1024).unwrap_or(i64::MAX);
+            // Every upload scenario issues exactly `concurrency` PUTs; bidi adds
+            // downloads on top, which are not PUTs.
+            if let Err(problems) =
+                guards::verify_uploads(&lines, cell.concurrency, expected_bytes, scheme)
+            {
+                record.bytes_verified = false;
+                for problem in problems {
+                    record.invalidate(&problem);
+                }
+            }
+        }
+    }
+    record
+}
+
+/// The end-to-end integrity run: one large download per implementation, hashed.
+fn run_integrity(
+    suite: &MatrixSuite,
+    topology: &Topology,
+    digests: &std::collections::BTreeMap<u64, String>,
+    commit: &str,
+) -> Vec<SampleRecord> {
+    if suite.integrity_mib == 0 {
+        return Vec::new();
+    }
+    let cell = Cell {
+        scenario: Scenario::DirectDownload,
+        payload_mib: suite.integrity_mib,
+        concurrency: 1,
+    };
+    IMPLEMENTATIONS
+        .iter()
+        .map(|label| {
+            let mut record = SampleRecord {
+                commit: commit.to_owned(),
+                implementation: (*label).to_owned(),
+                cell,
+                sample_index: 0,
+                wall_seconds: None,
+                throughput_mib_per_second: None,
+                per_request_seconds: Vec::new(),
+                bytes_verified: false,
+                invalid: false,
+                invalid_reason: None,
+            };
+            let Some(endpoints) = topology.endpoints.get(*label) else {
+                record.invalidate("no endpoints");
+                return record;
+            };
+            let Some(expected) = digests.get(&suite.integrity_mib) else {
+                record.invalidate("no recorded payload digest");
+                return record;
+            };
+            match integrity_transfer(*endpoints, suite.integrity_mib, expected) {
+                Ok(seconds) => {
+                    record.wall_seconds = Some(seconds);
+                    record.per_request_seconds = vec![seconds];
+                    record.bytes_verified = true;
+                }
+                Err(reason) => record.invalidate(&reason),
+            }
+            record
+        })
+        .collect()
+}
+
+/// Downloads the integrity payload to a temporary file and compares its digest.
+fn integrity_transfer(
+    endpoints: Endpoints,
+    payload_mib: u64,
+    expected_sha: &str,
+) -> Result<f64, String> {
+    let destination = std::env::temp_dir().join(format!(
+        "rr-matrix-integrity-{}-{}.bin",
+        std::process::id(),
+        endpoints.socks
+    ));
+    let started = Instant::now();
+    let result = run_curl(
+        &[
+            "--insecure".to_owned(),
+            "--tlsv1.3".to_owned(),
+            "--socks5-hostname".to_owned(),
+            format!("127.0.0.1:{}", endpoints.socks),
+            "--output".to_owned(),
+            destination.display().to_string(),
+            "--write-out".to_owned(),
+            "%{size_download} %{time_total}".to_owned(),
+            format!(
+                "https://127.0.0.1:{}/payload-{payload_mib}.bin",
+                endpoints.https
+            ),
+        ],
+        payload_mib,
+    );
+    let outcome = (|| -> Result<f64, String> {
+        let (size, _) = result?;
+        let expected_bytes = payload_mib * 1024 * 1024;
+        if size != expected_bytes {
+            return Err(format!("integrity size {size} != {expected_bytes}"));
+        }
+        let observed = crate::hash::sha256_file(&destination)?;
+        if observed != expected_sha {
+            return Err("integrity sha256 mismatch".to_owned());
+        }
+        Ok(started.elapsed().as_secs_f64())
+    })();
+    let _ = std::fs::remove_file(&destination);
+    outcome
+}
+
+/// The assembled summary and its totals.
+struct Summary {
+    document: Json,
+    total: usize,
+    invalid: usize,
+}
+
+/// The distribution the matrix records for a set of values.
+fn distribution(values: &[f64]) -> Json {
+    use crate::perf::stats;
+    let median = stats::median(values).unwrap_or(0.0);
+    let percentile = |fraction: f64| {
+        // The matrix uses ceil-rank, unlike the setup-rate family's floor rank.
+        stats::nearest_rank(values, fraction).unwrap_or(0.0)
+    };
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "sample counts here are small integers"
+    )]
+    let mean = stats::fsum(values) / values.len() as f64;
+    Json::object([
+        ("p50", Json::Float(median)),
+        ("p95", Json::Float(percentile(0.95))),
+        ("p99", Json::Float(percentile(0.99))),
+        ("mean", Json::Float(mean)),
+    ])
+}
+
+/// Aggregates the cells and the integrity run into `summary.json`.
+fn summarise(
+    suite: &MatrixSuite,
+    results: &[CellResult],
+    integrity: &[SampleRecord],
+    commit: &str,
+    binaries: &std::collections::BTreeMap<String, crate::bench::identity::Binary>,
+) -> Summary {
+    let mut cells: Vec<(String, Json)> = Vec::with_capacity(results.len());
+    let mut total = 0_usize;
+    let mut invalid = 0_usize;
+    let mut failures: Vec<Json> = Vec::new();
+
+    for result in results {
+        cells.push((result.cell.key(), summarise_cell(suite, result)));
+        for record in &result.records {
+            total += 1;
+            if record.invalid {
+                invalid += 1;
+                failures.push(failure_json(&result.cell, record));
+            }
+        }
+    }
+
+    let integrity_json: Vec<(String, Json)> = integrity
+        .iter()
+        .map(|record| {
+            total += 1;
+            if record.invalid {
+                invalid += 1;
+            }
+            (
+                record.implementation.clone(),
+                Json::object([
+                    ("invalid", Json::Bool(record.invalid)),
+                    (
+                        "sha256",
+                        Json::object([("match", Json::Bool(record.bytes_verified))]),
+                    ),
+                    (
+                        "reason",
+                        record
+                            .invalid_reason
+                            .clone()
+                            .map_or(Json::Null, Json::string),
+                    ),
+                ]),
+            )
+        })
+        .collect();
+
+    let document = Json::object([
+        ("schemaVersion", Json::Int(1)),
+        ("commit", Json::string(commit)),
+        ("binaries", binaries_json(binaries)),
+        (
+            "totals",
+            Json::object([
+                (
+                    "cells",
+                    Json::Int(i64::try_from(results.len()).unwrap_or(i64::MAX)),
+                ),
+                (
+                    "samples",
+                    Json::Int(i64::try_from(total).unwrap_or(i64::MAX)),
+                ),
+                (
+                    "invalidSamples",
+                    Json::Int(i64::try_from(invalid).unwrap_or(i64::MAX)),
+                ),
+            ]),
+        ),
+        ("cells", Json::object(cells)),
+        ("integrity", Json::object(integrity_json)),
+        ("failures", Json::Array(failures)),
+    ]);
+    Summary {
+        document,
+        total,
+        invalid,
+    }
+}
+
+/// The per-implementation statistics and ratios for one cell.
+fn summarise_cell(suite: &MatrixSuite, result: &CellResult) -> Json {
+    let mut per_impl: Vec<(String, Json)> = Vec::with_capacity(IMPLEMENTATIONS.len());
+    let mut medians: std::collections::BTreeMap<&str, f64> = std::collections::BTreeMap::new();
+    for label in IMPLEMENTATIONS {
+        let records: Vec<&SampleRecord> = result
+            .records
+            .iter()
+            .filter(|record| record.implementation == label)
+            .collect();
+        let valid: Vec<&&SampleRecord> = records.iter().filter(|record| !record.invalid).collect();
+        let throughput: Vec<f64> = valid
+            .iter()
+            .filter_map(|record| record.throughput_mib_per_second)
+            .collect();
+        let per_request: Vec<f64> = valid
+            .iter()
+            .flat_map(|record| record.per_request_seconds.iter().copied())
+            .collect();
+        let mut entry: Vec<(String, Json)> = vec![
+            (
+                "samples".to_owned(),
+                Json::Int(i64::try_from(records.len()).unwrap_or(i64::MAX)),
+            ),
+            (
+                "validSamples".to_owned(),
+                Json::Int(i64::try_from(valid.len()).unwrap_or(i64::MAX)),
+            ),
+            (
+                "invalidSamples".to_owned(),
+                Json::Int(i64::try_from(records.len() - valid.len()).unwrap_or(i64::MAX)),
+            ),
+        ];
+        if !throughput.is_empty() {
+            let summary = distribution(&throughput);
+            if let Json::Object(fields) = &summary
+                && let Some(Json::Float(p50)) = fields.get("p50")
+            {
+                medians.insert(label, *p50);
+            }
+            entry.push(("throughputMiBPerSecond".to_owned(), summary));
+        }
+        if !per_request.is_empty() {
+            entry.push(("perRequestSeconds".to_owned(), distribution(&per_request)));
+        }
+        per_impl.push((label.to_owned(), Json::object(entry)));
+    }
+
+    let ratio = |numerator: &str, denominator: &str| {
+        match (medians.get(numerator), medians.get(denominator)) {
+            (Some(top), Some(bottom)) if *bottom != 0.0 => Json::Float(top / bottom),
+            _ => Json::Null,
+        }
+    };
+    Json::object([
+        ("scenario", Json::string(result.cell.scenario.as_str())),
+        ("direction", Json::string(result.cell.scenario.direction())),
+        (
+            "payloadMiB",
+            Json::Int(i64::try_from(result.cell.payload_mib).unwrap_or(i64::MAX)),
+        ),
+        (
+            "concurrency",
+            Json::Int(i64::try_from(result.cell.concurrency).unwrap_or(i64::MAX)),
+        ),
+        (
+            "samplesPerImplementation",
+            Json::Int(
+                i64::try_from(suite.plan.samples_for(
+                    result.cell.payload_mib,
+                    suite.samples,
+                    suite.samples_large,
+                ))
+                .unwrap_or(i64::MAX),
+            ),
+        ),
+        (
+            "interleaveOrder",
+            Json::Array(result.order.iter().cloned().map(Json::string).collect()),
+        ),
+        ("implementations", Json::object(per_impl)),
+        (
+            "p50ThroughputRatios",
+            Json::object([
+                ("baselineVsXray", ratio("baseline", COMPARATOR)),
+                ("finalVsXray", ratio("final", COMPARATOR)),
+                ("finalVsBaseline", ratio("final", "baseline")),
+            ]),
+        ),
+    ])
+}
+
+/// One entry in the summary's `failures` list.
+fn failure_json(cell: &Cell, record: &SampleRecord) -> Json {
+    Json::object([
+        ("cell", Json::string(cell.key())),
+        (
+            "implementation",
+            Json::string(record.implementation.clone()),
+        ),
+        (
+            "sampleIndex",
+            Json::Int(i64::try_from(record.sample_index).unwrap_or(i64::MAX)),
+        ),
+        (
+            "reason",
+            record
+                .invalid_reason
+                .clone()
+                .map_or(Json::Null, Json::string),
+        ),
+    ])
+}
+
+/// The registered binaries, by label.
+fn binaries_json(
+    binaries: &std::collections::BTreeMap<String, crate::bench::identity::Binary>,
+) -> Json {
+    Json::object(binaries.iter().map(|(label, binary)| {
+        (
+            label.clone(),
+            Json::object([
+                ("path", Json::string(binary.path.display().to_string())),
+                ("sha256", Json::string(binary.sha256.clone())),
+            ]),
+        )
+    }))
+}
+
+/// The matrix `environment.json`.
+fn environment_json(
+    suite: &MatrixSuite,
+    repository: &crate::bench::attest::RepositoryState,
+    binaries: &std::collections::BTreeMap<String, crate::bench::identity::Binary>,
+    port_base: u16,
+    port_count: usize,
+    budget: &crate::checks::pipe_budget::PipeBudget,
+) -> Json {
+    Json::object([
+        ("schemaVersion", Json::Int(1)),
+        ("runId", Json::string(suite.run_id.clone())),
+        (
+            "repository",
+            Json::object([
+                ("head", Json::string(repository.head.clone())),
+                ("dirty", Json::Bool(repository.dirty)),
+            ]),
+        ),
+        (
+            "cover",
+            Json::object([
+                ("target", Json::string(suite.cover_target.clone())),
+                ("sni", Json::string(suite.cover_sni.clone())),
+            ]),
+        ),
+        ("plan", plan_json(suite)),
+        (
+            "ports",
+            Json::object([
+                ("address", Json::string("127.0.0.1")),
+                ("base", Json::Int(i64::from(port_base))),
+                (
+                    "count",
+                    Json::Int(i64::try_from(port_count).unwrap_or(i64::MAX)),
+                ),
+            ]),
+        ),
+        (
+            "pipeUserPagesSoft",
+            Json::object([
+                (
+                    "required",
+                    Json::Int(i64::try_from(budget.required).unwrap_or(i64::MAX)),
+                ),
+                (
+                    "peak",
+                    Json::Int(i64::try_from(budget.peak).unwrap_or(i64::MAX)),
+                ),
+                ("managed", Json::Bool(suite.manage_pipe_pages)),
+            ]),
+        ),
+        ("binaries", binaries_json(binaries)),
+    ])
+}
+
+/// The cell plan a run recorded.
+fn plan_json(suite: &MatrixSuite) -> Json {
+    let list = |values: &[usize]| {
+        Json::string(
+            values
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
+    };
+    Json::object([
+                (
+                    "payloadsMiB",
+                    Json::string(
+                        suite
+                            .plan
+                            .payloads_mib
+                            .iter()
+                            .map(u64::to_string)
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                    ),
+                ),
+                ("concurrencies", list(&suite.plan.concurrencies)),
+                ("largeConcurrencies", list(&suite.plan.large_concurrencies)),
+                (
+                    "largePayloadMiB",
+                    Json::Int(i64::try_from(suite.plan.large_payload_mib).unwrap_or(i64::MAX)),
+                ),
+                (
+                    "samples",
+                    Json::Int(i64::try_from(suite.samples).unwrap_or(i64::MAX)),
+                ),
+                (
+                    "samplesLarge",
+                    Json::Int(i64::try_from(suite.samples_large).unwrap_or(i64::MAX)),
+                ),
+                (
+                    "integrityMiB",
+                    Json::Int(i64::try_from(suite.integrity_mib).unwrap_or(i64::MAX)),
+                ),
+                ("abbaStart", Json::string(suite.abba_start.clone())),
+                (
+                    "cells",
+                    Json::string(suite.plan.include.join(" ")),
+                ),
+                ("skip", Json::string(suite.plan.exclude.join(" "))),
+    ])
+}
