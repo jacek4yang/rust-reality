@@ -126,6 +126,7 @@ struct Scope {
     control_group_name: String,
     cgroup: PathBuf,
     cpu_percent: i64,
+    memory_text: String,
     memory_bytes: i64,
     server_pid: u32,
     server_starttime: String,
@@ -289,6 +290,7 @@ impl Scope {
             control_group_name,
             cgroup,
             cpu_percent: class.cpu_percent,
+            memory_text: class.memory_text.clone(),
             memory_bytes: class.memory_bytes,
             server_pid,
             server_starttime,
@@ -321,7 +323,7 @@ impl Scope {
             &self.cgroup,
             self.cpu_percent,
             self.memory_bytes,
-            &self.memory_bytes.to_string(),
+            &self.memory_text,
         )?;
         if self.is_server_alive() {
             let current_sha = attest::running_executable_sha256(self.server_pid)?;

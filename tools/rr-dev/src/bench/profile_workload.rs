@@ -630,6 +630,7 @@ fn ladder_sample(
     server_starttime: &str,
     cgroup: &Path,
     server_log: &Path,
+    baseline_oom: Option<i64>,
 ) -> Json {
     let resources = sample_now(server_pid, cgroup);
     let markers = marker_counts(server_log);
@@ -672,7 +673,14 @@ fn ladder_sample(
             "cgroupMemorySwapCurrent",
             optional_int(resources.swap_current),
         ),
-        ("cgroupOomKills", optional_int(resources.oom_kills)),
+        (
+            "cgroupOomKills",
+            optional_int(
+                baseline_oom
+                    .zip(resources.oom_kills)
+                    .map(|(before, after)| after - before),
+            ),
+        ),
         (
             "logEvents",
             Json::object(
@@ -734,7 +742,7 @@ pub fn ladder(
             }
         }
         std::thread::sleep(settle);
-        let mut sample = ladder_sample(
+        let sample = ladder_sample(
             tag,
             level,
             connections.len(),
@@ -743,16 +751,8 @@ pub fn ladder(
             server_starttime,
             cgroup,
             server_log,
+            baseline_oom,
         );
-        let current_oom = oom_kills(cgroup);
-        if let Json::Object(fields) = &mut sample {
-            fields.insert(
-                "cgroupOomKills".to_owned(),
-                baseline_oom
-                    .zip(current_oom)
-                    .map_or(Json::Null, |(before, after)| Json::Int(after - before)),
-            );
-        }
         let alive = match &sample {
             Json::Object(fields) => matches!(fields.get("serverAlive"), Some(Json::Bool(true))),
             _ => false,
@@ -815,6 +815,7 @@ pub fn ladder(
                     server_starttime,
                     cgroup,
                     server_log,
+                    baseline_oom,
                 ),
                 &[("recheck", Json::Bool(true))],
             );
@@ -839,6 +840,7 @@ pub fn ladder(
         server_starttime,
         cgroup,
         server_log,
+        baseline_oom,
     );
     rows.push(with_fields(
         final_sample,
