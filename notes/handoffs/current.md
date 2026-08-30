@@ -65,8 +65,9 @@ hotspot core   cargo dev perf hotspot (identity-bound perf capture, reports,
    deployment control plane (12 -> 7)   NEXT
    hotspot/final cleanup (7 -> 0)
    - do not rebuild process/workspace/lock/identity/report lifecycle
-   - scripts/bench-origin remains only for benchmark-deployment.sh and is
-     deleted with that final caller in the deployment family
+   - scripts/bench-origin and its final caller benchmark-deployment.sh are
+     deleted in PR #154 with the native `cargo dev bench run --suite
+     deployment` catalogue entry
 
 2. The deployment family has a gate: issue #147 requires staging-VPS
    acceptance, separately authorized LINE/LANDING acceptance, or an

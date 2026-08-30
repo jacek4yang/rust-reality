@@ -142,7 +142,7 @@
       ],
       "disposition": "MERGE",
       "replacement": "BenchmarkRunner contract workload",
-      "status": "not-started"
+      "status": "deleted-after-parity in PR #154; the typed run-contract/run-completion publication owns environment identity, host-exclusive lock attestation, staged atomic publication and verify-on-exit gate semantics"
     },
     {
       "path": "scripts/benchmark-deployment.sh",
@@ -160,8 +160,8 @@
         "cargo dev deploy netem"
       ],
       "disposition": "MERGE",
-      "replacement": "cargo dev bench deployment",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite deployment",
+      "status": "deleted-after-parity in PR #154; the formal mechanism acceptance passed every verdict fail-closed (3/3 netem profiles, 108/108 records, PASS performance, clean teardown), and the catalogue smoke exercised routing/cost/nxr/longflow through the public suite path"
     },
     {
       "path": "scripts/benchmark-dns-comparison.sh",
@@ -424,8 +424,8 @@
         "benchmark-setup-rate.sh"
       ],
       "disposition": "MIGRATE",
-      "replacement": "cargo dev deploy (planner)",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite deployment (typed sections)",
+      "status": "deleted-after-parity in PR #154; route probing, setup-rate, throughput, relay evidence, SOCKS5 fixed-target serving, geosite config generation and the fail-closed summarizer are typed bench::deployment sections"
     },
     {
       "path": "scripts/dns-fake-server.py",
@@ -959,7 +959,7 @@
     "top_level_files": 61,
     "subdirectories": {
       "scripts/__pycache__": "build artifact, must be removed and ignored",
-      "scripts/bench-origin": "benchmark origin helper (2 files)",
+      "scripts/bench-origin": "deleted-after-parity in PR #154; the embedded native `cargo dev bench origin` is the deployment benchmark origin, and its final caller benchmark-deployment.sh is deleted in the same family",
       "scripts/ipv6-e2e": "deleted-after-parity in PR #152; active orchestration and helper behavior absorbed by typed rr-dev IPv6 modules",
       "scripts/v150-release-gates": "MOVED to notes/history/release-gates/v150-release-gates/ as inert historical evidence (was already non-runnable: calls deleted evaluate-release-performance.py)",
       "scripts/v151-release-gates": "MOVED to notes/history/release-gates/v151-release-gates/ as inert historical evidence (was already non-runnable: calls deleted evaluate-release-performance.py)",

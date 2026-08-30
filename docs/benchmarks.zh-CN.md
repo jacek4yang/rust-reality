@@ -51,7 +51,7 @@ JSON；如果内核或 VPS 策略拒绝某个事件，则记录带原始诊断�
 | `cargo dev bench run --suite fallback` | 在固定基线 ELF 与候选之间做干净的 fallback A/B：两侧 warn 级日志、直连 listener，两侧固定相同的 relay splice/pipe-pool/buffer 策略，并在计时前逐 slot 校验载荷完整性。 |
 | `cargo dev bench run --suite setup-rate` | 在固定基线 ELF 与候选之间做平衡 setup 速率 A/B（accept → 第一次 Vision 转换）。设置 `--cover-netem-rtt-ms` 时只把 TLS 伪装目标移到 veth/netns 后并施加有记录的单向延迟，同时保留 pool hit/miss 汇总。`--measure-mode perf` 在 warmup 后归因 task-clock/指令/context switch；`strace` 记录有界的 read/receive syscall 集，并先优雅停止 tracee，避免静默产生空汇总。 |
 | `cargo dev bench run --suite vision-direct`、`cargo dev bench run --suite xray` | 聚焦的 Vision-Direct 与 Xray 对比。 |
-| `scripts/benchmark-deployment.sh` | 部署特征化：路由正确性证明、路由决策成本（含 DNS 策略）、NXR 拓扑（direct/NXR/SOCKS5/Xray）、长连接 relay 证据，以及正式单跳 netem matrix。RTT 段保留精确生产构建在 1/10/50/100/200 ms、c1/8/32/128/512 下 Handoff/NXR/SOCKS5 的 ABBA cold/warm 样本与无秘密 pool retirement summary。 |
+| `cargo dev bench run --suite deployment` | 部署特征化：路由正确性证明、路由决策成本（含 DNS 策略）、NXR 拓扑（direct/NXR/SOCKS5/Xray）、长连接 relay 证据，以及正式单跳 netem matrix。RTT 段保留精确生产构建在 1/10/50/100/200 ms、c1/8/32/128/512 下 Handoff/NXR/SOCKS5 的 ABBA cold/warm 样本与无秘密 pool retirement summary。`--deployment-plan` 选择 `full`、`mechanism`、`robustness` 或非正式的 `smoke`。 |
 | `cargo dev bench run --suite soak` | 可选长期回环证据：standalone 混合流量加 Handoff、NXR、仅 TCP SOCKS5、中点 reload、精确进程身份下的逐进程 RSS、汇总 PSS，以及带哈希绑定的 start/interval/reload/end 完整性尝试。`--soak-implementation xray` 选择保留的对照端。默认原生运行是计划任务/非阻塞证据；精确 12 小时且分布式间隔为 5–30 分钟的运行会记录是否满足严格长期资格。 |
 | `cargo dev bench profiles` | 在精确 cgroup-v2 CPU、内存与零 swap 边界下执行 fail-closed 机器档位验证。它负责候选/Xray 身份、scope 进程清理、churn 与 512 MiB 下载、默认/调优空闲会话阶梯、RSS/FD/cgroup/OOM 采样、带逐阶梯基线的绝对日志计数、逐档汇总与聚合发布。 |
 | `cargo dev perf hotspot` | 对内建 benchmark 或既有 server PID 进行身份绑定的 `perf record` 采集。Rust 负责参数边界、精确 PID/start-time/可执行文件身份、只读二进制归档、report/build-ID 校验、校验和、发布与清理；`perf`、`readelf`、`sudo` 仅作为带类型 argv 的外部机制。 |
@@ -549,7 +549,7 @@ cargo dev bench run --suite descriptor-pressure \
 - **Miri 无法覆盖 `crates/rr-linux`**（不支持其中的裸系统调用）；该 crate 由
   ABI/布局测试和特权测试套件覆盖。
 - **NXR 没有协议级 Xray 基线**（Xray 没有实现 NXR），但 NXR 有受控协议对比：
-  部署特征化（`scripts/benchmark-deployment.sh`）在相同的线路/落地/源站拓扑
+  部署特征化（`cargo dev bench run --suite deployment`）在相同的线路/落地/源站拓扑
   上对比 NXR 与 SOCKS5——建连速率、吞吐、每连接 CPU 以及 netem RTT 扫描——
   并附带明确标注为系统级的 rust+NXR 对 Xray+SOCKS5 对比。最终数字见
   [performance.zh-CN.md](performance.zh-CN.md#部署特性v100)。

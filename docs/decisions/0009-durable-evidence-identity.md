@@ -29,9 +29,9 @@ detached checkout. Two sibling worktrees had already been pruned for disk pressu
 earlier in the same session, so the ability to replay the v1.8.0 release gate was one
 routine cleanup away from being lost silently.
 
-The immediate trigger is the `scripts/` removal target: `benchmark-contract.sh` carries
-a MERGE disposition, and merging its behaviour into the typed benchmark runner will
-necessarily change its digest.
+The immediate trigger was the `scripts/` removal target: `benchmark-contract.sh` carried
+a MERGE disposition, and merging its behaviour into the typed benchmark runner
+necessarily changed its digest.
 
 ## Decision
 
@@ -114,9 +114,10 @@ tooling.
 
 ## Effect on the `scripts/` removal target
 
-Unchanged and unblocked. Once the typed replacement reaches parity,
-`scripts/benchmark-contract.sh` and `scripts/host-exclusive-lock-keeper.py` may be
-merged and deleted per their assigned dispositions; their exact historical bytes survive
-as immutable evidence objects. Historical origin does not make archived data active
+Unchanged and unblocked. The typed replacement reached parity and
+`scripts/benchmark-contract.sh` was merged and deleted in PR #154 per its assigned
+disposition (`scripts/host-exclusive-lock-keeper.py` remains only as a shared helper
+until its final callers disappear); its exact historical bytes survive as immutable
+evidence objects. Historical origin does not make archived data active
 tooling, so the target remains a `scripts/` directory that does not exist and zero
 active shell policy.
