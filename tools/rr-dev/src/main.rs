@@ -120,6 +120,12 @@ enum DeployCommand {
         /// Release generation id (required except for rollback).
         #[arg(long)]
         release_id: Option<String>,
+        /// Existing absolute remote executable to adopt (bootstrap).
+        #[arg(long)]
+        baseline_binary: Option<String>,
+        /// Existing absolute remote config to adopt (bootstrap).
+        #[arg(long)]
+        baseline_config: Option<String>,
         /// Absolute local candidate binary path (stage/cutover).
         #[arg(long)]
         binary: Option<PathBuf>,
@@ -153,6 +159,12 @@ enum DeployCommand {
         /// Release generation id (required except for rollback).
         #[arg(long)]
         release_id: Option<String>,
+        /// Existing absolute remote executable to adopt (bootstrap).
+        #[arg(long)]
+        baseline_binary: Option<String>,
+        /// Existing absolute remote config to adopt (bootstrap).
+        #[arg(long)]
+        baseline_config: Option<String>,
         /// Absolute local candidate binary path (stage/cutover).
         #[arg(long)]
         binary: Option<PathBuf>,
@@ -240,8 +252,10 @@ impl DeployTarget {
 }
 
 /// A transaction that can be derived without contacting a live host.
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum DeployPlanOperation {
+    /// Adopt unmanaged remote files as the first protected generation.
+    Bootstrap,
     /// Install a candidate generation without changing CURRENT.
     Stage,
     /// Atomically move CURRENT to an already staged generation.
@@ -894,7 +908,7 @@ fn main() -> ExitCode {
             }
         },
         Command::Bench { command } => run_bench(&repo, &command),
-        Command::Deploy { command } => run_deploy(command),
+        Command::Deploy { command } => run_deploy(&repo, command),
         Command::Docs { command } => match command {
             DocsCommand::Check => {
                 let report = docs::check(&repo);
@@ -3148,6 +3162,8 @@ fn run_deploy_plan(
     target: DeployTarget,
     snapshot_path: &Path,
     release_id: Option<&str>,
+    baseline_binary: Option<&str>,
+    baseline_config: Option<&str>,
     binary: Option<&Path>,
     config: Option<&Path>,
     expected_sha256: Option<&str>,
@@ -3190,6 +3206,20 @@ fn run_deploy_plan(
     }
 
     let plan = match operation {
+        DeployPlanOperation::Bootstrap => release_id
+            .ok_or_else(|| "--release-id is required for bootstrap".to_owned())
+            .and_then(|release_id| {
+                let baseline_binary = baseline_binary
+                    .ok_or_else(|| "--baseline-binary is required for bootstrap".to_owned())?;
+                let baseline_config = baseline_config
+                    .ok_or_else(|| "--baseline-config is required for bootstrap".to_owned())?;
+                deploy::plan::plan_bootstrap(
+                    &snapshot,
+                    release_id,
+                    baseline_binary,
+                    baseline_config,
+                )
+            }),
         DeployPlanOperation::Stage => deploy_artifact(
             operation,
             release_id,
@@ -3269,11 +3299,14 @@ fn deploy_artifact(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn run_deploy_apply(
+    repo: &Path,
     operation: DeployPlanOperation,
     target: DeployTarget,
     release_id: Option<&str>,
+    baseline_binary: Option<&str>,
+    baseline_config: Option<&str>,
     binary: Option<&Path>,
     config: Option<&Path>,
     expected_sha256: Option<&str>,
@@ -3321,9 +3354,25 @@ fn run_deploy_apply(
                 return ExitCode::from(2);
             }
         },
-        DeployPlanOperation::Rollback | DeployPlanOperation::Promote => None,
+        DeployPlanOperation::Bootstrap
+        | DeployPlanOperation::Rollback
+        | DeployPlanOperation::Promote => None,
     };
     let plan = match operation {
+        DeployPlanOperation::Bootstrap => release_id
+            .ok_or_else(|| "--release-id is required for bootstrap".to_owned())
+            .and_then(|release_id| {
+                let baseline_binary = baseline_binary
+                    .ok_or_else(|| "--baseline-binary is required for bootstrap".to_owned())?;
+                let baseline_config = baseline_config
+                    .ok_or_else(|| "--baseline-config is required for bootstrap".to_owned())?;
+                deploy::plan::plan_bootstrap(
+                    &before,
+                    release_id,
+                    baseline_binary,
+                    baseline_config,
+                )
+            }),
         DeployPlanOperation::Stage => deploy::plan::plan_stage(
             &before,
             artifact.as_ref().expect("stage artifact was constructed"),
@@ -3346,6 +3395,8 @@ fn run_deploy_apply(
     };
     eprint!("{}", plan.describe());
     let mut validator = deploy::executor::SystemCandidateValidator;
+    let unit_file = (operation == DeployPlanOperation::Bootstrap)
+        .then(|| repo.join("deploy/rust-reality-vps.service"));
     match deploy::executor::execute(
         &mut transport,
         &mut validator,
@@ -3353,6 +3404,7 @@ fn run_deploy_apply(
         &plan,
         &before,
         artifact.as_ref(),
+        unit_file.as_deref(),
     ) {
         Ok(report) => {
             let json = report.to_json().to_python_json();
@@ -3375,7 +3427,8 @@ fn run_deploy_apply(
 /// The canary evaluator is fail-closed and three-valued, mirroring
 /// `cargo dev perf evaluate`: exit 0 on pass, 1 on a real canary failure, and 2
 /// when the recorded report could not be admitted at all.
-fn run_deploy(command: DeployCommand) -> ExitCode {
+#[allow(clippy::too_many_lines)]
+fn run_deploy(repo: &Path, command: DeployCommand) -> ExitCode {
     match command {
         DeployCommand::Inspect { target, output } => {
             run_deploy_inspect(target, output.as_deref())
@@ -3385,6 +3438,8 @@ fn run_deploy(command: DeployCommand) -> ExitCode {
             target,
             snapshot,
             release_id,
+            baseline_binary,
+            baseline_config,
             binary,
             config,
             expected_sha256,
@@ -3397,6 +3452,8 @@ fn run_deploy(command: DeployCommand) -> ExitCode {
             target,
             &snapshot,
             release_id.as_deref(),
+            baseline_binary.as_deref(),
+            baseline_config.as_deref(),
             binary.as_deref(),
             config.as_deref(),
             expected_sha256.as_deref(),
@@ -3409,6 +3466,8 @@ fn run_deploy(command: DeployCommand) -> ExitCode {
             operation,
             target,
             release_id,
+            baseline_binary,
+            baseline_config,
             binary,
             config,
             expected_sha256,
@@ -3418,9 +3477,12 @@ fn run_deploy(command: DeployCommand) -> ExitCode {
             mutate_remote,
             output,
         } => run_deploy_apply(
+            repo,
             operation,
             target,
             release_id.as_deref(),
+            baseline_binary.as_deref(),
+            baseline_config.as_deref(),
             binary.as_deref(),
             config.as_deref(),
             expected_sha256.as_deref(),

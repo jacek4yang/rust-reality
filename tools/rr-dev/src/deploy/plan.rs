@@ -137,6 +137,18 @@ impl ArtifactIdentity {
 /// One typed remote mutation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeploymentAction {
+    /// Adopt an existing remote binary/config pair as the first protected
+    /// generation without restarting the running service.
+    Bootstrap {
+        /// First release generation id.
+        release_id: String,
+        /// Existing executable path on the remote host.
+        baseline_binary: String,
+        /// Existing config path on the remote host.
+        baseline_config: String,
+    },
+    /// Install the repository-owned systemd unit and reload systemd metadata.
+    InstallUnit,
     /// Create the release directories and install the staged candidate into
     /// them without touching CURRENT.
     Stage {
@@ -182,6 +194,8 @@ impl DeploymentAction {
     #[must_use]
     pub fn verb(&self) -> &'static str {
         match self {
+            Self::Bootstrap { .. } => "bootstrap",
+            Self::InstallUnit => "install-unit",
             Self::Stage { .. } => "stage",
             Self::SwitchCurrent { .. } => "switch-current",
             Self::RestartService => "restart-service",
@@ -198,6 +212,17 @@ impl DeploymentAction {
     #[must_use]
     pub fn to_json(&self) -> Json {
         match self {
+            Self::Bootstrap {
+                release_id,
+                baseline_binary,
+                baseline_config,
+            } => Json::object([
+                ("action", Json::string("bootstrap")),
+                ("releaseId", Json::string(release_id.clone())),
+                ("baselineBinary", Json::string(baseline_binary.clone())),
+                ("baselineConfig", Json::string(baseline_config.clone())),
+            ]),
+            Self::InstallUnit => Json::object([("action", Json::string("install-unit"))]),
             Self::Stage { release_id, binary_sha256 } => Json::object([
                 ("action", Json::string("stage")),
                 ("releaseId", Json::string(release_id.clone())),
@@ -234,6 +259,8 @@ impl DeploymentAction {
 /// Which transaction a plan encodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlanKind {
+    /// Adopt the currently running unmanaged files as generation zero.
+    Bootstrap,
     /// Validate and install a candidate without touching CURRENT.
     Stage,
     /// Cut CURRENT over to a staged candidate with automatic rollback.
@@ -249,12 +276,63 @@ impl PlanKind {
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
+            Self::Bootstrap => "bootstrap",
             Self::Stage => "stage",
             Self::Cutover => "cutover",
             Self::Rollback => "rollback",
             Self::Promote => "promote",
         }
     }
+}
+
+/// Plans the one-time conversion from unmanaged files to CURRENT/PREVIOUS.
+///
+/// # Errors
+///
+/// Rejects an unhealthy service, unsafe/non-absolute input path, invalid release
+/// id, or a host that already has generation pointers.
+pub fn plan_bootstrap(
+    snapshot: &super::snapshot::HostSnapshot,
+    release_id: &str,
+    baseline_binary: &str,
+    baseline_config: &str,
+) -> Result<DeploymentPlan, String> {
+    validate_release_id(release_id)?;
+    for (label, path) in [
+        ("baseline binary", baseline_binary),
+        ("baseline config", baseline_config),
+    ] {
+        if !path.starts_with('/') || path.chars().any(char::is_whitespace) {
+            return Err(format!("{label} must be an absolute argv-safe remote path"));
+        }
+    }
+    if !snapshot.service_healthy() || !snapshot.ssh_22_present {
+        return Err(format!(
+            "refusing bootstrap: {} is not healthy (state={}, ssh={}, 443={})",
+            snapshot.alias,
+            snapshot.service_state,
+            snapshot.ssh_22_present,
+            snapshot.service_443_present
+        ));
+    }
+    if snapshot.generations.is_some() {
+        return Err("refusing bootstrap: CURRENT/PREVIOUS pointers already exist".to_owned());
+    }
+    Ok(DeploymentPlan {
+        kind: PlanKind::Bootstrap,
+        target: snapshot.alias.clone(),
+        actions: vec![
+            DeploymentAction::Bootstrap {
+                release_id: release_id.to_owned(),
+                baseline_binary: baseline_binary.to_owned(),
+                baseline_config: baseline_config.to_owned(),
+            },
+            DeploymentAction::InstallUnit,
+        ],
+        rationale: vec![format!(
+            "adopt the healthy running deployment as protected generation {release_id} without restart"
+        )],
+    })
 }
 
 /// A validated deployment plan for one host.
@@ -558,7 +636,7 @@ pub fn rollback_for(plan: &DeploymentPlan) -> Option<DeploymentPlan> {
             rationale: vec![format!("automatic rollback of failed {}", plan.kind.name())],
         }),
         // A failed rollback is retried, not rolled back.
-        PlanKind::Stage | PlanKind::Rollback => None,
+        PlanKind::Bootstrap | PlanKind::Stage | PlanKind::Rollback => None,
     }
 }
 
@@ -624,6 +702,31 @@ mod tests {
         assert!(bad.validate().is_err());
         bad.source_commit = None;
         assert!(bad.validate().is_ok());
+    }
+
+    #[test]
+    fn bootstrap_is_one_time_and_never_restarts() {
+        let mut initial = healthy_snapshot("line");
+        initial.generations = None;
+        let plan = plan_bootstrap(
+            &initial,
+            "baseline-1",
+            "/usr/local/bin/rust-reality",
+            "/etc/rust-reality/config.json",
+        )
+        .unwrap();
+        assert_eq!(plan.kind, PlanKind::Bootstrap);
+        assert_eq!(
+            plan.actions.iter().map(DeploymentAction::verb).collect::<Vec<_>>(),
+            ["bootstrap", "install-unit"]
+        );
+        assert!(plan_bootstrap(
+            &healthy_snapshot("line"),
+            "baseline-1",
+            "/usr/local/bin/rust-reality",
+            "/etc/rust-reality/config.json",
+        )
+        .is_err());
     }
 
     #[test]

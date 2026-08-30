@@ -145,12 +145,23 @@ pub fn execute(
     plan: &DeploymentPlan,
     before: &HostSnapshot,
     artifact: Option<&ArtifactIdentity>,
+    unit_file: Option<&Path>,
 ) -> Result<ExecutionReport, String> {
     if plan.target != host.alias() || before.alias != host.alias() {
         return Err("deployment plan/snapshot target does not match the host".to_owned());
     }
     let mut milestones = Vec::new();
     match plan.kind {
+        PlanKind::Bootstrap => {
+            let unit_file = unit_file
+                .ok_or_else(|| "bootstrap requires the repository systemd unit".to_owned())?;
+            bootstrap(transport, host, plan, unit_file)?;
+            milestones.extend([
+                "baseline-generation-adopted".to_owned(),
+                "current-and-previous-initialized".to_owned(),
+                "systemd-unit-installed-without-restart".to_owned(),
+            ]);
+        }
         PlanKind::Stage => {
             let artifact = artifact.ok_or_else(|| "stage requires candidate identity".to_owned())?;
             validator.validate(artifact)?;
@@ -216,7 +227,7 @@ fn expected_binary(
     artifact: Option<&ArtifactIdentity>,
 ) -> Result<String, String> {
     match plan.kind {
-        PlanKind::Stage | PlanKind::Promote => before
+        PlanKind::Bootstrap | PlanKind::Stage | PlanKind::Promote => before
             .executable
             .as_deref()
             .map(str::to_owned)
@@ -245,6 +256,211 @@ fn expected_binary(
                 _ => None,
             })
             .ok_or_else(|| "rollback plan lacks verification".to_owned()),
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn bootstrap(
+    transport: &mut impl Transport,
+    host: &Host,
+    plan: &DeploymentPlan,
+    unit_file: &Path,
+) -> Result<(), String> {
+    if !unit_file.is_file() {
+        return Err(format!(
+            "repository systemd unit is absent: {}",
+            unit_file.display()
+        ));
+    }
+    let (release_id, baseline_binary, baseline_config) = plan
+        .actions
+        .iter()
+        .find_map(|action| match action {
+            crate::deploy::plan::DeploymentAction::Bootstrap {
+                release_id,
+                baseline_binary,
+                baseline_config,
+            } => Some((release_id.as_str(), baseline_binary.as_str(), baseline_config.as_str())),
+            _ => None,
+        })
+        .ok_or_else(|| "bootstrap plan has no baseline action".to_owned())?;
+    validate_release_id(release_id)?;
+    run(
+        transport,
+        host,
+        true,
+        &["test", "-x", baseline_binary],
+        "verify baseline binary",
+    )?;
+    run(
+        transport,
+        host,
+        true,
+        &["test", "-r", baseline_config],
+        "verify baseline config",
+    )?;
+    let binary_digest = checked(
+        transport,
+        host,
+        true,
+        &["sha256sum".to_owned(), baseline_binary.to_owned()],
+        "digest baseline binary",
+    )?
+    .split_whitespace()
+    .next()
+    .ok_or_else(|| "baseline binary digest output is empty".to_owned())?
+    .to_owned();
+    let config_digest = checked(
+        transport,
+        host,
+        true,
+        &["sha256sum".to_owned(), baseline_config.to_owned()],
+        "digest baseline config",
+    )?
+    .split_whitespace()
+    .next()
+    .ok_or_else(|| "baseline config digest output is empty".to_owned())?
+    .to_owned();
+    for (label, digest) in [
+        ("baseline binary", binary_digest.as_str()),
+        ("baseline config", config_digest.as_str()),
+    ] {
+        if digest.len() != 64
+            || digest
+                .bytes()
+                .any(|byte| !byte.is_ascii_hexdigit() || byte.is_ascii_uppercase())
+        {
+            return Err(format!("{label} digest is not lowercase SHA-256"));
+        }
+    }
+    let paths = Paths::canonical();
+    let binary_dir = format!("{}/{release_id}", paths.releases);
+    let config_dir = format!("{}/{release_id}", paths.config_releases);
+    run(
+        transport,
+        host,
+        true,
+        &["install", "-d", "-m", "0755", &binary_dir],
+        "create bootstrap binary generation",
+    )?;
+    run(
+        transport,
+        host,
+        true,
+        &[
+            "install",
+            "-d",
+            "-m",
+            "0750",
+            "-o",
+            "root",
+            "-g",
+            "rust-reality",
+            &config_dir,
+        ],
+        "create bootstrap config generation",
+    )?;
+    run(
+        transport,
+        host,
+        true,
+        &[
+            "install",
+            "-m",
+            "0755",
+            baseline_binary,
+            &format!("{binary_dir}/rust-reality"),
+        ],
+        "install bootstrap binary",
+    )?;
+    run(
+        transport,
+        host,
+        true,
+        &[
+            "install",
+            "-m",
+            "0640",
+            "-o",
+            "root",
+            "-g",
+            "rust-reality",
+            baseline_config,
+            &format!("{config_dir}/config.json"),
+        ],
+        "install bootstrap config",
+    )?;
+    for (target, link) in [
+        (binary_dir.as_str(), paths.current_binary.as_str()),
+        (binary_dir.as_str(), paths.previous_binary.as_str()),
+        (config_dir.as_str(), paths.current_config.as_str()),
+        (config_dir.as_str(), paths.previous_config.as_str()),
+    ] {
+        switch_link(transport, host, target, link, "next")?;
+    }
+    install_record(
+        transport,
+        host,
+        "bootstrap",
+        &format!(
+            "legacyBinary={baseline_binary}\nlegacyBinarySha256={binary_digest}\nlegacyConfig={baseline_config}\nlegacyConfigSha256={config_digest}\n"
+        ),
+    )?;
+    install_unit(transport, host, unit_file)
+}
+
+fn install_unit(
+    transport: &mut impl Transport,
+    host: &Host,
+    unit_file: &Path,
+) -> Result<(), String> {
+    let staging = checked(
+        transport,
+        host,
+        false,
+        &strings(&["mktemp", "-d", "/tmp/rust-reality-deploy.XXXXXXXX"]),
+        "create unit staging directory",
+    )?;
+    if !safe_staging(&staging) {
+        return Err(format!("remote mktemp returned unsafe path {staging:?}"));
+    }
+    let remote = format!("{staging}/rust-reality.service");
+    let result = (|| {
+        transport.copy_to(host, unit_file, &remote)?;
+        run(
+            transport,
+            host,
+            true,
+            &[
+                "install",
+                "-m",
+                "0644",
+                &remote,
+                &format!("/etc/systemd/system/{}", host.service()),
+            ],
+            "install systemd unit",
+        )?;
+        run(
+            transport,
+            host,
+            true,
+            &["systemctl", "daemon-reload"],
+            "reload systemd units",
+        )
+    })();
+    let cleanup = run(
+        transport,
+        host,
+        false,
+        &["rm", "-rf", "--", &staging],
+        "remove unit staging directory",
+    );
+    match (result, cleanup) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(error), Err(cleanup)) => {
+            Err(format!("{error}; unit staging cleanup failed: {cleanup}"))
+        }
     }
 }
 
@@ -738,6 +954,7 @@ mod tests {
         copies: Vec<String>,
         fail_candidate_start: bool,
         candidate_start_failed: bool,
+        running_executable: String,
     }
 
     impl FakeTransport {
@@ -752,6 +969,7 @@ mod tests {
                 copies: Vec::new(),
                 fail_candidate_start: false,
                 candidate_start_failed: false,
+                running_executable: "/opt/rust-reality/releases/r1/rust-reality".to_owned(),
             }
         }
     }
@@ -774,7 +992,7 @@ mod tests {
             } else if joined == "systemctl show rust-reality.service -p MainPID --value" {
                 "4242\n".to_owned()
             } else if joined == "readlink -f /proc/4242/exe" {
-                format!("{}/rust-reality\n", self.current)
+                format!("{}\n", self.running_executable)
             } else if joined.starts_with("sha256sum /opt/rust-reality/releases/r2")
                 || joined.starts_with("sha256sum /tmp/rust-reality-deploy.")
             {
@@ -815,6 +1033,9 @@ mod tests {
             {
                 self.candidate_start_failed = true;
                 code = Some(1);
+                String::new()
+            } else if joined == "systemctl start rust-reality.service" {
+                self.running_executable = format!("{}/rust-reality", self.current);
                 String::new()
             } else {
                 String::new()
@@ -889,12 +1110,58 @@ mod tests {
             &plan,
             &before,
             Some(&artifact),
+            None,
         )
         .unwrap();
         assert_eq!(validator.calls, 1);
         assert_eq!(transport.copies.len(), 2);
         assert_eq!(report.after.executable, before.executable);
         assert!(!transport.commands.iter().any(|argv| argv.first().map(String::as_str) == Some("systemctl") && argv.get(1).map(String::as_str) == Some("stop")));
+    }
+
+    #[test]
+    fn fake_bootstrap_initializes_both_generations_without_restarting() {
+        let topology = Topology::canonical().unwrap();
+        let host = topology.host(HostRole::Line);
+        let mut before = snapshot();
+        before.generations = None;
+        before.executable = Some("/usr/local/bin/rust-reality".to_owned());
+        let plan = crate::deploy::plan::plan_bootstrap(
+            &before,
+            "baseline-1",
+            "/usr/local/bin/rust-reality",
+            "/etc/rust-reality/config.json",
+        )
+        .unwrap();
+        let mut transport = FakeTransport::new();
+        transport.running_executable = "/usr/local/bin/rust-reality".to_owned();
+        let unit = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../deploy/rust-reality-vps.service");
+        let report = execute(
+            &mut transport,
+            &mut FakeValidator::default(),
+            host,
+            &plan,
+            &before,
+            None,
+            Some(&unit),
+        )
+        .unwrap();
+        assert_eq!(
+            report.after.executable.as_deref(),
+            Some("/usr/local/bin/rust-reality")
+        );
+        assert_eq!(transport.current, "/opt/rust-reality/releases/baseline-1");
+        assert_eq!(transport.previous, transport.current);
+        assert!(!transport.commands.iter().any(|argv| {
+            argv == &["systemctl".to_owned(), "stop".to_owned(), "rust-reality.service".to_owned()]
+        }));
+        assert!(
+            transport
+                .copies
+                .iter()
+                .any(|path| path.ends_with("/rust-reality.service"))
+        );
     }
 
     #[test]
@@ -913,6 +1180,7 @@ mod tests {
             &plan,
             &before,
             Some(&artifact),
+            None,
         )
         .unwrap();
         assert_eq!(transport.current, "/opt/rust-reality/releases/r2");
@@ -940,6 +1208,7 @@ mod tests {
             &plan,
             &before,
             Some(&artifact),
+            None,
         )
         .unwrap_err();
         assert!(error.contains("rolled back"), "{error}");
