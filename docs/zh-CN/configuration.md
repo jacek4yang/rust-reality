@@ -1,6 +1,6 @@
 # 配置参考
 
-[English](configuration.md) | 简体中文
+[English](../en/configuration.md) | 简体中文
 
 本文覆盖 `rust-reality` 1.x 接受的全部 JSON 字段。最终权威仍是实际二进制：
 
@@ -49,7 +49,7 @@ rust-reality config format --config config.json > config.formatted.json
 
 从 1.4 升级配置必须迁移：标量形式 `"listen": "<ip>"` 和
 `network.addressFamily` 都会被拒绝。完整的新旧字段映射表见
-[CHANGELOG 1.5.0 迁移说明](../CHANGELOG.md)。
+[CHANGELOG 1.5.0 迁移说明](../../CHANGELOG.md)。
 
 ## `log`
 
@@ -371,7 +371,7 @@ LINE 与 LANDING 使用独立配置时，部署预检必须执行同一比较；
 3. 再次重载落地机，将两个 previous-key 列表清空。
 
 退役密钥必须及时移除：只要退役密钥仍被接受，轮换所要恢复的前向保密界就尚未
-生效（见[威胁模型](threat-model.zh-CN.md)）。开封路径总是先尝试活跃密钥对，
+生效（见[威胁模型](threat-model.md)）。开封路径总是先尝试活跃密钥对，
 候选尝试以九次为硬上限，且绝不暴露哪个候选命中——失败保持封闭错误词汇与静默
 关闭。
 

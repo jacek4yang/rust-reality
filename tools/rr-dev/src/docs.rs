@@ -31,17 +31,18 @@ use std::{
 const REQUIRED_PAIRS: &[(&str, &str)] = &[
     ("README.md", "README.zh-CN.md"),
     ("SECURITY.md", "docs/zh-CN/security.md"),
-    ("docs/index.md", "docs/index.zh-CN.md"),
-    ("docs/getting-started.md", "docs/getting-started.zh-CN.md"),
-    ("docs/cli.md", "docs/cli.zh-CN.md"),
-    ("docs/configuration.md", "docs/configuration.zh-CN.md"),
-    ("docs/deployment.md", "docs/deployment.zh-CN.md"),
-    ("docs/architecture.md", "docs/architecture.zh-CN.md"),
-    ("docs/protocol.md", "docs/protocol.zh-CN.md"),
-    ("docs/performance.md", "docs/performance.zh-CN.md"),
-    ("docs/benchmarks.md", "docs/benchmarks.zh-CN.md"),
-    ("docs/threat-model.md", "docs/threat-model.zh-CN.md"),
-    ("docs/tuning.md", "docs/tuning.zh-CN.md"),
+    ("docs/en/index.md", "docs/zh-CN/index.md"),
+    ("docs/en/getting-started.md", "docs/zh-CN/getting-started.md"),
+    ("docs/en/cli.md", "docs/zh-CN/cli.md"),
+    ("docs/en/configuration.md", "docs/zh-CN/configuration.md"),
+    ("docs/en/deployment.md", "docs/zh-CN/deployment.md"),
+    ("docs/en/architecture.md", "docs/zh-CN/architecture.md"),
+    ("docs/en/protocol.md", "docs/zh-CN/protocol.md"),
+    ("docs/en/performance.md", "docs/zh-CN/performance.md"),
+    ("docs/en/benchmarks.md", "docs/zh-CN/benchmarks.md"),
+    ("docs/en/threat-model.md", "docs/zh-CN/threat-model.md"),
+    ("docs/en/tuning.md", "docs/zh-CN/tuning.md"),
+    ("docs/en/release-process.md", "docs/zh-CN/release-process.md"),
 ];
 
 /// Wording that must never read as current behaviour again.
@@ -61,7 +62,7 @@ const FORBIDDEN_PHRASES: &[&str] = &[
 ];
 
 /// Paths where historical wording is legitimate.
-const FORBIDDEN_EXEMPT: &[&str] = &["CHANGELOG.md", "docs/decisions/"];
+const FORBIDDEN_EXEMPT: &[&str] = &["CHANGELOG.md", "docs/adr/"];
 
 /// The data file that owns current-release identity for documentation surfaces.
 const HEADLINES: &str = "benchmarks/baselines/current-release-headlines.json";
@@ -416,22 +417,22 @@ fn surface_failures(repo: &Path, release: &str, common: &[String], full: &[Strin
             "## 架构".to_owned(),
         ),
         (
-            "docs/benchmarks.md",
+            "docs/en/benchmarks.md",
             format!("## {release} release comparison evidence"),
             "## Historical README headline tables".to_owned(),
         ),
         (
-            "docs/benchmarks.zh-CN.md",
+            "docs/zh-CN/benchmarks.md",
             format!("## {release} 发布对比证据"),
             "## 历史 README 头条表格".to_owned(),
         ),
         (
-            "docs/performance.md",
+            "docs/en/performance.md",
             format!("## {release} release evidence"),
             "## v1.5.1 release evidence".to_owned(),
         ),
         (
-            "docs/performance.zh-CN.md",
+            "docs/zh-CN/performance.md",
             format!("## {release} 发布证据"),
             "## v1.5.1 发布证据".to_owned(),
         ),
@@ -842,7 +843,7 @@ mod tests {
         assert!(
             files
                 .iter()
-                .any(|path| { relative_display(&repo, path).starts_with("docs/decisions/") }),
+                .any(|path| { relative_display(&repo, path).starts_with("docs/adr/") }),
             "the exempt path no longer matches any file, so the exemption is stale"
         );
     }

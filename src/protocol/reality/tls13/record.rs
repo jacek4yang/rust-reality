@@ -127,7 +127,7 @@ impl Error for Tls13RecordError {}
 /// The default backend (feature `ring-aead`, on by default) is ring's
 /// BoringSSL-derived implementation, which measured ≈2.5× faster than
 /// RustCrypto at production record sizes (decision D9; see
-/// docs/performance.md). A `--no-default-features` build selects the
+/// docs/en/performance.md). A `--no-default-features` build selects the
 /// pure-Rust RustCrypto backend with identical wire behavior. Only the AEAD
 /// primitive differs: nonce
 /// derivation, sequence ownership, AAD construction, framing, limits, and

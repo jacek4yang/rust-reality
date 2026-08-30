@@ -1,6 +1,6 @@
 # 容量规划、性能调优与故障诊断
 
-[English](tuning.md) | 简体中文
+[English](../en/tuning.md) | 简体中文
 
 本文面向在 Linux VPS 上运行 rust-reality 的运维人员：如何选择机型规格、
 安全地设定容量上限，以及在不读源码的情况下诊断变慢的原因。本文假设你具备
@@ -926,7 +926,7 @@ TLS/Vision 工作，变成原始密文 splice 中继；落地机重建会话并�
 
 两种拓扑的链路系统总 CPU 大致持平（该 loopback A/B 中下载 −5.6%），
 所以选择的是 CPU 花在哪台机器上，而不是总量；实测表及其标注见
-[performance.md](performance.zh-CN.md#handoff-线路机卸载实测单机)。
+[performance.md](performance.md#handoff-线路机卸载实测单机)。
 
 相同端点上实测（MEASURED-LOCAL）：NXR 段相比 direct 增加 ≈3–5% 吞吐
 税和每连接 ≈+0.15 ms CPU——小到足以让"落地节点比线路节点低一档"成为

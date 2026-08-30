@@ -348,7 +348,7 @@ pub enum TuningMode {
     Startup,
     /// Startup derivation plus a controller adjusting soft ceilings within
     /// the startup-derived hard bounds (hysteresis, dwell, and a critical
-    /// pressure clamp documented in `docs/tuning.md`).
+    /// pressure clamp documented in `docs/en/tuning.md`).
     Adaptive,
 }
 

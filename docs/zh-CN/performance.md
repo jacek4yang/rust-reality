@@ -1,6 +1,6 @@
 # 性能
 
-[English](performance.md) | 简体中文
+[English](../en/performance.md) | 简体中文
 
 本文记录 v1.0.0 数据平面的实测性能属性以及每项设计决策背后的证据。除非另有
 说明，数字均在验证主机上测得：Intel Core i3-8100（4C/4T @ 3.60 GHz）、
@@ -8,7 +8,7 @@
 对编译的 Go 源站、未经修改的 Xray 26.7.28 客户端。loopback 让服务端、客户端
 和源站共享主机 CPU；这些数字描述的是实现成本，绝不是互联网吞吐。冻结的
 v1.0.0 发布对比矩阵见
-[benchmarks.zh-CN.md](benchmarks.zh-CN.md)。v1.6.0、v1.5.1 与 v1.5.0 的证据在下面紧随的
+[benchmarks.zh-CN.md](benchmarks.md)。v1.6.0、v1.5.1 与 v1.5.0 的证据在下面紧随的
 章节中，v1.0.0 表格作为该版本的历史发布测量保持不变。
 
 ## v1.7 开发证据：已认证 cover TCP 预热
@@ -123,7 +123,7 @@ Vision framed、Vision Direct 与双向传输，**不**覆盖 Handoff 与 NXR—
 时由双 VPS 主动 canary 覆盖；此外先前的 Xray 对比头条数据是在 v1.7.0 与 v1.6.1
 二进制上测得，这里沿用是因为已正式确立中性，而非在此重新测量。
 
-`docs/memory-audit-v1.8.md` 记录所有权映射、拷贝台账、分配台账与异步 future
+[docs/en/operations/memory-audit-v1.8.md](../en/operations/memory-audit-v1.8.md) 记录所有权映射、拷贝台账、分配台账与异步 future
 尺寸，包括一处仍存在于 v1.8 的实测重复——因为它的修复未通过受保护路径门禁。
 
 ## v1.7.0 发布证据
@@ -185,7 +185,7 @@ v1.6.1 头条保留 v1.6.0 与已发布的 v1.5.1 二进制对比测量，因为
 源站 write 减少 3.5×）。公开对比对象仍为 Xray-core 26.7.28（`5ca6f4b`，
 go1.26.0，二进制 SHA-256 `23d228d7…04c5268`）。完整建连、吞吐、DNS、路由、
 RSS、限制、身份与证据路径见
-[benchmarks.zh-CN.md](benchmarks.zh-CN.md#v161-发布对比证据)。
+[benchmarks.zh-CN.md](benchmarks.md#v161-发布对比证据)。
 
 ## v1.5.1 发布证据
 
@@ -215,7 +215,7 @@ v1.5.1 不含数据平面重设计；它是一次有针对性的成本削减与�
   非随自旋增长。该锁不是瓶颈，因此有意保留不分片。
 - **对 Xray 的对比。** v1.5.1 对 Xray 26.7.28 的建连速率、吞吐、DNS、
   路由规模与 RSS 测量汇总于
-  [benchmarks.zh-CN.md](benchmarks.zh-CN.md#v151-发布对比证据)。
+  [benchmarks.zh-CN.md](benchmarks.md#v151-发布对比证据)。
 
 ## v1.5 cover flight 与发布证据
 
@@ -362,7 +362,7 @@ perf 成本为每连接 0.757 ms、4.00 M 指令，Xray 为 1.239 ms、5.69 M �
 `benchmarks/final/v1.3-setup-refactor/`。
 
 VLESS Encryption 的 REALITY + Vision 精确叠加 A/B 及不在该档位发布它的结论见
-[ADR 0003](decisions/0003-do-not-stack-vless-encryption-on-reality.md)：p50 吞吐
+[ADR 0003](../adr/0003-do-not-stack-vless-encryption-on-reality.md)：p50 吞吐
 为 0.696×，服务端 CPU/GiB 为 5.50×，且 Vision splice 被禁用。
 
 ## 鲁棒性门禁
@@ -413,7 +413,7 @@ CPU 的分解：
 BoringSSL 的 C/汇编，静态链接）提供。使用 `--no-default-features` 构建则选择
 纯 Rust 的 RustCrypto aes-gcm 提供者，没有其他行为差异；逐字节跨提供者等价性
 和 RFC 8448 向量由两种配置下都会运行的测试保证。安全取舍（扩展密钥调度清
-零）记录在 [安全策略](zh-CN/security.md)。
+零）记录在 [安全策略](security.md)。
 
 实测证据（上述验证主机）：
 
@@ -446,7 +446,7 @@ BoringSSL 的 C/汇编，静态链接）提供。使用 `--no-default-features` 
   `benchmarks/final/v1-fallback-ab/`）：c1–c32 时 splice fallback 为 Xray 的
   1.00–1.03×，task-clock 持平或更低。更早的 fallback 劣势读数被追溯
   到矩阵 harness 的 debug 级逐连接日志，而不是 relay 路径（见
-  [benchmarks.zh-CN.md](benchmarks.zh-CN.md) 的方法一节）。D8 时期的历史
+  [benchmarks.zh-CN.md](benchmarks.md) 的方法一节）。D8 时期的历史
   机制测量在同主机上曾录得 1.04–1.05×；作为头条数值已被最终发布对比取代。
 
 ## 连接 setup
@@ -573,7 +573,7 @@ TLS，落地机吸收它，系统总 CPU 大致持平（此处略优）。公网
 
 - io_uring：生命周期审计后移除——设计上并非零拷贝、无取消、无会话层；补完它
   等于重写，收益不如 splice。见
-  [decisions/0002-io-uring-removed.md](decisions/0002-io-uring-removed.md)。
+  [decisions/0002-io-uring-removed.md](../adr/0002-io-uring-removed.md)。
 - 调度器/运行时重设计：Tokio 多线程运行时约占 framed CPU 的 1%；无争用证据。
 - Vision framing / 记录解析工作：合计 <1%。
 - 短流自适应分类器：没有新证据不做；一直没有找到证据。

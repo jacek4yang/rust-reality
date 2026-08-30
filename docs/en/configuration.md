@@ -1,6 +1,6 @@
 # Configuration reference
 
-English | [简体中文](configuration.zh-CN.md)
+English | [简体中文](../zh-CN/configuration.md)
 
 This document covers every accepted JSON field in `rust-reality` 1.x. The
 executable remains authoritative:
@@ -54,7 +54,7 @@ Top-level shape:
 Upgrading a 1.4 configuration requires migration: the scalar
 `"listen": "<ip>"` form and `network.addressFamily` are rejected. The complete
 old-to-new mapping table is in the
-[CHANGELOG 1.5.0 migration notes](../CHANGELOG.md).
+[CHANGELOG 1.5.0 migration notes](../../CHANGELOG.md).
 
 ## `log`
 

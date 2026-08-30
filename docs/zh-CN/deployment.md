@@ -1,6 +1,6 @@
 # Linux 部署
 
-[English](deployment.md) | 简体中文
+[English](../en/deployment.md) | 简体中文
 
 本指南使用官方 Linux Release（x86_64 或 aarch64）部署单机公网节点、线路机，
 或受防火墙限制的 NXR 落地机。
@@ -16,7 +16,7 @@
 二进制需要出站 DNS/TCP、资产缓存写权限，以及可选文件日志目录写权限；不需要
 运行时语言或伴随守护进程。
 
-机型选择、资源档位与性能诊断见[容量规划、性能调优与故障诊断](tuning.zh-CN.md)。
+机型选择、资源档位与性能诊断见[容量规划、性能调优与故障诊断](tuning.md)。
 
 ## 安装官方 Release
 
@@ -346,7 +346,7 @@ LINE 可以继续连接 v1.5 LANDING。回滚时，必须先降级所有 LINE，
 最后再降级 LANDING。不得在仍有活跃转移会话时重启或降级 LANDING。
 
 记录序号安全边界与混合版本依据见
-[ADR 0005](decisions/0005-handoff-server-record-sequences.md)。
+[ADR 0005](../adr/0005-handoff-server-record-sequences.md)。
 
 ## GeoIP 与 GeoSite
 
@@ -365,7 +365,7 @@ LINE 可以继续连接 v1.5 LANDING。回滚时，必须先降级所有 LINE，
 请把示例域名换成真实可信来源。下载有大小/超时边界，支持条件重验证，解析完成
 才发布，失败保留最后有效快照。`ext:文件名:标签` 只从配置缓存目录读取。
 
-匹配器和 DNS 策略见[配置参考](configuration.zh-CN.md#routing)。
+匹配器和 DNS 策略见[配置参考](configuration.md#routing)。
 
 ## 安装并启动 systemd
 
@@ -409,7 +409,7 @@ sudo systemctl reload rust-reality
 
 候选失败时当前 generation 继续工作，已有连接保留旧 generation。监听拓扑、
 `runtime` 设置、resource governor、direct barrier、relay 策略和 NXR 重放缓存容量/保留时间是冷设置，必须受控重启。
-完整列表见[热更新边界](configuration.zh-CN.md#热更新边界)。
+完整列表见[热更新边界](configuration.md#热更新边界)。
 
 SIGTERM 停止新 accept 并执行有界优雅退出；unit 的 40 秒停止超时覆盖程序 30 秒限制。
 
@@ -417,7 +417,7 @@ SIGTERM 停止新 accept 并执行有界优雅退出；unit 的 40 秒停止超�
 
 从 1.4 升级必须迁移配置：标量形式 `"listen": "<ip>"` 和
 `network.addressFamily` 都会被拒绝。新旧字段映射表见
-[CHANGELOG 1.5.0 迁移说明](../CHANGELOG.md)；重启前先用新二进制对迁移后的
+[CHANGELOG 1.5.0 迁移说明](../../CHANGELOG.md)；重启前先用新二进制对迁移后的
 配置副本执行 `check`。
 
 1. 下载并验证新 tag 的全部 Release 资产。
@@ -464,7 +464,7 @@ REALITY/VLESS 持久身份。首次迁移先把正在运行的二进制和配置
 
 日常边缘机的 22 是永久管理基础设施，443 是唯一公网 rust-reality 监听；origin、
 指标与 benchmark helper 只能在 loopback、Unix socket 或隔离 namespace。正常
-release 执行[发布流程](release-process.zh-CN.md)中的短时高密度 canary 后继续运行；
+release 执行[发布流程](release-process.md)中的短时高密度 canary 后继续运行；
 长期 soak 是计划任务/非阻塞证据，不再是发布等待。
 
 **rust-reality release 是可替换的软件代际；VPS 的 REALITY/VLESS 身份是持久部署
@@ -495,7 +495,7 @@ splice 持平，且无特权的生产部署模型永远无法 arm 它。仍然�
 未知字段被拒绝。
 
 io_uring 后端已被移除（见
-[`decisions/0002-io-uring-removed.md`](decisions/0002-io-uring-removed.md)）；仍然设置
+[`decisions/0002-io-uring-removed.md`](../adr/0002-io-uring-removed.md)）；仍然设置
 `policy.relay.ioUring` 或 `policy.relay.maxIoUringRelays` 的配置会作为未知字段被拒绝。
 
 可移植的缓冲中继和 Linux `splice` 不需要额外权限。

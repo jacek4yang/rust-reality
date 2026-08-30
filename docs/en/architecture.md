@@ -1,6 +1,6 @@
 # Architecture
 
-English | [简体中文](architecture.zh-CN.md)
+English | [简体中文](../zh-CN/architecture.md)
 
 This document describes how the production data plane is structured: the
 connection lifecycle, the raw-relay kernel backends, the descriptor admission
@@ -242,7 +242,7 @@ registration per progress step, no hot-path logging.
 ## LINE-to-LANDING warm transport
 
 Fixed Handoff, NXR, and SOCKS5 peers reuse the adaptive TCP pool described in
-[ADR 0007](decisions/0007-adaptive-line-to-landing-warm-connections.md). It
+[ADR 0007](../adr/0007-adaptive-line-to-landing-warm-connections.md). It
 pre-pays only TCP establishment. READY sockets have no user, destination,
 protocol credentials, replay state, or session state:
 
@@ -420,7 +420,7 @@ fails, the first is closed and all four units are released.
   `maxSockhashRelays`, or `maxPinnedMemoryBytes` configuration keys fail
   strict decoding as unknown fields.
 - **io_uring**: removed, not implemented. Rationale:
-  [decisions/0002-io-uring-removed.md](decisions/0002-io-uring-removed.md).
+  [decisions/0002-io-uring-removed.md](../adr/0002-io-uring-removed.md).
   Stale `ioUring` or `maxIoUringRelays` configuration keys fail strict
   decoding as unknown fields.
 

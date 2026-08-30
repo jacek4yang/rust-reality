@@ -1,6 +1,6 @@
 # 威胁模型
 
-[English](threat-model.md) | 简体中文
+[English](../en/threat-model.md) | 简体中文
 
 ## 受保护的数据路径
 
@@ -67,7 +67,7 @@ SOCKS 授权。Handoff/NXR 的防火墙源地址限制仍是额外部署边界�
 强制 REALITY 档位不把 VLESS Encryption 作为额外安全目标。外层 TLS 1.3 记录层
 已经提供机密性、完整性与前向保密的流量密钥；再叠一层数据 AEAD 会禁用本项目
 支持的 Vision raw/splice 路径。安全/性能结论及重新评估门槛记录在
-[ADR 0003](decisions/0003-do-not-stack-vless-encryption-on-reality.md)。
+[ADR 0003](../adr/0003-do-not-stack-vless-encryption-on-reality.md)。
 
 ## NXR 边界
 

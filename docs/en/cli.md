@@ -1,6 +1,6 @@
 # Command-line reference
 
-English | [简体中文](cli.zh-CN.md)
+English | [简体中文](../zh-CN/cli.md)
 
 ## General behavior
 

@@ -1,6 +1,6 @@
 # Benchmark policy and canonical samples
 
-English | [简体中文](benchmarks.zh-CN.md)
+English | [简体中文](../zh-CN/benchmarks.md)
 
 This document states how rust-reality is measured, which samples are canonical
 for v1.0.0, and the limits on interpreting any number here. The final frozen

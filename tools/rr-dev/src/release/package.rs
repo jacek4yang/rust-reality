@@ -148,7 +148,7 @@ fn stage_tree(repo: &Path, binary: &Path, staging: &Path) -> Result<(), String> 
         install(&repo.join(name), &staging.join(name), 0o644)?;
     }
     std::fs::create_dir_all(staging.join("deploy"))
-        .and_then(|()| std::fs::create_dir_all(staging.join("docs/decisions")))
+        .and_then(|()| std::fs::create_dir_all(staging.join("docs/adr")))
         .and_then(|()| std::fs::create_dir_all(staging.join("docs/zh-CN")))
         .map_err(|error| format!("could not create staging subdirectories: {error}"))?;
     install(
@@ -156,8 +156,7 @@ fn stage_tree(repo: &Path, binary: &Path, staging: &Path) -> Result<(), String> 
         &staging.join("deploy/rust-reality.service"),
         0o644,
     )?;
-    copy_markdown(&repo.join("docs"), &staging.join("docs"))?;
-    copy_markdown(&repo.join("docs/decisions"), &staging.join("docs/decisions"))?;
+    copy_markdown_tree(&repo.join("docs"), &staging.join("docs"))?;
     install(
         &repo.join("docs/zh-CN/security.md"),
         &staging.join("docs/zh-CN/security.md"),
@@ -166,12 +165,19 @@ fn stage_tree(repo: &Path, binary: &Path, staging: &Path) -> Result<(), String> 
     Ok(())
 }
 
-fn copy_markdown(from: &Path, to: &Path) -> Result<(), String> {
+/// Recursively copies `.md` files below `from` into `to`, preserving the
+/// directory structure relative to `from`.
+fn copy_markdown_tree(from: &Path, to: &Path) -> Result<(), String> {
     let entries = std::fs::read_dir(from)
         .map_err(|error| format!("could not read {}: {error}", from.display()))?;
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "md") {
+        if path.is_dir() {
+            let child_to = to.join(entry.file_name());
+            std::fs::create_dir_all(&child_to)
+                .map_err(|error| format!("could not create {}: {error}", child_to.display()))?;
+            copy_markdown_tree(&path, &child_to)?;
+        } else if path.extension().is_some_and(|ext| ext == "md") {
             let name = entry.file_name();
             install(&path, &to.join(name), 0o644)?;
         }

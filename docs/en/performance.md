@@ -1,6 +1,6 @@
 # Performance
 
-English | [简体中文](performance.zh-CN.md)
+English | [简体中文](../zh-CN/performance.md)
 
 This document records the measured performance properties of the v1.0.0 data
 plane and the evidence behind each design decision. Unless stated otherwise,
@@ -149,7 +149,7 @@ tables were measured on the v1.7.0 and v1.6.1 binaries; they are carried forward
 because neutrality was formally established, not because they were re-measured
 here.
 
-`docs/memory-audit-v1.8.md` records the ownership map, copy ledger, allocation
+[docs/en/operations/memory-audit-v1.8.md](operations/memory-audit-v1.8.md) records the ownership map, copy ledger, allocation
 ledger, and async future sizes, including one measured duplication that remains
 present in v1.8 because the fix for it failed its protected-path gate.
 
@@ -444,7 +444,7 @@ path; it is not a WAN capacity claim. Raw and summarized evidence lives in
 
 For VLESS Encryption, the exact nested REALITY + Vision A/B and the decision
 not to ship it in this profile are documented in
-[ADR 0003](decisions/0003-do-not-stack-vless-encryption-on-reality.md): p50
+[ADR 0003](../adr/0003-do-not-stack-vless-encryption-on-reality.md): p50
 throughput was 0.696×, server CPU/GiB 5.50×, and Vision splice was disabled.
 
 ## Robustness gates
@@ -505,7 +505,7 @@ Building with `--no-default-features` selects the pure-Rust RustCrypto
 aes-gcm provider with no other behavioral change; byte-exact cross-provider
 equivalence and the RFC 8448 vectors are enforced by tests under both
 configurations. The security tradeoff (expanded-key-schedule zeroization) is
-documented in [SECURITY.md](../SECURITY.md).
+documented in [SECURITY.md](../../SECURITY.md).
 
 Measured evidence (validation host above):
 
@@ -706,7 +706,7 @@ end-to-end headroom); no production change was made. Known kernel costs
 - io_uring: removed after a lifecycle audit — not zero-copy as designed, no
   cancellation, no session layer; completing it would have been a rewrite
   for dubious gain over splice. See
-  [decisions/0002-io-uring-removed.md](decisions/0002-io-uring-removed.md).
+  [decisions/0002-io-uring-removed.md](../adr/0002-io-uring-removed.md).
 - Scheduler/runtime redesign: the Tokio multi-thread runtime measures ≈1%
   of framed CPU; no contention evidence.
 - Vision framing / record parsing work: <1% combined.

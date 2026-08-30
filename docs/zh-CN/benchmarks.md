@@ -1,10 +1,10 @@
 # 基准策略与规范样本
 
-[English](benchmarks.md) | 简体中文
+[English](../en/benchmarks.md) | 简体中文
 
 本文说明 rust-reality 的测量方式、v1.0.0 的规范样本，以及解释任何数字时的
 边界。最终冻结的 v1.0.0 发布对比矩阵在发布时用同一批 harness 生成；数字背后
-的设计级证据见 [performance.zh-CN.md](performance.zh-CN.md)。
+的设计级证据见 [performance.zh-CN.md](performance.md)。
 
 ## 测量策略
 
@@ -317,7 +317,7 @@ soak 期间的描述符、线程与 RSS 增长均平坦，零传输失败。
 
 v1.8.0 没有引入新的对比表格。它是架构发布，其性能主张是相对 v1.7.0 的中性，由
 四个独立正式门禁确立，而非由新的头条测量活动确立。门禁输入、结论与已声明的局限
-记录在 [performance.zh-CN.md](performance.zh-CN.md#v180-发布证据)。
+记录在 [performance.zh-CN.md](performance.md#v180-发布证据)。
 
 stock Xray 兼容性门禁照常运行：固定的 `artifacts/xray-reference-v26.7.28` 客户端
 驱动了每个门禁的每个 matrix cell，无效样本为零，SHA-256 载荷完整性 cell 全部通过。
@@ -367,7 +367,7 @@ i3-8100（4C/4T），Linux 6.12.94，loopback，Go origin，每单元 5 次采�
 每连接建连成本远低于 Xray 的一半（在 864 个连接的测量窗口内服务端
 CPU 为 0.65 ms 对 1.53 ms）。单流 loopback 单元受时延约束，基本持平
 （0.94–1.04×）。完整 36 单元矩阵详见
-[performance.zh-CN.md](performance.zh-CN.md) “最终发布矩阵（v1.0.0）”
+[performance.zh-CN.md](performance.md) “最终发布矩阵（v1.0.0）”
 一节。
 
 ### v1.5.0 摘要（冻结于 v1.5.0）
@@ -376,7 +376,7 @@ v1.5 对 v1.4 的同机平衡 ABBA 没有发现统计显著的 setup 或受保�
 吞吐/时延变化：两轮完整矩阵的所有已报告 95% 区间都跨越“无差异”。
 单独的系统调用 trace 测得候选每个 setup 连接少 4.0013 次 cover
 `recvfrom`。这些是有边界的实现成本观察，不是吞吐胜利声明；精确区间见
-[performance.zh-CN.md](performance.zh-CN.md#v15-cover-flight-与发布证据)。
+[performance.zh-CN.md](performance.md#v15-cover-flight-与发布证据)。
 v1.5.0 的共享 DNS 合并结果、≥64 条规则的路由索引测量，以及真实 IPv6
 验证范围都记录在同一文档中。
 
@@ -554,7 +554,7 @@ cargo dev bench run --suite descriptor-pressure \
   部署特征化（`cargo dev bench run --suite deployment`）在相同的线路/落地/源站拓扑
   上对比 NXR 与 SOCKS5——建连速率、吞吐、每连接 CPU 以及 netem RTT 扫描——
   并附带明确标注为系统级的 rust+NXR 对 Xray+SOCKS5 对比。最终数字见
-  [performance.zh-CN.md](performance.zh-CN.md#部署特性v100)。
+  [performance.zh-CN.md](performance.md#部署特性v100)。
 
 更早的开发机样本（2026-08-03 的 Xray loopback 表格，以及自身结论为"与噪声
 无法区分"的 2 vCPU relay 基线）已被上述规范样本取代并从仓库移除。

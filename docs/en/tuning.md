@@ -1,6 +1,6 @@
 # Capacity Planning, Tuning and Troubleshooting
 
-English | [简体中文](tuning.zh-CN.md)
+English | [简体中文](../zh-CN/tuning.md)
 
 This guide is for operators who run rust-reality on a Linux VPS and need to
 pick a machine size, set capacity limits safely, and diagnose slowdowns

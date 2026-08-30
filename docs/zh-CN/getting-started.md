@@ -1,9 +1,9 @@
 # 快速上手
 
-[English](getting-started.md) | 简体中文
+[English](../en/getting-started.md) | 简体中文
 
 从下载 Release 到跑通单机节点的最短路径。生产加固、线路机/落地机拓扑、升级
-和防火墙规则请继续阅读 [deployment.zh-CN.md](deployment.zh-CN.md)。
+和防火墙规则请继续阅读 [deployment.zh-CN.md](deployment.md)。
 
 ## 1. 下载并验证 Release
 
@@ -84,11 +84,11 @@ Xray 的客户端，确认流量正常。
 ## 下一步
 
 - 线路机 + 受防火墙限制的 NXR 落地机：先用 `rust-reality node-keygen` 生成一
-  个共享 NXR 密钥，然后阅读[部署指南](deployment.zh-CN.md)。
+  个共享 NXR 密钥，然后阅读[部署指南](deployment.md)。
 - 线路机 + Handoff 落地机（转移后该跳只承载 TLS 密文）：用
   `rust-reality config generate handoff` 一步生成两侧配置，然后阅读
-  [部署指南](deployment.zh-CN.md#线路机与-handoff-落地机)。
-- 全部配置字段：[configuration.zh-CN.md](configuration.zh-CN.md)。
-- 全部命令：[cli.zh-CN.md](cli.zh-CN.md)。
+  [部署指南](deployment.md#线路机与-handoff-落地机)。
+- 全部配置字段：[configuration.zh-CN.md](configuration.md)。
+- 全部命令：[cli.zh-CN.md](cli.md)。
 - 开放监听端口前的安全姿态：
-  [threat-model.zh-CN.md](threat-model.zh-CN.md)。
+  [threat-model.zh-CN.md](threat-model.md)。

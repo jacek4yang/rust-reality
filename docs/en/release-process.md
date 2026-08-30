@@ -1,6 +1,6 @@
 # Engineering and release program
 
-English | [简体中文](release-process.zh-CN.md)
+English | [简体中文](../zh-CN/release-process.md)
 
 This is the executable release program from v1.7 through v2.0. Repository
 state, required GitHub checks, and retained exact-candidate evidence override a

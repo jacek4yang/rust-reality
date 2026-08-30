@@ -1,6 +1,6 @@
 # Getting started
 
-English | [简体中文](getting-started.zh-CN.md)
+English | [简体中文](../zh-CN/getting-started.md)
 
 The shortest path from a release download to a working standalone node. For
 production hardening, line/landing topologies, upgrades, and firewall rules,

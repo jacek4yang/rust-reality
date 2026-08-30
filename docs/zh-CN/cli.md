@@ -1,6 +1,6 @@
 # 命令行参考
 
-[English](cli.md) | 简体中文
+[English](../en/cli.md) | 简体中文
 
 ## 通用行为
 
@@ -258,7 +258,7 @@ rust-reality config autotune \
 自动调优只改变 resource governor、Direct 拨号和中继策略；不会替你选择安全
 协议、UUID/short ID 归属、伪装目标、路由或超时策略。审查 diff 与报告，执行
 `check`，再按正常重启流程部署。详见
-[调优指南](tuning.zh-CN.md#自动测量的起始策略)。
+[调优指南](tuning.md#自动测量的起始策略)。
 
 ### `config format`
 
@@ -336,7 +336,7 @@ rust-reality benchmark \
 | `--warmup-ms <N>` | `250`，`1..=10000` | 每个 case 的预热时间。 |
 
 报告包含嵌入 commit、构建/目标信息、计时、操作数、均值和样本分位数。它不是
-互联网吞吐测试；详见[基准策略](benchmarks.zh-CN.md)。
+互联网吞吐测试；详见[基准策略](benchmarks.md)。
 
 ## 信号与原子热更新
 
@@ -347,4 +347,4 @@ rust-reality benchmark \
 
 SIGHUP 失败时继续使用当前 generation；已有连接保留启动时的 generation。监听拓扑、
 `runtime` 设置、resource governor、direct barrier、relay 策略和 NXR 重放缓存容量/保留时间必须重启；详见
-[配置参考](configuration.zh-CN.md#热更新边界)。
+[配置参考](configuration.md#热更新边界)。

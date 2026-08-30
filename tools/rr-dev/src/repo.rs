@@ -111,7 +111,7 @@ mod tests {
             "Cargo.toml",
             "CONTRIBUTING.md",
             "README.md",
-            "docs/index.md",
+            "docs/en/index.md",
             "src/main.rs",
         ]);
         assert!(report.is_clean(), "{}", report.render());

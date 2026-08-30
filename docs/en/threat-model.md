@@ -1,6 +1,6 @@
 # Threat model
 
-English | [简体中文](threat-model.zh-CN.md)
+English | [简体中文](../zh-CN/threat-model.md)
 
 ## Protected data path
 
@@ -89,7 +89,7 @@ profile. The outer TLS 1.3 record layer already supplies confidentiality,
 integrity, and forward-secret traffic keys; stacking another data AEAD would
 disable the supported Vision raw/splice path. The security/performance decision
 and its revisit gates are recorded in
-[ADR 0003](decisions/0003-do-not-stack-vless-encryption-on-reality.md).
+[ADR 0003](../adr/0003-do-not-stack-vless-encryption-on-reality.md).
 
 ## NXR boundary
 

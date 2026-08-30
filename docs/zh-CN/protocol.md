@@ -1,9 +1,9 @@
 # 协议概览
 
-[English](protocol.md) | 简体中文
+[English](../en/protocol.md) | 简体中文
 
 `rust-reality` 只暴露一个公网协议栈和两个内部跳转协议。本页概括各自的含义；
-安全属性和信任边界以 [threat-model.zh-CN.md](threat-model.zh-CN.md) 为准。
+安全属性和信任边界以 [threat-model.zh-CN.md](threat-model.md) 为准。
 
 ## 公网栈：VLESS + REALITY + Vision
 
@@ -32,15 +32,15 @@
 - **VLESS** 是 TLS 流内的已认证请求协议：UUID、命令和目标。解密为 `none`——
   机密性与完整性由外层 REALITY TLS 1.3 记录层提供。v1.3 不在 REALITY 内再
   叠加 VLESS Encryption，因为它会禁用 Vision splice 并重复逐字节加密；实测
-  与结论见[决策记录](decisions/0003-do-not-stack-vless-encryption-on-reality.md)。
+  与结论见[决策记录](../adr/0003-do-not-stack-vless-encryption-on-reality.md)。
 - **`xtls-rprx-vision`** 是唯一接受的 flow。它在 framed 阶段提供 padding 与
   长度混淆，并支持 **Direct** 转换：当某方向完成认证并识别出内层 TLS 1.3
   应用数据后，该方向切换为 raw relay（优先 Linux `splice`），边界不变量见
-  [architecture.zh-CN.md](architecture.zh-CN.md)。公网入站不支持纯 VLESS、
+  [architecture.zh-CN.md](architecture.md)。公网入站不支持纯 VLESS、
   仅 TLS 的 VLESS、WebSocket、QUIC、UDP 代理或非 Vision flow。
 
 公网栈与 Xray-core 客户端线兼容；兼容性门禁见
-[benchmarks.zh-CN.md](benchmarks.zh-CN.md)。
+[benchmarks.zh-CN.md](benchmarks.md)。
 
 ## 出站
 
@@ -100,4 +100,4 @@ fresh timestamp/nonce/临时密钥/AEAD state。只有完整 transfer 写入前�
 和本地资源耗尽。认证前的一切都有界且日志不含秘密。部署者仍然要负责伪装目标
 的选择、防火墙策略（尤其是 NXR 和 Handoff）、VPS 链路（应用无法吸收上游流量型 DDoS）和
 端点被控（REALITY 不会让被控端点变得可信）。完整模型与非目标见
-[threat-model.zh-CN.md](threat-model.zh-CN.md)。
+[threat-model.zh-CN.md](threat-model.md)。

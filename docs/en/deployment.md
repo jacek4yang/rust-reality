@@ -1,6 +1,6 @@
 # Linux deployment
 
-English | [简体中文](deployment.zh-CN.md)
+English | [简体中文](../zh-CN/deployment.md)
 
 This guide deploys an official Linux release (x86_64 or aarch64) as either a
 standalone public node, a public line node, or a firewall-restricted NXR
@@ -396,7 +396,7 @@ sessions on the LANDINGs, then downgrade the LANDINGs. Never restart or
 downgrade a LANDING underneath active transferred sessions.
 
 The record-sequence safety boundary and mixed-version rationale are recorded in
-[ADR 0005](decisions/0005-handoff-server-record-sequences.md).
+[ADR 0005](../adr/0005-handoff-server-record-sequences.md).
 
 ## GeoIP and GeoSite
 
@@ -482,7 +482,7 @@ SIGTERM stops new accepts and permits a bounded graceful shutdown. The unit's
 Upgrading from 1.4 requires configuration migration: scalar
 `"listen": "<ip>"` values and `network.addressFamily` are rejected. The
 old-to-new mapping table is in the
-[CHANGELOG 1.5.0 migration notes](../CHANGELOG.md); run the new binary's
+[CHANGELOG 1.5.0 migration notes](../../CHANGELOG.md); run the new binary's
 `check` against a migrated copy before restarting.
 
 1. Download and verify all release assets for the new tag.
@@ -580,7 +580,7 @@ unprivileged production deployment model could never arm it. Stale
 `policy.relay.maxPinnedMemoryBytes` keys are rejected as unknown fields.
 
 The io_uring backend was removed (see
-[`decisions/0002-io-uring-removed.md`](decisions/0002-io-uring-removed.md));
+[`decisions/0002-io-uring-removed.md`](../adr/0002-io-uring-removed.md));
 stale `policy.relay.ioUring` or `policy.relay.maxIoUringRelays` keys are
 rejected as unknown fields.
 

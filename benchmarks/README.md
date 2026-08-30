@@ -2,7 +2,7 @@
 
 This directory owns machine-readable performance policy and compact durable
 evidence. Human guidance for running and interpreting benchmarks lives in the
-[benchmark documentation](../docs/benchmarks.md).
+[benchmark documentation](../docs/en/benchmarks.md).
 
 ## Categories
 

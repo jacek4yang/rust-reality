@@ -1,11 +1,11 @@
 # 架构
 
-[English](architecture.md) | 简体中文
+[English](../en/architecture.md) | 简体中文
 
 本文描述生产数据平面的结构：连接生命周期、raw relay 内核后端、文件描述符
 admission 架构和运行时可观测性。设计背后的实测证据见
-[performance.zh-CN.md](performance.zh-CN.md)；基准方法与规范样本见
-[benchmarks.zh-CN.md](benchmarks.zh-CN.md)。
+[performance.zh-CN.md](performance.md)；基准方法与规范样本见
+[benchmarks.zh-CN.md](benchmarks.md)。
 
 ## 连接生命周期
 
@@ -157,7 +157,7 @@ SOCKS5/NXR/Handoff 服务器名。数字字面量不会进入它。两种后端�
 普通原子计数器。解析器在启动时安装一次（first-wins）；热更新生成继续使用已安装
 的解析器，所以任何 `dns` 修改都需要重启。验证主机上的实测效果：128 个并发相同
 查询只产生 2 次上游请求（原为 315 次），热路径 p50 从 12.9 ms 降到微秒以下；
-见 [performance.zh-CN.md](performance.zh-CN.md)。
+见 [performance.zh-CN.md](performance.md)。
 
 ## 路由决策结构
 
@@ -168,7 +168,7 @@ Aho-Corasick 扫描覆盖目标域名的全部 keyword 匹配器。域名组无�
 （没有域名条件，或含 regex/资产/空 keyword 匹配器）保留在每次都评估的列表中，
 索引命中仍按规则顺序检查，因此决策与线性扫描逐字节一致；规模不足的规则列表继续
 使用普通线性路径。实测时延效果见
-[performance.zh-CN.md](performance.zh-CN.md)。
+[performance.zh-CN.md](performance.md)。
 
 ## 热路径拓扑
 
@@ -193,7 +193,7 @@ Aho-Corasick 扫描覆盖目标域名的全部 keyword 匹配器。域名组无�
 ## LINE→LANDING warm transport
 
 固定 Handoff、NXR 与 SOCKS5 对端复用
-[ADR 0007](decisions/0007-adaptive-line-to-landing-warm-connections.md) 的自适应
+[ADR 0007](../adr/0007-adaptive-line-to-landing-warm-connections.md) 的自适应
 TCP pool。它只预付 TCP 建连。READY socket 不含用户、目标、协议凭据、重放或
 会话状态：
 
@@ -275,7 +275,7 @@ effective_dynamic_fd_budget = soft_rlimit - fixed_fd_reserve - safety_headroom
 解析器描述符按预留而非准入处理，因为被取消的 `TcpStream::connect` 无法取消
 其底层阻塞的 `getaddrinfo`；这些描述符的存活期会超过发起它的连接。安全余量在
 标准模式下为 `max(soft_limit / 16, 64)`；专用资源模式使用更大的自有余量
-（见[配置参考](configuration.zh-CN.md#dedicated-resource-mode)）。
+（见[配置参考](configuration.md#dedicated-resource-mode)）。
 
 策略：
 
@@ -335,7 +335,7 @@ accept 错误按原始 `errno` 分类：
   splice 持平，无特权生产部署模型永远无法 arm。仍然设置 `sockhash`、
   `maxSockhashRelays` 或 `maxPinnedMemoryBytes` 配置键会作为未知字段校验失败。
 - **io_uring**：已移除，未实现。理由见
-  [decisions/0002-io-uring-removed.md](decisions/0002-io-uring-removed.md)。
+  [decisions/0002-io-uring-removed.md](../adr/0002-io-uring-removed.md)。
   仍然设置 `ioUring` 或 `maxIoUringRelays` 配置键会作为未知字段校验失败。
 
 自动后端顺序为 splice → buffered；可移植的 buffered relay 和 Linux `splice`
@@ -346,7 +346,7 @@ accept 错误按原始 `errno` 分类：
 每种类别的静态准入信号量（连接、握手、密码学、fallback）加上带压力迟滞的
 无锁 FD 预算在所有模式下都存在。`runtime.profile: "dedicated"` 增加
 机器感知预算和二维（FD + 内存）压力模型；见
-[配置参考](configuration.zh-CN.md#dedicated-resource-mode)。
+[配置参考](configuration.md#dedicated-resource-mode)。
 
 ## 可观测性
 

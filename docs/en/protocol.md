@@ -1,6 +1,6 @@
 # Protocol overview
 
-English | [简体中文](protocol.zh-CN.md)
+English | [简体中文](../zh-CN/protocol.md)
 
 `rust-reality` exposes exactly one public protocol stack and two internal
 hop protocols. This page summarizes what each is; the security properties and
@@ -41,7 +41,7 @@ Xray-compatible client
   TLS 1.3 record layer provides confidentiality and integrity. v1.3 does not
   stack VLESS Encryption inside REALITY because it disables Vision splice and
   duplicates per-byte encryption; see the measured
-  [decision record](decisions/0003-do-not-stack-vless-encryption-on-reality.md).
+  [decision record](../adr/0003-do-not-stack-vless-encryption-on-reality.md).
 - **`xtls-rprx-vision`** is the only accepted flow. It adds padding and
   length obfuscation in the framed phase and supports **Direct** transitions:
   once a direction is authenticated and its inner TLS 1.3 application data

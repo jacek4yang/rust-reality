@@ -1,6 +1,6 @@
 # 工程与发布流程
 
-[English](release-process.md) | 简体中文
+[English](../en/release-process.md) | 简体中文
 
 本文定义 v1.7 到 v2.0 的可执行发布程序。仓库实际状态、GitHub 必需检查以及精确
 候选二进制证据高于路线图估计；发布时间不能凌驾于协议正确性、安全性和受保护

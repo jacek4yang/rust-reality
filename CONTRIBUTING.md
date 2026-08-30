@@ -33,7 +33,7 @@ warning as an error.
   separate. Add a crate only for a real architectural boundary; prefer modules
   for ordinary source organization.
 - Follow the current benchmark process in
-  [the benchmark guide](docs/benchmarks.md). Preserve exact identities and
+  [the benchmark guide](docs/en/benchmarks.md). Preserve exact identities and
   admissible evidence; do not commit large raw captures or binaries.
 - Keep fuzz targets aligned with parser and reconstruction attack surfaces. Use
   `cargo dev fuzz` to inspect and exercise the target catalogue.

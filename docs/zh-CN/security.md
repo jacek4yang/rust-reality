@@ -32,7 +32,7 @@ RFC 8448 测试向量由在两种配置下都会运行的测试保证。
 大传输场景端到端 framed 吞吐提升 1.05–1.16 倍，服务端每 GiB CPU 降低 33%，
 不引入任何新的依赖 crate（ring 已经由 ureq/rustls 存在于发布依赖图中），完全
 静态链接，二进制体积还略有缩小。实测数字及其主机环境记录于
-[`performance.zh-CN.md`](../performance.zh-CN.md)。
+[`performance.zh-CN.md`](../en/performance.md)。
 
 随之而来的是一个经过权衡的取舍。rust-reality 会在 drop 时清零它拥有的全部
 秘密——ECDHE 与混合共享秘密、所有 HKDF 握手/主/流量秘密、原始流量密钥、
