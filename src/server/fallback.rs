@@ -540,12 +540,12 @@ mod tests {
 
     use super::{FallbackError, RealityFallback};
     use crate::{
-        config::{NetworkConfig, RelayPolicy, ResourceGovernorConfig, WarmConnectionPolicy},
+        config::{NetworkConfig, ResourceGovernorConfig, WarmConnectionPolicy},
         network::NetworkEnvironment,
         protocol::reality::{ClientHello, SESSION_ID_LEN, X25519_GROUP, client_hello_fixtures},
         runtime::{PressureGauge, ResourceGovernor, ResourcePressure},
         server::warm_pool::WarmPoolAuthority,
-        transport::{FdBudget, TcpRelay},
+        transport::{FdBudget, TcpRelay, TcpRelayConfig},
     };
 
     const PREFIX: &[u8] = b"exact-fragmented-client-hello-prefix";
@@ -553,7 +553,7 @@ mod tests {
     const RESPONSE: &[u8] = b"cover-response";
 
     fn test_fallback(target: String, config: &ResourceGovernorConfig) -> RealityFallback {
-        let relay = TcpRelay::new(&RelayPolicy::default(), FdBudget::new(4_096))
+        let relay = TcpRelay::new(TcpRelayConfig::for_test(), FdBudget::new(4_096))
             .expect("test relay must build");
         RealityFallback::new(target, ResourceGovernor::new(config), config, relay)
     }
@@ -577,7 +577,7 @@ mod tests {
             max_lifetime_ms: 2_000,
             shrink_delay_ms: 1_000,
         };
-        let relay = TcpRelay::new(&RelayPolicy::default(), FdBudget::new(64))
+        let relay = TcpRelay::new(TcpRelayConfig::for_test(), FdBudget::new(64))
             .expect("test relay must build");
         let pressure = PressureGauge::new();
         let fallback = RealityFallback::with_warm_pool(
@@ -657,7 +657,7 @@ mod tests {
             max_lifetime_ms: 2_000,
             shrink_delay_ms: 1_000,
         };
-        let relay = TcpRelay::new(&RelayPolicy::default(), FdBudget::new(64))
+        let relay = TcpRelay::new(TcpRelayConfig::for_test(), FdBudget::new(64))
             .expect("test relay must build");
         let pressure = PressureGauge::new();
         let fallback = RealityFallback::with_warm_pool(

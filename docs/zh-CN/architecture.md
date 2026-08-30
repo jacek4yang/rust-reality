@@ -292,6 +292,11 @@ Server/runtime adapter 推导并持有唯一的进程预算，而 Transport 定�
 这样依赖方向保持为 Runtime Adapter → Transport：Transport 不会仅为了核算自己
 持有的描述符而反向导入 Runtime。
 
+relay 构造遵循同一方向。Configuration 持有可序列化的 `RelayPolicy` 及只用于
+校验的总内存上限；server/runtime 组合层在启动时把该策略一次性转换为
+`TcpRelayConfig`，即 Transport 实际消费的六个 pool/backend 数值。因此 Transport
+不会导入 Configuration，也不会在每条连接或 relay 循环中执行策略转换。
+
 `FdBudget` 是严格上界许可计数器：快路径一次 relaxed load 加一次
 `compare_exchange_weak`，无互斥锁；许可经 `Drop` 单路径释放；释放使用受检
 减法，双重释放会被记录而不是被悄悄吞掉；压力下的等待是有界 `Notify` 唤醒，

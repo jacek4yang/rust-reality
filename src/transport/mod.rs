@@ -17,4 +17,4 @@ pub use fd_budget::{
 };
 pub use relay::RelayStats;
 pub use tcp::{AcceptBackoff, AcceptErrorClass, EmergencyDescriptor, TcpAcceptor};
-pub use tcp_relay::{TcpRelay, TcpRelayConfigError};
+pub use tcp_relay::{TcpRelay, TcpRelayConfig, TcpRelayConfigError};

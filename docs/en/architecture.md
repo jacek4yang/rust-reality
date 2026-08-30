@@ -366,6 +366,13 @@ owner. This keeps the dependency direction Runtime Adapter → Transport:
 Transport never imports Runtime merely to account for the descriptors it
 owns.
 
+The same direction applies at relay construction. Configuration owns the
+serialized `RelayPolicy` and its validation-only aggregate memory ceiling. The
+server/runtime composition layer translates that policy once at startup into
+`TcpRelayConfig`, the six concrete pool/backend values Transport consumes.
+Transport therefore does not import Configuration, and no policy translation
+runs per connection or inside a relay loop.
+
 `FdBudget` is a strict upper-bound permit counter: one relaxed load and one
 `compare_exchange_weak` on the fast path, no mutex; permits release in `Drop`
 through one path; release uses checked subtraction so a double-release bug is

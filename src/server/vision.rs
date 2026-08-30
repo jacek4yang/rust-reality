@@ -2128,7 +2128,7 @@ mod tests {
     };
     use crate::{
         config::{
-            DirectBarrierConfig, DnsStrategy, OutboundConfig, RelayPolicy, ResourceGovernorConfig,
+            DirectBarrierConfig, DnsStrategy, OutboundConfig, ResourceGovernorConfig,
             RoutingConfig, UserPolicy,
         },
         protocol::{
@@ -2147,7 +2147,7 @@ mod tests {
             reality::RealityEstablished,
             routing::{EmptyAssetMatcher, RoutingTable},
         },
-        transport::{FdBudget, RelayBackend, TcpRelay},
+        transport::{FdBudget, RelayBackend, TcpRelay, TcpRelayConfig},
     };
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -3623,11 +3623,10 @@ mod tests {
             )
             .expect("test routing must compile");
         let relay = crate::transport::TcpRelay::new(
-            &crate::config::RelayPolicy {
+            crate::transport::TcpRelayConfig {
                 buffer_bytes: 32 * 1024,
                 max_pooled_buffers: 8,
                 max_splice_relays: 0,
-                max_relay_memory_bytes: u64::MAX,
                 splice: false,
                 pipe_pool: true,
                 max_pooled_pipes: 8,
@@ -3656,7 +3655,7 @@ mod tests {
         // The raw stage's idle policy ends a stalled direction that never
         // moved a byte with TimedOut; the session must treat that like any
         // other benign teardown — clean DirectionStats, never a session error.
-        let relay = TcpRelay::new(&RelayPolicy::default(), FdBudget::new(4_096))
+        let relay = TcpRelay::new(TcpRelayConfig::for_test(), FdBudget::new(4_096))
             .expect("relay policy must compile");
         let handoff = DirectHandoff::new();
         let (_sender, source) = tcp_pair().await;
@@ -3695,7 +3694,7 @@ mod tests {
         // peer direction's tail: the relay resets both sockets and reports
         // the abort as ConnectionAborted, so the session must fail rather
         // than record a clean teardown.
-        let relay = TcpRelay::new(&RelayPolicy::default(), FdBudget::new(4_096))
+        let relay = TcpRelay::new(TcpRelayConfig::for_test(), FdBudget::new(4_096))
             .expect("relay policy must compile");
         let handoff = DirectHandoff::new();
         let (mut sender, source) = tcp_pair().await;

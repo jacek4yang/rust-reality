@@ -26,7 +26,7 @@ use tokio::{
 use crate::{
     assets::{AssetLoadError, AssetSnapshot},
     config::{
-        Config, ConfigError, ConfigLoadError, InboundConfig, ListenMode, ResourceMode,
+        Config, ConfigError, ConfigLoadError, InboundConfig, ListenMode, RelayPolicy, ResourceMode,
         RuntimeConfig, RuntimeProfile, TuningMode, load_config, validate_config,
     },
     logging::{AdmissionResource, BackendStatus, LogEvent, LogWriteError, Logger, RejectionReason},
@@ -44,7 +44,7 @@ use crate::{
         BackendDeclineReason, BackendReport, FdBudget, FdPermit, RelayBackend,
         UNITS_INBOUND_SOCKET,
         tcp::{AcceptBackoff, AcceptErrorClass, EmergencyDescriptor, TcpAcceptor},
-        tcp_relay::{TcpRelay, TcpRelayConfigError, is_liveness_timeout_abort},
+        tcp_relay::{TcpRelay, TcpRelayConfig, TcpRelayConfigError, is_liveness_timeout_abort},
     },
 };
 
@@ -89,6 +89,21 @@ struct ListenerPlan {
     tag: String,
     mode: ListenMode,
     addresses: Vec<SocketAddr>,
+}
+
+/// Translates validated operator policy into the concrete Transport mechanism.
+///
+/// `max_relay_memory_bytes` remains a Configuration validation ceiling rather
+/// than leaking into Transport, which consumes only the pool/backend values.
+const fn compile_tcp_relay_config(policy: &RelayPolicy) -> TcpRelayConfig {
+    TcpRelayConfig {
+        buffer_bytes: policy.buffer_bytes,
+        max_pooled_buffers: policy.max_pooled_buffers,
+        max_splice_relays: policy.max_splice_relays,
+        splice: policy.splice,
+        pipe_pool: policy.pipe_pool,
+        max_pooled_pipes: policy.max_pooled_pipes,
+    }
 }
 
 /// Computes the configured worst-case simultaneous descriptor demand.
@@ -420,8 +435,11 @@ impl ProductionServer {
         };
         let startup = derive_fd_budget(&config, resource_mode, machine)
             .map_err(ProductionServerError::DescriptorBudget)?;
-        let tcp_relay = TcpRelay::new(&config.advanced.limits.relay, startup.budget.clone())
-            .map_err(RuntimeUpdateError::Relay)?;
+        let tcp_relay = TcpRelay::new(
+            compile_tcp_relay_config(&config.advanced.limits.relay),
+            startup.budget.clone(),
+        )
+        .map_err(RuntimeUpdateError::Relay)?;
         let initial = RuntimeSnapshot::compile(
             config,
             0,
