@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "acceptedImplementationCommit": "4e94b903b102cbf7eafaefc051aed59f9f9ba370",
+  "candidateSourceCommit": "e292ed42ff26e4e2120a77de52a095273ef932df",
+  "externalBoundary": {
+    "mechanism": "pre-existing IDA Pro IDALib through inherited IDADIR and PYTHONPATH",
+    "libraryVersion": {
+      "major": 9,
+      "minor": 3,
+      "build": 260327
+    },
+    "repositoryPolicyLanguage": "Rust",
+    "adapter": "generated private direct-API Python bridge",
+    "installationModified": false,
+    "installationPathRecorded": false,
+    "proprietaryContentsRecorded": false
+  },
+  "directBridgeSmoke": {
+    "fixture": "disposable non-PIE ELF with one noinline hotspot function",
+    "function": "hotspot",
+    "functionStart": "0x401120",
+    "functionEnd": "0x401159",
+    "instructionCount": 13,
+    "pseudocodeProduced": true,
+    "status": "PASS"
+  },
+  "failureAcceptance": {
+    "case": "150 MiB debug ELF exceeds the 300-second IDALib analysis bound",
+    "exitCode": 124,
+    "failedMarkerProduced": true,
+    "partialOutputWasNotReused": true,
+    "status": "PASS"
+  },
+  "fullBundleAcceptance": {
+    "runId": "e292ed4-ida-full-accept",
+    "label": "decode-request",
+    "binarySha256": "b935958ac342030d307725226b7e68290a3d14030d8f62ec907625385c5a5388",
+    "binaryBuildId": "2d24d9eccc88487b7a7b1c2c1e048f5ae9efe7ff",
+    "function": "_ZN12rust_reality8protocol5vless6decode14decode_request17h7addd56e1ecccccaE",
+    "functionStart": "0x4c4f50",
+    "functionEnd": "0x4c5261",
+    "sampleRows": 520,
+    "mappedRows": 520,
+    "unmappedRows": 0,
+    "unmappedPeriodPercent": 0.0,
+    "evidenceFileCount": 19,
+    "bridgeSha256": "ba6eeed3a99a2f9cf165170577d6cc38dd2c31a0b748f6fdb2cdd01e22479de8",
+    "sha256sumsSha256": "e8746fc1e76df2b71b3d3c5bff3a02bc715c933931876dd7ebc448a7328e752c",
+    "bundleContractSha256": "340dc11bba918fda2854956a89de32593068f75d58172e14b4292571b3a4c691",
+    "allRecordedChecksumsVerified": true,
+    "hashBoundCompletionPublished": true,
+    "status": "PASS"
+  }
+}

@@ -51,14 +51,15 @@ JSON；如果内核或 VPS 策略拒绝某个事件，则记录带原始诊断�
 | `cargo dev bench run --suite fallback` | 在固定基线 ELF 与候选之间做干净的 fallback A/B：两侧 warn 级日志、直连 listener，两侧固定相同的 relay splice/pipe-pool/buffer 策略，并在计时前逐 slot 校验载荷完整性。 |
 | `cargo dev bench run --suite setup-rate` | 在固定基线 ELF 与候选之间做平衡 setup 速率 A/B（accept → 第一次 Vision 转换）。设置 `--cover-netem-rtt-ms` 时只把 TLS 伪装目标移到 veth/netns 后并施加有记录的单向延迟，同时保留 pool hit/miss 汇总。`--measure-mode perf` 在 warmup 后归因 task-clock/指令/context switch；`strace` 记录有界的 read/receive syscall 集，并先优雅停止 tracee，避免静默产生空汇总。 |
 | `cargo dev bench run --suite vision-direct`、`cargo dev bench run --suite xray` | 聚焦的 Vision-Direct 与 Xray 对比。 |
-| `scripts/benchmark-deployment.sh` | 部署特征化：路由正确性证明、路由决策成本（含 DNS 策略）、NXR 拓扑（direct/NXR/SOCKS5/Xray）、长连接 relay 证据，以及正式单跳 netem matrix。RTT 段保留精确生产构建在 1/10/50/100/200 ms、c1/8/32/128/512 下 Handoff/NXR/SOCKS5 的 ABBA cold/warm 样本与无秘密 pool retirement summary。 |
+| `cargo dev bench run --suite deployment` | 部署特征化：路由正确性证明、路由决策成本（含 DNS 策略）、NXR 拓扑（direct/NXR/SOCKS5/Xray）、长连接 relay 证据，以及正式单跳 netem matrix。RTT 段保留精确生产构建在 1/10/50/100/200 ms、c1/8/32/128/512 下 Handoff/NXR/SOCKS5 的 ABBA cold/warm 样本与无秘密 pool retirement summary。`--deployment-plan` 选择 `full`、`mechanism`、`robustness` 或非正式的 `smoke`。 |
 | `cargo dev bench run --suite soak` | 可选长期回环证据：standalone 混合流量加 Handoff、NXR、仅 TCP SOCKS5、中点 reload、精确进程身份下的逐进程 RSS、汇总 PSS，以及带哈希绑定的 start/interval/reload/end 完整性尝试。`--soak-implementation xray` 选择保留的对照端。默认原生运行是计划任务/非阻塞证据；精确 12 小时且分布式间隔为 5–30 分钟的运行会记录是否满足严格长期资格。 |
 | `cargo dev bench profiles` | 在精确 cgroup-v2 CPU、内存与零 swap 边界下执行 fail-closed 机器档位验证。它负责候选/Xray 身份、scope 进程清理、churn 与 512 MiB 下载、默认/调优空闲会话阶梯、RSS/FD/cgroup/OOM 采样、带逐阶梯基线的绝对日志计数、逐档汇总与聚合发布。 |
 | `cargo dev perf hotspot` | 对内建 benchmark 或既有 server PID 进行身份绑定的 `perf record` 采集。Rust 负责参数边界、精确 PID/start-time/可执行文件身份、只读二进制归档、report/build-ID 校验、校验和、发布与清理；`perf`、`readelf`、`sudo` 仅作为带类型 argv 的外部机制。 |
-| `cargo dev deploy canary` | 对约十分钟精确候选双 VPS 主动 canary 做 fail-closed 评估：部署、真实 WAN Handoff、stock Xray、完整性、churn、reload、LANDING 重启/恢复、有界 pool 与资源恢复包络。 |
+| `cargo dev perf hotspot-bundle` | 从已完成的原生 hotspot 运行中，经 DWARF、IDALib、LLVM 与精确 perf 符号偏移导出一个地址。Rust 负责采集身份、私有二进制/数据库路径、IDALib 输出验证、指令聚合、默认零容忍且硬上限低于 1% 的映射门、校验和、失败状态与发布。IDALib 仅有的 Python 自动化 API 被限制在运行时生成的私有直接 API 桥中；操作者提供 `--idalib-python` 与安装环境，仓库不保留 Python 策略文件或机器专用安装路径。 |
+| `cargo dev deploy {canary-plan,canary-run,canary}` | 对约十分钟精确候选双 VPS 主动 canary 进行非修改计划、显式修改门禁执行与 fail-closed 评估：部署、真实 WAN Handoff、stock Xray、完整性、churn、reload、LANDING 重启/恢复、有界 pool 与资源恢复包络。 |
 | `cargo dev bench run --suite real-path` | 真实互联网路径上与 Xray 的 A/B：崩溃与协议错误门禁；吞吐受路径最慢链路限制，不能用于区分带宽。 |
 | `cargo dev bench run --suite vless-encryption` | Xray v26.7.28 下 `encryption:none` 与同一 REALITY + Vision 内叠加 VLESS Encryption 的 A/B；测吞吐、服务端 CPU/GiB 和预热后的 setup，执行顺序为带种子且已记录的随机序。 |
-| `scripts/test-xray-interop.sh` | 兼容性门禁（见下），不是基准。 |
+| `cargo dev bench run --suite xray-interop` | 兼容性门禁（见下），不是基准。 |
 
 ## v1.7 LINE→LANDING 证据契约
 
@@ -485,7 +486,7 @@ v1.2 周期在命名空间/veth 装置上用 `tc netem` 表征了分布式拓扑
 
 ## Xray 26.7.28 兼容性门禁
 
-`scripts/test-xray-interop.sh` 证明未经修改的 Xray 客户端可以端到端驱动生产
+`cargo dev bench run --suite xray-interop` 证明未经修改的 Xray 客户端可以端到端驱动生产
 公网栈：
 
 ```text
@@ -494,10 +495,11 @@ curl -> Xray SOCKS5 入站 -> VLESS + REALITY + xtls-rprx-vision
 ```
 
 ```shell
-XRAY_BIN=/path/to/xray ./scripts/test-xray-interop.sh
+cargo dev bench run --suite xray-interop \
+  --rust-bin /path/to/rust-reality --xray-bin /path/to/xray
 ```
 
-脚本构建 release 二进制，生成全新的临时 UUID、X25519 和 short ID 材料，在
+原生 suite 使用所选 release 二进制，生成全新的临时 UUID、X25519 和 short ID 材料，在
 loopback 启动两个进程，经 Xray 传输一个确定的 1 MiB 对象并校验 SHA-256，
 对固定种子核对 ML-DSA-65 验证密钥生成是否与 Xray 一致，并可选择请求一个真实
 HTTPS URL。全部生成的配置和密钥保留在有界临时目录中，退出时删除。
@@ -549,7 +551,7 @@ cargo dev bench run --suite descriptor-pressure \
 - **Miri 无法覆盖 `crates/rr-linux`**（不支持其中的裸系统调用）；该 crate 由
   ABI/布局测试和特权测试套件覆盖。
 - **NXR 没有协议级 Xray 基线**（Xray 没有实现 NXR），但 NXR 有受控协议对比：
-  部署特征化（`scripts/benchmark-deployment.sh`）在相同的线路/落地/源站拓扑
+  部署特征化（`cargo dev bench run --suite deployment`）在相同的线路/落地/源站拓扑
   上对比 NXR 与 SOCKS5——建连速率、吞吐、每连接 CPU 以及 netem RTT 扫描——
   并附带明确标注为系统级的 rust+NXR 对 Xray+SOCKS5 对比。最终数字见
   [performance.zh-CN.md](performance.zh-CN.md#部署特性v100)。

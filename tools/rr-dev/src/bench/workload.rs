@@ -314,6 +314,17 @@ fn read_exact(stream: &mut TcpStream, count: usize) -> Option<Vec<u8>> {
 /// — the pool size caps parallelism, it does not set the amount of work.
 #[must_use]
 pub fn run_sample(plan: &SetupRatePlan, concurrency: usize, sample_index: usize) -> SampleRow {
+    run_sample_to(plan, &Destination::Loopback, concurrency, sample_index)
+}
+
+/// Runs one setup sample to an explicit IP/domain destination.
+#[must_use]
+pub fn run_sample_to(
+    plan: &SetupRatePlan,
+    destination: &Destination,
+    concurrency: usize,
+    sample_index: usize,
+) -> SampleRow {
     let next = AtomicUsize::new(0);
     let started = Instant::now();
     let mut latencies: Vec<f64> = Vec::with_capacity(plan.connections);
@@ -330,7 +341,7 @@ pub fn run_sample(plan: &SetupRatePlan, concurrency: usize, sample_index: usize)
                         if next.fetch_add(1, Ordering::Relaxed) >= plan.connections {
                             break;
                         }
-                        match one_connection(plan.socks_port, plan.origin_port) {
+                        match connect_through(plan.socks_port, destination, plan.origin_port) {
                             Some(elapsed) => mine.push(elapsed.as_secs_f64()),
                             None => failures += 1,
                         }
@@ -390,10 +401,27 @@ pub fn warm_up(socks_port: u16, origin_port: u16) -> Result<(), String> {
 /// Returns a message when the row count is short or any connection failed, which
 /// is the drivers' `incomplete setup samples` refusal.
 pub fn run_slot(plan: &SetupRatePlan) -> Result<Vec<SampleRow>, String> {
+    run_slot_to(plan, &Destination::Loopback)
+}
+
+/// Runs every setup cell to an explicit IP/domain destination.
+///
+/// # Errors
+///
+/// Returns the same completeness failures as [`run_slot`].
+pub fn run_slot_to(
+    plan: &SetupRatePlan,
+    destination: &Destination,
+) -> Result<Vec<SampleRow>, String> {
     let mut rows = Vec::with_capacity(plan.concurrencies.len() * plan.samples);
     for concurrency in &plan.concurrencies {
         for sample_index in 0..plan.samples {
-            rows.push(run_sample(plan, *concurrency, sample_index));
+            rows.push(run_sample_to(
+                plan,
+                destination,
+                *concurrency,
+                sample_index,
+            ));
         }
     }
     let expected = plan.samples * plan.concurrencies.len();

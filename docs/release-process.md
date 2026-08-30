@@ -108,16 +108,30 @@ The first migration copies the known-good binary and compatible config into a
 minimal rollback bundle before replacing the old active layout. Thereafter:
 
 ```shell
-scripts/deploy-release-vps.sh preflight
-MUTATE_REMOTE=1 ... scripts/deploy-release-vps.sh stage
-MUTATE_REMOTE=1 RELEASE_ID=... scripts/deploy-release-vps.sh cutover
+cargo dev deploy inspect --target line --output line-before.json
+cargo dev deploy plan stage --target line --snapshot line-before.json \
+  --release-id RELEASE --binary /absolute/path/to/rust-reality \
+  --config /absolute/path/to/config.json --expected-sha256 SHA256 \
+  --expected-version VERSION --source-commit COMMIT --output stage-plan.json
+cargo dev deploy apply stage --target line --release-id RELEASE \
+  --binary /absolute/path/to/rust-reality \
+  --config /absolute/path/to/config.json --expected-sha256 SHA256 \
+  --expected-version VERSION --source-commit COMMIT --mutate-remote \
+  --output stage-evidence.json
+cargo dev deploy apply cutover --target line --release-id RELEASE \
+  --binary /absolute/path/to/rust-reality \
+  --config /absolute/path/to/config.json --expected-sha256 SHA256 \
+  --expected-version VERSION --source-commit COMMIT --mutate-remote \
+  --output cutover-evidence.json
 # application canary
-MUTATE_REMOTE=1 RELEASE_ID=... PRUNE_OLD_RELEASES=1 \
-  scripts/deploy-release-vps.sh promote
+cargo dev deploy apply promote --target line --release-id RELEASE \
+  --prune-old-releases --mutate-remote --output promote-evidence.json
 ```
 
-`stage` verifies version, SHA-256, `check`, and `self-test` without changing
-CURRENT. `cutover` prepares PREVIOUS, performs the shortest stop/symlink/start
+`inspect` and `plan` are read-only. `apply` refuses to run without the explicit
+`--mutate-remote` acknowledgement. `stage` verifies version, SHA-256, `check`,
+and `self-test` without changing CURRENT. `cutover` prepares PREVIOUS, performs
+the shortest stop/symlink/start
 window, verifies the executable and 443, and rejects any unexpected wildcard
 TCP listener introduced during the cutover. Pre-existing unrelated listeners
 remain the host operator's responsibility and are not silently disabled by the
@@ -141,7 +155,10 @@ controlled LANDING restart/recovery, 1 MiB and larger download/upload/
 bidirectional integrity, and final recovery. Resource sampling uses SSH, not a
 public metrics listener.
 
-`cargo dev deploy canary` is fail-closed. It requires exact identity, both
+`cargo dev deploy canary-plan` validates and records the complete canary input
+without contacting either host. The same inputs go to `cargo dev deploy
+canary-run --mutate-remote`; its report is re-admitted by the fail-closed `cargo
+dev deploy canary` evaluator. The acceptance requires exact identity, both
 SSH connections, constrained listeners/firewall, stock Xray, integrity, warm
 Handoff, deliberately observed cold fallback, generation retirement, LANDING
 recovery, at least 500 bounded connection attempts, bounded pool targets and

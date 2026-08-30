@@ -84,18 +84,18 @@ tar -xzf rust-reality-v<version>-linux-x86_64-generic.tar.gz \
 tar -xzf rust-reality-v<version>-linux-x86_64-v3.tar.gz \
   -C release-smoke/x86-64-v3
 
-RUST_REALITY_BIN="$PWD/release-smoke/generic/rust-reality" \
-  XRAY_BIN=/absolute/path/to/xray \
-  ./scripts/test-xray-interop.sh
-RUST_REALITY_BIN="$PWD/release-smoke/x86-64-v3/rust-reality" \
-  XRAY_BIN=/absolute/path/to/xray \
-  ./scripts/test-xray-interop.sh
+cargo dev bench run --suite xray-interop \
+  --rust-bin "$PWD/release-smoke/generic/rust-reality" \
+  --xray-bin /absolute/path/to/xray
+cargo dev bench run --suite xray-interop \
+  --rust-bin "$PWD/release-smoke/x86-64-v3/rust-reality" \
+  --xray-bin /absolute/path/to/xray
 ```
 
 Each invocation uses a fresh configuration and proves an exact 1 MiB transfer,
 ML-DSA-65 agreement, and unmodified-Xray REALITY + Vision interoperability.
 Run it on an x86-64-v3 host with working external DNS/TCP and a cover target
-selected through `COVER_TARGET`/`COVER_SNI` if the defaults are unsuitable. On
+selected through `--cover-target`/`--cover-sni` if the defaults are unsuitable. On
 an ARM64 host, run the same gate against the `linux-aarch64-generic` binary.
 A failure in any tier is a release no-go; do not substitute a locally rebuilt
 binary for the downloaded asset.
@@ -508,8 +508,8 @@ to the older version.
 ### Versioned daily-node deployment
 
 A permanent production-like node should separate replaceable software from
-persistent identity. The canonical layout used by
-`scripts/deploy-release-vps.sh` is:
+persistent identity. The typed `cargo dev deploy {inspect,plan,apply}` workflow
+maintains this canonical layout:
 
 ```text
 /opt/rust-reality/releases/RELEASE/rust-reality
@@ -529,12 +529,12 @@ into a minimal known-good rollback bundle before the systemd unit begins using
 older replaceable release generations. Never prune identity merely because an
 old binary is pruned.
 
-The deployment driver requires `MUTATE_REMOTE=1` for every mutation. `stage`
+`cargo dev deploy apply` requires `--mutate-remote` for every mutation. `stage`
 validates version, SHA-256, `check`, and `self-test` without switching the live
 node. `cutover` prepares PREVIOUS and restores it automatically if the process,
 executable identity, or port-443 health check fails. If stock-Xray, byte
 integrity, or the active canary subsequently fails, run `rollback` immediately.
-The script does not edit SSH, firewall rules, or listener ports.
+The typed tool does not edit SSH, firewall rules, or listener ports.
 
 For a daily-use edge host, port 22 is permanent administrative infrastructure
 and port 443 is the only public rust-reality listener. Auxiliary origins,

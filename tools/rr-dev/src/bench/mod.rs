@@ -31,6 +31,8 @@ pub mod attribution;
 pub mod config;
 pub mod cover;
 pub mod dns;
+pub mod deployment;
+pub mod deployment_netns;
 pub mod engine;
 pub mod evidence;
 pub mod echo;

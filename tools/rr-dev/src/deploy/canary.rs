@@ -19,7 +19,7 @@ use crate::perf::{
 };
 
 /// The checks every release canary must report as `true`.
-const REQUIRED_CHECKS: [&str; 23] = [
+pub const REQUIRED_CHECKS: [&str; 23] = [
     "lineSsh",
     "landingSsh",
     "lineServiceActive",
@@ -74,7 +74,17 @@ pub fn evaluate_file(path: &Path) -> Outcome {
         Ok(text) => text,
         Err(error) => return Outcome::Inadmissible(format!("{}: {error}", path.display())),
     };
-    let value = match json_in::parse(&text) {
+    evaluate_text(&text)
+}
+
+/// Evaluates a canary report already held in memory.
+///
+/// This is the recorded-parity boundary used by the native runner: it must feed
+/// its generated report through the same fail-closed evaluator operators invoke
+/// on archived evidence.
+#[must_use]
+pub fn evaluate_text(text: &str) -> Outcome {
+    let value = match json_in::parse(text) {
         Ok(value) => value,
         Err(error) => return Outcome::Inadmissible(format!("canary input is not JSON: {error}")),
     };

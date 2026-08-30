@@ -71,6 +71,40 @@ pub fn xray_server_with_fallback(
             ("protocol", Json::string("freedom")),
         ])
     };
+    xray_server_with_outbound(identity, listen_port, private_key, fallback_dest, outbound)
+}
+
+/// Builds the deployment comparator whose only outbound is a local SOCKS5 hop.
+#[must_use]
+pub fn xray_server_with_socks(
+    identity: &RealityIdentity,
+    listen_port: u16,
+    private_key: &str,
+    socks_port: u16,
+) -> Json {
+    let outbound = Json::object([
+        ("protocol", Json::string("socks")),
+        (
+            "settings",
+            Json::object([(
+                "servers",
+                Json::Array(vec![Json::object([
+                    ("address", Json::string("127.0.0.1")),
+                    ("port", Json::Int(i64::from(socks_port))),
+                ])]),
+            )]),
+        ),
+    ]);
+    xray_server_with_outbound(identity, listen_port, private_key, None, outbound)
+}
+
+fn xray_server_with_outbound(
+    identity: &RealityIdentity,
+    listen_port: u16,
+    private_key: &str,
+    fallback_dest: Option<&str>,
+    outbound: Json,
+) -> Json {
     Json::object([
         ("log", Json::object([("loglevel", Json::string("warning"))])),
         (
@@ -270,5 +304,15 @@ mod tests {
         // Everything else is unchanged.
         assert!(with_fallback.contains("\"decryption\": \"none\""));
         assert!(with_fallback.contains("xtls-rprx-vision"));
+    }
+
+    #[test]
+    fn the_deployment_comparator_routes_only_through_socks() {
+        let rendered = xray_server_with_socks(&identity(), 8443, "PRIVKEY", 1080)
+            .to_python_json();
+        assert!(rendered.contains("\"protocol\": \"socks\""));
+        assert!(rendered.contains("\"address\": \"127.0.0.1\""));
+        assert!(rendered.contains("\"port\": 1080"));
+        assert!(!rendered.contains("\"protocol\": \"freedom\""));
     }
 }

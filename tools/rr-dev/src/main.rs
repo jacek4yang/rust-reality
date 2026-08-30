@@ -18,7 +18,7 @@ use std::{
     process::ExitCode,
 };
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 mod bench;
 mod check;
@@ -97,6 +97,120 @@ enum Command {
 
 #[derive(Subcommand)]
 enum DeployCommand {
+    /// Validate and render the active dual-VPS canary without contacting hosts.
+    CanaryPlan {
+        /// Shared canary identity, traffic and evidence inputs.
+        #[command(flatten)]
+        plan: CanaryArgs,
+        /// New plan JSON path; stdout when omitted.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Run the active dual-VPS canary (reloads LINE and restarts LANDING).
+    CanaryRun {
+        /// Shared canary identity, traffic and evidence inputs.
+        #[command(flatten)]
+        plan: CanaryArgs,
+        /// Required acknowledgement of remote service mutation.
+        #[arg(long)]
+        mutate_remote: bool,
+        /// Restore PREVIOUS on both hosts after any failure.
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        rollback_on_failure: bool,
+    },
+    /// Inspect one deployment host without mutating it.
+    Inspect {
+        /// Fixed host role to inspect; address/user/proxy stay in OpenSSH config.
+        #[arg(long, value_enum, default_value_t = DeployTarget::Line)]
+        target: DeployTarget,
+        /// New snapshot JSON path; stdout when omitted.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Derive a mutation plan from a recorded read-only snapshot.
+    Plan {
+        /// Transaction to plan.
+        #[arg(value_enum)]
+        operation: DeployPlanOperation,
+        /// Fixed host role the recorded snapshot must describe.
+        #[arg(long, value_enum, default_value_t = DeployTarget::Line)]
+        target: DeployTarget,
+        /// Snapshot JSON produced by `cargo dev deploy inspect`.
+        #[arg(long)]
+        snapshot: PathBuf,
+        /// Release generation id (required except for rollback).
+        #[arg(long)]
+        release_id: Option<String>,
+        /// Existing absolute remote executable to adopt (bootstrap).
+        #[arg(long)]
+        baseline_binary: Option<String>,
+        /// Existing absolute remote config to adopt (bootstrap).
+        #[arg(long)]
+        baseline_config: Option<String>,
+        /// Absolute local candidate binary path (stage/cutover).
+        #[arg(long)]
+        binary: Option<PathBuf>,
+        /// Absolute local candidate config path (stage/cutover).
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Expected lowercase candidate SHA-256 (stage/cutover).
+        #[arg(long)]
+        expected_sha256: Option<String>,
+        /// Expected semantic version (stage/cutover).
+        #[arg(long)]
+        expected_version: Option<String>,
+        /// Optional exact lowercase source commit embedded in the candidate.
+        #[arg(long)]
+        source_commit: Option<String>,
+        /// Include old-generation pruning in a promote plan.
+        #[arg(long)]
+        prune_old_releases: bool,
+        /// New plan JSON path; stdout when omitted.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Execute a freshly inspected transaction against one fixed host.
+    Apply {
+        /// Transaction to execute.
+        #[arg(value_enum)]
+        operation: DeployPlanOperation,
+        /// Fixed host role; address/user/proxy stay in OpenSSH config.
+        #[arg(long, value_enum, default_value_t = DeployTarget::Line)]
+        target: DeployTarget,
+        /// Release generation id (required except for rollback).
+        #[arg(long)]
+        release_id: Option<String>,
+        /// Existing absolute remote executable to adopt (bootstrap).
+        #[arg(long)]
+        baseline_binary: Option<String>,
+        /// Existing absolute remote config to adopt (bootstrap).
+        #[arg(long)]
+        baseline_config: Option<String>,
+        /// Absolute local candidate binary path (stage/cutover).
+        #[arg(long)]
+        binary: Option<PathBuf>,
+        /// Absolute local candidate config path (stage/cutover).
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Expected lowercase candidate SHA-256 (stage/cutover).
+        #[arg(long)]
+        expected_sha256: Option<String>,
+        /// Expected semantic version (stage/cutover).
+        #[arg(long)]
+        expected_version: Option<String>,
+        /// Optional exact lowercase source commit embedded in the candidate.
+        #[arg(long)]
+        source_commit: Option<String>,
+        /// Delete generations other than CURRENT/PREVIOUS after promote.
+        #[arg(long)]
+        prune_old_releases: bool,
+        /// Required acknowledgement that this command mutates the remote host.
+        #[arg(long)]
+        mutate_remote: bool,
+        /// New execution report path; stdout when omitted.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     /// Evaluate a recorded dual-VPS release-canary report, fail-closed.
     ///
     /// Exit status is three-valued: 0 when the canary passes, 1 for a real
@@ -138,6 +252,104 @@ enum DeployCommand {
         #[arg(long)]
         evaluate_performance: bool,
     },
+}
+
+/// Shared inputs for planning and running the active dual-VPS canary.
+#[derive(Debug, Clone, Args)]
+struct CanaryArgs {
+    /// Exact stock Xray binary.
+    #[arg(long)]
+    xray_bin: PathBuf,
+    /// Required lowercase Xray SHA-256.
+    #[arg(long)]
+    xray_sha256: String,
+    /// Xray config containing the loopback SOCKS inbound.
+    #[arg(long)]
+    xray_config: PathBuf,
+    /// Loopback SOCKS port.
+    #[arg(long)]
+    socks_port: u16,
+    /// LINE public IPv4 used for LANDING firewall validation.
+    #[arg(long)]
+    line_public_ipv4: std::net::Ipv4Addr,
+    /// Small URL used for active traffic.
+    #[arg(long)]
+    small_url: String,
+    /// Exact one-MiB download URL.
+    #[arg(long)]
+    one_mib_url: String,
+    /// Exact large download URL.
+    #[arg(long)]
+    large_url: String,
+    /// Upload endpoint.
+    #[arg(long)]
+    upload_url: String,
+    /// Local exact one-MiB reference payload.
+    #[arg(long)]
+    payload_one_mib: PathBuf,
+    /// Local exact large reference payload.
+    #[arg(long)]
+    payload_large: PathBuf,
+    /// New durable evidence directory the live run creates.
+    #[arg(long)]
+    out_dir: PathBuf,
+    /// Full source commit of the candidate on both hosts.
+    #[arg(long)]
+    candidate_commit: String,
+    /// Exact candidate SHA-256.
+    #[arg(long)]
+    candidate_sha256: String,
+    /// Candidate ELF build id.
+    #[arg(long)]
+    candidate_build_id: String,
+    /// Candidate product version.
+    #[arg(long)]
+    candidate_version: String,
+    /// Candidate target triple.
+    #[arg(long)]
+    candidate_target: String,
+    /// Candidate compiler identity.
+    #[arg(long)]
+    candidate_rustc: String,
+    /// Active canary seconds.
+    #[arg(long, default_value_t = 600)]
+    duration_seconds: u64,
+    /// Resource sample interval seconds.
+    #[arg(long, default_value_t = 5)]
+    sample_interval_seconds: u64,
+}
+
+/// One of the two fixed deployment roles.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DeployTarget {
+    /// Public LINE entry host.
+    Line,
+    /// Downstream LANDING host.
+    Landing,
+}
+
+impl DeployTarget {
+    const fn role(self) -> deploy::host::HostRole {
+        match self {
+            Self::Line => deploy::host::HostRole::Line,
+            Self::Landing => deploy::host::HostRole::Landing,
+        }
+    }
+}
+
+/// A transaction that can be derived without contacting a live host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum DeployPlanOperation {
+    /// Adopt unmanaged remote files as the first protected generation.
+    Bootstrap,
+    /// Install a candidate generation without changing CURRENT.
+    Stage,
+    /// Atomically move CURRENT to an already staged generation.
+    Cutover,
+    /// Restore CURRENT from PREVIOUS.
+    Rollback,
+    /// Accept the current generation after a successful canary.
+    Promote,
 }
 
 #[derive(Subcommand)]
@@ -279,9 +491,37 @@ enum BenchCommand {
     /// Internal TCP-only no-auth SOCKS5 upstream for outbound-pool gates.
     #[command(hide = true)]
     SocksServer {
-        /// Loopback listen port.
+        /// Numeric IPv4 listen address.
+        #[arg(long, default_value = "127.0.0.1")]
+        listen: std::net::Ipv4Addr,
+        /// Listen port.
         #[arg(long)]
         port: u16,
+        /// Rewrite every requested destination to this numeric socket.
+        #[arg(long)]
+        fixed_target: Option<std::net::SocketAddr>,
+    },
+    /// Internal deployment-suite acceptance entry point.
+    #[command(hide = true)]
+    Deployment {
+        /// Exact rust-reality binary under test.
+        #[arg(long, default_value = "target/release/rust-reality")]
+        rust_bin: PathBuf,
+        /// Exact stock Xray comparator binary.
+        #[arg(long, default_value = "xray")]
+        xray_bin: PathBuf,
+        /// New durable evidence directory.
+        #[arg(long)]
+        out_dir: PathBuf,
+        /// Stable evidence identity.
+        #[arg(long)]
+        run_id: String,
+        /// Reviewed deployment program.
+        #[arg(long, default_value = "smoke")]
+        plan: String,
+        /// Preserve the ephemeral workspace for diagnosis.
+        #[arg(long)]
+        keep_work: bool,
     },
     /// Validate bounded machine profiles under exact cgroup-v2 limits.
     Profiles {
@@ -545,6 +785,12 @@ enum BenchCommand {
         /// Interval between distributed soak integrity attempts.
         #[arg(long, default_value_t = 1800)]
         soak_distributed_interval_seconds: u64,
+        /// Reviewed deployment program (deployment suite).
+        #[arg(long, default_value = "smoke")]
+        deployment_plan: String,
+        /// Preserve the ephemeral deployment workspace for diagnosis.
+        #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
+        keep_work: bool,
     },
 }
 
@@ -701,6 +947,30 @@ enum PerfCommand {
         #[arg(long, default_value = "fp")]
         call_graph: String,
     },
+    /// Export one exact hotspot through DWARF, `IDALib`, LLVM and perf samples.
+    HotspotBundle {
+        /// Completed native `perf hotspot` run directory.
+        #[arg(long)]
+        run_dir: PathBuf,
+        /// Safe name for the new `hotspots/LABEL` evidence directory.
+        #[arg(long)]
+        label: String,
+        /// Static ELF address inside the function to export.
+        #[arg(long)]
+        address: String,
+        /// `IDALib` Python executable. Python is the external `IDALib` API boundary.
+        #[arg(long)]
+        idalib_python: PathBuf,
+        /// Maximum seconds allowed for `IDALib` analysis.
+        #[arg(long, default_value_t = 300)]
+        timeout_seconds: u64,
+        /// Reviewed sub-1% unmapped-period threshold; zero is fail-closed default.
+        #[arg(long, default_value_t = 0.0)]
+        max_unmapped_period_percent: f64,
+        /// Required explanation when allowing a non-zero unmapped-period threshold.
+        #[arg(long)]
+        unmapped_period_explanation: Option<String>,
+    },
     /// Capture identity-bound perf-stat or perf-c2c environment evidence.
     ///
     /// The workload command follows `--` and its argv[0] must be the identified
@@ -782,7 +1052,7 @@ fn main() -> ExitCode {
             }
         },
         Command::Bench { command } => run_bench(&repo, &command),
-        Command::Deploy { command } => run_deploy(command),
+        Command::Deploy { command } => run_deploy(&repo, command),
         Command::Docs { command } => match command {
             DocsCommand::Check => {
                 let report = docs::check(&repo);
@@ -862,6 +1132,10 @@ fn run_doctor() -> ExitCode {
 }
 
 /// Dispatches a `cargo dev perf` subcommand.
+#[allow(
+    clippy::too_many_lines,
+    reason = "each perf subcommand remains an explicit typed dispatch arm"
+)]
 fn run_perf(repo: &std::path::Path, command: PerfCommand) -> ExitCode {
     match command {
         PerfCommand::Evaluate { manifest, output } => {
@@ -923,6 +1197,32 @@ fn run_perf(repo: &std::path::Path, command: PerfCommand) -> ExitCode {
                 }
             }
         }
+        PerfCommand::HotspotBundle {
+            run_dir,
+            label,
+            address,
+            idalib_python,
+            timeout_seconds,
+            max_unmapped_period_percent,
+            unmapped_period_explanation,
+        } => match perf::hotspot::bundle::run(&perf::hotspot::bundle::Plan {
+            run_dir,
+            label,
+            address,
+            idalib_python,
+            timeout_seconds,
+            max_unmapped_period_percent,
+            unmapped_period_explanation,
+        }) {
+            Ok(message) => {
+                println!("{message}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("perf hotspot-bundle: {error}");
+                ExitCode::FAILURE
+            }
+        },
         PerfCommand::Environment {
             tool,
             output,
@@ -1230,12 +1530,15 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                 }
             }
         }
-        BenchCommand::SocksServer { port } => {
-            let listener = match std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, *port))
-            {
+        BenchCommand::SocksServer {
+            listen,
+            port,
+            fixed_target,
+        } => {
+            let listener = match std::net::TcpListener::bind((*listen, *port)) {
                 Ok(listener) => listener,
                 Err(error) => {
-                    eprintln!("bench socks-server: could not bind 127.0.0.1:{port}: {error}");
+                    eprintln!("bench socks-server: could not bind {listen}:{port}: {error}");
                     return ExitCode::FAILURE;
                 }
             };
@@ -1243,10 +1546,46 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                 println!("READY {address}");
                 let _ = std::io::Write::flush(&mut std::io::stdout());
             }
-            match bench::socks_server::serve(&listener) {
+            match bench::socks_server::serve_with_target(&listener, *fixed_target) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("bench socks-server: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        BenchCommand::Deployment {
+            rust_bin,
+            xray_bin,
+            out_dir,
+            run_id,
+            plan,
+            keep_work,
+        } => {
+            let kind = match bench::deployment::PlanKind::parse(plan) {
+                Ok(kind) => kind,
+                Err(error) => {
+                    eprintln!("bench deployment: {error}");
+                    return ExitCode::from(2);
+                }
+            };
+            let run = bench::deployment::RunPlan {
+                repo: repo.to_path_buf(),
+                rust_bin: rust_bin.clone(),
+                xray_bin: xray_bin.clone(),
+                out_dir: out_dir.clone(),
+                run_id: run_id.clone(),
+                program: bench::deployment::Plan::reviewed(kind),
+                keep_work: *keep_work,
+            };
+            match bench::deployment::run(&run) {
+                Ok(outcome) => {
+                    println!("summary: {}", outcome.summary_path.display());
+                    println!("completion: {}", outcome.marker_path.display());
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("bench deployment: {error}");
                     ExitCode::FAILURE
                 }
             }
@@ -1456,6 +1795,8 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             soak_round_sleep_ms,
             soak_min_rounds,
             soak_distributed_interval_seconds,
+            deployment_plan,
+            keep_work,
         } => {
             if suite == "tls-shape" {
                 return run_bench_tls_shape(
@@ -1532,6 +1873,47 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                     *soak_min_rounds,
                     *soak_distributed_interval_seconds,
                 );
+            }
+            if suite == "deployment" {
+                let kind = match bench::deployment::PlanKind::parse(deployment_plan) {
+                    Ok(kind) => kind,
+                    Err(error) => {
+                        eprintln!("bench run deployment: {error}");
+                        return ExitCode::from(2);
+                    }
+                };
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |duration| duration.as_secs());
+                let run_id = run_id.clone().unwrap_or_else(|| {
+                    format!("deployment-{}-{stamp}-{}", kind.name(), std::process::id())
+                });
+                let out_dir = out_dir.clone().unwrap_or_else(|| {
+                    std::env::current_dir()
+                        .unwrap_or_else(|_| PathBuf::from("."))
+                        .join("benchmarks/final")
+                        .join(&run_id)
+                });
+                let run = bench::deployment::RunPlan {
+                    repo: repo.to_path_buf(),
+                    rust_bin: rust_bin.clone(),
+                    xray_bin: xray_bin.clone(),
+                    out_dir,
+                    run_id,
+                    program: bench::deployment::Plan::reviewed(kind),
+                    keep_work: *keep_work,
+                };
+                return match bench::deployment::run(&run) {
+                    Ok(outcome) => {
+                        println!("summary: {}", outcome.summary_path.display());
+                        println!("completion: {}", outcome.marker_path.display());
+                        ExitCode::SUCCESS
+                    }
+                    Err(error) => {
+                        eprintln!("bench run deployment: {error}");
+                        ExitCode::FAILURE
+                    }
+                };
             }
             if suite == "xray-interop" {
                 return run_bench_interop(
@@ -2989,13 +3371,469 @@ fn run_deploy_netem(
     }
 }
 
+fn emit_deploy_json(output: Option<&Path>, json: &str) -> Result<(), String> {
+    if let Some(path) = output {
+        if path.exists() || path.is_symlink() {
+            return Err(format!("output must not already exist: {}", path.display()));
+        }
+        std::fs::write(path, json)
+            .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+    } else {
+        print!("{json}");
+    }
+    Ok(())
+}
+
+fn run_deploy_inspect(target: DeployTarget, output: Option<&Path>) -> ExitCode {
+    let topology = match deploy::host::Topology::canonical() {
+        Ok(topology) => topology,
+        Err(error) => {
+            eprintln!("deploy inspect: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let host = topology.host(target.role());
+    let mut transport = deploy::remote::SystemTransport;
+    match deploy::snapshot::inspect(&mut transport, host) {
+        Ok(snapshot) => {
+            eprintln!("{}", snapshot.summary_line());
+            let json = snapshot.to_json().to_python_json();
+            if let Err(error) = emit_deploy_json(output, &json) {
+                eprintln!("deploy inspect: {error}");
+                ExitCode::from(2)
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        Err(error) => {
+            eprintln!("deploy inspect: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn build_canary_plan(arguments: CanaryArgs, rollback_on_failure: bool) -> deploy::canary_run::Plan {
+    deploy::canary_run::Plan {
+        candidate: deploy::canary_run::Candidate {
+            commit: arguments.candidate_commit,
+            sha256: arguments.candidate_sha256,
+            build_id: arguments.candidate_build_id,
+            version: arguments.candidate_version,
+            target: arguments.candidate_target,
+            rustc: arguments.candidate_rustc,
+        },
+        xray_bin: arguments.xray_bin,
+        xray_sha256: arguments.xray_sha256,
+        xray_config: arguments.xray_config,
+        socks_port: arguments.socks_port,
+        line_public_ipv4: arguments.line_public_ipv4,
+        small_url: arguments.small_url,
+        one_mib_url: arguments.one_mib_url,
+        large_url: arguments.large_url,
+        upload_url: arguments.upload_url,
+        payload_one_mib: arguments.payload_one_mib,
+        payload_large: arguments.payload_large,
+        out_dir: arguments.out_dir,
+        duration_seconds: arguments.duration_seconds,
+        sample_interval_seconds: arguments.sample_interval_seconds,
+        rollback_on_failure,
+    }
+}
+
+fn run_canary_plan(arguments: CanaryArgs, output: Option<&Path>) -> ExitCode {
+    let plan = build_canary_plan(arguments, true);
+    if let Err(error) = plan.validate() {
+        eprintln!("deploy canary-plan: {error}");
+        return ExitCode::from(2);
+    }
+    let json = plan.to_json().to_python_json();
+    if let Err(error) = emit_deploy_json(output, &json) {
+        eprintln!("deploy canary-plan: {error}");
+        ExitCode::from(2)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+fn run_canary_live(
+    arguments: CanaryArgs,
+    mutate_remote: bool,
+    rollback_on_failure: bool,
+) -> ExitCode {
+    if !mutate_remote {
+        eprintln!(
+            "deploy canary-run: LINE reload and LANDING restart require --mutate-remote; use `deploy canary-plan` for non-live validation"
+        );
+        return ExitCode::from(2);
+    }
+    let plan = build_canary_plan(arguments, rollback_on_failure);
+    let topology = match deploy::host::Topology::canonical() {
+        Ok(topology) => topology,
+        Err(error) => {
+            eprintln!("deploy canary-run: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    match deploy::canary_run::run(&plan, &topology) {
+        Ok(outcome) => {
+            print!("{}", outcome.verdict);
+            if outcome.ok {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => {
+            eprintln!("deploy canary-run: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_deploy_plan(
+    operation: DeployPlanOperation,
+    target: DeployTarget,
+    snapshot_path: &Path,
+    release_id: Option<&str>,
+    baseline_binary: Option<&str>,
+    baseline_config: Option<&str>,
+    binary: Option<&Path>,
+    config: Option<&Path>,
+    expected_sha256: Option<&str>,
+    expected_version: Option<&str>,
+    source_commit: Option<&str>,
+    prune_old_releases: bool,
+    output: Option<&Path>,
+) -> ExitCode {
+    let text = match std::fs::read_to_string(snapshot_path) {
+        Ok(text) => text,
+        Err(error) => {
+            eprintln!(
+                "deploy plan: could not read {}: {error}",
+                snapshot_path.display()
+            );
+            return ExitCode::from(2);
+        }
+    };
+    let snapshot = match deploy::snapshot::from_json(&text) {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            eprintln!("deploy plan: inadmissible snapshot: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let topology = match deploy::host::Topology::canonical() {
+        Ok(topology) => topology,
+        Err(error) => {
+            eprintln!("deploy plan: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let expected_alias = topology.host(target.role()).alias();
+    if snapshot.alias != expected_alias {
+        eprintln!(
+            "deploy plan: snapshot alias {:?} does not match target {:?}",
+            snapshot.alias, expected_alias
+        );
+        return ExitCode::from(2);
+    }
+
+    let plan = match operation {
+        DeployPlanOperation::Bootstrap => release_id
+            .ok_or_else(|| "--release-id is required for bootstrap".to_owned())
+            .and_then(|release_id| {
+                let baseline_binary = baseline_binary
+                    .ok_or_else(|| "--baseline-binary is required for bootstrap".to_owned())?;
+                let baseline_config = baseline_config
+                    .ok_or_else(|| "--baseline-config is required for bootstrap".to_owned())?;
+                deploy::plan::plan_bootstrap(
+                    &snapshot,
+                    release_id,
+                    baseline_binary,
+                    baseline_config,
+                )
+            }),
+        DeployPlanOperation::Stage => deploy_artifact(
+            operation,
+            release_id,
+            binary,
+            config,
+            expected_sha256,
+            expected_version,
+            source_commit,
+        )
+            .and_then(|artifact| deploy::plan::plan_stage(&snapshot, &artifact)),
+        DeployPlanOperation::Cutover => deploy_artifact(
+            operation,
+            release_id,
+            binary,
+            config,
+            expected_sha256,
+            expected_version,
+            source_commit,
+        )
+            .and_then(|artifact| deploy::plan::plan_cutover(&snapshot, &artifact)),
+        DeployPlanOperation::Rollback => deploy::plan::plan_rollback(&snapshot),
+        DeployPlanOperation::Promote => release_id
+            .ok_or_else(|| "--release-id is required for promote".to_owned())
+            .and_then(|release_id| {
+                deploy::plan::plan_promote(&snapshot, release_id, prune_old_releases)
+            }),
+    };
+    let plan = match plan {
+        Ok(plan) => plan,
+        Err(error) => {
+            eprintln!("deploy plan: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    eprint!("{}", plan.describe());
+    if deploy::plan::rollback_for(&plan).is_some() {
+        eprintln!("  rollback: constructed and required on execution failure");
+    }
+    let json = plan.to_json().to_python_json();
+    if let Err(error) = emit_deploy_json(output, &json) {
+        eprintln!("deploy plan: {error}");
+        ExitCode::from(2)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn deploy_artifact(
+    operation: DeployPlanOperation,
+    release_id: Option<&str>,
+    binary: Option<&Path>,
+    config: Option<&Path>,
+    expected_sha256: Option<&str>,
+    expected_version: Option<&str>,
+    source_commit: Option<&str>,
+) -> Result<deploy::plan::ArtifactIdentity, String> {
+    let required = |value: Option<&str>, name: &str| {
+        value
+            .map(str::to_owned)
+            .ok_or_else(|| format!("--{name} is required for {operation:?}"))
+    };
+    let path = |value: Option<&Path>, name: &str| {
+        value
+            .ok_or_else(|| format!("--{name} is required for {operation:?}"))?
+            .to_str()
+            .map(str::to_owned)
+            .ok_or_else(|| format!("--{name} must be valid UTF-8"))
+    };
+    Ok(deploy::plan::ArtifactIdentity {
+        release_id: required(release_id, "release-id")?,
+        binary_path: path(binary, "binary")?,
+        config_path: path(config, "config")?,
+        binary_sha256: required(expected_sha256, "expected-sha256")?,
+        version: required(expected_version, "expected-version")?,
+        source_commit: source_commit.map(str::to_owned),
+    })
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn run_deploy_apply(
+    repo: &Path,
+    operation: DeployPlanOperation,
+    target: DeployTarget,
+    release_id: Option<&str>,
+    baseline_binary: Option<&str>,
+    baseline_config: Option<&str>,
+    binary: Option<&Path>,
+    config: Option<&Path>,
+    expected_sha256: Option<&str>,
+    expected_version: Option<&str>,
+    source_commit: Option<&str>,
+    prune_old_releases: bool,
+    mutate_remote: bool,
+    output: Option<&Path>,
+) -> ExitCode {
+    if !mutate_remote {
+        eprintln!(
+            "deploy apply: remote mutation requires --mutate-remote; use `deploy plan` for a non-mutating transaction"
+        );
+        return ExitCode::from(2);
+    }
+    let topology = match deploy::host::Topology::canonical() {
+        Ok(topology) => topology,
+        Err(error) => {
+            eprintln!("deploy apply: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let host = topology.host(target.role());
+    let mut transport = deploy::remote::SystemTransport;
+    let before = match deploy::snapshot::inspect(&mut transport, host) {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            eprintln!("deploy apply: pre-mutation inspection failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let artifact = match operation {
+        DeployPlanOperation::Stage | DeployPlanOperation::Cutover => match deploy_artifact(
+            operation,
+            release_id,
+            binary,
+            config,
+            expected_sha256,
+            expected_version,
+            source_commit,
+        ) {
+            Ok(artifact) => Some(artifact),
+            Err(error) => {
+                eprintln!("deploy apply: {error}");
+                return ExitCode::from(2);
+            }
+        },
+        DeployPlanOperation::Bootstrap
+        | DeployPlanOperation::Rollback
+        | DeployPlanOperation::Promote => None,
+    };
+    let plan = match operation {
+        DeployPlanOperation::Bootstrap => release_id
+            .ok_or_else(|| "--release-id is required for bootstrap".to_owned())
+            .and_then(|release_id| {
+                let baseline_binary = baseline_binary
+                    .ok_or_else(|| "--baseline-binary is required for bootstrap".to_owned())?;
+                let baseline_config = baseline_config
+                    .ok_or_else(|| "--baseline-config is required for bootstrap".to_owned())?;
+                deploy::plan::plan_bootstrap(
+                    &before,
+                    release_id,
+                    baseline_binary,
+                    baseline_config,
+                )
+            }),
+        DeployPlanOperation::Stage => deploy::plan::plan_stage(
+            &before,
+            artifact.as_ref().expect("stage artifact was constructed"),
+        ),
+        DeployPlanOperation::Cutover => deploy::plan::plan_cutover(
+            &before,
+            artifact.as_ref().expect("cutover artifact was constructed"),
+        ),
+        DeployPlanOperation::Rollback => deploy::plan::plan_rollback(&before),
+        DeployPlanOperation::Promote => release_id
+            .ok_or_else(|| "--release-id is required for promote".to_owned())
+            .and_then(|id| deploy::plan::plan_promote(&before, id, prune_old_releases)),
+    };
+    let plan = match plan {
+        Ok(plan) => plan,
+        Err(error) => {
+            eprintln!("deploy apply: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    eprint!("{}", plan.describe());
+    let mut validator = deploy::executor::SystemCandidateValidator;
+    let unit_file = (operation == DeployPlanOperation::Bootstrap)
+        .then(|| repo.join("deploy/rust-reality-vps.service"));
+    match deploy::executor::execute(
+        &mut transport,
+        &mut validator,
+        host,
+        &plan,
+        &before,
+        artifact.as_ref(),
+        unit_file.as_deref(),
+    ) {
+        Ok(report) => {
+            let json = report.to_json().to_python_json();
+            if let Err(error) = emit_deploy_json(output, &json) {
+                eprintln!("deploy apply: transaction succeeded but evidence failed: {error}");
+                ExitCode::from(2)
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        Err(error) => {
+            eprintln!("deploy apply: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// Dispatches a `cargo dev deploy` subcommand.
 ///
 /// The canary evaluator is fail-closed and three-valued, mirroring
 /// `cargo dev perf evaluate`: exit 0 on pass, 1 on a real canary failure, and 2
 /// when the recorded report could not be admitted at all.
-fn run_deploy(command: DeployCommand) -> ExitCode {
+#[allow(clippy::too_many_lines)]
+fn run_deploy(repo: &Path, command: DeployCommand) -> ExitCode {
     match command {
+        DeployCommand::CanaryPlan { plan, output } => {
+            run_canary_plan(plan, output.as_deref())
+        }
+        DeployCommand::CanaryRun {
+            plan,
+            mutate_remote,
+            rollback_on_failure,
+        } => run_canary_live(plan, mutate_remote, rollback_on_failure),
+        DeployCommand::Inspect { target, output } => {
+            run_deploy_inspect(target, output.as_deref())
+        }
+        DeployCommand::Plan {
+            operation,
+            target,
+            snapshot,
+            release_id,
+            baseline_binary,
+            baseline_config,
+            binary,
+            config,
+            expected_sha256,
+            expected_version,
+            source_commit,
+            prune_old_releases,
+            output,
+        } => run_deploy_plan(
+            operation,
+            target,
+            &snapshot,
+            release_id.as_deref(),
+            baseline_binary.as_deref(),
+            baseline_config.as_deref(),
+            binary.as_deref(),
+            config.as_deref(),
+            expected_sha256.as_deref(),
+            expected_version.as_deref(),
+            source_commit.as_deref(),
+            prune_old_releases,
+            output.as_deref(),
+        ),
+        DeployCommand::Apply {
+            operation,
+            target,
+            release_id,
+            baseline_binary,
+            baseline_config,
+            binary,
+            config,
+            expected_sha256,
+            expected_version,
+            source_commit,
+            prune_old_releases,
+            mutate_remote,
+            output,
+        } => run_deploy_apply(
+            repo,
+            operation,
+            target,
+            release_id.as_deref(),
+            baseline_binary.as_deref(),
+            baseline_config.as_deref(),
+            binary.as_deref(),
+            config.as_deref(),
+            expected_sha256.as_deref(),
+            expected_version.as_deref(),
+            source_commit.as_deref(),
+            prune_old_releases,
+            mutate_remote,
+            output.as_deref(),
+        ),
         DeployCommand::Netem {
             profiles,
             pool_summaries,

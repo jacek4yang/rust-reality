@@ -8,19 +8,28 @@
     "every deployment/canary/rollback script migrated with safety invariants preserved",
     "all data-only files moved to fixture/data directories",
     "historical evidence moved to evidence/research locations",
-    "no GitHub Actions, release workflow, AGENTS.md, README or mdBook reference to scripts/",
+    "no current active GitHub Actions, release workflow, AGENTS.md, README or mdBook command/caller references to scripts/; explicitly historical and decision-record references may remain",
     "no compatibility wrappers preserving old command names",
     "no equivalent shell/Python policy relocated to ci/, misc/, tools/scripts/ or .github/scripts/",
     "behavioural parity demonstrated for every safety- or decision-critical migration",
-    "full CI green on the exact final head, then git rm -r scripts"
+    "scripts/ absent with full local gates and exact-head CI green after final deletion"
   ],
   "current_state": {
-    "base_main": "d818ded524691bfe445c432241d8f2cd8ca651aa",
-    "snapshot": "C3_TLS_SHAPE_DELETED",
-    "tracked_files": 21,
-    "tracked_lines": 10246,
+    "base_main": "641a3f3ab65fb907a14d52cc7f333882cc0ed70b",
+    "snapshot": "PR154_SCRIPTS_ZERO_FINAL",
+    "tracked_files": 0,
+    "tracked_lines": 0,
+    "active_repository_owned_bash_policy_files": 0,
+    "active_repository_owned_python_policy_files": 0,
     "repository_owned_external_python_validators": 0,
-    "workflow_scripts_references": 0
+    "workflow_scripts_references": 0,
+    "current_documentation_scripts_commands": 0,
+    "compatibility_wrappers": 0,
+    "inert_historical_or_evidence_shell_python_files": 29,
+    "tracked_legacy_scripts": [],
+    "deployment_deletion_gate": "accepted by the operator's explicit APPROVED: DEPLOYMENT DELETION WAIVER for issue #147",
+    "deployment_deletion_acceptance": "fake-executor and dry-run parity, recorded mechanism parity, failure-injection and rollback evidence, native canary evidence, and read-only inspection accepted as sufficient",
+    "live_vps_mutation_performed": false
   },
   "dispositions": {
     "MIGRATE": "still-useful executable policy becomes typed rr-dev functionality",
@@ -112,8 +121,8 @@
         "validate-profiles.sh"
       ],
       "disposition": "MIGRATE",
-      "replacement": "cargo dev perf aggregate",
-      "status": "not-started"
+      "replacement": "cargo dev perf hotspot-bundle",
+      "status": "deleted-after-parity in PR #154; legacy Python self-test and seven native hotspot tests pass, and the real IDALib acceptance mapped 520/520 exact-symbol samples with 0.000000% unmapped period and 19/19 verified evidence checksums"
     },
     {
       "path": "scripts/aggregate-release.sh",
@@ -142,7 +151,7 @@
       ],
       "disposition": "MERGE",
       "replacement": "BenchmarkRunner contract workload",
-      "status": "not-started"
+      "status": "deleted-after-parity in PR #154; the typed run-contract/run-completion publication owns environment identity, host-exclusive lock attestation, staged atomic publication and verify-on-exit gate semantics"
     },
     {
       "path": "scripts/benchmark-deployment.sh",
@@ -160,8 +169,8 @@
         "cargo dev deploy netem"
       ],
       "disposition": "MERGE",
-      "replacement": "cargo dev bench deployment",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite deployment",
+      "status": "deleted-after-parity in PR #154; the formal mechanism acceptance passed every verdict fail-closed (3/3 netem profiles, 108/108 records, PASS performance, clean teardown), and the catalogue smoke exercised routing/cost/nxr/longflow through the public suite path"
     },
     {
       "path": "scripts/benchmark-dns-comparison.sh",
@@ -409,8 +418,8 @@
       "invoked_by_check_sh": false,
       "calls_scripts": [],
       "disposition": "MIGRATE",
-      "replacement": "cargo dev deploy",
-      "status": "not-started"
+      "replacement": "cargo dev deploy {inspect,plan,apply}",
+      "status": "deleted-after-parity in PR #154 under the operator's explicit issue #147 deployment deletion waiver; fixed LINE/LANDING roles, secret-free snapshots, candidate/config identity, bootstrap, staging, atomic CURRENT/PREVIOUS cutover, listener/service verification, failure rollback, idempotent rollback, promotion and safe pruning are typed and fake-tested; no live VPS mutation was performed"
     },
     {
       "path": "scripts/deployment_driver.py",
@@ -424,8 +433,8 @@
         "benchmark-setup-rate.sh"
       ],
       "disposition": "MIGRATE",
-      "replacement": "cargo dev deploy (planner)",
-      "status": "not-started"
+      "replacement": "cargo dev bench run --suite deployment (typed sections)",
+      "status": "deleted-after-parity in PR #154; route probing, setup-rate, throughput, relay evidence, SOCKS5 fixed-target serving, geosite config generation and the fail-closed summarizer are typed bench::deployment sections"
     },
     {
       "path": "scripts/dns-fake-server.py",
@@ -466,8 +475,8 @@
         "idalib-export-address.py"
       ],
       "disposition": "MERGE",
-      "replacement": "cargo dev perf aggregate",
-      "status": "not-started"
+      "replacement": "cargo dev perf hotspot-bundle",
+      "status": "deleted-after-parity in PR #154; Rust validates the completed capture and archived binary/perf identities, isolates IDALib input, owns DWARF/LLVM/perf invocation, writes checksums and publishes a hash-bound completion or durable FAILED state; real full-bundle acceptance is recorded in benchmarks/evidence/hotspot-bundle-authority-transfer-acceptance.json"
     },
     {
       "path": "scripts/fuzz-smoke.sh",
@@ -505,7 +514,7 @@
       "calls_scripts": [],
       "disposition": "MERGE",
       "replacement": "rr-dev benchmark host lock",
-      "status": "not-started"
+      "status": "deleted-after-parity in PR #154; final active caller benchmark-contract.sh is deleted, while native host_lock tests prove mutual exclusion, fail-closed contention, early-error cleanup and no child-process ownership inheritance"
     },
     {
       "path": "scripts/idalib-export-address.py",
@@ -516,8 +525,8 @@
       "invoked_by_check_sh": false,
       "calls_scripts": [],
       "disposition": "MERGE",
-      "replacement": "cargo dev perf hotspot (hotspot-bundle family)",
-      "status": "not-started",
+      "replacement": "cargo dev perf hotspot-bundle",
+      "status": "deleted-after-parity in PR #154; IDALib is a genuine Python-only external API boundary, reduced to a generated private direct-API bridge while Rust owns invocation, input/output validation, path policy, evidence identity and failure semantics; real IDALib 9.3 bridge, bounded-timeout failure and full-bundle acceptance passed without modifying or recording the installation",
       "disposition_correction": "was DELETE_OBSOLETE; export-hotspot-bundle.sh invokes it, so it is part of the hotspot family and shares that family's disposition"
     },
     {
@@ -658,8 +667,8 @@
         "evaluate-release-canary.py"
       ],
       "disposition": "MERGE",
-      "replacement": "cargo dev deploy canary",
-      "status": "not-started"
+      "replacement": "cargo dev deploy {canary-plan,canary-run,canary}",
+      "status": "deleted-after-parity in PR #154 under the operator's explicit issue #147 deployment deletion waiver; exact candidate/comparator identity, fixed direct LINE-to-LANDING topology, churn, reload, LANDING restart/recovery, byte integrity, bounded pools, resource recovery evidence, fail-closed verdict, cleanup and rollback-on-failure are typed and tested; no live VPS mutation was performed"
     },
     {
       "path": "scripts/run-target-host-validation.sh",
@@ -671,7 +680,7 @@
       "calls_scripts": [],
       "disposition": "MERGE",
       "replacement": "cargo dev check --all on target host",
-      "status": "not-started",
+      "status": "deleted-after-parity in PR #154; zero current callers, cargo dev check --all owns repository validation and the public xray-interop/matrix suites remain directly selectable when their external comparators are available",
       "calls_cargo_dev": [
         "cargo dev bench run --suite matrix",
         "cargo dev bench run --suite xray-interop"
@@ -959,7 +968,7 @@
     "top_level_files": 61,
     "subdirectories": {
       "scripts/__pycache__": "build artifact, must be removed and ignored",
-      "scripts/bench-origin": "benchmark origin helper (2 files)",
+      "scripts/bench-origin": "deleted-after-parity in PR #154; the embedded native `cargo dev bench origin` is the deployment benchmark origin, and its final caller benchmark-deployment.sh is deleted in the same family",
       "scripts/ipv6-e2e": "deleted-after-parity in PR #152; active orchestration and helper behavior absorbed by typed rr-dev IPv6 modules",
       "scripts/v150-release-gates": "MOVED to notes/history/release-gates/v150-release-gates/ as inert historical evidence (was already non-runnable: calls deleted evaluate-release-performance.py)",
       "scripts/v151-release-gates": "MOVED to notes/history/release-gates/v151-release-gates/ as inert historical evidence (was already non-runnable: calls deleted evaluate-release-performance.py)",
@@ -979,7 +988,7 @@
         "profile-built-in-benchmark.sh"
       ],
       "ci_or_gate_references": 0,
-      "finding": "the family is manual investigation tooling with no CI, gate or release caller. PR #153 migrated and deleted the built-in wrapper and forensic capture authority; aggregation, bundle export and the IDALib mechanism remain in the later hotspot transaction."
+      "finding": "the family is manual investigation tooling with no CI, gate or release caller. PR #153 migrated and deleted the built-in wrapper and forensic capture authority; PR #154 migrated aggregation and bundle export into cargo dev perf hotspot-bundle and reduced the Python-only IDALib API to a generated private mechanism bridge, deleting the final three repository policy files."
     }
   }
 }

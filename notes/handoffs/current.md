@@ -1,31 +1,40 @@
-# Engineering handoff — expected post-merge state for PR #153
+# Engineering handoff — issue #147 scripts-zero transaction
 
-This file describes the repository tree expected after PR #153 merges. While the
-PR is open, `main` remains the authoritative merged state and the PR body is the
-authoritative continuation ledger. Verify every mutable GitHub, Git, disk, and
-environment fact before relying on it.
+PR #154 is the scripts-zero transaction. It was based on `main` after PR #153;
+the PR body is the mutable continuation ledger. Verify the exact PR head,
+checks, merge state, and resulting `origin/main` rather than inferring them from
+this file.
 
 ## Repository
 
 ```text
-base main           14589c4   (verify: git rev-parse origin/main)
-candidate           PR #153   (verify its head/state with GitHub)
+PR #154 base        641a3f3   (main after PR #153)
+transaction         PR #154   branch dev/scripts-deployment
 latest release      v1.8.0    (tag on 6618e9d)
 tracking issue      #147      (durable scripts-elimination execution state)
 ```
 
-## scripts/ elimination milestone — in progress
+## scripts/ elimination milestone — scripts-zero candidate
 
 ```text
-scripts/ recursively tracked        12 (verify: git ls-files 'scripts/**' | wc -l)
-workflow scripts/ references        0
-session start                       46
-deleted in PR #153                  test-descriptor-pressure.sh,
-                                    sampling-xray-resources.sh, soak-test.sh,
-                                    profile-built-in-benchmark.sh,
-                                    profile-driver.py, profile-forensics.sh,
-                                    profile-report.py, profile-summarize.py,
-                                    validate-profiles.sh
+scripts/ recursively tracked         0 (verify after commit)
+top-level scripts/ directory          absent (verify after commit)
+active repository Bash policy        0
+active repository Python policy      0
+workflow repository .sh/.py calls    0
+current docs active scripts commands 0
+PR #154 start                       12
+deleted in PR #154                  aggregate-hotspot-samples.py,
+                                    bench-origin/{go.mod,main.go},
+                                    benchmark-contract.sh,
+                                    benchmark-deployment.sh,
+                                    deployment_driver.py,
+                                    export-hotspot-bundle.sh,
+                                    host-exclusive-lock-keeper.py,
+                                    idalib-export-address.py,
+                                    run-target-host-validation.sh
+final waiver deletion               deploy-release-vps.sh,
+                                    run-dual-vps-canary.sh
 ```
 
 ### Completed families (do not redo)
@@ -33,7 +42,12 @@ deleted in PR #153                  test-descriptor-pressure.sh,
 ```text
 evaluator / checks / release / fuzz / config id / perf env / historical gates
 bench core     cargo dev bench {list,environment}
-deploy canary  cargo dev deploy canary
+deploy control cargo dev deploy {inspect,plan,apply}
+               typed bootstrap/stage/cutover/rollback/promote, exact identity,
+               CURRENT/PREVIOUS, listener checks and secret-free evidence
+deploy canary  cargo dev deploy {canary-plan,canary-run,canary}
+               typed exact-candidate schedule, integrity, churn, recovery,
+               resource evidence, fail-closed verdict and failure rollback
 bench suites   cargo dev bench run --suite {real-path,xray,vision-direct}
                live WAN + loopback HTTP + loopback HTTPS smokes passed
 pipe budget    checks::pipe_budget (native; Python extract removed)
@@ -52,30 +66,42 @@ profiles       cargo dev bench profiles (native cgroup/workload/evidence/report
                policy; real 1c1g acceptance passed with clean teardown)
 hotspot core   cargo dev perf hotspot (identity-bound perf capture, reports,
                build IDs, checksums and publication; real acceptance passed)
+hotspot bundle cargo dev perf hotspot-bundle (completed-capture identity,
+               private IDALib bridge, instruction mapping gate, checksums and
+               publication; real IDALib acceptance passed 520/520 mapped,
+               0.000000% unmapped, 19/19 checksums)
 ```
 
-### Remaining — exact next actions
+### Final deployment deletion acceptance
+
+| Deleted legacy authority | Unique semantics now owned by Rust | Accepted evidence | Result |
+| --- | --- | --- | --- |
+| `deploy-release-vps.sh` | Fixed LINE/LANDING aliases; snapshots; artifact/config identity; bootstrap, stage, atomic cutover, listener/service verification, promotion/pruning; constructed rollback | `deploy::{host,snapshot,plan,executor}` unit/fake-transport tests, including injected cutover failure, redaction, typed SSH argv and repeat rollback | Deleted in PR #154 |
+| `run-dual-vps-canary.sh` | Exact candidate/comparator identity; direct LINE→LANDING topology; churn; LINE reload; LANDING restart/recovery; byte integrity; bounded pools; resource envelope; fail-closed evidence; cleanup and rollback | `deploy::{canary_run,canary}` schedule, firewall, journal, report-admission and evaluator tests; non-mutating `canary-plan` | Deleted in PR #154 |
+
+The operator explicitly supplied `APPROVED: DEPLOYMENT DELETION WAIVER` for issue
+#147 and accepted the completed fake-executor, dry-run parity, recorded mechanism
+parity, failure-injection/rollback, native canary, and read-only inspection
+evidence. This is the accepted deletion path. No live VPS mutation was performed
+or authorized by this waiver.
+
+Final local scripts-zero checkpoint:
 
 ```text
-1. Continue the approved sequence from issue #147:
-   DNS/routing/VLESS (37 -> 33)         DONE (PR #151)
-   TLS-shape/interop/IPv6 (33 -> 21)    DONE (PR #152)
-   soak/profiles/resource-pressure/
-     shared helpers (21 -> 12)          DONE (PR #153)
-   deployment control plane (12 -> 7)   NEXT
-   hotspot/final cleanup (7 -> 0)
-   - do not rebuild process/workspace/lock/identity/report lifecycle
-   - scripts/bench-origin remains only for benchmark-deployment.sh and is
-     deleted with that final caller in the deployment family
-
-2. The deployment family has a gate: issue #147 requires staging-VPS
-   acceptance, separately authorized LINE/LANDING acceptance, or an
-   explicit user waiver. An implementation agent may not choose the waiver.
-
-3. At the PR #153 final-gate checkpoint the filesystem had ~55 GiB free.
-   Gate each expensive operation on its measured peak plus a safety reserve.
-   Preserve artifacts/ (pinned evidence), proxy-env.sh, private/.
+rr-dev tests                         PASS (542/542)
+strict rr-dev clippy                PASS
+documentation check                 PASS (40 Markdown files)
+cargo dev check --all               PASS (14/14)
+inventory JSON/invariants           PASS
+active Bash/Python policy census    PASS (0/0)
+workflow .sh/.py caller census      PASS (0)
+current-doc active command census   PASS (0; historical citations retained)
+compatibility wrappers              PASS (0)
 ```
+
+Exact-head GitHub CI/Security must also pass before PR #154 is merged and issue
+#147 is closed; that external state belongs in the PR/issue ledger rather than a
+repository file that would itself change the checked commit.
 
 ### Verified reusable artifacts
 

@@ -67,14 +67,15 @@ exact diagnostic instead of manufacturing a measurement.
 | `cargo dev bench run --suite fallback` | Clean fallback A/B between a pinned baseline ELF and the candidate: warn-level logging both sides, direct-to-listener, with the relay splice/pipe-pool/buffer policy pinned identically on both sides and per-slot payload integrity verified before timing. |
 | `cargo dev bench run --suite setup-rate` | Balanced setup-rate A/B (accept → first Vision transition) between a pinned baseline ELF and the candidate. `--cover-netem-rtt-ms` moves only the TLS cover behind a veth/netns and applies a recorded one-leg delay, retaining pool hit/miss summaries. `--measure-mode perf` attributes task-clock/instructions/context switches after warmup; `strace` records the bounded read/receive syscall set and gracefully stops the tracee so summaries cannot be silently empty. |
 | `cargo dev bench run --suite vision-direct`, `cargo dev bench run --suite xray` | Focused Vision-Direct and Xray comparisons. |
-| `scripts/benchmark-deployment.sh` | Deployment characterization: routing correctness proof, routing decision cost (incl. DNS strategies), NXR topologies (direct/NXR/SOCKS5/Xray), long-flow relay evidence, and a formal one-leg netem matrix. The RTT section retains production-build ABBA cold/warm samples for Handoff/NXR/SOCKS5 at 1/10/50/100/200 ms, c1/8/32/128/512, plus secret-free pool retirement summaries. |
+| `cargo dev bench run --suite deployment` | Deployment characterization: routing correctness proof, routing decision cost (incl. DNS strategies), NXR topologies (direct/NXR/SOCKS5/Xray), long-flow relay evidence, and a formal one-leg netem matrix. The RTT section retains production-build ABBA cold/warm samples for Handoff/NXR/SOCKS5 at 1/10/50/100/200 ms, c1/8/32/128/512, plus secret-free pool retirement summaries. `--deployment-plan` selects `full`, `mechanism`, `robustness`, or the non-formal `smoke`. |
 | `cargo dev bench run --suite soak` | Optional long-horizon loopback evidence with standalone mixed traffic plus Handoff, NXR, and TCP-only SOCKS5, midpoint reload, exact per-process RSS identities, aggregate PSS, and hash-bound start/interval/reload/end integrity attempts. `--soak-implementation xray` selects the retained comparator. The default native run is scheduled/non-blocking; an exact 12-hour run with a 5–30 minute distributed interval records whether it meets the strict long-horizon qualification. |
 | `cargo dev bench profiles` | Fail-closed machine-profile validation under exact cgroup-v2 CPU, memory and zero-swap boundaries. It owns candidate/Xray identity, scoped process cleanup, churn and 512 MiB downloads, default/tuned idle-session ladders, RSS/FD/cgroup/OOM samples, absolute log counters with per-ladder baselines, class summaries, and aggregate publication. |
 | `cargo dev perf hotspot` | Identity-bound `perf record` capture for either the built-in benchmark or an existing server PID. Rust owns argument bounds, exact PID/start-time/executable identity, read-only binary archival, report/build-ID checks, checksums, publication, and cleanup; `perf`, `readelf`, and `sudo` remain typed external mechanisms. |
-| `cargo dev deploy canary` | Fail-closed evaluator for the approximately ten-minute exact-candidate dual-VPS active canary: deployment, real-WAN Handoff, stock Xray, integrity, churn, reload, LANDING restart/recovery, bounded pools, and recovering resource envelopes. |
+| `cargo dev perf hotspot-bundle` | Exports one address from a completed native hotspot run through DWARF, IDALib, LLVM and exact perf symbol offsets. Rust owns the completed-capture identity, private binary/database paths, IDALib result validation, instruction aggregation, the zero-default/sub-1% mapping gate, checksums, failure state and publication. IDALib's Python-only automation API is isolated behind a generated private direct-API bridge; the operator supplies `--idalib-python` plus any installation environment, and no repository Python policy file or machine-specific installation path remains. |
+| `cargo dev deploy {canary-plan,canary-run,canary}` | Non-mutating plan, explicitly mutation-gated runner, and fail-closed evaluator for the approximately ten-minute exact-candidate dual-VPS active canary: deployment, real-WAN Handoff, stock Xray, integrity, churn, reload, LANDING restart/recovery, bounded pools, and recovering resource envelopes. |
 | `cargo dev bench run --suite real-path` | Real-Internet A/B against Xray: crash and protocol-error gates on a real path; throughput is capped by the slowest link, so it does not discriminate bandwidth. |
 | `cargo dev bench run --suite vless-encryption` | Xray v26.7.28 A/B for `encryption:none` versus VLESS Encryption inside the same REALITY + Vision stack; measures throughput, server CPU/GiB, and warmed setup in a seeded, recorded random order. |
-| `scripts/test-xray-interop.sh` | Compatibility gate (below), not a benchmark. |
+| `cargo dev bench run --suite xray-interop` | Compatibility gate (below), not a benchmark. |
 
 ## v1.7 LINE-to-LANDING evidence contract
 
@@ -677,7 +678,7 @@ real WAN, ≥8-core, and NUMA remain unverified):
 
 ## Xray 26.7.28 compatibility gate
 
-`scripts/test-xray-interop.sh` proves that an unmodified Xray client can
+`cargo dev bench run --suite xray-interop` proves that an unmodified Xray client can
 drive the production public stack end to end:
 
 ```text
@@ -686,10 +687,11 @@ curl -> Xray SOCKS5 inbound -> VLESS + REALITY + xtls-rprx-vision
 ```
 
 ```shell
-XRAY_BIN=/path/to/xray ./scripts/test-xray-interop.sh
+cargo dev bench run --suite xray-interop \
+  --rust-bin /path/to/rust-reality --xray-bin /path/to/xray
 ```
 
-The script builds a release binary, creates fresh ephemeral UUID, X25519, and
+The native suite uses the selected release binary, creates fresh ephemeral UUID, X25519, and
 short-ID material, starts both processes on loopback, transfers a
 deterministic 1 MiB object through Xray, verifies its SHA-256 digest, checks
 ML-DSA-65 verification-key generation against Xray for a fixed seed, and
@@ -752,7 +754,7 @@ cargo dev bench run --suite descriptor-pressure \
   crate is covered by ABI/layout tests and privileged suites instead.
 - **NXR has no protocol-identical Xray baseline** (Xray implements no NXR),
   but NXR *does* have a controlled protocol comparison: the deployment
-  characterization (`scripts/benchmark-deployment.sh`) measures the same
+  characterization (`cargo dev bench run --suite deployment`) measures the same
   line/landing/origin topology over NXR vs SOCKS5 — setup rate, throughput,
   CPU/connection, and a netem RTT sweep — plus a clearly-labeled system-level
   rust+NXR vs Xray+SOCKS5 comparison. Final numbers are in
