@@ -1,5 +1,7 @@
 # Development workflow
 
+[简体中文](../../zh-CN/development/development-workflow.md) | English
+
 How to build, validate, and land a change. For repository layout and change
 routing see [repository-layout.md](repository-layout.md); for normative rules
 that also bind agents see [AGENTS.md](../../../AGENTS.md).
@@ -50,6 +52,37 @@ documentation policy checks, `cargo fmt --all --check`, strict clippy,
 `cargo deny`, `cargo doc` with warnings denied, the nextest suite, doc/release
 test profiles, bench compilation, and `cargo audit`. CI runs the same gate plus
 the musl release build; the Security workflow adds fuzz shards and sanitizers.
+
+## GitHub governance
+
+The default branch is protected by an active repository ruleset. Every change
+to it must arrive through a pull request; administrators have no standing
+bypass. A pull request can merge only when the exact current CI and Security
+checks succeed against the latest base state and every review conversation is
+resolved. The required approval count is zero while the repository has one
+maintainer, so the rule protects the merge without creating a self-review
+deadlock. Force pushes and deletion of the default branch are prohibited.
+
+Required-check names come from the jobs in `.github/workflows/`. Renaming,
+adding, or removing a mandatory job therefore requires a coordinated ruleset
+update through the GitHub API: verify the new check on a pull-request head,
+update the ruleset, and read the effective rules back before merging. Never
+change product or workflow semantics to accommodate a misspelled or stale
+administrative context.
+
+New release tags matching `v*` may be created by the documented release
+process. Once created, those tags cannot be updated, force-updated, or deleted.
+The release workflow remains responsible for verifying that the tag is
+annotated, belongs to the current history, and matches the release identity.
+
+Repository Actions policy permits GitHub-owned actions and the explicitly
+approved third-party action families used by current workflows. Every `uses:`
+reference must be pinned to a full commit SHA. The default `GITHUB_TOKEN` is
+read-only and cannot approve pull requests; a job declares a narrower write
+permission only when its owned operation requires it. In particular, only the
+release publish job needs `contents: write`. Adding an action or a write
+permission requires auditing the complete workflow and updating repository
+policy deliberately.
 
 ## Pull requests
 
