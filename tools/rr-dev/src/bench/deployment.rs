@@ -18,9 +18,11 @@ use std::{
 use crate::{
     deploy::netem::LEGS,
     hash,
-    perf::{json_in, json_out::Json},
+    perf::{json_in, json_in::Value, json_out::Json},
     process::Tool,
 };
+
+use super::suites;
 
 /// One deployment-characterization section, in required execution order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -319,6 +321,382 @@ impl Plan {
             ),
         ])
     }
+}
+
+#[derive(Debug)]
+pub(crate) struct RoutingConfig {
+    pub(crate) json: String,
+    pub(crate) short_ids: Vec<String>,
+}
+
+#[derive(Debug)]
+pub(crate) struct RoutingConfigInput<'a> {
+    pub(crate) base: &'a str,
+    pub(crate) uuids: &'a [String],
+    pub(crate) origin_a_port: u16,
+    pub(crate) socks_b_port: u16,
+    pub(crate) blocked_port: u16,
+    pub(crate) geosite_label: &'a str,
+    pub(crate) assets: &'a Path,
+}
+
+/// Builds the exact four-user routing correctness policy without replacing any
+/// unrelated generated configuration fields.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the reviewed routing policy stays visibly contiguous and exact"
+)]
+pub(crate) fn routing_config(input: &RoutingConfigInput<'_>) -> Result<RoutingConfig, String> {
+    if input.uuids.len() != 4 {
+        return Err("routing correctness requires exactly four UUIDs".to_owned());
+    }
+    let mut root = root_object(input.base)?;
+    let base_client = first_client(&root)?.clone();
+    let clients = clients_with_owned_short_ids(&base_client, input.uuids, Some("proof"))?;
+    let short_ids = clients
+        .iter()
+        .map(|client| {
+            client
+                .array_field("client", "shortIds")
+                .map_err(|error| error.to_string())?
+                .first()
+                .ok_or_else(|| "generated routing client has no short ID".to_owned())?
+                .as_str("client.shortIds[0]")
+                .map(str::to_owned)
+                .map_err(|error| error.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    replace_clients(&mut root, clients)?;
+    root.insert(
+        "outbounds".to_owned(),
+        Value::Array(vec![
+            object([("protocol", string("direct")), ("tag", string("direct"))]),
+            object([
+                ("protocol", string("blackhole")),
+                ("tag", string("block")),
+                (
+                    "settings",
+                    object([("responseDelayMs", number(0))]),
+                ),
+            ]),
+            object([
+                ("protocol", string("socks5")),
+                ("tag", string("via-socks-b")),
+                (
+                    "settings",
+                    object([
+                        ("address", string("127.0.0.1")),
+                        ("port", number(u64::from(input.socks_b_port))),
+                    ]),
+                ),
+            ]),
+        ]),
+    );
+    root.insert(
+        "routing".to_owned(),
+        object([
+            ("domainStrategy", string("IPIfNonMatch")),
+            (
+                "globalRules",
+                Value::Array(vec![
+                    rule(
+                        "global-block-domain",
+                        "block",
+                        [("domain", strings(["full:blocked.example"]))],
+                    ),
+                    rule(
+                        "global-block-geosite",
+                        "block",
+                        [("domain", strings([format!("geosite:{}", input.geosite_label)]))],
+                    ),
+                    rule(
+                        "global-block-port",
+                        "block",
+                        [("port", strings([input.blocked_port.to_string()]))],
+                    ),
+                ]),
+            ),
+            (
+                "users",
+                Value::Array(vec![
+                    object([
+                        ("name", string("group-alpha")),
+                        ("userIds", strings(input.uuids[..2].iter().cloned())),
+                        ("defaultOutbound", string("block")),
+                        (
+                            "rules",
+                            Value::Array(vec![
+                                rule(
+                                    "alpha-allow-origin-a-by-domain",
+                                    "direct",
+                                    [
+                                        ("domain", strings(["full:localhost"])),
+                                        ("port", strings([input.origin_a_port.to_string()])),
+                                    ],
+                                ),
+                                rule(
+                                    "alpha-allow-origin-a-by-ip",
+                                    "direct",
+                                    [
+                                        ("ip", strings(["127.0.0.1"])),
+                                        ("port", strings([input.origin_a_port.to_string()])),
+                                    ],
+                                ),
+                                rule(
+                                    "alpha-late-block-loopback-rest",
+                                    "block",
+                                    [("ip", strings(["127.0.0.0/8"]))],
+                                ),
+                            ]),
+                        ),
+                    ]),
+                    object([
+                        ("name", string("group-beta")),
+                        ("userIds", strings(input.uuids[2..].iter().cloned())),
+                        ("defaultOutbound", string("via-socks-b")),
+                        (
+                            "rules",
+                            Value::Array(vec![rule(
+                                "beta-block-private-geoip",
+                                "block",
+                                [("ip", strings(["geoip:private"]))],
+                            )]),
+                        ),
+                    ]),
+                ]),
+            ),
+        ]),
+    );
+    root.insert("log".to_owned(), object([("level", string("warn"))]));
+    let assets = root
+        .entry("assets".to_owned())
+        .or_insert_with(|| object(std::iter::empty::<(&str, Value)>()));
+    let Value::Object(assets) = assets else {
+        return Err("generated routing config assets is not an object".to_owned());
+    };
+    assets.insert(
+        "cacheDirectory".to_owned(),
+        string(input.assets.display().to_string()),
+    );
+    assets.insert("requestTimeoutSeconds".to_owned(), number(15));
+    Ok(RoutingConfig {
+        json: suites::render_compact(&Value::Object(root)),
+        short_ids,
+    })
+}
+
+#[derive(Debug)]
+pub(crate) struct ScaleConfigInput<'a> {
+    pub(crate) base: &'a str,
+    pub(crate) uuids: &'a [String],
+    pub(crate) rules: usize,
+    pub(crate) global_rules: usize,
+    pub(crate) with_ip: bool,
+    pub(crate) strategy: &'a str,
+    pub(crate) assets: &'a Path,
+}
+
+/// Builds one routing-cost scale while preserving the generated listener and
+/// REALITY identity around the replaced routing policy.
+pub(crate) fn scale_config(input: &ScaleConfigInput<'_>) -> Result<String, String> {
+    if input.uuids.is_empty() {
+        return Err("routing-cost scale requires at least one UUID".to_owned());
+    }
+    if !matches!(input.strategy, "AsIs" | "IPIfNonMatch" | "IPOnDemand") {
+        return Err(format!("unknown routing domain strategy: {}", input.strategy));
+    }
+    let mut root = root_object(input.base)?;
+    let base_client = first_client(&root)?.clone();
+    let clients = clients_with_owned_short_ids(&base_client, input.uuids, None)?;
+    replace_clients(&mut root, clients)?;
+    root.insert(
+        "outbounds".to_owned(),
+        Value::Array(vec![
+            object([("protocol", string("direct")), ("tag", string("direct"))]),
+            object([
+                ("protocol", string("blackhole")),
+                ("tag", string("block")),
+                ("settings", object([("responseDelayMs", number(0))])),
+            ]),
+        ]),
+    );
+    let mut users = vec![object([
+        ("name", string("measured")),
+        ("userIds", strings([input.uuids[0].clone()])),
+        ("defaultOutbound", string("direct")),
+        ("rules", Value::Array(scale_rules(input.rules, input.with_ip, ""))),
+    ])];
+    if input.uuids.len() > 1 {
+        users.push(object([
+            ("name", string("bulk")),
+            ("userIds", strings(input.uuids[1..].iter().cloned())),
+            ("defaultOutbound", string("block")),
+            ("rules", Value::Array(Vec::new())),
+        ]));
+    }
+    root.insert(
+        "routing".to_owned(),
+        object([
+            ("domainStrategy", string(input.strategy)),
+            (
+                "globalRules",
+                Value::Array(scale_rules(input.global_rules, input.with_ip, "global-")),
+            ),
+            ("users", Value::Array(users)),
+        ]),
+    );
+    root.insert("log".to_owned(), object([("level", string("warn"))]));
+    let assets = root
+        .entry("assets".to_owned())
+        .or_insert_with(|| object(std::iter::empty::<(&str, Value)>()));
+    let Value::Object(assets) = assets else {
+        return Err("generated routing-cost config assets is not an object".to_owned());
+    };
+    assets.insert(
+        "cacheDirectory".to_owned(),
+        string(input.assets.display().to_string()),
+    );
+    Ok(suites::render_compact(&Value::Object(root)))
+}
+
+fn root_object(raw: &str) -> Result<BTreeMap<String, Value>, String> {
+    match json_in::parse(raw)
+        .map_err(|error| format!("generated rust config is invalid JSON: {error}"))?
+    {
+        Value::Object(root) => Ok(root),
+        _ => Err("generated rust config is not an object".to_owned()),
+    }
+}
+
+fn first_client(root: &BTreeMap<String, Value>) -> Result<&Value, String> {
+    root.get("inbounds")
+        .ok_or_else(|| "generated config has no inbounds".to_owned())?
+        .as_array("inbounds")
+        .map_err(|error| error.to_string())?
+        .first()
+        .ok_or_else(|| "generated config has no first inbound".to_owned())?
+        .field("inbounds[0]", "settings")
+        .and_then(|settings| settings.array_field("inbounds[0].settings", "clients"))
+        .map_err(|error| error.to_string())?
+        .first()
+        .ok_or_else(|| "generated config has no base client".to_owned())
+}
+
+fn replace_clients(root: &mut BTreeMap<String, Value>, clients: Vec<Value>) -> Result<(), String> {
+    let Some(Value::Array(inbounds)) = root.get_mut("inbounds") else {
+        return Err("generated config has no inbounds array".to_owned());
+    };
+    let Some(Value::Object(inbound)) = inbounds.first_mut() else {
+        return Err("generated config has no first inbound object".to_owned());
+    };
+    let Some(Value::Object(settings)) = inbound.get_mut("settings") else {
+        return Err("generated config has no first inbound settings object".to_owned());
+    };
+    settings.insert("clients".to_owned(), Value::Array(clients));
+    Ok(())
+}
+
+fn clients_with_owned_short_ids(
+    base: &Value,
+    uuids: &[String],
+    email_prefix: Option<&str>,
+) -> Result<Vec<Value>, String> {
+    let base_short_ids = base
+        .array_field("baseClient", "shortIds")
+        .map_err(|error| error.to_string())?;
+    if base_short_ids.is_empty() {
+        return Err("base VLESS client must contain at least one short ID".to_owned());
+    }
+    let mut used = BTreeSet::new();
+    let mut first_ids = Vec::with_capacity(base_short_ids.len());
+    for (index, value) in base_short_ids.iter().enumerate() {
+        let short_id = value
+            .as_str(&format!("baseClient.shortIds[{index}]"))
+            .map_err(|error| error.to_string())?
+            .to_owned();
+        if !used.insert(short_id.to_ascii_lowercase()) {
+            return Err("base VLESS client contains duplicate short IDs".to_owned());
+        }
+        first_ids.push(short_id);
+    }
+    uuids
+        .iter()
+        .enumerate()
+        .map(|(index, uuid)| {
+            let short_ids = if index == 0 {
+                first_ids.clone()
+            } else {
+                let short_id = (0_u16..=255)
+                    .map(|salt| hash::sha256_hex(format!("{uuid}:{salt}").as_bytes())[..16].to_owned())
+                    .find(|candidate| !used.contains(&candidate.to_ascii_lowercase()))
+                    .ok_or_else(|| "could not derive a unique short ID for VLESS client".to_owned())?;
+                used.insert(short_id.to_ascii_lowercase());
+                vec![short_id]
+            };
+            let mut client = BTreeMap::from([
+                ("flow".to_owned(), string("xtls-rprx-vision")),
+                ("id".to_owned(), string(uuid)),
+                ("shortIds".to_owned(), strings(short_ids)),
+            ]);
+            if let Some(prefix) = email_prefix {
+                client.insert("email".to_owned(), string(format!("{prefix}-{index}")));
+            }
+            Ok(Value::Object(client))
+        })
+        .collect()
+}
+
+fn scale_rules(count: usize, with_ip: bool, prefix: &str) -> Vec<Value> {
+    (0..count)
+        .map(|index| {
+            let kind = index % if with_ip { 5 } else { 4 };
+            let (suffix, field, value) = match kind {
+                0 => ("full", "domain", format!("full:host{index}.scale-example.test")),
+                1 => ("keyword", "domain", format!("keyword:needle-{index}-scale")),
+                2 => (
+                    "regexp",
+                    "domain",
+                    format!(r"regexp:^cdn-[0-9]+\.scale-{index}\.test$"),
+                ),
+                3 => (
+                    "port",
+                    "port",
+                    format!("{}-{}", 20_000 + index % 1000, 21_000 + index % 1000),
+                ),
+                _ => ("cidr", "ip", format!("10.{}.0.0/16", index % 250)),
+            };
+            rule(
+                &format!("{prefix}r{index}-{suffix}"),
+                "block",
+                [(field, strings([value]))],
+            )
+        })
+        .collect()
+}
+
+fn rule<const N: usize>(name: &str, outbound: &str, fields: [(&str, Value); N]) -> Value {
+    let mut rule = BTreeMap::from([
+        ("name".to_owned(), string(name)),
+        ("outbound".to_owned(), string(outbound)),
+    ]);
+    rule.extend(fields.into_iter().map(|(key, value)| (key.to_owned(), value)));
+    Value::Object(rule)
+}
+
+fn object<K: Into<String>>(entries: impl IntoIterator<Item = (K, Value)>) -> Value {
+    Value::Object(entries.into_iter().map(|(key, value)| (key.into(), value)).collect())
+}
+
+fn string(value: impl Into<String>) -> Value {
+    Value::Str(value.into())
+}
+
+fn strings(values: impl IntoIterator<Item = impl Into<String>>) -> Value {
+    Value::Array(values.into_iter().map(|value| string(value.into())).collect())
+}
+
+fn number(value: u64) -> Value {
+    Value::Number(value.to_string())
 }
 
 /// Expected outcome of one routing proof case.
@@ -919,6 +1297,29 @@ fn counts(values: &[usize]) -> Json {
 mod tests {
     use super::*;
 
+    fn generated_base() -> &'static str {
+        r#"{
+          "sentinel":"keep",
+          "log":{"level":"info","format":"json"},
+          "assets":{"cacheDirectory":"old","sentinel":true},
+          "inbounds":[{
+            "port":8443,
+            "settings":{"clients":[{
+              "id":"base","flow":"xtls-rprx-vision","shortIds":["0123456789abcdef"]
+            }]},
+            "streamSettings":{"sentinel":true}
+          }],
+          "outbounds":[{"protocol":"direct","tag":"old-direct"}],
+          "routing":{"users":[{"name":"old","userIds":["base"]}]}
+        }"#
+    }
+
+    fn uuids(count: usize) -> Vec<String> {
+        (0..count)
+            .map(|index| format!("00000000-0000-4000-8000-{index:012}"))
+            .collect()
+    }
+
     #[test]
     fn the_full_plan_cannot_narrow_the_legacy_matrix() {
         let plan = Plan::reviewed(PlanKind::Full);
@@ -960,6 +1361,97 @@ mod tests {
         let mut plan = Plan::reviewed(PlanKind::Full);
         plan.rtts_ms.pop();
         assert!(plan.validate().unwrap_err().contains("differ"));
+    }
+
+    #[test]
+    fn routing_config_replaces_only_the_owned_policy_subtrees() {
+        let uuids = uuids(4);
+        let config = routing_config(&RoutingConfigInput {
+            base: generated_base(),
+            uuids: &uuids,
+            origin_a_port: 8080,
+            socks_b_port: 1080,
+            blocked_port: 9666,
+            geosite_label: "google",
+            assets: Path::new("/tmp/assets"),
+        })
+        .unwrap();
+        assert_eq!(config.short_ids.len(), 4);
+        assert_eq!(config.short_ids[0], "0123456789abcdef");
+        assert_eq!(config.short_ids.iter().collect::<BTreeSet<_>>().len(), 4);
+        let value = json_in::parse(&config.json).unwrap();
+        assert_eq!(value.str_field("", "sentinel").unwrap(), "keep");
+        assert!(
+            value
+                .array_field("", "inbounds")
+                .unwrap()[0]
+                .field("inbounds[0]", "streamSettings")
+                .unwrap()
+                .field("inbounds[0].streamSettings", "sentinel")
+                .unwrap()
+                .as_bool("sentinel")
+                .unwrap()
+        );
+        let clients = value
+            .array_field("", "inbounds")
+            .unwrap()[0]
+            .field("inbounds[0]", "settings")
+            .unwrap()
+            .array_field("inbounds[0].settings", "clients")
+            .unwrap();
+        assert_eq!(clients.len(), 4);
+        let routing = value.field("", "routing").unwrap();
+        assert_eq!(routing.array_field("routing", "users").unwrap().len(), 2);
+        assert_eq!(routing.array_field("routing", "globalRules").unwrap().len(), 3);
+        assert!(
+            value
+                .field("", "assets")
+                .unwrap()
+                .field("assets", "sentinel")
+                .unwrap()
+                .as_bool("assets.sentinel")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn routing_cost_scale_retains_generated_identity_and_exact_dimensions() {
+        let uuids = uuids(5);
+        let json = scale_config(&ScaleConfigInput {
+            base: generated_base(),
+            uuids: &uuids,
+            rules: 16,
+            global_rules: 4,
+            with_ip: true,
+            strategy: "IPOnDemand",
+            assets: Path::new("/tmp/scale-assets"),
+        })
+        .unwrap();
+        let value = json_in::parse(&json).unwrap();
+        assert_eq!(value.str_field("", "sentinel").unwrap(), "keep");
+        let clients = value
+            .array_field("", "inbounds")
+            .unwrap()[0]
+            .field("inbounds[0]", "settings")
+            .unwrap()
+            .array_field("inbounds[0].settings", "clients")
+            .unwrap();
+        assert_eq!(clients.len(), 5);
+        let routing = value.field("", "routing").unwrap();
+        assert_eq!(
+            routing.str_field("routing", "domainStrategy").unwrap(),
+            "IPOnDemand"
+        );
+        let users = routing.array_field("routing", "users").unwrap();
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].array_field("routing.users[0]", "rules").unwrap().len(), 16);
+        let global = routing.array_field("routing", "globalRules").unwrap();
+        assert_eq!(global.len(), 4);
+        assert!(
+            global
+                .iter()
+                .all(|rule| rule.str_field("rule", "name").unwrap().starts_with("global-"))
+        );
     }
 
     #[test]
