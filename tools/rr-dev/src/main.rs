@@ -97,6 +97,72 @@ enum Command {
 
 #[derive(Subcommand)]
 enum DeployCommand {
+    /// Validate and render the active dual-VPS canary without contacting hosts.
+    CanaryPlan {
+        /// Exact stock Xray binary.
+        #[arg(long)]
+        xray_bin: PathBuf,
+        /// Required lowercase Xray SHA-256.
+        #[arg(long)]
+        xray_sha256: String,
+        /// Xray config containing the loopback SOCKS inbound.
+        #[arg(long)]
+        xray_config: PathBuf,
+        /// Loopback SOCKS port.
+        #[arg(long)]
+        socks_port: u16,
+        /// LINE public IPv4 used for LANDING firewall validation.
+        #[arg(long)]
+        line_public_ipv4: std::net::Ipv4Addr,
+        /// Small URL used for active traffic.
+        #[arg(long)]
+        small_url: String,
+        /// Exact one-MiB download URL.
+        #[arg(long)]
+        one_mib_url: String,
+        /// Exact large download URL.
+        #[arg(long)]
+        large_url: String,
+        /// Upload endpoint.
+        #[arg(long)]
+        upload_url: String,
+        /// Local exact one-MiB reference payload.
+        #[arg(long)]
+        payload_one_mib: PathBuf,
+        /// Local exact large reference payload.
+        #[arg(long)]
+        payload_large: PathBuf,
+        /// New durable evidence directory the live run would create.
+        #[arg(long)]
+        out_dir: PathBuf,
+        /// Full source commit of the candidate on both hosts.
+        #[arg(long)]
+        candidate_commit: String,
+        /// Exact candidate SHA-256.
+        #[arg(long)]
+        candidate_sha256: String,
+        /// Candidate ELF build id.
+        #[arg(long)]
+        candidate_build_id: String,
+        /// Candidate product version.
+        #[arg(long)]
+        candidate_version: String,
+        /// Candidate target triple.
+        #[arg(long)]
+        candidate_target: String,
+        /// Candidate compiler identity.
+        #[arg(long)]
+        candidate_rustc: String,
+        /// Active canary seconds.
+        #[arg(long, default_value_t = 600)]
+        duration_seconds: u64,
+        /// Resource sample interval seconds.
+        #[arg(long, default_value_t = 5)]
+        sample_interval_seconds: u64,
+        /// New plan JSON path; stdout when omitted.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     /// Inspect one deployment host without mutating it.
     Inspect {
         /// Fixed host role to inspect; address/user/proxy stay in OpenSSH config.
@@ -3157,6 +3223,67 @@ fn run_deploy_inspect(target: DeployTarget, output: Option<&Path>) -> ExitCode {
 }
 
 #[allow(clippy::too_many_arguments)]
+fn run_canary_plan(
+    xray_bin: PathBuf,
+    xray_sha256: String,
+    xray_config: PathBuf,
+    socks_port: u16,
+    line_public_ipv4: std::net::Ipv4Addr,
+    small_url: String,
+    one_mib_url: String,
+    large_url: String,
+    upload_url: String,
+    payload_one_mib: PathBuf,
+    payload_large: PathBuf,
+    out_dir: PathBuf,
+    candidate_commit: String,
+    candidate_sha256: String,
+    candidate_build_id: String,
+    candidate_version: String,
+    candidate_target: String,
+    candidate_rustc: String,
+    duration_seconds: u64,
+    sample_interval_seconds: u64,
+    output: Option<&Path>,
+) -> ExitCode {
+    let plan = deploy::canary_run::Plan {
+        candidate: deploy::canary_run::Candidate {
+            commit: candidate_commit,
+            sha256: candidate_sha256,
+            build_id: candidate_build_id,
+            version: candidate_version,
+            target: candidate_target,
+            rustc: candidate_rustc,
+        },
+        xray_bin,
+        xray_sha256,
+        xray_config,
+        socks_port,
+        line_public_ipv4,
+        small_url,
+        one_mib_url,
+        large_url,
+        upload_url,
+        payload_one_mib,
+        payload_large,
+        out_dir,
+        duration_seconds,
+        sample_interval_seconds,
+    };
+    if let Err(error) = plan.validate() {
+        eprintln!("deploy canary-plan: {error}");
+        return ExitCode::from(2);
+    }
+    let json = plan.to_json().to_python_json();
+    if let Err(error) = emit_deploy_json(output, &json) {
+        eprintln!("deploy canary-plan: {error}");
+        ExitCode::from(2)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_deploy_plan(
     operation: DeployPlanOperation,
     target: DeployTarget,
@@ -3430,6 +3557,51 @@ fn run_deploy_apply(
 #[allow(clippy::too_many_lines)]
 fn run_deploy(repo: &Path, command: DeployCommand) -> ExitCode {
     match command {
+        DeployCommand::CanaryPlan {
+            xray_bin,
+            xray_sha256,
+            xray_config,
+            socks_port,
+            line_public_ipv4,
+            small_url,
+            one_mib_url,
+            large_url,
+            upload_url,
+            payload_one_mib,
+            payload_large,
+            out_dir,
+            candidate_commit,
+            candidate_sha256,
+            candidate_build_id,
+            candidate_version,
+            candidate_target,
+            candidate_rustc,
+            duration_seconds,
+            sample_interval_seconds,
+            output,
+        } => run_canary_plan(
+            xray_bin,
+            xray_sha256,
+            xray_config,
+            socks_port,
+            line_public_ipv4,
+            small_url,
+            one_mib_url,
+            large_url,
+            upload_url,
+            payload_one_mib,
+            payload_large,
+            out_dir,
+            candidate_commit,
+            candidate_sha256,
+            candidate_build_id,
+            candidate_version,
+            candidate_target,
+            candidate_rustc,
+            duration_seconds,
+            sample_interval_seconds,
+            output.as_deref(),
+        ),
         DeployCommand::Inspect { target, output } => {
             run_deploy_inspect(target, output.as_deref())
         }
