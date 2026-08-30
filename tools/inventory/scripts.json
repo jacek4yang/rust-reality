@@ -8,26 +8,28 @@
     "every deployment/canary/rollback script migrated with safety invariants preserved",
     "all data-only files moved to fixture/data directories",
     "historical evidence moved to evidence/research locations",
-    "no GitHub Actions, release workflow, AGENTS.md, README or mdBook reference to scripts/",
+    "no current active GitHub Actions, release workflow, AGENTS.md, README or mdBook command/caller references to scripts/; explicitly historical and decision-record references may remain",
     "no compatibility wrappers preserving old command names",
     "no equivalent shell/Python policy relocated to ci/, misc/, tools/scripts/ or .github/scripts/",
     "behavioural parity demonstrated for every safety- or decision-critical migration",
-    "full CI green on the exact final head, then git rm -r scripts"
+    "scripts/ absent with full local gates and exact-head CI green after final deletion"
   ],
   "current_state": {
     "base_main": "641a3f3ab65fb907a14d52cc7f333882cc0ed70b",
-    "snapshot": "PR154_NON_LIVE_COMPLETE",
-    "tracked_files": 2,
-    "tracked_lines": 777,
-    "active_repository_owned_bash_policy_files": 2,
+    "snapshot": "PR154_SCRIPTS_ZERO_FINAL",
+    "tracked_files": 0,
+    "tracked_lines": 0,
+    "active_repository_owned_bash_policy_files": 0,
     "active_repository_owned_python_policy_files": 0,
     "repository_owned_external_python_validators": 0,
     "workflow_scripts_references": 0,
-    "tracked_legacy_scripts": [
-      "scripts/deploy-release-vps.sh",
-      "scripts/run-dual-vps-canary.sh"
-    ],
-    "deployment_deletion_gate": "issue #147 requires disposable-staging mutation acceptance, separately authorized LINE/LANDING mutation acceptance, or an explicit operator waiver"
+    "current_documentation_scripts_commands": 0,
+    "compatibility_wrappers": 0,
+    "inert_historical_or_evidence_shell_python_files": 29,
+    "tracked_legacy_scripts": [],
+    "deployment_deletion_gate": "accepted by the operator's explicit APPROVED: DEPLOYMENT DELETION WAIVER for issue #147",
+    "deployment_deletion_acceptance": "fake-executor and dry-run parity, recorded mechanism parity, failure-injection and rollback evidence, native canary evidence, and read-only inspection accepted as sufficient",
+    "live_vps_mutation_performed": false
   },
   "dispositions": {
     "MIGRATE": "still-useful executable policy becomes typed rr-dev functionality",
@@ -417,7 +419,7 @@
       "calls_scripts": [],
       "disposition": "MIGRATE",
       "replacement": "cargo dev deploy {inspect,plan,apply}",
-      "status": "native parity complete in PR #154: fixed LINE/LANDING roles, secret-free snapshots, candidate/config identity, bootstrap, staging, atomic CURRENT/PREVIOUS cutover, listener/service verification, failure rollback, idempotent rollback, promotion and safe pruning are typed and fake-tested; this tracked legacy authority is retained only until one issue #147 deployment mutation acceptance path is satisfied"
+      "status": "deleted-after-parity in PR #154 under the operator's explicit issue #147 deployment deletion waiver; fixed LINE/LANDING roles, secret-free snapshots, candidate/config identity, bootstrap, staging, atomic CURRENT/PREVIOUS cutover, listener/service verification, failure rollback, idempotent rollback, promotion and safe pruning are typed and fake-tested; no live VPS mutation was performed"
     },
     {
       "path": "scripts/deployment_driver.py",
@@ -666,7 +668,7 @@
       ],
       "disposition": "MERGE",
       "replacement": "cargo dev deploy {canary-plan,canary-run,canary}",
-      "status": "native parity complete in PR #154: exact candidate/comparator identity, fixed direct LINE-to-LANDING topology, churn, reload, LANDING restart/recovery, byte integrity, bounded pools, resource recovery evidence, fail-closed verdict, cleanup and rollback-on-failure are typed and tested; this tracked legacy authority is retained only until one issue #147 deployment mutation acceptance path is satisfied"
+      "status": "deleted-after-parity in PR #154 under the operator's explicit issue #147 deployment deletion waiver; exact candidate/comparator identity, fixed direct LINE-to-LANDING topology, churn, reload, LANDING restart/recovery, byte integrity, bounded pools, resource recovery evidence, fail-closed verdict, cleanup and rollback-on-failure are typed and tested; no live VPS mutation was performed"
     },
     {
       "path": "scripts/run-target-host-validation.sh",

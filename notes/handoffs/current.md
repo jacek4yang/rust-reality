@@ -1,23 +1,25 @@
-# Engineering handoff — merged main and active PR #154
+# Engineering handoff — issue #147 scripts-zero transaction
 
-`main` contains PR #153. Deployment/hotspot migration work remains on draft
-PR #154; this file does not claim it is merged. The PR body is the mutable
-continuation ledger, so verify its exact head and checks before acting.
+PR #154 is the scripts-zero transaction. It was based on `main` after PR #153;
+the PR body is the mutable continuation ledger. Verify the exact PR head,
+checks, merge state, and resulting `origin/main` rather than inferring them from
+this file.
 
 ## Repository
 
 ```text
-merged main         641a3f3   (merge of PR #153)
-active candidate    PR #154   branch dev/scripts-deployment
+PR #154 base        641a3f3   (main after PR #153)
+transaction         PR #154   branch dev/scripts-deployment
 latest release      v1.8.0    (tag on 6618e9d)
 tracking issue      #147      (durable scripts-elimination execution state)
 ```
 
-## scripts/ elimination milestone — in progress
+## scripts/ elimination milestone — scripts-zero candidate
 
 ```text
-scripts/ recursively tracked         2 (verify: git ls-files 'scripts/**' | wc -l)
-active repository Bash policy        2 (the two live-gated authorities below)
+scripts/ recursively tracked         0 (verify after commit)
+top-level scripts/ directory          absent (verify after commit)
+active repository Bash policy        0
 active repository Python policy      0
 workflow repository .sh/.py calls    0
 current docs active scripts commands 0
@@ -31,7 +33,7 @@ deleted in PR #154                  aggregate-hotspot-samples.py,
                                     host-exclusive-lock-keeper.py,
                                     idalib-export-address.py,
                                     run-target-host-validation.sh
-tracked pending gate                deploy-release-vps.sh,
+final waiver deletion               deploy-release-vps.sh,
                                     run-dual-vps-canary.sh
 ```
 
@@ -70,18 +72,36 @@ hotspot bundle cargo dev perf hotspot-bundle (completed-capture identity,
                0.000000% unmapped, 19/19 checksums)
 ```
 
-### Final deployment deletion matrix
+### Final deployment deletion acceptance
 
-| Legacy authority | Unique semantics now owned by Rust | Non-live proof | Remaining acceptance |
+| Deleted legacy authority | Unique semantics now owned by Rust | Accepted evidence | Result |
 | --- | --- | --- | --- |
-| `deploy-release-vps.sh` | Fixed LINE/LANDING aliases; snapshots; artifact/config identity; bootstrap, stage, atomic cutover, listener/service verification, promotion/pruning; constructed rollback | `deploy::{host,snapshot,plan,executor}` unit/fake-transport tests, including injected cutover failure, redaction, typed SSH argv and repeat rollback | One issue #147 deployment mutation path |
-| `run-dual-vps-canary.sh` | Exact candidate/comparator identity; direct LINE→LANDING topology; churn; LINE reload; LANDING restart/recovery; byte integrity; bounded pools; resource envelope; fail-closed evidence; cleanup and rollback | `deploy::{canary_run,canary}` schedule, firewall, journal, report-admission and evaluator tests; non-mutating `canary-plan` | One issue #147 deployment mutation path |
+| `deploy-release-vps.sh` | Fixed LINE/LANDING aliases; snapshots; artifact/config identity; bootstrap, stage, atomic cutover, listener/service verification, promotion/pruning; constructed rollback | `deploy::{host,snapshot,plan,executor}` unit/fake-transport tests, including injected cutover failure, redaction, typed SSH argv and repeat rollback | Deleted in PR #154 |
+| `run-dual-vps-canary.sh` | Exact candidate/comparator identity; direct LINE→LANDING topology; churn; LINE reload; LANDING restart/recovery; byte integrity; bounded pools; resource envelope; fail-closed evidence; cleanup and rollback | `deploy::{canary_run,canary}` schedule, firewall, journal, report-admission and evaluator tests; non-mutating `canary-plan` | Deleted in PR #154 |
 
-The gate accepts exactly one of: mutation acceptance on an identified disposable
-staging pair; separately authorized LINE/LANDING acceptance using
-`APPROVED: LIVE VPS MUTATION`; or an explicit operator waiver accepting fake execution, dry-run
-parity, recorded parity and read-only inspection. None is currently recorded.
-Until one exists, both files remain tracked and #147 remains open.
+The operator explicitly supplied `APPROVED: DEPLOYMENT DELETION WAIVER` for issue
+#147 and accepted the completed fake-executor, dry-run parity, recorded mechanism
+parity, failure-injection/rollback, native canary, and read-only inspection
+evidence. This is the accepted deletion path. No live VPS mutation was performed
+or authorized by this waiver.
+
+Final local scripts-zero checkpoint:
+
+```text
+rr-dev tests                         PASS (542/542)
+strict rr-dev clippy                PASS
+documentation check                 PASS (40 Markdown files)
+cargo dev check --all               PASS (14/14)
+inventory JSON/invariants           PASS
+active Bash/Python policy census    PASS (0/0)
+workflow .sh/.py caller census      PASS (0)
+current-doc active command census   PASS (0; historical citations retained)
+compatibility wrappers              PASS (0)
+```
+
+Exact-head GitHub CI/Security must also pass before PR #154 is merged and issue
+#147 is closed; that external state belongs in the PR/issue ledger rather than a
+repository file that would itself change the checked commit.
 
 ### Verified reusable artifacts
 
