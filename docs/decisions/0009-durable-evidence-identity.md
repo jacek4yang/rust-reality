@@ -115,9 +115,9 @@ tooling.
 ## Effect on the `scripts/` removal target
 
 Unchanged and unblocked. The typed replacement reached parity and
-`scripts/benchmark-contract.sh` was merged and deleted in PR #154 per its assigned
-disposition (`scripts/host-exclusive-lock-keeper.py` remains only as a shared helper
-until its final callers disappear); its exact historical bytes survive as immutable
-evidence objects. Historical origin does not make archived data active
+`scripts/benchmark-contract.sh` and its now-caller-free
+`scripts/host-exclusive-lock-keeper.py` were merged and deleted in PR #154 per their
+assigned dispositions; their exact historical bytes survive as immutable evidence
+objects. Historical origin does not make archived data active
 tooling, so the target remains a `scripts/` directory that does not exist and zero
 active shell policy.

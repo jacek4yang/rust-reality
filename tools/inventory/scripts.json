@@ -505,7 +505,7 @@
       "calls_scripts": [],
       "disposition": "MERGE",
       "replacement": "rr-dev benchmark host lock",
-      "status": "not-started"
+      "status": "deleted-after-parity in PR #154; final active caller benchmark-contract.sh is deleted, while native host_lock tests prove mutual exclusion, fail-closed contention, early-error cleanup and no child-process ownership inheritance"
     },
     {
       "path": "scripts/idalib-export-address.py",
@@ -671,7 +671,7 @@
       "calls_scripts": [],
       "disposition": "MERGE",
       "replacement": "cargo dev check --all on target host",
-      "status": "not-started",
+      "status": "deleted-after-parity in PR #154; zero current callers, cargo dev check --all owns repository validation and the public xray-interop/matrix suites remain directly selectable when their external comparators are available",
       "calls_cargo_dev": [
         "cargo dev bench run --suite matrix",
         "cargo dev bench run --suite xray-interop"
