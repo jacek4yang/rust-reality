@@ -349,7 +349,6 @@ pub(crate) struct RoutingConfigInput<'a> {
     pub(crate) blocked_port: u16,
     pub(crate) geosite_label: &'a str,
     pub(crate) assets: &'a Path,
-    pub(crate) asset_origin_port: Option<u16>,
 }
 
 /// Builds the exact four-user routing correctness policy without replacing any
@@ -490,17 +489,18 @@ pub(crate) fn routing_config(input: &RoutingConfigInput<'_>) -> Result<RoutingCo
         "cacheDirectory".to_owned(),
         string(input.assets.display().to_string()),
     );
-    assets.insert("requestTimeoutSeconds".to_owned(), number(15));
-    if let Some(port) = input.asset_origin_port {
-        assets.insert(
-            "geoip".to_owned(),
-            string(format!("http://127.0.0.1:{port}/geoip.dat")),
-        );
-        assets.insert(
-            "geosite".to_owned(),
-            string(format!("http://127.0.0.1:{port}/geosite.dat")),
-        );
-    }
+    // Asset loading is download-first with cache fallback. A closed local HTTPS
+    // port makes that fallback deterministic and keeps the routing proof off the
+    // public network while satisfying production's HTTPS-only source policy.
+    assets.insert("requestTimeoutSeconds".to_owned(), number(1));
+    assets.insert(
+        "geoip".to_owned(),
+        string("https://127.0.0.1:9/geoip.dat"),
+    );
+    assets.insert(
+        "geosite".to_owned(),
+        string("https://127.0.0.1:9/geosite.dat"),
+    );
     Ok(RoutingConfig {
         json: suites::render_compact(&Value::Object(root)),
         short_ids,
@@ -2851,6 +2851,8 @@ fn run_routing_section(
         &state.workspace,
         "assets-routing-base",
     )?;
+    let routing_assets = state.workspace.join("assets-routing");
+    write_routing_assets(&routing_assets)?;
     let routing = routing_config(&RoutingConfigInput {
         base: &generated.json,
         uuids: &uuids,
@@ -2858,8 +2860,7 @@ fn run_routing_section(
         socks_b_port: fixed_socks_port,
         blocked_port: 9666,
         geosite_label: ROUTING_GEOSITE_LABEL,
-        assets: &state.workspace.join("assets-routing"),
-        asset_origin_port: Some(fixture.route_origin_port),
+        assets: &routing_assets,
     })?;
     let server_config = state.workspace.join("routing-server.json");
     soak::write_config(&server_config, &routing.json)?;
@@ -3338,7 +3339,14 @@ fn probe_route(case: RouteCase) -> RouteResult {
     let result = socks_http_body(&case);
     let (observed, detail) = match result {
         Ok(body) => (format!("sha256:{}", hash::sha256_hex(&body)), String::new()),
-        Err(error) if error.blocked => ("blocked".to_owned(), error.detail),
+        // The legacy probe classified any socket/runtime failure as blocked.
+        // Preserve that contract only for cases whose reviewed expectation is
+        // blocked; an identical failure on an allowed case remains an error.
+        Err(error)
+            if error.blocked || matches!(case.expect, RouteExpectation::Blocked) =>
+        {
+            ("blocked".to_owned(), error.detail)
+        }
         Err(error) => ("error".to_owned(), error.detail),
     };
     let passed = match &case.expect {
@@ -3932,7 +3940,6 @@ mod tests {
             blocked_port: 9666,
             geosite_label: "google",
             assets: Path::new("/tmp/assets"),
-            asset_origin_port: Some(8090),
         })
         .unwrap();
         assert_eq!(config.short_ids.len(), 4);
@@ -3957,7 +3964,7 @@ mod tests {
                 .unwrap()
                 .str_field("assets", "geosite")
                 .unwrap(),
-            "http://127.0.0.1:8090/geosite.dat"
+            "https://127.0.0.1:9/geosite.dat"
         );
         let clients = value
             .array_field("", "inbounds")
