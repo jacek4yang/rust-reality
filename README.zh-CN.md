@@ -252,7 +252,7 @@ rust-reality serve --config config.tuned.json
 开放监听端口前请阅读[威胁模型](docs/threat-model.zh-CN.md)；支持版本、私密
 漏洞报告和密码学边界——包括 ring AEAD 提供者已披露的清零取舍和
 `--no-default-features` RustCrypto 回退构建——见
-[安全策略](SECURITY.zh-CN.md)。应用程序无法阻止上游流量型 DDoS 填满 VPS 链路。
+[安全策略](docs/zh-CN/security.md)。应用程序无法阻止上游流量型 DDoS 填满 VPS 链路。
 NXR 必须由防火墙限制，其认证后的字节是明文。不要在 issue 或日志中公开真实
 私钥、UUID、NXR PSK、凭据、抓包、访问令牌或部署配置。
 
@@ -270,7 +270,7 @@ NXR 必须由防火墙限制，其认证后的字节是明文。不要在 issue 
 | 性能 | [English](docs/performance.md) | [简体中文](docs/performance.zh-CN.md) |
 | 基准测试 | [English](docs/benchmarks.md) | [简体中文](docs/benchmarks.zh-CN.md) |
 | 威胁模型 | [English](docs/threat-model.md) | [简体中文](docs/threat-model.zh-CN.md) |
-| 安全策略 | [English](SECURITY.md) | [简体中文](SECURITY.zh-CN.md) |
+| 安全策略 | [English](SECURITY.md) | [简体中文](docs/zh-CN/security.md) |
 
 ## 构建与开发
 

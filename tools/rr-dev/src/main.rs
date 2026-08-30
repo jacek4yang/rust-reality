@@ -11,6 +11,7 @@
 //! cargo dev doctor
 //! cargo dev check
 //! cargo dev check --all
+//! cargo dev repo check
 //! ```
 
 use std::{
@@ -31,6 +32,7 @@ mod hash;
 mod perf;
 mod process;
 mod release;
+mod repo;
 
 /// Development control plane for the rust-reality repository.
 #[derive(Parser)]
@@ -62,6 +64,11 @@ enum Command {
     Docs {
         #[command(subcommand)]
         command: DocsCommand,
+    },
+    /// Repository layout and ownership policy.
+    Repo {
+        #[command(subcommand)]
+        command: RepoCommand,
     },
     /// Release performance evaluation.
     Perf {
@@ -1017,6 +1024,12 @@ enum DocsCommand {
     Check,
 }
 
+#[derive(Subcommand)]
+enum RepoCommand {
+    /// Validate the tracked tree against repository-layout policy.
+    Check,
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let repo = cli.repo.unwrap_or_else(default_repo_root);
@@ -1056,6 +1069,18 @@ fn main() -> ExitCode {
         Command::Docs { command } => match command {
             DocsCommand::Check => {
                 let report = docs::check(&repo);
+                if report.is_clean() {
+                    println!("{}", report.render());
+                    ExitCode::SUCCESS
+                } else {
+                    eprint!("{}", report.render());
+                    ExitCode::FAILURE
+                }
+            }
+        },
+        Command::Repo { command } => match command {
+            RepoCommand::Check => {
+                let report = repo::check(&repo);
                 if report.is_clean() {
                     println!("{}", report.render());
                     ExitCode::SUCCESS

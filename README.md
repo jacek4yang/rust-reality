@@ -320,7 +320,7 @@ access tokens, or deployment configuration in an issue or log.
 | Performance | [English](docs/performance.md) | [简体中文](docs/performance.zh-CN.md) |
 | Benchmarks | [English](docs/benchmarks.md) | [简体中文](docs/benchmarks.zh-CN.md) |
 | Threat model | [English](docs/threat-model.md) | [简体中文](docs/threat-model.zh-CN.md) |
-| Security policy | [English](SECURITY.md) | [简体中文](SECURITY.zh-CN.md) |
+| Security policy | [English](SECURITY.md) | [简体中文](docs/zh-CN/security.md) |
 
 ## Build and development
 

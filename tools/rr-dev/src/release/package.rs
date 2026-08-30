@@ -141,7 +141,6 @@ fn stage_tree(repo: &Path, binary: &Path, staging: &Path) -> Result<(), String> 
         "README.md",
         "README.zh-CN.md",
         "SECURITY.md",
-        "SECURITY.zh-CN.md",
         "LICENSE-MIT",
         "LICENSE-APACHE",
         "CHANGELOG.md",
@@ -150,6 +149,7 @@ fn stage_tree(repo: &Path, binary: &Path, staging: &Path) -> Result<(), String> 
     }
     std::fs::create_dir_all(staging.join("deploy"))
         .and_then(|()| std::fs::create_dir_all(staging.join("docs/decisions")))
+        .and_then(|()| std::fs::create_dir_all(staging.join("docs/zh-CN")))
         .map_err(|error| format!("could not create staging subdirectories: {error}"))?;
     install(
         &repo.join("deploy/rust-reality.service"),
@@ -158,6 +158,11 @@ fn stage_tree(repo: &Path, binary: &Path, staging: &Path) -> Result<(), String> 
     )?;
     copy_markdown(&repo.join("docs"), &staging.join("docs"))?;
     copy_markdown(&repo.join("docs/decisions"), &staging.join("docs/decisions"))?;
+    install(
+        &repo.join("docs/zh-CN/security.md"),
+        &staging.join("docs/zh-CN/security.md"),
+        0o644,
+    )?;
     Ok(())
 }
 
