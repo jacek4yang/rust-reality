@@ -30,7 +30,7 @@ pub struct Suite {
 }
 
 /// The catalogue of benchmark suites, in migration order.
-pub const SUITES: [Suite; 16] = [
+pub const SUITES: [Suite; 17] = [
     Suite {
         id: "real-path",
         summary: "real-network A/B download through rust-reality and Xray tunnels",
@@ -90,6 +90,11 @@ pub const SUITES: [Suite; 16] = [
         id: "soak",
         summary: "long-duration soak with resource sampling",
         supersedes: "soak-test.sh",
+    },
+    Suite {
+        id: "deployment",
+        summary: "deployment characterization: routing proof, cost, topologies, netem, relay",
+        supersedes: "benchmark-deployment.sh",
     },
     Suite {
         id: "xray-interop",

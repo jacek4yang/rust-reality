@@ -785,6 +785,12 @@ enum BenchCommand {
         /// Interval between distributed soak integrity attempts.
         #[arg(long, default_value_t = 1800)]
         soak_distributed_interval_seconds: u64,
+        /// Reviewed deployment program (deployment suite).
+        #[arg(long, default_value = "smoke")]
+        deployment_plan: String,
+        /// Preserve the ephemeral deployment workspace for diagnosis.
+        #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
+        keep_work: bool,
     },
 }
 
@@ -1735,6 +1741,8 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             soak_round_sleep_ms,
             soak_min_rounds,
             soak_distributed_interval_seconds,
+            deployment_plan,
+            keep_work,
         } => {
             if suite == "tls-shape" {
                 return run_bench_tls_shape(
@@ -1811,6 +1819,47 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                     *soak_min_rounds,
                     *soak_distributed_interval_seconds,
                 );
+            }
+            if suite == "deployment" {
+                let kind = match bench::deployment::PlanKind::parse(deployment_plan) {
+                    Ok(kind) => kind,
+                    Err(error) => {
+                        eprintln!("bench run deployment: {error}");
+                        return ExitCode::from(2);
+                    }
+                };
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |duration| duration.as_secs());
+                let run_id = run_id.clone().unwrap_or_else(|| {
+                    format!("deployment-{}-{stamp}-{}", kind.name(), std::process::id())
+                });
+                let out_dir = out_dir.clone().unwrap_or_else(|| {
+                    std::env::current_dir()
+                        .unwrap_or_else(|_| PathBuf::from("."))
+                        .join("benchmarks/final")
+                        .join(&run_id)
+                });
+                let run = bench::deployment::RunPlan {
+                    repo: repo.to_path_buf(),
+                    rust_bin: rust_bin.clone(),
+                    xray_bin: xray_bin.clone(),
+                    out_dir,
+                    run_id,
+                    program: bench::deployment::Plan::reviewed(kind),
+                    keep_work: *keep_work,
+                };
+                return match bench::deployment::run(&run) {
+                    Ok(outcome) => {
+                        println!("summary: {}", outcome.summary_path.display());
+                        println!("completion: {}", outcome.marker_path.display());
+                        ExitCode::SUCCESS
+                    }
+                    Err(error) => {
+                        eprintln!("bench run deployment: {error}");
+                        ExitCode::FAILURE
+                    }
+                };
             }
             if suite == "xray-interop" {
                 return run_bench_interop(
