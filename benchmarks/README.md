@@ -19,6 +19,11 @@ When a manifest records checksums, the referenced objects must retain their
 exact bytes. Never replace measured values with estimates or silently rewrite
 an accepted evidence object.
 
+The non-executable `.sh` and `.py` objects under `evidence/objects/sha256/` are
+immutable historical evidence retained by digest; they are not active
+repository policy. Shell or Python source anywhere else is rejected by
+`cargo dev repo check`.
+
 Do not commit raw `perf.data`, large packet captures, IDA databases, release
 binaries, full artifact trees, or huge logs. Store large reproducible outputs as
 CI artifacts or release assets and retain only the necessary identity, checksum,

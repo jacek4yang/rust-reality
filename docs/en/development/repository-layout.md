@@ -33,6 +33,13 @@ for the original packaging decision.
 | `deploy/` | Service packaging (systemd unit). |
 | `examples/` | Rust example consuming the library surface. |
 
+General human documentation belongs under `docs/` or in the standard root
+entry files. Two exact colocated ownership references are part of their owning
+trees: `benchmarks/README.md` defines the benchmark-data categories and
+`tools/reference/README.md` defines the independent comparator boundary.
+Markdown below `benchmarks/evidence/` is durable evidence, not a second
+documentation hierarchy.
+
 ## Where should I change this?
 
 | Change intent | Owner |
@@ -55,7 +62,17 @@ for the original packaging decision.
 
 ## Paths that must not be created
 
-`scripts/`, `notes/`, transient state files (`STATUS.md`, `PLAN.md`, `HANDOFF.md`,
-`TODO.md`, `CURRENT.md`), arbitrary root JSON/data dumps, machine-readable data
-under `docs/`, or vendor-specific agent policy files. `cargo dev repo check`
-enforces the root allowlist and structural rules; see [AGENTS.md](../../../AGENTS.md).
+`scripts/`, `notes/`, `tools/inventory/`, transient state files (`STATUS.md`,
+`PLAN.md`, `HANDOFF.md`, `TODO.md`, `CURRENT.md`), arbitrary root JSON/data
+dumps, machine-readable data under `docs/`, or vendor-specific agent policy
+files (`CLAUDE.md`, `CODEX.md`, and similar — `AGENTS.md` is the one canonical
+agent constitution).
+
+`cargo dev repo check` enforces all of this structurally: the explicitly owned
+root allowlist, forbidden directories, transient/model-state paths, competing
+agent policy files, human-document ownership, canonical onboarding paths and
+links, ADR numbering/status/index consistency, benchmark data taxonomy, zero
+active shell/Python files, a reviewable tracked-object size bound, and narrow
+machine-path hygiene. `cargo dev docs check` separately owns bilingual pairs
+and general link correctness; `cargo dev check --all` composes both authorities.
+See [AGENTS.md](../../../AGENTS.md).
