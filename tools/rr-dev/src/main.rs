@@ -494,6 +494,9 @@ enum BenchCommand {
         /// Loopback listen port.
         #[arg(long)]
         port: u16,
+        /// Rewrite every requested destination to this numeric socket.
+        #[arg(long)]
+        fixed_target: Option<std::net::SocketAddr>,
     },
     /// Validate bounded machine profiles under exact cgroup-v2 limits.
     Profiles {
@@ -1442,7 +1445,7 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                 }
             }
         }
-        BenchCommand::SocksServer { port } => {
+        BenchCommand::SocksServer { port, fixed_target } => {
             let listener = match std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, *port))
             {
                 Ok(listener) => listener,
@@ -1455,7 +1458,7 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                 println!("READY {address}");
                 let _ = std::io::Write::flush(&mut std::io::stdout());
             }
-            match bench::socks_server::serve(&listener) {
+            match bench::socks_server::serve_with_target(&listener, *fixed_target) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("bench socks-server: {error}");

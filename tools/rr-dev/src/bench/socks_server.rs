@@ -7,7 +7,7 @@
 
 use std::{
     io::{Read, Write},
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, Shutdown, TcpListener, TcpStream},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr, TcpListener, TcpStream},
 };
 
 /// Serves no-auth TCP CONNECT sessions until the process is terminated.
@@ -16,18 +16,34 @@ use std::{
 ///
 /// Returns an I/O error when the listener can no longer accept connections.
 pub fn serve(listener: &TcpListener) -> std::io::Result<()> {
+    serve_with_target(listener, None)
+}
+
+/// Serves TCP CONNECT sessions, optionally rewriting every destination.
+///
+/// A fixed target is a routing-proof mechanism: content from that target proves
+/// the measured server selected this SOCKS outbound, regardless of the address
+/// its client requested.
+///
+/// # Errors
+///
+/// Returns an I/O error when the listener can no longer accept connections.
+pub fn serve_with_target(
+    listener: &TcpListener,
+    fixed_target: Option<SocketAddr>,
+) -> std::io::Result<()> {
     for stream in listener.incoming() {
         let stream = stream?;
         std::thread::Builder::new()
             .name("rr-socks5-session".to_owned())
             .spawn(move || {
-                let _ = session(stream);
+                let _ = session(stream, fixed_target);
             })?;
     }
     Ok(())
 }
 
-fn session(mut client: TcpStream) -> std::io::Result<()> {
+fn session(mut client: TcpStream, fixed_target: Option<SocketAddr>) -> std::io::Result<()> {
     let mut greeting = [0_u8; 2];
     client.read_exact(&mut greeting)?;
     if greeting[0] != 5 {
@@ -72,8 +88,11 @@ fn session(mut client: TcpStream) -> std::io::Result<()> {
     };
     let mut port = [0_u8; 2];
     client.read_exact(&mut port)?;
-    let destination = (host.as_str(), u16::from_be_bytes(port));
-    let upstream = match TcpStream::connect(destination) {
+    let requested_port = u16::from_be_bytes(port);
+    let upstream = match fixed_target.map_or_else(
+        || TcpStream::connect((host.as_str(), requested_port)),
+        TcpStream::connect,
+    ) {
         Ok(stream) => stream,
         Err(error) => {
             let _ = reply(&mut client, 5);
@@ -125,7 +144,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
-            session(stream).unwrap();
+            session(stream, None).unwrap();
         });
         let mut client = TcpStream::connect(address).unwrap();
         client.write_all(&[5, 1, 0]).unwrap();
@@ -135,6 +154,42 @@ mod tests {
         let port = destination_port.to_be_bytes();
         client
             .write_all(&[5, 1, 0, 1, 127, 0, 0, 1, port[0], port[1]])
+            .unwrap();
+        let mut response = [0_u8; 10];
+        client.read_exact(&mut response).unwrap();
+        assert_eq!(response[1], 0);
+        client.write_all(b"ping").unwrap();
+        let mut echoed = [0_u8; 4];
+        client.read_exact(&mut echoed).unwrap();
+        assert_eq!(&echoed, b"ping");
+        drop(client);
+        server.join().unwrap();
+        echo.join().unwrap();
+    }
+
+    #[test]
+    fn a_fixed_target_rewrites_the_requested_destination() {
+        let destination = TcpListener::bind("127.0.0.1:0").unwrap();
+        let fixed = destination.local_addr().unwrap();
+        let echo = std::thread::spawn(move || {
+            let (mut stream, _) = destination.accept().unwrap();
+            let mut bytes = [0_u8; 4];
+            stream.read_exact(&mut bytes).unwrap();
+            stream.write_all(&bytes).unwrap();
+        });
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            session(stream, Some(fixed)).unwrap();
+        });
+        let mut client = TcpStream::connect(address).unwrap();
+        client.write_all(&[5, 1, 0]).unwrap();
+        let mut greeting = [0_u8; 2];
+        client.read_exact(&mut greeting).unwrap();
+        client
+            .write_all(&[5, 1, 0, 1, 203, 0, 113, 9, 0, 80])
             .unwrap();
         let mut response = [0_u8; 10];
         client.read_exact(&mut response).unwrap();
