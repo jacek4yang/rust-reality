@@ -41,7 +41,7 @@ warning as an error.
   Maintain the designated English/Chinese pairs and validate them with
   `cargo dev docs check`.
 - Record durable architectural decisions in the ADR collection under
-  `docs/decisions/`. Active plans and handoffs belong in GitHub issues and pull
+  `docs/adr/`. Active plans and handoffs belong in GitHub issues and pull
   requests, not in the repository.
 - Keep machine-readable benchmark contracts, baselines, and compact evidence
   under their corresponding `benchmarks/` directories.
