@@ -24,7 +24,8 @@ use crate::{
         nxr::{NxrKey, NxrProtocolError, encode_request},
         vless::{Address, Destination},
     },
-    runtime::{AdmissionDenied, DirectBarrier, FdBudget, FdPermit},
+    runtime::{AdmissionDenied, DirectBarrier},
+    transport::{FdBudget, FdPermit},
 };
 use rr_session::AttemptTransport;
 
@@ -1132,8 +1133,9 @@ mod tests {
             },
             vless::{Address, Destination},
         },
-        runtime::{AdmissionDenied, DirectBarrier, FdBudget, PressureGauge, ResourcePressure},
+        runtime::{AdmissionDenied, DirectBarrier, PressureGauge, ResourcePressure},
         server::warm_pool::WarmPoolAuthority,
+        transport::FdBudget,
     };
 
     #[test]
@@ -1167,7 +1169,7 @@ mod tests {
             }],
             barrier.clone(),
             connect_timeout,
-            crate::runtime::FdBudget::new(4_096),
+            crate::transport::FdBudget::new(4_096),
         )
     }
 
@@ -1833,7 +1835,7 @@ mod tests {
             .await
             .expect("target listener must bind");
         let address = listener.local_addr().expect("target address must exist");
-        let budget = crate::runtime::FdBudget::new(4_096);
+        let budget = crate::transport::FdBudget::new(4_096);
         let registry = OutboundRegistry::new(
             &[OutboundConfig::Direct {
                 tag: "direct".to_owned(),
@@ -1855,7 +1857,7 @@ mod tests {
         let in_flight = budget.in_use() - baseline;
         assert_eq!(
             in_flight,
-            u64::from(crate::runtime::UNITS_OUTBOUND_SOCKET),
+            u64::from(crate::transport::UNITS_OUTBOUND_SOCKET),
             "one outbound connection accounts exactly one descriptor"
         );
         let (_stream, permit) = connection.into_parts();
@@ -1869,7 +1871,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn outbound_connect_declines_when_the_descriptor_budget_is_exhausted() {
-        let budget = crate::runtime::FdBudget::new(4_096);
+        let budget = crate::transport::FdBudget::new(4_096);
         let _reservation = budget
             .try_acquire(4_096)
             .expect("the whole budget must be acquirable for the test");
@@ -1911,7 +1913,7 @@ mod tests {
             }],
             &DirectBarrierConfig::default(),
             Duration::from_secs(1),
-            crate::runtime::FdBudget::new(4_096),
+            crate::transport::FdBudget::new(4_096),
         );
         let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
 
@@ -1973,7 +1975,7 @@ mod tests {
             }],
             &DirectBarrierConfig::default(),
             connect_timeout,
-            crate::runtime::FdBudget::new(4_096),
+            crate::transport::FdBudget::new(4_096),
         )
     }
 
@@ -2246,7 +2248,7 @@ mod tests {
             }],
             &DirectBarrierConfig::default(),
             Duration::from_secs(1),
-            crate::runtime::FdBudget::new(4_096),
+            crate::transport::FdBudget::new(4_096),
         );
         let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 9);
 
@@ -2278,7 +2280,7 @@ mod tests {
             }],
             &DirectBarrierConfig::default(),
             Duration::from_secs(1),
-            crate::runtime::FdBudget::new(4_096),
+            crate::transport::FdBudget::new(4_096),
         );
         let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
 
@@ -2626,7 +2628,7 @@ mod tests {
             }],
             barrier,
             Duration::from_secs(1),
-            crate::runtime::FdBudget::new(4_096),
+            crate::transport::FdBudget::new(4_096),
         );
         let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 443);
 
@@ -2686,7 +2688,7 @@ mod tests {
             }],
             barrier,
             Duration::from_secs(1),
-            crate::runtime::FdBudget::new(4_096),
+            crate::transport::FdBudget::new(4_096),
         );
         let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
 

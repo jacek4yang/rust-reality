@@ -110,7 +110,7 @@ pub struct CoverConnection {
     governor: ResourceGovernor,
     relay: TcpRelay,
     permit: Option<AdmissionPermit>,
-    fd_permit: Option<crate::runtime::FdPermit>,
+    fd_permit: Option<crate::transport::FdPermit>,
     deadline: Instant,
     forwarded_prefix: u64,
     warm_use: Option<WarmUsePermit>,
@@ -543,9 +543,9 @@ mod tests {
         config::{NetworkConfig, RelayPolicy, ResourceGovernorConfig, WarmConnectionPolicy},
         network::NetworkEnvironment,
         protocol::reality::{ClientHello, SESSION_ID_LEN, X25519_GROUP, client_hello_fixtures},
-        runtime::{FdBudget, PressureGauge, ResourceGovernor, ResourcePressure},
+        runtime::{PressureGauge, ResourceGovernor, ResourcePressure},
         server::warm_pool::WarmPoolAuthority,
-        transport::TcpRelay,
+        transport::{FdBudget, TcpRelay},
     };
 
     const PREFIX: &[u8] = b"exact-fragmented-client-hello-prefix";

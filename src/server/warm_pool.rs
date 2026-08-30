@@ -25,7 +25,8 @@ use tokio::{
 
 use crate::{
     config::WarmConnectionPolicy,
-    runtime::{FdBudget, FdPressure, PressureGauge, ResourcePressure},
+    runtime::{PressureGauge, ResourcePressure},
+    transport::{FdBudget, FdPressure},
 };
 
 use super::connector::{AccountedTcpStream, DestinationConnectError, DestinationConnector};
@@ -868,8 +869,9 @@ mod tests {
     use crate::{
         config::{NetworkConfig, WarmConnectionPolicy},
         network::NetworkEnvironment,
-        runtime::{FdBudget, PressureGauge, ResourcePressure},
+        runtime::{PressureGauge, ResourcePressure},
         server::connector::DestinationConnector,
+        transport::FdBudget,
     };
 
     struct CoverFixture {

@@ -48,7 +48,7 @@ documentation hierarchy.
 | VLESS / REALITY / Vision / TLS 1.3 protocol behavior | `src/protocol/` |
 | Runtime orchestration, snapshots, generation management | `src/runtime/` |
 | Server lifecycle, routing, admission | `src/server/` |
-| Transport and raw-relay backends | `src/transport/` (with `crates/rr-linux/` where an OS mechanism is involved) |
+| Transport, descriptor lifetime/accounting, and raw-relay backends | `src/transport/` (with `crates/rr-linux/` where an OS mechanism is involved) |
 | Runtime-independent session state transitions | `crates/rr-session/` |
 | Linux kernel/platform mechanisms | `crates/rr-linux/` |
 | Developer tooling, gates, benchmark/deploy commands | `tools/rr-dev/` |

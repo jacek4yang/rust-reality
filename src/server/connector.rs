@@ -15,7 +15,7 @@ use crate::{
     config::NetworkConfig,
     network::{AddressFamily, ConnectionPlanner, NetworkEnvironment},
     protocol::vless::{Address, Destination},
-    runtime::{FdBudget, FdPermit, UNITS_OUTBOUND_SOCKET},
+    transport::{FdBudget, FdPermit, UNITS_OUTBOUND_SOCKET},
 };
 
 const MAX_PRE_RESOLVED_IPS: usize = 64;
@@ -709,7 +709,7 @@ mod tests {
         config::{DialConfig, DialMode, NetworkConfig},
         network::{AddressFamily, ConnectionPlanner, NetworkEnvironment},
         protocol::vless::{Address, Destination},
-        runtime::FdBudget,
+        transport::FdBudget,
     };
 
     #[test]

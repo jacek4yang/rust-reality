@@ -10,7 +10,7 @@ use std::{io, net::Ipv4Addr, time::Duration};
 
 use rust_reality::{
     config::RelayPolicy,
-    transport::{BackendRequest, RelayBackend, RelayContext, TcpRelay},
+    transport::{BackendRequest, FdBudget, RelayBackend, RelayContext, TcpRelay},
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -42,11 +42,7 @@ fn exercisable() -> Vec<RelayBackend> {
 }
 
 fn relay_for(backend: RelayBackend) -> TcpRelay {
-    TcpRelay::new(
-        &policy(backend),
-        rust_reality::runtime::FdBudget::new(65_536),
-    )
-    .expect("relay policy must compile")
+    TcpRelay::new(&policy(backend), FdBudget::new(65_536)).expect("relay policy must compile")
 }
 
 fn context(backend: RelayBackend) -> RelayContext {

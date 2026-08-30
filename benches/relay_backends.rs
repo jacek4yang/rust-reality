@@ -23,7 +23,7 @@ use std::{
 
 use rust_reality::{
     config::RelayPolicy,
-    transport::{BackendRequest, RelayBackend, RelayContext, TcpRelay},
+    transport::{BackendRequest, FdBudget, RelayBackend, RelayContext, TcpRelay},
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -257,11 +257,8 @@ fn main() {
         for position in order {
             let scenario = scenarios[position];
             let payload: &'static [u8] = payloads[position];
-            let relay = TcpRelay::new(
-                &policy(scenario.backend),
-                rust_reality::runtime::FdBudget::new(65_536),
-            )
-            .expect("relay must compile");
+            let relay = TcpRelay::new(&policy(scenario.backend), FdBudget::new(65_536))
+                .expect("relay must compile");
 
             let cpu_before = cpu_times();
             let cs_before = context_switches();

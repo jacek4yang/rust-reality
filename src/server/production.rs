@@ -33,15 +33,16 @@ use crate::{
     network::{AddressFamily, ConnectionPlanner, NetworkEnvironment},
     protocol::{handoff::HandoffReplayCache, reality::ReplayCache},
     runtime::{
-        AdmissionDenied, AdmissionKind, AdmissionPermit, DirectBarrier, FdBudget, FdBudgetError,
-        FdBudgetPlan, FdHeadroomPolicy, FdPermit, FixedFdReserve, PressureGauge, ResourceGovernor,
-        ResourcePressure, UNITS_INBOUND_SOCKET, adaptive,
+        AdmissionDenied, AdmissionKind, AdmissionPermit, DirectBarrier, FdBudgetError,
+        FdBudgetPlan, FdHeadroomPolicy, FixedFdReserve, PressureGauge, ResourceGovernor,
+        ResourcePressure, adaptive,
         connection::ConnectionTasks,
         machine::{self, MachineReport, MemoryPlan, MemorySampler},
         plan,
     },
     transport::{
-        BackendDeclineReason, BackendReport, RelayBackend,
+        BackendDeclineReason, BackendReport, FdBudget, FdPermit, RelayBackend,
+        UNITS_INBOUND_SOCKET,
         tcp::{AcceptBackoff, AcceptErrorClass, EmergencyDescriptor, TcpAcceptor},
         tcp_relay::{TcpRelay, TcpRelayConfigError, is_liveness_timeout_abort},
     },
@@ -102,13 +103,13 @@ struct ListenerPlan {
 fn theoretical_fd_peak(config: &Config) -> u64 {
     let connections = u64::from(config.advanced.limits.resource_governor.max_connections);
     let splice = u64::from(config.advanced.limits.relay.max_splice_relays)
-        .saturating_mul(u64::from(crate::runtime::UNITS_SPLICE_RELAY));
+        .saturating_mul(u64::from(crate::transport::UNITS_SPLICE_RELAY));
     // A pooled pipe holds its two descriptors past the relay that created it,
     // so the pool's retention is steady-state demand the peak must include.
     let pool_retention =
         if config.advanced.limits.relay.splice && config.advanced.limits.relay.pipe_pool {
             u64::from(config.advanced.limits.relay.max_pooled_pipes)
-                .saturating_mul(u64::from(crate::runtime::UNITS_SPLICE_DIRECTION))
+                .saturating_mul(u64::from(crate::transport::UNITS_SPLICE_DIRECTION))
         } else {
             0
         };
@@ -2630,7 +2631,7 @@ mod tests {
             }],
             &DirectBarrierConfig::default(),
             Duration::from_secs(1),
-            crate::runtime::FdBudget::new(4_096),
+            crate::transport::FdBudget::new(4_096),
         );
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
         let server_task = tokio::spawn(server.run_until(async move {

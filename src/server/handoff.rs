@@ -43,8 +43,9 @@ use crate::{
         },
         vless::UserId,
     },
-    runtime::{AdmissionDenied, FdBudget, FdPermit, PressureGauge, ResourceGovernor},
+    runtime::{AdmissionDenied, PressureGauge, ResourceGovernor},
     transport::{
+        FdBudget, FdPermit,
         relay::RelayStats,
         tcp_relay::{TcpRelay, TcpRelayConfigError},
     },
@@ -836,7 +837,7 @@ mod tests {
                 VisionDecoder, VisionEncoder,
             },
         },
-        runtime::{FdBudget, PressureGauge},
+        runtime::PressureGauge,
         server::{
             connector::DestinationConnector,
             outbound::OutboundRegistry,
@@ -845,7 +846,7 @@ mod tests {
             vision::{VisionHandler, VisionSessionError},
             warm_pool::WarmPoolAuthority,
         },
-        transport::TcpRelay,
+        transport::{FdBudget, TcpRelay},
     };
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(3);

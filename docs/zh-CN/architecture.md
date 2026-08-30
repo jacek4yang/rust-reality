@@ -287,6 +287,11 @@ effective_dynamic_fd_budget = soft_rlimit - fixed_fd_reserve - safety_headroom
 任何策略下进程都不会带着无法兑现的配置启动，然后在 `accept4` 里才发现问题。
 `maxConnections` 仍是协议层限制；描述符预算更紧时先生效。
 
+Server/runtime adapter 推导并持有唯一的进程预算，而 Transport 定义具体的计数器
+和 RAII 许可机制。每个许可随已准入的 socket 或管道转移，并由该资源的属主释放。
+这样依赖方向保持为 Runtime Adapter → Transport：Transport 不会仅为了核算自己
+持有的描述符而反向导入 Runtime。
+
 `FdBudget` 是严格上界许可计数器：快路径一次 relaxed load 加一次
 `compare_exchange_weak`，无互斥锁；许可经 `Drop` 单路径释放；释放使用受检
 减法，双重释放会被记录而不是被悄悄吞掉；压力下的等待是有界 `Notify` 唤醒，
