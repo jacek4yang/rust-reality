@@ -18,7 +18,7 @@ use std::{
     process::ExitCode,
 };
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 mod bench;
 mod check;
@@ -97,6 +97,51 @@ enum Command {
 
 #[derive(Subcommand)]
 enum DeployCommand {
+    /// Inspect one deployment host without mutating it.
+    Inspect {
+        /// Fixed host role to inspect; address/user/proxy stay in OpenSSH config.
+        #[arg(long, value_enum, default_value_t = DeployTarget::Line)]
+        target: DeployTarget,
+        /// New snapshot JSON path; stdout when omitted.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Derive a mutation plan from a recorded read-only snapshot.
+    Plan {
+        /// Transaction to plan.
+        #[arg(value_enum)]
+        operation: DeployPlanOperation,
+        /// Fixed host role the recorded snapshot must describe.
+        #[arg(long, value_enum, default_value_t = DeployTarget::Line)]
+        target: DeployTarget,
+        /// Snapshot JSON produced by `cargo dev deploy inspect`.
+        #[arg(long)]
+        snapshot: PathBuf,
+        /// Release generation id (required except for rollback).
+        #[arg(long)]
+        release_id: Option<String>,
+        /// Absolute local candidate binary path (stage/cutover).
+        #[arg(long)]
+        binary: Option<PathBuf>,
+        /// Absolute local candidate config path (stage/cutover).
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Expected lowercase candidate SHA-256 (stage/cutover).
+        #[arg(long)]
+        expected_sha256: Option<String>,
+        /// Expected semantic version (stage/cutover).
+        #[arg(long)]
+        expected_version: Option<String>,
+        /// Optional exact lowercase source commit embedded in the candidate.
+        #[arg(long)]
+        source_commit: Option<String>,
+        /// Include old-generation pruning in a promote plan.
+        #[arg(long)]
+        prune_old_releases: bool,
+        /// New plan JSON path; stdout when omitted.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     /// Evaluate a recorded dual-VPS release-canary report, fail-closed.
     ///
     /// Exit status is three-valued: 0 when the canary passes, 1 for a real
@@ -138,6 +183,37 @@ enum DeployCommand {
         #[arg(long)]
         evaluate_performance: bool,
     },
+}
+
+/// One of the two fixed deployment roles.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DeployTarget {
+    /// Public LINE entry host.
+    Line,
+    /// Downstream LANDING host.
+    Landing,
+}
+
+impl DeployTarget {
+    const fn role(self) -> deploy::host::HostRole {
+        match self {
+            Self::Line => deploy::host::HostRole::Line,
+            Self::Landing => deploy::host::HostRole::Landing,
+        }
+    }
+}
+
+/// A transaction that can be derived without contacting a live host.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DeployPlanOperation {
+    /// Install a candidate generation without changing CURRENT.
+    Stage,
+    /// Atomically move CURRENT to an already staged generation.
+    Cutover,
+    /// Restore CURRENT from PREVIOUS.
+    Rollback,
+    /// Accept the current generation after a successful canary.
+    Promote,
 }
 
 #[derive(Subcommand)]
@@ -2989,6 +3065,148 @@ fn run_deploy_netem(
     }
 }
 
+fn emit_deploy_json(output: Option<&Path>, json: &str) -> Result<(), String> {
+    if let Some(path) = output {
+        if path.exists() || path.is_symlink() {
+            return Err(format!("output must not already exist: {}", path.display()));
+        }
+        std::fs::write(path, json)
+            .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+    } else {
+        print!("{json}");
+    }
+    Ok(())
+}
+
+fn run_deploy_inspect(target: DeployTarget, output: Option<&Path>) -> ExitCode {
+    let topology = match deploy::host::Topology::canonical() {
+        Ok(topology) => topology,
+        Err(error) => {
+            eprintln!("deploy inspect: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let host = topology.host(target.role());
+    let mut transport = deploy::remote::SystemTransport;
+    match deploy::snapshot::inspect(&mut transport, host) {
+        Ok(snapshot) => {
+            eprintln!("{}", snapshot.summary_line());
+            let json = snapshot.to_json().to_python_json();
+            if let Err(error) = emit_deploy_json(output, &json) {
+                eprintln!("deploy inspect: {error}");
+                ExitCode::from(2)
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        Err(error) => {
+            eprintln!("deploy inspect: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_deploy_plan(
+    operation: DeployPlanOperation,
+    target: DeployTarget,
+    snapshot_path: &Path,
+    release_id: Option<&str>,
+    binary: Option<&Path>,
+    config: Option<&Path>,
+    expected_sha256: Option<&str>,
+    expected_version: Option<&str>,
+    source_commit: Option<&str>,
+    prune_old_releases: bool,
+    output: Option<&Path>,
+) -> ExitCode {
+    let text = match std::fs::read_to_string(snapshot_path) {
+        Ok(text) => text,
+        Err(error) => {
+            eprintln!(
+                "deploy plan: could not read {}: {error}",
+                snapshot_path.display()
+            );
+            return ExitCode::from(2);
+        }
+    };
+    let snapshot = match deploy::snapshot::from_json(&text) {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            eprintln!("deploy plan: inadmissible snapshot: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let topology = match deploy::host::Topology::canonical() {
+        Ok(topology) => topology,
+        Err(error) => {
+            eprintln!("deploy plan: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let expected_alias = topology.host(target.role()).alias();
+    if snapshot.alias != expected_alias {
+        eprintln!(
+            "deploy plan: snapshot alias {:?} does not match target {:?}",
+            snapshot.alias, expected_alias
+        );
+        return ExitCode::from(2);
+    }
+
+    let artifact = || -> Result<deploy::plan::ArtifactIdentity, String> {
+        let required = |value: Option<&str>, name: &str| {
+            value
+                .map(str::to_owned)
+                .ok_or_else(|| format!("--{name} is required for {operation:?}"))
+        };
+        let path = |value: Option<&Path>, name: &str| {
+            value
+                .ok_or_else(|| format!("--{name} is required for {operation:?}"))?
+                .to_str()
+                .map(str::to_owned)
+                .ok_or_else(|| format!("--{name} must be valid UTF-8"))
+        };
+        Ok(deploy::plan::ArtifactIdentity {
+            release_id: required(release_id, "release-id")?,
+            binary_path: path(binary, "binary")?,
+            config_path: path(config, "config")?,
+            binary_sha256: required(expected_sha256, "expected-sha256")?,
+            version: required(expected_version, "expected-version")?,
+            source_commit: source_commit.map(str::to_owned),
+        })
+    };
+    let plan = match operation {
+        DeployPlanOperation::Stage => artifact()
+            .and_then(|artifact| deploy::plan::plan_stage(&snapshot, &artifact)),
+        DeployPlanOperation::Cutover => artifact()
+            .and_then(|artifact| deploy::plan::plan_cutover(&snapshot, &artifact)),
+        DeployPlanOperation::Rollback => deploy::plan::plan_rollback(&snapshot),
+        DeployPlanOperation::Promote => release_id
+            .ok_or_else(|| "--release-id is required for promote".to_owned())
+            .and_then(|release_id| {
+                deploy::plan::plan_promote(&snapshot, release_id, prune_old_releases)
+            }),
+    };
+    let plan = match plan {
+        Ok(plan) => plan,
+        Err(error) => {
+            eprintln!("deploy plan: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    eprint!("{}", plan.describe());
+    if deploy::plan::rollback_for(&plan).is_some() {
+        eprintln!("  rollback: constructed and required on execution failure");
+    }
+    let json = plan.to_json().to_python_json();
+    if let Err(error) = emit_deploy_json(output, &json) {
+        eprintln!("deploy plan: {error}");
+        ExitCode::from(2)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
 /// Dispatches a `cargo dev deploy` subcommand.
 ///
 /// The canary evaluator is fail-closed and three-valued, mirroring
@@ -2996,6 +3214,34 @@ fn run_deploy_netem(
 /// when the recorded report could not be admitted at all.
 fn run_deploy(command: DeployCommand) -> ExitCode {
     match command {
+        DeployCommand::Inspect { target, output } => {
+            run_deploy_inspect(target, output.as_deref())
+        }
+        DeployCommand::Plan {
+            operation,
+            target,
+            snapshot,
+            release_id,
+            binary,
+            config,
+            expected_sha256,
+            expected_version,
+            source_commit,
+            prune_old_releases,
+            output,
+        } => run_deploy_plan(
+            operation,
+            target,
+            &snapshot,
+            release_id.as_deref(),
+            binary.as_deref(),
+            config.as_deref(),
+            expected_sha256.as_deref(),
+            expected_version.as_deref(),
+            source_commit.as_deref(),
+            prune_old_releases,
+            output.as_deref(),
+        ),
         DeployCommand::Netem {
             profiles,
             pool_summaries,

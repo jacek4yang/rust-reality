@@ -10,5 +10,6 @@ pub mod canary;
 pub mod host;
 pub mod netem;
 pub mod plan;
+pub mod remote;
 pub mod snapshot;
 pub mod summary;

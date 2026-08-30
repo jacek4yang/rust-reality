@@ -68,12 +68,6 @@ impl Host {
         })
     }
 
-    /// The host's role.
-    #[must_use]
-    pub const fn role(&self) -> HostRole {
-        self.role
-    }
-
     /// The SSH alias; the only host identifier the repository carries.
     #[must_use]
     pub fn alias(&self) -> &str {
@@ -122,19 +116,6 @@ impl Host {
         argv
     }
 
-    /// A redacted one-line rendering of an SSH argv for logs and evidence.
-    ///
-    /// Arguments after the alias are the remote command; they may name release
-    /// ids but are safe by construction (validated argv tokens), so the redaction
-    /// here is the documented, checked one: nothing secret is ever passed as an
-    /// argv element.
-    #[must_use]
-    pub fn describe_argv(argv: &[String]) -> String {
-        argv.iter()
-            .map(|argument| argument.replace(' ', "\\ "))
-            .collect::<Vec<_>>()
-            .join(" ")
-    }
 }
 
 /// The fixed two-host topology the deployment family operates on.
@@ -172,47 +153,12 @@ impl Topology {
         })
     }
 
-    /// The LINE host.
-    #[must_use]
-    pub const fn line(&self) -> &Host {
-        &self.line
-    }
-
-    /// The LANDING host.
-    #[must_use]
-    pub const fn landing(&self) -> &Host {
-        &self.landing
-    }
-
     /// Looks up a host by role.
     #[must_use]
     pub const fn host(&self, role: HostRole) -> &Host {
         match role {
             HostRole::Line => &self.line,
             HostRole::Landing => &self.landing,
-        }
-    }
-}
-
-/// Secret material classes that must never appear in evidence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SecretClass {
-    /// A REALITY private key.
-    PrivateKey,
-    /// A VLESS user UUID.
-    Uuid,
-    /// A REALITY short id.
-    ShortId,
-}
-
-impl SecretClass {
-    /// The `<redacted:...>` marker recorded in place of the value.
-    #[must_use]
-    pub fn marker(self) -> &'static str {
-        match self {
-            Self::PrivateKey => "<redacted:private-key>",
-            Self::Uuid => "<redacted:uuid>",
-            Self::ShortId => "<redacted:short-id>",
         }
     }
 }
@@ -364,17 +310,21 @@ mod tests {
     #[test]
     fn the_canonical_topology_uses_the_fixed_aliases() {
         let topology = Topology::canonical().expect("canonical topology is valid");
-        assert_eq!(topology.line().alias(), "rust-reality-vps");
-        assert_eq!(topology.landing().alias(), "rust-reality-landing-vps");
-        assert_eq!(topology.line().role(), HostRole::Line);
-        assert_eq!(topology.landing().role(), HostRole::Landing);
+        assert_eq!(
+            topology.host(HostRole::Line).alias(),
+            "rust-reality-vps"
+        );
+        assert_eq!(
+            topology.host(HostRole::Landing).alias(),
+            "rust-reality-landing-vps"
+        );
     }
 
     #[test]
     fn ssh_argv_uses_the_alias_and_nothing_but_the_alias() {
         let topology = Topology::new("line-alias", "landing-alias").unwrap();
         let argv = topology
-            .line()
+            .host(HostRole::Line)
             .ssh_argv(&["true".to_owned(), "&&".to_owned(), "rm".to_owned()]);
         // The alias selects user/port/proxy from the operator's config; no
         // address, user, port, identity file, or proxy override is present.
@@ -388,7 +338,7 @@ mod tests {
     #[test]
     fn sudo_argv_prepends_sudo_n_to_the_remote_command() {
         let topology = Topology::new("line", "landing").unwrap();
-        let argv = topology.line().ssh_sudo_argv(&["systemctl".to_owned(), "reload".to_owned(), "rust-reality.service".to_owned()]);
+        let argv = topology.host(HostRole::Line).ssh_sudo_argv(&["systemctl".to_owned(), "reload".to_owned(), "rust-reality.service".to_owned()]);
         assert_eq!(
             &argv[..8],
             [
@@ -413,16 +363,6 @@ mod tests {
         assert!(Host::new(HostRole::Line, "two words", "rust-reality.service").is_err());
         assert!(Host::new(HostRole::Line, "ok", "bad service").is_err());
         assert!(Host::new(HostRole::Line, "", "rust-reality.service").is_err());
-    }
-
-    #[test]
-    fn argv_describe_quotes_spaces_without_evaluating() {
-        let argv = vec!["echo".to_owned(), "a b".to_owned()];
-        let described = Host::describe_argv(&argv);
-        assert_eq!(described, "echo a\\ b");
-        // Rendering is documentation, not execution: back the string back apart
-        // and the token still contains its space.
-        assert!(described.contains("a\\ b"));
     }
 
     #[test]

@@ -118,10 +118,13 @@ impl ArtifactIdentity {
         if !self.config_path.starts_with('/') {
             failures.push("config_path must be absolute".to_owned());
         }
-        if let Some(commit) = &self.source_commit {
-            if commit.len() != 40 || commit.bytes().any(|b| !b.is_ascii_hexdigit() || b.is_ascii_uppercase()) {
-                failures.push("source_commit must be 40 lowercase hex characters".to_owned());
-            }
+        if let Some(commit) = &self.source_commit
+            && (commit.len() != 40
+                || commit
+                    .bytes()
+                    .any(|byte| !byte.is_ascii_hexdigit() || byte.is_ascii_uppercase()))
+        {
+            failures.push("source_commit must be 40 lowercase hex characters".to_owned());
         }
         if failures.is_empty() {
             Ok(())
@@ -151,8 +154,6 @@ pub enum DeploymentAction {
     /// Restart the systemd unit and wait for the executable identity and the
     /// 443 listener to come back.
     RestartService,
-    /// Reload the unit (generation rotation without a process restart).
-    ReloadService,
     /// Verify the running process's executable path and that 443 is listening.
     VerifyService {
         /// The binary path the running process must present.
@@ -167,6 +168,13 @@ pub enum DeploymentAction {
         /// The release id that is pending promote.
         release_id: String,
     },
+    /// Write the durable record naming the accepted current generation.
+    RecordPromoted {
+        /// Release id that passed the canary and is now accepted.
+        release_id: String,
+    },
+    /// Delete release generations other than CURRENT and PREVIOUS.
+    PruneOldReleases,
 }
 
 impl DeploymentAction {
@@ -177,11 +185,12 @@ impl DeploymentAction {
             Self::Stage { .. } => "stage",
             Self::SwitchCurrent { .. } => "switch-current",
             Self::RestartService => "restart-service",
-            Self::ReloadService => "reload-service",
             Self::VerifyService { .. } => "verify-service",
             Self::VerifyNoNewPublicListeners => "verify-no-new-public-listeners",
             Self::ClearPending => "clear-pending",
             Self::RecordPending { .. } => "record-pending",
+            Self::RecordPromoted { .. } => "record-promoted",
+            Self::PruneOldReleases => "prune-old-releases",
         }
     }
 
@@ -199,7 +208,6 @@ impl DeploymentAction {
                 ("releaseId", Json::string(release_id.clone())),
             ]),
             Self::RestartService => Json::object([("action", Json::string("restart-service"))]),
-            Self::ReloadService => Json::object([("action", Json::string("reload-service"))]),
             Self::VerifyService { expected_binary } => Json::object([
                 ("action", Json::string("verify-service")),
                 ("expectedBinary", Json::string(expected_binary.clone())),
@@ -212,6 +220,13 @@ impl DeploymentAction {
                 ("action", Json::string("record-pending")),
                 ("releaseId", Json::string(release_id.clone())),
             ]),
+            Self::RecordPromoted { release_id } => Json::object([
+                ("action", Json::string("record-promoted")),
+                ("releaseId", Json::string(release_id.clone())),
+            ]),
+            Self::PruneOldReleases => {
+                Json::object([("action", Json::string("prune-old-releases"))])
+            }
         }
     }
 }
@@ -264,7 +279,12 @@ impl DeploymentPlan {
             ("target", Json::string(self.target.clone())),
             (
                 "actions",
-                Json::Array(self.actions.iter().map(|action| action.to_json()).collect()),
+                Json::Array(
+                    self.actions
+                        .iter()
+                        .map(DeploymentAction::to_json)
+                        .collect(),
+                ),
             ),
             (
                 "rationale",
@@ -315,6 +335,7 @@ pub fn plan_stage(
         "stage {} without changing CURRENT",
         artifact.release_id
     ));
+    let paths = Paths::canonical();
     Ok(DeploymentPlan {
         kind: PlanKind::Stage,
         target: snapshot.alias.clone(),
@@ -325,9 +346,8 @@ pub fn plan_stage(
             },
             DeploymentAction::VerifyService {
                 expected_binary: format!(
-                    "{}/releases/{}/rust-reality",
-                    "/opt/rust-reality",
-                    artifact.release_id
+                    "{}/{}/rust-reality",
+                    paths.releases, artifact.release_id
                 ),
             },
         ],
@@ -358,7 +378,8 @@ pub fn plan_cutover(
     let Some(current_binary) = previous else {
         return Err("refusing to cut over: CURRENT pointer unresolved".to_owned());
     };
-    let new_release = format!("/opt/rust-reality/releases/{}", artifact.release_id);
+    let paths = Paths::canonical();
+    let new_release = format!("{}/{}", paths.releases, artifact.release_id);
     let new_binary = format!("{new_release}/rust-reality");
     if current_binary == new_release {
         return Err(format!(
@@ -394,6 +415,7 @@ pub fn plan_cutover(
 ///
 /// Returns a rejection when the snapshot shows no usable PREVIOUS generation.
 pub fn plan_rollback(snapshot: &super::snapshot::HostSnapshot) -> Result<DeploymentPlan, String> {
+    let paths = Paths::canonical();
     let Some(generations) = &snapshot.generations else {
         return Err(format!(
             "refusing to roll back {}: no CURRENT/PREVIOUS generation pointers observed",
@@ -406,7 +428,7 @@ pub fn plan_rollback(snapshot: &super::snapshot::HostSnapshot) -> Result<Deploym
             snapshot.alias
         ));
     };
-    if !previous_binary.starts_with("/opt/rust-reality/releases/") {
+    if !previous_binary.starts_with(&format!("{}/", paths.releases)) {
         return Err(format!(
             "refusing to roll back: PREVIOUS {previous_binary} is outside the release root"
         ));
@@ -428,6 +450,78 @@ pub fn plan_rollback(snapshot: &super::snapshot::HostSnapshot) -> Result<Deploym
     })
 }
 
+/// Plans promotion after a successful application-level canary.
+///
+/// Promotion never restarts the service. It verifies that CURRENT and the live
+/// executable still name the requested generation, records the accepted state,
+/// clears the pending marker, and optionally prunes every generation other than
+/// CURRENT/PREVIOUS.
+///
+/// # Errors
+///
+/// Returns a rejection when the snapshot is unhealthy or does not prove that the
+/// requested release is the running CURRENT generation.
+pub fn plan_promote(
+    snapshot: &super::snapshot::HostSnapshot,
+    release_id: &str,
+    prune_old_releases: bool,
+) -> Result<DeploymentPlan, String> {
+    validate_release_id(release_id)?;
+    if !snapshot.service_healthy() {
+        return Err(format!(
+            "refusing to promote: {} is not healthy (state={}, 443={})",
+            snapshot.alias, snapshot.service_state, snapshot.service_443_present
+        ));
+    }
+    let paths = Paths::canonical();
+    let expected_release = format!("{}/{release_id}", paths.releases);
+    let expected_config = format!("{}/{release_id}", paths.config_releases);
+    let expected_binary = format!("{expected_release}/rust-reality");
+    let Some(generations) = &snapshot.generations else {
+        return Err("refusing to promote: generation pointers are absent".to_owned());
+    };
+    if generations.current_binary.as_deref() != Some(expected_release.as_str())
+        || generations.current_config.as_deref() != Some(expected_config.as_str())
+        || snapshot.executable.as_deref() != Some(expected_binary.as_str())
+    {
+        return Err(format!(
+            "refusing to promote {release_id}: CURRENT/config/executable identity does not match"
+        ));
+    }
+    let mut actions = vec![
+        DeploymentAction::VerifyService {
+            expected_binary,
+        },
+        DeploymentAction::RecordPromoted {
+            release_id: release_id.to_owned(),
+        },
+        DeploymentAction::ClearPending,
+    ];
+    if prune_old_releases {
+        actions.push(DeploymentAction::PruneOldReleases);
+    }
+    Ok(DeploymentPlan {
+        kind: PlanKind::Promote,
+        target: snapshot.alias.clone(),
+        actions,
+        rationale: vec![format!(
+            "CURRENT {expected_release} passed the application canary"
+        )],
+    })
+}
+
+fn validate_release_id(release_id: &str) -> Result<(), String> {
+    ArtifactIdentity {
+        release_id: release_id.to_owned(),
+        binary_path: "/unused".to_owned(),
+        config_path: "/unused".to_owned(),
+        binary_sha256: "0".repeat(64),
+        version: "0.0.0".to_owned(),
+        source_commit: None,
+    }
+    .validate()
+}
+
 /// Extracts the release generation id from a release-root path.
 fn release_id_of(release_dir: &str) -> String {
     release_dir
@@ -447,7 +541,6 @@ fn release_id_of(release_dir: &str) -> String {
 #[must_use]
 pub fn rollback_for(plan: &DeploymentPlan) -> Option<DeploymentPlan> {
     match plan.kind {
-        PlanKind::Stage => None,
         PlanKind::Cutover | PlanKind::Promote => Some(DeploymentPlan {
             kind: PlanKind::Rollback,
             target: plan.target.clone(),
@@ -460,7 +553,7 @@ pub fn rollback_for(plan: &DeploymentPlan) -> Option<DeploymentPlan> {
             rationale: vec![format!("automatic rollback of failed {}", plan.kind.name())],
         }),
         // A failed rollback is retried, not rolled back.
-        PlanKind::Rollback => None,
+        PlanKind::Stage | PlanKind::Rollback => None,
     }
 }
 
@@ -549,7 +642,7 @@ mod tests {
     fn cutover_plan_orders_switch_restart_verify_and_pending() {
         let plan = plan_cutover(&healthy_snapshot("line"), &candidate()).unwrap();
         assert_eq!(plan.kind, PlanKind::Cutover);
-        let verbs: Vec<_> = plan.actions.iter().map(|action| action.verb()).collect();
+        let verbs: Vec<_> = plan.actions.iter().map(DeploymentAction::verb).collect();
         assert_eq!(
             verbs,
             ["switch-current", "restart-service", "verify-service",
@@ -577,7 +670,7 @@ mod tests {
     #[test]
     fn rollback_plan_restores_previous_and_clears_pending() {
         let plan = plan_rollback(&healthy_snapshot("line")).unwrap();
-        let verbs: Vec<_> = plan.actions.iter().map(|action| action.verb()).collect();
+        let verbs: Vec<_> = plan.actions.iter().map(DeploymentAction::verb).collect();
         assert_eq!(
             verbs,
             ["switch-current", "restart-service", "verify-service",
@@ -613,6 +706,31 @@ mod tests {
 
         let rollback_plan = plan_rollback(&healthy_snapshot("line")).unwrap();
         assert!(rollback_for(&rollback_plan).is_none(), "a failed rollback is retried");
+    }
+
+    #[test]
+    fn promote_requires_exact_current_identity_and_never_restarts() {
+        let mut snapshot = healthy_snapshot("line");
+        snapshot.generations.as_mut().unwrap().current_binary =
+            Some("/opt/rust-reality/releases/r2".into());
+        snapshot.generations.as_mut().unwrap().current_config =
+            Some("/etc/rust-reality/releases/r2".into());
+        snapshot.executable = Some("/opt/rust-reality/releases/r2/rust-reality".into());
+        let plan = plan_promote(&snapshot, "r2", true).unwrap();
+        let verbs: Vec<_> = plan.actions.iter().map(DeploymentAction::verb).collect();
+        assert_eq!(
+            verbs,
+            [
+                "verify-service",
+                "record-promoted",
+                "clear-pending",
+                "prune-old-releases"
+            ]
+        );
+        assert!(!verbs.contains(&"restart-service"));
+
+        snapshot.executable = Some("/opt/rust-reality/releases/r1/rust-reality".into());
+        assert!(plan_promote(&snapshot, "r2", false).is_err());
     }
 
     #[test]
