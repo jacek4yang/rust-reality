@@ -4,6 +4,12 @@ rust-reality is a forward-only project: changes should improve the current
 contract rather than preserve obsolete product behavior. Read [AGENTS.md](AGENTS.md)
 for the engineering invariants before making a change.
 
+Use the [documentation index](docs/en/index.md) as the full map. Before editing,
+read the [architecture overview](docs/en/architecture.md), find the owning path
+in the [repository layout](docs/en/development/repository-layout.md), follow the
+[development workflow](docs/en/development/development-workflow.md), and select
+the appropriate validation from the [testing guide](docs/en/development/testing.md).
+
 ## Development setup
 
 Use the toolchain pinned by [`rust-toolchain.toml`](rust-toolchain.toml). The

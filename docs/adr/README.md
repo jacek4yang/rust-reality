@@ -51,3 +51,7 @@ of the law is what it is.
 | [0007](0007-adaptive-line-to-landing-warm-connections.md) | Adaptive LINE-to-LANDING warm connections | Accepted |
 | [0008](0008-session-engine-runtime-and-transport-boundaries.md) | Session Engine, Runtime Adapter, and Transport boundaries | Accepted for incremental implementation |
 | [0009](0009-durable-evidence-identity.md) | Durable evidence identity for replayable benchmark runs | Accepted |
+| [0010](0010-rejected-connection-future-factory.md) | Rejected connection-future factory (per-connection task memory) | Rejected on measurement |
+| [0011](0011-framed-loop-copy-allocation-complete.md) | The framed record loop is copy- and allocation-complete | Accepted (negative result) |
+| [0012](0012-relay-buffer-hypothesis-rejected.md) | The relay-buffer throughput hypothesis is rejected on mechanism | Rejected on mechanism |
+| [0013](0013-no-compiled-runtime-plan.md) | No compiled-runtime-plan construct | Accepted (negative result) |

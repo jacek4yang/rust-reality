@@ -11,6 +11,10 @@ client entry is **VLESS + REALITY + `xtls-rprx-vision`**. An optional, separate
 NXR protocol carries authenticated per-flow traffic from a public line node to
 a firewall-restricted landing node.
 
+New contributors should start with [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[documentation index](docs/en/index.md); together they route development work
+to the architecture, repository ownership map, workflow, and test guidance.
+
 ```text
 Xray-compatible client
   -> VLESS + REALITY + Vision

@@ -10,6 +10,10 @@
 **VLESS + REALITY + `xtls-rprx-vision`**。可选的独立 NXR 协议用于把线路机上
 每一条已认证用户流量转发到仅受防火墙信任的落地机。
 
+新贡献者请从 [CONTRIBUTING.md](CONTRIBUTING.md) 和
+[中文文档索引](docs/zh-CN/index.md) 开始；它们会继续指向架构、仓库归属、
+开发流程和测试指南。
+
 ```text
 兼容 Xray 的客户端
   -> VLESS + REALITY + Vision

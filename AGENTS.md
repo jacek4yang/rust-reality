@@ -192,6 +192,10 @@ The canonical directory ownership map lives in
   Chinese `docs/zh-CN/`, decisions `docs/adr/`) except the standard root entry
   files (`README.md`, `README.zh-CN.md`, `CONTRIBUTING.md`, `CHANGELOG.md`,
   `SECURITY.md`, `AGENTS.md`, licenses).
+- Exact colocated ownership references (`benchmarks/README.md` and
+  `tools/reference/README.md`) and durable evidence documents below
+  `benchmarks/evidence/` are owned by those trees; they MUST NOT become a
+  second home for general human documentation.
 - Machine-readable benchmark data lives under `benchmarks/` — contracts in
   `benchmarks/contracts/`, baselines in `benchmarks/baselines/`, durable
   compact evidence in `benchmarks/evidence/` — never under `docs/`.
@@ -403,7 +407,14 @@ only; private operator endpoints MUST NOT be hard-coded into the repository.
 ## 22. Forbidden repository artifacts
 
 The following MUST NOT be created in the repository; where they exist they are
-deleted on sight. `cargo dev repo check` enforces the structural core:
+deleted on sight. `cargo dev repo check` enforces the structural core
+(root allowlist with an explicit owner for every entry, forbidden directories,
+transient-state and model-conversation paths, competing agent policy files,
+human-document ownership, canonical onboarding paths and links, ADR naming,
+status metadata and exact index consistency, benchmark data taxonomy, zero
+active shell/Python files, bounded tracked-object size, and narrow machine-path
+hygiene), so violating the taxonomy fails the build gate rather than relying
+on reviewer vigilance:
 
 - `scripts/` (repository-owned shell/Python policy is zero);
 - `notes/` and any execution-state tree;
@@ -418,6 +429,11 @@ deleted on sight. `cargo dev repo check` enforces the structural core:
   technically requires its own entry file MAY contain only a minimal pointer to
   this file and the canonical docs;
 - arbitrary generated files without a canonical owner.
+
+The two non-executable shell/Python files below
+`benchmarks/evidence/objects/sha256/` are immutable, content-addressed historical
+evidence, not active repository policy. Any active shell/Python file elsewhere
+is forbidden.
 
 Current execution state belongs in Git commits, GitHub PRs/issues, and CI.
 Permanent engineering knowledge belongs in canonical documentation; durable
@@ -459,17 +475,17 @@ ledger so the next session can reconstruct the state.
 
 | Need | Go to |
 | --- | --- |
-| Project overview, features, quick links | `README.md` / `README.zh-CN.md` |
-| Human contribution entry | `CONTRIBUTING.md` |
+| Project overview, features, quick links | [README.md](README.md) / [README.zh-CN.md](README.zh-CN.md) |
+| Human contribution entry | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Normative agent law | this file |
-| Directory ownership, change routing | `docs/en/development/repository-layout.md` |
-| Build, tooling, validation ladder, PR rules | `docs/en/development/development-workflow.md` |
-| Test layers and gates | `docs/en/development/testing.md` |
-| Fuzz targets and commands | `docs/en/development/fuzzing.md` |
-| System mental model | `docs/en/architecture.md` |
-| Measurement policy and evidence | `docs/en/benchmarks.md`, `docs/en/performance.md` |
-| Security boundaries | `docs/en/threat-model.md`, `SECURITY.md` |
-| Durable decisions | `docs/adr/` |
-| Release engineering | `docs/en/release-process.md` |
-| CLI/configuration/deployment contracts | `docs/en/cli.md`, `docs/en/configuration.md`, `docs/en/deployment.md` |
-| Chinese mirrors | `docs/zh-CN/` |
+| Directory ownership, change routing | [repository layout](docs/en/development/repository-layout.md) |
+| Build, tooling, validation ladder, PR rules | [development workflow](docs/en/development/development-workflow.md) |
+| Test layers and gates | [testing guide](docs/en/development/testing.md) |
+| Fuzz targets and commands | [fuzzing guide](docs/en/development/fuzzing.md) |
+| System mental model | [architecture](docs/en/architecture.md) |
+| Measurement policy and evidence | [benchmarks](docs/en/benchmarks.md), [performance](docs/en/performance.md) |
+| Security boundaries | [threat model](docs/en/threat-model.md), [security policy](SECURITY.md) |
+| Durable decisions | [ADR index](docs/adr/README.md) |
+| Release engineering | [release process](docs/en/release-process.md) |
+| CLI/configuration/deployment contracts | [CLI](docs/en/cli.md), [configuration](docs/en/configuration.md), [deployment](docs/en/deployment.md) |
+| Chinese mirrors | [Chinese documentation index](docs/zh-CN/index.md) |
