@@ -141,11 +141,11 @@ pub struct RustSoakOutcome {
 }
 
 #[derive(Debug, Clone)]
-struct GeneratedPublicConfig {
-    public_key: String,
-    uuid: String,
-    short_id: String,
-    json: String,
+pub(crate) struct GeneratedPublicConfig {
+    pub(crate) public_key: String,
+    pub(crate) uuid: String,
+    pub(crate) short_id: String,
+    pub(crate) json: String,
 }
 
 #[derive(Debug, Clone)]
@@ -306,7 +306,7 @@ pub fn validate(plan: &SoakPlan) -> Result<(), String> {
     Ok(())
 }
 
-fn generated_public_config(
+pub(crate) fn generated_public_config(
     rust_bin: &Path,
     args: Vec<String>,
     workspace: &Workspace,
@@ -363,7 +363,7 @@ fn generated_public_config(
     })
 }
 
-fn patch_server_config(
+pub(crate) fn patch_server_config(
     raw: &str,
     workspace: &Workspace,
     cache_label: &str,
@@ -408,7 +408,7 @@ fn patch_server_config(
     Ok(suites::render_compact(&Value::Object(root)))
 }
 
-fn patch_xray_socks_port(raw: &str, port: u16) -> Result<String, String> {
+pub(crate) fn patch_xray_socks_port(raw: &str, port: u16) -> Result<String, String> {
     use json_in::Value;
     let value = json_in::parse(raw)
         .map_err(|error| format!("generated Xray config is invalid JSON: {error}"))?;
@@ -425,7 +425,7 @@ fn patch_xray_socks_port(raw: &str, port: u16) -> Result<String, String> {
     Ok(suites::render_compact(&Value::Object(root)))
 }
 
-fn patch_socks_outbound(raw: &str, upstream_port: u16) -> Result<String, String> {
+pub(crate) fn patch_socks_outbound(raw: &str, upstream_port: u16) -> Result<String, String> {
     use json_in::Value;
     let value = json_in::parse(raw)
         .map_err(|error| format!("generated SOCKS line config is invalid JSON: {error}"))?;
@@ -477,7 +477,7 @@ fn patch_socks_outbound(raw: &str, upstream_port: u16) -> Result<String, String>
     Ok(suites::render_compact(&Value::Object(root)))
 }
 
-fn node_key(rust_bin: &Path) -> Result<String, String> {
+pub(crate) fn node_key(rust_bin: &Path) -> Result<String, String> {
     let outcome = Tool::new(rust_bin.display().to_string())
         .arg("node-keygen")
         .probe()
@@ -496,7 +496,7 @@ fn node_key(rust_bin: &Path) -> Result<String, String> {
         .map_err(|error| error.to_string())
 }
 
-fn check_config(rust_bin: &Path, config: &Path) -> Result<(), String> {
+pub(crate) fn check_config(rust_bin: &Path, config: &Path) -> Result<(), String> {
     let outcome = Tool::new(rust_bin.display().to_string())
         .args(["check", "--config", &config.display().to_string()])
         .probe()
@@ -512,7 +512,7 @@ fn check_config(rust_bin: &Path, config: &Path) -> Result<(), String> {
     }
 }
 
-fn write_config(path: &Path, contents: &str) -> Result<(), String> {
+pub(crate) fn write_config(path: &Path, contents: &str) -> Result<(), String> {
     std::fs::write(path, contents)
         .map_err(|error| format!("could not write {}: {error}", path.display()))
 }
@@ -803,7 +803,7 @@ fn external_binary(label: &str, path: &Path, args: &[&str]) -> Result<Binary, St
     })
 }
 
-fn spawn_rust(
+pub(crate) fn spawn_rust(
     label: &str,
     rust: &Binary,
     config: &Path,
@@ -831,7 +831,7 @@ fn spawn_rust(
     Ok(child)
 }
 
-fn spawn_xray_client(
+pub(crate) fn spawn_xray_client(
     label: &str,
     xray: &Binary,
     config: &Path,
