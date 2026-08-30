@@ -5,14 +5,33 @@
 //! identities, resource samples, journal aggregation, and report serialization.
 //! The resulting report is always re-admitted through [`super::canary`].
 
-use std::{collections::BTreeMap, net::Ipv4Addr, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    net::Ipv4Addr,
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering},
+    },
+    thread::JoinHandle,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
 use crate::{
+    bench::process::Child,
+    deploy::{
+        executor::{self, SystemCandidateValidator},
+        host::{Host, HostRole, Topology},
+        plan,
+        remote::{SystemTransport, Transport, checked},
+        snapshot::{HostSnapshot, inspect},
+    },
     hash,
     perf::{
         json_in::{self, Value},
         json_out::Json,
     },
+    process::Tool,
 };
 
 /// Identity of the rust-reality candidate running on both remote hosts.
@@ -143,6 +162,8 @@ pub struct Plan {
     pub duration_seconds: u64,
     /// Remote resource sampling interval.
     pub sample_interval_seconds: u64,
+    /// Restore PREVIOUS on both hosts after any failure.
+    pub rollback_on_failure: bool,
 }
 
 impl Plan {
@@ -258,6 +279,10 @@ impl Plan {
                 Json::Int(i64::try_from(self.sample_interval_seconds).unwrap_or(i64::MAX)),
             ),
             ("schedule", self.schedule().to_json()),
+            (
+                "rollbackOnFailure",
+                Json::Bool(self.rollback_on_failure),
+            ),
         ])
     }
 }
@@ -339,7 +364,7 @@ impl Schedule {
             line_reload_second: scaled(330),
             landing_restart_second: scaled(390),
             integrity_second: scaled(450),
-            final_reload_second: duration.saturating_sub(30),
+            final_reload_second: duration,
         }
     }
 
@@ -633,6 +658,743 @@ impl Report {
     }
 }
 
+/// Result of one complete native active canary.
+#[derive(Debug, Clone)]
+pub struct RunOutcome {
+    /// Fail-closed evaluator verdict.
+    pub verdict: String,
+    /// Whether the evaluator accepted every canary invariant.
+    pub ok: bool,
+}
+
+/// Runs the active canary through the fixed topology.
+///
+/// This function performs live remote reload/restart operations. Callers must
+/// enforce the explicit mutation authorization boundary before invoking it.
+///
+/// # Errors
+///
+/// Returns preflight, traffic, integrity, sampling, journal, or rollback errors.
+/// A report that is structurally valid but fails policy returns `Ok` with
+/// [`RunOutcome::ok`] false after the requested rollback is attempted.
+#[allow(clippy::too_many_lines)]
+pub fn run(plan: &Plan, topology: &Topology) -> Result<RunOutcome, String> {
+    let result = run_inner(plan, topology);
+    let failed = result.as_ref().map_or(true, |outcome| !outcome.ok);
+    if failed && plan.rollback_on_failure {
+        let rollback = rollback_hosts(topology);
+        if let Err(rollback_error) = rollback {
+            return Err(match result {
+                Ok(_) => format!("canary failed; rollback failed: {rollback_error}"),
+                Err(error) => format!("canary failed ({error}); rollback failed: {rollback_error}"),
+            });
+        }
+    }
+    result
+}
+
+#[allow(clippy::too_many_lines)]
+fn run_inner(plan: &Plan, topology: &Topology) -> Result<RunOutcome, String> {
+    plan.validate()?;
+    if let Some(parent) = plan.out_dir.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("create canary parent {}: {error}", parent.display()))?;
+    }
+    std::fs::create_dir(&plan.out_dir).map_err(|error| {
+        format!(
+            "create canary evidence directory {}: {error}",
+            plan.out_dir.display()
+        )
+    })?;
+    std::fs::write(
+        plan.out_dir.join("plan.json"),
+        plan.to_json().to_python_json(),
+    )
+    .map_err(|error| format!("write canary plan: {error}"))?;
+
+    let line = topology.host(HostRole::Line);
+    let landing = topology.host(HostRole::Landing);
+    let mut transport = SystemTransport;
+    let line_before = inspect(&mut transport, line)?;
+    let landing_before = inspect(&mut transport, landing)?;
+    verify_candidate(&line_before, &plan.candidate)?;
+    verify_candidate(&landing_before, &plan.candidate)?;
+    if !line_before.unexpected_public_ports().is_empty()
+        || !landing_before.unexpected_public_ports().is_empty()
+    {
+        return Err("LINE or LANDING exposes an unexpected wildcard listener".to_owned());
+    }
+    let firewall = checked(
+        &mut transport,
+        landing,
+        true,
+        &["iptables-save".to_owned()],
+        "inspect LANDING firewall",
+    )?;
+    if !firewall_line_only(&firewall, plan.line_public_ipv4) {
+        return Err("LANDING firewall does not allow exactly LINE-origin TCP/443".to_owned());
+    }
+    let comparator = comparator_identity(plan)?;
+
+    let mut xray = Child::spawn_isolated(
+        "deployment-canary-xray",
+        &plan.xray_bin,
+        &[
+            "run".to_owned(),
+            "-config".to_owned(),
+            plan.xray_config.display().to_string(),
+        ],
+        &plan.out_dir,
+        &[],
+        &plan.out_dir.join("xray.log"),
+    )
+    .map_err(|error| error.to_string())?;
+    xray.wait_for_port(plan.socks_port, Duration::from_secs(10))
+        .map_err(|error| error.to_string())?;
+
+    let schedule = plan.schedule();
+    let started = Instant::now();
+    let started_epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock before Unix epoch: {error}"))?
+        .as_secs();
+    let attempted = AtomicI64::new(0);
+    let successful = AtomicI64::new(0);
+    let sampler = ResourceSampler::start(
+        line.clone(),
+        landing.clone(),
+        started,
+        Duration::from_secs(plan.sample_interval_seconds),
+    );
+    let mut line_reload = false;
+    let mut landing_restart = false;
+    let mut restart_recovery = false;
+    let mut integrity = IntegrityStatus::Pending;
+
+    for phase in &schedule.phases {
+        match phase.name {
+            "post-line-reload" => {
+                remote_unit(&mut transport, line, "reload")?;
+                line_reload = true;
+            }
+            "post-landing-restart" => {
+                remote_unit(&mut transport, landing, "restart")?;
+                landing_restart = true;
+                restart_recovery = wait_candidate(&mut transport, landing, &plan.candidate)?;
+            }
+            "integrity-recovery" => {
+                run_integrity(plan, &mut transport, landing)?;
+                integrity = IntegrityStatus::Passed;
+            }
+            _ => {}
+        }
+        let phase_deadline = Duration::from_secs(phase.end_second);
+        while started.elapsed() < phase_deadline {
+            if phase.concurrency > 0 {
+                run_request_batch(
+                    plan,
+                    phase.batch,
+                    phase.concurrency,
+                    &attempted,
+                    &successful,
+                );
+            } else {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+    }
+    remote_unit(&mut transport, line, "reload")?;
+    std::thread::sleep(Duration::from_secs(2));
+    let (line_resources, landing_resources) = sampler.finish()?;
+    xray.terminate();
+
+    let line_after = inspect(&mut transport, line)?;
+    let landing_after = inspect(&mut transport, landing)?;
+    verify_candidate(&line_after, &plan.candidate)?;
+    verify_candidate(&landing_after, &plan.candidate)?;
+    let line_journal = journal_since(&mut transport, line, started_epoch)?;
+    let landing_journal = journal_since(&mut transport, landing, started_epoch)?;
+    std::fs::write(plan.out_dir.join("line-journal.jsonl"), &line_journal)
+        .map_err(|error| format!("write LINE journal: {error}"))?;
+    std::fs::write(plan.out_dir.join("landing-journal.jsonl"), &landing_journal)
+        .map_err(|error| format!("write LANDING journal: {error}"))?;
+    let journals = aggregate_journals(&line_journal, &landing_journal);
+
+    let mut checks = Report::checks(false);
+    for name in [
+        "lineSsh",
+        "landingSsh",
+        "lineServiceActive",
+        "landingServiceActive",
+        "linePublicPortsRestricted",
+        "landingPublicPortsRestricted",
+        "landingFirewallLineOnly",
+        "lineCandidateIdentity",
+        "landingCandidateIdentity",
+        "stockXray",
+        "noReplayRegression",
+    ] {
+        checks.insert(name.to_owned(), true);
+    }
+    for name in [
+        "oneMiBIntegrity",
+        "largeIntegrity",
+        "uploadIntegrity",
+        "bidirectionalIntegrity",
+    ] {
+        checks.insert(name.to_owned(), integrity.passed());
+    }
+    checks.insert("lineReload".to_owned(), line_reload);
+    checks.insert(
+        "generationRetirement".to_owned(),
+        journals.pool_summary_events > 0,
+    );
+    checks.insert("landingRestart".to_owned(), landing_restart);
+    checks.insert("restartRecovery".to_owned(), restart_recovery);
+    checks.insert("coldFallback".to_owned(), journals.cold_fallback > 0);
+    checks.insert("warmHandoff".to_owned(), journals.checkout_hit > 0);
+    checks.insert(
+        "noRestartLoop".to_owned(),
+        line_before.restarts == line_after.restarts
+            && landing_before.restarts == landing_after.restarts,
+    );
+    checks.insert(
+        "noAuthenticationRegression".to_owned(),
+        journals.authentication_rejections == 0,
+    );
+
+    let report = Report {
+        candidate: plan.candidate.clone(),
+        comparator,
+        elapsed_seconds: i64::try_from(started.elapsed().as_secs()).unwrap_or(i64::MAX),
+        checks,
+        connections_attempted: attempted.load(Ordering::Relaxed),
+        connections_successful: successful.load(Ordering::Relaxed),
+        journals,
+        line_resources,
+        landing_resources,
+    }
+    .to_json()
+    .to_python_json();
+    let input = plan.out_dir.join("canary-input.json");
+    std::fs::write(&input, &report)
+        .map_err(|error| format!("write {}: {error}", input.display()))?;
+    let (verdict, ok) = match super::canary::evaluate_text(&report) {
+        super::canary::Outcome::Evaluated { verdict, ok } => (verdict, ok),
+        super::canary::Outcome::Inadmissible(error) => {
+            return Err(format!("native canary report was inadmissible: {error}"));
+        }
+    };
+    std::fs::write(plan.out_dir.join("canary-verdict.json"), &verdict)
+        .map_err(|error| format!("write canary verdict: {error}"))?;
+    Ok(RunOutcome { verdict, ok })
+}
+
+fn verify_candidate(snapshot: &HostSnapshot, candidate: &Candidate) -> Result<(), String> {
+    if !snapshot.service_healthy() || !snapshot.ssh_22_present {
+        return Err(format!("candidate host is unhealthy: {}", snapshot.summary_line()));
+    }
+    if snapshot.executable_sha256.as_deref() != Some(candidate.sha256.as_str()) {
+        return Err(format!(
+            "candidate SHA-256 mismatch on {}: {:?}",
+            snapshot.alias, snapshot.executable_sha256
+        ));
+    }
+    let observed_version = snapshot
+        .version
+        .as_deref()
+        .and_then(|version| version.split_whitespace().nth(1));
+    if observed_version != Some(candidate.version.as_str()) {
+        return Err(format!(
+            "candidate version mismatch on {}: {:?}",
+            snapshot.alias, snapshot.version
+        ));
+    }
+    Ok(())
+}
+
+fn comparator_identity(plan: &Plan) -> Result<Comparator, String> {
+    let version = Tool::new(plan.xray_bin.display().to_string())
+        .arg("version")
+        .run()
+        .map_err(|error| format!("Xray version: {error}"))?;
+    let version = version
+        .trimmed_stdout()
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| "Xray version output has no version field".to_owned())?
+        .to_owned();
+    let notes = Tool::new("readelf")
+        .args(["-n".to_owned(), plan.xray_bin.display().to_string()])
+        .run()
+        .map_err(|error| format!("Xray build id: {error}"))?;
+    let build_id = notes
+        .stdout
+        .lines()
+        .find_map(|line| line.split_once("Build ID:").map(|(_, value)| value.trim()))
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Xray ELF has no build id".to_owned())?
+        .to_owned();
+    Ok(Comparator {
+        name: "Xray".to_owned(),
+        version,
+        sha256: plan.xray_sha256.clone(),
+        build_id,
+    })
+}
+
+/// Checks that exactly one INPUT ACCEPT rule exposes TCP/443 and it is scoped to
+/// LINE's `/32`; unrelated non-443 rules are ignored.
+#[must_use]
+pub fn firewall_line_only(iptables_save: &str, line: Ipv4Addr) -> bool {
+    let source = format!("{line}/32");
+    let rules: Vec<Vec<&str>> = iptables_save
+        .lines()
+        .map(|rule| rule.split_whitespace().collect::<Vec<_>>())
+        .filter(|tokens| {
+            tokens.starts_with(&["-A", "INPUT"])
+                && token_value(tokens, "--dport") == Some("443")
+                && token_value(tokens, "-j") == Some("ACCEPT")
+        })
+        .collect();
+    rules.len() == 1
+        && token_value(&rules[0], "-s") == Some(source.as_str())
+        && token_value(&rules[0], "-p") == Some("tcp")
+}
+
+fn token_value<'a>(tokens: &'a [&str], key: &str) -> Option<&'a str> {
+    tokens
+        .windows(2)
+        .find_map(|pair| (pair[0] == key).then_some(pair[1]))
+}
+
+fn remote_unit(
+    transport: &mut impl Transport,
+    host: &Host,
+    action: &str,
+) -> Result<(), String> {
+    checked(
+        transport,
+        host,
+        true,
+        &[
+            "systemctl".to_owned(),
+            action.to_owned(),
+            host.service().to_owned(),
+        ],
+        &format!("{action} {}", host.alias()),
+    )
+    .map(|_| ())
+}
+
+fn wait_candidate(
+    transport: &mut impl Transport,
+    host: &Host,
+    candidate: &Candidate,
+) -> Result<bool, String> {
+    let mut last = String::new();
+    for _ in 0..100 {
+        match inspect(transport, host).and_then(|snapshot| {
+            verify_candidate(&snapshot, candidate).map(|()| snapshot)
+        }) {
+            Ok(_) => return Ok(true),
+            Err(error) => last = error,
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Err(format!("{} did not recover within 10 seconds: {last}", host.alias()))
+}
+
+fn run_request_batch(
+    plan: &Plan,
+    count: usize,
+    concurrency: usize,
+    attempted: &AtomicI64,
+    successful: &AtomicI64,
+) {
+    let next = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        for _ in 0..concurrency {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    if index >= count {
+                        break;
+                    }
+                    attempted.fetch_add(1, Ordering::Relaxed);
+                    if curl_request(plan, &plan.small_url, None, None, 20).is_ok() {
+                        successful.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            });
+        }
+    });
+}
+
+fn curl_request(
+    plan: &Plan,
+    url: &str,
+    output: Option<&Path>,
+    upload: Option<&Path>,
+    max_time: u64,
+) -> Result<(), String> {
+    let mut curl = Tool::new("curl");
+    for name in [
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "NO_PROXY",
+        "no_proxy",
+    ] {
+        curl = curl.env(name, "");
+    }
+    let mut arguments = vec![
+        "--fail".to_owned(),
+        "--silent".to_owned(),
+        "--show-error".to_owned(),
+        "--noproxy".to_owned(),
+        String::new(),
+        "--max-time".to_owned(),
+        max_time.to_string(),
+        "--socks5-hostname".to_owned(),
+        format!("127.0.0.1:{}", plan.socks_port),
+    ];
+    if let Some(path) = upload {
+        arguments.extend(["--upload-file".to_owned(), path.display().to_string()]);
+    }
+    arguments.extend([
+        "--output".to_owned(),
+        output.map_or_else(|| "/dev/null".to_owned(), |path| path.display().to_string()),
+        url.to_owned(),
+    ]);
+    curl.args(arguments)
+        .run()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Default)]
+enum IntegrityStatus {
+    #[default]
+    Pending,
+    Passed,
+}
+
+impl IntegrityStatus {
+    const fn passed(&self) -> bool {
+        matches!(self, Self::Passed)
+    }
+}
+
+fn run_integrity(
+    plan: &Plan,
+    transport: &mut impl Transport,
+    landing: &Host,
+) -> Result<(), String> {
+    let one = plan.out_dir.join("download-1mib.bin");
+    curl_request(plan, &plan.one_mib_url, Some(&one), None, 60)?;
+    compare_files(&one, &plan.payload_one_mib)?;
+    let large = plan.out_dir.join("download-large.bin");
+    curl_request(plan, &plan.large_url, Some(&large), None, 120)?;
+    compare_files(&large, &plan.payload_large)?;
+    curl_request(
+        plan,
+        &plan.upload_url,
+        None,
+        Some(&plan.payload_large),
+        120,
+    )?;
+    let bidi = plan.out_dir.join("download-bidirectional.bin");
+    let bidi_url = format!("{}/bidi", plan.upload_url.trim_end_matches('/'));
+    let (download, upload) = std::thread::scope(|scope| {
+        let download = scope.spawn(|| {
+            curl_request(plan, &plan.large_url, Some(&bidi), None, 120)
+        });
+        let upload = scope.spawn(|| {
+            curl_request(
+                plan,
+                &bidi_url,
+                None,
+                Some(&plan.payload_large),
+                120,
+            )
+        });
+        (
+            download.join().unwrap_or_else(|_| Err("download worker panicked".to_owned())),
+            upload.join().unwrap_or_else(|_| Err("upload worker panicked".to_owned())),
+        )
+    });
+    download?;
+    upload?;
+    compare_files(&bidi, &plan.payload_large)?;
+    let put_log = checked(
+        transport,
+        landing,
+        true,
+        &[
+            "cat".to_owned(),
+            "/var/lib/rust-reality/canary-put.jsonl".to_owned(),
+        ],
+        "read LANDING canary upload log",
+    )?;
+    let expected_bytes = i64::try_from(
+        plan.payload_large
+            .metadata()
+            .map_err(|error| format!("large payload metadata: {error}"))?
+            .len(),
+    )
+    .map_err(|_| "large payload length exceeds evaluator range".to_owned())?;
+    let matching_puts = json_records(&put_log)
+        .filter(|value| integer_field(value, "bytes") == expected_bytes)
+        .count();
+    if matching_puts < 2 {
+        return Err(format!(
+            "LANDING upload log has {matching_puts} matching writes, expected at least 2"
+        ));
+    }
+    Ok(())
+}
+
+fn compare_files(observed: &Path, expected: &Path) -> Result<(), String> {
+    let observed_size = observed
+        .metadata()
+        .map_err(|error| format!("download {}: {error}", observed.display()))?
+        .len();
+    let expected_size = expected
+        .metadata()
+        .map_err(|error| format!("reference {}: {error}", expected.display()))?
+        .len();
+    if observed_size != expected_size || hash::sha256_file(observed)? != hash::sha256_file(expected)?
+    {
+        return Err(format!(
+            "download integrity mismatch: {} versus {}",
+            observed.display(),
+            expected.display()
+        ));
+    }
+    Ok(())
+}
+
+fn sample_pair(
+    transport: &mut impl Transport,
+    line: &Host,
+    landing: &Host,
+    started: Instant,
+    line_samples: &mut Vec<ResourceSample>,
+    landing_samples: &mut Vec<ResourceSample>,
+) -> Result<(), String> {
+    line_samples.push(sample_host(transport, line, started)?);
+    landing_samples.push(sample_host(transport, landing, started)?);
+    Ok(())
+}
+
+type ResourceSeries = (Vec<ResourceSample>, Vec<ResourceSample>);
+
+struct ResourceSampler {
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<Result<ResourceSeries, String>>>,
+}
+
+impl ResourceSampler {
+    fn start(line: Host, landing: Host, started: Instant, interval: Duration) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stop);
+        let handle = std::thread::spawn(move || {
+            let mut transport = SystemTransport;
+            let mut line_resources = Vec::new();
+            let mut landing_resources = Vec::new();
+            while !worker_stop.load(Ordering::Acquire) {
+                sample_pair(
+                    &mut transport,
+                    &line,
+                    &landing,
+                    started,
+                    &mut line_resources,
+                    &mut landing_resources,
+                )?;
+                std::thread::park_timeout(interval);
+            }
+            Ok((line_resources, landing_resources))
+        });
+        Self {
+            stop,
+            handle: Some(handle),
+        }
+    }
+
+    fn finish(mut self) -> Result<ResourceSeries, String> {
+        self.stop();
+        self.join()
+    }
+
+    fn stop(&self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(handle) = &self.handle {
+            handle.thread().unpark();
+        }
+    }
+
+    fn join(&mut self) -> Result<ResourceSeries, String> {
+        self.handle
+            .take()
+            .ok_or_else(|| "resource sampler was already joined".to_owned())?
+            .join()
+            .map_err(|_| "resource sampler panicked".to_owned())?
+    }
+}
+
+impl Drop for ResourceSampler {
+    fn drop(&mut self) {
+        self.stop();
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn sample_host(
+    transport: &mut impl Transport,
+    host: &Host,
+    started: Instant,
+) -> Result<ResourceSample, String> {
+    let elapsed_millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let pid_text = checked(
+        transport,
+        host,
+        true,
+        &[
+            "systemctl".to_owned(),
+            "show".to_owned(),
+            host.service().to_owned(),
+            "-p".to_owned(),
+            "MainPID".to_owned(),
+            "--value".to_owned(),
+        ],
+        "sample service pid",
+    )?;
+    let pid = pid_text.trim().parse::<u32>().unwrap_or(0);
+    if pid == 0 {
+        return Ok(ResourceSample {
+            elapsed_millis,
+            pid,
+            rss_kib: 0,
+            pss_kib: None,
+            fd: 0,
+            threads: 0,
+        });
+    }
+    let status = checked(
+        transport,
+        host,
+        true,
+        &["cat".to_owned(), format!("/proc/{pid}/status")],
+        "sample process status",
+    )?;
+    let rss_kib = proc_status_value(&status, "VmRSS:").unwrap_or(0);
+    let threads = proc_status_value(&status, "Threads:").unwrap_or(0);
+    let descriptors = checked(
+        transport,
+        host,
+        true,
+        &[
+            "find".to_owned(),
+            format!("/proc/{pid}/fd"),
+            "-mindepth".to_owned(),
+            "1".to_owned(),
+            "-maxdepth".to_owned(),
+            "1".to_owned(),
+            "-printf".to_owned(),
+            "x\\n".to_owned(),
+        ],
+        "sample descriptors",
+    )?;
+    let rollup = transport.run(
+        host,
+        true,
+        &["cat".to_owned(), format!("/proc/{pid}/smaps_rollup")],
+    )?;
+    let pss_kib = rollup
+        .success()
+        .then(|| proc_status_value(&rollup.stdout, "Pss:"))
+        .flatten();
+    Ok(ResourceSample {
+        elapsed_millis,
+        pid,
+        rss_kib,
+        pss_kib,
+        fd: i64::try_from(descriptors.lines().count()).unwrap_or(i64::MAX),
+        threads,
+    })
+}
+
+fn proc_status_value(text: &str, prefix: &str) -> Option<i64> {
+    text.lines().find_map(|line| {
+        line.strip_prefix(prefix)
+            .and_then(|rest| rest.split_whitespace().next())
+            .and_then(|value| value.parse().ok())
+    })
+}
+
+fn journal_since(
+    transport: &mut impl Transport,
+    host: &Host,
+    started_epoch: u64,
+) -> Result<String, String> {
+    checked(
+        transport,
+        host,
+        true,
+        &[
+            "journalctl".to_owned(),
+            "-u".to_owned(),
+            host.service().to_owned(),
+            "--since".to_owned(),
+            format!("@{started_epoch}"),
+            "--no-pager".to_owned(),
+            "-o".to_owned(),
+            "cat".to_owned(),
+        ],
+        "collect service journal",
+    )
+}
+
+fn rollback_hosts(topology: &Topology) -> Result<(), String> {
+    let mut failures = Vec::new();
+    for role in [HostRole::Line, HostRole::Landing] {
+        let host = topology.host(role);
+        let mut transport = SystemTransport;
+        let result = inspect(&mut transport, host)
+            .and_then(|snapshot| {
+                plan::plan_rollback(&snapshot).map(|rollback| (snapshot, rollback))
+            })
+            .and_then(|(snapshot, rollback)| {
+                executor::execute(
+                    &mut transport,
+                    &mut SystemCandidateValidator,
+                    host,
+                    &rollback,
+                    &snapshot,
+                    None,
+                    None,
+                )
+                .map(|_| ())
+            });
+        if let Err(error) = result {
+            failures.push(format!("{}: {error}", host.alias()));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
 fn lower_hex(value: &str, length: usize) -> bool {
     value.len() == length
         && value
@@ -750,5 +1512,20 @@ not json
         let mut candidate = candidate();
         candidate.sha256 = "UPPER".to_owned();
         assert!(candidate.validate().is_err());
+    }
+
+    #[test]
+    fn firewall_requires_one_exact_line_scoped_tcp_rule() {
+        let line = "203.0.113.7".parse().unwrap();
+        let fixture = "-A INPUT -p tcp -s 203.0.113.7/32 --dport 443 -j ACCEPT\n-A INPUT -p tcp --dport 22 -j ACCEPT\n";
+        assert!(firewall_line_only(fixture, line));
+        assert!(!firewall_line_only(
+            "-A INPUT -p tcp -s 0.0.0.0/0 --dport 443 -j ACCEPT\n",
+            line
+        ));
+        assert!(!firewall_line_only(
+            &format!("{fixture}-A INPUT -p tcp -s 198.51.100.1/32 --dport 443 -j ACCEPT\n"),
+            line
+        ));
     }
 }
