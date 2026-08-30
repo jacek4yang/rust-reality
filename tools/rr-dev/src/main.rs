@@ -491,7 +491,10 @@ enum BenchCommand {
     /// Internal TCP-only no-auth SOCKS5 upstream for outbound-pool gates.
     #[command(hide = true)]
     SocksServer {
-        /// Loopback listen port.
+        /// Numeric IPv4 listen address.
+        #[arg(long, default_value = "127.0.0.1")]
+        listen: std::net::Ipv4Addr,
+        /// Listen port.
         #[arg(long)]
         port: u16,
         /// Rewrite every requested destination to this numeric socket.
@@ -1445,12 +1448,15 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                 }
             }
         }
-        BenchCommand::SocksServer { port, fixed_target } => {
-            let listener = match std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, *port))
-            {
+        BenchCommand::SocksServer {
+            listen,
+            port,
+            fixed_target,
+        } => {
+            let listener = match std::net::TcpListener::bind((*listen, *port)) {
                 Ok(listener) => listener,
                 Err(error) => {
-                    eprintln!("bench socks-server: could not bind 127.0.0.1:{port}: {error}");
+                    eprintln!("bench socks-server: could not bind {listen}:{port}: {error}");
                     return ExitCode::FAILURE;
                 }
             };
