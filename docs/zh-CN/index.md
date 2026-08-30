@@ -35,7 +35,7 @@
 | --- | --- |
 | [贡献指南](../../CONTRIBUTING.md) | 如何搭建环境、验证并合入一个变更。 |
 | [仓库布局与变更路由](../en/development/repository-layout.md) | 每个目录负责什么，某类变更应放在哪里（英文记录）。 |
-| [开发工作流](../en/development/development-workflow.md) | 构建、`cargo dev` 工具、验证升级阶梯和 PR 规则（英文记录）。 |
+| [开发工作流](development/development-workflow.md) | 构建、`cargo dev` 工具、验证升级阶梯、GitHub 治理和 PR 规则。 |
 | [测试](../en/development/testing.md) | 验证分层、聚焦运行和工具链门禁（英文记录）。 |
 | [模糊测试](../en/development/fuzzing.md) | 攻击面覆盖、目标与命令（英文记录）。 |
 | [工程宪法](../../AGENTS.md) | 面向贡献者和编码代理的规范性规则。 |
