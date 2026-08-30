@@ -431,7 +431,7 @@ versions were unified, and Criterion's plotting/parallel default graph was
 removed. The lockfile lost ten packages. After all source changes the stripped
 release binary is 6,309,616 bytes, 22,920 bytes (0.36%) below the pre-audit
 6,332,536-byte build. Canonical values are retained in
-`benchmarks/final/v1.3-hot-structures/summary.json`.
+`benchmarks/evidence/releases/v1.3-hot-structures/summary.json`.
 
 The complete setup path (accept through first Vision payload) was then run
 against Xray 26.7.28 with three 96-connection samples per cell and zero
@@ -440,7 +440,7 @@ failures. rust-reality medians were 190/793/892 conn/s at c1/c8/c32 versus
 connections was 0.757 ms and 4.00 M instructions per connection versus
 1.239 ms and 5.69 M for Xray. This same-host result validates the composed
 path; it is not a WAN capacity claim. Raw and summarized evidence lives in
-`benchmarks/final/v1.3-setup-refactor/`.
+`benchmarks/evidence/releases/v1.3-setup-refactor/`.
 
 For VLESS Encryption, the exact nested REALITY + Vision A/B and the decision
 not to ship it in this profile are documented in
@@ -542,7 +542,7 @@ Measured evidence (validation host above):
   once warm). rust-reality's `PipePool` removes the equivalent per-session
   pipe2/fcntl/close churn for its 512 KiB pipes.
 - Final v1.0.0 clean same-origin fallback A/B (warn-level logging both
-  sides; `benchmarks/final/v1-fallback-ab/`): splice fallback 1.00–1.03×
+  sides; `benchmarks/evidence/releases/v1-fallback-ab/`): splice fallback 1.00–1.03×
   Xray at c1–c32 with equal-or-lower task-clock. An earlier apparent
   fallback deficit was traced to the matrix harness's debug-level
   per-connection logging, not to the relay path (see the methodology
@@ -555,7 +555,7 @@ Measured evidence (validation host above):
 Final v1.0.0 figures (accept → REALITY handshake → VLESS parse → routing →
 outbound connect → first Vision transition; steady state excluded;
 validation host above, local TLS origin, raw-socket client; evidence:
-`benchmarks/final/v1-setup-rate/`):
+`benchmarks/evidence/releases/v1-setup-rate/`):
 
 | cell | rust-reality | Xray | ratio |
 |---|---:|---:|---:|

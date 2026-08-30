@@ -98,13 +98,13 @@ B 层内存门禁比较基线、burst 峰值和恢复后的 FD/thread/RSS 包络
 
 ## v1.0.0 规范样本
 
-仓库保留最终 v1.0.0 证据集：`benchmarks/final/v1-matrix/` 与 `v1-matrix-512/`
+仓库保留最终 v1.0.0 证据集：`benchmarks/evidence/releases/v1-matrix/` 与 `v1-matrix-512/`
 （36 单元发布矩阵）、`v1-fallback-ab/`、`v1-setup-rate/` 为发布规范样本；
 `d9-framed-ab/`（ring 提供者 A/B）与 `d11-ab/`（记录批处理 A/B）是两项已发布
 设计决策的机制证据。更大的历史矩阵已在仓库之外的发布证据档案中保存。
 
 
-### framed AEAD 提供者 A/B —— `benchmarks/final/d9-framed-ab/`
+### framed AEAD 提供者 A/B —— `benchmarks/evidence/releases/d9-framed-ab/`
 
 ring（默认）vs RustCrypto（`baseline`）vs Xray 26.7.28，framed cell，219 个
 有效样本、0 个无效，三个实现的 2 GiB sha256 完整性校验全部一致。环境：Intel
@@ -125,7 +125,7 @@ Core i3-8100（4C/4T）、Linux 6.12.94+deb13-amd64、rustc 1.96.0、Xray 26.7.2
 服务端成本（perf stat，各 3 次）：task-clock 631 vs 940 ms/GiB（−33%），指令数
 −30%，上下文切换 −39%；RSS +3%（噪声）。
 
-### fallback A/B —— `benchmarks/final/v1-fallback-ab/`
+### fallback A/B —— `benchmarks/evidence/releases/v1-fallback-ab/`
 
 最终 v1.0.0 干净同源 fallback 对比（splice 后端 vs Xray，两侧 warn 级日志），
 7 次取样取中位数：
@@ -138,16 +138,16 @@ Core i3-8100（4C/4T）、Linux 6.12.94+deb13-amd64、rustc 1.96.0、Xray 26.7.2
 
 ## v1.3 规范结构与加密样本
 
-- `benchmarks/final/v1.3-hot-structures/summary.json` 记录 Criterion 的
+- `benchmarks/evidence/releases/v1.3-hot-structures/summary.json` 记录 Criterion 的
   short-ID/UUID/tag 交叉点、VLESS 零拷贝门禁、REALITY digest 哈希、无锁 direct
   admission 及重放 deadline 堆/目标分片 A/B；基准源码为
   `benches/short_id_lookup.rs`、`benches/identity_lookup.rs`、
   `benches/tag_lookup.rs`、`benches/replay_expiry.rs`、
   `benches/vless_decode.rs` 和 `benches/admission.rs`。admission 基准保留了被替换的
   mutex token bucket 作为可执行对照，使争用结论可以持续复现。
-- `benchmarks/final/v1.3-setup-refactor/` 保存分配/查找重构后的组合 setup 路径复测：
+- `benchmarks/evidence/releases/v1.3-setup-refactor/` 保存分配/查找重构后的组合 setup 路径复测：
   原始样本、perf 计数器和 `summary.json`。它是同机 loopback 证据，不是 WAN 承诺。
-- `benchmarks/final/v1.3-vless-encryption/summary.json` 记录同机 Xray v26.7.28
+- `benchmarks/evidence/releases/v1.3-vless-encryption/summary.json` 记录同机 Xray v26.7.28
   叠加栈 A/B。它只适用于 REALITY + Vision 内的 VLESS Encryption，不代表 raw
   VLESS Encryption；完整解释和重审门槛见 ADR 0003。
 

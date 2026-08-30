@@ -352,14 +352,14 @@ Tokio 并发信号量，Criterion 测得单线程 68.34 vs 84.90 ns，四线程�
 绘图/并行依赖图被移除，lockfile 共减少 10 个 package。全部源码变化后的剥离版
 release 二进制为 6,309,616 字节，比审计前 6,332,536 字节少 22,920 字节
 （0.36%）。规范值保存在
-`benchmarks/final/v1.3-hot-structures/summary.json`。
+`benchmarks/evidence/releases/v1.3-hot-structures/summary.json`。
 
 随后以每个 cell 3 轮、每轮 96 条连接、零失败，对完整 setup 路径（accept 到
 首个 Vision 载荷）与 Xray 26.7.28 做了复测。rust-reality 在 c1/c8/c32 的中位数
 为 190/793/892 conn/s，Xray 为 177/721/833。按 864 条被测连接归一后的服务端
 perf 成本为每连接 0.757 ms、4.00 M 指令，Xray 为 1.239 ms、5.69 M 指令。
 这是组合路径的同机验证，不是 WAN 容量承诺；原始和汇总证据保存在
-`benchmarks/final/v1.3-setup-refactor/`。
+`benchmarks/evidence/releases/v1.3-setup-refactor/`。
 
 VLESS Encryption 的 REALITY + Vision 精确叠加 A/B 及不在该档位发布它的结论见
 [ADR 0003](../adr/0003-do-not-stack-vless-encryption-on-reality.md)：p50 吞吐
@@ -443,7 +443,7 @@ BoringSSL 的 C/汇编，静态链接）提供。使用 `--no-default-features` 
   约 0 次管道系统调用）。rust-reality 的 `PipePool` 为其 512 KiB 管道消除了
   等价的每会话 pipe2/fcntl/close 抖动。
 - 最终 v1.0.0 干净同源 fallback A/B（两侧 warn 级日志；
-  `benchmarks/final/v1-fallback-ab/`）：c1–c32 时 splice fallback 为 Xray 的
+  `benchmarks/evidence/releases/v1-fallback-ab/`）：c1–c32 时 splice fallback 为 Xray 的
   1.00–1.03×，task-clock 持平或更低。更早的 fallback 劣势读数被追溯
   到矩阵 harness 的 debug 级逐连接日志，而不是 relay 路径（见
   [benchmarks.zh-CN.md](benchmarks.md) 的方法一节）。D8 时期的历史
@@ -453,7 +453,7 @@ BoringSSL 的 C/汇编，静态链接）提供。使用 `--no-default-features` 
 
 最终 v1.0.0 数字（accept → REALITY 握手 → VLESS 解析 → 路由 → 出站连接 →
 第一次 Vision 转换；不含稳态；上述验证主机，本地 TLS 源站，裸 socket 客户
-端；证据：`benchmarks/final/v1-setup-rate/`）：
+端；证据：`benchmarks/evidence/releases/v1-setup-rate/`）：
 
 | cell | rust-reality | Xray | 比值 |
 |---|---:|---:|---:|

@@ -11,10 +11,8 @@ evidence. Human guidance for running and interpreting benchmarks lives in the
 - `baselines/` contains canonical comparison identities and measurements used
   by current checks or documentation.
 - `evidence/` contains compact acceptance manifests, checksummed golden objects,
-  and other small evidence that supports a durable claim.
-- `final/` contains the current release evidence set. It will be folded into the
-  evidence taxonomy once all consumers and identity references have been
-  migrated.
+  and other small evidence that supports a durable claim. Release evidence sets
+  and durable per-run evidence records live under `evidence/releases/`.
 
 Evidence manifests must identify their implementation and inputs precisely.
 When a manifest records checksums, the referenced objects must retain their

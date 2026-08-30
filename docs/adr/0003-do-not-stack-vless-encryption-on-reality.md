@@ -50,7 +50,7 @@ concurrent 64 MiB downloads measured:
 The result is not a claim about raw VLESS Encryption. It is evidence for the
 specific nested stack this server would deploy. The raw report is retained in
 the v1.3 analysis artifacts; the checked-in canonical values are in
-`benchmarks/final/v1.3-vless-encryption/summary.json`.
+`benchmarks/evidence/releases/v1.3-vless-encryption/summary.json`.
 
 ## Decision
 

@@ -127,14 +127,14 @@ long-duration evidence.
 ## Canonical v1.0.0 samples
 
 The final v1.0.0 evidence sets are retained in the repository:
-`benchmarks/final/v1-matrix/` + `v1-matrix-512/` (the 36-cell release
+`benchmarks/evidence/releases/v1-matrix/` + `v1-matrix-512/` (the 36-cell release
 matrix), `v1-fallback-ab/`, and `v1-setup-rate/` are the canonical release
 samples; `d9-framed-ab/` (ring provider A/B) and `d11-ab/` (record-batching
 A/B) are the mechanism evidence behind two shipped design decisions. Larger
 historical matrices were archived outside the repo in the release evidence
 archive.
 
-### Framed AEAD provider A/B — `benchmarks/final/d9-framed-ab/`
+### Framed AEAD provider A/B — `benchmarks/evidence/releases/d9-framed-ab/`
 
 Ring (default) vs RustCrypto (`baseline`) vs Xray 26.7.28, framed cells, 219
 valid samples, 0 invalid, 2 GiB sha256 integrity matched for all three
@@ -156,7 +156,7 @@ All 16 framed cells are ≥1.00 ring-vs-RustCrypto. Server cost per GiB of
 framed download (perf stat, 3 reps each): task-clock 631 vs 940 ms/GiB
 (−33%), instructions −30%, context switches −39%; RSS +3% (noise).
 
-### Fallback A/B — `benchmarks/final/v1-fallback-ab/`
+### Fallback A/B — `benchmarks/evidence/releases/v1-fallback-ab/`
 
 Final v1.0.0 clean same-origin fallback comparison (splice backend vs Xray,
 warn-level logging both sides), medians of 7:
@@ -169,7 +169,7 @@ warn-level logging both sides), medians of 7:
 
 ## Canonical v1.3 structure and encryption samples
 
-- `benchmarks/final/v1.3-hot-structures/summary.json` records the Criterion
+- `benchmarks/evidence/releases/v1.3-hot-structures/summary.json` records the Criterion
   short-ID/UUID/tag crossover evidence, zero-copy VLESS gate, REALITY digest
   hashing, lock-free direct admission, and replay heap/selected-shard A/B. The
   benchmark sources are `benches/short_id_lookup.rs`,
@@ -178,10 +178,10 @@ warn-level logging both sides), medians of 7:
   `benches/admission.rs`. The admission benchmark keeps the replaced mutex
   token bucket as an executable reference, so the contention claim remains
   reproducible.
-- `benchmarks/final/v1.3-setup-refactor/` records the composed setup-path
+- `benchmarks/evidence/releases/v1.3-setup-refactor/` records the composed setup-path
   rerun after the allocation/lookup refactor: raw samples and perf counters
   plus `summary.json`. It is same-host loopback evidence, not a WAN claim.
-- `benchmarks/final/v1.3-vless-encryption/summary.json` records the same-host
+- `benchmarks/evidence/releases/v1.3-vless-encryption/summary.json` records the same-host
   Xray v26.7.28 nested-stack A/B. It applies only to VLESS Encryption inside
   REALITY + Vision, not raw VLESS Encryption; complete interpretation and
   revisit gates are in ADR 0003.

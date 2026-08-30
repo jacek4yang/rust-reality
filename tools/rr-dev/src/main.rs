@@ -1916,7 +1916,7 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                 let out_dir = out_dir.clone().unwrap_or_else(|| {
                     std::env::current_dir()
                         .unwrap_or_else(|_| PathBuf::from("."))
-                        .join("benchmarks/final")
+                        .join("benchmarks/evidence/releases")
                         .join(&run_id)
                 });
                 let run = bench::deployment::RunPlan {
@@ -2615,7 +2615,7 @@ fn run_bench_soak(
         || {
             std::env::current_dir()
                 .unwrap_or_else(|_| PathBuf::from("."))
-                .join("benchmarks/final")
+                .join("benchmarks/evidence/releases")
                 .join(&run_id)
         },
         Path::to_path_buf,
