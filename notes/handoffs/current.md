@@ -52,6 +52,9 @@ profiles       cargo dev bench profiles (native cgroup/workload/evidence/report
                policy; real 1c1g acceptance passed with clean teardown)
 hotspot core   cargo dev perf hotspot (identity-bound perf capture, reports,
                build IDs, checksums and publication; real acceptance passed)
+hotspot bundle cargo dev perf hotspot-bundle (completed-capture identity,
+               private IDALib bridge, instruction mapping gate, checksums and
+               publication; policy parity tests pass, IDALib absent locally)
 ```
 
 ### Remaining — exact next actions
@@ -62,12 +65,16 @@ hotspot core   cargo dev perf hotspot (identity-bound perf capture, reports,
    TLS-shape/interop/IPv6 (33 -> 21)    DONE (PR #152)
    soak/profiles/resource-pressure/
      shared helpers (21 -> 12)          DONE (PR #153)
-   deployment control plane (12 -> 7)   NEXT
-   hotspot/final cleanup (7 -> 0)
+   deployment control plane (12 -> 5)   ACTIVE (PR #154)
+   hotspot/final cleanup (5 -> 2)       DONE on PR #154
    - do not rebuild process/workspace/lock/identity/report lifecycle
    - scripts/bench-origin and its final caller benchmark-deployment.sh are
      deleted in PR #154 with the native `cargo dev bench run --suite
      deployment` catalogue entry
+   - hotspot aggregation/export and the IDALib boundary are native in
+     `cargo dev perf hotspot-bundle`; the three legacy hotspot files are deleted
+   - only deploy-release-vps.sh and run-dual-vps-canary.sh remain, held by the
+     explicit live/staging/waiver mutation-acceptance gate
 
 2. The deployment family has a gate: issue #147 requires staging-VPS
    acceptance, separately authorized LINE/LANDING acceptance, or an

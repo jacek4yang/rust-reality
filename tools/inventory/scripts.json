@@ -15,10 +15,10 @@
     "full CI green on the exact final head, then git rm -r scripts"
   ],
   "current_state": {
-    "base_main": "d818ded524691bfe445c432241d8f2cd8ca651aa",
-    "snapshot": "C3_TLS_SHAPE_DELETED",
-    "tracked_files": 21,
-    "tracked_lines": 10246,
+    "base_main": "641a3f3ab65fb907a14d52cc7f333882cc0ed70b",
+    "snapshot": "PR154_NON_LIVE_COMPLETE",
+    "tracked_files": 2,
+    "tracked_lines": 777,
     "repository_owned_external_python_validators": 0,
     "workflow_scripts_references": 0
   },
@@ -112,8 +112,8 @@
         "validate-profiles.sh"
       ],
       "disposition": "MIGRATE",
-      "replacement": "cargo dev perf aggregate",
-      "status": "not-started"
+      "replacement": "cargo dev perf hotspot-bundle",
+      "status": "deleted-after-parity in PR #154; legacy Python self-test and seven native hotspot tests pass, including exact symbol/DSO selection, instruction-boundary mapping, IDALib result validation and the hard unmapped-period gate"
     },
     {
       "path": "scripts/aggregate-release.sh",
@@ -466,8 +466,8 @@
         "idalib-export-address.py"
       ],
       "disposition": "MERGE",
-      "replacement": "cargo dev perf aggregate",
-      "status": "not-started"
+      "replacement": "cargo dev perf hotspot-bundle",
+      "status": "deleted-after-parity in PR #154; Rust validates the completed capture and archived binary/perf identities, isolates IDALib input, owns DWARF/LLVM/perf invocation, writes checksums and publishes a hash-bound completion or durable FAILED state"
     },
     {
       "path": "scripts/fuzz-smoke.sh",
@@ -516,8 +516,8 @@
       "invoked_by_check_sh": false,
       "calls_scripts": [],
       "disposition": "MERGE",
-      "replacement": "cargo dev perf hotspot (hotspot-bundle family)",
-      "status": "not-started",
+      "replacement": "cargo dev perf hotspot-bundle",
+      "status": "deleted-after-parity in PR #154; IDALib is a genuine Python-only external API boundary, reduced to a generated private direct-API bridge while Rust owns invocation, input/output validation, path policy, evidence identity and failure semantics; IDALib is absent on the accepting host so no live IDA claim is made",
       "disposition_correction": "was DELETE_OBSOLETE; export-hotspot-bundle.sh invokes it, so it is part of the hotspot family and shares that family's disposition"
     },
     {
@@ -979,7 +979,7 @@
         "profile-built-in-benchmark.sh"
       ],
       "ci_or_gate_references": 0,
-      "finding": "the family is manual investigation tooling with no CI, gate or release caller. PR #153 migrated and deleted the built-in wrapper and forensic capture authority; aggregation, bundle export and the IDALib mechanism remain in the later hotspot transaction."
+      "finding": "the family is manual investigation tooling with no CI, gate or release caller. PR #153 migrated and deleted the built-in wrapper and forensic capture authority; PR #154 migrated aggregation and bundle export into cargo dev perf hotspot-bundle and reduced the Python-only IDALib API to a generated private mechanism bridge, deleting the final three repository policy files."
     }
   }
 }

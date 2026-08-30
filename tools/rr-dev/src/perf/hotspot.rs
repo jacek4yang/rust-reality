@@ -32,6 +32,9 @@ use crate::{
     process::Tool,
 };
 
+#[path = "hotspot_bundle.rs"]
+pub mod bundle;
+
 const MAX_RECORD_SECONDS: u64 = 300;
 const MAX_DURATION_MS: u64 = 600_000;
 const MAX_WARMUP_MS: u64 = 600_000;

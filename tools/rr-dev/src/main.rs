@@ -947,6 +947,30 @@ enum PerfCommand {
         #[arg(long, default_value = "fp")]
         call_graph: String,
     },
+    /// Export one exact hotspot through DWARF, `IDALib`, LLVM and perf samples.
+    HotspotBundle {
+        /// Completed native `perf hotspot` run directory.
+        #[arg(long)]
+        run_dir: PathBuf,
+        /// Safe name for the new `hotspots/LABEL` evidence directory.
+        #[arg(long)]
+        label: String,
+        /// Static ELF address inside the function to export.
+        #[arg(long)]
+        address: String,
+        /// `IDALib` Python executable. Python is the external `IDALib` API boundary.
+        #[arg(long)]
+        idalib_python: PathBuf,
+        /// Maximum seconds allowed for `IDALib` analysis.
+        #[arg(long, default_value_t = 300)]
+        timeout_seconds: u64,
+        /// Reviewed sub-1% unmapped-period threshold; zero is fail-closed default.
+        #[arg(long, default_value_t = 0.0)]
+        max_unmapped_period_percent: f64,
+        /// Required explanation when allowing a non-zero unmapped-period threshold.
+        #[arg(long)]
+        unmapped_period_explanation: Option<String>,
+    },
     /// Capture identity-bound perf-stat or perf-c2c environment evidence.
     ///
     /// The workload command follows `--` and its argv[0] must be the identified
@@ -1108,6 +1132,10 @@ fn run_doctor() -> ExitCode {
 }
 
 /// Dispatches a `cargo dev perf` subcommand.
+#[allow(
+    clippy::too_many_lines,
+    reason = "each perf subcommand remains an explicit typed dispatch arm"
+)]
 fn run_perf(repo: &std::path::Path, command: PerfCommand) -> ExitCode {
     match command {
         PerfCommand::Evaluate { manifest, output } => {
@@ -1169,6 +1197,32 @@ fn run_perf(repo: &std::path::Path, command: PerfCommand) -> ExitCode {
                 }
             }
         }
+        PerfCommand::HotspotBundle {
+            run_dir,
+            label,
+            address,
+            idalib_python,
+            timeout_seconds,
+            max_unmapped_period_percent,
+            unmapped_period_explanation,
+        } => match perf::hotspot::bundle::run(&perf::hotspot::bundle::Plan {
+            run_dir,
+            label,
+            address,
+            idalib_python,
+            timeout_seconds,
+            max_unmapped_period_percent,
+            unmapped_period_explanation,
+        }) {
+            Ok(message) => {
+                println!("{message}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("perf hotspot-bundle: {error}");
+                ExitCode::FAILURE
+            }
+        },
         PerfCommand::Environment {
             tool,
             output,
