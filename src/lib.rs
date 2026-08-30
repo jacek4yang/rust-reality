@@ -3,6 +3,7 @@
 pub mod assets;
 pub mod autotune;
 pub mod benchmark;
+pub mod cli;
 pub mod config;
 pub mod crypto;
 pub mod explain;
