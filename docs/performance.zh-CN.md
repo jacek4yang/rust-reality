@@ -413,7 +413,7 @@ CPU 的分解：
 BoringSSL 的 C/汇编，静态链接）提供。使用 `--no-default-features` 构建则选择
 纯 Rust 的 RustCrypto aes-gcm 提供者，没有其他行为差异；逐字节跨提供者等价性
 和 RFC 8448 向量由两种配置下都会运行的测试保证。安全取舍（扩展密钥调度清
-零）记录在 [SECURITY.zh-CN.md](../SECURITY.zh-CN.md)。
+零）记录在 [安全策略](zh-CN/security.md)。
 
 实测证据（上述验证主机）：
 

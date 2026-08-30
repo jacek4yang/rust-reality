@@ -1,13 +1,11 @@
 //! The canonical repository quality gate.
 //!
 //! This is the typed repository gate that replaced `scripts/check.sh` and its
-//! external Python policy validators. Repository policy runs in process; Cargo,
-//! Bash syntax validation for surviving scripts, and mature audit/build tools
-//! remain external mechanisms invoked with typed argv.
+//! external Python policy validators. Repository policy runs in process; Cargo
+//! and mature audit/build tools remain external mechanisms invoked with typed
+//! argv.
 //!
-//! Two deliberate differences from the script are documented at
-//! [`Scope::steps`]: the `bash -n` sweep is scoped to surviving scripts, and the
-//! gate is split into scopes so a developer can run the fast subset locally
+//! The gate is split into scopes so a developer can run the fast subset locally
 //! without silently skipping anything that CI will enforce.
 
 use std::path::Path;
@@ -87,15 +85,30 @@ fn docs_step() -> Step {
     }
 }
 
+/// The repository-layout policy, as a gate step.
+fn repo_step() -> Step {
+    Step::Native {
+        label: "cargo dev repo check".to_owned(),
+        run: |repo| {
+            let report = crate::repo::check(repo);
+            if report.is_clean() {
+                println!("{}", report.render());
+                Ok(())
+            } else {
+                Err(report.render())
+            }
+        },
+    }
+}
+
 impl Scope {
     /// Builds the ordered step list for this scope.
     ///
-    /// The order mirrors `scripts/check.sh` because several steps depend on
-    /// earlier ones having already failed fast: formatting before lint, lint
-    /// before tests, cheap validators before the expensive triple test run.
+    /// Cheap native policy checks run before formatting, lint, and the expensive
+    /// test profiles so structural failures are reported quickly.
     fn steps(self, repo: &Path) -> Vec<Step> {
         let mut steps = Vec::new();
-        steps.extend(shell_syntax_steps(repo));
+        steps.push(repo_step());
         steps.push(docs_step());
         steps.extend(validator_steps());
         steps.extend(self.cargo_steps(repo));
@@ -224,21 +237,6 @@ fn audit_step(_repo: &Path) -> Step {
     }
 }
 
-/// Shell syntax checks over whatever scripts still exist.
-///
-/// The legacy script hard-codes `scripts/*.sh`. Discovering them instead means
-/// this step keeps working as the migration deletes scripts, and disappears
-/// entirely once none remain.
-fn shell_syntax_steps(repo: &Path) -> Vec<Step> {
-    shell_scripts(repo)
-        .into_iter()
-        .map(|script| Step::External {
-            label: format!("bash -n {script}"),
-            tool: Tool::new("bash").arg("-n").arg(&script).current_dir(repo),
-        })
-        .collect()
-}
-
 /// The gate validators.
 ///
 /// Every repository policy validator here is native rr-dev code. External tools
@@ -289,26 +287,6 @@ fn cargo(repo: &Path, label: &str, args: &[&str]) -> Step {
     }
 }
 
-/// Lists the shell scripts still present, sorted for deterministic ordering.
-fn shell_scripts(repo: &Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(repo.join("scripts")) else {
-        return Vec::new();
-    };
-    let mut scripts: Vec<String> = entries
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let path = entry.path();
-            let is_shell = path
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("sh"));
-            let name = entry.file_name().to_string_lossy().into_owned();
-            is_shell.then(|| format!("scripts/{name}"))
-        })
-        .collect();
-    scripts.sort_unstable();
-    scripts
-}
-
 /// Runs the gate, stopping at the first failure.
 ///
 /// # Errors
@@ -321,12 +299,6 @@ pub fn run(repo: &Path, scope: Scope) -> Result<(), ToolError> {
             program: "cargo".to_owned(),
         });
     }
-    if !shell_scripts(repo).is_empty() && !Tool::exists("bash") {
-        return Err(ToolError::NotFound {
-            program: "bash".to_owned(),
-        });
-    }
-
     let steps = scope.steps(repo);
     let total = steps.len();
     let mut slowest: Option<(String, std::time::Duration)> = None;
@@ -382,32 +354,6 @@ mod tests {
         assert!(
             all.len() > fast.len(),
             "the full scope must add steps, otherwise the split is pointless"
-        );
-    }
-
-    #[test]
-    fn the_shell_syntax_sweep_covers_every_surviving_script() {
-        let repo = repo_root();
-        let discovered = shell_scripts(&repo);
-        let on_disk = std::fs::read_dir(repo.join("scripts")).map_or(0, |entries| {
-            entries
-                .filter_map(Result::ok)
-                .filter(|entry| {
-                    entry
-                        .path()
-                        .extension()
-                        .is_some_and(|extension| extension.eq_ignore_ascii_case("sh"))
-                })
-                .count()
-        });
-        assert_eq!(
-            discovered.len(),
-            on_disk,
-            "discovery must not miss a script, or a syntax error could reach main"
-        );
-        assert!(
-            discovered.windows(2).all(|pair| pair[0] <= pair[1]),
-            "ordering must be deterministic for reproducible logs"
         );
     }
 

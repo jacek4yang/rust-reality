@@ -30,7 +30,7 @@ use std::{
 /// Operator documents that must exist in both languages.
 const REQUIRED_PAIRS: &[(&str, &str)] = &[
     ("README.md", "README.zh-CN.md"),
-    ("SECURITY.md", "SECURITY.zh-CN.md"),
+    ("SECURITY.md", "docs/zh-CN/security.md"),
     ("docs/index.md", "docs/index.zh-CN.md"),
     ("docs/getting-started.md", "docs/getting-started.zh-CN.md"),
     ("docs/cli.md", "docs/cli.zh-CN.md"),
@@ -64,7 +64,7 @@ const FORBIDDEN_PHRASES: &[&str] = &[
 const FORBIDDEN_EXEMPT: &[&str] = &["CHANGELOG.md", "docs/decisions/"];
 
 /// The data file that owns current-release identity for documentation surfaces.
-const HEADLINES: &str = "machine-readable/current-release-headlines.json";
+const HEADLINES: &str = "benchmarks/baselines/current-release-headlines.json";
 
 /// Outcome of a documentation check.
 #[derive(Debug, Default)]
