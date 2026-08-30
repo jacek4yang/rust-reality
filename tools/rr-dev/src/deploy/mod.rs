@@ -7,6 +7,7 @@
 //! machinery is never migrated ahead of a tested evaluator.
 
 pub mod canary;
+pub mod executor;
 pub mod host;
 pub mod netem;
 pub mod plan;

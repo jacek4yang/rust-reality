@@ -142,6 +142,42 @@ enum DeployCommand {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    /// Execute a freshly inspected transaction against one fixed host.
+    Apply {
+        /// Transaction to execute.
+        #[arg(value_enum)]
+        operation: DeployPlanOperation,
+        /// Fixed host role; address/user/proxy stay in OpenSSH config.
+        #[arg(long, value_enum, default_value_t = DeployTarget::Line)]
+        target: DeployTarget,
+        /// Release generation id (required except for rollback).
+        #[arg(long)]
+        release_id: Option<String>,
+        /// Absolute local candidate binary path (stage/cutover).
+        #[arg(long)]
+        binary: Option<PathBuf>,
+        /// Absolute local candidate config path (stage/cutover).
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Expected lowercase candidate SHA-256 (stage/cutover).
+        #[arg(long)]
+        expected_sha256: Option<String>,
+        /// Expected semantic version (stage/cutover).
+        #[arg(long)]
+        expected_version: Option<String>,
+        /// Optional exact lowercase source commit embedded in the candidate.
+        #[arg(long)]
+        source_commit: Option<String>,
+        /// Delete generations other than CURRENT/PREVIOUS after promote.
+        #[arg(long)]
+        prune_old_releases: bool,
+        /// Required acknowledgement that this command mutates the remote host.
+        #[arg(long)]
+        mutate_remote: bool,
+        /// New execution report path; stdout when omitted.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     /// Evaluate a recorded dual-VPS release-canary report, fail-closed.
     ///
     /// Exit status is three-valued: 0 when the canary passes, 1 for a real
@@ -3153,32 +3189,26 @@ fn run_deploy_plan(
         return ExitCode::from(2);
     }
 
-    let artifact = || -> Result<deploy::plan::ArtifactIdentity, String> {
-        let required = |value: Option<&str>, name: &str| {
-            value
-                .map(str::to_owned)
-                .ok_or_else(|| format!("--{name} is required for {operation:?}"))
-        };
-        let path = |value: Option<&Path>, name: &str| {
-            value
-                .ok_or_else(|| format!("--{name} is required for {operation:?}"))?
-                .to_str()
-                .map(str::to_owned)
-                .ok_or_else(|| format!("--{name} must be valid UTF-8"))
-        };
-        Ok(deploy::plan::ArtifactIdentity {
-            release_id: required(release_id, "release-id")?,
-            binary_path: path(binary, "binary")?,
-            config_path: path(config, "config")?,
-            binary_sha256: required(expected_sha256, "expected-sha256")?,
-            version: required(expected_version, "expected-version")?,
-            source_commit: source_commit.map(str::to_owned),
-        })
-    };
     let plan = match operation {
-        DeployPlanOperation::Stage => artifact()
+        DeployPlanOperation::Stage => deploy_artifact(
+            operation,
+            release_id,
+            binary,
+            config,
+            expected_sha256,
+            expected_version,
+            source_commit,
+        )
             .and_then(|artifact| deploy::plan::plan_stage(&snapshot, &artifact)),
-        DeployPlanOperation::Cutover => artifact()
+        DeployPlanOperation::Cutover => deploy_artifact(
+            operation,
+            release_id,
+            binary,
+            config,
+            expected_sha256,
+            expected_version,
+            source_commit,
+        )
             .and_then(|artifact| deploy::plan::plan_cutover(&snapshot, &artifact)),
         DeployPlanOperation::Rollback => deploy::plan::plan_rollback(&snapshot),
         DeployPlanOperation::Promote => release_id
@@ -3204,6 +3234,139 @@ fn run_deploy_plan(
         ExitCode::from(2)
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn deploy_artifact(
+    operation: DeployPlanOperation,
+    release_id: Option<&str>,
+    binary: Option<&Path>,
+    config: Option<&Path>,
+    expected_sha256: Option<&str>,
+    expected_version: Option<&str>,
+    source_commit: Option<&str>,
+) -> Result<deploy::plan::ArtifactIdentity, String> {
+    let required = |value: Option<&str>, name: &str| {
+        value
+            .map(str::to_owned)
+            .ok_or_else(|| format!("--{name} is required for {operation:?}"))
+    };
+    let path = |value: Option<&Path>, name: &str| {
+        value
+            .ok_or_else(|| format!("--{name} is required for {operation:?}"))?
+            .to_str()
+            .map(str::to_owned)
+            .ok_or_else(|| format!("--{name} must be valid UTF-8"))
+    };
+    Ok(deploy::plan::ArtifactIdentity {
+        release_id: required(release_id, "release-id")?,
+        binary_path: path(binary, "binary")?,
+        config_path: path(config, "config")?,
+        binary_sha256: required(expected_sha256, "expected-sha256")?,
+        version: required(expected_version, "expected-version")?,
+        source_commit: source_commit.map(str::to_owned),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_deploy_apply(
+    operation: DeployPlanOperation,
+    target: DeployTarget,
+    release_id: Option<&str>,
+    binary: Option<&Path>,
+    config: Option<&Path>,
+    expected_sha256: Option<&str>,
+    expected_version: Option<&str>,
+    source_commit: Option<&str>,
+    prune_old_releases: bool,
+    mutate_remote: bool,
+    output: Option<&Path>,
+) -> ExitCode {
+    if !mutate_remote {
+        eprintln!(
+            "deploy apply: remote mutation requires --mutate-remote; use `deploy plan` for a non-mutating transaction"
+        );
+        return ExitCode::from(2);
+    }
+    let topology = match deploy::host::Topology::canonical() {
+        Ok(topology) => topology,
+        Err(error) => {
+            eprintln!("deploy apply: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let host = topology.host(target.role());
+    let mut transport = deploy::remote::SystemTransport;
+    let before = match deploy::snapshot::inspect(&mut transport, host) {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            eprintln!("deploy apply: pre-mutation inspection failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let artifact = match operation {
+        DeployPlanOperation::Stage | DeployPlanOperation::Cutover => match deploy_artifact(
+            operation,
+            release_id,
+            binary,
+            config,
+            expected_sha256,
+            expected_version,
+            source_commit,
+        ) {
+            Ok(artifact) => Some(artifact),
+            Err(error) => {
+                eprintln!("deploy apply: {error}");
+                return ExitCode::from(2);
+            }
+        },
+        DeployPlanOperation::Rollback | DeployPlanOperation::Promote => None,
+    };
+    let plan = match operation {
+        DeployPlanOperation::Stage => deploy::plan::plan_stage(
+            &before,
+            artifact.as_ref().expect("stage artifact was constructed"),
+        ),
+        DeployPlanOperation::Cutover => deploy::plan::plan_cutover(
+            &before,
+            artifact.as_ref().expect("cutover artifact was constructed"),
+        ),
+        DeployPlanOperation::Rollback => deploy::plan::plan_rollback(&before),
+        DeployPlanOperation::Promote => release_id
+            .ok_or_else(|| "--release-id is required for promote".to_owned())
+            .and_then(|id| deploy::plan::plan_promote(&before, id, prune_old_releases)),
+    };
+    let plan = match plan {
+        Ok(plan) => plan,
+        Err(error) => {
+            eprintln!("deploy apply: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    eprint!("{}", plan.describe());
+    let mut validator = deploy::executor::SystemCandidateValidator;
+    match deploy::executor::execute(
+        &mut transport,
+        &mut validator,
+        host,
+        &plan,
+        &before,
+        artifact.as_ref(),
+    ) {
+        Ok(report) => {
+            let json = report.to_json().to_python_json();
+            if let Err(error) = emit_deploy_json(output, &json) {
+                eprintln!("deploy apply: transaction succeeded but evidence failed: {error}");
+                ExitCode::from(2)
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        Err(error) => {
+            eprintln!("deploy apply: {error}");
+            ExitCode::FAILURE
+        }
     }
 }
 
@@ -3240,6 +3403,31 @@ fn run_deploy(command: DeployCommand) -> ExitCode {
             expected_version.as_deref(),
             source_commit.as_deref(),
             prune_old_releases,
+            output.as_deref(),
+        ),
+        DeployCommand::Apply {
+            operation,
+            target,
+            release_id,
+            binary,
+            config,
+            expected_sha256,
+            expected_version,
+            source_commit,
+            prune_old_releases,
+            mutate_remote,
+            output,
+        } => run_deploy_apply(
+            operation,
+            target,
+            release_id.as_deref(),
+            binary.as_deref(),
+            config.as_deref(),
+            expected_sha256.as_deref(),
+            expected_version.as_deref(),
+            source_commit.as_deref(),
+            prune_old_releases,
+            mutate_remote,
             output.as_deref(),
         ),
         DeployCommand::Netem {

@@ -510,7 +510,12 @@ pub fn plan_promote(
     })
 }
 
-fn validate_release_id(release_id: &str) -> Result<(), String> {
+/// Validates the canonical release-generation id syntax.
+///
+/// # Errors
+///
+/// Returns the shared artifact-identity diagnostic when the id is unsafe.
+pub fn validate_release_id(release_id: &str) -> Result<(), String> {
     ArtifactIdentity {
         release_id: release_id.to_owned(),
         binary_path: "/unused".to_owned(),
