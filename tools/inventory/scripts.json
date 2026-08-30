@@ -19,8 +19,15 @@
     "snapshot": "PR154_NON_LIVE_COMPLETE",
     "tracked_files": 2,
     "tracked_lines": 777,
+    "active_repository_owned_bash_policy_files": 2,
+    "active_repository_owned_python_policy_files": 0,
     "repository_owned_external_python_validators": 0,
-    "workflow_scripts_references": 0
+    "workflow_scripts_references": 0,
+    "tracked_legacy_scripts": [
+      "scripts/deploy-release-vps.sh",
+      "scripts/run-dual-vps-canary.sh"
+    ],
+    "deployment_deletion_gate": "issue #147 requires disposable-staging mutation acceptance, separately authorized LINE/LANDING mutation acceptance, or an explicit operator waiver"
   },
   "dispositions": {
     "MIGRATE": "still-useful executable policy becomes typed rr-dev functionality",
@@ -409,8 +416,8 @@
       "invoked_by_check_sh": false,
       "calls_scripts": [],
       "disposition": "MIGRATE",
-      "replacement": "cargo dev deploy",
-      "status": "not-started"
+      "replacement": "cargo dev deploy {inspect,plan,apply}",
+      "status": "native parity complete in PR #154: fixed LINE/LANDING roles, secret-free snapshots, candidate/config identity, bootstrap, staging, atomic CURRENT/PREVIOUS cutover, listener/service verification, failure rollback, idempotent rollback, promotion and safe pruning are typed and fake-tested; this tracked legacy authority is retained only until one issue #147 deployment mutation acceptance path is satisfied"
     },
     {
       "path": "scripts/deployment_driver.py",
@@ -658,8 +665,8 @@
         "evaluate-release-canary.py"
       ],
       "disposition": "MERGE",
-      "replacement": "cargo dev deploy canary",
-      "status": "not-started"
+      "replacement": "cargo dev deploy {canary-plan,canary-run,canary}",
+      "status": "native parity complete in PR #154: exact candidate/comparator identity, fixed direct LINE-to-LANDING topology, churn, reload, LANDING restart/recovery, byte integrity, bounded pools, resource recovery evidence, fail-closed verdict, cleanup and rollback-on-failure are typed and tested; this tracked legacy authority is retained only until one issue #147 deployment mutation acceptance path is satisfied"
     },
     {
       "path": "scripts/run-target-host-validation.sh",

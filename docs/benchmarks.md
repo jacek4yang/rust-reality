@@ -72,10 +72,10 @@ exact diagnostic instead of manufacturing a measurement.
 | `cargo dev bench profiles` | Fail-closed machine-profile validation under exact cgroup-v2 CPU, memory and zero-swap boundaries. It owns candidate/Xray identity, scoped process cleanup, churn and 512 MiB downloads, default/tuned idle-session ladders, RSS/FD/cgroup/OOM samples, absolute log counters with per-ladder baselines, class summaries, and aggregate publication. |
 | `cargo dev perf hotspot` | Identity-bound `perf record` capture for either the built-in benchmark or an existing server PID. Rust owns argument bounds, exact PID/start-time/executable identity, read-only binary archival, report/build-ID checks, checksums, publication, and cleanup; `perf`, `readelf`, and `sudo` remain typed external mechanisms. |
 | `cargo dev perf hotspot-bundle` | Exports one address from a completed native hotspot run through DWARF, IDALib, LLVM and exact perf symbol offsets. Rust owns the completed-capture identity, private binary/database paths, IDALib result validation, instruction aggregation, the zero-default/sub-1% mapping gate, checksums, failure state and publication. IDALib's Python-only automation API is isolated behind a generated private direct-API bridge; the operator supplies `--idalib-python` plus any installation environment, and no repository Python policy file or machine-specific installation path remains. |
-| `cargo dev deploy canary` | Fail-closed evaluator for the approximately ten-minute exact-candidate dual-VPS active canary: deployment, real-WAN Handoff, stock Xray, integrity, churn, reload, LANDING restart/recovery, bounded pools, and recovering resource envelopes. |
+| `cargo dev deploy {canary-plan,canary-run,canary}` | Non-mutating plan, explicitly mutation-gated runner, and fail-closed evaluator for the approximately ten-minute exact-candidate dual-VPS active canary: deployment, real-WAN Handoff, stock Xray, integrity, churn, reload, LANDING restart/recovery, bounded pools, and recovering resource envelopes. |
 | `cargo dev bench run --suite real-path` | Real-Internet A/B against Xray: crash and protocol-error gates on a real path; throughput is capped by the slowest link, so it does not discriminate bandwidth. |
 | `cargo dev bench run --suite vless-encryption` | Xray v26.7.28 A/B for `encryption:none` versus VLESS Encryption inside the same REALITY + Vision stack; measures throughput, server CPU/GiB, and warmed setup in a seeded, recorded random order. |
-| `scripts/test-xray-interop.sh` | Compatibility gate (below), not a benchmark. |
+| `cargo dev bench run --suite xray-interop` | Compatibility gate (below), not a benchmark. |
 
 ## v1.7 LINE-to-LANDING evidence contract
 
@@ -678,7 +678,7 @@ real WAN, ≥8-core, and NUMA remain unverified):
 
 ## Xray 26.7.28 compatibility gate
 
-`scripts/test-xray-interop.sh` proves that an unmodified Xray client can
+`cargo dev bench run --suite xray-interop` proves that an unmodified Xray client can
 drive the production public stack end to end:
 
 ```text
@@ -687,10 +687,11 @@ curl -> Xray SOCKS5 inbound -> VLESS + REALITY + xtls-rprx-vision
 ```
 
 ```shell
-XRAY_BIN=/path/to/xray ./scripts/test-xray-interop.sh
+cargo dev bench run --suite xray-interop \
+  --rust-bin /path/to/rust-reality --xray-bin /path/to/xray
 ```
 
-The script builds a release binary, creates fresh ephemeral UUID, X25519, and
+The native suite uses the selected release binary, creates fresh ephemeral UUID, X25519, and
 short-ID material, starts both processes on loopback, transfers a
 deterministic 1 MiB object through Xray, verifies its SHA-256 digest, checks
 ML-DSA-65 verification-key generation against Xray for a fixed seed, and

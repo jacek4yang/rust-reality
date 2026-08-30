@@ -926,7 +926,7 @@ mod tests {
     use super::*;
     use crate::deploy::{
         host::{HostRole, Topology},
-        plan::{DeploymentAction, plan_cutover, plan_stage},
+        plan::{DeploymentAction, plan_cutover, plan_rollback, plan_stage},
         remote::Reply,
         snapshot::{GenerationPointers, Listener},
     };
@@ -1214,6 +1214,47 @@ mod tests {
         assert!(error.contains("rolled back"), "{error}");
         assert_eq!(transport.current, "/opt/rust-reality/releases/r1");
         assert_eq!(transport.config_current, "/etc/rust-reality/releases/r1");
+    }
+
+    #[test]
+    fn fake_rollback_is_idempotent() {
+        let topology = Topology::canonical().unwrap();
+        let host = topology.host(HostRole::Line);
+        let before = snapshot();
+        let mut transport = FakeTransport::new();
+
+        let first_plan = plan_rollback(&before).unwrap();
+        let first = execute(
+            &mut transport,
+            &mut FakeValidator::default(),
+            host,
+            &first_plan,
+            &before,
+            None,
+            None,
+        )
+        .unwrap();
+        let first_current = transport.current.clone();
+        let first_config = transport.config_current.clone();
+
+        let second_plan = plan_rollback(&first.after).unwrap();
+        let second = execute(
+            &mut transport,
+            &mut FakeValidator::default(),
+            host,
+            &second_plan,
+            &first.after,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(first_current, "/opt/rust-reality/releases/r0");
+        assert_eq!(first_config, "/etc/rust-reality/releases/r0");
+        assert_eq!(transport.current, first_current);
+        assert_eq!(transport.config_current, first_config);
+        assert_eq!(second.after.executable, first.after.executable);
+        assert_eq!(second.after.generations, first.after.generations);
     }
 
     #[test]

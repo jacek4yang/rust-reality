@@ -45,9 +45,11 @@ REALITY/VLESS 身份是持久部署状态。正常升级必须保持密钥对应
 ID、SNI/target、flow、endpoint、routing 与 outbound 语义。配置秘密不得打印
 或进入公开工件；迁移前后用 `cargo dev config fingerprint` 只比较指纹。
 
-首次迁移先复制已知良好二进制和兼容配置作为最小回滚包。
-`deploy-release-vps.sh stage` 在不切换 CURRENT 的情况下验证版本、SHA、`check`
-和 `self-test`；`cutover` 先准备 PREVIOUS，再以最短 stop/symlink/start 窗口切换，
+首次迁移先复制已知良好二进制和兼容配置作为最小回滚包。`cargo dev deploy
+inspect` 与 `cargo dev deploy plan` 只读；`cargo dev deploy apply` 没有显式
+`--mutate-remote` 会拒绝执行。`apply stage` 在不切换 CURRENT 的情况下验证版本、
+SHA、`check` 和 `self-test`；`apply cutover` 先准备 PREVIOUS，再以最短
+stop/symlink/start 窗口切换，
 验证二进制与 443，并拒绝切换期间新出现的非预期 wildcard TCP 监听。主机原有的
 无关监听仍由主机管理员负责，部署工具不会擅自停止；启动或监听策略健康失败会
 自动恢复旧代际。后续互操作或 canary 失败执行 `rollback`。`promote` 只保留
@@ -66,7 +68,9 @@ stock Xray client -> LINE:443 -> warm Handoff -> LANDING:443 -> loopback origin
 idle/stale 轮换、LINE reload、LANDING 服务受控重启与恢复、1 MiB 及更大下载/
 上传/双向逐字节完整性、最后稳态回收。指标通过 SSH 获取，不开放公网指标端口。
 
-`cargo dev deploy canary` 采用 fail-closed 合约：必须有精确候选身份、两端 SSH、
+`cargo dev deploy canary-plan` 不接触主机即可校验并记录完整输入；相同输入交给
+`cargo dev deploy canary-run --mutate-remote` 执行，报告再由 fail-closed 的
+`cargo dev deploy canary` 评估器验收。该合约必须有精确候选身份、两端 SSH、
 端口/防火墙限制、stock Xray、完整性、warm Handoff、故意触发的 cold fallback、
 generation 退休、LANDING 恢复、至少 500 次有界连接、pool 上界、无系统性落地机
 拒绝 churn，以及可恢复的 FD/thread/RSS 包络。FD 门禁使用经评审的绝对上界，

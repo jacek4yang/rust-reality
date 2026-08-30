@@ -76,17 +76,17 @@ tar -xzf rust-reality-v<version>-linux-x86_64-generic.tar.gz \
 tar -xzf rust-reality-v<version>-linux-x86_64-v3.tar.gz \
   -C release-smoke/x86-64-v3
 
-RUST_REALITY_BIN="$PWD/release-smoke/generic/rust-reality" \
-  XRAY_BIN=/absolute/path/to/xray \
-  ./scripts/test-xray-interop.sh
-RUST_REALITY_BIN="$PWD/release-smoke/x86-64-v3/rust-reality" \
-  XRAY_BIN=/absolute/path/to/xray \
-  ./scripts/test-xray-interop.sh
+cargo dev bench run --suite xray-interop \
+  --rust-bin "$PWD/release-smoke/generic/rust-reality" \
+  --xray-bin /absolute/path/to/xray
+cargo dev bench run --suite xray-interop \
+  --rust-bin "$PWD/release-smoke/x86-64-v3/rust-reality" \
+  --xray-bin /absolute/path/to/xray
 ```
 
 每轮都会使用全新配置，证明准确的 1 MiB 传输、ML-DSA-65 一致性，以及未经修改
 Xray 的 REALITY + Vision 互操作。应在支持 x86-64-v3、外部 DNS/TCP 正常的主机
-执行；默认伪装目标不适用时用 `COVER_TARGET`/`COVER_SNI` 选择已探测的目标。在
+执行；默认伪装目标不适用时用 `--cover-target`/`--cover-sni` 选择已探测的目标。在
 ARM64 主机上，对 `linux-aarch64-generic` 二进制运行同一门禁。任一
 档失败都属于 release no-go；不得以本地重建二进制替代下载到的制品。
 
@@ -439,8 +439,8 @@ sudo systemctl restart rust-reality
 
 ### 日常节点的版本化部署
 
-永久生产化节点必须把可替换软件与持久身份分开。`scripts/deploy-release-vps.sh`
-采用以下规范布局：
+永久生产化节点必须把可替换软件与持久身份分开。类型化的
+`cargo dev deploy {inspect,plan,apply}` 工作流采用以下规范布局：
 
 ```text
 /opt/rust-reality/releases/RELEASE/rust-reality
@@ -457,10 +457,10 @@ REALITY/VLESS 持久身份。首次迁移先把正在运行的二进制和配置
 回滚包，然后 systemd 才改用 `current`。canary 成功后只保留 CURRENT 与 PREVIOUS，
 删除的只能是更旧的可替换软件代际，绝不能随旧二进制裁剪部署身份。
 
-部署脚本对每个远端修改都要求 `MUTATE_REMOTE=1`。`stage` 在不切换 live 节点时
+`cargo dev deploy apply` 对每个远端修改都要求 `--mutate-remote`。`stage` 在不切换 live 节点时
 验证版本、SHA-256、`check` 与 `self-test`；`cutover` 先准备 PREVIOUS，并在进程、
 可执行文件身份或 443 健康检查失败时自动恢复它。后续 stock-Xray、字节完整性或
-主动 canary 失败时立即执行 `rollback`。脚本不编辑 SSH、防火墙或监听端口。
+主动 canary 失败时立即执行 `rollback`。类型化工具不编辑 SSH、防火墙或监听端口。
 
 日常边缘机的 22 是永久管理基础设施，443 是唯一公网 rust-reality 监听；origin、
 指标与 benchmark helper 只能在 loopback、Unix socket 或隔离 namespace。正常
