@@ -113,7 +113,7 @@
       ],
       "disposition": "MIGRATE",
       "replacement": "cargo dev perf hotspot-bundle",
-      "status": "deleted-after-parity in PR #154; legacy Python self-test and seven native hotspot tests pass, including exact symbol/DSO selection, instruction-boundary mapping, IDALib result validation and the hard unmapped-period gate"
+      "status": "deleted-after-parity in PR #154; legacy Python self-test and seven native hotspot tests pass, and the real IDALib acceptance mapped 520/520 exact-symbol samples with 0.000000% unmapped period and 19/19 verified evidence checksums"
     },
     {
       "path": "scripts/aggregate-release.sh",
@@ -467,7 +467,7 @@
       ],
       "disposition": "MERGE",
       "replacement": "cargo dev perf hotspot-bundle",
-      "status": "deleted-after-parity in PR #154; Rust validates the completed capture and archived binary/perf identities, isolates IDALib input, owns DWARF/LLVM/perf invocation, writes checksums and publishes a hash-bound completion or durable FAILED state"
+      "status": "deleted-after-parity in PR #154; Rust validates the completed capture and archived binary/perf identities, isolates IDALib input, owns DWARF/LLVM/perf invocation, writes checksums and publishes a hash-bound completion or durable FAILED state; real full-bundle acceptance is recorded in benchmarks/evidence/hotspot-bundle-authority-transfer-acceptance.json"
     },
     {
       "path": "scripts/fuzz-smoke.sh",
@@ -517,7 +517,7 @@
       "calls_scripts": [],
       "disposition": "MERGE",
       "replacement": "cargo dev perf hotspot-bundle",
-      "status": "deleted-after-parity in PR #154; IDALib is a genuine Python-only external API boundary, reduced to a generated private direct-API bridge while Rust owns invocation, input/output validation, path policy, evidence identity and failure semantics; IDALib is absent on the accepting host so no live IDA claim is made",
+      "status": "deleted-after-parity in PR #154; IDALib is a genuine Python-only external API boundary, reduced to a generated private direct-API bridge while Rust owns invocation, input/output validation, path policy, evidence identity and failure semantics; real IDALib 9.3 bridge, bounded-timeout failure and full-bundle acceptance passed without modifying or recording the installation",
       "disposition_correction": "was DELETE_OBSOLETE; export-hotspot-bundle.sh invokes it, so it is part of the hotspot family and shares that family's disposition"
     },
     {

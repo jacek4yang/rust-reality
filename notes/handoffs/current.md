@@ -54,7 +54,8 @@ hotspot core   cargo dev perf hotspot (identity-bound perf capture, reports,
                build IDs, checksums and publication; real acceptance passed)
 hotspot bundle cargo dev perf hotspot-bundle (completed-capture identity,
                private IDALib bridge, instruction mapping gate, checksums and
-               publication; policy parity tests pass, IDALib absent locally)
+               publication; real IDALib acceptance passed 520/520 mapped,
+               0.000000% unmapped, 19/19 checksums)
 ```
 
 ### Remaining — exact next actions

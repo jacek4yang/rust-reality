@@ -55,7 +55,7 @@ JSON；如果内核或 VPS 策略拒绝某个事件，则记录带原始诊断�
 | `cargo dev bench run --suite soak` | 可选长期回环证据：standalone 混合流量加 Handoff、NXR、仅 TCP SOCKS5、中点 reload、精确进程身份下的逐进程 RSS、汇总 PSS，以及带哈希绑定的 start/interval/reload/end 完整性尝试。`--soak-implementation xray` 选择保留的对照端。默认原生运行是计划任务/非阻塞证据；精确 12 小时且分布式间隔为 5–30 分钟的运行会记录是否满足严格长期资格。 |
 | `cargo dev bench profiles` | 在精确 cgroup-v2 CPU、内存与零 swap 边界下执行 fail-closed 机器档位验证。它负责候选/Xray 身份、scope 进程清理、churn 与 512 MiB 下载、默认/调优空闲会话阶梯、RSS/FD/cgroup/OOM 采样、带逐阶梯基线的绝对日志计数、逐档汇总与聚合发布。 |
 | `cargo dev perf hotspot` | 对内建 benchmark 或既有 server PID 进行身份绑定的 `perf record` 采集。Rust 负责参数边界、精确 PID/start-time/可执行文件身份、只读二进制归档、report/build-ID 校验、校验和、发布与清理；`perf`、`readelf`、`sudo` 仅作为带类型 argv 的外部机制。 |
-| `cargo dev perf hotspot-bundle` | 从已完成的原生 hotspot 运行中，经 DWARF、IDALib、LLVM 与精确 perf 符号偏移导出一个地址。Rust 负责采集身份、私有二进制/数据库路径、IDALib 输出验证、指令聚合、默认零容忍且硬上限低于 1% 的映射门、校验和、失败状态与发布。IDALib 仅有的 Python 自动化 API 被限制在运行时生成的私有直接 API 桥中；仓库不再保留 Python 策略文件。 |
+| `cargo dev perf hotspot-bundle` | 从已完成的原生 hotspot 运行中，经 DWARF、IDALib、LLVM 与精确 perf 符号偏移导出一个地址。Rust 负责采集身份、私有二进制/数据库路径、IDALib 输出验证、指令聚合、默认零容忍且硬上限低于 1% 的映射门、校验和、失败状态与发布。IDALib 仅有的 Python 自动化 API 被限制在运行时生成的私有直接 API 桥中；操作者提供 `--idalib-python` 与安装环境，仓库不保留 Python 策略文件或机器专用安装路径。 |
 | `cargo dev deploy canary` | 对约十分钟精确候选双 VPS 主动 canary 做 fail-closed 评估：部署、真实 WAN Handoff、stock Xray、完整性、churn、reload、LANDING 重启/恢复、有界 pool 与资源恢复包络。 |
 | `cargo dev bench run --suite real-path` | 真实互联网路径上与 Xray 的 A/B：崩溃与协议错误门禁；吞吐受路径最慢链路限制，不能用于区分带宽。 |
 | `cargo dev bench run --suite vless-encryption` | Xray v26.7.28 下 `encryption:none` 与同一 REALITY + Vision 内叠加 VLESS Encryption 的 A/B；测吞吐、服务端 CPU/GiB 和预热后的 setup，执行顺序为带种子且已记录的随机序。 |
