@@ -16,6 +16,16 @@ use std::{
 };
 
 use crate::{
+    bench::{
+        config::{self, RealityIdentity},
+        evidence::{Publication, RunDirectory},
+        host_lock::HostLock,
+        identity::{self, Binary, Kind},
+        process::Child,
+        runner,
+        soak,
+        workspace::{self, Workspace},
+    },
     deploy::netem::LEGS,
     hash,
     perf::{json_in, json_in::Value, json_out::Json},
@@ -338,6 +348,7 @@ pub(crate) struct RoutingConfigInput<'a> {
     pub(crate) blocked_port: u16,
     pub(crate) geosite_label: &'a str,
     pub(crate) assets: &'a Path,
+    pub(crate) asset_origin_port: Option<u16>,
 }
 
 /// Builds the exact four-user routing correctness policy without replacing any
@@ -479,6 +490,16 @@ pub(crate) fn routing_config(input: &RoutingConfigInput<'_>) -> Result<RoutingCo
         string(input.assets.display().to_string()),
     );
     assets.insert("requestTimeoutSeconds".to_owned(), number(15));
+    if let Some(port) = input.asset_origin_port {
+        assets.insert(
+            "geoip".to_owned(),
+            string(format!("http://127.0.0.1:{port}/geoip.dat")),
+        );
+        assets.insert(
+            "geosite".to_owned(),
+            string(format!("http://127.0.0.1:{port}/geosite.dat")),
+        );
+    }
     Ok(RoutingConfig {
         json: suites::render_compact(&Value::Object(root)),
         short_ids,
@@ -697,6 +718,652 @@ fn strings(values: impl IntoIterator<Item = impl Into<String>>) -> Value {
 
 fn number(value: u64) -> Value {
     Value::Number(value.to_string())
+}
+
+const ROUTING_GEOSITE_LABEL: &str = "proof";
+const ROUTING_GEOSITE_DOMAIN: &str = "geo-proof.example";
+
+pub(crate) fn write_routing_assets(directory: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(directory)
+        .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
+    std::fs::write(directory.join("geosite.dat"), geosite_fixture())
+        .map_err(|error| format!("could not write geosite fixture: {error}"))?;
+    std::fs::write(directory.join("geoip.dat"), geoip_fixture())
+        .map_err(|error| format!("could not write geoip fixture: {error}"))
+}
+
+fn geosite_fixture() -> Vec<u8> {
+    let mut domain = Vec::new();
+    varint_field(&mut domain, 1, 3);
+    bytes_field(&mut domain, 2, ROUTING_GEOSITE_DOMAIN.as_bytes());
+    let mut site = Vec::new();
+    bytes_field(&mut site, 1, ROUTING_GEOSITE_LABEL.as_bytes());
+    bytes_field(&mut site, 2, &domain);
+    let mut list = Vec::new();
+    bytes_field(&mut list, 1, &site);
+    list
+}
+
+fn geoip_fixture() -> Vec<u8> {
+    let mut private = Vec::new();
+    bytes_field(&mut private, 1, b"PRIVATE");
+    for (address, prefix) in [([127, 0, 0, 0], 8), ([10, 0, 0, 0], 8)] {
+        let mut cidr = Vec::new();
+        bytes_field(&mut cidr, 1, &address);
+        varint_field(&mut cidr, 2, prefix);
+        bytes_field(&mut private, 2, &cidr);
+    }
+    let mut list = Vec::new();
+    bytes_field(&mut list, 1, &private);
+    list
+}
+
+fn bytes_field(output: &mut Vec<u8>, number: u8, value: &[u8]) {
+    output.push((number << 3) | 2);
+    encode_varint(output, value.len() as u64);
+    output.extend_from_slice(value);
+}
+
+fn varint_field(output: &mut Vec<u8>, number: u8, value: u64) {
+    output.push(number << 3);
+    encode_varint(output, value);
+}
+
+fn encode_varint(output: &mut Vec<u8>, mut value: u64) {
+    while value >= 0x80 {
+        output.push(u8::try_from(value & 0x7f).expect("seven bits fit in u8") | 0x80);
+        value >>= 7;
+    }
+    output.push(u8::try_from(value).expect("final varint byte fits in u8"));
+}
+
+#[derive(Debug)]
+pub(crate) struct RouteMatrixInput<'a> {
+    pub(crate) uuids: &'a [String],
+    pub(crate) socks_ports: &'a [u16],
+    pub(crate) origin_a_port: u16,
+    pub(crate) origin_b_port: u16,
+    pub(crate) blocked_port: u16,
+    pub(crate) sha_a: &'a str,
+    pub(crate) sha_b: &'a str,
+}
+
+pub(crate) fn route_cases(input: &RouteMatrixInput<'_>) -> Result<Vec<RouteCase>, String> {
+    if input.uuids.len() != 4 || input.socks_ports.len() != 4 {
+        return Err("routing proof requires four UUIDs and four SOCKS ports".to_owned());
+    }
+    let mut cases = Vec::with_capacity(26);
+    for index in 0..2 {
+        for (label, host, port, expect) in [
+            (
+                "allow-domain-port-rule",
+                "localhost",
+                input.origin_a_port,
+                RouteExpectation::Sha256(input.sha_a.to_owned()),
+            ),
+            (
+                "allow-ip-port-rule",
+                "127.0.0.1",
+                input.origin_a_port,
+                RouteExpectation::Sha256(input.sha_a.to_owned()),
+            ),
+            (
+                "late-match-loopback-block",
+                "127.0.0.1",
+                input.origin_b_port,
+                RouteExpectation::Blocked,
+            ),
+            (
+                "global-port-block",
+                "127.0.0.1",
+                input.blocked_port,
+                RouteExpectation::Blocked,
+            ),
+            (
+                "global-domain-block",
+                "blocked.example",
+                80,
+                RouteExpectation::Blocked,
+            ),
+            (
+                "global-geosite-block",
+                ROUTING_GEOSITE_DOMAIN,
+                80,
+                RouteExpectation::Blocked,
+            ),
+            (
+                "group-default-block",
+                "198.51.100.23",
+                80,
+                RouteExpectation::Blocked,
+            ),
+        ] {
+            cases.push(route_case(input, index, "alpha", label, host, port, expect));
+        }
+    }
+    for index in 2..4 {
+        for (label, host, port, expect) in [
+            (
+                "default-via-socks-b",
+                "8.8.8.8",
+                80,
+                RouteExpectation::Sha256(input.sha_b.to_owned()),
+            ),
+            (
+                "group-geoip-private-block-loopback",
+                "127.0.0.1",
+                input.origin_b_port,
+                RouteExpectation::Blocked,
+            ),
+            (
+                "group-geoip-private-block-rfc1918",
+                "10.255.255.1",
+                input.origin_a_port,
+                RouteExpectation::Blocked,
+            ),
+            (
+                "global-domain-block",
+                "blocked.example",
+                80,
+                RouteExpectation::Blocked,
+            ),
+            (
+                "global-geosite-block",
+                ROUTING_GEOSITE_DOMAIN,
+                80,
+                RouteExpectation::Blocked,
+            ),
+            (
+                "global-port-block",
+                "8.8.8.8",
+                input.blocked_port,
+                RouteExpectation::Blocked,
+            ),
+        ] {
+            cases.push(route_case(input, index, "beta", label, host, port, expect));
+        }
+    }
+    Ok(cases)
+}
+
+fn route_case(
+    input: &RouteMatrixInput<'_>,
+    index: usize,
+    group: &str,
+    label: &str,
+    host: &str,
+    port: u16,
+    expect: RouteExpectation,
+) -> RouteCase {
+    RouteCase {
+        uuid: input.uuids[index].clone(),
+        group: group.to_owned(),
+        label: label.to_owned(),
+        socks_port: input.socks_ports[index],
+        host: host.to_owned(),
+        port,
+        path: "/payload-1.bin".to_owned(),
+        expect,
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RunPlan {
+    pub(crate) repo: PathBuf,
+    pub(crate) rust_bin: PathBuf,
+    pub(crate) xray_bin: PathBuf,
+    pub(crate) out_dir: PathBuf,
+    pub(crate) run_id: String,
+    pub(crate) program: Plan,
+    pub(crate) keep_work: bool,
+}
+
+#[derive(Debug)]
+pub(crate) struct RunOutcome {
+    pub(crate) summary_path: PathBuf,
+    pub(crate) marker_path: PathBuf,
+}
+
+struct RunState<'a> {
+    plan: &'a RunPlan,
+    rust: Binary,
+    xray: Binary,
+    run: RunDirectory,
+    workspace: Workspace,
+    lock: HostLock,
+    children: Vec<Child>,
+    next_port: u16,
+    port_limit: u16,
+}
+
+impl RunState<'_> {
+    fn port(&mut self) -> Result<u16, String> {
+        if self.next_port >= self.port_limit {
+            return Err("deployment runtime exhausted its reserved port block".to_owned());
+        }
+        let port = self.next_port;
+        self.next_port += 1;
+        Ok(port)
+    }
+
+    fn spawn_helper(
+        &mut self,
+        label: &str,
+        args: &[String],
+        log_name: &str,
+        port: u16,
+    ) -> Result<(), String> {
+        let executable = std::env::current_exe()
+            .map_err(|error| format!("could not identify rr-dev executable: {error}"))?;
+        let mut child = Child::spawn_isolated(
+            label,
+            &executable,
+            args,
+            self.workspace.path(),
+            &isolated_environment(),
+            &self.workspace.join(log_name),
+        )
+        .map_err(|error| error.to_string())?;
+        child
+            .wait_for_port(port, Duration::from_secs(30))
+            .map_err(|error| error.to_string())?;
+        self.children.push(child);
+        Ok(())
+    }
+
+    fn spawn_origin(
+        &mut self,
+        label: &str,
+        directory: &Path,
+        port: u16,
+        tls: Option<(&Path, &Path)>,
+    ) -> Result<(), String> {
+        let mut args = vec![
+            "bench".to_owned(),
+            "origin".to_owned(),
+            "--port".to_owned(),
+            port.to_string(),
+            "--payload-dir".to_owned(),
+            directory.display().to_string(),
+            "--put-log".to_owned(),
+            self.workspace
+                .join(&format!("{label}-put.jsonl"))
+                .display()
+                .to_string(),
+            "--label".to_owned(),
+            label.to_owned(),
+        ];
+        if let Some((certificate, key)) = tls {
+            args.extend([
+                "--tls-cert".to_owned(),
+                certificate.display().to_string(),
+                "--tls-key".to_owned(),
+                key.display().to_string(),
+            ]);
+        }
+        self.spawn_helper(label, &args, &format!("{label}.log"), port)
+    }
+
+    fn spawn_xray_client(
+        &mut self,
+        label: &str,
+        server_port: u16,
+        socks_port: u16,
+        public_key: &str,
+        identity: &RealityIdentity,
+    ) -> Result<(), String> {
+        let path = self.workspace.join(&format!("{label}.json"));
+        soak::write_config(
+            &path,
+            &config::xray_client(
+                identity,
+                server_port,
+                socks_port,
+                public_key,
+            )
+            .to_python_json(),
+        )?;
+        let child = soak::spawn_xray_client(
+            label,
+            &self.xray,
+            &path,
+            &self.workspace,
+            &self.workspace.join(&format!("{label}.log")),
+            socks_port,
+        )?;
+        self.children.push(child);
+        Ok(())
+    }
+}
+
+pub(crate) fn run_routing_acceptance(plan: &RunPlan) -> Result<RunOutcome, String> {
+    plan.program.validate()?;
+    if plan.run_id.trim().is_empty() {
+        return Err("deployment run ID must not be empty".to_owned());
+    }
+    if !plan.program.sections.contains(&Section::Routing) {
+        return Err("deployment routing acceptance requires the routing section".to_owned());
+    }
+    let rust = identity::register("rust-reality", &plan.rust_bin, "", Kind::Rust)?;
+    let xray = identity::register("xray", &plan.xray_bin, "", Kind::Xray)?;
+    let lock = HostLock::acquire(&runner::default_lock_path())?;
+    let mut workspace = Workspace::create("deployment")?;
+    if plan.keep_work {
+        workspace.keep();
+    }
+    let run = RunDirectory::create(&plan.out_dir)?;
+    let base_port = workspace::reserve_block(32)?;
+    let mut state = RunState {
+        plan,
+        rust,
+        xray,
+        run,
+        workspace,
+        lock,
+        children: Vec::new(),
+        next_port: base_port,
+        port_limit: base_port + 32,
+    };
+    state
+        .run
+        .write_new("plan.json", &plan.program.to_json().to_python_json())?;
+    write_environment(&state)?;
+    run_routing_section(&mut state)?;
+    let summary = routing_run_summary(&state)?;
+    let summary_path = state.run.write_new("summary.json", &summary.to_python_json())?;
+    let contract = run_contract(&state, &summary_path)?;
+    let marker_path = state.run.publish(
+        Publication::Contract,
+        &contract.to_python_json(),
+        &plan.run_id,
+        "benchmark-deployment",
+    )?;
+    Ok(RunOutcome {
+        summary_path,
+        marker_path,
+    })
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "one bounded section keeps process ownership and its proof visibly together"
+)]
+fn run_routing_section(state: &mut RunState<'_>) -> Result<(), String> {
+    let route_origin_port = state.port()?;
+    let fixed_origin_port = state.port()?;
+    let cover_port = state.port()?;
+    let fixed_socks_port = state.port()?;
+    let server_port = state.port()?;
+    let socks_ports = [state.port()?, state.port()?, state.port()?, state.port()?];
+    let payload_a = state.workspace.join("payload-a");
+    let payload_b = state.workspace.join("payload-b");
+    std::fs::create_dir_all(&payload_a)
+        .map_err(|error| format!("could not create {}: {error}", payload_a.display()))?;
+    std::fs::create_dir_all(&payload_b)
+        .map_err(|error| format!("could not create {}: {error}", payload_b.display()))?;
+    super::origin::write_payload(&payload_a.join("payload-0.bin"), 256)?;
+    super::origin::write_payload(&payload_a.join("payload-1.bin"), 1024 * 1024)?;
+    write_inverted_payload(&payload_b.join("payload-1.bin"), 1024 * 1024)?;
+    write_routing_assets(&payload_a)?;
+    let (certificate, key) = super::origin_tls::generate_self_signed(state.workspace.path())?;
+    state.spawn_origin("deployment-origin-a", &payload_a, route_origin_port, None)?;
+    state.spawn_origin("deployment-origin-b", &payload_b, fixed_origin_port, None)?;
+    state.spawn_origin(
+        "deployment-cover",
+        &payload_a,
+        cover_port,
+        Some((&certificate, &key)),
+    )?;
+    state.spawn_helper(
+        "deployment-fixed-socks",
+        &[
+            "bench".to_owned(),
+            "socks-server".to_owned(),
+            "--port".to_owned(),
+            fixed_socks_port.to_string(),
+            "--fixed-target".to_owned(),
+            format!("127.0.0.1:{fixed_origin_port}"),
+        ],
+        "fixed-socks.log",
+        fixed_socks_port,
+    )?;
+    let uuids = generate_uuids(&state.rust, 4)?;
+    let generated = soak::generated_public_config(
+        &state.rust.path,
+        vec![
+            "config".to_owned(),
+            "generate".to_owned(),
+            "standalone".to_owned(),
+            "--listen".to_owned(),
+            "127.0.0.1".to_owned(),
+            "--port".to_owned(),
+            server_port.to_string(),
+            "--target".to_owned(),
+            format!("127.0.0.1:{cover_port}"),
+            "--server-name".to_owned(),
+            "localhost".to_owned(),
+        ],
+        &state.workspace,
+        "assets-routing-base",
+    )?;
+    let routing = routing_config(&RoutingConfigInput {
+        base: &generated.json,
+        uuids: &uuids,
+        origin_a_port: route_origin_port,
+        socks_b_port: fixed_socks_port,
+        blocked_port: 9666,
+        geosite_label: ROUTING_GEOSITE_LABEL,
+        assets: &state.workspace.join("assets-routing"),
+        asset_origin_port: Some(route_origin_port),
+    })?;
+    let server_config = state.workspace.join("routing-server.json");
+    soak::write_config(&server_config, &routing.json)?;
+    soak::check_config(&state.rust.path, &server_config)?;
+    let server = soak::spawn_rust(
+        "deployment-routing-server",
+        &state.rust,
+        &server_config,
+        &state.workspace,
+        &isolated_environment(),
+        &state.workspace.join("routing-server.log"),
+        server_port,
+    )?;
+    state.children.push(server);
+    for index in 0..4 {
+        let identity = RealityIdentity {
+            uuid: uuids[index].clone(),
+            short_id: routing.short_ids[index].clone(),
+            server_name: "localhost".to_owned(),
+            target: format!("127.0.0.1:{cover_port}"),
+        };
+        state.spawn_xray_client(
+            &format!("deployment-routing-client-{index}"),
+            server_port,
+            socks_ports[index],
+            &generated.public_key,
+            &identity,
+        )?;
+    }
+    let sha_a = hash::sha256_file(&payload_a.join("payload-1.bin"))?;
+    let sha_b = hash::sha256_file(&payload_b.join("payload-1.bin"))?;
+    let cases = route_cases(&RouteMatrixInput {
+        uuids: &uuids,
+        socks_ports: &socks_ports,
+        origin_a_port: route_origin_port,
+        origin_b_port: fixed_origin_port,
+        blocked_port: 9666,
+        sha_a: &sha_a,
+        sha_b: &sha_b,
+    })?;
+    let results = probe_routes(&cases);
+    state.run.write_jsonl(
+        "routing-correctness.jsonl",
+        &results
+            .iter()
+            .map(|result| result.to_json().to_compact_json())
+            .collect::<Vec<_>>(),
+    )?;
+    let summary = routing_summary(&results);
+    state
+        .run
+        .write_new("summary-routing.json", &summary.to_python_json())?;
+    if results.iter().all(|result| result.passed) {
+        Ok(())
+    } else {
+        Err(format!(
+            "deployment routing correctness failed {}/{} cases",
+            results.iter().filter(|result| !result.passed).count(),
+            results.len()
+        ))
+    }
+}
+
+fn generate_uuids(binary: &Binary, count: usize) -> Result<Vec<String>, String> {
+    let outcome = Tool::new(binary.path.display().to_string())
+        .args(["uuid".to_owned(), count.to_string()])
+        .probe()
+        .map_err(|error| format!("rust-reality uuid failed: {error}"))?;
+    if !outcome.success() {
+        return Err(format!(
+            "rust-reality uuid exited {:?}: {}",
+            outcome.code,
+            outcome.stderr.trim_end()
+        ));
+    }
+    let values = outcome
+        .trimmed_stdout()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if values.len() != count {
+        return Err(format!(
+            "rust-reality uuid returned {} values, expected {count}",
+            values.len()
+        ));
+    }
+    Ok(values)
+}
+
+fn write_inverted_payload(path: &Path, size: u64) -> Result<(), String> {
+    let chunk: Vec<u8> = (0_u8..=255)
+        .rev()
+        .cycle()
+        .take(256 * 4096)
+        .collect();
+    let mut file = std::fs::File::create(path)
+        .map_err(|error| format!("could not create {}: {error}", path.display()))?;
+    let mut remaining = size;
+    while remaining > 0 {
+        let take = usize::try_from(remaining.min(chunk.len() as u64)).unwrap_or(chunk.len());
+        file.write_all(&chunk[..take])
+            .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+        remaining -= take as u64;
+    }
+    Ok(())
+}
+
+fn write_environment(state: &RunState<'_>) -> Result<(), String> {
+    let commit = Tool::new("git")
+        .args([
+            "-C".to_owned(),
+            state.plan.repo.display().to_string(),
+            "rev-parse".to_owned(),
+            "HEAD".to_owned(),
+        ])
+        .probe()
+        .map_err(|error| format!("could not identify harness commit: {error}"))?;
+    if !commit.success() {
+        return Err(format!(
+            "could not identify harness commit: {}",
+            commit.stderr.trim_end()
+        ));
+    }
+    let environment = Json::object([
+        ("schemaVersion", Json::Int(1)),
+        ("runId", Json::string(&state.plan.run_id)),
+        ("harnessCommit", Json::string(commit.trimmed_stdout())),
+        ("rustRealityBin", Json::string(state.rust.path.display().to_string())),
+        ("rustRealitySha256", Json::string(&state.rust.sha256)),
+        ("rustRealityIdentity", Json::string(&state.rust.identity)),
+        ("xrayBin", Json::string(state.xray.path.display().to_string())),
+        ("xraySha256", Json::string(&state.xray.sha256)),
+        ("xrayIdentity", Json::string(&state.xray.identity)),
+        ("hostLock", Json::string(state.lock.device_inode())),
+    ]);
+    state
+        .run
+        .write_new("environment.json", &environment.to_python_json())?;
+    Ok(())
+}
+
+fn routing_run_summary(state: &RunState<'_>) -> Result<Json, String> {
+    let raw = std::fs::read_to_string(state.run.join("summary-routing.json"))
+        .map_err(|error| format!("could not read routing summary: {error}"))?;
+    let routing = json_in::parse(&raw)
+        .map_err(|error| format!("routing summary is invalid JSON: {error}"))?;
+    let verdict = routing
+        .str_field("routing", "verdict")
+        .map_err(|error| error.to_string())?;
+    Ok(Json::object([
+        ("schemaVersion", Json::Int(1)),
+        ("status", Json::string("COMPLETE")),
+        ("program", state.plan.program.to_json()),
+        ("completedSections", Json::Array(vec![Json::string("routing")])),
+        ("routingCorrectness", parsed_to_json(&routing)?),
+        ("dataQualityVerdict", Json::string(verdict)),
+        ("correctnessVerdict", Json::string(verdict)),
+        ("performanceVerdict", Json::string("NOT_EVALUATED")),
+        ("gateVerdict", Json::string(verdict)),
+        ("overallVerdict", Json::string("NOT_EVALUATED")),
+    ]))
+}
+
+fn run_contract(state: &RunState<'_>, summary: &Path) -> Result<Json, String> {
+    Ok(Json::object([
+        ("schemaVersion", Json::Int(1)),
+        ("phase", Json::string("complete")),
+        ("suite", Json::string("benchmark-deployment")),
+        ("runId", Json::string(&state.plan.run_id)),
+        ("plan", state.plan.program.to_json()),
+        (
+            "summary",
+            Json::object([
+                ("path", Json::string(summary.display().to_string())),
+                ("sha256", Json::string(hash::sha256_file(summary)?)),
+            ]),
+        ),
+    ]))
+}
+
+fn parsed_to_json(value: &Value) -> Result<Json, String> {
+    match value {
+        Value::Null => Ok(Json::Null),
+        Value::Bool(value) => Ok(Json::Bool(*value)),
+        Value::Number(value) => value
+            .parse::<i64>()
+            .map(Json::Int)
+            .or_else(|_| value.parse::<f64>().map(Json::Float))
+            .map_err(|error| format!("could not convert JSON number {value}: {error}")),
+        Value::Str(value) => Ok(Json::string(value)),
+        Value::Array(values) => values
+            .iter()
+            .map(parsed_to_json)
+            .collect::<Result<Vec<_>, _>>()
+            .map(Json::Array),
+        Value::Object(values) => values
+            .iter()
+            .map(|(key, value)| Ok((key.clone(), parsed_to_json(value)?)))
+            .collect::<Result<Vec<_>, String>>()
+            .map(Json::object),
+    }
+}
+
+fn isolated_environment() -> Vec<(String, String)> {
+    vec![(
+        "PATH".to_owned(),
+        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_owned(),
+    )]
 }
 
 /// Expected outcome of one routing proof case.
@@ -1374,6 +2041,7 @@ mod tests {
             blocked_port: 9666,
             geosite_label: "google",
             assets: Path::new("/tmp/assets"),
+            asset_origin_port: Some(8090),
         })
         .unwrap();
         assert_eq!(config.short_ids.len(), 4);
@@ -1391,6 +2059,14 @@ mod tests {
                 .unwrap()
                 .as_bool("sentinel")
                 .unwrap()
+        );
+        assert_eq!(
+            value
+                .field("", "assets")
+                .unwrap()
+                .str_field("assets", "geosite")
+                .unwrap(),
+            "http://127.0.0.1:8090/geosite.dat"
         );
         let clients = value
             .array_field("", "inbounds")
@@ -1452,6 +2128,40 @@ mod tests {
                 .iter()
                 .all(|rule| rule.str_field("rule", "name").unwrap().starts_with("global-"))
         );
+    }
+
+    #[test]
+    fn routing_assets_and_case_matrix_are_bounded_and_complete() {
+        let root = std::env::temp_dir().join(format!(
+            "rr-deployment-routing-assets-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        write_routing_assets(&root).unwrap();
+        assert!(!std::fs::read(root.join("geosite.dat")).unwrap().is_empty());
+        assert!(!std::fs::read(root.join("geoip.dat")).unwrap().is_empty());
+        let uuids = uuids(4);
+        let cases = route_cases(&RouteMatrixInput {
+            uuids: &uuids,
+            socks_ports: &[1001, 1002, 1003, 1004],
+            origin_a_port: 8080,
+            origin_b_port: 8081,
+            blocked_port: 9666,
+            sha_a: "a",
+            sha_b: "b",
+        })
+        .unwrap();
+        assert_eq!(cases.len(), 26);
+        assert_eq!(cases.iter().filter(|case| case.group == "alpha").count(), 14);
+        assert_eq!(cases.iter().filter(|case| case.group == "beta").count(), 12);
+        assert_eq!(
+            cases
+                .iter()
+                .filter(|case| matches!(case.expect, RouteExpectation::Sha256(_)))
+                .count(),
+            6
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
