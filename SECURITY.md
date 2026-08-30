@@ -39,7 +39,7 @@ production 16 KiB record sizes, 1.05–1.16× end-to-end framed throughput on
 large-transfer cells, −33% server CPU per GiB, zero new dependency crates
 (ring already ships in the release graph via ureq/rustls), a fully static
 link, and a slightly smaller binary. The measured numbers and their host
-context are recorded in [`docs/performance.md`](docs/performance.md).
+context are recorded in [`docs/performance.md`](docs/en/performance.md).
 
 One deliberate tradeoff follows. rust-reality zeroizes every secret it owns
 on drop — ECDHE and hybrid shared secrets, all HKDF handshake/master/traffic

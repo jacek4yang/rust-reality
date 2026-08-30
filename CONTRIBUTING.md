@@ -33,7 +33,7 @@ warning as an error.
   separate. Add a crate only for a real architectural boundary; prefer modules
   for ordinary source organization.
 - Follow the current benchmark process in
-  [the benchmark guide](docs/benchmarks.md). Preserve exact identities and
+  [the benchmark guide](docs/en/benchmarks.md). Preserve exact identities and
   admissible evidence; do not commit large raw captures or binaries.
 - Keep fuzz targets aligned with parser and reconstruction attack surfaces. Use
   `cargo dev fuzz` to inspect and exercise the target catalogue.
@@ -41,7 +41,7 @@ warning as an error.
   Maintain the designated English/Chinese pairs and validate them with
   `cargo dev docs check`.
 - Record durable architectural decisions in the ADR collection under
-  `docs/decisions/`. Active plans and handoffs belong in GitHub issues and pull
+  `docs/adr/`. Active plans and handoffs belong in GitHub issues and pull
   requests, not in the repository.
 - Keep machine-readable benchmark contracts, baselines, and compact evidence
   under their corresponding `benchmarks/` directories.

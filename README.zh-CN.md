@@ -64,7 +64,7 @@ Xray 对比数字沿用 v1.6.1 在发布主机（Intel i3-8100 4C/4T，Linux
 服务器前置同一个未修改的 Xray SOCKS5 客户端，使用相同的 TLS 1.3 REALITY
 cover，loopback origin，传输逐字节校验，并采用平衡 ABBA 交错。这些是受控
 同机结果，不是互联网速率保证。完整方法与各次运行的工件索引见
-[docs/benchmarks.zh-CN.md](docs/benchmarks.zh-CN.md)；更早版本的头条表格
+[docs/benchmarks.zh-CN.md](docs/zh-CN/benchmarks.md)；更早版本的头条表格
 作为历史证据保留在该文档中。
 
 建连（accept → 首次 Vision 转换；144 样本 ABBA）：
@@ -160,8 +160,8 @@ framed 阶段运行带 Vision padding 的外层 TLS 记录 I/O；在已认证的
 `splice`，否则单向 `splice`，后端拒绝时回退到有界 buffered 用户态 relay。
 到伪装目标的 fallback（ camouflage ）流量使用同一个统一的、计入 FD 预算的
 relay。生命周期、热路径拓扑、描述符预算模型和可观测事件见
-[docs/architecture.zh-CN.md](docs/architecture.zh-CN.md)，协议栈本身见
-[docs/protocol.zh-CN.md](docs/protocol.zh-CN.md)。
+[docs/architecture.zh-CN.md](docs/zh-CN/architecture.md)，协议栈本身见
+[docs/protocol.zh-CN.md](docs/zh-CN/protocol.md)。
 
 ## 支持范围
 
@@ -225,7 +225,7 @@ rust-reality serve --config config.tuned.json
 使用的 REALITY 公钥写入标准错误，使服务器私密配置可以单独保存。两个输出都应
 妥善保护；示例目标必须替换成从实际部署机器执行 `probe-dest` 能通过的目标。
 完整步骤（含线路机/落地机 NXR 拓扑）见
-[docs/getting-started.zh-CN.md](docs/getting-started.zh-CN.md)。
+[docs/getting-started.zh-CN.md](docs/zh-CN/getting-started.md)。
 
 ## 配置
 
@@ -236,7 +236,7 @@ rust-reality serve --config config.tuned.json
 `routing.users[].rules`，最后使用该用户组的 `defaultOutbound`。同一规则中不同
 条件类别之间是 AND；同一类别的多个值之间是 OR。所有字段、默认值、约束、匹配
 器语法、热更新行为和专用资源模式见
-[配置参考](docs/configuration.zh-CN.md)。v1.2 配置在 v1.3 重启前必须把原来共享的
+[配置参考](docs/zh-CN/configuration.md)。v1.2 配置在 v1.3 重启前必须把原来共享的
 `realitySettings.shortIds` 列表移到其所属的 `clients[]` 条目下。
 
 ## 部署
@@ -245,11 +245,11 @@ rust-reality serve --config config.tuned.json
 并原子发布兼容的新配置，已建立连接继续使用旧 generation。请安装并审查
 [`deploy/rust-reality.service`](deploy/rust-reality.service) 提供的 systemd 加固
 基线；验证、服务账号、防火墙规则、升级与回滚见
-[docs/deployment.zh-CN.md](docs/deployment.zh-CN.md)。
+[docs/deployment.zh-CN.md](docs/zh-CN/deployment.md)。
 
 ## 安全
 
-开放监听端口前请阅读[威胁模型](docs/threat-model.zh-CN.md)；支持版本、私密
+开放监听端口前请阅读[威胁模型](docs/zh-CN/threat-model.md)；支持版本、私密
 漏洞报告和密码学边界——包括 ring AEAD 提供者已披露的清零取舍和
 `--no-default-features` RustCrypto 回退构建——见
 [安全策略](docs/zh-CN/security.md)。应用程序无法阻止上游流量型 DDoS 填满 VPS 链路。
@@ -260,16 +260,16 @@ NXR 必须由防火墙限制，其认证后的字节是明文。不要在 issue 
 
 | 指南 | English | 简体中文 |
 | --- | --- | --- |
-| 文档索引 | [English](docs/index.md) | [简体中文](docs/index.zh-CN.md) |
-| 快速上手 | [English](docs/getting-started.md) | [简体中文](docs/getting-started.zh-CN.md) |
-| 命令行参考 | [English](docs/cli.md) | [简体中文](docs/cli.zh-CN.md) |
-| 配置参考 | [English](docs/configuration.md) | [简体中文](docs/configuration.zh-CN.md) |
-| 部署指南 | [English](docs/deployment.md) | [简体中文](docs/deployment.zh-CN.md) |
-| 协议概览 | [English](docs/protocol.md) | [简体中文](docs/protocol.zh-CN.md) |
-| 架构 | [English](docs/architecture.md) | [简体中文](docs/architecture.zh-CN.md) |
-| 性能 | [English](docs/performance.md) | [简体中文](docs/performance.zh-CN.md) |
-| 基准测试 | [English](docs/benchmarks.md) | [简体中文](docs/benchmarks.zh-CN.md) |
-| 威胁模型 | [English](docs/threat-model.md) | [简体中文](docs/threat-model.zh-CN.md) |
+| 文档索引 | [English](docs/en/index.md) | [简体中文](docs/zh-CN/index.md) |
+| 快速上手 | [English](docs/en/getting-started.md) | [简体中文](docs/zh-CN/getting-started.md) |
+| 命令行参考 | [English](docs/en/cli.md) | [简体中文](docs/zh-CN/cli.md) |
+| 配置参考 | [English](docs/en/configuration.md) | [简体中文](docs/zh-CN/configuration.md) |
+| 部署指南 | [English](docs/en/deployment.md) | [简体中文](docs/zh-CN/deployment.md) |
+| 协议概览 | [English](docs/en/protocol.md) | [简体中文](docs/zh-CN/protocol.md) |
+| 架构 | [English](docs/en/architecture.md) | [简体中文](docs/zh-CN/architecture.md) |
+| 性能 | [English](docs/en/performance.md) | [简体中文](docs/zh-CN/performance.md) |
+| 基准测试 | [English](docs/en/benchmarks.md) | [简体中文](docs/zh-CN/benchmarks.md) |
+| 威胁模型 | [English](docs/en/threat-model.md) | [简体中文](docs/zh-CN/threat-model.md) |
 | 安全策略 | [English](SECURITY.md) | [简体中文](docs/zh-CN/security.md) |
 
 ## 构建与开发
