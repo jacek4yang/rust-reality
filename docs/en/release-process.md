@@ -172,6 +172,16 @@ never accepted. The short canary does not extrapolate a MiB/hour slope. NXR
 receives a separate compact run on the same LANDING 443, after which the
 intended daily configuration is restored.
 
+When a canary leg cannot exercise a specific topology gap (for example the
+v1.8.0 release where neither the formal loopback legs nor the canary reached
+the LINE-to-LANDING Handoff/NXR path), the established alternative is a
+**supplemental real-WAN run** that extends the live daily configuration
+instead of replacing it: identities, users, and routing are copied verbatim
+(hash-verified), one canary-only user is appended, and the daily generation is
+restored afterwards with the live configuration hash verified byte-identical.
+A compact durable record of such a run lives in
+`benchmarks/evidence/releases/` (`v1.8-supplemental-dual-vps-evidence.md`).
+
 ## Phase 5 — tag, publish, and deploy official artifacts
 
 After exact-main Tier A/B gates pass, create and push an annotated tag, then

@@ -80,7 +80,7 @@ performance, fuzzing, and transport work has something solid to stand on.
   10 768 — because rustc keeps a captured upvar slot alive alongside the awaitee
   slot. The obvious fix was implemented, removed the duplication exactly, and was
   then rejected because two independent formal rounds both failed the protected
-  framed-download cell. See `notes/v1.8.0/rejected-connection-future-factory.md`
+  framed-download cell. See `docs/adr/0010-rejected-connection-future-factory.md`
   for the evidence and the revisit conditions.
 
 ## [1.7.0] - 2026-08-26

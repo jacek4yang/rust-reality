@@ -23,6 +23,9 @@
 | [架构](architecture.md) | 连接生命周期、relay 后端、描述符预算和可观测性。 |
 | [性能](performance.md) | 实测数据平面属性、ring AEAD 提供者和 D1–D11 决策登记。 |
 | [v1.8 内存审计](../en/operations/memory-audit-v1.8.md) | 所有权映射、拷贝台账、分配台账与异步 future 尺寸，并明确列出未测量的内容（英文记录）。 |
+| [性能调查记录](../en/operations/performance-investigation-record.md) | 已关闭性能调查的持久结论：控制路径台账、被否决的机制、历史吞吐问题（英文记录）。 |
+| [冻结的评估器规范](../en/operations/frozen-evaluator-specification.md) | `cargo dev perf evaluate` 的方法学契约与被精确复现的旧语义（英文记录）。 |
+| [模糊测试攻击面映射](../en/operations/fuzz-attack-surface.md) | 每个外部可达解析器对应的 fuzz 目标，以及已记录的缺口理由（英文记录）。 |
 | [基准测试](benchmarks.md) | 测量策略、harness、规范样本、兼容性门禁和限制。 |
 | [架构决策记录](../adr/README.md) | ADR，包括 io_uring 被移除的原因。 |
 

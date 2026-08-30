@@ -1,8 +1,9 @@
 //! The evidence loader: files on disk to validated, typed evidence.
 //!
-//! Transcribed from Part II of `tools/inventory/evaluator-specification.md`, which was
-//! itself read out of the Python evaluator. This is parity work: where the legacy rules
-//! are awkward they are reproduced, not tidied.
+//! Transcribed from the frozen evaluator specification
+//! (`docs/en/operations/frozen-evaluator-specification.md`), which was itself read
+//! out of the Python evaluator. This is parity work: where the legacy rules are
+//! awkward they are reproduced, not tidied.
 //!
 //! # One validation pass feeds both consumers
 //!

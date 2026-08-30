@@ -457,8 +457,8 @@ the affected server's splice chunks collapse to ~2 KiB (~0.7× on that
 cell). This was bisected, straced (38 failed `F_SETPIPE_SZ` grows), and
 causally proven (raising the limit restores 1647–1662 MiB/s parity); it
 is an external kernel constraint, not a code regression — the formal
-fallback ABBA gate shows 1.00× with the cpuPerGiB win. Analysis:
-`notes/v1.6.0/fallback-exploratory-cell-pipeclamp.md`.
+fallback ABBA gate shows 1.00× with the cpuPerGiB win. Analysis: the fallback exploratory-cell pipe-clamp investigation
+(Git history retains the full analysis; the mechanism is summarised above).
 
 ### DNS vs Xray — `readme-comparison/dns/`
 

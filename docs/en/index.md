@@ -23,6 +23,9 @@ English | [简体中文](../zh-CN/index.md)
 | [Architecture](architecture.md) | Connection lifecycle, relay backends, descriptor budget, and observability. |
 | [Performance](performance.md) | Measured data-plane properties, the ring AEAD provider, and the D1–D11 decision register. |
 | [v1.8 memory audit](operations/memory-audit-v1.8.md) | Ownership map, copy ledger, allocation ledger, and async future sizes, with what is deliberately not measured. |
+| [Performance investigation record](operations/performance-investigation-record.md) | Durable conclusions of closed performance investigations: control-path ledger, rejected mechanisms, historical throughput question. |
+| [Frozen evaluator specification](operations/frozen-evaluator-specification.md) | Methodology contract of `cargo dev perf evaluate` and the legacy semantics reproduced exactly. |
+| [Fuzz attack-surface map](operations/fuzz-attack-surface.md) | Every externally reachable parser mapped to its fuzz target, with recorded gap justifications. |
 | [Benchmarks](benchmarks.md) | Measurement policy, harnesses, canonical samples, compatibility gate, and limitations. |
 | [Architecture decisions](../adr/README.md) | ADRs, including why io_uring was removed. |
 

@@ -126,7 +126,7 @@ demonstrated production constraint.
 
 Full hypothesis, implementation, evidence, candidate mechanism, and the three
 revisit conditions are recorded in
-`notes/v1.8.0/rejected-connection-future-factory.md`. The duplication therefore
+`docs/adr/0010-rejected-connection-future-factory.md`. The duplication therefore
 **remains present in v1.8** and is documented here rather than silently fixed or
 silently ignored.
 

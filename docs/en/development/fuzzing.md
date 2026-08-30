@@ -4,7 +4,9 @@ Fuzz coverage is an attack-surface requirement, not decoration: every externally
 reachable parser, decoder, or reconstruction path must have a fuzz target or a
 recorded justification for the gap. See the threat model
 ([English](../threat-model.md) | [简体中文](../../zh-CN/threat-model.md)) for the
-trust boundaries that make this a security discipline.
+trust boundaries that make this a security discipline, and the
+[attack-surface map](../operations/fuzz-attack-surface.md) for the complete
+surface-to-target inventory with recorded gaps.
 
 ## Targets
 
