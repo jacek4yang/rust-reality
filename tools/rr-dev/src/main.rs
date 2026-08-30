@@ -501,6 +501,28 @@ enum BenchCommand {
         #[arg(long)]
         fixed_target: Option<std::net::SocketAddr>,
     },
+    /// Internal deployment-suite acceptance entry point.
+    #[command(hide = true)]
+    Deployment {
+        /// Exact rust-reality binary under test.
+        #[arg(long, default_value = "target/release/rust-reality")]
+        rust_bin: PathBuf,
+        /// Exact stock Xray comparator binary.
+        #[arg(long, default_value = "xray")]
+        xray_bin: PathBuf,
+        /// New durable evidence directory.
+        #[arg(long)]
+        out_dir: PathBuf,
+        /// Stable evidence identity.
+        #[arg(long)]
+        run_id: String,
+        /// Reviewed deployment program.
+        #[arg(long, default_value = "smoke")]
+        plan: String,
+        /// Preserve the ephemeral workspace for diagnosis.
+        #[arg(long)]
+        keep_work: bool,
+    },
     /// Validate bounded machine profiles under exact cgroup-v2 limits.
     Profiles {
         /// Path to the exact rust-reality release binary under test.
@@ -1468,6 +1490,42 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("bench socks-server: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        BenchCommand::Deployment {
+            rust_bin,
+            xray_bin,
+            out_dir,
+            run_id,
+            plan,
+            keep_work,
+        } => {
+            let kind = match bench::deployment::PlanKind::parse(plan) {
+                Ok(kind) => kind,
+                Err(error) => {
+                    eprintln!("bench deployment: {error}");
+                    return ExitCode::from(2);
+                }
+            };
+            let run = bench::deployment::RunPlan {
+                repo: repo.to_path_buf(),
+                rust_bin: rust_bin.clone(),
+                xray_bin: xray_bin.clone(),
+                out_dir: out_dir.clone(),
+                run_id: run_id.clone(),
+                program: bench::deployment::Plan::reviewed(kind),
+                keep_work: *keep_work,
+            };
+            match bench::deployment::run(&run) {
+                Ok(outcome) => {
+                    println!("summary: {}", outcome.summary_path.display());
+                    println!("completion: {}", outcome.marker_path.display());
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("bench deployment: {error}");
                     ExitCode::FAILURE
                 }
             }
