@@ -936,6 +936,16 @@ struct RunState<'a> {
     port_limit: u16,
 }
 
+struct SharedFixture {
+    route_origin_port: u16,
+    fixed_origin_port: u16,
+    cover_port: u16,
+    payload_a: PathBuf,
+    payload_b: PathBuf,
+    sha_a: String,
+    sha_b: String,
+}
+
 impl RunState<'_> {
     fn port(&mut self) -> Result<u16, String> {
         if self.next_port >= self.port_limit {
@@ -1052,7 +1062,7 @@ pub(crate) fn run_routing_acceptance(plan: &RunPlan) -> Result<RunOutcome, Strin
         workspace.keep();
     }
     let run = RunDirectory::create(&plan.out_dir)?;
-    let base_port = workspace::reserve_block(32)?;
+    let base_port = workspace::reserve_block(96)?;
     let mut state = RunState {
         plan,
         rust,
@@ -1062,13 +1072,15 @@ pub(crate) fn run_routing_acceptance(plan: &RunPlan) -> Result<RunOutcome, Strin
         lock,
         children: Vec::new(),
         next_port: base_port,
-        port_limit: base_port + 32,
+        port_limit: base_port + 96,
     };
     state
         .run
         .write_new("plan.json", &plan.program.to_json().to_python_json())?;
     write_environment(&state)?;
-    run_routing_section(&mut state)?;
+    let fixture = prepare_shared_fixture(&mut state)?;
+    run_routing_section(&mut state, &fixture)?;
+    run_cost_section(&mut state, &fixture)?;
     let summary = routing_run_summary(&state)?;
     let summary_path = state.run.write_new("summary.json", &summary.to_python_json())?;
     let contract = run_contract(&state, &summary_path)?;
@@ -1084,27 +1096,203 @@ pub(crate) fn run_routing_acceptance(plan: &RunPlan) -> Result<RunOutcome, Strin
     })
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one bounded section keeps process ownership and its proof visibly together"
-)]
-fn run_routing_section(state: &mut RunState<'_>) -> Result<(), String> {
+#[derive(Clone, Copy)]
+struct CostVariant {
+    label: &'static str,
+    uuids: usize,
+    rules: usize,
+    global_rules: usize,
+    strategy: &'static str,
+    domain_destination: bool,
+    with_ip: bool,
+}
+
+const COST_VARIANTS: [CostVariant; 5] = [
+    CostVariant {
+        label: "simple",
+        uuids: 1,
+        rules: 0,
+        global_rules: 0,
+        strategy: "AsIs",
+        domain_destination: false,
+        with_ip: false,
+    },
+    CostVariant {
+        label: "medium",
+        uuids: 100,
+        rules: 16,
+        global_rules: 4,
+        strategy: "AsIs",
+        domain_destination: false,
+        with_ip: true,
+    },
+    CostVariant {
+        label: "complex",
+        uuids: 1_000,
+        rules: 64,
+        global_rules: 8,
+        strategy: "AsIs",
+        domain_destination: false,
+        with_ip: true,
+    },
+    CostVariant {
+        label: "complex-ipifnonmatch",
+        uuids: 1_000,
+        rules: 64,
+        global_rules: 8,
+        strategy: "IPIfNonMatch",
+        domain_destination: true,
+        with_ip: true,
+    },
+    CostVariant {
+        label: "complex-ipondemand",
+        uuids: 1_000,
+        rules: 64,
+        global_rules: 8,
+        strategy: "IPOnDemand",
+        domain_destination: true,
+        with_ip: true,
+    },
+];
+
+fn run_cost_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Result<(), String> {
+    for variant in COST_VARIANTS {
+        let server_port = state.port()?;
+        let socks_port = state.port()?;
+        let uuids = generate_uuids(&state.rust, variant.uuids)?;
+        let generated = soak::generated_public_config(
+            &state.rust.path,
+            vec![
+                "config".to_owned(),
+                "generate".to_owned(),
+                "standalone".to_owned(),
+                "--listen".to_owned(),
+                "127.0.0.1".to_owned(),
+                "--port".to_owned(),
+                server_port.to_string(),
+                "--target".to_owned(),
+                format!("127.0.0.1:{}", fixture.cover_port),
+                "--server-name".to_owned(),
+                "localhost".to_owned(),
+            ],
+            &state.workspace,
+            &format!("assets-cost-{}", variant.label),
+        )?;
+        let json = scale_config(&ScaleConfigInput {
+            base: &generated.json,
+            uuids: &uuids,
+            rules: variant.rules,
+            global_rules: variant.global_rules,
+            with_ip: variant.with_ip,
+            strategy: variant.strategy,
+            assets: &state.workspace.join(&format!("assets-cost-{}", variant.label)),
+        })?;
+        let config_path = state.workspace.join(&format!("cost-{}.json", variant.label));
+        soak::write_config(&config_path, &json)?;
+        soak::check_config(&state.rust.path, &config_path)?;
+        let server = soak::spawn_rust(
+            &format!("deployment-cost-{}-server", variant.label),
+            &state.rust,
+            &config_path,
+            &state.workspace,
+            &isolated_environment(),
+            &state.workspace.join(&format!("cost-{}-server.log", variant.label)),
+            server_port,
+        )?;
+        state.children.push(server);
+        let identity = RealityIdentity {
+            uuid: uuids[0].clone(),
+            short_id: generated.short_id,
+            server_name: "localhost".to_owned(),
+            target: format!("127.0.0.1:{}", fixture.cover_port),
+        };
+        state.spawn_xray_client(
+            &format!("deployment-cost-{}-client", variant.label),
+            server_port,
+            socks_port,
+            &generated.public_key,
+            &identity,
+        )?;
+        let destination = if variant.domain_destination {
+            super::workload::Destination::Domain("localhost".to_owned())
+        } else {
+            super::workload::Destination::Loopback
+        };
+        if super::workload::connect_through(
+            socks_port,
+            &destination,
+            fixture.route_origin_port,
+        )
+        .is_none()
+        {
+            return Err(format!(
+                "deployment cost {} warm-up did not reach the native origin",
+                variant.label
+            ));
+        }
+        let rows = super::workload::run_slot_to(
+            &super::workload::SetupRatePlan {
+                socks_port,
+                origin_port: fixture.route_origin_port,
+                connections: state.plan.program.connections,
+                concurrencies: state.plan.program.concurrencies.clone(),
+                samples: state.plan.program.samples,
+                implementation: format!("cost-{}", variant.label),
+                block: 0,
+                position: 0,
+                record_latencies: false,
+            },
+            &destination,
+        )?;
+        state.run.write_jsonl(
+            &format!("setup-cost-{}.jsonl", variant.label),
+            &rows.iter().map(setup_row_json).collect::<Vec<_>>(),
+        )?;
+    }
+    Ok(())
+}
+
+fn setup_row_json(row: &super::workload::SampleRow) -> String {
+    let mut fields = vec![
+        ("concurrency", count(row.concurrency)),
+        ("sampleIndex", count(row.sample_index)),
+        ("wallSeconds", Json::Float(row.wall_seconds)),
+        ("connections", count(row.connections)),
+        ("failed", count(row.failed)),
+    ];
+    if let Some(rate) = row.connections_per_second() {
+        fields.push(("connectionsPerSecond", Json::Float(rate)));
+        for (name, fraction) in [
+            ("p50Seconds", 0.50),
+            ("p90Seconds", 0.90),
+            ("p95Seconds", 0.95),
+            ("p99Seconds", 0.99),
+        ] {
+            if let Ok(value) = super::aggregate::floor_percentile(&row.latencies_seconds, fraction) {
+                fields.push((name, Json::Float(value)));
+            }
+        }
+    }
+    Json::object(fields).to_compact_json()
+}
+
+fn prepare_shared_fixture(state: &mut RunState<'_>) -> Result<SharedFixture, String> {
     let route_origin_port = state.port()?;
     let fixed_origin_port = state.port()?;
     let cover_port = state.port()?;
-    let fixed_socks_port = state.port()?;
-    let server_port = state.port()?;
-    let socks_ports = [state.port()?, state.port()?, state.port()?, state.port()?];
     let payload_a = state.workspace.join("payload-a");
     let payload_b = state.workspace.join("payload-b");
     std::fs::create_dir_all(&payload_a)
         .map_err(|error| format!("could not create {}: {error}", payload_a.display()))?;
     std::fs::create_dir_all(&payload_b)
         .map_err(|error| format!("could not create {}: {error}", payload_b.display()))?;
+    super::origin_go::write_setup_payload(&payload_a)?;
     super::origin::write_payload(&payload_a.join("payload-0.bin"), 256)?;
     super::origin::write_payload(&payload_a.join("payload-1.bin"), 1024 * 1024)?;
     write_inverted_payload(&payload_b.join("payload-1.bin"), 1024 * 1024)?;
     write_routing_assets(&payload_a)?;
+    let sha_a = hash::sha256_file(&payload_a.join("payload-1.bin"))?;
+    let sha_b = hash::sha256_file(&payload_b.join("payload-1.bin"))?;
     let (certificate, key) = super::origin_tls::generate_self_signed(state.workspace.path())?;
     state.spawn_origin("deployment-origin-a", &payload_a, route_origin_port, None)?;
     state.spawn_origin("deployment-origin-b", &payload_b, fixed_origin_port, None)?;
@@ -1114,6 +1302,28 @@ fn run_routing_section(state: &mut RunState<'_>) -> Result<(), String> {
         cover_port,
         Some((&certificate, &key)),
     )?;
+    Ok(SharedFixture {
+        route_origin_port,
+        fixed_origin_port,
+        cover_port,
+        payload_a,
+        payload_b,
+        sha_a,
+        sha_b,
+    })
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "one bounded section keeps process ownership and its proof visibly together"
+)]
+fn run_routing_section(
+    state: &mut RunState<'_>,
+    fixture: &SharedFixture,
+) -> Result<(), String> {
+    let fixed_socks_port = state.port()?;
+    let server_port = state.port()?;
+    let socks_ports = [state.port()?, state.port()?, state.port()?, state.port()?];
     state.spawn_helper(
         "deployment-fixed-socks",
         &[
@@ -1122,7 +1332,7 @@ fn run_routing_section(state: &mut RunState<'_>) -> Result<(), String> {
             "--port".to_owned(),
             fixed_socks_port.to_string(),
             "--fixed-target".to_owned(),
-            format!("127.0.0.1:{fixed_origin_port}"),
+            format!("127.0.0.1:{}", fixture.fixed_origin_port),
         ],
         "fixed-socks.log",
         fixed_socks_port,
@@ -1139,7 +1349,7 @@ fn run_routing_section(state: &mut RunState<'_>) -> Result<(), String> {
             "--port".to_owned(),
             server_port.to_string(),
             "--target".to_owned(),
-            format!("127.0.0.1:{cover_port}"),
+            format!("127.0.0.1:{}", fixture.cover_port),
             "--server-name".to_owned(),
             "localhost".to_owned(),
         ],
@@ -1149,12 +1359,12 @@ fn run_routing_section(state: &mut RunState<'_>) -> Result<(), String> {
     let routing = routing_config(&RoutingConfigInput {
         base: &generated.json,
         uuids: &uuids,
-        origin_a_port: route_origin_port,
+        origin_a_port: fixture.route_origin_port,
         socks_b_port: fixed_socks_port,
         blocked_port: 9666,
         geosite_label: ROUTING_GEOSITE_LABEL,
         assets: &state.workspace.join("assets-routing"),
-        asset_origin_port: Some(route_origin_port),
+        asset_origin_port: Some(fixture.route_origin_port),
     })?;
     let server_config = state.workspace.join("routing-server.json");
     soak::write_config(&server_config, &routing.json)?;
@@ -1174,7 +1384,7 @@ fn run_routing_section(state: &mut RunState<'_>) -> Result<(), String> {
             uuid: uuids[index].clone(),
             short_id: routing.short_ids[index].clone(),
             server_name: "localhost".to_owned(),
-            target: format!("127.0.0.1:{cover_port}"),
+            target: format!("127.0.0.1:{}", fixture.cover_port),
         };
         state.spawn_xray_client(
             &format!("deployment-routing-client-{index}"),
@@ -1184,16 +1394,14 @@ fn run_routing_section(state: &mut RunState<'_>) -> Result<(), String> {
             &identity,
         )?;
     }
-    let sha_a = hash::sha256_file(&payload_a.join("payload-1.bin"))?;
-    let sha_b = hash::sha256_file(&payload_b.join("payload-1.bin"))?;
     let cases = route_cases(&RouteMatrixInput {
         uuids: &uuids,
         socks_ports: &socks_ports,
-        origin_a_port: route_origin_port,
-        origin_b_port: fixed_origin_port,
+        origin_a_port: fixture.route_origin_port,
+        origin_b_port: fixture.fixed_origin_port,
         blocked_port: 9666,
-        sha_a: &sha_a,
-        sha_b: &sha_b,
+        sha_a: &fixture.sha_a,
+        sha_b: &fixture.sha_b,
     })?;
     let results = probe_routes(&cases);
     state.run.write_jsonl(
