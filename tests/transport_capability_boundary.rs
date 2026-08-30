@@ -138,6 +138,29 @@ fn the_session_engine_names_no_transport_capability() {
 }
 
 #[test]
+fn transport_never_depends_back_on_the_runtime_adapter() {
+    // Dependency direction is Runtime Adapter -> Transport. In particular,
+    // descriptor accounting for sockets and pipes is a concrete transport
+    // mechanism; Transport must not import its permit type back from Runtime.
+    let transport = repository_root().join("src/transport");
+    let mut violations = Vec::new();
+    for path in rust_sources(&transport) {
+        let source = fs::read_to_string(&path).expect("transport source must be readable");
+        let code = without_line_comments(&source);
+        for token in ["runtime::"] {
+            if code.contains(token) {
+                violations.push(format!("{}: {token}", path.display()));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "Transport depends upward on the Runtime Adapter:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn the_directional_capability_cannot_be_asked_for_reset_as_eof() {
     // The two raw capabilities honour different options, so they take different
     // policy types. `DirectionalRelayContext` has no reset-as-EOF field at all,

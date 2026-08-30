@@ -684,8 +684,9 @@ mod tests {
     use crate::{
         config::{Config, WarmConnectionPolicy, test_config_json},
         protocol::reality::{ReplayCache, SESSION_ID_LEN, client_hello_fixtures},
-        runtime::{FdBudget, PressureGauge, ResourceGovernor},
+        runtime::{PressureGauge, ResourceGovernor},
         server::{fallback::FallbackError, warm_pool::WarmPoolAuthority},
+        transport::FdBudget,
     };
 
     const COVER_RESPONSE: &[u8] = b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n";
@@ -840,7 +841,7 @@ mod tests {
             replay,
             crate::transport::TcpRelay::new(
                 &crate::config::RelayPolicy::default(),
-                crate::runtime::FdBudget::new(4_096),
+                crate::transport::FdBudget::new(4_096),
             )
             .expect("test relay must build"),
             &config.network,
@@ -914,7 +915,7 @@ mod tests {
             replay,
             crate::transport::TcpRelay::new(
                 &crate::config::RelayPolicy::default(),
-                crate::runtime::FdBudget::new(4_096),
+                crate::transport::FdBudget::new(4_096),
             )
             .expect("test relay must build"),
             &config.network,

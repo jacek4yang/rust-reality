@@ -24,7 +24,7 @@ use std::sync::{
 use tokio::sync::Notify;
 
 use super::admission::AdmissionKind;
-use super::fd_budget::FdPressure;
+use crate::transport::FdPressure;
 
 /// The effective process resource-pressure state.
 ///

@@ -698,7 +698,7 @@ mod tests {
             Duration::from_secs(1),
             TcpRelay::new(
                 &RelayPolicy::default(),
-                crate::runtime::FdBudget::new(4_096),
+                crate::transport::FdBudget::new(4_096),
             )
             .expect("relay policy must compile"),
             Duration::from_secs(1),
@@ -738,7 +738,7 @@ mod tests {
                 Duration::from_secs(1),
                 TcpRelay::new(
                     &RelayPolicy::default(),
-                    crate::runtime::FdBudget::new(4_096),
+                    crate::transport::FdBudget::new(4_096),
                 )
                 .expect("relay policy must compile"),
                 Duration::from_secs(1),
@@ -788,7 +788,7 @@ mod tests {
             Duration::from_secs(1),
             TcpRelay::new(
                 &RelayPolicy::default(),
-                crate::runtime::FdBudget::new(4_096),
+                crate::transport::FdBudget::new(4_096),
             )
             .expect("relay policy must compile"),
             Duration::from_secs(1),
@@ -823,7 +823,7 @@ mod tests {
             Duration::from_secs(1),
             TcpRelay::new(
                 &RelayPolicy::default(),
-                crate::runtime::FdBudget::new(4_096),
+                crate::transport::FdBudget::new(4_096),
             )
             .expect("relay policy must compile"),
             Duration::from_secs(1),
@@ -901,7 +901,7 @@ mod tests {
             Duration::from_secs(1),
             TcpRelay::new(
                 &RelayPolicy::default(),
-                crate::runtime::FdBudget::new(4_096),
+                crate::transport::FdBudget::new(4_096),
             )
             .expect("relay policy must compile"),
             Duration::from_secs(1),

@@ -192,7 +192,7 @@ fn landing_registry(port: u16, key: &str) -> Arc<OutboundRegistry> {
         }],
         &DirectBarrierConfig::default(),
         Duration::from_secs(1),
-        rust_reality::runtime::FdBudget::new(4_096),
+        rust_reality::transport::FdBudget::new(4_096),
     ))
 }
 

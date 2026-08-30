@@ -21,16 +21,18 @@ use tokio::{
 use crate::{
     config::RelayPolicy,
     protocol::reality::tls13::{IdleDeadline, IdleError},
-    runtime::FdBudget,
 };
 
 #[cfg(target_os = "linux")]
-use crate::runtime::{FdPermit, UNITS_SPLICE_DIRECTION, UNITS_SPLICE_RELAY};
+use super::{FdPermit, UNITS_SPLICE_DIRECTION, UNITS_SPLICE_RELAY};
 
-use super::backend::{
-    BackendCapability, BackendDeclineReason, BackendReport, BackendRequest, BackendRun,
-    DirectionalRelayContext, DirectionalRelayOutcome, RelayBackend, RelayContext, RelayDirection,
-    RelayOutcome, TransferLedger,
+use super::{
+    FdBudget,
+    backend::{
+        BackendCapability, BackendDeclineReason, BackendReport, BackendRequest, BackendRun,
+        DirectionalRelayContext, DirectionalRelayOutcome, RelayBackend, RelayContext,
+        RelayDirection, RelayOutcome, TransferLedger,
+    },
 };
 
 /// Process-wide bounded relay state for plaintext TCP-to-TCP boundaries.
@@ -1360,10 +1362,11 @@ mod tests {
         time,
     };
 
-    use super::{DirectionalRelayContext, TcpRelay, classify_abort, is_liveness_timeout_abort};
+    use super::{
+        DirectionalRelayContext, FdBudget, TcpRelay, classify_abort, is_liveness_timeout_abort,
+    };
     use crate::{
         config::RelayPolicy,
-        runtime::FdBudget,
         transport::{
             BackendRequest, DirectionalRelayOutcome, RelayBackend, RelayContext, RelayDirection,
         },
@@ -1484,11 +1487,11 @@ mod tests {
 
         assert_eq!(
             observed.load(std::sync::atomic::Ordering::Relaxed),
-            u64::from(crate::runtime::UNITS_SPLICE_RELAY),
+            u64::from(crate::transport::UNITS_SPLICE_RELAY),
             "a bidirectional splice relay uses two pipe pairs, all four accounted"
         );
         assert!(
-            budget.in_use() <= u64::from(crate::runtime::UNITS_SPLICE_RELAY),
+            budget.in_use() <= u64::from(crate::transport::UNITS_SPLICE_RELAY),
             "after completion the pool may retain drained pipes within its keep count"
         );
         drop(relay);
@@ -1535,7 +1538,7 @@ mod tests {
         assert_eq!(response.expect("client I/O must succeed"), b"response");
         assert_eq!(stats.inbound_to_outbound(), 7);
         assert!(
-            budget.in_use() <= u64::from(crate::runtime::UNITS_SPLICE_DIRECTION),
+            budget.in_use() <= u64::from(crate::transport::UNITS_SPLICE_DIRECTION),
             "a declined attempt may retain one drained pipe in the pool"
         );
         drop(relay);
@@ -1582,7 +1585,7 @@ mod tests {
                 .expect("relay must complete");
             stats.expect("relay must succeed");
             assert!(
-                budget.in_use() <= u64::from(crate::runtime::UNITS_SPLICE_RELAY),
+                budget.in_use() <= u64::from(crate::transport::UNITS_SPLICE_RELAY),
                 "each cycle's pool retention stays within two pipe pairs"
             );
         }
@@ -1593,7 +1596,7 @@ mod tests {
             "dropping the relay (and its pool) returns the counter to baseline"
         );
         assert_eq!(budget.underflows(), 0);
-        assert!(budget.peak_in_use() <= u64::from(crate::runtime::UNITS_SPLICE_RELAY));
+        assert!(budget.peak_in_use() <= u64::from(crate::transport::UNITS_SPLICE_RELAY));
     }
 
     #[cfg(target_os = "linux")]
@@ -1842,7 +1845,7 @@ mod tests {
         assert_eq!(pool.snapshot().shrinks, 1, "the second return shrinks");
         assert_eq!(
             budget.in_use(),
-            in_flight - u64::from(crate::runtime::UNITS_SPLICE_DIRECTION),
+            in_flight - u64::from(crate::transport::UNITS_SPLICE_DIRECTION),
             "the shrunk pipe releases its units"
         );
         drop(pool);
@@ -1996,11 +1999,11 @@ mod tests {
         assert_eq!(received.len(), payload.len());
         assert_eq!(
             budget.peak_in_use(),
-            u64::from(crate::runtime::UNITS_SPLICE_DIRECTION),
+            u64::from(crate::transport::UNITS_SPLICE_DIRECTION),
             "one pipe pair is exactly two descriptor units"
         );
         assert!(
-            budget.in_use() <= u64::from(crate::runtime::UNITS_SPLICE_DIRECTION),
+            budget.in_use() <= u64::from(crate::transport::UNITS_SPLICE_DIRECTION),
             "after completion the pool may retain the drained pipe within its keep count"
         );
         drop(relay);
@@ -2027,7 +2030,7 @@ mod tests {
             .await;
             outcome.expect("directional relay must succeed");
             assert!(
-                budget.in_use() <= u64::from(crate::runtime::UNITS_SPLICE_DIRECTION),
+                budget.in_use() <= u64::from(crate::transport::UNITS_SPLICE_DIRECTION),
                 "cycle {cycle}: pool retention stays within one pipe pair"
             );
         }
@@ -2038,7 +2041,7 @@ mod tests {
             "dropping the relay (and its pool) returns the counter to baseline"
         );
         assert_eq!(budget.underflows(), 0);
-        assert!(budget.peak_in_use() <= u64::from(crate::runtime::UNITS_SPLICE_DIRECTION));
+        assert!(budget.peak_in_use() <= u64::from(crate::transport::UNITS_SPLICE_DIRECTION));
     }
 
     #[cfg(target_os = "linux")]
@@ -2293,7 +2296,7 @@ mod tests {
         .await;
         assert_timeout_abort(&error);
         assert!(
-            budget.in_use() <= u64::from(crate::runtime::UNITS_SPLICE_DIRECTION),
+            budget.in_use() <= u64::from(crate::transport::UNITS_SPLICE_DIRECTION),
             "on the timeout path the drained pipe may be retained within the keep count"
         );
         drop(relay);

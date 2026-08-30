@@ -2141,14 +2141,13 @@ mod tests {
                 VisionDecoder, VisionEncoder, VisionMode,
             },
         },
-        runtime::FdBudget,
         server::{
             direct::{DirectHandoff, Direction},
             outbound::OutboundRegistry,
             reality::RealityEstablished,
             routing::{EmptyAssetMatcher, RoutingTable},
         },
-        transport::{RelayBackend, TcpRelay},
+        transport::{FdBudget, RelayBackend, TcpRelay},
     };
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -3603,7 +3602,7 @@ mod tests {
             }],
             &barrier,
             Duration::from_millis(governor.connect_timeout_ms),
-            crate::runtime::FdBudget::new(4_096),
+            crate::transport::FdBudget::new(4_096),
         );
         let routing =
             RoutingTable::compile(
@@ -3633,7 +3632,7 @@ mod tests {
                 pipe_pool: true,
                 max_pooled_pipes: 8,
             },
-            crate::runtime::FdBudget::new(4_096),
+            crate::transport::FdBudget::new(4_096),
         )
         .expect("test relay policy must compile");
         VisionHandler::new(outbounds, routing, relay, governor)

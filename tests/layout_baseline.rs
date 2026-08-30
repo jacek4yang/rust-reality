@@ -7,8 +7,9 @@ use rust_reality::{
         reality::{ClientHello, ReplayCache, tls13::TlsApplicationIo},
         vless::{VisionDecoder, VisionEncoder},
     },
-    runtime::{AdmissionPermit, DirectBarrier, FdBudget, ResourceGovernor},
+    runtime::{AdmissionPermit, DirectBarrier, ResourceGovernor},
     server::reality::RealityEstablished,
+    transport::FdBudget,
 };
 use tokio::net::TcpStream;
 

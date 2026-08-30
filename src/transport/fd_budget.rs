@@ -1,4 +1,9 @@
-//! Strict upper-bound file-descriptor admission.
+//! Strict upper-bound file-descriptor admission for transport resources.
+//!
+//! The server/runtime adapter constructs and owns the process budget, then
+//! transfers RAII permits with sockets and pipes. The concrete accounting
+//! mechanism lives with Transport so the lower layer never depends back on the
+//! Runtime Adapter merely to account for descriptors it owns.
 //!
 //! # Why this module exists
 //!
