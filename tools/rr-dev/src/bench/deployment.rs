@@ -1081,6 +1081,7 @@ pub(crate) fn run_routing_acceptance(plan: &RunPlan) -> Result<RunOutcome, Strin
     let fixture = prepare_shared_fixture(&mut state)?;
     run_routing_section(&mut state, &fixture)?;
     run_cost_section(&mut state, &fixture)?;
+    run_topology_section(&mut state, &fixture)?;
     let summary = routing_run_summary(&state)?;
     let summary_path = state.run.write_new("summary.json", &summary.to_python_json())?;
     let contract = run_contract(&state, &summary_path)?;
@@ -1276,6 +1277,359 @@ fn setup_row_json(row: &super::workload::SampleRow) -> String {
     Json::object(fields).to_compact_json()
 }
 
+#[derive(Clone, Copy)]
+struct Topology {
+    label: &'static str,
+    socks_port: u16,
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "the four reviewed topologies are materialized together for direct comparison"
+)]
+fn run_topology_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Result<(), String> {
+    let upstream_socks = state.port()?;
+    state.spawn_helper(
+        "deployment-transparent-socks",
+        &[
+            "bench".to_owned(),
+            "socks-server".to_owned(),
+            "--port".to_owned(),
+            upstream_socks.to_string(),
+        ],
+        "transparent-socks.log",
+        upstream_socks,
+    )?;
+
+    let standalone_port = state.port()?;
+    let standalone_socks = state.port()?;
+    let standalone = deployment_public_config(
+        state,
+        "standalone",
+        vec![
+            "config".to_owned(),
+            "generate".to_owned(),
+            "standalone".to_owned(),
+            "--listen".to_owned(),
+            "127.0.0.1".to_owned(),
+            "--port".to_owned(),
+            standalone_port.to_string(),
+            "--target".to_owned(),
+            format!("127.0.0.1:{}", fixture.cover_port),
+            "--server-name".to_owned(),
+            "localhost".to_owned(),
+        ],
+    )?;
+    spawn_generated_rust(state, "topo-a", standalone_port, &standalone.json)?;
+    let standalone_identity = identity_for(&standalone, fixture.cover_port);
+    state.spawn_xray_client(
+        "deployment-topo-a-client",
+        standalone_port,
+        standalone_socks,
+        &standalone.public_key,
+        &standalone_identity,
+    )?;
+
+    let nxr_key = soak::node_key(&state.rust.path)?;
+    let nxr_line_port = state.port()?;
+    let nxr_landing_port = state.port()?;
+    let nxr_socks = state.port()?;
+    let nxr_line = deployment_public_config(
+        state,
+        "nxr-line",
+        line_generation_args(
+            nxr_line_port,
+            fixture.cover_port,
+            nxr_landing_port,
+            &nxr_key,
+        ),
+    )?;
+    let nxr_landing = landing_config(state, "nxr-landing", nxr_landing_port, &nxr_key, "warn")?;
+    spawn_generated_rust(state, "topo-b-landing", nxr_landing_port, &nxr_landing)?;
+    spawn_generated_rust(state, "topo-b-line", nxr_line_port, &nxr_line.json)?;
+    let nxr_identity = identity_for(&nxr_line, fixture.cover_port);
+    state.spawn_xray_client(
+        "deployment-topo-b-client",
+        nxr_line_port,
+        nxr_socks,
+        &nxr_line.public_key,
+        &nxr_identity,
+    )?;
+
+    let socks_line_port = state.port()?;
+    let socks_client_port = state.port()?;
+    let socks_line = deployment_public_config(
+        state,
+        "socks-line",
+        line_generation_args(socks_line_port, fixture.cover_port, 9, &nxr_key),
+    )?;
+    let socks_json = soak::patch_socks_outbound(&socks_line.json, upstream_socks)?;
+    spawn_generated_rust(state, "topo-c-line", socks_line_port, &socks_json)?;
+    let socks_identity = identity_for(&socks_line, fixture.cover_port);
+    state.spawn_xray_client(
+        "deployment-topo-c-client",
+        socks_line_port,
+        socks_client_port,
+        &socks_line.public_key,
+        &socks_identity,
+    )?;
+
+    let xray_server_port = state.port()?;
+    let xray_client_port = state.port()?;
+    let keys = suites::generate_xray_keys(&state.xray.path)?;
+    let xray_uuid = generate_uuids(&state.rust, 1)?
+        .pop()
+        .ok_or_else(|| "rust-reality uuid returned no comparator UUID".to_owned())?;
+    let xray_identity = RealityIdentity {
+        uuid: xray_uuid,
+        short_id: "0123456789abcdef".to_owned(),
+        server_name: "localhost".to_owned(),
+        target: format!("127.0.0.1:{}", fixture.cover_port),
+    };
+    let xray_server_config = state.workspace.join("topo-d-xray-server.json");
+    soak::write_config(
+        &xray_server_config,
+        &config::xray_server_with_socks(
+            &xray_identity,
+            xray_server_port,
+            &keys.private,
+            upstream_socks,
+        )
+        .to_python_json(),
+    )?;
+    let mut xray_server = Child::spawn_isolated(
+        "deployment-topo-d-server",
+        &state.xray.path,
+        &[
+            "run".to_owned(),
+            "-config".to_owned(),
+            xray_server_config.display().to_string(),
+        ],
+        state.workspace.path(),
+        &isolated_environment(),
+        &state.workspace.join("topo-d-xray-server.log"),
+    )
+    .map_err(|error| error.to_string())?;
+    xray_server
+        .wait_for_port(xray_server_port, Duration::from_secs(30))
+        .map_err(|error| error.to_string())?;
+    state.children.push(xray_server);
+    state.spawn_xray_client(
+        "deployment-topo-d-client",
+        xray_server_port,
+        xray_client_port,
+        &keys.public,
+        &xray_identity,
+    )?;
+
+    let topologies = [
+        Topology {
+            label: "topo-a",
+            socks_port: standalone_socks,
+        },
+        Topology {
+            label: "topo-b",
+            socks_port: nxr_socks,
+        },
+        Topology {
+            label: "topo-c",
+            socks_port: socks_client_port,
+        },
+        Topology {
+            label: "topo-d",
+            socks_port: xray_client_port,
+        },
+    ];
+    for topology in topologies {
+        run_topology_setup(state, fixture, topology)?;
+        for cell in &state.plan.program.throughput_cells {
+            run_topology_throughput(state, fixture, topology, *cell)?;
+        }
+    }
+    Ok(())
+}
+
+fn deployment_public_config(
+    state: &RunState<'_>,
+    label: &str,
+    args: Vec<String>,
+) -> Result<soak::GeneratedPublicConfig, String> {
+    let mut generated = soak::generated_public_config(
+        &state.rust.path,
+        args,
+        &state.workspace,
+        &format!("assets-{label}"),
+    )?;
+    generated.json = suites::set_rust_log_level(&generated.json, "warn")?;
+    Ok(generated)
+}
+
+fn line_generation_args(
+    line_port: u16,
+    cover_port: u16,
+    landing_port: u16,
+    key: &str,
+) -> Vec<String> {
+    vec![
+        "config".to_owned(),
+        "generate".to_owned(),
+        "line".to_owned(),
+        "--listen".to_owned(),
+        "127.0.0.1".to_owned(),
+        "--port".to_owned(),
+        line_port.to_string(),
+        "--target".to_owned(),
+        format!("127.0.0.1:{cover_port}"),
+        "--server-name".to_owned(),
+        "localhost".to_owned(),
+        "--nxr-address".to_owned(),
+        "127.0.0.1".to_owned(),
+        "--nxr-port".to_owned(),
+        landing_port.to_string(),
+        "--nxr-key".to_owned(),
+        key.to_owned(),
+    ]
+}
+
+fn landing_config(
+    state: &RunState<'_>,
+    label: &str,
+    port: u16,
+    key: &str,
+    level: &str,
+) -> Result<String, String> {
+    let outcome = Tool::new(state.rust.path.display().to_string())
+        .args([
+            "config".to_owned(),
+            "generate".to_owned(),
+            "landing".to_owned(),
+            "--listen".to_owned(),
+            "127.0.0.1".to_owned(),
+            "--port".to_owned(),
+            port.to_string(),
+            "--nxr-key".to_owned(),
+            key.to_owned(),
+        ])
+        .probe()
+        .map_err(|error| format!("{label} config generation failed: {error}"))?;
+    if !outcome.success() {
+        return Err(format!(
+            "{label} config generation exited {:?}: {}",
+            outcome.code,
+            outcome.stderr.trim_end()
+        ));
+    }
+    let patched = soak::patch_server_config(
+        outcome.trimmed_stdout(),
+        &state.workspace,
+        &format!("assets-{label}"),
+        false,
+    )?;
+    suites::set_rust_log_level(&patched, level)
+}
+
+fn spawn_generated_rust(
+    state: &mut RunState<'_>,
+    label: &str,
+    port: u16,
+    json: &str,
+) -> Result<PathBuf, String> {
+    let path = state.workspace.join(&format!("{label}.json"));
+    soak::write_config(&path, json)?;
+    soak::check_config(&state.rust.path, &path)?;
+    let child = soak::spawn_rust(
+        &format!("deployment-{label}"),
+        &state.rust,
+        &path,
+        &state.workspace,
+        &isolated_environment(),
+        &state.workspace.join(&format!("{label}.log")),
+        port,
+    )?;
+    state.children.push(child);
+    Ok(path)
+}
+
+fn identity_for(generated: &soak::GeneratedPublicConfig, cover_port: u16) -> RealityIdentity {
+    RealityIdentity {
+        uuid: generated.uuid.clone(),
+        short_id: generated.short_id.clone(),
+        server_name: "localhost".to_owned(),
+        target: format!("127.0.0.1:{cover_port}"),
+    }
+}
+
+fn run_topology_setup(
+    state: &RunState<'_>,
+    fixture: &SharedFixture,
+    topology: Topology,
+) -> Result<(), String> {
+    let destination = super::workload::Destination::Loopback;
+    if super::workload::connect_through(
+        topology.socks_port,
+        &destination,
+        fixture.route_origin_port,
+    )
+    .is_none()
+    {
+        return Err(format!(
+            "{} warm-up did not reach the native origin",
+            topology.label
+        ));
+    }
+    let rows = super::workload::run_slot(&super::workload::SetupRatePlan {
+        socks_port: topology.socks_port,
+        origin_port: fixture.route_origin_port,
+        connections: state.plan.program.connections,
+        concurrencies: state.plan.program.concurrencies.clone(),
+        samples: state.plan.program.samples,
+        implementation: topology.label.to_owned(),
+        block: 0,
+        position: 0,
+        record_latencies: false,
+    })?;
+    state.run.write_jsonl(
+        &format!("setup-{}.jsonl", topology.label),
+        &rows.iter().map(setup_row_json).collect::<Vec<_>>(),
+    )?;
+    Ok(())
+}
+
+fn run_topology_throughput(
+    state: &RunState<'_>,
+    fixture: &SharedFixture,
+    topology: Topology,
+    cell: ThroughputCell,
+) -> Result<(), String> {
+    let payload = fixture
+        .payload_a
+        .join(format!("payload-{}.bin", cell.payload_mib));
+    let rows = run_socks_throughput(&SocksThroughputPlan {
+        label: topology.label.to_owned(),
+        socks_port: topology.socks_port,
+        url: format!(
+            "http://127.0.0.1:{}/payload-{}.bin",
+            fixture.route_origin_port, cell.payload_mib
+        ),
+        payload_mib: cell.payload_mib,
+        samples: state.plan.program.throughput_samples,
+        concurrencies: vec![cell.concurrency],
+        expected_sha256: hash::sha256_file(&payload)?,
+        workspace: state.workspace.path().to_path_buf(),
+    })?;
+    state.run.write_jsonl(
+        &format!(
+            "tput-{}-{}mib-c{}.jsonl",
+            topology.label, cell.payload_mib, cell.concurrency
+        ),
+        &rows
+            .iter()
+            .map(|row| row.to_json().to_compact_json())
+            .collect::<Vec<_>>(),
+    )?;
+    Ok(())
+}
+
 fn prepare_shared_fixture(state: &mut RunState<'_>) -> Result<SharedFixture, String> {
     let route_origin_port = state.port()?;
     let fixed_origin_port = state.port()?;
@@ -1288,7 +1642,21 @@ fn prepare_shared_fixture(state: &mut RunState<'_>) -> Result<SharedFixture, Str
         .map_err(|error| format!("could not create {}: {error}", payload_b.display()))?;
     super::origin_go::write_setup_payload(&payload_a)?;
     super::origin::write_payload(&payload_a.join("payload-0.bin"), 256)?;
-    super::origin::write_payload(&payload_a.join("payload-1.bin"), 1024 * 1024)?;
+    let mut sizes = BTreeSet::from([1_u64, state.plan.program.longflow_mib]);
+    sizes.extend(
+        state
+            .plan
+            .program
+            .throughput_cells
+            .iter()
+            .map(|cell| cell.payload_mib),
+    );
+    for mebibytes in sizes {
+        super::origin::write_payload(
+            &payload_a.join(format!("payload-{mebibytes}.bin")),
+            mebibytes * 1024 * 1024,
+        )?;
+    }
     write_inverted_payload(&payload_b.join("payload-1.bin"), 1024 * 1024)?;
     write_routing_assets(&payload_a)?;
     let sha_a = hash::sha256_file(&payload_a.join("payload-1.bin"))?;
