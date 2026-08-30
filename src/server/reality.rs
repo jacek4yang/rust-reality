@@ -727,8 +727,11 @@ mod tests {
             governor,
             &policy,
             replay,
-            crate::transport::TcpRelay::new(&crate::config::RelayPolicy::default(), fd_budget)
-                .expect("test relay must build"),
+            crate::transport::TcpRelay::new(
+                crate::transport::tcp_relay::TcpRelayConfig::for_test(),
+                fd_budget,
+            )
+            .expect("test relay must build"),
             &config.network,
             crate::network::NetworkEnvironment::detect(),
             17,
@@ -840,7 +843,7 @@ mod tests {
             &policy,
             replay,
             crate::transport::TcpRelay::new(
-                &crate::config::RelayPolicy::default(),
+                crate::transport::tcp_relay::TcpRelayConfig::for_test(),
                 crate::transport::FdBudget::new(4_096),
             )
             .expect("test relay must build"),
@@ -914,7 +917,7 @@ mod tests {
             &policy,
             replay,
             crate::transport::TcpRelay::new(
-                &crate::config::RelayPolicy::default(),
+                crate::transport::tcp_relay::TcpRelayConfig::for_test(),
                 crate::transport::FdBudget::new(4_096),
             )
             .expect("test relay must build"),

@@ -8,9 +8,8 @@
 
 use std::{io, net::Ipv4Addr, time::Duration};
 
-use rust_reality::{
-    config::RelayPolicy,
-    transport::{BackendRequest, FdBudget, RelayBackend, RelayContext, TcpRelay},
+use rust_reality::transport::{
+    BackendRequest, FdBudget, RelayBackend, RelayContext, TcpRelay, TcpRelayConfig,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -20,12 +19,11 @@ use tokio::{
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 
-fn policy(backend: RelayBackend) -> RelayPolicy {
-    RelayPolicy {
+fn policy(backend: RelayBackend) -> TcpRelayConfig {
+    TcpRelayConfig {
         buffer_bytes: 32 * 1024,
         max_pooled_buffers: 64,
         max_splice_relays: 16,
-        max_relay_memory_bytes: u64::MAX,
         splice: matches!(backend, RelayBackend::Splice),
         pipe_pool: true,
         max_pooled_pipes: 8,
@@ -42,7 +40,7 @@ fn exercisable() -> Vec<RelayBackend> {
 }
 
 fn relay_for(backend: RelayBackend) -> TcpRelay {
-    TcpRelay::new(&policy(backend), FdBudget::new(65_536)).expect("relay policy must compile")
+    TcpRelay::new(policy(backend), FdBudget::new(65_536)).expect("relay policy must compile")
 }
 
 fn context(backend: RelayBackend) -> RelayContext {

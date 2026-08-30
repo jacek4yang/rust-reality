@@ -18,10 +18,7 @@ use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore},
 };
 
-use crate::{
-    config::RelayPolicy,
-    protocol::reality::tls13::{IdleDeadline, IdleError},
-};
+use crate::protocol::reality::tls13::{IdleDeadline, IdleError};
 
 #[cfg(target_os = "linux")]
 use super::{FdPermit, UNITS_SPLICE_DIRECTION, UNITS_SPLICE_RELAY};
@@ -34,6 +31,42 @@ use super::{
         RelayDirection, RelayOutcome, TransferLedger,
     },
 };
+
+/// Concrete pool and backend settings consumed by [`TcpRelay`].
+///
+/// This is deliberately separate from the serialized operator policy: the
+/// server/runtime composition layer validates and translates configuration,
+/// while Transport owns only the mechanism values it actually consumes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TcpRelayConfig {
+    /// Bytes per pooled userspace buffer.
+    pub buffer_bytes: usize,
+    /// Maximum pooled buffers.
+    pub max_pooled_buffers: usize,
+    /// Maximum concurrent Linux splice relays.
+    pub max_splice_relays: u32,
+    /// Whether nonblocking splice is enabled on plaintext TCP boundaries.
+    pub splice: bool,
+    /// Whether drained splice pipes are retained process-wide.
+    pub pipe_pool: bool,
+    /// Maximum retained pipe pairs.
+    pub max_pooled_pipes: u32,
+}
+
+#[cfg(test)]
+impl TcpRelayConfig {
+    /// Supplies ordinary bounded settings to crate-local behavior tests.
+    pub(crate) const fn for_test() -> Self {
+        Self {
+            buffer_bytes: 32 * 1024,
+            max_pooled_buffers: 4_096,
+            max_splice_relays: 256,
+            splice: true,
+            pipe_pool: true,
+            max_pooled_pipes: 256,
+        }
+    }
+}
 
 /// Process-wide bounded relay state for plaintext TCP-to-TCP boundaries.
 ///
@@ -51,24 +84,24 @@ pub struct TcpRelay {
 }
 
 impl TcpRelay {
-    /// Compiles immutable relay policy and pre-reserves all pool metadata.
+    /// Compiles immutable relay settings and pre-reserves all pool metadata.
     ///
     /// # Errors
     ///
     /// Returns an allocation error before any listener is bound.
-    pub fn new(policy: &RelayPolicy, fd_budget: FdBudget) -> Result<Self, TcpRelayConfigError> {
-        let buffers = BufferPool::new(policy.buffer_bytes, policy.max_pooled_buffers)?;
+    pub fn new(config: TcpRelayConfig, fd_budget: FdBudget) -> Result<Self, TcpRelayConfigError> {
+        let buffers = BufferPool::new(config.buffer_bytes, config.max_pooled_buffers)?;
         #[cfg(target_os = "linux")]
-        let splice = policy.splice.then(|| {
+        let splice = config.splice.then(|| {
             SplicePool::new(
-                policy.max_splice_relays,
+                config.max_splice_relays,
                 fd_budget.clone(),
-                Some((policy.pipe_pool, policy.max_pooled_pipes)),
+                Some((config.pipe_pool, config.max_pooled_pipes)),
             )
         });
         let report = BackendReport {
             buffered: BackendCapability::available(),
-            splice: splice_capability(policy),
+            splice: splice_capability(config),
         };
         Ok(Self {
             buffers,
@@ -430,14 +463,14 @@ pub fn is_liveness_timeout_abort(error: &io::Error) -> bool {
             .is_some_and(|payload| payload.kind() == io::ErrorKind::TimedOut)
 }
 
-fn splice_capability(policy: &RelayPolicy) -> BackendCapability {
+fn splice_capability(config: TcpRelayConfig) -> BackendCapability {
     if !cfg!(target_os = "linux") {
         return BackendCapability::declined(
-            policy.splice,
+            config.splice,
             BackendDeclineReason::UnsupportedOperatingSystem,
         );
     }
-    if policy.splice {
+    if config.splice {
         BackendCapability::available()
     } else {
         BackendCapability::declined(false, BackendDeclineReason::Disabled)
@@ -1363,23 +1396,20 @@ mod tests {
     };
 
     use super::{
-        DirectionalRelayContext, FdBudget, TcpRelay, classify_abort, is_liveness_timeout_abort,
+        DirectionalRelayContext, FdBudget, TcpRelay, TcpRelayConfig, classify_abort,
+        is_liveness_timeout_abort,
     };
-    use crate::{
-        config::RelayPolicy,
-        transport::{
-            BackendRequest, DirectionalRelayOutcome, RelayBackend, RelayContext, RelayDirection,
-        },
+    use crate::transport::{
+        BackendRequest, DirectionalRelayOutcome, RelayBackend, RelayContext, RelayDirection,
     };
 
     #[tokio::test(flavor = "current_thread")]
     async fn bounded_buffered_relay_preserves_half_close() {
         let relay = TcpRelay::new(
-            &RelayPolicy {
+            TcpRelayConfig {
                 buffer_bytes: 4 * 1024,
                 max_pooled_buffers: 2,
                 max_splice_relays: 0,
-                max_relay_memory_bytes: u64::MAX,
                 splice: false,
                 pipe_pool: true,
                 max_pooled_pipes: 8,
@@ -1394,11 +1424,10 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn nonblocking_splice_relay_preserves_half_close() {
         let relay = TcpRelay::new(
-            &RelayPolicy {
+            TcpRelayConfig {
                 buffer_bytes: 32 * 1024,
                 max_pooled_buffers: 2,
                 max_splice_relays: 1,
-                max_relay_memory_bytes: u64::MAX,
                 splice: true,
                 pipe_pool: true,
                 max_pooled_pipes: 8,
@@ -1444,7 +1473,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn a_splice_relay_reserves_four_descriptor_units_before_creating_pipes() {
         let budget = FdBudget::new(64);
-        let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
+        let relay = TcpRelay::new(splice_policy(), budget.clone()).expect("relay must compile");
         assert_eq!(budget.in_use(), 0);
 
         let (mut client, relay_inbound) = tcp_pair().await;
@@ -1509,7 +1538,7 @@ mod tests {
         // Three units cannot satisfy the four a splice relay requires, so the
         // backend must decline *before* `pipe2` and fall through.
         let budget = FdBudget::new(3);
-        let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
+        let relay = TcpRelay::new(splice_policy(), budget.clone()).expect("relay must compile");
         let (mut client, relay_inbound) = tcp_pair().await;
         let (relay_outbound, mut target) = tcp_pair().await;
         let exchange = async {
@@ -1557,7 +1586,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn repeated_splice_relays_return_descriptor_units_to_baseline() {
         let budget = FdBudget::new(64);
-        let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
+        let relay = TcpRelay::new(splice_policy(), budget.clone()).expect("relay must compile");
         for _ in 0..16 {
             let (mut client, relay_inbound) = tcp_pair().await;
             let (relay_outbound, mut target) = tcp_pair().await;
@@ -1603,7 +1632,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn a_cancelled_splice_relay_releases_its_descriptor_units() {
         let budget = FdBudget::new(64);
-        let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
+        let relay = TcpRelay::new(splice_policy(), budget.clone()).expect("relay must compile");
         let (_client, relay_inbound) = tcp_pair().await;
         let (relay_outbound, _target) = tcp_pair().await;
         // Neither peer sends or closes, so the relay parks with its pipes open.
@@ -1622,12 +1651,11 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
-    fn splice_policy() -> RelayPolicy {
-        RelayPolicy {
+    fn splice_policy() -> TcpRelayConfig {
+        TcpRelayConfig {
             buffer_bytes: 32 * 1024,
             max_pooled_buffers: 4,
             max_splice_relays: 8,
-            max_relay_memory_bytes: u64::MAX,
             splice: true,
             pipe_pool: true,
             max_pooled_pipes: 8,
@@ -1637,9 +1665,9 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn an_aborted_relay_resets_the_surviving_peer() {
         let relay = TcpRelay::new(
-            &RelayPolicy {
+            TcpRelayConfig {
                 splice: false,
-                ..RelayPolicy::default()
+                ..TcpRelayConfig::for_test()
             },
             FdBudget::new(4_096),
         )
@@ -1685,8 +1713,8 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[tokio::test(flavor = "current_thread")]
     async fn an_aborted_splice_relay_resets_the_surviving_peer() {
-        let relay =
-            TcpRelay::new(&RelayPolicy::default(), FdBudget::new(4_096)).expect("relay must build");
+        let relay = TcpRelay::new(TcpRelayConfig::for_test(), FdBudget::new(4_096))
+            .expect("relay must build");
         let payload = vec![0x5a_u8; 256 * 1024];
         let (mut source_peer, relay_inbound) = tcp_pair().await;
         let (relay_outbound, mut sink_peer) = tcp_pair().await;
@@ -1727,9 +1755,9 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn a_graceful_relay_close_is_a_clean_eof_without_abort_marks() {
         let relay = TcpRelay::new(
-            &RelayPolicy {
+            TcpRelayConfig {
                 splice: false,
-                ..RelayPolicy::default()
+                ..TcpRelayConfig::for_test()
             },
             FdBudget::new(4_096),
         )
@@ -1860,7 +1888,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn pooled_splice_relays_are_byte_exact_and_reuse_pipes() {
         let relay =
-            TcpRelay::new(&splice_policy(), FdBudget::new(4_096)).expect("relay must compile");
+            TcpRelay::new(splice_policy(), FdBudget::new(4_096)).expect("relay must compile");
         let payload = vec![0x5a_u8; 64 * 1024];
         for round in 0..3 {
             let (outcome, received) = run_one_direction(
@@ -1932,11 +1960,10 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn directional_buffered_relay_is_byte_exact_in_both_directions() {
         let relay = TcpRelay::new(
-            &RelayPolicy {
+            TcpRelayConfig {
                 buffer_bytes: 4 * 1024,
                 max_pooled_buffers: 2,
                 max_splice_relays: 0,
-                max_relay_memory_bytes: u64::MAX,
                 splice: false,
                 pipe_pool: true,
                 max_pooled_pipes: 8,
@@ -1962,7 +1989,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[tokio::test(flavor = "current_thread")]
     async fn directional_splice_relay_is_byte_exact_in_both_directions() {
-        let relay = TcpRelay::new(&splice_policy(), FdBudget::new(4_096))
+        let relay = TcpRelay::new(splice_policy(), FdBudget::new(4_096))
             .expect("relay policy must compile");
         let payload = directional_payload();
 
@@ -1983,7 +2010,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn a_directional_splice_relay_reserves_two_descriptor_units() {
         let budget = FdBudget::new(64);
-        let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
+        let relay = TcpRelay::new(splice_policy(), budget.clone()).expect("relay must compile");
         assert_eq!(budget.in_use(), 0);
 
         let payload = directional_payload();
@@ -2019,7 +2046,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn repeated_directional_splice_relays_return_descriptor_units_to_baseline() {
         let budget = FdBudget::new(64);
-        let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
+        let relay = TcpRelay::new(splice_policy(), budget.clone()).expect("relay must compile");
         for cycle in 0..8 {
             let (outcome, _) = run_one_direction(
                 &relay,
@@ -2050,7 +2077,7 @@ mod tests {
         // One unit cannot satisfy the two a directional splice relay requires,
         // so the backend must decline *before* `pipe2` and fall through.
         let budget = FdBudget::new(1);
-        let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
+        let relay = TcpRelay::new(splice_policy(), budget.clone()).expect("relay must compile");
         let payload = directional_payload();
 
         let (outcome, received) = run_one_direction(
@@ -2078,7 +2105,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn an_explicit_buffered_directional_request_bypasses_splice() {
         let budget = FdBudget::new(64);
-        let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
+        let relay = TcpRelay::new(splice_policy(), budget.clone()).expect("relay must compile");
         let payload = directional_payload();
 
         let (outcome, received) = run_one_direction(
@@ -2152,11 +2179,10 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn an_idle_direction_without_any_byte_stays_a_clean_timeout() {
         let relay = TcpRelay::new(
-            &RelayPolicy {
+            TcpRelayConfig {
                 buffer_bytes: 4 * 1024,
                 max_pooled_buffers: 2,
                 max_splice_relays: 0,
-                max_relay_memory_bytes: u64::MAX,
                 splice: false,
                 pipe_pool: true,
                 max_pooled_pipes: 8,
@@ -2213,9 +2239,9 @@ mod tests {
         // ConnectionAborted carrying the original TimedOut — the exact shape
         // the session layer must file as a timeout, not a protocol error.
         let relay = TcpRelay::new(
-            &RelayPolicy {
+            TcpRelayConfig {
                 splice: false,
-                ..RelayPolicy::default()
+                ..TcpRelayConfig::for_test()
             },
             FdBudget::new(4_096),
         )
@@ -2255,11 +2281,10 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn a_stalled_directional_buffered_relay_times_out_and_returns_its_permit() {
         let relay = TcpRelay::new(
-            &RelayPolicy {
+            TcpRelayConfig {
                 buffer_bytes: 4 * 1024,
                 max_pooled_buffers: 2,
                 max_splice_relays: 0,
-                max_relay_memory_bytes: u64::MAX,
                 splice: false,
                 pipe_pool: true,
                 max_pooled_pipes: 8,
@@ -2286,7 +2311,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn a_stalled_directional_splice_relay_times_out_and_returns_its_units() {
         let budget = FdBudget::new(64);
-        let relay = TcpRelay::new(&splice_policy(), budget.clone()).expect("relay must compile");
+        let relay = TcpRelay::new(splice_policy(), budget.clone()).expect("relay must compile");
 
         let error = run_stalled_direction(
             &relay,
@@ -2354,7 +2379,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn an_active_directional_relay_never_times_out_across_many_windows() {
         let relay =
-            TcpRelay::new(&splice_policy(), FdBudget::new(4_096)).expect("relay must compile");
+            TcpRelay::new(splice_policy(), FdBudget::new(4_096)).expect("relay must compile");
         let liveness = Duration::from_millis(200);
         let expected: Vec<u8> = (0..8_u8).flat_map(|chunk| [chunk; 256]).collect();
 

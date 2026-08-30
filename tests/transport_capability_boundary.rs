@@ -138,16 +138,18 @@ fn the_session_engine_names_no_transport_capability() {
 }
 
 #[test]
-fn transport_never_depends_back_on_the_runtime_adapter() {
+fn transport_never_depends_back_on_adapter_or_configuration() {
     // Dependency direction is Runtime Adapter -> Transport. In particular,
     // descriptor accounting for sockets and pipes is a concrete transport
     // mechanism; Transport must not import its permit type back from Runtime.
+    // Serialized operator policy is translated at composition, so Transport
+    // also cannot reach up into Configuration for its construction values.
     let transport = repository_root().join("src/transport");
     let mut violations = Vec::new();
     for path in rust_sources(&transport) {
         let source = fs::read_to_string(&path).expect("transport source must be readable");
         let code = without_line_comments(&source);
-        for token in ["runtime::"] {
+        for token in ["runtime::", "config::"] {
             if code.contains(token) {
                 violations.push(format!("{}: {token}", path.display()));
             }
@@ -155,7 +157,7 @@ fn transport_never_depends_back_on_the_runtime_adapter() {
     }
     assert!(
         violations.is_empty(),
-        "Transport depends upward on the Runtime Adapter:\n{}",
+        "Transport depends upward on Runtime Adapter or Configuration:\n{}",
         violations.join("\n")
     );
 }

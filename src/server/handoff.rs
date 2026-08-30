@@ -820,8 +820,8 @@ mod tests {
     use crate::{
         config::{
             BlackholeSettings, DirectBarrierConfig, DnsStrategy, HandoffSettings, OutboundConfig,
-            RelayPolicy, ResourceGovernorConfig, RoutingConfig, SecretString, Socks5Settings,
-            UserPolicy, WarmConnectionPolicy,
+            ResourceGovernorConfig, RoutingConfig, SecretString, Socks5Settings, UserPolicy,
+            WarmConnectionPolicy,
         },
         protocol::{
             handoff::{
@@ -846,7 +846,7 @@ mod tests {
             vision::{VisionHandler, VisionSessionError},
             warm_pool::WarmPoolAuthority,
         },
-        transport::{FdBudget, TcpRelay},
+        transport::{FdBudget, TcpRelay, TcpRelayConfig},
     };
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(3);
@@ -855,7 +855,7 @@ mod tests {
     const LANDING_SECRET: [u8; 32] = [0x77; 32];
 
     fn test_relay() -> TcpRelay {
-        TcpRelay::new(&RelayPolicy::default(), FdBudget::new(4_096))
+        TcpRelay::new(TcpRelayConfig::for_test(), FdBudget::new(4_096))
             .expect("test relay policy must compile")
     }
 

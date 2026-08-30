@@ -21,9 +21,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use rust_reality::{
-    config::RelayPolicy,
-    transport::{BackendRequest, FdBudget, RelayBackend, RelayContext, TcpRelay},
+use rust_reality::transport::{
+    BackendRequest, FdBudget, RelayBackend, RelayContext, TcpRelay, TcpRelayConfig,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -72,16 +71,15 @@ impl Scenario {
     }
 }
 
-fn policy(backend: Option<RelayBackend>) -> RelayPolicy {
+fn policy(backend: Option<RelayBackend>) -> TcpRelayConfig {
     let buffer_kib = env::var("RR_BENCH_BUFFER_KIB")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(32);
-    RelayPolicy {
+    TcpRelayConfig {
         buffer_bytes: buffer_kib * 1024,
         max_pooled_buffers: 512,
         max_splice_relays: 256,
-        max_relay_memory_bytes: u64::MAX,
         splice: !matches!(backend, Some(RelayBackend::Buffered)),
         pipe_pool: true,
         max_pooled_pipes: 512,
@@ -257,7 +255,7 @@ fn main() {
         for position in order {
             let scenario = scenarios[position];
             let payload: &'static [u8] = payloads[position];
-            let relay = TcpRelay::new(&policy(scenario.backend), FdBudget::new(65_536))
+            let relay = TcpRelay::new(policy(scenario.backend), FdBudget::new(65_536))
                 .expect("relay must compile");
 
             let cpu_before = cpu_times();

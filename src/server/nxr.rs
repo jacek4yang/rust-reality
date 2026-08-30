@@ -634,12 +634,11 @@ mod tests {
 
     use super::{NxrAuthenticator, NxrLandingHandler, NxrReplayCache, NxrReplayError};
     use crate::{
-        config::RelayPolicy,
         protocol::{
             nxr::{NxrKey, encode_request},
             vless::{Address, Destination},
         },
-        transport::tcp_relay::TcpRelay,
+        transport::tcp_relay::{TcpRelay, TcpRelayConfig},
     };
 
     #[test]
@@ -697,7 +696,7 @@ mod tests {
             Duration::from_secs(1),
             Duration::from_secs(1),
             TcpRelay::new(
-                &RelayPolicy::default(),
+                TcpRelayConfig::for_test(),
                 crate::transport::FdBudget::new(4_096),
             )
             .expect("relay policy must compile"),
@@ -737,7 +736,7 @@ mod tests {
                 Duration::from_secs(1),
                 Duration::from_secs(1),
                 TcpRelay::new(
-                    &RelayPolicy::default(),
+                    TcpRelayConfig::for_test(),
                     crate::transport::FdBudget::new(4_096),
                 )
                 .expect("relay policy must compile"),
@@ -787,7 +786,7 @@ mod tests {
             Duration::from_secs(1),
             Duration::from_secs(1),
             TcpRelay::new(
-                &RelayPolicy::default(),
+                TcpRelayConfig::for_test(),
                 crate::transport::FdBudget::new(4_096),
             )
             .expect("relay policy must compile"),
@@ -822,7 +821,7 @@ mod tests {
             Duration::from_secs(1),
             Duration::from_secs(1),
             TcpRelay::new(
-                &RelayPolicy::default(),
+                TcpRelayConfig::for_test(),
                 crate::transport::FdBudget::new(4_096),
             )
             .expect("relay policy must compile"),
@@ -900,7 +899,7 @@ mod tests {
             Duration::from_secs(1),
             Duration::from_secs(1),
             TcpRelay::new(
-                &RelayPolicy::default(),
+                TcpRelayConfig::for_test(),
                 crate::transport::FdBudget::new(4_096),
             )
             .expect("relay policy must compile"),
