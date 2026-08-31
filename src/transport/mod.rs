@@ -2,6 +2,7 @@
 
 pub mod backend;
 mod fd_budget;
+mod idle;
 pub mod relay;
 pub mod tcp;
 pub mod tcp_relay;

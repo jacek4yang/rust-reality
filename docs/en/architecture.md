@@ -380,6 +380,10 @@ syscall-shaped pipe capacity, `splice`, write-shutdown, and errno operations.
 The root crate has no direct `libc` or `rustix` dependency, keeping the hot loop
 monomorphic while making the unsafe OS boundary auditable in one place.
 
+Raw relay liveness uses a Transport-local reusable idle deadline. TLS record and
+application I/O retain their protocol-owned deadline, so Transport does not
+import a protocol module merely to time its own readiness operations.
+
 `FdBudget` is a strict upper-bound permit counter: one relaxed load and one
 `compare_exchange_weak` on the fast path, no mutex; permits release in `Drop`
 through one path; release uses checked subtraction so a double-release bug is
