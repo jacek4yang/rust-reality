@@ -143,6 +143,7 @@ struct Capture {
     binary_sha256: String,
     binary_build_id: String,
     perf_data: PathBuf,
+    perf_data_sha256: String,
 }
 
 #[derive(Debug, Clone)]
@@ -276,9 +277,20 @@ pub fn validate(plan: &Plan) -> Result<(), String> {
 }
 
 fn read_json(path: &Path, context: &str) -> Result<json_in::Value, String> {
-    let text = std::fs::read_to_string(path)
+    read_json_snapshot(path, context).map(|(value, _)| value)
+}
+
+fn read_json_snapshot(
+    path: &Path,
+    context: &str,
+) -> Result<(json_in::Value, String), String> {
+    let bytes = std::fs::read(path)
         .map_err(|error| format!("could not read {context} {}: {error}", path.display()))?;
-    json_in::parse(&text).map_err(|error| format!("invalid {context} {}: {error}", path.display()))
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|error| format!("invalid UTF-8 in {context} {}: {error}", path.display()))?;
+    let value = json_in::parse(text)
+        .map_err(|error| format!("invalid {context} {}: {error}", path.display()))?;
+    Ok((value, crate::perf::loader::sha256_bytes(&bytes)))
 }
 
 fn load_capture(plan: &Plan) -> Result<Capture, String> {
@@ -297,37 +309,67 @@ fn load_capture(plan: &Plan) -> Result<Capture, String> {
         .map_err(|error| format!("could not canonicalize --run-dir: {error}"))?;
     let metadata_path = root.join("metadata.json");
     let completion_path = root.join("run-completion.json");
+    let contract_path = root.join("run-contract.json");
     let perf_data = root.join("perf.data");
     for (path, context) in [
         (&metadata_path, "hotspot metadata"),
         (&completion_path, "hotspot completion"),
+        (&contract_path, "hotspot contract"),
         (&perf_data, "perf data"),
     ] {
         regular_not_symlink(path, context)?;
     }
-    let metadata = read_json(&metadata_path, "hotspot metadata")?;
-    metadata
-        .require_str("metadata", "state", "COMPLETE")
+    let (contract, contract_sha256) = read_json_snapshot(&contract_path, "hotspot contract")?;
+    contract
+        .require_int("hotspot contract", "schemaVersion", 2)
+        .map_err(|_| {
+            "hotspot contract is not hash-bound to perf.data; recapture with the current rr-dev"
+                .to_owned()
+        })?;
+    contract
+        .require_str("hotspot contract", "collector", "perf-hotspot")
         .map_err(|error| error.to_string())?;
-    let run_id = metadata
-        .str_field("metadata", "runId")
+    contract
+        .require_str("hotspot contract", "phase", "complete")
+        .map_err(|error| error.to_string())?;
+    contract
+        .require_int("hotspot contract", "exitCode", 0)
+        .map_err(|error| error.to_string())?;
+    let run_id = contract
+        .str_field("hotspot contract", "runId")
         .map_err(|error| error.to_string())?
         .to_owned();
-    let binary_sha256 = metadata
-        .str_field("metadata", "binarySha256")
+    if run_id.is_empty() {
+        return Err("hotspot contract run ID is empty".to_owned());
+    }
+    let contract_binary = contract
+        .field("hotspot contract", "binary")
+        .map_err(|error| error.to_string())?;
+    let binary_sha256 = contract_binary
+        .str_field("hotspot contract.binary", "sha256")
         .map_err(|error| error.to_string())?
         .to_owned();
-    let binary_build_id = metadata
-        .str_field("metadata", "binaryBuildId")
+    let binary_build_id = contract_binary
+        .str_field("hotspot contract.binary", "buildId")
         .map_err(|error| error.to_string())?
         .to_owned();
     if !valid_lower_hex(&binary_sha256, Some(64)) || !valid_lower_hex(&binary_build_id, None) {
-        return Err("hotspot capture binary identity is malformed".to_owned());
+        return Err("hotspot contract binary identity is malformed".to_owned());
+    }
+    let contract_perf_data = contract.optional("perfData").ok_or_else(|| {
+        "hotspot contract does not bind perf.data; recapture with the current rr-dev".to_owned()
+    })?;
+    contract_perf_data
+        .require_str("hotspot contract.perfData", "relativePath", "perf.data")
+        .map_err(|error| error.to_string())?;
+    let perf_data_sha256 = contract_perf_data
+        .str_field("hotspot contract.perfData", "sha256")
+        .map_err(|error| error.to_string())?
+        .to_owned();
+    if !valid_lower_hex(&perf_data_sha256, Some(64)) {
+        return Err("hotspot contract perf.data identity is malformed".to_owned());
     }
     let completion = read_json(&completion_path, "hotspot completion")?;
-    let contract_path = root.join("run-contract.json");
-    let contract_sha256 =
-        crate::perf::loader::sha256_file(&contract_path).map_err(|error| error.to_string())?;
     crate::perf::loader::verify_success_marker(
         &completion,
         &contract_path,
@@ -337,6 +379,26 @@ fn load_capture(plan: &Plan) -> Result<Capture, String> {
         "hotspot completion",
     )
     .map_err(|error| error.to_string())?;
+
+    let metadata = read_json(&metadata_path, "hotspot metadata")?;
+    metadata
+        .require_str("metadata", "state", "COMPLETE")
+        .map_err(|error| error.to_string())?;
+    if metadata
+        .str_field("metadata", "runId")
+        .map_err(|error| error.to_string())?
+        != run_id
+        || metadata
+            .str_field("metadata", "binarySha256")
+            .map_err(|error| error.to_string())?
+            != binary_sha256
+        || metadata
+            .str_field("metadata", "binaryBuildId")
+            .map_err(|error| error.to_string())?
+            != binary_build_id
+    {
+        return Err("hotspot metadata disagrees with the bound capture contract".to_owned());
+    }
 
     let binary_dir = root.join("binary");
     let entries = std::fs::read_dir(&binary_dir)
@@ -364,6 +426,9 @@ fn load_capture(plan: &Plan) -> Result<Capture, String> {
     if perf_bytes == 0 || perf_bytes > MAX_PERF_DATA_BYTES {
         return Err("perf data must be non-empty and no larger than 1 GiB".to_owned());
     }
+    if hash::sha256_file(&perf_data)? != perf_data_sha256 {
+        return Err("perf data SHA-256 does not match completed capture".to_owned());
+    }
     Ok(Capture {
         root,
         run_id,
@@ -371,6 +436,7 @@ fn load_capture(plan: &Plan) -> Result<Capture, String> {
         binary_sha256,
         binary_build_id,
         perf_data,
+        perf_data_sha256,
     })
 }
 
@@ -1028,11 +1094,7 @@ fn execute(plan: &Plan, capture: &Capture, output: &RunDirectory) -> Result<(), 
         ])
         .run()
         .map_err(|error| format!("perf buildid-list failed: {error}"))?;
-    if !buildids
-        .stdout
-        .to_ascii_lowercase()
-        .contains(&capture.binary_build_id)
-    {
+    if !super::build_id_list_contains(&buildids.stdout, &capture.binary_build_id) {
         return Err(format!(
             "perf data does not contain binary Build ID {}",
             capture.binary_build_id
@@ -1096,7 +1158,7 @@ fn execute(plan: &Plan, capture: &Capture, output: &RunDirectory) -> Result<(), 
                 ),
                 (
                     "perfDataSha256",
-                    Json::string(hash::sha256_file(&capture.perf_data)?),
+                    Json::string(&capture.perf_data_sha256),
                 ),
             ]),
         ),
@@ -1218,7 +1280,7 @@ pub fn run(plan: &Plan) -> Result<String, String> {
     let output = RunDirectory::create(&hotspot)?;
     if let Err(error) = execute(plan, &capture, &output) {
         let failure = Json::object([
-            ("schemaVersion", Json::Int(1)),
+            ("schemaVersion", Json::Int(2)),
             ("state", Json::string("FAILED")),
             ("label", Json::string(&plan.label)),
             ("error", Json::string(&error)),
@@ -1340,5 +1402,102 @@ mod tests {
         assert!(parse_address("0xdeadbeef", "address").is_ok());
         assert!(parse_address("deadbeef", "address").is_err());
         assert!(!valid_lower_hex("ABC", None));
+    }
+
+    #[test]
+    fn completed_capture_binds_perf_data_and_binary_identity() {
+        let root = scratch("mutated-perf-data");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("binary")).unwrap();
+
+        let source = std::env::current_exe().unwrap();
+        let binary_name = source.file_name().unwrap();
+        let binary = root.join("binary").join(binary_name);
+        std::fs::copy(&source, &binary).unwrap();
+        let binary_sha256 = hash::sha256_file(&binary).unwrap();
+        let binary_build_id = attest::build_id(&binary).unwrap();
+        let perf_data = root.join("perf.data");
+        std::fs::write(&perf_data, b"original perf capture").unwrap();
+        let perf_data_sha256 = hash::sha256_file(&perf_data).unwrap();
+        let run_id = "hotspot-integrity-fixture";
+
+        let metadata = Json::object([
+            ("schemaVersion", Json::Int(2)),
+            ("state", Json::string("COMPLETE")),
+            ("runId", Json::string(run_id)),
+            ("binarySha256", Json::string(&binary_sha256)),
+            ("binaryBuildId", Json::string(&binary_build_id)),
+        ]);
+        std::fs::write(root.join("metadata.json"), metadata.to_python_json()).unwrap();
+        let contract = Json::object([
+            ("schemaVersion", Json::Int(2)),
+            ("runId", Json::string(run_id)),
+            ("collector", Json::string("perf-hotspot")),
+            ("phase", Json::string("complete")),
+            ("exitCode", Json::Int(0)),
+            (
+                "binary",
+                Json::object([
+                    ("sha256", Json::string(&binary_sha256)),
+                    ("buildId", Json::string(&binary_build_id)),
+                ]),
+            ),
+            (
+                "perfData",
+                Json::object([
+                    ("relativePath", Json::string("perf.data")),
+                    ("sha256", Json::string(&perf_data_sha256)),
+                ]),
+            ),
+        ]);
+        let contract_path = root.join("run-contract.json");
+        std::fs::write(&contract_path, contract.to_python_json()).unwrap();
+        publication::publish_success_marker(
+            &root.join("run-completion.json"),
+            &contract_path,
+            run_id,
+            "perf-hotspot",
+        )
+        .unwrap();
+        let plan = Plan {
+            run_dir: root.clone(),
+            label: "integrity-fixture".to_owned(),
+            address: "0x1000".to_owned(),
+            idalib_python: source,
+            timeout_seconds: 60,
+            max_unmapped_period_percent: 0.0,
+            unmapped_period_explanation: None,
+        };
+
+        load_capture(&plan).expect("the completed fixture is initially admissible");
+        std::fs::write(&perf_data, b"substituted capture").unwrap();
+        assert!(
+            load_capture(&plan).is_err(),
+            "completion must bind the exact perf.data bytes"
+        );
+
+        std::fs::write(&perf_data, b"original perf capture").unwrap();
+        let substitute = Path::new("/bin/true");
+        let substitute_sha256 = hash::sha256_file(substitute).unwrap();
+        let substitute_build_id = attest::build_id(substitute).unwrap();
+        std::fs::copy(substitute, &binary).unwrap();
+        let substituted_metadata = Json::object([
+            ("schemaVersion", Json::Int(2)),
+            ("state", Json::string("COMPLETE")),
+            ("runId", Json::string(run_id)),
+            ("binarySha256", Json::string(&substitute_sha256)),
+            ("binaryBuildId", Json::string(&substitute_build_id)),
+        ]);
+        std::fs::write(
+            root.join("metadata.json"),
+            substituted_metadata.to_python_json(),
+        )
+        .unwrap();
+        assert!(
+            load_capture(&plan).is_err(),
+            "metadata and the archived binary must agree with the bound contract"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

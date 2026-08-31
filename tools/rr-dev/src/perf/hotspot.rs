@@ -109,6 +109,13 @@ struct Status {
     process: Option<ProcessIdentity>,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ContractState<'a> {
+    Running,
+    Failed(&'a str),
+    Complete(&'a str),
+}
+
 fn valid_hex(value: &str, length: usize) -> bool {
     value.len() == length
         && value
@@ -383,15 +390,26 @@ impl ThenOr for bool {
 
 fn contract(
     plan: &Plan,
-    phase: &str,
-    exit_code: Option<i32>,
+    state: ContractState<'_>,
     lock: &HostLock,
     binary: &identity::Binary,
     build_id: &str,
-    error: Option<&str>,
 ) -> Json {
+    let (phase, exit_code, error, perf_data) = match state {
+        ContractState::Running => ("running", None, None, Json::Null),
+        ContractState::Failed(error) => ("failed", Some(1), Some(error), Json::Null),
+        ContractState::Complete(sha256) => (
+            "complete",
+            Some(0),
+            None,
+            Json::object([
+                ("relativePath", Json::string("perf.data")),
+                ("sha256", Json::string(sha256)),
+            ]),
+        ),
+    };
     Json::object([
-        ("schemaVersion", Json::Int(1)),
+        ("schemaVersion", Json::Int(2)),
         ("runId", Json::string(&plan.run_id)),
         ("collector", Json::string("perf-hotspot")),
         ("phase", Json::string(phase)),
@@ -419,7 +437,16 @@ fn contract(
                 ),
             ]),
         ),
+        ("perfData", perf_data),
     ])
+}
+
+pub(super) fn build_id_list_contains(output: &str, expected: &str) -> bool {
+    output.lines().any(|line| {
+        line.split_whitespace()
+            .next()
+            .is_some_and(|observed| observed.eq_ignore_ascii_case(expected))
+    })
 }
 
 fn atomic_metadata(path: &Path, document: &Json) -> Result<(), String> {
@@ -585,7 +612,7 @@ fn execute(
         .run()
         .map_err(|error| format!("perf buildid-list failed: {error}"))?
         .stdout;
-    if !buildids.to_ascii_lowercase().contains(&build_id.to_ascii_lowercase()) {
+    if !build_id_list_contains(&buildids, build_id) {
         return Err(format!(
             "perf data does not contain archived binary Build ID {build_id}"
         ));
@@ -690,7 +717,7 @@ pub fn run(plan: &Plan) -> Result<String, String> {
     }
     run_dir.write_new(
         "run-contract.json",
-        &contract(plan, "running", None, &lock, &binary, &build_id, None).to_python_json(),
+        &contract(plan, ContractState::Running, &lock, &binary, &build_id).to_python_json(),
     )?;
     let mut status = Status::default();
     let metadata_path = run_dir.join("metadata.json");
@@ -728,16 +755,15 @@ pub fn run(plan: &Plan) -> Result<String, String> {
         );
         let failed = contract(
             plan,
-            "failed",
-            Some(1),
+            ContractState::Failed(&error),
             &lock,
             &binary,
             &build_id,
-            Some(&error),
         );
         let _ = std::fs::write(run_dir.join("run-contract.json"), failed.to_python_json());
         return Err(error);
     }
+    let perf_data_sha256 = hash::sha256_file(&run_dir.join("perf.data"))?;
     atomic_metadata(
         &metadata_path,
         &metadata(
@@ -754,12 +780,10 @@ pub fn run(plan: &Plan) -> Result<String, String> {
         Publication::Contract,
         &contract(
             plan,
-            "complete",
-            Some(0),
+            ContractState::Complete(&perf_data_sha256),
             &lock,
             &binary,
             &build_id,
-            None,
         )
         .to_python_json(),
         &plan.run_id,
@@ -818,5 +842,22 @@ mod tests {
         for value in ["", "none", "dwarf,0", "dwarf,-1", "dwarf,65529"] {
             assert!(!validate_call_graph(value), "{value}");
         }
+    }
+
+    #[test]
+    fn perf_build_id_membership_requires_an_exact_first_field() {
+        let expected = "36b5a89ab69cb83898eac9980943d6c9da0a98bb";
+        assert!(build_id_list_contains(
+            &format!("{expected} /usr/bin/rust-reality\n"),
+            expected
+        ));
+        assert!(!build_id_list_contains(
+            &format!("00{expected} /usr/bin/rust-reality\n"),
+            expected
+        ));
+        assert!(!build_id_list_contains(
+            &format!("0123 /tmp/{expected}/rust-reality\n"),
+            expected
+        ));
     }
 }
