@@ -601,6 +601,7 @@ impl SampleRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bench::evidence::RunDirectory;
 
     fn plan() -> CellPlan {
         CellPlan {
@@ -760,6 +761,113 @@ mod tests {
         let rendered = failed.to_json().to_python_json();
         assert!(rendered.contains("\"wallSeconds\": null"));
         assert!(rendered.contains("\"throughputMiBPerSecond\": null"));
+    }
+
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "rr-bench-matrix-{name}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |duration| duration.as_nanos())
+            ));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn unpublished_run(name: &str) -> (Scratch, RunDirectory) {
+        let scratch = Scratch::new(name);
+        let run = RunDirectory::create(&scratch.0.join("run")).unwrap();
+        run.write_new("environment.json", "{\"phase\":\"measured\"}\n")
+            .unwrap();
+        (scratch, run)
+    }
+
+    #[test]
+    fn invalid_matrix_diagnostics_are_never_marked_complete() {
+        let (_scratch, run) = unpublished_run("invalid-completion");
+        let summary = Summary {
+            document: Json::Null,
+            total: 3,
+            invalid: 1,
+        };
+
+        let error = publish_complete_matrix(
+            &run,
+            "{\"phase\":\"complete\"}\n",
+            "run-1",
+            &summary,
+            || Ok(()),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("1 of 3 samples invalid"), "{error}");
+        assert!(
+            !run.join("completion.json").exists(),
+            "an invalid matrix must remain visibly incomplete"
+        );
+    }
+
+    #[test]
+    fn failed_final_checks_are_never_marked_complete() {
+        let (_scratch, run) = unpublished_run("failed-final-check");
+        let summary = Summary {
+            document: Json::Null,
+            total: 3,
+            invalid: 0,
+        };
+
+        let error = publish_complete_matrix(
+            &run,
+            "{\"phase\":\"complete\"}\n",
+            "run-1",
+            &summary,
+            || Err("pipe-page restoration was not verified".to_owned()),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("restoration was not verified"), "{error}");
+        assert!(
+            !run.join("completion.json").exists(),
+            "failed final checks must leave the run visibly incomplete"
+        );
+    }
+
+    #[test]
+    fn valid_matrix_is_marked_complete_after_final_checks() {
+        let (_scratch, run) = unpublished_run("valid-completion");
+        let summary = Summary {
+            document: Json::Null,
+            total: 3,
+            invalid: 0,
+        };
+        let mut checked = false;
+
+        publish_complete_matrix(
+            &run,
+            "{\"phase\":\"complete\"}\n",
+            "run-1",
+            &summary,
+            || {
+                checked = true;
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert!(checked, "final checks must run before publication");
+        assert!(run.join("completion.json").is_file());
     }
 }
 
@@ -1168,7 +1276,7 @@ struct CellResult {
 /// one bad cell still yields evidence about every other one.
 pub fn run(suite: &MatrixSuite) -> Result<MatrixOutcome, String> {
     use crate::bench::{
-        evidence::{Publication, RunDirectory},
+        evidence::RunDirectory,
         host_lock::HostLock,
         identity::{self, Kind},
         sysctl,
@@ -1254,24 +1362,24 @@ pub fn run(suite: &MatrixSuite) -> Result<MatrixOutcome, String> {
     run.write_new("summary.json", &summary_json)?;
     let environment = environment_json(suite, &repository, &binaries, port_base, port_count, &budget);
     run.write_new("environment.json", &environment.to_python_json())?;
-    run.publish(
-        Publication::Environment,
+    // A completion marker is the final authority boundary. Stop every process
+    // capable of mutating run-adjacent logs before crossing it, then require all
+    // fallible restoration and sample-validity checks to pass.
+    drop(trackers);
+    drop(topology);
+    publish_complete_matrix(
+        &run,
         &environment.to_python_json(),
         &suite.run_id,
-        "benchmark-matrix",
+        &summary,
+        || {
+            drop(pages);
+            if let Some(original) = original_pages {
+                sysctl::PipePagesGuard::verify_restored(original)?;
+            }
+            Ok(())
+        },
     )?;
-
-    drop(pages);
-    if let Some(original) = original_pages {
-        sysctl::PipePagesGuard::verify_restored(original)?;
-    }
-
-    if summary.invalid > 0 {
-        return Err(format!(
-            "matrix contains incomplete, invalid, or corrupt samples: {} of {} samples invalid",
-            summary.invalid, summary.total
-        ));
-    }
     Ok(MatrixOutcome {
         out_dir: suite.out_dir.clone(),
         summary_json,
@@ -1623,6 +1731,30 @@ struct Summary {
     document: Json,
     total: usize,
     invalid: usize,
+}
+
+/// Crosses the matrix publication boundary only after every final check passes.
+fn publish_complete_matrix(
+    run: &crate::bench::evidence::RunDirectory,
+    environment_json: &str,
+    run_id: &str,
+    summary: &Summary,
+    final_checks: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    final_checks()?;
+    if summary.invalid > 0 {
+        return Err(format!(
+            "matrix contains incomplete, invalid, or corrupt samples: {} of {} samples invalid",
+            summary.invalid, summary.total
+        ));
+    }
+    run.publish(
+        crate::bench::evidence::Publication::Environment,
+        environment_json,
+        run_id,
+        "benchmark-matrix",
+    )?;
+    Ok(())
 }
 
 /// The distribution the matrix records for a set of values.
