@@ -272,7 +272,7 @@ pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
         || format!("127.0.0.1:{tls_port}"),
         |_| format!("{}:{tls_port}", netns::COVER_ADDRESS),
     );
-    let _origins = start_origins(suite, &workspace, plain_port, tls_port, leg.as_ref())?;
+    let origins = start_origins(suite, &workspace, plain_port, tls_port, leg.as_ref())?;
     if let Some(leg) = leg.as_ref() {
         leg.describe(&cover_target, &run.join("cover-netem.txt"))?;
     }
@@ -322,26 +322,44 @@ pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
         .map(|row| row.to_json(false).to_compact_json())
         .collect();
     run.write_jsonl("raw-samples.jsonl", &raw)?;
-    run.publish(
-        Publication::Environment,
+    drop(origins);
+    publish_complete_setup_rate(
+        &run,
         &environment.to_python_json(),
         &suite.run_id,
-        "benchmark-setup-rate",
+        || {
+            // Drop the leg before asserting it is gone: restoration is verified,
+            // not assumed, so an `ip` command that reported success but left state
+            // behind is caught here rather than by the next run's name collision.
+            drop(leg);
+            if let Some(names) = leg_names {
+                netns::CoverLeg::verify_removed(&names)?;
+            }
+            Ok(())
+        },
     )?;
-
-    // Drop the leg before asserting it is gone: restoration is verified, not
-    // assumed, so an `ip` command that reported success but left state behind is
-    // caught here rather than by the next run's name collision.
-    drop(leg);
-    if let Some(names) = leg_names {
-        netns::CoverLeg::verify_removed(&names)?;
-    }
 
     Ok(SuiteOutcome {
         out_dir: suite.out_dir.clone(),
         summary_json,
         slot_count,
     })
+}
+
+fn publish_complete_setup_rate(
+    run: &RunDirectory,
+    environment_json: &str,
+    run_id: &str,
+    final_checks: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    final_checks()?;
+    run.publish(
+        Publication::Environment,
+        environment_json,
+        run_id,
+        "benchmark-setup-rate",
+    )?;
+    Ok(())
 }
 
 /// Starts both native origin listeners, returning their RAII guards.
@@ -1109,6 +1127,68 @@ fn lock_json(lock: &HostLock) -> Json {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "rr-bench-paired-{name}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |duration| duration.as_nanos())
+            ));
+            let _ = std::fs::remove_dir_all(&path);
+            Self(path)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn setup_rate_completion_waits_for_restoration() {
+        let scratch = Scratch::new("completion-order");
+        let run = RunDirectory::create(&scratch.0).unwrap();
+        run.write_new("environment.json", "{\"phase\":\"running\"}\n")
+            .unwrap();
+
+        let error = publish_complete_setup_rate(
+            &run,
+            "{\"phase\":\"complete\"}\n",
+            "run-1",
+            || Err("cover-leg restoration was not verified".to_owned()),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("restoration was not verified"), "{error}");
+        assert!(
+            !run.join("completion.json").exists(),
+            "failed restoration must leave setup-rate evidence incomplete"
+        );
+
+        let mut checked = false;
+        publish_complete_setup_rate(
+            &run,
+            "{\"phase\":\"complete\"}\n",
+            "run-1",
+            || {
+                assert!(
+                    !run.join("completion.json").exists(),
+                    "the marker must not precede the final restoration check"
+                );
+                checked = true;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(checked, "the final restoration check must run");
+        assert!(run.join("completion.json").is_file());
+    }
 
     fn suite() -> SetupRateSuite {
         SetupRateSuite {
