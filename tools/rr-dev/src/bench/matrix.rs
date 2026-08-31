@@ -1392,7 +1392,7 @@ fn measure_cell(
     } else {
         topology.http_port
     };
-    let before = guards::fetch_origin_stats(stats_port, scheme);
+    let before = guards::fetch_origin_stats(stats_port, scheme)?;
 
     let mut counters: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     let mut records = Vec::with_capacity(order.len());
@@ -1414,8 +1414,8 @@ fn measure_cell(
     // The origin's own error counter is a cell-level fact: if it moved, the
     // origin was the bottleneck and no sample in the cell means anything, for
     // any implementation.
-    let after = guards::fetch_origin_stats(stats_port, scheme);
-    if let Some(delta) = guards::origin_error_delta(before, after) {
+    let after = guards::fetch_origin_stats(stats_port, scheme)?;
+    if let Some(delta) = guards::origin_error_delta(before, after)? {
         let reason =
             format!("origin error: {scheme} origin reported {delta} new error(s) during the cell");
         for record in &mut records {

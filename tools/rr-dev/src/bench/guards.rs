@@ -72,7 +72,7 @@ impl LineTracker {
 }
 
 /// The origin counters the saturation guard reads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OriginStats {
     /// Requests the origin itself failed.
     pub errors: i64,
@@ -84,11 +84,15 @@ pub struct OriginStats {
 
 /// Fetches `GET /__stats` from an origin.
 ///
-/// Returns `None` rather than an error when the origin cannot be reached: the
-/// Python fallback origin never served this endpoint, and the guard degrades to a
-/// no-op there exactly as the script's did.
-#[must_use]
-pub fn fetch_origin_stats(port: u16, scheme: &str) -> Option<OriginStats> {
+/// The current matrix owns an embedded origin that always serves this endpoint,
+/// so losing it means the saturation guard has lost its authority. Transport,
+/// HTTP, syntax, shape, and counter failures therefore all fail closed.
+///
+/// # Errors
+///
+/// Returns a diagnostic when the endpoint cannot be fetched or does not contain
+/// all three non-negative integer counters.
+pub fn fetch_origin_stats(port: u16, scheme: &str) -> Result<OriginStats, String> {
     let mut curl = Tool::new("curl");
     for name in [
         "ALL_PROXY",
@@ -112,21 +116,30 @@ pub fn fetch_origin_stats(port: u16, scheme: &str) -> Option<OriginStats> {
         args.push("--insecure".to_owned());
     }
     args.push(format!("{scheme}://127.0.0.1:{port}/__stats"));
-    let outcome = curl.args(args).probe().ok()?;
-    if !outcome.success() {
-        return None;
-    }
-    let value = json_in::parse(outcome.trimmed_stdout()).ok()?;
-    let counter = |name: &str| -> i64 {
-        match value.field("stats", name) {
-            Ok(Value::Number(text)) => text.parse().unwrap_or(0),
-            _ => 0,
+    let outcome = curl
+        .args(args)
+        .run()
+        .map_err(|error| format!("could not fetch {scheme} origin stats: {error}"))?;
+    parse_origin_stats(outcome.trimmed_stdout())
+}
+
+fn parse_origin_stats(text: &str) -> Result<OriginStats, String> {
+    let value = json_in::parse(text).map_err(|error| format!("invalid origin stats: {error}"))?;
+    let counter = |name: &str| -> Result<i64, String> {
+        let observed = value
+            .int_field("origin stats", name)
+            .map_err(|error| format!("invalid origin stats: {error}"))?;
+        if observed < 0 {
+            return Err(format!(
+                "invalid origin stats: {name} counter is negative ({observed})"
+            ));
         }
+        Ok(observed)
     };
-    Some(OriginStats {
-        errors: counter("errors"),
-        gets: counter("gets"),
-        puts: counter("puts"),
+    Ok(OriginStats {
+        errors: counter("errors")?,
+        gets: counter("gets")?,
+        puts: counter("puts")?,
     })
 }
 
@@ -134,11 +147,23 @@ pub fn fetch_origin_stats(port: u16, scheme: &str) -> Option<OriginStats> {
 ///
 /// A growing counter means the origin failed requests during the cell, so the
 /// cell measured the origin rather than the proxy.
-#[must_use]
-pub fn origin_error_delta(before: Option<OriginStats>, after: Option<OriginStats>) -> Option<i64> {
-    let (before, after) = (before?, after?);
-    let delta = after.errors - before.errors;
-    (delta > 0).then_some(delta)
+pub fn origin_error_delta(before: OriginStats, after: OriginStats) -> Result<Option<i64>, String> {
+    for (name, before, after) in [
+        ("errors", before.errors, after.errors),
+        ("gets", before.gets, after.gets),
+        ("puts", before.puts, after.puts),
+    ] {
+        if before < 0 || after < before {
+            return Err(format!(
+                "origin {name} counter moved backward from {before} to {after}"
+            ));
+        }
+    }
+    let delta = after
+        .errors
+        .checked_sub(before.errors)
+        .ok_or_else(|| "origin errors counter delta overflowed".to_owned())?;
+    Ok((delta > 0).then_some(delta))
 }
 
 /// The byte counts an origin logged for the `PUT`s of one sample.
@@ -228,7 +253,7 @@ pub fn verify_not_bypassed(accepted: usize, expected: usize) -> Result<(), Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
+    use std::io::{Read as _, Write as _};
 
     fn scratch(name: &str) -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!(
@@ -289,12 +314,66 @@ mod tests {
             errors: 5,
             ..before
         };
-        assert_eq!(origin_error_delta(Some(before), Some(after)), Some(2));
-        assert_eq!(origin_error_delta(Some(before), Some(before)), None);
-        // An origin that does not serve /__stats degrades the guard to a no-op,
-        // as the Python fallback origin required.
-        assert_eq!(origin_error_delta(None, Some(after)), None);
-        assert_eq!(origin_error_delta(Some(before), None), None);
+        assert_eq!(origin_error_delta(before, after), Ok(Some(2)));
+        assert_eq!(origin_error_delta(before, before), Ok(None));
+    }
+
+    #[test]
+    fn an_origin_counter_reset_fails_closed() {
+        let before = OriginStats {
+            errors: 3,
+            gets: 10,
+            puts: 2,
+        };
+        for after in [
+            OriginStats {
+                errors: 2,
+                ..before
+            },
+            OriginStats { gets: 9, ..before },
+            OriginStats { puts: 1, ..before },
+        ] {
+            assert!(origin_error_delta(before, after).is_err());
+        }
+    }
+
+    #[test]
+    fn a_missing_origin_counter_is_not_rewritten_as_zero() {
+        let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).unwrap();
+            let body = "{\"gets\":1,\"puts\":2}\n";
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+
+        let observed = fetch_origin_stats(port, "http");
+        server.join().unwrap();
+
+        let error = observed.expect_err("a missing errors counter must fail closed");
+        assert!(error.contains("errors"), "{error}");
+    }
+
+    #[test]
+    fn origin_stats_require_non_negative_integer_counters() {
+        let valid = parse_origin_stats(r#"{"errors":0,"gets":1,"puts":2}"#).unwrap();
+        assert_eq!(valid.errors, 0);
+        for invalid in [
+            r#"{"gets":1,"puts":2}"#,
+            r#"{"errors":0,"puts":2}"#,
+            r#"{"errors":0,"gets":1}"#,
+            r#"{"errors":"0","gets":1,"puts":2}"#,
+            r#"{"errors":-1,"gets":1,"puts":2}"#,
+        ] {
+            assert!(parse_origin_stats(invalid).is_err(), "accepted {invalid}");
+        }
     }
 
     #[test]
