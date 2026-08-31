@@ -18,10 +18,15 @@
 use std::{
     ffi::OsStr,
     fmt, io,
+    io::Read,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
+    thread,
     time::{Duration, Instant},
 };
+
+/// Default upper bound for one external development-tool invocation.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_mins(30);
 
 /// Argument values that must never appear in a diagnostic.
 ///
@@ -94,6 +99,13 @@ pub enum ToolError {
         /// Captured standard error, truncated for readability.
         stderr: String,
     },
+    /// The child exceeded its execution deadline and was terminated.
+    Timeout {
+        /// The redacted command line.
+        command: String,
+        /// The deadline that was exceeded.
+        timeout: Duration,
+    },
 }
 
 impl fmt::Display for ToolError {
@@ -120,6 +132,13 @@ impl fmt::Display for ToolError {
                     write!(formatter, "`{command}` failed with {status}\n{stderr}")
                 }
             }
+            Self::Timeout { command, timeout } => {
+                write!(
+                    formatter,
+                    "`{command}` exceeded its {}s timeout",
+                    timeout.as_secs()
+                )
+            }
         }
     }
 }
@@ -128,7 +147,7 @@ impl std::error::Error for ToolError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Spawn { source, .. } => Some(source),
-            Self::NotFound { .. } | Self::Failed { .. } => None,
+            Self::NotFound { .. } | Self::Failed { .. } | Self::Timeout { .. } => None,
         }
     }
 }
@@ -146,6 +165,7 @@ pub struct Tool {
     env: Vec<(String, String)>,
     cwd: Option<PathBuf>,
     inherit_stdio: bool,
+    timeout: Duration,
 }
 
 impl Tool {
@@ -158,6 +178,7 @@ impl Tool {
             env: Vec::new(),
             cwd: None,
             inherit_stdio: false,
+            timeout: DEFAULT_TIMEOUT,
         }
     }
 
@@ -203,6 +224,17 @@ impl Tool {
         self
     }
 
+    /// Sets the maximum time allowed for this invocation.
+    #[allow(
+        dead_code,
+        reason = "the public builder is reserved for commands needing a tighter deadline"
+    )]
+    #[must_use]
+    pub const fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
     /// Returns the command line with sensitive values replaced.
     ///
     /// This is the only representation that may be printed or embedded in an
@@ -244,7 +276,7 @@ impl Tool {
     /// [`ToolError::Spawn`] when the process cannot be started or awaited.
     pub fn probe(&self) -> Result<Outcome, ToolError> {
         let started = Instant::now();
-        let output = self.build().output().map_err(|source| {
+        let mut child = self.build().spawn().map_err(|source| {
             if source.kind() == io::ErrorKind::NotFound {
                 ToolError::NotFound {
                     program: self.program.clone(),
@@ -256,6 +288,62 @@ impl Tool {
                 }
             }
         })?;
+
+        // Drain captured pipes concurrently while polling. Waiting for the child
+        // before draining can deadlock when a tool fills a pipe.
+        let stdout_reader = child.stdout.take().map(|mut pipe| {
+            thread::spawn(move || {
+                let mut bytes = Vec::new();
+                let _ = pipe.read_to_end(&mut bytes);
+                bytes
+            })
+        });
+        let stderr_reader = child.stderr.take().map(|mut pipe| {
+            thread::spawn(move || {
+                let mut bytes = Vec::new();
+                let _ = pipe.read_to_end(&mut bytes);
+                bytes
+            })
+        });
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if started.elapsed() >= self.timeout => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    if let Some(reader) = stdout_reader {
+                        let _ = reader.join();
+                    }
+                    if let Some(reader) = stderr_reader {
+                        let _ = reader.join();
+                    }
+                    return Err(ToolError::Timeout {
+                        command: self.redacted(),
+                        timeout: self.timeout,
+                    });
+                }
+                Ok(None) => thread::sleep(Duration::from_millis(10)),
+                Err(source) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(ToolError::Spawn {
+                        program: self.program.clone(),
+                        source,
+                    });
+                }
+            }
+        };
+        let stdout = stdout_reader
+            .and_then(|reader| reader.join().ok())
+            .unwrap_or_default();
+        let stderr = stderr_reader
+            .and_then(|reader| reader.join().ok())
+            .unwrap_or_default();
+        let output = Output {
+            status,
+            stdout,
+            stderr,
+        };
         Ok(Self::finish(&output, started.elapsed()))
     }
 
@@ -406,6 +494,19 @@ mod tests {
         }
         let outcome = Tool::new("echo").arg("hello").run().expect("echo must run");
         assert_eq!(outcome.trimmed_stdout(), "hello");
+    }
+
+    #[test]
+    fn a_child_that_exceeds_its_deadline_is_killed_and_reported() {
+        if !Tool::exists("sleep") {
+            return;
+        }
+        let error = Tool::new("sleep")
+            .arg("1")
+            .timeout(Duration::from_millis(20))
+            .probe()
+            .expect_err("a child beyond its deadline must fail closed");
+        assert!(matches!(error, ToolError::Timeout { .. }), "{error:?}");
     }
 
     #[test]
