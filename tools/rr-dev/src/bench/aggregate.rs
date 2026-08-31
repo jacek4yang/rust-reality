@@ -85,9 +85,9 @@ pub struct PairedCell {
 ///
 /// # Errors
 ///
-/// Returns a message when a block is unbalanced, when a baseline median is zero
-/// (which would make the ratio undefined), or when the bootstrap has too few
-/// blocks to estimate an interval.
+/// Returns a message when a block is unbalanced, an observation is not positive
+/// and finite, a ratio is not positive and finite, or the bootstrap cannot
+/// estimate a bounded interval.
 pub fn paired_cell(
     blocks: &[BlockObservations],
     expected_per_block: usize,
@@ -107,15 +107,31 @@ pub fn paired_cell(
                 block.candidate.len()
             ));
         }
+        for (side, observations) in [
+            ("baseline", block.baseline.as_slice()),
+            ("candidate", block.candidate.as_slice()),
+        ] {
+            if let Some((sample, _)) = observations
+                .iter()
+                .enumerate()
+                .find(|(_, value)| !value.is_finite() || **value <= 0.0)
+            {
+                return Err(format!(
+                    "block {} {side} observation {} is not positive and finite",
+                    index + 1,
+                    sample + 1
+                ));
+            }
+        }
         let baseline = stats::median(&block.baseline).map_err(|error| error.to_string())?;
         let candidate = stats::median(&block.candidate).map_err(|error| error.to_string())?;
-        if baseline == 0.0 {
+        let ratio = candidate / baseline;
+        if !ratio.is_finite() || ratio <= 0.0 {
             return Err(format!(
-                "block {} has a zero baseline median, so the ratio is undefined",
+                "block {} candidate/baseline ratio is not positive and finite",
                 index + 1
             ));
         }
-        let ratio = candidate / baseline;
         ratios.push(ratio);
         rows.push(BlockRatio {
             baseline,
@@ -212,7 +228,8 @@ impl PooledImplementation {
 ///
 /// # Errors
 ///
-/// Returns a message when there are no rows or no latencies to summarise.
+/// Returns a message when there are no rows or no latencies to summarise, or when
+/// any rate or latency is not positive and finite.
 pub fn pooled_implementation(
     rates: &[f64],
     latencies: &[f64],
@@ -222,6 +239,24 @@ pub fn pooled_implementation(
     }
     if latencies.is_empty() {
         return Err("no connection latencies to pool for this implementation".to_owned());
+    }
+    if let Some(index) = rates
+        .iter()
+        .position(|value| !value.is_finite() || *value <= 0.0)
+    {
+        return Err(format!(
+            "connection-rate observation {} is not positive and finite",
+            index + 1
+        ));
+    }
+    if let Some(index) = latencies
+        .iter()
+        .position(|value| !value.is_finite() || *value <= 0.0)
+    {
+        return Err(format!(
+            "latency observation {} is not positive and finite",
+            index + 1
+        ));
     }
     Ok(PooledImplementation {
         samples: rates.len(),
@@ -240,10 +275,19 @@ pub fn pooled_implementation(
 ///
 /// # Errors
 ///
-/// Returns a message for an empty sample.
+/// Returns a message for an empty sample, a non-finite observation, or a fraction
+/// outside the closed unit interval.
 pub fn floor_percentile(values: &[f64], fraction: f64) -> Result<f64, String> {
     if values.is_empty() {
         return Err("cannot take a percentile of an empty sample".to_owned());
+    }
+    if !fraction.is_finite() || !(0.0..=1.0).contains(&fraction) {
+        return Err(format!(
+            "percentile fraction {fraction} is outside 0..=1"
+        ));
+    }
+    if let Some(index) = values.iter().position(|value| !value.is_finite()) {
+        return Err(format!("percentile observation {} is not finite", index + 1));
     }
     let mut ordered = values.to_vec();
     ordered.sort_unstable_by(f64::total_cmp);
@@ -344,14 +388,35 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_baseline_median_is_rejected_rather_than_producing_infinity() {
+    fn a_zero_baseline_observation_is_rejected_rather_than_producing_infinity() {
         let data = blocks(&[
             (&[1.0, 1.0], &[1.0, 1.0]),
             (&[0.0, 0.0], &[1.0, 1.0]),
             (&[1.0, 1.0], &[1.0, 1.0]),
         ]);
         let error = paired_cell(&data, 2, FALLBACK_CPU_SEED, "x").unwrap_err();
-        assert!(error.contains("zero baseline median"), "{error}");
+        assert!(error.contains("baseline observation 1"), "{error}");
+    }
+
+    #[test]
+    fn paired_cells_reject_non_finite_negative_and_overflowing_values() {
+        for bad in [-1.0, f64::NAN, f64::INFINITY] {
+            let data = blocks(&[
+                (&[1.0], &[1.0]),
+                (&[1.0], &[bad]),
+                (&[1.0], &[1.0]),
+            ]);
+            let error = paired_cell(&data, 1, FALLBACK_CPU_SEED, "x").unwrap_err();
+            assert!(error.contains("candidate observation 1"), "{bad}: {error}");
+        }
+
+        let data = blocks(&[
+            (&[f64::MIN_POSITIVE], &[f64::MAX]),
+            (&[1.0], &[1.0]),
+            (&[1.0], &[1.0]),
+        ]);
+        let error = paired_cell(&data, 1, FALLBACK_CPU_SEED, "x").unwrap_err();
+        assert!(error.contains("ratio is not positive and finite"), "{error}");
     }
 
     /// The bootstrap refuses to interval-estimate from fewer than three blocks,
@@ -406,6 +471,16 @@ mod tests {
         assert!(floor_percentile(&[], 0.5).is_err());
     }
 
+    #[test]
+    fn floor_percentile_rejects_invalid_inputs_instead_of_panicking() {
+        for fraction in [-0.1, 1.1, f64::NAN, f64::INFINITY] {
+            assert!(floor_percentile(&[1.0, 2.0], fraction).is_err());
+        }
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(floor_percentile(&[1.0, bad, 2.0], 0.5).is_err());
+        }
+    }
+
     /// A ten-element sample is a length where the two agree, which is why the
     /// disagreement is easy to miss.
     #[test]
@@ -437,6 +512,14 @@ mod tests {
 
         assert!(pooled_implementation(&[], &latencies).is_err());
         assert!(pooled_implementation(&rates, &[]).is_err());
+    }
+
+    #[test]
+    fn pooled_statistics_reject_non_positive_and_non_finite_measurements() {
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(pooled_implementation(&[100.0, bad], &[0.01, 0.02]).is_err());
+            assert!(pooled_implementation(&[100.0, 110.0], &[0.01, bad]).is_err());
+        }
     }
 
     #[test]

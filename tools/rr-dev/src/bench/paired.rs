@@ -1302,6 +1302,76 @@ mod tests {
         );
     }
 
+    #[test]
+    fn cpu_per_connection_matches_an_independent_unit_oracle() {
+        let context = small_suite();
+        let cpu = cpu_summary(&context, &measured(3, 1, true))
+            .expect("the complete fixture has CPU attribution")
+            .to_python_json();
+
+        // Independent arithmetic: each slot completes 1 sample * 1 cell * 4
+        // connections. 200 ms / 4 = 50,000 us baseline; 100 ms / 4 = 25,000 us
+        // candidate, so candidate/baseline is exactly 0.5.
+        assert!(cpu.contains("\"baseline\": 50000.0"), "{cpu}");
+        assert!(cpu.contains("\"candidate\": 25000.0"), "{cpu}");
+        assert!(
+            cpu.contains("\"medianCandidateVsBaseline\": 0.5"),
+            "{cpu}"
+        );
+    }
+
+    #[test]
+    fn cpu_per_gib_matches_an_independent_volume_oracle() {
+        let context = FallbackSuite {
+            repo: PathBuf::new(),
+            baseline_bin: PathBuf::new(),
+            candidate_bin: PathBuf::new(),
+            baseline_identity: None,
+            baseline_commit: None,
+            out_dir: PathBuf::new(),
+            run_id: "unit-oracle".to_owned(),
+            blocks: 3,
+            samples: 1,
+            concurrencies: vec![1, 3],
+            payload_mib: 256,
+            abba_start: "baseline".to_owned(),
+            relay: RelayPolicy::default(),
+            attribution: Attribution::Perf(&[]),
+        };
+        let slots = plan::abba_slots(
+            PAIRED_LABELS,
+            "baseline",
+            context.blocks,
+            PortLayout::ServerAfterOneOrigin { base: 20_000 },
+        )
+        .expect("valid ABBA fixture");
+        let measured: Vec<FallbackSlot> = slots
+            .into_iter()
+            .map(|slot| FallbackSlot {
+                task_clock_ms: Some(if slot.implementation == "baseline" {
+                    2_000.0
+                } else {
+                    1_000.0
+                }),
+                slot,
+                rows: Vec::new(),
+            })
+            .collect();
+        let cpu = fallback_cpu_summary(&context, &measured)
+            .expect("the complete fixture has CPU attribution")
+            .to_python_json();
+
+        // Independent arithmetic: one sample at c1 and c3 moves four 256 MiB
+        // payloads, exactly 1 GiB per slot. The baseline therefore uses 2 s/GiB,
+        // the candidate 1 s/GiB, and candidate/baseline is exactly 0.5.
+        assert!(cpu.contains("\"baseline\": 2.0"), "{cpu}");
+        assert!(cpu.contains("\"candidate\": 1.0"), "{cpu}");
+        assert!(
+            cpu.contains("\"medianCandidateVsBaseline\": 0.5"),
+            "{cpu}"
+        );
+    }
+
     /// The environment keeps schema 2 and its field names, and says plainly that
     /// the shell contract and keeper no longer exist.
     #[test]

@@ -42,7 +42,7 @@ use super::{
 pub const MIN_BOOTSTRAP_ITERATIONS: usize = 20_000;
 
 /// Highest bootstrap resample count the manifest may request.
-pub const MAX_BOOTSTRAP_ITERATIONS: usize = 100_000;
+pub const MAX_BOOTSTRAP_ITERATIONS: usize = bootstrap::MAX_ITERATIONS;
 
 /// CPU tiers the evaluator recognises.
 pub const SUPPORTED_TIERS: [&str; 2] = ["portable", "x86-64-v3"];
@@ -184,7 +184,8 @@ impl ReportingStatistics {
     ///
     /// # Errors
     ///
-    /// Returns [`StatsError::BootstrapSample`] with fewer than three blocks.
+    /// Returns a statistical error when the ratios or resample count are outside
+    /// the bounded reporting contract.
     pub fn compute(metric_id: &str, ratios: &[f64], iterations: usize) -> Result<Self, StatsError> {
         Ok(Self {
             bootstrap95: bootstrap::interval(metric_id, ratios, iterations)?,

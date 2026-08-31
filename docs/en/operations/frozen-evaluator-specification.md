@@ -56,7 +56,9 @@ The block bootstrap. The output method block labels it
 `"deterministic 95% block bootstrap (reporting only)"` and no verdict consults
 it. Procedure: seed from the first eight bytes of the SHA-256 of `metric_id`
 read big-endian, then resample medians over the recorded iteration count; sort
-and report the 2.5% and 97.5% elements. Requires at least three blocks.
+and report the 2.5% and 97.5% elements. Requires at least three positive finite
+block ratios and 40..=100000 resamples. The manifest contract remains narrower:
+it permits 20000..=100000 resamples.
 
 This split is the key parity finding: **verdict parity requires no RNG
 reproduction at all.** The RNG only affects a reported interval.
@@ -72,7 +74,11 @@ duplicate hypothesis id
 raw p-value outside [0,1] or not finite
 both directions significant for one metric
 fewer than three blocks for the bootstrap
+bootstrap resample count outside 40..=100000
 empty sample handed to a rank statistic
+non-finite sample handed to a rank statistic
+quantile fraction outside 0..=1
+non-positive/non-finite median ratio or invalid p-value handed to classification
 ```
 
 ## Numerical parity
