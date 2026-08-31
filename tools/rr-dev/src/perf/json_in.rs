@@ -11,7 +11,13 @@
 //! and a parse-then-reformat round trip through `f64` would be the obvious place to
 //! lose a digit.
 
-use std::collections::BTreeMap;
+use std::collections::{btree_map::Entry, BTreeMap};
+
+/// Maximum number of recursively nested arrays and objects in one document.
+///
+/// Evidence schemas are shallow. A fixed ceiling keeps malformed inputs from
+/// exhausting the control-plane thread's stack without constraining valid runs.
+const MAX_NESTING_DEPTH: usize = 128;
 
 /// A parsed JSON value.
 #[derive(Debug, Clone, PartialEq)]
@@ -133,7 +139,16 @@ impl Value {
     /// Fails when the value is not a JSON number.
     pub fn as_f64(&self, path: &str) -> Field<f64> {
         match self {
-            Self::Number(text) => text.parse().map_err(|_| missing(path, "a number")),
+            Self::Number(text) => {
+                let value: f64 = text
+                    .parse()
+                    .map_err(|_| missing(path, "a finite number"))?;
+                if value.is_finite() {
+                    Ok(value)
+                } else {
+                    Err(missing(path, "a finite number"))
+                }
+            }
             _ => Err(missing(path, "a number")),
         }
     }
@@ -267,7 +282,7 @@ impl Value {
 pub fn parse(text: &str) -> Result<Value, String> {
     let bytes = text.as_bytes();
     let mut cursor = 0;
-    let value = parse_value(bytes, &mut cursor)?;
+    let value = parse_value(bytes, &mut cursor, 0)?;
     skip_whitespace(bytes, &mut cursor);
     if cursor != bytes.len() {
         return Err(format!("trailing input at byte {cursor}"));
@@ -296,12 +311,12 @@ pub fn parse_lines(text: &str) -> Result<Vec<Value>, String> {
     Ok(rows)
 }
 
-fn parse_value(bytes: &[u8], cursor: &mut usize) -> Result<Value, String> {
+fn parse_value(bytes: &[u8], cursor: &mut usize, depth: usize) -> Result<Value, String> {
     skip_whitespace(bytes, cursor);
     match bytes.get(*cursor) {
         None => Err("unexpected end of input".to_owned()),
-        Some(b'{') => parse_object(bytes, cursor),
-        Some(b'[') => parse_array(bytes, cursor),
+        Some(b'{') => parse_object(bytes, cursor, depth),
+        Some(b'[') => parse_array(bytes, cursor, depth),
         Some(b'"') => parse_string(bytes, cursor).map(Value::Str),
         Some(b't') => literal(bytes, cursor, "true", Value::Bool(true)),
         Some(b'f') => literal(bytes, cursor, "false", Value::Bool(false)),
@@ -310,7 +325,10 @@ fn parse_value(bytes: &[u8], cursor: &mut usize) -> Result<Value, String> {
     }
 }
 
-fn parse_object(bytes: &[u8], cursor: &mut usize) -> Result<Value, String> {
+fn parse_object(bytes: &[u8], cursor: &mut usize, depth: usize) -> Result<Value, String> {
+    if depth >= MAX_NESTING_DEPTH {
+        return Err(format!("nesting depth exceeds {MAX_NESTING_DEPTH}"));
+    }
     *cursor += 1;
     let mut members = BTreeMap::new();
     skip_whitespace(bytes, cursor);
@@ -320,14 +338,22 @@ fn parse_object(bytes: &[u8], cursor: &mut usize) -> Result<Value, String> {
     }
     loop {
         skip_whitespace(bytes, cursor);
+        let key_offset = *cursor;
         let key = parse_string(bytes, cursor)?;
         skip_whitespace(bytes, cursor);
         if bytes.get(*cursor) != Some(&b':') {
             return Err(format!("expected ':' at byte {cursor}"));
         }
         *cursor += 1;
-        let value = parse_value(bytes, cursor)?;
-        members.insert(key, value);
+        let value = parse_value(bytes, cursor, depth + 1)?;
+        match members.entry(key) {
+            Entry::Vacant(member) => {
+                member.insert(value);
+            }
+            Entry::Occupied(_) => {
+                return Err(format!("duplicate object member at byte {key_offset}"));
+            }
+        }
         skip_whitespace(bytes, cursor);
         match bytes.get(*cursor) {
             Some(b',') => *cursor += 1,
@@ -340,7 +366,10 @@ fn parse_object(bytes: &[u8], cursor: &mut usize) -> Result<Value, String> {
     }
 }
 
-fn parse_array(bytes: &[u8], cursor: &mut usize) -> Result<Value, String> {
+fn parse_array(bytes: &[u8], cursor: &mut usize, depth: usize) -> Result<Value, String> {
+    if depth >= MAX_NESTING_DEPTH {
+        return Err(format!("nesting depth exceeds {MAX_NESTING_DEPTH}"));
+    }
     *cursor += 1;
     let mut items = Vec::new();
     skip_whitespace(bytes, cursor);
@@ -349,7 +378,7 @@ fn parse_array(bytes: &[u8], cursor: &mut usize) -> Result<Value, String> {
         return Ok(Value::Array(items));
     }
     loop {
-        items.push(parse_value(bytes, cursor)?);
+        items.push(parse_value(bytes, cursor, depth + 1)?);
         skip_whitespace(bytes, cursor);
         match bytes.get(*cursor) {
             Some(b',') => *cursor += 1,
@@ -391,14 +420,7 @@ fn parse_string(bytes: &[u8], cursor: &mut usize) -> Result<String, String> {
                     b'b' => out.push(0x08),
                     b'f' => out.push(0x0c),
                     b'u' => {
-                        let hex = bytes
-                            .get(*cursor..*cursor + 4)
-                            .ok_or_else(|| "truncated \\u escape".to_owned())?;
-                        let text = std::str::from_utf8(hex).map_err(|e| e.to_string())?;
-                        let code = u32::from_str_radix(text, 16).map_err(|e| e.to_string())?;
-                        *cursor += 4;
-                        let character = char::from_u32(code)
-                            .ok_or_else(|| format!("invalid code point {code}"))?;
+                        let character = parse_unicode_escape(bytes, cursor)?;
                         let mut buffer = [0_u8; 4];
                         out.extend_from_slice(character.encode_utf8(&mut buffer).as_bytes());
                     }
@@ -409,6 +431,50 @@ fn parse_string(bytes: &[u8], cursor: &mut usize) -> Result<String, String> {
         }
     }
     Err("unterminated string".to_owned())
+}
+
+fn parse_unicode_escape(bytes: &[u8], cursor: &mut usize) -> Result<char, String> {
+    let first = parse_hex_quad(bytes, cursor)?;
+    let code = match first {
+        0xd800..=0xdbff => {
+            if bytes.get(*cursor..*cursor + 2) != Some(b"\\u") {
+                return Err(format!(
+                    "high surrogate at byte {} is not followed by a low surrogate",
+                    *cursor - 4
+                ));
+            }
+            *cursor += 2;
+            let second = parse_hex_quad(bytes, cursor)?;
+            if !(0xdc00..=0xdfff).contains(&second) {
+                return Err(format!("invalid low surrogate at byte {}", *cursor - 4));
+            }
+            0x1_0000 + (u32::from(first) - 0xd800) * 0x400 + (u32::from(second) - 0xdc00)
+        }
+        0xdc00..=0xdfff => {
+            return Err(format!("unpaired low surrogate at byte {}", *cursor - 4));
+        }
+        _ => u32::from(first),
+    };
+    char::from_u32(code).ok_or_else(|| format!("invalid Unicode scalar value {code:#x}"))
+}
+
+fn parse_hex_quad(bytes: &[u8], cursor: &mut usize) -> Result<u16, String> {
+    let start = *cursor;
+    let hex = bytes
+        .get(start..start + 4)
+        .ok_or_else(|| format!("truncated \\u escape at byte {start}"))?;
+    let mut code = 0_u16;
+    for &byte in hex {
+        let digit = match byte {
+            b'0'..=b'9' => u16::from(byte - b'0'),
+            b'a'..=b'f' => u16::from(byte - b'a' + 10),
+            b'A'..=b'F' => u16::from(byte - b'A' + 10),
+            _ => return Err(format!("invalid hex digit at byte {}", *cursor)),
+        };
+        code = code * 16 + digit;
+        *cursor += 1;
+    }
+    Ok(code)
 }
 
 fn parse_number(bytes: &[u8], cursor: &mut usize) -> Result<Value, String> {
@@ -487,7 +553,7 @@ fn literal(bytes: &[u8], cursor: &mut usize, word: &str, value: Value) -> Result
 
 fn skip_whitespace(bytes: &[u8], cursor: &mut usize) {
     while let Some(byte) = bytes.get(*cursor) {
-        if byte.is_ascii_whitespace() {
+        if matches!(byte, b' ' | b'\t' | b'\n' | b'\r') {
             *cursor += 1;
         } else {
             break;
@@ -611,9 +677,70 @@ mod tests {
     }
 
     #[test]
+    fn valid_number_boundaries_are_retained_and_non_finite_f64_is_refused() {
+        for good in ["0", "-0", "1.0", "1e0", "1E+9", "-2.5e-3"] {
+            assert_eq!(parse(good), Ok(Value::Number(good.to_owned())));
+        }
+        let huge = doc(r#"{"x":1e9999}"#);
+        assert!(huge.field("$", "x").unwrap().as_f64("$.x").is_err());
+    }
+
+    #[test]
     fn escapes_including_unicode_resolve() {
-        let value = doc(r#"{"a":"line\nbreak \u4e2d"}"#);
-        assert_eq!(value.str_field("$", "a"), Ok("line\nbreak 中"));
+        let value = doc(r#"{"a":"line\nbreak \u4e2d \ud834\udd1e"}"#);
+        assert_eq!(value.str_field("$", "a"), Ok("line\nbreak 中 𝄞"));
+    }
+
+    #[test]
+    fn malformed_unicode_escapes_are_refused() {
+        for bad in [
+            r#"{"x":"\u12"}"#,
+            r#"{"x":"\uzzzz"}"#,
+            r#"{"x":"\ud834"}"#,
+            r#"{"x":"\ud834\u0041"}"#,
+            r#"{"x":"\udd1e"}"#,
+        ] {
+            assert!(parse(bad).is_err(), "{bad} must be refused");
+        }
+    }
+
+    #[test]
+    fn only_rfc_8259_whitespace_is_accepted() {
+        assert!(parse(" \t\r\nnull \t\r\n").is_ok());
+        assert!(parse("\u{000b}null").is_err());
+        assert!(parse("\u{000c}null").is_err());
+    }
+
+    #[test]
+    fn duplicate_members_are_refused() {
+        assert!(parse(r#"{"identity":"expected","identity":"stale"}"#).is_err());
+    }
+
+    #[test]
+    fn malformed_container_separators_and_eof_are_refused() {
+        for bad in [
+            "[1,]",
+            "[1,,2]",
+            r#"{"x":1,}"#,
+            r#"{"x":1,,"y":2}"#,
+            r#"{"x" 1}"#,
+            "[",
+            r#"{"x":[1,2}"#,
+        ] {
+            assert!(parse(bad).is_err(), "{bad} must be refused");
+        }
+    }
+
+    #[test]
+    fn nesting_depth_is_bounded() {
+        let accepted = format!("{}0{}", "[".repeat(MAX_NESTING_DEPTH), "]".repeat(MAX_NESTING_DEPTH));
+        assert!(parse(&accepted).is_ok());
+        let refused = format!(
+            "{}0{}",
+            "[".repeat(MAX_NESTING_DEPTH + 1),
+            "]".repeat(MAX_NESTING_DEPTH + 1)
+        );
+        assert!(parse(&refused).is_err());
     }
 
     #[test]
