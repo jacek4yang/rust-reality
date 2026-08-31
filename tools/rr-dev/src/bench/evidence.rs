@@ -187,6 +187,8 @@ impl RunDirectory {
         run_id: &str,
         collector: &str,
     ) -> Result<PathBuf, String> {
+        let marker = self.join(contract.marker_name());
+        ensure_unpublished(&marker)?;
         let metadata = self.join(contract.metadata_name());
         if let Some(staging_name) = contract.staging_name() {
             let staging = self.join(staging_name);
@@ -215,9 +217,27 @@ impl RunDirectory {
             let _ = std::fs::remove_file(&metadata);
             write_new_at(&metadata, metadata_json)?;
         }
-        let marker = self.join(contract.marker_name());
         publication::publish_success_marker(&marker, &metadata, run_id, collector)?;
         Ok(marker)
+    }
+}
+
+/// Refuses to touch metadata after a run has become authoritative.
+///
+/// `Path::exists` follows symlinks and would miss a dangling destination, so the
+/// marker is inspected without following it. Errors other than absence also fail
+/// closed: publication must not mutate evidence when marker state is unknown.
+fn ensure_unpublished(marker: &Path) -> Result<(), String> {
+    match marker.symlink_metadata() {
+        Ok(_) => Err(format!(
+            "could not publish completion marker {} without overwrite: destination already exists",
+            marker.display()
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "could not inspect completion marker {} before publication: {error}",
+            marker.display()
+        )),
     }
 }
 
@@ -479,17 +499,94 @@ mod tests {
         );
     }
 
-    /// Publishing twice must not silently replace an authoritative marker.
+    /// Publishing twice must leave the already authoritative evidence intact.
     #[test]
     fn a_second_publication_fails_closed() {
         let scratch = Scratch::new("twice");
         let run = RunDirectory::create(&scratch.join("run")).unwrap();
-        run.publish(Publication::Environment, "{}\n", "run-1", "collector")
+        let metadata = "{\"phase\":\"complete\"}\n";
+        let marker = run
+            .publish(Publication::Environment, metadata, "run-1", "collector")
             .unwrap();
+        let original_marker = std::fs::read(&marker).unwrap();
         let error = run
-            .publish(Publication::Environment, "{}\n", "run-1", "collector")
+            .publish(
+                Publication::Environment,
+                "{\"phase\":\"tampered\"}\n",
+                "run-1",
+                "collector",
+            )
             .unwrap_err();
         assert!(error.contains("without overwrite"), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(run.join("environment.json")).unwrap(),
+            metadata,
+            "a rejected republication must not replace marker-bound metadata"
+        );
+        assert_eq!(
+            std::fs::read(&marker).unwrap(),
+            original_marker,
+            "a rejected republication must not replace the marker"
+        );
+    }
+
+    #[test]
+    fn contract_republication_preserves_marker_bound_metadata() {
+        let scratch = Scratch::new("contract-twice");
+        let run = RunDirectory::create(&scratch.join("run")).unwrap();
+        run.write_new("run-contract.json", "{\"phase\":\"preflight\"}\n")
+            .unwrap();
+        let metadata = "{\"phase\":\"complete\"}\n";
+        let marker = run
+            .publish(Publication::Contract, metadata, "run-1", "collector")
+            .unwrap();
+        let original_marker = std::fs::read(&marker).unwrap();
+
+        let error = run
+            .publish(
+                Publication::Contract,
+                "{\"phase\":\"tampered\"}\n",
+                "run-1",
+                "collector",
+            )
+            .unwrap_err();
+
+        assert!(error.contains("without overwrite"), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(run.join("run-contract.json")).unwrap(),
+            metadata,
+            "a rejected republication must not replace marker-bound metadata"
+        );
+        assert_eq!(std::fs::read(&marker).unwrap(), original_marker);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_marker_symlink_blocks_metadata_mutation() {
+        let scratch = Scratch::new("marker-symlink");
+        let run = RunDirectory::create(&scratch.join("run")).unwrap();
+        let metadata = "{\"phase\":\"early\"}\n";
+        run.write_new("environment.json", metadata).unwrap();
+        std::os::unix::fs::symlink(
+            scratch.join("missing-marker-target"),
+            run.join("completion.json"),
+        )
+        .unwrap();
+
+        let error = run
+            .publish(
+                Publication::Environment,
+                "{\"phase\":\"complete\"}\n",
+                "run-1",
+                "collector",
+            )
+            .unwrap_err();
+
+        assert!(error.contains("without overwrite"), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(run.join("environment.json")).unwrap(),
+            metadata
+        );
     }
 
     #[test]
