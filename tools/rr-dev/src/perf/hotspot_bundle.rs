@@ -325,9 +325,13 @@ fn load_capture(plan: &Plan) -> Result<Capture, String> {
         return Err("hotspot capture binary identity is malformed".to_owned());
     }
     let completion = read_json(&completion_path, "hotspot completion")?;
+    let contract_path = root.join("run-contract.json");
+    let contract_sha256 =
+        crate::perf::loader::sha256_file(&contract_path).map_err(|error| error.to_string())?;
     crate::perf::loader::verify_success_marker(
         &completion,
-        &root.join("run-contract.json"),
+        &contract_path,
+        &contract_sha256,
         &run_id,
         "perf-hotspot",
         "hotspot completion",

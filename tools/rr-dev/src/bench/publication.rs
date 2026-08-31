@@ -126,14 +126,22 @@ mod tests {
         assert_eq!(std::fs::read(&marker).unwrap(), original);
 
         let parsed = json_in::parse(std::str::from_utf8(&original).unwrap()).unwrap();
-        loader::verify_success_marker(&parsed, &evidence, "run-1", "native-test", "completion")
-            .expect("the marker attests the exact evidence");
+        loader::verify_success_marker(
+            &parsed,
+            &evidence,
+            &loader::sha256_file(&evidence).unwrap(),
+            "run-1",
+            "native-test",
+            "completion",
+        )
+        .expect("the marker attests the exact evidence");
 
         std::fs::write(&evidence, b"{\"status\":\"TAMPERED\"}\n").unwrap();
         assert!(
             loader::verify_success_marker(
                 &parsed,
                 &evidence,
+                &loader::sha256_file(&evidence).unwrap(),
                 "run-1",
                 "native-test",
                 "completion",

@@ -23,10 +23,12 @@ use super::{
         self, DeterministicMetric, OverallVerdict, ReportingStatistics,
         validate_bootstrap_iterations, validate_tier,
     },
-    evidence::{BinaryIdentity, SUPPORTED_SCHEMA_VERSION, WorkloadKind},
+    evidence::{
+        BinaryIdentity, SUPPORTED_SCHEMA_VERSION, WorkloadKind, is_commit_hex, is_sha256_hex,
+    },
     json_in::Value,
     json_out::Json,
-    loader::{self, LoadError, WorkloadInput, sha256_file},
+    loader::{self, LoadError, WorkloadInput, parse_json_bytes, sha256_bytes, sha256_file},
     stats::{Classification, FAMILY_WISE_ALPHA, MAX_EXACT_BLOCKS, MIN_EXACT_BLOCKS},
 };
 
@@ -60,8 +62,7 @@ pub struct ValidatedEvidence {
 /// # Errors
 ///
 /// Returns the first rule that failed.
-pub fn load_manifest(manifest_path: &Path) -> Result<ValidatedEvidence, LoadError> {
-    let manifest = loader::load_json(manifest_path)?;
+fn load_manifest(manifest: &Value) -> Result<ValidatedEvidence, LoadError> {
     let context = "manifest";
 
     manifest.require_int(
@@ -72,14 +73,9 @@ pub fn load_manifest(manifest_path: &Path) -> Result<ValidatedEvidence, LoadErro
     let tier = manifest.str_field(context, "tier")?.to_owned();
     validate_tier(&tier).map_err(|error| evaluation_to_load(&error))?;
 
-    let candidate = identity(&manifest, "candidate")?;
-    let baseline = identity(&manifest, "baseline")?;
-    if candidate == baseline {
-        return Err(rule(
-            context,
-            "candidate and baseline identities are identical",
-        ));
-    }
+    let candidate = identity(manifest, "candidate")?;
+    let baseline = identity(manifest, "baseline")?;
+    validate_comparison_identity(&candidate, &baseline)?;
 
     // The default is applied before range validation, matching `.get(key, 20_000)`.
     let iterations = match manifest.optional("bootstrapIterations") {
@@ -126,6 +122,14 @@ pub fn load_manifest(manifest_path: &Path) -> Result<ValidatedEvidence, LoadErro
         return Err(rule(
             context,
             "workloads used different host-exclusive lock protocols/identities",
+        ));
+    }
+
+    let build_ids: Vec<_> = inputs.iter().map(|input| &input.build_ids).collect();
+    if build_ids.windows(2).any(|pair| pair[0] != pair[1]) {
+        return Err(rule(
+            context,
+            "workloads reported different candidate/baseline Build IDs",
         ));
     }
 
@@ -188,10 +192,37 @@ fn validate_workload_set(workloads: &[Value], context: &str) -> Result<(), LoadE
 
 fn identity(manifest: &Value, label: &str) -> Result<BinaryIdentity, LoadError> {
     let value = manifest.field("manifest", label)?;
+    let commit = value.str_field(label, "commit")?;
+    if !is_commit_hex(commit) {
+        return Err(rule("manifest", format!("{label} commit invalid")));
+    }
+    let sha256 = value.str_field(label, "sha256")?;
+    if !is_sha256_hex(sha256) {
+        return Err(rule("manifest", format!("{label} SHA-256 invalid")));
+    }
     Ok(BinaryIdentity {
-        commit: value.str_field(label, "commit")?.to_owned(),
-        sha256: value.str_field(label, "sha256")?.to_owned(),
+        commit: commit.to_owned(),
+        sha256: sha256.to_owned(),
     })
+}
+
+fn validate_comparison_identity(
+    candidate: &BinaryIdentity,
+    baseline: &BinaryIdentity,
+) -> Result<(), LoadError> {
+    if candidate == baseline {
+        return Err(rule(
+            "manifest",
+            "candidate and baseline identities are identical",
+        ));
+    }
+    if candidate.sha256 == baseline.sha256 {
+        return Err(rule(
+            "manifest",
+            "candidate and baseline binary SHA-256 values are identical",
+        ));
+    }
+    Ok(())
 }
 
 fn rule(context: &str, message: impl Into<String>) -> LoadError {
@@ -670,9 +701,11 @@ pub fn evaluate_to_file(
         message: error.to_string(),
     })?;
 
-    let manifest_sha = sha256_file(manifest_path).ok();
-    let (document, verdict) = match manifest_sha.as_deref() {
-        Some(digest) => match load_manifest(manifest_path)
+    let manifest_bytes = std::fs::read(manifest_path).ok();
+    let manifest_sha = manifest_bytes.as_deref().map(sha256_bytes);
+    let (document, verdict) = match (manifest_bytes.as_deref(), manifest_sha.as_deref()) {
+        (Some(bytes), Some(digest)) => match parse_json_bytes(manifest_path, bytes)
+            .and_then(|manifest| load_manifest(&manifest))
             .and_then(|evidence| build_report(&evidence, manifest_path, digest, &evaluator))
         {
             Ok((document, verdict)) => (document, verdict),
@@ -686,7 +719,7 @@ pub fn evaluate_to_file(
                 OverallVerdict::Invalid,
             ),
         },
-        None => (
+        _ => (
             invalid_report(
                 manifest_path,
                 None,
@@ -770,6 +803,55 @@ pub fn normalise_for_parity(document: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manifest_binary_identity_requires_canonical_commit_and_sha() {
+        let valid = super::super::json_in::parse(&format!(
+            r#"{{"candidate":{{"commit":"{}","sha256":"{}"}}}}"#,
+            "a".repeat(40),
+            "b".repeat(64),
+        ))
+        .expect("fixture parses");
+        assert!(identity(&valid, "candidate").is_ok());
+
+        for (commit, sha256) in [
+            ("short".to_owned(), "b".repeat(64)),
+            ("A".repeat(40), "b".repeat(64)),
+            ("a".repeat(40), "short".to_owned()),
+            ("a".repeat(40), "B".repeat(64)),
+        ] {
+            let malformed = super::super::json_in::parse(&format!(
+                r#"{{"candidate":{{"commit":"{commit}","sha256":"{sha256}"}}}}"#,
+            ))
+            .expect("fixture parses");
+            assert!(
+                identity(&malformed, "candidate").is_err(),
+                "must reject commit={commit} sha256={sha256}"
+            );
+        }
+    }
+
+    #[test]
+    fn different_commit_labels_cannot_disguise_the_same_binary() {
+        let candidate = BinaryIdentity {
+            commit: "a".repeat(40),
+            sha256: "c".repeat(64),
+        };
+        let disguised = BinaryIdentity {
+            commit: "b".repeat(40),
+            sha256: candidate.sha256.clone(),
+        };
+        assert!(validate_comparison_identity(&candidate, &disguised).is_err());
+
+        let distinct = BinaryIdentity {
+            commit: candidate.commit.clone(),
+            sha256: "d".repeat(64),
+        };
+        assert!(
+            validate_comparison_identity(&candidate, &distinct).is_ok(),
+            "same-commit rebuild comparisons remain representable"
+        );
+    }
 
     #[test]
     fn relative_paths_are_refused_for_both_arguments() {

@@ -38,7 +38,10 @@ use super::{
     bootstrap::sha256,
     contract::{self, CellKey, MatrixRole},
     evaluator::DeterministicMetric,
-    evidence::{BinaryIdentity, EvidenceError, WorkloadKind, is_sha256_hex, positive_number},
+    evidence::{
+        BinaryBuildIds, BinaryIdentity, EvidenceError, WorkloadKind, is_build_id_hex,
+        is_sha256_hex, positive_number,
+    },
     json_in::{self, FieldError, Value},
     stats::{self, Direction, MAX_EXACT_BLOCKS, MIN_EXACT_BLOCKS},
 };
@@ -142,12 +145,29 @@ fn rule(context: &str, message: impl Into<String>) -> LoadError {
 /// # Errors
 ///
 /// Returns [`LoadError::Io`], [`LoadError::Syntax`] or [`LoadError::NotAnObject`].
+#[cfg(test)]
 pub fn load_json(path: &Path) -> Result<Value, LoadError> {
-    let text = std::fs::read_to_string(path).map_err(|error| LoadError::Io {
+    let bytes = std::fs::read(path).map_err(|error| LoadError::Io {
         path: path.display().to_string(),
         message: error.to_string(),
     })?;
-    let value = json_in::parse(&text).map_err(|message| LoadError::Syntax {
+    parse_json_bytes(path, &bytes)
+}
+
+/// Parses a JSON object from bytes already read by the caller.
+///
+/// Keeping parsing separate from I/O lets the evidence loader hash and parse the
+/// same immutable snapshot instead of reopening a path after verification.
+///
+/// # Errors
+///
+/// Returns [`LoadError::Syntax`] or [`LoadError::NotAnObject`].
+pub fn parse_json_bytes(path: &Path, bytes: &[u8]) -> Result<Value, LoadError> {
+    let text = std::str::from_utf8(bytes).map_err(|error| LoadError::Syntax {
+        path: path.display().to_string(),
+        message: error.to_string(),
+    })?;
+    let value = json_in::parse(text).map_err(|message| LoadError::Syntax {
         path: path.display().to_string(),
         message,
     })?;
@@ -164,12 +184,21 @@ pub fn load_json(path: &Path) -> Result<Value, LoadError> {
 /// # Errors
 ///
 /// Returns [`LoadError::Io`] or [`LoadError::Syntax`].
+#[cfg(test)]
 pub fn load_jsonl(path: &Path) -> Result<Vec<Value>, LoadError> {
-    let text = std::fs::read_to_string(path).map_err(|error| LoadError::Io {
+    let bytes = std::fs::read(path).map_err(|error| LoadError::Io {
         path: path.display().to_string(),
         message: error.to_string(),
     })?;
-    json_in::parse_lines(&text).map_err(|message| LoadError::Syntax {
+    parse_jsonl_bytes(path, &bytes)
+}
+
+fn parse_jsonl_bytes(path: &Path, bytes: &[u8]) -> Result<Vec<Value>, LoadError> {
+    let text = std::str::from_utf8(bytes).map_err(|error| LoadError::Syntax {
+        path: path.display().to_string(),
+        message: error.to_string(),
+    })?;
+    json_in::parse_lines(text).map_err(|message| LoadError::Syntax {
         path: path.display().to_string(),
         message,
     })
@@ -185,11 +214,42 @@ pub fn sha256_file(path: &Path) -> Result<String, LoadError> {
         path: path.display().to_string(),
         message: error.to_string(),
     })?;
-    Ok(sha256(&bytes).iter().fold(String::new(), |mut text, byte| {
+    Ok(sha256_bytes(&bytes))
+}
+
+/// Computes lowercase SHA-256 for an in-memory file snapshot.
+#[must_use]
+pub fn sha256_bytes(bytes: &[u8]) -> String {
+    sha256(bytes).iter().fold(String::new(), |mut text, byte| {
         use std::fmt::Write as _;
         let _ = write!(text, "{byte:02x}");
         text
-    }))
+    })
+}
+
+/// One workload's declared files, read once and bound to their observed digests.
+pub struct VerifiedFiles {
+    run_dir: PathBuf,
+    hashes: BTreeMap<String, String>,
+    contents: BTreeMap<String, Vec<u8>>,
+}
+
+impl VerifiedFiles {
+    fn json(&self, name: &str) -> Result<Value, LoadError> {
+        let bytes = self
+            .contents
+            .get(name)
+            .expect("callers only request files required by the workload kind");
+        parse_json_bytes(&self.run_dir.join(name), bytes)
+    }
+
+    fn jsonl(&self, name: &str) -> Result<Vec<Value>, LoadError> {
+        let bytes = self
+            .contents
+            .get(name)
+            .expect("callers only request files required by the workload kind");
+        parse_jsonl_bytes(&self.run_dir.join(name), bytes)
+    }
 }
 
 /// Verifies a workload's declared files and returns the observed digests.
@@ -205,7 +265,7 @@ pub fn verify_files(
     run_dir_text: &str,
     files: &BTreeMap<String, Value>,
     kind: WorkloadKind,
-) -> Result<(PathBuf, BTreeMap<String, String>), LoadError> {
+) -> Result<VerifiedFiles, LoadError> {
     let context = kind.as_str();
     if !run_dir_text.starts_with('/') {
         return Err(rule(context, "runDir must be absolute"));
@@ -234,6 +294,7 @@ pub fn verify_files(
         .canonicalize()
         .map_err(|_| rule(context, "invalid runDir"))?;
     let mut observed = BTreeMap::new();
+    let mut contents = BTreeMap::new();
     for relative in sorted_expected {
         let path = format!("{context}.files.{relative}");
         let expected_sha = files
@@ -258,13 +319,22 @@ pub fn verify_files(
         if resolved.parent() != Some(canonical_run_dir.as_path()) {
             return Err(rule(context, "path escaped runDir"));
         }
-        let actual = sha256_file(&file)?;
+        let bytes = std::fs::read(&resolved).map_err(|error| LoadError::Io {
+            path: resolved.display().to_string(),
+            message: error.to_string(),
+        })?;
+        let actual = sha256_bytes(&bytes);
         if actual != expected_sha {
             return Err(rule(context, format!("SHA mismatch for {relative}")));
         }
         observed.insert(relative.to_owned(), actual);
+        contents.insert(relative.to_owned(), bytes);
     }
-    Ok((run_dir, observed))
+    Ok(VerifiedFiles {
+        run_dir,
+        hashes: observed,
+        contents,
+    })
 }
 
 /// A verified host-exclusive-lock identity, normalised as the report records it.
@@ -500,6 +570,7 @@ fn observed_device_inode(_path: &Path) -> Option<String> {
 pub fn verify_success_marker(
     marker: &Value,
     evidence_path: &Path,
+    evidence_sha256: &str,
     run_id: &str,
     collector: &str,
     context: &str,
@@ -522,7 +593,7 @@ pub fn verify_success_marker(
     if evidence.str_field(context, "path")? != resolved.to_string_lossy() {
         return Err(rule(context, "marker evidence path mismatch"));
     }
-    if evidence.str_field(context, "sha256")? != sha256_file(evidence_path)? {
+    if evidence.str_field(context, "sha256")? != evidence_sha256 {
         return Err(rule(context, "marker evidence SHA-256 mismatch"));
     }
     Ok(())
@@ -547,6 +618,8 @@ pub struct WorkloadInput {
     pub collector_performance_verdict: String,
     /// Verified host-lock identity.
     pub host_lock: HostLock,
+    /// Independently recorded Build IDs, retained for cross-workload consistency.
+    pub build_ids: BinaryBuildIds,
 }
 
 /// Sanitises a cell key into a metric identifier component.
@@ -747,9 +820,33 @@ pub fn matrix_cell_metrics(
 
     let scenario = cell.str_field(&context, "scenario")?;
     let direction = cell.str_field(&context, "direction")?;
-    let payload_mib = cell.int_field(&context, "payloadMiB")?;
-    let concurrency = cell.int_field(&context, "concurrency")?;
-    let payload_bytes = payload_mib * 1024 * 1024;
+    let requests_per_connection = match direction {
+        "download" | "upload" => 1_u32,
+        "bidi" => 2,
+        _ => return Err(rule(&context, "direction is invalid")),
+    };
+    let payload_mib = u64::try_from(cell.int_field(&context, "payloadMiB")?)
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| rule(&context, "payloadMiB must be positive"))?;
+    let concurrency = u32::try_from(cell.int_field(&context, "concurrency")?)
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| rule(&context, "concurrency must be positive"))?;
+    verify_matrix_cell_key(key, scenario, payload_mib, concurrency, &context)?;
+    let payload_bytes = i64::try_from(
+        payload_mib
+            .checked_mul(1024 * 1024)
+            .ok_or_else(|| rule(&context, "payloadMiB is too large"))?,
+    )
+    .map_err(|_| rule(&context, "payloadMiB is too large"))?;
+    let concurrency_i64 = i64::from(concurrency);
+    let latency_count = usize::try_from(
+        concurrency
+            .checked_mul(requests_per_connection)
+            .ok_or_else(|| rule(&context, "latency count is too large"))?,
+    )
+    .unwrap_or(usize::MAX);
 
     // Selection preserves file order, which the exact-order check below depends on.
     let selected: Vec<&Value> = rows
@@ -761,7 +858,8 @@ pub fn matrix_cell_metrics(
                     .optional("payloadBytes")
                     .and_then(|v| v.as_int("p").ok())
                     == Some(payload_bytes)
-                && row.optional("concurrency").and_then(|v| v.as_int("c").ok()) == Some(concurrency)
+                && row.optional("concurrency").and_then(|v| v.as_int("c").ok())
+                    == Some(concurrency_i64)
         })
         .collect();
 
@@ -825,29 +923,7 @@ pub fn matrix_cell_metrics(
             ));
         }
         for row in &arm {
-            if row.optional("invalid").and_then(|v| v.as_bool("i").ok()) != Some(false)
-                || row
-                    .optional("bytesVerified")
-                    .and_then(|v| v.as_bool("b").ok())
-                    != Some(true)
-            {
-                return Err(rule(&context, "invalid/unverified sample"));
-            }
-            positive_number(
-                row.optional("throughputMiBPerSecond")
-                    .and_then(|v| v.as_f64("t").ok()),
-                &format!("{context} throughput"),
-            )?;
-            let latencies = row.array_field(&context, "perRequestSeconds")?;
-            if latencies.is_empty() {
-                return Err(rule(&context, "latency samples missing"));
-            }
-            for latency in latencies {
-                positive_number(
-                    latency.as_f64("perRequestSeconds").ok(),
-                    &format!("{context} latency"),
-                )?;
-            }
+            validate_matrix_sample(row, &context, latency_count)?;
         }
         per_arm.insert(role, arm);
     }
@@ -872,6 +948,9 @@ pub fn matrix_cell_metrics(
         || xray_indexes != (0..i64::try_from(count).unwrap_or(0)).collect::<Vec<i64>>()
     {
         return Err(rule(&context, "Xray comparator samples incomplete"));
+    }
+    for row in &xray {
+        validate_matrix_sample(row, &context, latency_count)?;
     }
 
     // Blocks are consecutive sampleIndex pairs, not interleave chunks.
@@ -936,6 +1015,61 @@ pub fn matrix_cell_metrics(
             &latency_ratios,
         )?,
     ])
+}
+
+fn verify_matrix_cell_key(
+    key: &str,
+    scenario: &str,
+    payload_mib: u64,
+    concurrency: u32,
+    context: &str,
+) -> Result<(), LoadError> {
+    let declared = CellKey {
+        scenario: scenario.to_owned(),
+        payload_mib,
+        concurrency,
+    };
+    if CellKey::parse(key).as_ref() == Some(&declared) {
+        Ok(())
+    } else {
+        Err(rule(context, "summary key disagrees with the cell fields"))
+    }
+}
+
+/// Validates the measurement fields shared by every matrix arm.
+///
+/// Xray is not part of the candidate/baseline ratio, but it is part of the formal
+/// interoperability run. Treating a failed or partially timed Xray row as complete
+/// would let a broken comparator run inherit the protected verdict from the other arms.
+fn validate_matrix_sample(
+    row: &Value,
+    context: &str,
+    latency_count: usize,
+) -> Result<(), LoadError> {
+    if row.optional("invalid").and_then(|v| v.as_bool("i").ok()) != Some(false)
+        || row
+            .optional("bytesVerified")
+            .and_then(|v| v.as_bool("b").ok())
+            != Some(true)
+    {
+        return Err(rule(context, "invalid/unverified sample"));
+    }
+    positive_number(
+        row.optional("throughputMiBPerSecond")
+            .and_then(|v| v.as_f64("t").ok()),
+        &format!("{context} throughput"),
+    )?;
+    let latencies = row.array_field(context, "perRequestSeconds")?;
+    if latencies.len() != latency_count {
+        return Err(rule(context, "per-request latency count mismatch"));
+    }
+    for latency in latencies {
+        positive_number(
+            latency.as_f64("perRequestSeconds").ok(),
+            &format!("{context} latency"),
+        )?;
+    }
+    Ok(())
 }
 
 /// Parses the `concurrencies` field, which the schema records either way.
@@ -1012,13 +1146,13 @@ pub fn evaluate_pair_run(
     baseline: &BinaryIdentity,
 ) -> Result<(Vec<DeterministicMetric>, WorkloadInput), LoadError> {
     let context = kind.as_str();
-    let (run_dir, hashes) = verify_files(run_dir_text, files, kind)?;
+    let verified = verify_files(run_dir_text, files, kind)?;
 
-    let summary = load_json(&run_dir.join("summary.json"))?;
-    let environment = load_json(&run_dir.join("environment.json"))?;
-    let completion = load_json(&run_dir.join("completion.json"))?;
-    let order = load_json(&run_dir.join("order.json"))?;
-    let rows = load_jsonl(&run_dir.join("raw-samples.jsonl"))?;
+    let summary = verified.json("summary.json")?;
+    let environment = verified.json("environment.json")?;
+    let completion = verified.json("completion.json")?;
+    let order = verified.json("order.json")?;
+    let rows = verified.jsonl("raw-samples.jsonl")?;
 
     // The paired marker attests environment.json; the matrix marker attests
     // run-contract.json. Keeping the call sites separate is what preserves that.
@@ -1030,7 +1164,8 @@ pub fn evaluate_pair_run(
     let run_id = environment.str_field(context, "runId")?.to_owned();
     verify_success_marker(
         &completion,
-        &run_dir.join("environment.json"),
+        &verified.run_dir.join("environment.json"),
+        &verified.hashes["environment.json"],
         &run_id,
         collector,
         context,
@@ -1041,7 +1176,8 @@ pub fn evaluate_pair_run(
     // Paired evidence records failures as the integer zero.
     summary.require_int(context, "failures", 0)?;
 
-    let host_lock = verify_pair_environment(&environment, candidate, baseline, context)?;
+    let (host_lock, build_ids) =
+        verify_pair_environment(&environment, candidate, baseline, context)?;
 
     let blocks = environment.int_field(context, "blocks")?;
     validate_block_count(blocks, context)?;
@@ -1050,6 +1186,24 @@ pub fn evaluate_pair_run(
         return Err(rule(context, "samples invalid"));
     }
     let concurrencies = parse_concurrencies(environment.field(context, "concurrencies")?, context)?;
+
+    let expected_slots = blocks
+        .checked_mul(4)
+        .ok_or_else(|| rule(context, "slot count overflow"))?;
+    summary.require_int(context, "slotCount", expected_slots)?;
+    let concurrency_count = i64::try_from(concurrencies.len())
+        .map_err(|_| rule(context, "raw sample count overflow"))?;
+    let expected_rows = expected_slots
+        .checked_mul(concurrency_count)
+        .and_then(|value| value.checked_mul(samples))
+        .ok_or_else(|| rule(context, "raw sample count overflow"))?;
+    summary.require_int(context, "rawSampleCount", expected_rows)?;
+    if i64::try_from(rows.len()).unwrap_or(-1) != expected_rows {
+        return Err(rule(
+            context,
+            "raw sample count disagrees with the run plan",
+        ));
+    }
 
     // Order manifest, then every raw row must agree with the slot it claims.
     let slots = order.array_field(context, "slots")?;
@@ -1188,12 +1342,13 @@ pub fn evaluate_pair_run(
     let input = WorkloadInput {
         name: name.to_owned(),
         kind,
-        run_dir: run_dir.to_string_lossy().into_owned(),
-        files: hashes,
+        run_dir: verified.run_dir.to_string_lossy().into_owned(),
+        files: verified.hashes,
         status: summary.str_field(context, "status")?.to_owned(),
         data_quality_verdict: "PASS",
         collector_performance_verdict: summary.str_field(context, "performanceVerdict")?.to_owned(),
         host_lock,
+        build_ids,
     };
     Ok((metrics, input))
 }
@@ -1302,11 +1457,15 @@ pub fn verify_pair_environment(
     candidate: &BinaryIdentity,
     baseline: &BinaryIdentity,
     context: &str,
-) -> Result<HostLock, LoadError> {
+) -> Result<(HostLock, BinaryBuildIds), LoadError> {
     let repository = environment.field(context, "repository")?;
     if repository.field(context, "dirty")?.as_bool("dirty")? {
         return Err(rule(context, "repository was dirty"));
     }
+    if repository.str_field(context, "head")? != candidate.commit {
+        return Err(rule(context, "repository HEAD did not match the candidate"));
+    }
+    let mut observed_build_ids = BTreeMap::new();
     for (label, expected) in [("candidate", candidate), ("baseline", baseline)] {
         let observed = environment.field(context, label)?;
         let path = format!("{context}.{label}");
@@ -1317,13 +1476,10 @@ pub fn verify_pair_environment(
             return Err(rule(context, format!("{label} commit mismatch")));
         }
         let build_id = observed.str_field(&path, "buildId")?;
-        let hex = !build_id.is_empty()
-            && build_id
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
-        if !hex {
+        if !is_build_id_hex(build_id) {
             return Err(rule(context, format!("{label} Build ID missing")));
         }
+        observed_build_ids.insert(label, build_id.to_owned());
     }
 
     let lock_value = environment.field(context, "hostExclusiveLock")?;
@@ -1363,7 +1519,13 @@ pub fn verify_pair_environment(
 
     let mut result = current;
     result.contract = Some(contract);
-    Ok(result)
+    Ok((
+        result,
+        BinaryBuildIds {
+            candidate: observed_build_ids["candidate"].clone(),
+            baseline: observed_build_ids["baseline"].clone(),
+        },
+    ))
 }
 
 /// Validates the formal matrix workload and returns its metrics and report input.
@@ -1385,23 +1547,27 @@ pub fn evaluate_matrix_workload(
 ) -> Result<(Vec<DeterministicMetric>, WorkloadInput), LoadError> {
     let kind = WorkloadKind::Matrix;
     let context = "matrix";
-    let (run_dir, hashes) = verify_files(run_dir_text, files, kind)?;
+    let verified = verify_files(run_dir_text, files, kind)?;
 
-    let summary = load_json(&run_dir.join("summary.json"))?;
-    let run_contract = load_json(&run_dir.join("run-contract.json"))?;
-    let completion = load_json(&run_dir.join("run-completion.json"))?;
-    let rows = load_jsonl(&run_dir.join("samples.jsonl"))?;
+    let summary = verified.json("summary.json")?;
+    let run_contract = verified.json("run-contract.json")?;
+    let completion = verified.json("run-completion.json")?;
+    let rows = verified.jsonl("samples.jsonl")?;
 
     let run_id = run_contract.str_field(context, "runId")?.to_owned();
     verify_success_marker(
         &completion,
-        &run_dir.join("run-contract.json"),
+        &verified.run_dir.join("run-contract.json"),
+        &verified.hashes["run-contract.json"],
         &run_id,
         "benchmark-matrix",
         context,
     )?;
 
-    let host_lock = verify_matrix_identity(&summary, &run_contract, candidate, baseline)?;
+    let (host_lock, build_ids) =
+        verify_matrix_identity(&summary, &run_contract, candidate, baseline)?;
+
+    verify_matrix_integrity(&summary, &rows)?;
 
     let cells = summary
         .field(context, "cells")?
@@ -1409,6 +1575,7 @@ pub fn evaluate_matrix_workload(
     if cells.is_empty() {
         return Err(rule(context, "no protected cells"));
     }
+    verify_matrix_sample_conservation(&summary, cells, &rows)?;
 
     // Coverage must hold in both directions before any metric is produced.
     let mut summary_keys = Vec::with_capacity(cells.len());
@@ -1429,14 +1596,80 @@ pub fn evaluate_matrix_workload(
     let input = WorkloadInput {
         name: name.to_owned(),
         kind,
-        run_dir: run_dir.to_string_lossy().into_owned(),
-        files: hashes,
+        run_dir: verified.run_dir.to_string_lossy().into_owned(),
+        files: verified.hashes,
         status: summary.str_field(context, "status")?.to_owned(),
         data_quality_verdict: "PASS",
         collector_performance_verdict: summary.str_field(context, "performanceVerdict")?.to_owned(),
         host_lock,
+        build_ids,
     };
     Ok((metrics, input))
+}
+
+fn verify_matrix_sample_conservation(
+    summary: &Value,
+    cells: &BTreeMap<String, Value>,
+    rows: &[Value],
+) -> Result<(), LoadError> {
+    let context = "matrix";
+    let totals = summary.field(context, "totals")?;
+    totals.require_int(
+        "matrix.totals",
+        "cells",
+        i64::try_from(cells.len()).map_err(|_| rule(context, "cell count overflow"))?,
+    )?;
+    totals.require_int(
+        "matrix.totals",
+        "samples",
+        i64::try_from(rows.len()).map_err(|_| rule(context, "sample count overflow"))?,
+    )?;
+
+    let mut expected_protected_rows = 0_i64;
+    for (key, cell) in cells {
+        let count = cell.int_field(&format!("matrix cell {key}"), "samplesPerImplementation")?;
+        if count <= 0 {
+            return Err(rule(
+                context,
+                format!("matrix cell {key} sample count invalid"),
+            ));
+        }
+        expected_protected_rows = expected_protected_rows
+            .checked_add(
+                count
+                    .checked_mul(3)
+                    .ok_or_else(|| rule(context, "sample count overflow"))?,
+            )
+            .ok_or_else(|| rule(context, "sample count overflow"))?;
+        let implementations = cell
+            .field(&format!("matrix cell {key}"), "implementations")?
+            .as_object(&format!("matrix cell {key}.implementations"))?;
+        if implementations.len() != MatrixRole::all().len() {
+            return Err(rule(
+                context,
+                format!("matrix cell {key} arms are incomplete"),
+            ));
+        }
+        for role in MatrixRole::all() {
+            let aggregate = implementations
+                .get(role.as_str())
+                .ok_or_else(|| rule(context, format!("matrix cell {key} arm is missing")))?;
+            aggregate.require_int(context, "samples", count)?;
+            aggregate.require_int(context, "validSamples", count)?;
+            aggregate.require_int(context, "invalidSamples", 0)?;
+        }
+    }
+    let observed_protected_rows = rows
+        .iter()
+        .filter(|row| row_str(row, "scenario") != Some(contract::INTEGRITY_SCENARIO))
+        .count();
+    if i64::try_from(observed_protected_rows).unwrap_or(-1) != expected_protected_rows {
+        return Err(rule(
+            context,
+            "raw protected sample count disagrees with the summary cells",
+        ));
+    }
+    Ok(())
 }
 
 /// Verifies the matrix run's identity block and contract.
@@ -1449,7 +1682,7 @@ pub fn verify_matrix_identity(
     run_contract: &Value,
     candidate: &BinaryIdentity,
     baseline: &BinaryIdentity,
-) -> Result<HostLock, LoadError> {
+) -> Result<(HostLock, BinaryBuildIds), LoadError> {
     let context = "matrix";
     summary.require_str(context, "status", "COMPLETE")?;
     summary.require_str(context, "performanceVerdict", "NOT_EVALUATED")?;
@@ -1464,6 +1697,9 @@ pub fn verify_matrix_identity(
     }
     if identity.str_field("matrix.identity", "baselineCommit")? != baseline.commit {
         return Err(rule(context, "baseline commit mismatch"));
+    }
+    if identity.str_field("matrix.identity", "repositoryHead")? != candidate.commit {
+        return Err(rule(context, "repository HEAD did not match the candidate"));
     }
     let binaries = identity.field("matrix.identity", "binaries")?;
     // The candidate arm is spelled `final` in matrix evidence.
@@ -1482,6 +1718,12 @@ pub fn verify_matrix_identity(
         return Err(rule(context, "baseline SHA mismatch"));
     }
     identity.require_bool("matrix.identity", "binariesPinned", true)?;
+    let xray_sha = binaries
+        .field("matrix.identity.binaries", "xray")?
+        .str_field("matrix.identity.binaries.xray", "sha256")?;
+    if !is_sha256_hex(xray_sha) {
+        return Err(rule(context, "Xray SHA invalid"));
+    }
 
     run_contract.require_str("matrix.contract", "phase", "complete")?;
     run_contract.require_bool("matrix.contract", "exploratory", false)?;
@@ -1493,28 +1735,12 @@ pub fn verify_matrix_identity(
         return Err(rule(context, "harness commit mismatch"));
     }
 
-    let registered = run_contract.array_field("matrix.contract", "binaries")?;
-    for (label, expected) in [("candidate", candidate), ("baseline", baseline)] {
-        let row = registered
-            .iter()
-            .find(|row| row.optional("label").and_then(|v| v.as_str("label").ok()) == Some(label))
-            .ok_or_else(|| rule(context, format!("contract {label} SHA mismatch")))?;
-        let path = format!("matrix.contract.binaries.{label}");
-        if row.str_field(&path, "sha256")? != expected.sha256 {
-            return Err(rule(context, format!("contract {label} SHA mismatch")));
-        }
-        if row.str_field(&path, "sourceCommit")? != expected.commit {
-            return Err(rule(context, format!("contract {label} commit mismatch")));
-        }
-        let build_id = row.str_field(&path, "buildId")?;
-        let hex = !build_id.is_empty()
-            && build_id
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
-        if !hex {
-            return Err(rule(context, format!("contract {label} Build ID missing")));
-        }
-    }
+    let build_ids = verify_matrix_registrations(
+        run_contract.array_field("matrix.contract", "binaries")?,
+        candidate,
+        baseline,
+        xray_sha,
+    )?;
 
     let mut host_lock = verify_host_lock_metadata(
         run_contract.field("matrix.contract", "hostExclusiveLock")?,
@@ -1525,7 +1751,173 @@ pub fn verify_matrix_identity(
         "matrix.contract.contract",
         "lock contract",
     )?);
-    Ok(host_lock)
+    Ok((host_lock, build_ids))
+}
+
+/// Verifies that the formal matrix registered each binary exactly once and that
+/// every registration agrees with the independently recorded summary identity.
+fn verify_matrix_registrations(
+    registered: &[Value],
+    candidate: &BinaryIdentity,
+    baseline: &BinaryIdentity,
+    xray_sha: &str,
+) -> Result<BinaryBuildIds, LoadError> {
+    let context = "matrix";
+    if registered.len() != 3 {
+        return Err(rule(
+            context,
+            "contract binaries must be exactly candidate, baseline, and xray",
+        ));
+    }
+    let mut registrations = BTreeMap::new();
+    for row in registered {
+        let label = row.str_field("matrix.contract.binaries", "label")?;
+        if !matches!(label, "candidate" | "baseline" | "xray")
+            || registrations.insert(label, row).is_some()
+        {
+            return Err(rule(
+                context,
+                "contract binary labels must be unique candidate, baseline, and xray",
+            ));
+        }
+    }
+    let mut observed_build_ids = BTreeMap::new();
+    for (label, expected) in [("candidate", candidate), ("baseline", baseline)] {
+        let row = registrations
+            .get(label)
+            .copied()
+            .ok_or_else(|| rule(context, format!("contract {label} SHA mismatch")))?;
+        let path = format!("matrix.contract.binaries.{label}");
+        if row.str_field(&path, "sha256")? != expected.sha256 {
+            return Err(rule(context, format!("contract {label} SHA mismatch")));
+        }
+        if row.str_field(&path, "sourceCommit")? != expected.commit {
+            return Err(rule(context, format!("contract {label} commit mismatch")));
+        }
+        let build_id = row.str_field(&path, "buildId")?;
+        if !is_build_id_hex(build_id) {
+            return Err(rule(context, format!("contract {label} Build ID missing")));
+        }
+        observed_build_ids.insert(label, build_id.to_owned());
+    }
+
+    let xray = registrations
+        .get("xray")
+        .copied()
+        .ok_or_else(|| rule(context, "contract Xray identity missing"))?;
+    if xray.str_field("matrix.contract.binaries.xray", "sha256")? != xray_sha {
+        return Err(rule(context, "contract Xray SHA mismatch"));
+    }
+    if !is_build_id_hex(xray.str_field("matrix.contract.binaries.xray", "buildId")?) {
+        return Err(rule(context, "contract Xray Build ID missing"));
+    }
+    if xray
+        .str_field("matrix.contract.binaries.xray", "identity")?
+        .is_empty()
+    {
+        return Err(rule(context, "contract Xray identity missing"));
+    }
+
+    Ok(BinaryBuildIds {
+        candidate: observed_build_ids["candidate"].clone(),
+        baseline: observed_build_ids["baseline"].clone(),
+    })
+}
+
+/// Verifies the matrix's end-to-end integrity transfers against both raw and summary data.
+///
+/// Integrity rows are intentionally excluded from protected metric pairing, but they
+/// are not optional evidence: one successful SHA-verified transfer from each arm is
+/// what proves that throughput was measured over the intended payload rather than a
+/// short or bypassed stream.
+fn verify_matrix_integrity(summary: &Value, rows: &[Value]) -> Result<(), LoadError> {
+    let context = "matrix integrity";
+    let recorded = summary.field("matrix", "integrity")?.as_object(context)?;
+    if recorded.len() != MatrixRole::all().len() {
+        return Err(rule(context, "summary arms are incomplete"));
+    }
+
+    let mut raw = BTreeMap::new();
+    for row in rows {
+        if row
+            .optional("scenario")
+            .and_then(|value| value.as_str("scenario").ok())
+            != Some(contract::INTEGRITY_SCENARIO)
+        {
+            continue;
+        }
+        let label = row
+            .optional("implementation")
+            .and_then(|value| value.as_str("implementation").ok())
+            .and_then(MatrixRole::parse)
+            .ok_or_else(|| rule(context, "raw implementation is invalid"))?;
+        if raw.insert(label, row).is_some() {
+            return Err(rule(context, "raw arm is duplicated"));
+        }
+    }
+    if raw.len() != MatrixRole::all().len() {
+        return Err(rule(context, "raw arms are incomplete"));
+    }
+
+    let mut common_payload = None;
+    for role in MatrixRole::all() {
+        let label = role.as_str();
+        let row = raw
+            .get(&role)
+            .copied()
+            .ok_or_else(|| rule(context, format!("{label} raw row is missing")))?;
+        if row_int(row, "sampleIndex") != Some(0)
+            || row_int(row, "concurrency") != Some(1)
+            || row_str(row, "direction") != Some("download")
+        {
+            return Err(rule(context, format!("{label} raw shape is invalid")));
+        }
+        validate_matrix_sample(row, context, 1)?;
+        let payload = row_int(row, "payloadBytes")
+            .filter(|value| *value > 0)
+            .ok_or_else(|| rule(context, format!("{label} payload is invalid")))?;
+        if common_payload.is_some_and(|expected| expected != payload) {
+            return Err(rule(context, "arms used different payload sizes"));
+        }
+        common_payload = Some(payload);
+        let row_hash = verified_integrity_hash(row.field(context, "sha256")?, context)?;
+
+        let aggregate = recorded
+            .get(label)
+            .ok_or_else(|| rule(context, format!("{label} summary is missing")))?;
+        aggregate.require_bool(context, "invalid", false)?;
+        if aggregate.int_field(context, "payloadBytes")? != payload {
+            return Err(rule(context, format!("{label} summary payload mismatch")));
+        }
+        let row_wall = positive_number(
+            row.optional("wallSeconds")
+                .and_then(|value| value.as_f64("wallSeconds").ok()),
+            &format!("{context} {label} raw wall time"),
+        )?;
+        let summary_wall = positive_number(
+            aggregate
+                .optional("wallSeconds")
+                .and_then(|value| value.as_f64("wallSeconds").ok()),
+            &format!("{context} {label} summary wall time"),
+        )?;
+        if row_wall.to_bits() != summary_wall.to_bits() {
+            return Err(rule(context, format!("{label} summary wall time mismatch")));
+        }
+        if verified_integrity_hash(aggregate.field(context, "sha256")?, context)? != row_hash {
+            return Err(rule(context, format!("{label} summary SHA mismatch")));
+        }
+    }
+    Ok(())
+}
+
+fn verified_integrity_hash(value: &Value, context: &str) -> Result<String, LoadError> {
+    value.require_bool(context, "match", true)?;
+    let origin = value.str_field(context, "origin")?;
+    let received = value.str_field(context, "received")?;
+    if !is_sha256_hex(origin) || received != origin {
+        return Err(rule(context, "payload SHA verification is invalid"));
+    }
+    Ok(origin.to_owned())
 }
 
 /// Collects the cell keys present in raw matrix samples, excluding integrity rows.
@@ -1543,20 +1935,23 @@ pub fn raw_cell_keys(rows: &[Value]) -> Result<Vec<CellKey>, LoadError> {
         if scenario == contract::INTEGRITY_SCENARIO {
             continue;
         }
-        // `payloadBytes` defaults to zero in the original, matching `.get(field, 0)`.
         let payload = row
             .optional("payloadBytes")
             .and_then(|v| v.as_int("payloadBytes").ok())
-            .unwrap_or(0);
+            .ok_or_else(|| rule("matrix", "raw row is missing payloadBytes"))?;
         let concurrency = row
             .optional("concurrency")
             .and_then(|v| v.as_int("concurrency").ok())
             .ok_or_else(|| rule("matrix", "raw row is missing concurrency"))?;
-        let key = CellKey::from_bytes(
-            scenario.to_owned(),
-            u64::try_from(payload).unwrap_or(0),
-            u32::try_from(concurrency).unwrap_or(0),
-        );
+        let payload = u64::try_from(payload)
+            .ok()
+            .filter(|value| *value > 0 && value.is_multiple_of(1024 * 1024))
+            .ok_or_else(|| rule("matrix", "raw row payloadBytes is invalid"))?;
+        let concurrency = u32::try_from(concurrency)
+            .ok()
+            .filter(|value| *value > 0)
+            .ok_or_else(|| rule("matrix", "raw row concurrency is invalid"))?;
+        let key = CellKey::from_bytes(scenario.to_owned(), payload, concurrency);
         if !keys.contains(&key) {
             keys.push(key);
         }
@@ -1695,6 +2090,177 @@ mod tests {
         let keys = raw_cell_keys(&rows).expect("valid");
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].to_string(), "bidi:1:1");
+    }
+
+    #[test]
+    fn every_matrix_arm_requires_one_latency_per_request() {
+        let valid = doc(
+            r#"{"invalid":false,"bytesVerified":true,"throughputMiBPerSecond":2.0,"perRequestSeconds":[1.0,1.5]}"#,
+        );
+        validate_matrix_sample(&valid, "cell", 2).expect("two requests were timed");
+
+        let partial = doc(
+            r#"{"invalid":false,"bytesVerified":true,"throughputMiBPerSecond":2.0,"perRequestSeconds":[1.0]}"#,
+        );
+        let error = validate_matrix_sample(&partial, "cell", 2)
+            .expect_err("a missing request latency must invalidate the row");
+        assert!(
+            error.to_string().contains("latency count mismatch"),
+            "{error}"
+        );
+
+        let failed_xray = doc(
+            r#"{"invalid":true,"bytesVerified":false,"throughputMiBPerSecond":2.0,"perRequestSeconds":[1.0,1.5]}"#,
+        );
+        assert!(
+            validate_matrix_sample(&failed_xray, "cell", 2).is_err(),
+            "the unpaired Xray arm is still required interoperability evidence"
+        );
+    }
+
+    #[test]
+    fn matrix_summary_key_must_name_its_own_cell_fields() {
+        verify_matrix_cell_key("bidi:32:1", "bidi", 32, 1, "cell").expect("matching key");
+        assert!(
+            verify_matrix_cell_key("bidi:32:1", "bidi", 1, 1, "cell").is_err(),
+            "a swapped payload must not put another cell's data under this metric ID"
+        );
+        assert!(
+            verify_matrix_cell_key("bidi:32:1", "fallback", 32, 1, "cell").is_err(),
+            "a swapped scenario must not be accepted"
+        );
+    }
+
+    #[test]
+    fn matrix_sample_conservation_rejects_an_unselected_extra_row() {
+        let summary = doc(
+            r#"{"totals":{"cells":1,"samples":3,"invalidSamples":0},"cells":{"direct-download:1:1":{"samplesPerImplementation":1,"implementations":{"baseline":{"samples":1,"validSamples":1,"invalidSamples":0},"final":{"samples":1,"validSamples":1,"invalidSamples":0},"xray":{"samples":1,"validSamples":1,"invalidSamples":0}}}}}"#,
+        );
+        let cells = summary
+            .field("matrix", "cells")
+            .and_then(|value| value.as_object("matrix.cells"))
+            .unwrap();
+        let row = |direction: &str| {
+            doc(&format!(
+                r#"{{"scenario":"direct-download","direction":"{direction}"}}"#,
+            ))
+        };
+        let valid = vec![row("download"), row("download"), row("download")];
+        verify_matrix_sample_conservation(&summary, cells, &valid)
+            .expect("the declared three arms conserve three rows");
+
+        let summary_with_four = doc(
+            r#"{"totals":{"cells":1,"samples":4,"invalidSamples":0},"cells":{"direct-download:1:1":{"samplesPerImplementation":1,"implementations":{"baseline":{"samples":1,"validSamples":1,"invalidSamples":0},"final":{"samples":1,"validSamples":1,"invalidSamples":0},"xray":{"samples":1,"validSamples":1,"invalidSamples":0}}}}}"#,
+        );
+        let cells_with_four = summary_with_four
+            .field("matrix", "cells")
+            .and_then(|value| value.as_object("matrix.cells"))
+            .unwrap();
+        let mut extra = valid;
+        extra.push(row("upload"));
+        assert!(
+            verify_matrix_sample_conservation(&summary_with_four, cells_with_four, &extra).is_err(),
+            "a row that no cell selects must not disappear from the census"
+        );
+    }
+
+    #[test]
+    fn matrix_integrity_requires_three_matching_sha_verified_transfers() {
+        let digest = "a".repeat(64);
+        let aggregate = |label: &str, invalid: bool| {
+            format!(
+                r#""{label}":{{"invalid":{invalid},"payloadBytes":1048576,"wallSeconds":1.0,"sha256":{{"match":true,"origin":"{digest}","received":"{digest}"}}}}"#,
+            )
+        };
+        let summary = doc(&format!(
+            r#"{{"integrity":{{{},{},{}}}}}"#,
+            aggregate("baseline", false),
+            aggregate("final", false),
+            aggregate("xray", false),
+        ));
+        let row = |label: &str, verified: bool| {
+            doc(&format!(
+                r#"{{"implementation":"{label}","scenario":"integrity","direction":"download","payloadBytes":1048576,"concurrency":1,"sampleIndex":0,"invalid":false,"bytesVerified":{verified},"wallSeconds":1.0,"throughputMiBPerSecond":1.0,"perRequestSeconds":[1.0],"sha256":{{"match":true,"origin":"{digest}","received":"{digest}"}}}}"#,
+            ))
+        };
+        let valid = vec![row("baseline", true), row("final", true), row("xray", true)];
+        verify_matrix_integrity(&summary, &valid).expect("all three transfers are complete");
+
+        let corrupt = vec![
+            row("baseline", true),
+            row("final", true),
+            row("xray", false),
+        ];
+        assert!(
+            verify_matrix_integrity(&summary, &corrupt).is_err(),
+            "an unverified Xray transfer must invalidate the matrix"
+        );
+    }
+
+    #[test]
+    fn duplicate_matrix_binary_registrations_are_rejected() {
+        let candidate = BinaryIdentity {
+            commit: "a".repeat(40),
+            sha256: "c".repeat(64),
+        };
+        let baseline = BinaryIdentity {
+            commit: "b".repeat(40),
+            sha256: "d".repeat(64),
+        };
+        let summary = doc(&format!(
+            r#"{{"status":"COMPLETE","performanceVerdict":"NOT_EVALUATED","failures":[],"totals":{{"invalidSamples":0}},"identity":{{"candidateCommit":"{}","baselineCommit":"{}","repositoryHead":"{}","binariesPinned":true,"binaries":{{"final":{{"sha256":"{}"}},"baseline":{{"sha256":"{}"}},"xray":{{"sha256":"{}"}}}}}}}}"#,
+            candidate.commit,
+            baseline.commit,
+            candidate.commit,
+            candidate.sha256,
+            baseline.sha256,
+            "e".repeat(64),
+        ));
+        let row = |label: &str| {
+            format!(
+                r#"{{"label":"{label}","sha256":"{}","sourceCommit":"{}","buildId":"01","identity":"present"}}"#,
+                candidate.sha256, candidate.commit,
+            )
+        };
+        let contract = doc(&format!(
+            r#"{{"phase":"complete","exploratory":false,"script":{{"harnessCommit":"{}"}},"binaries":[{},{},{}]}}"#,
+            candidate.commit,
+            row("candidate"),
+            row("candidate"),
+            row("xray"),
+        ));
+        let error = verify_matrix_identity(&summary, &contract, &candidate, &baseline)
+            .expect_err("duplicate labels must fail before any host-lock check");
+        assert!(
+            error.to_string().contains("labels must be unique"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn verified_files_are_parsed_from_the_hashed_snapshot() {
+        let temp =
+            std::env::temp_dir().join(format!("rr-dev-evidence-snapshot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).expect("temp run dir");
+        let bytes = b"{}\n";
+        let digest = sha256_bytes(bytes);
+        let mut files = BTreeMap::new();
+        for name in WorkloadKind::Matrix.required_files() {
+            std::fs::write(temp.join(name), bytes).expect("write evidence fixture");
+            files.insert((*name).to_owned(), Value::Str(digest.clone()));
+        }
+        let verified = verify_files(&temp.to_string_lossy(), &files, WorkloadKind::Matrix)
+            .expect("fixture hashes match");
+
+        std::fs::write(temp.join("summary.json"), b"not JSON")
+            .expect("mutate the path after verification");
+        assert!(
+            verified.json("summary.json").is_ok(),
+            "parsing must use the exact bytes whose digest was recorded"
+        );
+        assert_eq!(verified.hashes["summary.json"], digest);
+        let _ = std::fs::remove_dir_all(&temp);
     }
 
     #[test]

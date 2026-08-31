@@ -142,13 +142,45 @@ pub struct BinaryIdentity {
     pub sha256: String,
 }
 
+/// The ELF Build IDs independently recorded by one workload for the compared binaries.
+///
+/// SHA-256 remains the primary artifact identity. Build IDs are retained as a second,
+/// independently produced consistency check: all workloads that claim the same two
+/// binaries must report the same Build IDs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BinaryBuildIds {
+    /// Candidate ELF Build ID.
+    pub candidate: String,
+    /// Baseline ELF Build ID.
+    pub baseline: String,
+}
+
+/// Whether `text` is a lowercase hexadecimal 40-character Git object ID.
+#[must_use]
+pub fn is_commit_hex(text: &str) -> bool {
+    is_lower_hex(text, 40)
+}
+
 /// Whether `text` is a lowercase hexadecimal SHA-256 digest.
 ///
 /// Case matters: the manifest is machine-generated in lowercase, and accepting
 /// mixed case would let two spellings of the same digest compare unequal.
 #[must_use]
 pub fn is_sha256_hex(text: &str) -> bool {
-    text.len() == 64
+    is_lower_hex(text, 64)
+}
+
+/// Whether `text` is a non-empty lowercase hexadecimal ELF Build ID.
+#[must_use]
+pub fn is_build_id_hex(text: &str) -> bool {
+    !text.is_empty()
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn is_lower_hex(text: &str, length: usize) -> bool {
+    text.len() == length
         && text
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
@@ -256,5 +288,15 @@ mod tests {
             "g3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         ));
         assert!(!is_sha256_hex(""));
+    }
+
+    #[test]
+    fn commit_and_build_id_recognition_are_lowercase_hex() {
+        assert!(is_commit_hex(&"a".repeat(40)));
+        assert!(!is_commit_hex(&"a".repeat(39)));
+        assert!(!is_commit_hex(&"A".repeat(40)));
+        assert!(is_build_id_hex("0123abcdef"));
+        assert!(!is_build_id_hex(""));
+        assert!(!is_build_id_hex("ABCDEF"));
     }
 }

@@ -66,7 +66,7 @@ pub fn repository_state(repo: &Path, rule: Dirtiness) -> Result<RepositoryState,
         ));
     }
     let head = outcome.trimmed_stdout().to_owned();
-    if !(head.len() == 40 && head.chars().all(|c| c.is_ascii_hexdigit())) {
+    if !crate::perf::evidence::is_commit_hex(&head) {
         return Err(format!("repository HEAD is not a 40-hex commit: {head}"));
     }
     let dirty = match rule {
@@ -129,15 +129,33 @@ pub fn build_id(binary: &Path) -> Result<String, String> {
             outcome.stderr.trim_end()
         ));
     }
-    outcome
-        .trimmed_stdout()
+    parse_build_id(outcome.trimmed_stdout(), binary)
+}
+
+fn parse_build_id(output: &str, binary: &Path) -> Result<String, String> {
+    let ids: Vec<&str> = output
         .lines()
-        .find_map(|line| {
-            let rest = line.trim().strip_prefix("Build ID:")?;
-            let id = rest.split_whitespace().next()?;
-            (!id.is_empty()).then(|| id.to_owned())
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("Build ID:")?
+                .split_whitespace()
+                .next()
         })
-        .ok_or_else(|| format!("{} has no GNU build ID", binary.display()))
+        .collect();
+    let [id] = ids.as_slice() else {
+        return Err(format!(
+            "{} must have exactly one GNU Build ID, found {}",
+            binary.display(),
+            ids.len()
+        ));
+    };
+    if !crate::perf::evidence::is_build_id_hex(id) {
+        return Err(format!(
+            "{} has a malformed GNU Build ID: {id}",
+            binary.display()
+        ));
+    }
+    Ok((*id).to_owned())
 }
 
 /// Whether the binary's bytes contain `commit` literally.
@@ -201,6 +219,15 @@ pub fn verify_identity_sidecar(
         value.field("identity", "sha256sumsVerified"),
         Ok(json_in::Value::Bool(true))
     );
+    let hex = |text: &str, length: usize| {
+        text.len() == length && text.bytes().all(|byte| byte.is_ascii_hexdigit())
+    };
+    if !hex(source_commit, 40) {
+        return Err("baseline identity sourceCommit is not 40 hexadecimal characters".to_owned());
+    }
+    if !hex(binary_sha256, 64) {
+        return Err("baseline identity binarySha256 is not 64 hexadecimal characters".to_owned());
+    }
     if let Some(expected_commit) = expected_commit
         && !source_commit.eq_ignore_ascii_case(expected_commit)
     {
@@ -294,6 +321,18 @@ mod tests {
         verify_identity_sidecar(&good, None, &sha).expect("the digest still binds");
         assert!(verify_identity_sidecar(&good, None, &"d".repeat(64)).is_err());
 
+        let malformed = scratch.write(
+            "malformed.json",
+            &format!(
+                "{{\"sourceCommit\":\"unknown\",\"binarySha256\":\"{sha}\",\
+                 \"sha256sumsVerified\":true}}"
+            ),
+        );
+        assert!(
+            verify_identity_sidecar(&malformed, None, &sha).is_err(),
+            "an unpinned sidecar must still provide usable source provenance"
+        );
+
         let unverified = scratch.write(
             "unverified.json",
             &format!(
@@ -362,5 +401,25 @@ mod tests {
             !id.is_empty() && id.chars().all(|c| c.is_ascii_hexdigit()),
             "build id must be hex, got {id}"
         );
+    }
+
+    #[test]
+    fn build_id_output_requires_one_lowercase_hex_identity() {
+        let binary = Path::new("/binary");
+        assert_eq!(
+            parse_build_id("  Build ID: 0123abcdef\n", binary).unwrap(),
+            "0123abcdef"
+        );
+        for invalid in [
+            "",
+            "Build ID: ABCDEF\n",
+            "Build ID: not-hex\n",
+            "Build ID: 01\nBuild ID: 02\n",
+        ] {
+            assert!(
+                parse_build_id(invalid, binary).is_err(),
+                "must reject {invalid:?}"
+            );
+        }
     }
 }
