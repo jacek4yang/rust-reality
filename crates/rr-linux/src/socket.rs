@@ -13,6 +13,12 @@ use std::{
     os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
 };
 
+#[cfg(target_os = "linux")]
+/// Shuts down only the write side of a socket.
+pub fn shutdown_write(fd: impl std::os::fd::AsFd) -> io::Result<()> {
+    rustix::net::shutdown(fd.as_fd(), rustix::net::Shutdown::Write).map_err(io::Error::from)
+}
+
 /// Creates, configures, and binds a nonblocking IPv6 TCP listener with
 /// `IPV6_V6ONLY=1` set before `bind(2)`.
 ///

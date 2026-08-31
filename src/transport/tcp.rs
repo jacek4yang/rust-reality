@@ -662,23 +662,13 @@ mod tests {
         assert_eq!(super::libc_compat::EOPNOTSUPP, libc_errno::EOPNOTSUPP);
     }
 
-    /// Platform errno values sourced from `rustix`, which the crate already
-    /// depends on for Linux splice support.
+    /// Platform errno values sourced from the Linux mechanism boundary.
     #[cfg(target_os = "linux")]
     mod libc_errno {
-        pub(super) const EPERM: i32 = rustix::io::Errno::PERM.raw_os_error();
-        pub(super) const EINTR: i32 = rustix::io::Errno::INTR.raw_os_error();
-        pub(super) const EBADF: i32 = rustix::io::Errno::BADF.raw_os_error();
-        pub(super) const EAGAIN: i32 = rustix::io::Errno::AGAIN.raw_os_error();
-        pub(super) const ENOMEM: i32 = rustix::io::Errno::NOMEM.raw_os_error();
-        pub(super) const EINVAL: i32 = rustix::io::Errno::INVAL.raw_os_error();
-        pub(super) const EMFILE: i32 = rustix::io::Errno::MFILE.raw_os_error();
-        pub(super) const ENFILE: i32 = rustix::io::Errno::NFILE.raw_os_error();
-        pub(super) const ENOTSOCK: i32 = rustix::io::Errno::NOTSOCK.raw_os_error();
-        pub(super) const EOPNOTSUPP: i32 = rustix::io::Errno::OPNOTSUPP.raw_os_error();
-        pub(super) const ENOBUFS: i32 = rustix::io::Errno::NOBUFS.raw_os_error();
-        pub(super) const ECONNABORTED: i32 = rustix::io::Errno::CONNABORTED.raw_os_error();
-        pub(super) const EPROTO: i32 = rustix::io::Errno::PROTO.raw_os_error();
+        pub(super) use rr_linux::errno::{
+            EAGAIN, EBADF, ECONNABORTED, EINTR, EINVAL, EMFILE, ENFILE, ENOBUFS, ENOMEM, ENOTSOCK,
+            EOPNOTSUPP, EPERM, EPROTO,
+        };
     }
 
     #[test]

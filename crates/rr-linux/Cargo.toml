@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 libc = { version = "0.2.180", default-features = false, features = ["std"] }
+rustix = { version = "1.1.4", default-features = false, features = ["net", "pipe", "std"] }
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
