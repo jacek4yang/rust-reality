@@ -389,6 +389,68 @@ pub fn assert_unchanged(binary: &crate::bench::identity::Binary) -> Result<(), S
 mod tests {
     use super::*;
 
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "rr-bench-no-ccs-{name}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |duration| duration.as_nanos())
+            ));
+            let _ = std::fs::remove_dir_all(&path);
+            Self(path)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn completion_waits_for_run_log_writers_to_stop() {
+        let scratch = Scratch::new("completion-order");
+        let run = crate::bench::evidence::RunDirectory::create(&scratch.0).unwrap();
+        run.write_new("environment.json", "{\"phase\":\"running\"}\n")
+            .unwrap();
+
+        let error = publish_complete_run(
+            &run,
+            "{\"phase\":\"complete\"}\n",
+            "run-1",
+            || Err("run log writers did not stop".to_owned()),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("log writers did not stop"), "{error}");
+        assert!(
+            !run.join("completion.json").exists(),
+            "failed process finalization must leave no completion marker"
+        );
+
+        let mut stopped = false;
+        publish_complete_run(
+            &run,
+            "{\"phase\":\"complete\"}\n",
+            "run-1",
+            || {
+                assert!(
+                    !run.join("completion.json").exists(),
+                    "run log writers must stop before publication"
+                );
+                stopped = true;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(stopped);
+        assert!(run.join("completion.json").is_file());
+    }
+
     /// A real `-no_middlebox` trace: the server sends a `ServerHello` and no CCS,
     /// while the *client* still sends one, which the assertion must ignore.
     const NO_MIDDLEBOX_TRACE: &str = "\
@@ -737,6 +799,36 @@ fn start_tunnel(
     Ok((server, client))
 }
 
+fn publish_complete_run(
+    run: &crate::bench::evidence::RunDirectory,
+    environment_json: &str,
+    run_id: &str,
+    finalise_processes: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    finalise_processes()?;
+    run.publish(
+        crate::bench::evidence::Publication::Environment,
+        environment_json,
+        run_id,
+        "test-openssl-no-ccs-interop",
+    )?;
+    Ok(())
+}
+
+fn stop_log_writers_and_publish(
+    run: &crate::bench::evidence::RunDirectory,
+    environment_json: &str,
+    run_id: &str,
+    writers: [&mut crate::bench::process::Child; 3],
+) -> Result<(), String> {
+    publish_complete_run(run, environment_json, run_id, || {
+        for writer in writers {
+            writer.terminate();
+        }
+        Ok(())
+    })
+}
+
 /// Runs the no-CCS interoperability gate.
 ///
 /// # Errors
@@ -745,7 +837,7 @@ fn start_tunnel(
 /// mismatch, or a binary that changed mid-run are all gate failures.
 pub fn run(suite: &NoCcsSuite) -> Result<Json, String> {
     use crate::bench::{
-        evidence::{Publication, RunDirectory},
+        evidence::RunDirectory,
         host_lock::HostLock,
         identity::{self, Kind},
         interop,
@@ -808,7 +900,7 @@ pub fn run(suite: &NoCcsSuite) -> Result<Json, String> {
         socks_port,
     )?;
 
-    let (_origin, expected_sha) = start_origin(suite, &workspace, origin_port)?;
+    let (mut origin, expected_sha) = start_origin(suite, &workspace, origin_port)?;
     server
         .wait_for_port(server_port, std::time::Duration::from_secs(30))
         .map_err(|error| error.to_string())?;
@@ -849,11 +941,11 @@ pub fn run(suite: &NoCcsSuite) -> Result<Json, String> {
     );
     let document = summary.to_python_json();
     run.write_new("summary.json", &document)?;
-    run.publish(
-        Publication::Environment,
+    stop_log_writers_and_publish(
+        &run,
         &document,
         &suite.run_id,
-        "test-openssl-no-ccs-interop",
+        [&mut client, &mut server, &mut origin],
     )?;
     Ok(summary)
 }
