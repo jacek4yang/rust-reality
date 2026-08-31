@@ -31,6 +31,12 @@ use super::stats::{StatsError, median};
 #[cfg(test)]
 pub const DEFAULT_ITERATIONS: usize = 20_000;
 
+/// Fewest resamples for which the frozen percentile-index formula is defined.
+pub const MIN_ITERATIONS: usize = 40;
+
+/// Largest resample allocation accepted by the reporting implementation.
+pub const MAX_ITERATIONS: usize = 100_000;
+
 /// `CPython`'s `random.Random`, restricted to what the bootstrap needs.
 ///
 /// Only the integer-seeded construction and `random()` are implemented, because
@@ -272,8 +278,8 @@ pub fn seed_from_label(label: &str) -> u64 {
 ///
 /// # Errors
 ///
-/// Returns [`StatsError::BootstrapSample`] with fewer than three blocks, matching
-/// the original's refusal to interval-estimate from almost no data.
+/// Returns an error for fewer than three blocks, a non-positive/non-finite ratio,
+/// or a resample count outside the bounded implementation contract.
 pub fn interval(label: &str, ratios: &[f64], iterations: usize) -> Result<[f64; 2], StatsError> {
     interval_with_seed(seed_from_label(label), label, ratios, iterations)
 }
@@ -291,7 +297,9 @@ pub fn interval(label: &str, ratios: &[f64], iterations: usize) -> Result<[f64; 
 ///
 /// # Errors
 ///
-/// Returns [`StatsError::BootstrapSample`] with fewer than three blocks.
+/// Returns [`StatsError::BootstrapSample`] with fewer than three blocks,
+/// [`StatsError::NonPositiveRatio`] for an invalid ratio, or
+/// [`StatsError::BootstrapIterations`] for an unsafe resample count.
 pub fn interval_with_seed(
     seed: u64,
     label: &str,
@@ -303,6 +311,20 @@ pub fn interval_with_seed(
             metric: label.to_owned(),
             found: ratios.len(),
         });
+    }
+    if !(MIN_ITERATIONS..=MAX_ITERATIONS).contains(&iterations) {
+        return Err(StatsError::BootstrapIterations {
+            metric: label.to_owned(),
+            found: iterations,
+        });
+    }
+    for (index, ratio) in ratios.iter().enumerate() {
+        if !ratio.is_finite() || *ratio <= 0.0 {
+            return Err(StatsError::NonPositiveRatio {
+                metric: label.to_owned(),
+                index,
+            });
+        }
     }
     let mut generator = PythonRandom::seeded(seed);
     let mut medians = Vec::with_capacity(iterations);
@@ -595,6 +617,26 @@ mod tests {
             interval("m", &[1.0, 1.0], 100),
             Err(StatsError::BootstrapSample { found: 2, .. })
         ));
+    }
+
+    #[test]
+    fn invalid_ratios_and_resample_counts_fail_before_allocation() {
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let mut ratios = [1.0; 3];
+            ratios[1] = bad;
+            assert!(matches!(
+                interval_with_seed(1, "m", &ratios, MIN_ITERATIONS),
+                Err(StatsError::NonPositiveRatio { index: 1, .. })
+            ));
+        }
+        for iterations in [0, MIN_ITERATIONS - 1, MAX_ITERATIONS + 1] {
+            assert!(matches!(
+                interval_with_seed(1, "m", &[1.0; 3], iterations),
+                Err(StatsError::BootstrapIterations { found, .. }) if found == iterations
+            ));
+        }
+        assert!(interval_with_seed(1, "m", &[1.0; 3], MIN_ITERATIONS).is_ok());
+        assert!(interval_with_seed(1, "m", &[1.0; 3], MAX_ITERATIONS).is_ok());
     }
 
     #[test]

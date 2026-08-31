@@ -149,7 +149,7 @@ pub enum StatsError {
         /// The repeated identifier.
         id: String,
     },
-    /// A raw p-value outside `[0, 1]` or not finite.
+    /// A p-value outside `[0, 1]` or not finite.
     InvalidPValue {
         /// The hypothesis that failed.
         id: String,
@@ -168,8 +168,35 @@ pub enum StatsError {
         /// How many blocks were supplied.
         found: usize,
     },
+    /// A bootstrap request whose resample count cannot be evaluated safely.
+    BootstrapIterations {
+        /// The metric that failed.
+        metric: String,
+        /// How many resamples were requested.
+        found: usize,
+    },
     /// An empty sample list handed to a rank statistic.
     EmptySample,
+    /// A rank-statistic input contained NaN or infinity.
+    NonFiniteSample {
+        /// Which input value failed.
+        index: usize,
+    },
+    /// A quantile fraction outside the closed unit interval.
+    InvalidFraction {
+        /// The offending fraction.
+        fraction: f64,
+    },
+    /// A finite sample produced a non-finite statistic.
+    NonFiniteStatistic {
+        /// Which statistic failed.
+        name: &'static str,
+    },
+    /// A median ratio used for classification was not positive and finite.
+    InvalidMedianRatio {
+        /// The metric that failed.
+        metric: String,
+    },
 }
 
 impl std::fmt::Display for StatsError {
@@ -211,7 +238,22 @@ impl std::fmt::Display for StatsError {
                 formatter,
                 "{metric}: fewer than three complete ABBA blocks ({found})"
             ),
+            Self::BootstrapIterations { metric, found } => {
+                write!(formatter, "{metric}: invalid bootstrap iteration count {found}")
+            }
             Self::EmptySample => write!(formatter, "tail-latency sample list is empty"),
+            Self::NonFiniteSample { index } => {
+                write!(formatter, "sample value {index} is not finite")
+            }
+            Self::InvalidFraction { fraction } => {
+                write!(formatter, "quantile fraction {fraction} is outside 0..=1")
+            }
+            Self::NonFiniteStatistic { name } => {
+                write!(formatter, "{name} produced a non-finite result")
+            }
+            Self::InvalidMedianRatio { metric } => {
+                write!(formatter, "{metric}: median ratio is not positive and finite")
+            }
         }
     }
 }
@@ -304,7 +346,8 @@ pub fn fsum(values: &[f64]) -> f64 {
 ///
 /// # Errors
 ///
-/// Returns [`StatsError::EmptySample`] for an empty sample.
+/// Returns [`StatsError::EmptySample`] for an empty sample, or
+/// [`StatsError::NonFiniteSample`] when an observation is NaN or infinite.
 #[expect(
     clippy::manual_midpoint,
     reason = "must match the (a + b) / 2 arithmetic that produced the recorded evidence"
@@ -313,18 +356,26 @@ pub fn median(values: &[f64]) -> Result<f64, StatsError> {
     if values.is_empty() {
         return Err(StatsError::EmptySample);
     }
+    if let Some(index) = values.iter().position(|value| !value.is_finite()) {
+        return Err(StatsError::NonFiniteSample { index });
+    }
     let mut ordered = values.to_vec();
     ordered.sort_unstable_by(f64::total_cmp);
     let count = ordered.len();
     let middle = count / 2;
-    if count % 2 == 1 {
-        Ok(ordered[middle])
+    let result = if count % 2 == 1 {
+        ordered[middle]
     } else {
         // Written as the original does rather than with `midpoint`, because the
         // recorded evidence was produced by `(a + b) / 2` and the two can differ in
-        // the last bit. `f64::midpoint` cannot overflow here either way, since these
-        // are ratios near one.
-        Ok((ordered[middle - 1] + ordered[middle]) / 2.0)
+        // the last bit. Recorded ratios are near one; a generic finite sample that
+        // overflows this expression is rejected below.
+        (ordered[middle - 1] + ordered[middle]) / 2.0
+    };
+    if result.is_finite() {
+        Ok(result)
+    } else {
+        Err(StatsError::NonFiniteStatistic { name: "median" })
     }
 }
 
@@ -334,10 +385,18 @@ pub fn median(values: &[f64]) -> Result<f64, StatsError> {
 ///
 /// # Errors
 ///
-/// Returns [`StatsError::EmptySample`] for an empty sample.
+/// Returns [`StatsError::EmptySample`] for an empty sample,
+/// [`StatsError::NonFiniteSample`] for a non-finite observation, or
+/// [`StatsError::InvalidFraction`] when `fraction` is outside `0..=1`.
 pub fn nearest_rank(values: &[f64], fraction: f64) -> Result<f64, StatsError> {
     if values.is_empty() {
         return Err(StatsError::EmptySample);
+    }
+    if !fraction.is_finite() || !(0.0..=1.0).contains(&fraction) {
+        return Err(StatsError::InvalidFraction { fraction });
+    }
+    if let Some(index) = values.iter().position(|value| !value.is_finite()) {
+        return Err(StatsError::NonFiniteSample { index });
     }
     let mut ordered = values.to_vec();
     ordered.sort_unstable_by(f64::total_cmp);
@@ -480,8 +539,9 @@ pub fn holm_adjusted_pvalues(family: &[(String, f64)]) -> Result<Vec<f64>, Stats
 ///
 /// # Errors
 ///
-/// Returns [`StatsError::ContradictoryDirections`] if both directions are
-/// significant, which indicates broken evidence rather than an unusual result.
+/// Returns an error for an invalid median ratio or p-value, or
+/// [`StatsError::ContradictoryDirections`] if both directions are significant,
+/// which indicates broken evidence rather than an unusual result.
 pub fn classify(
     metric: &str,
     direction: Direction,
@@ -489,6 +549,22 @@ pub fn classify(
     regression_adjusted: f64,
     improvement_adjusted: f64,
 ) -> Result<Classification, StatsError> {
+    if !median_ratio.is_finite() || median_ratio <= 0.0 {
+        return Err(StatsError::InvalidMedianRatio {
+            metric: metric.to_owned(),
+        });
+    }
+    for (tail, value) in [
+        ("regression", regression_adjusted),
+        ("improvement", improvement_adjusted),
+    ] {
+        if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+            return Err(StatsError::InvalidPValue {
+                id: format!("{metric}:{tail}"),
+                value,
+            });
+        }
+    }
     let regression = regression_adjusted <= FAMILY_WISE_ALPHA;
     let improvement = improvement_adjusted <= FAMILY_WISE_ALPHA;
     if regression && improvement {
@@ -687,6 +763,60 @@ mod tests {
                 "{value} is not an exact multiple of 1/4096"
             );
         }
+    }
+
+    /// A deliberately simple integer oracle. It shares no summation, orientation,
+    /// or comparison helper with the implementation under test.
+    fn integer_sign_flip_oracle(observed_signs: &[i32]) -> (u32, u32, u32) {
+        let observed: i32 = observed_signs.iter().sum();
+        let assignments = 1_u32 << observed_signs.len();
+        let mut lower = 0;
+        let mut upper = 0;
+        for assignment in 0..assignments {
+            let mut statistic = 0_i32;
+            for (index, value) in observed_signs.iter().enumerate() {
+                let magnitude = value.abs();
+                statistic += if assignment & (1 << index) == 0 {
+                    -magnitude
+                } else {
+                    magnitude
+                };
+            }
+            lower += u32::from(statistic <= observed);
+            upper += u32::from(statistic >= observed);
+        }
+        (lower, upper, assignments)
+    }
+
+    #[test]
+    fn exact_sign_flip_matches_an_independent_integer_lattice_oracle() {
+        let fixtures = [
+            [1_i32; 12],
+            [-1_i32; 12],
+            [1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1],
+        ];
+        for fixture in fixtures {
+            let input: Vec<f64> = fixture.iter().map(|value| f64::from(*value)).collect();
+            let (observed_lower, observed_upper) =
+                exact_sign_flip_pvalues("integer-oracle", &input).expect("valid fixture");
+            let (expected_lower, expected_upper, denominator) =
+                integer_sign_flip_oracle(&fixture);
+            assert_eq!(
+                observed_lower,
+                f64::from(expected_lower) / f64::from(denominator)
+            );
+            assert_eq!(
+                observed_upper,
+                f64::from(expected_upper) / f64::from(denominator)
+            );
+        }
+
+        assert_eq!(integer_sign_flip_oracle(&[1; 12]), (4096, 1, 4096));
+        assert_eq!(integer_sign_flip_oracle(&[-1; 12]), (1, 4096, 4096));
+        assert_eq!(
+            integer_sign_flip_oracle(&[1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1]),
+            (2510, 2510, 4096)
+        );
     }
 
     #[test]
@@ -960,6 +1090,26 @@ mod tests {
     }
 
     #[test]
+    fn classification_rejects_invalid_effects_and_probabilities() {
+        for ratio in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(matches!(
+                classify("m", Direction::HigherIsBetter, ratio, 0.9, 0.9),
+                Err(StatsError::InvalidMedianRatio { .. })
+            ));
+        }
+        for bad in [-0.1, 1.1, f64::NAN, f64::INFINITY] {
+            assert!(matches!(
+                classify("m", Direction::HigherIsBetter, 1.0, bad, 0.9),
+                Err(StatsError::InvalidPValue { .. })
+            ));
+            assert!(matches!(
+                classify("m", Direction::HigherIsBetter, 1.0, 0.9, bad),
+                Err(StatsError::InvalidPValue { .. })
+            ));
+        }
+    }
+
+    #[test]
     fn the_alpha_boundary_is_inclusive() {
         // Exactly alpha counts as significant, matching `<=` in the original.
         assert_eq!(
@@ -978,6 +1128,30 @@ mod tests {
         // A fraction of zero floors at index zero rather than underflowing.
         assert_eq!(nearest_rank(&values, 0.0).expect("non-empty"), 1.0);
         assert_eq!(nearest_rank(&[], 0.5), Err(StatsError::EmptySample));
+    }
+
+    #[test]
+    fn rank_statistics_reject_non_finite_inputs_and_invalid_fractions() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(matches!(
+                median(&[1.0, bad, 2.0]),
+                Err(StatsError::NonFiniteSample { index: 1 })
+            ));
+            assert!(matches!(
+                nearest_rank(&[1.0, bad, 2.0], 0.5),
+                Err(StatsError::NonFiniteSample { index: 1 })
+            ));
+        }
+        for fraction in [-0.1, 1.1, f64::NAN, f64::INFINITY] {
+            assert!(matches!(
+                nearest_rank(&[1.0, 2.0], fraction),
+                Err(StatsError::InvalidFraction { .. })
+            ));
+        }
+        assert!(matches!(
+            median(&[f64::MAX, f64::MAX]),
+            Err(StatsError::NonFiniteStatistic { name: "median" })
+        ));
     }
 
     #[test]
