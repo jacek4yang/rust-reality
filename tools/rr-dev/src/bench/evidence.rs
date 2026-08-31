@@ -449,6 +449,7 @@ mod tests {
         loader::verify_success_marker(
             &parsed,
             &run.join("environment.json"),
+            &loader::sha256_file(&run.join("environment.json")).unwrap(),
             "run-1",
             "benchmark-fallback-ab",
             "completion",

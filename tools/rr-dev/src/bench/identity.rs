@@ -71,16 +71,27 @@ pub fn register(
     expected_sha256: &str,
     kind: Kind,
 ) -> Result<Binary, String> {
-    let path = if path.is_absolute() {
+    if !expected_sha256.is_empty() && !crate::perf::evidence::is_sha256_hex(expected_sha256) {
+        return Err(format!(
+            "{label} expected SHA-256 must be 64 lowercase hexadecimal characters"
+        ));
+    }
+    let unresolved = if path.is_absolute() {
         path.to_path_buf()
     } else {
         std::env::current_dir()
             .map_err(|error| format!("could not resolve the working directory: {error}"))?
             .join(path)
     };
-    if !path.is_file() {
+    let path = unresolved.canonicalize().map_err(|error| {
+        format!(
+            "{label} binary is not a regular executable file: {}: {error}",
+            unresolved.display()
+        )
+    })?;
+    if !is_executable_file(&path) {
         return Err(format!(
-            "{} binary is not a regular file: {}",
+            "{} binary is not a regular executable file: {}",
             label,
             path.display()
         ));
@@ -129,12 +140,24 @@ fn rust_identity(path: &Path) -> Result<String, String> {
         .field("environment", "gitCommit")
         .and_then(|commit| commit.as_str("environment.gitCommit"))
         .map_err(|error| format!("rust-reality benchmark JSON: {error}"))?;
-    if !(commit.len() == 40 && commit.chars().all(|c| c.is_ascii_hexdigit())) {
+    if !crate::perf::evidence::is_commit_hex(commit) {
         return Err(format!(
             "rust-reality benchmark JSON has no valid 40-hex environment.gitCommit: {commit}"
         ));
     }
     Ok(serde_compatible_environment(environment))
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::metadata(path)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
 }
 
 /// Renders the captured `environment` object back to compact JSON for the report.
@@ -203,11 +226,8 @@ mod tests {
     #[test]
     fn a_malformed_expected_digest_is_rejected_before_anything_else() {
         let dir = scratch("digest");
-        let script = dir.join("tool");
-        std::fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
-        make_executable(&script);
-        let error = register("tool", &script, "not-hex", Kind::Rust).unwrap_err();
-        assert!(error.contains("SHA-256 mismatch"), "{error}");
+        let error = register("tool", &dir.join("missing"), "not-hex", Kind::Rust).unwrap_err();
+        assert!(error.contains("64 lowercase hexadecimal"), "{error}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -215,7 +235,7 @@ mod tests {
     fn a_missing_binary_fails_closed() {
         let dir = scratch("missing");
         let error = register("tool", &dir.join("absent"), "", Kind::Xray).unwrap_err();
-        assert!(error.contains("not a regular file"), "{error}");
+        assert!(error.contains("not a regular executable file"), "{error}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -254,6 +274,18 @@ mod tests {
         let error = register("tool", &script, "", Kind::Rust).unwrap_err();
         assert!(error.contains("40-hex"), "{error}");
 
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '{{\"environment\":{{\"gitCommit\":\"{}\"}}}}\\n'\n",
+                "A".repeat(40)
+            ),
+        )
+        .unwrap();
+        make_executable(&script);
+        let error = register("tool", &script, "", Kind::Rust).unwrap_err();
+        assert!(error.contains("40-hex"), "{error}");
+
         let commit = "a".repeat(40);
         std::fs::write(
             &script,
@@ -262,8 +294,19 @@ mod tests {
         .unwrap();
         make_executable(&script);
         let binary = register("tool", &script, "", Kind::Rust).expect("valid identity");
+        assert_eq!(binary.path, script.canonicalize().unwrap());
         assert_eq!(binary.sha256.len(), 64);
         assert!(binary.identity.contains(&commit));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_non_executable_regular_file_is_rejected_at_registration() {
+        let dir = scratch("not-executable");
+        let file = dir.join("tool");
+        std::fs::write(&file, "not executable\n").unwrap();
+        let error = register("tool", &file, "", Kind::Prebuilt).unwrap_err();
+        assert!(error.contains("not a regular executable file"), "{error}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
