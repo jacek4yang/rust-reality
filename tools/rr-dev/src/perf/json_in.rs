@@ -372,6 +372,10 @@ fn parse_string(bytes: &[u8], cursor: &mut usize) -> Result<String, String> {
         *cursor += 1;
         match byte {
             b'"' => return String::from_utf8(out).map_err(|error| error.to_string()),
+            // RFC 8259 forbids unescaped U+0000..U+001F in JSON strings.
+            0x00..=0x1f => {
+                return Err(format!("unescaped control byte at byte {}", *cursor - 1));
+            }
             b'\\' => {
                 let escape = *bytes
                     .get(*cursor)
@@ -536,6 +540,12 @@ mod tests {
         for bad in ["{", r#"{"a":}"#, r#"{"a":1}x"#, r#"{"a":"unterminated}"#] {
             assert!(parse(bad).is_err(), "{bad} must be refused");
         }
+    }
+
+    #[test]
+    fn unescaped_control_bytes_inside_strings_are_refused() {
+        assert!(parse("{\"x\":\"line\nfeed\"}").is_err());
+        assert!(parse("{\"x\":\"nul\0byte\"}").is_err());
     }
 
     #[test]
