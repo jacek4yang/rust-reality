@@ -29,7 +29,7 @@ use crate::{
     },
     hash,
     perf::{json_in, json_out::Json},
-    process::Tool,
+    process::{Outcome, Tool},
 };
 
 #[path = "hotspot_bundle.rs"]
@@ -41,6 +41,9 @@ const MIN_BENCHMARK_WARMUP_MS: u64 = 1;
 const MAX_BENCHMARK_WARMUP_MS: u64 = 10_000;
 const MAX_FREQUENCY: u32 = 9_999;
 const MAX_DWARF_BYTES: u32 = 65_528;
+const MAX_PERF_OUTPUT_BYTES: usize = 64 * 1024;
+const PERF_STDOUT: &str = "perf.stdout";
+const PERF_STDERR: &str = "perf.stderr";
 
 /// Which process supplies samples to `perf record`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,8 +109,15 @@ struct ProcessIdentity {
 #[derive(Debug, Default)]
 struct Status {
     perf_exit: Option<i32>,
+    perf_elapsed_millis: Option<u64>,
     workload_exit: Option<i32>,
     process: Option<ProcessIdentity>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PerfRecord {
+    exit_code: i32,
+    elapsed_millis: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -334,6 +344,12 @@ fn metadata(
                         .perf_exit
                         .map_or(Json::Null, |code| Json::Int(i64::from(code))),
                 ),
+                (
+                    "elapsedMillis",
+                    status.perf_elapsed_millis.map_or(Json::Null, |millis| {
+                        Json::Int(i64::try_from(millis).unwrap_or(i64::MAX))
+                    }),
+                ),
             ]),
         ),
         (
@@ -472,30 +488,54 @@ fn numeric_id(flag: &str) -> Result<String, String> {
         .map_err(|error| format!("id {flag}: {error}"))
 }
 
-fn record_perf(plan: &Plan, pid: u32, perf_data: &Path) -> Result<i32, String> {
-    let output = Tool::new("sudo")
-        .args([
-            "-n".to_owned(),
-            "perf".to_owned(),
-            "record".to_owned(),
-            "-e".to_owned(),
-            plan.event.clone(),
-            "-F".to_owned(),
-            plan.frequency.to_string(),
-            "-g".to_owned(),
-            "--call-graph".to_owned(),
-            plan.call_graph.clone(),
-            "-p".to_owned(),
-            pid.to_string(),
-            "-o".to_owned(),
-            perf_data.display().to_string(),
-            "--".to_owned(),
-            "sleep".to_owned(),
-            plan.record_seconds.to_string(),
-        ])
+fn capture_perf_output(run_dir: &RunDirectory, tool: Tool) -> Result<Outcome, String> {
+    let output = tool
+        .capture_limit(MAX_PERF_OUTPUT_BYTES)
         .probe()
-        .map_err(|error| format!("perf record could not start: {error}"))?;
-    Ok(output.code.unwrap_or(128))
+        .map_err(|error| format!("perf record mechanism failed: {error}"))?;
+    run_dir.write_new(PERF_STDOUT, &output.stdout)?;
+    run_dir.write_new(PERF_STDERR, &output.stderr)?;
+    Ok(output)
+}
+
+fn record_perf(
+    plan: &Plan,
+    run_dir: &RunDirectory,
+    pid: u32,
+    perf_data: &Path,
+) -> Result<PerfRecord, String> {
+    let tool = Tool::new("sudo").args([
+        "-n".to_owned(),
+        "perf".to_owned(),
+        "record".to_owned(),
+        "-e".to_owned(),
+        plan.event.clone(),
+        "-F".to_owned(),
+        plan.frequency.to_string(),
+        "-g".to_owned(),
+        "--call-graph".to_owned(),
+        plan.call_graph.clone(),
+        "-p".to_owned(),
+        pid.to_string(),
+        "-o".to_owned(),
+        perf_data.display().to_string(),
+        "--".to_owned(),
+        "sleep".to_owned(),
+        plan.record_seconds.to_string(),
+    ]);
+    let output = capture_perf_output(run_dir, tool)?;
+    Ok(PerfRecord {
+        exit_code: output.code.unwrap_or(128),
+        elapsed_millis: u64::try_from(output.elapsed.as_millis()).unwrap_or(u64::MAX),
+    })
+}
+
+fn perf_failure(run_dir: &RunDirectory, exit_code: i32) -> String {
+    format!(
+        "perf record failed with exit code {exit_code}; see {} and {}",
+        run_dir.join(PERF_STDERR).display(),
+        run_dir.join(PERF_STDOUT).display()
+    )
 }
 
 fn execute(
@@ -551,17 +591,18 @@ fn execute(
         .as_ref()
         .expect("process identity recorded")
         .pid;
-    status.perf_exit = Some(record_perf(plan, pid, &perf_data)?);
+    let perf = record_perf(plan, run_dir, pid, &perf_data)?;
+    status.perf_exit = Some(perf.exit_code);
+    status.perf_elapsed_millis = Some(perf.elapsed_millis);
     if let Some(child) = owned.as_mut() {
         status.workload_exit = Some(child.wait()?);
-    } else if let Some(process) = status.process.as_mut() {
+    } else if perf.exit_code == 0
+        && let Some(process) = status.process.as_mut()
+    {
         verify_process(process)?;
     }
-    if status.perf_exit != Some(0) {
-        return Err(format!(
-            "perf record failed with exit code {}",
-            status.perf_exit.unwrap_or(128)
-        ));
+    if perf.exit_code != 0 {
+        return Err(perf_failure(run_dir, perf.exit_code));
     }
     if status.workload_exit.is_some_and(|code| code != 0) {
         return Err(format!(
@@ -643,11 +684,15 @@ fn execute(
     run_dir.write_new("perf-report.txt", &report)?;
     let report_path = run_dir.join("perf-report.txt");
     let buildids_path = run_dir.join("perf-buildids.txt");
+    let perf_stdout_path = run_dir.join(PERF_STDOUT);
+    let perf_stderr_path = run_dir.join(PERF_STDERR);
     let checksum_files = [
         archived,
         perf_data.as_path(),
         report_path.as_path(),
         buildids_path.as_path(),
+        perf_stdout_path.as_path(),
+        perf_stderr_path.as_path(),
     ];
     let mut checksums = String::new();
     for path in checksum_files {
@@ -801,6 +846,32 @@ pub fn run(plan: &Plan) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "rr-hotspot-{name}-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_or(0, |duration| duration.as_nanos())
+            ));
+            std::fs::create_dir_all(&path).expect("create scratch directory");
+            Self(path)
+        }
+
+        fn join(&self, relative: &str) -> PathBuf {
+            self.0.join(relative)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     fn plan() -> Plan {
         Plan {
             repo: PathBuf::from("/repo"),
@@ -878,5 +949,34 @@ mod tests {
                 "--warmup-ms must be in 1..=10000"
             );
         }
+    }
+
+    #[test]
+    fn a_failing_perf_mechanism_retains_bounded_diagnostics_without_completion() {
+        let scratch = Scratch::new("diagnostics");
+        let run = RunDirectory::create(&scratch.join("run")).expect("create run directory");
+        let output = capture_perf_output(
+            &run,
+            Tool::new("sh").args([
+                "-c",
+                "printf 'bounded stdout'; printf 'intentional perf diagnostic' >&2; exit 42",
+            ]),
+        )
+        .expect("capture a non-zero mechanism outcome");
+
+        assert_eq!(output.code, Some(42));
+        assert_eq!(
+            std::fs::read_to_string(run.join(PERF_STDOUT)).expect("read perf stdout"),
+            "bounded stdout"
+        );
+        assert_eq!(
+            std::fs::read_to_string(run.join(PERF_STDERR)).expect("read perf stderr"),
+            "intentional perf diagnostic"
+        );
+        let error = perf_failure(&run, output.code.unwrap_or(128));
+        assert!(error.contains(&run.join(PERF_STDERR).display().to_string()));
+        assert!(error.contains(&run.join(PERF_STDOUT).display().to_string()));
+        assert!(!error.contains("intentional perf diagnostic"));
+        assert!(!run.join(Publication::Contract.marker_name()).exists());
     }
 }
