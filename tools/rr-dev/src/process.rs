@@ -20,13 +20,33 @@ use std::{
     fmt, io,
     io::Read,
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
-    thread,
+    process::{Child, Command, Stdio},
+    thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
+#[cfg(unix)]
+use rustix::process::{kill_process_group, Pid, Signal};
+
 /// Default upper bound for one external development-tool invocation.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_mins(30);
+
+/// Maximum bytes retained from each captured output stream by default.
+pub const DEFAULT_CAPTURE_LIMIT: usize = 64 * 1024 * 1024;
+
+const POLL_INTERVAL: Duration = Duration::from_millis(10);
+const TERMINATION_GRACE: Duration = Duration::from_millis(250);
+
+type OutputReader = JoinHandle<io::Result<CapturedOutput>>;
+
+#[derive(Debug, Default)]
+struct CapturedOutput {
+    bytes: Vec<u8>,
+    exceeded_limit: bool,
+}
 
 /// Argument values that must never appear in a diagnostic.
 ///
@@ -106,6 +126,22 @@ pub enum ToolError {
         /// The deadline that was exceeded.
         timeout: Duration,
     },
+    /// A captured stream exceeded its configured memory bound.
+    OutputTooLarge {
+        /// The redacted command line.
+        command: String,
+        /// Which output stream exceeded the bound.
+        stream: &'static str,
+        /// Maximum bytes retained for one stream.
+        limit: usize,
+    },
+    /// A captured stream was not valid UTF-8.
+    InvalidOutput {
+        /// The redacted command line.
+        command: String,
+        /// Which output stream was invalid.
+        stream: &'static str,
+    },
 }
 
 impl fmt::Display for ToolError {
@@ -139,6 +175,19 @@ impl fmt::Display for ToolError {
                     timeout.as_secs()
                 )
             }
+            Self::OutputTooLarge {
+                command,
+                stream,
+                limit,
+            } => {
+                write!(
+                    formatter,
+                    "`{command}` produced more than {limit} bytes on {stream}"
+                )
+            }
+            Self::InvalidOutput { command, stream } => {
+                write!(formatter, "`{command}` produced non-UTF-8 {stream}")
+            }
         }
     }
 }
@@ -147,7 +196,11 @@ impl std::error::Error for ToolError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Spawn { source, .. } => Some(source),
-            Self::NotFound { .. } | Self::Failed { .. } | Self::Timeout { .. } => None,
+            Self::NotFound { .. }
+            | Self::Failed { .. }
+            | Self::Timeout { .. }
+            | Self::OutputTooLarge { .. }
+            | Self::InvalidOutput { .. } => None,
         }
     }
 }
@@ -166,6 +219,7 @@ pub struct Tool {
     cwd: Option<PathBuf>,
     inherit_stdio: bool,
     timeout: Duration,
+    capture_limit: usize,
 }
 
 impl Tool {
@@ -179,6 +233,7 @@ impl Tool {
             cwd: None,
             inherit_stdio: false,
             timeout: DEFAULT_TIMEOUT,
+            capture_limit: DEFAULT_CAPTURE_LIMIT,
         }
     }
 
@@ -232,6 +287,17 @@ impl Tool {
     #[must_use]
     pub const fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Sets the maximum bytes retained from each captured output stream.
+    #[allow(
+        dead_code,
+        reason = "the public builder is reserved for commands needing a tighter bound"
+    )]
+    #[must_use]
+    pub const fn capture_limit(mut self, limit: usize) -> Self {
+        self.capture_limit = limit;
         self
     }
 
@@ -291,60 +357,57 @@ impl Tool {
 
         // Drain captured pipes concurrently while polling. Waiting for the child
         // before draining can deadlock when a tool fills a pipe.
-        let stdout_reader = child.stdout.take().map(|mut pipe| {
-            thread::spawn(move || {
-                let mut bytes = Vec::new();
-                let _ = pipe.read_to_end(&mut bytes);
-                bytes
-            })
-        });
-        let stderr_reader = child.stderr.take().map(|mut pipe| {
-            thread::spawn(move || {
-                let mut bytes = Vec::new();
-                let _ = pipe.read_to_end(&mut bytes);
-                bytes
-            })
-        });
+        let capture_limit = self.capture_limit;
+        let stdout_reader = child
+            .stdout
+            .take()
+            .map(|pipe| thread::spawn(move || read_bounded(pipe, capture_limit)));
+        let stderr_reader = child
+            .stderr
+            .take()
+            .map(|pipe| thread::spawn(move || read_bounded(pipe, capture_limit)));
+        let mut status = None;
         let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) if started.elapsed() >= self.timeout => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    if let Some(reader) = stdout_reader {
-                        let _ = reader.join();
+            if status.is_none() {
+                match child.try_wait() {
+                    Ok(observed) => status = observed,
+                    Err(source) => {
+                        terminate_and_reap(child, stdout_reader, stderr_reader);
+                        return Err(ToolError::Spawn {
+                            program: self.program.clone(),
+                            source,
+                        });
                     }
-                    if let Some(reader) = stderr_reader {
-                        let _ = reader.join();
-                    }
-                    return Err(ToolError::Timeout {
-                        command: self.redacted(),
-                        timeout: self.timeout,
-                    });
-                }
-                Ok(None) => thread::sleep(Duration::from_millis(10)),
-                Err(source) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(ToolError::Spawn {
-                        program: self.program.clone(),
-                        source,
-                    });
                 }
             }
+            if let Some(observed) = status
+                && readers_finished(stdout_reader.as_ref(), stderr_reader.as_ref())
+            {
+                break observed;
+            }
+            if started.elapsed() >= self.timeout {
+                terminate_and_reap(child, stdout_reader, stderr_reader);
+                return Err(ToolError::Timeout {
+                    command: self.redacted(),
+                    timeout: self.timeout,
+                });
+            }
+            thread::sleep(POLL_INTERVAL);
         };
-        let stdout = stdout_reader
-            .and_then(|reader| reader.join().ok())
-            .unwrap_or_default();
-        let stderr = stderr_reader
-            .and_then(|reader| reader.join().ok())
-            .unwrap_or_default();
-        let output = Output {
-            status,
-            stdout,
-            stderr,
-        };
-        Ok(Self::finish(&output, started.elapsed()))
+        let stdout = join_reader(stdout_reader, "stdout").map_err(|source| ToolError::Spawn {
+            program: self.program.clone(),
+            source,
+        })?;
+        let stderr = join_reader(stderr_reader, "stderr").map_err(|source| ToolError::Spawn {
+            program: self.program.clone(),
+            source,
+        })?;
+        Ok(Outcome {
+            code: status.code(),
+            stdout: self.decode_output(stdout, "stdout")?,
+            stderr: self.decode_output(stderr, "stderr")?,
+            elapsed: started.elapsed(),
+        })
     }
 
     /// Runs the tool and fails unless it exits zero.
@@ -385,17 +448,107 @@ impl Tool {
         } else {
             command.stdout(Stdio::piped()).stderr(Stdio::piped());
         }
+        #[cfg(unix)]
+        command.process_group(0);
         command
     }
 
-    fn finish(output: &Output, elapsed: Duration) -> Outcome {
-        Outcome {
-            code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            elapsed,
+    fn decode_output(
+        &self,
+        capture: CapturedOutput,
+        stream: &'static str,
+    ) -> Result<String, ToolError> {
+        if capture.exceeded_limit {
+            return Err(ToolError::OutputTooLarge {
+                command: self.redacted(),
+                stream,
+                limit: self.capture_limit,
+            });
         }
+        String::from_utf8(capture.bytes).map_err(|_| ToolError::InvalidOutput {
+            command: self.redacted(),
+            stream,
+        })
     }
+}
+
+fn readers_finished(stdout: Option<&OutputReader>, stderr: Option<&OutputReader>) -> bool {
+    stdout.is_none_or(JoinHandle::is_finished) && stderr.is_none_or(JoinHandle::is_finished)
+}
+
+fn read_bounded(mut pipe: impl Read, limit: usize) -> io::Result<CapturedOutput> {
+    let mut capture = CapturedOutput {
+        bytes: Vec::with_capacity(limit.min(16 * 1024)),
+        exceeded_limit: false,
+    };
+    let mut chunk = [0_u8; 16 * 1024];
+    loop {
+        let count = pipe.read(&mut chunk)?;
+        if count == 0 {
+            return Ok(capture);
+        }
+        let retained = count.min(limit.saturating_sub(capture.bytes.len()));
+        capture.bytes.extend_from_slice(&chunk[..retained]);
+        capture.exceeded_limit |= retained != count;
+    }
+}
+
+fn join_reader(reader: Option<OutputReader>, stream: &str) -> io::Result<CapturedOutput> {
+    match reader {
+        None => Ok(CapturedOutput::default()),
+        Some(reader) => reader
+            .join()
+            .map_err(|_| io::Error::other(format!("{stream} reader panicked")))?,
+    }
+}
+
+fn terminate_and_reap(
+    mut child: Child,
+    stdout_reader: Option<OutputReader>,
+    stderr_reader: Option<OutputReader>,
+) {
+    terminate_process_group(&mut child);
+    let deadline = Instant::now() + TERMINATION_GRACE;
+    let mut reaped = false;
+    while Instant::now() < deadline {
+        if !reaped {
+            reaped = child.try_wait().is_ok_and(|status| status.is_some());
+        }
+        if reaped && readers_finished(stdout_reader.as_ref(), stderr_reader.as_ref()) {
+            break;
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+    if reaped {
+        drop(child);
+    } else {
+        let _ = thread::Builder::new()
+            .name("rr-dev-child-reaper".to_owned())
+            .spawn(move || {
+                let _ = child.wait();
+            });
+    }
+    join_reader_if_finished(stdout_reader);
+    join_reader_if_finished(stderr_reader);
+}
+
+fn join_reader_if_finished(reader: Option<OutputReader>) {
+    if let Some(reader) = reader
+        && reader.is_finished()
+    {
+        let _ = reader.join();
+    }
+}
+
+#[cfg(unix)]
+fn terminate_process_group(child: &mut Child) {
+    let _ = kill_process_group(Pid::from_child(child), Signal::KILL);
+    let _ = child.kill();
+}
+
+#[cfg(not(unix))]
+fn terminate_process_group(child: &mut Child) {
+    let _ = child.kill();
 }
 
 /// Resolves `program` against `PATH`, returning its full path.
@@ -507,6 +660,69 @@ mod tests {
             .probe()
             .expect_err("a child beyond its deadline must fail closed");
         assert!(matches!(error, ToolError::Timeout { .. }), "{error:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_descendant_holding_capture_pipes_cannot_outlive_the_deadline() {
+        if !Tool::exists("sh") || !Tool::exists("sleep") {
+            return;
+        }
+        let started = Instant::now();
+        let error = Tool::new("sh")
+            .args(["-c", "sleep 5 &"])
+            .timeout(Duration::from_millis(50))
+            .probe()
+            .expect_err("an inherited output pipe must not defeat the deadline");
+        assert!(matches!(error, ToolError::Timeout { .. }), "{error:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "process-tree cleanup must itself remain bounded"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn captured_streams_are_drained_but_never_grow_past_their_bound() {
+        if !Tool::exists("sh") || !Tool::exists("head") {
+            return;
+        }
+        let error = Tool::new("sh")
+            .args([
+                "-c",
+                "head -c 262144 /dev/zero; head -c 262144 /dev/zero >&2",
+            ])
+            .capture_limit(1024)
+            .timeout(Duration::from_secs(2))
+            .probe()
+            .expect_err("oversized output must fail closed after both pipes drain");
+        assert!(matches!(
+            error,
+            ToolError::OutputTooLarge {
+                stream: "stdout",
+                limit: 1024,
+                ..
+            }
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_tool_output_is_refused_instead_of_lossily_rewritten() {
+        if !Tool::exists("sh") {
+            return;
+        }
+        let error = Tool::new("sh")
+            .args(["-c", "printf '\\377'"])
+            .probe()
+            .expect_err("invalid UTF-8 must not become apparently valid evidence");
+        assert!(matches!(
+            error,
+            ToolError::InvalidOutput {
+                stream: "stdout",
+                ..
+            }
+        ));
     }
 
     #[test]
