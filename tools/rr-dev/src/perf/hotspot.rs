@@ -37,7 +37,8 @@ pub mod bundle;
 
 const MAX_RECORD_SECONDS: u64 = 300;
 const MAX_DURATION_MS: u64 = 600_000;
-const MAX_WARMUP_MS: u64 = 600_000;
+const MIN_BENCHMARK_WARMUP_MS: u64 = 1;
+const MAX_BENCHMARK_WARMUP_MS: u64 = 10_000;
 const MAX_FREQUENCY: u32 = 9_999;
 const MAX_DWARF_BYTES: u32 = 65_528;
 
@@ -165,8 +166,9 @@ pub fn validate(plan: &Plan) -> Result<(), String> {
     if plan.duration_ms == 0 || plan.duration_ms > MAX_DURATION_MS {
         return Err("--duration-ms must be in 1..=600000".to_owned());
     }
-    if plan.warmup_ms > MAX_WARMUP_MS {
-        return Err("--warmup-ms must be in 0..=600000".to_owned());
+    if !(MIN_BENCHMARK_WARMUP_MS..=MAX_BENCHMARK_WARMUP_MS).contains(&plan.warmup_ms)
+    {
+        return Err("--warmup-ms must be in 1..=10000".to_owned());
     }
     if plan.frequency == 0 || plan.frequency > MAX_FREQUENCY {
         return Err("--frequency must be in 1..=9999".to_owned());
@@ -859,5 +861,22 @@ mod tests {
             &format!("0123 /tmp/{expected}/rust-reality\n"),
             expected
         ));
+    }
+
+    #[test]
+    fn built_in_warmup_matches_the_benchmark_cli_contract() {
+        for warmup_ms in [MIN_BENCHMARK_WARMUP_MS, MAX_BENCHMARK_WARMUP_MS] {
+            let mut valid = plan();
+            valid.warmup_ms = warmup_ms;
+            assert!(validate(&valid).is_ok(), "{warmup_ms}");
+        }
+        for warmup_ms in [0, MAX_BENCHMARK_WARMUP_MS + 1] {
+            let mut invalid = plan();
+            invalid.warmup_ms = warmup_ms;
+            assert_eq!(
+                validate(&invalid).unwrap_err(),
+                "--warmup-ms must be in 1..=10000"
+            );
+        }
     }
 }
