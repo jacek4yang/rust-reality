@@ -222,3 +222,29 @@ fn the_adapter_layer_is_the_only_caller_of_a_raw_capability() {
         );
     }
 }
+
+#[test]
+fn root_reaches_linux_mechanisms_only_through_rr_linux() {
+    let root = repository_root().join("src");
+    let violations: Vec<_> = rust_sources(&root)
+        .into_iter()
+        .filter_map(|path| {
+            let source = fs::read_to_string(&path).expect("source must be readable");
+            let code = without_line_comments(&source);
+            (code.contains("rustix::") || code.contains("libc::")).then_some(path)
+        })
+        .collect();
+    assert!(
+        violations.is_empty(),
+        "root source directly names Linux syscall crates: {violations:?}"
+    );
+
+    let manifest = fs::read_to_string(repository_root().join("Cargo.toml"))
+        .expect("root manifest must be readable");
+    assert!(
+        !manifest
+            .lines()
+            .any(|line| line.trim_start().starts_with("rustix =")),
+        "the root manifest must not directly depend on rustix"
+    );
+}

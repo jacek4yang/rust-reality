@@ -64,7 +64,6 @@ hickory-resolver = { version = "0.26.1", default-features = false, features = ["
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rr-linux = { path = "crates/rr-linux", version = "0.1.0" }
-rustix = { version = "1.1.4", default-features = false, features = ["net", "pipe", "std"] }
 
 [lints.rust]
 unsafe_code = "deny"

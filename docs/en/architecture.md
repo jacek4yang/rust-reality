@@ -373,6 +373,13 @@ server/runtime composition layer translates that policy once at startup into
 Transport therefore does not import Configuration, and no policy translation
 runs per connection or inside a relay loop.
 
+The Linux mechanism boundary is equally concrete: Transport owns backend choice,
+Tokio readiness, relay state, pooling, permits, accounting, and retry policy;
+`crates/rr-linux` owns only the owned nonblocking pipe descriptors and the
+syscall-shaped pipe capacity, `splice`, write-shutdown, and errno operations.
+The root crate has no direct `libc` or `rustix` dependency, keeping the hot loop
+monomorphic while making the unsafe OS boundary auditable in one place.
+
 `FdBudget` is a strict upper-bound permit counter: one relaxed load and one
 `compare_exchange_weak` on the fast path, no mutex; permits release in `Drop`
 through one path; release uses checked subtraction so a double-release bug is

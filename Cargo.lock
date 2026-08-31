@@ -1540,6 +1540,7 @@ name = "rr-linux"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "rustix",
 ]
 
 [[package]]
@@ -1571,7 +1572,6 @@ dependencies = [
  "ring",
  "rr-linux",
  "rr-session",
- "rustix",
  "schemars",
  "serde",
  "serde_json",

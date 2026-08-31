@@ -895,7 +895,7 @@ impl PipePool {
     /// same rule in `putPipe`. A returned pipe beyond the keep count is closed
     /// (its units release with it), which bounds idle retention.
     fn give_back(&self, pipe: PooledPipe) {
-        let dirty = rr_linux::socket::pending_input(pipe.pair.read.as_raw_fd())
+        let dirty = rr_linux::socket::pending_input(pipe.pair.read_fd().as_raw_fd())
             .map(|queued| queued > 0)
             .unwrap_or(true);
         if dirty {
@@ -991,8 +991,8 @@ impl SplicePool {
             Err(_) => return Ok(None),
         };
         for pipe in [&pipes.uplink, &pipes.downlink] {
-            if pipe.capacity < SPLICE_PIPE_CAPACITY {
-                ledger.note_pipe_downgrade(SPLICE_PIPE_CAPACITY, pipe.capacity);
+            if pipe.capacity() < SPLICE_PIPE_CAPACITY {
+                ledger.note_pipe_downgrade(SPLICE_PIPE_CAPACITY, pipe.capacity());
             }
         }
         let _permit = permit;
@@ -1000,7 +1000,7 @@ impl SplicePool {
             inbound,
             outbound,
             &pipes.uplink,
-            pipes.uplink.capacity,
+            pipes.uplink.capacity(),
             ledger,
             true,
             liveness,
@@ -1010,7 +1010,7 @@ impl SplicePool {
             outbound,
             inbound,
             &pipes.downlink,
-            pipes.downlink.capacity,
+            pipes.downlink.capacity(),
             ledger,
             false,
             liveness,
@@ -1039,8 +1039,8 @@ impl SplicePool {
             return Ok(None);
         };
         for pipe in [&uplink_pipe.pair, &downlink_pipe.pair] {
-            if pipe.capacity < SPLICE_PIPE_CAPACITY {
-                ledger.note_pipe_downgrade(SPLICE_PIPE_CAPACITY, pipe.capacity);
+            if pipe.capacity() < SPLICE_PIPE_CAPACITY {
+                ledger.note_pipe_downgrade(SPLICE_PIPE_CAPACITY, pipe.capacity());
                 pool.stats.downgrades.fetch_add(1, Ordering::Relaxed);
             }
         }
@@ -1049,7 +1049,7 @@ impl SplicePool {
                 inbound,
                 outbound,
                 &uplink_pipe.pair,
-                uplink_pipe.pair.capacity,
+                uplink_pipe.pair.capacity(),
                 ledger,
                 true,
                 liveness,
@@ -1059,7 +1059,7 @@ impl SplicePool {
                 outbound,
                 inbound,
                 &downlink_pipe.pair,
-                downlink_pipe.pair.capacity,
+                downlink_pipe.pair.capacity(),
                 ledger,
                 false,
                 liveness,
@@ -1095,15 +1095,15 @@ impl SplicePool {
                 return Ok(None);
             };
             let pipe = &pooled.pair;
-            if pipe.capacity < SPLICE_PIPE_CAPACITY {
-                ledger.note_pipe_downgrade(SPLICE_PIPE_CAPACITY, pipe.capacity);
+            if pipe.capacity() < SPLICE_PIPE_CAPACITY {
+                ledger.note_pipe_downgrade(SPLICE_PIPE_CAPACITY, pipe.capacity());
                 pool.stats.downgrades.fetch_add(1, Ordering::Relaxed);
             }
             let result = splice_owned_direction(
                 source,
                 destination,
                 pipe,
-                pipe.capacity,
+                pipe.capacity(),
                 ledger,
                 direction.is_inbound_to_outbound(),
                 liveness,
@@ -1126,14 +1126,14 @@ impl SplicePool {
             Ok(pipe) => pipe,
             Err(_) => return Ok(None),
         };
-        if pipe.capacity < SPLICE_PIPE_CAPACITY {
-            ledger.note_pipe_downgrade(SPLICE_PIPE_CAPACITY, pipe.capacity);
+        if pipe.capacity() < SPLICE_PIPE_CAPACITY {
+            ledger.note_pipe_downgrade(SPLICE_PIPE_CAPACITY, pipe.capacity());
         }
         splice_owned_direction(
             source,
             destination,
             &pipe,
-            pipe.capacity,
+            pipe.capacity(),
             ledger,
             direction.is_inbound_to_outbound(),
             liveness,
@@ -1171,9 +1171,7 @@ impl SplicePipes {
 
 #[cfg(target_os = "linux")]
 struct PipePair {
-    read: rustix::fd::OwnedFd,
-    write: rustix::fd::OwnedFd,
-    capacity: usize,
+    inner: rr_linux::pipe::NonblockingPipe,
 }
 
 /// Target pipe capacity for splice relays.
@@ -1191,20 +1189,18 @@ const SPLICE_PIPE_CAPACITY: usize = 512 * 1024;
 #[cfg(target_os = "linux")]
 impl PipePair {
     fn new() -> io::Result<Self> {
-        let (read, write) = rustix::pipe::pipe_with(
-            rustix::pipe::PipeFlags::CLOEXEC | rustix::pipe::PipeFlags::NONBLOCK,
-        )
-        .map_err(io::Error::from)?;
-        // Best effort: a host that refuses the raise keeps the default
-        // capacity, and the relay remains correct with the smaller chunk.
-        let capacity = rustix::pipe::fcntl_setpipe_size(&write, SPLICE_PIPE_CAPACITY)
-            .or_else(|_| rustix::pipe::fcntl_getpipe_size(&write))
-            .unwrap_or(SPLICE_PIPE_CAPACITY / 4);
-        Ok(Self {
-            read,
-            write,
-            capacity,
-        })
+        rr_linux::pipe::NonblockingPipe::open(SPLICE_PIPE_CAPACITY, SPLICE_PIPE_CAPACITY / 4)
+            .map(|inner| Self { inner })
+    }
+
+    fn read_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        self.inner.read_fd()
+    }
+    fn write_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        self.inner.write_fd()
+    }
+    fn capacity(&self) -> usize {
+        self.inner.capacity()
     }
 }
 
@@ -1234,15 +1230,13 @@ async fn splice_direction(
         source_reset_is_eof,
     )
     .await?;
-    rustix::net::shutdown(destination, rustix::net::Shutdown::Write)
-        .map_err(io::Error::from)
-        .or_else(|error| {
-            if source_reset_is_eof && is_peer_gone(&error) {
-                Ok(())
-            } else {
-                Err(error)
-            }
-        })
+    rr_linux::socket::shutdown_write(destination).or_else(|error| {
+        if source_reset_is_eof && is_peer_gone(&error) {
+            Ok(())
+        } else {
+            Err(error)
+        }
+    })
 }
 
 /// Splices one direction between owned socket halves until source EOF.
@@ -1306,7 +1300,6 @@ async fn splice_pump(
 ) -> io::Result<()> {
     use tokio::io::Interest;
 
-    let flags = rustix::pipe::SpliceFlags::MOVE | rustix::pipe::SpliceFlags::NONBLOCK;
     let mut idle = liveness.map(|_| IdleDeadline::new());
     loop {
         if let (Some(idle), Some(window)) = (&mut idle, liveness) {
@@ -1315,14 +1308,14 @@ async fn splice_pump(
         let read = match &mut idle {
             Some(idle) => idle
                 .guard(source.async_io(Interest::READABLE, || {
-                    splice_retry(source, &pipe.write, chunk_bytes, flags)
+                    rr_linux::pipe::splice_nonblocking(source, pipe.write_fd(), chunk_bytes)
                 }))
                 .await
                 .map_err(idle_io_error),
             None => {
                 source
                     .async_io(Interest::READABLE, || {
-                        splice_retry(source, &pipe.write, chunk_bytes, flags)
+                        rr_linux::pipe::splice_nonblocking(source, pipe.write_fd(), chunk_bytes)
                     })
                     .await
             }
@@ -1341,14 +1334,14 @@ async fn splice_pump(
             let written = match &mut idle {
                 Some(idle) => idle
                     .guard(destination.async_io(Interest::WRITABLE, || {
-                        splice_retry(&pipe.read, destination, pending, flags)
+                        rr_linux::pipe::splice_nonblocking(pipe.read_fd(), destination, pending)
                     }))
                     .await
                     .map_err(idle_io_error)?,
                 None => {
                     destination
                         .async_io(Interest::WRITABLE, || {
-                            splice_retry(&pipe.read, destination, pending, flags)
+                            rr_linux::pipe::splice_nonblocking(pipe.read_fd(), destination, pending)
                         })
                         .await?
                 }
@@ -1361,26 +1354,6 @@ async fn splice_pump(
             }
             pending = pending.saturating_sub(written);
             record(ledger, inbound_to_outbound, written)?;
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn splice_retry<FdIn, FdOut>(
-    input: FdIn,
-    output: FdOut,
-    length: usize,
-    flags: rustix::pipe::SpliceFlags,
-) -> io::Result<usize>
-where
-    FdIn: std::os::fd::AsFd + Copy,
-    FdOut: std::os::fd::AsFd + Copy,
-{
-    loop {
-        match rustix::pipe::splice(input, None, output, None, length, flags) {
-            Ok(transferred) => return Ok(transferred),
-            Err(rustix::io::Errno::INTR) => {}
-            Err(error) => return Err(io::Error::from(error)),
         }
     }
 }
@@ -1813,7 +1786,7 @@ mod tests {
         let pool = super::PipePool::new(8, budget.clone());
 
         let first = pool.take().expect("first take must create a pipe");
-        let first_read_fd = first.pair.read.as_raw_fd();
+        let first_read_fd = first.pair.read_fd().as_raw_fd();
         let baseline = budget.in_use();
         pool.give_back(first);
         let snapshot = pool.snapshot();
@@ -1822,7 +1795,7 @@ mod tests {
 
         let second = pool.take().expect("second take must be a pool hit");
         assert_eq!(
-            second.pair.read.as_raw_fd(),
+            second.pair.read_fd().as_raw_fd(),
             first_read_fd,
             "a pool hit must return the exact same pipe without pipe2"
         );
@@ -1838,7 +1811,7 @@ mod tests {
         let pool = super::PipePool::new(8, budget);
         let pipe = pool.take().expect("take must create a pipe");
         // Poison the pipe with an unread byte: it must never come back.
-        rustix::io::write(&pipe.pair.write, b"x").expect("poison write");
+        rr_linux::pipe::write_nonblocking(pipe.pair.write_fd(), b"x").expect("poison write");
         pool.give_back(pipe);
 
         let snapshot = pool.snapshot();

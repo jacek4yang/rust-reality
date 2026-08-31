@@ -14,7 +14,12 @@
     allow(dead_code, reason = "Linux-only crate")
 )]
 
+#[cfg(target_os = "linux")]
+pub mod errno;
+#[cfg(target_os = "linux")]
 pub mod memory;
+#[cfg(target_os = "linux")]
+pub mod pipe;
 pub mod rlimit;
 pub mod socket;
 
