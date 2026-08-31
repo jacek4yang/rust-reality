@@ -291,10 +291,6 @@ impl Tool {
     }
 
     /// Sets the maximum bytes retained from each captured output stream.
-    #[allow(
-        dead_code,
-        reason = "the public builder is reserved for commands needing a tighter bound"
-    )]
     #[must_use]
     pub const fn capture_limit(mut self, limit: usize) -> Self {
         self.capture_limit = limit;
