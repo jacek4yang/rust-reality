@@ -423,9 +423,58 @@ fn parse_number(bytes: &[u8], cursor: &mut usize) -> Result<Value, String> {
     if start == *cursor {
         return Err(format!("expected a value at byte {start}"));
     }
-    std::str::from_utf8(&bytes[start..*cursor])
-        .map(|text| Value::Number(text.to_owned()))
-        .map_err(|error| error.to_string())
+    let text = std::str::from_utf8(&bytes[start..*cursor]).map_err(|error| error.to_string())?;
+    if !is_json_number(text.as_bytes()) {
+        return Err(format!("invalid number at byte {start}"));
+    }
+    Ok(Value::Number(text.to_owned()))
+}
+
+fn is_json_number(bytes: &[u8]) -> bool {
+    let mut index = 0;
+    if bytes.get(index) == Some(&b'-') {
+        index += 1;
+    }
+    match bytes.get(index) {
+        Some(b'0') => index += 1,
+        Some(b'1'..=b'9') => {
+            index += 1;
+            while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+                index += 1;
+            }
+        }
+        _ => return false,
+    }
+    if bytes.get(index) == Some(&b'.') {
+        index += 1;
+        let start = index;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+        if index == start {
+            return false;
+        }
+    }
+    if bytes
+        .get(index)
+        .is_some_and(|byte| matches!(byte, b'e' | b'E'))
+    {
+        index += 1;
+        if bytes
+            .get(index)
+            .is_some_and(|byte| matches!(byte, b'+' | b'-'))
+        {
+            index += 1;
+        }
+        let start = index;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+        if index == start {
+            return false;
+        }
+    }
+    index == bytes.len()
 }
 
 fn literal(bytes: &[u8], cursor: &mut usize, word: &str, value: Value) -> Result<Value, String> {
@@ -546,6 +595,19 @@ mod tests {
     fn unescaped_control_bytes_inside_strings_are_refused() {
         assert!(parse("{\"x\":\"line\nfeed\"}").is_err());
         assert!(parse("{\"x\":\"nul\0byte\"}").is_err());
+    }
+
+    #[test]
+    fn malformed_json_number_grammar_is_refused() {
+        for bad in [
+            r#"{"x":01}"#,
+            r#"{"x":1.}"#,
+            r#"{"x":1e}"#,
+            r#"{"x":+1}"#,
+            r#"{"x":-.1}"#,
+        ] {
+            assert!(parse(bad).is_err(), "{bad} must be refused");
+        }
     }
 
     #[test]
