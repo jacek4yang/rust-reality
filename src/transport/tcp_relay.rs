@@ -18,8 +18,6 @@ use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore},
 };
 
-use crate::protocol::reality::tls13::{IdleDeadline, IdleError};
-
 #[cfg(target_os = "linux")]
 use super::{FdPermit, UNITS_SPLICE_DIRECTION, UNITS_SPLICE_RELAY};
 
@@ -30,6 +28,7 @@ use super::{
         DirectionalRelayContext, DirectionalRelayOutcome, RelayBackend, RelayContext,
         RelayDirection, RelayOutcome, TransferLedger,
     },
+    idle::{RelayIdleDeadline as IdleDeadline, RelayIdleError as IdleError},
 };
 
 /// Concrete pool and backend settings consumed by [`TcpRelay`].

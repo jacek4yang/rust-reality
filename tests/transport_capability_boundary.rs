@@ -149,7 +149,7 @@ fn transport_never_depends_back_on_adapter_or_configuration() {
     for path in rust_sources(&transport) {
         let source = fs::read_to_string(&path).expect("transport source must be readable");
         let code = without_line_comments(&source);
-        for token in ["runtime::", "config::"] {
+        for token in ["runtime::", "config::", "protocol::"] {
             if code.contains(token) {
                 violations.push(format!("{}: {token}", path.display()));
             }
