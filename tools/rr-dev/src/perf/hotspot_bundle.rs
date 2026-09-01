@@ -462,10 +462,7 @@ fn read_json(path: &Path, context: &str) -> Result<json_in::Value, String> {
     read_json_snapshot(path, context).map(|(value, _)| value)
 }
 
-fn read_json_snapshot(
-    path: &Path,
-    context: &str,
-) -> Result<(json_in::Value, String), String> {
+fn read_json_snapshot(path: &Path, context: &str) -> Result<(json_in::Value, String), String> {
     let bytes = std::fs::read(path)
         .map_err(|error| format!("could not read {context} {}: {error}", path.display()))?;
     let text = std::str::from_utf8(&bytes)
@@ -476,12 +473,9 @@ fn read_json_snapshot(
 }
 
 fn load_capture(run_dir: &Path) -> Result<Capture, String> {
-    let root_metadata = run_dir.symlink_metadata().map_err(|error| {
-        format!(
-            "could not stat --run-dir {}: {error}",
-            run_dir.display()
-        )
-    })?;
+    let root_metadata = run_dir
+        .symlink_metadata()
+        .map_err(|error| format!("could not stat --run-dir {}: {error}", run_dir.display()))?;
     if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
         return Err("--run-dir must be an existing non-symlink directory".to_owned());
     }
@@ -1593,10 +1587,7 @@ fn execute(plan: &Plan, capture: &Capture, output: &RunDirectory) -> Result<(), 
                     "perfData",
                     Json::string(capture.perf_data.display().to_string()),
                 ),
-                (
-                    "perfDataSha256",
-                    Json::string(&capture.perf_data_sha256),
-                ),
+                ("perfDataSha256", Json::string(&capture.perf_data_sha256)),
                 ("perfDsoPath", Json::string(&perf_dso_path)),
             ]),
         ),
