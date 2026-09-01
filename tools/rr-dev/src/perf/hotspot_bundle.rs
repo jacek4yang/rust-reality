@@ -475,18 +475,17 @@ fn read_json_snapshot(
     Ok((value, crate::perf::loader::sha256_bytes(&bytes)))
 }
 
-fn load_capture(plan: &Plan) -> Result<Capture, String> {
-    let root_metadata = plan.run_dir.symlink_metadata().map_err(|error| {
+fn load_capture(run_dir: &Path) -> Result<Capture, String> {
+    let root_metadata = run_dir.symlink_metadata().map_err(|error| {
         format!(
             "could not stat --run-dir {}: {error}",
-            plan.run_dir.display()
+            run_dir.display()
         )
     })?;
     if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
         return Err("--run-dir must be an existing non-symlink directory".to_owned());
     }
-    let root = plan
-        .run_dir
+    let root = run_dir
         .canonicalize()
         .map_err(|error| format!("could not canonicalize --run-dir: {error}"))?;
     let metadata_path = root.join("metadata.json");
@@ -620,6 +619,13 @@ fn load_capture(plan: &Plan) -> Result<Capture, String> {
         perf_data,
         perf_data_sha256,
     })
+}
+
+/// Verifies that a completed capture is admissible to the hotspot-bundle
+/// pipeline without starting `IDALib` or choosing a function.
+#[cfg(test)]
+pub(super) fn admit_capture(run_dir: &Path) -> Result<(), String> {
+    load_capture(run_dir).map(|_| ())
 }
 
 fn write_new(path: &Path, contents: &[u8]) -> Result<(), String> {
@@ -1695,7 +1701,7 @@ pub fn run(plan: &Plan) -> Result<String, String> {
             return Err(format!("required tool unavailable: {program}"));
         }
     }
-    let capture = load_capture(plan)?;
+    let capture = load_capture(&plan.run_dir)?;
     let hotspots = capture.root.join("hotspots");
     match hotspots.symlink_metadata() {
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
@@ -1988,10 +1994,10 @@ mod tests {
             unmapped_period_explanation: None,
         };
 
-        load_capture(&plan).expect("the completed fixture is initially admissible");
+        load_capture(&plan.run_dir).expect("the completed fixture is initially admissible");
         std::fs::write(&perf_data, b"substituted capture").unwrap();
         assert!(
-            load_capture(&plan).is_err(),
+            load_capture(&plan.run_dir).is_err(),
             "completion must bind the exact perf.data bytes"
         );
 
@@ -2013,7 +2019,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            load_capture(&plan).is_err(),
+            load_capture(&plan.run_dir).is_err(),
             "metadata and the archived binary must agree with the bound contract"
         );
 

@@ -15,11 +15,12 @@ use std::time::Instant;
 
 use crate::{
     bench::{
+        attest,
         engine::Transfer,
         origin,
         suites::{self, CurlTransfer, RunError, SuiteContext},
     },
-    perf::json_out::Json,
+    perf::{hotspot, json_out::Json},
 };
 
 /// The legacy shuffle seed, kept as a constant so archived evidence stays
@@ -52,6 +53,10 @@ pub struct LoopbackPlan {
     pub tls_origin: bool,
     /// Report harness id (`benchmark-xray` or `benchmark-vision-direct`).
     pub harness: String,
+    /// Stable benchmark transaction identifier.
+    pub run_id: String,
+    /// Optional identity-bound capture of the rust-reality server.
+    pub profile: Option<hotspot::BenchmarkProfile>,
 }
 
 /// Outcome of a loopback concurrent suite run.
@@ -487,6 +492,14 @@ pub fn run_loopback(
             "bounds are samples<=100, concurrency<=64, payload_mib<=1024".to_owned(),
         ));
     }
+    if let Some(profile) = &plan.profile {
+        hotspot::validate_benchmark_profile(profile).map_err(RunError::Setup)?;
+        if !plan.tls_origin {
+            return Err(RunError::Setup(
+                "benchmark-owned profiling is supported only by vision-direct".to_owned(),
+            ));
+        }
+    }
 
     let mut context = SuiteContext {
         allow_private: true,
@@ -549,6 +562,26 @@ pub fn run_loopback(
             .map_err(|error| RunError::Processes(format!("warmup {name}: {error}")))?;
     }
 
+    let mut profile = if let Some(settings) = &plan.profile {
+        let binary = &run.binaries[0];
+        let build_id = attest::build_id(&binary.path).map_err(RunError::Setup)?;
+        Some(
+            hotspot::BenchmarkCapture::start(
+                &run.lock,
+                binary,
+                &build_id,
+                run.processes.rust_server.pid(),
+                "vision-direct",
+                &plan.run_id,
+                absolute_profile_dir(&context.out_dir).map_err(RunError::Setup)?,
+                settings,
+            )
+            .map_err(RunError::Processes)?,
+        )
+    } else {
+        None
+    };
+
     let order = shuffled_order("rust-reality", "xray", plan.samples);
     let mut measurements = Vec::with_capacity(order.len());
     for name in &order {
@@ -557,17 +590,31 @@ pub fn run_loopback(
         } else {
             run.ports[3]
         };
-        let sample = measure_concurrent(
+        let sample = match measure_concurrent(
             &transfer,
             port,
             context.expected_bytes,
             plan.concurrency,
             plan.payload_mib,
             name,
-        )
-        .map_err(RunError::Processes)?;
+        ) {
+            Ok(sample) => sample,
+            Err(error) => {
+                if let Some(capture) = profile.take() {
+                    capture
+                        .cancel("vision-direct workload failed")
+                        .map_err(RunError::Processes)?;
+                }
+                return Err(RunError::Processes(error));
+            }
+        };
         measurements.push(sample);
     }
+
+    if let Some(capture) = profile.take() {
+        capture.finish().map_err(RunError::Processes)?;
+    }
+    drop(profile);
 
     let binaries: Vec<(String, String, String)> = run
         .binaries
@@ -617,6 +664,17 @@ pub fn run_loopback(
         report_json,
         measurements,
     })
+}
+
+fn absolute_profile_dir(out_dir: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let root = if out_dir.is_absolute() {
+        out_dir.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("could not resolve benchmark output directory: {error}"))?
+            .join(out_dir)
+    };
+    Ok(root.join("hotspot"))
 }
 
 impl SuiteContext<'_> {

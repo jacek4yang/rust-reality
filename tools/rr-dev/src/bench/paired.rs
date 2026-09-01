@@ -37,18 +37,17 @@ use crate::{
         evidence::{Publication, RunDirectory},
         host_lock::HostLock,
         identity::{self, Binary, Kind},
-        netns,
-        origin_go, origin_tls,
+        netns, origin_go, origin_tls,
         plan::{self, PortLayout, Slot},
         process::Child,
-        slot::{self, Attribution},
         relay::{self, RelayPolicy},
+        slot::{self, Attribution},
         throughput::{self, ThroughputRow},
         workload::{SampleRow, SetupRatePlan},
         workspace::Workspace,
     },
     hash,
-    perf::json_out::Json,
+    perf::{hotspot, json_out::Json},
     process::Tool,
 };
 
@@ -98,6 +97,8 @@ pub struct SetupRateSuite {
     pub attribution: Attribution,
     /// One-leg netem delay in milliseconds, when the cover leg is shaped.
     pub cover_netem_rtt_ms: Option<u32>,
+    /// Optional identity-bound perf capture of the first candidate slot.
+    pub profile: Option<hotspot::BenchmarkProfile>,
 }
 
 /// What a paired run produced.
@@ -147,6 +148,9 @@ pub fn validate(suite: &SetupRateSuite) -> Result<(), String> {
         && !(1..=2000).contains(&rtt)
     {
         return Err("COVER_NETEM_RTT_MS must be an integer in 1..2000".to_owned());
+    }
+    if let Some(profile) = &suite.profile {
+        hotspot::validate_benchmark_profile(profile)?;
     }
     Ok(())
 }
@@ -299,6 +303,7 @@ pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
     run.write_new("environment.json", &environment.to_python_json())?;
 
     let mut measured = Vec::with_capacity(slot_count);
+    let mut profile_pending = suite.profile.is_some();
     for entry in &slots {
         measured.push(measure_slot(
             suite,
@@ -308,7 +313,12 @@ pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
             entry,
             plain_port,
             &cover_target,
+            &lock,
+            &mut profile_pending,
         )?);
+    }
+    if profile_pending {
+        return Err("setup-rate profile did not observe a candidate slot".to_owned());
     }
 
     verify_binaries_unchanged(&[&binaries.baseline, &binaries.candidate, &binaries.xray])?;
@@ -323,21 +333,16 @@ pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
         .collect();
     run.write_jsonl("raw-samples.jsonl", &raw)?;
     drop(origins);
-    publish_complete_setup_rate(
-        &run,
-        &environment.to_python_json(),
-        &suite.run_id,
-        || {
-            // Drop the leg before asserting it is gone: restoration is verified,
-            // not assumed, so an `ip` command that reported success but left state
-            // behind is caught here rather than by the next run's name collision.
-            drop(leg);
-            if let Some(names) = leg_names {
-                netns::CoverLeg::verify_removed(&names)?;
-            }
-            Ok(())
-        },
-    )?;
+    publish_complete_setup_rate(&run, &environment.to_python_json(), &suite.run_id, || {
+        // Drop the leg before asserting it is gone: restoration is verified,
+        // not assumed, so an `ip` command that reported success but left state
+        // behind is caught here rather than by the next run's name collision.
+        drop(leg);
+        if let Some(names) = leg_names {
+            netns::CoverLeg::verify_removed(&names)?;
+        }
+        Ok(())
+    })?;
 
     Ok(SuiteOutcome {
         out_dir: suite.out_dir.clone(),
@@ -585,6 +590,11 @@ fn stop_slot(processes: &mut SlotProcesses) {
 }
 
 /// Runs one paired slot: configure, launch, warm up, measure, record, tear down.
+#[expect(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "a slot explicitly owns its benchmark, process, lock and optional profile lifecycle"
+)]
 fn measure_slot(
     suite: &SetupRateSuite,
     binaries: &PairedBinaries,
@@ -593,6 +603,8 @@ fn measure_slot(
     entry: &Slot,
     plain_port: u16,
     cover_target: &str,
+    lock: &HostLock,
+    profile_pending: &mut bool,
 ) -> Result<MeasuredSlot, String> {
     let name = entry.directory_name();
     let slot_dir = run.slot_directory(&name)?;
@@ -606,7 +618,15 @@ fn measure_slot(
         .ok_or_else(|| format!("{name} has no planned SOCKS port"))?;
 
     write_slot_configs(
-        suite, workspace, &slot_dir, &name, binary, role, server_port, socks_port, cover_target,
+        suite,
+        workspace,
+        &slot_dir,
+        &name,
+        binary,
+        role,
+        server_port,
+        socks_port,
+        cover_target,
     )?;
     let mut processes = launch_slot(
         suite,
@@ -635,16 +655,46 @@ fn measure_slot(
     };
     warm_up_slot(suite, &workload, &slot_dir, workspace)?;
 
+    let profile = if role == Role::Candidate && *profile_pending {
+        *profile_pending = false;
+        let out_dir = absolute_profile_dir(&suite.out_dir)?;
+        Some(hotspot::BenchmarkCapture::start(
+            lock,
+            binary,
+            build_id,
+            server_pid,
+            "setup-rate",
+            &suite.run_id,
+            out_dir,
+            suite.profile.as_ref().expect("profile was pending"),
+        )?)
+    } else {
+        None
+    };
+
     let samples_path = slot_dir.join("samples.json");
     let perf_csv = slot_dir.join("perf.csv");
-    slot::drive(
+    let workload_result = slot::drive(
         &workload,
         &samples_path,
         suite.attribution,
         server_pid,
         &perf_csv,
         workspace.path(),
-    )?;
+    );
+    match workload_result {
+        Ok(()) => {
+            if let Some(profile) = profile {
+                profile.finish()?;
+            }
+        }
+        Err(workload_error) => {
+            if let Some(profile) = profile {
+                profile.cancel("setup-rate workload failed")?;
+            }
+            return Err(workload_error);
+        }
+    }
 
     let task_clock_ms = match suite.attribution {
         Attribution::Wall | Attribution::Strace => None,
@@ -652,8 +702,11 @@ fn measure_slot(
             let raw = std::fs::read_to_string(&perf_csv)
                 .map_err(|error| format!("could not read {}: {error}", perf_csv.display()))?;
             let record = attribution::parse_csv(&raw, &attribution::REQUIRED_EVENTS)?;
-            std::fs::write(slot_dir.join("perf.json"), record.to_json().to_python_json())
-                .map_err(|error| format!("could not write the slot perf record: {error}"))?;
+            std::fs::write(
+                slot_dir.join("perf.json"),
+                record.to_json().to_python_json(),
+            )
+            .map_err(|error| format!("could not write the slot perf record: {error}"))?;
             Some(record.task_clock_milliseconds)
         }
     };
@@ -693,6 +746,17 @@ fn measure_slot(
         pool,
         profile,
     })
+}
+
+fn absolute_profile_dir(out_dir: &Path) -> Result<PathBuf, String> {
+    let root = if out_dir.is_absolute() {
+        out_dir.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("could not resolve benchmark output directory: {error}"))?
+            .join(out_dir)
+    };
+    Ok(root.join("hotspot"))
 }
 
 /// Extracts the cover counters a candidate slot under the shaped leg must report.
@@ -1209,6 +1273,7 @@ mod tests {
             candidate_cover_mode: CoverMode::Default,
             attribution: Attribution::Perf(&attribution::REQUIRED_EVENTS),
             cover_netem_rtt_ms: None,
+            profile: None,
         }
     }
 
