@@ -57,3 +57,4 @@ of the law is what it is.
 | [0013](0013-no-compiled-runtime-plan.md) | No compiled-runtime-plan construct | Accepted (negative result) |
 | [0014](0014-benchmark-owned-whole-session-profiling.md) | Whole-session profiling is owned by the benchmark transaction | Accepted |
 | [0015](0015-rr-linux-is-a-no-std-linux-abi-boundary.md) | `rr-linux` is a `no_std` Linux ABI boundary | Accepted |
+| [0016](0016-protocol-core-is-no-std-ready-but-stays-in-place.md) | The protocol core is `no_std`-ready and stays in the main crate | Accepted (deferred action) |

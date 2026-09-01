@@ -14,6 +14,12 @@ the validation layers themselves.
 - **Integration tests** live in `tests/` (production) and validate cross-module
   behavior: configuration loading, server lifecycle, layout baselines
   (`tests/layout_baseline.rs` pins hot-state struct sizes).
+- **Architecture boundary tests** assert the layering itself over the source
+  tree rather than over behavior: `tests/transport_capability_boundary.rs`
+  keeps protocol and session semantics from reaching down into a transport
+  backend, and `tests/protocol_core_boundary.rs` keeps the `no_std`-ready
+  protocol core free of the runtime, the clock, and configuration
+  ([ADR 0016](../../adr/0016-protocol-core-is-no-std-ready-but-stays-in-place.md)).
 - **No-default-features tests** (`cargo test --workspace --no-default-features
   --locked`) validate the RustCrypto fallback build: identical wire behavior
   with a different AEAD provider.
