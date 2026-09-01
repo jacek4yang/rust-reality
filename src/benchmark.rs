@@ -12,7 +12,9 @@ use serde::Serialize;
 
 use crate::protocol::{
     nxr::{NxrKey, encode_request},
-    vless::{Address, Command, Destination, UserId, VERSION, VisionCommand, VisionDecoder},
+    vless::{
+        Address, Command, Destination, UserId, VERSION, VisionCommand, VisionDecoder, VisionPayload,
+    },
 };
 
 const SAMPLE_COUNT: usize = 9;
@@ -188,6 +190,56 @@ pub fn run_benchmarks(options: BenchmarkOptions) -> Result<BenchmarkReport, Benc
         &mut vision_operation,
     )?;
 
+    // The borrowed parser is what a real session runs; the owned one above is
+    // the public convenience API. They are measured separately so a change to
+    // either is visible on its own.
+    let mut vless_borrowed_operation = || {
+        let decoded = crate::protocol::vless::decode_request_ref(black_box(vless.as_slice()))
+            .map_err(|_| BenchmarkError::Fixture("VLESS borrowed decode"))?;
+        black_box(decoded);
+        Ok(())
+    };
+    let vless_borrowed_case = measure(
+        "vless.decode.ipv4.borrowed",
+        u64::try_from(vless.len()).map_err(|_| BenchmarkError::Fixture("VLESS length"))?,
+        options.warmup,
+        sample_duration,
+        &mut vless_borrowed_operation,
+    )?;
+
+    // Steady-state relay decoding: the opening frame leaves framed mode, after
+    // which every record is payload verbatim and is borrowed rather than
+    // staged. The case asserts the payload really is borrowed, so it cannot
+    // silently degrade into the copying path it exists to distinguish from.
+    let vision_record = vec![0x5a; VISION_PAYLOAD_BYTES];
+    let mut vision_stage = Vec::with_capacity(VISION_PAYLOAD_BYTES);
+    let mut vision_borrowed_decoder = VisionDecoder::new(UserId::new([0x11; 16]));
+    vision_borrowed_decoder
+        .decode_append(&vision_wire, &mut vision_stage)
+        .map_err(|_| BenchmarkError::Fixture("Vision opening frame"))?;
+    let mut vision_borrowed_operation = || {
+        let (_, payload) = vision_borrowed_decoder
+            .decode_borrowed_append(black_box(vision_record.as_slice()), &mut vision_stage)
+            .map_err(|_| BenchmarkError::Fixture("Vision borrowed decode"))?;
+        let VisionPayload::Borrowed(bytes) = payload else {
+            return Err(BenchmarkError::Fixture(
+                "Vision payload was staged, not borrowed",
+            ));
+        };
+        if bytes.len() != VISION_PAYLOAD_BYTES {
+            return Err(BenchmarkError::Fixture("Vision borrowed length"));
+        }
+        black_box(bytes);
+        Ok(())
+    };
+    let vision_borrowed_case = measure(
+        "vision.decode.8k.borrowed",
+        VISION_PAYLOAD_BYTES as u64,
+        options.warmup,
+        sample_duration,
+        &mut vision_borrowed_operation,
+    )?;
+
     let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
     let key = NxrKey::new([0x33; 32]);
     let mut nxr_output = Vec::with_capacity(crate::protocol::nxr::MAX_REQUEST_LEN);
@@ -213,7 +265,13 @@ pub fn run_benchmarks(options: BenchmarkOptions) -> Result<BenchmarkReport, Benc
 
     Ok(BenchmarkReport {
         environment,
-        cases: vec![vless_case, vision_case, nxr_case],
+        cases: vec![
+            vless_case,
+            vless_borrowed_case,
+            vision_case,
+            vision_borrowed_case,
+            nxr_case,
+        ],
     })
 }
 
@@ -325,7 +383,20 @@ mod tests {
         .expect("short benchmark must run");
 
         assert_eq!(report.environment.samples_per_case, SAMPLE_COUNT);
-        assert_eq!(report.cases.len(), 3);
+        // Named rather than counted: the borrowed cases are the ones a real
+        // session executes, and dropping one would silently return the suite
+        // to measuring only the owning convenience APIs.
+        let names: Vec<&str> = report.cases.iter().map(|case| case.name).collect();
+        assert_eq!(
+            names,
+            [
+                "vless.decode.ipv4",
+                "vless.decode.ipv4.borrowed",
+                "vision.decode.8k",
+                "vision.decode.8k.borrowed",
+                "nxr.auth.encode.domain",
+            ]
+        );
         for case in report.cases {
             assert!(case.operations > 0);
             assert!(case.mean_nanoseconds_per_operation.is_finite());
