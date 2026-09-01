@@ -15,8 +15,11 @@
 //!   Runtime Adapter converts it into `std::io::Error` at the one place that
 //!   needs an `std` error, and no diagnostic string is invented down here.
 //! * **Descriptors are owned, never raw.** Creation returns [`OwnedFd`];
-//!   observation takes `impl `[`AsFd`]. Nothing in the public API hands a bare
-//!   descriptor number to a caller.
+//!   observation takes `impl `[`AsFd`]. Nothing in the public API accepts or
+//!   hands out a bare descriptor number, and no mechanism here needs `unsafe`:
+//!   the reviewed `rustix` API covers every one of them. This crate remains
+//!   the place raw-syscall `unsafe` would live if a future mechanism needed
+//!   it (ADR 0008); today none does.
 //!
 //! # The `std` feature
 //!
