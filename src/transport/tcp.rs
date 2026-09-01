@@ -179,7 +179,7 @@ mod libc_compat {
 /// Releasing this descriptor makes exactly one `accept` possible, which drains
 /// one backlog entry and lets the peer observe a close rather than a hang.
 pub struct EmergencyDescriptor {
-    file: Option<std::fs::File>,
+    held: Option<std::os::fd::OwnedFd>,
 }
 
 impl EmergencyDescriptor {
@@ -191,14 +191,14 @@ impl EmergencyDescriptor {
     /// indicates the process is already at its descriptor limit.
     pub fn open() -> io::Result<Self> {
         Ok(Self {
-            file: Some(open_reserve()?),
+            held: Some(open_reserve()?),
         })
     }
 
     /// Returns whether the reserve is currently held.
     #[must_use]
     pub const fn is_held(&self) -> bool {
-        self.file.is_some()
+        self.held.is_some()
     }
 
     /// Releases the reserve so one descriptor becomes available.
@@ -206,7 +206,7 @@ impl EmergencyDescriptor {
     /// Returns whether a descriptor was actually released, so a caller cannot
     /// mistake a double release for freed capacity.
     pub fn release(&mut self) -> bool {
-        self.file.take().is_some()
+        self.held.take().is_some()
     }
 
     /// Reopens the reserve after a recovery attempt.
@@ -217,22 +217,29 @@ impl EmergencyDescriptor {
     /// means the process is still at its limit. The caller must keep backing
     /// off and retry rather than treating this as fatal.
     pub fn reacquire(&mut self) -> io::Result<()> {
-        if self.file.is_some() {
+        if self.held.is_some() {
             return Ok(());
         }
-        self.file = Some(open_reserve()?);
+        self.held = Some(open_reserve()?);
         Ok(())
     }
 }
 
-fn open_reserve() -> io::Result<std::fs::File> {
+/// Opens the reserve as a bare owned descriptor.
+///
+/// One descriptor held open and released on demand is the whole mechanism; a
+/// file abstraction over it would only add a buffer nothing reads.
+fn open_reserve() -> io::Result<std::os::fd::OwnedFd> {
     #[cfg(target_os = "linux")]
     {
-        rr_linux::open_reserve_descriptor()
+        rr_linux::open_reserve_descriptor().map_err(io::Error::from)
     }
     #[cfg(not(target_os = "linux"))]
     {
-        std::fs::OpenOptions::new().read(true).open("/dev/null")
+        std::fs::OpenOptions::new()
+            .read(true)
+            .open("/dev/null")
+            .map(std::os::fd::OwnedFd::from)
     }
 }
 
@@ -265,10 +272,16 @@ impl TcpAcceptor {
     /// Returns the raw OS error when the address cannot be bound.
     pub async fn bind(address: SocketAddr) -> io::Result<Self> {
         #[cfg(target_os = "linux")]
-        let listener = if address.is_ipv6() {
-            TcpListener::from_std(rr_linux::socket::bind_tcp_listener_v6only(address)?)?
-        } else {
-            TcpListener::bind(address).await?
+        let listener = match address {
+            // The Linux boundary creates, configures, binds, and listens; it
+            // returns the owned kernel descriptor and nothing more. Ownership
+            // transfers here, by value, exactly once: `std::net::TcpListener`
+            // takes the descriptor and Tokio takes the listener. The socket is
+            // already `SOCK_NONBLOCK`, which is what `from_std` requires.
+            SocketAddr::V6(address) => TcpListener::from_std(std::net::TcpListener::from(
+                rr_linux::socket::bind_tcp_listener_v6only(address).map_err(io::Error::from)?,
+            ))?,
+            SocketAddr::V4(_) => TcpListener::bind(address).await?,
         };
         #[cfg(not(target_os = "linux"))]
         let listener = TcpListener::bind(address).await?;
@@ -284,14 +297,13 @@ impl TcpAcceptor {
     /// query error.
     #[cfg(target_os = "linux")]
     pub fn ipv6_only(&self) -> io::Result<bool> {
-        use std::os::fd::AsRawFd as _;
         if !self.local_addr()?.is_ipv6() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "IPv4 listener has no IPV6_V6ONLY option",
             ));
         }
-        rr_linux::socket::ipv6_only(self.listener.as_raw_fd())
+        rr_linux::socket::ipv6_only(&self.listener).map_err(io::Error::from)
     }
 
     /// Returns the local address assigned to the listening socket.
@@ -342,14 +354,9 @@ impl TcpAcceptor {
     ///
     /// Returns the raw OS error from either `setsockopt`.
     pub fn configure_stream(stream: &TcpStream) -> io::Result<()> {
-        use std::os::fd::AsRawFd as _;
         stream.set_nodelay(true)?;
-        rr_linux::socket::set_keepalive(
-            stream.as_raw_fd(),
-            KEEPALIVE_IDLE,
-            KEEPALIVE_INTERVAL,
-            KEEPALIVE_COUNT,
-        )
+        rr_linux::socket::set_keepalive(stream, KEEPALIVE_IDLE, KEEPALIVE_INTERVAL, KEEPALIVE_COUNT)
+            .map_err(io::Error::from)
     }
 
     /// Accepts and configures one inbound TCP connection.
@@ -535,14 +542,13 @@ mod tests {
         let client = client_result.expect("connect to listener");
         let (accepted, _) = accepted_result.expect("accept client");
 
-        use std::os::fd::AsRawFd as _;
         assert!(
-            rr_linux::socket::keepalive_enabled(accepted.as_raw_fd()).expect("read SO_KEEPALIVE"),
+            rr_linux::socket::keepalive_enabled(&accepted).expect("read SO_KEEPALIVE"),
             "accepted streams must arm keepalive"
         );
         crate::transport::TcpAcceptor::configure_stream(&client).expect("configure outbound");
         assert!(
-            rr_linux::socket::keepalive_enabled(client.as_raw_fd()).expect("read SO_KEEPALIVE"),
+            rr_linux::socket::keepalive_enabled(&client).expect("read SO_KEEPALIVE"),
             "outbound streams must arm keepalive"
         );
     }

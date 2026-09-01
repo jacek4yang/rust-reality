@@ -108,12 +108,10 @@ impl MachineReport {
 
     #[cfg(target_os = "linux")]
     fn detect_linux() -> Self {
-        let fd = rr_linux::descriptor_limit()
-            .ok()
-            .map(|limit| (limit.soft, limit.hard));
-        let memlock = rr_linux::memlock_limit()
-            .ok()
-            .map(|limit| (limit.soft, limit.hard));
+        let fd = rr_linux::descriptor_limit();
+        let fd = Some((fd.soft, fd.hard));
+        let memlock = rr_linux::memlock_limit();
+        let memlock = Some((memlock.soft, memlock.hard));
         let meminfo_total = read_meminfo_total(Path::new("/proc/meminfo"));
         let cgroup = read_cgroup_v2(Path::new("/proc/self/cgroup"), Path::new("/sys/fs/cgroup"));
         Self::assemble(

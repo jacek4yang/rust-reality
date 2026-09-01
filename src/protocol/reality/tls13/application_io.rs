@@ -442,11 +442,14 @@ where
 }
 
 impl TlsApplicationReader<tokio::net::tcp::OwnedReadHalf> {
-    /// Returns the raw client descriptor for abort-path socket options.
+    /// Borrows the client descriptor for abort-path socket options.
+    ///
+    /// The borrow is lifetime-bound to this reader, so an abort guard has to
+    /// capture what it needs while the socket is provably live.
     #[must_use]
-    pub fn fd(&self) -> std::os::fd::RawFd {
-        use std::os::fd::AsRawFd as _;
-        self.io.as_ref().as_raw_fd()
+    pub fn fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        use std::os::fd::AsFd as _;
+        self.io.as_ref().as_fd()
     }
 }
 
@@ -640,11 +643,14 @@ where
 }
 
 impl TlsApplicationWriter<tokio::net::tcp::OwnedWriteHalf> {
-    /// Returns the raw client descriptor for abort-path socket options.
+    /// Borrows the client descriptor for abort-path socket options.
+    ///
+    /// The borrow is lifetime-bound to this writer, so an abort guard has to
+    /// capture what it needs while the socket is provably live.
     #[must_use]
-    pub fn fd(&self) -> std::os::fd::RawFd {
-        use std::os::fd::AsRawFd as _;
-        self.io.as_ref().as_raw_fd()
+    pub fn fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        use std::os::fd::AsFd as _;
+        self.io.as_ref().as_fd()
     }
 }
 

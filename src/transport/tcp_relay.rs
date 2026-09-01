@@ -1,7 +1,6 @@
 use std::{
     error::Error,
     fmt, io,
-    os::fd::AsRawFd as _,
     sync::{
         Arc, Mutex, MutexGuard,
         atomic::{AtomicU64, Ordering},
@@ -198,8 +197,8 @@ impl TcpRelay {
                 Err(error) if !ledger.is_untouched() => {
                     // True abort: the peer must observe a reset, not a clean
                     // short EOF. Pre-first-byte declines never reach here.
-                    let _ignored = rr_linux::socket::abort_linger(source.as_ref().as_raw_fd());
-                    let _ignored = rr_linux::socket::abort_linger(destination.as_ref().as_raw_fd());
+                    let _ignored = rr_linux::socket::abort_linger(source.as_ref());
+                    let _ignored = rr_linux::socket::abort_linger(destination.as_ref());
                     return Err(classify_abort(error));
                 }
                 run => run?,
@@ -308,8 +307,8 @@ impl TcpRelay {
                 Err(error) if !ledger.is_untouched() => {
                     // True abort: the peer must observe a reset, not a clean
                     // short EOF. Pre-first-byte declines never reach here.
-                    let _ignored = rr_linux::socket::abort_linger(inbound.as_raw_fd());
-                    let _ignored = rr_linux::socket::abort_linger(outbound.as_raw_fd());
+                    let _ignored = rr_linux::socket::abort_linger(&*inbound);
+                    let _ignored = rr_linux::socket::abort_linger(&*outbound);
                     return Err(classify_abort(error));
                 }
                 run => run?,
@@ -894,7 +893,7 @@ impl PipePool {
     /// same rule in `putPipe`. A returned pipe beyond the keep count is closed
     /// (its units release with it), which bounds idle retention.
     fn give_back(&self, pipe: PooledPipe) {
-        let dirty = rr_linux::socket::pending_input(pipe.pair.read_fd().as_raw_fd())
+        let dirty = rr_linux::socket::pending_input(pipe.pair.read_fd())
             .map(|queued| queued > 0)
             .unwrap_or(true);
         if dirty {
@@ -1190,6 +1189,7 @@ impl PipePair {
     fn new() -> io::Result<Self> {
         rr_linux::pipe::NonblockingPipe::open(SPLICE_PIPE_CAPACITY, SPLICE_PIPE_CAPACITY / 4)
             .map(|inner| Self { inner })
+            .map_err(io::Error::from)
     }
 
     fn read_fd(&self) -> std::os::fd::BorrowedFd<'_> {
@@ -1229,13 +1229,15 @@ async fn splice_direction(
         source_reset_is_eof,
     )
     .await?;
-    rr_linux::socket::shutdown_write(destination).or_else(|error| {
-        if source_reset_is_eof && is_peer_gone(&error) {
-            Ok(())
-        } else {
-            Err(error)
-        }
-    })
+    rr_linux::socket::shutdown_write(destination)
+        .map_err(io::Error::from)
+        .or_else(|error| {
+            if source_reset_is_eof && is_peer_gone(&error) {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        })
 }
 
 /// Splices one direction between owned socket halves until source EOF.
@@ -1308,6 +1310,7 @@ async fn splice_pump(
             Some(idle) => idle
                 .guard(source.async_io(Interest::READABLE, || {
                     rr_linux::pipe::splice_nonblocking(source, pipe.write_fd(), chunk_bytes)
+                        .map_err(io::Error::from)
                 }))
                 .await
                 .map_err(idle_io_error),
@@ -1315,6 +1318,7 @@ async fn splice_pump(
                 source
                     .async_io(Interest::READABLE, || {
                         rr_linux::pipe::splice_nonblocking(source, pipe.write_fd(), chunk_bytes)
+                            .map_err(io::Error::from)
                     })
                     .await
             }
@@ -1334,6 +1338,7 @@ async fn splice_pump(
                 Some(idle) => idle
                     .guard(destination.async_io(Interest::WRITABLE, || {
                         rr_linux::pipe::splice_nonblocking(pipe.read_fd(), destination, pending)
+                            .map_err(io::Error::from)
                     }))
                     .await
                     .map_err(idle_io_error)?,
@@ -1341,6 +1346,7 @@ async fn splice_pump(
                     destination
                         .async_io(Interest::WRITABLE, || {
                             rr_linux::pipe::splice_nonblocking(pipe.read_fd(), destination, pending)
+                                .map_err(io::Error::from)
                         })
                         .await?
                 }
@@ -1659,8 +1665,7 @@ mod tests {
                 .await
                 .expect("the first half must not stall")
                 .expect("the first half must arrive");
-            rr_linux::socket::abort_linger(std::os::fd::AsRawFd::as_raw_fd(&sink_peer))
-                .expect("abort linger must apply");
+            rr_linux::socket::abort_linger(&sink_peer).expect("abort linger must apply");
             drop(sink_peer);
         };
         let (relay_result, ()) = tokio::join!(relaying, drive);
@@ -1701,8 +1706,7 @@ mod tests {
                 .await
                 .expect("the first half must not stall")
                 .expect("the first half must arrive");
-            rr_linux::socket::abort_linger(std::os::fd::AsRawFd::as_raw_fd(&sink_peer))
-                .expect("abort linger must apply");
+            rr_linux::socket::abort_linger(&sink_peer).expect("abort linger must apply");
             drop(sink_peer);
         };
         let (relay_result, ()) = tokio::join!(relaying, drive);

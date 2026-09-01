@@ -598,7 +598,7 @@ async fn stalled_echo_is_bounded() {
 #[test]
 fn dedicated_mode_raises_the_soft_limit_in_a_child_process() {
     if std::env::var_os(CHILD_ENV).is_some() {
-        let before = rr_linux::descriptor_limit().expect("limits must be readable");
+        let before = rr_linux::descriptor_limit();
         assert_eq!(before.soft, 256, "the parent must lower the soft limit");
         let target =
             rust_reality::runtime::machine::soft_limit_raise_target(before.soft, before.hard)

@@ -2,7 +2,6 @@ use std::{
     error::Error,
     fmt, io,
     ops::Range,
-    os::fd::AsRawFd as _,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -452,7 +451,7 @@ impl VisionHandler {
         request: AcceptedVisionRequest,
         client_random: [u8; 32],
     ) -> Result<VisionRelayStats, VisionSessionError> {
-        let client_fd = client_reader.fd();
+        let client_fd = rr_linux::socket::AbortMark::capture(client_reader.fd());
         let (pending, client_read_half, client_records) = client_reader.into_handoff_parts();
         let (client_write_half, server_records) = client_writer.into_handoff_parts();
         // Until the transfer provably lands, the guard covers only the client
@@ -492,7 +491,7 @@ impl VisionHandler {
         // The sealed continuation is on the wire; its key material must not
         // live across the first-byte probe and the session relay below.
         drop(state);
-        guard.fds[1] = handoff_stream.as_raw_fd();
+        guard.retarget_destination(rr_linux::socket::AbortMark::capture(&handoff_stream));
         let client_stream = client_read_half
             .reunite(client_write_half)
             .map_err(|_| VisionSessionError::HandoffLine(HandoffLineError::Reunite))?;
@@ -785,16 +784,27 @@ struct SessionContext<'session> {
 /// completion: the peer observes a reset, never a clean short EOF. Graceful
 /// exits disarm the guard, preserving FIN and independent half-close.
 struct DirectionAbortGuard {
-    fds: [std::os::fd::RawFd; 2],
+    marks: [rr_linux::socket::AbortMark; 2],
     disarmed: bool,
 }
 
 impl DirectionAbortGuard {
-    const fn new(client_fd: std::os::fd::RawFd, destination_fd: std::os::fd::RawFd) -> Self {
+    /// Captures both descriptor numbers while the sockets are still live.
+    ///
+    /// A guard outlives the sockets it marks — that is the point of a guard —
+    /// so it can only hold numbers, and applying a mark is best effort. Every
+    /// path that hands a descriptor onward disarms first, so the guard never
+    /// fires on a number the process has since reused.
+    fn new(client: rr_linux::socket::AbortMark, destination: rr_linux::socket::AbortMark) -> Self {
         Self {
-            fds: [client_fd, destination_fd],
+            marks: [client, destination],
             disarmed: false,
         }
+    }
+
+    /// Replaces the destination mark once the real destination exists.
+    fn retarget_destination(&mut self, destination: rr_linux::socket::AbortMark) {
+        self.marks[1] = destination;
     }
 
     fn disarm(&mut self) {
@@ -807,8 +817,8 @@ impl Drop for DirectionAbortGuard {
         if self.disarmed {
             return;
         }
-        for fd in self.fds {
-            let _ignored = rr_linux::socket::abort_linger(fd);
+        for mark in self.marks {
+            let _ignored = mark.apply();
         }
     }
 }
@@ -821,7 +831,10 @@ async fn relay_uplink(
     prefetched: Range<usize>,
     context: &SessionContext<'_>,
 ) -> Result<DirectionStats, VisionSessionError> {
-    let mut guard = DirectionAbortGuard::new(client.fd(), destination.as_ref().as_raw_fd());
+    let mut guard = DirectionAbortGuard::new(
+        rr_linux::socket::AbortMark::capture(client.fd()),
+        rr_linux::socket::AbortMark::capture(destination.as_ref()),
+    );
     let result = relay_uplink_inner(
         client,
         destination,
@@ -1067,7 +1080,10 @@ async fn relay_downlink(
     context: &SessionContext<'_>,
 ) -> Result<DirectionStats, VisionSessionError> {
     let nested = NestedRecordReader::new(destination);
-    let mut guard = DirectionAbortGuard::new(client.fd(), nested.fd());
+    let mut guard = DirectionAbortGuard::new(
+        rr_linux::socket::AbortMark::capture(client.fd()),
+        rr_linux::socket::AbortMark::capture(nested.fd()),
+    );
     let result = relay_downlink_inner(
         nested,
         client,
@@ -1666,10 +1682,10 @@ struct NestedRecordReader {
 }
 
 impl NestedRecordReader {
-    /// Returns the raw destination descriptor for abort-path socket options.
-    fn fd(&self) -> std::os::fd::RawFd {
-        use std::os::fd::AsRawFd as _;
-        self.io.as_ref().as_raw_fd()
+    /// Borrows the destination descriptor for abort-path socket options.
+    fn fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        use std::os::fd::AsFd as _;
+        self.io.as_ref().as_fd()
     }
 
     fn new(io: OwnedReadHalf) -> Self {
