@@ -903,6 +903,28 @@ fn parse_perf_hex(value: &str, context: &str) -> Result<u64, String> {
     u64::from_str_radix(digits, 16).map_err(|error| format!("invalid {context}: {error}"))
 }
 
+fn perf_event_dso_field(line: &str) -> Result<&str, String> {
+    let trimmed = line.trim();
+    let dso_start = trimmed
+        .find('(')
+        .ok_or_else(|| format!("missing perf DSO-offset field in {line:?}"))?;
+    trimmed
+        .get(dso_start + 1..)
+        .and_then(|value| value.strip_suffix(')'))
+        .ok_or_else(|| format!("invalid perf DSO-offset field in {line:?}"))
+}
+
+fn perf_event_dso_path(line: &str) -> Result<&str, String> {
+    let dso_field = perf_event_dso_field(line)?;
+    let dso_path = dso_field
+        .rsplit_once("+0x")
+        .map_or(dso_field, |(path, _)| path);
+    if dso_path.is_empty() {
+        return Err(format!("empty perf DSO path in {line:?}"));
+    }
+    Ok(dso_path)
+}
+
 fn parse_perf_event(line: &str) -> Result<(u64, u64, &str, u64), String> {
     let trimmed = line.trim();
     let mut fields = trimmed.split_whitespace();
@@ -912,13 +934,7 @@ fn parse_perf_event(line: &str) -> Result<(u64, u64, &str, u64), String> {
     let runtime_ip_text = fields
         .next()
         .ok_or_else(|| format!("missing perf runtime IP in {line:?}"))?;
-    let dso_start = trimmed
-        .find('(')
-        .ok_or_else(|| format!("missing perf DSO-offset field in {line:?}"))?;
-    let dso_field = trimmed
-        .get(dso_start + 1..)
-        .and_then(|value| value.strip_suffix(')'))
-        .ok_or_else(|| format!("invalid perf DSO-offset field in {line:?}"))?;
+    let dso_field = perf_event_dso_field(line)?;
     let (dso_path, dso_offset_text) = dso_field
         .rsplit_once("+0x")
         .ok_or_else(|| format!("missing perf DSO offset in {line:?}"))?;
@@ -945,10 +961,11 @@ fn select_samples(
     let mut samples = Vec::new();
     let mut totals = SelectionTotals::default();
     for line in events.lines().filter(|line| !line.trim().is_empty()) {
-        let (period, runtime_ip, dso_path, dso_offset) = parse_perf_event(line)?;
-        if dso_path != expected_dso_path {
+        if perf_event_dso_path(line)? != expected_dso_path {
             continue;
         }
+        let (period, runtime_ip, dso_path, dso_offset) = parse_perf_event(line)?;
+        debug_assert_eq!(dso_path, expected_dso_path);
         add(&mut totals.dso_rows, 1, "application DSO row count")?;
         add(&mut totals.dso_period, period, "application DSO period sum")?;
         let runtime_base = runtime_ip
@@ -1790,6 +1807,7 @@ mod tests {
             "3000 5003 (/tmp/rust-reality+0x2003)\n",
             "10 5004 (/tmp/rust-reality+0x2004)\n",
             "10 5001 (/tmp/other+0x2001)\n",
+            "20 ffffffff8ae015f0 ([unknown])\n",
         );
         let function = fixture_function();
         let (samples, totals) = select_samples(
@@ -1811,6 +1829,17 @@ mod tests {
             totals.dso_period
         );
         assert_eq!(totals.runtime_base, Some(0x3000));
+    }
+
+    #[test]
+    fn matching_application_dso_still_requires_an_offset() {
+        let result = select_samples(
+            "20 5001 (/tmp/rust-reality)\n",
+            "/tmp/rust-reality",
+            &fixture_address_map(),
+            &fixture_function(),
+        );
+        assert!(result.is_err());
     }
 
     #[test]
