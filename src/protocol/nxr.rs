@@ -27,8 +27,22 @@ pub const REQUEST_HEADER_LEN: usize = ADDRESS_OFFSET;
 /// Strict maximum for one NXR authentication request.
 pub const MAX_REQUEST_LEN: usize = REQUEST_HEADER_LEN + MAX_DOMAIN_LEN + TAG_LEN;
 
-/// Independent NXR HMAC key. Debug output never reveals its bytes. The cached
-/// keyed SHA-256 cores and buffer zeroize through their composed drop paths.
+/// Independent NXR HMAC key, held as a keyed HMAC template so authenticating
+/// and verifying clone precomputed ipad/opad SHA-256 cores instead of deriving
+/// them per request. Debug output never reveals its bytes.
+///
+/// `Hmac<Sha256>` carries no `ZeroizeOnDrop` marker, because `hmac` builds it
+/// through `digest::buffer_fixed!` with `MacTraits` and only `FixedHashTraits`
+/// requests that marker. Erasure is nonetheless complete through the composed
+/// drop path that the enabled `hmac/zeroize` and `sha2/zeroize` features turn
+/// on: `BlockBuffer` zeroizes its whole block and position, and each
+/// `Sha256VarCore` zeroizes its chaining state and block length, reached by
+/// field recursion through `HmacCore` and `CtOutWrapper`. Do not re-add a
+/// `ZeroizeOnDrop` bound here; it fails to compile and proves nothing. See the
+/// [performance investigation record] for the measured evidence.
+///
+/// [performance investigation record]:
+///     https://github.com/jacek4yang/rust-reality/blob/main/docs/en/operations/performance-investigation-record.md
 #[derive(Clone)]
 pub struct NxrKey(NxrHmac);
 
