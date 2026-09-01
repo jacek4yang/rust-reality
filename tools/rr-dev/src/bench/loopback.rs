@@ -15,11 +15,12 @@ use std::time::Instant;
 
 use crate::{
     bench::{
+        attest,
         engine::Transfer,
         origin,
         suites::{self, CurlTransfer, RunError, SuiteContext},
     },
-    perf::json_out::Json,
+    perf::{hotspot, json_out::Json},
 };
 
 /// The legacy shuffle seed, kept as a constant so archived evidence stays
@@ -52,6 +53,10 @@ pub struct LoopbackPlan {
     pub tls_origin: bool,
     /// Report harness id (`benchmark-xray` or `benchmark-vision-direct`).
     pub harness: String,
+    /// Stable benchmark transaction identifier.
+    pub run_id: String,
+    /// Optional identity-bound capture of the rust-reality server.
+    pub profile: Option<hotspot::BenchmarkProfile>,
 }
 
 /// Outcome of a loopback concurrent suite run.
@@ -263,6 +268,22 @@ pub fn parse_direct_events(log: &std::path::Path) -> DirectSummary {
     }
     summary.tunnel_bypass_detected = summary.accepted_connections <= 1;
     summary
+}
+
+fn validate_direct_summary(summary: &DirectSummary) -> Result<(), String> {
+    if summary.tunnel_bypass_detected {
+        return Err(
+            "Vision-Direct tunnel guard observed no server connections beyond readiness"
+                .to_owned(),
+        );
+    }
+    if summary.connections == 0 {
+        return Err("Vision-Direct server emitted no completed-connection evidence".to_owned());
+    }
+    if summary.downlink_direct == 0 {
+        return Err("Vision-Direct workload never promoted the download path to Direct".to_owned());
+    }
+    Ok(())
 }
 
 /// Assembles the schema-v1 loopback concurrent report.
@@ -487,6 +508,14 @@ pub fn run_loopback(
             "bounds are samples<=100, concurrency<=64, payload_mib<=1024".to_owned(),
         ));
     }
+    if let Some(profile) = &plan.profile {
+        hotspot::validate_benchmark_profile(profile).map_err(RunError::Setup)?;
+        if !plan.tls_origin {
+            return Err(RunError::Setup(
+                "benchmark-owned profiling is supported only by vision-direct".to_owned(),
+            ));
+        }
+    }
 
     let mut context = SuiteContext {
         allow_private: true,
@@ -497,7 +526,10 @@ pub fn run_loopback(
 
     // Materialize tunnels first (4 ports). Then reserve an origin port and
     // launch the HTTP origin inside the same workspace.
-    let run = suites::materialize(&context)?;
+    let run = suites::materialize_with_rust_log_level(
+        &context,
+        plan.tls_origin.then_some("debug"),
+    )?;
 
     let origin_port = crate::bench::workspace::reserve_ports(1)
         .map_err(RunError::Setup)?
@@ -549,6 +581,26 @@ pub fn run_loopback(
             .map_err(|error| RunError::Processes(format!("warmup {name}: {error}")))?;
     }
 
+    let mut profile = if let Some(settings) = &plan.profile {
+        let binary = &run.binaries[0];
+        let build_id = attest::build_id(&binary.path).map_err(RunError::Setup)?;
+        Some(
+            hotspot::BenchmarkCapture::start(
+                &run.lock,
+                binary,
+                &build_id,
+                run.processes.rust_server.pid(),
+                "vision-direct",
+                &plan.run_id,
+                absolute_profile_dir(&context.out_dir).map_err(RunError::Setup)?,
+                settings,
+            )
+            .map_err(RunError::Processes)?,
+        )
+    } else {
+        None
+    };
+
     let order = shuffled_order("rust-reality", "xray", plan.samples);
     let mut measurements = Vec::with_capacity(order.len());
     for name in &order {
@@ -557,17 +609,51 @@ pub fn run_loopback(
         } else {
             run.ports[3]
         };
-        let sample = measure_concurrent(
+        let sample = match measure_concurrent(
             &transfer,
             port,
             context.expected_bytes,
             plan.concurrency,
             plan.payload_mib,
             name,
-        )
-        .map_err(RunError::Processes)?;
+        ) {
+            Ok(sample) => sample,
+            Err(error) => {
+                if let Some(capture) = profile.take() {
+                    capture
+                        .cancel("vision-direct workload failed")
+                        .map_err(RunError::Processes)?;
+                }
+                return Err(RunError::Processes(error));
+            }
+        };
         measurements.push(sample);
     }
+
+    // Give the server a moment to flush per-connection completion events while
+    // it and the optional profile are still transaction-owned. An invalid
+    // Direct workload cancels the profile, so neither child nor parent can
+    // publish success for traffic that bypassed the measured server.
+    let direct = if plan.tls_origin {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        let direct = parse_direct_events(&run.workspace.join("rust-server.log"));
+        if let Err(error) = validate_direct_summary(&direct) {
+            if let Some(capture) = profile.take() {
+                capture
+                    .cancel("vision-direct evidence validation failed")
+                    .map_err(RunError::Processes)?;
+            }
+            return Err(RunError::Processes(error));
+        }
+        Some(direct)
+    } else {
+        None
+    };
+
+    if let Some(capture) = profile.take() {
+        capture.finish().map_err(RunError::Processes)?;
+    }
+    drop(profile);
 
     let binaries: Vec<(String, String, String)> = run
         .binaries
@@ -580,15 +666,6 @@ pub fn run_loopback(
             )
         })
         .collect();
-    // Give the server a moment to flush per-connection completion events.
-    if plan.tls_origin {
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
-    let direct = if plan.tls_origin {
-        Some(parse_direct_events(&run.workspace.join("rust-server.log")))
-    } else {
-        None
-    };
     let report_json = assemble_report(
         plan,
         &context,
@@ -617,6 +694,17 @@ pub fn run_loopback(
         report_json,
         measurements,
     })
+}
+
+fn absolute_profile_dir(out_dir: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let root = if out_dir.is_absolute() {
+        out_dir.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("could not resolve benchmark output directory: {error}"))?
+            .join(out_dir)
+    };
+    Ok(root.join("hotspot"))
 }
 
 impl SuiteContext<'_> {
@@ -660,5 +748,29 @@ mod tests {
         let values = [10.0, 20.0, 30.0, 40.0];
         assert!((percentile(&values, 0.5) - 20.0).abs() < 1e-9);
         assert!((percentile(&values, 0.95) - 40.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn vision_direct_evidence_fails_closed_without_a_direct_download() {
+        let absent = DirectSummary {
+            tunnel_bypass_detected: true,
+            ..DirectSummary::default()
+        };
+        assert!(validate_direct_summary(&absent).is_err());
+
+        let not_direct = DirectSummary {
+            accepted_connections: 3,
+            connections: 2,
+            ..DirectSummary::default()
+        };
+        assert!(validate_direct_summary(&not_direct).is_err());
+
+        let direct = DirectSummary {
+            accepted_connections: 3,
+            connections: 2,
+            downlink_direct: 2,
+            ..DirectSummary::default()
+        };
+        assert!(validate_direct_summary(&direct).is_ok());
     }
 }

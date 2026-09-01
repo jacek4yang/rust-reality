@@ -663,6 +663,21 @@ enum BenchCommand {
         /// `wall` records rates only.
         #[arg(long, default_value = "perf")]
         measure_mode: String,
+        /// Capture an identity-bound `perf record` from the benchmark-owned server.
+        #[arg(long)]
+        profile: bool,
+        /// Hard maximum duration of a benchmark-owned profile.
+        #[arg(long, default_value_t = 35)]
+        profile_record_seconds: u64,
+        /// `perf record` event for a benchmark-owned profile.
+        #[arg(long, default_value = "cycles:u")]
+        profile_event: String,
+        /// Sampling frequency for a benchmark-owned profile.
+        #[arg(long, default_value_t = 999)]
+        profile_frequency: u32,
+        /// Call-graph mode for a benchmark-owned profile.
+        #[arg(long, default_value = "fp")]
+        profile_call_graph: String,
         /// Run identifier recorded in the completion marker.
         #[arg(long)]
         run_id: Option<String>,
@@ -1814,6 +1829,11 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             concurrencies,
             abba_start,
             measure_mode,
+            profile,
+            profile_record_seconds,
+            profile_event,
+            profile_frequency,
+            profile_call_graph,
             run_id,
             baseline_bin,
             baseline_identity,
@@ -1862,6 +1882,24 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             deployment_plan,
             keep_work,
         } => {
+            if *profile && !matches!(suite.as_str(), "setup-rate" | "vision-direct") {
+                eprintln!(
+                    "bench run: --profile is supported only for setup-rate and vision-direct"
+                );
+                return ExitCode::from(2);
+            }
+            let profile = profile.then(|| perf::hotspot::BenchmarkProfile {
+                record_seconds: *profile_record_seconds,
+                event: profile_event.clone(),
+                frequency: *profile_frequency,
+                call_graph: profile_call_graph.clone(),
+            });
+            if let Some(profile) = &profile
+                && let Err(error) = perf::hotspot::validate_benchmark_profile(profile)
+            {
+                eprintln!("bench run: {error}");
+                return ExitCode::from(2);
+            }
             if suite == "tls-shape" {
                 return run_bench_tls_shape(
                     repo,
@@ -2101,6 +2139,7 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                         candidate_cover_mode,
                         measure_mode,
                         cover_netem_rtt_ms: *cover_netem_rtt_ms,
+                        profile: profile.clone(),
                     },
                 );
             }
@@ -2119,16 +2158,23 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                     measure_mode,
                 );
             }
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_secs());
             let out_dir = out_dir.clone().unwrap_or_else(|| {
-                let stamp = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |duration| duration.as_secs());
                 std::env::current_dir()
                     .unwrap_or_else(|_| PathBuf::from("."))
                     .join(format!(
                         "benchmarks/benchmark-real-path-{stamp}-{}",
                         std::process::id()
                     ))
+            });
+            let benchmark_run_id = run_id.clone().unwrap_or_else(|| {
+                format!(
+                    "benchmark-{}-{stamp}-{}",
+                    suite.replace('_', "-"),
+                    std::process::id()
+                )
             });
             let context = bench::suites::SuiteContext {
                 rust_bin,
@@ -2159,6 +2205,8 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                         payload_mib: *payload_mib,
                         tls_origin: false,
                         harness: "benchmark-xray".to_owned(),
+                        run_id: benchmark_run_id.clone(),
+                        profile: None,
                     },
                 ),
                 "vision-direct" => run_bench_xray(
@@ -2169,6 +2217,8 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                         payload_mib: *payload_mib,
                         tls_origin: true,
                         harness: "benchmark-vision-direct".to_owned(),
+                        run_id: benchmark_run_id,
+                        profile: profile.clone(),
                     },
                 ),
                 other => {
@@ -3054,6 +3104,7 @@ struct SetupRateArgs<'a> {
     candidate_cover_mode: &'a str,
     measure_mode: &'a str,
     cover_netem_rtt_ms: Option<u32>,
+    profile: Option<perf::hotspot::BenchmarkProfile>,
 }
 
 /// Drives the paired baseline-versus-candidate setup-rate suite.
@@ -3122,6 +3173,7 @@ fn run_bench_setup_rate(repo: &Path, args: &SetupRateArgs<'_>) -> ExitCode {
         candidate_cover_mode,
         attribution,
         cover_netem_rtt_ms: args.cover_netem_rtt_ms,
+        profile: args.profile.clone(),
     };
     if let Err(error) = bench::paired::validate(&suite) {
         eprintln!("bench run setup-rate: {error}");

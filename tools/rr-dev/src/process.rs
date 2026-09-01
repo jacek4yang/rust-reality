@@ -20,7 +20,7 @@ use std::{
     fmt, fs, io,
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
@@ -230,6 +230,22 @@ pub struct Tool {
     output_logs: Option<OutputLogs>,
 }
 
+/// One live invocation started through the trusted [`Tool`] boundary.
+///
+/// The handle retains the process-group, output readers, capture bounds and
+/// original deadline. Dropping it before [`RunningTool::wait`] or
+/// [`RunningTool::interrupt_and_wait`] terminates and reaps the whole group, so
+/// callers cannot accidentally detach an external measurement authority.
+#[derive(Debug)]
+pub struct RunningTool {
+    tool: Tool,
+    started: Instant,
+    child: Option<Child>,
+    stdout_reader: Option<OutputReader>,
+    stderr_reader: Option<OutputReader>,
+    status: Option<ExitStatus>,
+}
+
 impl Tool {
     /// Starts building an invocation of `program`.
     #[must_use]
@@ -380,6 +396,20 @@ impl Tool {
     /// Returns [`ToolError::NotFound`] when the executable is absent and
     /// [`ToolError::Spawn`] when the process cannot be started or awaited.
     pub fn probe(&self) -> Result<Outcome, ToolError> {
+        self.spawn()?.wait()
+    }
+
+    /// Starts the tool and returns a scoped handle without waiting for it.
+    ///
+    /// This is for transactions that must run typed work concurrently with one
+    /// owned tool child, such as driving a benchmark while `perf record` samples
+    /// its server. The returned handle is never detachable.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ToolError::NotFound`] when the executable is absent and
+    /// [`ToolError::Spawn`] when the process or its output logs cannot be opened.
+    pub fn spawn(&self) -> Result<RunningTool, ToolError> {
         let started = Instant::now();
         let (stdout_log, stderr_log) =
             self.open_output_logs().map_err(|source| ToolError::Spawn {
@@ -410,47 +440,13 @@ impl Tool {
             .stderr
             .take()
             .map(|pipe| thread::spawn(move || read_bounded(pipe, capture_limit, stderr_log)));
-        let mut status = None;
-        let status = loop {
-            if status.is_none() {
-                match child.try_wait() {
-                    Ok(observed) => status = observed,
-                    Err(source) => {
-                        terminate_and_reap(child, stdout_reader, stderr_reader);
-                        return Err(ToolError::Spawn {
-                            program: self.program.clone(),
-                            source,
-                        });
-                    }
-                }
-            }
-            if let Some(observed) = status
-                && readers_finished(stdout_reader.as_ref(), stderr_reader.as_ref())
-            {
-                break observed;
-            }
-            if started.elapsed() >= self.timeout {
-                terminate_and_reap(child, stdout_reader, stderr_reader);
-                return Err(ToolError::Timeout {
-                    command: self.redacted(),
-                    timeout: self.timeout,
-                });
-            }
-            thread::sleep(POLL_INTERVAL);
-        };
-        let stdout = join_reader(stdout_reader, "stdout").map_err(|source| ToolError::Spawn {
-            program: self.program.clone(),
-            source,
-        })?;
-        let stderr = join_reader(stderr_reader, "stderr").map_err(|source| ToolError::Spawn {
-            program: self.program.clone(),
-            source,
-        })?;
-        Ok(Outcome {
-            code: status.code(),
-            stdout: self.decode_output(stdout, "stdout")?,
-            stderr: self.decode_output(stderr, "stderr")?,
-            elapsed: started.elapsed(),
+        Ok(RunningTool {
+            tool: self.clone(),
+            started,
+            child: Some(child),
+            stdout_reader,
+            stderr_reader,
+            status: None,
         })
     }
 
@@ -522,6 +518,131 @@ impl Tool {
             command: self.redacted(),
             stream,
         })
+    }
+}
+
+impl RunningTool {
+    /// Returns whether the child is still running.
+    ///
+    /// The exit status is retained for the later wait, so observing completion
+    /// never consumes evidence or weakens cleanup ownership.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ToolError::Spawn`] when the child cannot be polled.
+    pub fn is_running(&mut self) -> Result<bool, ToolError> {
+        self.poll_status()?;
+        Ok(self.status.is_none())
+    }
+
+    /// Waits for normal completion under the invocation's original deadline.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same bounded process and output errors as [`Tool::probe`].
+    pub fn wait(self) -> Result<Outcome, ToolError> {
+        let timeout = self.tool.timeout;
+        self.wait_bounded(timeout)
+    }
+
+    /// Sends `SIGINT` to the owned process group and waits for bounded cleanup.
+    ///
+    /// `perf record` uses this path to flush its data file when the benchmark
+    /// workload finishes. If graceful cleanup exceeds `cleanup_timeout`, the
+    /// whole group is killed and reaped before a timeout error is returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns a bounded process/output error, including [`ToolError::Timeout`]
+    /// when interrupt cleanup does not finish in time.
+    pub fn interrupt_and_wait(mut self, cleanup_timeout: Duration) -> Result<Outcome, ToolError> {
+        self.poll_status()?;
+        if self.status.is_none() {
+            self.interrupt_process_group();
+        }
+        self.wait_bounded(cleanup_timeout)
+    }
+
+    fn poll_status(&mut self) -> Result<(), ToolError> {
+        if self.status.is_some() {
+            return Ok(());
+        }
+        let child = self.child.as_mut().expect("running tool retains its child");
+        self.status = child.try_wait().map_err(|source| ToolError::Spawn {
+            program: self.tool.program.clone(),
+            source,
+        })?;
+        Ok(())
+    }
+
+    fn wait_bounded(mut self, timeout: Duration) -> Result<Outcome, ToolError> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Err(error) = self.poll_status() {
+                self.terminate_and_reap();
+                return Err(error);
+            }
+            if self.status.is_some()
+                && readers_finished(self.stdout_reader.as_ref(), self.stderr_reader.as_ref())
+            {
+                break;
+            }
+            if Instant::now() >= deadline {
+                self.terminate_and_reap();
+                return Err(ToolError::Timeout {
+                    command: self.tool.redacted(),
+                    timeout,
+                });
+            }
+            thread::sleep(POLL_INTERVAL);
+        }
+        let status = self.status.expect("completed tool has an exit status");
+        let stdout = join_reader(self.stdout_reader.take(), "stdout").map_err(|source| {
+            ToolError::Spawn {
+                program: self.tool.program.clone(),
+                source,
+            }
+        })?;
+        let stderr = join_reader(self.stderr_reader.take(), "stderr").map_err(|source| {
+            ToolError::Spawn {
+                program: self.tool.program.clone(),
+                source,
+            }
+        })?;
+        self.child.take();
+        Ok(Outcome {
+            code: status.code(),
+            stdout: self.tool.decode_output(stdout, "stdout")?,
+            stderr: self.tool.decode_output(stderr, "stderr")?,
+            elapsed: self.started.elapsed(),
+        })
+    }
+
+    #[cfg(unix)]
+    fn interrupt_process_group(&mut self) {
+        if let Some(child) = self.child.as_ref() {
+            let _ = kill_process_group(Pid::from_child(child), Signal::INT);
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn interrupt_process_group(&mut self) {
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.kill();
+        }
+    }
+
+    fn terminate_and_reap(&mut self) {
+        let Some(child) = self.child.take() else {
+            return;
+        };
+        terminate_and_reap(child, self.stdout_reader.take(), self.stderr_reader.take());
+    }
+}
+
+impl Drop for RunningTool {
+    fn drop(&mut self) {
+        self.terminate_and_reap();
     }
 }
 
@@ -748,6 +869,46 @@ mod tests {
             .probe()
             .expect_err("a child beyond its deadline must fail closed");
         assert!(matches!(error, ToolError::Timeout { .. }), "{error:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_owned_running_tool_can_be_interrupted_and_reaped() {
+        if !Tool::exists("sh") || !Tool::exists("sleep") {
+            return;
+        }
+        let started = Instant::now();
+        let running = Tool::new("sh")
+            .args(["-c", "trap 'exit 0' INT; while :; do sleep 1; done"])
+            .spawn()
+            .expect("start interruptible tool");
+        thread::sleep(Duration::from_millis(30));
+        let _ = running
+            .interrupt_and_wait(Duration::from_secs(2))
+            .expect("SIGINT must finish and reap the owned group");
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interrupt_cleanup_is_bounded_and_kills_an_uncooperative_group() {
+        if !Tool::exists("sh") || !Tool::exists("sleep") {
+            return;
+        }
+        let started = Instant::now();
+        let running = Tool::new("sh")
+            .args(["-c", "trap '' INT TERM; while :; do sleep 1; done"])
+            .spawn()
+            .expect("start uncooperative tool");
+        thread::sleep(Duration::from_millis(30));
+        let error = running
+            .interrupt_and_wait(Duration::from_millis(40))
+            .expect_err("cleanup past its bound must fail closed");
+        assert!(matches!(error, ToolError::Timeout { .. }), "{error:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "cleanup must kill and reap the process group promptly"
+        );
     }
 
     #[cfg(unix)]

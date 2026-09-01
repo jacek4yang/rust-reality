@@ -744,6 +744,24 @@ fn drive_workload(
 /// [`RunError::Processes`] for launch/readiness failures; all partial resources
 /// are cleaned up by their guards.
 pub fn materialize(context: &SuiteContext<'_>) -> Result<Materialized, RunError> {
+    materialize_with_rust_log_level(context, None)
+}
+
+/// Materializes a tunnel suite with an explicit Rust event-observation level.
+///
+/// Ordinary comparative runs retain symmetric warn logging. A harness whose
+/// validity depends on structured runtime events must request their documented
+/// level before the server launches; changing the config after materialization
+/// would observe a different process than the measured one.
+///
+/// # Errors
+///
+/// Returns the same setup and process errors as [`materialize`], plus invalid
+/// generated-log configuration when `rust_log_level` is present.
+pub fn materialize_with_rust_log_level(
+    context: &SuiteContext<'_>,
+    rust_log_level: Option<&str>,
+) -> Result<Materialized, RunError> {
     let preflight = runner::preflight(&["curl"]);
     if !preflight.is_ready() {
         return Err(RunError::Setup(format!(
@@ -761,8 +779,12 @@ pub fn materialize(context: &SuiteContext<'_>) -> Result<Materialized, RunError>
         .map_err(RunError::Setup)?
         .try_into()
         .expect("four ports reserved");
-    let (rust_identity, xray_keys) =
+    let (mut rust_identity, xray_keys) =
         generate_identities(&workspace, context, ports[0]).map_err(RunError::Setup)?;
+    if let Some(level) = rust_log_level {
+        rust_identity.server_json =
+            set_rust_log_level(&rust_identity.server_json, level).map_err(RunError::Setup)?;
+    }
     write_configs(&workspace, context, &rust_identity, &xray_keys, ports)
         .map_err(RunError::Setup)?;
     let binaries = vec![rust, xray];

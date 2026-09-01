@@ -55,3 +55,4 @@ of the law is what it is.
 | [0011](0011-framed-loop-copy-allocation-complete.md) | The framed record loop is copy- and allocation-complete | Accepted (negative result) |
 | [0012](0012-relay-buffer-hypothesis-rejected.md) | The relay-buffer throughput hypothesis is rejected on mechanism | Rejected on mechanism |
 | [0013](0013-no-compiled-runtime-plan.md) | No compiled-runtime-plan construct | Accepted (negative result) |
+| [0014](0014-benchmark-owned-whole-session-profiling.md) | Whole-session profiling is owned by the benchmark transaction | Accepted |

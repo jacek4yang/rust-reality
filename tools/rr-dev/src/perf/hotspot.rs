@@ -29,7 +29,7 @@ use crate::{
     },
     hash,
     perf::{json_in, json_out::Json},
-    process::{Outcome, Tool},
+    process::{Outcome, RunningTool, Tool},
 };
 
 #[path = "hotspot_bundle.rs"]
@@ -46,6 +46,8 @@ const PERF_DEADLINE_EXIT_CODE: i32 = 124;
 const PERF_KILL_AFTER_SECONDS: u64 = 5;
 const PERF_STDOUT: &str = "perf.stdout";
 const PERF_STDERR: &str = "perf.stderr";
+const PERF_INTERRUPT_GRACE: Duration = Duration::from_secs(5);
+const PERF_ATTACH_SETTLE: Duration = Duration::from_millis(100);
 
 /// Which process supplies samples to `perf record`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +100,39 @@ pub struct Plan {
     pub call_graph: String,
 }
 
+/// Bounded `perf record` settings for a benchmark-owned capture.
+#[derive(Debug, Clone)]
+pub struct BenchmarkProfile {
+    /// Hard maximum duration of the perf child.
+    pub record_seconds: u64,
+    /// `perf record` event selector.
+    pub event: String,
+    /// Sampling frequency.
+    pub frequency: u32,
+    /// `perf record --call-graph` value.
+    pub call_graph: String,
+}
+
+impl Default for BenchmarkProfile {
+    fn default() -> Self {
+        Self {
+            record_seconds: 35,
+            event: "cycles:u".to_owned(),
+            frequency: 999,
+            call_graph: "fp".to_owned(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum CaptureAuthority {
+    Command,
+    Benchmark {
+        suite: String,
+        benchmark_run_id: String,
+    },
+}
+
 #[derive(Debug, Clone)]
 struct ProcessIdentity {
     pid: u32,
@@ -113,6 +148,7 @@ struct Status {
     perf_exit: Option<i32>,
     perf_elapsed_millis: Option<u64>,
     perf_deadline_reached: Option<bool>,
+    perf_benchmark_stopped: Option<bool>,
     workload_exit: Option<i32>,
     process: Option<ProcessIdentity>,
 }
@@ -137,6 +173,21 @@ enum ContractState<'a> {
     Complete(&'a str),
 }
 
+/// One live perf child owned by the benchmark transaction that already owns the
+/// host lock and exact server process.
+pub struct BenchmarkCapture<'a> {
+    plan: Plan,
+    authority: CaptureAuthority,
+    lock: &'a HostLock,
+    binary: identity::Binary,
+    build_id: String,
+    run_dir: RunDirectory,
+    archived: PathBuf,
+    status: Status,
+    perf: Option<RunningTool>,
+    finalized: bool,
+}
+
 fn valid_hex(value: &str, length: usize) -> bool {
     value.len() == length
         && value
@@ -152,6 +203,35 @@ fn validate_call_graph(value: &str) -> bool {
         .strip_prefix("dwarf,")
         .and_then(|bytes| bytes.parse::<u32>().ok())
         .is_some_and(|bytes| bytes > 0 && bytes <= MAX_DWARF_BYTES)
+}
+
+fn safe_component(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+/// Validates benchmark-owned capture settings without touching the host.
+///
+/// # Errors
+///
+/// Returns the first violated perf bound.
+pub fn validate_benchmark_profile(profile: &BenchmarkProfile) -> Result<(), String> {
+    if profile.record_seconds == 0 || profile.record_seconds > MAX_RECORD_SECONDS {
+        return Err("profile record seconds must be in 1..=300".to_owned());
+    }
+    if profile.frequency == 0 || profile.frequency > MAX_FREQUENCY {
+        return Err("profile frequency must be in 1..=9999".to_owned());
+    }
+    if profile.event.is_empty() {
+        return Err("profile event must not be empty".to_owned());
+    }
+    if !validate_call_graph(&profile.call_graph) {
+        return Err("profile call graph must be fp, lbr, dwarf, or dwarf,BYTES<=65528".to_owned());
+    }
+    Ok(())
 }
 
 /// Validates a plan without touching the host.
@@ -186,8 +266,7 @@ pub fn validate(plan: &Plan) -> Result<(), String> {
     if plan.duration_ms == 0 || plan.duration_ms > MAX_DURATION_MS {
         return Err("--duration-ms must be in 1..=600000".to_owned());
     }
-    if !(MIN_BENCHMARK_WARMUP_MS..=MAX_BENCHMARK_WARMUP_MS).contains(&plan.warmup_ms)
-    {
+    if !(MIN_BENCHMARK_WARMUP_MS..=MAX_BENCHMARK_WARMUP_MS).contains(&plan.warmup_ms) {
         return Err("--warmup-ms must be in 1..=10000".to_owned());
     }
     if plan.frequency == 0 || plan.frequency > MAX_FREQUENCY {
@@ -208,7 +287,11 @@ pub fn validate(plan: &Plan) -> Result<(), String> {
     }
 }
 
-fn inspect_process(pid: u32, expected_sha: &str, expected_build_id: &str) -> Result<ProcessIdentity, String> {
+fn inspect_process(
+    pid: u32,
+    expected_sha: &str,
+    expected_build_id: &str,
+) -> Result<ProcessIdentity, String> {
     let starttime = proc_starttime(pid).ok_or_else(|| format!("PID {pid} is not alive"))?;
     let sha256 = attest::running_executable_sha256(pid)?;
     if sha256 != expected_sha {
@@ -242,10 +325,7 @@ fn verify_process(identity: &mut ProcessIdentity) -> Result<(), String> {
         ));
     }
     let sha256 = attest::running_executable_sha256(identity.pid)?;
-    let build_id = attest::build_id(&PathBuf::from(format!(
-        "/proc/{}/exe",
-        identity.pid
-    )))?;
+    let build_id = attest::build_id(&PathBuf::from(format!("/proc/{}/exe", identity.pid)))?;
     if sha256 != identity.sha256_pre || build_id != identity.build_id_pre {
         return Err(format!(
             "PID {} executable identity changed during profile capture",
@@ -266,8 +346,13 @@ fn tool_stdout(program: &str, args: &[&str]) -> String {
         .map_or_else(String::new, |outcome| outcome.trimmed_stdout().to_owned())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "capture metadata records each independently verified identity and lifecycle input"
+)]
 fn metadata(
     plan: &Plan,
+    authority: &CaptureAuthority,
     state: &str,
     exit_code: Option<i32>,
     binary: &identity::Binary,
@@ -312,12 +397,19 @@ fn metadata(
         ),
         ("runId", Json::string(&plan.run_id)),
         ("mode", Json::string(plan.mode.as_str())),
+        ("captureAuthority", authority_json(authority)),
         (
             "updatedAt",
             Json::string(utc_timestamp(i64::try_from(now).unwrap_or(i64::MAX))),
         ),
-        ("sourceBinary", Json::string(binary.path.display().to_string())),
-        ("archivedBinary", Json::string(archived.display().to_string())),
+        (
+            "sourceBinary",
+            Json::string(binary.path.display().to_string()),
+        ),
+        (
+            "archivedBinary",
+            Json::string(archived.display().to_string()),
+        ),
         ("binarySha256", Json::string(&binary.sha256)),
         ("binaryBuildId", Json::string(build_id)),
         (
@@ -351,6 +443,10 @@ fn metadata(
                 (
                     "deadlineReached",
                     status.perf_deadline_reached.map_or(Json::Null, Json::Bool),
+                ),
+                (
+                    "benchmarkStopped",
+                    status.perf_benchmark_stopped.map_or(Json::Null, Json::Bool),
                 ),
             ]),
         ),
@@ -393,6 +489,20 @@ fn metadata(
     ])
 }
 
+fn authority_json(authority: &CaptureAuthority) -> Json {
+    match authority {
+        CaptureAuthority::Command => Json::object([("owner", Json::string("perf-command"))]),
+        CaptureAuthority::Benchmark {
+            suite,
+            benchmark_run_id,
+        } => Json::object([
+            ("owner", Json::string("benchmark-transaction")),
+            ("suite", Json::string(suite)),
+            ("benchmarkRunId", Json::string(benchmark_run_id)),
+        ]),
+    }
+}
+
 trait ThenOr {
     fn then_or<F>(self, otherwise: Json, value: F) -> Json
     where
@@ -411,6 +521,7 @@ impl ThenOr for bool {
 fn contract(
     plan: &Plan,
     state: ContractState<'_>,
+    authority: &CaptureAuthority,
     lock: &HostLock,
     binary: &identity::Binary,
     build_id: &str,
@@ -432,6 +543,7 @@ fn contract(
         ("schemaVersion", Json::Int(2)),
         ("runId", Json::string(&plan.run_id)),
         ("collector", Json::string("perf-hotspot")),
+        ("captureAuthority", authority_json(authority)),
         ("phase", Json::string(phase)),
         (
             "exitCode",
@@ -451,10 +563,7 @@ fn contract(
                 ("path", Json::string(binary.path.display().to_string())),
                 ("sha256", Json::string(&binary.sha256)),
                 ("buildId", Json::string(build_id)),
-                (
-                    "sourceCommit",
-                    Json::string(&plan.expected_source_commit),
-                ),
+                ("sourceCommit", Json::string(&plan.expected_source_commit)),
             ]),
         ),
         ("perfData", perf_data),
@@ -523,6 +632,15 @@ fn perf_tool(plan: &Plan, pid: u32, perf_data: &Path) -> Tool {
     ])
 }
 
+fn benchmark_perf_tool(plan: &Plan, pid: u32, run_dir: &RunDirectory) -> Tool {
+    perf_tool(plan, pid, &run_dir.join("perf.data"))
+        .timeout(Duration::from_secs(
+            plan.record_seconds + PERF_KILL_AFTER_SECONDS + 1,
+        ))
+        .capture_limit(MAX_PERF_OUTPUT_BYTES)
+        .log_output(run_dir.join(PERF_STDOUT), run_dir.join(PERF_STDERR))
+}
+
 fn perf_completion(
     exit_code: i32,
     elapsed: Duration,
@@ -558,80 +676,18 @@ fn perf_failure(run_dir: &RunDirectory, exit_code: i32) -> String {
     )
 }
 
-fn execute(
+fn verify_capture_evidence(
     plan: &Plan,
     run_dir: &RunDirectory,
     binary: &identity::Binary,
     build_id: &str,
     archived: &Path,
-    status: &mut Status,
 ) -> Result<(), String> {
     let perf_data = run_dir.join("perf.data");
-    let benchmark_json = run_dir.join("benchmark.json");
-    let benchmark_stderr = run_dir.join("benchmark.stderr");
-    let mut owned = match plan.mode {
-        Mode::BuiltIn => {
-            let mut child = Child::spawn_split_isolated(
-                "built-in hotspot workload",
-                &binary.path,
-                &[
-                    "benchmark".to_owned(),
-                    "--duration-ms".to_owned(),
-                    plan.duration_ms.to_string(),
-                    "--warmup-ms".to_owned(),
-                    plan.warmup_ms.to_string(),
-                ],
-                &plan.repo,
-                &[(
-                    "PATH".to_owned(),
-                    "/usr/local/bin:/usr/bin:/bin".to_owned(),
-                )],
-                &benchmark_json,
-                &benchmark_stderr,
-            )
-            .map_err(|error| error.to_string())?;
-            std::thread::sleep(Duration::from_millis(500));
-            if !child.is_alive() {
-                return Err(format!(
-                    "built-in benchmark exited before perf attached; see {}",
-                    benchmark_stderr.display()
-                ));
-            }
-            status.process = Some(inspect_process(child.pid(), &binary.sha256, build_id)?);
-            Some(child)
-        }
-        Mode::AttachServer => {
-            let pid = plan.server_pid.expect("validated attach PID");
-            status.process = Some(inspect_process(pid, &binary.sha256, build_id)?);
-            None
-        }
-    };
-    let pid = status
-        .process
-        .as_ref()
-        .expect("process identity recorded")
-        .pid;
-    let perf = record_perf(plan, run_dir, pid, &perf_data)?;
-    status.perf_exit = Some(perf.exit_code);
-    status.perf_elapsed_millis = Some(perf.elapsed_millis);
-    status.perf_deadline_reached = Some(perf.completion == Some(PerfCompletion::Deadline));
-    if let Some(child) = owned.as_mut() {
-        status.workload_exit = Some(child.wait()?);
-    } else if perf.completion.is_some()
-        && let Some(process) = status.process.as_mut()
+    if !perf_data
+        .metadata()
+        .is_ok_and(|metadata| metadata.len() > 0)
     {
-        verify_process(process)?;
-    }
-    if perf.completion.is_none() {
-        return Err(perf_failure(run_dir, perf.exit_code));
-    }
-    if status.workload_exit.is_some_and(|code| code != 0) {
-        return Err(format!(
-            "built-in workload failed with exit code {}",
-            status.workload_exit.unwrap_or(128)
-        ));
-    }
-    if !perf_data.metadata().is_ok_and(|metadata| metadata.len() > 0) {
         return Err("perf produced no data".to_owned());
     }
     let uid = numeric_id("-u")?;
@@ -646,6 +702,7 @@ fn execute(
         .run()
         .map_err(|error| format!("could not take ownership of perf data: {error}"))?;
     if plan.mode == Mode::BuiltIn {
+        let benchmark_json = run_dir.join("benchmark.json");
         let raw = std::fs::read_to_string(&benchmark_json)
             .map_err(|error| format!("could not read {}: {error}", benchmark_json.display()))?;
         let measured = json_in::parse(&raw)
@@ -728,14 +785,7 @@ fn execute(
     Ok(())
 }
 
-/// Captures and publishes an identity-bound hotspot profile.
-///
-/// # Errors
-///
-/// Returns a setup, mechanism, identity or publication diagnostic. An output
-/// directory created before failure remains visibly marked `FAILED`.
-pub fn run(plan: &Plan) -> Result<String, String> {
-    validate(plan)?;
+fn capture_preflight() -> Result<(), String> {
     for program in [
         "hostname", "id", "perf", "readelf", "sudo", "timeout", "uname",
     ] {
@@ -750,22 +800,14 @@ pub fn run(plan: &Plan) -> Result<String, String> {
     if !sudo.success() {
         return Err("passwordless sudo is required for perf".to_owned());
     }
-    let lock = HostLock::acquire(&runner::default_lock_path())?;
-    let binary = identity::register(
-        "rust-reality",
-        &plan.binary,
-        &plan.binary_sha256,
-        Kind::Rust,
-    )?;
-    let observed_commit = identity::embedded_commit(&binary.identity)?;
-    if observed_commit != plan.expected_source_commit {
-        return Err(format!(
-            "rust-reality embedded commit mismatch: expected {}, got {observed_commit}",
-            plan.expected_source_commit
-        ));
-    }
-    let build_id = attest::build_id(&binary.path)?;
-    let run_dir = RunDirectory::create(&plan.out_dir)?;
+    Ok(())
+}
+
+fn archive_binary(
+    run_dir: &RunDirectory,
+    binary: &identity::Binary,
+    build_id: &str,
+) -> Result<PathBuf, String> {
     let binary_dir = run_dir.join("binary");
     std::fs::create_dir(&binary_dir)
         .map_err(|error| format!("could not create {}: {error}", binary_dir.display()))?;
@@ -785,36 +827,417 @@ pub fn run(plan: &Plan) -> Result<String, String> {
     if hash::sha256_file(&archived)? != binary.sha256 || attest::build_id(&archived)? != build_id {
         return Err("archived binary identity changed during copy".to_owned());
     }
+    Ok(archived)
+}
+
+impl BenchmarkCapture<'_> {
+    /// Starts a perf child under the benchmark transaction's existing host lock.
+    ///
+    /// The caller supplies the already-registered candidate and its exact live
+    /// server PID. This function never acquires or bypasses a host lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns a preflight, identity, spawn or evidence-initialization error.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the capture boundary receives each independently verified authority input"
+    )]
+    pub fn start<'a>(
+        lock: &'a HostLock,
+        binary: &identity::Binary,
+        build_id: &str,
+        server_pid: u32,
+        suite: &str,
+        benchmark_run_id: &str,
+        out_dir: PathBuf,
+        profile: &BenchmarkProfile,
+    ) -> Result<BenchmarkCapture<'a>, String> {
+        validate_benchmark_profile(profile)?;
+        if !safe_component(suite) || !safe_component(benchmark_run_id) {
+            return Err("profile suite and benchmark run ID must be safe components".to_owned());
+        }
+        capture_preflight()?;
+        let expected_source_commit = identity::embedded_commit(&binary.identity)?;
+        let plan = Plan {
+            repo: PathBuf::new(),
+            mode: Mode::AttachServer,
+            binary: binary.path.clone(),
+            binary_sha256: binary.sha256.clone(),
+            expected_source_commit,
+            server_pid: Some(server_pid),
+            out_dir,
+            run_id: format!("{benchmark_run_id}-hotspot"),
+            record_seconds: profile.record_seconds,
+            duration_ms: MIN_BENCHMARK_WARMUP_MS,
+            warmup_ms: MIN_BENCHMARK_WARMUP_MS,
+            event: profile.event.clone(),
+            frequency: profile.frequency,
+            call_graph: profile.call_graph.clone(),
+        };
+        validate(&plan)?;
+        if attest::build_id(&binary.path)? != build_id {
+            return Err("registered benchmark binary Build ID changed before profiling".to_owned());
+        }
+        let authority = CaptureAuthority::Benchmark {
+            suite: suite.to_owned(),
+            benchmark_run_id: benchmark_run_id.to_owned(),
+        };
+        let run_dir = RunDirectory::create(&plan.out_dir)?;
+        let archived = archive_binary(&run_dir, binary, build_id)?;
+        let status = Status {
+            process: Some(inspect_process(server_pid, &binary.sha256, build_id)?),
+            ..Status::default()
+        };
+        run_dir.write_new(
+            "run-contract.json",
+            &contract(
+                &plan,
+                ContractState::Running,
+                &authority,
+                lock,
+                binary,
+                build_id,
+            )
+            .to_python_json(),
+        )?;
+        atomic_metadata(
+            &run_dir.join("metadata.json"),
+            &metadata(
+                &plan, &authority, "RUNNING", None, binary, build_id, &archived, &status,
+            ),
+        )?;
+        let mut capture = BenchmarkCapture {
+            plan,
+            authority,
+            lock,
+            binary: binary.clone(),
+            build_id: build_id.to_owned(),
+            run_dir,
+            archived,
+            status,
+            perf: None,
+            finalized: false,
+        };
+        let perf = benchmark_perf_tool(&capture.plan, server_pid, &capture.run_dir)
+            .spawn()
+            .map_err(|error| format!("perf record mechanism failed: {error}"))?;
+        capture.perf = Some(perf);
+        std::thread::sleep(PERF_ATTACH_SETTLE);
+        let running = capture
+            .perf
+            .as_mut()
+            .expect("capture owns perf")
+            .is_running()
+            .map_err(|error| format!("perf record mechanism failed: {error}"))?;
+        if !running {
+            let outcome = capture
+                .perf
+                .take()
+                .expect("capture owns completed perf")
+                .wait()
+                .map_err(|error| format!("perf record mechanism failed: {error}"))?;
+            capture.status.perf_exit = outcome.code;
+            return Err(perf_failure(&capture.run_dir, outcome.code.unwrap_or(128)));
+        }
+        Ok(capture)
+    }
+
+    /// Stops perf after the workload, verifies the same live process and binary,
+    /// and publishes an ordinary hotspot capture accepted by the bundle pipeline.
+    ///
+    /// # Errors
+    ///
+    /// Returns a cleanup, target-liveness, identity, perf or publication error.
+    pub fn finish(mut self) -> Result<PathBuf, String> {
+        let result = self.finish_inner();
+        if let Err(error) = &result {
+            self.mark_failed(error);
+        }
+        self.finalized = true;
+        result.map(|()| self.plan.out_dir.clone())
+    }
+
+    /// Cancels a capture because its enclosing workload failed, while still
+    /// requiring bounded perf cleanup before the benchmark can return.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the perf child cannot be cleaned up within the bound.
+    pub fn cancel(mut self, reason: &str) -> Result<(), String> {
+        let cleanup = self.stop_perf();
+        let failure = match &cleanup {
+            Ok(_) => reason.to_owned(),
+            Err(error) => format!("{reason}; profile cleanup failed: {error}"),
+        };
+        self.mark_failed(&failure);
+        self.finalized = true;
+        cleanup.map(|_| ())
+    }
+
+    fn stop_perf(&mut self) -> Result<(Outcome, bool), String> {
+        let mut perf = self
+            .perf
+            .take()
+            .ok_or_else(|| "benchmark capture no longer owns its perf record child".to_owned())?;
+        let running = perf
+            .is_running()
+            .map_err(|error| format!("perf record mechanism failed: {error}"))?;
+        let outcome = if running {
+            perf.interrupt_and_wait(PERF_INTERRUPT_GRACE)
+        } else {
+            perf.wait()
+        }
+        .map_err(|error| format!("perf record cleanup failed: {error}"))?;
+        // An intentional benchmark stop commonly terminates the sudo/timeout
+        // wrapper by signal even though perf flushed valid data. Preserve that
+        // distinction as a null exit code; `benchmarkStopped` records why it is
+        // admissible, while a manufactured numeric code would look like a
+        // contradictory failure in otherwise complete evidence.
+        self.status.perf_exit = outcome.code;
+        self.status.perf_elapsed_millis =
+            Some(u64::try_from(outcome.elapsed.as_millis()).unwrap_or(u64::MAX));
+        self.status.perf_deadline_reached = Some(
+            !running
+                && perf_completion(
+                    outcome.code.unwrap_or(128),
+                    outcome.elapsed,
+                    self.plan.record_seconds,
+                ) == Some(PerfCompletion::Deadline),
+        );
+        self.status.perf_benchmark_stopped = Some(running);
+        Ok((outcome, running))
+    }
+
+    fn finish_inner(&mut self) -> Result<(), String> {
+        let process_result = verify_process(
+            self.status
+                .process
+                .as_mut()
+                .expect("benchmark capture records its process identity"),
+        );
+        let (outcome, interrupted) = self.stop_perf()?;
+        process_result?;
+        let deadline = perf_completion(
+            outcome.code.unwrap_or(128),
+            outcome.elapsed,
+            self.plan.record_seconds,
+        ) == Some(PerfCompletion::Deadline);
+        if !interrupted && !deadline {
+            return Err(format!(
+                "perf record exited before benchmark completion with code {}",
+                outcome.code.unwrap_or(128)
+            ));
+        }
+        if interrupted && !matches!(outcome.code, Some(0 | 130) | None) {
+            return Err(perf_failure(&self.run_dir, outcome.code.unwrap_or(128)));
+        }
+        verify_capture_evidence(
+            &self.plan,
+            &self.run_dir,
+            &self.binary,
+            &self.build_id,
+            &self.archived,
+        )?;
+        let perf_data_sha256 = hash::sha256_file(&self.run_dir.join("perf.data"))?;
+        atomic_metadata(
+            &self.run_dir.join("metadata.json"),
+            &metadata(
+                &self.plan,
+                &self.authority,
+                "COMPLETE",
+                Some(0),
+                &self.binary,
+                &self.build_id,
+                &self.archived,
+                &self.status,
+            ),
+        )?;
+        self.run_dir
+            .publish(
+                Publication::Contract,
+                &contract(
+                    &self.plan,
+                    ContractState::Complete(&perf_data_sha256),
+                    &self.authority,
+                    self.lock,
+                    &self.binary,
+                    &self.build_id,
+                )
+                .to_python_json(),
+                &self.plan.run_id,
+                "perf-hotspot",
+            )
+            .map(|_| ())
+    }
+
+    fn mark_failed(&self, error: &str) {
+        let _ = atomic_metadata(
+            &self.run_dir.join("metadata.json"),
+            &metadata(
+                &self.plan,
+                &self.authority,
+                "FAILED",
+                Some(1),
+                &self.binary,
+                &self.build_id,
+                &self.archived,
+                &self.status,
+            ),
+        );
+        let failed = contract(
+            &self.plan,
+            ContractState::Failed(error),
+            &self.authority,
+            self.lock,
+            &self.binary,
+            &self.build_id,
+        );
+        let _ = std::fs::write(
+            self.run_dir.join("run-contract.json"),
+            failed.to_python_json(),
+        );
+    }
+}
+
+impl Drop for BenchmarkCapture<'_> {
+    fn drop(&mut self) {
+        if self.finalized {
+            return;
+        }
+        if let Some(perf) = self.perf.take() {
+            let _ = perf.interrupt_and_wait(PERF_INTERRUPT_GRACE);
+        }
+        self.mark_failed("benchmark capture dropped before explicit finalization");
+    }
+}
+
+fn execute(
+    plan: &Plan,
+    run_dir: &RunDirectory,
+    binary: &identity::Binary,
+    build_id: &str,
+    archived: &Path,
+    status: &mut Status,
+) -> Result<(), String> {
+    let perf_data = run_dir.join("perf.data");
+    let benchmark_json = run_dir.join("benchmark.json");
+    let benchmark_stderr = run_dir.join("benchmark.stderr");
+    let mut owned = match plan.mode {
+        Mode::BuiltIn => {
+            let mut child = Child::spawn_split_isolated(
+                "built-in hotspot workload",
+                &binary.path,
+                &[
+                    "benchmark".to_owned(),
+                    "--duration-ms".to_owned(),
+                    plan.duration_ms.to_string(),
+                    "--warmup-ms".to_owned(),
+                    plan.warmup_ms.to_string(),
+                ],
+                &plan.repo,
+                &[("PATH".to_owned(), "/usr/local/bin:/usr/bin:/bin".to_owned())],
+                &benchmark_json,
+                &benchmark_stderr,
+            )
+            .map_err(|error| error.to_string())?;
+            std::thread::sleep(Duration::from_millis(500));
+            if !child.is_alive() {
+                return Err(format!(
+                    "built-in benchmark exited before perf attached; see {}",
+                    benchmark_stderr.display()
+                ));
+            }
+            status.process = Some(inspect_process(child.pid(), &binary.sha256, build_id)?);
+            Some(child)
+        }
+        Mode::AttachServer => {
+            let pid = plan.server_pid.expect("validated attach PID");
+            status.process = Some(inspect_process(pid, &binary.sha256, build_id)?);
+            None
+        }
+    };
+    let pid = status
+        .process
+        .as_ref()
+        .expect("process identity recorded")
+        .pid;
+    let perf = record_perf(plan, run_dir, pid, &perf_data)?;
+    status.perf_exit = Some(perf.exit_code);
+    status.perf_elapsed_millis = Some(perf.elapsed_millis);
+    status.perf_deadline_reached = Some(perf.completion == Some(PerfCompletion::Deadline));
+    if let Some(child) = owned.as_mut() {
+        status.workload_exit = Some(child.wait()?);
+    } else if perf.completion.is_some()
+        && let Some(process) = status.process.as_mut()
+    {
+        verify_process(process)?;
+    }
+    if perf.completion.is_none() {
+        return Err(perf_failure(run_dir, perf.exit_code));
+    }
+    if status.workload_exit.is_some_and(|code| code != 0) {
+        return Err(format!(
+            "built-in workload failed with exit code {}",
+            status.workload_exit.unwrap_or(128)
+        ));
+    }
+    verify_capture_evidence(plan, run_dir, binary, build_id, archived)
+}
+
+/// Captures and publishes an identity-bound hotspot profile.
+///
+/// # Errors
+///
+/// Returns a setup, mechanism, identity or publication diagnostic. An output
+/// directory created before failure remains visibly marked `FAILED`.
+pub fn run(plan: &Plan) -> Result<String, String> {
+    validate(plan)?;
+    capture_preflight()?;
+    let lock = HostLock::acquire(&runner::default_lock_path())?;
+    let authority = CaptureAuthority::Command;
+    let binary = identity::register(
+        "rust-reality",
+        &plan.binary,
+        &plan.binary_sha256,
+        Kind::Rust,
+    )?;
+    let observed_commit = identity::embedded_commit(&binary.identity)?;
+    if observed_commit != plan.expected_source_commit {
+        return Err(format!(
+            "rust-reality embedded commit mismatch: expected {}, got {observed_commit}",
+            plan.expected_source_commit
+        ));
+    }
+    let build_id = attest::build_id(&binary.path)?;
+    let run_dir = RunDirectory::create(&plan.out_dir)?;
+    let archived = archive_binary(&run_dir, &binary, &build_id)?;
     run_dir.write_new(
         "run-contract.json",
-        &contract(plan, ContractState::Running, &lock, &binary, &build_id).to_python_json(),
+        &contract(
+            plan,
+            ContractState::Running,
+            &authority,
+            &lock,
+            &binary,
+            &build_id,
+        )
+        .to_python_json(),
     )?;
     let mut status = Status::default();
     let metadata_path = run_dir.join("metadata.json");
     atomic_metadata(
         &metadata_path,
         &metadata(
-            plan,
-            "RUNNING",
-            None,
-            &binary,
-            &build_id,
-            &archived,
-            &status,
+            plan, &authority, "RUNNING", None, &binary, &build_id, &archived, &status,
         ),
     )?;
-    if let Err(error) = execute(
-        plan,
-        &run_dir,
-        &binary,
-        &build_id,
-        &archived,
-        &mut status,
-    ) {
+    if let Err(error) = execute(plan, &run_dir, &binary, &build_id, &archived, &mut status) {
         let _ = atomic_metadata(
             &metadata_path,
             &metadata(
                 plan,
+                &authority,
                 "FAILED",
                 Some(1),
                 &binary,
@@ -826,6 +1249,7 @@ pub fn run(plan: &Plan) -> Result<String, String> {
         let failed = contract(
             plan,
             ContractState::Failed(&error),
+            &authority,
             &lock,
             &binary,
             &build_id,
@@ -838,6 +1262,7 @@ pub fn run(plan: &Plan) -> Result<String, String> {
         &metadata_path,
         &metadata(
             plan,
+            &authority,
             "COMPLETE",
             Some(0),
             &binary,
@@ -851,6 +1276,7 @@ pub fn run(plan: &Plan) -> Result<String, String> {
         &contract(
             plan,
             ContractState::Complete(&perf_data_sha256),
+            &authority,
             &lock,
             &binary,
             &build_id,
@@ -914,6 +1340,24 @@ mod tests {
         }
     }
 
+    fn live_binary() -> (identity::Binary, String) {
+        let path = std::env::current_exe()
+            .expect("current executable")
+            .canonicalize()
+            .expect("canonical current executable");
+        let sha256 = hash::sha256_file(&path).expect("hash current executable");
+        let build_id = attest::build_id(&path).expect("current executable Build ID");
+        (
+            identity::Binary {
+                label: "rust-reality".to_owned(),
+                path,
+                sha256,
+                identity: format!("{{\"gitCommit\":\"{}\"}}", "a".repeat(40)),
+            },
+            build_id,
+        )
+    }
+
     #[test]
     fn bounded_capture_arguments_are_validated() {
         assert!(validate(&plan()).is_ok());
@@ -955,6 +1399,195 @@ mod tests {
             &format!("0123 /tmp/{expected}/rust-reality\n"),
             expected
         ));
+    }
+
+    #[test]
+    fn process_identity_is_bound_to_the_exact_pid_sha_and_build_id() {
+        let (binary, build_id) = live_binary();
+        let pid = std::process::id();
+        let identity = inspect_process(pid, &binary.sha256, &build_id)
+            .expect("the current process has the registered identity");
+        assert_eq!(identity.pid, pid);
+
+        let wrong_sha = "0".repeat(64);
+        let error = inspect_process(pid, &wrong_sha, &build_id).unwrap_err();
+        assert!(error.contains("executable SHA-256 mismatch"), "{error}");
+
+        let error = inspect_process(pid, &binary.sha256, "00").unwrap_err();
+        assert!(error.contains("executable Build ID mismatch"), "{error}");
+    }
+
+    #[test]
+    fn target_exit_is_detected_before_capture_publication() {
+        if !Tool::exists("sleep") {
+            return;
+        }
+        let sleep = crate::process::which("sleep").expect("resolved sleep");
+        let sha256 = hash::sha256_file(&sleep).expect("hash sleep");
+        let build_id = attest::build_id(&sleep).expect("sleep Build ID");
+        let mut child = std::process::Command::new(&sleep)
+            .arg("30")
+            .spawn()
+            .expect("start target");
+        let mut identity =
+            inspect_process(child.id(), &sha256, &build_id).expect("bind the running target");
+        child.kill().expect("kill target");
+        child.wait().expect("reap target");
+        let error = verify_process(&mut identity).unwrap_err();
+        assert!(error.contains("exited during profile capture"), "{error}");
+    }
+
+    #[test]
+    fn benchmark_owned_contract_uses_one_lock_and_is_bundle_admissible() {
+        let scratch = Scratch::new("benchmark-bundle-admission");
+        let lock_path = scratch.join("exclusive.lock");
+        let lock = HostLock::acquire(&lock_path).expect("benchmark owns host lock");
+        assert!(
+            HostLock::acquire(&lock_path).is_err(),
+            "no independent measurement authority can acquire the same host lock"
+        );
+        let (binary, build_id) = live_binary();
+        let root = scratch.join("run");
+        let mut plan = plan();
+        plan.mode = Mode::AttachServer;
+        plan.binary = binary.path.clone();
+        plan.binary_sha256.clone_from(&binary.sha256);
+        plan.server_pid = Some(std::process::id());
+        plan.out_dir.clone_from(&root);
+        plan.run_id = "benchmark-owned-hotspot".to_owned();
+        let authority = CaptureAuthority::Benchmark {
+            suite: "setup-rate".to_owned(),
+            benchmark_run_id: "setup-rate-test".to_owned(),
+        };
+        let run = RunDirectory::create(&root).expect("create capture");
+        let archived = archive_binary(&run, &binary, &build_id).expect("archive exact binary");
+        let status = Status {
+            process: Some(
+                inspect_process(std::process::id(), &binary.sha256, &build_id)
+                    .expect("bind exact current PID"),
+            ),
+            perf_exit: None,
+            perf_elapsed_millis: Some(100),
+            perf_deadline_reached: Some(false),
+            perf_benchmark_stopped: Some(true),
+            workload_exit: None,
+        };
+        std::fs::write(run.join("perf.data"), b"identity-bound perf fixture")
+            .expect("write perf fixture");
+        let perf_sha = hash::sha256_file(&run.join("perf.data")).expect("hash perf fixture");
+        atomic_metadata(
+            &run.join("metadata.json"),
+            &metadata(
+                &plan,
+                &authority,
+                "COMPLETE",
+                Some(0),
+                &binary,
+                &build_id,
+                &archived,
+                &status,
+            ),
+        )
+        .expect("write complete metadata");
+        run.publish(
+            Publication::Contract,
+            &contract(
+                &plan,
+                ContractState::Complete(&perf_sha),
+                &authority,
+                &lock,
+                &binary,
+                &build_id,
+            )
+            .to_python_json(),
+            &plan.run_id,
+            "perf-hotspot",
+        )
+        .expect("publish capture");
+
+        bundle::admit_capture(&root)
+            .expect("existing hotspot-bundle admission accepts benchmark capture");
+        assert_eq!(
+            hash::sha256_file(&archived).expect("hash archived binary"),
+            binary.sha256,
+            "admission uses the captured exact ELF, not a surrogate"
+        );
+        let contract_text =
+            std::fs::read_to_string(run.join("run-contract.json")).expect("read contract");
+        assert!(contract_text.contains("benchmark-transaction"));
+        assert!(contract_text.contains(lock.device_inode()));
+        let metadata_text =
+            std::fs::read_to_string(run.join("metadata.json")).expect("read metadata");
+        assert!(metadata_text.contains("\"exitCode\": null"));
+        assert!(metadata_text.contains("\"benchmarkStopped\": true"));
+    }
+
+    #[test]
+    fn a_failed_benchmark_capture_never_publishes_completion() {
+        let scratch = Scratch::new("benchmark-profile-failure");
+        let lock = HostLock::acquire(&scratch.join("exclusive.lock")).expect("lock");
+        let (binary, build_id) = live_binary();
+        let root = scratch.join("run");
+        let mut plan = plan();
+        plan.mode = Mode::AttachServer;
+        plan.binary = binary.path.clone();
+        plan.binary_sha256.clone_from(&binary.sha256);
+        plan.server_pid = Some(std::process::id());
+        plan.out_dir.clone_from(&root);
+        let authority = CaptureAuthority::Benchmark {
+            suite: "setup-rate".to_owned(),
+            benchmark_run_id: "failure-test".to_owned(),
+        };
+        let run_dir = RunDirectory::create(&root).expect("run directory");
+        let archived = archive_binary(&run_dir, &binary, &build_id).expect("archive");
+        run_dir
+            .write_new(
+                "run-contract.json",
+                &contract(
+                    &plan,
+                    ContractState::Running,
+                    &authority,
+                    &lock,
+                    &binary,
+                    &build_id,
+                )
+                .to_python_json(),
+            )
+            .expect("running contract");
+        atomic_metadata(
+            &run_dir.join("metadata.json"),
+            &metadata(
+                &plan,
+                &authority,
+                "RUNNING",
+                None,
+                &binary,
+                &build_id,
+                &archived,
+                &Status::default(),
+            ),
+        )
+        .expect("running metadata");
+        let mut capture = BenchmarkCapture {
+            plan,
+            authority,
+            lock: &lock,
+            binary,
+            build_id,
+            run_dir,
+            archived,
+            status: Status::default(),
+            perf: None,
+            finalized: false,
+        };
+        capture.mark_failed("injected perf failure");
+        capture.finalized = true;
+        drop(capture);
+        assert!(!root.join("run-completion.json").exists());
+        let contract = std::fs::read_to_string(root.join("run-contract.json"))
+            .expect("failed contract retained");
+        assert!(contract.contains("injected perf failure"));
+        assert!(contract.contains("\"phase\": \"failed\""));
     }
 
     #[test]
