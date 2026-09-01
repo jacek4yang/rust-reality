@@ -2120,8 +2120,7 @@ mod tests {
             "a silent close must classify as rejected"
         );
         let (peer, stream) = tcp_pair().await;
-        rr_linux::socket::abort_linger(std::os::fd::AsRawFd::as_raw_fd(&peer))
-            .expect("abort linger must apply");
+        rr_linux::socket::abort_linger(&peer).expect("abort linger must apply");
         drop(peer);
         assert!(
             !super::first_downlink_landed(&stream, TEST_TIMEOUT).await,
@@ -2238,8 +2237,7 @@ mod tests {
     /// byte into the client's receive queue.
     async fn reset_client_unread(client: TcpStream) {
         tokio::time::sleep(Duration::from_millis(200)).await;
-        rr_linux::socket::abort_linger(std::os::fd::AsRawFd::as_raw_fd(&client))
-            .expect("abort linger must apply");
+        rr_linux::socket::abort_linger(&client).expect("abort linger must apply");
         drop(client);
     }
 

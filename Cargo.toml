@@ -63,7 +63,13 @@ zeroize = { version = "1.9.0", default-features = false, features = ["alloc", "d
 hickory-resolver = { version = "0.26.1", default-features = false, features = ["tokio"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-rr-linux = { path = "crates/rr-linux", version = "0.1.0" }
+# The Linux ABI boundary is `no_std`; `std` is the narrow interoperability
+# feature this crate needs and is stated explicitly rather than inherited. It
+# makes the descriptor types rr-linux returns identical to `std::os::fd`'s, so
+# a bound listening socket moves into std/Tokio by value and this crate keeps
+# `#![deny(unsafe_code)]`. It enables no mechanism: rr-linux's implementation
+# also compiles with `--no-default-features`.
+rr-linux = { path = "crates/rr-linux", version = "0.1.0", default-features = false, features = ["std"] }
 
 [lints.rust]
 unsafe_code = "deny"

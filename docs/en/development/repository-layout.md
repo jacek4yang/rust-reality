@@ -18,7 +18,7 @@ for the original packaging decision.
 | --- | --- |
 | `src/` | Production application implementation: configuration model and diagnostics, protocol (VLESS, REALITY, Vision, TLS 1.3, Handoff, NXR), runtime orchestration, server lifecycle, transport, crypto key generation, CLI-facing library surface. |
 | `crates/rr-session/` | The runtime-independent Session Engine: synchronous, data-only session state machines and decisions (direction phases, raw-relay grants, transfer commits). `no_std`-capable; no Tokio, sockets, clocks, or OS APIs. |
-| `crates/rr-linux/` | The Linux-specific OS/ABI boundary: raw syscalls, rlimits, socket options, memory policy. Isolated so the main crate can stay `#![deny(unsafe_code)]`. |
+| `crates/rr-linux/` | The Linux OS/ABI boundary: sockets, pipes and `splice`, rlimits, socket options, `/proc` memory sampling. `#![no_std]`; mechanisms go through `rustix`'s `linux_raw` backend and report `Errno`, and descriptors leave as `OwnedFd`. Isolated so the main crate can stay `#![deny(unsafe_code)]`. See [ADR 0015](../../adr/0015-rr-linux-is-a-no-std-linux-abi-boundary.md). |
 | `tools/rr-dev/` | The repository development control plane (`cargo dev`): quality gates, documentation checks, repository-layout policy, performance evaluation, release packaging, fuzz manifest, benchmark lifecycle, deployment engineering. |
 | `tools/reference/` | Deliberately independent reference mechanisms (e.g. the OpenSSL TLS-shape reference program) kept outside production and outside rr-dev so cross-implementation comparisons stay honest. |
 | `tools/fixtures/` | Tooling and test fixtures shared by repository tooling (e.g. active-probe cases). |

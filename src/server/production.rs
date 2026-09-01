@@ -306,10 +306,8 @@ fn resolve_startup_resource_mode(
 fn read_descriptor_limit() -> (u64, u64) {
     #[cfg(target_os = "linux")]
     {
-        match rr_linux::descriptor_limit() {
-            Ok(limit) => (limit.soft, limit.hard),
-            Err(_) => (1_024, 1_024),
-        }
+        let limit = rr_linux::descriptor_limit();
+        (limit.soft, limit.hard)
     }
     #[cfg(not(target_os = "linux"))]
     {
