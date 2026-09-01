@@ -3,8 +3,8 @@
 //! Rust owns the policy formerly split across `profile-forensics.sh` and its
 //! compatibility wrapper: bounded arguments, immutable binary identity, exact
 //! PID/start-time ownership, host exclusion, archival, perf invocation, report
-//! generation, checksums, failure state and final publication. `perf`, `readelf`
-//! and `sudo` remain external mechanisms invoked with typed argv.
+//! generation, checksums, failure state and final publication. `timeout`, `perf`,
+//! `readelf` and `sudo` remain external mechanisms invoked with typed argv.
 
 #![allow(
     clippy::too_many_lines,
@@ -42,6 +42,8 @@ const MAX_BENCHMARK_WARMUP_MS: u64 = 10_000;
 const MAX_FREQUENCY: u32 = 9_999;
 const MAX_DWARF_BYTES: u32 = 65_528;
 const MAX_PERF_OUTPUT_BYTES: usize = 64 * 1024;
+const PERF_DEADLINE_EXIT_CODE: i32 = 124;
+const PERF_KILL_AFTER_SECONDS: u64 = 5;
 const PERF_STDOUT: &str = "perf.stdout";
 const PERF_STDERR: &str = "perf.stderr";
 
@@ -110,14 +112,22 @@ struct ProcessIdentity {
 struct Status {
     perf_exit: Option<i32>,
     perf_elapsed_millis: Option<u64>,
+    perf_deadline_reached: Option<bool>,
     workload_exit: Option<i32>,
     process: Option<ProcessIdentity>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PerfCompletion {
+    TargetExit,
+    Deadline,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct PerfRecord {
     exit_code: i32,
     elapsed_millis: u64,
+    completion: Option<PerfCompletion>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -350,6 +360,10 @@ fn metadata(
                         Json::Int(i64::try_from(millis).unwrap_or(i64::MAX))
                     }),
                 ),
+                (
+                    "deadlineReached",
+                    status.perf_deadline_reached.map_or(Json::Null, Json::Bool),
+                ),
             ]),
         ),
         (
@@ -498,14 +512,13 @@ fn capture_perf_output(run_dir: &RunDirectory, tool: Tool) -> Result<Outcome, St
     Ok(output)
 }
 
-fn record_perf(
-    plan: &Plan,
-    run_dir: &RunDirectory,
-    pid: u32,
-    perf_data: &Path,
-) -> Result<PerfRecord, String> {
-    let tool = Tool::new("sudo").args([
+fn perf_tool(plan: &Plan, pid: u32, perf_data: &Path) -> Tool {
+    Tool::new("sudo").args([
         "-n".to_owned(),
+        "timeout".to_owned(),
+        "--signal=INT".to_owned(),
+        format!("--kill-after={PERF_KILL_AFTER_SECONDS}s"),
+        format!("{}s", plan.record_seconds),
         "perf".to_owned(),
         "record".to_owned(),
         "-e".to_owned(),
@@ -519,14 +532,33 @@ fn record_perf(
         pid.to_string(),
         "-o".to_owned(),
         perf_data.display().to_string(),
-        "--".to_owned(),
-        "sleep".to_owned(),
-        plan.record_seconds.to_string(),
-    ]);
-    let output = capture_perf_output(run_dir, tool)?;
+    ])
+}
+
+fn perf_completion(
+    exit_code: i32,
+    elapsed: Duration,
+    record_seconds: u64,
+) -> Option<PerfCompletion> {
+    if exit_code == 0 {
+        return Some(PerfCompletion::TargetExit);
+    }
+    (exit_code == PERF_DEADLINE_EXIT_CODE && elapsed >= Duration::from_secs(record_seconds))
+        .then_some(PerfCompletion::Deadline)
+}
+
+fn record_perf(
+    plan: &Plan,
+    run_dir: &RunDirectory,
+    pid: u32,
+    perf_data: &Path,
+) -> Result<PerfRecord, String> {
+    let output = capture_perf_output(run_dir, perf_tool(plan, pid, perf_data))?;
+    let exit_code = output.code.unwrap_or(128);
     Ok(PerfRecord {
-        exit_code: output.code.unwrap_or(128),
+        exit_code,
         elapsed_millis: u64::try_from(output.elapsed.as_millis()).unwrap_or(u64::MAX),
+        completion: perf_completion(exit_code, output.elapsed, plan.record_seconds),
     })
 }
 
@@ -594,14 +626,15 @@ fn execute(
     let perf = record_perf(plan, run_dir, pid, &perf_data)?;
     status.perf_exit = Some(perf.exit_code);
     status.perf_elapsed_millis = Some(perf.elapsed_millis);
+    status.perf_deadline_reached = Some(perf.completion == Some(PerfCompletion::Deadline));
     if let Some(child) = owned.as_mut() {
         status.workload_exit = Some(child.wait()?);
-    } else if perf.exit_code == 0
+    } else if perf.completion.is_some()
         && let Some(process) = status.process.as_mut()
     {
         verify_process(process)?;
     }
-    if perf.exit_code != 0 {
+    if perf.completion.is_none() {
         return Err(perf_failure(run_dir, perf.exit_code));
     }
     if status.workload_exit.is_some_and(|code| code != 0) {
@@ -715,7 +748,9 @@ fn execute(
 /// directory created before failure remains visibly marked `FAILED`.
 pub fn run(plan: &Plan) -> Result<String, String> {
     validate(plan)?;
-    for program in ["hostname", "id", "perf", "readelf", "sudo", "uname"] {
+    for program in [
+        "hostname", "id", "perf", "readelf", "sudo", "timeout", "uname",
+    ] {
         if !Tool::exists(program) {
             return Err(format!("required tool unavailable: {program}"));
         }
@@ -932,6 +967,31 @@ mod tests {
             &format!("0123 /tmp/{expected}/rust-reality\n"),
             expected
         ));
+    }
+
+    #[test]
+    fn perf_records_the_target_until_its_exit_or_the_bounded_deadline() {
+        let command = perf_tool(&plan(), 42, Path::new("/tmp/perf.data")).redacted();
+        assert_eq!(
+            command,
+            "sudo -n timeout --signal=INT --kill-after=5s 35s perf record -e cycles:u \
+             -F 999 -g --call-graph fp -p 42 -o /tmp/perf.data"
+        );
+        assert!(!command.contains("sleep"));
+
+        assert_eq!(
+            perf_completion(0, Duration::from_millis(1), 35),
+            Some(PerfCompletion::TargetExit)
+        );
+        assert_eq!(
+            perf_completion(PERF_DEADLINE_EXIT_CODE, Duration::from_secs(35), 35),
+            Some(PerfCompletion::Deadline)
+        );
+        assert_eq!(
+            perf_completion(PERF_DEADLINE_EXIT_CODE, Duration::from_millis(34_999), 35),
+            None
+        );
+        assert_eq!(perf_completion(128, Duration::from_secs(35), 35), None);
     }
 
     #[test]
