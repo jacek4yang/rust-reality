@@ -17,8 +17,8 @@
 
 use std::{
     ffi::OsStr,
-    fmt, io,
-    io::Read,
+    fmt, fs, io,
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     thread::{self, JoinHandle},
@@ -29,7 +29,7 @@ use std::{
 use std::os::unix::process::CommandExt;
 
 #[cfg(unix)]
-use rustix::process::{kill_process_group, Pid, Signal};
+use rustix::process::{Pid, Signal, kill_process_group};
 
 /// Default upper bound for one external development-tool invocation.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_mins(30);
@@ -46,6 +46,13 @@ type OutputReader = JoinHandle<io::Result<CapturedOutput>>;
 struct CapturedOutput {
     bytes: Vec<u8>,
     exceeded_limit: bool,
+}
+
+#[derive(Debug, Clone)]
+struct OutputLogs {
+    stdout: PathBuf,
+    stderr: PathBuf,
+    append: bool,
 }
 
 /// Argument values that must never appear in a diagnostic.
@@ -220,6 +227,7 @@ pub struct Tool {
     inherit_stdio: bool,
     timeout: Duration,
     capture_limit: usize,
+    output_logs: Option<OutputLogs>,
 }
 
 impl Tool {
@@ -234,6 +242,7 @@ impl Tool {
             inherit_stdio: false,
             timeout: DEFAULT_TIMEOUT,
             capture_limit: DEFAULT_CAPTURE_LIMIT,
+            output_logs: None,
         }
     }
 
@@ -297,6 +306,40 @@ impl Tool {
         self
     }
 
+    /// Retains the bounded raw output streams in fresh local log files.
+    ///
+    /// Logging implies capture: the child never writes directly to the terminal,
+    /// and both files are truncated before the child starts. Output is still
+    /// drained after the byte cap so an oversized stream cannot deadlock the
+    /// process; the invocation then fails closed with [`ToolError::OutputTooLarge`].
+    #[must_use]
+    pub fn log_output(mut self, stdout: impl Into<PathBuf>, stderr: impl Into<PathBuf>) -> Self {
+        self.inherit_stdio = false;
+        self.output_logs = Some(OutputLogs {
+            stdout: stdout.into(),
+            stderr: stderr.into(),
+            append: false,
+        });
+        self
+    }
+
+    /// Appends the bounded raw output streams to existing local log files.
+    ///
+    /// This is reserved for a single logical step that needs a bounded fallback
+    /// invocation, such as the fresh-then-cached `RustSec` audit. Callers remain
+    /// responsible for lowering the second invocation's capture cap so the
+    /// combined per-stage files retain one finite bound.
+    #[must_use]
+    pub fn append_output(mut self, stdout: impl Into<PathBuf>, stderr: impl Into<PathBuf>) -> Self {
+        self.inherit_stdio = false;
+        self.output_logs = Some(OutputLogs {
+            stdout: stdout.into(),
+            stderr: stderr.into(),
+            append: true,
+        });
+        self
+    }
+
     /// Returns the command line with sensitive values replaced.
     ///
     /// This is the only representation that may be printed or embedded in an
@@ -338,6 +381,11 @@ impl Tool {
     /// [`ToolError::Spawn`] when the process cannot be started or awaited.
     pub fn probe(&self) -> Result<Outcome, ToolError> {
         let started = Instant::now();
+        let (stdout_log, stderr_log) =
+            self.open_output_logs().map_err(|source| ToolError::Spawn {
+                program: self.program.clone(),
+                source,
+            })?;
         let mut child = self.build().spawn().map_err(|source| {
             if source.kind() == io::ErrorKind::NotFound {
                 ToolError::NotFound {
@@ -357,11 +405,11 @@ impl Tool {
         let stdout_reader = child
             .stdout
             .take()
-            .map(|pipe| thread::spawn(move || read_bounded(pipe, capture_limit)));
+            .map(|pipe| thread::spawn(move || read_bounded(pipe, capture_limit, stdout_log)));
         let stderr_reader = child
             .stderr
             .take()
-            .map(|pipe| thread::spawn(move || read_bounded(pipe, capture_limit)));
+            .map(|pipe| thread::spawn(move || read_bounded(pipe, capture_limit, stderr_log)));
         let mut status = None;
         let status = loop {
             if status.is_none() {
@@ -420,7 +468,7 @@ impl Tool {
         Err(ToolError::Failed {
             command: self.redacted(),
             code: outcome.code,
-            stderr: truncate(&outcome.stderr),
+            stderr: terminal_excerpt(&outcome.stderr),
         })
     }
 
@@ -449,6 +497,15 @@ impl Tool {
         command
     }
 
+    fn open_output_logs(&self) -> io::Result<(Option<fs::File>, Option<fs::File>)> {
+        let Some(logs) = &self.output_logs else {
+            return Ok((None, None));
+        };
+        let stdout = open_output_log(&logs.stdout, logs.append)?;
+        let stderr = open_output_log(&logs.stderr, logs.append)?;
+        Ok((Some(stdout), Some(stderr)))
+    }
+
     fn decode_output(
         &self,
         capture: CapturedOutput,
@@ -472,7 +529,26 @@ fn readers_finished(stdout: Option<&OutputReader>, stderr: Option<&OutputReader>
     stdout.is_none_or(JoinHandle::is_finished) && stderr.is_none_or(JoinHandle::is_finished)
 }
 
-fn read_bounded(mut pipe: impl Read, limit: usize) -> io::Result<CapturedOutput> {
+fn open_output_log(path: &Path, append: bool) -> io::Result<fs::File> {
+    fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(append)
+        .truncate(!append)
+        .open(path)
+        .map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("could not open output log {}: {error}", path.display()),
+            )
+        })
+}
+
+fn read_bounded(
+    mut pipe: impl Read,
+    limit: usize,
+    mut log: Option<fs::File>,
+) -> io::Result<CapturedOutput> {
     let mut capture = CapturedOutput {
         bytes: Vec::with_capacity(limit.min(16 * 1024)),
         exceeded_limit: false,
@@ -485,6 +561,9 @@ fn read_bounded(mut pipe: impl Read, limit: usize) -> io::Result<CapturedOutput>
         }
         let retained = count.min(limit.saturating_sub(capture.bytes.len()));
         capture.bytes.extend_from_slice(&chunk[..retained]);
+        if let Some(log) = &mut log {
+            log.write_all(&chunk[..retained])?;
+        }
         capture.exceeded_limit |= retained != count;
     }
 }
@@ -562,7 +641,7 @@ pub fn which(program: &str) -> Option<PathBuf> {
 }
 
 /// Shortens captured stderr so one failing step cannot flood the terminal.
-fn truncate(text: &str) -> String {
+pub(crate) fn terminal_excerpt(text: &str) -> String {
     const MAX_LINES: usize = 20;
     let trimmed = text.trim_end();
     if trimmed.is_empty() {
@@ -583,6 +662,19 @@ fn truncate(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scratch(prefix: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "{prefix}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&path).unwrap();
+        path
+    }
 
     #[test]
     fn a_separated_sensitive_value_is_redacted() {
@@ -729,9 +821,106 @@ mod tests {
             long.push_str(&line.to_string());
             long.push('\n');
         }
-        let shortened = truncate(&long);
+        let shortened = terminal_excerpt(&long);
         assert!(shortened.contains("20 earlier lines omitted"));
         assert!(shortened.contains("line40"));
         assert!(!shortened.contains("line1\n"));
+    }
+
+    #[test]
+    fn bounded_output_is_retained_in_separate_log_files() {
+        if !Tool::exists("sh") {
+            return;
+        }
+        let scratch = scratch("rr-dev-output-log");
+        let stdout = scratch.join("stdout.log");
+        let stderr = scratch.join("stderr.log");
+        let outcome = Tool::new("sh")
+            .args(["-c", "printf stdout; printf stderr >&2"])
+            .log_output(&stdout, &stderr)
+            .run()
+            .unwrap();
+        assert_eq!(outcome.stdout, "stdout");
+        assert_eq!(outcome.stderr, "stderr");
+        assert_eq!(fs::read(&stdout).unwrap(), b"stdout");
+        assert_eq!(fs::read(&stderr).unwrap(), b"stderr");
+        fs::remove_dir_all(scratch).unwrap();
+    }
+
+    #[test]
+    fn appended_output_preserves_the_first_invocation() {
+        if !Tool::exists("printf") {
+            return;
+        }
+        let scratch = scratch("rr-dev-output-append");
+        let stdout = scratch.join("stdout.log");
+        let stderr = scratch.join("stderr.log");
+        Tool::new("printf")
+            .arg("first")
+            .log_output(&stdout, &stderr)
+            .run()
+            .unwrap();
+        Tool::new("printf")
+            .arg("second")
+            .append_output(&stdout, &stderr)
+            .run()
+            .unwrap();
+        assert_eq!(fs::read(&stdout).unwrap(), b"firstsecond");
+        assert!(fs::read(&stderr).unwrap().is_empty());
+        fs::remove_dir_all(scratch).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn oversized_output_retains_exactly_the_bounded_prefix() {
+        if !Tool::exists("sh") || !Tool::exists("head") {
+            return;
+        }
+        let scratch = scratch("rr-dev-output-bound");
+        let stdout = scratch.join("stdout.log");
+        let stderr = scratch.join("stderr.log");
+        let error = Tool::new("sh")
+            .args(["-c", "head -c 4096 /dev/zero"])
+            .capture_limit(1024)
+            .log_output(&stdout, &stderr)
+            .probe()
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            ToolError::OutputTooLarge {
+                stream: "stdout",
+                limit: 1024,
+                ..
+            }
+        ));
+        assert_eq!(fs::metadata(&stdout).unwrap().len(), 1024);
+        assert!(fs::read(&stderr).unwrap().is_empty());
+        fs::remove_dir_all(scratch).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn invalid_utf8_is_retained_raw_before_the_invocation_fails_closed() {
+        if !Tool::exists("sh") {
+            return;
+        }
+        let scratch = scratch("rr-dev-output-raw");
+        let stdout = scratch.join("stdout.log");
+        let stderr = scratch.join("stderr.log");
+        let error = Tool::new("sh")
+            .args(["-c", "printf '\\377'"])
+            .log_output(&stdout, &stderr)
+            .probe()
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            ToolError::InvalidOutput {
+                stream: "stdout",
+                ..
+            }
+        ));
+        assert_eq!(fs::read(&stdout).unwrap(), [0xff]);
+        assert!(fs::read(&stderr).unwrap().is_empty());
+        fs::remove_dir_all(scratch).unwrap();
     }
 }

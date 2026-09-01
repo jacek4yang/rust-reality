@@ -53,6 +53,32 @@ documentation policy checks, `cargo fmt --all --check`, strict clippy,
 test profiles, bench compilation, and `cargo audit`. CI runs the same gate plus
 the musl release build; the Security workflow adds fuzz shards and sanitizers.
 
+### Check result protocol
+
+The check gate separates complete local diagnostics from its compact terminal
+result:
+
+```shell
+cargo dev check --all --output human            # concise readable progress (default)
+cargo dev check --all --output agent            # stable CHECK_* line records
+cargo dev check --all --output json             # one rr-dev-result/v1 JSON object
+cargo dev check --all --log-dir target/my-check # optional fresh directory
+```
+
+Every attempted stage retains raw stdout and stderr in separate files below a
+fresh directory. The default is an ignored run directory under
+`target/rr-dev/check/`; a relative `--log-dir` is resolved from the repository
+root, and an existing directory is refused rather than overwritten. Each stream
+has a 64 MiB cap, and oversized or unreadable output fails the stage closed. The
+fresh and cached `cargo audit` attempts share that same per-stage bound.
+
+All modes preserve the same step order, stop-at-first-failure behavior, process
+timeouts, exit decision, and complete diagnostic logs. Human mode prints one
+short verdict per completed stage. Agent mode emits token-efficient
+`CHECK_START`, `CHECK_STAGE`, and `CHECK_RESULT` records with JSON-quoted values.
+JSON mode emits one compact result containing the overall decision, counts,
+durations, slowest stage, log directory, and attempted-stage log names.
+
 ## GitHub governance
 
 The default branch is protected by an active repository ruleset. Every change

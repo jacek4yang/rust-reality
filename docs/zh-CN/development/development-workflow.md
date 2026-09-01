@@ -54,6 +54,29 @@ git diff --check
 `cargo audit`。CI 还会构建 musl release；Security workflow 另外运行 fuzz shard
 和 sanitizer。
 
+### Check 结果协议
+
+Check 门禁将完整本地诊断与精简终端结果分离：
+
+```shell
+cargo dev check --all --output human            # 精简易读的进度（默认）
+cargo dev check --all --output agent            # 稳定的 CHECK_* 单行记录
+cargo dev check --all --output json             # 单个 rr-dev-result/v1 JSON 对象
+cargo dev check --all --log-dir target/my-check # 可选的新目录
+```
+
+每个已尝试阶段都会把原始 stdout 和 stderr 分别保留在一个新目录下。默认位置是
+git 忽略的 `target/rr-dev/check/` 运行目录；相对 `--log-dir` 从仓库根目录解析，
+已存在的目录会被拒绝而不会覆盖。每条输出流上限为 64 MiB；超限或无法读取的
+输出会使该阶段按失败关闭。`cargo audit` 的在线尝试与缓存重试共同使用同一个
+阶段上限。
+
+所有模式都保持相同的步骤顺序、首次失败即停止的行为、进程超时、退出判定和
+完整诊断日志。Human 模式为每个已完成阶段打印一条简短判定。Agent 模式输出
+节省 token 的 `CHECK_START`、`CHECK_STAGE` 和 `CHECK_RESULT` 记录，其中值使用
+JSON 引号。JSON 模式输出一个精简结果，包含总体判定、计数、耗时、最慢阶段、
+日志目录，以及已尝试阶段的日志文件名。
+
 ## GitHub 治理
 
 默认分支由启用状态的 repository ruleset 保护。所有变更都必须通过 pull request

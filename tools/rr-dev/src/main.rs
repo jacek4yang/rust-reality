@@ -59,6 +59,12 @@ enum Command {
         /// Run every check CI enforces instead of the fast local subset.
         #[arg(long)]
         all: bool,
+        /// Terminal result protocol.
+        #[arg(long, value_enum, default_value_t)]
+        output: check::OutputMode,
+        /// Fresh local log directory; relative paths resolve from the repository root.
+        #[arg(long)]
+        log_dir: Option<PathBuf>,
     },
     /// Documentation tooling.
     Docs {
@@ -1105,18 +1111,20 @@ fn main() -> ExitCode {
                 }
             }
         },
-        Command::Check { all } => {
+        Command::Check {
+            all,
+            output,
+            log_dir,
+        } => {
             let scope = if all {
                 check::Scope::All
             } else {
                 check::Scope::Fast
             };
-            match check::run(&repo, scope) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(error) => {
-                    eprintln!("\ncheck failed: {error}");
-                    ExitCode::FAILURE
-                }
+            if check::run(&repo, scope, output, log_dir.as_deref()) {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
             }
         }
     }
