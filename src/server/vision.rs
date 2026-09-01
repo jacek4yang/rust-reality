@@ -3962,6 +3962,90 @@ mod tests {
         );
     }
 
+    /// The counterpart to the two abort regressions: arming a reset on every
+    /// failure must not leak into the graceful path.
+    ///
+    /// A session that completes normally has to close with FIN so the client
+    /// can tell a finished response from a truncated one. Over-aborting would
+    /// be a worse defect than the one #195 fixed, because it would corrupt
+    /// every healthy session rather than a failing one.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_completed_session_closes_the_client_cleanly() {
+        let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("destination must bind");
+        let destination_address = destination_listener
+            .local_addr()
+            .expect("destination address must exist");
+        let (mut client, server) = tcp_pair().await;
+        let (established_tls, mut client_write_records, _client_read_records) = tls_states();
+        let established = RealityEstablished::from_test_parts(
+            TlsApplicationIo::new(server, established_tls),
+            USER,
+        );
+        let governor = ResourceGovernorConfig {
+            connect_timeout_ms: 1_000,
+            handshake_timeout_ms: 1_000,
+            fallback_timeout_ms: 1_000,
+            ..ResourceGovernorConfig::default()
+        };
+        let handler = direct_handler(&governor);
+        let request = vision_request(destination_address.port(), b"ping");
+
+        let exchange = async {
+            let handle = handler.handle(established);
+            let client_io = async {
+                let mut request_record = Vec::new();
+                client_write_records
+                    .seal_into(
+                        ContentType::ApplicationData,
+                        &request,
+                        0,
+                        &mut request_record,
+                    )
+                    .map_err(io::Error::other)?;
+                client.write_all(&request_record).await?;
+                let mut close_record = Vec::new();
+                client_write_records
+                    .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                    .map_err(io::Error::other)?;
+                client.write_all(&close_record).await?;
+
+                let mut sink = [0_u8; 4_096];
+                loop {
+                    match client.read(&mut sink).await {
+                        Ok(0) => return Ok::<_, io::Error>(None),
+                        Ok(_) => {}
+                        Err(error) => return Ok(Some(error.kind())),
+                    }
+                }
+            };
+            let destination_io = async {
+                let (mut destination, _) = destination_listener.accept().await?;
+                let mut request = Vec::new();
+                destination.read_to_end(&mut request).await?;
+                destination.write_all(b"pong").await?;
+                destination.shutdown().await?;
+                Ok::<_, io::Error>(request)
+            };
+            tokio::join!(handle, client_io, destination_io)
+        };
+        let (session, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+            .await
+            .expect("the exchange must not time out");
+        assert_eq!(
+            destination_result.expect("destination I/O must succeed"),
+            b"ping"
+        );
+        session.expect("a complete session must succeed");
+        assert_eq!(
+            client_result.expect("client I/O must not fail structurally"),
+            None,
+            "a graceful session must end with FIN; resetting a healthy session \
+             would be a worse defect than the abort it protects against"
+        );
+    }
+
     /// The cancellation half of #195.
     ///
     /// Here the client keeps its stream open, so the uplink direction is alive
