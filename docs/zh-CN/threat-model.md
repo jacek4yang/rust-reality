@@ -177,13 +177,12 @@ Linux `splice` 只允许在两侧都是明文 TCP socket 后使用，不能跨�
 **后端不能悄悄吞掉字节。** 只有在共享传输账本两个方向都为零时才可能回退到另一个
 后端；否则无法构造 decline 类型。一旦发生传输，错误将结束该连接。
 
-**unsafe 代码被隔离。** 所有 Linux ABI `unsafe` 都位于
-`crates/rr-linux`，该 crate 禁止 `unsafe_op_in_unsafe_fn`；协议 crate 保持
-`unsafe_code = "deny"`。该 crate 通过经过评审的 `rustix` API 访问内核，而不是
-手写 ABI，因此仅剩一个 `unsafe` 块：在描述符所有者可能已关闭它之后仍需按编号
-标记中止的那一处。它带有 `SAFETY:` 注释；描述符生命周期、套接字选项与 `/proc`
-解析器都有直接测试。服务器不加载任何 eBPF：需要特权的 sockhash 后端已被移除
-（D7），因此无需任何内核注入能力。
+**unsafe 代码被隔离。** `crates/rr-linux` 是允许存放 Linux ABI `unsafe` 的位置，
+该 crate 禁止 `unsafe_op_in_unsafe_fn`；协议 crate 保持 `unsafe_code = "deny"`。
+该 crate 通过经过评审的 `rustix` API 访问内核，而不是手写 ABI；自中止权限改为
+绑定所有权之后，其中已不再有任何生产环境 `unsafe` 块。描述符生命周期、套接字
+选项、中止语义与 `/proc` 解析器都有直接测试。服务器不加载任何 eBPF：需要特权的
+sockhash 后端已被移除（D7），因此无需任何内核注入能力。
 
 **日志保持无秘密。** 拒绝原因、阶段和后端名称均来自封闭词表。本工作不会让任何
 UUID、密钥、PSK、SNI 值、目标地址、配置内容或负载字节进入日志行。

@@ -243,15 +243,14 @@ possible while the shared transfer ledger reads zero in both directions; the
 decline type cannot be constructed otherwise. After any transfer, an error ends
 the connection.
 
-**Unsafe code is contained.** All Linux ABI `unsafe` lives in
-`crates/rr-linux`, which denies `unsafe_op_in_unsafe_fn`; the protocol crate
-keeps `unsafe_code = "deny"`. The crate reaches the kernel through reviewed
-`rustix` APIs rather than hand-written ABI, so exactly one `unsafe` block
-remains: the abort marker that must address a descriptor number after its owner
-may have closed it. It carries a `SAFETY:` comment, and descriptor lifetimes,
-socket options and the `/proc` parser have direct tests. No eBPF is loaded:
-the privileged sockhash backend was removed (D7), so the server needs no
-kernel-injection capability.
+**Unsafe code is contained.** `crates/rr-linux` is where Linux ABI `unsafe`
+may live and denies `unsafe_op_in_unsafe_fn`; the protocol crate keeps
+`unsafe_code = "deny"`. The crate reaches the kernel through reviewed `rustix`
+APIs rather than hand-written ABI, and since abort authority became
+ownership-bound no production `unsafe` block remains in it at all. Descriptor
+lifetimes, socket options, abort semantics and the `/proc` parser have direct
+tests. No eBPF is loaded: the privileged sockhash backend was removed (D7), so
+the server needs no kernel-injection capability.
 
 **Logs stay secret-free.** Decline reasons, phases and backend names come from
 closed vocabularies. No UUID, key, PSK, SNI value, target address, configuration

@@ -2,6 +2,7 @@ use std::{
     error::Error,
     fmt, io,
     ops::Range,
+    os::fd::{AsFd as _, BorrowedFd},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -10,7 +11,10 @@ use std::{
 
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
-    net::tcp::{OwnedReadHalf, OwnedWriteHalf},
+    net::{
+        TcpStream,
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+    },
     time::Instant,
 };
 
@@ -451,64 +455,90 @@ impl VisionHandler {
         request: AcceptedVisionRequest,
         client_random: [u8; 32],
     ) -> Result<VisionRelayStats, VisionSessionError> {
-        let client_fd = rr_linux::socket::AbortMark::capture(client_reader.fd());
         let (pending, client_read_half, client_records) = client_reader.into_handoff_parts();
         let (client_write_half, server_records) = client_writer.into_handoff_parts();
-        // Until the transfer provably lands, the guard covers only the client
-        // socket (twice — the second abort is an idempotent setsockopt); the
-        // landing descriptor takes its place once it exists.
-        let mut guard = DirectionAbortGuard::new(client_fd, client_fd);
-        let (suite, client_traffic, client_sequence) =
-            client_records.into_exported_state().into_parts();
-        let (_suite, server_traffic, server_sequence) =
-            server_records.into_exported_state().into_parts();
-        let prefetched = request
-            .buffer
-            .get(request.prefetched.clone())
-            .unwrap_or_default()
-            .to_vec();
-        let state = ContinuationState::new(
-            suite,
-            client_traffic,
-            client_sequence,
-            server_traffic,
-            server_sequence,
-            *request.user_id.as_bytes(),
-            request.destination,
-            pending,
-            prefetched,
-        )
-        .map_err(HandoffLineError::Transfer)
-        .map_err(VisionSessionError::HandoffLine)?;
-        let transferred = line
-            .transfer(self.relay.fd_budget(), &state, client_random)
-            .await
+        // Phase one: the client socket is the only descriptor that exists, so
+        // it is the only thing to reset. Its guard borrows the read half, so
+        // the transfer below cannot consume or close the socket while the
+        // guard could still fire.
+        let (transferred, server_sequence) = {
+            let mut client_abort = SocketAbortGuard::new(&client_read_half);
+            let (suite, client_traffic, client_sequence) =
+                client_records.into_exported_state().into_parts();
+            let (_suite, server_traffic, server_sequence) =
+                server_records.into_exported_state().into_parts();
+            let prefetched = request
+                .buffer
+                .get(request.prefetched.clone())
+                .unwrap_or_default()
+                .to_vec();
+            let state = ContinuationState::new(
+                suite,
+                client_traffic,
+                client_sequence,
+                server_traffic,
+                server_sequence,
+                *request.user_id.as_bytes(),
+                request.destination,
+                pending,
+                prefetched,
+            )
+            .map_err(HandoffLineError::Transfer)
             .map_err(VisionSessionError::HandoffLine)?;
+            let transferred = line
+                .transfer(self.relay.fd_budget(), &state, client_random)
+                .await
+                .map_err(VisionSessionError::HandoffLine)?;
+            // The sealed continuation is on the wire; its key material must not
+            // live across the first-byte probe and the session relay below.
+            drop(state);
+            client_abort.disarm();
+            (transferred, server_sequence)
+        };
         // Declared before the stream so every error path closes the handoff
         // descriptor before its budget unit is released.
         let _fd_permit = transferred.1;
         let handoff_stream = transferred.0;
-        // The sealed continuation is on the wire; its key material must not
-        // live across the first-byte probe and the session relay below.
-        drop(state);
-        guard.retarget_destination(rr_linux::socket::AbortMark::capture(&handoff_stream));
-        let client_stream = client_read_half
-            .reunite(client_write_half)
-            .map_err(|_| VisionSessionError::HandoffLine(HandoffLineError::Reunite))?;
+        // Reuniting consumes both client halves, so the landing descriptor —
+        // which now exists and would otherwise leak a FIN — carries its own
+        // guard across the only fallible step between the two phases.
+        let client_stream = {
+            let _landing_abort = SocketAbortGuard::new(&handoff_stream);
+            client_read_half
+                .reunite(client_write_half)
+                .map_err(|_| VisionSessionError::HandoffLine(HandoffLineError::Reunite))?
+        };
         // Classify the silent protocol's only failure signal before any socket
         // moves into the relay: no TLS downlink byte within the configured
-        // first-byte deadline means rejection. The guard's descriptors are
-        // still open here, so dropping it armed aborts both sockets
-        // (SO_LINGER {on,0}); they close as whole streams right after,
-        // delivering RST — never FIN — and the session's descriptors,
-        // permits, and pipes are not held until the idle timeout.
-        if !super::handoff::first_downlink_landed(&handoff_stream, line.first_byte_timeout()).await
-        {
-            drop(guard);
+        // first-byte deadline means rejection. Both guards borrow their
+        // sockets, so a rejection — or a cancellation inside the probe — resets
+        // descriptors that are provably still open (SO_LINGER {on,0}); they
+        // close as whole streams right after, delivering RST — never FIN — and
+        // the session's descriptors, permits, and pipes are not held until the
+        // idle timeout.
+        let landed = {
+            let mut landing_abort = SocketAbortGuard::new(&handoff_stream);
+            let mut client_abort = SocketAbortGuard::new(&client_stream);
+            let landed =
+                super::handoff::first_downlink_landed(&handoff_stream, line.first_byte_timeout())
+                    .await;
+            if landed {
+                // Ownership passes to the relay below, which owns abort
+                // semantics for both sockets from here on.
+                client_abort.disarm();
+                landing_abort.disarm();
+            }
+            landed
+        };
+        if !landed {
             return Err(VisionSessionError::HandoffLine(
                 HandoffLineError::LandingRejected,
             ));
         }
+        // The relay consumes both sockets: it aborts them itself on a
+        // mid-transfer error, and on every return their descriptors are
+        // already closed. No guard is armed here, so nothing can fire on what
+        // another connection may have recycled those descriptor numbers into.
         let result = self
             .relay
             .relay_owned(
@@ -522,11 +552,6 @@ impl VisionHandler {
                     .with_source_reset_as_eof(),
             )
             .await;
-        // The relay consumed both sockets: it aborts them itself on a
-        // mid-transfer error, and on every return their descriptors are
-        // already closed, so the guard must never fire on what another
-        // connection may have recycled those descriptor numbers into.
-        guard.disarm();
         let outcome = result
             .map_err(HandoffLineError::Relay)
             .map_err(VisionSessionError::HandoffLine)?;
@@ -778,88 +803,238 @@ struct SessionContext<'session> {
     relay: &'session TcpRelay,
 }
 
-/// Resets both sockets with `SO_LINGER {on,0}` if the direction ends without
-/// being disarmed — cancellation via `try_join`, shutdown abort, or any error
-/// path. An aborted transfer must be distinguishable from graceful
-/// completion: the peer observes a reset, never a clean short EOF. Graceful
-/// exits disarm the guard, preserving FIN and independent half-close.
-struct DirectionAbortGuard {
-    marks: [rr_linux::socket::AbortMark; 2],
+/// A session socket an abort guard can reset while it still borrows it.
+trait AbortableSocket {
+    /// Borrows the descriptor for the duration of the borrow of `self`.
+    fn abort_fd(&self) -> BorrowedFd<'_>;
+
+    /// Releases the socket without the graceful shutdown a normal drop performs.
+    ///
+    /// Tokio's `OwnedWriteHalf` shuts its direction down when dropped, which
+    /// puts a FIN on the wire *ahead* of the abortive close. The peer reads
+    /// that FIN as a clean end of stream and never observes the reset behind
+    /// it, so arming `SO_LINGER {on,0}` alone does not deliver the contract.
+    /// Every abort path therefore releases through this instead of dropping.
+    ///
+    /// Read halves and whole streams have nothing to suppress, so for them
+    /// this is an ordinary drop.
+    fn release_aborted(self);
+}
+
+impl AbortableSocket for TlsApplicationReader<OwnedReadHalf> {
+    fn abort_fd(&self) -> BorrowedFd<'_> {
+        self.fd()
+    }
+
+    fn release_aborted(self) {}
+}
+
+impl AbortableSocket for TlsApplicationWriter<OwnedWriteHalf> {
+    fn abort_fd(&self) -> BorrowedFd<'_> {
+        self.fd()
+    }
+
+    fn release_aborted(self) {
+        let (half, _records) = self.into_handoff_parts();
+        half.forget();
+    }
+}
+
+impl AbortableSocket for OwnedReadHalf {
+    fn abort_fd(&self) -> BorrowedFd<'_> {
+        self.as_ref().as_fd()
+    }
+
+    fn release_aborted(self) {}
+}
+
+impl AbortableSocket for OwnedWriteHalf {
+    fn abort_fd(&self) -> BorrowedFd<'_> {
+        self.as_ref().as_fd()
+    }
+
+    fn release_aborted(self) {
+        self.forget();
+    }
+}
+
+impl AbortableSocket for NestedRecordReader {
+    fn abort_fd(&self) -> BorrowedFd<'_> {
+        self.fd()
+    }
+
+    fn release_aborted(self) {}
+}
+
+impl AbortableSocket for TcpStream {
+    fn abort_fd(&self) -> BorrowedFd<'_> {
+        self.as_fd()
+    }
+
+    fn release_aborted(self) {}
+}
+
+/// Marks `socket` so its close delivers a reset instead of a FIN.
+///
+/// The caller holds a borrow, which is what proves the descriptor is still
+/// open and still the intended socket.
+fn arm_abort(socket: &impl AbortableSocket) {
+    let _ignored = rr_linux::socket::abort_linger(socket.abort_fd());
+}
+
+/// Resets one socket with `SO_LINGER {on,0}` unless it is disarmed.
+///
+/// Used where abort authority covers a single socket, or two sockets whose
+/// lifetimes differ — one guard each, both dropping before either closes.
+struct SocketAbortGuard<'socket, S: AbortableSocket> {
+    socket: &'socket S,
     disarmed: bool,
 }
 
-impl DirectionAbortGuard {
-    /// Captures both descriptor numbers while the sockets are still live.
-    ///
-    /// A guard outlives the sockets it marks — that is the point of a guard —
-    /// so it can only hold numbers, and applying a mark is best effort. Every
-    /// path that hands a descriptor onward disarms first, so the guard never
-    /// fires on a number the process has since reused.
-    fn new(client: rr_linux::socket::AbortMark, destination: rr_linux::socket::AbortMark) -> Self {
+impl<'socket, S: AbortableSocket> SocketAbortGuard<'socket, S> {
+    const fn new(socket: &'socket S) -> Self {
         Self {
-            marks: [client, destination],
+            socket,
             disarmed: false,
         }
     }
 
-    /// Replaces the destination mark once the real destination exists.
-    fn retarget_destination(&mut self, destination: rr_linux::socket::AbortMark) {
-        self.marks[1] = destination;
-    }
-
-    fn disarm(&mut self) {
+    const fn disarm(&mut self) {
         self.disarmed = true;
     }
 }
 
-impl Drop for DirectionAbortGuard {
+impl<S: AbortableSocket> Drop for SocketAbortGuard<'_, S> {
+    fn drop(&mut self) {
+        if !self.disarmed {
+            arm_abort(self.socket);
+        }
+    }
+}
+
+/// Resets both sockets of one relay direction unless it is disarmed —
+/// cancellation via `try_join`, shutdown abort, or any error path. An aborted
+/// transfer must be distinguishable from graceful completion: the peer
+/// observes a reset, never a clean short EOF that could make a truncated
+/// stream look complete. Graceful exits disarm the guard, preserving FIN and
+/// independent half-close.
+///
+/// # Why this holds the borrows rather than descriptor numbers
+///
+/// The guard used to hold captured descriptor *numbers*, so it could outlive
+/// the sockets it was meant to reset. When one direction finished before the
+/// other failed, it did exactly that: both marks returned `EBADF` and the peer
+/// received a clean FIN for a truncated transfer — the one outcome this type
+/// exists to prevent (#195).
+///
+/// Holding the borrows makes the invariant structural instead of a matter of
+/// drop-order discipline. A value cannot be moved, closed, or dropped while it
+/// is mutably borrowed, so an armed guard is *provably* resetting a live
+/// socket, and the borrow checker rejects any future edit that would hand a
+/// socket onward without disarming first. The direction's I/O runs through
+/// [`Self::parts_mut`], so the guard is the only owner of the borrows and
+/// nothing aliases them.
+struct DirectionAbortGuard<'sockets, C: AbortableSocket, D: AbortableSocket> {
+    client: &'sockets mut C,
+    destination: &'sockets mut D,
+    disarmed: bool,
+}
+
+impl<'sockets, C: AbortableSocket, D: AbortableSocket> DirectionAbortGuard<'sockets, C, D> {
+    const fn new(client: &'sockets mut C, destination: &'sockets mut D) -> Self {
+        Self {
+            client,
+            destination,
+            disarmed: false,
+        }
+    }
+
+    /// Lends both sockets to the direction's framed phase.
+    const fn parts_mut(&mut self) -> (&mut C, &mut D) {
+        (self.client, self.destination)
+    }
+
+    const fn disarm(&mut self) {
+        self.disarmed = true;
+    }
+}
+
+impl<C: AbortableSocket, D: AbortableSocket> Drop for DirectionAbortGuard<'_, C, D> {
     fn drop(&mut self) {
         if self.disarmed {
             return;
         }
-        for mark in self.marks {
-            let _ignored = mark.apply();
-        }
+        arm_abort(self.client);
+        arm_abort(self.destination);
     }
 }
 
+/// Owns the uplink sockets so the abort guard can only ever borrow live ones.
+///
+/// The framed loop borrows them; on error or cancellation the guard drops
+/// first — the borrow checker guarantees it cannot outlive what it borrows —
+/// and resets sockets that are still open. Only when the framed phase asks for
+/// the Direct transition does ownership leave this frame, and by then the
+/// guard is gone and the raw relay owns abort semantics.
 async fn relay_uplink(
-    client: TlsApplicationReader<OwnedReadHalf>,
-    destination: OwnedWriteHalf,
-    user_id: UserId,
-    request_buffer: Vec<u8>,
-    prefetched: Range<usize>,
-    context: &SessionContext<'_>,
-) -> Result<DirectionStats, VisionSessionError> {
-    let mut guard = DirectionAbortGuard::new(
-        rr_linux::socket::AbortMark::capture(client.fd()),
-        rr_linux::socket::AbortMark::capture(destination.as_ref()),
-    );
-    let result = relay_uplink_inner(
-        client,
-        destination,
-        user_id,
-        request_buffer,
-        prefetched,
-        context,
-        &mut guard,
-    )
-    .await;
-    if result.is_ok() {
-        guard.disarm();
-    }
-    result
-}
-
-async fn relay_uplink_inner(
     mut client: TlsApplicationReader<OwnedReadHalf>,
     mut destination: OwnedWriteHalf,
     user_id: UserId,
     request_buffer: Vec<u8>,
     prefetched: Range<usize>,
     context: &SessionContext<'_>,
-    guard: &mut DirectionAbortGuard,
 ) -> Result<DirectionStats, VisionSessionError> {
+    let step = {
+        let mut guard = DirectionAbortGuard::new(&mut client, &mut destination);
+        let (client, destination) = guard.parts_mut();
+        let step = relay_uplink_framed(
+            client,
+            destination,
+            user_id,
+            request_buffer,
+            prefetched,
+            context,
+        )
+        .await;
+        if step.is_ok() {
+            guard.disarm();
+        }
+        step
+    };
+    match step {
+        Ok(UplinkStep::Framed(stats)) => Ok(stats),
+        Ok(UplinkStep::Direct { bytes }) => {
+            finish_uplink_direct(client, destination, bytes, context).await
+        }
+        Err(error) => {
+            // The guard reset both sockets while they were provably live.
+            // Release them without tokio's shutdown-on-drop so the abortive
+            // close is not preceded by a FIN the peer would read as a clean
+            // end of stream.
+            client.release_aborted();
+            destination.release_aborted();
+            Err(error)
+        }
+    }
+}
+
+/// What the framed uplink phase decided.
+enum UplinkStep {
+    /// The direction finished inside the framed protocol.
+    Framed(DirectionStats),
+    /// An authenticated Direct boundary was reached after `bytes` framed bytes;
+    /// the caller owns the sockets and performs the raw transfer.
+    Direct { bytes: u64 },
+}
+
+async fn relay_uplink_framed(
+    client: &mut TlsApplicationReader<OwnedReadHalf>,
+    destination: &mut OwnedWriteHalf,
+    user_id: UserId,
+    request_buffer: Vec<u8>,
+    prefetched: Range<usize>,
+    context: &SessionContext<'_>,
+) -> Result<UplinkStep, VisionSessionError> {
     let SessionContext {
         timeout, handoff, ..
     } = *context;
@@ -890,13 +1065,12 @@ async fn relay_uplink_inner(
         let mode = decoder
             .decode_append(initial, &mut stage)
             .map_err(VisionSessionError::VisionDecode)?;
-        flush_uplink(&mut stage, &mut destination, &mut idle, timeout, &mut bytes).await?;
+        flush_uplink(&mut stage, destination, &mut idle, timeout, &mut bytes).await?;
         if mode == VisionMode::Direct {
-            // The direct path takes both halves: from here on the raw relay
-            // owns abort semantics and its drop closes the descriptors, so
-            // the guard must never fire on recycled descriptor numbers.
-            guard.disarm();
-            return finish_uplink_direct(client, destination, bytes, context).await;
+            // The caller owns the sockets and performs the transfer; the guard
+            // it holds is disarmed on this `Ok`, so abort authority passes to
+            // the raw relay with no window in which nobody owns it.
+            return Ok(UplinkStep::Direct { bytes });
         }
     }
     drop(request_buffer);
@@ -906,7 +1080,7 @@ async fn relay_uplink_inner(
         // still buffered the loop keeps batching, and a sparse flow never
         // waits behind staged bytes.
         if !client.has_buffered_record() {
-            flush_uplink(&mut stage, &mut destination, &mut idle, timeout, &mut bytes).await?;
+            flush_uplink(&mut stage, destination, &mut idle, timeout, &mut bytes).await?;
         }
         let record = match client.read_application(timeout).await {
             Ok(record) => record,
@@ -914,13 +1088,11 @@ async fn relay_uplink_inner(
                 level: _,
                 description: 0,
             }) => {
-                flush_uplink(&mut stage, &mut destination, &mut idle, timeout, &mut bytes).await?;
+                flush_uplink(&mut stage, destination, &mut idle, timeout, &mut bytes).await?;
                 idle.reset(timeout).map_err(idle_failure)?;
-                idle.shutdown(&mut destination)
-                    .await
-                    .map_err(idle_failure)?;
+                idle.shutdown(destination).await.map_err(idle_failure)?;
                 settle(handoff, Direction::Uplink, DirectionState::Closed);
-                return Ok(DirectionStats::framed(bytes));
+                return Ok(UplinkStep::Framed(DirectionStats::framed(bytes)));
             }
             Err(error) => {
                 settle(handoff, Direction::Uplink, DirectionState::Failed);
@@ -931,7 +1103,7 @@ async fn relay_uplink_inner(
             continue;
         }
         if stage.len() + record.len() > stage.capacity() {
-            flush_uplink(&mut stage, &mut destination, &mut idle, timeout, &mut bytes).await?;
+            flush_uplink(&mut stage, destination, &mut idle, timeout, &mut bytes).await?;
             // A completely-full staging buffer is bulk-flow evidence: grow to
             // the batched layout exactly once and never shrink back.
             if stage.capacity() < UPLINK_STAGE_CAPACITY {
@@ -953,10 +1125,9 @@ async fn relay_uplink_inner(
         if mode == VisionMode::Direct {
             // The decoded bytes precede every raw byte finish_uplink_direct
             // drains, so the staging buffer is flushed first; see the
-            // prefetched branch above for the guard handoff.
-            flush_uplink(&mut stage, &mut destination, &mut idle, timeout, &mut bytes).await?;
-            guard.disarm();
-            return finish_uplink_direct(client, destination, bytes, context).await;
+            // prefetched branch above for the ownership handoff.
+            flush_uplink(&mut stage, destination, &mut idle, timeout, &mut bytes).await?;
+            return Ok(UplinkStep::Direct { bytes });
         }
     }
 }
@@ -1072,41 +1243,60 @@ async fn finish_uplink_direct(
     }
 }
 
+/// Owns the downlink sockets so the abort guard can only ever borrow live ones.
+///
+/// The mirror of [`relay_uplink`]: the framed phase borrows, the guard cannot
+/// outlive what it borrows, and ownership leaves this frame only for the
+/// Direct transition, after the guard is gone.
 async fn relay_downlink(
     destination: OwnedReadHalf,
-    client: TlsApplicationWriter<OwnedWriteHalf>,
-    user_id: UserId,
-    response_header: &[u8],
-    context: &SessionContext<'_>,
-) -> Result<DirectionStats, VisionSessionError> {
-    let nested = NestedRecordReader::new(destination);
-    let mut guard = DirectionAbortGuard::new(
-        rr_linux::socket::AbortMark::capture(client.fd()),
-        rr_linux::socket::AbortMark::capture(nested.fd()),
-    );
-    let result = relay_downlink_inner(
-        nested,
-        client,
-        user_id,
-        response_header,
-        context,
-        &mut guard,
-    )
-    .await;
-    if result.is_ok() {
-        guard.disarm();
-    }
-    result
-}
-
-async fn relay_downlink_inner(
-    mut destination: NestedRecordReader,
     mut client: TlsApplicationWriter<OwnedWriteHalf>,
     user_id: UserId,
     response_header: &[u8],
     context: &SessionContext<'_>,
-    guard: &mut DirectionAbortGuard,
 ) -> Result<DirectionStats, VisionSessionError> {
+    let mut nested = NestedRecordReader::new(destination);
+    let step = {
+        let mut guard = DirectionAbortGuard::new(&mut client, &mut nested);
+        let (client, destination) = guard.parts_mut();
+        let step =
+            relay_downlink_framed(destination, client, user_id, response_header, context).await;
+        if step.is_ok() {
+            guard.disarm();
+        }
+        step
+    };
+    match step {
+        Ok(DownlinkStep::Framed(stats)) => Ok(stats),
+        Ok(DownlinkStep::Direct { bytes }) => {
+            finish_downlink_direct(nested, client, bytes, context).await
+        }
+        Err(error) => {
+            // See `relay_uplink`: the reset is already armed, and this is what
+            // keeps a FIN from reaching the peer ahead of it.
+            client.release_aborted();
+            nested.release_aborted();
+            Err(error)
+        }
+    }
+}
+
+/// What the framed downlink phase decided.
+enum DownlinkStep {
+    /// The direction finished inside the framed protocol.
+    Framed(DirectionStats),
+    /// An authenticated Direct boundary was reached after `bytes` framed bytes;
+    /// the caller owns the sockets and performs the raw transfer.
+    Direct { bytes: u64 },
+}
+
+async fn relay_downlink_framed(
+    destination: &mut NestedRecordReader,
+    client: &mut TlsApplicationWriter<OwnedWriteHalf>,
+    user_id: UserId,
+    response_header: &[u8],
+    context: &SessionContext<'_>,
+) -> Result<DownlinkStep, VisionSessionError> {
     let SessionContext {
         timeout, handoff, ..
     } = *context;
@@ -1147,12 +1337,12 @@ async fn relay_downlink_inner(
                     .await
                     .map_err(VisionSessionError::Tls)?;
                 settle(handoff, Direction::Downlink, DirectionState::Closed);
-                return Ok(DirectionStats::framed(bytes));
+                return Ok(DownlinkStep::Framed(DirectionStats::framed(bytes)));
             }
             NestedRead::Unframed(content) => {
                 bytes = bytes.saturating_add(length_u64(content.len()));
                 write_vision_content(
-                    &mut client,
+                    client,
                     &mut encoder,
                     content,
                     VisionCommand::End,
@@ -1161,11 +1351,10 @@ async fn relay_downlink_inner(
                 )
                 .await?;
                 settle(handoff, Direction::Downlink, DirectionState::Outer);
-                bytes = bytes.saturating_add(
-                    relay_outer_downlink(&mut destination, &mut client, timeout).await?,
-                );
+                bytes =
+                    bytes.saturating_add(relay_outer_downlink(destination, client, timeout).await?);
                 settle(handoff, Direction::Downlink, DirectionState::Closed);
-                return Ok(DirectionStats::framed(bytes));
+                return Ok(DownlinkStep::Framed(DirectionStats::framed(bytes)));
             }
             NestedRead::Record(record) => {
                 bytes = bytes.saturating_add(length_u64(record.len()));
@@ -1175,26 +1364,24 @@ async fn relay_downlink_inner(
                     PaddingDecision::End => VisionCommand::End,
                     PaddingDecision::Direct => VisionCommand::Direct,
                 };
-                write_vision_content(&mut client, &mut encoder, record, command, true, timeout)
-                    .await?;
+                write_vision_content(client, &mut encoder, record, command, true, timeout).await?;
 
                 match decision {
                     PaddingDecision::Continue => {}
                     PaddingDecision::End => {
                         settle(handoff, Direction::Downlink, DirectionState::Outer);
                         bytes = bytes.saturating_add(
-                            relay_outer_downlink(&mut destination, &mut client, timeout).await?,
+                            relay_outer_downlink(destination, client, timeout).await?,
                         );
                         settle(handoff, Direction::Downlink, DirectionState::Closed);
-                        return Ok(DirectionStats::framed(bytes));
+                        return Ok(DownlinkStep::Framed(DirectionStats::framed(bytes)));
                     }
                     PaddingDecision::Direct => {
-                        // The direct path takes both halves: from here on the
-                        // raw relay owns abort semantics and its drop closes
-                        // the descriptors, so the guard must never fire on
-                        // recycled descriptor numbers.
-                        guard.disarm();
-                        return finish_downlink_direct(destination, client, bytes, context).await;
+                        // The caller owns the sockets and performs the
+                        // transfer; the guard it holds is disarmed on this
+                        // `Ok`, so abort authority passes to the raw relay
+                        // with no window in which nobody owns it.
+                        return Ok(DownlinkStep::Direct { bytes });
                     }
                 }
             }
@@ -3651,6 +3838,312 @@ mod tests {
         )
         .expect("test relay policy must compile");
         VisionHandler::new(outbounds, routing, relay, governor)
+    }
+
+    /// Reproduces the abort-authority lifetime question from #195.
+    ///
+    /// The client sends its whole request and closes the inner TLS stream, so
+    /// the uplink direction completes and `try_join!` drops its future — which
+    /// owns the client read half and the destination write half. The
+    /// destination then aborts, so the downlink direction fails. At that point
+    /// the downlink future owns the *last* halves of both sockets, and the
+    /// question is whether the abort guard can still reach a live socket.
+    ///
+    /// The ordering is a happens-before chain, not a sleep:
+    ///
+    /// 1. `read_to_end` on the destination returns only after the uplink
+    ///    shut the destination write half down, which it does immediately
+    ///    before returning `Ok`;
+    /// 2. the client decodes a downlink record, which the session can only
+    ///    have produced after the uplink future became `Ready` and was
+    ///    dropped in that same poll;
+    /// 3. only then does the client release the destination, which resets.
+    ///
+    /// The peer-visible contract is what is asserted: a truncated transfer
+    /// must reach the client as a reset, never as a clean end of stream that
+    /// a client could mistake for a complete response.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_downlink_abort_after_the_uplink_finished_resets_the_client() {
+        let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("destination must bind");
+        let destination_address = destination_listener
+            .local_addr()
+            .expect("destination address must exist");
+        let (mut client, server) = tcp_pair().await;
+        let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
+        let established = RealityEstablished::from_test_parts(
+            TlsApplicationIo::new(server, established_tls),
+            USER,
+        );
+        let governor = ResourceGovernorConfig {
+            connect_timeout_ms: 1_000,
+            handshake_timeout_ms: 1_000,
+            fallback_timeout_ms: 1_000,
+            ..ResourceGovernorConfig::default()
+        };
+        let handler = direct_handler(&governor);
+        let request = vision_request(destination_address.port(), b"ping");
+        let (downlink_seen, downlink_wait) = tokio::sync::oneshot::channel::<()>();
+
+        let exchange = async {
+            let handle = handler.handle(established);
+            let client_io = async {
+                let mut request_record = Vec::new();
+                client_write_records
+                    .seal_into(
+                        ContentType::ApplicationData,
+                        &request,
+                        0,
+                        &mut request_record,
+                    )
+                    .map_err(io::Error::other)?;
+                client.write_all(&request_record).await?;
+                // Closing the inner stream is what ends the uplink direction.
+                let mut close_record = Vec::new();
+                client_write_records
+                    .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                    .map_err(io::Error::other)?;
+                client.write_all(&close_record).await?;
+
+                // Barrier 2: one decoded downlink record proves the session
+                // progressed past the uplink's completion.
+                let mut record = read_tls_record(&mut client, TEST_TIMEOUT)
+                    .await
+                    .map_err(io::Error::other)?
+                    .into_wire();
+                let opened = client_read_records
+                    .open_in_place(&mut record)
+                    .map_err(io::Error::other)?;
+                assert_eq!(opened.content_type(), ContentType::ApplicationData);
+                let _ = downlink_seen.send(());
+
+                // How the transport ends is the whole assertion.
+                let mut sink = [0_u8; 4_096];
+                loop {
+                    match client.read(&mut sink).await {
+                        Ok(0) => return Ok::<_, io::Error>(None),
+                        Ok(_) => {}
+                        Err(error) => return Ok(Some(error.kind())),
+                    }
+                }
+            };
+            let destination_io = async {
+                let (mut destination, _) = destination_listener.accept().await?;
+                // Barrier 1: returns only once the uplink shut this half down.
+                let mut request = Vec::new();
+                destination.read_to_end(&mut request).await?;
+                destination.write_all(b"partial").await?;
+                let _ = downlink_wait.await;
+                // Truncate the response mid-transfer, the way a dying origin does.
+                rr_linux::socket::abort_linger(&destination).expect("arm the reset");
+                drop(destination);
+                Ok::<_, io::Error>(request)
+            };
+            tokio::join!(handle, client_io, destination_io)
+        };
+        let (session, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+            .await
+            .expect("the exchange must not time out");
+        assert_eq!(
+            destination_result.expect("destination I/O must succeed"),
+            b"ping"
+        );
+        assert!(
+            session.is_err(),
+            "a truncated downlink must fail the session, not report a clean close"
+        );
+        let ending = client_result.expect("client I/O must not fail structurally");
+        assert_eq!(
+            ending,
+            Some(io::ErrorKind::ConnectionReset),
+            "an aborted transfer must reach the client as a reset; a clean end of \
+             stream lets a truncated response look complete"
+        );
+    }
+
+    /// The counterpart to the two abort regressions: arming a reset on every
+    /// failure must not leak into the graceful path.
+    ///
+    /// A session that completes normally has to close with FIN so the client
+    /// can tell a finished response from a truncated one. Over-aborting would
+    /// be a worse defect than the one #195 fixed, because it would corrupt
+    /// every healthy session rather than a failing one.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_completed_session_closes_the_client_cleanly() {
+        let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("destination must bind");
+        let destination_address = destination_listener
+            .local_addr()
+            .expect("destination address must exist");
+        let (mut client, server) = tcp_pair().await;
+        let (established_tls, mut client_write_records, _client_read_records) = tls_states();
+        let established = RealityEstablished::from_test_parts(
+            TlsApplicationIo::new(server, established_tls),
+            USER,
+        );
+        let governor = ResourceGovernorConfig {
+            connect_timeout_ms: 1_000,
+            handshake_timeout_ms: 1_000,
+            fallback_timeout_ms: 1_000,
+            ..ResourceGovernorConfig::default()
+        };
+        let handler = direct_handler(&governor);
+        let request = vision_request(destination_address.port(), b"ping");
+
+        let exchange = async {
+            let handle = handler.handle(established);
+            let client_io = async {
+                let mut request_record = Vec::new();
+                client_write_records
+                    .seal_into(
+                        ContentType::ApplicationData,
+                        &request,
+                        0,
+                        &mut request_record,
+                    )
+                    .map_err(io::Error::other)?;
+                client.write_all(&request_record).await?;
+                let mut close_record = Vec::new();
+                client_write_records
+                    .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                    .map_err(io::Error::other)?;
+                client.write_all(&close_record).await?;
+
+                let mut sink = [0_u8; 4_096];
+                loop {
+                    match client.read(&mut sink).await {
+                        Ok(0) => return Ok::<_, io::Error>(None),
+                        Ok(_) => {}
+                        Err(error) => return Ok(Some(error.kind())),
+                    }
+                }
+            };
+            let destination_io = async {
+                let (mut destination, _) = destination_listener.accept().await?;
+                let mut request = Vec::new();
+                destination.read_to_end(&mut request).await?;
+                destination.write_all(b"pong").await?;
+                destination.shutdown().await?;
+                Ok::<_, io::Error>(request)
+            };
+            tokio::join!(handle, client_io, destination_io)
+        };
+        let (session, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+            .await
+            .expect("the exchange must not time out");
+        assert_eq!(
+            destination_result.expect("destination I/O must succeed"),
+            b"ping"
+        );
+        session.expect("a complete session must succeed");
+        assert_eq!(
+            client_result.expect("client I/O must not fail structurally"),
+            None,
+            "a graceful session must end with FIN; resetting a healthy session \
+             would be a worse defect than the abort it protects against"
+        );
+    }
+
+    /// The cancellation half of #195.
+    ///
+    /// Here the client keeps its stream open, so the uplink direction is alive
+    /// and parked on a read when the downlink fails. `try_join!` then cancels
+    /// the uplink future *while it owns the client read half and the
+    /// destination write half*. Both guards must still deliver a reset, and
+    /// neither may let a FIN reach the client first.
+    ///
+    /// The barrier is the destination observing the relayed payload, which
+    /// only happens after the session is fully established and both directions
+    /// are running.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_downlink_abort_resets_the_client_while_the_uplink_is_cancelled() {
+        let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("destination must bind");
+        let destination_address = destination_listener
+            .local_addr()
+            .expect("destination address must exist");
+        let (mut client, server) = tcp_pair().await;
+        let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
+        let established = RealityEstablished::from_test_parts(
+            TlsApplicationIo::new(server, established_tls),
+            USER,
+        );
+        let governor = ResourceGovernorConfig {
+            connect_timeout_ms: 1_000,
+            handshake_timeout_ms: 1_000,
+            fallback_timeout_ms: 1_000,
+            ..ResourceGovernorConfig::default()
+        };
+        let handler = direct_handler(&governor);
+        let request = vision_request(destination_address.port(), b"ping");
+
+        let exchange = async {
+            let handle = handler.handle(established);
+            let client_io = async {
+                let mut request_record = Vec::new();
+                client_write_records
+                    .seal_into(
+                        ContentType::ApplicationData,
+                        &request,
+                        0,
+                        &mut request_record,
+                    )
+                    .map_err(io::Error::other)?;
+                client.write_all(&request_record).await?;
+                // No close_notify: the uplink direction stays alive and parked
+                // on a read for the whole test, so cancelling it is what the
+                // downlink failure below has to do.
+
+                // Consume the downlink preamble so the assertion below observes
+                // the end of the transport, not the response.
+                let mut record = read_tls_record(&mut client, TEST_TIMEOUT)
+                    .await
+                    .map_err(io::Error::other)?
+                    .into_wire();
+                let opened = client_read_records
+                    .open_in_place(&mut record)
+                    .map_err(io::Error::other)?;
+                assert_eq!(opened.content_type(), ContentType::ApplicationData);
+
+                let mut sink = [0_u8; 4_096];
+                loop {
+                    match client.read(&mut sink).await {
+                        Ok(0) => return Ok::<_, io::Error>(None),
+                        Ok(_) => {}
+                        Err(error) => return Ok(Some(error.kind())),
+                    }
+                }
+            };
+            let destination_io = async {
+                let (mut destination, _) = destination_listener.accept().await?;
+                // Barrier: the relayed payload proves both directions are live.
+                let mut relayed = [0_u8; 4];
+                destination.read_exact(&mut relayed).await?;
+                rr_linux::socket::abort_linger(&destination).expect("arm the reset");
+                drop(destination);
+                Ok::<_, io::Error>(relayed)
+            };
+            tokio::join!(handle, client_io, destination_io)
+        };
+        let (session, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+            .await
+            .expect("the exchange must not time out");
+        assert_eq!(
+            destination_result.expect("destination I/O must succeed"),
+            *b"ping"
+        );
+        assert!(
+            session.is_err(),
+            "an aborted destination must fail the session"
+        );
+        assert_eq!(
+            client_result.expect("client I/O must not fail structurally"),
+            Some(io::ErrorKind::ConnectionReset),
+            "cancelling a live direction must still reset the client, never FIN it"
+        );
     }
 
     #[test]

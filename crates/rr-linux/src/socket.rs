@@ -7,14 +7,13 @@
 //! * `FIONREAD` reports userspace-visible queued input; the pipe pool uses it
 //!   to refuse recycling a pipe that still holds unread bytes.
 //!
-//! Every entry point takes a borrowed descriptor or returns an owned one. The
-//! single exception, [`AbortMark`], exists because one abort guard outlives the
-//! socket it marks, and its raw handling is contained here.
+//! Every entry point takes a borrowed descriptor or returns an owned one:
+//! nothing here accepts or hands out a bare descriptor number.
 
 use core::{net::SocketAddrV6, time::Duration};
 
 use rustix::{
-    fd::{AsFd, AsRawFd as _, BorrowedFd, OwnedFd, RawFd},
+    fd::{AsFd, OwnedFd},
     io::Errno,
     net::{AddressFamily, Shutdown, SocketFlags, SocketType, ipproto, sockopt},
 };
@@ -148,49 +147,6 @@ pub fn abort_linger(fd: impl AsFd) -> Result<(), Errno> {
     sockopt::set_socket_linger(fd.as_fd(), Some(Duration::ZERO))
 }
 
-/// A descriptor number captured from a live socket for later abort marking.
-///
-/// Abort guards are armed while a socket is live and fire on unwind, by which
-/// time the owner may already have closed it — so a guard can only hold a
-/// descriptor *number*, never a borrow. Capturing one is safe; applying one is
-/// best-effort. A number the process has since closed reports `EBADF`, which
-/// the caller ignores. A number the process has since *reused* would mark an
-/// unrelated socket, which is why every path that hands a descriptor onward
-/// disarms its guard first.
-///
-/// The `unsafe` needed to address a bare descriptor number lives here so the
-/// protocol crate keeps `#![deny(unsafe_code)]`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AbortMark(RawFd);
-
-impl AbortMark {
-    /// Captures the number of a socket that is live right now.
-    #[must_use]
-    #[inline]
-    pub fn capture(fd: impl AsFd) -> Self {
-        Self(fd.as_fd().as_raw_fd())
-    }
-
-    /// Applies [`abort_linger`] to the captured number, best effort.
-    ///
-    /// # Errors
-    ///
-    /// Returns the kernel error from `setsockopt(SO_LINGER)`, which is `EBADF`
-    /// when the descriptor has already been closed.
-    #[inline]
-    pub fn apply(self) -> Result<(), Errno> {
-        // SAFETY: `borrow_raw` requires a descriptor number that is not `-1`.
-        // `capture` recorded it from a live `AsFd`, so it was a real descriptor
-        // of this process and is never `-1`. The borrow does not outlive this
-        // statement, and it is used only for one `setsockopt`, which reports
-        // `EBADF` rather than misbehaving if the number is no longer open. No
-        // ownership is created or destroyed here: nothing closes this
-        // descriptor.
-        let borrowed = unsafe { BorrowedFd::borrow_raw(self.0) };
-        abort_linger(borrowed)
-    }
-}
-
 /// Returns the number of userspace-visible queued input bytes on `fd`.
 ///
 /// # Errors
@@ -213,8 +169,8 @@ pub(crate) mod tests {
     };
 
     use super::{
-        AbortMark, LISTEN_BACKLOG, abort_linger, bind_tcp_listener_v6only, ipv6_only,
-        keepalive_enabled, pending_input, set_keepalive, shutdown_write, whole_seconds,
+        LISTEN_BACKLOG, abort_linger, bind_tcp_listener_v6only, ipv6_only, keepalive_enabled,
+        pending_input, set_keepalive, shutdown_write, whole_seconds,
     };
 
     /// Pins the listen backlog to the C library policy of each release target.
@@ -409,18 +365,14 @@ pub(crate) mod tests {
             "the abort marker must be a zero linger, not a timed one"
         );
 
-        // A mark is a captured number, so applying it must reach the same
-        // socket the borrow-taking entry point does.
-        let mark = AbortMark::capture(&client);
-        rustix::net::sockopt::set_socket_linger(&client, None).expect("clear SO_LINGER");
-        mark.apply().expect("a captured live socket applies");
+        // Arming is idempotent: an abort path may run it more than once.
+        abort_linger(&client).expect("re-arm SO_LINGER {on, 0}");
         assert_eq!(
             rustix::net::sockopt::socket_linger(&client).expect("read SO_LINGER"),
-            Some(Duration::ZERO),
-            "the mark must arm the same socket it was captured from"
+            Some(Duration::ZERO)
         );
 
-        // A number that is not open reports the kernel error; callers ignore it.
+        // A descriptor that is not open reports the kernel error; callers ignore it.
         assert_eq!(
             abort_linger(always_invalid_fd()).err(),
             Some(rustix::io::Errno::BADF),
