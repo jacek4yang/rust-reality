@@ -245,8 +245,11 @@ the connection.
 
 **Unsafe code is contained.** All Linux ABI `unsafe` lives in
 `crates/rr-linux`, which denies `unsafe_op_in_unsafe_fn`; the protocol crate
-keeps `unsafe_code = "deny"`. Every unsafe block has a `SAFETY:` comment, and
-ABI layouts and descriptor lifetimes have direct tests. No eBPF is loaded:
+keeps `unsafe_code = "deny"`. The crate reaches the kernel through reviewed
+`rustix` APIs rather than hand-written ABI, so exactly one `unsafe` block
+remains: the abort marker that must address a descriptor number after its owner
+may have closed it. It carries a `SAFETY:` comment, and descriptor lifetimes,
+socket options and the `/proc` parser have direct tests. No eBPF is loaded:
 the privileged sockhash backend was removed (D7), so the server needs no
 kernel-injection capability.
 

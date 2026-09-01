@@ -380,6 +380,17 @@ syscall-shaped pipe capacity, `splice`, write-shutdown, and errno operations.
 The root crate has no direct `libc` or `rustix` dependency, keeping the hot loop
 monomorphic while making the unsafe OS boundary auditable in one place.
 
+That boundary is `#![no_std]` (ADR 0015). Mechanisms reach the kernel through
+`rustix`'s `linux_raw` backend rather than through a C library, report
+`rustix::io::Errno` rather than `std::io::Error`, and hand descriptors upward as
+`OwnedFd` — the listener leaves `rr-linux` already created, configured, bound and
+listening, and Transport moves that descriptor into std and then Tokio by value.
+A narrow `std` feature makes those descriptor types identical to `std::os::fd`'s,
+which is what keeps the transfer free of `unsafe` above the boundary; disabling
+it still compiles every mechanism. The daemon itself remains a std/Tokio
+application and still links glibc on the GNU target: this is a boundary
+property, not a libc-free binary.
+
 Raw relay liveness uses a Transport-local reusable idle deadline. TLS record and
 application I/O retain their protocol-owned deadline, so Transport does not
 import a protocol module merely to time its own readiness operations.
