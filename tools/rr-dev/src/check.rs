@@ -157,6 +157,13 @@ impl Scope {
     }
 
     /// The cargo half of the gate.
+    ///
+    /// Every stage names `--workspace` explicitly. Without it, cargo selects
+    /// the default members — which for this repository is the root package
+    /// alone — so `crates/rr-linux` and `crates/rr-session` would be neither
+    /// linted, documented, nor tested by a gate that reports `PASS`. That is
+    /// not a hypothetical: this gate once reported 15/15 while a workspace
+    /// crate held a clippy error, and it ran 816 of the workspace's 874 tests.
     fn cargo_steps(self, repo: &Path) -> Vec<Step> {
         let mut steps = Vec::new();
         steps.push(cargo(
@@ -166,9 +173,10 @@ impl Scope {
         ));
         steps.push(cargo(
             repo,
-            "cargo clippy --all-targets --all-features --locked -- -D warnings",
+            "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
             &[
                 "clippy",
+                "--workspace",
                 "--all-targets",
                 "--all-features",
                 "--locked",
@@ -192,22 +200,29 @@ impl Scope {
                 ],
             ));
             steps.push(Step::External {
-                label: "cargo doc --all-features --locked --no-deps".to_owned(),
+                label: "cargo doc --workspace --all-features --locked --no-deps".to_owned(),
                 tool: Tool::new("cargo")
-                    .args(["doc", "--all-features", "--locked", "--no-deps"])
+                    .args([
+                        "doc",
+                        "--workspace",
+                        "--all-features",
+                        "--locked",
+                        "--no-deps",
+                    ])
                     .env("RUSTDOCFLAGS", "-D warnings")
                     .current_dir(repo),
             });
         }
 
         steps.push(Step::External {
-            label: "cargo nextest run --all-features --locked".to_owned(),
+            label: "cargo nextest run --workspace --all-features --locked".to_owned(),
             tool: Tool::new("cargo")
                 .args([
                     "nextest",
                     "run",
                     "--profile",
                     "default",
+                    "--workspace",
                     "--all-features",
                     "--locked",
                 ])
@@ -217,19 +232,26 @@ impl Scope {
         if self == Self::All {
             steps.push(cargo(
                 repo,
-                "cargo test --doc --all-features --locked",
-                &["test", "--doc", "--all-features", "--locked"],
+                "cargo test --workspace --doc --all-features --locked",
+                &["test", "--workspace", "--doc", "--all-features", "--locked"],
             ));
             steps.push(cargo(
                 repo,
-                "cargo test --release --all-features --locked",
-                &["test", "--release", "--all-features", "--locked"],
-            ));
-            steps.push(cargo(
-                repo,
-                "cargo test --benches --all-features --locked --no-run",
+                "cargo test --workspace --release --all-features --locked",
                 &[
                     "test",
+                    "--workspace",
+                    "--release",
+                    "--all-features",
+                    "--locked",
+                ],
+            ));
+            steps.push(cargo(
+                repo,
+                "cargo test --workspace --benches --all-features --locked --no-run",
+                &[
+                    "test",
+                    "--workspace",
                     "--benches",
                     "--all-features",
                     "--locked",
@@ -885,6 +907,30 @@ mod tests {
             all.len() > fast.len(),
             "the full scope must add steps, otherwise the split is pointless"
         );
+    }
+
+    #[test]
+    fn every_cargo_build_stage_covers_the_whole_workspace() {
+        // Without `--workspace`, cargo selects the default members — the root
+        // package alone — so `crates/rr-linux` and `crates/rr-session` would be
+        // silently excluded from a gate that still reports `PASS`. `fmt --all`
+        // and `deny`, which read the whole workspace by construction, and
+        // `audit`, which reads the lockfile, are the deliberate exceptions.
+        let repo = repo_root();
+        for step in Scope::All.steps(&repo) {
+            let Step::External { label, tool } = &step else {
+                continue;
+            };
+            let rendered = tool.redacted();
+            let selects_by_default = label.contains("cargo fmt") || label.contains("cargo deny");
+            if selects_by_default {
+                continue;
+            }
+            assert!(
+                rendered.contains("--workspace"),
+                "gate stage must not silently skip workspace crates: {label}"
+            );
+        }
     }
 
     #[test]

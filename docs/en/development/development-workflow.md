@@ -50,8 +50,11 @@ git diff --check
 `cargo dev check --all` runs the repository gate: repository-layout and
 documentation policy checks, `cargo fmt --all --check`, strict clippy,
 `cargo deny`, `cargo doc` with warnings denied, the nextest suite, doc/release
-test profiles, bench compilation, and `cargo audit`. CI runs the same gate plus
-the musl release build; the Security workflow adds fuzz shards and sanitizers.
+test profiles, bench compilation, and `cargo audit`. Every cargo stage names
+`--workspace`, so `crates/rr-linux` and `crates/rr-session` are linted,
+documented and tested by the gate rather than silently skipped. CI runs the
+same gate plus the musl release build; the Security workflow adds fuzz shards
+and sanitizers.
 
 ### Check result protocol
 
