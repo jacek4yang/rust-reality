@@ -148,6 +148,27 @@ fn rust_identity(path: &Path) -> Result<String, String> {
     Ok(serde_compatible_environment(environment))
 }
 
+/// Reads the source commit out of a captured rust-reality identity object.
+///
+/// `register` already proved the field is a 40-hex commit, so callers that need
+/// the value itself parse the same object rather than re-deriving it from the
+/// binary, and every consumer reports the same failure for the same input.
+///
+/// # Errors
+///
+/// Returns an error when the identity is not the expected JSON object.
+pub fn embedded_commit(identity: &str) -> Result<String, String> {
+    crate::perf::json_in::parse(identity)
+        .and_then(|value| {
+            value
+                .field("environment", "gitCommit")
+                .and_then(|commit| commit.as_str("environment.gitCommit"))
+                .map(str::to_owned)
+                .map_err(|error| error.to_string())
+        })
+        .map_err(|error| format!("rust-reality binary identity: {error}"))
+}
+
 #[cfg(unix)]
 fn is_executable_file(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt as _;

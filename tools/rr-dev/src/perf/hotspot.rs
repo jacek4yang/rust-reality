@@ -208,18 +208,6 @@ pub fn validate(plan: &Plan) -> Result<(), String> {
     }
 }
 
-fn embedded_commit(identity: &str) -> Result<String, String> {
-    json_in::parse(identity)
-        .and_then(|value| {
-            value
-                .field("environment", "gitCommit")
-                .and_then(|commit| commit.as_str("environment.gitCommit"))
-                .map(str::to_owned)
-                .map_err(|error| error.to_string())
-        })
-        .map_err(|error| format!("rust-reality binary identity: {error}"))
-}
-
 fn inspect_process(pid: u32, expected_sha: &str, expected_build_id: &str) -> Result<ProcessIdentity, String> {
     let starttime = proc_starttime(pid).ok_or_else(|| format!("PID {pid} is not alive"))?;
     let sha256 = attest::running_executable_sha256(pid)?;
@@ -769,7 +757,7 @@ pub fn run(plan: &Plan) -> Result<String, String> {
         &plan.binary_sha256,
         Kind::Rust,
     )?;
-    let observed_commit = embedded_commit(&binary.identity)?;
+    let observed_commit = identity::embedded_commit(&binary.identity)?;
     if observed_commit != plan.expected_source_commit {
         return Err(format!(
             "rust-reality embedded commit mismatch: expected {}, got {observed_commit}",
