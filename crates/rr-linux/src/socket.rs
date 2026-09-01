@@ -213,9 +213,23 @@ pub(crate) mod tests {
     };
 
     use super::{
-        AbortMark, abort_linger, bind_tcp_listener_v6only, ipv6_only, keepalive_enabled,
-        pending_input, set_keepalive, shutdown_write, whole_seconds,
+        AbortMark, LISTEN_BACKLOG, abort_linger, bind_tcp_listener_v6only, ipv6_only,
+        keepalive_enabled, pending_input, set_keepalive, shutdown_write, whole_seconds,
     };
+
+    /// Pins the listen backlog to the C library policy of each release target.
+    ///
+    /// The two supported tiers deliberately disagree. Asserting the numbers
+    /// here means a dependency bump that changes either one fails the build
+    /// instead of silently reshaping the accept queue of one release.
+    #[test]
+    fn the_listen_backlog_is_the_target_c_library_policy() {
+        #[cfg(target_env = "gnu")]
+        assert_eq!(LISTEN_BACKLOG, 4_096, "glibc SOMAXCONN");
+        #[cfg(target_env = "musl")]
+        assert_eq!(LISTEN_BACKLOG, 128, "musl SOMAXCONN");
+        assert!(LISTEN_BACKLOG > 0, "a non-positive backlog cannot listen");
+    }
 
     fn loopback_listener() -> OwnedFd {
         bind_tcp_listener_v6only(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 0, 0, 0))
