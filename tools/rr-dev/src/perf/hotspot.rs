@@ -1417,6 +1417,23 @@ mod tests {
         assert!(error.contains("executable Build ID mismatch"), "{error}");
     }
 
+    /// Binds a freshly spawned target once its `execve` has completed.
+    ///
+    /// Bounded rather than unbounded: a target that never becomes the expected
+    /// executable is a real failure and must not hang the suite.
+    fn bind_after_exec(pid: u32, sha256: &str, build_id: &str) -> ProcessIdentity {
+        const ATTEMPTS: u32 = 400;
+        let mut last = String::new();
+        for _ in 0..ATTEMPTS {
+            match inspect_process(pid, sha256, build_id) {
+                Ok(identity) => return identity,
+                Err(error) => last = error,
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("target never became the expected executable: {last}");
+    }
+
     #[test]
     fn target_exit_is_detected_before_capture_publication() {
         if !Tool::exists("sleep") {
@@ -1429,12 +1446,33 @@ mod tests {
             .arg("30")
             .spawn()
             .expect("start target");
-        let mut identity =
-            inspect_process(child.id(), &sha256, &build_id).expect("bind the running target");
+        let child_pid = child.id();
+        // `spawn` returns after the fork, not after the child's `execve`, so
+        // for a moment `/proc/<pid>/exe` still names *this* test binary and
+        // binding would fail on an executable mismatch. Production never sees
+        // that state — it attaches to an already-running server — so wait for
+        // the exec to land rather than binding a half-started process. Under
+        // load this window is wide enough to matter.
+        let mut identity = bind_after_exec(child_pid, &sha256, &build_id);
         child.kill().expect("kill target");
         child.wait().expect("reap target");
         let error = verify_process(&mut identity).unwrap_err();
-        assert!(error.contains("exited during profile capture"), "{error}");
+        // Reaping the child frees its PID, so a parallel test can take that
+        // number before the check below reads `/proc`. Both outcomes are
+        // correct detections of the same fact — the bound target is gone — and
+        // which one is observed is a property of the machine, not of the code
+        // under test. Asserting only the `exited` wording made this test fail
+        // intermittently under load; assert the contract instead, which is
+        // that verification refuses to publish and names the PID it lost.
+        assert!(
+            error.contains("exited during profile capture")
+                || error.contains("starttime changed during profile capture"),
+            "target death must be detected, however the PID was lost: {error}"
+        );
+        assert!(
+            error.contains(&child_pid.to_string()),
+            "the failure must name the PID it was bound to: {error}"
+        );
     }
 
     #[test]
