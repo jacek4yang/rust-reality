@@ -49,8 +49,8 @@ JSON；如果内核或 VPS 策略拒绝某个事件，则记录带原始诊断�
 | `cargo bench`（criterion） | VLESS 解码、Vision framing、relay 后端、双栈规划/setup/fallback、自适应 short-ID/身份/tag 查找、REALITY digest 哈希、重放过期/reserve 和 direct admission 争用的回归分析，带基线和图表。 |
 | `cargo dev bench run --suite matrix` | 完整 A/B/C loopback 矩阵（baseline/final/Xray），覆盖 方向 × 载荷 × 并发；每个 cell 都有 origin 饱和、上传计量与隧道绕过守卫，并含端到端完整性校验。`--cells`/`--skip` 可裁剪计划。 |
 | `cargo dev bench run --suite fallback` | 在固定基线 ELF 与候选之间做干净的 fallback A/B：两侧 warn 级日志、直连 listener，两侧固定相同的 relay splice/pipe-pool/buffer 策略，并在计时前逐 slot 校验载荷完整性。 |
-| `cargo dev bench run --suite setup-rate` | 在固定基线 ELF 与候选之间做平衡 setup 速率 A/B（accept → 第一次 Vision 转换）。设置 `--cover-netem-rtt-ms` 时只把 TLS 伪装目标移到 veth/netns 后并施加有记录的单向延迟，同时保留 pool hit/miss 汇总。`--measure-mode perf` 在 warmup 后归因 task-clock/指令/context switch；`strace` 记录有界的 read/receive syscall 集，并先优雅停止 tracee，避免静默产生空汇总。 |
-| `cargo dev bench run --suite vision-direct`、`cargo dev bench run --suite xray` | 聚焦的 Vision-Direct 与 Xray 对比。 |
+| `cargo dev bench run --suite setup-rate` | 在固定基线 ELF 与候选之间做平衡 setup 速率 A/B（accept → 第一次 Vision 转换）。设置 `--cover-netem-rtt-ms` 时只把 TLS 伪装目标移到 veth/netns 后并施加有记录的单向延迟，同时保留 pool hit/miss 汇总。`--measure-mode perf` 在 warmup 后归因 task-clock/指令/context switch；`strace` 记录有界的 read/receive syscall 集，并先优雅停止 tracee，避免静默产生空汇总。`--profile` 在 benchmark 已持有的锁和精确 server 身份下采集第一个正式候选 slot。 |
+| `cargo dev bench run --suite vision-direct`、`cargo dev bench run --suite xray` | 聚焦的 Vision-Direct 与 Xray 对比。Vision-Direct 支持 `--profile`，对 warmup 之后的完整测量 workload 采样精确的 Rust server。 |
 | `cargo dev bench run --suite deployment` | 部署特征化：路由正确性证明、路由决策成本（含 DNS 策略）、NXR 拓扑（direct/NXR/SOCKS5/Xray）、长连接 relay 证据，以及正式单跳 netem matrix。RTT 段保留精确生产构建在 1/10/50/100/200 ms、c1/8/32/128/512 下 Handoff/NXR/SOCKS5 的 ABBA cold/warm 样本与无秘密 pool retirement summary。`--deployment-plan` 选择 `full`、`mechanism`、`robustness` 或非正式的 `smoke`。 |
 | `cargo dev bench run --suite soak` | 可选长期回环证据：standalone 混合流量加 Handoff、NXR、仅 TCP SOCKS5、中点 reload、精确进程身份下的逐进程 RSS、汇总 PSS，以及带哈希绑定的 start/interval/reload/end 完整性尝试。`--soak-implementation xray` 选择保留的对照端。默认原生运行是计划任务/非阻塞证据；精确 12 小时且分布式间隔为 5–30 分钟的运行会记录是否满足严格长期资格。 |
 | `cargo dev bench profiles` | 在精确 cgroup-v2 CPU、内存与零 swap 边界下执行 fail-closed 机器档位验证。它负责候选/Xray 身份、scope 进程清理、churn 与 512 MiB 下载、默认/调优空闲会话阶梯、RSS/FD/cgroup/OOM 采样、带逐阶梯基线的绝对日志计数、逐档汇总与聚合发布。 |
@@ -60,6 +60,16 @@ JSON；如果内核或 VPS 策略拒绝某个事件，则记录带原始诊断�
 | `cargo dev bench run --suite real-path` | 真实互联网路径上与 Xray 的 A/B：崩溃与协议错误门禁；吞吐受路径最慢链路限制，不能用于区分带宽。 |
 | `cargo dev bench run --suite vless-encryption` | Xray v26.7.28 下 `encryption:none` 与同一 REALITY + Vision 内叠加 VLESS Encryption 的 A/B；测吞吐、服务端 CPU/GiB 和预热后的 setup，执行顺序为带种子且已记录的随机序。 |
 | `cargo dev bench run --suite xray-interop` | 兼容性门禁（见下），不是基准。 |
+
+要执行整段 workload 的 CPU 归因，可在 `setup-rate` 或
+`vision-direct` 中加入 `--profile`。benchmark 仍是排他主机锁、拓扑、
+已注册精确 Rust ELF 和实时 server PID 的唯一所有者。它只在 warmup
+后启动 `perf`，在测量 workload 后停止并回收子进程，验证结果，并将
+普通的、可被 bundle 接受的 hotspot 契约写入 `OUT_DIR/hotspot/`。父
+benchmark 只在清理与验证成功后发布。`--profile-record-seconds`
+是硬上限；`--profile-event`、`--profile-frequency` 和
+`--profile-call-graph` 选择采样配置。所有权决策记录在
+[ADR 0014](../adr/0014-benchmark-owned-whole-session-profiling.md)。
 
 ## v1.7 LINE→LANDING 证据契约
 

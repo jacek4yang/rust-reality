@@ -65,8 +65,8 @@ exact diagnostic instead of manufacturing a measurement.
 | `cargo bench` (criterion) | Regression analysis for VLESS decoding, Vision framing, relay backends, dual-stack planning/setup/fallback, adaptive short-ID/identity/tag lookup, REALITY digest hashing, replay expiry/reservation, and direct admission contention, with baselines and plots. |
 | `cargo dev bench run --suite matrix` | Full A/B/C loopback matrix (baseline/final/Xray) over direction × payload × concurrency, with per-cell origin-saturation, upload-accounting and tunnel-bypass guards and an end-to-end integrity run. `--cells`/`--skip` trim the plan. |
 | `cargo dev bench run --suite fallback` | Clean fallback A/B between a pinned baseline ELF and the candidate: warn-level logging both sides, direct-to-listener, with the relay splice/pipe-pool/buffer policy pinned identically on both sides and per-slot payload integrity verified before timing. |
-| `cargo dev bench run --suite setup-rate` | Balanced setup-rate A/B (accept → first Vision transition) between a pinned baseline ELF and the candidate. `--cover-netem-rtt-ms` moves only the TLS cover behind a veth/netns and applies a recorded one-leg delay, retaining pool hit/miss summaries. `--measure-mode perf` attributes task-clock/instructions/context switches after warmup; `strace` records the bounded read/receive syscall set and gracefully stops the tracee so summaries cannot be silently empty. |
-| `cargo dev bench run --suite vision-direct`, `cargo dev bench run --suite xray` | Focused Vision-Direct and Xray comparisons. |
+| `cargo dev bench run --suite setup-rate` | Balanced setup-rate A/B (accept → first Vision transition) between a pinned baseline ELF and the candidate. `--cover-netem-rtt-ms` moves only the TLS cover behind a veth/netns and applies a recorded one-leg delay, retaining pool hit/miss summaries. `--measure-mode perf` attributes task-clock/instructions/context switches after warmup; `strace` records the bounded read/receive syscall set and gracefully stops the tracee so summaries cannot be silently empty. `--profile` captures the first measured candidate slot under the benchmark's existing lock and exact server identity. |
+| `cargo dev bench run --suite vision-direct`, `cargo dev bench run --suite xray` | Focused Vision-Direct and Xray comparisons. `--profile` is available for Vision-Direct and samples the exact Rust server across the post-warmup measured workload. |
 | `cargo dev bench run --suite deployment` | Deployment characterization: routing correctness proof, routing decision cost (incl. DNS strategies), NXR topologies (direct/NXR/SOCKS5/Xray), long-flow relay evidence, and a formal one-leg netem matrix. The RTT section retains production-build ABBA cold/warm samples for Handoff/NXR/SOCKS5 at 1/10/50/100/200 ms, c1/8/32/128/512, plus secret-free pool retirement summaries. `--deployment-plan` selects `full`, `mechanism`, `robustness`, or the non-formal `smoke`. |
 | `cargo dev bench run --suite soak` | Optional long-horizon loopback evidence with standalone mixed traffic plus Handoff, NXR, and TCP-only SOCKS5, midpoint reload, exact per-process RSS identities, aggregate PSS, and hash-bound start/interval/reload/end integrity attempts. `--soak-implementation xray` selects the retained comparator. The default native run is scheduled/non-blocking; an exact 12-hour run with a 5–30 minute distributed interval records whether it meets the strict long-horizon qualification. |
 | `cargo dev bench profiles` | Fail-closed machine-profile validation under exact cgroup-v2 CPU, memory and zero-swap boundaries. It owns candidate/Xray identity, scoped process cleanup, churn and 512 MiB downloads, default/tuned idle-session ladders, RSS/FD/cgroup/OOM samples, absolute log counters with per-ladder baselines, class summaries, and aggregate publication. |
@@ -77,6 +77,17 @@ exact diagnostic instead of manufacturing a measurement.
 | `cargo dev bench run --suite real-path` | Real-Internet A/B against Xray: crash and protocol-error gates on a real path; throughput is capped by the slowest link, so it does not discriminate bandwidth. |
 | `cargo dev bench run --suite vless-encryption` | Xray v26.7.28 A/B for `encryption:none` versus VLESS Encryption inside the same REALITY + Vision stack; measures throughput, server CPU/GiB, and warmed setup in a seeded, recorded random order. |
 | `cargo dev bench run --suite xray-interop` | Compatibility gate (below), not a benchmark. |
+
+For whole-session CPU attribution, add `--profile` to `setup-rate` or
+`vision-direct`. The benchmark remains the sole owner of the exclusive host lock,
+topology, exact registered Rust ELF, and live server PID. It starts `perf` only
+after warmup, stops and reaps it after the measured workload, verifies the
+result, and writes the ordinary bundle-admissible hotspot contract under
+`OUT_DIR/hotspot/`. The parent benchmark publishes only after that cleanup and
+verification succeed. `--profile-record-seconds` is a hard maximum;
+`--profile-event`, `--profile-frequency`, and `--profile-call-graph` select the
+sampling configuration. The ownership decision is recorded in
+[ADR 0014](../adr/0014-benchmark-owned-whole-session-profiling.md).
 
 ## v1.7 LINE-to-LANDING evidence contract
 
