@@ -51,8 +51,10 @@ git diff --check
 `cargo dev check --all` 会运行仓库门禁：仓库布局与文档策略检查、
 `cargo fmt --all --check`、严格 Clippy、`cargo deny`、将警告视为错误的
 `cargo doc`、nextest 测试套件、doc/release 测试 profile、benchmark 编译和
-`cargo audit`。CI 还会构建 musl release；Security workflow 另外运行 fuzz shard
-和 sanitizer。
+`cargo audit`。每个 cargo 阶段都显式指定 `--workspace`，因此
+`crates/rr-linux` 与 `crates/rr-session` 会被门禁检查、生成文档并运行测试，
+而不会被静默跳过。CI 还会构建 musl release；Security workflow 另外运行
+fuzz shard 和 sanitizer。
 
 ### Check 结果协议
 
