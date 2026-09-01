@@ -937,7 +937,7 @@ impl BenchmarkCapture<'_> {
                 .expect("capture owns completed perf")
                 .wait()
                 .map_err(|error| format!("perf record mechanism failed: {error}"))?;
-            capture.status.perf_exit = Some(outcome.code.unwrap_or(128));
+            capture.status.perf_exit = outcome.code;
             return Err(perf_failure(&capture.run_dir, outcome.code.unwrap_or(128)));
         }
         Ok(capture)
@@ -989,7 +989,12 @@ impl BenchmarkCapture<'_> {
             perf.wait()
         }
         .map_err(|error| format!("perf record cleanup failed: {error}"))?;
-        self.status.perf_exit = Some(outcome.code.unwrap_or(128));
+        // An intentional benchmark stop commonly terminates the sudo/timeout
+        // wrapper by signal even though perf flushed valid data. Preserve that
+        // distinction as a null exit code; `benchmarkStopped` records why it is
+        // admissible, while a manufactured numeric code would look like a
+        // contradictory failure in otherwise complete evidence.
+        self.status.perf_exit = outcome.code;
         self.status.perf_elapsed_millis =
             Some(u64::try_from(outcome.elapsed.as_millis()).unwrap_or(u64::MAX));
         self.status.perf_deadline_reached = Some(
@@ -1461,7 +1466,7 @@ mod tests {
                 inspect_process(std::process::id(), &binary.sha256, &build_id)
                     .expect("bind exact current PID"),
             ),
-            perf_exit: Some(0),
+            perf_exit: None,
             perf_elapsed_millis: Some(100),
             perf_deadline_reached: Some(false),
             perf_benchmark_stopped: Some(true),
@@ -1511,6 +1516,10 @@ mod tests {
             std::fs::read_to_string(run.join("run-contract.json")).expect("read contract");
         assert!(contract_text.contains("benchmark-transaction"));
         assert!(contract_text.contains(lock.device_inode()));
+        let metadata_text =
+            std::fs::read_to_string(run.join("metadata.json")).expect("read metadata");
+        assert!(metadata_text.contains("\"exitCode\": null"));
+        assert!(metadata_text.contains("\"benchmarkStopped\": true"));
     }
 
     #[test]
