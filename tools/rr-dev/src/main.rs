@@ -954,6 +954,21 @@ enum PerfCommand {
         #[arg(long, default_value = "fp")]
         call_graph: String,
     },
+    /// Build one named commit into an identity-bound, read-only release artifact.
+    ///
+    /// Every other perf command consumes a binary that already carries its
+    /// source commit, SHA-256 and Build ID; this is what produces one. The
+    /// commit is embedded at build time and the built binary must report it
+    /// back, so a forgotten `RUST_REALITY_GIT_COMMIT` fails here rather than
+    /// inside a capture minutes later.
+    Freeze {
+        /// The 40-hex source commit to build, embed and verify.
+        #[arg(long)]
+        commit: String,
+        /// New absolute evidence directory. Must not already exist.
+        #[arg(long)]
+        out_dir: PathBuf,
+    },
     /// Export one exact hotspot through DWARF, `IDALib`, LLVM and perf samples.
     HotspotBundle {
         /// Completed native `perf hotspot` run directory.
@@ -1218,6 +1233,22 @@ fn run_perf(repo: &std::path::Path, command: PerfCommand) -> ExitCode {
                 }
                 Err(error) => {
                     eprintln!("perf hotspot: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        PerfCommand::Freeze { commit, out_dir } => {
+            match perf::freeze::run(&perf::freeze::Plan {
+                repo: repo.to_path_buf(),
+                commit,
+                out_dir,
+            }) {
+                Ok(message) => {
+                    println!("{message}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("perf freeze: {error}");
                     ExitCode::FAILURE
                 }
             }

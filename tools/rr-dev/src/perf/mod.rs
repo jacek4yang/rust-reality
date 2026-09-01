@@ -20,6 +20,7 @@ pub mod contract;
 pub mod environment;
 pub mod evaluator;
 pub mod evidence;
+pub mod freeze;
 pub mod hotspot;
 pub mod json_in;
 pub mod json_out;
