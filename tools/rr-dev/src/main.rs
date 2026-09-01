@@ -962,9 +962,9 @@ enum PerfCommand {
         /// Safe name for the new `hotspots/LABEL` evidence directory.
         #[arg(long)]
         label: String,
-        /// Static ELF address inside the function to export.
+        /// Perf DSO/file offset; the bundle normalizes it to a static ELF address.
         #[arg(long)]
-        address: String,
+        dso_offset: String,
         /// `IDALib` Python executable. Python is the external `IDALib` API boundary.
         #[arg(long)]
         idalib_python: PathBuf,
@@ -1225,7 +1225,7 @@ fn run_perf(repo: &std::path::Path, command: PerfCommand) -> ExitCode {
         PerfCommand::HotspotBundle {
             run_dir,
             label,
-            address,
+            dso_offset,
             idalib_python,
             timeout_seconds,
             max_unmapped_period_percent,
@@ -1233,7 +1233,7 @@ fn run_perf(repo: &std::path::Path, command: PerfCommand) -> ExitCode {
         } => match perf::hotspot::bundle::run(&perf::hotspot::bundle::Plan {
             run_dir,
             label,
-            address,
+            dso_offset,
             idalib_python,
             timeout_seconds,
             max_unmapped_period_percent,

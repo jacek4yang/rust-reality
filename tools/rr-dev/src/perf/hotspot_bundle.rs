@@ -123,8 +123,8 @@ pub struct Plan {
     pub run_dir: PathBuf,
     /// Safe evidence label.
     pub label: String,
-    /// Static ELF address inside the selected function.
-    pub address: String,
+    /// Perf DSO/file offset to normalize through the executable ELF `PT_LOAD`.
+    pub dso_offset: String,
     /// `IDALib` Python executable.
     pub idalib_python: PathBuf,
     /// `IDALib` timeout.
@@ -168,8 +168,42 @@ struct Function {
 #[derive(Debug)]
 struct Sample {
     period: u64,
-    offset: u64,
+    runtime_ip: u64,
+    dso_offset: u64,
+    static_address: u64,
     source: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LoadSegment {
+    file_offset: u64,
+    virtual_address: u64,
+    file_size: u64,
+    memory_size: u64,
+    alignment: u64,
+    flags: u32,
+}
+
+impl LoadSegment {
+    const fn executable(self) -> bool {
+        self.flags & 1 != 0
+    }
+}
+
+#[derive(Debug)]
+struct ElfAddressMap {
+    loads: Vec<LoadSegment>,
+}
+
+#[derive(Debug, Default)]
+struct SelectionTotals {
+    dso_rows: u64,
+    dso_period: u64,
+    function_rows: u64,
+    function_period: u64,
+    outside_function_rows: u64,
+    outside_function_period: u64,
+    runtime_base: Option<u64>,
 }
 
 #[derive(Debug, Default)]
@@ -180,6 +214,154 @@ struct Totals {
     mapped_period: u64,
     unmapped_rows: u64,
     unmapped_period: u64,
+}
+
+fn read_array<const N: usize>(
+    bytes: &[u8],
+    offset: usize,
+    context: &str,
+) -> Result<[u8; N], String> {
+    let end = offset
+        .checked_add(N)
+        .ok_or_else(|| format!("{context} offset overflow"))?;
+    bytes
+        .get(offset..end)
+        .ok_or_else(|| format!("truncated {context}"))?
+        .try_into()
+        .map_err(|_| format!("invalid {context}"))
+}
+
+fn elf_u16(bytes: &[u8], offset: usize, context: &str) -> Result<u16, String> {
+    Ok(u16::from_le_bytes(read_array(bytes, offset, context)?))
+}
+
+fn elf_u32(bytes: &[u8], offset: usize, context: &str) -> Result<u32, String> {
+    Ok(u32::from_le_bytes(read_array(bytes, offset, context)?))
+}
+
+fn elf_u64(bytes: &[u8], offset: usize, context: &str) -> Result<u64, String> {
+    Ok(u64::from_le_bytes(read_array(bytes, offset, context)?))
+}
+
+impl ElfAddressMap {
+    fn parse(binary: &Path) -> Result<Self, String> {
+        let bytes = std::fs::read(binary)
+            .map_err(|error| format!("could not read ELF {}: {error}", binary.display()))?;
+        if bytes.get(..4) != Some(b"\x7fELF")
+            || bytes.get(4) != Some(&2)
+            || bytes.get(5) != Some(&1)
+            || bytes.get(6) != Some(&1)
+        {
+            return Err("hotspot bundle requires a little-endian ELF64 binary".to_owned());
+        }
+        let elf_type = elf_u16(&bytes, 16, "ELF type")?;
+        let machine = elf_u16(&bytes, 18, "ELF machine")?;
+        if !matches!(elf_type, 2 | 3) || machine != 62 || elf_u32(&bytes, 20, "ELF version")? != 1 {
+            return Err("hotspot bundle requires an x86-64 ET_EXEC or ET_DYN ELF".to_owned());
+        }
+        let program_offset = elf_u64(&bytes, 32, "program-header table offset")?;
+        let header_size = elf_u16(&bytes, 52, "ELF header size")?;
+        let entry_size = elf_u16(&bytes, 54, "program-header entry size")?;
+        let entry_count = elf_u16(&bytes, 56, "program-header entry count")?;
+        if header_size < 64 || entry_size < 56 || entry_count == 0 || entry_count == u16::MAX {
+            return Err("ELF program-header table is unsupported or empty".to_owned());
+        }
+        let program_offset = usize::try_from(program_offset)
+            .map_err(|_| "ELF program-header offset exceeds addressable memory".to_owned())?;
+        let entry_size = usize::from(entry_size);
+        let mut loads = Vec::new();
+        for index in 0..usize::from(entry_count) {
+            let offset = index
+                .checked_mul(entry_size)
+                .and_then(|value| program_offset.checked_add(value))
+                .ok_or_else(|| "ELF program-header offset overflow".to_owned())?;
+            let entry_end = offset
+                .checked_add(entry_size)
+                .ok_or_else(|| "ELF program-header range overflow".to_owned())?;
+            let entry = bytes
+                .get(offset..entry_end)
+                .ok_or_else(|| "truncated ELF program-header table".to_owned())?;
+            if elf_u32(entry, 0, "program-header type")? != 1 {
+                continue;
+            }
+            let segment = LoadSegment {
+                flags: elf_u32(entry, 4, "PT_LOAD flags")?,
+                file_offset: elf_u64(entry, 8, "PT_LOAD file offset")?,
+                virtual_address: elf_u64(entry, 16, "PT_LOAD virtual address")?,
+                file_size: elf_u64(entry, 32, "PT_LOAD file size")?,
+                memory_size: elf_u64(entry, 40, "PT_LOAD memory size")?,
+                alignment: elf_u64(entry, 48, "PT_LOAD alignment")?,
+            };
+            let file_end = segment
+                .file_offset
+                .checked_add(segment.file_size)
+                .ok_or_else(|| "PT_LOAD file range overflow".to_owned())?;
+            let memory_end = segment
+                .virtual_address
+                .checked_add(segment.memory_size)
+                .ok_or_else(|| "PT_LOAD memory range overflow".to_owned())?;
+            if segment.file_size > segment.memory_size
+                || file_end > u64::try_from(bytes.len()).map_err(|error| error.to_string())?
+                || memory_end < segment.virtual_address
+                || (segment.alignment > 1
+                    && (!segment.alignment.is_power_of_two()
+                        || segment.file_offset % segment.alignment
+                            != segment.virtual_address % segment.alignment))
+            {
+                return Err("ELF contains an invalid PT_LOAD range".to_owned());
+            }
+            loads.push(segment);
+        }
+        if !loads
+            .iter()
+            .any(|segment| segment.executable() && segment.file_size > 0)
+        {
+            return Err("ELF has no file-backed executable PT_LOAD segment".to_owned());
+        }
+        Ok(Self { loads })
+    }
+
+    fn dso_offset_to_static(&self, dso_offset: u64) -> Result<u64, String> {
+        let matches = self
+            .loads
+            .iter()
+            .filter(|segment| {
+                segment.executable()
+                    && dso_offset >= segment.file_offset
+                    && dso_offset - segment.file_offset < segment.file_size
+            })
+            .collect::<Vec<_>>();
+        let [segment] = matches.as_slice() else {
+            return Err(format!(
+                "perf DSO offset 0x{dso_offset:x} is not in exactly one file-backed executable PT_LOAD"
+            ));
+        };
+        segment
+            .virtual_address
+            .checked_add(dso_offset - segment.file_offset)
+            .ok_or_else(|| "static ELF address overflow".to_owned())
+    }
+
+    fn static_to_dso_offset(&self, address: u64) -> Result<u64, String> {
+        let matches = self
+            .loads
+            .iter()
+            .filter(|segment| {
+                segment.executable()
+                    && address >= segment.virtual_address
+                    && address - segment.virtual_address < segment.file_size
+            })
+            .collect::<Vec<_>>();
+        let [segment] = matches.as_slice() else {
+            return Err(format!(
+                "static ELF address 0x{address:x} is not in exactly one file-backed executable PT_LOAD"
+            ));
+        };
+        segment
+            .file_offset
+            .checked_add(address - segment.virtual_address)
+            .ok_or_else(|| "perf DSO offset overflow".to_owned())
+    }
 }
 
 fn safe_component(value: &str) -> bool {
@@ -235,7 +417,7 @@ pub fn validate(plan: &Plan) -> Result<(), String> {
     if !safe_component(&plan.label) {
         return Err("--label must be a 1..=96 character safe identifier".to_owned());
     }
-    parse_address(&plan.address, "--address")?;
+    parse_address(&plan.dso_offset, "--dso-offset")?;
     if !plan.idalib_python.is_absolute() {
         return Err("--idalib-python must be absolute".to_owned());
     }
@@ -682,45 +864,143 @@ fn dso_basename(path: &str) -> Option<&str> {
     Path::new(trimmed).file_name()?.to_str()
 }
 
+fn build_id_dso_path(
+    buildids: &str,
+    expected_build_id: &str,
+    expected_basename: &str,
+) -> Result<String, String> {
+    let paths = buildids
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.trim().splitn(2, char::is_whitespace);
+            let build_id = fields.next()?;
+            let path = fields.next()?.trim();
+            (build_id == expected_build_id && !path.is_empty()).then(|| path.to_owned())
+        })
+        .collect::<Vec<_>>();
+    let [path] = paths.as_slice() else {
+        return Err(format!(
+            "perf data must contain exactly one DSO path for Build ID {expected_build_id}, found {}",
+            paths.len()
+        ));
+    };
+    if dso_basename(path) != Some(expected_basename) {
+        return Err(format!(
+            "perf Build-ID DSO path does not name archived binary {expected_basename}"
+        ));
+    }
+    Ok(path.clone())
+}
+
+fn parse_perf_hex(value: &str, context: &str) -> Result<u64, String> {
+    let digits = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        .unwrap_or(value);
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("invalid {context}: {value:?}"));
+    }
+    u64::from_str_radix(digits, 16).map_err(|error| format!("invalid {context}: {error}"))
+}
+
+fn parse_perf_event(line: &str) -> Result<(u64, u64, &str, u64), String> {
+    let trimmed = line.trim();
+    let mut fields = trimmed.split_whitespace();
+    let period_text = fields
+        .next()
+        .ok_or_else(|| format!("missing perf sample period in {line:?}"))?;
+    let runtime_ip_text = fields
+        .next()
+        .ok_or_else(|| format!("missing perf runtime IP in {line:?}"))?;
+    let dso_start = trimmed
+        .find('(')
+        .ok_or_else(|| format!("missing perf DSO-offset field in {line:?}"))?;
+    let dso_field = trimmed
+        .get(dso_start + 1..)
+        .and_then(|value| value.strip_suffix(')'))
+        .ok_or_else(|| format!("invalid perf DSO-offset field in {line:?}"))?;
+    let (dso_path, dso_offset_text) = dso_field
+        .rsplit_once("+0x")
+        .ok_or_else(|| format!("missing perf DSO offset in {line:?}"))?;
+    if dso_path.is_empty() {
+        return Err(format!("empty perf DSO path in {line:?}"));
+    }
+    let period = period_text
+        .parse::<u64>()
+        .map_err(|error| format!("invalid perf sample period in {line:?}: {error}"))?;
+    if period == 0 {
+        return Err(format!("non-positive perf sample period in {line:?}"));
+    }
+    let runtime_ip = parse_perf_hex(runtime_ip_text, "perf runtime IP")?;
+    let dso_offset = parse_perf_hex(dso_offset_text, "perf DSO offset")?;
+    Ok((period, runtime_ip, dso_path, dso_offset))
+}
+
 fn select_samples(
     events: &str,
-    raw_symbol: &str,
-    expected_dso: &str,
-) -> Result<Vec<Sample>, String> {
-    let prefix = format!("{raw_symbol}+0x");
+    expected_dso_path: &str,
+    address_map: &ElfAddressMap,
+    function: &Function,
+) -> Result<(Vec<Sample>, SelectionTotals), String> {
     let mut samples = Vec::new();
-    for line in events.lines() {
-        let parts = line.split_whitespace().collect::<Vec<_>>();
-        if parts.len() != 4 || !parts[2].starts_with(&prefix) {
+    let mut totals = SelectionTotals::default();
+    for line in events.lines().filter(|line| !line.trim().is_empty()) {
+        let (period, runtime_ip, dso_path, dso_offset) = parse_perf_event(line)?;
+        if dso_path != expected_dso_path {
             continue;
         }
-        if dso_basename(parts[3]) != Some(expected_dso) {
-            continue;
+        add(&mut totals.dso_rows, 1, "application DSO row count")?;
+        add(&mut totals.dso_period, period, "application DSO period sum")?;
+        let runtime_base = runtime_ip
+            .checked_sub(dso_offset)
+            .ok_or_else(|| format!("perf runtime IP precedes its DSO offset in {line:?}"))?;
+        match totals.runtime_base {
+            Some(expected) if expected != runtime_base => {
+                return Err(format!(
+                    "perf DSO runtime base changed from 0x{expected:x} to 0x{runtime_base:x}"
+                ));
+            }
+            None => totals.runtime_base = Some(runtime_base),
+            _ => {}
         }
-        let offset_text = &parts[2][prefix.len()..];
-        if offset_text.is_empty() || !offset_text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            continue;
+        let static_address = address_map.dso_offset_to_static(dso_offset)?;
+        if (function.start..function.end).contains(&static_address) {
+            add(&mut totals.function_rows, 1, "function row count")?;
+            add(&mut totals.function_period, period, "function period sum")?;
+            samples.push(Sample {
+                period,
+                runtime_ip,
+                dso_offset,
+                static_address,
+                source: line.trim().to_owned(),
+            });
+        } else {
+            add(
+                &mut totals.outside_function_rows,
+                1,
+                "outside-function row count",
+            )?;
+            add(
+                &mut totals.outside_function_period,
+                period,
+                "outside-function period sum",
+            )?;
         }
-        let period = parts[0]
-            .parse::<u64>()
-            .map_err(|error| format!("invalid perf sample period in {line:?}: {error}"))?;
-        if period == 0 {
-            return Err(format!("non-positive perf sample period in {line:?}"));
-        }
-        let offset = u64::from_str_radix(offset_text, 16)
-            .map_err(|error| format!("invalid perf symbol offset in {line:?}: {error}"))?;
-        samples.push(Sample {
-            period,
-            offset,
-            source: line.trim().to_owned(),
-        });
     }
     if samples.is_empty() {
         return Err(format!(
-            "no perf samples resolved to {raw_symbol} in {expected_dso}"
+            "no perf samples normalized into {} [0x{:x}, 0x{:x}) in {expected_dso_path}",
+            function.name, function.start, function.end
         ));
     }
-    Ok(samples)
+    if totals.function_rows + totals.outside_function_rows != totals.dso_rows
+        || totals.function_period + totals.outside_function_period != totals.dso_period
+    {
+        return Err(
+            "application DSO sample selection did not conserve rows and periods".to_owned(),
+        );
+    }
+    Ok((samples, totals))
 }
 
 fn add(total: &mut u64, value: u64, context: &str) -> Result<(), String> {
@@ -735,15 +1015,7 @@ fn map_samples(function: &mut Function, samples: &[Sample]) -> Result<Totals, St
     for sample in samples {
         add(&mut totals.sample_rows, 1, "sample row count")?;
         add(&mut totals.period_sum, sample.period, "sample period sum")?;
-        let Some(address) = function.start.checked_add(sample.offset) else {
-            add(&mut totals.unmapped_rows, 1, "unmapped row count")?;
-            add(
-                &mut totals.unmapped_period,
-                sample.period,
-                "unmapped period sum",
-            )?;
-            continue;
-        };
+        let address = sample.static_address;
         let index = function
             .instructions
             .partition_point(|instruction| instruction.address <= address);
@@ -780,6 +1052,11 @@ fn map_samples(function: &mut Function, samples: &[Sample]) -> Result<Totals, St
     if totals.sample_rows == 0 || totals.mapped_rows == 0 {
         return Err("perf sample file contains no mapped samples".to_owned());
     }
+    if totals.mapped_rows + totals.unmapped_rows != totals.sample_rows
+        || totals.mapped_period + totals.unmapped_period != totals.period_sum
+    {
+        return Err("instruction mapping did not conserve sample rows and periods".to_owned());
+    }
     Ok(totals)
 }
 
@@ -812,14 +1089,96 @@ fn totals_json(totals: &Totals, unmapped_percent: f64) -> Result<Json, String> {
     ]))
 }
 
+fn selection_totals_json(totals: &SelectionTotals) -> Result<Json, String> {
+    Ok(Json::object([
+        (
+            "applicationDsoRows",
+            json_u64(totals.dso_rows, "application DSO rows")?,
+        ),
+        (
+            "applicationDsoPeriod",
+            json_u64(totals.dso_period, "application DSO period")?,
+        ),
+        (
+            "functionRows",
+            json_u64(totals.function_rows, "function rows")?,
+        ),
+        (
+            "functionPeriod",
+            json_u64(totals.function_period, "function period")?,
+        ),
+        (
+            "outsideFunctionRows",
+            json_u64(totals.outside_function_rows, "outside-function rows")?,
+        ),
+        (
+            "outsideFunctionPeriod",
+            json_u64(totals.outside_function_period, "outside-function period")?,
+        ),
+        (
+            "runtimeBase",
+            Json::string(format!(
+                "0x{:x}",
+                totals
+                    .runtime_base
+                    .ok_or_else(|| "application DSO runtime base is missing".to_owned())?
+            )),
+        ),
+    ]))
+}
+
+fn elf_segments_json(address_map: &ElfAddressMap, capture: &Capture) -> Result<Json, String> {
+    let segments = address_map
+        .loads
+        .iter()
+        .map(|segment| {
+            Ok(Json::object([
+                (
+                    "fileOffset",
+                    Json::string(format!("0x{:x}", segment.file_offset)),
+                ),
+                (
+                    "virtualAddress",
+                    Json::string(format!("0x{:x}", segment.virtual_address)),
+                ),
+                (
+                    "fileSize",
+                    json_u64(segment.file_size, "PT_LOAD file size")?,
+                ),
+                (
+                    "memorySize",
+                    json_u64(segment.memory_size, "PT_LOAD memory size")?,
+                ),
+                (
+                    "alignment",
+                    json_u64(segment.alignment, "PT_LOAD alignment")?,
+                ),
+                ("flags", Json::Int(i64::from(segment.flags))),
+                ("executable", Json::Bool(segment.executable())),
+            ]))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(Json::object([
+        ("schemaVersion", Json::Int(1)),
+        ("binarySha256", Json::string(&capture.binary_sha256)),
+        ("elfClass", Json::string("ELF64")),
+        ("elfData", Json::string("little-endian")),
+        ("elfMachine", Json::string("x86-64")),
+        ("loadSegments", Json::Array(segments)),
+    ]))
+}
+
 fn aggregate(
     output: &RunDirectory,
     function: &mut Function,
     samples: &[Sample],
+    selection_totals: &SelectionTotals,
     capture: &Capture,
-    expected_dso: &str,
+    expected_dso_path: &str,
     plan: &Plan,
 ) -> Result<(Totals, f64), String> {
+    let expected_dso = dso_basename(expected_dso_path)
+        .ok_or_else(|| "perf DSO path has no UTF-8 basename".to_owned())?;
     let totals = map_samples(function, samples)?;
     let unmapped_percent = totals.unmapped_period as f64 * 100.0 / totals.period_sum as f64;
     if unmapped_percent >= HARD_UNMAPPED_PERCENT {
@@ -870,14 +1229,19 @@ fn aggregate(
         .as_deref()
         .map_or(Json::Null, Json::string);
     let report = Json::object([
-        ("schemaVersion", Json::Int(2)),
+        ("schemaVersion", Json::Int(3)),
         (
             "identity",
             Json::object([
                 ("binary_sha256", Json::string(&capture.binary_sha256)),
                 ("binary_build_id", Json::string(&capture.binary_build_id)),
-                ("raw_symbol", Json::string(&function.name)),
+                ("ida_function_name", Json::string(&function.name)),
                 ("dso_basename", Json::string(expected_dso)),
+                ("perf_dso_path", Json::string(expected_dso_path)),
+                (
+                    "address_normalization",
+                    Json::string("perf-dso-file-offset-through-executable-elf-pt-load"),
+                ),
             ]),
         ),
         (
@@ -922,6 +1286,7 @@ fn aggregate(
                 ),
             ]),
         ),
+        ("selectionTotals", selection_totals_json(selection_totals)?),
         ("totals", totals_json(&totals, unmapped_percent)?),
         ("instructions", Json::Array(instruction_rows)),
     ]);
@@ -988,7 +1353,12 @@ fn write_tool_capture(
 }
 
 fn execute(plan: &Plan, capture: &Capture, output: &RunDirectory) -> Result<(), String> {
-    let requested = parse_address(&plan.address, "--address")?;
+    let requested_dso_offset = parse_address(&plan.dso_offset, "--dso-offset")?;
+    let address_map = ElfAddressMap::parse(&capture.binary)?;
+    let requested = address_map.dso_offset_to_static(requested_dso_offset)?;
+    if address_map.static_to_dso_offset(requested)? != requested_dso_offset {
+        return Err("ELF address normalization is not reversible".to_owned());
+    }
     make_private_directory(&output.join("ida"))?;
     make_private_directory(&output.join("ida-work"))?;
 
@@ -1013,6 +1383,17 @@ fn execute(plan: &Plan, capture: &Capture, output: &RunDirectory) -> Result<(), 
     if hash::sha256_file(&ida_input)? != capture.binary_sha256 {
         return Err("isolated IDA input SHA-256 mismatch".to_owned());
     }
+
+    output.write_new(
+        "elf-load-segments.json",
+        &elf_segments_json(&address_map, capture)?.to_python_json(),
+    )?;
+    run_stdout_file(
+        Path::new("readelf"),
+        &["-lW".to_owned(), capture.binary.display().to_string()],
+        &output.join("readelf-program-headers.txt"),
+        &output.join("readelf-program-headers.stderr"),
+    )?;
 
     let bridge = output.join("ida-work/idalib-bridge.py");
     write_new(&bridge, IDALIB_BRIDGE.as_bytes())?;
@@ -1067,6 +1448,8 @@ fn execute(plan: &Plan, capture: &Capture, output: &RunDirectory) -> Result<(), 
         return Err("isolated IDA input changed during analysis".to_owned());
     }
     let mut function = parse_idalib_result(&raw_result, requested)?;
+    address_map.static_to_dso_offset(function.start)?;
+    address_map.static_to_dso_offset(function.end - 1)?;
     write_ida_outputs(output, &function, capture, &ida_input, requested)?;
 
     run_stdout_file(
@@ -1086,6 +1469,9 @@ fn execute(plan: &Plan, capture: &Capture, output: &RunDirectory) -> Result<(), 
         &output.join("llvm-disassembly.stderr"),
     )?;
 
+    let expected_dso = binary_name
+        .to_str()
+        .ok_or_else(|| "archived binary file name is not UTF-8".to_owned())?;
     let buildids = Tool::new("perf")
         .args([
             "buildid-list".to_owned(),
@@ -1100,6 +1486,8 @@ fn execute(plan: &Plan, capture: &Capture, output: &RunDirectory) -> Result<(), 
             capture.binary_build_id
         ));
     }
+    let perf_dso_path =
+        build_id_dso_path(&buildids.stdout, &capture.binary_build_id, expected_dso)?;
     output.write_new("perf-buildids.txt", &buildids.stdout)?;
 
     run_stdout_file(
@@ -1111,35 +1499,61 @@ fn execute(plan: &Plan, capture: &Capture, output: &RunDirectory) -> Result<(), 
             "-i".to_owned(),
             capture.perf_data.display().to_string(),
             "-F".to_owned(),
-            "hw:ip,sym,symoff,period,dso".to_owned(),
+            "hw:ip,dsoff,period,dso".to_owned(),
         ],
         &output.join("perf-script-events.txt"),
         &output.join("perf-script-events.stderr"),
     )?;
     let events = std::fs::read_to_string(output.join("perf-script-events.txt"))
         .map_err(|error| format!("could not read perf script events: {error}"))?;
-    let expected_dso = binary_name
-        .to_str()
-        .ok_or_else(|| "archived binary file name is not UTF-8".to_owned())?;
-    let samples = select_samples(&events, &function.name, expected_dso)?;
+    let (samples, selection_totals) =
+        select_samples(&events, &perf_dso_path, &address_map, &function)?;
     let mut sample_text = format!(
-        "# binary_sha256={}\n# binary_build_id={}\n# raw_symbol={}\n# dso_basename={}\n# fields=period ip raw_symbol+offset dso\n",
-        capture.binary_sha256, capture.binary_build_id, function.name, expected_dso
+        "# binary_sha256={}\n# binary_build_id={}\n# ida_function_name={}\n# perf_dso_path={}\n# normalization=perf-dso-file-offset-through-executable-elf-pt-load\n# fields=period runtime_ip dso_offset static_address raw_perf_row\n",
+        capture.binary_sha256, capture.binary_build_id, function.name, perf_dso_path
     );
     for sample in &samples {
-        let _ = writeln!(sample_text, "{}", sample.source);
+        let _ = writeln!(
+            sample_text,
+            "{}\t0x{:x}\t0x{:x}\t0x{:x}\t{}",
+            sample.period,
+            sample.runtime_ip,
+            sample.dso_offset,
+            sample.static_address,
+            sample.source
+        );
     }
-    output.write_new("perf-symbol-samples.txt", &sample_text)?;
-    let (totals, unmapped_percent) =
-        aggregate(output, &mut function, &samples, capture, expected_dso, plan)?;
+    output.write_new("perf-function-samples.txt", &sample_text)?;
+    let (totals, unmapped_percent) = aggregate(
+        output,
+        &mut function,
+        &samples,
+        &selection_totals,
+        capture,
+        &perf_dso_path,
+        plan,
+    )?;
 
     let metadata = Json::object([
-        ("schemaVersion", Json::Int(2)),
+        ("schemaVersion", Json::Int(3)),
         ("state", Json::string("COMPLETE")),
         ("label", Json::string(&plan.label)),
         (
-            "requestedStaticAddress",
-            Json::string(format!("0x{requested:x}")),
+            "addressNormalization",
+            Json::object([
+                (
+                    "method",
+                    Json::string("perf-dso-file-offset-through-executable-elf-pt-load"),
+                ),
+                (
+                    "requestedDsoOffset",
+                    Json::string(format!("0x{requested_dso_offset:x}")),
+                ),
+                (
+                    "requestedStaticAddress",
+                    Json::string(format!("0x{requested:x}")),
+                ),
+            ]),
         ),
         (
             "capture",
@@ -1160,6 +1574,7 @@ fn execute(plan: &Plan, capture: &Capture, output: &RunDirectory) -> Result<(), 
                     "perfDataSha256",
                     Json::string(&capture.perf_data_sha256),
                 ),
+                ("perfDsoPath", Json::string(&perf_dso_path)),
             ]),
         ),
         (
@@ -1185,6 +1600,7 @@ fn execute(plan: &Plan, capture: &Capture, output: &RunDirectory) -> Result<(), 
                 ("end", Json::string(format!("0x{:x}", function.end))),
             ]),
         ),
+        ("selectionTotals", selection_totals_json(&selection_totals)?),
         ("totals", totals_json(&totals, unmapped_percent)?),
     ]);
     output.write_new("metadata.json", &metadata.to_python_json())?;
@@ -1193,6 +1609,9 @@ fn execute(plan: &Plan, capture: &Capture, output: &RunDirectory) -> Result<(), 
         "metadata.json",
         "dwarf.txt",
         "dwarf.stderr",
+        "elf-load-segments.json",
+        "readelf-program-headers.txt",
+        "readelf-program-headers.stderr",
         "ida/summary.json",
         "ida/disassembly.json",
         "ida/pseudocode.c",
@@ -1205,7 +1624,7 @@ fn execute(plan: &Plan, capture: &Capture, output: &RunDirectory) -> Result<(), 
         "perf-buildids.txt",
         "perf-script-events.txt",
         "perf-script-events.stderr",
-        "perf-symbol-samples.txt",
+        "perf-function-samples.txt",
         "instruction-hotspots.json",
         "instruction-hotspots.tsv",
         "instruction-hotspots.txt",
@@ -1326,6 +1745,29 @@ mod tests {
         }
     }
 
+    fn fixture_address_map() -> ElfAddressMap {
+        ElfAddressMap {
+            loads: vec![LoadSegment {
+                file_offset: 0x2000,
+                virtual_address: 0x1000,
+                file_size: 0x100,
+                memory_size: 0x100,
+                alignment: 0x1000,
+                flags: 5,
+            }],
+        }
+    }
+
+    fn fixture_sample(period: u64, static_address: u64) -> Sample {
+        Sample {
+            period,
+            runtime_ip: 0x5000 + static_address,
+            dso_offset: 0x2000 + static_address.saturating_sub(0x1000),
+            static_address,
+            source: String::new(),
+        }
+    }
+
     #[test]
     fn bridge_result_is_validated_before_policy_uses_it() {
         let path = scratch("idalib.json");
@@ -1342,33 +1784,58 @@ mod tests {
     }
 
     #[test]
-    fn symbol_selection_is_identity_exact() {
+    fn dso_offset_selection_normalizes_and_conserves_identity_exactly() {
         let events = concat!(
-            "1000 0x1 raw_symbol+0x0 (/tmp/rust-reality)\n",
-            "3000 0x3 raw_symbol+0x3 (/tmp/rust-reality)\n",
-            "10 0x1 other+0x0 (/tmp/rust-reality)\n",
-            "10 0x1 raw_symbol+0x0 (/tmp/other)\n",
+            "1000 5001 (/tmp/rust-reality+0x2001)\n",
+            "3000 5003 (/tmp/rust-reality+0x2003)\n",
+            "10 5004 (/tmp/rust-reality+0x2004)\n",
+            "10 5001 (/tmp/other+0x2001)\n",
         );
-        let samples = select_samples(events, "raw_symbol", "rust-reality").unwrap();
+        let function = fixture_function();
+        let (samples, totals) = select_samples(
+            events,
+            "/tmp/rust-reality",
+            &fixture_address_map(),
+            &function,
+        )
+        .unwrap();
         assert_eq!(samples.len(), 2);
-        assert_eq!(samples[1].offset, 3);
+        assert_eq!(samples[1].static_address, 0x1003);
+        assert_eq!(totals.dso_rows, 3);
+        assert_eq!(
+            totals.function_rows + totals.outside_function_rows,
+            totals.dso_rows
+        );
+        assert_eq!(
+            totals.function_period + totals.outside_function_period,
+            totals.dso_period
+        );
+        assert_eq!(totals.runtime_base, Some(0x3000));
     }
 
     #[test]
-    fn instruction_mapping_matches_the_legacy_boundaries() {
+    fn build_id_membership_binds_the_exact_perf_dso_path() {
+        let build_id = "0123456789abcdef";
+        let buildids = format!("{build_id} /tmp/exact/rust-reality\nfeedface /tmp/other\n");
+        assert_eq!(
+            build_id_dso_path(&buildids, build_id, "rust-reality").unwrap(),
+            "/tmp/exact/rust-reality"
+        );
+        assert!(build_id_dso_path(&buildids, build_id, "other").is_err());
+        assert!(
+            build_id_dso_path(
+                &format!("{buildids}{build_id} /tmp/duplicate\n"),
+                build_id,
+                "rust-reality"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn instruction_mapping_uses_static_elf_boundaries() {
         let mut function = fixture_function();
-        let samples = vec![
-            Sample {
-                period: 1000,
-                offset: 0,
-                source: String::new(),
-            },
-            Sample {
-                period: 3000,
-                offset: 3,
-                source: String::new(),
-            },
-        ];
+        let samples = vec![fixture_sample(1000, 0x1000), fixture_sample(3000, 0x1003)];
         let totals = map_samples(&mut function, &samples).unwrap();
         assert_eq!(totals.mapped_rows, 2);
         assert_eq!(function.instructions[1].period_sum, 3000);
@@ -1377,18 +1844,7 @@ mod tests {
     #[test]
     fn unmapped_samples_remain_visible_to_the_hard_gate() {
         let mut function = fixture_function();
-        let samples = vec![
-            Sample {
-                period: 9900,
-                offset: 0,
-                source: String::new(),
-            },
-            Sample {
-                period: 100,
-                offset: 5,
-                source: String::new(),
-            },
-        ];
+        let samples = vec![fixture_sample(9900, 0x1000), fixture_sample(100, 0x1005)];
         let totals = map_samples(&mut function, &samples).unwrap();
         let percent = totals.unmapped_period as f64 * 100.0 / totals.period_sum as f64;
         assert!((percent - 1.0).abs() < f64::EPSILON);
@@ -1402,6 +1858,40 @@ mod tests {
         assert!(parse_address("0xdeadbeef", "address").is_ok());
         assert!(parse_address("deadbeef", "address").is_err());
         assert!(!valid_lower_hex("ABC", None));
+    }
+
+    #[test]
+    fn elf_program_header_maps_file_offset_to_distinct_virtual_address() {
+        let path = scratch("elf-address-map");
+        let _ = std::fs::remove_file(&path);
+        let mut elf = vec![0_u8; 0x2100];
+        elf[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
+        elf[16..18].copy_from_slice(&3_u16.to_le_bytes());
+        elf[18..20].copy_from_slice(&62_u16.to_le_bytes());
+        elf[20..24].copy_from_slice(&1_u32.to_le_bytes());
+        elf[32..40].copy_from_slice(&64_u64.to_le_bytes());
+        elf[52..54].copy_from_slice(&64_u16.to_le_bytes());
+        elf[54..56].copy_from_slice(&56_u16.to_le_bytes());
+        elf[56..58].copy_from_slice(&1_u16.to_le_bytes());
+        elf[64..68].copy_from_slice(&1_u32.to_le_bytes());
+        elf[68..72].copy_from_slice(&5_u32.to_le_bytes());
+        elf[72..80].copy_from_slice(&0x2000_u64.to_le_bytes());
+        elf[80..88].copy_from_slice(&0x3000_u64.to_le_bytes());
+        elf[96..104].copy_from_slice(&0x100_u64.to_le_bytes());
+        elf[104..112].copy_from_slice(&0x100_u64.to_le_bytes());
+        elf[112..120].copy_from_slice(&0x1000_u64.to_le_bytes());
+        std::fs::write(&path, elf).unwrap();
+
+        let map = ElfAddressMap::parse(&path).unwrap();
+        assert_eq!(map.dso_offset_to_static(0x2010).unwrap(), 0x3010);
+        assert_eq!(map.static_to_dso_offset(0x3010).unwrap(), 0x2010);
+        assert!(map.dso_offset_to_static(0x1fff).is_err());
+
+        let mut malformed = std::fs::read(&path).unwrap();
+        malformed[32..40].copy_from_slice(&u64::MAX.to_le_bytes());
+        std::fs::write(&path, malformed).unwrap();
+        assert!(ElfAddressMap::parse(&path).is_err());
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -1462,7 +1952,7 @@ mod tests {
         let plan = Plan {
             run_dir: root.clone(),
             label: "integrity-fixture".to_owned(),
-            address: "0x1000".to_owned(),
+            dso_offset: "0x1000".to_owned(),
             idalib_python: source,
             timeout_seconds: 60,
             max_unmapped_period_percent: 0.0,
