@@ -276,3 +276,88 @@ The borrowed VLESS parser being *slower* than the owned one is a genuine
 production-relevant lead, and is consistent with the by-value return and
 odd-offset layout observed above. It is recorded here rather than acted on in
 the same change.
+
+## Session establishment: where the CPU actually goes (characterised)
+
+The protocol microbenchmarks were exhausted, so the unit of analysis moved up to
+one complete production session: a stock Xray client performing a real
+REALITY/TLS 1.3 handshake against a rust-reality server, which then dials a
+loopback origin — measured with `cargo dev bench run --suite setup-rate`, whose
+`perf stat` is attached to the identity-verified server process.
+
+### Baseline
+
+Exact artifact `a2da37b6df2c2939d55e561ce9881511cccbd942`, SHA-256
+`f907258a8649afb27f9c9c86bd306bd0a73701967727eadd147dad8eabc6ef7b`, Build ID
+`2b3e87c4bda98d8afe8fe4ca7290c2fe8991b4fb`. Intel i3-8100, **no SHA-NI**.
+
+| metric | value |
+| --- | --- |
+| setup rate, concurrency 1 | ~284–294 sessions/s |
+| setup rate, concurrency 8 | ~531–550 sessions/s |
+| **server CPU per session** | **~530 µs (c8), ~581 µs (c1+c8)** |
+| instructions per session | 3,066,993 |
+| context switches per session | 3.72 (c8), 7.43 (c1+c8) |
+| syscalls per session | 62.3 |
+| sessions measured / failures | 15,768 / **0** |
+
+An A/A run of the harness against itself gives the noise floor: CPU per session
+within ±1.2%, but the *rate* metric at concurrency 8 showed a systematic +2.4%
+position bias, so **CPU per session is the trustworthy metric** and a rate-only
+improvement below ~3% must not be believed.
+
+### Where the CPU goes
+
+Sampled on the live server during real session establishment (4,343 samples,
+identity confirmed against the running `/proc/<pid>/exe`):
+
+| component | share of session CPU |
+| --- | --- |
+| kernel (TCP stack, scheduler, syscall entry/exit) | 37.0% |
+| curve25519 / X25519 | 29.5% |
+| SHA-2 | 13.6% |
+| libc and unresolved user code | 13.4% |
+| **rust-reality's own logic** | **4.9%** |
+| AES/GCM | 1.4% |
+| ML-KEM | 0.0% (not negotiated by this client) |
+
+**Application logic is 4.9% of session establishment.** Eliminating all of it
+would not reach a 5% gain, which is why no further parser- or framing-level
+optimisation is worth pursuing.
+
+### The dominant costs are irreducible
+
+X25519 was measured directly on this host: a base-point multiplication costs
+**17.28 µs** and a variable-base `diffie_hellman` **56.56 µs**. A session
+performs three: the server's ephemeral public key, the TLS 1.3 ECDHE, and the
+REALITY authentication ECDH against the client's ephemeral share — about
+130 µs, matching the sampled 29.5%. All three are ephemeral by construction, so
+**none can be cached or precomputed** the way the NXR keyed-HMAC template was.
+
+Backend selection does not help either: curve25519-dalek's SIMD/AVX backends
+accelerate Edwards arithmetic, while X25519 runs the Montgomery ladder on
+serial `FieldElement51` regardless of backend, which is exactly what the profile
+shows.
+
+SHA-2's 13.6% is partly an artifact of this host having no SHA-NI; the
+transcript is already hashed incrementally, so there is no redundant hashing to
+remove.
+
+### Rejected: per-session socket-option syscalls
+
+`setsockopt` is **24.1% of all syscalls** — 9.65 per session — which looks
+alarming until it is costed. `configure_stream` sets five options
+(`TCP_NODELAY`, `SO_KEEPALIVE`, `TCP_KEEPIDLE`, `TCP_KEEPINTVL`, `TCP_KEEPCNT`)
+on each of the two sockets a session uses, and the measured cost on this host is
+**0.636 µs per `setsockopt`**, so the whole pattern costs 6.36 µs — **1.2% of
+session CPU**. Moving the accepted socket's five calls onto the listener could
+recover at most **0.6%**. Rejected as immaterial; recorded so the syscall-share
+headline is not mistaken for a CPU opportunity.
+
+### What this means
+
+Session establishment is **crypto-bound and kernel-bound**. The remaining levers
+are deployment-level rather than code-level: a CPU with SHA-NI removes much of
+the 13.6%, and connection-rate capacity is governed by X25519 throughput. Any
+future session-setup claim should be measured as CPU per session against this
+baseline, not as a rate.
