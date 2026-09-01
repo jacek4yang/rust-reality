@@ -361,3 +361,79 @@ are deployment-level rather than code-level: a CPU with SHA-NI removes much of
 the 13.6%, and connection-rate capacity is governed by X25519 throughput. Any
 future session-setup claim should be measured as CPU per session against this
 baseline, not as a rate.
+
+## Steady-state relay: the data path is kernel zero-copy (characterised)
+
+The companion to the session-establishment characterisation above. Same exact
+artifact, same host, driven by `cargo dev bench run --suite vision-direct`,
+which moves a real payload through a genuine tunnel — stock Xray client,
+REALITY/Vision session, rust-reality server, loopback origin — and compares
+against stock Xray on the same path.
+
+### Throughput is at parity with stock Xray
+
+| implementation | median MiB/s |
+| --- | --- |
+| rust-reality | 945.0 |
+| stock Xray | 942.4 |
+
+Ratio 1.0027. Loopback bandwidth, not either proxy, is the limit here.
+
+### Data-path efficiency
+
+Counters taken over the measured server's whole lifetime while it relayed
+2.50 GiB:
+
+| metric | value |
+| --- | --- |
+| **server CPU per GiB relayed** | **114.4 ms** |
+| **instructions per byte** | **0.337** |
+| syscalls per GiB | 15,070 |
+| context switches per GiB | 3,130 |
+| CPU utilisation while relaying ~950 MiB/s | **2% of one core** |
+
+A third of an instruction per relayed byte is the signature of a proxy that
+does not touch the payload.
+
+### Where relay CPU goes
+
+| component | share |
+| --- | --- |
+| kernel | 86.5% |
+| libc and unresolved | 4.9% |
+| tokio / std | 4.0% |
+| crypto (AES/SHA/curve) | 2.7% |
+| **rust-reality's own logic** | **2.0%** |
+
+and within the kernel:
+
+| kernel area | share of total |
+| --- | --- |
+| scheduler and other | 30.3% |
+| TCP/IP stack | 29.8% |
+| **splice / zero-copy page handling** | **11.3%** |
+| syscall entry/exit | 7.8% |
+| slab / memory | 7.3% |
+
+`__splice_segment`, `skb_splice_from_iter` and `skb_append_pagefrags` are all
+present in the profile; no user-space copy of payload bytes appears anywhere.
+
+### Copy accounting
+
+Applying the classification to what real traffic actually pays: payload bytes
+are **KERNEL_ZERO_COPY** — they move by `splice` between the inbound socket and
+the outbound socket through a pipe and are never copied into user space. Vision
+framing is only paid on the framed prologue, which the borrowed decode path
+handles at 1.49 ns per record, and steady-state records are returned borrowed
+without staging. There is no AVOIDABLE copy in the relay path to remove.
+
+### Consequence
+
+Both halves of the production path are now characterised, and neither has
+application-level headroom worth pursuing: session establishment is 4.9%
+application code against 29.5% X25519 and 37.0% kernel, and steady-state relay
+is 2.0% application code against 86.5% kernel with the payload never leaving
+the kernel. Future performance work should target deployment-level variables —
+CPU features such as SHA-NI, connection-rate capacity governed by X25519, and
+network-stack tuning — rather than further Rust-level optimisation of these
+paths.
