@@ -210,3 +210,69 @@ configured NXR inbound (`NxrAuthenticator`) and per configured NXR outbound
 (`CompiledNxr`) — never per connection or per session — so the +112 bytes is a
 per-configuration constant. `Debug` still prints `NxrKey([REDACTED])`, and the
 number of key copies is unchanged.
+
+## VLESS decode sret copy (rejected), and the measurement gap it exposed
+
+The post-NXR profile put 22.07% of application-DSO cycles in one 785-byte
+function, with 41.59% of that function's period on a single unaligned 16-byte
+stack load. The mechanism was real and was identified exactly: `decode_request`
+calls `decode_destination_owned`, which returns `Result<Destination,
+DecodeError>` (48 bytes, `Ok` discriminant 6 because `DecodeError` has six
+variants) through an sret temporary. The caller then copies the 40-byte
+`Destination` into the `Option<Destination>` argument slot for
+`RequestHeader::new`, and copies it again into its own sret buffer — the same
+value materialised three times.
+
+Two bounded formulations were tried and both failed:
+
+- **Delegating the owned parser to the borrowed one** (which also deletes 47
+  lines of duplicated parsing) made it **~2× slower**: 45.5 ns/op against
+  23.2, with `ld_blocks.store_forward` rising from 7.5 to 16.0 per operation.
+  `Result<DecodeRequestRef, DecodeError>` is ~96 bytes against the 48 it
+  replaced, the call did not inline, and `DecodeRequestRef` places an align-1
+  `UserId` at odd offsets, so the copies became unaligned `movups` at offsets
+  1, 47, 81 and 127. **The owned/borrowed parser duplication is load-bearing;
+  collapsing it is not free.**
+- **`#[inline]` on the producer** changed nothing at all: the resulting `.text`
+  was byte-for-byte identical to the baseline.
+
+Removing the remaining copies in safe Rust would require an out-parameter,
+uglifying a parser API for no production benefit. The prior IPC caveat also
+held: at 7.5 blocks per operation and a nominal ~12-cycle penalty, full
+exposure would cost ~26 ns, which exceeds the entire 23 ns operation, so the
+blocks are mostly absorbed by out-of-order execution. **Sample concentration on
+one instruction is not recoverable time.**
+
+### The instrument was selecting the wrong code
+
+The investigation's durable result is not the rejection but its cause. Two of
+the three original benchmark cases measured owning APIs that a production
+session never executes on its hot path:
+
+| case | production reality |
+| --- | --- |
+| `vless.decode.ipv4` → `decode_request` | sessions use `decode_request_ref` |
+| `vision.decode.8k` → `VisionDecoder::decode` | the relay uses `decode_borrowed_append` |
+| `nxr.auth.encode.domain` → `encode_request` | the same function |
+
+The one representative case is the one that produced a real 1.902× win. Once
+the production paths were measured directly, the scale of the distortion was
+plain:
+
+| case | ns/op |
+| --- | --- |
+| `vision.decode.8k` (stages 8 KB) | 122.29 |
+| `vision.decode.8k.borrowed` (production) | **1.49** |
+| `vless.decode.ipv4` (owned) | 23.63 |
+| `vless.decode.ipv4.borrowed` (production) | **27.68** |
+
+Steady-state Vision decoding is roughly **82× cheaper** than the suite
+reported, because production borrows the record instead of copying it; the
+~29% of profile samples sitting in libc `memcpy` were an artifact of the
+benchmark, not a cost the relay pays. The suite now measures both paths, so a
+hypothesis is chosen against code that actually runs.
+
+The borrowed VLESS parser being *slower* than the owned one is a genuine
+production-relevant lead, and is consistent with the by-value return and
+odd-offset layout observed above. It is recorded here rather than acted on in
+the same change.
