@@ -47,6 +47,11 @@ transaction that owns the server.**
    process cleanup have succeeded. A workload or profile failure leaves no
    completion marker for either result.
 
+For Vision-Direct, workload validation includes the debug-level structured
+connection evidence that proves measured downloads reached the server and
+promoted the downlink to Direct. That validation runs while the optional capture
+is still owned, so failure cancels rather than publishes the child capture.
+
 ## Consequences
 
 The captured interval begins after benchmark warmup and spans the measured

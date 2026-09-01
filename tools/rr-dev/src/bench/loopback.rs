@@ -270,6 +270,22 @@ pub fn parse_direct_events(log: &std::path::Path) -> DirectSummary {
     summary
 }
 
+fn validate_direct_summary(summary: &DirectSummary) -> Result<(), String> {
+    if summary.tunnel_bypass_detected {
+        return Err(
+            "Vision-Direct tunnel guard observed no server connections beyond readiness"
+                .to_owned(),
+        );
+    }
+    if summary.connections == 0 {
+        return Err("Vision-Direct server emitted no completed-connection evidence".to_owned());
+    }
+    if summary.downlink_direct == 0 {
+        return Err("Vision-Direct workload never promoted the download path to Direct".to_owned());
+    }
+    Ok(())
+}
+
 /// Assembles the schema-v1 loopback concurrent report.
 #[must_use]
 #[allow(clippy::too_many_lines)]
@@ -510,7 +526,10 @@ pub fn run_loopback(
 
     // Materialize tunnels first (4 ports). Then reserve an origin port and
     // launch the HTTP origin inside the same workspace.
-    let run = suites::materialize(&context)?;
+    let run = suites::materialize_with_rust_log_level(
+        &context,
+        plan.tls_origin.then_some("debug"),
+    )?;
 
     let origin_port = crate::bench::workspace::reserve_ports(1)
         .map_err(RunError::Setup)?
@@ -611,6 +630,26 @@ pub fn run_loopback(
         measurements.push(sample);
     }
 
+    // Give the server a moment to flush per-connection completion events while
+    // it and the optional profile are still transaction-owned. An invalid
+    // Direct workload cancels the profile, so neither child nor parent can
+    // publish success for traffic that bypassed the measured server.
+    let direct = if plan.tls_origin {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        let direct = parse_direct_events(&run.workspace.join("rust-server.log"));
+        if let Err(error) = validate_direct_summary(&direct) {
+            if let Some(capture) = profile.take() {
+                capture
+                    .cancel("vision-direct evidence validation failed")
+                    .map_err(RunError::Processes)?;
+            }
+            return Err(RunError::Processes(error));
+        }
+        Some(direct)
+    } else {
+        None
+    };
+
     if let Some(capture) = profile.take() {
         capture.finish().map_err(RunError::Processes)?;
     }
@@ -627,15 +666,6 @@ pub fn run_loopback(
             )
         })
         .collect();
-    // Give the server a moment to flush per-connection completion events.
-    if plan.tls_origin {
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
-    let direct = if plan.tls_origin {
-        Some(parse_direct_events(&run.workspace.join("rust-server.log")))
-    } else {
-        None
-    };
     let report_json = assemble_report(
         plan,
         &context,
@@ -718,5 +748,29 @@ mod tests {
         let values = [10.0, 20.0, 30.0, 40.0];
         assert!((percentile(&values, 0.5) - 20.0).abs() < 1e-9);
         assert!((percentile(&values, 0.95) - 40.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn vision_direct_evidence_fails_closed_without_a_direct_download() {
+        let absent = DirectSummary {
+            tunnel_bypass_detected: true,
+            ..DirectSummary::default()
+        };
+        assert!(validate_direct_summary(&absent).is_err());
+
+        let not_direct = DirectSummary {
+            accepted_connections: 3,
+            connections: 2,
+            ..DirectSummary::default()
+        };
+        assert!(validate_direct_summary(&not_direct).is_err());
+
+        let direct = DirectSummary {
+            accepted_connections: 3,
+            connections: 2,
+            downlink_direct: 2,
+            ..DirectSummary::default()
+        };
+        assert!(validate_direct_summary(&direct).is_ok());
     }
 }
