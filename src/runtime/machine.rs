@@ -108,15 +108,16 @@ impl MachineReport {
 
     #[cfg(target_os = "linux")]
     fn detect_linux() -> Self {
+        // `getrlimit` on the calling process cannot fail, so on Linux these are
+        // always present; `assemble` keeps taking an option because the
+        // platforms that cannot report a limit, and its tests, still need one.
         let fd = rr_linux::descriptor_limit();
-        let fd = Some((fd.soft, fd.hard));
         let memlock = rr_linux::memlock_limit();
-        let memlock = Some((memlock.soft, memlock.hard));
         let meminfo_total = read_meminfo_total(Path::new("/proc/meminfo"));
         let cgroup = read_cgroup_v2(Path::new("/proc/self/cgroup"), Path::new("/sys/fs/cgroup"));
         Self::assemble(
-            fd,
-            memlock,
+            Some((fd.soft, fd.hard)),
+            Some((memlock.soft, memlock.hard)),
             meminfo_total,
             cgroup,
             std::thread::available_parallelism()

@@ -224,11 +224,17 @@ pub(crate) mod tests {
     /// instead of silently reshaping the accept queue of one release.
     #[test]
     fn the_listen_backlog_is_the_target_c_library_policy() {
-        #[cfg(target_env = "gnu")]
-        assert_eq!(LISTEN_BACKLOG, 4_096, "glibc SOMAXCONN");
-        #[cfg(target_env = "musl")]
-        assert_eq!(LISTEN_BACKLOG, 128, "musl SOMAXCONN");
-        assert!(LISTEN_BACKLOG > 0, "a non-positive backlog cannot listen");
+        let expected = if cfg!(target_env = "gnu") {
+            4_096
+        } else if cfg!(target_env = "musl") {
+            128
+        } else {
+            panic!("unsupported target_env: record its SOMAXCONN policy here")
+        };
+        assert_eq!(
+            LISTEN_BACKLOG, expected,
+            "the listen backlog must stay the C library policy of this target"
+        );
     }
 
     fn loopback_listener() -> OwnedFd {
