@@ -6,6 +6,8 @@ use zeroize::Zeroizing;
 
 use super::vless::{Address, Destination};
 
+type NxrHmac = Hmac<Sha256>;
+
 const MAGIC: [u8; 4] = [b'N', b'X', b'R', 1];
 const FLAGS: u8 = 0;
 const ADDRESS_IPV4: u8 = 1;
@@ -25,19 +27,37 @@ pub const REQUEST_HEADER_LEN: usize = ADDRESS_OFFSET;
 /// Strict maximum for one NXR authentication request.
 pub const MAX_REQUEST_LEN: usize = REQUEST_HEADER_LEN + MAX_DOMAIN_LEN + TAG_LEN;
 
-/// Independent NXR HMAC key. Debug output never reveals its bytes.
+/// Independent NXR HMAC key, held as a keyed HMAC template so authenticating
+/// and verifying clone precomputed ipad/opad SHA-256 cores instead of deriving
+/// them per request. Debug output never reveals its bytes.
+///
+/// `Hmac<Sha256>` carries no `ZeroizeOnDrop` marker, because `hmac` builds it
+/// through `digest::buffer_fixed!` with `MacTraits` and only `FixedHashTraits`
+/// requests that marker. Erasure is nonetheless complete through the composed
+/// drop path that the enabled `hmac/zeroize` and `sha2/zeroize` features turn
+/// on: `BlockBuffer` zeroizes its whole block and position, and each
+/// `Sha256VarCore` zeroizes its chaining state and block length, reached by
+/// field recursion through `HmacCore` and `CtOutWrapper`. Do not re-add a
+/// `ZeroizeOnDrop` bound here; it fails to compile and proves nothing. See the
+/// [performance investigation record] for the measured evidence.
+///
+/// [performance investigation record]:
+///     https://github.com/jacek4yang/rust-reality/blob/main/docs/en/operations/performance-investigation-record.md
 #[derive(Clone)]
-pub struct NxrKey(Zeroizing<[u8; 32]>);
+pub struct NxrKey(NxrHmac);
 
 impl NxrKey {
     /// Creates a key from exactly 256 bits of independently generated entropy.
     #[must_use]
     pub fn new(bytes: [u8; 32]) -> Self {
-        Self(Zeroizing::new(bytes))
+        let bytes = Zeroizing::new(bytes);
+        let template =
+            NxrHmac::new_from_slice(bytes.as_slice()).expect("HMAC-SHA256 accepts a 32-byte key");
+        Self(template)
     }
 
-    fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
+    fn mac(&self) -> NxrHmac {
+        self.0.clone()
     }
 }
 
@@ -89,8 +109,7 @@ impl AuthenticatedRequest {
 ///
 /// # Errors
 ///
-/// Rejects port zero, empty or oversized domains, allocator failure, and the
-/// theoretically unavailable fixed-size HMAC key initialization.
+/// Rejects port zero, empty or oversized domains, and allocator failure.
 pub fn encode_request(
     destination: &Destination,
     timestamp: u64,
@@ -126,7 +145,7 @@ pub fn encode_request(
         Address::Domain(domain) => output.extend_from_slice(domain.as_bytes()),
         Address::Ipv6(address) => output.extend_from_slice(&address.octets()),
     }
-    let tag = authenticate(key, output)?;
+    let tag = authenticate(key, output);
     output.extend_from_slice(&tag);
     Ok(())
 }
@@ -249,16 +268,14 @@ fn parse_address(address_type: u8, address: &[u8]) -> Result<Address, NxrProtoco
     }
 }
 
-fn authenticate(key: &NxrKey, input: &[u8]) -> Result<[u8; TAG_LEN], NxrProtocolError> {
-    let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(key.as_bytes())
-        .map_err(|_| NxrProtocolError::Authentication)?;
+fn authenticate(key: &NxrKey, input: &[u8]) -> [u8; TAG_LEN] {
+    let mut mac = key.mac();
     mac.update(input);
-    Ok(mac.finalize().into_bytes().into())
+    mac.finalize().into_bytes().into()
 }
 
 fn verify(key: &NxrKey, input: &[u8], tag: &[u8]) -> Result<(), NxrProtocolError> {
-    let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(key.as_bytes())
-        .map_err(|_| NxrProtocolError::Authentication)?;
+    let mut mac = key.mac();
     mac.update(input);
     mac.verify_slice(tag)
         .map_err(|_| NxrProtocolError::Authentication)
@@ -316,7 +333,7 @@ impl Error for NxrProtocolError {}
 
 #[cfg(test)]
 mod tests {
-    use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::{hint::black_box, net::Ipv4Addr, net::Ipv6Addr};
 
     use super::{
         MAX_REQUEST_LEN, NxrKey, NxrProtocolError, REQUEST_HEADER_LEN,
@@ -325,6 +342,31 @@ mod tests {
     use crate::protocol::vless::{Address, Destination};
 
     const NOW: u64 = 1_700_000_000;
+
+    #[test]
+    fn repeated_encode_reuses_reserved_output_without_allocating() {
+        let key = NxrKey::new([0x0b; 32]);
+        let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
+        let mut encoded = Vec::with_capacity(MAX_REQUEST_LEN);
+
+        let measured = allocation_counter::measure(|| {
+            for _ in 0..1_024 {
+                encode_request(
+                    black_box(&destination),
+                    black_box(NOW),
+                    black_box([0x44; 16]),
+                    black_box(&key),
+                    black_box(&mut encoded),
+                )
+                .expect("request must encode");
+            }
+        });
+
+        assert_eq!(
+            measured.count_total, 0,
+            "reserved NXR encoding must not allocate: {measured:?}"
+        );
+    }
 
     #[test]
     fn fixed_ipv4_hmac_vector_round_trips() {
