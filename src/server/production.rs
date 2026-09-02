@@ -2608,13 +2608,24 @@ mod tests {
             Ok(())
         }));
 
-        let connected = loop {
+        // Bounded, so a real failure surfaces as an error instead of a hang.
+        let mut last_error = None;
+        let mut connected = None;
+        for _ in 0..200 {
             match registry.connect("landing", &destination).await {
-                Ok(OutboundConnectOutcome::Connected(connection)) => break connection,
-                Ok(_) => panic!("the NXR outbound must connect"),
-                Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+                Ok(OutboundConnectOutcome::Connected(connection)) => {
+                    connected = Some(connection);
+                    break;
+                }
+                Ok(other) => panic!("the NXR outbound must connect, got {other:?}"),
+                Err(error) => {
+                    last_error = Some(error);
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
             }
-        };
+        }
+        let connected =
+            connected.unwrap_or_else(|| panic!("the landing never accepted: {last_error:?}"));
         let (mut accepted, _) = target.accept().await.expect("landing must dial the target");
 
         let (mut stream, _permit) = connected.into_parts();
@@ -2629,6 +2640,11 @@ mod tests {
             .expect("the target must observe the uplink");
         assert_eq!(&received, b"ping");
 
+        // Close the session before asking the server to stop: graceful
+        // shutdown waits for live relays, and an open one would hold it for
+        // the full thirty-second window.
+        drop(stream);
+        drop(accepted);
         let _ = shutdown_sender.send(());
         let _ = server_task.await;
     }

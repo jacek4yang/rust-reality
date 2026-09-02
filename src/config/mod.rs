@@ -7,9 +7,10 @@
 //! ```
 //!
 //! [`node`] owns the operator-facing model, [`parse`] the structural read,
-//! [`semantics`] the cross-object rules, and [`load`] the combination every
-//! command uses. [`syntax`] holds the per-value rules the validator applies,
-//! and `diagnostic` renders any failure against the source that caused it.
+//! [`semantics`] the cross-object rules, and [`mod@load`] the combination
+//! every command uses. The private `syntax` module holds the per-value rules
+//! the validator applies, and `diagnostic` renders any failure against the
+//! source that caused it.
 
 mod diagnostic;
 pub mod load;
