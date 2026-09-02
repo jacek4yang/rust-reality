@@ -8,11 +8,13 @@ use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 use hkdf::Hkdf;
 use sha2::Sha256;
 use uuid::Uuid;
-use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use super::ClientHello;
-use crate::config::node::{entry::EntryConfig, reality::RealityConfig};
+use crate::{
+    config::node::{entry::EntryConfig, reality::RealityConfig},
+    crypto::StaticX25519Key,
+};
 use crate::{
     protocol::vless::UserId,
     server_name::{is_server_name_pattern, server_name_matches},
@@ -319,9 +321,12 @@ impl fmt::Debug for RealityAuthResult {
 }
 
 /// Immutable, decoded authentication state for one REALITY listener snapshot.
-#[derive(Clone)]
+///
+/// Deliberately not `Clone`: one runtime generation owns one compiled key, and
+/// the previous derive was unused. Cloning would copy private key material to
+/// satisfy a derive rather than a requirement.
 pub struct RealityAuthenticator {
-    private_key: StaticSecret,
+    private_key: StaticX25519Key,
     server_names: Vec<String>,
     short_ids: ShortIdOwnerIndex,
     max_time_diff_ms: u64,
@@ -450,7 +455,8 @@ impl RealityAuthenticator {
             return Err(RealityAuthConfigError::DuplicateShortId);
         }
         Ok(Self {
-            private_key: StaticSecret::from(private_bytes),
+            private_key: StaticX25519Key::new(&private_bytes)
+                .map_err(|_| RealityAuthConfigError::InvalidPrivateKey)?,
             server_names,
             short_ids: ShortIdOwnerIndex::from_sorted(short_ids),
             max_time_diff_ms: config.max_time_diff_ms(),
@@ -485,11 +491,11 @@ impl RealityAuthenticator {
         let peer = hello
             .peer_x25519()
             .ok_or(RealityAuthError::MissingKeyShare)?;
-        let shared = self.private_key.diffie_hellman(&PublicKey::from(peer));
-        if !shared.was_contributory() {
-            return Err(RealityAuthError::NonContributoryKey);
-        }
-        let auth_key = derive_auth_key(shared.as_bytes(), hello.random())?;
+        let shared = self
+            .private_key
+            .agree(&peer)
+            .ok_or(RealityAuthError::NonContributoryKey)?;
+        let auth_key = derive_auth_key(&shared, hello.random())?;
         let ciphertext = hello
             .session_ciphertext()
             .ok_or(RealityAuthError::MissingCiphertext)?;

@@ -2,10 +2,12 @@ use std::{error::Error, fmt};
 
 use ml_kem::{EncapsulationKey768, array::Array as MlKemArray};
 use subtle::ConstantTimeEq;
-use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
-use crate::protocol::reality::{AuthKey, ClientHello, X25519_GROUP, X25519_MLKEM768_GROUP};
+use crate::{
+    crypto::EphemeralX25519Key,
+    protocol::reality::{AuthKey, ClientHello, X25519_GROUP, X25519_MLKEM768_GROUP},
+};
 
 use super::{
     CertificateIdentity, CipherSuite, ContentType, CoverHandshakePlan, CoverHandshakeRecordShape,
@@ -635,10 +637,11 @@ fn agree_key_share(
         .key_shares()
         .find(|share| share.group() == group)
         .ok_or(RealityHandshakeError::MissingClientKeyShare)?;
-    let mut ephemeral = Zeroizing::new([0_u8; 32]);
-    getrandom::fill(ephemeral.as_mut()).map_err(|_| RealityHandshakeError::Random)?;
-    let secret = StaticSecret::from(*ephemeral);
-    let server_public = PublicKey::from(&secret).to_bytes();
+    // One ephemeral key per exchange, consumed by exactly one agreement. The
+    // private key never exists as raw bytes on this side, and there is nothing
+    // to cache or precompute.
+    let ephemeral = EphemeralX25519Key::generate().map_err(|_| RealityHandshakeError::Random)?;
+    let server_public = *ephemeral.public_key();
 
     match group {
         X25519_GROUP => {
@@ -646,12 +649,11 @@ fn agree_key_share(
                 .data()
                 .try_into()
                 .map_err(|_| RealityHandshakeError::MissingClientKeyShare)?;
-            let shared = secret.diffie_hellman(&PublicKey::from(client_public));
-            if !shared.was_contributory() {
-                return Err(RealityHandshakeError::NonContributoryKey);
-            }
+            let shared = ephemeral
+                .agree(&client_public)
+                .ok_or(RealityHandshakeError::NonContributoryKey)?;
             let mut shared_output = Zeroizing::new([0_u8; 64]);
-            shared_output[..32].copy_from_slice(shared.as_bytes());
+            shared_output[..32].copy_from_slice(shared.as_slice());
             Ok(KeyAgreement {
                 server_share: ServerShare::X25519(server_public),
                 shared: shared_output,
@@ -678,10 +680,9 @@ fn agree_key_share(
             let (ciphertext, mlkem_shared) =
                 encapsulation_key.encapsulate_deterministic(&randomness);
             let mlkem_shared = Zeroizing::new(mlkem_shared);
-            let x25519_shared = secret.diffie_hellman(&PublicKey::from(client_public));
-            if !x25519_shared.was_contributory() {
-                return Err(RealityHandshakeError::NonContributoryKey);
-            }
+            let x25519_shared = ephemeral
+                .agree(&client_public)
+                .ok_or(RealityHandshakeError::NonContributoryKey)?;
 
             let mut server_share = Vec::new();
             server_share
@@ -691,7 +692,7 @@ fn agree_key_share(
             server_share.extend_from_slice(&server_public);
             let mut shared = Zeroizing::new([0_u8; 64]);
             shared[..32].copy_from_slice(mlkem_shared.as_ref());
-            shared[32..].copy_from_slice(x25519_shared.as_bytes());
+            shared[32..].copy_from_slice(x25519_shared.as_slice());
             Ok(KeyAgreement {
                 server_share: ServerShare::Hybrid(server_share),
                 shared,
