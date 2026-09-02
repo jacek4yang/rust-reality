@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     collections::HashMap,
     error::Error,
     fmt, io,
@@ -15,10 +16,7 @@ use tokio::{
 use zeroize::Zeroizing;
 
 use crate::{
-    config::{
-        DirectBarrierConfig, NetworkConfig, NxrSettings, OutboundConfig, Socks5Settings,
-        WarmConnectionPolicy,
-    },
+    config::node::outbound::{BUILTIN_BLOCK, BUILTIN_DIRECT},
     network::NetworkEnvironment,
     protocol::{
         nxr::{NxrKey, NxrProtocolError, encode_request},
@@ -35,6 +33,9 @@ use super::{
     handoff::HandoffLine,
     warm_pool::{AdaptiveTcpPool, WarmPoolAuthority, WarmPoolSnapshot, WarmUsePermit},
 };
+use crate::config::node::network::NetworkConfig;
+use crate::config::node::outbound::{NxrOutboundConfig, OutboundConfig, Socks5Config};
+use crate::runtime::policy::{DirectBarrierPolicy, WarmConnectionPolicy};
 
 const SOCKS_VERSION: u8 = 5;
 const SOCKS_AUTH_VERSION: u8 = 1;
@@ -51,22 +52,29 @@ enum OutboundIndex {
     Hashed(HashMap<Box<str>, CompiledOutbound>),
 }
 
+/// How many outbounds exist without being declared: `direct` and `block`.
+#[cfg(test)]
+const BUILTIN_OUTBOUND_COUNT: usize = crate::config::node::outbound::BUILTIN_OUTBOUNDS.len();
+
 impl OutboundIndex {
     fn from_config(
-        outbounds: &[OutboundConfig],
+        outbounds: &BTreeMap<String, OutboundConfig>,
         connector: &DestinationConnector,
         fd_budget: &FdBudget,
         warm: Option<&WarmBuildContext<'_>>,
     ) -> Self {
-        let mut entries = outbounds
-            .iter()
-            .map(|outbound| {
-                (
-                    Box::<str>::from(outbound.tag()),
-                    CompiledOutbound::from_config(outbound, connector, fd_budget, warm),
-                )
-            })
-            .collect::<Vec<_>>();
+        // `direct` and `block` are always available and are never declared, so
+        // they are compiled in rather than read from the map.
+        let mut entries = vec![
+            (Box::<str>::from(BUILTIN_DIRECT), CompiledOutbound::Direct),
+            (Box::<str>::from(BUILTIN_BLOCK), CompiledOutbound::Block),
+        ];
+        entries.extend(outbounds.iter().map(|(name, outbound)| {
+            (
+                Box::<str>::from(name.as_str()),
+                CompiledOutbound::from_config(outbound, connector, fd_budget, warm),
+            )
+        }));
         if entries.len() <= SORTED_OUTBOUND_LIMIT {
             entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
             Self::Sorted(entries.into_boxed_slice())
@@ -128,8 +136,8 @@ impl OutboundRegistry {
     /// Compiles validated outbound configuration into secret-safe runtime state.
     #[must_use]
     pub fn new(
-        outbounds: &[OutboundConfig],
-        direct_barrier: &DirectBarrierConfig,
+        outbounds: &BTreeMap<String, OutboundConfig>,
+        direct_barrier: &DirectBarrierPolicy,
         connect_timeout: Duration,
         fd_budget: FdBudget,
     ) -> Self {
@@ -150,7 +158,7 @@ impl OutboundRegistry {
     /// concurrency and rate permits instead of silently multiplying them.
     #[must_use]
     pub fn with_barrier(
-        outbounds: &[OutboundConfig],
+        outbounds: &BTreeMap<String, OutboundConfig>,
         direct_barrier: DirectBarrier,
         connect_timeout: Duration,
         fd_budget: FdBudget,
@@ -169,7 +177,7 @@ impl OutboundRegistry {
     /// Compiles outbounds over one process-lifetime adaptive network state.
     #[must_use]
     pub fn with_barrier_and_network(
-        outbounds: &[OutboundConfig],
+        outbounds: &BTreeMap<String, OutboundConfig>,
         direct_barrier: DirectBarrier,
         connect_timeout: Duration,
         fd_budget: FdBudget,
@@ -181,7 +189,7 @@ impl OutboundRegistry {
             direct_barrier,
             connect_timeout,
             fd_budget,
-            network.clone(),
+            *network,
             environment,
             None,
         )
@@ -194,7 +202,7 @@ impl OutboundRegistry {
         reason = "one argument per process/generation authority"
     )]
     pub(crate) fn with_warm_pools(
-        outbounds: &[OutboundConfig],
+        outbounds: &BTreeMap<String, OutboundConfig>,
         direct_barrier: DirectBarrier,
         connect_timeout: Duration,
         fd_budget: FdBudget,
@@ -214,14 +222,14 @@ impl OutboundRegistry {
             direct_barrier,
             connect_timeout,
             fd_budget,
-            network.clone(),
+            *network,
             environment,
             Some(&warm),
         )
     }
 
     fn build(
-        outbounds: &[OutboundConfig],
+        outbounds: &BTreeMap<String, OutboundConfig>,
         direct_barrier: DirectBarrier,
         connect_timeout: Duration,
         fd_budget: FdBudget,
@@ -325,12 +333,7 @@ impl OutboundRegistry {
                     warm_permit: None,
                 }))
             }
-            CompiledOutbound::Blackhole { delay } => {
-                if !delay.is_zero() {
-                    time::sleep(*delay).await;
-                }
-                Ok(OutboundConnectOutcome::Blackholed)
-            }
+            CompiledOutbound::Block => Ok(OutboundConnectOutcome::Blocked),
             CompiledOutbound::Socks5(settings) => {
                 let connected = connect_socks5(
                     settings,
@@ -365,7 +368,7 @@ impl OutboundRegistry {
                     warm_permit,
                 }))
             }
-            CompiledOutbound::Nxr(None) => Err(OutboundConnectError::NxrSettings),
+            CompiledOutbound::Nxr(None) => Err(OutboundConnectError::NxrOutboundConfig),
             // The Vision session pipeline intercepts a handoff route at the
             // session boundary via `handoff_line`; a handoff outbound never
             // serves a plain destination dial.
@@ -411,7 +414,7 @@ impl fmt::Debug for OutboundRegistry {
 
 enum CompiledOutbound {
     Direct,
-    Blackhole { delay: Duration },
+    Block,
     Socks5(CompiledSocks5),
     Nxr(Option<CompiledNxr>),
     Handoff(Option<HandoffLine>),
@@ -425,17 +428,13 @@ impl CompiledOutbound {
         warm: Option<&WarmBuildContext<'_>>,
     ) -> Self {
         match outbound {
-            OutboundConfig::Direct { .. } => Self::Direct,
-            OutboundConfig::Blackhole { settings, .. } => Self::Blackhole {
-                delay: Duration::from_millis(settings.response_delay_ms),
-            },
-            OutboundConfig::Socks5 { settings, .. } => {
+            OutboundConfig::Socks5(settings) => {
                 Self::Socks5(CompiledSocks5::new(settings, connector, fd_budget, warm))
             }
-            OutboundConfig::Nxr { settings, .. } => {
+            OutboundConfig::Nxr(settings) => {
                 Self::Nxr(CompiledNxr::new(settings, connector, fd_budget, warm))
             }
-            OutboundConfig::Handoff { settings, .. } => {
+            OutboundConfig::Handoff(settings) => {
                 Self::Handoff(HandoffLine::from_settings_with_warm_pool(
                     settings,
                     connector.clone(),
@@ -457,7 +456,7 @@ impl CompiledOutbound {
             Self::Socks5(settings) => settings.pool.as_ref(),
             Self::Nxr(Some(settings)) => settings.pool.as_ref(),
             Self::Handoff(Some(line)) => line.warm_pool(),
-            Self::Direct | Self::Blackhole { .. } | Self::Nxr(None) | Self::Handoff(None) => None,
+            Self::Direct | Self::Block | Self::Nxr(None) | Self::Handoff(None) => None,
         }
     }
 
@@ -478,7 +477,7 @@ impl CompiledOutbound {
             Self::Socks5(_) => "socks5",
             Self::Nxr(Some(_)) => "nxr",
             Self::Handoff(Some(_)) => "handoff",
-            Self::Direct | Self::Blackhole { .. } | Self::Nxr(None) | Self::Handoff(None) => {
+            Self::Direct | Self::Block | Self::Nxr(None) | Self::Handoff(None) => {
                 return None;
             }
         };
@@ -503,7 +502,7 @@ struct CompiledSocks5 {
 
 impl CompiledSocks5 {
     fn new(
-        settings: &Socks5Settings,
+        settings: &Socks5Config,
         connector: &DestinationConnector,
         fd_budget: &FdBudget,
         warm: Option<&WarmBuildContext<'_>>,
@@ -520,16 +519,21 @@ impl CompiledSocks5 {
             address: Arc::from(settings.address.as_str()),
             port: settings.port,
             credentials,
-            pool: settings.warm_tcp.then_some(warm).flatten().map(|warm| {
-                AdaptiveTcpPool::new(
-                    Arc::from(format!("{}:{}", settings.address, settings.port)),
-                    warm.generation,
-                    connector.clone(),
-                    fd_budget.clone(),
-                    warm.authority.clone(),
-                    warm.policy,
-                )
-            }),
+            pool: settings
+                .warm_tcp
+                .unwrap_or(true)
+                .then_some(warm)
+                .flatten()
+                .map(|warm| {
+                    AdaptiveTcpPool::new(
+                        Arc::from(format!("{}:{}", settings.address, settings.port)),
+                        warm.generation,
+                        connector.clone(),
+                        fd_budget.clone(),
+                        warm.authority.clone(),
+                        warm.policy,
+                    )
+                }),
         }
     }
 }
@@ -548,31 +552,32 @@ struct CompiledNxr {
 
 impl CompiledNxr {
     fn new(
-        settings: &NxrSettings,
+        settings: &NxrOutboundConfig,
         connector: &DestinationConnector,
         fd_budget: &FdBudget,
         warm: Option<&WarmBuildContext<'_>>,
     ) -> Option<Self> {
-        let decoded = Zeroizing::new(
-            BASE64_URL_SAFE_NO_PAD
-                .decode(settings.pre_shared_key.expose())
-                .ok()?,
-        );
+        let decoded = Zeroizing::new(BASE64_URL_SAFE_NO_PAD.decode(settings.psk.expose()).ok()?);
         let key: [u8; 32] = decoded.as_slice().try_into().ok()?;
         Some(Self {
             address: Arc::from(settings.address.as_str()),
             port: settings.port,
             key: NxrKey::new(key),
-            pool: settings.warm_tcp.then_some(warm).flatten().map(|warm| {
-                AdaptiveTcpPool::new(
-                    Arc::from(format!("{}:{}", settings.address, settings.port)),
-                    warm.generation,
-                    connector.clone(),
-                    fd_budget.clone(),
-                    warm.authority.clone(),
-                    warm.policy,
-                )
-            }),
+            pool: settings
+                .warm_tcp
+                .unwrap_or(true)
+                .then_some(warm)
+                .flatten()
+                .map(|warm| {
+                    AdaptiveTcpPool::new(
+                        Arc::from(format!("{}:{}", settings.address, settings.port)),
+                        warm.generation,
+                        connector.clone(),
+                        fd_budget.clone(),
+                        warm.authority.clone(),
+                        warm.policy,
+                    )
+                }),
         })
     }
 }
@@ -617,7 +622,7 @@ pub struct OutboundPermit {
 #[derive(Debug)]
 pub enum OutboundConnectOutcome {
     Connected(OutboundConnection),
-    Blackholed,
+    Blocked,
 }
 
 /// A Vision route either transfers the authenticated session or completes an
@@ -637,7 +642,7 @@ pub enum OutboundConnectError {
     SocksConnect(io::Error),
     SocksTimeout,
     SocksProtocol(Socks5ProtocolError),
-    NxrSettings,
+    NxrOutboundConfig,
     NxrConnect(io::Error),
     NxrTimeout,
     NxrClock,
@@ -658,7 +663,7 @@ impl fmt::Display for OutboundConnectError {
             Self::SocksConnect(_) => formatter.write_str("failed to connect to SOCKS5 outbound"),
             Self::SocksTimeout => formatter.write_str("SOCKS5 outbound handshake timed out"),
             Self::SocksProtocol(source) => source.fmt(formatter),
-            Self::NxrSettings => formatter.write_str("NXR outbound settings are invalid"),
+            Self::NxrOutboundConfig => formatter.write_str("NXR outbound settings are invalid"),
             Self::NxrConnect(_) => formatter.write_str("failed to connect to NXR landing node"),
             Self::NxrTimeout => formatter.write_str("NXR outbound authentication timed out"),
             Self::NxrClock => formatter.write_str("system clock is before the Unix epoch"),
@@ -683,7 +688,7 @@ impl Error for OutboundConnectError {
             Self::UnknownTag(_)
             | Self::DescriptorBudget
             | Self::SocksTimeout
-            | Self::NxrSettings
+            | Self::NxrOutboundConfig
             | Self::NxrTimeout
             | Self::NxrClock
             | Self::NxrRandom
@@ -1104,6 +1109,7 @@ async fn read_before(
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
         io,
         net::{Ipv4Addr, Ipv6Addr},
         time::{Duration, SystemTime, UNIX_EPOCH},
@@ -1117,14 +1123,15 @@ mod tests {
     };
 
     use super::{
-        OutboundConnectError, OutboundConnectOutcome, OutboundIndex, OutboundRegistry,
-        SOCKS_CONNECT, SOCKS_NO_AUTH, SOCKS_USERNAME_PASSWORD, SOCKS_VERSION,
+        BUILTIN_OUTBOUND_COUNT, OutboundConnectError, OutboundConnectOutcome, OutboundIndex,
+        OutboundRegistry, SOCKS_CONNECT, SOCKS_NO_AUTH, SOCKS_USERNAME_PASSWORD, SOCKS_VERSION,
         SORTED_OUTBOUND_LIMIT, Socks5ProtocolError,
     };
     use crate::{
+        config::node::network::NetworkConfig,
         config::{
-            DirectBarrierConfig, NetworkConfig, NxrSettings, OutboundConfig, SecretString,
-            Socks5Settings, WarmConnectionPolicy,
+            SecretString,
+            node::outbound::{NxrOutboundConfig, OutboundConfig, Socks5Config},
         },
         network::NetworkEnvironment,
         protocol::{
@@ -1133,6 +1140,7 @@ mod tests {
             },
             vless::{Address, Destination},
         },
+        runtime::policy::{DirectBarrierPolicy, WarmConnectionPolicy},
         runtime::{AdmissionDenied, DirectBarrier, PressureGauge, ResourcePressure},
         server::warm_pool::WarmPoolAuthority,
         transport::FdBudget,
@@ -1140,33 +1148,50 @@ mod tests {
 
     #[test]
     fn outbound_index_uses_the_measured_cardinality_boundary() {
-        let configs = (0..=SORTED_OUTBOUND_LIMIT)
-            .map(|index| OutboundConfig::Direct {
-                tag: format!("direct-{index}"),
+        let socks = |_index: usize| {
+            OutboundConfig::Socks5(Socks5Config {
+                address: "10.0.0.1".to_owned(),
+                port: 1080,
+                username: None,
+                password: None,
+                warm_tcp: Some(false),
             })
-            .collect::<Vec<_>>();
+        };
+        let _ = &socks;
+        // Names are zero-padded so the sorted map order matches the numeric
+        // order the assertions below read.
+        let configs: BTreeMap<String, OutboundConfig> = (0..=SORTED_OUTBOUND_LIMIT)
+            .map(|index| (format!("socks-{index:03}"), socks(index)))
+            .collect();
         let connector = super::DestinationConnector::new(Duration::from_secs(1));
         let fd_budget = FdBudget::new(4_096);
         let small = OutboundIndex::from_config(
-            &configs[..SORTED_OUTBOUND_LIMIT],
+            &configs
+                .iter()
+                .take(SORTED_OUTBOUND_LIMIT - BUILTIN_OUTBOUND_COUNT)
+                .map(|(name, outbound)| (name.clone(), outbound.clone()))
+                .collect(),
             &connector,
             &fd_budget,
             None,
         );
         assert!(matches!(small, OutboundIndex::Sorted(_)));
-        assert!(small.contains("direct-2"));
+        assert!(small.contains("socks-001"));
         assert!(!small.contains("missing"));
 
         let large = OutboundIndex::from_config(&configs, &connector, &fd_budget, None);
         assert!(matches!(large, OutboundIndex::Hashed(_)));
-        assert!(large.contains("direct-4"));
+        assert!(large.contains("socks-004"));
+    }
+
+    /// Builds the declared section from one named outbound.
+    fn named(name: &str, outbound: OutboundConfig) -> BTreeMap<String, OutboundConfig> {
+        BTreeMap::from([(name.to_owned(), outbound)])
     }
 
     fn direct_registry(barrier: &DirectBarrier, connect_timeout: Duration) -> OutboundRegistry {
         OutboundRegistry::with_barrier(
-            &[OutboundConfig::Direct {
-                tag: "direct".to_owned(),
-            }],
+            &BTreeMap::new(),
             barrier.clone(),
             connect_timeout,
             crate::transport::FdBudget::new(4_096),
@@ -1276,16 +1301,16 @@ mod tests {
         let pressure = PressureGauge::new();
         let fd_budget = FdBudget::new(4_096);
         let registry = OutboundRegistry::with_warm_pools(
-            &[OutboundConfig::Nxr {
-                tag: "nxr".to_owned(),
-                settings: NxrSettings {
+            &named(
+                "nxr",
+                OutboundConfig::Nxr(NxrOutboundConfig {
                     address: address.ip().to_string(),
                     port: address.port(),
-                    pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(key_bytes)),
-                    warm_tcp: true,
-                },
-            }],
-            DirectBarrier::new(&DirectBarrierConfig::default()),
+                    psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(key_bytes)),
+                    warm_tcp: Some(true),
+                }),
+            ),
+            DirectBarrier::new(&DirectBarrierPolicy::default()),
             Duration::from_secs(2),
             fd_budget,
             &NetworkConfig::default(),
@@ -1334,16 +1359,16 @@ mod tests {
         let key_bytes = [0x63; 32];
         let policy = warm_policy();
         let registry = OutboundRegistry::with_warm_pools(
-            &[OutboundConfig::Nxr {
-                tag: "nxr".to_owned(),
-                settings: NxrSettings {
+            &named(
+                "nxr",
+                OutboundConfig::Nxr(NxrOutboundConfig {
                     address: address.ip().to_string(),
                     port: address.port(),
-                    pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(key_bytes)),
-                    warm_tcp: true,
-                },
-            }],
-            DirectBarrier::new(&DirectBarrierConfig::default()),
+                    psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(key_bytes)),
+                    warm_tcp: Some(true),
+                }),
+            ),
+            DirectBarrier::new(&DirectBarrierPolicy::default()),
             Duration::from_secs(2),
             FdBudget::new(4_096),
             &NetworkConfig::default(),
@@ -1422,17 +1447,17 @@ mod tests {
         let policy = warm_policy();
         let pressure = PressureGauge::new();
         let registry = OutboundRegistry::with_warm_pools(
-            &[OutboundConfig::Socks5 {
-                tag: "socks".to_owned(),
-                settings: Socks5Settings {
+            &named(
+                "socks",
+                OutboundConfig::Socks5(Socks5Config {
                     address: address.ip().to_string(),
                     port: address.port(),
                     username: None,
                     password: None,
-                    warm_tcp: true,
-                },
-            }],
-            DirectBarrier::new(&DirectBarrierConfig::default()),
+                    warm_tcp: Some(true),
+                }),
+            ),
+            DirectBarrier::new(&DirectBarrierPolicy::default()),
             Duration::from_secs(2),
             FdBudget::new(4_096),
             &NetworkConfig::default(),
@@ -1474,17 +1499,17 @@ mod tests {
         let address = listener.local_addr().expect("SOCKS address");
         let policy = warm_policy();
         let registry = OutboundRegistry::with_warm_pools(
-            &[OutboundConfig::Socks5 {
-                tag: "socks".to_owned(),
-                settings: Socks5Settings {
+            &named(
+                "socks",
+                OutboundConfig::Socks5(Socks5Config {
                     address: address.ip().to_string(),
                     port: address.port(),
                     username: None,
                     password: None,
-                    warm_tcp: true,
-                },
-            }],
-            DirectBarrier::new(&DirectBarrierConfig::default()),
+                    warm_tcp: Some(true),
+                }),
+            ),
+            DirectBarrier::new(&DirectBarrierPolicy::default()),
             Duration::from_secs(2),
             FdBudget::new(4_096),
             &NetworkConfig::default(),
@@ -1545,17 +1570,17 @@ mod tests {
         });
         let policy = warm_policy();
         let registry = OutboundRegistry::with_warm_pools(
-            &[OutboundConfig::Socks5 {
-                tag: "socks".to_owned(),
-                settings: Socks5Settings {
+            &named(
+                "socks",
+                OutboundConfig::Socks5(Socks5Config {
                     address: address.ip().to_string(),
                     port: address.port(),
                     username: None,
                     password: None,
-                    warm_tcp: true,
-                },
-            }],
-            DirectBarrier::new(&DirectBarrierConfig::default()),
+                    warm_tcp: Some(true),
+                }),
+            ),
+            DirectBarrier::new(&DirectBarrierPolicy::default()),
             Duration::from_secs(2),
             FdBudget::new(4_096),
             &NetworkConfig::default(),
@@ -1614,17 +1639,17 @@ mod tests {
         });
         let policy = warm_policy();
         let registry = OutboundRegistry::with_warm_pools(
-            &[OutboundConfig::Socks5 {
-                tag: "socks".to_owned(),
-                settings: Socks5Settings {
+            &named(
+                "socks",
+                OutboundConfig::Socks5(Socks5Config {
                     address: address.ip().to_string(),
                     port: address.port(),
                     username: None,
                     password: None,
-                    warm_tcp: true,
-                },
-            }],
-            DirectBarrier::new(&DirectBarrierConfig::default()),
+                    warm_tcp: Some(true),
+                }),
+            ),
+            DirectBarrier::new(&DirectBarrierPolicy::default()),
             Duration::from_millis(25),
             FdBudget::new(4_096),
             &NetworkConfig::default(),
@@ -1756,29 +1781,29 @@ mod tests {
 
         let policy = warm_policy();
         let registry = OutboundRegistry::with_warm_pools(
-            &[
-                OutboundConfig::Socks5 {
-                    tag: "socks-a".to_owned(),
-                    settings: Socks5Settings {
+            &BTreeMap::from([
+                (
+                    "socks-a".to_owned(),
+                    OutboundConfig::Socks5(Socks5Config {
                         address: address.ip().to_string(),
                         port: address.port(),
                         username: Some(SecretString::new("alice".to_owned())),
                         password: Some(SecretString::new("alpha".to_owned())),
-                        warm_tcp: true,
-                    },
-                },
-                OutboundConfig::Socks5 {
-                    tag: "socks-b".to_owned(),
-                    settings: Socks5Settings {
+                        warm_tcp: Some(true),
+                    }),
+                ),
+                (
+                    "socks-b".to_owned(),
+                    OutboundConfig::Socks5(Socks5Config {
                         address: address.ip().to_string(),
                         port: address.port(),
                         username: Some(SecretString::new("bob".to_owned())),
                         password: Some(SecretString::new("bravo".to_owned())),
-                        warm_tcp: true,
-                    },
-                },
-            ],
-            DirectBarrier::new(&DirectBarrierConfig::default()),
+                        warm_tcp: Some(true),
+                    }),
+                ),
+            ]),
+            DirectBarrier::new(&DirectBarrierPolicy::default()),
             Duration::from_secs(2),
             FdBudget::new(4_096),
             &NetworkConfig::default(),
@@ -1837,10 +1862,8 @@ mod tests {
         let address = listener.local_addr().expect("target address must exist");
         let budget = crate::transport::FdBudget::new(4_096);
         let registry = OutboundRegistry::new(
-            &[OutboundConfig::Direct {
-                tag: "direct".to_owned(),
-            }],
-            &DirectBarrierConfig::default(),
+            &BTreeMap::new(),
+            &DirectBarrierPolicy::default(),
             Duration::from_secs(1),
             budget.clone(),
         );
@@ -1876,10 +1899,8 @@ mod tests {
             .try_acquire(4_096)
             .expect("the whole budget must be acquirable for the test");
         let registry = OutboundRegistry::new(
-            &[OutboundConfig::Direct {
-                tag: "direct".to_owned(),
-            }],
-            &DirectBarrierConfig::default(),
+            &BTreeMap::new(),
+            &DirectBarrierPolicy::default(),
             Duration::from_secs(1),
             budget,
         );
@@ -1901,17 +1922,17 @@ mod tests {
             .expect("SOCKS listener must bind");
         let address = listener.local_addr().expect("SOCKS address must exist");
         let registry = OutboundRegistry::new(
-            &[OutboundConfig::Socks5 {
-                tag: "socks".to_owned(),
-                settings: Socks5Settings {
+            &named(
+                "socks",
+                OutboundConfig::Socks5(Socks5Config {
                     address: address.ip().to_string(),
                     port: address.port(),
                     username: Some(SecretString::new("user")),
                     password: Some(SecretString::new("pass")),
-                    warm_tcp: false,
-                },
-            }],
-            &DirectBarrierConfig::default(),
+                    warm_tcp: Some(false),
+                }),
+            ),
+            &DirectBarrierPolicy::default(),
             Duration::from_secs(1),
             crate::transport::FdBudget::new(4_096),
         );
@@ -1963,17 +1984,17 @@ mod tests {
             None => (None, None),
         };
         OutboundRegistry::new(
-            &[OutboundConfig::Socks5 {
-                tag: "socks".to_owned(),
-                settings: Socks5Settings {
+            &named(
+                "socks",
+                OutboundConfig::Socks5(Socks5Config {
                     address: address.ip().to_string(),
                     port: address.port(),
                     username,
                     password,
-                    warm_tcp: false,
-                },
-            }],
-            &DirectBarrierConfig::default(),
+                    warm_tcp: Some(false),
+                }),
+            ),
+            &DirectBarrierPolicy::default(),
             connect_timeout,
             crate::transport::FdBudget::new(4_096),
         )
@@ -2240,13 +2261,8 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn blackhole_never_opens_a_destination_stream() {
         let registry = OutboundRegistry::new(
-            &[OutboundConfig::Blackhole {
-                tag: "blocked".to_owned(),
-                settings: crate::config::BlackholeSettings {
-                    response_delay_ms: 0,
-                },
-            }],
-            &DirectBarrierConfig::default(),
+            &BTreeMap::new(),
+            &DirectBarrierPolicy::default(),
             Duration::from_secs(1),
             crate::transport::FdBudget::new(4_096),
         );
@@ -2254,10 +2270,10 @@ mod tests {
 
         assert!(matches!(
             registry
-                .connect("blocked", &destination)
+                .connect("block", &destination)
                 .await
                 .expect("blackhole route must complete"),
-            OutboundConnectOutcome::Blackholed
+            OutboundConnectOutcome::Blocked
         ));
     }
 
@@ -2269,16 +2285,16 @@ mod tests {
         let address = listener.local_addr().expect("NXR address must exist");
         let key_bytes = [0x5a; 32];
         let registry = OutboundRegistry::new(
-            &[OutboundConfig::Nxr {
-                tag: "landing".to_owned(),
-                settings: NxrSettings {
+            &named(
+                "landing",
+                OutboundConfig::Nxr(NxrOutboundConfig {
                     address: address.ip().to_string(),
                     port: address.port(),
-                    pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(key_bytes)),
-                    warm_tcp: false,
-                },
-            }],
-            &DirectBarrierConfig::default(),
+                    psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(key_bytes)),
+                    warm_tcp: Some(false),
+                }),
+            ),
+            &DirectBarrierPolicy::default(),
             Duration::from_secs(1),
             crate::transport::FdBudget::new(4_096),
         );
@@ -2332,7 +2348,7 @@ mod tests {
             .await
             .expect("target listener must bind");
         let address = listener.local_addr().expect("target address must exist");
-        let barrier = DirectBarrier::new(&DirectBarrierConfig {
+        let barrier = DirectBarrier::new(&DirectBarrierPolicy {
             max_concurrent: 1,
             max_per_second: 1_000,
         });
@@ -2375,7 +2391,7 @@ mod tests {
             .await
             .expect("target listener must bind");
         let address = listener.local_addr().expect("target address must exist");
-        let barrier = DirectBarrier::new(&DirectBarrierConfig {
+        let barrier = DirectBarrier::new(&DirectBarrierPolicy {
             max_concurrent: 1,
             max_per_second: 1_000,
         });
@@ -2419,7 +2435,7 @@ mod tests {
             .await
             .expect("target listener must bind");
         let address = listener.local_addr().expect("target address must exist");
-        let barrier = DirectBarrier::new(&DirectBarrierConfig {
+        let barrier = DirectBarrier::new(&DirectBarrierPolicy {
             max_concurrent: 1,
             max_per_second: 1_000,
         });
@@ -2475,7 +2491,7 @@ mod tests {
             .local_addr()
             .expect("target address must exist")
             .port();
-        let barrier = DirectBarrier::new(&DirectBarrierConfig {
+        let barrier = DirectBarrier::new(&DirectBarrierPolicy {
             max_concurrent: 1,
             max_per_second: 1_000,
         });
@@ -2510,7 +2526,7 @@ mod tests {
             .await
             .expect("target listener must bind");
         let address = listener.local_addr().expect("target address must exist");
-        let barrier = DirectBarrier::new(&DirectBarrierConfig {
+        let barrier = DirectBarrier::new(&DirectBarrierPolicy {
             max_concurrent: 8,
             max_per_second: 1,
         });
@@ -2550,7 +2566,7 @@ mod tests {
         let address = listener.local_addr().expect("target address must exist");
         let gauge = crate::runtime::PressureGauge::new();
         let barrier = DirectBarrier::with_pressure(
-            &DirectBarrierConfig {
+            &DirectBarrierPolicy {
                 max_concurrent: 4,
                 max_per_second: 1_000,
             },
@@ -2606,7 +2622,7 @@ mod tests {
             .await
             .expect("SOCKS listener must bind");
         let address = listener.local_addr().expect("SOCKS address must exist");
-        let barrier = DirectBarrier::new(&DirectBarrierConfig {
+        let barrier = DirectBarrier::new(&DirectBarrierPolicy {
             max_concurrent: 1,
             max_per_second: 1,
         });
@@ -2616,16 +2632,16 @@ mod tests {
             .try_acquire()
             .expect("the barrier must be fillable for the test");
         let registry = OutboundRegistry::with_barrier(
-            &[OutboundConfig::Socks5 {
-                tag: "socks".to_owned(),
-                settings: Socks5Settings {
+            &named(
+                "socks",
+                OutboundConfig::Socks5(Socks5Config {
                     address: address.ip().to_string(),
                     port: address.port(),
                     username: None,
                     password: None,
-                    warm_tcp: false,
-                },
-            }],
+                    warm_tcp: Some(false),
+                }),
+            ),
             barrier,
             Duration::from_secs(1),
             crate::transport::FdBudget::new(4_096),
@@ -2667,7 +2683,7 @@ mod tests {
             .expect("NXR listener must bind");
         let address = listener.local_addr().expect("NXR address must exist");
         let key_bytes = [0x5a; 32];
-        let barrier = DirectBarrier::new(&DirectBarrierConfig {
+        let barrier = DirectBarrier::new(&DirectBarrierPolicy {
             max_concurrent: 1,
             max_per_second: 1,
         });
@@ -2677,15 +2693,15 @@ mod tests {
             .try_acquire()
             .expect("the barrier must be fillable for the test");
         let registry = OutboundRegistry::with_barrier(
-            &[OutboundConfig::Nxr {
-                tag: "landing".to_owned(),
-                settings: NxrSettings {
+            &named(
+                "landing",
+                OutboundConfig::Nxr(NxrOutboundConfig {
                     address: address.ip().to_string(),
                     port: address.port(),
-                    pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(key_bytes)),
-                    warm_tcp: false,
-                },
-            }],
+                    psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(key_bytes)),
+                    warm_tcp: Some(false),
+                }),
+            ),
             barrier,
             Duration::from_secs(1),
             crate::transport::FdBudget::new(4_096),

@@ -30,8 +30,9 @@ use hickory_resolver::{
     config::{ConnectionConfig, LookupIpStrategy, NameServerConfig, ResolverConfig, ResolverOpts},
     net::runtime::TokioRuntimeProvider,
 };
-use rust_reality::config::{DnsCacheConfig, DnsConfig, ResourceGovernorConfig};
+use rust_reality::config::node::dns::{DnsCacheConfig, DnsConfig};
 use rust_reality::runtime::ResourceGovernor;
+use rust_reality::runtime::policy::ResourceGovernorPolicy;
 use rust_reality::server::dns::{DnsResolver, IpFamily};
 use tokio::net::UdpSocket;
 
@@ -145,14 +146,14 @@ fn raw_resolver(server: &BenchDns) -> hickory_resolver::TokioResolver {
 fn caching_resolver(server: &BenchDns) -> DnsResolver {
     DnsResolver::from_config(
         &DnsConfig {
-            servers: vec![format!("127.0.0.1:{}", server.addr.port())],
-            timeout_ms: 2_000,
-            cache: DnsCacheConfig {
-                min_ttl_seconds: 0,
+            servers: Some(vec![format!("127.0.0.1:{}", server.addr.port())]),
+            timeout_ms: Some(2_000),
+            cache: Some(DnsCacheConfig {
+                min_ttl_seconds: Some(0),
                 ..DnsCacheConfig::default()
-            },
+            }),
         },
-        ResourceGovernor::new(&ResourceGovernorConfig::default()),
+        ResourceGovernor::new(&ResourceGovernorPolicy::default()),
     )
     .expect("caching resolver builds")
 }
@@ -208,11 +209,11 @@ async fn system_reuse_main() {
     let mut windows = serde_json::Map::new();
     for reuse_ms in [0_u64, 250] {
         let resolver = DnsResolver::system(
-            ResourceGovernor::new(&ResourceGovernorConfig::default()),
+            ResourceGovernor::new(&ResourceGovernorPolicy::default()),
             Duration::from_millis(2_000),
             &DnsCacheConfig {
-                system_reuse_ms: reuse_ms,
-                min_ttl_seconds: 0,
+                system_reuse_ms: Some(reuse_ms),
+                min_ttl_seconds: Some(0),
                 ..DnsCacheConfig::default()
             },
         );

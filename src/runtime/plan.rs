@@ -19,11 +19,14 @@
 use serde::Serialize;
 
 use crate::{
-    config::{
-        DirectBarrierConfig, Objective, PolicyConfig, PolicyOverrides, RelayPolicy,
-        ResourceGovernorConfig, ResourceMode, TuningConfig, TuningMode,
+    config::node::runtime::{LimitOverrides, Objective},
+    runtime::{
+        machine::MachineReport,
+        policy::{
+            DirectBarrierPolicy, EffectivePolicy, RelayPolicy, ResourceGovernorPolicy,
+            ResourceMode, WarmConnectionPolicy,
+        },
     },
-    runtime::machine::MachineReport,
 };
 
 const MEBIBYTE: u64 = 1024 * 1024;
@@ -197,8 +200,9 @@ impl StartupPlan {
     /// the resource mode, the tuning objective, and whatever probes the
     /// caller measured.
     ///
-    /// `overrides` contributes the timeout fields verbatim: timeouts are
-    /// protocol security parameters and are never machine-derived. The
+    /// `overrides` contributes the timeout fields: timeouts are protocol
+    /// security parameters and are never machine-derived, so a pinned value
+    /// is carried and an absent one takes its documented default. The
     /// balanced derivation runs first; the objective then scales the
     /// selected outputs documented in design §1.2, the caps bound the scaled
     /// values, and the safety floors apply last, so a tiny or unobservable
@@ -212,8 +216,9 @@ impl StartupPlan {
         objective: Objective,
         listener_count: usize,
         probes: Probes<'_>,
-        overrides: &PolicyConfig,
+        overrides: &LimitOverrides,
     ) -> PlannedPolicy {
+        let timeouts = ResourceGovernorPolicy::default();
         let cpus = u64::try_from(capabilities.effective_cpus)
             .unwrap_or(u64::MAX)
             .max(1);
@@ -279,8 +284,16 @@ impl StartupPlan {
             .max(measured_setup_capacity.saturating_mul(4))
             .clamp(64, u64::from(u32::MAX));
 
-        let policy = PolicyConfig {
-            resource_governor: ResourceGovernorConfig {
+        // Warm-connection sizing follows the machine for the same reason the
+        // admission ceilings do. At eight effective CPUs this reproduces the
+        // values the previous fixed defaults used, so an ordinary host keeps
+        // the behaviour it had while a small or large one now scales.
+        let warm_max_ready = cpus.saturating_mul(32).clamp(1, 4_096).min(max_connections);
+        let warm_max_connecting = cpus.saturating_mul(8).clamp(1, 1_024).min(warm_max_ready);
+        let warm_defaults = WarmConnectionPolicy::default();
+
+        let policy = EffectivePolicy {
+            governor: ResourceGovernorPolicy {
                 max_connections: to_u32(max_connections),
                 max_handshakes: to_u32(max_handshakes),
                 max_pre_auth_idle_connections: to_u32(max_handshakes.min(max_connections)),
@@ -288,13 +301,21 @@ impl StartupPlan {
                 max_crypto_operations: to_u32(max_crypto_operations),
                 max_replay_entries: to_u32(max_replay_entries),
                 max_dns_lookups: to_u32(max_dns_lookups),
-                replay_retention_ms: overrides.resource_governor.replay_retention_ms,
-                client_hello_timeout_ms: overrides.resource_governor.client_hello_timeout_ms,
-                handshake_timeout_ms: overrides.resource_governor.handshake_timeout_ms,
-                connect_timeout_ms: overrides.resource_governor.connect_timeout_ms,
-                fallback_timeout_ms: overrides.resource_governor.fallback_timeout_ms,
+                replay_retention_ms: timeouts.replay_retention_ms,
+                client_hello_timeout_ms: overrides
+                    .client_hello_timeout_ms
+                    .unwrap_or(timeouts.client_hello_timeout_ms),
+                handshake_timeout_ms: overrides
+                    .handshake_timeout_ms
+                    .unwrap_or(timeouts.handshake_timeout_ms),
+                connect_timeout_ms: overrides
+                    .connect_timeout_ms
+                    .unwrap_or(timeouts.connect_timeout_ms),
+                fallback_timeout_ms: overrides
+                    .fallback_timeout_ms
+                    .unwrap_or(timeouts.fallback_timeout_ms),
             },
-            direct_barrier: DirectBarrierConfig {
+            direct_barrier: DirectBarrierPolicy {
                 max_concurrent: to_u32(max_direct_concurrent),
                 max_per_second: to_u32(max_direct_per_second),
             },
@@ -311,7 +332,13 @@ impl StartupPlan {
                     0
                 },
             },
-            warm_connections: overrides.warm_connections.clone(),
+            warm_connections: WarmConnectionPolicy {
+                min_ready: warm_defaults.min_ready.min(to_u32(warm_max_ready)),
+                max_ready: to_u32(warm_max_ready),
+                max_connecting: to_u32(warm_max_connecting),
+                refill_batch: warm_defaults.refill_batch.min(to_u32(warm_max_connecting)),
+                ..warm_defaults
+            },
         };
         PlannedPolicy {
             policy: scale_for_objective(&policy, objective, limits, capabilities),
@@ -323,27 +350,27 @@ impl StartupPlan {
 /// The derived policy and the hard bounds it may move within.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlannedPolicy {
-    policy: PolicyConfig,
-    hard_bounds: PolicyConfig,
+    policy: EffectivePolicy,
+    hard_bounds: EffectivePolicy,
 }
 
 impl PlannedPolicy {
     /// Returns the derived effective policy.
     #[must_use]
-    pub const fn policy(&self) -> &PolicyConfig {
+    pub const fn policy(&self) -> &EffectivePolicy {
         &self.policy
     }
 
     /// Returns the balanced-mode derivation: the ceiling set the adaptive
     /// controller may never exceed, independent of the configured objective.
     #[must_use]
-    pub const fn hard_bounds(&self) -> &PolicyConfig {
+    pub const fn hard_bounds(&self) -> &EffectivePolicy {
         &self.hard_bounds
     }
 
     /// Consumes the plan and returns the effective policy.
     #[must_use]
-    pub fn into_policy(self) -> PolicyConfig {
+    pub fn into_policy(self) -> EffectivePolicy {
         self.policy
     }
 }
@@ -419,16 +446,16 @@ fn scale(value: u64, (numerator, denominator): (u64, u64)) -> u64 {
 /// validator's child-≤-parent invariants keep holding, and the relay memory
 /// budget always covers the scaled pools so the derived policy validates.
 fn scale_for_objective(
-    balanced: &PolicyConfig,
+    balanced: &EffectivePolicy,
     objective: Objective,
     limits: &SafetyLimits,
     capabilities: &MachineCapabilities,
-) -> PolicyConfig {
+) -> EffectivePolicy {
     if objective == Objective::Balanced {
         return balanced.clone();
     }
     let multipliers = multipliers(objective);
-    let governor = &balanced.resource_governor;
+    let governor = &balanced.governor;
     let max_connections = scale(u64::from(governor.max_connections), multipliers.connections)
         .clamp(64, limits.max_connections);
     let max_handshakes = u64::from(governor.max_handshakes)
@@ -506,8 +533,8 @@ fn scale_for_objective(
         }
     }
 
-    PolicyConfig {
-        resource_governor: ResourceGovernorConfig {
+    EffectivePolicy {
+        governor: ResourceGovernorPolicy {
             max_connections: to_u32(max_connections),
             max_handshakes: to_u32(max_handshakes),
             max_pre_auth_idle_connections: to_u32(max_pre_auth_idle_connections),
@@ -517,7 +544,7 @@ fn scale_for_objective(
             max_dns_lookups: to_u32(max_dns_lookups),
             ..governor.clone()
         },
-        direct_barrier: DirectBarrierConfig {
+        direct_barrier: DirectBarrierPolicy {
             max_concurrent: to_u32(max_direct_concurrent),
             max_per_second: to_u32(max_direct_per_second),
         },
@@ -530,7 +557,7 @@ fn scale_for_objective(
             pipe_pool: balanced.relay.pipe_pool,
             max_pooled_pipes: to_u32(max_pooled_pipes),
         },
-        warm_connections: balanced.warm_connections.clone(),
+        warm_connections: balanced.warm_connections,
     }
 }
 
@@ -571,43 +598,40 @@ fn to_u32(value: u64) -> u32 {
 /// Where one effective policy value came from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FieldSource {
-    /// Derived at startup from the detected machine (`startup`/`adaptive`).
+    /// Derived at startup from the detected machine.
     ///
-    /// Startup derivation, not the adaptive controller. The controller moves only
-    /// selected soft admission and direct-dial ceilings while the process runs; it
-    /// never retunes a startup-derived field such as `relay.bufferBytes`.
+    /// Startup derivation, not the adaptive controller. The controller moves
+    /// only selected soft admission and direct-dial ceilings while the process
+    /// runs; it never retunes a startup-derived field such as the relay buffer
+    /// size.
     Derived,
-    /// Pinned by presence in `advanced.overrides`.
+    /// Pinned by presence in `runtime.limits`.
     ///
-    /// Honoured whatever the value, including a value equal to the built-in
-    /// default. Reported separately from the legacy channel so an operator can see
-    /// which input language supplied the number.
-    Override,
-    /// Pinned by an `advanced.limits` value that differs from the built-in default.
-    ///
-    /// The legacy 1.x input language. Retained for compatibility; the override
-    /// channel is the recommended way to pin a field.
-    LegacyLimit,
-    /// The built-in default: no operator value and no derivation.
+    /// Honoured whatever the value, including one that equals what derivation
+    /// or the default would have produced. Presence is the whole signal, which
+    /// is why there is one override channel rather than two.
+    Pinned,
+    /// The built-in default: no operator value, and a field the derivation
+    /// does not produce. Every timeout lands here unless it is pinned, because
+    /// timeouts are protocol security parameters rather than machine budgets.
     Default,
 }
 
 impl FieldSource {
-    /// Returns the stable report name.
+    /// The stable report name.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Derived => "startup-derived",
-            Self::Override => "operator-override",
-            Self::LegacyLimit => "operator-legacy-limit",
+            Self::Pinned => "operator-pinned",
             Self::Default => "default",
         }
     }
 
-    /// Whether an operator pinned this field through either input language.
+    /// Whether the operator pinned this field.
     #[must_use]
     pub const fn is_operator_pinned(self) -> bool {
-        matches!(self, Self::Override | Self::LegacyLimit)
+        matches!(self, Self::Pinned)
     }
 }
 
@@ -632,7 +656,7 @@ pub struct FieldResolution {
 #[derive(Clone, Debug)]
 pub struct PolicyResolution {
     /// The effective policy: derived fields merged under operator pins.
-    pub policy: PolicyConfig,
+    pub policy: EffectivePolicy,
     /// Per-field value and source, in a stable order.
     pub fields: Vec<FieldResolution>,
     /// The startup derivation (`startup`/`adaptive` modes only). Its
@@ -641,59 +665,44 @@ pub struct PolicyResolution {
     pub plan: Option<PlannedPolicy>,
 }
 
-/// Resolves the effective policy for the serve path and `runtime explain`.
+/// Resolves the effective policy for the serve path and `rust-reality explain`.
 ///
-/// `fixed` mode returns `limits` verbatim (v1.5 behavior). The derived modes
-/// (`startup`, and `adaptive` until the controller lands) run
-/// [`StartupPlan::derive`] against the detected machine and merge field by
-/// field: a field whose configured value differs from the built-in default
-/// is operator-pinned and always wins, and every other field takes the
-/// derived value.
-/// Derivation is passive: no storage or network benchmark runs at startup,
-/// so readiness is never delayed; fields the design does not derive always
-/// carry the configured value (all timeouts), and the unpinned `splice`/
-/// `pipePool` booleans follow the derived platform capability.
+/// Derivation always runs: there is one policy channel, and an absent limit
+/// means "let the machine decide" rather than "use a fixed number". Each field
+/// is then either pinned by presence in `runtime.limits` or taken from the
+/// derivation. Derivation is passive — no storage or network benchmark runs at
+/// startup, so readiness is never delayed. Fields the design does not derive
+/// (every timeout) report `default` when unpinned, and the unpinned
+/// `splice`/`pipePool` booleans follow the detected platform capability.
 #[must_use]
 pub fn resolve_policy(
-    limits: &PolicyConfig,
-    overrides: &PolicyOverrides,
-    tuning: &TuningConfig,
+    overrides: &LimitOverrides,
+    objective: Objective,
     machine: &MachineReport,
     mode: ResourceMode,
     listener_count: usize,
 ) -> PolicyResolution {
-    let derive = tuning.mode() != TuningMode::Fixed;
-    let plan = derive.then(|| {
-        StartupPlan::derive(
-            &MachineCapabilities::from_report(machine),
-            &SafetyLimits::default(),
-            mode,
-            tuning.objective,
-            listener_count,
-            Probes::default(),
-            limits,
-        )
-    });
-    let derived = plan.as_ref().map_or(limits, PlannedPolicy::policy);
-    let defaults = PolicyConfig::default();
-    let multipliers = multipliers(tuning.objective);
-    let mut effective = limits.clone();
-    let mut fields = Vec::with_capacity(20);
+    let plan = StartupPlan::derive(
+        &MachineCapabilities::from_report(machine),
+        &SafetyLimits::default(),
+        mode,
+        objective,
+        listener_count,
+        Probes::default(),
+        overrides,
+    );
+    let derived = plan.policy().clone();
+    let defaults = EffectivePolicy::default();
+    let multipliers = multipliers(objective);
+    let mut effective = derived.clone();
+    let mut fields = Vec::with_capacity(26);
+
+    /// A field the derivation produces: pinned, or derived.
     macro_rules! resolve_field {
-        ($section:ident, $name:ident, $path:literal, $multiplier:expr, $floor:expr, $cap:expr) => {{
-            let default = defaults.$section.$name;
-            // `advanced.overrides` is presence-based, so it is consulted first and
-            // honours a pin whose value equals the built-in default. The legacy
-            // `advanced.limits` inequality check stays after it so existing 1.x
-            // configurations resolve exactly as before.
-            let (value, source) = if let Some(pinned) = overrides.$section.$name {
-                (pinned, FieldSource::Override)
-            } else if limits.$section.$name != default {
-                (limits.$section.$name, FieldSource::LegacyLimit)
-            } else if derive {
-                (derived.$section.$name, FieldSource::Derived)
-            } else {
-                (default, FieldSource::Default)
+        ($section:ident, $name:ident, $path:literal, $pin:expr, $multiplier:expr, $floor:expr, $cap:expr) => {{
+            let (value, source) = match $pin {
+                Some(pinned) => (pinned, FieldSource::Pinned),
+                None => (derived.$section.$name, FieldSource::Derived),
             };
             effective.$section.$name = value;
             fields.push(FieldResolution {
@@ -710,18 +719,14 @@ pub fn resolve_policy(
             });
         }};
     }
-    /// Fields the derivation never produces (all timeouts): the configured
-    /// value always wins, so an unpinned field reports `default`, never
-    /// `derived`.
+
+    /// A field the derivation never produces (every timeout): pinned, or the
+    /// built-in default.
     macro_rules! resolve_carried {
-        ($section:ident, $name:ident, $path:literal) => {{
-            let default = defaults.$section.$name;
-            let (value, source) = if let Some(pinned) = overrides.$section.$name {
-                (pinned, FieldSource::Override)
-            } else if limits.$section.$name != default {
-                (limits.$section.$name, FieldSource::LegacyLimit)
-            } else {
-                (default, FieldSource::Default)
+        ($section:ident, $name:ident, $path:literal, $pin:expr) => {{
+            let (value, source) = match $pin {
+                Some(pinned) => (pinned, FieldSource::Pinned),
+                None => (defaults.$section.$name, FieldSource::Default),
             };
             effective.$section.$name = value;
             fields.push(FieldResolution {
@@ -734,155 +739,230 @@ pub fn resolve_policy(
             });
         }};
     }
+
     let ratio = |(numerator, denominator): (u64, u64)| numerator as f64 / denominator as f64;
-    let limits_ref = SafetyLimits::default();
+    let bounds = SafetyLimits::default();
+
     resolve_field!(
-        resource_governor,
+        governor,
         max_connections,
-        "resourceGovernor.maxConnections",
+        "governor.maxConnections",
+        overrides.max_connections,
         Some(ratio(multipliers.connections)),
         Some(64),
-        Some(limits_ref.max_connections)
+        Some(bounds.max_connections)
     );
     resolve_field!(
-        resource_governor,
+        governor,
         max_handshakes,
-        "resourceGovernor.maxHandshakes",
+        "governor.maxHandshakes",
+        overrides.max_handshakes,
         Some(1.0),
         Some(1),
         None
     );
     resolve_field!(
-        resource_governor,
+        governor,
         max_pre_auth_idle_connections,
-        "resourceGovernor.maxPreAuthIdleConnections",
+        "governor.maxPreAuthIdleConnections",
+        None,
         Some(1.0),
         Some(1),
         None
     );
     resolve_field!(
-        resource_governor,
+        governor,
         max_fallbacks,
-        "resourceGovernor.maxFallbacks",
+        "governor.maxFallbacks",
+        None,
         Some(ratio(multipliers.fallbacks)),
         Some(1),
         None
     );
     resolve_field!(
-        resource_governor,
+        governor,
         max_crypto_operations,
-        "resourceGovernor.maxCryptoOperations",
+        "governor.maxCryptoOperations",
+        None,
         Some(1.0),
         Some(1),
         None
     );
     resolve_field!(
-        resource_governor,
+        governor,
         max_replay_entries,
-        "resourceGovernor.maxReplayEntries",
-        Some(ratio(multipliers.connections)),
+        "governor.maxReplayEntries",
+        None,
+        Some(1.0),
         Some(1_024),
         Some(1_000_000)
     );
     resolve_field!(
-        resource_governor,
+        governor,
         max_dns_lookups,
-        "resourceGovernor.maxDnsLookups",
+        "governor.maxDnsLookups",
+        None,
         Some(1.0),
-        Some(1),
+        Some(16),
         None
     );
     resolve_carried!(
-        resource_governor,
+        governor,
         replay_retention_ms,
-        "resourceGovernor.replayRetentionMs"
+        "governor.replayRetentionMs",
+        None
     );
     resolve_carried!(
-        resource_governor,
+        governor,
         client_hello_timeout_ms,
-        "resourceGovernor.clientHelloTimeoutMs"
+        "governor.clientHelloTimeoutMs",
+        overrides.client_hello_timeout_ms
     );
     resolve_carried!(
-        resource_governor,
+        governor,
         handshake_timeout_ms,
-        "resourceGovernor.handshakeTimeoutMs"
+        "governor.handshakeTimeoutMs",
+        overrides.handshake_timeout_ms
     );
     resolve_carried!(
-        resource_governor,
+        governor,
         connect_timeout_ms,
-        "resourceGovernor.connectTimeoutMs"
+        "governor.connectTimeoutMs",
+        overrides.connect_timeout_ms
     );
     resolve_carried!(
-        resource_governor,
+        governor,
         fallback_timeout_ms,
-        "resourceGovernor.fallbackTimeoutMs"
+        "governor.fallbackTimeoutMs",
+        overrides.fallback_timeout_ms
     );
     resolve_field!(
         direct_barrier,
         max_concurrent,
         "directBarrier.maxConcurrent",
+        None,
         Some(ratio(multipliers.direct_concurrent)),
-        Some(1),
+        Some(64),
         None
     );
     resolve_field!(
         direct_barrier,
         max_per_second,
         "directBarrier.maxPerSecond",
+        None,
         Some(ratio(multipliers.direct_per_second)),
         Some(64),
-        Some(u64::from(u32::MAX))
+        None
     );
     resolve_field!(
         relay,
         buffer_bytes,
         "relay.bufferBytes",
-        Some(match multipliers.buffer_tier_shift {
-            -1 => 0.5,
-            1 => 2.0,
-            _ => 1.0,
-        }),
-        Some(16 * 1024),
-        Some(64 * 1024)
+        None,
+        None,
+        None,
+        None
     );
     resolve_field!(
         relay,
         max_pooled_buffers,
         "relay.maxPooledBuffers",
+        None,
         Some(ratio(multipliers.pooled_buffers)),
         Some(2),
-        Some(limits_ref.max_pooled_buffers)
+        Some(bounds.max_pooled_buffers)
     );
     resolve_field!(
         relay,
         max_splice_relays,
         "relay.maxSpliceRelays",
+        None,
         Some(ratio(multipliers.splice_relays)),
         Some(1),
-        Some(limits_ref.max_splice_relays)
+        Some(bounds.max_splice_relays)
     );
     resolve_field!(
         relay,
         max_relay_memory_bytes,
         "relay.maxRelayMemoryBytes",
-        Some(ratio(multipliers.relay_memory)),
         None,
-        (machine.memory_total > 0).then_some(machine.memory_total / 4)
+        None,
+        None,
+        None
     );
-    resolve_field!(relay, splice, "relay.splice", None, None, None);
-    resolve_field!(relay, pipe_pool, "relay.pipePool", None, None, None);
+    resolve_field!(
+        relay,
+        splice,
+        "relay.splice",
+        overrides.splice,
+        None,
+        None,
+        None
+    );
+    resolve_field!(
+        relay,
+        pipe_pool,
+        "relay.pipePool",
+        overrides.pipe_pool,
+        None,
+        None,
+        None
+    );
     resolve_field!(
         relay,
         max_pooled_pipes,
         "relay.maxPooledPipes",
+        None,
         Some(ratio(multipliers.splice_relays)),
         None,
         None
     );
+    resolve_field!(
+        warm_connections,
+        min_ready,
+        "warmConnections.minReady",
+        None,
+        None,
+        None,
+        None
+    );
+    resolve_field!(
+        warm_connections,
+        max_ready,
+        "warmConnections.maxReady",
+        None,
+        None,
+        None,
+        None
+    );
+    resolve_field!(
+        warm_connections,
+        max_connecting,
+        "warmConnections.maxConnecting",
+        None,
+        None,
+        None,
+        None
+    );
+    resolve_field!(
+        warm_connections,
+        refill_batch,
+        "warmConnections.refillBatch",
+        None,
+        None,
+        None,
+        None
+    );
+
+    // A pipe pool without splice would reserve pipes nothing can use.
+    if !effective.relay.splice {
+        effective.relay.pipe_pool = false;
+    }
+
     PolicyResolution {
         policy: effective,
         fields,
-        plan,
+        plan: Some(plan),
     }
 }
 
@@ -943,8 +1023,9 @@ mod tests {
         FieldSource, MachineCapabilities, Probes, RuntimeTopology, SafetyLimits, StartupPlan,
         resolve_policy,
     };
-    use crate::config::{
-        Objective, PolicyConfig, PolicyOverrides, ResourceMode, TuningConfig, TuningMode,
+    use crate::{
+        config::node::runtime::{LimitOverrides, Objective},
+        runtime::policy::{EffectivePolicy, ResourceGovernorPolicy, ResourceMode},
     };
 
     fn capabilities(
@@ -971,7 +1052,7 @@ mod tests {
         mode: ResourceMode,
         listener_count: usize,
         probes: Probes<'_>,
-    ) -> PolicyConfig {
+    ) -> EffectivePolicy {
         StartupPlan::derive(
             capabilities,
             &SafetyLimits::default(),
@@ -979,7 +1060,7 @@ mod tests {
             Objective::Balanced,
             listener_count,
             probes,
-            &PolicyConfig::default(),
+            &LimitOverrides::default(),
         )
         .into_policy()
     }
@@ -1008,8 +1089,8 @@ mod tests {
             },
         );
         assert_eq!(policy.relay.buffer_bytes, 64 * 1024);
-        assert_eq!(policy.resource_governor.max_connections, 24_576);
-        assert!(policy.relay.max_splice_relays <= policy.resource_governor.max_connections);
+        assert_eq!(policy.governor.max_connections, 24_576);
+        assert!(policy.relay.max_splice_relays <= policy.governor.max_connections);
     }
 
     #[test]
@@ -1027,7 +1108,7 @@ mod tests {
                 objective,
                 1,
                 Probes::default(),
-                &PolicyConfig::default(),
+                &LimitOverrides::default(),
             );
             let balanced = StartupPlan::derive(
                 &capabilities,
@@ -1036,7 +1117,7 @@ mod tests {
                 Objective::Balanced,
                 1,
                 Probes::default(),
-                &PolicyConfig::default(),
+                &LimitOverrides::default(),
             );
             assert_eq!(
                 plan.hard_bounds(),
@@ -1056,7 +1137,7 @@ mod tests {
             "no network probe selects the default tier"
         );
         assert_eq!(
-            policy.resource_governor.max_connections, 24_576,
+            policy.governor.max_connections, 24_576,
             "an absent protocol probe still derives the fd/memory-bounded plan"
         );
     }
@@ -1070,7 +1151,7 @@ mod tests {
         };
         let policy = derive(&capabilities, ResourceMode::Standard, 1, probes);
         assert_eq!(
-            policy.resource_governor.max_handshakes, 2_000,
+            policy.governor.max_handshakes, 2_000,
             "the measured capacity wins over cpus x 128"
         );
         assert_eq!(policy.direct_barrier.max_per_second, 8_192);
@@ -1083,12 +1164,12 @@ mod tests {
         let report = crate::runtime::machine::MachineReport::conservative();
         let capabilities = MachineCapabilities::from_report(&report);
         let policy = derive(&capabilities, ResourceMode::Standard, 1, Probes::default());
-        assert_eq!(policy.resource_governor.max_connections, 197);
-        assert_eq!(policy.resource_governor.max_handshakes, 128);
-        assert_eq!(policy.resource_governor.max_crypto_operations, 32);
-        assert_eq!(policy.resource_governor.max_fallbacks, 128);
-        assert_eq!(policy.resource_governor.max_dns_lookups, 32);
-        assert_eq!(policy.resource_governor.max_replay_entries, 1_024);
+        assert_eq!(policy.governor.max_connections, 197);
+        assert_eq!(policy.governor.max_handshakes, 128);
+        assert_eq!(policy.governor.max_crypto_operations, 32);
+        assert_eq!(policy.governor.max_fallbacks, 128);
+        assert_eq!(policy.governor.max_dns_lookups, 32);
+        assert_eq!(policy.governor.max_replay_entries, 1_024);
         assert_eq!(policy.relay.buffer_bytes, 32 * 1024);
         assert_eq!(policy.relay.max_splice_relays, 64);
         assert_eq!(policy.relay.max_pooled_pipes, 128);
@@ -1102,8 +1183,7 @@ mod tests {
         let standard = derive(&capabilities, ResourceMode::Standard, 1, Probes::default());
         let dedicated = derive(&capabilities, ResourceMode::Dedicated, 1, Probes::default());
         assert!(
-            dedicated.resource_governor.max_connections
-                > standard.resource_governor.max_connections,
+            dedicated.governor.max_connections > standard.governor.max_connections,
             "the hard limit and the /10 headroom must widen the plan"
         );
     }
@@ -1113,7 +1193,7 @@ mod tests {
         let capabilities = capabilities(8, 1_048_576, 1_048_576, 0);
         let policy = derive(&capabilities, ResourceMode::Dedicated, 1, Probes::default());
         assert_eq!(
-            policy.resource_governor.max_connections, 262_144,
+            policy.governor.max_connections, 262_144,
             "the fd dimension alone still produces a plan, bounded by the cap"
         );
         assert_eq!(
@@ -1128,17 +1208,18 @@ mod tests {
         let capabilities = capabilities(64, 1_048_576, 1_048_576, 64 * 1024 * 1024 * 1024);
         let limits = SafetyLimits::default();
         let policy = derive(&capabilities, ResourceMode::Dedicated, 1, Probes::default());
-        assert!(u64::from(policy.resource_governor.max_connections) <= limits.max_connections);
+        assert!(u64::from(policy.governor.max_connections) <= limits.max_connections);
         assert!(u64::from(policy.relay.max_splice_relays) <= limits.max_splice_relays);
         assert!(policy.relay.max_pooled_buffers <= limits.max_pooled_buffers as usize);
     }
 
     #[test]
-    fn overrides_carry_the_timeouts_verbatim() {
+    fn a_pinned_timeout_is_carried_verbatim_through_derivation() {
         let capabilities = capabilities(4, 65_536, 1_048_576, 4 * 1024 * 1024 * 1024);
-        let mut overrides = PolicyConfig::default();
-        overrides.resource_governor.handshake_timeout_ms = 42_000;
-        overrides.resource_governor.replay_retention_ms = 7_000;
+        let overrides = LimitOverrides {
+            handshake_timeout_ms: Some(42_000),
+            ..LimitOverrides::default()
+        };
         let policy = StartupPlan::derive(
             &capabilities,
             &SafetyLimits::default(),
@@ -1149,8 +1230,12 @@ mod tests {
             &overrides,
         )
         .into_policy();
-        assert_eq!(policy.resource_governor.handshake_timeout_ms, 42_000);
-        assert_eq!(policy.resource_governor.replay_retention_ms, 7_000);
+        assert_eq!(policy.governor.handshake_timeout_ms, 42_000);
+        assert_eq!(
+            policy.governor.replay_retention_ms,
+            ResourceGovernorPolicy::default().replay_retention_ms,
+            "replay retention is derived, so it keeps its default"
+        );
     }
 
     #[test]
@@ -1211,7 +1296,7 @@ mod tests {
         capabilities: &MachineCapabilities,
         mode: ResourceMode,
         objective: Objective,
-    ) -> PolicyConfig {
+    ) -> EffectivePolicy {
         StartupPlan::derive(
             capabilities,
             &SafetyLimits::default(),
@@ -1219,15 +1304,15 @@ mod tests {
             objective,
             1,
             Probes::default(),
-            &PolicyConfig::default(),
+            &LimitOverrides::default(),
         )
         .into_policy()
     }
 
     /// The validator's numeric invariants, mirrored so every derived and
     /// scaled policy proves it would pass `validate_config`.
-    fn assert_policy_invariants(policy: &PolicyConfig) {
-        let governor = &policy.resource_governor;
+    fn assert_policy_invariants(policy: &EffectivePolicy) {
+        let governor = &policy.governor;
         assert!(governor.max_connections >= 64);
         assert!(governor.max_handshakes >= 1);
         assert!(governor.max_handshakes <= governor.max_connections);
@@ -1298,9 +1383,9 @@ mod tests {
             derive_with_objective(&capabilities, ResourceMode::Standard, Objective::Throughput);
 
         // The documented multipliers on the golden machine.
-        assert_eq!(balanced.resource_governor.max_connections, 24_576);
-        assert_eq!(latency.resource_governor.max_connections, 12_288);
-        assert_eq!(throughput.resource_governor.max_connections, 36_864);
+        assert_eq!(balanced.governor.max_connections, 24_576);
+        assert_eq!(latency.governor.max_connections, 12_288);
+        assert_eq!(throughput.governor.max_connections, 36_864);
         assert_eq!(latency.relay.buffer_bytes, 16 * 1024, "one tier down");
         assert_eq!(balanced.relay.buffer_bytes, 32 * 1024, "the probe tier");
         assert_eq!(throughput.relay.buffer_bytes, 64 * 1024, "one tier up");
@@ -1312,26 +1397,26 @@ mod tests {
         // Objective-invariant fields never move; replay entries follow the
         // scaled connection ceiling.
         for policy in [&latency, &balanced, &throughput] {
-            assert_eq!(policy.resource_governor.max_handshakes, 512);
-            assert_eq!(policy.resource_governor.max_crypto_operations, 128);
-            assert_eq!(policy.resource_governor.max_dns_lookups, 128);
+            assert_eq!(policy.governor.max_handshakes, 512);
+            assert_eq!(policy.governor.max_crypto_operations, 128);
+            assert_eq!(policy.governor.max_dns_lookups, 128);
             assert_eq!(
-                policy.resource_governor.max_replay_entries,
-                policy.resource_governor.max_connections * 4
+                policy.governor.max_replay_entries,
+                policy.governor.max_connections * 4
             );
         }
 
         // Monotonicity across the scaled fields.
         for (lo, mid, hi) in [
             (
-                latency.resource_governor.max_connections,
-                balanced.resource_governor.max_connections,
-                throughput.resource_governor.max_connections,
+                latency.governor.max_connections,
+                balanced.governor.max_connections,
+                throughput.governor.max_connections,
             ),
             (
-                latency.resource_governor.max_fallbacks,
-                balanced.resource_governor.max_fallbacks,
-                throughput.resource_governor.max_fallbacks,
+                latency.governor.max_fallbacks,
+                balanced.governor.max_fallbacks,
+                throughput.governor.max_fallbacks,
             ),
             (
                 latency.direct_barrier.max_concurrent,
@@ -1361,19 +1446,19 @@ mod tests {
             let policy = derive_with_objective(&capabilities, ResourceMode::Standard, objective);
             assert_policy_invariants(&policy);
             assert!(
-                policy.resource_governor.max_connections >= 64,
+                policy.governor.max_connections >= 64,
                 "the connection floor survives {objective:?}"
             );
         }
         let latency =
             derive_with_objective(&capabilities, ResourceMode::Standard, Objective::Latency);
-        assert_eq!(latency.resource_governor.max_connections, 98);
+        assert_eq!(latency.governor.max_connections, 98);
         assert_eq!(
-            latency.resource_governor.max_handshakes, 98,
+            latency.governor.max_handshakes, 98,
             "the child limit re-clamps to the scaled parent"
         );
         assert_eq!(
-            latency.resource_governor.max_replay_entries, 1_024,
+            latency.governor.max_replay_entries, 1_024,
             "the replay floor applies last"
         );
     }
@@ -1387,7 +1472,7 @@ mod tests {
             ResourceMode::Dedicated,
             Objective::Throughput,
         );
-        assert!(u64::from(policy.resource_governor.max_connections) <= limits.max_connections);
+        assert!(u64::from(policy.governor.max_connections) <= limits.max_connections);
         assert!(u64::from(policy.relay.max_splice_relays) <= limits.max_splice_relays);
         assert!(policy.relay.max_pooled_buffers <= limits.max_pooled_buffers as usize);
         assert!(
@@ -1420,53 +1505,11 @@ mod tests {
     }
 
     #[test]
-    fn fixed_mode_returns_the_limits_verbatim() {
+    fn derivation_always_runs_and_records_its_provenance() {
         let machine = report(4, 65_536, 1_048_576, 4 * 1024 * 1024 * 1024);
-        let mut limits = PolicyConfig::default();
-        limits.resource_governor.max_connections = 100_000;
-        let tuning = TuningConfig {
-            mode: Some(TuningMode::Fixed),
-            objective: Objective::Throughput,
-        };
         let resolution = resolve_policy(
-            &limits,
-            &PolicyOverrides::default(),
-            &tuning,
-            &machine,
-            ResourceMode::Standard,
-            1,
-        );
-        assert_eq!(resolution.policy, limits, "fixed never derives");
-        assert!(resolution.plan.is_none());
-        assert!(
-            resolution
-                .fields
-                .iter()
-                .all(|field| field.source != FieldSource::Derived)
-        );
-        let pinned = resolution
-            .fields
-            .iter()
-            .find(|field| field.field == "resourceGovernor.maxConnections")
-            .expect("the field is reported");
-        assert_eq!(pinned.value, 100_000);
-        assert_eq!(
-            pinned.source,
-            FieldSource::LegacyLimit,
-            "a value pinned through advanced.limits reports the legacy channel"
-        );
-        assert!(pinned.source.is_operator_pinned());
-    }
-
-    #[test]
-    fn startup_mode_derives_unpinned_fields_and_records_provenance() {
-        let machine = report(4, 65_536, 1_048_576, 4 * 1024 * 1024 * 1024);
-        let limits = PolicyConfig::default();
-        let tuning = TuningConfig::default();
-        let resolution = resolve_policy(
-            &limits,
-            &PolicyOverrides::default(),
-            &tuning,
+            &LimitOverrides::default(),
+            Objective::Balanced,
             &machine,
             ResourceMode::Standard,
             1,
@@ -1478,76 +1521,173 @@ mod tests {
             Objective::Balanced,
             1,
             Probes::default(),
-            &limits,
+            &LimitOverrides::default(),
         )
         .into_policy();
-        // The booleans follow the derived platform capability; everything
-        // else matches the derivation exactly when nothing is pinned.
+
         assert_eq!(resolution.policy, expected);
+        assert!(
+            resolution.plan.is_some(),
+            "there is one policy channel, so an absent limit always derives"
+        );
         for field in &resolution.fields {
-            if field.field.contains("TimeoutMs")
-                || field.field == "resourceGovernor.replayRetentionMs"
-            {
-                assert_eq!(
-                    field.source,
-                    FieldSource::Default,
-                    "timeouts are never derived: {}",
-                    field.field
-                );
-            } else {
-                assert_eq!(
-                    field.source,
-                    FieldSource::Derived,
-                    "an unpinned startup field derives: {}",
-                    field.field
-                );
-            }
+            let expected_source =
+                if field.field.ends_with("TimeoutMs") || field.field.ends_with("RetentionMs") {
+                    FieldSource::Default
+                } else {
+                    FieldSource::Derived
+                };
+            assert_eq!(
+                field.source, expected_source,
+                "{} reported the wrong provenance",
+                field.field
+            );
+            assert!(!field.source.is_operator_pinned());
         }
-        assert_eq!(resolution.policy.resource_governor.max_connections, 24_576);
-        assert!(resolution.plan.is_some());
     }
 
     #[test]
-    fn operator_pins_win_over_the_derivation_field_by_field() {
+    fn a_pin_wins_over_the_derivation_and_reports_itself() {
         let machine = report(4, 65_536, 1_048_576, 4 * 1024 * 1024 * 1024);
-        let mut limits = PolicyConfig::default();
-        limits.resource_governor.max_connections = 100_000;
-        limits.relay.buffer_bytes = 8 * 1024;
+        let overrides = LimitOverrides {
+            max_connections: Some(100_000),
+            ..LimitOverrides::default()
+        };
         let resolution = resolve_policy(
-            &limits,
-            &PolicyOverrides::default(),
-            &TuningConfig::default(),
+            &overrides,
+            Objective::Balanced,
             &machine,
             ResourceMode::Standard,
             1,
         );
-        assert_eq!(resolution.policy.resource_governor.max_connections, 100_000);
-        assert_eq!(resolution.policy.relay.buffer_bytes, 8 * 1024);
-        assert_eq!(
-            resolution.policy.resource_governor.max_handshakes, 512,
-            "unpinned fields still derive"
+
+        assert_eq!(resolution.policy.governor.max_connections, 100_000);
+        let pinned = resolution
+            .fields
+            .iter()
+            .find(|field| field.field == "governor.maxConnections")
+            .expect("the field is reported");
+        assert_eq!(pinned.source, FieldSource::Pinned);
+        assert!(pinned.source.is_operator_pinned());
+        assert_eq!(pinned.multiplier, None, "a pin is not scaled");
+    }
+
+    #[test]
+    fn a_pin_does_not_disturb_its_siblings() {
+        let machine = report(4, 65_536, 1_048_576, 4 * 1024 * 1024 * 1024);
+        let derived = resolve_policy(
+            &LimitOverrides::default(),
+            Objective::Balanced,
+            &machine,
+            ResourceMode::Standard,
+            1,
         );
-        let source_of = |name: &str| {
-            resolution
-                .fields
-                .iter()
-                .find(|field| field.field == name)
-                .expect("the field is reported")
-                .source
-        };
-        assert_eq!(
-            source_of("resourceGovernor.maxConnections"),
-            FieldSource::LegacyLimit
+        let pinned = resolve_policy(
+            &LimitOverrides {
+                max_connections: Some(100_000),
+                ..LimitOverrides::default()
+            },
+            Objective::Balanced,
+            &machine,
+            ResourceMode::Standard,
+            1,
         );
-        assert_eq!(source_of("relay.bufferBytes"), FieldSource::LegacyLimit);
-        assert_eq!(
-            source_of("resourceGovernor.maxHandshakes"),
-            FieldSource::Derived
+
+        assert_ne!(
+            derived.policy.governor.max_connections,
+            pinned.policy.governor.max_connections
         );
         assert_eq!(
-            source_of("resourceGovernor.handshakeTimeoutMs"),
+            derived.policy.governor.max_handshakes, pinned.policy.governor.max_handshakes,
+            "pinning one field must not move another"
+        );
+        assert_eq!(derived.policy.relay, pinned.policy.relay);
+    }
+
+    #[test]
+    fn a_pin_equal_to_the_derived_value_is_still_a_pin() {
+        // This is the case the previous two-channel model could not express,
+        // and the reason presence rather than inequality is the signal.
+        let machine = report(4, 65_536, 1_048_576, 4 * 1024 * 1024 * 1024);
+        let derived = resolve_policy(
+            &LimitOverrides::default(),
+            Objective::Balanced,
+            &machine,
+            ResourceMode::Standard,
+            1,
+        );
+        let same = derived.policy.governor.max_connections;
+        let resolution = resolve_policy(
+            &LimitOverrides {
+                max_connections: Some(same),
+                ..LimitOverrides::default()
+            },
+            Objective::Balanced,
+            &machine,
+            ResourceMode::Standard,
+            1,
+        );
+
+        assert_eq!(resolution.policy.governor.max_connections, same);
+        let field = resolution
+            .fields
+            .iter()
+            .find(|field| field.field == "governor.maxConnections")
+            .expect("the field is reported");
+        assert_eq!(field.source, FieldSource::Pinned);
+    }
+
+    #[test]
+    fn pinned_timeouts_replace_the_default_they_would_otherwise_report() {
+        let machine = report(4, 65_536, 1_048_576, 4 * 1024 * 1024 * 1024);
+        let resolution = resolve_policy(
+            &LimitOverrides {
+                handshake_timeout_ms: Some(15_000),
+                ..LimitOverrides::default()
+            },
+            Objective::Balanced,
+            &machine,
+            ResourceMode::Standard,
+            1,
+        );
+
+        assert_eq!(resolution.policy.governor.handshake_timeout_ms, 15_000);
+        let pinned = resolution
+            .fields
+            .iter()
+            .find(|field| field.field == "governor.handshakeTimeoutMs")
+            .expect("the field is reported");
+        assert_eq!(pinned.source, FieldSource::Pinned);
+        let unpinned = resolution
+            .fields
+            .iter()
+            .find(|field| field.field == "governor.connectTimeoutMs")
+            .expect("the field is reported");
+        assert_eq!(
+            unpinned.source,
             FieldSource::Default,
-            "timeouts are carried from the configuration, never derived"
+            "a timeout the derivation does not produce reports its default"
+        );
+    }
+
+    #[test]
+    fn disabling_splice_also_disables_the_pipe_pool_it_would_fill() {
+        let machine = report(4, 65_536, 1_048_576, 4 * 1024 * 1024 * 1024);
+        let resolution = resolve_policy(
+            &LimitOverrides {
+                splice: Some(false),
+                ..LimitOverrides::default()
+            },
+            Objective::Balanced,
+            &machine,
+            ResourceMode::Standard,
+            1,
+        );
+
+        assert!(!resolution.policy.relay.splice);
+        assert!(
+            !resolution.policy.relay.pipe_pool,
+            "a pipe pool with no splice would reserve pipes nothing can use"
         );
     }
 
@@ -1555,41 +1695,34 @@ mod tests {
     fn the_conservative_machine_resolves_to_the_documented_floors() {
         let machine = crate::runtime::machine::MachineReport::conservative();
         let resolution = resolve_policy(
-            &PolicyConfig::default(),
-            &PolicyOverrides::default(),
-            &TuningConfig::default(),
+            &LimitOverrides::default(),
+            Objective::Balanced,
             &machine,
             ResourceMode::Standard,
             1,
         );
-        assert_eq!(resolution.policy.resource_governor.max_connections, 197);
+        assert_eq!(resolution.policy.governor.max_connections, 197);
         assert_eq!(resolution.policy.relay.buffer_bytes, 32 * 1024);
     }
 
     #[test]
     fn the_dedicated_profile_derives_a_wider_policy() {
         let machine = report(4, 65_536, 1_048_576, 4 * 1024 * 1024 * 1024);
-        let tuning = TuningConfig::default();
         let shared = resolve_policy(
-            &PolicyConfig::default(),
-            &PolicyOverrides::default(),
-            &tuning,
+            &LimitOverrides::default(),
+            Objective::Balanced,
             &machine,
             ResourceMode::Standard,
             1,
         );
         let dedicated = resolve_policy(
-            &PolicyConfig::default(),
-            &PolicyOverrides::default(),
-            &tuning,
+            &LimitOverrides::default(),
+            Objective::Balanced,
             &machine,
             ResourceMode::Dedicated,
             1,
         );
-        assert!(
-            dedicated.policy.resource_governor.max_connections
-                > shared.policy.resource_governor.max_connections
-        );
+        assert!(dedicated.policy.governor.max_connections > shared.policy.governor.max_connections);
     }
 
     #[test]
@@ -1633,118 +1766,5 @@ mod tests {
         assert_eq!(super::shift_buffer_tier(32 * 1024, 1), 64 * 1024);
         assert_eq!(super::shift_buffer_tier(64 * 1024, 1), 64 * 1024);
         assert_eq!(super::shift_buffer_tier(64 * 1024, -1), 32 * 1024);
-    }
-
-    /// Regression test for the defect that `advanced.limits` cannot express a pin
-    /// whose value equals the built-in default: the value was silently discarded
-    /// and replaced by derivation.
-    #[test]
-    fn an_override_equal_to_the_default_is_still_operator_pinned() {
-        let machine = report(4, 65_536, 1_048_576, 4 * 1024 * 1024 * 1024);
-        let defaults = PolicyConfig::default();
-        let mut overrides = PolicyOverrides::default();
-        overrides.relay.buffer_bytes = Some(defaults.relay.buffer_bytes);
-
-        let resolution = resolve_policy(
-            &PolicyConfig::default(),
-            &overrides,
-            &TuningConfig::default(),
-            &machine,
-            ResourceMode::Dedicated,
-            1,
-        );
-
-        let source_of = |name: &str| {
-            resolution
-                .fields
-                .iter()
-                .find(|field| field.field == name)
-                .expect("the field is reported")
-                .source
-        };
-        assert_eq!(
-            resolution.policy.relay.buffer_bytes, defaults.relay.buffer_bytes,
-            "an explicit pin equal to the default must survive derivation"
-        );
-        assert_eq!(source_of("relay.bufferBytes"), FieldSource::Override);
-    }
-
-    /// Regression test for the defect that overriding one field required restating
-    /// its mandatory siblings: siblings must keep deriving independently.
-    #[test]
-    fn an_override_does_not_pin_its_siblings() {
-        let machine = report(4, 65_536, 1_048_576, 4 * 1024 * 1024 * 1024);
-        let mut overrides = PolicyOverrides::default();
-        overrides.relay.buffer_bytes = Some(49_152);
-
-        let resolution = resolve_policy(
-            &PolicyConfig::default(),
-            &overrides,
-            &TuningConfig::default(),
-            &machine,
-            ResourceMode::Dedicated,
-            1,
-        );
-
-        let source_of = |name: &str| {
-            resolution
-                .fields
-                .iter()
-                .find(|field| field.field == name)
-                .expect("the field is reported")
-                .source
-        };
-        assert_eq!(resolution.policy.relay.buffer_bytes, 49_152);
-        assert_eq!(source_of("relay.bufferBytes"), FieldSource::Override);
-        assert_eq!(
-            source_of("relay.maxPooledBuffers"),
-            FieldSource::Derived,
-            "a sibling of an overridden field must keep deriving"
-        );
-        assert_eq!(
-            source_of("relay.maxSpliceRelays"),
-            FieldSource::Derived,
-            "a sibling of an overridden field must keep deriving"
-        );
-    }
-
-    /// The override channel must also reach fields the derivation never produces,
-    /// which previously could only be set through the value-inequality path.
-    #[test]
-    fn overrides_reach_carried_timeout_fields() {
-        let machine = report(4, 65_536, 1_048_576, 4 * 1024 * 1024 * 1024);
-        let defaults = PolicyConfig::default();
-        let mut overrides = PolicyOverrides::default();
-        overrides.resource_governor.handshake_timeout_ms =
-            Some(defaults.resource_governor.handshake_timeout_ms);
-
-        let resolution = resolve_policy(
-            &PolicyConfig::default(),
-            &overrides,
-            &TuningConfig::default(),
-            &machine,
-            ResourceMode::Dedicated,
-            1,
-        );
-
-        let field = resolution
-            .fields
-            .iter()
-            .find(|field| field.field == "resourceGovernor.handshakeTimeoutMs")
-            .expect("the field is reported");
-        assert_eq!(field.source, FieldSource::Override);
-    }
-
-    #[test]
-    fn pinned_paths_names_every_override_by_json_path() {
-        let mut overrides = PolicyOverrides::default();
-        assert!(overrides.is_empty());
-        overrides.relay.buffer_bytes = Some(32_768);
-        overrides.resource_governor.max_connections = Some(1_024);
-        let paths = overrides.pinned_paths();
-        assert!(paths.contains(&"advanced.overrides.relay.bufferBytes"));
-        assert!(paths.contains(&"advanced.overrides.resourceGovernor.maxConnections"));
-        assert_eq!(paths.len(), 2);
-        assert!(!overrides.is_empty());
     }
 }

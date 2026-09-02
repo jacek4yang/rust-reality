@@ -136,15 +136,33 @@ fn path_help(path: &str) -> Option<&'static str> {
 
 /// Diagnostics for fields removed in v1.6, per AGENTS.md §7: recognizing a
 /// removed field name solely to emit a targeted fatal error is acceptable.
+/// Names a field the v1.9 configuration reset removed, so an operator holding
+/// an older file learns what happened instead of reading "unknown field".
+///
+/// This recognises the name only to fail with a better message; nothing here
+/// accepts, translates, or migrates an old value. `AGENTS.md` §9 permits
+/// exactly that and nothing more.
 fn removed_field(path: &str) -> Option<Classified> {
     let (title, help) = match path {
-        "policy" => (
-            "field `policy` was removed in v1.6",
-            "move every value to the identically named `advanced.limits.*` fields",
+        "inbounds" => (
+            "field `inbounds` was removed in v1.9",
+            "a node now declares one `role` (\"entry\" or \"landing\") with its own              `listeners`; see the configuration guide",
         ),
-        "runtime.resourceMode" => (
-            "field `runtime.resourceMode` was removed in v1.6",
-            "use `runtime.profile` (\"auto\", \"shared\", or \"dedicated\")",
+        "advanced" => (
+            "field `advanced` was removed in v1.9",
+            "the few limits that remain configurable moved to `runtime.limits`;              everything else is derived from the machine",
+        ),
+        "policy" => (
+            "field `policy` was removed in v1.6 and its replacement in v1.9",
+            "the few limits that remain configurable live in `runtime.limits`",
+        ),
+        "routing.users" => (
+            "field `routing.users` was removed in v1.9",
+            "a user names its policy through `users[].policy`, and the policies              live in `routing.policies`",
+        ),
+        "routing.globalRules" => (
+            "field `routing.globalRules` was removed in v1.9",
+            "the global rule list is now `routing.rules`",
         ),
         _ => return None,
     };

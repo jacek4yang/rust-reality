@@ -12,7 +12,7 @@ use std::{
 
 use serde::Serialize;
 
-use crate::config::{FileLogConfig, LogConfig, LogLevel, LogOutput};
+use crate::config::node::log::{FileLogConfig, LogConfig, LogLevel, LogOutput};
 
 const MAX_MANAGED_ROTATIONS: u16 = 64;
 
@@ -607,7 +607,7 @@ impl Logger {
     /// Returns an error if a file sink directory cannot be created, the active file
     /// cannot be opened, or existing rotations cannot be brought within bounds.
     pub fn new(config: &LogConfig) -> Result<Self, LogWriteError> {
-        let sink = match (config.output, config.file.as_ref()) {
+        let sink = match (config.output(), config.file.as_ref()) {
             (LogOutput::None, _) => Sink::None,
             (LogOutput::Stderr | LogOutput::Journald, _) => Sink::Stderr,
             (LogOutput::File, Some(file)) => Sink::File(Mutex::new(RotatingFile::open(file)?)),
@@ -619,7 +619,7 @@ impl Logger {
             }
         };
         Ok(Self {
-            minimum_level: config.level,
+            minimum_level: config.level(),
             sink: Arc::new(sink),
         })
     }
@@ -699,9 +699,9 @@ impl RotatingFile {
             path: config.path.clone(),
             file: Some(file),
             bytes,
-            max_bytes: config.max_bytes,
-            max_files: config.max_files,
-            max_total_bytes: config.max_total_bytes,
+            max_bytes: config.max_bytes(),
+            max_files: config.max_files(),
+            max_total_bytes: config.max_total_bytes(),
         };
         state.remove_out_of_range_rotations()?;
         if state.bytes >= state.max_bytes {
@@ -816,9 +816,8 @@ mod tests {
         sync::atomic::{AtomicU64, Ordering},
     };
 
-    use crate::config::{FileLogConfig, LogConfig, LogLevel, LogOutput};
-
     use super::{LogEvent, Logger};
+    use crate::config::node::log::{FileLogConfig, LogConfig, LogLevel, LogOutput};
 
     static TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -829,13 +828,13 @@ mod tests {
         // Validation forbids file settings with `none`; passing them anyway
         // proves the sink itself never opens the path.
         let logger = Logger::new(&LogConfig {
-            level: LogLevel::Debug,
-            output: LogOutput::None,
+            level: Some(LogLevel::Debug),
+            output: Some(LogOutput::None),
             file: Some(FileLogConfig {
                 path: path.clone(),
-                max_bytes: 64 * 1024,
-                max_files: 2,
-                max_total_bytes: 128 * 1024,
+                max_bytes: Some(64 * 1024),
+                max_files: Some(2),
+                max_total_bytes: Some(128 * 1024),
             }),
         })
         .expect("none logger must initialize without opening a sink");
@@ -856,16 +855,16 @@ mod tests {
     #[test]
     fn debug_enabled_reflects_level_for_real_sinks() {
         let stderr_info = Logger::new(&LogConfig {
-            level: LogLevel::Info,
-            output: LogOutput::Stderr,
+            level: Some(LogLevel::Info),
+            output: Some(LogOutput::Stderr),
             file: None,
         })
         .expect("stderr logger must initialize");
         assert!(!stderr_info.debug_enabled());
 
         let stderr_debug = Logger::new(&LogConfig {
-            level: LogLevel::Debug,
-            output: LogOutput::Stderr,
+            level: Some(LogLevel::Debug),
+            output: Some(LogOutput::Stderr),
             file: None,
         })
         .expect("stderr logger must initialize");
@@ -958,13 +957,13 @@ mod tests {
         max_total_bytes: u64,
     ) -> Logger {
         Logger::new(&LogConfig {
-            level,
-            output: LogOutput::File,
+            level: Some(level),
+            output: Some(LogOutput::File),
             file: Some(FileLogConfig {
                 path: path.to_path_buf(),
-                max_bytes,
-                max_files,
-                max_total_bytes,
+                max_bytes: Some(max_bytes),
+                max_files: Some(max_files),
+                max_total_bytes: Some(max_total_bytes),
             }),
         })
         .expect("file logger must initialize")

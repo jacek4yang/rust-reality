@@ -144,15 +144,19 @@ fn resolve_span(
     }
 }
 
-/// Recovers the precise path inside internally tagged enum elements.
+/// Recovers the precise path inside an internally tagged object.
 ///
-/// `serde` buffers the content of internally tagged enums (`inbounds[*]` and
-/// `outbounds[*]` use `tag = "protocol"`), so `serde_path_to_error` reports
-/// only the element path — `inbounds[0]` instead of
-/// `inbounds[0].settings.clients[0].id`. When the reported path names exactly
-/// one such element, its `protocol` tag selects the concrete variant type and
-/// the source subtree is re-deserialized on the error path; if the same error
-/// reappears with a deeper path, that path wins.
+/// `serde` buffers the content of an internally tagged enum, so
+/// `serde_path_to_error` reports only the object that holds the tag —
+/// `outbounds.landing-1` instead of `outbounds.landing-1.psk`. When the
+/// reported path names one such object, its tag selects the concrete variant
+/// type and the source subtree is re-deserialized on the error path; if the
+/// same failure reappears with a deeper path, that path wins.
+///
+/// Two objects are tagged in the current schema: a declared outbound, by
+/// `type`, and a landing's protocol block, by `protocol`. The role itself is
+/// not tagged this way — [`crate::config::parse`] dispatches it manually for
+/// exactly this reason — so it needs no repair.
 fn refine_tagged_enum_path(
     map: &SourceMap,
     text: &str,
@@ -162,16 +166,20 @@ fn refine_tagged_enum_path(
     if error.classify() != serde_json::error::Category::Data {
         return path.to_owned();
     }
-    let Some(array) = ["inbounds", "outbounds"]
-        .into_iter()
-        .find(|name| indexed_element(path, name))
-    else {
+    let tag = if path == "landing" {
+        "protocol"
+    } else if path
+        .strip_prefix("outbounds.")
+        .is_some_and(|name| !name.is_empty())
+    {
+        "type"
+    } else {
         return path.to_owned();
     };
     let Some(element) = map.lookup(path) else {
         return path.to_owned();
     };
-    let Some(protocol) = element.member("protocol").and_then(|node| {
+    let Some(variant) = element.member(tag).and_then(|node| {
         let span = node.content_span();
         text.get(span.start..span.end)
     }) else {
@@ -181,14 +189,24 @@ fn refine_tagged_enum_path(
     let Some(element_text) = text.get(element_span.start..element_span.end) else {
         return path.to_owned();
     };
-    let sub = match (array, protocol) {
-        // The variant structs reject the `protocol` tag itself, so the
-        // subtree is re-deserialized from a `Value` with the tag removed.
-        ("inbounds", "vless") => repath_value::<super::VlessInboundConfig>(element_text, error),
-        ("inbounds", "nxr") => repath_value::<super::NxrInboundConfig>(element_text, error),
-        ("inbounds", "handoff") => repath_value::<super::HandoffInboundConfig>(element_text, error),
-        ("outbounds", _) => refine_outbound_settings(text, element, protocol, error)
-            .map(|sub| format!("settings.{sub}")),
+    // The variant structs reject the tag itself, so the subtree is
+    // re-deserialized from a `Value` with the tag removed.
+    let sub = match (tag, variant) {
+        ("type", "socks5") => {
+            repath_value::<super::node::outbound::Socks5Config>(element_text, tag, error)
+        }
+        ("type", "nxr") => {
+            repath_value::<super::node::outbound::NxrOutboundConfig>(element_text, tag, error)
+        }
+        ("type", "handoff") => {
+            repath_value::<super::node::outbound::HandoffOutboundConfig>(element_text, tag, error)
+        }
+        ("protocol", "handoff") => {
+            repath_value::<super::node::landing::HandoffLandingConfig>(element_text, tag, error)
+        }
+        ("protocol", "nxr") => {
+            repath_value::<super::node::landing::NxrLandingConfig>(element_text, tag, error)
+        }
         _ => None,
     };
     match sub {
@@ -196,9 +214,9 @@ fn refine_tagged_enum_path(
         _ => {
             // The tag itself is the only enum-level value: when no variant
             // reproduced the error and it names an unknown variant, the
-            // offending value is `protocol`.
+            // offending value is the tag.
             if classify::strip_location(error).starts_with("unknown variant `") {
-                format!("{path}.protocol")
+                format!("{path}.{tag}")
             } else {
                 path.to_owned()
             }
@@ -206,64 +224,16 @@ fn refine_tagged_enum_path(
     }
 }
 
-/// Outbound variants carry no named per-variant struct, so refinement
-/// re-deserializes the `settings` subtree against the tag's settings type.
-fn refine_outbound_settings(
-    text: &str,
-    element: &source_map::Node,
-    protocol: &str,
-    error: &serde_json::Error,
-) -> Option<String> {
-    let span = element.member("settings")?.value_span();
-    let subtree = text.get(span.start..span.end)?;
-    match protocol {
-        "blackhole" => repath::<super::BlackholeSettings>(subtree, error),
-        "socks5" => repath::<super::Socks5Settings>(subtree, error),
-        "nxr" => repath::<super::NxrSettings>(subtree, error),
-        "handoff" => repath::<super::HandoffSettings>(subtree, error),
-        _ => None,
-    }
-}
-
-/// Returns whether `path` is exactly `name[<index>]`.
-fn indexed_element(path: &str, name: &str) -> bool {
-    let Some(rest) = path.strip_prefix(name) else {
-        return false;
-    };
-    let Some(index) = rest
-        .strip_prefix('[')
-        .and_then(|rest| rest.strip_suffix(']'))
-    else {
-        return false;
-    };
-    !index.is_empty() && index.bytes().all(|byte| byte.is_ascii_digit())
-}
-
-/// Re-deserializes one subtree, returning the failing sub-path when the
-/// identical error reappears deeper inside it.
-fn repath<T: serde::de::DeserializeOwned>(
-    subtree: &str,
-    error: &serde_json::Error,
-) -> Option<String> {
-    let mut deserializer = serde_json::Deserializer::from_str(subtree);
-    let tracked = serde_path_to_error::deserialize::<_, T>(&mut deserializer).err()?;
-    // The subtree reports different line/column numbers; compare the
-    // location-free messages to confirm it is the same failure.
-    if classify::strip_location(tracked.inner()) == classify::strip_location(error) {
-        Some(tracked.path().to_string())
-    } else {
-        None
-    }
-}
-
-/// [`repath`] variant that drops the internally tagged `protocol` member
-/// before re-deserializing against the concrete variant struct.
+/// Re-deserializes one subtree against a concrete variant struct, dropping the
+/// internally tagged member first, and returns the failing sub-path when the
+/// identical failure reappears deeper inside it.
 fn repath_value<T: serde::de::DeserializeOwned>(
     subtree: &str,
+    tag: &str,
     error: &serde_json::Error,
 ) -> Option<String> {
     let mut value: serde_json::Value = serde_json::from_str(subtree).ok()?;
-    value.as_object_mut()?.remove("protocol");
+    value.as_object_mut()?.remove(tag);
     let tracked = serde_path_to_error::deserialize::<_, T>(value).err()?;
     if classify::strip_location(tracked.inner()) == classify::strip_location(error) {
         Some(tracked.path().to_string())

@@ -14,7 +14,7 @@ use std::fmt;
 use serde::Serialize;
 
 use crate::{
-    config::Config,
+    config::NodeConfig,
     runtime::{
         machine::MachineReport,
         plan::{RuntimeTopology, resolve_policy},
@@ -121,16 +121,16 @@ pub struct ExplainField {
 /// Everything is read from the supplied machine report; the caller detects
 /// once so the serve bootstrap and this report share the detection cost.
 #[must_use]
-pub fn explain_config(config: &Config, machine: &MachineReport) -> ExplainReport {
-    let resource_mode = config.runtime.resolve_resource_mode(machine);
+pub fn explain_config(node: &NodeConfig, machine: &MachineReport) -> ExplainReport {
+    let runtime = node.runtime();
+    let resource_mode = crate::runtime::policy::resolve_resource_mode(runtime.profile(), machine);
     let topology = RuntimeTopology::for_mode(resource_mode, machine.effective_cpus());
     let resolution = resolve_policy(
-        &config.advanced.limits,
-        &config.advanced.overrides,
-        &config.runtime.tuning,
+        &runtime.limits(),
+        runtime.objective(),
         machine,
         resource_mode,
-        config.inbounds.len(),
+        node.listeners().len(),
     );
     let fields = resolution
         .fields
@@ -158,10 +158,10 @@ pub fn explain_config(config: &Config, machine: &MachineReport) -> ExplainReport
             cpu_period_microseconds: machine.cpu_period_us,
             tenancy_boundary_observable: machine.tenancy_boundary_observable(),
         },
-        profile: config.runtime.profile.as_str(),
+        profile: runtime.profile().as_str(),
         resolved_resource_mode: resource_mode.as_str(),
-        tuning_mode: config.runtime.tuning.mode().as_str(),
-        objective: config.runtime.tuning.objective.as_str(),
+        tuning_mode: runtime.tuning().as_str(),
+        objective: runtime.objective().as_str(),
         bootstrap: ExplainBootstrap {
             worker_threads: topology.worker_threads.unwrap_or(machine.available_cpus),
             max_blocking_threads: topology.effective_max_blocking_threads(),
@@ -301,16 +301,8 @@ mod tests {
         }
     }
 
-    fn config() -> crate::config::Config {
-        crate::config::generate_minimal_config(crate::config::GenerateConfigInput {
-            listen: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-            port: 443,
-            target: "www.example.com:443".to_owned(),
-            server_name: "www.example.com".to_owned(),
-        })
-        .expect("configuration must generate")
-        .config()
-        .clone()
+    fn config() -> crate::config::NodeConfig {
+        crate::config::node::fixture::entry().into_node()
     }
 
     #[test]
@@ -332,17 +324,17 @@ mod tests {
         assert_eq!(json["bootstrap"]["maxBlockingThreads"], 64);
         assert_eq!(json["bootstrap"]["sizing"], "dedicated");
         let fields = json["fields"].as_array().expect("fields must be a list");
-        assert_eq!(fields.len(), 21, "every policy field is explained");
+        assert_eq!(fields.len(), 25, "every policy field is explained");
         let connections = fields
             .iter()
-            .find(|field| field["field"] == "resourceGovernor.maxConnections")
+            .find(|field| field["field"] == "governor.maxConnections")
             .expect("maxConnections is explained");
         assert_eq!(connections["source"], "startup-derived");
         assert_eq!(connections["multiplier"], 1.0);
         assert_eq!(connections["floor"], 64);
         let timeouts = fields
             .iter()
-            .find(|field| field["field"] == "resourceGovernor.handshakeTimeoutMs")
+            .find(|field| field["field"] == "governor.handshakeTimeoutMs")
             .expect("timeouts are explained");
         assert!(
             timeouts.get("multiplier").is_none(),
@@ -353,9 +345,11 @@ mod tests {
 
     #[test]
     fn the_explain_report_marks_operator_pins() {
-        let mut config = config();
-        config.advanced.limits.resource_governor.max_connections = 100_000;
-        config.runtime.profile = crate::config::RuntimeProfile::Shared;
+        let config =
+            crate::config::node::fixture::validated(&crate::config::node::fixture::entry_with(
+                r#","runtime":{"profile":"shared","limits":{"maxConnections":100000}}"#,
+            ))
+            .into_node();
         let explanation = explain_config(&config, &report());
         let json = serde_json::to_value(&explanation).expect("the report must serialize");
         assert_eq!(json["resolvedResourceMode"], "standard");
@@ -364,16 +358,16 @@ mod tests {
         let fields = json["fields"].as_array().expect("fields must be a list");
         let pinned = fields
             .iter()
-            .find(|field| field["field"] == "resourceGovernor.maxConnections")
+            .find(|field| field["field"] == "governor.maxConnections")
             .expect("maxConnections is explained");
         assert_eq!(pinned["value"], 100_000);
         assert_eq!(
-            pinned["source"], "operator-legacy-limit",
-            "advanced.limits is the legacy input language and is labelled as such"
+            pinned["source"], "operator-pinned",
+            "there is one override channel, and presence in it is the whole signal"
         );
         let derived = fields
             .iter()
-            .find(|field| field["field"] == "resourceGovernor.maxHandshakes")
+            .find(|field| field["field"] == "governor.maxHandshakes")
             .expect("maxHandshakes is explained");
         assert_eq!(derived["source"], "startup-derived");
     }
@@ -384,7 +378,7 @@ mod tests {
         let rendered = explanation.to_string();
         assert!(rendered.contains("machine:"));
         assert!(rendered.contains("resolved resource mode: dedicated"));
-        assert!(rendered.contains("resourceGovernor.maxConnections"));
+        assert!(rendered.contains("governor.maxConnections"));
         assert!(rendered.contains("advisories:"));
     }
 }

@@ -11,7 +11,8 @@ use std::{
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use rust_reality::{
-    config::{DialConfig, DialMode, NetworkConfig},
+    config::node::network::{DialPolicy, NetworkConfig},
+    network::DialTuning,
     network::{ConnectionPlanner, NetworkEnvironment},
     protocol::vless::{Address, Destination},
     server::connector::DestinationConnector,
@@ -91,27 +92,21 @@ async fn drain_connections(listener: TcpListener) {
     }
 }
 
-fn connector(mode: DialMode, environment: NetworkEnvironment) -> DestinationConnector {
+fn connector(mode: DialPolicy, environment: NetworkEnvironment) -> DestinationConnector {
     DestinationConnector::with_environment(
         Duration::from_secs(1),
-        NetworkConfig {
-            dial: DialConfig {
-                mode,
-                fallback_delay_ms: 250,
-                ..DialConfig::default()
-            },
-        },
+        NetworkConfig { ip: Some(mode) },
         environment,
     )
 }
 
 fn dual_stack_benchmarks(criterion: &mut Criterion) {
     let fixture = LoopbackFixture::new();
-    let ipv4_connector = connector(DialMode::Ipv4Only, NetworkEnvironment::detect());
-    let ipv6_connector = connector(DialMode::Ipv6Only, NetworkEnvironment::detect());
+    let ipv4_connector = connector(DialPolicy::Ipv4Only, NetworkEnvironment::detect());
+    let ipv6_connector = connector(DialPolicy::Ipv6Only, NetworkEnvironment::detect());
 
     let fallback_environment = NetworkEnvironment::detect();
-    let fallback_connector = connector(DialMode::PreferIpv6, fallback_environment);
+    let fallback_connector = connector(DialPolicy::PreferIpv6, fallback_environment);
     let fallback_destination = Destination::new(
         Address::Domain("benchmark.invalid".to_owned()),
         fixture.ipv4.port(),
@@ -173,7 +168,7 @@ fn dual_stack_benchmarks(criterion: &mut Criterion) {
     });
     setup.finish();
 
-    let planner = ConnectionPlanner::new(DialConfig::default(), NetworkEnvironment::detect());
+    let planner = ConnectionPlanner::new(DialTuning::default(), NetworkEnvironment::detect());
     let mixed = [
         SocketAddr::new(Ipv4Addr::new(192, 0, 2, 1).into(), 443),
         SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 443),

@@ -8,8 +8,8 @@ use tokio::{
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
+use crate::config::node::network::NetworkConfig;
 use crate::{
-    config::NetworkConfig,
     network::NetworkEnvironment,
     protocol::reality::{
         ClientHello, ClientHelloError, SESSION_ID_LEN, X25519_GROUP,
@@ -199,11 +199,8 @@ pub async fn probe_destination_with_network(
     let deadline = started
         .checked_add(timeout)
         .ok_or(DestinationProbeError::ConnectTimeout)?;
-    let connector = super::connector::DestinationConnector::with_environment(
-        timeout,
-        network.clone(),
-        environment,
-    );
+    let connector =
+        super::connector::DestinationConnector::with_environment(timeout, *network, environment);
     let mut stream = time::timeout_at(deadline, connector.connect_target(target))
         .await
         .map_err(|_| DestinationProbeError::ConnectTimeout)?

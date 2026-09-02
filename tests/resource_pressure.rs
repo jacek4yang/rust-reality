@@ -11,18 +11,15 @@
 
 use std::{
     io,
-    net::{IpAddr, Ipv4Addr},
-    str::FromStr,
+    net::Ipv4Addr,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
+use rust_reality::runtime::policy::DirectBarrierPolicy;
 use rust_reality::{
-    config::{
-        DirectBarrierConfig, GenerateConfigInput, GenerateLandingConfigInput,
-        generate_landing_config, generate_minimal_config,
-    },
+    config::{ValidatedConfig, load_bytes},
     protocol::vless::{Address, Destination},
     runtime::{PressureGauge, ResourcePressure},
     server::{
@@ -181,16 +178,18 @@ async fn a_critical_pause_keeps_established_traffic_and_resumes() {
 
 fn landing_registry(port: u16, key: &str) -> Arc<OutboundRegistry> {
     Arc::new(OutboundRegistry::new(
-        &[rust_reality::config::OutboundConfig::Nxr {
-            tag: "landing".to_owned(),
-            settings: rust_reality::config::NxrSettings {
-                address: Ipv4Addr::LOCALHOST.to_string(),
-                port,
-                pre_shared_key: rust_reality::config::SecretString::new(key.to_owned()),
-                warm_tcp: false,
-            },
-        }],
-        &DirectBarrierConfig::default(),
+        &std::collections::BTreeMap::from([(
+            "landing".to_owned(),
+            rust_reality::config::node::outbound::OutboundConfig::Nxr(
+                rust_reality::config::node::outbound::NxrOutboundConfig {
+                    address: Ipv4Addr::LOCALHOST.to_string(),
+                    port,
+                    psk: rust_reality::config::SecretString::new(key.to_owned()),
+                    warm_tcp: Some(false),
+                },
+            ),
+        )]),
+        &DirectBarrierPolicy::default(),
         Duration::from_secs(1),
         rust_reality::transport::FdBudget::new(4_096),
     ))
@@ -242,13 +241,8 @@ async fn start_landing_server(
             .get(attempt)
             .copied()
             .unwrap_or_else(unused_loopback_port);
-        let config = generate_landing_config(GenerateLandingConfigInput {
-            listen: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            port,
-            pre_shared_key: rust_reality::config::SecretString::new(key.to_owned()),
-        })
-        .expect("landing configuration must generate");
-        let server = ProductionServer::from_config(&config).expect("server must compile");
+        let config = landing_config(port, key);
+        let server = ProductionServer::from_config(config).expect("server must compile");
         let gauge = server.pressure_gauge();
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
         let scheduling_delay = scheduling_delays
@@ -447,7 +441,7 @@ async fn connect_with_retry(
         loop {
             match registry.connect("landing", destination).await {
                 Ok(OutboundConnectOutcome::Connected(connection)) => return connection,
-                Ok(OutboundConnectOutcome::Blackholed) => {
+                Ok(OutboundConnectOutcome::Blocked) => {
                     *connect_last_error.lock().expect("last error lock") =
                         "outbound was unexpectedly blackholed".to_owned();
                     time::sleep(Duration::from_millis(10)).await;
@@ -609,16 +603,8 @@ fn dedicated_mode_raises_the_soft_limit_in_a_child_process() {
             "the dedicated mode raises the soft limit exactly to the hard limit"
         );
 
-        let generated = generate_minimal_config(GenerateConfigInput {
-            listen: IpAddr::from_str("127.0.0.1").expect("address must parse"),
-            port: 8_443,
-            target: "www.example.com:443".to_owned(),
-            server_name: "www.example.com".to_owned(),
-        })
-        .expect("configuration must generate");
-        let mut config = generated.config().clone();
-        config.runtime.profile = rust_reality::config::RuntimeProfile::Dedicated;
-        ProductionServer::from_config(&config)
+        let config = entry_config(8_443, r#","runtime": { "profile": "dedicated" }"#);
+        ProductionServer::from_config(config)
             .expect("a dedicated server must compile against the raised limit");
         return;
     }
@@ -654,6 +640,36 @@ fn which_bash() -> io::Result<std::path::PathBuf> {
         }
     }
     Err(io::Error::new(io::ErrorKind::NotFound, "bash not found"))
+}
+
+/// A validated NXR landing node on one loopback port.
+fn landing_config(port: u16, psk: &str) -> ValidatedConfig {
+    let json = format!(
+        r#"{{
+  "role": "landing",
+  "listeners": [{{ "port": {port}, "ip": "ipv4Only", "ipv4": "127.0.0.1" }}],
+  "landing": {{ "protocol": "nxr", "psk": "{psk}" }}
+}}"#
+    );
+    load_bytes(std::path::Path::new("fixture.json"), json.as_bytes())
+        .unwrap_or_else(|error| panic!("landing fixture must load: {error}"))
+}
+
+/// A validated entry node on one loopback port, plus optional extra sections.
+fn entry_config(port: u16, extra: &str) -> ValidatedConfig {
+    let json = format!(
+        r#"{{
+  "role": "entry",
+  "listeners": [{{ "port": {port}, "ip": "ipv4Only", "ipv4": "127.0.0.1" }}],
+  "reality": {{ "cover": "www.example.com:443",
+                "privateKey": "ERERERERERERERERERERERERERERERERERERERERERE" }},
+  "users": [{{ "id": "11111111-1111-4111-8111-111111111111",
+               "shortIds": ["0123456789abcdef"] }}],
+  "routing": {{ "default": "direct" }}{extra}
+}}"#
+    );
+    load_bytes(std::path::Path::new("fixture.json"), json.as_bytes())
+        .unwrap_or_else(|error| panic!("entry fixture must load: {error}"))
 }
 
 fn unused_loopback_port() -> u16 {

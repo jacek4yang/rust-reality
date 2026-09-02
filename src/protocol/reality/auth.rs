@@ -12,8 +12,8 @@ use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use super::ClientHello;
+use crate::config::node::{entry::EntryConfig, reality::RealityConfig};
 use crate::{
-    config::{RealityConfig, VlessInboundConfig},
     protocol::vless::UserId,
     server_name::{is_server_name_pattern, server_name_matches},
 };
@@ -37,7 +37,7 @@ pub mod fuzzing {
 
     use super::{RealityAuthenticator, derive_auth_key};
     use crate::{
-        config::{RealityConfig, SecretString},
+        config::{SecretString, node::reality::RealityConfig},
         protocol::{
             reality::{
                 ClientHello, X25519_GROUP, client_hello::fixtures::client_hello_with_key_share,
@@ -151,11 +151,11 @@ pub mod fuzzing {
     pub fn synthetic_authenticator(bindings: &[([u8; 8], [u8; 16])]) -> RealityAuthenticator {
         const SERVER_SECRET: [u8; 32] = [0x11; 32];
         let config = RealityConfig {
-            target: "cover.invalid:443".to_owned(),
-            server_names: vec!["www.example.com".to_owned()],
+            cover: "cover.invalid:443".to_owned(),
             private_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(SERVER_SECRET)),
-            max_time_diff_ms: 60_000,
-            cover_optimization: crate::config::CoverOptimizationConfig::default(),
+            server_names: Some(vec!["www.example.com".to_owned()]),
+            max_time_diff_ms: None,
+            cover_optimization: None,
         };
         let encoded = bindings
             .iter()
@@ -386,40 +386,42 @@ impl fmt::Debug for RealityAuthenticator {
 }
 
 impl RealityAuthenticator {
-    /// Decodes and compiles one validated inbound into immutable authentication state.
+    /// Decodes and compiles one validated entry node into immutable
+    /// authentication state.
     ///
     /// # Errors
     ///
     /// Returns an error for malformed key material, server names, short IDs, or empty identity sets.
-    pub fn from_inbound(inbound: &VlessInboundConfig) -> Result<Self, RealityAuthConfigError> {
-        let config = &inbound.stream_settings.reality_settings;
+    pub fn from_entry(entry: &EntryConfig) -> Result<Self, RealityAuthConfigError> {
         let mut short_ids = Vec::new();
-        for client in &inbound.settings.clients {
+        for user in &entry.users {
             let uuid =
-                Uuid::parse_str(&client.id).map_err(|_| RealityAuthConfigError::InvalidUserId)?;
+                Uuid::parse_str(&user.id).map_err(|_| RealityAuthConfigError::InvalidUserId)?;
             let user_id = UserId::new(*uuid.as_bytes());
             short_ids.extend(
-                client
-                    .short_ids
+                user.short_ids
                     .iter()
                     .map(|short_id| (user_id, short_id.as_str())),
             );
         }
-        Self::compile(config, short_ids)
+        Self::compile(&entry.reality, short_ids)
     }
 
     fn compile<'a>(
         config: &RealityConfig,
         configured_short_ids: impl IntoIterator<Item = (UserId, &'a str)>,
     ) -> Result<Self, RealityAuthConfigError> {
-        if config.server_names.is_empty() {
+        // An omitted `serverNames` accepts the cover host, which semantic
+        // validation has already proved is a usable name.
+        let server_names: Vec<String> = config
+            .effective_server_names()
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        if server_names.is_empty() {
             return Err(RealityAuthConfigError::MissingServerName);
         }
-        if !config
-            .server_names
-            .iter()
-            .all(|name| is_server_name_pattern(name))
-        {
+        if !server_names.iter().all(|name| is_server_name_pattern(name)) {
             return Err(RealityAuthConfigError::InvalidServerName);
         }
         let decoded_private = Zeroizing::new(
@@ -449,9 +451,9 @@ impl RealityAuthenticator {
         }
         Ok(Self {
             private_key: StaticSecret::from(private_bytes),
-            server_names: config.server_names.clone(),
+            server_names,
             short_ids: ShortIdOwnerIndex::from_sorted(short_ids),
-            max_time_diff_ms: config.max_time_diff_ms,
+            max_time_diff_ms: config.max_time_diff_ms(),
         })
     }
 
@@ -594,6 +596,7 @@ const fn decode_hex(byte: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::node::reality::RealityConfig;
     use aes_gcm::{
         Aes256Gcm, KeyInit,
         aead::{AeadInOut, Nonce, array::Array},
@@ -608,7 +611,7 @@ mod tests {
         ShortIdBinding, ShortIdOwnerIndex, derive_auth_key, open_session_id,
     };
     use crate::{
-        config::{RealityConfig, SecretString},
+        config::SecretString,
         protocol::reality::{
             ClientHello, X25519_GROUP, client_hello::fixtures::client_hello_with_key_share,
         },
@@ -641,7 +644,7 @@ mod tests {
     fn rejects_wrong_server_identity_and_private_key() {
         let (_, hello) = valid_handshake(SHORT_ID, NOW, &["aabb"]);
         let mut wrong_name = auth_config([0x11; 32]);
-        wrong_name.server_names = vec!["other.example.com".to_owned()];
+        wrong_name.server_names = Some(vec!["other.example.com".to_owned()]);
         let wrong_name =
             compile_config(&wrong_name, &["aabb"]).expect("configuration must compile");
         assert!(matches!(
@@ -661,7 +664,7 @@ mod tests {
     fn authenticates_one_label_server_name_wildcard() {
         let (_, hello) = valid_handshake(SHORT_ID, NOW, &["aabb"]);
         let mut config = auth_config([0x11; 32]);
-        config.server_names = vec!["*.example.com".to_owned()];
+        config.server_names = Some(vec!["*.example.com".to_owned()]);
         let authenticator = compile_config(&config, &["aabb"]).expect("configuration must compile");
 
         authenticator
@@ -672,7 +675,7 @@ mod tests {
     #[test]
     fn rejects_invalid_server_name_when_config_validation_is_bypassed() {
         let mut config = auth_config([0x11; 32]);
-        config.server_names = vec!["www.*.edu".to_owned()];
+        config.server_names = Some(vec!["www.*.edu".to_owned()]);
 
         assert!(matches!(
             compile_config(&config, &["aabb"]),
@@ -912,11 +915,11 @@ mod tests {
 
     fn auth_config(private_key: [u8; 32]) -> RealityConfig {
         RealityConfig {
-            target: "www.example.com:443".to_owned(),
-            server_names: vec!["www.example.com".to_owned()],
+            cover: "www.example.com:443".to_owned(),
             private_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(private_key)),
-            max_time_diff_ms: 60_000,
-            cover_optimization: crate::config::CoverOptimizationConfig::default(),
+            server_names: None,
+            max_time_diff_ms: None,
+            cover_optimization: None,
         }
     }
 

@@ -12,8 +12,9 @@ use std::{
     time::Duration,
 };
 
-use rust_reality::config::{DnsCacheConfig, DnsConfig, ResourceGovernorConfig};
+use rust_reality::config::node::dns::{DnsCacheConfig, DnsConfig};
 use rust_reality::runtime::ResourceGovernor;
+use rust_reality::runtime::policy::ResourceGovernorPolicy;
 use rust_reality::server::connector::DestinationConnector;
 use rust_reality::server::dns::{DnsError, DnsResolver, IpFamily, install_shared};
 use tokio::{
@@ -254,19 +255,19 @@ fn build_response(packet: &[u8], query: &ParsedQuery, response: &Response) -> Op
 
 fn dns_config(server: &FakeDns, timeout_ms: u64) -> DnsConfig {
     DnsConfig {
-        servers: vec![format!("127.0.0.1:{}", server.addr.port())],
-        timeout_ms,
-        cache: DnsCacheConfig {
-            min_ttl_seconds: 0,
+        servers: Some(vec![format!("127.0.0.1:{}", server.addr.port())]),
+        timeout_ms: Some(timeout_ms),
+        cache: Some(DnsCacheConfig {
+            min_ttl_seconds: Some(0),
             ..DnsCacheConfig::default()
-        },
+        }),
     }
 }
 
 fn resolver(server: &FakeDns, timeout_ms: u64) -> DnsResolver {
     DnsResolver::from_config(
         &dns_config(server, timeout_ms),
-        ResourceGovernor::new(&ResourceGovernorConfig::default()),
+        ResourceGovernor::new(&ResourceGovernorPolicy::default()),
     )
     .expect("resolver builds against the fake server")
 }
@@ -639,7 +640,7 @@ async fn connector_dials_cached_static_targets_without_re_resolving() {
     );
     let resolver = DnsResolver::from_config(
         &dns_config(&server, 2_000),
-        ResourceGovernor::new(&ResourceGovernorConfig::default()),
+        ResourceGovernor::new(&ResourceGovernorPolicy::default()),
     )
     .expect("resolver builds");
     assert!(

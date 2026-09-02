@@ -55,10 +55,9 @@ use tokio::{
     time::{self, Instant},
 };
 
-use crate::{
-    config::{DnsCacheConfig, DnsConfig, ResourceGovernorConfig},
-    runtime::{AdmissionKind, AdmissionPermit, ResourceGovernor},
-};
+use crate::config::node::dns::{DnsCacheConfig, DnsConfig};
+use crate::runtime::policy::ResourceGovernorPolicy;
+use crate::runtime::{AdmissionKind, AdmissionPermit, ResourceGovernor};
 
 /// Longest DNS name accepted by the resolver (RFC 1035 presentation form).
 const MAX_NAME_LENGTH: usize = 253;
@@ -413,11 +412,11 @@ struct CacheBounds {
 impl CacheBounds {
     fn new(config: &DnsCacheConfig) -> Self {
         Self {
-            max_entries: usize::try_from(config.max_entries).unwrap_or(usize::MAX),
-            min_ttl: Duration::from_secs(u64::from(config.min_ttl_seconds)),
-            max_ttl: Duration::from_secs(u64::from(config.max_ttl_seconds)),
-            negative_ttl: Duration::from_secs(u64::from(config.negative_ttl_seconds)),
-            static_ttl: Duration::from_secs(u64::from(config.static_ttl_seconds)),
+            max_entries: usize::try_from(config.max_entries()).unwrap_or(usize::MAX),
+            min_ttl: Duration::from_secs(u64::from(config.min_ttl_seconds())),
+            max_ttl: Duration::from_secs(u64::from(config.max_ttl_seconds())),
+            negative_ttl: Duration::from_secs(u64::from(config.negative_ttl_seconds())),
+            static_ttl: Duration::from_secs(u64::from(config.static_ttl_seconds())),
         }
     }
 }
@@ -453,7 +452,7 @@ impl DnsResolver {
     /// static-peer cache apply either way.
     #[must_use]
     pub fn system(governor: ResourceGovernor, timeout: Duration, cache: &DnsCacheConfig) -> Self {
-        let system_reuse = Duration::from_millis(cache.system_reuse_ms);
+        let system_reuse = Duration::from_millis(cache.system_reuse_ms());
         Self::with_backend(
             Box::new(SystemBackend),
             governor,
@@ -497,17 +496,19 @@ impl DnsResolver {
         config: &DnsConfig,
         governor: ResourceGovernor,
     ) -> Result<Self, DnsResolverConfigError> {
-        let timeout = Duration::from_millis(config.timeout_ms);
+        let timeout = Duration::from_millis(config.timeout_ms());
+        let cache = config.cache.unwrap_or_default();
+        let configured = config.servers();
         let mut servers = Vec::new();
-        for (index, server) in config.servers.iter().enumerate() {
+        for (index, server) in configured.iter().enumerate() {
             match parse_server_spec(server)
                 .map_err(|reason| DnsResolverConfigError::InvalidServer { index, reason })?
             {
                 DnsServerSpec::System => {
-                    if config.servers.len() > 1 {
+                    if configured.len() > 1 {
                         return Err(DnsResolverConfigError::MixedSystem);
                     }
-                    return Ok(Self::system(governor, timeout, &config.cache));
+                    return Ok(Self::system(governor, timeout, &cache));
                 }
                 DnsServerSpec::Address(address) => servers.push(name_server_config(address)),
                 DnsServerSpec::Host { host, port } => {
@@ -534,7 +535,7 @@ impl DnsResolver {
             Box::new(backend),
             governor,
             timeout,
-            &config.cache,
+            &cache,
             None,
         ))
     }
@@ -1041,8 +1042,8 @@ pub fn shared() -> DnsResolver {
     SHARED
         .get_or_init(|| {
             DnsResolver::system(
-                ResourceGovernor::new(&ResourceGovernorConfig::default()),
-                Duration::from_millis(crate::config::DnsConfig::default().timeout_ms),
+                ResourceGovernor::new(&ResourceGovernorPolicy::default()),
+                Duration::from_millis(crate::config::node::dns::DnsConfig::default().timeout_ms()),
                 &DnsCacheConfig::default(),
             )
         })
@@ -1066,8 +1067,8 @@ mod tests {
         DnsBackend, DnsCacheConfig, DnsError, DnsResolver, DnsServerSpec, IpFamily, UpstreamAnswer,
         UpstreamError, parse_server_spec,
     };
-    use crate::config::ResourceGovernorConfig;
     use crate::runtime::ResourceGovernor;
+    use crate::runtime::policy::ResourceGovernorPolicy;
 
     /// A scripted backend: counts calls, optionally delays, and replays one
     /// programmable outcome per call.
@@ -1169,7 +1170,7 @@ mod tests {
         timeout: Duration,
         max_dns_lookups: u32,
     ) -> Harness {
-        let reuse = Duration::from_millis(cache.system_reuse_ms);
+        let reuse = Duration::from_millis(cache.system_reuse_ms());
         build_inner(
             backend,
             cache,
@@ -1189,9 +1190,9 @@ mod tests {
         let backend = Arc::new(backend);
         let resolver = DnsResolver::with_backend(
             Box::new(ArcBackend(Arc::clone(&backend))),
-            ResourceGovernor::new(&ResourceGovernorConfig {
+            ResourceGovernor::new(&ResourceGovernorPolicy {
                 max_dns_lookups,
-                ..ResourceGovernorConfig::default()
+                ..ResourceGovernorPolicy::default()
             }),
             timeout,
             cache,
@@ -1219,7 +1220,7 @@ mod tests {
 
     fn cache_config() -> DnsCacheConfig {
         DnsCacheConfig {
-            min_ttl_seconds: 0,
+            min_ttl_seconds: Some(0),
             ..DnsCacheConfig::default()
         }
     }
@@ -1377,7 +1378,7 @@ mod tests {
     #[tokio::test]
     async fn upstream_ttls_are_clamped_to_the_configured_floor() {
         let cache = DnsCacheConfig {
-            min_ttl_seconds: 2,
+            min_ttl_seconds: Some(2),
             ..cache_config()
         };
         let harness = build(
@@ -1590,7 +1591,7 @@ mod tests {
     #[tokio::test]
     async fn cache_pressure_evicts_the_earliest_expiring_entry() {
         let cache = DnsCacheConfig {
-            max_entries: 2,
+            max_entries: Some(2),
             ..cache_config()
         };
         let harness = build(
@@ -1854,7 +1855,7 @@ mod tests {
     #[tokio::test]
     async fn system_reuse_window_bounds_update_visibility() {
         let cache = DnsCacheConfig {
-            system_reuse_ms: 80,
+            system_reuse_ms: Some(80),
             ..cache_config()
         };
         let harness = build_system(
@@ -1912,7 +1913,7 @@ mod tests {
     #[tokio::test]
     async fn system_reuse_never_caches_negative_answers() {
         let cache = DnsCacheConfig {
-            system_reuse_ms: 5_000,
+            system_reuse_ms: Some(5_000),
             ..cache_config()
         };
         let backend = MockBackend::answering(vec![], None);
@@ -1939,7 +1940,7 @@ mod tests {
     #[tokio::test]
     async fn the_entry_bound_counts_both_classes_of_one_name() {
         let cache = DnsCacheConfig {
-            max_entries: 2,
+            max_entries: Some(2),
             ..cache_config()
         };
         let harness = build(

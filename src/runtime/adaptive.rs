@@ -56,7 +56,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use super::{AdmissionKind, DirectBarrier, PressureGauge, ResourceGovernor, ResourcePressure};
-use crate::config::{DirectBarrierConfig, PolicyConfig, ResourceGovernorConfig};
+use crate::runtime::policy::{DirectBarrierPolicy, EffectivePolicy, ResourceGovernorPolicy};
 
 /// How often the controller samples and decides. Decoupled from the 1 s
 /// pressure monitor: the controller reacts to sustained conditions, not
@@ -571,12 +571,12 @@ impl AdaptiveController {
         governor: ResourceGovernor,
         direct_barrier: DirectBarrier,
         pressure: PressureGauge,
-        policy: &PolicyConfig,
+        policy: &EffectivePolicy,
         status_file: Option<PathBuf>,
     ) -> Self {
-        let defaults = ResourceGovernorConfig::default();
-        let barrier_defaults = DirectBarrierConfig::default();
-        let governor_policy = &policy.resource_governor;
+        let defaults = ResourceGovernorPolicy::default();
+        let barrier_defaults = DirectBarrierPolicy::default();
+        let governor_policy = &policy.governor;
         let startup_values = [
             u64::from(governor_policy.max_connections),
             u64::from(governor_policy.max_handshakes),
@@ -725,37 +725,37 @@ impl AdaptiveController {
 
 #[cfg(test)]
 mod tests {
-    use super::{AdaptiveController, ChangeReason, PolicyConfig, quantized_step, read_status};
-    use crate::config::{DirectBarrierConfig, ResourceGovernorConfig};
+    use super::{AdaptiveController, ChangeReason, EffectivePolicy, quantized_step, read_status};
+    use crate::runtime::policy::{DirectBarrierPolicy, ResourceGovernorPolicy};
     use crate::runtime::{
         AdmissionKind, DirectBarrier, PressureGauge, ResourceGovernor, ResourcePressure,
     };
 
     /// A policy whose startup values sit above the v1.5 defaults, so every
     /// knob has room to move in both directions.
-    fn test_policy() -> PolicyConfig {
-        PolicyConfig {
-            resource_governor: ResourceGovernorConfig {
+    fn test_policy() -> EffectivePolicy {
+        EffectivePolicy {
+            governor: ResourceGovernorPolicy {
                 max_connections: 32_768,
                 max_handshakes: 4_096,
                 max_fallbacks: 2_048,
                 max_crypto_operations: 512,
                 max_replay_entries: 131_072,
                 max_dns_lookups: 256,
-                ..ResourceGovernorConfig::default()
+                ..ResourceGovernorPolicy::default()
             },
-            direct_barrier: DirectBarrierConfig {
+            direct_barrier: DirectBarrierPolicy {
                 max_concurrent: 8_192,
                 max_per_second: 16_384,
             },
-            ..PolicyConfig::default()
+            ..EffectivePolicy::default()
         }
     }
 
     fn test_controller() -> AdaptiveController {
         let policy = test_policy();
         AdaptiveController::new(
-            ResourceGovernor::new(&policy.resource_governor),
+            ResourceGovernor::new(&policy.governor),
             DirectBarrier::new(&policy.direct_barrier),
             PressureGauge::new(),
             &policy,
@@ -1048,7 +1048,7 @@ mod tests {
 
         let policy = test_policy();
         let mut controller = AdaptiveController::new(
-            ResourceGovernor::new(&policy.resource_governor),
+            ResourceGovernor::new(&policy.governor),
             DirectBarrier::new(&policy.direct_barrier),
             PressureGauge::new(),
             &policy,
@@ -1110,9 +1110,9 @@ mod tests {
     #[test]
     fn an_operator_pin_below_the_default_becomes_an_immovable_knob() {
         let mut policy = test_policy();
-        policy.resource_governor.max_dns_lookups = 32;
+        policy.governor.max_dns_lookups = 32;
         let controller = AdaptiveController::new(
-            ResourceGovernor::new(&policy.resource_governor),
+            ResourceGovernor::new(&policy.governor),
             DirectBarrier::new(&policy.direct_barrier),
             PressureGauge::new(),
             &policy,

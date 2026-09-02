@@ -33,7 +33,6 @@ getrandom = { version = "0.4.3", features = ["sys_rng"] }
 futures-util = "0.3.33"
 hkdf = "0.13.0"
 hmac = { version = "0.13.0", features = ["zeroize"] }
-libcrux-ml-dsa = { version = "0.0.10", default-features = false, features = ["mldsa65", "std"] }
 ml-kem = { version = "0.3.2", default-features = false, features = ["zeroize"] }
 regex = { version = "1.12.3", default-features = false, features = ["perf", "std", "unicode"] }
 rr-session = { path = "crates/rr-session", version = "0.1.0" }

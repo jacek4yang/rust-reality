@@ -18,11 +18,12 @@ use std::{
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use criterion::{BenchmarkId, Criterion, criterion_group};
 use regex::{Regex, RegexBuilder};
+use rust_reality::runtime::policy::ResourceGovernorPolicy;
 use rust_reality::{
     assets::{AssetMatcher, AssetSource},
-    config::{
-        DnsStrategy, GlobalRule, Network, PortMatcher, ResourceGovernorConfig, RoutingConfig,
-        UserPolicy,
+    config::node::{
+        routing::{DomainStrategy, RoutePolicy, RouteRule, RoutingConfig},
+        user::UserConfig,
     },
     protocol::vless::{Address, Destination, UserId},
     runtime::ResourceGovernor,
@@ -186,101 +187,88 @@ fn bench_assets() -> BenchAssets {
     }
 }
 
-fn base_rule(index: usize) -> GlobalRule {
-    GlobalRule {
-        name: format!("rule-{index}"),
+fn base_rule(index: usize) -> RouteRule {
+    RouteRule {
+        name: Some(format!("rule-{index}")),
         outbound: format!("out-{:02}", index % 16),
-        domain: Vec::new(),
-        ip: Vec::new(),
-        port: Vec::new(),
-        network: Vec::new(),
-        inbound_tag: Vec::new(),
+        ..RouteRule::default()
     }
 }
 
 /// One mixed-shape rule; every matcher value is unique per index so crafted
 /// probe destinations hit exactly the intended rule.
-fn generated_rule(index: usize) -> GlobalRule {
+fn generated_rule(index: usize) -> RouteRule {
     let mut rule = base_rule(index);
     match index % 20 {
-        0..=4 => rule.domain = vec![format!("full:h{index}.full.bench")],
-        5..=10 => rule.domain = vec![format!("domain:s{index}.sfx.bench")],
-        11..=13 => rule.domain = vec![format!("keyword:kw{index}token")],
-        14 => rule.domain = vec![format!("regexp:^r{index}[a-z]+\\.re\\.bench$")],
-        15..=16 => rule.domain = vec![format!("geosite:label{}", index % 8)],
-        17 => rule.domain = vec![format!("ext:bench.dat:tag{}", index % 4)],
+        0..=4 => rule.domain = Some(vec![format!("full:h{index}.full.bench")]),
+        5..=10 => rule.domain = Some(vec![format!("domain:s{index}.sfx.bench")]),
+        11..=13 => rule.domain = Some(vec![format!("keyword:kw{index}token")]),
+        14 => rule.domain = Some(vec![format!("regexp:^r{index}[a-z]+\\.re\\.bench$")]),
+        15..=16 => rule.domain = Some(vec![format!("geosite:label{}", index % 8)]),
+        17 => rule.domain = Some(vec![format!("ext:bench.dat:tag{}", index % 4)]),
         18 => {
-            rule.ip = vec![format!("10.{}.{}.0/24", (index / 256) % 256, index % 256)];
+            rule.ip = Some(vec![format!(
+                "10.{}.{}.0/24",
+                (index / 256) % 256,
+                index % 256
+            )]);
         }
-        _ => rule.ip = vec![format!("geoip:gi{}", index % 4)],
+        _ => rule.ip = Some(vec![format!("geoip:gi{}", index % 4)]),
     }
     if index.is_multiple_of(7) {
-        rule.port = vec![PortMatcher("8000-9000".to_owned())];
-    }
-    if index.is_multiple_of(11) {
-        rule.network = vec![Network::Tcp];
-    }
-    if index.is_multiple_of(13) {
-        rule.inbound_tag = vec!["other-in".to_owned()];
+        rule.port = Some(vec!["8000-9000".to_owned()]);
     }
     rule
 }
 
-fn global_prelude() -> Vec<GlobalRule> {
+fn global_prelude() -> Vec<RouteRule> {
     let cidrs = ["172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8"];
-    let mut rules: Vec<GlobalRule> = cidrs
+    let mut rules: Vec<RouteRule> = cidrs
         .iter()
         .enumerate()
-        .map(|(index, cidr)| GlobalRule {
-            ip: vec![(*cidr).to_owned()],
+        .map(|(index, cidr)| RouteRule {
+            ip: Some(vec![(*cidr).to_owned()]),
             ..base_rule(index)
         })
         .collect();
-    rules.push(GlobalRule {
-        domain: vec!["geosite:category-ads".to_owned()],
+    rules.push(RouteRule {
+        domain: Some(vec!["geosite:category-ads".to_owned()]),
         ..base_rule(3)
     });
-    rules.push(GlobalRule {
-        domain: vec!["domain:internal.corp".to_owned()],
+    rules.push(RouteRule {
+        domain: Some(vec!["domain:internal.corp".to_owned()]),
         ..base_rule(4)
     });
-    rules.push(GlobalRule {
-        domain: vec!["keyword:tracker".to_owned()],
-        network: vec![Network::Udp],
+    rules.push(RouteRule {
+        domain: Some(vec!["keyword:tracker".to_owned()]),
         ..base_rule(5)
     });
-    rules.push(GlobalRule {
-        inbound_tag: vec!["admin-in".to_owned()],
-        ..base_rule(6)
-    });
-    rules.push(GlobalRule {
-        port: vec![PortMatcher("53".to_owned())],
+    rules.push(RouteRule {
+        port: Some(vec!["53".to_owned()]),
         ..base_rule(7)
     });
     rules
 }
 
-fn secondary_policy() -> UserPolicy {
+fn secondary_policy() -> RoutePolicy {
     let rules = (0..16)
         .map(|index| {
             if index == 8 {
-                GlobalRule {
-                    domain: vec!["full:secondary-probe.target.bench".to_owned()],
+                RouteRule {
+                    domain: Some(vec!["full:secondary-probe.target.bench".to_owned()]),
                     ..base_rule(1000 + index)
                 }
             } else {
-                GlobalRule {
-                    domain: vec![format!("domain:secondary-{index}.sfx.bench")],
+                RouteRule {
+                    domain: Some(vec![format!("domain:secondary-{index}.sfx.bench")]),
                     ..base_rule(1000 + index)
                 }
             }
         })
         .collect();
-    UserPolicy {
-        name: "secondary".to_owned(),
-        user_ids: vec!["22222222-2222-2222-2222-222222222222".to_owned()],
-        default_outbound: "direct".to_owned(),
-        rules,
+    RoutePolicy {
+        default: "direct".to_owned(),
+        rules: Some(rules),
     }
 }
 
@@ -327,13 +315,13 @@ struct Fixture {
     table: RoutingTable,
     user_id: UserId,
     destination: Destination,
-    strategy: DnsStrategy,
+    strategy: DomainStrategy,
 }
 
 fn fixture(size: usize, case: Case) -> Fixture {
-    let mut rules: Vec<GlobalRule> = (0..size).map(generated_rule).collect();
+    let mut rules: Vec<RouteRule> = (0..size).map(generated_rule).collect();
     let mut user_id = PRIMARY_USER;
-    let mut strategy = DnsStrategy::AsIs;
+    let mut strategy = DomainStrategy::AsIs;
     let destination = match case {
         Case::Early | Case::Middle | Case::Late => {
             let position = match case {
@@ -341,8 +329,8 @@ fn fixture(size: usize, case: Case) -> Fixture {
                 Case::Middle => size / 2,
                 _ => size - 1,
             };
-            rules[position] = GlobalRule {
-                domain: vec![format!("full:probe-{position}.target.bench")],
+            rules[position] = RouteRule {
+                domain: Some(vec![format!("full:probe-{position}.target.bench")]),
                 ..base_rule(size)
             };
             Destination::new(
@@ -352,25 +340,25 @@ fn fixture(size: usize, case: Case) -> Fixture {
         }
         Case::NoMatch => Destination::new(Address::Domain("nomatch.probe.example".to_owned()), 443),
         Case::IpLiteral => {
-            rules[size - 1] = GlobalRule {
-                ip: vec!["10.255.255.0/24".to_owned()],
+            rules[size - 1] = RouteRule {
+                ip: Some(vec!["10.255.255.0/24".to_owned()]),
                 ..base_rule(size)
             };
             Destination::new(Address::Ipv4(Ipv4Addr::new(10, 255, 255, 7)), 443)
         }
         Case::AssetBacked => {
-            rules[size - 1] = GlobalRule {
-                domain: vec!["geosite:targetlabel".to_owned()],
+            rules[size - 1] = RouteRule {
+                domain: Some(vec!["geosite:targetlabel".to_owned()]),
                 ..base_rule(size)
             };
             Destination::new(Address::Domain("asset-hit.probe.example".to_owned()), 443)
         }
         Case::DnsRequired => {
-            rules[size - 1] = GlobalRule {
-                ip: vec!["203.0.113.0/24".to_owned()],
+            rules[size - 1] = RouteRule {
+                ip: Some(vec!["203.0.113.0/24".to_owned()]),
                 ..base_rule(size)
             };
-            strategy = DnsStrategy::IpIfNonMatch;
+            strategy = DomainStrategy::ResolveIfNoMatch;
             // A numeric literal "resolves" without the blocking pool, so this
             // case isolates the two-pass IpIfNonMatch evaluation cost.
             Destination::new(Address::Domain("203.0.113.7".to_owned()), 443)
@@ -384,22 +372,34 @@ fn fixture(size: usize, case: Case) -> Fixture {
         }
     };
     let config = RoutingConfig {
-        domain_strategy: strategy,
-        global_rules: global_prelude(),
-        users: vec![
-            UserPolicy {
-                name: "primary".to_owned(),
-                user_ids: vec!["11111111-1111-1111-1111-111111111111".to_owned()],
-                default_outbound: "direct".to_owned(),
-                rules,
-            },
-            secondary_policy(),
-        ],
+        default: "direct".to_owned(),
+        strategy: Some(strategy),
+        rules: Some(global_prelude()),
+        policies: Some(std::collections::BTreeMap::from([
+            (
+                "primary".to_owned(),
+                RoutePolicy {
+                    default: "direct".to_owned(),
+                    rules: Some(rules),
+                },
+            ),
+            ("secondary".to_owned(), secondary_policy()),
+        ])),
+    };
+    let user = |id: &str, policy: &str| UserConfig {
+        id: id.to_owned(),
+        short_ids: vec!["0123456789abcdef".to_owned()],
+        label: None,
+        policy: Some(policy.to_owned()),
     };
     let table = RoutingTable::compile(
         &config,
+        &[
+            user("11111111-1111-1111-1111-111111111111", "primary"),
+            user("22222222-2222-2222-2222-222222222222", "secondary"),
+        ],
         Arc::new(bench_assets()),
-        ResourceGovernor::new(&ResourceGovernorConfig::default()),
+        ResourceGovernor::new(&ResourceGovernorPolicy::default()),
     )
     .expect("bench routing table must compile");
     Fixture {
@@ -411,7 +411,7 @@ fn fixture(size: usize, case: Case) -> Fixture {
 }
 
 fn run_once(fixture: &Fixture, runtime: &tokio::runtime::Runtime) {
-    if matches!(fixture.strategy, DnsStrategy::IpIfNonMatch) {
+    if matches!(fixture.strategy, DomainStrategy::ResolveIfNoMatch) {
         runtime.block_on(async {
             std::hint::black_box(
                 fixture
