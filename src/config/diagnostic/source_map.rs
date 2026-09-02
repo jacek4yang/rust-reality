@@ -91,6 +91,8 @@ fn is_secret_member(name: &str) -> bool {
             | "shortIds"
             | "privateKey"
             | "previousPrivateKeys"
+            | "psk"
+            | "previousPsks"
             | "preSharedKey"
             | "previousPreSharedKeys"
             | "username"

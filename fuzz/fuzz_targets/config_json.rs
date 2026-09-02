@@ -2,16 +2,21 @@
 
 use arbitrary::{Result, Unstructured};
 use libfuzzer_sys::fuzz_target;
-use rust_reality::config::fuzz_decode_config;
+use rust_reality::config::fuzz_load;
 use serde_json::{Map, Value, json};
 
-// Structured config-deserialization target. A small custom generator builds
-// JSON shaped like the real configuration grammar — every value is synthetic,
-// never a real key, UUID, or capture — then a byte-level tail mutation keeps
-// lexer-level rejects reachable. One input in sixteen bypasses the generator
-// entirely and fuzzes raw bytes.
+// Structured configuration target. A small custom generator builds JSON shaped
+// like the real node grammar — every value is synthetic, never a real key,
+// UUID, or capture — then a byte-level tail mutation keeps lexer-level rejects
+// reachable. One input in sixteen bypasses the generator entirely and fuzzes
+// raw bytes.
+//
+// The generator has to produce *nearly* valid documents most of the time, or
+// everything fails at the role dispatch and the interesting rejects — key
+// decoding, reference resolution, bound checks, key reuse — are never reached.
 
 const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789.-_:/";
+const BASE64URL: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 fn gen_text(u: &mut Unstructured<'_>, maximum: usize) -> Result<String> {
     let length = u.int_in_range(0..=maximum)?;
@@ -26,9 +31,24 @@ fn gen_pick(u: &mut Unstructured<'_>, choices: &[&str]) -> Result<String> {
     if u.ratio(3, 4)? {
         Ok((*u.choose(choices)?).to_owned())
     } else {
-        // Short garbage string to reach enum and validation rejects.
+        // Short garbage keeps enum and validation rejects reachable.
         gen_text(u, 8)
     }
+}
+
+/// A synthetic base64url string of a chosen length; never real key material.
+fn gen_key(u: &mut Unstructured<'_>) -> Result<String> {
+    // 43 characters is exactly 32 bytes; the neighbours exercise the length
+    // rejection, and the alphabet break exercises the decode rejection.
+    let length = *u.choose(&[0_usize, 42, 43, 44])?;
+    let mut text = String::with_capacity(length);
+    for _ in 0..length {
+        text.push(char::from(*u.choose(BASE64URL)?));
+    }
+    if u.ratio(1, 8)? {
+        text.push('!');
+    }
+    Ok(text)
 }
 
 fn gen_hex(u: &mut Unstructured<'_>, length: usize) -> Result<String> {
@@ -44,15 +64,31 @@ fn gen_u64(u: &mut Unstructured<'_>) -> Result<u64> {
 }
 
 fn gen_port(u: &mut Unstructured<'_>) -> Result<u16> {
-    Ok(*u.choose(&[0_u16, 1, 80, 443, 1080, 8080, 65_535])?)
+    Ok(*u.choose(&[0_u16, 1, 80, 443, 1080, 7443, 8080, 65_535])?)
 }
 
-fn gen_tag(u: &mut Unstructured<'_>) -> Result<String> {
+fn gen_outbound_name(u: &mut Unstructured<'_>) -> Result<String> {
     if u.ratio(3, 4)? {
-        Ok((*u.choose(&["public-reality", "direct", "block", "landing", "nxr-out"])?).to_owned())
+        Ok((*u.choose(&["direct", "block", "landing-1", "up"])?).to_owned())
     } else {
         gen_text(u, 12)
     }
+}
+
+fn gen_listeners(u: &mut Unstructured<'_>) -> Result<Value> {
+    let mut listeners = Vec::new();
+    for _ in 0..u.int_in_range(0..=2_usize)? {
+        let mut listener = Map::new();
+        listener.insert("port".into(), json!(gen_port(u)?));
+        if u.ratio(1, 2)? {
+            listener.insert(
+                "ip".into(),
+                json!(gen_pick(u, &["auto", "dualStack", "ipv4Only", "ipv6Only"])?),
+            );
+        }
+        listeners.push(Value::Object(listener));
+    }
+    Ok(Value::Array(listeners))
 }
 
 fn gen_log(u: &mut Unstructured<'_>) -> Result<Value> {
@@ -90,12 +126,7 @@ fn gen_dns(u: &mut Unstructured<'_>) -> Result<Value> {
         for _ in 0..u.int_in_range(0..=3_usize)? {
             servers.push(json!(gen_pick(
                 u,
-                &[
-                    "system",
-                    "8.8.8.8",
-                    "1.1.1.1:53",
-                    "https://dns.example/dns-query"
-                ],
+                &["system", "8.8.8.8", "1.1.1.1:53", "resolver.example"],
             )?));
         }
         dns.insert("servers".into(), Value::Array(servers));
@@ -103,10 +134,21 @@ fn gen_dns(u: &mut Unstructured<'_>) -> Result<Value> {
     if u.ratio(1, 3)? {
         dns.insert("timeoutMs".into(), json!(gen_u64(u)?));
     }
+    if u.ratio(1, 4)? {
+        dns.insert(
+            "cache".into(),
+            json!({
+                "maxEntries": gen_u64(u)?,
+                "minTtlSeconds": gen_u64(u)?,
+                "maxTtlSeconds": gen_u64(u)?,
+                "systemReuseMs": gen_u64(u)?,
+            }),
+        );
+    }
     Ok(Value::Object(dns))
 }
 
-fn gen_client(u: &mut Unstructured<'_>) -> Result<Value> {
+fn gen_user(u: &mut Unstructured<'_>) -> Result<Value> {
     // RFC 4122 version-4-shaped synthetic UUID; never a real subscriber UUID.
     let synthetic_uuid = format!(
         "{:08x}-{:04x}-4{:03x}-8{:03x}-{:012x}",
@@ -118,133 +160,229 @@ fn gen_client(u: &mut Unstructured<'_>) -> Result<Value> {
     );
     let mut short_ids = Vec::new();
     for _ in 0..u.int_in_range(0..=3_usize)? {
-        let length = *u.choose(&[0_usize, 2, 8, 16, 17])?;
+        let length = *u.choose(&[0_usize, 2, 3, 8, 16, 17])?;
         short_ids.push(json!(gen_hex(u, length)?));
     }
-    Ok(json!({
-        "id": if u.ratio(4, 5)? { synthetic_uuid } else { gen_text(u, 16)? },
-        "shortIds": short_ids,
-        "email": gen_text(u, 10)?,
-        "flow": gen_pick(u, &["xtls-rprx-vision"])?,
-    }))
-}
-
-fn gen_vless_inbound(u: &mut Unstructured<'_>) -> Result<Value> {
-    let mut clients = Vec::new();
-    for _ in 0..u.int_in_range(0..=2_usize)? {
-        clients.push(gen_client(u)?);
+    let mut user = Map::new();
+    user.insert(
+        "id".into(),
+        json!(if u.ratio(4, 5)? {
+            synthetic_uuid
+        } else {
+            gen_text(u, 16)?
+        }),
+    );
+    user.insert("shortIds".into(), Value::Array(short_ids));
+    if u.ratio(1, 3)? {
+        user.insert("label".into(), json!(gen_text(u, 10)?));
     }
-    // Synthetic 32-byte X25519-shaped base64url; never a real key.
-    let mut synthetic_key = String::with_capacity(43);
-    for _ in 0..43 {
-        synthetic_key.push(char::from(*u.choose(
-            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_",
-        )?));
+    if u.ratio(1, 3)? {
+        user.insert("policy".into(), json!(gen_pick(u, &["split", "missing"])?));
     }
-    Ok(json!({
-        "protocol": "vless",
-        "tag": gen_tag(u)?,
-        "listen": { "mode": gen_pick(u, &["auto", "dualStack", "ipv4Only", "ipv6Only"])? },
-        "port": gen_port(u)?,
-        "settings": {
-            "clients": clients,
-            "decryption": gen_pick(u, &["none"])?,
-        },
-        "streamSettings": {
-            "network": gen_pick(u, &["tcp"])?,
-            "security": gen_pick(u, &["reality", "none"])?,
-            "realitySettings": {
-                "target": format!("{}:{}", gen_text(u, 10)?, gen_port(u)?),
-                "serverNames": [gen_text(u, 10)?],
-                "privateKey": synthetic_key,
-            },
-        },
-    }))
-}
-
-fn gen_inbound(u: &mut Unstructured<'_>) -> Result<Value> {
-    match u.int_in_range(0..=3_u8)? {
-        0..=2 => gen_vless_inbound(u),
-        _ => Ok(json!({
-            "protocol": gen_pick(u, &["nxr", "handoff", "vless", "trojan"])?,
-            "tag": gen_tag(u)?,
-            "port": gen_port(u)?,
-        })),
-    }
+    Ok(Value::Object(user))
 }
 
 fn gen_outbound(u: &mut Unstructured<'_>) -> Result<Value> {
-    // direct/blackhole carry no required settings; the heavier protocols
-    // appear rarely so their settings rejects stay reachable without
-    // dominating the input space.
-    let protocol = gen_pick(
-        u,
-        &[
-            "direct",
-            "direct",
-            "blackhole",
-            "blackhole",
-            "socks5",
-            "nxr",
-            "handoff",
-        ],
-    )?;
     let mut outbound = Map::new();
-    outbound.insert("protocol".into(), json!(protocol));
-    outbound.insert("tag".into(), json!(gen_tag(u)?));
-    if u.ratio(1, 3)? {
-        outbound.insert("settings".into(), json!({}));
+    let kind = gen_pick(u, &["socks5", "nxr", "handoff"])?;
+    outbound.insert("type".into(), json!(kind.clone()));
+    outbound.insert("address".into(), json!(gen_pick(u, &["10.0.0.2", "a.example", "-bad-"])?));
+    outbound.insert("port".into(), json!(gen_port(u)?));
+    match kind.as_str() {
+        "socks5" => {
+            if u.ratio(1, 3)? {
+                outbound.insert("username".into(), json!(gen_text(u, 8)?));
+            }
+            if u.ratio(1, 3)? {
+                outbound.insert("password".into(), json!(gen_text(u, 8)?));
+            }
+        }
+        "nxr" => {
+            outbound.insert("psk".into(), json!(gen_key(u)?));
+        }
+        _ => {
+            outbound.insert("psk".into(), json!(gen_key(u)?));
+            outbound.insert("landingPublicKey".into(), json!(gen_key(u)?));
+            if u.ratio(1, 3)? {
+                outbound.insert("connectTimeoutMs".into(), json!(gen_u64(u)?));
+                outbound.insert("firstByteTimeoutMs".into(), json!(gen_u64(u)?));
+            }
+        }
     }
     Ok(Value::Object(outbound))
 }
 
-fn gen_routing(u: &mut Unstructured<'_>) -> Result<Value> {
-    let mut rules = Vec::new();
-    for _ in 0..u.int_in_range(0..=3_usize)? {
-        rules.push(json!({
-            "name": gen_text(u, 8)?,
-            "outbound": gen_tag(u)?,
-            "ip": [gen_pick(u, &["geoip:private", "geoip:cn"])?],
-            "domain": [gen_pick(u, &["geosite:category-ads-all", "full:example.com"])?],
-            "port": gen_pick(u, &["443", "1-1024", "53,80"])?,
-            "network": gen_pick(u, &["tcp", "udp", "tcp,udp"])?,
-        }));
+fn gen_rule(u: &mut Unstructured<'_>) -> Result<Value> {
+    let mut rule = Map::new();
+    if u.ratio(1, 2)? {
+        rule.insert("name".into(), json!(gen_text(u, 8)?));
     }
-    Ok(json!({
-        "domainStrategy": gen_pick(u, &["AsIs", "IPIfNonMatch", "IPOnDemand"])?,
-        "globalRules": rules,
-        "users": [],
-    }))
+    if u.ratio(2, 3)? {
+        rule.insert(
+            "ip".into(),
+            json!([gen_pick(u, &["geoip:private", "10.0.0.0/8", "10.0.0.0/99"])?]),
+        );
+    }
+    if u.ratio(2, 3)? {
+        rule.insert(
+            "domain".into(),
+            json!([gen_pick(
+                u,
+                &["geosite:cn", "full:example.com", "regexp:^a", "ext:x:y"]
+            )?]),
+        );
+    }
+    if u.ratio(1, 3)? {
+        rule.insert(
+            "port".into(),
+            json!([gen_pick(u, &["443", "1-1024", "443-80", "0"])?]),
+        );
+    }
+    rule.insert("outbound".into(), json!(gen_outbound_name(u)?));
+    Ok(Value::Object(rule))
+}
+
+fn gen_routing(u: &mut Unstructured<'_>) -> Result<Value> {
+    let mut routing = Map::new();
+    routing.insert("default".into(), json!(gen_outbound_name(u)?));
+    if u.ratio(1, 2)? {
+        routing.insert(
+            "strategy".into(),
+            json!(gen_pick(
+                u,
+                &["asIs", "resolveIfNoMatch", "resolveOnDemand"]
+            )?),
+        );
+    }
+    if u.ratio(3, 4)? {
+        let mut rules = Vec::new();
+        for _ in 0..u.int_in_range(0..=3_usize)? {
+            rules.push(gen_rule(u)?);
+        }
+        routing.insert("rules".into(), Value::Array(rules));
+    }
+    if u.ratio(1, 3)? {
+        let mut policy = Map::new();
+        policy.insert("default".into(), json!(gen_outbound_name(u)?));
+        policy.insert("rules".into(), json!([gen_rule(u)?]));
+        routing.insert("policies".into(), json!({ "split": Value::Object(policy) }));
+    }
+    Ok(Value::Object(routing))
+}
+
+fn gen_entry(u: &mut Unstructured<'_>) -> Result<Map<String, Value>> {
+    let mut node = Map::new();
+    node.insert("role".into(), json!("entry"));
+    node.insert("listeners".into(), gen_listeners(u)?);
+    let mut reality = Map::new();
+    reality.insert(
+        "cover".into(),
+        json!(gen_pick(
+            u,
+            &["www.example.com:443", "93.184.216.34:443", "www.example.com"]
+        )?),
+    );
+    reality.insert("privateKey".into(), json!(gen_key(u)?));
+    if u.ratio(1, 3)? {
+        reality.insert(
+            "serverNames".into(),
+            json!([gen_pick(u, &["www.example.com", "*.example.com", "*"])?]),
+        );
+    }
+    if u.ratio(1, 4)? {
+        reality.insert("maxTimeDiffMs".into(), json!(gen_u64(u)?));
+    }
+    node.insert("reality".into(), Value::Object(reality));
+
+    let mut users = Vec::new();
+    for _ in 0..u.int_in_range(0..=2_usize)? {
+        users.push(gen_user(u)?);
+    }
+    node.insert("users".into(), Value::Array(users));
+
+    if u.ratio(1, 2)? {
+        let mut outbounds = Map::new();
+        for _ in 0..u.int_in_range(0..=2_usize)? {
+            outbounds.insert(gen_outbound_name(u)?, gen_outbound(u)?);
+        }
+        node.insert("outbounds".into(), Value::Object(outbounds));
+    }
+    node.insert("routing".into(), gen_routing(u)?);
+    if u.ratio(1, 4)? {
+        node.insert(
+            "assets".into(),
+            json!({ "geoip": gen_pick(u, &["https://a.example/geoip.dat", "http://a/x"])? }),
+        );
+    }
+    Ok(node)
+}
+
+fn gen_landing(u: &mut Unstructured<'_>) -> Result<Map<String, Value>> {
+    let mut node = Map::new();
+    node.insert("role".into(), json!("landing"));
+    node.insert("listeners".into(), gen_listeners(u)?);
+
+    let mut landing = Map::new();
+    let protocol = gen_pick(u, &["handoff", "nxr"])?;
+    landing.insert("protocol".into(), json!(protocol.clone()));
+    landing.insert("psk".into(), json!(gen_key(u)?));
+    if protocol == "handoff" {
+        landing.insert("privateKey".into(), json!(gen_key(u)?));
+        if u.ratio(1, 3)? {
+            landing.insert("previousPsks".into(), json!([gen_key(u)?, gen_key(u)?]));
+        }
+    }
+    if u.ratio(1, 3)? {
+        landing.insert("maxTimeDifferenceSeconds".into(), json!(gen_u64(u)?));
+        landing.insert("authenticationTimeoutMs".into(), json!(gen_u64(u)?));
+    }
+    node.insert("landing".into(), Value::Object(landing));
+
+    if u.ratio(1, 3)? {
+        node.insert("egress".into(), json!(gen_outbound_name(u)?));
+    }
+    if u.ratio(1, 3)? {
+        node.insert(
+            "outbounds".into(),
+            json!({ gen_outbound_name(u)?: gen_outbound(u)? }),
+        );
+    }
+    Ok(node)
 }
 
 fn gen_structured(u: &mut Unstructured<'_>) -> Result<Vec<u8>> {
-    let mut config = Map::new();
-    if u.ratio(3, 4)? {
-        config.insert("log".into(), gen_log(u)?);
+    let mut node = match u.int_in_range(0..=3_u8)? {
+        0..=1 => gen_entry(u)?,
+        2 => gen_landing(u)?,
+        _ => {
+            // An unknown or missing role must reach the dispatch reject.
+            let mut node = Map::new();
+            if u.ratio(3, 4)? {
+                node.insert("role".into(), json!(gen_text(u, 8)?));
+            }
+            node.insert("listeners".into(), gen_listeners(u)?);
+            node
+        }
+    };
+    if u.ratio(1, 2)? {
+        node.insert("log".into(), gen_log(u)?);
     }
     if u.ratio(1, 3)? {
-        config.insert("dns".into(), gen_dns(u)?);
-    }
-    let mut inbounds = Vec::new();
-    for _ in 0..u.int_in_range(0..=3_usize)? {
-        inbounds.push(gen_inbound(u)?);
-    }
-    config.insert("inbounds".into(), Value::Array(inbounds));
-    let mut outbounds = Vec::new();
-    for _ in 0..u.int_in_range(0..=3_usize)? {
-        outbounds.push(gen_outbound(u)?);
-    }
-    config.insert("outbounds".into(), Value::Array(outbounds));
-    if u.ratio(3, 4)? {
-        config.insert("routing".into(), gen_routing(u)?);
+        node.insert("dns".into(), gen_dns(u)?);
     }
     if u.ratio(1, 4)? {
-        config.insert(
-            "advanced".into(),
-            json!({ "limits": { "resourceGovernor": { "maxConnections": gen_u64(u)? } } }),
+        node.insert("network".into(), json!({ "ip": gen_pick(u, &["auto", "ipv4Only"])? }));
+    }
+    if u.ratio(1, 4)? {
+        node.insert(
+            "runtime".into(),
+            json!({
+                "tuning": gen_pick(u, &["startup", "adaptive", "fixed"])?,
+                "limits": { "maxConnections": gen_u64(u)?, "maxHandshakes": gen_u64(u)? },
+            }),
         );
     }
-    let mut document = serde_json::to_vec(&Value::Object(config)).unwrap_or_default();
+    let mut document = serde_json::to_vec(&Value::Object(node)).unwrap_or_default();
 
     // One byte-level tail mutation keeps lexer-level rejects reachable.
     match u.int_in_range(0..=4_u8)? {
@@ -277,5 +415,5 @@ fuzz_target!(|input: &[u8]| {
         },
         _ => input.to_vec(),
     };
-    let _ = fuzz_decode_config(&bytes);
+    let _ = fuzz_load(&bytes);
 });

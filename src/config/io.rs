@@ -160,27 +160,15 @@ pub(super) fn decode_config(path: &Path, bytes: &[u8]) -> Result<Config, ConfigL
         });
     }
     validate_config(&config).map_err(|source| ConfigLoadError::Invalid {
-        diagnostic: Box::new(Diagnostic::validation(path, &text, &source)),
+        diagnostic: Box::new(Diagnostic::validation(
+            path,
+            &text,
+            source.path(),
+            source.message(),
+        )),
         source,
     })?;
     Ok(config)
-}
-
-/// Fuzz entry point: decodes and validates raw configuration bytes.
-///
-/// Exercises the exact `load_config` decode path without touching the file
-/// system. Gated behind the `fuzzing` feature, which the `fuzz/` workspace
-/// enables on this crate; never part of a production build.
-#[cfg(feature = "fuzzing")]
-#[doc(hidden)]
-pub fn fuzz_decode_config(bytes: &[u8]) -> Result<Config, ConfigLoadError> {
-    if bytes.len() > MAX_CONFIG_BYTES {
-        return Err(ConfigLoadError::TooLarge {
-            path: PathBuf::from("<fuzz>"),
-            bytes: bytes.len() as u64,
-        });
-    }
-    decode_config(Path::new("<fuzz>"), bytes)
 }
 
 /// Serializes a validated configuration as deterministic pretty JSON.

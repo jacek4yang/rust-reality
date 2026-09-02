@@ -1,12 +1,10 @@
 use std::{
-    fmt,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     path::PathBuf,
 };
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Complete runtime configuration.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
@@ -461,36 +459,7 @@ impl ResourceMode {
     }
 }
 
-/// A string whose debug representation never reveals its contents.
-#[derive(Clone, Eq, PartialEq, Deserialize, JsonSchema, Serialize, Zeroize, ZeroizeOnDrop)]
-#[serde(transparent)]
-pub struct SecretString(String);
-
-impl SecretString {
-    /// Creates a protected string.
-    #[must_use]
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    /// Exposes the secret to code that explicitly needs it.
-    #[must_use]
-    pub fn expose(&self) -> &str {
-        &self.0
-    }
-
-    /// Returns whether the secret is empty without revealing it.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-}
-
-impl fmt::Debug for SecretString {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("SecretString([REDACTED])")
-    }
-}
+pub use super::secret::SecretString;
 
 /// Logging configuration.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]

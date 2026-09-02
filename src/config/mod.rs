@@ -3,8 +3,14 @@
 mod diagnostic;
 mod generate;
 mod io;
+pub mod load;
 mod model;
+pub mod node;
+pub mod parse;
 mod schema;
+mod secret;
+pub mod semantics;
+mod syntax;
 mod validate;
 
 pub use diagnostic::Diagnostic;
@@ -16,10 +22,10 @@ pub use generate::{
     generate_handoff_configs, generate_landing_config, generate_line_config,
     generate_minimal_config, generate_multi_handoff_configs,
 };
+pub use io::{ConfigLoadError, MAX_CONFIG_BYTES, format_config, load_config};
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]
-pub use io::fuzz_decode_config;
-pub use io::{ConfigLoadError, MAX_CONFIG_BYTES, format_config, load_config};
+pub use load::fuzz_load;
 pub use model::{
     AdvancedConfig, AssetsConfig, BlackholeSettings, Config, CoverOptimizationConfig, DialConfig,
     DialMode, DirectBarrierConfig, DnsCacheConfig, DnsConfig, DnsStrategy, FileLogConfig,
