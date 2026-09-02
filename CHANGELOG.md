@@ -4,6 +4,17 @@ All notable user-facing changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Session establishment costs about 12% less server CPU.** The two X25519 key
+  agreements every REALITY session performs are now computed by `aws-lc-rs`:
+  571 → 503 µs of server CPU per connection, measured as a balanced A/B between
+  frozen binaries and reproduced with the ordering reversed. No protocol,
+  configuration, or interoperability change — Xray interoperability is verified
+  for both the X25519 and X25519MLKEM768 key-exchange groups, and the hybrid
+  shared secret is byte-identical. The binary grows by about 2.6 MB as a result.
+  See [ADR 0020](docs/adr/0020-aws-lc-rs-computes-per-session-x25519.md).
+
 ### Added
 
 - `--version` now reports the exact source commit the binary was built from, on

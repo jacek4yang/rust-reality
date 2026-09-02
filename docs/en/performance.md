@@ -560,6 +560,46 @@ Measured evidence (validation host above):
   release graph via ureq/rustls), fully static link, slightly smaller
   binary.
 
+## Per-session X25519 provider: aws-lc-rs
+
+The two X25519 agreements every REALITY session performs — authentication
+against the configured key, and the TLS key exchange — are computed by
+**aws-lc-rs** (non-FIPS, high-level safe API). Key generation, the destination
+probe and the handoff control channel still use `x25519-dalek`, which therefore
+remains an independent oracle for the cross-provider equivalence tests. The
+decision and its revisit conditions are [ADR 0020](../adr/0020-aws-lc-rs-computes-per-session-x25519.md).
+
+Measured evidence (validation host above; Coffee Lake i3-8100, AES-NI + AVX2 +
+BMI2 + ADX, **no SHA-NI**):
+
+- Isolated primitives, exact production operation shapes: variable-base
+  agreement 56.6 → 23.5 µs (**2.41×**); complete TLS ECDHE, generate → public
+  share → agree, 73.9 → 38.2 µs (**1.93×**). ring, measured in the same
+  ECDHE shape, sits between the two at 66.2 µs; it has no API for importing a
+  fixed static private key, so it cannot serve the REALITY authentication shape
+  at all.
+- Setup-rate A/B between frozen identity-bound artifacts, both arms unprofiled:
+  server CPU **571 → 503 µs per connection, −11.7%**, bootstrap95
+  [0.874, 0.883]. Reproduced with the ABBA order reversed (0.8833 vs 0.8832)
+  against an A/A floor whose widest excursion is 0.94%. Setup rate itself
+  improves 1–3%, less than the CPU reduction, because the loopback workload
+  shares four cores with its client, origin and cover.
+- The mechanism is confirmed rather than inferred: the primitive measurements
+  predicted a 68.8 µs/session saving before the candidate existed, and the A/B
+  measured 68 µs. That agreement also fixes the attribution — X25519 was
+  **≈22.9%** of server session CPU and Ed25519 a further **≈3.4%**, so the
+  earlier ~29.5% "curve25519" bucket was ~87% X25519 and ~13% Ed25519.
+- Correctness: 5528 cross-provider checks, 0 failures, on GNU and musl —
+  including identical accept/reject behaviour on every low-order point and
+  non-canonical field encoding, where the two libraries reject by different
+  mechanisms. Xray 26.7.28 interoperability passes once per key-exchange group
+  (X25519 and X25519MLKEM768), with the negotiated group verified rather than
+  assumed.
+- Cost: stripped ELF +35.6% (7.30 → 9.90 MB), `.text` +38.7%, no new dynamic
+  dependency, musl static tier preserved (static-pie, 0 `NEEDED`), warm process
+  start +66 µs once per process. `aws-lc-sys` builds with the `cc` builder and
+  prebuilt bindings, so the only new build requirement is a C compiler.
+
 ## Raw relay and fallback
 
 - On the raw relay surface (directions × payload × concurrency), splice

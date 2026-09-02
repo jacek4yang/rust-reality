@@ -145,6 +145,19 @@ fn the_protocol_core_uses_no_std_only_facility() {
         ("std::sync::RwLock", "not available without `std`"),
         ("std::sync::OnceLock", "not available without `std`"),
         ("std::sync::LazyLock", "not available without `std`"),
+        // A `std`-only dependency breaks the property just as surely as a
+        // `std`-only path, and is easier to add by accident: the import reads
+        // like any other crypto import. ADR 0016's audit specifically checked
+        // that no crate in this layer's closure enables `std` — including
+        // `ring`, which resolves without it. `aws-lc-rs` does require `std`, so
+        // it is confined to `crypto::x25519` and used only from `auth.rs` and
+        // `handshake.rs`, both deliberately outside this list. Migrating
+        // `record.rs` or `messages.rs` to it would be an architecture decision
+        // with an ADR, not an import.
+        (
+            "aws_lc_rs",
+            "aws-lc-rs requires `std`; this layer must compile against `core` + `alloc`",
+        ),
     ];
     // `std::error::Error`, `std::fmt`, `std::str`, `std::net::Ipv6Addr`,
     // `std::ops::Range`, `std::iter` and `std::sync::Arc` are deliberately
