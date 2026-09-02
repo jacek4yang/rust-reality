@@ -462,51 +462,52 @@ new generation; a rejected one logs `configuration_rejected` with a
 validator-owned JSON path and keeps the old configuration running (VERIFIED
 events). After every reload, confirm which of the two you got.
 
-**Worked example — complete tuned policy for 1C1G.** This block, embedded
-in a generated standalone config with `"runtime": {"profile": "dedicated",
-"tuning": {"mode": "fixed"}}`, passes `check --config`. Only
-`maxConnections` differs from the defaults; the rest is shown because every
-field marked "required when object present" must be supplied once its
-object appears.
+**Worked example — a tuned policy for 1C1G.** One ceiling is pinned and
+nothing else is, which is the whole shape of expert tuning now: presence in
+`runtime.limits` means pinned, absence means "derive it from this machine".
+The file below passes `rust-reality check`, and `rust-reality explain` will
+report `maxConnections` as `operator-pinned` and every other value as
+`startup-derived`.
 
 ```json
-"advanced": {
-  "limits": {
-    "resourceGovernor": {
-      "maxConnections": 8000,
-      "maxHandshakes": 1024,
-      "maxFallbacks": 512,
-      "maxCryptoOperations": 128,
-      "maxReplayEntries": 65536,
-      "maxDnsLookups": 64,
-      "replayRetentionMs": 120000,
-      "clientHelloTimeoutMs": 3000,
-      "handshakeTimeoutMs": 10000,
-      "connectTimeoutMs": 10000,
-      "fallbackTimeoutMs": 120000
-    },
-    "directBarrier": {
-      "maxConcurrent": 2048,
-      "maxPerSecond": 4096
-    },
-    "relay": {
-      "bufferBytes": 32768,
-      "maxPooledBuffers": 4096,
-      "maxSpliceRelays": 256,
-      "maxRelayMemoryBytes": 536870912,
-      "splice": true,
-      "pipePool": true,
-      "maxPooledPipes": 256
+{
+  "role": "entry",
+  "listeners": [
+    {
+      "port": 443
+    }
+  ],
+  "reality": {
+    "cover": "www.microsoft.com:443",
+    "privateKey": "ERERERERERERERERERERERERERERERERERERERERERE"
+  },
+  "users": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "shortIds": [
+        "0123456789abcdef"
+      ],
+      "label": "alice"
+    }
+  ],
+  "routing": {
+    "default": "direct"
+  },
+  "runtime": {
+    "profile": "dedicated",
+    "limits": {
+      "maxConnections": 8000
     }
   }
 }
 ```
 
-Note the relay block is untouched: on 1 GiB the default pools still fit
-(§7 formula: 128 MiB + 256 MiB ≤ 512 MiB ceiling), because the memory
-budget is dominated by sessions, not pools. Then restart — `advanced.limits`
-is restart-required — and confirm `server_starting`, `machine_report`,
-`descriptor_budget_report`, and `listener_started` in the journal.
+Everything the pin does not name still follows the machine, including the
+relay pools: on 1 GiB the derived buffer and pipe budgets already fit inside
+the memory ceiling, because the budget is dominated by sessions rather than
+pools. `runtime.limits` is cold, so restart rather than reload — then confirm
+`server_starting`, `machine_report`, `descriptor_budget_report`, and
+`listener_started` in the journal.
 
 ## 11. REALITY cover selection
 
@@ -620,53 +621,114 @@ resolvers are rejected by the validator (VERIFIED,
 local caching stub (`systemd-resolved` or similar), point
 `/etc/resolv.conf` at it, and keep `dns.timeoutMs` honest.
 
-Validated example — three user groups: A direct, B China-direct with an NXR
-landing default, C filtered through an upstream SOCKS5. The full config
-(routing below plus matching `outbounds` and placeholder UUIDs) passes
-`check --config` (VERIFIED). Matcher syntax: `geosite:`/`geoip:` labels
-from the community DAT files, `domain:`/`full:`/`keyword:`/`regexp:`
-prefixes for domains, CIDRs for IPs.
+Validated example — three user groups: A straight out, B China-direct with
+an NXR landing default, C filtered through an upstream SOCKS5. Routing lives
+with identity now: a user names the policy it follows, and the policy carries
+its own default and rules, so there is no separate list mapping UUIDs to
+groups. Matcher syntax: `geosite:`/`geoip:` labels from the community DAT
+files, `domain:`/`full:`/`keyword:`/`regexp:` prefixes for domains, CIDRs for
+IPs.
 
 ```json
-"outbounds": [
-  { "protocol": "direct", "tag": "direct" },
-  { "protocol": "blackhole", "tag": "block" },
-  { "protocol": "nxr", "tag": "nxr-landing",
-    "settings": { "address": "10.0.0.2", "port": 7443,
-                  "preSharedKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" } },
-  { "protocol": "socks5", "tag": "upstream-socks",
-    "settings": { "address": "127.0.0.1", "port": 1080 } }
-],
-"routing": {
-  "domainStrategy": "IPIfNonMatch",
-  "globalRules": [
-    { "name": "reject-private", "outbound": "block", "ip": ["geoip:private"] }
+{
+  "role": "entry",
+  "listeners": [
+    {
+      "port": 443
+    }
   ],
+  "reality": {
+    "cover": "www.microsoft.com:443",
+    "privateKey": "ERERERERERERERERERERERERERERERERERERERERERE"
+  },
   "users": [
-    { "name": "group-a-direct",
-      "userIds": ["11111111-1111-4111-8111-111111111111"],
-      "defaultOutbound": "direct", "rules": [] },
-    { "name": "group-b-cn-direct",
-      "userIds": ["22222222-2222-4222-8222-222222222222"],
-      "defaultOutbound": "nxr-landing",
-      "rules": [
-        { "name": "cn-direct", "outbound": "direct",
-          "domain": ["geosite:cn"], "ip": ["geoip:cn"] }
-      ] },
-    { "name": "group-c-filtered",
-      "userIds": ["33333333-3333-4333-8333-333333333333"],
-      "defaultOutbound": "upstream-socks",
-      "rules": [
-        { "name": "block-ads", "outbound": "block",
-          "domain": ["geosite:category-ads-all"] }
-      ] }
-  ]
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "shortIds": [
+        "0123456789abcdef"
+      ],
+      "label": "group-a"
+    },
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "shortIds": [
+        "fedcba9876543210"
+      ],
+      "label": "group-b",
+      "policy": "cn-direct"
+    },
+    {
+      "id": "33333333-3333-4333-8333-333333333333",
+      "shortIds": [
+        "00112233445566aa"
+      ],
+      "label": "group-c",
+      "policy": "filtered"
+    }
+  ],
+  "outbounds": {
+    "landing-1": {
+      "type": "nxr",
+      "address": "10.0.0.2",
+      "port": 7443,
+      "psk": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    "upstream-socks": {
+      "type": "socks5",
+      "address": "127.0.0.1",
+      "port": 1080
+    }
+  },
+  "routing": {
+    "default": "direct",
+    "strategy": "resolveIfNoMatch",
+    "rules": [
+      {
+        "name": "block-private",
+        "ip": [
+          "geoip:private"
+        ],
+        "outbound": "block"
+      }
+    ],
+    "policies": {
+      "cn-direct": {
+        "default": "landing-1",
+        "rules": [
+          {
+            "name": "cn-stays-home",
+            "domain": [
+              "geosite:cn"
+            ],
+            "ip": [
+              "geoip:cn"
+            ],
+            "outbound": "direct"
+          }
+        ]
+      },
+      "filtered": {
+        "default": "upstream-socks",
+        "rules": [
+          {
+            "name": "block-ads",
+            "domain": [
+              "geosite:category-ads-all"
+            ],
+            "outbound": "block"
+          }
+        ]
+      }
+    }
+  }
 }
 ```
 
-All three UUIDs are placeholders; replace them with the real client IDs.
-Outbounds and routing are hot-reloadable, so group and rule changes do not
-need a restart (§10).
+All three UUIDs and both short-ID sets are placeholders; replace them with
+material from `rust-reality generate`. `direct` and `block` are built in and
+are never declared — the only outbounds this file declares are the two it
+actually dials. Outbounds, users, and routing are all hot, so group and rule
+changes reload without a restart (§10).
 
 ## 13. Latency diagnosis
 

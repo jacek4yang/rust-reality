@@ -106,8 +106,7 @@ pub(crate) fn run_explain(arguments: ExplainArgs) -> Result<(), CliError> {
 /// omitted and never drops one they wrote.
 pub(crate) fn run_format(arguments: super::model::FormatArgs) -> Result<(), CliError> {
     let config = load(&arguments.config)?;
-    let mut rendered = serde_json::to_string_pretty(config.node())?;
-    rendered.push('\n');
+    let rendered = crate::config::canonical(&config);
     if arguments.write {
         super::atomic::write_atomic(&arguments.config, rendered.as_bytes())?;
         write_stdout(format_args!("{}\n", arguments.config.display()))
