@@ -10,11 +10,12 @@ use std::{
     time::Duration,
 };
 
+use rust_reality::runtime::policy::ResourceGovernorPolicy;
 use rust_reality::{
     assets::{AssetMatcher, AssetSource},
-    config::{
-        DnsStrategy, GlobalRule, Network, PortMatcher, ResourceGovernorConfig, RoutingConfig,
-        UserPolicy,
+    config::node::{
+        routing::{DomainStrategy, RoutePolicy, RouteRule, RoutingConfig},
+        user::UserConfig,
     },
     protocol::vless::{Address, Destination, UserId},
     runtime::ResourceGovernor,
@@ -68,16 +69,10 @@ impl Rng {
     }
 }
 
-fn random_rule(rng: &mut Rng, index: usize) -> GlobalRule {
-    let mut rule = GlobalRule {
-        name: format!("rule-{index}"),
-        outbound: format!("out-{:02}", rng.below(8)),
-        domain: Vec::new(),
-        ip: Vec::new(),
-        port: Vec::new(),
-        network: Vec::new(),
-        inbound_tag: Vec::new(),
-    };
+fn random_rule(rng: &mut Rng, index: usize) -> RouteRule {
+    let mut domain = Vec::new();
+    let mut ip = Vec::new();
+    let mut port = Vec::new();
     for _ in 0..rng.below(3) {
         let matcher = match rng.below(8) {
             0 => format!("full:host{}.full.test", rng.below(50)),
@@ -94,10 +89,10 @@ fn random_rule(rng: &mut Rng, index: usize) -> GlobalRule {
             6 => format!("plain{}.plain.test", rng.below(50)),
             _ => "keyword:".to_owned(),
         };
-        rule.domain.push(matcher);
+        domain.push(matcher);
     }
     for _ in 0..rng.below(2) {
-        rule.ip.push(match rng.below(4) {
+        ip.push(match rng.below(4) {
             0 => format!("10.{}.0.0/16", rng.below(256)),
             1 => "2001:db8::/32".to_owned(),
             2 => format!("geoip:g{}", rng.below(8)),
@@ -105,21 +100,20 @@ fn random_rule(rng: &mut Rng, index: usize) -> GlobalRule {
         });
     }
     if rng.chance(30) {
-        rule.port.push(PortMatcher(
-            ["53", "443", "1000-2000", "8000-9000"][rng.below(4)].to_owned(),
-        ));
+        port.push(["53", "443", "1000-2000", "8000-9000"][rng.below(4)].to_owned());
     }
-    if rng.chance(30) {
-        rule.network = match rng.below(3) {
-            0 => vec![Network::Tcp],
-            1 => vec![Network::Udp],
-            _ => vec![Network::Tcp, Network::Udp],
-        };
+    // A rule with no condition is rejected by validation, so the generator
+    // never produces one.
+    if domain.is_empty() && ip.is_empty() && port.is_empty() {
+        domain.push(format!("plain{index}.plain.test"));
     }
-    if rng.chance(30) {
-        rule.inbound_tag = vec![["in-a", "in-b", "in-c"][rng.below(3)].to_owned()];
+    RouteRule {
+        name: Some(format!("rule-{index}")),
+        outbound: format!("out-{:02}", rng.below(8)),
+        domain: (!domain.is_empty()).then_some(domain),
+        ip: (!ip.is_empty()).then_some(ip),
+        port: (!port.is_empty()).then_some(port),
     }
-    rule
 }
 
 fn random_destination(rng: &mut Rng) -> Destination {
@@ -153,25 +147,25 @@ fn random_destination(rng: &mut Rng) -> Destination {
     }
 }
 
-/// Independent config-level oracle: interprets `GlobalRule` strings directly,
+/// Independent config-level oracle: interprets `RouteRule` strings directly,
 /// sharing nothing with the router's compiled representation.
 mod oracle {
-    use super::{AssetMatcher, Destination, GlobalRule, IpAddr, Network, StubAssets};
+    use super::{AssetMatcher, Destination, IpAddr, RouteRule, StubAssets};
     use rust_reality::{assets::AssetSource, protocol::vless::Address};
 
     pub(super) fn rule_matches(
-        rule: &GlobalRule,
+        rule: &RouteRule,
         destination: &Destination,
         resolved: &[IpAddr],
-        inbound_tag: &str,
+        _inbound_tag: &str,
     ) -> bool {
         let domain = match destination.address() {
             Address::Domain(domain) => Some(domain.to_ascii_lowercase()),
             _ => None,
         };
-        let domain_ok = rule.domain.is_empty()
+        let domain_ok = rule.domain().is_empty()
             || domain.as_deref().is_some_and(|domain| {
-                rule.domain
+                rule.domain()
                     .iter()
                     .any(|matcher| domain_matches(matcher, domain))
             });
@@ -180,26 +174,20 @@ mod oracle {
             Address::Ipv6(v6) => vec![IpAddr::V6(*v6)],
             Address::Domain(_) => resolved.to_vec(),
         };
-        let ip_ok = rule.ip.is_empty()
+        let ip_ok = rule.ip().is_empty()
             || ips
                 .iter()
-                .any(|address| rule.ip.iter().any(|m| ip_matches(m, *address)));
-        let port_ok = rule.port.is_empty()
-            || rule.port.iter().any(|port| {
+                .any(|address| rule.ip().iter().any(|m| ip_matches(m, *address)));
+        let port_ok = rule.port().is_empty()
+            || rule.port().iter().any(|port| {
                 let (start, end) = port
-                    .0
                     .split_once('-')
-                    .map_or((port.0.as_str(), port.0.as_str()), |(a, b)| (a, b));
+                    .map_or((port.as_str(), port.as_str()), |(a, b)| (a, b));
                 let start: u16 = start.parse().expect("test ports parse");
                 let end: u16 = end.parse().expect("test ports parse");
                 start <= destination.port() && destination.port() <= end
             });
-        // The production router currently evaluates every request as TCP;
-        // the oracle mirrors that exact behavior.
-        let network_ok = rule.network.is_empty() || rule.network.contains(&Network::Tcp);
-        let tag_ok =
-            rule.inbound_tag.is_empty() || rule.inbound_tag.iter().any(|tag| tag == inbound_tag);
-        domain_ok && ip_ok && port_ok && network_ok && tag_ok
+        domain_ok && ip_ok && port_ok
     }
 
     fn domain_matches(matcher: &str, domain: &str) -> bool {
@@ -273,21 +261,34 @@ mod oracle {
     }
 }
 
-fn compile(rules: Vec<GlobalRule>) -> RoutingTable {
+/// The one identity every scale fixture routes for.
+fn primary_user() -> UserConfig {
+    UserConfig {
+        id: PRIMARY.to_owned(),
+        short_ids: vec!["0123456789abcdef".to_owned()],
+        label: None,
+        policy: Some("primary".to_owned()),
+    }
+}
+
+fn compile(rules: Vec<RouteRule>) -> RoutingTable {
     let config = RoutingConfig {
-        domain_strategy: DnsStrategy::AsIs,
-        global_rules: Vec::new(),
-        users: vec![UserPolicy {
-            name: "primary".to_owned(),
-            user_ids: vec![PRIMARY.to_owned()],
-            default_outbound: "fallback".to_owned(),
-            rules,
-        }],
+        default: "fallback".to_owned(),
+        strategy: Some(DomainStrategy::AsIs),
+        rules: None,
+        policies: Some(std::collections::BTreeMap::from([(
+            "primary".to_owned(),
+            RoutePolicy {
+                default: "fallback".to_owned(),
+                rules: Some(rules),
+            },
+        )])),
     };
     RoutingTable::compile(
         &config,
+        &[primary_user()],
         Arc::new(StubAssets),
-        ResourceGovernor::new(&ResourceGovernorConfig::default()),
+        ResourceGovernor::new(&ResourceGovernorPolicy::default()),
     )
     .expect("randomized routing config must compile")
 }
@@ -297,7 +298,7 @@ fn indexed_and_linear_paths_match_independent_oracle() {
     // Straddle the adaptive threshold: below, around, and well above it.
     for (seed, rule_count) in [(1, 1_usize), (2, 32), (3, 63), (4, 64), (5, 65), (6, 200)] {
         let mut rng = Rng(seed * 0x9E37_79B9 + 7);
-        let rules: Vec<GlobalRule> = (0..rule_count)
+        let rules: Vec<RouteRule> = (0..rule_count)
             .map(|index| random_rule(&mut rng, index))
             .collect();
         let table = compile(rules.clone());
@@ -315,9 +316,22 @@ fn indexed_and_linear_paths_match_independent_oracle() {
             let expected = rules
                 .iter()
                 .find(|rule| oracle::rule_matches(rule, &destination, &resolved, inbound_tag))
-                .map_or(("fallback", "primary", RouteScope::UserDefault), |rule| {
-                    (rule.outbound.as_str(), rule.name.as_str(), RouteScope::User)
-                });
+                .map_or(
+                    // A default decision reports the policy by its
+                    // configuration path, which is what an operator can look up.
+                    (
+                        "fallback",
+                        "routing.policies.primary",
+                        RouteScope::UserDefault,
+                    ),
+                    |rule| {
+                        (
+                            rule.outbound.as_str(),
+                            rule.name.as_deref().unwrap_or_default(),
+                            RouteScope::User,
+                        )
+                    },
+                );
             let context = RouteContext {
                 user_id: PRIMARY_ID,
                 inbound_tag,
@@ -336,40 +350,37 @@ fn indexed_and_linear_paths_match_independent_oracle() {
 
 #[test]
 fn global_rules_precede_user_rules_at_scale() {
-    let mut rules: Vec<GlobalRule> = (0..300)
-        .map(|index| GlobalRule {
-            name: format!("user-{index}"),
+    let mut rules: Vec<RouteRule> = (0..300)
+        .map(|index| RouteRule {
+            name: Some(format!("user-{index}")),
             outbound: "user-out".to_owned(),
-            domain: vec![format!("full:shared-{index}.test")],
-            ip: Vec::new(),
-            port: Vec::new(),
-            network: Vec::new(),
-            inbound_tag: Vec::new(),
+            domain: Some(vec![format!("full:shared-{index}.test")]),
+            ..RouteRule::default()
         })
         .collect();
-    rules[150].domain = vec!["full:contended.test".to_owned()];
+    rules[150].domain = Some(vec!["full:contended.test".to_owned()]);
     let config = RoutingConfig {
-        domain_strategy: DnsStrategy::AsIs,
-        global_rules: vec![GlobalRule {
-            name: "global-wins".to_owned(),
+        default: "fallback".to_owned(),
+        strategy: Some(DomainStrategy::AsIs),
+        rules: Some(vec![RouteRule {
+            name: Some("global-wins".to_owned()),
             outbound: "global-out".to_owned(),
-            domain: vec!["full:contended.test".to_owned()],
-            ip: Vec::new(),
-            port: Vec::new(),
-            network: Vec::new(),
-            inbound_tag: Vec::new(),
-        }],
-        users: vec![UserPolicy {
-            name: "primary".to_owned(),
-            user_ids: vec![PRIMARY.to_owned()],
-            default_outbound: "fallback".to_owned(),
-            rules,
-        }],
+            domain: Some(vec!["full:contended.test".to_owned()]),
+            ..RouteRule::default()
+        }]),
+        policies: Some(std::collections::BTreeMap::from([(
+            "primary".to_owned(),
+            RoutePolicy {
+                default: "fallback".to_owned(),
+                rules: Some(rules),
+            },
+        )])),
     };
     let table = RoutingTable::compile(
         &config,
+        &[primary_user()],
         Arc::new(StubAssets),
-        ResourceGovernor::new(&ResourceGovernorConfig::default()),
+        ResourceGovernor::new(&ResourceGovernorPolicy::default()),
     )
     .expect("config must compile");
     let destination = Destination::new(Address::Domain("Contended.TEST".to_owned()), 443);
@@ -386,14 +397,11 @@ fn global_rules_precede_user_rules_at_scale() {
 
 #[test]
 fn unknown_uuid_is_rejected_before_any_rule_evaluation() {
-    let table = compile(vec![GlobalRule {
-        name: "catch-all".to_owned(),
+    let table = compile(vec![RouteRule {
+        name: Some("catch-all".to_owned()),
         outbound: "open".to_owned(),
-        domain: Vec::new(),
-        ip: Vec::new(),
-        port: Vec::new(),
-        network: Vec::new(),
-        inbound_tag: Vec::new(),
+        domain: Some(vec!["plain.catch.test".to_owned()]),
+        ..RouteRule::default()
     }]);
     let destination = Destination::new(Address::Domain("anything.test".to_owned()), 443);
     let context = RouteContext {
@@ -410,25 +418,19 @@ fn unknown_uuid_is_rejected_before_any_rule_evaluation() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn ip_if_non_match_resolves_numeric_literal_and_matches_ip_rule() {
-    let mut rules: Vec<GlobalRule> = (0..150)
-        .map(|index| GlobalRule {
-            name: format!("domain-{index}"),
+    let mut rules: Vec<RouteRule> = (0..150)
+        .map(|index| RouteRule {
+            name: Some(format!("domain-{index}")),
             outbound: "domain-out".to_owned(),
-            domain: vec![format!("full:host{index}.full.test")],
-            ip: Vec::new(),
-            port: Vec::new(),
-            network: Vec::new(),
-            inbound_tag: Vec::new(),
+            domain: Some(vec![format!("full:host{index}.full.test")]),
+            ..RouteRule::default()
         })
         .collect();
-    rules.push(GlobalRule {
-        name: "late-ip".to_owned(),
+    rules.push(RouteRule {
+        name: Some("late-ip".to_owned()),
         outbound: "ip-out".to_owned(),
-        domain: Vec::new(),
-        ip: vec!["203.0.113.0/24".to_owned()],
-        port: Vec::new(),
-        network: Vec::new(),
-        inbound_tag: Vec::new(),
+        ip: Some(vec!["203.0.113.0/24".to_owned()]),
+        ..RouteRule::default()
     });
     let table = compile(rules);
     // No domain rule matches, so IpIfNonMatch must resolve the numeric
@@ -439,7 +441,7 @@ async fn ip_if_non_match_resolves_numeric_literal_and_matches_ip_rule() {
             PRIMARY_ID,
             "in-a",
             &destination,
-            DnsStrategy::IpIfNonMatch,
+            DomainStrategy::ResolveIfNoMatch,
             Duration::from_secs(1),
         )
         .await
@@ -454,25 +456,19 @@ async fn ip_if_non_match_resolves_numeric_literal_and_matches_ip_rule() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn ip_if_non_match_early_domain_match_skips_resolution() {
-    let mut rules: Vec<GlobalRule> = (0..150)
-        .map(|index| GlobalRule {
-            name: format!("domain-{index}"),
+    let mut rules: Vec<RouteRule> = (0..150)
+        .map(|index| RouteRule {
+            name: Some(format!("domain-{index}")),
             outbound: format!("out-{index}"),
-            domain: vec![format!("full:host{index}.full.test")],
-            ip: Vec::new(),
-            port: Vec::new(),
-            network: Vec::new(),
-            inbound_tag: Vec::new(),
+            domain: Some(vec![format!("full:host{index}.full.test")]),
+            ..RouteRule::default()
         })
         .collect();
-    rules.push(GlobalRule {
-        name: "ip-rule".to_owned(),
+    rules.push(RouteRule {
+        name: Some("ip-rule".to_owned()),
         outbound: "ip-out".to_owned(),
-        domain: Vec::new(),
-        ip: vec!["203.0.113.0/24".to_owned()],
-        port: Vec::new(),
-        network: Vec::new(),
-        inbound_tag: Vec::new(),
+        ip: Some(vec!["203.0.113.0/24".to_owned()]),
+        ..RouteRule::default()
     });
     let table = compile(rules);
     // A pass-1 domain match must win without DNS even though the numeric
@@ -483,7 +479,7 @@ async fn ip_if_non_match_early_domain_match_skips_resolution() {
             PRIMARY_ID,
             "in-a",
             &destination,
-            DnsStrategy::IpIfNonMatch,
+            DomainStrategy::ResolveIfNoMatch,
             Duration::from_secs(1),
         )
         .await

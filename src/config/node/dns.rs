@@ -71,8 +71,8 @@ impl DnsConfig {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DnsCacheConfig {
     /// Largest number of cached names, counting positive, negative, and
-    /// in-flight entries. Absent means a value derived from the memory the
-    /// process may use.
+    /// in-flight entries. Absent means 1024, which bounds the cache at a size
+    /// no deployment has needed to raise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_entries: Option<u32>,
     /// Floor clamp on upstream positive TTLs, in seconds. Absent means 5.
@@ -100,6 +100,9 @@ pub struct DnsCacheConfig {
     pub system_reuse_ms: Option<u64>,
 }
 
+/// The default bound on cached names.
+pub const DEFAULT_MAX_ENTRIES: u32 = 1_024;
+
 /// The default floor clamp on positive TTLs, in seconds.
 pub const DEFAULT_MIN_TTL_SECONDS: u32 = 5;
 
@@ -113,6 +116,12 @@ pub const DEFAULT_NEGATIVE_TTL_SECONDS: u32 = 60;
 pub const DEFAULT_STATIC_TTL_SECONDS: u32 = 300;
 
 impl DnsCacheConfig {
+    /// The bound on cached names, applying the default.
+    #[must_use]
+    pub fn max_entries(&self) -> u32 {
+        self.max_entries.unwrap_or(DEFAULT_MAX_ENTRIES)
+    }
+
     /// The positive-TTL floor, applying the default.
     #[must_use]
     pub fn min_ttl_seconds(&self) -> u32 {
@@ -180,10 +189,8 @@ mod tests {
         assert_eq!(cache.min_ttl_seconds(), 30);
         assert_eq!(cache.static_ttl_seconds(), DEFAULT_STATIC_TTL_SECONDS);
         assert_eq!(cache.system_reuse_ms(), 0);
-        assert!(
-            cache.max_entries.is_none(),
-            "an absent entry bound derives from available memory"
-        );
+        assert_eq!(cache.max_entries(), super::DEFAULT_MAX_ENTRIES);
+        assert!(cache.max_entries.is_none(), "an omitted bound stays absent");
     }
 
     #[test]

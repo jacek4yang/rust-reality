@@ -25,9 +25,18 @@ use ureq::{
     },
 };
 
-use crate::config::Config;
+use crate::config::node::entry::EntryConfig;
 
 use dat::{DomainSet, IpSet, parse_geoip_list, parse_geosite_list};
+
+/// Absolute deadline for one asset request including its response body.
+///
+/// Derived rather than configured: this bounds how long a poll may stall, and
+/// an operator has no information that would set it better.
+const ASSET_REQUEST_TIMEOUT_SECONDS: u64 = 120;
+
+/// Largest number of bytes accepted from any one asset or external file.
+const MAX_ASSET_BYTES: u64 = 128 * 1024 * 1024;
 
 /// Immutable GeoIP/GeoSite lookup used by one routing snapshot.
 pub trait AssetMatcher: Send + Sync {
@@ -79,7 +88,7 @@ impl AssetSnapshot {
     /// # Errors
     ///
     /// Returns an I/O, size, protobuf, UTF-8, regex, or network error.
-    pub fn load(config: &Config) -> Result<Self, AssetLoadError> {
+    pub fn load(config: &EntryConfig) -> Result<Self, AssetLoadError> {
         Self::load_generation(config, 0)
     }
 
@@ -102,19 +111,20 @@ impl AssetSnapshot {
     }
 
     pub(crate) fn load_generation(
-        config: &Config,
+        config: &EntryConfig,
         generation: u64,
     ) -> Result<Self, AssetLoadError> {
         let requirements = AssetRequirements::from_config(config);
-        let maximum = usize::try_from(config.assets.max_bytes)
-            .map_err(|_| AssetLoadError::SizeLimitUnsupported)?;
+        let assets = config.assets.clone().unwrap_or_default();
+        let maximum =
+            usize::try_from(MAX_ASSET_BYTES).map_err(|_| AssetLoadError::SizeLimitUnsupported)?;
         let fetcher = AssetFetcher::new(config);
         let mut cache_updates = Vec::new();
         let mut domains = HashMap::new();
         let mut ips = HashMap::new();
 
         if !requirements.geosite.is_empty() {
-            let candidate = fetcher.fetch("geosite.dat", &config.assets.geosite, maximum)?;
+            let candidate = fetcher.fetch("geosite.dat", assets.geosite(), maximum)?;
             let (parsed, update) = parse_candidate(candidate, maximum, |input| {
                 parse_geosite_list(input, &requirements.geosite)
             })?;
@@ -122,7 +132,7 @@ impl AssetSnapshot {
             cache_updates.extend(update);
         }
         if !requirements.geoip.is_empty() {
-            let candidate = fetcher.fetch("geoip.dat", &config.assets.geoip, maximum)?;
+            let candidate = fetcher.fetch("geoip.dat", assets.geoip(), maximum)?;
             let (parsed, update) = parse_candidate(candidate, maximum, |input| {
                 parse_geoip_list(input, &requirements.geoip)
             })?;
@@ -130,7 +140,7 @@ impl AssetSnapshot {
             cache_updates.extend(update);
         }
         for (file, labels) in requirements.external_domains {
-            let path = resolve_external(&config.assets.cache_directory, &file)?;
+            let path = resolve_external(&assets.cache_directory(), &file)?;
             let bytes = read_bounded(&path, maximum)?;
             domains.insert(
                 AssetSource::External(Arc::from(file)),
@@ -138,7 +148,7 @@ impl AssetSnapshot {
             );
         }
         for (file, labels) in requirements.external_ips {
-            let path = resolve_external(&config.assets.cache_directory, &file)?;
+            let path = resolve_external(&assets.cache_directory(), &file)?;
             let bytes = read_bounded(&path, maximum)?;
             ips.insert(
                 AssetSource::External(Arc::from(file)),
@@ -211,7 +221,7 @@ impl AssetStore {
     /// # Errors
     ///
     /// Returns an asset load error without constructing a partial store.
-    pub fn new(config: &Config) -> Result<Self, AssetLoadError> {
+    pub fn new(config: &EntryConfig) -> Result<Self, AssetLoadError> {
         Ok(Self {
             current: ArcSwap::from_pointee(AssetSnapshot::load_generation(config, 0)?),
             generation: AtomicU64::new(0),
@@ -233,7 +243,7 @@ impl AssetStore {
     /// # Errors
     ///
     /// Returns an asset load or generation exhaustion error.
-    pub fn reload(&self, config: &Config) -> Result<u64, AssetUpdateError> {
+    pub fn reload(&self, config: &EntryConfig) -> Result<u64, AssetUpdateError> {
         let _guard = self
             .update
             .lock()
@@ -259,15 +269,15 @@ struct AssetRequirements {
 }
 
 impl AssetRequirements {
-    fn from_config(config: &Config) -> Self {
+    fn from_config(config: &EntryConfig) -> Self {
         let mut requirements = Self::default();
-        for rule in config
-            .routing
-            .global_rules
-            .iter()
-            .chain(config.routing.users.iter().flat_map(|policy| &policy.rules))
-        {
-            for matcher in &rule.domain {
+        for rule in config.routing.rules().iter().chain(
+            config
+                .routing
+                .policies()
+                .flat_map(|(_, policy)| policy.rules()),
+        ) {
+            for matcher in rule.domain() {
                 if matcher
                     .get(..8)
                     .is_some_and(|prefix| prefix.eq_ignore_ascii_case("geosite:"))
@@ -283,7 +293,7 @@ impl AssetRequirements {
                         .insert(label.to_ascii_lowercase());
                 }
             }
-            for matcher in &rule.ip {
+            for matcher in rule.ip() {
                 if matcher
                     .get(..6)
                     .is_some_and(|prefix| prefix.eq_ignore_ascii_case("geoip:"))
@@ -318,18 +328,16 @@ struct AssetFetcher {
 }
 
 impl AssetFetcher {
-    fn new(config: &Config) -> Self {
+    fn new(config: &EntryConfig) -> Self {
         let agent_config = Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(
-                config.assets.request_timeout_seconds,
-            )))
+            .timeout_global(Some(Duration::from_secs(ASSET_REQUEST_TIMEOUT_SECONDS)))
             .max_redirects(5)
             .http_status_as_error(false)
             .user_agent("rust-reality-assets/0.1")
             .build();
         Self {
             agent: agent_config.into(),
-            cache_directory: config.assets.cache_directory.clone(),
+            cache_directory: config.assets.clone().unwrap_or_default().cache_directory(),
         }
     }
 
@@ -804,6 +812,7 @@ impl Error for AssetUpdateError {
 
 #[cfg(test)]
 mod tests {
+
     use std::{
         fs,
         io::{Read, Write},
@@ -813,10 +822,38 @@ mod tests {
         time::Duration,
     };
 
+    use super::AssetFetcher;
     use super::{
         AssetDownloadFailure, AssetLoadError, AssetMatcher, AssetSnapshot, AssetSource, AssetStore,
     };
-    use crate::config::Config;
+    use crate::config::node::{entry::EntryConfig, fixture};
+
+    /// An entry node whose routing names geo conditions and whose assets come
+    /// from a local test server.
+    fn geo_entry(
+        geosite_url: &str,
+        directory: &std::path::Path,
+        domain: &str,
+        ip: &str,
+    ) -> EntryConfig {
+        let ip_rule = if ip.is_empty() {
+            String::new()
+        } else {
+            format!(r#","ip":["{ip}"]"#)
+        };
+        let json = fixture::entry_without_routing(&format!(
+            r#""listeners": [{{ "port": 443 }}],
+  "assets": {{ "geoip": "{geosite_url}", "geosite": "{geosite_url}",
+               "cacheDirectory": "{}" }},
+  "routing": {{ "default": "direct",
+    "rules": [{{ "name": "geo", "domain": ["{domain}"]{ip_rule}, "outbound": "block" }}] }}"#,
+            directory.display()
+        ));
+        fixture::parsed(&json)
+            .as_entry()
+            .expect("the fixture is an entry node")
+            .clone()
+    }
 
     #[test]
     fn loads_xray_geosite_and_geoip_wire_shapes() {
@@ -896,12 +933,12 @@ mod tests {
 
         let suffix = format!("{}-etag", std::process::id());
         let directory = std::env::temp_dir().join(format!("rust-reality-assets-{suffix}"));
-        let mut config: Config = serde_json::from_str(crate::config::test_config_json())
-            .expect("fixture config must parse");
-        config.assets.geosite = format!("http://{address}/geosite.dat");
-        config.assets.cache_directory = directory.clone();
-        config.routing.global_rules[0].domain = vec!["geosite:test".to_owned()];
-        config.routing.global_rules[0].ip.clear();
+        let config = geo_entry(
+            &format!("http://{address}/geosite.dat"),
+            &directory,
+            "geosite:test",
+            "",
+        );
 
         let first = AssetSnapshot::load(&config).expect("downloaded asset must load");
         let second = AssetSnapshot::load(&config).expect("revalidated cache must load");
@@ -939,13 +976,12 @@ mod tests {
         fs::create_dir(&directory).expect("temporary asset cache must be created");
         fs::write(directory.join("geosite.dat"), geosite_list())
             .expect("cached geosite must be written");
-        let mut config: Config = serde_json::from_str(crate::config::test_config_json())
-            .expect("fixture config must parse");
-        config.assets.geosite = format!("http://{address}/geosite.dat");
-        config.assets.cache_directory = directory.clone();
-        config.assets.request_timeout_seconds = 1;
-        config.routing.global_rules[0].domain = vec!["geosite:test".to_owned()];
-        config.routing.global_rules[0].ip.clear();
+        let config = geo_entry(
+            &format!("http://{address}/geosite.dat"),
+            &directory,
+            "geosite:test",
+            "",
+        );
 
         let snapshot = AssetSnapshot::load(&config)
             .expect("a timed-out response body must fall back to the validated cache");
@@ -982,15 +1018,19 @@ mod tests {
         fs::create_dir(&directory).expect("temporary asset cache must be created");
         fs::write(directory.join("geosite.dat"), geosite_list())
             .expect("cached geosite must be written");
-        let mut config: Config = serde_json::from_str(crate::config::test_config_json())
-            .expect("fixture config must parse");
-        config.assets.geosite = format!("http://{address}/geosite.dat");
-        config.assets.cache_directory = directory.clone();
-        config.assets.max_bytes = u64::try_from(maximum).expect("maximum must fit u64");
-        config.routing.global_rules[0].domain = vec!["geosite:test".to_owned()];
-        config.routing.global_rules[0].ip.clear();
+        let config = geo_entry(
+            &format!("http://{address}/geosite.dat"),
+            &directory,
+            "geosite:test",
+            "",
+        );
+        let fetcher = AssetFetcher::new(&config);
 
-        let error = match AssetSnapshot::load(&config) {
+        let error = match fetcher.fetch(
+            "geosite.dat",
+            &format!("http://{address}/geosite.dat"),
+            maximum,
+        ) {
             Ok(_) => panic!("an oversized body must fail instead of using cached assets"),
             Err(error) => error,
         };
@@ -1036,15 +1076,19 @@ mod tests {
         fs::create_dir(&directory).expect("temporary asset cache must be created");
         fs::write(directory.join("geosite.dat"), geosite_list())
             .expect("cached geosite must be written");
-        let mut config: Config = serde_json::from_str(crate::config::test_config_json())
-            .expect("fixture config must parse");
-        config.assets.geosite = format!("http://{address}/geosite.dat");
-        config.assets.cache_directory = directory.clone();
-        config.assets.max_bytes = u64::try_from(maximum).expect("maximum must fit u64");
-        config.routing.global_rules[0].domain = vec!["geosite:test".to_owned()];
-        config.routing.global_rules[0].ip.clear();
+        let config = geo_entry(
+            &format!("http://{address}/geosite.dat"),
+            &directory,
+            "geosite:test",
+            "",
+        );
+        let fetcher = AssetFetcher::new(&config);
 
-        let error = match AssetSnapshot::load(&config) {
+        let error = match fetcher.fetch(
+            "geosite.dat",
+            &format!("http://{address}/geosite.dat"),
+            maximum,
+        ) {
             Ok(_) => panic!("a maximum-plus-one body must fail instead of using cached assets"),
             Err(error) => error,
         };
@@ -1064,27 +1108,9 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_pointer_width = "64")]
-    fn unsupported_maximum_does_not_fall_back_to_validated_cache() {
-        let (address, server) = one_response_server("200 OK");
-        let (config, directory) = remote_geosite_fixture(address, "unsupported-maximum", u64::MAX);
-        fs::write(directory.join("geosite.dat"), geosite_list())
-            .expect("cached geosite must be written");
-
-        let error = match AssetSnapshot::load(&config) {
-            Ok(_) => panic!("an unsupported maximum must fail instead of using cached assets"),
-            Err(error) => error,
-        };
-        assert!(matches!(error, AssetLoadError::SizeLimitUnsupported));
-
-        server.join().expect("asset test server must complete");
-        fs::remove_dir_all(directory).expect("temporary asset cache must be removed");
-    }
-
-    #[test]
     fn http_error_falls_back_to_validated_cache() {
         let (address, server) = one_response_server("503 Service Unavailable");
-        let (config, directory) = remote_geosite_fixture(address, "status-cache", 1024);
+        let (config, directory) = remote_geosite_fixture(address, "status-cache");
         fs::write(directory.join("geosite.dat"), geosite_list())
             .expect("cached geosite must be written");
 
@@ -1099,35 +1125,10 @@ mod tests {
     #[test]
     fn http_error_with_missing_cache_preserves_download_failure() {
         let (address, server) = one_response_server("503 Service Unavailable");
-        let (config, directory) = remote_geosite_fixture(address, "status-missing-cache", 1024);
+        let (config, directory) = remote_geosite_fixture(address, "status-missing-cache");
 
         let error = match AssetSnapshot::load(&config) {
             Ok(_) => panic!("an HTTP error without cache must fail"),
-            Err(error) => error,
-        };
-        assert!(matches!(
-            error,
-            AssetLoadError::Download(AssetDownloadFailure::HttpStatus(503))
-        ));
-
-        server.join().expect("asset test server must complete");
-        fs::remove_dir_all(directory).expect("temporary asset cache must be removed");
-    }
-
-    #[test]
-    fn http_error_with_oversized_cache_preserves_download_failure() {
-        let maximum = 1024_u64;
-        let (address, server) = one_response_server("503 Service Unavailable");
-        let (config, directory) =
-            remote_geosite_fixture(address, "status-oversized-cache", maximum);
-        fs::write(
-            directory.join("geosite.dat"),
-            vec![0_u8; usize::try_from(maximum).expect("maximum must fit usize") + 1],
-        )
-        .expect("oversized cached geosite must be written");
-
-        let error = match AssetSnapshot::load(&config) {
-            Ok(_) => panic!("an HTTP error with oversized cache must fail"),
             Err(error) => error,
         };
         assert!(matches!(
@@ -1144,11 +1145,12 @@ mod tests {
     fn loads_live_community_geoip_and_geosite_release() {
         let suffix = format!("{}-live", std::process::id());
         let directory = std::env::temp_dir().join(format!("rust-reality-assets-{suffix}"));
-        let mut config: Config = serde_json::from_str(crate::config::test_config_json())
-            .expect("fixture config must parse");
-        config.assets.cache_directory = directory.clone();
-        config.routing.global_rules[0].domain = vec!["geosite:cn".to_owned()];
-        config.routing.global_rules[0].ip = vec!["geoip:private".to_owned()];
+        let config = geo_entry(
+            crate::config::node::assets::DEFAULT_GEOSITE_URL,
+            &directory,
+            "geosite:cn",
+            "geoip:private",
+        );
 
         let snapshot = AssetSnapshot::load(&config).expect("community assets must load");
 
@@ -1196,24 +1198,22 @@ mod tests {
     fn remote_geosite_fixture(
         address: SocketAddr,
         suffix: &str,
-        maximum: u64,
-    ) -> (Config, std::path::PathBuf) {
+    ) -> (EntryConfig, std::path::PathBuf) {
         let directory = std::env::temp_dir().join(format!(
             "rust-reality-assets-{}-{suffix}",
             std::process::id()
         ));
         fs::create_dir(&directory).expect("temporary asset cache must be created");
-        let mut config: Config = serde_json::from_str(crate::config::test_config_json())
-            .expect("fixture config must parse");
-        config.assets.geosite = format!("http://{address}/geosite.dat");
-        config.assets.cache_directory = directory.clone();
-        config.assets.max_bytes = maximum;
-        config.routing.global_rules[0].domain = vec!["geosite:test".to_owned()];
-        config.routing.global_rules[0].ip.clear();
+        let config = geo_entry(
+            &format!("http://{address}/geosite.dat"),
+            &directory,
+            "geosite:test",
+            "",
+        );
         (config, directory)
     }
 
-    fn fixture() -> (Config, std::path::PathBuf) {
+    fn fixture() -> (EntryConfig, std::path::PathBuf) {
         let suffix = format!("{}-{:?}", std::process::id(), std::thread::current().id());
         let directory = std::env::temp_dir().join(format!("rust-reality-assets-{suffix}"));
         fs::create_dir(&directory).expect("temporary asset cache must be created");
@@ -1221,14 +1221,14 @@ mod tests {
             .expect("temporary geoip must be written");
         fs::write(directory.join("geosite.dat"), geosite_list())
             .expect("temporary geosite must be written");
-        let mut config: Config = serde_json::from_str(crate::config::test_config_json())
-            .expect("fixture config must parse");
-        config.assets.geoip = "invalid://cached/geoip.dat".to_owned();
-        config.assets.geosite = "invalid://cached/geosite.dat".to_owned();
-        config.assets.cache_directory = directory.clone();
-        config.assets.request_timeout_seconds = 1;
-        config.routing.global_rules[0].domain = vec!["geosite:test".to_owned()];
-        config.routing.global_rules[0].ip = vec!["geoip:private".to_owned()];
+        // Unreachable sources, so the loader has to fall back to the
+        // validated cache written above.
+        let config = geo_entry(
+            "https://cached.invalid/geosite.dat",
+            &directory,
+            "geosite:test",
+            "geoip:private",
+        );
         (config, directory)
     }
 

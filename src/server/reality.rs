@@ -7,7 +7,6 @@ use std::{
 };
 
 use crate::{
-    config::{NetworkConfig, ResourceGovernorConfig, VlessInboundConfig, WarmConnectionPolicy},
     network::NetworkEnvironment,
     protocol::{
         reality::{
@@ -34,6 +33,8 @@ use super::{
     fallback::{CoverConnection, FallbackError, FallbackStats, RealityFallback},
     warm_pool::{WarmPoolAuthority, WarmPoolSnapshot},
 };
+use crate::config::node::{entry::EntryConfig, network::NetworkConfig};
+use crate::runtime::policy::{ResourceGovernorPolicy, WarmConnectionPolicy};
 
 /// Validated runtime state could not be built for one REALITY listener.
 #[derive(Debug)]
@@ -240,9 +241,9 @@ impl RealityAcceptor {
     /// immutable runtime generations.
     #[cfg(test)]
     pub(crate) fn from_inbound_with_replay(
-        inbound: &VlessInboundConfig,
+        inbound: &EntryConfig,
         governor: ResourceGovernor,
-        policy: &ResourceGovernorConfig,
+        policy: &ResourceGovernorPolicy,
         replay: ReplayCache,
         relay: crate::transport::TcpRelay,
         network: &NetworkConfig,
@@ -266,9 +267,9 @@ impl RealityAcceptor {
         reason = "extends the existing listener constructor with one pool generation"
     )]
     pub(crate) fn from_inbound_with_warm_pool(
-        inbound: &VlessInboundConfig,
+        inbound: &EntryConfig,
         governor: ResourceGovernor,
-        policy: &ResourceGovernorConfig,
+        policy: &ResourceGovernorPolicy,
         replay: ReplayCache,
         relay: crate::transport::TcpRelay,
         network: &NetworkConfig,
@@ -294,28 +295,27 @@ impl RealityAcceptor {
         reason = "one immutable listener generation requires these existing authorities"
     )]
     fn build(
-        inbound: &VlessInboundConfig,
+        inbound: &EntryConfig,
         governor: ResourceGovernor,
-        policy: &ResourceGovernorConfig,
+        policy: &ResourceGovernorPolicy,
         replay: ReplayCache,
         relay: crate::transport::TcpRelay,
         network: &NetworkConfig,
         network_environment: NetworkEnvironment,
         warm: Option<(u64, WarmPoolAuthority, &WarmConnectionPolicy)>,
     ) -> Result<Self, RealityAcceptorConfigError> {
-        let reality = &inbound.stream_settings.reality_settings;
-        let authenticator = RealityAuthenticator::from_inbound(inbound)
+        let reality = &inbound.reality;
+        let cover_optimization = reality.cover_optimization.unwrap_or_default();
+        let authenticator = RealityAuthenticator::from_entry(inbound)
             .map_err(RealityAcceptorConfigError::Authentication)?;
         let identity = CertificateIdentity::generate()
             .map(Arc::new)
             .map_err(RealityAcceptorConfigError::Certificate)?;
         let generation = warm.as_ref().map(|(generation, _, _)| *generation);
         let fallback = match warm {
-            Some((generation, authority, warm_policy))
-                if reality.cover_optimization.enabled && reality.cover_optimization.warm_tcp =>
-            {
+            Some((generation, authority, warm_policy)) if cover_optimization.warm_tcp() => {
                 RealityFallback::with_warm_pool(
-                    reality.target.as_str(),
+                    reality.cover.as_str(),
                     governor.clone(),
                     policy,
                     relay,
@@ -327,7 +327,7 @@ impl RealityAcceptor {
                 )
             }
             _ => RealityFallback::with_environment(
-                reality.target.as_str(),
+                reality.cover.as_str(),
                 governor.clone(),
                 policy,
                 relay,
@@ -337,9 +337,7 @@ impl RealityAcceptor {
         };
         let target_hello_timeout = Duration::from_millis(policy.connect_timeout_ms);
         let profiles = generation
-            .filter(|_| {
-                reality.cover_optimization.enabled && reality.cover_optimization.prebuilt_profiles
-            })
+            .filter(|_| cover_optimization.enabled() && cover_optimization.prebuilt_profiles())
             .map(|generation| {
                 CoverProfiles::new(
                     generation,
@@ -354,7 +352,7 @@ impl RealityAcceptor {
             identity,
             fallback,
             governor,
-            inbound_tag: Arc::from(inbound.tag.as_str()),
+            inbound_tag: Arc::from("entry"),
             client_hello_timeout: Duration::from_millis(policy.client_hello_timeout_ms),
             handshake_timeout: Duration::from_millis(policy.handshake_timeout_ms),
             target_hello_timeout,
@@ -668,6 +666,7 @@ fn unix_seconds() -> Result<u64, RealityAcceptError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::runtime::policy::{ResourceGovernorPolicy, WarmConnectionPolicy};
     use std::{
         io,
         net::{Ipv4Addr, SocketAddr},
@@ -682,7 +681,7 @@ mod tests {
 
     use super::{RealityAcceptError, RealityAcceptOutcome, RealityAcceptor};
     use crate::{
-        config::{Config, WarmConnectionPolicy, test_config_json},
+        config::node::fixture,
         protocol::reality::{ReplayCache, SESSION_ID_LEN, client_hello_fixtures},
         runtime::{PressureGauge, ResourceGovernor},
         server::{fallback::FallbackError, warm_pool::WarmPoolAuthority},
@@ -696,18 +695,14 @@ mod tests {
         let cover_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("cover listener must bind");
-        let mut config: Config =
-            serde_json::from_str(test_config_json()).expect("test config must parse");
-        config.inbounds[0]
-            .as_vless_mut()
-            .expect("fixture must contain VLESS")
-            .stream_settings
-            .reality_settings
-            .target = cover_listener
+        let cover = cover_listener
             .local_addr()
             .expect("cover address must exist")
             .to_string();
-        let policy = config.advanced.limits.resource_governor.clone();
+        let validated = fixture::validated(&fixture::entry_with_cover(&cover));
+        let node = validated.into_node();
+        let entry = node.as_entry().expect("the fixture is an entry node");
+        let policy = ResourceGovernorPolicy::default();
         let warm_policy = WarmConnectionPolicy {
             min_ready: 1,
             max_ready: 2,
@@ -721,9 +716,7 @@ mod tests {
         let replay = ReplayCache::new(governor.clone(), &policy);
         let fd_budget = FdBudget::new(64);
         let acceptor = RealityAcceptor::from_inbound_with_warm_pool(
-            config.inbounds[0]
-                .as_vless()
-                .expect("fixture must contain VLESS"),
+            entry,
             governor,
             &policy,
             replay,
@@ -732,7 +725,7 @@ mod tests {
                 fd_budget,
             )
             .expect("test relay must build"),
-            &config.network,
+            &entry.network.unwrap_or_default(),
             crate::network::NetworkEnvironment::detect(),
             17,
             WarmPoolAuthority::new(&warm_policy, 1, PressureGauge::new()),
@@ -821,24 +814,18 @@ mod tests {
         let cover_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("cover listener must bind");
-        let mut config: Config =
-            serde_json::from_str(test_config_json()).expect("test config must parse");
-        config.inbounds[0]
-            .as_vless_mut()
-            .expect("fixture must contain VLESS")
-            .stream_settings
-            .reality_settings
-            .target = cover_listener
+        let cover = cover_listener
             .local_addr()
             .expect("cover address must exist")
             .to_string();
-        let policy = config.advanced.limits.resource_governor.clone();
+        let validated = fixture::validated(&fixture::entry_with_cover(&cover));
+        let node = validated.into_node();
+        let entry = node.as_entry().expect("the fixture is an entry node");
+        let policy = ResourceGovernorPolicy::default();
         let governor = ResourceGovernor::new(&policy);
         let replay = ReplayCache::new(governor.clone(), &policy);
         let acceptor = RealityAcceptor::from_inbound_with_replay(
-            config.inbounds[0]
-                .as_vless()
-                .expect("fixture must contain VLESS"),
+            entry,
             governor,
             &policy,
             replay,
@@ -847,7 +834,7 @@ mod tests {
                 crate::transport::FdBudget::new(4_096),
             )
             .expect("test relay must build"),
-            &config.network,
+            &entry.network.unwrap_or_default(),
             crate::network::NetworkEnvironment::detect(),
         )
         .expect("validated inbound must compile");
@@ -898,21 +885,15 @@ mod tests {
             .local_addr()
             .expect("probe address must exist")
             .to_string();
-        let mut config: Config =
-            serde_json::from_str(test_config_json()).expect("test config must parse");
-        config.inbounds[0]
-            .as_vless_mut()
-            .expect("fixture must contain VLESS")
-            .stream_settings
-            .reality_settings
-            .target = refused_target;
-        let policy = config.advanced.limits.resource_governor.clone();
+        let cover = refused_target;
+        let validated = fixture::validated(&fixture::entry_with_cover(&cover));
+        let node = validated.into_node();
+        let entry = node.as_entry().expect("the fixture is an entry node");
+        let policy = ResourceGovernorPolicy::default();
         let governor = ResourceGovernor::new(&policy);
         let replay = ReplayCache::new(governor.clone(), &policy);
         let acceptor = RealityAcceptor::from_inbound_with_replay(
-            config.inbounds[0]
-                .as_vless()
-                .expect("fixture must contain VLESS"),
+            entry,
             governor,
             &policy,
             replay,
@@ -921,7 +902,7 @@ mod tests {
                 crate::transport::FdBudget::new(4_096),
             )
             .expect("test relay must build"),
-            &config.network,
+            &entry.network.unwrap_or_default(),
             crate::network::NetworkEnvironment::detect(),
         )
         .expect("validated inbound must compile");

@@ -19,7 +19,7 @@ use tokio::{
 use zeroize::Zeroizing;
 
 use crate::{
-    config::{NetworkConfig, NxrInboundConfig, ResourceGovernorConfig},
+    config::node::landing::NxrLandingConfig,
     network::NetworkEnvironment,
     protocol::{
         nxr::{
@@ -41,6 +41,8 @@ use super::{
     connector::{DestinationConnectError, DestinationConnector},
     pre_auth::{PreAuthError, PreAuthGeneration, begin_authentication},
 };
+use crate::config::node::network::NetworkConfig;
+use crate::runtime::policy::ResourceGovernorPolicy;
 
 const REPLAY_SHARDS: usize = 16;
 
@@ -65,18 +67,36 @@ struct NxrReplayCacheInner {
     retention: Duration,
 }
 
+/// Retained verified nonces per landing listener.
+///
+/// Derived rather than configured: the bound exists to cap memory, and a
+/// landing has no information an operator could add to it.
+pub(super) const REPLAY_NONCE_CAPACITY: u32 = 65_536;
+
+/// How long a verified nonce is retained, from the accepted clock skew.
+///
+/// A nonce must outlive the window in which a replayed request could still be
+/// accepted, which is the skew in both directions plus a second of margin.
+pub(super) const fn replay_retention_seconds(max_time_difference_seconds: u64) -> u64 {
+    max_time_difference_seconds
+        .saturating_mul(2)
+        .saturating_add(1)
+}
+
 impl NxrReplayCache {
     /// Compiles the bounded replay policy for one validated NXR listener.
     ///
     /// # Errors
     ///
     /// Rejects an unrepresentable capacity or unavailable replay policy.
-    pub fn from_inbound(inbound: &NxrInboundConfig) -> Result<Self, NxrLandingConfigError> {
-        let capacity = usize::try_from(inbound.settings.max_nonce_entries)
-            .map_err(|_| NxrLandingConfigError::Capacity)?;
+    pub fn from_landing(inbound: &NxrLandingConfig) -> Result<Self, NxrLandingConfigError> {
+        let capacity =
+            usize::try_from(REPLAY_NONCE_CAPACITY).map_err(|_| NxrLandingConfigError::Capacity)?;
         Self::new(
             capacity,
-            Duration::from_secs(inbound.settings.nonce_retention_seconds),
+            Duration::from_secs(replay_retention_seconds(
+                inbound.timing().max_time_difference_seconds,
+            )),
         )
         .map_err(NxrLandingConfigError::Replay)
     }
@@ -310,8 +330,8 @@ impl NxrLandingHandler {
         clippy::too_many_arguments,
         reason = "one parameter per immutable landing policy and process authority"
     )]
-    pub(crate) fn from_inbound_with_replay(
-        inbound: &NxrInboundConfig,
+    pub(crate) fn from_landing_with_replay(
+        inbound: &NxrLandingConfig,
         replay: NxrReplayCache,
         relay: TcpRelay,
         liveness: Duration,
@@ -323,7 +343,7 @@ impl NxrLandingHandler {
     ) -> Result<Self, NxrLandingConfigError> {
         let decoded = Zeroizing::new(
             BASE64_URL_SAFE_NO_PAD
-                .decode(inbound.settings.pre_shared_key.expose())
+                .decode(inbound.psk.expose())
                 .map_err(|_| NxrLandingConfigError::Key)?,
         );
         let key: [u8; 32] = decoded
@@ -334,21 +354,21 @@ impl NxrLandingHandler {
             NxrAuthenticator::new(
                 NxrKey::new(key),
                 replay,
-                inbound.settings.max_time_difference_seconds,
+                inbound.timing().max_time_difference_seconds,
             ),
-            Duration::from_millis(inbound.settings.connect_timeout_ms),
-            Duration::from_millis(inbound.settings.authentication_timeout_ms),
+            Duration::from_millis(inbound.timing().connect_timeout_ms),
+            Duration::from_millis(inbound.timing().authentication_timeout_ms),
             relay,
             liveness,
         );
         handler.pre_auth_idle_timeout =
-            Duration::from_millis(inbound.settings.pre_auth_idle_timeout_ms);
+            Duration::from_millis(inbound.timing().pre_auth_idle_timeout_ms);
         handler.governor = governor;
         handler.pressure = pressure;
         handler.generation = generation;
         handler.connector = DestinationConnector::with_environment(
-            Duration::from_millis(inbound.settings.connect_timeout_ms),
-            network.clone(),
+            Duration::from_millis(inbound.timing().connect_timeout_ms),
+            *network,
             network_environment,
         );
         Ok(handler)
@@ -363,7 +383,7 @@ impl NxrLandingHandler {
         relay: TcpRelay,
         liveness: Duration,
     ) -> Self {
-        let governor = ResourceGovernor::new(&ResourceGovernorConfig::default());
+        let governor = ResourceGovernor::new(&ResourceGovernorPolicy::default());
         Self {
             authenticator,
             connector: DestinationConnector::new(connect_timeout),

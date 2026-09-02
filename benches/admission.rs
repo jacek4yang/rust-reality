@@ -4,7 +4,7 @@ use std::{
 };
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use rust_reality::{config::DirectBarrierConfig, runtime::DirectBarrier};
+use rust_reality::runtime::{DirectBarrier, policy::DirectBarrierPolicy};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 const CONTENDED_WORKERS: usize = 4;
@@ -84,7 +84,7 @@ fn contended_batch<B: BenchBarrier>(
 }
 
 fn barrier() -> DirectBarrier {
-    DirectBarrier::new(&DirectBarrierConfig {
+    DirectBarrier::new(&DirectBarrierPolicy {
         max_concurrent: u32::MAX,
         max_per_second: u32::MAX,
     })

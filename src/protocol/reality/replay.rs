@@ -14,10 +14,8 @@ use std::{
 use sha2::{Digest, Sha256};
 
 use super::ClientHello;
-use crate::{
-    config::ResourceGovernorConfig,
-    runtime::{AdmissionKind, AdmissionPermit, ResourceGovernor},
-};
+use crate::runtime::policy::ResourceGovernorPolicy;
+use crate::runtime::{AdmissionKind, AdmissionPermit, ResourceGovernor};
 
 const REPLAY_SHARDS: usize = 16;
 
@@ -132,7 +130,7 @@ pub struct ReplayCache {
 impl ReplayCache {
     /// Creates a cache sharing the process-wide resource governor.
     #[must_use]
-    pub fn new(governor: ResourceGovernor, config: &ResourceGovernorConfig) -> Self {
+    pub fn new(governor: ResourceGovernor, config: &ResourceGovernorPolicy) -> Self {
         let shards = (0..REPLAY_SHARDS)
             .map(|_| Mutex::new(ReplayShard::default()))
             .collect();
@@ -439,7 +437,7 @@ mod tests {
     };
 
     use super::{ReplayCache, ReplayError, ReplayKey};
-    use crate::{config::ResourceGovernorConfig, runtime::ResourceGovernor};
+    use crate::runtime::{ResourceGovernor, policy::ResourceGovernorPolicy};
 
     #[test]
     fn pending_duplicate_is_rejected_and_drop_rolls_back() {
@@ -610,11 +608,11 @@ mod tests {
     }
 
     fn test_cache(max_entries: u32) -> ReplayCache {
-        let config = ResourceGovernorConfig {
+        let config = ResourceGovernorPolicy {
             max_replay_entries: max_entries,
             handshake_timeout_ms: 100,
             replay_retention_ms: 100,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         ReplayCache::new(ResourceGovernor::new(&config), &config)
     }

@@ -7,7 +7,6 @@ use tokio::{
 };
 
 use crate::{
-    config::{NetworkConfig, ResourceGovernorConfig, WarmConnectionPolicy},
     network::NetworkEnvironment,
     protocol::reality::{
         ClientHello,
@@ -22,6 +21,8 @@ use crate::{
 };
 
 use super::warm_pool::{AdaptiveTcpPool, WarmPoolAuthority, WarmPoolSnapshot, WarmUsePermit};
+use crate::config::node::network::NetworkConfig;
+use crate::runtime::policy::{ResourceGovernorPolicy, WarmConnectionPolicy};
 
 const MAX_WARM_CHECKOUT_ATTEMPTS: usize = 2;
 
@@ -122,7 +123,7 @@ impl RealityFallback {
     pub fn new(
         target: impl Into<Arc<str>>,
         governor: ResourceGovernor,
-        config: &ResourceGovernorConfig,
+        config: &ResourceGovernorPolicy,
         relay: TcpRelay,
     ) -> Self {
         Self::with_environment(
@@ -140,7 +141,7 @@ impl RealityFallback {
     pub fn with_environment(
         target: impl Into<Arc<str>>,
         governor: ResourceGovernor,
-        config: &ResourceGovernorConfig,
+        config: &ResourceGovernorPolicy,
         relay: TcpRelay,
         network: &NetworkConfig,
         environment: NetworkEnvironment,
@@ -165,7 +166,7 @@ impl RealityFallback {
     pub(crate) fn with_warm_pool(
         target: impl Into<Arc<str>>,
         governor: ResourceGovernor,
-        config: &ResourceGovernorConfig,
+        config: &ResourceGovernorPolicy,
         relay: TcpRelay,
         network: &NetworkConfig,
         environment: NetworkEnvironment,
@@ -187,7 +188,7 @@ impl RealityFallback {
     fn build(
         target: Arc<str>,
         governor: ResourceGovernor,
-        config: &ResourceGovernorConfig,
+        config: &ResourceGovernorPolicy,
         relay: TcpRelay,
         network: &NetworkConfig,
         environment: NetworkEnvironment,
@@ -195,7 +196,7 @@ impl RealityFallback {
     ) -> Self {
         let connector = super::connector::DestinationConnector::with_environment(
             Duration::from_millis(config.connect_timeout_ms),
-            network.clone(),
+            *network,
             environment,
         );
         let warm_pool = warm.map(|(generation, authority, policy)| {
@@ -530,6 +531,8 @@ impl fmt::Debug for RealityFallback {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::node::network::NetworkConfig;
+    use crate::runtime::policy::{ResourceGovernorPolicy, WarmConnectionPolicy};
     use std::{io, net::Ipv4Addr, time::Duration};
 
     use tokio::{
@@ -540,7 +543,6 @@ mod tests {
 
     use super::{FallbackError, RealityFallback};
     use crate::{
-        config::{NetworkConfig, ResourceGovernorConfig, WarmConnectionPolicy},
         network::NetworkEnvironment,
         protocol::reality::{ClientHello, SESSION_ID_LEN, X25519_GROUP, client_hello_fixtures},
         runtime::{PressureGauge, ResourceGovernor, ResourcePressure},
@@ -552,7 +554,7 @@ mod tests {
     const SUFFIX: &[u8] = b"bytes-read-after-fallback-connect";
     const RESPONSE: &[u8] = b"cover-response";
 
-    fn test_fallback(target: String, config: &ResourceGovernorConfig) -> RealityFallback {
+    fn test_fallback(target: String, config: &ResourceGovernorPolicy) -> RealityFallback {
         let relay = TcpRelay::new(TcpRelayConfig::for_test(), FdBudget::new(4_096))
             .expect("test relay must build");
         RealityFallback::new(target, ResourceGovernor::new(config), config, relay)
@@ -567,7 +569,7 @@ mod tests {
             .local_addr()
             .expect("cover address must exist")
             .to_string();
-        let resource = ResourceGovernorConfig::default();
+        let resource = ResourceGovernorPolicy::default();
         let warm = WarmConnectionPolicy {
             min_ready: 1,
             max_ready: 2,
@@ -647,7 +649,7 @@ mod tests {
             .local_addr()
             .expect("cover address must exist")
             .to_string();
-        let resource = ResourceGovernorConfig::default();
+        let resource = ResourceGovernorPolicy::default();
         let warm = WarmConnectionPolicy {
             min_ready: 1,
             max_ready: 1,
@@ -743,7 +745,7 @@ mod tests {
             .local_addr()
             .expect("cover listener address must exist")
             .to_string();
-        let config = ResourceGovernorConfig::default();
+        let config = ResourceGovernorPolicy::default();
         let fallback = test_fallback(target, &config);
         let (mut client, inbound) = tcp_pair().await;
 
@@ -799,7 +801,7 @@ mod tests {
             .local_addr()
             .expect("cover listener address must exist")
             .to_string();
-        let config = ResourceGovernorConfig::default();
+        let config = ResourceGovernorPolicy::default();
         let fallback = test_fallback(target, &config);
         let client_hello = client_hello();
         let mut target_flight = target_server_hello_record();
@@ -884,7 +886,7 @@ mod tests {
             .local_addr()
             .expect("cover listener address must exist")
             .to_string();
-        let config = ResourceGovernorConfig::default();
+        let config = ResourceGovernorPolicy::default();
         let fallback = test_fallback(target, &config);
         let client_hello = client_hello();
         let mut initial = target_server_hello_record();
@@ -963,7 +965,7 @@ mod tests {
             .local_addr()
             .expect("cover listener address must exist")
             .to_string();
-        let config = ResourceGovernorConfig::default();
+        let config = ResourceGovernorPolicy::default();
         let fallback = test_fallback(target, &config);
         let client_hello = client_hello();
         let target_record = target_server_hello_record();
@@ -1031,10 +1033,10 @@ mod tests {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("cover listener must bind");
-        let mut config = ResourceGovernorConfig {
+        let mut config = ResourceGovernorPolicy {
             max_fallbacks: 1,
             fallback_timeout_ms: 10,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         config.connect_timeout_ms = 100;
         let fallback = test_fallback(
@@ -1063,7 +1065,7 @@ mod tests {
             .local_addr()
             .expect("probe address must exist")
             .to_string();
-        let config = ResourceGovernorConfig::default();
+        let config = ResourceGovernorPolicy::default();
         let fallback = test_fallback(refused_target, &config);
 
         // Two attempts: the second proves the refused first attempt released
@@ -1090,9 +1092,9 @@ mod tests {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("cover listener must bind");
-        let config = ResourceGovernorConfig {
+        let config = ResourceGovernorPolicy {
             max_fallbacks: 0,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let fallback = test_fallback(
             listener

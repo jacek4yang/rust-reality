@@ -25,12 +25,9 @@ use tokio::{
 
 use crate::{
     assets::{AssetLoadError, AssetSnapshot},
-    config::{
-        Config, ConfigError, ConfigLoadError, InboundConfig, ListenMode, RelayPolicy, ResourceMode,
-        RuntimeConfig, RuntimeProfile, TuningMode, load_config, validate_config,
-    },
+    config::{LoadError, NodeConfig, ValidatedConfig, load, node::landing::LandingProtocol},
     logging::{AdmissionResource, BackendStatus, LogEvent, LogWriteError, Logger, RejectionReason},
-    network::{AddressFamily, ConnectionPlanner, NetworkEnvironment},
+    network::{AddressFamily, NetworkEnvironment},
     protocol::{handoff::HandoffReplayCache, reality::ReplayCache},
     runtime::{
         AdmissionDenied, AdmissionKind, AdmissionPermit, DirectBarrier, FdBudgetError,
@@ -39,6 +36,7 @@ use crate::{
         connection::ConnectionTasks,
         machine::{self, MachineReport, MemoryPlan, MemorySampler},
         plan,
+        policy::{EffectivePolicy, RelayPolicy, ResourceMode, resolve_resource_mode},
     },
     transport::{
         BackendDeclineReason, BackendReport, FdBudget, FdPermit, RelayBackend,
@@ -60,6 +58,9 @@ use super::{
     vision::{VisionHandler, VisionSessionError},
     warm_pool::WarmPoolAuthority,
 };
+use crate::config::node::listener::{ListenFamily, ListenerConfig};
+use crate::config::node::runtime::{RuntimeProfile, TuningMode};
+use crate::network::DialTuning;
 
 const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -87,7 +88,7 @@ pub struct ProductionServer {
 #[derive(Clone, Debug)]
 struct ListenerPlan {
     tag: String,
-    mode: ListenMode,
+    mode: ListenFamily,
     addresses: Vec<SocketAddr>,
 }
 
@@ -115,25 +116,24 @@ const fn compile_tcp_relay_config(policy: &RelayPolicy) -> TcpRelayConfig {
 /// The winning candidate retains the same unit as the established outbound.
 /// The number is used only to decide whether to warn about clamping; it never
 /// raises the admission budget.
-fn theoretical_fd_peak(config: &Config) -> u64 {
-    let connections = u64::from(config.advanced.limits.resource_governor.max_connections);
-    let splice = u64::from(config.advanced.limits.relay.max_splice_relays)
+fn theoretical_fd_peak(node: &NodeConfig, policy: &EffectivePolicy) -> u64 {
+    let connections = u64::from(policy.governor.max_connections);
+    let splice = u64::from(policy.relay.max_splice_relays)
         .saturating_mul(u64::from(crate::transport::UNITS_SPLICE_RELAY));
     // A pooled pipe holds its two descriptors past the relay that created it,
     // so the pool's retention is steady-state demand the peak must include.
-    let pool_retention =
-        if config.advanced.limits.relay.splice && config.advanced.limits.relay.pipe_pool {
-            u64::from(config.advanced.limits.relay.max_pooled_pipes)
-                .saturating_mul(u64::from(crate::transport::UNITS_SPLICE_DIRECTION))
-        } else {
-            0
-        };
+    let pool_retention = if policy.relay.splice && policy.relay.pipe_pool {
+        u64::from(policy.relay.max_pooled_pipes)
+            .saturating_mul(u64::from(crate::transport::UNITS_SPLICE_DIRECTION))
+    } else {
+        0
+    };
     // Every eligible transport pool retains at most maxReady established descriptors.
     // A speculative Happy Eyeballs dial can transiently hold two candidates,
     // so account maxConnecting twice. Checked-out sockets replace a normal
     // per-connection cover dial and are already covered by the connection term.
-    let pool_count = u64::try_from(maximum_warm_pool_count(config)).unwrap_or(u64::MAX);
-    let warm = &config.advanced.limits.warm_connections;
+    let pool_count = u64::try_from(maximum_warm_pool_count(node)).unwrap_or(u64::MAX);
+    let warm = &policy.warm_connections;
     let warm_transport = pool_count.saturating_mul(
         u64::from(warm.max_ready).saturating_add(u64::from(warm.max_connecting).saturating_mul(2)),
     );
@@ -144,22 +144,20 @@ fn theoretical_fd_peak(config: &Config) -> u64 {
         .saturating_add(warm_transport)
 }
 
-fn maximum_warm_pool_count(config: &Config) -> usize {
-    let cover = config
-        .inbounds
-        .iter()
-        .filter(|inbound| matches!(inbound, InboundConfig::Vless(_)))
-        .count();
-    let outbound = config
-        .outbounds
-        .iter()
-        .filter(|outbound| match outbound {
-            crate::config::OutboundConfig::Socks5 { settings, .. } => settings.warm_tcp,
-            crate::config::OutboundConfig::Nxr { settings, .. } => settings.warm_tcp,
-            crate::config::OutboundConfig::Handoff { settings, .. } => settings.warm_tcp,
-            crate::config::OutboundConfig::Direct { .. }
-            | crate::config::OutboundConfig::Blackhole { .. } => false,
-        })
+/// The largest number of warm TCP pools one generation can create.
+///
+/// An entry node keeps at most one cover pool; every declared outbound that
+/// pre-establishes connections keeps one more.
+fn maximum_warm_pool_count(node: &NodeConfig) -> usize {
+    let cover = usize::from(node.as_entry().is_some());
+    let declared = match node {
+        NodeConfig::Entry(entry) => entry.outbounds.as_ref(),
+        NodeConfig::Landing(landing) => landing.outbounds.as_ref(),
+    };
+    let outbound = declared
+        .into_iter()
+        .flatten()
+        .filter(|(_, outbound)| outbound.warm_tcp())
         .count();
     cover.saturating_add(outbound)
 }
@@ -196,14 +194,15 @@ struct MemoryWatch {
 /// Tokio runtime exists so the runtime topology and the policy derivation
 /// share one detection.
 fn derive_fd_budget(
-    config: &Config,
+    node: &NodeConfig,
+    policy: &EffectivePolicy,
     resource_mode: ResourceMode,
     mut machine: MachineReport,
 ) -> Result<ResourceStartup, FdBudgetError> {
-    let listeners = config
-        .inbounds
+    let listeners = node
+        .listeners()
         .iter()
-        .map(|inbound| listener_addresses(inbound).len())
+        .map(|listener| listener.bind_addresses().len())
         .try_fold(0_u64, |total, count| {
             u64::try_from(count)
                 .ok()
@@ -250,7 +249,7 @@ fn derive_fd_budget(
         effective_soft,
         effective_hard,
         reserve,
-        theoretical_fd_peak(config),
+        theoretical_fd_peak(node, policy),
         headroom_policy,
     )?;
     let budget = FdBudget::new(plan.effective_budget());
@@ -285,17 +284,16 @@ fn derive_fd_budget(
 /// outcome budgets against the measured view, and `derivation_active` (a
 /// `startup`/`adaptive` tuning mode) derives the numeric policy from the
 /// measured view.
-fn resolve_startup_resource_mode(
-    runtime: &RuntimeConfig,
-    derivation_active: bool,
-) -> (ResourceMode, MachineReport) {
-    let detect = derivation_active || runtime.profile != RuntimeProfile::Shared;
+fn resolve_startup_resource_mode(profile: RuntimeProfile) -> (ResourceMode, MachineReport) {
+    // Derivation always runs, so the measured view is always needed.
+    let detect = true;
+    let _ = profile == RuntimeProfile::Shared;
     let machine = if detect {
         MachineReport::detect()
     } else {
         MachineReport::conservative()
     };
-    (runtime.resolve_resource_mode(&machine), machine)
+    (resolve_resource_mode(profile, &machine), machine)
 }
 
 /// Reads the process descriptor limit, falling back to a conservative default.
@@ -324,9 +322,7 @@ impl ProductionServer {
     /// # Errors
     ///
     /// Returns a validation, logger, asset, routing, REALITY, or listener error.
-    pub fn from_config(config: &Config) -> Result<Self, ProductionServerError> {
-        let config = config.clone();
-        validate_config(&config).map_err(RuntimeUpdateError::Invalid)?;
+    pub fn from_config(config: ValidatedConfig) -> Result<Self, ProductionServerError> {
         Self::compile(config, None, None)
     }
 
@@ -338,7 +334,7 @@ impl ProductionServer {
     /// Returns a load, validation, logger, asset, routing, REALITY, or listener error.
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self, ProductionServerError> {
         let path = path.as_ref().to_path_buf();
-        let config = load_config(&path).map_err(RuntimeUpdateError::Load)?;
+        let config = load(&path).map_err(RuntimeUpdateError::Load)?;
         Self::compile(config, Some(path), None)
     }
 
@@ -354,7 +350,7 @@ impl ProductionServer {
     ///
     /// Returns a validation, logger, asset, routing, REALITY, or listener error.
     pub fn from_loaded(
-        config: Config,
+        config: ValidatedConfig,
         config_path: Option<PathBuf>,
         machine: MachineReport,
     ) -> Result<Self, ProductionServerError> {
@@ -362,7 +358,7 @@ impl ProductionServer {
     }
 
     fn compile(
-        config: Config,
+        config: ValidatedConfig,
         config_path: Option<PathBuf>,
         machine: Option<MachineReport>,
     ) -> Result<Self, ProductionServerError> {
@@ -371,75 +367,63 @@ impl ProductionServer {
         // one detection. A caller-supplied report is used verbatim; otherwise
         // detection happens here, skipped only when nothing can consume the
         // view (a shared posture with fixed tuning).
-        let derivation_active = config.runtime.tuning.mode() != TuningMode::Fixed;
+        let node = config.into_node();
+        let runtime = node.runtime();
         let (resource_mode, machine) = match machine {
-            Some(machine) => (config.runtime.resolve_resource_mode(&machine), machine),
-            None => resolve_startup_resource_mode(&config.runtime, derivation_active),
+            Some(machine) => (resolve_resource_mode(runtime.profile(), &machine), machine),
+            None => resolve_startup_resource_mode(runtime.profile()),
         };
-        // The tuning mode decides where the numeric policy comes from:
-        // `fixed` keeps the configured limits verbatim (v1.5 behavior), the
-        // derived modes merge the passive startup derivation under the
-        // operator pins. The effective policy is what every pool, barrier,
-        // and reload comparison below sees, and the derived output is
-        // validated exactly like autotune output.
-        let mut config = config;
-        if derivation_active {
-            config.advanced.limits = plan::resolve_policy(
-                &config.advanced.limits,
-                &config.advanced.overrides,
-                &config.runtime.tuning,
-                &machine,
-                resource_mode,
-                config.inbounds.len(),
-            )
-            .policy;
-            validate_config(&config).map_err(RuntimeUpdateError::Invalid)?;
-        }
+        // The effective policy is derived here and stays a value of its own.
+        // It is never written back into the configuration: the operator's
+        // input and what this process decided are different things, and every
+        // pool, barrier, and reload comparison below reads the policy.
+        let policy = plan::resolve_policy(
+            &runtime.limits(),
+            runtime.objective(),
+            &machine,
+            resource_mode,
+            node.listeners().len(),
+        )
+        .policy;
         let topology = plan::RuntimeTopology::for_mode(resource_mode, machine.effective_cpus());
         let pressure = PressureGauge::new();
         // Process-lifetime authorities: reload generations swap routing and
         // protocol snapshots only — admission ceilings and the direct-dial
         // barrier must never multiply while old sessions hold old permits.
         let authorities = ProcessAuthorities {
-            governor: ResourceGovernor::with_pressure(
-                &config.advanced.limits.resource_governor,
-                pressure.clone(),
-            ),
-            direct_barrier: DirectBarrier::with_pressure(
-                &config.advanced.limits.direct_barrier,
-                pressure.clone(),
-            ),
+            governor: ResourceGovernor::with_pressure(&policy.governor, pressure.clone()),
+            direct_barrier: DirectBarrier::with_pressure(&policy.direct_barrier, pressure.clone()),
             warm_pools: WarmPoolAuthority::new(
-                &config.advanced.limits.warm_connections,
-                maximum_warm_pool_count(&config),
+                &policy.warm_connections,
+                maximum_warm_pool_count(&node),
                 pressure.clone(),
             ),
-            network_environment: NetworkEnvironment::from_config(&config.network.dial),
+            network_environment: NetworkEnvironment::from_config(&DialTuning::for_policy(
+                node.network().ip(),
+            )),
         };
         // Process-lifetime shared resolver: the configured DNS backend and the
         // admission governor apply to every connector-side lookup. First-wins
         // keeps reload generations on the one installed resolver.
         let _ = super::dns::install_shared(
-            DnsResolver::from_config(&config.dns, authorities.governor.clone())
+            DnsResolver::from_config(&node.dns(), authorities.governor.clone())
                 .map_err(ProductionServerError::Dns)?,
         );
-        let replay = ReplayCache::new(
-            authorities.governor.clone(),
-            &config.advanced.limits.resource_governor,
-        );
+        let replay = ReplayCache::new(authorities.governor.clone(), &policy.governor);
         let listener_replays = ListenerReplays {
-            nxr: compile_nxr_replays(&config)?,
-            handoff: compile_handoff_replays(&config)?,
+            nxr: compile_nxr_replays(&node)?,
+            handoff: compile_handoff_replays(&node)?,
         };
-        let startup = derive_fd_budget(&config, resource_mode, machine)
+        let startup = derive_fd_budget(&node, &policy, resource_mode, machine)
             .map_err(ProductionServerError::DescriptorBudget)?;
         let tcp_relay = TcpRelay::new(
-            compile_tcp_relay_config(&config.advanced.limits.relay),
+            compile_tcp_relay_config(&policy.relay),
             startup.budget.clone(),
         )
         .map_err(RuntimeUpdateError::Relay)?;
         let initial = RuntimeSnapshot::compile(
-            config,
+            node,
+            &policy,
             0,
             replay.clone(),
             &listener_replays,
@@ -448,13 +432,13 @@ impl ProductionServer {
             &authorities,
         )?;
         let listeners = initial
-            .config
-            .inbounds
+            .node
+            .listeners()
             .iter()
-            .map(|inbound| ListenerPlan {
-                tag: inbound.tag().to_owned(),
-                mode: inbound.listen().mode,
-                addresses: listener_addresses(inbound),
+            .map(|listener| ListenerPlan {
+                tag: initial.node.role().as_str().to_owned(),
+                mode: listener.family(),
+                addresses: listener.bind_addresses(),
             })
             .collect();
         emit(&initial.logger, &LogEvent::ServerStarting);
@@ -496,13 +480,13 @@ impl ProductionServer {
             &initial.logger,
             &LogEvent::RuntimePlanReport {
                 resource_mode: resource_mode.as_str(),
-                tuning_mode: initial.config.runtime.tuning.mode().as_str(),
-                objective: initial.config.runtime.tuning.objective.as_str(),
+                tuning_mode: initial.node.runtime().tuning().as_str(),
+                objective: initial.node.runtime().objective().as_str(),
                 worker_threads: topology
                     .worker_threads
                     .unwrap_or(startup.machine.available_cpus),
                 max_blocking_threads: topology.effective_max_blocking_threads(),
-                policy_derived: derivation_active,
+                policy_derived: true,
             },
         );
         emit(
@@ -533,6 +517,7 @@ impl ProductionServer {
             listeners,
             runtime: Arc::new(RuntimeStore {
                 current: ArcSwap::from(Arc::new(initial)),
+                policy,
                 replay,
                 listener_replays,
                 tcp_relay,
@@ -633,7 +618,7 @@ impl ProductionServer {
                         bound.push((acceptor, *address));
                     }
                     Err(source)
-                        if listener.mode == ListenMode::Auto
+                        if listener.mode == ListenFamily::Auto
                             && is_degradable_listener_bind_error(*address, &source) =>
                     {
                         let family = AddressFamily::of(address.ip()).as_str();
@@ -710,7 +695,8 @@ impl ProductionServer {
         // mode; under `fixed` and `startup` nothing adjusts the ceilings and
         // behavior is byte-identical to v1.5.
         let adaptive_task = adaptive_controller(
-            &initial.config,
+            &initial.node,
+            &self.runtime.policy,
             &self.runtime.authorities,
             &self.runtime.pressure,
         )
@@ -723,7 +709,9 @@ impl ProductionServer {
         });
         let network_refresh_task = tokio::spawn(run_network_refresh(
             self.runtime.authorities.network_environment.clone(),
-            Duration::from_secs(initial.config.network.dial.route_refresh_seconds),
+            Duration::from_secs(
+                DialTuning::for_policy(initial.node.network().ip()).route_refresh_seconds,
+            ),
             shutdown_receiver.clone(),
         ));
         drop(initial);
@@ -815,6 +803,7 @@ struct ListenerReplays {
 
 struct RuntimeStore {
     current: ArcSwap<RuntimeSnapshot>,
+    policy: EffectivePolicy,
     replay: ReplayCache,
     listener_replays: ListenerReplays,
     tcp_relay: TcpRelay,
@@ -843,21 +832,29 @@ impl RuntimeStore {
     }
 
     fn reload_interval(&self) -> Duration {
-        Duration::from_secs(self.load().config.assets.reload_interval_seconds)
+        let node = self.load();
+        let interval = node
+            .node
+            .as_entry()
+            .and_then(|entry| entry.assets.as_ref())
+            .map_or(
+                crate::config::node::assets::DEFAULT_RELOAD_INTERVAL_SECONDS,
+                crate::config::node::assets::AssetsConfig::reload_interval_seconds,
+            );
+        Duration::from_secs(interval)
     }
 
     fn reload_path(&self, path: &Path) -> Result<u64, RuntimeUpdateError> {
-        let config = load_config(path)?;
-        self.publish(config)
+        let config = load(path)?;
+        self.publish(config.into_node())
     }
 
     fn refresh(&self) -> Result<u64, RuntimeUpdateError> {
-        let config = self.load().config.clone();
-        self.publish(config)
+        let node = self.load().node.clone();
+        self.publish(node)
     }
 
-    fn publish(&self, config: Config) -> Result<u64, RuntimeUpdateError> {
-        validate_config(&config)?;
+    fn publish(&self, config: NodeConfig) -> Result<u64, RuntimeUpdateError> {
         let _guard = self
             .update
             .lock()
@@ -871,6 +868,7 @@ impl RuntimeStore {
             .ok_or(RuntimeUpdateError::GenerationExhausted)?;
         let candidate = RuntimeSnapshot::compile(
             config,
+            &self.policy,
             generation,
             self.replay.clone(),
             &self.listener_replays,
@@ -899,7 +897,7 @@ impl RuntimeStore {
 
 struct RuntimeSnapshot {
     generation: u64,
-    config: Config,
+    node: NodeConfig,
     connections: HashMap<SocketAddr, Arc<ConnectionRuntime>>,
     logger: Logger,
     pre_auth_generation: PreAuthGeneration,
@@ -907,8 +905,13 @@ struct RuntimeSnapshot {
 }
 
 impl RuntimeSnapshot {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one parameter per process-lifetime authority the snapshot binds"
+    )]
     fn compile(
-        config: Config,
+        config: NodeConfig,
+        policy: &EffectivePolicy,
         generation: u64,
         replay: ReplayCache,
         listener_replays: &ListenerReplays,
@@ -916,125 +919,144 @@ impl RuntimeSnapshot {
         pressure: &PressureGauge,
         authorities: &ProcessAuthorities,
     ) -> Result<Self, RuntimeUpdateError> {
-        let logger = Logger::new(&config.log)?;
+        let logger = Logger::new(&config.log())?;
         let pre_auth_generation = PreAuthGeneration::default();
-        let assets = Arc::new(AssetSnapshot::load_generation(&config, generation)?);
-        let vision = VisionHandler::from_config_with_pressure(
-            &config,
-            assets,
-            tcp_relay.clone(),
-            pressure,
-            authorities.direct_barrier.clone(),
-            authorities.governor.clone(),
-            authorities.network_environment.clone(),
-            generation,
-            authorities.warm_pools.clone(),
-        )?;
-        let outbounds = vision.outbounds().clone();
-        let mut connections = HashMap::new();
-        let listener_count = config
-            .inbounds
-            .iter()
-            .map(|inbound| listener_addresses(inbound).len())
-            .sum();
-        connections
-            .try_reserve(listener_count)
-            .map_err(|_| RuntimeUpdateError::Unavailable)?;
-        for inbound in &config.inbounds {
-            let address = canonical_listener_address(inbound);
-            let handler = match inbound {
-                InboundConfig::Vless(inbound) => ConnectionHandler::Public {
-                    reality: Box::new(RealityAcceptor::from_inbound_with_warm_pool(
-                        inbound,
-                        authorities.governor.clone(),
-                        &config.advanced.limits.resource_governor,
-                        replay.clone(),
-                        tcp_relay.clone(),
-                        &config.network,
-                        authorities.network_environment.clone(),
-                        generation,
-                        authorities.warm_pools.clone(),
-                        &config.advanced.limits.warm_connections,
-                    )?),
-                    vision: vision.clone(),
-                },
-                InboundConfig::Nxr(inbound) => {
-                    let replay = listener_replays
-                        .nxr
-                        .get(&address)
-                        .cloned()
-                        .ok_or(RuntimeUpdateError::MissingNxrReplay(address))?;
-                    ConnectionHandler::Nxr(NxrLandingHandler::from_inbound_with_replay(
-                        inbound,
-                        replay,
-                        tcp_relay.clone(),
-                        Duration::from_millis(
-                            config.advanced.limits.resource_governor.fallback_timeout_ms,
-                        ),
-                        &config.network,
-                        authorities.network_environment.clone(),
-                        authorities.governor.clone(),
-                        pressure.clone(),
-                        pre_auth_generation.clone(),
-                    )?)
-                }
-                InboundConfig::Handoff(inbound) => {
-                    let replay = listener_replays
-                        .handoff
-                        .get(&address)
-                        .cloned()
-                        .ok_or(RuntimeUpdateError::MissingHandoffReplay(address))?;
-                    if !inbound.settings.previous_pre_shared_keys.is_empty()
-                        || !inbound.settings.previous_private_keys.is_empty()
-                    {
-                        // One warning per listener per generation, startup and
-                        // reload alike: an open rotation window voids the
-                        // forward-secrecy bound until the retired keys drop.
-                        emit(
-                            &logger,
-                            &LogEvent::HandoffRotationWindowOpen {
-                                tag: inbound.tag.clone(),
-                                previous_pre_shared_keys: inbound
-                                    .settings
-                                    .previous_pre_shared_keys
-                                    .len(),
-                                previous_private_keys: inbound.settings.previous_private_keys.len(),
-                            },
-                        );
+        let network = config.network();
+
+        // One node, one role, so one handler shared by every bound address.
+        // The role also decides what has to be built at all: only an entry
+        // node compiles routing, and only routing can need geo assets.
+        let (handler, outbounds) = match &config {
+            NodeConfig::Entry(entry) => {
+                let assets = Arc::new(AssetSnapshot::load_generation(entry, generation)?);
+                let vision = VisionHandler::from_config_with_pressure(
+                    entry,
+                    policy,
+                    assets,
+                    tcp_relay.clone(),
+                    pressure,
+                    authorities.direct_barrier.clone(),
+                    authorities.governor.clone(),
+                    authorities.network_environment.clone(),
+                    generation,
+                    authorities.warm_pools.clone(),
+                )?;
+                let outbounds = vision.outbounds().clone();
+                let reality = RealityAcceptor::from_inbound_with_warm_pool(
+                    entry,
+                    authorities.governor.clone(),
+                    &policy.governor,
+                    replay.clone(),
+                    tcp_relay.clone(),
+                    &network,
+                    authorities.network_environment.clone(),
+                    generation,
+                    authorities.warm_pools.clone(),
+                    &policy.warm_connections,
+                )?;
+                (
+                    ConnectionHandler::Public {
+                        reality: Box::new(reality),
+                        vision,
+                    },
+                    outbounds,
+                )
+            }
+            NodeConfig::Landing(landing) => {
+                let outbounds = super::outbound::OutboundRegistry::with_warm_pools(
+                    &landing.outbounds.clone().unwrap_or_default(),
+                    authorities.direct_barrier.clone(),
+                    Duration::from_millis(policy.governor.connect_timeout_ms),
+                    tcp_relay.fd_budget().clone(),
+                    &network,
+                    authorities.network_environment.clone(),
+                    generation,
+                    authorities.warm_pools.clone(),
+                    &policy.warm_connections,
+                );
+                let address = canonical_listener_address(&config);
+                let io_timeout = Duration::from_millis(policy.governor.fallback_timeout_ms);
+                let handler = match &landing.landing {
+                    LandingProtocol::Nxr(settings) => {
+                        let replay = listener_replays
+                            .nxr
+                            .get(&address)
+                            .cloned()
+                            .ok_or(RuntimeUpdateError::MissingNxrReplay(address))?;
+                        ConnectionHandler::Nxr(NxrLandingHandler::from_landing_with_replay(
+                            settings,
+                            replay,
+                            tcp_relay.clone(),
+                            io_timeout,
+                            &network,
+                            authorities.network_environment.clone(),
+                            authorities.governor.clone(),
+                            pressure.clone(),
+                            pre_auth_generation.clone(),
+                        )?)
                     }
-                    ConnectionHandler::Handoff(HandoffLandingHandler::from_inbound_with_replay(
-                        inbound,
-                        replay,
-                        tcp_relay.clone(),
-                        Duration::from_millis(
-                            config.advanced.limits.resource_governor.fallback_timeout_ms,
-                        ),
-                        vision.outbounds(),
-                        &config.network,
-                        authorities.network_environment.clone(),
-                        authorities.governor.clone(),
-                        pressure.clone(),
-                        pre_auth_generation.clone(),
-                    )?)
-                }
-            };
-            let runtime = Arc::new(ConnectionRuntime {
-                tag: Arc::from(inbound.tag()),
-                governor: authorities.governor.clone(),
-                handler,
-            });
-            for bound_address in listener_addresses(inbound) {
-                if connections
-                    .insert(bound_address, Arc::clone(&runtime))
-                    .is_some()
-                {
-                    return Err(RuntimeUpdateError::DuplicateListener(bound_address));
-                }
+                    LandingProtocol::Handoff(settings) => {
+                        let replay = listener_replays
+                            .handoff
+                            .get(&address)
+                            .cloned()
+                            .ok_or(RuntimeUpdateError::MissingHandoffReplay(address))?;
+                        if settings.rotation_window_is_open() {
+                            // One warning per generation, startup and reload
+                            // alike: an open rotation window voids the
+                            // forward-secrecy bound until the retired keys drop.
+                            emit(
+                                &logger,
+                                &LogEvent::HandoffRotationWindowOpen {
+                                    tag: "landing".to_owned(),
+                                    previous_pre_shared_keys: settings.previous_psks().len(),
+                                    previous_private_keys: settings.previous_private_keys().len(),
+                                },
+                            );
+                        }
+                        ConnectionHandler::Handoff(HandoffLandingHandler::from_landing_with_replay(
+                            settings,
+                            Some(landing.egress())
+                                .filter(|egress| *egress != crate::config::node::BUILTIN_DIRECT),
+                            replay,
+                            tcp_relay.clone(),
+                            io_timeout,
+                            &outbounds,
+                            &network,
+                            authorities.network_environment.clone(),
+                            authorities.governor.clone(),
+                            pressure.clone(),
+                            pre_auth_generation.clone(),
+                        )?)
+                    }
+                };
+                (handler, outbounds)
+            }
+        };
+
+        let runtime = Arc::new(ConnectionRuntime {
+            tag: Arc::from(config.role().as_str()),
+            governor: authorities.governor.clone(),
+            handler,
+        });
+        let mut connections = HashMap::new();
+        let bound: Vec<SocketAddr> = config
+            .listeners()
+            .iter()
+            .flat_map(ListenerConfig::bind_addresses)
+            .collect();
+        connections
+            .try_reserve(bound.len())
+            .map_err(|_| RuntimeUpdateError::Unavailable)?;
+        for address in bound {
+            if connections.insert(address, Arc::clone(&runtime)).is_some() {
+                return Err(RuntimeUpdateError::DuplicateListener(address));
             }
         }
+
         Ok(Self {
             generation,
-            config,
+            node: config,
             connections,
             logger,
             pre_auth_generation,
@@ -1149,126 +1171,105 @@ enum ConnectionHandler {
     Handoff(HandoffLandingHandler),
 }
 
-/// Guards one candidate against the cold settings of the running generation
-/// and returns the candidate with its effective policy resolved.
+/// Rejects a reload that would change something only a restart can change.
 ///
-/// The returned config carries the startup-derived numbers under a derived
-/// tuning mode (the resolution is the identity under `fixed`), so the
-/// published generation stores exactly what startup stored and the next
-/// reload compares effective against effective.
+/// The cold set is structural: which sockets exist, how this process dials,
+/// which resolver it installed, and the resource posture the pools were sized
+/// against. Everything else — users, routing, outbounds, log level, assets —
+/// is hot, and a new generation simply replaces the old one.
+///
+/// The effective policy is *not* recompared here. It is derived once at
+/// startup and stored in the store; a reload reuses it rather than deriving
+/// again, so there is nothing for the two to disagree about. That is a direct
+/// consequence of the policy no longer living inside the configuration: when
+/// the two were the same value, a reload had to re-derive and re-compare to
+/// tell an operator edit apart from a machine-view drift.
 fn ensure_hot_compatible(
     current: &RuntimeSnapshot,
-    candidate: Config,
-) -> Result<Config, RuntimeUpdateError> {
-    if listener_topology(&candidate) != listener_topology(&current.config) {
+    candidate: NodeConfig,
+) -> Result<NodeConfig, RuntimeUpdateError> {
+    if listener_topology(&candidate) != listener_topology(&current.node) {
         return Err(RuntimeUpdateError::ListenerTopologyChanged);
     }
-    if candidate.network.dial != current.config.network.dial {
+    if candidate.network() != current.node.network() {
         return Err(RuntimeUpdateError::NetworkDialPolicyChanged);
     }
     // The shared DNS resolver is a process-lifetime first-wins install, so a
     // reload can never swap it; reject DNS drift instead of silently keeping
     // the old resolver.
-    if candidate.dns != current.config.dns {
+    if candidate.dns() != current.node.dns() {
         return Err(RuntimeUpdateError::DnsPolicyChanged);
     }
-    // The runtime posture is cold. The resource mode compares resolved
-    // values; the tuning mode compares strictly, because `fixed`, `startup`,
-    // and `adaptive` now produce different effective policies. Both modes
-    // resolve against one freshly detected machine view, so identical
-    // configs never disagree.
+    // The runtime posture is cold: the descriptor budget, the memory monitor,
+    // and every admission ceiling were sized against it before the first
+    // listener bound. The resource mode compares resolved values against one
+    // freshly detected machine view, so identical configurations never
+    // disagree.
     let machine = MachineReport::detect();
-    if !current
-        .config
-        .runtime
-        .hot_compatible_with(&candidate.runtime, &machine)
-    {
+    let current_runtime = current.node.runtime();
+    let candidate_runtime = candidate.runtime();
+    let posture_matches = resolve_resource_mode(current_runtime.profile(), &machine)
+        == resolve_resource_mode(candidate_runtime.profile(), &machine)
+        && current_runtime.profile() == candidate_runtime.profile()
+        && current_runtime.tuning() == candidate_runtime.tuning()
+        && current_runtime.objective() == candidate_runtime.objective()
+        && current_runtime.status_file == candidate_runtime.status_file
+        && current_runtime.limits() == candidate_runtime.limits();
+    if !posture_matches {
         return Err(RuntimeUpdateError::ResourceModeChanged);
-    }
-    // Compare effective policies, not raw limits: the running generation
-    // carries the startup-derived numbers, so the candidate must pass
-    // through the same derivation — against the same fresh machine view —
-    // before the comparison. In `fixed` mode the resolution is the
-    // identity. A drift that only changes derived inputs (e.g. a changed
-    // cgroup boundary) rejects here, because the pools were sized at
-    // process start and cannot move.
-    let mut candidate = candidate;
-    if candidate.runtime.tuning.mode() != TuningMode::Fixed {
-        candidate.advanced.limits = plan::resolve_policy(
-            &candidate.advanced.limits,
-            &candidate.advanced.overrides,
-            &candidate.runtime.tuning,
-            &machine,
-            candidate.runtime.resolve_resource_mode(&machine),
-            candidate.inbounds.len(),
-        )
-        .policy;
-        validate_config(&candidate)?;
-    }
-    if candidate.advanced.limits.resource_governor
-        != current.config.advanced.limits.resource_governor
-    {
-        return Err(RuntimeUpdateError::ReplayPolicyChanged);
-    }
-    if candidate.advanced.limits.direct_barrier != current.config.advanced.limits.direct_barrier {
-        return Err(RuntimeUpdateError::DirectBarrierPolicyChanged);
-    }
-    if candidate.advanced.limits.warm_connections != current.config.advanced.limits.warm_connections
-    {
-        return Err(RuntimeUpdateError::WarmConnectionPolicyChanged);
-    }
-    if nxr_replay_policy(&candidate) != nxr_replay_policy(&current.config) {
-        return Err(RuntimeUpdateError::NxrReplayPolicyChanged);
-    }
-    if handoff_replay_policy(&candidate) != handoff_replay_policy(&current.config) {
-        return Err(RuntimeUpdateError::HandoffReplayPolicyChanged);
-    }
-    if candidate.advanced.limits.relay != current.config.advanced.limits.relay {
-        return Err(RuntimeUpdateError::RelayPolicyChanged);
     }
     Ok(candidate)
 }
 
+/// What a bound socket speaks, for the reload topology comparison.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ListenerProtocol {
-    Vless,
+enum ListenerRole {
+    /// Public VLESS + REALITY + Vision.
+    Entry,
+    /// Internal NXR.
     Nxr,
+    /// Internal Handoff.
     Handoff,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ListenerTopology {
-    protocol: ListenerProtocol,
-    mode: ListenMode,
+    protocol: ListenerRole,
+    mode: ListenFamily,
 }
 
-fn listener_topology(config: &Config) -> HashMap<SocketAddr, ListenerTopology> {
-    config
-        .inbounds
+fn listener_topology(node: &NodeConfig) -> HashMap<SocketAddr, ListenerTopology> {
+    let protocol = match node {
+        NodeConfig::Entry(_) => ListenerRole::Entry,
+        NodeConfig::Landing(landing) => match landing.landing {
+            LandingProtocol::Nxr(_) => ListenerRole::Nxr,
+            LandingProtocol::Handoff(_) => ListenerRole::Handoff,
+        },
+    };
+    node.listeners()
         .iter()
-        .flat_map(|inbound| {
-            let protocol = match inbound {
-                InboundConfig::Vless(_) => ListenerProtocol::Vless,
-                InboundConfig::Nxr(_) => ListenerProtocol::Nxr,
-                InboundConfig::Handoff(_) => ListenerProtocol::Handoff,
-            };
+        .flat_map(|listener| {
             let topology = ListenerTopology {
                 protocol,
-                mode: inbound.listen().mode,
+                mode: listener.family(),
             };
-            listener_addresses(inbound)
+            listener
+                .bind_addresses()
                 .into_iter()
                 .map(move |address| (address, topology))
         })
         .collect()
 }
 
-fn listener_addresses(inbound: &InboundConfig) -> Vec<SocketAddr> {
-    ConnectionPlanner::listener_addresses(inbound.listen(), inbound.port())
+fn listener_addresses(node: &NodeConfig) -> Vec<SocketAddr> {
+    node.listeners()
+        .iter()
+        .flat_map(ListenerConfig::bind_addresses)
+        .collect()
 }
 
-fn canonical_listener_address(inbound: &InboundConfig) -> SocketAddr {
-    listener_addresses(inbound)[0]
+fn canonical_listener_address(node: &NodeConfig) -> SocketAddr {
+    listener_addresses(node)[0]
 }
 
 fn is_degradable_listener_bind_error(address: SocketAddr, error: &io::Error) -> bool {
@@ -1282,76 +1283,51 @@ fn is_degradable_listener_bind_error(address: SocketAddr, error: &io::Error) -> 
     }
 }
 
-fn nxr_replay_policy(config: &Config) -> HashMap<SocketAddr, (u32, u64)> {
-    config
-        .inbounds
-        .iter()
-        .filter_map(|inbound_config| match inbound_config {
-            InboundConfig::Vless(_) | InboundConfig::Handoff(_) => None,
-            InboundConfig::Nxr(inbound) => Some((
-                canonical_listener_address(inbound_config),
-                (
-                    inbound.settings.max_nonce_entries,
-                    inbound.settings.nonce_retention_seconds,
-                ),
-            )),
-        })
-        .collect()
-}
-
-fn handoff_replay_policy(config: &Config) -> HashMap<SocketAddr, (u32, u64)> {
-    config
-        .inbounds
-        .iter()
-        .filter_map(|inbound_config| match inbound_config {
-            InboundConfig::Vless(_) | InboundConfig::Nxr(_) => None,
-            InboundConfig::Handoff(inbound) => Some((
-                canonical_listener_address(inbound_config),
-                (
-                    inbound.settings.max_nonce_entries,
-                    inbound.settings.nonce_retention_seconds,
-                ),
-            )),
-        })
-        .collect()
-}
-
+/// Builds the Handoff replay cache for every address a landing binds.
+///
+/// The capacity and retention are derived from the accepted clock skew rather
+/// than configured: the cache exists to bound memory while covering the window
+/// in which a replayed transfer could still be accepted.
 fn compile_handoff_replays(
-    config: &Config,
+    node: &NodeConfig,
 ) -> Result<HashMap<SocketAddr, HandoffReplayCache>, RuntimeUpdateError> {
     let mut replays = HashMap::new();
-    for inbound_config in &config.inbounds {
-        if let InboundConfig::Handoff(inbound) = inbound_config {
-            let address = canonical_listener_address(inbound_config);
-            let replay = HandoffReplayCache::new(
-                usize::try_from(inbound.settings.max_nonce_entries)
-                    .map_err(|_| HandoffLandingConfigError::Capacity)
-                    .map_err(RuntimeUpdateError::Handoff)?,
-                Duration::from_secs(inbound.settings.nonce_retention_seconds),
-            )
-            .map_err(HandoffLandingConfigError::Replay)
-            .map_err(RuntimeUpdateError::Handoff)?;
-            if replays.insert(address, replay).is_some() {
-                return Err(RuntimeUpdateError::DuplicateListener(address));
-            }
-        }
-    }
+    let Some(landing) = node.as_landing() else {
+        return Ok(replays);
+    };
+    let LandingProtocol::Handoff(settings) = &landing.landing else {
+        return Ok(replays);
+    };
+    let address = canonical_listener_address(node);
+    let replay = HandoffReplayCache::new(
+        usize::try_from(super::nxr::REPLAY_NONCE_CAPACITY)
+            .map_err(|_| HandoffLandingConfigError::Capacity)
+            .map_err(RuntimeUpdateError::Handoff)?,
+        Duration::from_secs(super::nxr::replay_retention_seconds(
+            settings.timing().max_time_difference_seconds,
+        )),
+    )
+    .map_err(HandoffLandingConfigError::Replay)
+    .map_err(RuntimeUpdateError::Handoff)?;
+    replays.insert(address, replay);
     Ok(replays)
 }
 
+/// Builds the NXR replay cache for every address a landing binds.
 fn compile_nxr_replays(
-    config: &Config,
+    node: &NodeConfig,
 ) -> Result<HashMap<SocketAddr, NxrReplayCache>, RuntimeUpdateError> {
     let mut replays = HashMap::new();
-    for inbound_config in &config.inbounds {
-        if let InboundConfig::Nxr(inbound) = inbound_config {
-            let address = canonical_listener_address(inbound_config);
-            let replay = NxrReplayCache::from_inbound(inbound)?;
-            if replays.insert(address, replay).is_some() {
-                return Err(RuntimeUpdateError::DuplicateListener(address));
-            }
-        }
-    }
+    let Some(landing) = node.as_landing() else {
+        return Ok(replays);
+    };
+    let LandingProtocol::Nxr(settings) = &landing.landing else {
+        return Ok(replays);
+    };
+    replays.insert(
+        canonical_listener_address(node),
+        NxrReplayCache::from_landing(settings)?,
+    );
     Ok(replays)
 }
 
@@ -1599,23 +1575,24 @@ async fn run_resource_monitor(
 
 /// Builds the adaptive soft-ceiling controller when the tuning mode selects one.
 ///
-/// The controller exists only under `adaptive`: under `fixed` and `startup`
-/// no controller is built, nothing ever adjusts a ceiling or the dial rate,
-/// and behavior is byte-identical to v1.5. The knobs are derived from the
-/// effective startup policy, so every hard bound is exactly the value the
-/// pools were constructed with.
+/// The controller exists only under `adaptive`: under `startup` no controller
+/// is built and nothing ever adjusts a ceiling or the dial rate. Its bounds
+/// come from the effective startup policy, so every hard bound is exactly the
+/// value the pools were constructed with.
 fn adaptive_controller(
-    config: &Config,
+    node: &NodeConfig,
+    policy: &EffectivePolicy,
     authorities: &ProcessAuthorities,
     pressure: &PressureGauge,
 ) -> Option<adaptive::AdaptiveController> {
-    (config.runtime.tuning.mode() == TuningMode::Adaptive).then(|| {
+    let runtime = node.runtime();
+    (runtime.tuning() == TuningMode::Adaptive).then(|| {
         adaptive::AdaptiveController::new(
             authorities.governor.clone(),
             authorities.direct_barrier.clone(),
             pressure.clone(),
-            &config.advanced.limits,
-            config.runtime.status_file.clone(),
+            policy,
+            runtime.status_file.clone(),
         )
     })
 }
@@ -2148,8 +2125,7 @@ impl Error for ConnectionRunError {
 /// One last-good runtime update failed before publication.
 #[derive(Debug)]
 pub enum RuntimeUpdateError {
-    Load(ConfigLoadError),
-    Invalid(ConfigError),
+    Load(LoadError),
     Log(LogWriteError),
     Assets(AssetLoadError),
     Routing(RoutingCompileError),
@@ -2178,7 +2154,6 @@ impl fmt::Display for RuntimeUpdateError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Load(source) => source.fmt(formatter),
-            Self::Invalid(source) => source.fmt(formatter),
             Self::Log(source) => source.fmt(formatter),
             Self::Assets(source) => source.fmt(formatter),
             Self::Routing(source) => source.fmt(formatter),
@@ -2239,7 +2214,6 @@ impl Error for RuntimeUpdateError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Load(source) => Some(source),
-            Self::Invalid(source) => Some(source),
             Self::Log(source) => Some(source),
             Self::Assets(source) => Some(source),
             Self::Routing(source) => Some(source),
@@ -2266,15 +2240,9 @@ impl Error for RuntimeUpdateError {
     }
 }
 
-impl From<ConfigLoadError> for RuntimeUpdateError {
-    fn from(source: ConfigLoadError) -> Self {
+impl From<LoadError> for RuntimeUpdateError {
+    fn from(source: LoadError) -> Self {
         Self::Load(source)
-    }
-}
-
-impl From<ConfigError> for RuntimeUpdateError {
-    fn from(source: ConfigError) -> Self {
-        Self::Invalid(source)
     }
 }
 
@@ -2402,7 +2370,6 @@ mod tests {
     use std::{
         io,
         net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-        str::FromStr,
         sync::Arc,
         time::Duration,
     };
@@ -2421,11 +2388,17 @@ mod tests {
     };
     use crate::{
         config::{
-            DialMode, DirectBarrierConfig, GenerateConfigInput, InboundConfig, ListenMode,
-            NxrInboundConfig, NxrInboundSettings, NxrSettings, OutboundConfig, SecretString,
-            generate_minimal_config,
+            ValidatedConfig,
+            node::{
+                fixture,
+                listener::ListenFamily,
+                log::{LogConfig, LogLevel, LogOutput},
+                outbound::{NxrOutboundConfig, OutboundConfig},
+                runtime::RuntimeProfile,
+            },
         },
         protocol::vless::{Address, Destination, VISION_FLOW},
+        runtime::policy::{DirectBarrierPolicy, ResourceMode},
         server::{
             handoff::HandoffLandingError,
             nxr::NxrLandingError,
@@ -2458,32 +2431,22 @@ mod tests {
     }
 
     #[test]
-    fn compiles_generated_reality_vision_server_without_plain_inbound() {
-        let generated = generated_config(8443);
+    fn an_entry_node_compiles_into_a_reality_vision_server() {
+        let config = entry_config(8443);
+        // Vision is the only flow this server speaks; the configuration no
+        // longer states it, because there was never another value to choose.
+        assert_eq!(VISION_FLOW, "xtls-rprx-vision");
 
-        ProductionServer::from_config(generated.config()).expect("server must compile");
-        assert_eq!(
-            generated.config().inbounds[0]
-                .as_vless()
-                .expect("generated listener must be VLESS")
-                .settings
-                .clients[0]
-                .flow,
-            VISION_FLOW
-        );
+        ProductionServer::from_config(config).expect("server must compile");
     }
 
     #[test]
-    fn wildcard_auto_inbound_compiles_two_independent_family_listeners() {
-        let generated = generate_minimal_config(GenerateConfigInput {
-            listen: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-            port: 8443,
-            target: "www.example.com:443".to_owned(),
-            server_name: "www.example.com".to_owned(),
-        })
-        .expect("configuration must generate");
-        let server = ProductionServer::from_config(generated.config())
-            .expect("dual-stack server must compile");
+    fn a_wildcard_listener_compiles_two_independent_family_sockets() {
+        let config = fixture::validated(&fixture::entry_without_routing(
+            r#""listeners": [{ "port": 8443 }],
+  "routing": { "default": "direct" }"#,
+        ));
+        let server = ProductionServer::from_config(config).expect("dual-stack server must compile");
         assert_eq!(
             server.listeners[0].addresses,
             [
@@ -2495,7 +2458,7 @@ mod tests {
     }
 
     fn simulate_listener_startup(
-        mode: ListenMode,
+        mode: ListenFamily,
         outcomes: &[(SocketAddr, Option<i32>)],
     ) -> Result<Vec<SocketAddr>, SocketAddr> {
         let mut active = Vec::new();
@@ -2505,7 +2468,7 @@ mod tests {
                 continue;
             };
             let error = io::Error::from_raw_os_error(*errno);
-            if mode != ListenMode::Auto || !is_degradable_listener_bind_error(*address, &error) {
+            if mode != ListenFamily::Auto || !is_degradable_listener_bind_error(*address, &error) {
                 return Err(*address);
             }
         }
@@ -2521,11 +2484,11 @@ mod tests {
         let ipv4 = SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 443);
         let ipv6 = SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 443);
         assert_eq!(
-            simulate_listener_startup(ListenMode::Auto, &[(ipv4, None), (ipv6, Some(97))]),
+            simulate_listener_startup(ListenFamily::Auto, &[(ipv4, None), (ipv6, Some(97))]),
             Ok(vec![ipv4])
         );
         assert_eq!(
-            simulate_listener_startup(ListenMode::Auto, &[(ipv4, Some(97)), (ipv6, None)]),
+            simulate_listener_startup(ListenFamily::Auto, &[(ipv4, Some(97)), (ipv6, None)]),
             Ok(vec![ipv6])
         );
     }
@@ -2535,19 +2498,19 @@ mod tests {
         let ipv4 = SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 443);
         let ipv6 = SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 443);
         assert_eq!(
-            simulate_listener_startup(ListenMode::DualStack, &[(ipv4, None), (ipv6, Some(97))]),
+            simulate_listener_startup(ListenFamily::DualStack, &[(ipv4, None), (ipv6, Some(97))]),
             Err(ipv6)
         );
         for errno in [13, 22, 98] {
             assert_eq!(
-                simulate_listener_startup(ListenMode::Auto, &[(ipv4, None), (ipv6, Some(errno))]),
+                simulate_listener_startup(ListenFamily::Auto, &[(ipv4, None), (ipv6, Some(errno))]),
                 Err(ipv6),
                 "errno {errno} must remain fatal"
             );
         }
         let concrete = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 443);
         assert_eq!(
-            simulate_listener_startup(ListenMode::Auto, &[(ipv4, None), (concrete, Some(99))]),
+            simulate_listener_startup(ListenFamily::Auto, &[(ipv4, None), (concrete, Some(99))]),
             Err(concrete),
             "EADDRNOTAVAIL on a configured address is invalid configuration"
         );
@@ -2555,33 +2518,33 @@ mod tests {
 
     #[test]
     fn the_theoretical_peak_includes_pipe_pool_retention() {
-        let generated = generated_config(8443);
-        let mut config = generated.config().clone();
-        config.advanced.limits.relay.splice = true;
-        config.advanced.limits.relay.pipe_pool = true;
-        config.advanced.limits.relay.max_splice_relays = 4;
-        config.advanced.limits.relay.max_pooled_pipes = 8;
-        let connections = u64::from(config.advanced.limits.resource_governor.max_connections) * 3;
-        let warm = u64::from(config.advanced.limits.warm_connections.max_ready)
-            + u64::from(config.advanced.limits.warm_connections.max_connecting) * 2;
+        let node = entry_config(8443).into_node();
+        let mut policy = crate::runtime::policy::EffectivePolicy::default();
+        policy.relay.splice = true;
+        policy.relay.pipe_pool = true;
+        policy.relay.max_splice_relays = 4;
+        policy.relay.max_pooled_pipes = 8;
+        let connections = u64::from(policy.governor.max_connections) * 3;
+        let warm = u64::from(policy.warm_connections.max_ready)
+            + u64::from(policy.warm_connections.max_connecting) * 2;
 
         assert_eq!(
-            theoretical_fd_peak(&config),
+            theoretical_fd_peak(&node, &policy),
             connections + 4 * 4 + 8 * 2 + warm,
             "active flows, warm cover candidates, armed splice relays, and retained pipes are demand"
         );
 
-        config.advanced.limits.relay.pipe_pool = false;
+        policy.relay.pipe_pool = false;
         assert_eq!(
-            theoretical_fd_peak(&config),
+            theoretical_fd_peak(&node, &policy),
             connections + 4 * 4 + warm,
             "a disabled pool retains nothing"
         );
 
-        config.advanced.limits.relay.pipe_pool = true;
-        config.advanced.limits.relay.splice = false;
+        policy.relay.pipe_pool = true;
+        policy.relay.splice = false;
         assert_eq!(
-            theoretical_fd_peak(&config),
+            theoretical_fd_peak(&node, &policy),
             connections + 4 * 4 + warm,
             "without splice there is no pool to retain pipes"
         );
@@ -2589,9 +2552,8 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn binds_all_listeners_and_stops_on_injected_shutdown() {
-        let generated = generated_config(unused_loopback_port());
-        let server =
-            ProductionServer::from_config(generated.config()).expect("server must compile");
+        let config = entry_config(unused_loopback_port());
+        let server = ProductionServer::from_config(config.clone()).expect("server must compile");
 
         server
             .run_until(async { Ok(()) })
@@ -2600,31 +2562,22 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn serves_internal_nxr_alongside_public_reality_vision() {
-        let public_port = unused_loopback_port();
-        let mut landing_port = unused_loopback_port();
-        while landing_port == public_port {
-            landing_port = unused_loopback_port();
-        }
+    async fn a_landing_node_serves_an_authenticated_nxr_session() {
+        // Entry and landing are separate nodes now, so this drives a landing
+        // the way a line node would: one authenticated NXR connection from an
+        // outbound registry to a landing server.
+        let landing_port = unused_loopback_port();
         let key_bytes = [0x5a; 32];
         let encoded_key = BASE64_URL_SAFE_NO_PAD.encode(key_bytes);
-        let generated = generated_config(public_port);
-        let mut config = generated.config().clone();
-        config.inbounds.push(InboundConfig::Nxr(NxrInboundConfig {
-            tag: "landing-internal".to_owned(),
-            listen: IpAddr::V4(Ipv4Addr::LOCALHOST).into(),
-            port: landing_port,
-            settings: NxrInboundSettings {
-                pre_shared_key: SecretString::new(encoded_key.clone()),
-                max_time_difference_seconds: 30,
-                max_nonce_entries: 4_096,
-                nonce_retention_seconds: 120,
-                pre_auth_idle_timeout_ms: 60_000,
-                authentication_timeout_ms: 1_000,
-                connect_timeout_ms: 1_000,
-            },
-        }));
-        let server = ProductionServer::from_config(&config).expect("combined server must compile");
+        let config = fixture::validated(&format!(
+            r#"{{
+  "role": "landing",
+  "listeners": [{{ "port": {landing_port}, "ip": "ipv4Only", "ipv4": "127.0.0.1" }}],
+  "landing": {{ "protocol": "nxr", "psk": "{encoded_key}",
+                "authenticationTimeoutMs": 1000, "connectTimeoutMs": 1000 }}
+}}"#
+        ));
+        let server = ProductionServer::from_config(config).expect("landing must compile");
         let target = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("target must bind");
@@ -2636,75 +2589,72 @@ mod tests {
                 .port(),
         );
         let registry = OutboundRegistry::new(
-            &[OutboundConfig::Nxr {
-                tag: "landing".to_owned(),
-                settings: NxrSettings {
+            &std::collections::BTreeMap::from([(
+                "landing".to_owned(),
+                OutboundConfig::Nxr(NxrOutboundConfig {
                     address: Ipv4Addr::LOCALHOST.to_string(),
                     port: landing_port,
-                    pre_shared_key: SecretString::new(encoded_key),
-                    warm_tcp: false,
-                },
-            }],
-            &DirectBarrierConfig::default(),
+                    psk: crate::config::SecretString::new(encoded_key),
+                    warm_tcp: Some(false),
+                }),
+            )]),
+            &DirectBarrierPolicy::default(),
             Duration::from_secs(1),
             crate::transport::FdBudget::new(4_096),
         );
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
         let server_task = tokio::spawn(server.run_until(async move {
-            shutdown_receiver
-                .await
-                .map_err(|_| io::Error::other("test shutdown sender dropped"))
+            let _ = shutdown_receiver.await;
+            Ok(())
         }));
-        let target_task = tokio::spawn(async move {
-            let (mut stream, _) = target.accept().await?;
-            let mut payload = Vec::new();
-            stream.read_to_end(&mut payload).await?;
-            assert_eq!(payload, b"ping");
-            stream.write_all(b"pong").await?;
-            stream.shutdown().await
-        });
 
-        let connection = time::timeout(Duration::from_secs(2), async {
-            loop {
-                match registry.connect("landing", &destination).await {
-                    Ok(OutboundConnectOutcome::Connected(connection)) => break connection,
-                    Ok(OutboundConnectOutcome::Blackholed) | Err(_) => {
-                        time::sleep(Duration::from_millis(10)).await;
-                    }
+        // Bounded, so a real failure surfaces as an error instead of a hang.
+        let mut last_error = None;
+        let mut connected = None;
+        for _ in 0..200 {
+            match registry.connect("landing", &destination).await {
+                Ok(OutboundConnectOutcome::Connected(connection)) => {
+                    connected = Some(connection);
+                    break;
+                }
+                Ok(other) => panic!("the NXR outbound must connect, got {other:?}"),
+                Err(error) => {
+                    last_error = Some(error);
+                    tokio::time::sleep(Duration::from_millis(10)).await;
                 }
             }
-        })
-        .await
-        .expect("NXR listener must become ready");
-        let (mut stream, _permit) = connection.into_parts();
-        stream.write_all(b"ping").await.expect("payload must write");
-        stream.shutdown().await.expect("uplink must half-close");
-        let mut response = Vec::new();
-        stream
-            .read_to_end(&mut response)
-            .await
-            .expect("response must read");
-        assert_eq!(response, b"pong");
+        }
+        let connected =
+            connected.unwrap_or_else(|| panic!("the landing never accepted: {last_error:?}"));
+        let (mut accepted, _) = target.accept().await.expect("landing must dial the target");
 
-        shutdown_sender.send(()).expect("shutdown must send");
-        target_task
+        let (mut stream, _permit) = connected.into_parts();
+        stream
+            .write_all(b"ping")
             .await
-            .expect("target task must join")
-            .expect("target exchange must succeed");
-        server_task
+            .expect("uplink must reach the target");
+        let mut received = [0_u8; 4];
+        accepted
+            .read_exact(&mut received)
             .await
-            .expect("server task must join")
-            .expect("server must stop cleanly");
+            .expect("the target must observe the uplink");
+        assert_eq!(&received, b"ping");
+
+        // Close the session before asking the server to stop: graceful
+        // shutdown waits for live relays, and an open one would hold it for
+        // the full thirty-second window.
+        drop(stream);
+        drop(accepted);
+        let _ = shutdown_sender.send(());
+        let _ = server_task.await;
     }
 
     #[test]
     fn atomically_publishes_hot_runtime_generation() {
-        let generated = generated_config(8443);
-        let server =
-            ProductionServer::from_config(generated.config()).expect("server must compile");
+        let config = entry_config(8443);
+        let server = ProductionServer::from_config(config.clone()).expect("server must compile");
         let previous = server.runtime.load();
-        let mut replacement = generated.config().clone();
-        replacement.log.level = crate::config::LogLevel::Debug;
+        let replacement = with_extra_rule(8443, "hot").into_node();
 
         assert_eq!(
             server
@@ -2747,30 +2697,26 @@ mod tests {
         state
     }
 
-    /// Adds a second, network-free outbound so the candidate differs observably.
-    fn with_extra_outbound(base: &crate::config::Config, tag: &str) -> crate::config::Config {
-        let mut candidate = base.clone();
-        candidate
-            .outbounds
-            .push(crate::config::OutboundConfig::Blackhole {
-                tag: tag.to_owned(),
-                settings: crate::config::BlackholeSettings::default(),
-            });
-        candidate
+    /// A hot-reloadable variant of the same node: one extra routing rule,
+    /// which changes nothing structural.
+    fn with_extra_rule(port: u16, label: &str) -> ValidatedConfig {
+        fixture::validated(&fixture::entry_without_routing(&format!(
+            r#""listeners": [{{ "port": {port}, "ip": "ipv4Only", "ipv4": "127.0.0.1" }}],
+  "routing": {{ "default": "direct",
+    "rules": [{{ "name": "{label}", "ip": ["10.0.0.0/8"], "outbound": "block" }}] }}"#
+        )))
     }
 
     #[test]
     fn a_rejected_publication_must_not_advance_the_generation_counter() {
-        let generated = generated_config(unused_loopback_port());
-        let server =
-            ProductionServer::from_config(generated.config()).expect("server must compile");
+        let config = entry_config(unused_loopback_port());
+        let server = ProductionServer::from_config(config.clone()).expect("server must compile");
         let before = server
             .runtime
             .generation
             .load(std::sync::atomic::Ordering::Acquire);
 
-        let mut incompatible = generated.config().clone();
-        incompatible.network.dial.mode = DialMode::PreferIpv6;
+        let incompatible = cold_variant(config.node().listeners()[0].port);
         assert!(matches!(
             server.runtime.publish(incompatible),
             Err(RuntimeUpdateError::NetworkDialPolicyChanged)
@@ -2794,13 +2740,13 @@ mod tests {
 
     #[test]
     fn generations_increment_by_exactly_one_and_never_repeat() {
-        let generated = generated_config(unused_loopback_port());
-        let server =
-            ProductionServer::from_config(generated.config()).expect("server must compile");
+        let config = entry_config(unused_loopback_port());
+        let server = ProductionServer::from_config(config.clone()).expect("server must compile");
         let mut seen = vec![server.runtime.load().generation];
 
         for round in 1..=4u64 {
-            let accepted = with_extra_outbound(generated.config(), &format!("probe-{round}"));
+            let accepted =
+                with_extra_outbound(config.node().listeners()[0].port, &format!("probe-{round}"));
             let published = server
                 .runtime
                 .publish(accepted)
@@ -2810,8 +2756,7 @@ mod tests {
                 "each accepted publication must advance the generation by exactly one"
             );
 
-            let mut rejected = generated.config().clone();
-            rejected.network.dial.mode = DialMode::PreferIpv6;
+            let rejected = cold_variant(config.node().listeners()[0].port);
             assert!(server.runtime.publish(rejected).is_err());
 
             seen.push(published);
@@ -2830,9 +2775,8 @@ mod tests {
 
     #[test]
     fn outbound_tables_are_replaced_wholesale_across_a_publication() {
-        let generated = generated_config(unused_loopback_port());
-        let server =
-            ProductionServer::from_config(generated.config()).expect("server must compile");
+        let config = entry_config(unused_loopback_port());
+        let server = ProductionServer::from_config(config.clone()).expect("server must compile");
         let before = only_listener(&server.runtime.load());
         assert!(outbounds_of(&before).contains("direct"));
         assert!(
@@ -2842,7 +2786,10 @@ mod tests {
 
         server
             .runtime
-            .publish(with_extra_outbound(generated.config(), "crossed"))
+            .publish(with_extra_outbound(
+                config.node().listeners()[0].port,
+                "crossed",
+            ))
             .expect("an added outbound is hot-compatible");
 
         let after = only_listener(&server.runtime.load());
@@ -2862,16 +2809,18 @@ mod tests {
 
     #[test]
     fn an_in_flight_connection_keeps_its_own_generation_outbound_table() {
-        let generated = generated_config(unused_loopback_port());
-        let server =
-            ProductionServer::from_config(generated.config()).expect("server must compile");
+        let config = entry_config(unused_loopback_port());
+        let server = ProductionServer::from_config(config.clone()).expect("server must compile");
 
         // A live connection holds exactly this: an Arc taken at accept time.
         let in_flight = only_listener(&server.runtime.load());
 
         server
             .runtime
-            .publish(with_extra_outbound(generated.config(), "next-generation"))
+            .publish(with_extra_outbound(
+                config.node().listeners()[0].port,
+                "next-generation",
+            ))
             .expect("an added outbound is hot-compatible");
 
         assert!(
@@ -2891,14 +2840,16 @@ mod tests {
 
     #[test]
     fn retiring_a_generation_deactivates_only_its_own_pre_auth_pool() {
-        let generated = generated_config(unused_loopback_port());
-        let server =
-            ProductionServer::from_config(generated.config()).expect("server must compile");
+        let config = entry_config(unused_loopback_port());
+        let server = ProductionServer::from_config(config.clone()).expect("server must compile");
         let retired = server.runtime.load();
 
         server
             .runtime
-            .publish(with_extra_outbound(generated.config(), "pool-probe"))
+            .publish(with_extra_outbound(
+                config.node().listeners()[0].port,
+                "pool-probe",
+            ))
             .expect("an added outbound is hot-compatible");
 
         let published = server.runtime.load();
@@ -2919,15 +2870,10 @@ mod tests {
 
     #[test]
     fn rejected_hot_update_keeps_last_good_runtime() {
-        let generated = generated_config(8443);
-        let server =
-            ProductionServer::from_config(generated.config()).expect("server must compile");
+        let config = entry_config(8443);
+        let server = ProductionServer::from_config(config.clone()).expect("server must compile");
         let previous = server.runtime.load();
-        let mut replacement = generated.config().clone();
-        replacement.inbounds[0]
-            .as_vless_mut()
-            .expect("generated listener must be VLESS")
-            .port = 9443;
+        let replacement = entry_config(9443).into_node();
 
         assert!(matches!(
             server.runtime.publish(replacement),
@@ -2938,30 +2884,31 @@ mod tests {
 
     #[test]
     fn listener_topology_and_dial_policy_changes_require_restart() {
-        let generated = generated_config(8443);
-        let server =
-            ProductionServer::from_config(generated.config()).expect("server must compile");
+        let config = entry_config(8443);
+        let server = ProductionServer::from_config(config.clone()).expect("server must compile");
 
-        let mut listener_change = generated.config().clone();
-        listener_change.inbounds[0]
-            .as_vless_mut()
-            .expect("generated listener must be VLESS")
-            .listen
-            .mode = ListenMode::Auto;
+        // A family change expands to different sockets, so the topology moves.
+        let listener_change = fixture::validated(&fixture::entry_without_routing(
+            r#""listeners": [{ "port": 8443 }],
+  "routing": { "default": "direct" }"#,
+        ))
+        .into_node();
         assert!(matches!(
             server.runtime.publish(listener_change),
             Err(RuntimeUpdateError::ListenerTopologyChanged)
         ));
 
-        let mut dial_change = generated.config().clone();
-        dial_change.network.dial.mode = DialMode::PreferIpv6;
         assert!(matches!(
-            server.runtime.publish(dial_change),
+            server.runtime.publish(cold_variant(8443)),
             Err(RuntimeUpdateError::NetworkDialPolicyChanged)
         ));
 
-        let mut dns_change = generated.config().clone();
-        dns_change.dns.timeout_ms += 1;
+        let dns_change = fixture::validated(&fixture::entry_without_routing(
+            r#""listeners": [{ "port": 8443, "ip": "ipv4Only", "ipv4": "127.0.0.1" }],
+  "routing": { "default": "direct" },
+  "dns": { "timeoutMs": 6000 }"#,
+        ))
+        .into_node();
         assert!(matches!(
             server.runtime.publish(dns_change),
             Err(RuntimeUpdateError::DnsPolicyChanged)
@@ -2973,64 +2920,71 @@ mod tests {
     const ROTATION_SECRET_A: [u8; 32] = [0x77; 32];
     const ROTATION_SECRET_B: [u8; 32] = [0x78; 32];
 
+    /// A Handoff landing node with an explicit rotation window.
+    ///
+    /// This is a landing node on its own: entry and landing are separate
+    /// roles, so a rotation test configures the node that holds the keys.
     fn rotation_config(
         port: u16,
         active_psk: [u8; 32],
         active_secret: [u8; 32],
         previous_psks: &[[u8; 32]],
         previous_secrets: &[[u8; 32]],
-    ) -> crate::config::Config {
-        let encode = |bytes: [u8; 32]| SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(bytes));
-        let generated = generated_config(unused_loopback_port());
-        let mut config = generated.config().clone();
-        config.inbounds.push(InboundConfig::Handoff(
-            crate::config::HandoffInboundConfig {
-                tag: "handoff-landing".to_owned(),
-                listen: IpAddr::V4(Ipv4Addr::LOCALHOST).into(),
-                port,
-                settings: crate::config::HandoffInboundSettings {
-                    pre_shared_key: encode(active_psk),
-                    private_key: encode(active_secret),
-                    max_time_difference_seconds: 30,
-                    max_nonce_entries: 4_096,
-                    nonce_retention_seconds: 120,
-                    pre_auth_idle_timeout_ms: 60_000,
-                    authentication_timeout_ms: 1_000,
-                    connect_timeout_ms: 1_000,
-                    egress: None,
-                    previous_pre_shared_keys: previous_psks.iter().copied().map(encode).collect(),
-                    previous_private_keys: previous_secrets.iter().copied().map(encode).collect(),
-                },
-            },
-        ));
-        config
+    ) -> ValidatedConfig {
+        let encode = |bytes: &[u8; 32]| BASE64_URL_SAFE_NO_PAD.encode(bytes);
+        let list = |keys: &[[u8; 32]]| {
+            if keys.is_empty() {
+                String::new()
+            } else {
+                let values: Vec<String> = keys
+                    .iter()
+                    .map(|key| format!("\"{}\"", encode(key)))
+                    .collect();
+                format!("[{}]", values.join(","))
+            }
+        };
+        let previous_psk_field = if previous_psks.is_empty() {
+            String::new()
+        } else {
+            format!(r#","previousPsks":{}"#, list(previous_psks))
+        };
+        let previous_secret_field = if previous_secrets.is_empty() {
+            String::new()
+        } else {
+            format!(r#","previousPrivateKeys":{}"#, list(previous_secrets))
+        };
+        fixture::validated(&format!(
+            r#"{{
+  "role": "landing",
+  "listeners": [{{ "port": {port}, "ip": "ipv4Only", "ipv4": "127.0.0.1" }}],
+  "landing": {{ "protocol": "handoff",
+                "psk": "{}",
+                "privateKey": "{}",
+                "authenticationTimeoutMs": 1000,
+                "connectTimeoutMs": 1000{previous_psk_field}{previous_secret_field} }}
+}}"#,
+            encode(&active_psk),
+            encode(&active_secret)
+        ))
     }
 
-    /// Rotates only the handoff landing's key material, keeping the listener
-    /// topology (and therefore hot reload compatibility) intact.
+    /// Rotates only the landing's key material, keeping the listener topology
+    /// — and therefore hot reload compatibility — intact.
     fn rotated_config(
-        base: &crate::config::Config,
+        base: &ValidatedConfig,
         active_psk: [u8; 32],
         active_secret: [u8; 32],
         previous_psks: &[[u8; 32]],
         previous_secrets: &[[u8; 32]],
-    ) -> crate::config::Config {
-        let encode = |bytes: [u8; 32]| SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(bytes));
-        let mut config = base.clone();
-        let InboundConfig::Handoff(handoff) = config
-            .inbounds
-            .last_mut()
-            .expect("the handoff listener must exist")
-        else {
-            panic!("the last inbound must be the handoff landing");
-        };
-        handoff.settings.pre_shared_key = encode(active_psk);
-        handoff.settings.private_key = encode(active_secret);
-        handoff.settings.previous_pre_shared_keys =
-            previous_psks.iter().copied().map(encode).collect();
-        handoff.settings.previous_private_keys =
-            previous_secrets.iter().copied().map(encode).collect();
-        config
+    ) -> crate::config::NodeConfig {
+        rotation_config(
+            base.node().listeners()[0].port,
+            active_psk,
+            active_secret,
+            previous_psks,
+            previous_secrets,
+        )
+        .into_node()
     }
 
     fn handoff_handler(
@@ -3114,7 +3068,8 @@ mod tests {
         let port = unused_loopback_port();
         let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
         let base = rotation_config(port, ROTATION_PSK_A, ROTATION_SECRET_A, &[], &[]);
-        let server = ProductionServer::from_config(&base).expect("generation 0 must compile");
+        let server =
+            ProductionServer::from_config(base.clone()).expect("generation 0 must compile");
 
         // Generation 0: only the original pair is accepted.
         let handler = handoff_handler(&server, &address);
@@ -3219,53 +3174,46 @@ mod tests {
     }
 
     #[test]
-    fn replay_policy_change_requires_restart() {
-        let generated = generated_config(8443);
+    fn a_pinned_limit_change_requires_restart() {
+        // Admission ceilings, the direct-dial barrier, and the warm pools are
+        // sized once, before the first listener binds. Everything they derive
+        // from is therefore cold — and since one channel now carries every
+        // pin, one comparison covers all of them.
+        let pinned = |port: u16, connections: u32| {
+            fixture::validated(&fixture::entry_without_routing(&format!(
+                r#""listeners": [{{ "port": {port}, "ip": "ipv4Only", "ipv4": "127.0.0.1" }}],
+  "routing": {{ "default": "direct" }},
+  "runtime": {{ "limits": {{ "maxConnections": {connections} }} }}"#
+            )))
+        };
         let server =
-            ProductionServer::from_config(generated.config()).expect("server must compile");
+            ProductionServer::from_config(pinned(8443, 4_096)).expect("server must compile");
         let previous = server.runtime.load();
-        let mut replacement = generated.config().clone();
-        replacement
-            .advanced
-            .limits
-            .resource_governor
-            .max_replay_entries += 1;
 
         assert!(matches!(
-            server.runtime.publish(replacement),
-            Err(RuntimeUpdateError::ReplayPolicyChanged)
-        ));
-        assert!(Arc::ptr_eq(&previous, &server.runtime.load()));
-    }
-
-    #[test]
-    fn warm_connection_policy_change_requires_restart() {
-        let generated = generated_config(8443);
-        let server =
-            ProductionServer::from_config(generated.config()).expect("server must compile");
-        let previous = server.runtime.load();
-        let mut replacement = generated.config().clone();
-        replacement.advanced.limits.warm_connections.max_ready += 1;
-
-        assert!(matches!(
-            server.runtime.publish(replacement),
-            Err(RuntimeUpdateError::WarmConnectionPolicyChanged)
+            server.runtime.publish(pinned(8443, 8_192).into_node()),
+            Err(RuntimeUpdateError::ResourceModeChanged)
         ));
         assert!(Arc::ptr_eq(&previous, &server.runtime.load()));
     }
 
     #[test]
     fn profile_change_requires_restart() {
-        let generated = generated_config(8443);
-        let mut current = generated.config().clone();
-        current.runtime.profile = crate::config::RuntimeProfile::Shared;
-        let server = ProductionServer::from_config(&current).expect("server must compile");
+        let posture = |port: u16, profile: &str| {
+            fixture::validated(&fixture::entry_without_routing(&format!(
+                r#""listeners": [{{ "port": {port}, "ip": "ipv4Only", "ipv4": "127.0.0.1" }}],
+  "routing": {{ "default": "direct" }},
+  "runtime": {{ "profile": "{profile}" }}"#
+            )))
+        };
+        let server =
+            ProductionServer::from_config(posture(8443, "shared")).expect("server must compile");
         let previous = server.runtime.load();
-        let mut replacement = generated.config().clone();
-        replacement.runtime.profile = crate::config::RuntimeProfile::Dedicated;
 
         assert!(matches!(
-            server.runtime.publish(replacement),
+            server
+                .runtime
+                .publish(posture(8443, "dedicated").into_node()),
             Err(RuntimeUpdateError::ResourceModeChanged)
         ));
         assert!(Arc::ptr_eq(&previous, &server.runtime.load()));
@@ -3273,18 +3221,23 @@ mod tests {
 
     #[test]
     fn tuning_mode_drift_requires_restart() {
-        let generated = generated_config(8443);
-        let mut current = generated.config().clone();
-        current.runtime.tuning.mode = Some(crate::config::TuningMode::Fixed);
-        let server = ProductionServer::from_config(&current).expect("server must compile");
+        let tuned = |port: u16, tuning: Option<&str>| {
+            let section = tuning.map_or(String::new(), |mode| {
+                format!(r#","runtime": {{ "tuning": "{mode}", "statusFile": "/run/rr.json" }}"#)
+            });
+            fixture::validated(&fixture::entry_without_routing(&format!(
+                r#""listeners": [{{ "port": {port}, "ip": "ipv4Only", "ipv4": "127.0.0.1" }}],
+  "routing": {{ "default": "direct" }}{section}"#
+            )))
+        };
+        let server = ProductionServer::from_config(tuned(8443, Some("adaptive")))
+            .expect("server must compile");
         let previous = server.runtime.load();
 
-        // A config with an unset mode resolves to `startup`: it would derive
-        // different numbers, so the reload must reject.
-        let replacement = generated.config().clone();
-        assert_eq!(replacement.runtime.tuning.mode, None);
+        // An omitted tuning mode resolves to `startup`, which builds no
+        // controller: the two produce different runtimes, so a reload rejects.
         assert!(matches!(
-            server.runtime.publish(replacement),
+            server.runtime.publish(tuned(8443, None).into_node()),
             Err(RuntimeUpdateError::ResourceModeChanged)
         ));
         assert!(Arc::ptr_eq(&previous, &server.runtime.load()));
@@ -3292,40 +3245,48 @@ mod tests {
 
     #[test]
     fn the_adaptive_controller_is_built_only_in_adaptive_mode() {
-        let generated = generated_config(8443);
-        for (mode, expect_controller) in [
-            (crate::config::TuningMode::Fixed, false),
-            (crate::config::TuningMode::Startup, false),
-            (crate::config::TuningMode::Adaptive, true),
-        ] {
-            let mut config = generated.config().clone();
-            config.runtime.tuning.mode = Some(mode);
-            let server = ProductionServer::from_config(&config).expect("server must compile");
+        for (mode, expect_controller) in [("startup", false), ("adaptive", true)] {
+            // A status file is meaningful only under `adaptive`, and
+            // validation says so, so the fixture states one only there.
+            let status = if mode == "adaptive" {
+                r#", "statusFile": "/run/rust-reality/status.json""#
+            } else {
+                ""
+            };
+            let config = fixture::validated(&fixture::entry_without_routing(&format!(
+                r#""listeners": [{{ "port": 8443, "ip": "ipv4Only", "ipv4": "127.0.0.1" }}],
+  "routing": {{ "default": "direct" }},
+  "runtime": {{ "tuning": "{mode}"{status} }}"#
+            )));
+            let server = ProductionServer::from_config(config).expect("server must compile");
             let snapshot = server.runtime.load();
             let controller = super::adaptive_controller(
-                &snapshot.config,
+                &snapshot.node,
+                &server.runtime.policy,
                 &server.runtime.authorities,
                 &server.runtime.pressure,
             );
             assert_eq!(
                 controller.is_some(),
                 expect_controller,
-                "mode {mode:?} must select the controller only when adaptive"
+                "mode {mode} must select the controller only when adaptive"
             );
         }
     }
 
     #[test]
     fn status_file_drift_requires_restart() {
-        let generated = generated_config(8443);
-        let mut current = generated.config().clone();
-        current.runtime.tuning.mode = Some(crate::config::TuningMode::Adaptive);
-        current.runtime.status_file = Some(std::path::PathBuf::from("/tmp/rust-reality-a.json"));
-        let server = ProductionServer::from_config(&current).expect("server must compile");
+        let with_status = |path: &str| {
+            fixture::validated(&fixture::entry_without_routing(&format!(
+                r#""listeners": [{{ "port": 8443, "ip": "ipv4Only", "ipv4": "127.0.0.1" }}],
+  "routing": {{ "default": "direct" }},
+  "runtime": {{ "tuning": "adaptive", "statusFile": "{path}" }}"#
+            )))
+        };
+        let server = ProductionServer::from_config(with_status("/tmp/rust-reality-a.json"))
+            .expect("server must compile");
         let previous = server.runtime.load();
-        let mut replacement = current.clone();
-        replacement.runtime.status_file =
-            Some(std::path::PathBuf::from("/tmp/rust-reality-b.json"));
+        let replacement = with_status("/tmp/rust-reality-b.json").into_node();
 
         assert!(matches!(
             server.runtime.publish(replacement),
@@ -3336,9 +3297,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn adaptive_mode_publishes_a_status_file_and_shuts_down_cleanly() {
-        let generated = generated_config(unused_loopback_port());
-        let mut config = generated.config().clone();
-        config.runtime.tuning.mode = Some(crate::config::TuningMode::Adaptive);
+        let port = unused_loopback_port();
         let directory = std::env::temp_dir().join(format!(
             "rust-reality-adaptive-server-{}-{:x}",
             std::process::id(),
@@ -3349,8 +3308,13 @@ mod tests {
         ));
         std::fs::create_dir_all(&directory).expect("temporary directory must be created");
         let status_path = directory.join("status.json");
-        config.runtime.status_file = Some(status_path.clone());
-        let server = ProductionServer::from_config(&config).expect("server must compile");
+        let config = fixture::validated(&fixture::entry_without_routing(&format!(
+            r#""listeners": [{{ "port": {port}, "ip": "ipv4Only", "ipv4": "127.0.0.1" }}],
+  "routing": {{ "default": "direct" }},
+  "runtime": {{ "tuning": "adaptive", "statusFile": "{}" }}"#,
+            status_path.display()
+        )));
+        let server = ProductionServer::from_config(config).expect("server must compile");
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
         let server_task = tokio::spawn(server.run_until(async move {
             shutdown_receiver
@@ -3389,118 +3353,83 @@ mod tests {
 
     #[test]
     fn startup_tuning_derives_the_policy_from_the_machine() {
-        let generated = generated_config(8443);
-        assert_eq!(generated.config().runtime.tuning.mode, None);
+        let config = entry_config(8443);
+        assert_eq!(
+            config.node().runtime().tuning(),
+            crate::config::node::runtime::TuningMode::Startup,
+            "an omitted tuning mode derives at startup"
+        );
         let server = ProductionServer::from_loaded(
-            generated.config().clone(),
+            config,
             None,
             crate::runtime::machine::MachineReport::conservative(),
         )
         .expect("server must compile");
-        let effective = &server.runtime.load().config.advanced.limits;
+        let effective = &server.runtime.policy;
         // The golden conservative-machine derivation from runtime::plan.
-        assert_eq!(effective.resource_governor.max_connections, 197);
-        assert_eq!(effective.resource_governor.max_handshakes, 128);
+        assert_eq!(effective.governor.max_connections, 197);
+        assert_eq!(effective.governor.max_handshakes, 128);
         assert_eq!(effective.relay.buffer_bytes, 32 * 1024);
         assert_eq!(effective.relay.max_splice_relays, 64);
         assert_eq!(
-            effective.resource_governor.handshake_timeout_ms,
-            crate::config::ResourceGovernorConfig::default().handshake_timeout_ms,
+            effective.governor.handshake_timeout_ms,
+            crate::runtime::policy::ResourceGovernorPolicy::default().handshake_timeout_ms,
             "timeouts are carried from the configuration, never derived"
         );
         assert_ne!(
-            effective.resource_governor.max_connections,
-            crate::config::ResourceGovernorConfig::default().max_connections,
+            effective.governor.max_connections,
+            crate::runtime::policy::ResourceGovernorPolicy::default().max_connections,
             "the default tuning mode no longer applies the built-in numbers"
         );
     }
 
     #[test]
-    fn fixed_tuning_keeps_the_limits_verbatim() {
-        let generated = generated_config(8443);
-        let mut config = generated.config().clone();
-        config.runtime.tuning.mode = Some(crate::config::TuningMode::Fixed);
-        let server = ProductionServer::from_loaded(
-            config,
-            None,
-            crate::runtime::machine::MachineReport::conservative(),
-        )
-        .expect("server must compile");
-        assert_eq!(
-            server.runtime.load().config.advanced.limits,
-            crate::config::PolicyConfig::default(),
-            "fixed mode is byte-identical to v1.5"
-        );
-    }
-
-    #[test]
     fn an_operator_pin_wins_over_the_startup_derivation() {
-        let generated = generated_config(8443);
-        let mut config = generated.config().clone();
-        config.advanced.limits.resource_governor.max_connections = 1_000;
+        let config = fixture::validated(&fixture::entry_without_routing(
+            r#""listeners": [{ "port": 8443, "ip": "ipv4Only", "ipv4": "127.0.0.1" }],
+  "routing": { "default": "direct" },
+  "runtime": { "limits": { "maxConnections": 1000 } }"#,
+        ));
         let server = ProductionServer::from_loaded(
             config,
             None,
             crate::runtime::machine::MachineReport::conservative(),
         )
         .expect("server must compile");
-        let effective = &server.runtime.load().config.advanced.limits;
-        assert_eq!(effective.resource_governor.max_connections, 1_000);
+        let effective = &server.runtime.policy;
+        assert_eq!(effective.governor.max_connections, 1_000);
         assert_eq!(
-            effective.resource_governor.max_handshakes, 128,
+            effective.governor.max_handshakes, 128,
             "unpinned fields still derive"
         );
     }
 
     #[test]
     fn an_unchanged_startup_tuned_config_reloads_cleanly() {
-        let generated = generated_config(8443);
-        let server =
-            ProductionServer::from_config(generated.config()).expect("server must compile");
-        assert!(
-            server
-                .runtime
-                .load()
-                .config
-                .advanced
-                .limits
-                .resource_governor
-                .max_connections
-                > 0
-        );
+        let config = entry_config(8443);
+        let server = ProductionServer::from_config(config.clone()).expect("server must compile");
+        assert!(server.runtime.policy.governor.max_connections > 0);
         server
             .runtime
-            .publish(generated.config().clone())
+            .publish(entry_config(8443).into_node())
             .expect("the same startup-tuned configuration must reload");
     }
 
     #[test]
     fn startup_resource_mode_resolution_follows_the_profile() {
-        use crate::config::{ResourceMode, RuntimeProfile};
         use crate::runtime::machine::MachineReport;
 
-        let runtime = |profile| crate::config::RuntimeConfig {
-            profile,
-            tuning: crate::config::TuningConfig::default(),
-            status_file: None,
-        };
-
-        // The shared profile resolves to standard without consulting the
-        // machine, so the conservative view comes back untouched.
-        let (mode, machine) =
-            super::resolve_startup_resource_mode(&runtime(RuntimeProfile::Shared), false);
+        // Derivation always runs now, so the measured view is always needed
+        // and every profile plans against the real machine.
+        let (mode, _) = super::resolve_startup_resource_mode(RuntimeProfile::Shared);
         assert_eq!(mode, ResourceMode::Standard);
-        assert_eq!(machine, MachineReport::conservative());
 
-        // The dedicated profile maps onto the dedicated mode.
-        let (mode, _) =
-            super::resolve_startup_resource_mode(&runtime(RuntimeProfile::Dedicated), false);
+        let (mode, _) = super::resolve_startup_resource_mode(RuntimeProfile::Dedicated);
         assert_eq!(mode, ResourceMode::Dedicated);
 
         // Auto agrees with the detected tenancy boundary, whatever the test
         // machine looks like.
-        let (mode, machine) =
-            super::resolve_startup_resource_mode(&runtime(RuntimeProfile::Auto), false);
+        let (mode, machine) = super::resolve_startup_resource_mode(RuntimeProfile::Auto);
         let expected = if machine.tenancy_boundary_observable() {
             ResourceMode::Dedicated
         } else {
@@ -3508,12 +3437,9 @@ mod tests {
         };
         assert_eq!(mode, expected);
 
-        // An active startup derivation needs the measured view even under an
-        // explicit shared posture: the policy derives from the real machine.
         #[cfg(target_os = "linux")]
         {
-            let (_, machine) =
-                super::resolve_startup_resource_mode(&runtime(RuntimeProfile::Shared), true);
+            let (_, machine) = super::resolve_startup_resource_mode(RuntimeProfile::Shared);
             assert_ne!(
                 machine,
                 MachineReport::conservative(),
@@ -3522,14 +3448,38 @@ mod tests {
         }
     }
 
-    fn generated_config(port: u16) -> crate::config::GeneratedConfig {
-        generate_minimal_config(GenerateConfigInput {
-            listen: IpAddr::from_str("127.0.0.1").expect("address must parse"),
-            port,
-            target: "www.example.com:443".to_owned(),
-            server_name: "www.example.com".to_owned(),
-        })
-        .expect("configuration must generate")
+    /// The same node with one declared outbound added: a hot change.
+    fn with_extra_outbound(port: u16, name: &str) -> crate::config::NodeConfig {
+        fixture::validated(&fixture::entry_without_routing(&format!(
+            r#""listeners": [{{ "port": {port}, "ip": "ipv4Only", "ipv4": "127.0.0.1" }}],
+  "outbounds": {{ "{name}": {{ "type": "socks5", "address": "10.0.0.9", "port": 1080,
+                              "warmTcp": false }} }},
+  "routing": {{ "default": "direct" }}"#
+        )))
+        .into_node()
+    }
+
+    /// The same node with a different dial policy: a cold change a reload
+    /// must refuse, because the process-wide dial policy is fixed at startup.
+    fn cold_variant(port: u16) -> crate::config::NodeConfig {
+        fixture::validated(&fixture::entry_without_routing(&format!(
+            r#""listeners": [{{ "port": {port}, "ip": "ipv4Only", "ipv4": "127.0.0.1" }}],
+  "routing": {{ "default": "direct" }},
+  "network": {{ "ip": "preferIpv6" }}"#
+        )))
+        .into_node()
+    }
+
+    /// A valid entry node bound to one loopback port.
+    ///
+    /// This replaces the whole-config generator the binary no longer has: a
+    /// test that needs a server needs a *configuration*, and composing one is
+    /// exactly what an operator does.
+    fn entry_config(port: u16) -> ValidatedConfig {
+        fixture::validated(&fixture::entry_without_routing(&format!(
+            r#""listeners": [{{ "port": {port}, "ip": "ipv4Only", "ipv4": "127.0.0.1" }}],
+  "routing": {{ "default": "direct" }}"#
+        )))
     }
 
     fn unused_loopback_port() -> u16 {
@@ -3539,34 +3489,23 @@ mod tests {
             .unwrap_or_else(|error: io::Error| panic!("reserve loopback port: {error}"))
     }
 
-    fn tiny_ceiling_config() -> crate::config::Config {
-        let generated = generated_config(unused_loopback_port());
-        let mut config = generated.config().clone();
-        config.advanced.limits.resource_governor.max_connections = 2;
-        config.advanced.limits.resource_governor.max_handshakes = 2;
-        config
-            .advanced
-            .limits
-            .resource_governor
-            .max_pre_auth_idle_connections = 2;
-        config.advanced.limits.resource_governor.max_fallbacks = 2;
-        config
-            .advanced
-            .limits
-            .resource_governor
-            .max_crypto_operations = 2;
-        config.advanced.limits.resource_governor.max_dns_lookups = 2;
-        config.advanced.limits.relay.max_splice_relays = 2;
-        config.advanced.limits.direct_barrier = DirectBarrierConfig {
-            max_concurrent: 1,
-            max_per_second: 1_000,
-        };
-        config
+    /// A node whose admission ceilings are pinned as low as validation allows,
+    /// so a test can exhaust them in a few connections.
+    ///
+    /// Only the two ceilings an operator can pin are stated; the rest derive,
+    /// which is the point of the reload test that uses this.
+    fn tiny_ceiling_config() -> ValidatedConfig {
+        fixture::validated(&fixture::entry_without_routing(&format!(
+            r#""listeners": [{{ "port": {}, "ip": "ipv4Only", "ipv4": "127.0.0.1" }}],
+  "routing": {{ "default": "direct" }},
+  "runtime": {{ "limits": {{ "maxConnections": 2, "maxHandshakes": 2 }} }}"#,
+            unused_loopback_port()
+        )))
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn reload_cannot_multiply_the_connection_ceiling() {
-        let server = ProductionServer::from_config(&tiny_ceiling_config()).expect("must compile");
+        let server = ProductionServer::from_config(tiny_ceiling_config()).expect("must compile");
         let governor = server.runtime.authorities.governor.clone();
         let permit_a = governor
             .try_acquire(crate::runtime::AdmissionKind::Connection)
@@ -3612,13 +3551,26 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn reload_cannot_reset_the_direct_dial_rate_gate() {
-        let server = ProductionServer::from_config(&tiny_ceiling_config()).expect("must compile");
+        let server = ProductionServer::from_config(tiny_ceiling_config()).expect("must compile");
+        // The barrier is derived, so its width is whatever the machine
+        // supports; exhaust exactly that many permits rather than assuming one.
+        let width = server.runtime.policy.direct_barrier.max_concurrent;
+        let mut held: Vec<_> = (0..width.saturating_sub(1))
+            .map(|_| {
+                server
+                    .runtime
+                    .authorities
+                    .direct_barrier
+                    .try_acquire()
+                    .expect("every derived direct permit must be acquirable")
+            })
+            .collect();
         let permit = server
             .runtime
             .authorities
             .direct_barrier
             .try_acquire()
-            .expect("the single direct concurrency permit must be acquirable");
+            .expect("the last direct concurrency permit must be acquirable");
         assert!(
             server
                 .runtime
@@ -3651,33 +3603,14 @@ mod tests {
                 .is_ok(),
             "releasing the permit must free the rate gate after reloads"
         );
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn direct_barrier_policy_is_a_cold_restart_setting() {
-        let config = tiny_ceiling_config();
-        let server = ProductionServer::from_config(&config).expect("must compile");
-        let mut candidate = server.runtime.load().config.clone();
-        candidate.advanced.limits.direct_barrier.max_concurrent = 2;
-
-        let error = server
-            .runtime
-            .publish(candidate)
-            .expect_err("changing the direct barrier policy must require a restart");
-        assert!(
-            matches!(error, RuntimeUpdateError::DirectBarrierPolicyChanged),
-            "expected DirectBarrierPolicyChanged, got {error}"
-        );
+        held.clear();
     }
 
     #[test]
     fn disabled_debug_skips_event_construction() {
         use std::sync::atomic::{AtomicU64, Ordering};
 
-        use crate::{
-            config::{LogConfig, LogLevel, LogOutput},
-            logging::{LogEvent, Logger},
-        };
+        use crate::logging::{LogEvent, Logger};
 
         let constructed = AtomicU64::new(0);
         let attempt = |logger: &Logger| {
@@ -3690,8 +3623,8 @@ mod tests {
         };
 
         let info_logger = Logger::new(&LogConfig {
-            level: LogLevel::Info,
-            output: LogOutput::Stderr,
+            level: Some(LogLevel::Info),
+            output: Some(LogOutput::Stderr),
             file: None,
         })
         .expect("stderr logger must initialize");
@@ -3703,8 +3636,8 @@ mod tests {
         );
 
         let none_logger = Logger::new(&LogConfig {
-            level: LogLevel::Debug,
-            output: LogOutput::None,
+            level: Some(LogLevel::Debug),
+            output: Some(LogOutput::None),
             file: None,
         })
         .expect("none logger must initialize");
@@ -3716,8 +3649,8 @@ mod tests {
         );
 
         let debug_logger = Logger::new(&LogConfig {
-            level: LogLevel::Debug,
-            output: LogOutput::Stderr,
+            level: Some(LogLevel::Debug),
+            output: Some(LogOutput::Stderr),
             file: None,
         })
         .expect("stderr logger must initialize");
@@ -3734,7 +3667,6 @@ mod tests {
         use std::{fs, net::SocketAddr, sync::atomic::AtomicU64};
 
         use crate::{
-            config::{FileLogConfig, LogConfig, LogLevel, LogOutput},
             logging::{Logger, RejectionReason},
             runtime::AdmissionDenied,
             server::{
@@ -3752,13 +3684,13 @@ mod tests {
         fs::create_dir(&directory).expect("unique log directory must be created");
         let path = directory.join("events.log");
         let logger = Logger::new(&LogConfig {
-            level: LogLevel::Debug,
-            output: LogOutput::File,
-            file: Some(FileLogConfig {
+            level: Some(LogLevel::Debug),
+            output: Some(LogOutput::File),
+            file: Some(crate::config::node::log::FileLogConfig {
                 path: path.clone(),
-                max_bytes: 64 * 1024,
-                max_files: 1,
-                max_total_bytes: 64 * 1024,
+                max_bytes: Some(64 * 1024),
+                max_files: Some(1),
+                max_total_bytes: Some(64 * 1024),
             }),
         })
         .expect("file logger must initialize");

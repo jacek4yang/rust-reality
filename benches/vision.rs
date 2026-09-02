@@ -3,7 +3,10 @@ use std::sync::Arc;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use rr_session::{Direction, DirectionState, RawRelayTransition};
 use rust_reality::{
-    config::{DnsStrategy, GlobalRule, Network, PortMatcher, RoutingConfig, UserPolicy},
+    config::node::{
+        routing::{DomainStrategy, RoutePolicy, RouteRule, RoutingConfig},
+        user::UserConfig,
+    },
     protocol::vless::{Address, Destination, UserId, VisionCommand, VisionDecoder, VisionEncoder},
     server::routing::{EmptyAssetMatcher, RouteContext, RoutingTable},
 };
@@ -166,38 +169,41 @@ fn unpadded_frame(payload: &[u8], command: VisionCommand) -> Vec<u8> {
 }
 
 fn routing_table() -> RoutingTable {
-    let private_rule = GlobalRule {
-        name: "private".to_owned(),
-        outbound: "blocked".to_owned(),
-        domain: Vec::new(),
-        ip: vec!["10.0.0.0/8".to_owned()],
-        port: Vec::new(),
-        network: Vec::new(),
-        inbound_tag: Vec::new(),
+    let private_rule = RouteRule {
+        name: Some("private".to_owned()),
+        outbound: "block".to_owned(),
+        ip: Some(vec!["10.0.0.0/8".to_owned()]),
+        ..RouteRule::default()
     };
-    let domain_rule = GlobalRule {
-        name: "api".to_owned(),
+    let domain_rule = RouteRule {
+        name: Some("api".to_owned()),
         outbound: "direct".to_owned(),
-        domain: vec!["domain:example.com".to_owned()],
-        ip: Vec::new(),
-        port: vec![PortMatcher("443".to_owned())],
-        network: vec![Network::Tcp],
-        inbound_tag: vec!["public-reality".to_owned()],
+        domain: Some(vec!["domain:example.com".to_owned()]),
+        port: Some(vec!["443".to_owned()]),
+        ..RouteRule::default()
     };
     RoutingTable::compile(
         &RoutingConfig {
-            domain_strategy: DnsStrategy::AsIs,
-            global_rules: vec![private_rule],
-            users: vec![UserPolicy {
-                name: "primary".to_owned(),
-                user_ids: vec![USER_UUID.to_owned()],
-                default_outbound: "direct".to_owned(),
-                rules: vec![domain_rule],
-            }],
+            default: "direct".to_owned(),
+            strategy: Some(DomainStrategy::AsIs),
+            rules: Some(vec![private_rule]),
+            policies: Some(std::collections::BTreeMap::from([(
+                "primary".to_owned(),
+                RoutePolicy {
+                    default: "direct".to_owned(),
+                    rules: Some(vec![domain_rule]),
+                },
+            )])),
         },
+        &[UserConfig {
+            id: USER_UUID.to_owned(),
+            short_ids: vec!["0123456789abcdef".to_owned()],
+            label: None,
+            policy: Some("primary".to_owned()),
+        }],
         Arc::new(EmptyAssetMatcher),
         rust_reality::runtime::ResourceGovernor::new(
-            &rust_reality::config::ResourceGovernorConfig::default(),
+            &rust_reality::runtime::policy::ResourceGovernorPolicy::default(),
         ),
     )
     .expect("benchmark routing must compile")

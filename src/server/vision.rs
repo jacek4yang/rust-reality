@@ -18,19 +18,16 @@ use tokio::{
     time::Instant,
 };
 
-use crate::{
-    config::{Config, DnsStrategy, ResourceGovernorConfig},
-    protocol::{
-        handoff::ContinuationState,
-        reality::tls13::{
-            IdleDeadline, IdleError, MAX_PLAINTEXT_LEN, TlsApplicationIoError,
-            TlsApplicationReader, TlsApplicationWriter, VectoredRead,
-        },
-        vless::{
-            DecodeError, Destination, RequestValidationError, UserId, VERSION, VISION_FRAME_SIZE,
-            VisionCommand, VisionDecodeError, VisionDecoder, VisionEncodeError, VisionEncoder,
-            VisionMode, VisionPayload, decode_request_ref, validate_authenticated_vision_fields,
-        },
+use crate::protocol::{
+    handoff::ContinuationState,
+    reality::tls13::{
+        IdleDeadline, IdleError, MAX_PLAINTEXT_LEN, TlsApplicationIoError, TlsApplicationReader,
+        TlsApplicationWriter, VectoredRead,
+    },
+    vless::{
+        DecodeError, Destination, RequestValidationError, UserId, VERSION, VISION_FRAME_SIZE,
+        VisionCommand, VisionDecodeError, VisionDecoder, VisionEncodeError, VisionEncoder,
+        VisionMode, VisionPayload, decode_request_ref, validate_authenticated_vision_fields,
     },
 };
 
@@ -47,6 +44,10 @@ use super::{
     reality::RealityEstablished,
     routing::{AssetMatcher, RouteResolutionError, RoutingCompileError, RoutingTable},
 };
+use crate::config::node::entry::EntryConfig;
+use crate::config::node::routing::DomainStrategy;
+use crate::runtime::policy::EffectivePolicy;
+use crate::runtime::policy::ResourceGovernorPolicy;
 use crate::transport::{
     DirectionalRelayContext, RelayBackend, RelayContext, RelayDirection, RelayOutcome, TcpRelay,
 };
@@ -173,7 +174,7 @@ pub struct VisionHandler {
     relay: TcpRelay,
     request_timeout: Duration,
     io_timeout: Duration,
-    dns_strategy: DnsStrategy,
+    dns_strategy: DomainStrategy,
     dns_timeout: Duration,
 }
 
@@ -184,11 +185,12 @@ impl VisionHandler {
     ///
     /// Returns a routing matcher or UUID compilation error.
     pub fn from_config(
-        config: &Config,
+        entry: &EntryConfig,
+        policy: &EffectivePolicy,
         assets: Arc<dyn AssetMatcher>,
         relay: TcpRelay,
     ) -> Result<Self, RoutingCompileError> {
-        Self::build(config, assets, relay, None)
+        Self::build(entry, policy, assets, relay, None)
     }
 
     /// Compiles the data path with a pressure-aware outbound registry.
@@ -201,7 +203,8 @@ impl VisionHandler {
         reason = "one parameter per process-lifetime authority and generation input"
     )]
     pub(crate) fn from_config_with_pressure(
-        config: &Config,
+        entry: &EntryConfig,
+        policy: &EffectivePolicy,
         assets: Arc<dyn AssetMatcher>,
         relay: TcpRelay,
         pressure: &crate::runtime::PressureGauge,
@@ -212,7 +215,8 @@ impl VisionHandler {
         warm_authority: super::warm_pool::WarmPoolAuthority,
     ) -> Result<Self, RoutingCompileError> {
         Self::build(
-            config,
+            entry,
+            policy,
             assets,
             relay,
             Some((
@@ -227,7 +231,8 @@ impl VisionHandler {
     }
 
     fn build(
-        config: &Config,
+        entry: &EntryConfig,
+        policy: &EffectivePolicy,
         assets: Arc<dyn AssetMatcher>,
         relay: TcpRelay,
         authorities: Option<(
@@ -239,8 +244,10 @@ impl VisionHandler {
             super::warm_pool::WarmPoolAuthority,
         )>,
     ) -> Result<Self, RoutingCompileError> {
-        let governor = &config.advanced.limits.resource_governor;
+        let governor = &policy.governor;
         let connect_timeout = Duration::from_millis(governor.connect_timeout_ms);
+        let declared = entry.outbounds.clone().unwrap_or_default();
+        let network = entry.network.unwrap_or_default();
         let (outbounds, dns_governor) = match authorities {
             Some((
                 _pressure,
@@ -251,25 +258,25 @@ impl VisionHandler {
                 warm_authority,
             )) => (
                 OutboundRegistry::with_warm_pools(
-                    &config.outbounds,
+                    &declared,
                     direct_barrier,
                     connect_timeout,
                     relay.fd_budget().clone(),
-                    &config.network,
+                    &network,
                     network_environment,
                     generation,
                     warm_authority,
-                    &config.advanced.limits.warm_connections,
+                    &policy.warm_connections,
                 ),
                 dns_governor,
             ),
             None => (
                 OutboundRegistry::with_barrier_and_network(
-                    &config.outbounds,
-                    crate::runtime::DirectBarrier::new(&config.advanced.limits.direct_barrier),
+                    &declared,
+                    crate::runtime::DirectBarrier::new(&policy.direct_barrier),
                     connect_timeout,
                     relay.fd_budget().clone(),
-                    &config.network,
+                    &network,
                     crate::network::NetworkEnvironment::detect(),
                 ),
                 crate::runtime::ResourceGovernor::new(governor),
@@ -277,11 +284,11 @@ impl VisionHandler {
         };
         Ok(Self::new_with_dns(
             outbounds,
-            RoutingTable::compile(&config.routing, assets, dns_governor)?,
+            RoutingTable::compile(&entry.routing, &entry.users, assets, dns_governor)?,
             relay,
             governor,
-            config.routing.domain_strategy,
-            Duration::from_millis(config.dns.timeout_ms),
+            entry.routing.strategy(),
+            Duration::from_millis(entry.dns.clone().unwrap_or_default().timeout_ms()),
         ))
     }
 
@@ -298,14 +305,14 @@ impl VisionHandler {
         outbounds: OutboundRegistry,
         routing: RoutingTable,
         relay: TcpRelay,
-        governor: &ResourceGovernorConfig,
+        governor: &ResourceGovernorPolicy,
     ) -> Self {
         Self::new_with_dns(
             outbounds,
             routing,
             relay,
             governor,
-            DnsStrategy::AsIs,
+            DomainStrategy::AsIs,
             Duration::from_secs(5),
         )
     }
@@ -316,8 +323,8 @@ impl VisionHandler {
         outbounds: OutboundRegistry,
         routing: RoutingTable,
         relay: TcpRelay,
-        governor: &ResourceGovernorConfig,
-        dns_strategy: DnsStrategy,
+        governor: &ResourceGovernorPolicy,
+        dns_strategy: DomainStrategy,
         dns_timeout: Duration,
     ) -> Self {
         Self {
@@ -2317,6 +2324,7 @@ fn length_u64(length: usize) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use crate::runtime::policy::{DirectBarrierPolicy, ResourceGovernorPolicy};
     use std::{io, net::Ipv4Addr, sync::Arc, time::Duration};
 
     use tokio::{
@@ -2330,10 +2338,7 @@ mod tests {
         VisionSessionError, is_benign_teardown, is_tls13_server_hello, length_u64, run_directional,
     };
     use crate::{
-        config::{
-            DirectBarrierConfig, DnsStrategy, OutboundConfig, ResourceGovernorConfig,
-            RoutingConfig, UserPolicy,
-        },
+        config::node::{routing::RoutingConfig, user::UserConfig},
         protocol::{
             reality::tls13::{
                 CipherSuite, ContentType, EstablishedTls, Tls13KeySchedule, Tls13RecordLayer,
@@ -2370,11 +2375,11 @@ mod tests {
             TlsApplicationIo::new(server, established_tls),
             USER,
         );
-        let governor = ResourceGovernorConfig {
+        let governor = ResourceGovernorPolicy {
             connect_timeout_ms: 1_000,
             handshake_timeout_ms: 1_000,
             fallback_timeout_ms: 1_000,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let handler = direct_handler(&governor);
         let request = vision_request(destination_address.port(), b"ping");
@@ -2475,11 +2480,11 @@ mod tests {
             TlsApplicationIo::new(server, established_tls),
             USER,
         );
-        let governor = ResourceGovernorConfig {
+        let governor = ResourceGovernorPolicy {
             connect_timeout_ms: 1_000,
             handshake_timeout_ms: 1_000,
             fallback_timeout_ms: 1_000,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let handler = direct_handler(&governor);
         let request = vision_request_with_command(
@@ -2608,11 +2613,11 @@ mod tests {
             TlsApplicationIo::new(server, established_tls),
             USER,
         );
-        let governor = ResourceGovernorConfig {
+        let governor = ResourceGovernorPolicy {
             connect_timeout_ms: 1_000,
             handshake_timeout_ms: 1_000,
             fallback_timeout_ms: 1_000,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let handler = direct_handler(&governor);
         let request = vision_request_with_command(
@@ -2755,11 +2760,11 @@ mod tests {
             TlsApplicationIo::new(server, established_tls),
             USER,
         );
-        let governor = ResourceGovernorConfig {
+        let governor = ResourceGovernorPolicy {
             connect_timeout_ms: 2_000,
             handshake_timeout_ms: 2_000,
             fallback_timeout_ms: 2_000,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let handler = direct_handler(&governor);
         // The client's first frame continues; the client follows with its own
@@ -2953,11 +2958,11 @@ mod tests {
             TlsApplicationIo::new(server, established_tls),
             USER,
         );
-        let governor = ResourceGovernorConfig {
+        let governor = ResourceGovernorPolicy {
             connect_timeout_ms: 1_000,
             handshake_timeout_ms: 1_000,
             fallback_timeout_ms: 1_000,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let handler = direct_handler(&governor);
         // The client ends its Vision flow (`End`), so the uplink stays in
@@ -3096,11 +3101,11 @@ mod tests {
             TlsApplicationIo::new(server, established_tls),
             USER,
         );
-        let governor = ResourceGovernorConfig {
+        let governor = ResourceGovernorPolicy {
             connect_timeout_ms: 1_000,
             handshake_timeout_ms: 1_000,
             fallback_timeout_ms: 1_000,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let handler = direct_handler(&governor);
         let request = vision_request(destination_address.port(), b"up-ping");
@@ -3229,11 +3234,11 @@ mod tests {
             TlsApplicationIo::new(server, established_tls),
             USER,
         );
-        let governor = ResourceGovernorConfig {
+        let governor = ResourceGovernorPolicy {
             connect_timeout_ms: 1_000,
             handshake_timeout_ms: 1_000,
             fallback_timeout_ms: 1_000,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let handler = direct_handler(&governor);
         let request = vision_request_with_command(
@@ -3336,11 +3341,11 @@ mod tests {
             TlsApplicationIo::new(server, established_tls),
             USER,
         );
-        let governor = ResourceGovernorConfig {
+        let governor = ResourceGovernorPolicy {
             connect_timeout_ms: 1_000,
             handshake_timeout_ms: 1_000,
             fallback_timeout_ms: 1_000,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let handler = direct_handler(&governor);
         let request =
@@ -3455,11 +3460,11 @@ mod tests {
             TlsApplicationIo::new(server, established_tls),
             USER,
         );
-        let governor = ResourceGovernorConfig {
+        let governor = ResourceGovernorPolicy {
             connect_timeout_ms: 1_000,
             handshake_timeout_ms: 1_000,
             fallback_timeout_ms: 1_000,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let handler = direct_handler(&governor);
         let request = vision_request(destination_address.port(), b"ping");
@@ -3794,37 +3799,36 @@ mod tests {
         )
     }
 
-    fn direct_handler(governor: &ResourceGovernorConfig) -> VisionHandler {
-        let barrier = DirectBarrierConfig {
+    fn direct_handler(governor: &ResourceGovernorPolicy) -> VisionHandler {
+        let barrier = DirectBarrierPolicy {
             max_concurrent: 8,
             max_per_second: 8,
         };
         let outbounds = OutboundRegistry::new(
-            &[OutboundConfig::Direct {
-                tag: "direct".to_owned(),
-            }],
+            &std::collections::BTreeMap::new(),
             &barrier,
             Duration::from_millis(governor.connect_timeout_ms),
             crate::transport::FdBudget::new(4_096),
         );
-        let routing =
-            RoutingTable::compile(
-                &RoutingConfig {
-                    domain_strategy: DnsStrategy::AsIs,
-                    global_rules: Vec::new(),
-                    users: vec![UserPolicy {
-                        name: "test-user".to_owned(),
-                        user_ids: vec!["33333333-3333-3333-3333-333333333333".to_owned()],
-                        default_outbound: "direct".to_owned(),
-                        rules: Vec::new(),
-                    }],
-                },
-                Arc::new(EmptyAssetMatcher),
-                crate::runtime::ResourceGovernor::new(
-                    &crate::config::ResourceGovernorConfig::default(),
-                ),
-            )
-            .expect("test routing must compile");
+        let routing = RoutingTable::compile(
+            &RoutingConfig {
+                default: "direct".to_owned(),
+                strategy: None,
+                rules: None,
+                policies: None,
+            },
+            &[UserConfig {
+                id: "33333333-3333-3333-3333-333333333333".to_owned(),
+                short_ids: vec!["0123456789abcdef".to_owned()],
+                label: None,
+                policy: None,
+            }],
+            Arc::new(EmptyAssetMatcher),
+            crate::runtime::ResourceGovernor::new(
+                &crate::runtime::policy::ResourceGovernorPolicy::default(),
+            ),
+        )
+        .expect("test routing must compile");
         let relay = crate::transport::TcpRelay::new(
             crate::transport::TcpRelayConfig {
                 buffer_bytes: 32 * 1024,
@@ -3876,11 +3880,11 @@ mod tests {
             TlsApplicationIo::new(server, established_tls),
             USER,
         );
-        let governor = ResourceGovernorConfig {
+        let governor = ResourceGovernorPolicy {
             connect_timeout_ms: 1_000,
             handshake_timeout_ms: 1_000,
             fallback_timeout_ms: 1_000,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let handler = direct_handler(&governor);
         let request = vision_request(destination_address.port(), b"ping");
@@ -3983,11 +3987,11 @@ mod tests {
             TlsApplicationIo::new(server, established_tls),
             USER,
         );
-        let governor = ResourceGovernorConfig {
+        let governor = ResourceGovernorPolicy {
             connect_timeout_ms: 1_000,
             handshake_timeout_ms: 1_000,
             fallback_timeout_ms: 1_000,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let handler = direct_handler(&governor);
         let request = vision_request(destination_address.port(), b"ping");
@@ -4071,11 +4075,11 @@ mod tests {
             TlsApplicationIo::new(server, established_tls),
             USER,
         );
-        let governor = ResourceGovernorConfig {
+        let governor = ResourceGovernorPolicy {
             connect_timeout_ms: 1_000,
             handshake_timeout_ms: 1_000,
             fallback_timeout_ms: 1_000,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let handler = direct_handler(&governor);
         let request = vision_request(destination_address.port(), b"ping");

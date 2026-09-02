@@ -24,12 +24,12 @@ use tokio::{
 };
 
 use crate::{
-    config::WarmConnectionPolicy,
     runtime::{PressureGauge, ResourcePressure},
     transport::{FdBudget, FdPressure},
 };
 
 use super::connector::{AccountedTcpStream, DestinationConnectError, DestinationConnector};
+use crate::runtime::policy::WarmConnectionPolicy;
 
 const LIFECYCLE_CREATED: u8 = 0;
 const LIFECYCLE_ACTIVE: u8 = 1;
@@ -857,6 +857,8 @@ impl std::fmt::Debug for WarmPoolAuthority {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::node::network::NetworkConfig;
+    use crate::runtime::policy::WarmConnectionPolicy;
     use std::{
         net::Ipv4Addr,
         sync::{Arc, Mutex},
@@ -867,7 +869,6 @@ mod tests {
 
     use super::{AdaptiveTcpPool, WarmPoolAuthority};
     use crate::{
-        config::{NetworkConfig, WarmConnectionPolicy},
         network::NetworkEnvironment,
         runtime::{PressureGauge, ResourcePressure},
         server::connector::DestinationConnector,

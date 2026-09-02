@@ -219,8 +219,13 @@ pub(super) fn check_asset_url(value: &str) -> Result<(), &'static str> {
     let Some(rest) = value.strip_prefix("https://") else {
         return Err("must be an https:// URL");
     };
-    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    let host = host.rsplit_once(':').map_or(host, |(host, _)| host);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.contains('@') {
+        return Err("must not embed credentials in the URL");
+    }
+    let host = authority
+        .rsplit_once(':')
+        .map_or(authority, |(host, _)| host);
     if host.is_empty() || !is_hostname_or_ip(host) {
         return Err("must be an https:// URL with a valid host");
     }
@@ -370,5 +375,9 @@ mod tests {
         assert!(check_asset_url("http://example.com/geoip.dat").is_err());
         assert!(check_asset_url("https:///geoip.dat").is_err());
         assert!(check_asset_url("example.com/geoip.dat").is_err());
+        assert!(
+            check_asset_url("https://user:pass@example.com/geoip.dat").is_err(),
+            "credentials in an asset URL would be logged wherever the URL is"
+        );
     }
 }

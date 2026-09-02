@@ -10,7 +10,10 @@ use uuid::Uuid;
 
 pub use crate::assets::{AssetMatcher, AssetSource, EmptyAssetMatcher};
 use crate::{
-    config::{DnsStrategy, GlobalRule, Network, RoutingConfig, UserPolicy},
+    config::node::{
+        routing::{DomainStrategy, RouteRule, RoutingConfig},
+        user::UserConfig,
+    },
     protocol::vless::{Address, Destination, UserId},
     user_map::AdaptiveUserMap,
 };
@@ -108,24 +111,42 @@ impl RoutingTable {
     /// Returns an invalid UUID, matcher, port range, CIDR, or regular expression.
     pub fn compile(
         config: &RoutingConfig,
+        clients: &[UserConfig],
         assets: Arc<dyn AssetMatcher>,
         dns_governor: crate::runtime::ResourceGovernor,
     ) -> Result<Self, RoutingCompileError> {
-        let global_rules: Arc<[CompiledRule]> = config
-            .global_rules
-            .iter()
-            .map(CompiledRule::compile)
-            .collect::<Result<Vec<_>, _>>()?
-            .into();
+        let global_rules = compile_rules(config.rules(), "routing.rules")?;
         let global_index = RuleIndex::build(&global_rules);
-        let mut users = Vec::new();
-        for policy in &config.users {
-            let compiled = Arc::new(CompiledUserPolicy::compile(policy)?);
-            for user_id in &policy.user_ids {
-                let uuid =
-                    Uuid::parse_str(user_id).map_err(|_| RoutingCompileError::InvalidUuid)?;
-                users.push((UserId::new(*uuid.as_bytes()), Arc::clone(&compiled)));
-            }
+
+        // Every user follows exactly one policy: the one it names, or the
+        // global default. Compiling each named policy once and sharing it
+        // keeps the per-user map a pointer per identity.
+        let fallback = Arc::new(CompiledUserPolicy::compile(
+            "routing",
+            &config.default,
+            config.rules(),
+        )?);
+        let mut named: HashMap<&str, Arc<CompiledUserPolicy>> = HashMap::new();
+        for (name, policy) in config.policies() {
+            let compiled = CompiledUserPolicy::compile(
+                &format!("routing.policies.{name}"),
+                &policy.default,
+                policy.rules(),
+            )?;
+            named.insert(name.as_str(), Arc::new(compiled));
+        }
+
+        let mut users = Vec::with_capacity(clients.len());
+        for client in clients {
+            let policy = match &client.policy {
+                Some(name) => named
+                    .get(name.as_str())
+                    .cloned()
+                    .ok_or(RoutingCompileError::UnknownPolicy)?,
+                None => Arc::clone(&fallback),
+            };
+            let uuid = Uuid::parse_str(&client.id).map_err(|_| RoutingCompileError::InvalidUuid)?;
+            users.push((UserId::new(*uuid.as_bytes()), policy));
         }
         let global_has_ip_rules = global_rules
             .iter()
@@ -259,7 +280,7 @@ impl RoutingTable {
         user_id: UserId,
         inbound_tag: &str,
         destination: &Destination,
-        strategy: DnsStrategy,
+        strategy: DomainStrategy,
         timeout: Duration,
     ) -> Result<ResolvedRoute, RouteResolutionError> {
         let user = self
@@ -276,7 +297,7 @@ impl RoutingTable {
         let domain = normalized_domain(destination);
 
         if !matches!(destination.address(), Address::Domain(_))
-            || strategy == DnsStrategy::AsIs
+            || strategy == DomainStrategy::AsIs
             || !needs_ip
         {
             return Ok(ResolvedRoute::new(
@@ -285,7 +306,7 @@ impl RoutingTable {
             ));
         }
 
-        if strategy == DnsStrategy::IpIfNonMatch {
+        if strategy == DomainStrategy::ResolveIfNoMatch {
             // Pass 1 ignores IP conditions. A rule that matches without any IP
             // condition is the exact old pass-1 full match (an unresolved
             // domain can never satisfy an IP condition), so it decides without
@@ -414,18 +435,17 @@ struct CompiledUserPolicy {
 }
 
 impl CompiledUserPolicy {
-    fn compile(policy: &UserPolicy) -> Result<Self, RoutingCompileError> {
-        let rules: Arc<[CompiledRule]> = policy
-            .rules
-            .iter()
-            .map(CompiledRule::compile)
-            .collect::<Result<Vec<_>, _>>()?
-            .into();
+    fn compile(
+        name: &str,
+        default_outbound: &str,
+        rule_list: &[RouteRule],
+    ) -> Result<Self, RoutingCompileError> {
+        let rules = compile_rules(rule_list, name)?;
         let index = RuleIndex::build(&rules);
         let has_ip_rules = rules.iter().any(|rule| !rule.ips.is_empty());
         Ok(Self {
-            name: Arc::from(policy.name.as_str()),
-            default_outbound: Arc::from(policy.default_outbound.as_str()),
+            name: Arc::from(name),
+            default_outbound: Arc::from(default_outbound),
             rules,
             index,
             has_ip_rules,
@@ -785,14 +805,26 @@ struct CompiledRule {
     residual_domains: Arc<[DomainMatcher]>,
     ips: Arc<[IpMatcher]>,
     ports: Arc<[PortRange]>,
-    networks: Arc<[Network]>,
-    inbound_tags: Arc<[Arc<str>]>,
+}
+
+/// Compiles an ordered rule list, labelling each rule by position when the
+/// operator did not name it.
+fn compile_rules(
+    rules: &[RouteRule],
+    label: &str,
+) -> Result<Arc<[CompiledRule]>, RoutingCompileError> {
+    rules
+        .iter()
+        .enumerate()
+        .map(|(index, rule)| CompiledRule::compile(rule, &format!("{label}[{index}]")))
+        .collect::<Result<Vec<_>, _>>()
+        .map(Into::into)
 }
 
 impl CompiledRule {
-    fn compile(rule: &GlobalRule) -> Result<Self, RoutingCompileError> {
+    fn compile(rule: &RouteRule, label: &str) -> Result<Self, RoutingCompileError> {
         let domains: Arc<[DomainMatcher]> = rule
-            .domain
+            .domain()
             .iter()
             .map(|matcher| DomainMatcher::compile(matcher))
             .collect::<Result<Vec<_>, _>>()?
@@ -803,28 +835,21 @@ impl CompiledRule {
             .cloned()
             .collect();
         Ok(Self {
-            name: Arc::from(rule.name.as_str()),
+            name: Arc::from(rule.name.as_deref().unwrap_or(label)),
             outbound: Arc::from(rule.outbound.as_str()),
             domains,
             residual_domains,
             ips: rule
-                .ip
+                .ip()
                 .iter()
                 .map(|matcher| IpMatcher::compile(matcher))
                 .collect::<Result<Vec<_>, _>>()?
                 .into(),
             ports: rule
-                .port
+                .port()
                 .iter()
-                .map(|matcher| PortRange::compile(&matcher.0))
+                .map(|matcher| PortRange::compile(matcher))
                 .collect::<Result<Vec<_>, _>>()?
-                .into(),
-            networks: rule.network.clone().into(),
-            inbound_tags: rule
-                .inbound_tag
-                .iter()
-                .map(|tag| Arc::from(tag.as_str()))
-                .collect::<Vec<_>>()
                 .into(),
         })
     }
@@ -881,19 +906,17 @@ impl CompiledRule {
             })
     }
 
-    /// Port, network, and inbound-tag groups; never consult `resolved_ips`.
+    /// The port group; never consults `resolved_ips`.
+    ///
+    /// This used to also test a network group and an inbound-tag group. Both
+    /// were always true — every flow is TCP, and a node has one identity — so
+    /// the conditions that fed them no longer exist and neither do the tests.
     fn static_groups_match(&self, context: &RouteContext<'_>) -> bool {
-        (self.ports.is_empty()
+        self.ports.is_empty()
             || self
                 .ports
                 .iter()
-                .any(|range| range.contains(context.destination.port())))
-            && (self.networks.is_empty() || self.networks.contains(&Network::Tcp))
-            && (self.inbound_tags.is_empty()
-                || self
-                    .inbound_tags
-                    .iter()
-                    .any(|tag| tag.as_ref() == context.inbound_tag))
+                .any(|range| range.contains(context.destination.port()))
     }
 
     fn matches_indexed(
@@ -1191,6 +1214,10 @@ pub enum RoutingCompileError {
     InvalidRegex,
     InvalidIp,
     InvalidPort,
+    /// A user names a routing policy that is not declared. Semantic validation
+    /// rejects this first; reaching it here means compilation ran on a node
+    /// that was never validated.
+    UnknownPolicy,
 }
 
 impl fmt::Display for RoutingCompileError {
@@ -1202,6 +1229,9 @@ impl fmt::Display for RoutingCompileError {
             }
             Self::InvalidIp => formatter.write_str("routing contains an invalid IP matcher"),
             Self::InvalidPort => formatter.write_str("routing contains an invalid port matcher"),
+            Self::UnknownPolicy => {
+                formatter.write_str("a user names a routing policy that is not declared")
+            }
         }
     }
 }
@@ -1257,6 +1287,7 @@ impl Error for RouteResolutionError {
 
 #[cfg(test)]
 mod tests {
+    use crate::runtime::policy::ResourceGovernorPolicy;
     use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 
     use super::{
@@ -1264,7 +1295,10 @@ mod tests {
         RoutingTable,
     };
     use crate::{
-        config::{DnsStrategy, GlobalRule, Network, PortMatcher, RoutingConfig, UserPolicy},
+        config::node::{
+            routing::{DomainStrategy, RoutePolicy, RouteRule, RoutingConfig},
+            user::UserConfig,
+        },
         protocol::vless::{Address, Destination, UserId},
     };
 
@@ -1355,7 +1389,7 @@ mod tests {
                 USER_ID,
                 "public-reality",
                 &destination,
-                DnsStrategy::IpIfNonMatch,
+                DomainStrategy::ResolveIfNoMatch,
                 Duration::from_secs(2),
             )
             .await
@@ -1380,7 +1414,7 @@ mod tests {
                 USER_ID,
                 "public-reality",
                 &destination,
-                DnsStrategy::AsIs,
+                DomainStrategy::AsIs,
                 Duration::from_secs(2),
             )
             .await
@@ -1398,33 +1432,38 @@ mod tests {
     fn table_with_global_ip(ip_matcher: &str) -> RoutingTable {
         RoutingTable::compile(
             &RoutingConfig {
-                domain_strategy: DnsStrategy::AsIs,
-                global_rules: vec![GlobalRule {
-                    name: "private".to_owned(),
+                default: "direct".to_owned(),
+                strategy: Some(DomainStrategy::AsIs),
+                rules: Some(vec![RouteRule {
+                    name: Some("private".to_owned()),
                     outbound: "blocked".to_owned(),
-                    domain: Vec::new(),
-                    ip: vec![ip_matcher.to_owned()],
-                    port: Vec::new(),
-                    network: Vec::new(),
-                    inbound_tag: Vec::new(),
-                }],
-                users: vec![UserPolicy {
-                    name: "primary".to_owned(),
-                    user_ids: vec![USER.to_owned()],
-                    default_outbound: "direct".to_owned(),
-                    rules: vec![GlobalRule {
-                        name: "api through socks".to_owned(),
-                        outbound: "socks".to_owned(),
-                        domain: vec!["domain:example.com".to_owned()],
-                        ip: Vec::new(),
-                        port: vec![PortMatcher("443".to_owned())],
-                        network: vec![Network::Tcp],
-                        inbound_tag: vec!["public-reality".to_owned()],
-                    }],
-                }],
+                    ip: Some(vec![ip_matcher.to_owned()]),
+                    ..RouteRule::default()
+                }]),
+                policies: Some(std::collections::BTreeMap::from([(
+                    "primary".to_owned(),
+                    RoutePolicy {
+                        default: "direct".to_owned(),
+                        rules: Some(vec![RouteRule {
+                            name: Some("api through socks".to_owned()),
+                            outbound: "socks".to_owned(),
+                            domain: Some(vec!["domain:example.com".to_owned()]),
+                            port: Some(vec!["443".to_owned()]),
+                            ..RouteRule::default()
+                        }]),
+                    },
+                )])),
             },
+            &[UserConfig {
+                id: USER.to_owned(),
+                short_ids: vec!["0123456789abcdef".to_owned()],
+                label: None,
+                policy: Some("primary".to_owned()),
+            }],
             Arc::new(EmptyAssetMatcher),
-            crate::runtime::ResourceGovernor::new(&crate::config::ResourceGovernorConfig::default()),
+            crate::runtime::ResourceGovernor::new(
+                &crate::runtime::policy::ResourceGovernorPolicy::default(),
+            ),
         )
         .expect("routing must compile")
     }
@@ -1432,12 +1471,12 @@ mod tests {
     use std::net::{IpAddr, SocketAddr};
 
     use super::resolve_domain_with;
-    use crate::{config::ResourceGovernorConfig, runtime::ResourceGovernor};
+    use crate::runtime::ResourceGovernor;
 
     fn tiny_dns_governor(permits: u32) -> ResourceGovernor {
-        ResourceGovernor::new(&ResourceGovernorConfig {
+        ResourceGovernor::new(&ResourceGovernorPolicy {
             max_dns_lookups: permits,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         })
     }
 
@@ -1715,39 +1754,30 @@ mod tests {
         }
     }
 
-    fn random_rule(rng: &mut XorShift, index: usize) -> GlobalRule {
-        let mut rule = GlobalRule {
-            name: format!("rule-{index}"),
-            outbound: format!("out-{:02}", rng.below(8)),
-            domain: Vec::new(),
-            ip: Vec::new(),
-            port: Vec::new(),
-            network: Vec::new(),
-            inbound_tag: Vec::new(),
-        };
+    fn random_rule(rng: &mut XorShift, index: usize) -> RouteRule {
+        let mut domain = Vec::new();
         for _ in 0..rng.below(3) {
-            rule.domain.push(random_domain_matcher(rng));
+            domain.push(random_domain_matcher(rng));
         }
+        let mut ip = Vec::new();
         for _ in 0..rng.below(2) {
-            rule.ip.push(random_ip_matcher(rng));
+            ip.push(random_ip_matcher(rng));
         }
-        if rng.chance(30) {
-            rule.port.push(PortMatcher(
-                ["53", "443", "1000-2000", "8000-9000"][rng.below(4)].to_owned(),
-            ));
+        let port = rng
+            .chance(30)
+            .then(|| vec![["53", "443", "1000-2000", "8000-9000"][rng.below(4)].to_owned()]);
+        // A rule with no condition is rejected by validation, so the generator
+        // never produces one.
+        if domain.is_empty() && ip.is_empty() && port.is_none() {
+            domain.push(random_domain_matcher(rng));
         }
-        if rng.chance(30) {
-            rule.network = match rng.below(3) {
-                0 => vec![Network::Tcp],
-                // A udp-only rule never matches today; both paths must agree.
-                1 => vec![Network::Udp],
-                _ => vec![Network::Tcp, Network::Udp],
-            };
+        RouteRule {
+            name: Some(format!("rule-{index}")),
+            outbound: format!("out-{:02}", rng.below(8)),
+            domain: (!domain.is_empty()).then_some(domain),
+            ip: (!ip.is_empty()).then_some(ip),
+            port,
         }
-        if rng.chance(30) {
-            rule.inbound_tag = vec![["in-a", "in-b", "in-c"][rng.below(3)].to_owned()];
-        }
-        rule
     }
 
     fn random_destination(rng: &mut XorShift) -> Destination {
@@ -1842,35 +1872,48 @@ mod tests {
         compile_random_with_rules(rng, rules)
     }
 
-    fn compile_random_with_rules(rng: &mut XorShift, rules: Vec<GlobalRule>) -> RoutingTable {
-        let global_rules = (0..rng.below(9))
+    fn compile_random_with_rules(rng: &mut XorShift, rules: Vec<RouteRule>) -> RoutingTable {
+        let global_rules: Vec<RouteRule> = (0..rng.below(9))
             .map(|index| random_rule(rng, index))
             .collect();
-        let second_rules = (0..70)
+        let second_rules: Vec<RouteRule> = (0..70)
             .map(|index| random_rule(rng, 2000 + index))
             .collect();
+        let user = |id: &str, policy: &str| UserConfig {
+            id: id.to_owned(),
+            short_ids: vec!["0123456789abcdef".to_owned()],
+            label: None,
+            policy: Some(policy.to_owned()),
+        };
         RoutingTable::compile(
             &RoutingConfig {
-                domain_strategy: DnsStrategy::AsIs,
-                global_rules,
-                users: vec![
-                    UserPolicy {
-                        name: "primary".to_owned(),
-                        user_ids: vec![USER.to_owned()],
-                        default_outbound: "fallback".to_owned(),
-                        rules,
-                    },
-                    UserPolicy {
-                        name: "second".to_owned(),
-                        user_ids: vec!["ffffffff-ffff-ffff-ffff-ffffffffffff".to_owned()],
-                        default_outbound: "fallback-two".to_owned(),
-                        rules: second_rules,
-                    },
-                ],
+                default: "fallback".to_owned(),
+                strategy: Some(DomainStrategy::AsIs),
+                rules: Some(global_rules),
+                policies: Some(std::collections::BTreeMap::from([
+                    (
+                        "primary".to_owned(),
+                        RoutePolicy {
+                            default: "fallback".to_owned(),
+                            rules: Some(rules),
+                        },
+                    ),
+                    (
+                        "second".to_owned(),
+                        RoutePolicy {
+                            default: "fallback-two".to_owned(),
+                            rules: Some(second_rules),
+                        },
+                    ),
+                ])),
             },
+            &[
+                user(USER, "primary"),
+                user("ffffffff-ffff-ffff-ffff-ffffffffffff", "second"),
+            ],
             Arc::new(StubAssets),
             crate::runtime::ResourceGovernor::new(
-                &crate::config::ResourceGovernorConfig::default(),
+                &crate::runtime::policy::ResourceGovernorPolicy::default(),
             ),
         )
         .expect("randomized routing config must compile")
@@ -1878,38 +1921,47 @@ mod tests {
 
     #[test]
     fn mixed_indexable_residual_rule_matches_through_the_residual() {
-        let table =
-            RoutingTable::compile(
-                &RoutingConfig {
-                    domain_strategy: DnsStrategy::AsIs,
-                    global_rules: Vec::new(),
-                    users: vec![UserPolicy {
-                        name: "primary".to_owned(),
-                        user_ids: vec![USER.to_owned()],
-                        default_outbound: "fallback".to_owned(),
-                        rules: (0..70)
-                            .map(|index| GlobalRule {
-                                name: format!("r{index}"),
-                                outbound: format!("out-{index}"),
-                                domain: if index == 40 {
-                                    vec!["full:unrelated.test".to_owned(), "geosite:l3".to_owned()]
-                                } else {
-                                    vec![format!("full:h{index}.test")]
-                                },
-                                ip: Vec::new(),
-                                port: Vec::new(),
-                                network: Vec::new(),
-                                inbound_tag: Vec::new(),
-                            })
-                            .collect(),
-                    }],
-                },
-                Arc::new(StubAssets),
-                crate::runtime::ResourceGovernor::new(
-                    &crate::config::ResourceGovernorConfig::default(),
-                ),
-            )
-            .expect("compiles");
+        let table = RoutingTable::compile(
+            &RoutingConfig {
+                default: "fallback".to_owned(),
+                strategy: Some(DomainStrategy::AsIs),
+                rules: None,
+                policies: Some(std::collections::BTreeMap::from([(
+                    "primary".to_owned(),
+                    RoutePolicy {
+                        default: "fallback".to_owned(),
+                        rules: Some(
+                            (0..70)
+                                .map(|index| RouteRule {
+                                    name: Some(format!("r{index}")),
+                                    outbound: format!("out-{index}"),
+                                    domain: Some(if index == 40 {
+                                        vec![
+                                            "full:unrelated.test".to_owned(),
+                                            "geosite:l3".to_owned(),
+                                        ]
+                                    } else {
+                                        vec![format!("full:h{index}.test")]
+                                    }),
+                                    ..RouteRule::default()
+                                })
+                                .collect(),
+                        ),
+                    },
+                )])),
+            },
+            &[UserConfig {
+                id: USER.to_owned(),
+                short_ids: vec!["0123456789abcdef".to_owned()],
+                label: None,
+                policy: Some("primary".to_owned()),
+            }],
+            Arc::new(StubAssets),
+            crate::runtime::ResourceGovernor::new(
+                &crate::runtime::policy::ResourceGovernorPolicy::default(),
+            ),
+        )
+        .expect("compiles");
         let destination = Destination::new(Address::Domain("l3.stub".to_owned()), 443);
         let context = RouteContext {
             user_id: USER_ID,
@@ -1984,11 +2036,11 @@ mod tests {
         // no other condition groups, so index coverage and `always` coverage
         // alone decide first-match order.
         let mut rng = XorShift(42);
-        let mixed_rules: Vec<GlobalRule> = (0..(INDEXED_RULE_LIMIT + 20))
-            .map(|index| GlobalRule {
-                name: format!("mixed-{index}"),
+        let mixed_rules: Vec<RouteRule> = (0..(INDEXED_RULE_LIMIT + 20))
+            .map(|index| RouteRule {
+                name: Some(format!("mixed-{index}")),
                 outbound: format!("mixed-out-{index}"),
-                domain: vec![
+                domain: Some(vec![
                     random_domain_matcher(&mut rng),
                     [
                         "regexp:^api\\.",
@@ -1997,11 +2049,8 @@ mod tests {
                         "keyword:",
                     ][rng.below(4)]
                     .to_owned(),
-                ],
-                ip: Vec::new(),
-                port: Vec::new(),
-                network: Vec::new(),
-                inbound_tag: Vec::new(),
+                ]),
+                ..RouteRule::default()
             })
             .collect();
         let table = compile_random_with_rules(&mut rng, mixed_rules);
@@ -2094,7 +2143,7 @@ mod tests {
                         USER_ID,
                         "in-a",
                         &destination,
-                        DnsStrategy::IpIfNonMatch,
+                        DomainStrategy::ResolveIfNoMatch,
                         Duration::from_secs(1),
                     )
                     .await
@@ -2115,15 +2164,15 @@ mod tests {
         // and the linear path is taken.
         let rules: Vec<CompiledRule> = (0..10)
             .map(|index| {
-                CompiledRule::compile(&GlobalRule {
-                    name: format!("r{index}"),
-                    outbound: "direct".to_owned(),
-                    domain: vec![format!("full:h{index}.test")],
-                    ip: Vec::new(),
-                    port: Vec::new(),
-                    network: Vec::new(),
-                    inbound_tag: Vec::new(),
-                })
+                CompiledRule::compile(
+                    &RouteRule {
+                        name: Some(format!("r{index}")),
+                        outbound: "direct".to_owned(),
+                        domain: Some(vec![format!("full:h{index}.test")]),
+                        ..RouteRule::default()
+                    },
+                    "rules[0]",
+                )
                 .expect("rule compiles")
             })
             .collect();

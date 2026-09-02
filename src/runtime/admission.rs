@@ -8,8 +8,8 @@ use std::{
     time::Instant,
 };
 
-use crate::config::{DirectBarrierConfig, ResourceGovernorConfig};
 use crate::runtime::ceiling::{CeilingPermit, CeilingSemaphore};
+use crate::runtime::policy::{DirectBarrierPolicy, ResourceGovernorPolicy};
 use crate::runtime::pressure::{PressureGauge, ResourcePressure};
 
 /// Independently bounded work categories in the unauthenticated and setup paths.
@@ -103,7 +103,7 @@ pub struct ResourceGovernor {
 impl ResourceGovernor {
     /// Creates independent bounded resource pools from validated configuration.
     #[must_use]
-    pub fn new(config: &ResourceGovernorConfig) -> Self {
+    pub fn new(config: &ResourceGovernorPolicy) -> Self {
         Self::pools(config, None)
     }
 
@@ -115,11 +115,11 @@ impl ResourceGovernor {
     /// under `Critical`, every new category is refused. Held permits are
     /// never affected.
     #[must_use]
-    pub fn with_pressure(config: &ResourceGovernorConfig, pressure: PressureGauge) -> Self {
+    pub fn with_pressure(config: &ResourceGovernorPolicy, pressure: PressureGauge) -> Self {
         Self::pools(config, Some(pressure))
     }
 
-    fn pools(config: &ResourceGovernorConfig, pressure: Option<PressureGauge>) -> Self {
+    fn pools(config: &ResourceGovernorPolicy, pressure: Option<PressureGauge>) -> Self {
         Self {
             inner: Arc::new(GovernorInner {
                 connections: CeilingSemaphore::new(config.max_connections),
@@ -304,7 +304,7 @@ pub struct DirectBarrier {
 impl DirectBarrier {
     /// Creates a direct-dial barrier from validated configuration.
     #[must_use]
-    pub fn new(config: &DirectBarrierConfig) -> Self {
+    pub fn new(config: &DirectBarrierPolicy) -> Self {
         Self::barrier(config, None)
     }
 
@@ -312,11 +312,11 @@ impl DirectBarrier {
     /// pressure. Established relays hold no barrier permit, so pausing new
     /// dials never interrupts traffic already flowing.
     #[must_use]
-    pub fn with_pressure(config: &DirectBarrierConfig, pressure: PressureGauge) -> Self {
+    pub fn with_pressure(config: &DirectBarrierPolicy, pressure: PressureGauge) -> Self {
         Self::barrier(config, Some(pressure))
     }
 
-    fn barrier(config: &DirectBarrierConfig, pressure: Option<PressureGauge>) -> Self {
+    fn barrier(config: &DirectBarrierPolicy, pressure: Option<PressureGauge>) -> Self {
         Self {
             inner: Arc::new(DirectBarrierInner {
                 concurrency: CeilingSemaphore::new(config.max_concurrent),
@@ -394,7 +394,7 @@ mod tests {
         atomic::{AtomicU64, Ordering},
     };
 
-    use crate::config::{DirectBarrierConfig, ResourceGovernorConfig};
+    use crate::runtime::policy::{DirectBarrierPolicy, ResourceGovernorPolicy};
 
     use super::{
         AdmissionDenied, AdmissionKind, DialRateGate, DirectBarrier, NANOS_PER_SECOND,
@@ -403,9 +403,9 @@ mod tests {
 
     #[test]
     fn governor_releases_permit_on_drop() {
-        let config = ResourceGovernorConfig {
+        let config = ResourceGovernorPolicy {
             max_connections: 1,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let governor = ResourceGovernor::new(&config);
         let permit = governor
@@ -422,9 +422,9 @@ mod tests {
 
     #[test]
     fn governor_keeps_resource_pools_independent() {
-        let config = ResourceGovernorConfig {
+        let config = ResourceGovernorPolicy {
             max_handshakes: 1,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let governor = ResourceGovernor::new(&config);
         let handshake = governor
@@ -437,10 +437,10 @@ mod tests {
 
     #[test]
     fn governor_ceilings_default_to_the_configured_limits() {
-        let config = ResourceGovernorConfig {
+        let config = ResourceGovernorPolicy {
             max_connections: 7,
             max_handshakes: 3,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let governor = ResourceGovernor::new(&config);
 
@@ -450,10 +450,10 @@ mod tests {
 
     #[test]
     fn governor_denial_accounting_stays_exact_around_shrink_and_grow() {
-        let config = ResourceGovernorConfig {
+        let config = ResourceGovernorPolicy {
             max_connections: 4,
             max_handshakes: 4,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let governor = ResourceGovernor::new(&config);
 
@@ -512,9 +512,9 @@ mod tests {
         const MAX: u32 = 64;
         const WORKERS: usize = 8;
         const ROUNDS: usize = 2_000;
-        let config = ResourceGovernorConfig {
+        let config = ResourceGovernorPolicy {
             max_connections: MAX,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let governor = ResourceGovernor::new(&config);
         let held = Arc::new(AtomicU64::new(0));
@@ -566,7 +566,7 @@ mod tests {
 
     #[test]
     fn direct_barrier_enforces_concurrency_then_rate() {
-        let barrier = DirectBarrier::new(&DirectBarrierConfig {
+        let barrier = DirectBarrier::new(&DirectBarrierPolicy {
             max_concurrent: 1,
             max_per_second: 1,
         });
@@ -585,7 +585,7 @@ mod tests {
 
     #[test]
     fn direct_barrier_adjusts_concurrency_ceiling_without_revoking_dials() {
-        let barrier = DirectBarrier::new(&DirectBarrierConfig {
+        let barrier = DirectBarrier::new(&DirectBarrierPolicy {
             max_concurrent: 2,
             max_per_second: 1_000_000,
         });
@@ -625,7 +625,7 @@ mod tests {
 
     #[test]
     fn direct_barrier_retargets_the_rate_at_runtime() {
-        let barrier = DirectBarrier::new(&DirectBarrierConfig {
+        let barrier = DirectBarrier::new(&DirectBarrierPolicy {
             max_concurrent: 1,
             max_per_second: 1_000_000,
         });
@@ -738,7 +738,7 @@ mod tests {
 
     #[test]
     fn pressure_refuses_fallback_first_then_handshake_then_everything() {
-        let config = ResourceGovernorConfig::default();
+        let config = ResourceGovernorPolicy::default();
         let gauge = crate::runtime::PressureGauge::new();
         let governor = ResourceGovernor::with_pressure(&config, gauge.clone());
 
@@ -771,9 +771,9 @@ mod tests {
 
     #[test]
     fn a_governor_without_a_gauge_never_sees_pressure() {
-        let config = ResourceGovernorConfig {
+        let config = ResourceGovernorPolicy {
             max_fallbacks: 1,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let governor = ResourceGovernor::new(&config);
         assert!(
@@ -784,7 +784,7 @@ mod tests {
 
     #[test]
     fn the_direct_barrier_pauses_only_at_critical_pressure() {
-        let config = DirectBarrierConfig {
+        let config = DirectBarrierPolicy {
             max_concurrent: 4,
             max_per_second: 1_000,
         };

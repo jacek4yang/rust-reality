@@ -14,7 +14,49 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::config::{DialConfig, DialMode, ListenConfig, ListenMode};
+use crate::config::node::network::DialPolicy;
+
+/// Dial timing, derived rather than configured.
+///
+/// These four numbers used to be operator-facing fields. None of them is a
+/// decision an operator has information to make better than the process does:
+/// the first is the happy-eyeballs delay, and the rest are how long an
+/// observation about the local network stays trusted. They are constants here
+/// so the configuration carries only the family preference, which *is* an
+/// operator decision.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DialTuning {
+    /// Which families to dial, and which to prefer.
+    pub mode: DialPolicy,
+    /// Delay before the first alternate-family attempt.
+    pub fallback_delay_ms: u64,
+    /// Lifetime of the cached route and local-address observation.
+    pub route_refresh_seconds: u64,
+    /// How long a family-level reachability error deprioritises that family.
+    pub hard_failure_penalty_seconds: u64,
+    /// Lifetime of learned family latency before it expires.
+    pub latency_memory_seconds: u64,
+}
+
+impl DialTuning {
+    /// The derived timing for one family preference.
+    #[must_use]
+    pub const fn for_policy(mode: DialPolicy) -> Self {
+        Self {
+            mode,
+            fallback_delay_ms: 250,
+            route_refresh_seconds: 30,
+            hard_failure_penalty_seconds: 30,
+            latency_memory_seconds: 300,
+        }
+    }
+}
+
+impl Default for DialTuning {
+    fn default() -> Self {
+        Self::for_policy(DialPolicy::Auto)
+    }
+}
 
 const ROUTE_IPV4: u8 = 1;
 const ROUTE_IPV6: u8 = 2;
@@ -88,7 +130,7 @@ impl AddressFamily {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StartupNetworkSnapshot {
     /// Configured outbound dialing mode.
-    pub mode: DialMode,
+    pub mode: DialPolicy,
     /// Whether local route/source selection found usable IPv4.
     pub ipv4_available: bool,
     /// Whether local route/source selection found usable IPv6.
@@ -150,14 +192,14 @@ impl FamilyHealth {
 
 impl Default for NetworkEnvironment {
     fn default() -> Self {
-        Self::from_config(&DialConfig::default())
+        Self::from_config(&DialTuning::default())
     }
 }
 
 impl NetworkEnvironment {
     /// Detects the startup route/source snapshot without sending network data.
     #[must_use]
-    pub fn from_config(config: &DialConfig) -> Self {
+    pub fn from_config(config: &DialTuning) -> Self {
         let routes = detect_routes();
         let primary = initial_primary(config.mode, routes, system_preferred_family());
         Self::from_snapshot(StartupNetworkSnapshot {
@@ -324,7 +366,7 @@ impl NetworkEnvironment {
     }
 
     fn preferred_recovery_family(&self) -> AddressFamily {
-        match self.inner.startup.mode.preferred_family_is_ipv4() {
+        match self.inner.startup.mode.prefers_ipv4() {
             Some(true) => AddressFamily::Ipv4,
             Some(false) => AddressFamily::Ipv6,
             None => self.inner.startup.initial_primary,
@@ -396,7 +438,7 @@ impl NetworkEnvironment {
 
     #[cfg(test)]
     pub(crate) fn with_routes_and_primary(
-        mode: DialMode,
+        mode: DialPolicy,
         ipv4: bool,
         ipv6: bool,
         primary: AddressFamily,
@@ -442,14 +484,14 @@ impl NetworkEnvironment {
 /// Immutable planner over shared process-lifetime state.
 #[derive(Clone, Debug)]
 pub struct ConnectionPlanner {
-    config: DialConfig,
+    config: DialTuning,
     environment: NetworkEnvironment,
 }
 
 impl ConnectionPlanner {
     /// Compiles one planner.
     #[must_use]
-    pub const fn new(config: DialConfig, environment: NetworkEnvironment) -> Self {
+    pub const fn new(config: DialTuning, environment: NetworkEnvironment) -> Self {
         Self {
             config,
             environment,
@@ -481,19 +523,6 @@ impl ConnectionPlanner {
             latency,
             Duration::from_secs(self.config.latency_memory_seconds),
         );
-    }
-
-    /// Expands one logical inbound into its configured independent sockets.
-    #[must_use]
-    pub fn listener_addresses(listen: &ListenConfig, port: u16) -> Vec<SocketAddr> {
-        match listen.mode {
-            ListenMode::Auto | ListenMode::DualStack => vec![
-                SocketAddr::new(listen.ipv4.into(), port),
-                SocketAddr::new(listen.ipv6.into(), port),
-            ],
-            ListenMode::Ipv4Only => vec![SocketAddr::new(listen.ipv4.into(), port)],
-            ListenMode::Ipv6Only => vec![SocketAddr::new(listen.ipv6.into(), port)],
-        }
     }
 
     /// Filters, de-duplicates, and interleaves a bounded DNS snapshot using the
@@ -582,24 +611,28 @@ pub fn classify_connect_error(error: &io::Error) -> FailureEvidence {
     }
 }
 
-fn mode_allows(mode: DialMode, family: AddressFamily) -> bool {
+fn mode_allows(mode: DialPolicy, family: AddressFamily) -> bool {
     match family {
         AddressFamily::Ipv4 => mode.allows_ipv4(),
         AddressFamily::Ipv6 => mode.allows_ipv6(),
     }
 }
 
-fn initial_primary(mode: DialMode, routes: u8, system_preference: AddressFamily) -> AddressFamily {
+fn initial_primary(
+    mode: DialPolicy,
+    routes: u8,
+    system_preference: AddressFamily,
+) -> AddressFamily {
     let v4 = routes & ROUTE_IPV4 != 0;
     let v6 = routes & ROUTE_IPV6 != 0;
     match mode {
-        DialMode::Ipv4Only => AddressFamily::Ipv4,
-        DialMode::Ipv6Only => AddressFamily::Ipv6,
-        DialMode::PreferIpv4 if v4 || !v6 => AddressFamily::Ipv4,
-        DialMode::PreferIpv4 => AddressFamily::Ipv6,
-        DialMode::PreferIpv6 if v6 || !v4 => AddressFamily::Ipv6,
-        DialMode::PreferIpv6 => AddressFamily::Ipv4,
-        DialMode::Auto => match (v4, v6) {
+        DialPolicy::Ipv4Only => AddressFamily::Ipv4,
+        DialPolicy::Ipv6Only => AddressFamily::Ipv6,
+        DialPolicy::PreferIpv4 if v4 || !v6 => AddressFamily::Ipv4,
+        DialPolicy::PreferIpv4 => AddressFamily::Ipv6,
+        DialPolicy::PreferIpv6 if v6 || !v4 => AddressFamily::Ipv6,
+        DialPolicy::PreferIpv6 => AddressFamily::Ipv4,
+        DialPolicy::Auto => match (v4, v6) {
             (true, false) => AddressFamily::Ipv4,
             (false, true) => AddressFamily::Ipv6,
             (true, true) | (false, false) => system_preference,
@@ -697,17 +730,18 @@ mod tests {
         time::Duration,
     };
 
+    use super::DialTuning;
     use super::{
         AddressFamily, ConnectionPlanner, FailureEvidence, NetworkEnvironment,
         classify_connect_error, initial_primary,
     };
-    use crate::config::{DialConfig, DialMode, ListenConfig, ListenMode};
+    use crate::config::node::network::DialPolicy;
 
-    fn planner(mode: DialMode, primary: AddressFamily) -> ConnectionPlanner {
+    fn planner(mode: DialPolicy, primary: AddressFamily) -> ConnectionPlanner {
         ConnectionPlanner::new(
-            DialConfig {
+            DialTuning {
                 mode,
-                ..DialConfig::default()
+                ..DialTuning::default()
             },
             NetworkEnvironment::with_routes_and_primary(mode, true, true, primary),
         )
@@ -725,17 +759,17 @@ mod tests {
     #[test]
     fn every_dial_mode_filters_and_orders_mixed_results() {
         for (mode, primary) in [
-            (DialMode::Auto, AddressFamily::Ipv6),
-            (DialMode::PreferIpv4, AddressFamily::Ipv4),
-            (DialMode::PreferIpv6, AddressFamily::Ipv6),
-            (DialMode::Ipv4Only, AddressFamily::Ipv4),
-            (DialMode::Ipv6Only, AddressFamily::Ipv6),
+            (DialPolicy::Auto, AddressFamily::Ipv6),
+            (DialPolicy::PreferIpv4, AddressFamily::Ipv4),
+            (DialPolicy::PreferIpv6, AddressFamily::Ipv6),
+            (DialPolicy::Ipv4Only, AddressFamily::Ipv4),
+            (DialPolicy::Ipv6Only, AddressFamily::Ipv6),
         ] {
             let plan = planner(mode, primary).plan(&mixed());
             assert_eq!(plan[0].is_ipv4(), primary == AddressFamily::Ipv4);
-            if mode == DialMode::Ipv4Only {
+            if mode == DialPolicy::Ipv4Only {
                 assert!(plan.iter().all(SocketAddr::is_ipv4));
-            } else if mode == DialMode::Ipv6Only {
+            } else if mode == DialPolicy::Ipv6Only {
                 assert!(plan.iter().all(SocketAddr::is_ipv6));
             } else {
                 assert_ne!(plan[0].is_ipv4(), plan[1].is_ipv4());
@@ -746,23 +780,27 @@ mod tests {
     #[test]
     fn startup_decision_uses_capability_then_stable_system_preference() {
         assert_eq!(
-            initial_primary(DialMode::Auto, super::ROUTE_IPV4, AddressFamily::Ipv6),
+            initial_primary(DialPolicy::Auto, super::ROUTE_IPV4, AddressFamily::Ipv6),
             AddressFamily::Ipv4
         );
         assert_eq!(
-            initial_primary(DialMode::Auto, super::ROUTE_IPV6, AddressFamily::Ipv4),
+            initial_primary(DialPolicy::Auto, super::ROUTE_IPV6, AddressFamily::Ipv4),
             AddressFamily::Ipv6
         );
         assert_eq!(
             initial_primary(
-                DialMode::Auto,
+                DialPolicy::Auto,
                 super::ROUTE_IPV4 | super::ROUTE_IPV6,
                 AddressFamily::Ipv4
             ),
             AddressFamily::Ipv4
         );
         assert_eq!(
-            initial_primary(DialMode::PreferIpv6, super::ROUTE_IPV4, AddressFamily::Ipv6),
+            initial_primary(
+                DialPolicy::PreferIpv6,
+                super::ROUTE_IPV4,
+                AddressFamily::Ipv6
+            ),
             AddressFamily::Ipv4
         );
     }
@@ -770,7 +808,7 @@ mod tests {
     #[test]
     fn route_refresh_changes_primary_only_when_current_route_disappears() {
         let environment = NetworkEnvironment::with_routes_and_primary(
-            DialMode::Auto,
+            DialPolicy::Auto,
             true,
             true,
             AddressFamily::Ipv6,
@@ -784,7 +822,7 @@ mod tests {
     #[test]
     fn strong_failures_need_hysteresis_and_endpoint_failures_clear_them() {
         let environment = NetworkEnvironment::with_routes_and_primary(
-            DialMode::Auto,
+            DialPolicy::Auto,
             true,
             true,
             AddressFamily::Ipv6,
@@ -835,7 +873,7 @@ mod tests {
     #[test]
     fn weak_loser_evidence_switches_only_after_repeated_alternate_wins() {
         let environment = NetworkEnvironment::with_routes_and_primary(
-            DialMode::Auto,
+            DialPolicy::Auto,
             true,
             true,
             AddressFamily::Ipv6,
@@ -851,7 +889,7 @@ mod tests {
     #[test]
     fn successful_recovery_restores_configured_preference_with_hysteresis() {
         let environment = NetworkEnvironment::with_routes_and_primary(
-            DialMode::PreferIpv6,
+            DialPolicy::PreferIpv6,
             true,
             true,
             AddressFamily::Ipv6,
@@ -876,12 +914,12 @@ mod tests {
     #[test]
     fn expired_penalty_allows_bounded_recovery_attempts() {
         let environment = NetworkEnvironment::with_routes_and_primary(
-            DialMode::PreferIpv6,
+            DialPolicy::PreferIpv6,
             true,
             true,
             AddressFamily::Ipv6,
         );
-        let planner = ConnectionPlanner::new(DialConfig::default(), environment.clone());
+        let planner = ConnectionPlanner::new(DialTuning::default(), environment.clone());
         let unreachable = io::Error::from_raw_os_error(101);
         for _ in 0..2 {
             environment.record_connect_error(AddressFamily::Ipv6, &unreachable, Duration::ZERO);
@@ -897,41 +935,5 @@ mod tests {
         assert!(confirmation[0].is_ipv6());
         planner.record_success(AddressFamily::Ipv6, Duration::from_millis(5));
         assert_eq!(environment.primary(), AddressFamily::Ipv6);
-    }
-
-    #[test]
-    fn listener_modes_expand_independently_from_dial_modes() {
-        for mode in [ListenMode::Auto, ListenMode::DualStack] {
-            let addresses = ConnectionPlanner::listener_addresses(
-                &ListenConfig {
-                    mode,
-                    ..ListenConfig::default()
-                },
-                443,
-            );
-            assert_eq!(addresses.len(), 2);
-            assert!(addresses[0].is_ipv4());
-            assert!(addresses[1].is_ipv6());
-        }
-        assert!(
-            ConnectionPlanner::listener_addresses(
-                &ListenConfig {
-                    mode: ListenMode::Ipv4Only,
-                    ..ListenConfig::default()
-                },
-                443
-            )[0]
-            .is_ipv4()
-        );
-        assert!(
-            ConnectionPlanner::listener_addresses(
-                &ListenConfig {
-                    mode: ListenMode::Ipv6Only,
-                    ..ListenConfig::default()
-                },
-                443
-            )[0]
-            .is_ipv6()
-        );
     }
 }

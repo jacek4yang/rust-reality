@@ -11,8 +11,8 @@ use tokio::{
     time::{self, Instant},
 };
 
+use crate::{config::node::network::NetworkConfig, network::DialTuning};
 use crate::{
-    config::NetworkConfig,
     network::{AddressFamily, ConnectionPlanner, NetworkEnvironment},
     protocol::vless::{Address, Destination},
     transport::{FdBudget, FdPermit, UNITS_OUTBOUND_SOCKET},
@@ -72,14 +72,14 @@ impl DestinationConnector {
 
     /// Creates a connector using one process-lifetime environment snapshot.
     #[must_use]
-    pub const fn with_environment(
+    pub fn with_environment(
         connect_timeout: Duration,
         config: NetworkConfig,
         environment: NetworkEnvironment,
     ) -> Self {
         Self {
             connect_timeout,
-            planner: ConnectionPlanner::new(config.dial, environment),
+            planner: ConnectionPlanner::new(DialTuning::for_policy(config.ip()), environment),
         }
     }
 
@@ -706,7 +706,8 @@ mod tests {
         race_with,
     };
     use crate::{
-        config::{DialConfig, DialMode, NetworkConfig},
+        config::node::network::{DialPolicy, NetworkConfig},
+        network::DialTuning,
         network::{AddressFamily, ConnectionPlanner, NetworkEnvironment},
         protocol::vless::{Address, Destination},
         transport::FdBudget,
@@ -847,13 +848,10 @@ mod tests {
         let connector = DestinationConnector::with_environment(
             Duration::from_secs(1),
             NetworkConfig {
-                dial: DialConfig {
-                    mode: DialMode::Ipv6Only,
-                    ..DialConfig::default()
-                },
+                ip: Some(DialPolicy::Ipv6Only),
             },
             NetworkEnvironment::with_routes_and_primary(
-                DialMode::Ipv6Only,
+                DialPolicy::Ipv6Only,
                 false,
                 true,
                 AddressFamily::Ipv6,
@@ -867,17 +865,16 @@ mod tests {
         assert_eq!(stream.local_addr().expect("read local address"), peer);
     }
 
-    fn test_planner(mode: DialMode, delay_ms: u64) -> ConnectionPlanner {
-        let primary = if mode.preferred_family_is_ipv4() == Some(true) {
+    fn test_planner(mode: DialPolicy, delay_ms: u64) -> ConnectionPlanner {
+        let primary = if mode.prefers_ipv4() == Some(true) {
             AddressFamily::Ipv4
         } else {
             AddressFamily::Ipv6
         };
         ConnectionPlanner::new(
-            DialConfig {
-                mode,
+            DialTuning {
                 fallback_delay_ms: delay_ms,
-                ..DialConfig::default()
+                ..DialTuning::for_policy(mode)
             },
             NetworkEnvironment::with_routes_and_primary(mode, true, true, primary),
         )
@@ -885,7 +882,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn preferred_family_failure_falls_back_and_updates_health() {
-        let planner = test_planner(DialMode::PreferIpv6, 5);
+        let planner = test_planner(DialPolicy::PreferIpv6, 5);
         let addresses = vec![
             SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 443),
             SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 443),
@@ -928,7 +925,7 @@ mod tests {
         for _ in 0..101 {
             let started = WallClock::now();
             let (winner, _) = race_with(
-                test_planner(DialMode::PreferIpv6, 250),
+                test_planner(DialPolicy::PreferIpv6, 250),
                 addresses.clone(),
                 Instant::now() + Duration::from_secs(1),
                 Duration::from_secs(1),
@@ -964,7 +961,7 @@ mod tests {
         for _ in 0..101 {
             let started = WallClock::now();
             let (winner, _) = race_with(
-                test_planner(DialMode::PreferIpv6, 5),
+                test_planner(DialPolicy::PreferIpv6, 5),
                 addresses.clone(),
                 Instant::now() + Duration::from_secs(1),
                 Duration::from_secs(1),
@@ -994,7 +991,7 @@ mod tests {
         let timeout = Duration::from_millis(30);
         let started = Instant::now();
         let result = race_with(
-            test_planner(DialMode::PreferIpv6, 5),
+            test_planner(DialPolicy::PreferIpv6, 5),
             vec![
                 SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 443),
                 SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 443),
@@ -1028,7 +1025,7 @@ mod tests {
             SocketAddr::new(Ipv4Addr::new(127, 0, 0, 2).into(), 443),
         ];
         let (winner, _) = race_with(
-            test_planner(DialMode::Ipv4Only, 1),
+            test_planner(DialPolicy::Ipv4Only, 1),
             addresses.clone(),
             Instant::now() + Duration::from_secs(1),
             Duration::from_secs(1),
@@ -1069,7 +1066,7 @@ mod tests {
         let observed = Arc::clone(&active);
         let budget = FdBudget::new(2);
         let (winner, permit) = race_with(
-            test_planner(DialMode::PreferIpv6, 5),
+            test_planner(DialPolicy::PreferIpv6, 5),
             vec![
                 SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 443),
                 SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 443),

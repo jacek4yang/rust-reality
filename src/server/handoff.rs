@@ -27,10 +27,7 @@ use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
 use crate::{
-    config::{
-        HandoffInboundConfig, HandoffSettings, NetworkConfig, ResourceGovernorConfig, SecretString,
-        WarmConnectionPolicy,
-    },
+    config::{SecretString, node::landing::HandoffLandingConfig},
     network::NetworkEnvironment,
     protocol::{
         handoff::{
@@ -60,6 +57,9 @@ use super::{
     vision::{VisionSessionError, run_resumed_session},
     warm_pool::{AdaptiveTcpPool, WarmPoolAuthority, WarmUsePermit},
 };
+use crate::config::node::network::NetworkConfig;
+use crate::config::node::outbound::HandoffOutboundConfig;
+use crate::runtime::policy::{ResourceGovernorPolicy, WarmConnectionPolicy};
 
 /// Compiled LINE-side landing endpoint for session transfers.
 ///
@@ -83,24 +83,20 @@ impl HandoffLine {
     /// Returns `None` only when key material does not decode, which validated
     /// configuration has already excluded.
     #[must_use]
-    pub fn from_settings(settings: &HandoffSettings) -> Option<Self> {
+    pub fn from_settings(settings: &HandoffOutboundConfig) -> Option<Self> {
         Self::from_settings_with_connector(
             settings,
-            DestinationConnector::new(Duration::from_millis(settings.connect_timeout_ms)),
+            DestinationConnector::new(Duration::from_millis(settings.connect_timeout_ms())),
         )
     }
 
     /// Compiles settings while sharing the process network environment.
     #[must_use]
     pub(crate) fn from_settings_with_connector(
-        settings: &HandoffSettings,
+        settings: &HandoffOutboundConfig,
         connector: DestinationConnector,
     ) -> Option<Self> {
-        let psk = Zeroizing::new(
-            BASE64_URL_SAFE_NO_PAD
-                .decode(settings.pre_shared_key.expose())
-                .ok()?,
-        );
+        let psk = Zeroizing::new(BASE64_URL_SAFE_NO_PAD.decode(settings.psk.expose()).ok()?);
         let psk: [u8; 32] = psk.as_slice().try_into().ok()?;
         let public = BASE64_URL_SAFE_NO_PAD
             .decode(&settings.landing_public_key)
@@ -111,9 +107,9 @@ impl HandoffLine {
             port: settings.port,
             psk: HandoffPsk::new(psk),
             landing_public: PublicKey::from(public),
-            connect_timeout: Duration::from_millis(settings.connect_timeout_ms),
-            first_byte_timeout: Duration::from_millis(settings.first_byte_timeout_ms),
-            connector: connector.with_timeout(Duration::from_millis(settings.connect_timeout_ms)),
+            connect_timeout: Duration::from_millis(settings.connect_timeout_ms()),
+            first_byte_timeout: Duration::from_millis(settings.first_byte_timeout_ms()),
+            connector: connector.with_timeout(Duration::from_millis(settings.connect_timeout_ms())),
             pool: None,
         })
     }
@@ -121,13 +117,13 @@ impl HandoffLine {
     /// Compiles an optional generation-owned raw TCP pool. Key material stays
     /// in this immutable line object and never enters the pool identity.
     pub(crate) fn from_settings_with_warm_pool(
-        settings: &HandoffSettings,
+        settings: &HandoffOutboundConfig,
         connector: DestinationConnector,
         fd_budget: &FdBudget,
         warm: Option<(u64, WarmPoolAuthority, &WarmConnectionPolicy)>,
     ) -> Option<Self> {
         let mut line = Self::from_settings_with_connector(settings, connector)?;
-        if settings.warm_tcp
+        if settings.warm_tcp.unwrap_or(true)
             && let Some((generation, authority, policy)) = warm
         {
             line.pool = Some(AdaptiveTcpPool::new(
@@ -419,8 +415,9 @@ impl HandoffLandingHandler {
         clippy::too_many_arguments,
         reason = "one parameter per immutable landing policy and process authority"
     )]
-    pub(crate) fn from_inbound_with_replay(
-        inbound: &HandoffInboundConfig,
+    pub(crate) fn from_landing_with_replay(
+        settings: &HandoffLandingConfig,
+        egress: Option<&str>,
         replay: HandoffReplayCache,
         relay: TcpRelay,
         io_timeout: Duration,
@@ -431,16 +428,16 @@ impl HandoffLandingHandler {
         pressure: PressureGauge,
         generation: PreAuthGeneration,
     ) -> Result<Self, HandoffLandingConfigError> {
-        let settings = &inbound.settings;
-        let psk = decode_key(&settings.pre_shared_key)?;
+        let timing = settings.timing();
+        let psk = decode_key(&settings.psk)?;
         let secret = decode_key(&settings.private_key)?;
         let previous_psks = settings
-            .previous_pre_shared_keys
+            .previous_psks()
             .iter()
             .map(|key| decode_key(key).map(HandoffPsk::new))
             .collect::<Result<Vec<_>, _>>()?;
         let previous_secrets = settings
-            .previous_private_keys
+            .previous_private_keys()
             .iter()
             .map(|key| decode_key(key).map(StaticSecret::from))
             .collect::<Result<Vec<_>, _>>()?;
@@ -454,24 +451,23 @@ impl HandoffLandingHandler {
         let mut handler = Self::new(
             keys,
             replay,
-            inbound.settings.max_time_difference_seconds,
-            Duration::from_millis(inbound.settings.connect_timeout_ms),
-            Duration::from_millis(inbound.settings.authentication_timeout_ms),
+            timing.max_time_difference_seconds,
+            Duration::from_millis(timing.connect_timeout_ms),
+            Duration::from_millis(timing.authentication_timeout_ms),
             relay,
             io_timeout,
         );
-        handler.pre_auth_idle_timeout =
-            Duration::from_millis(inbound.settings.pre_auth_idle_timeout_ms);
+        handler.pre_auth_idle_timeout = Duration::from_millis(timing.pre_auth_idle_timeout_ms);
         handler.governor = governor;
         handler.pressure = pressure;
         handler.generation = generation;
         handler.connector = DestinationConnector::with_environment(
-            Duration::from_millis(inbound.settings.connect_timeout_ms),
-            network.clone(),
+            Duration::from_millis(timing.connect_timeout_ms),
+            *network,
             network_environment,
         );
-        Ok(match &inbound.settings.egress {
-            Some(tag) => handler.with_egress(outbounds.clone(), tag),
+        Ok(match egress {
+            Some(name) => handler.with_egress(outbounds.clone(), name),
             None => handler,
         })
     }
@@ -502,7 +498,7 @@ impl HandoffLandingHandler {
         relay: TcpRelay,
         io_timeout: Duration,
     ) -> Self {
-        let governor = ResourceGovernor::new(&ResourceGovernorConfig::default());
+        let governor = ResourceGovernor::new(&ResourceGovernorPolicy::default());
         Self {
             keys,
             replay,
@@ -591,7 +587,7 @@ impl HandoffLandingHandler {
                 // A blackhole egress discards the session by configuration:
                 // end it without dialing and without an error, leaving the
                 // silent close the line node reads as a rejection.
-                Ok(OutboundConnectOutcome::Blackholed) => return Ok(RelayStats::new(0, 0)),
+                Ok(OutboundConnectOutcome::Blocked) => return Ok(RelayStats::new(0, 0)),
                 Err(source) => return Err(HandoffLandingError::Egress(source)),
             },
             None => {
@@ -803,6 +799,9 @@ impl From<DestinationConnectError> for HandoffLandingError {
 
 #[cfg(test)]
 mod tests {
+    use crate::runtime::policy::{
+        DirectBarrierPolicy, ResourceGovernorPolicy, WarmConnectionPolicy,
+    };
     use std::{io, net::Ipv4Addr, sync::Arc, time::Duration};
 
     use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
@@ -819,9 +818,12 @@ mod tests {
     };
     use crate::{
         config::{
-            BlackholeSettings, DirectBarrierConfig, DnsStrategy, HandoffSettings, OutboundConfig,
-            ResourceGovernorConfig, RoutingConfig, SecretString, Socks5Settings, UserPolicy,
-            WarmConnectionPolicy,
+            SecretString,
+            node::{
+                outbound::{HandoffOutboundConfig, OutboundConfig, Socks5Config},
+                routing::RoutingConfig,
+                user::UserConfig,
+            },
         },
         protocol::{
             handoff::{
@@ -875,14 +877,14 @@ mod tests {
 
     fn handoff_line(address: std::net::SocketAddr) -> HandoffLine {
         let landing_public = PublicKey::from(&StaticSecret::from(LANDING_SECRET));
-        HandoffLine::from_settings(&HandoffSettings {
+        HandoffLine::from_settings(&HandoffOutboundConfig {
             address: address.ip().to_string(),
             port: address.port(),
-            pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
+            psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
             landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public.as_bytes()),
-            connect_timeout_ms: 1_000,
-            first_byte_timeout_ms: 1_000,
-            warm_tcp: false,
+            connect_timeout_ms: Some(1_000),
+            first_byte_timeout_ms: Some(1_000),
+            warm_tcp: Some(false),
         })
         .expect("test handoff settings must compile")
     }
@@ -906,14 +908,14 @@ mod tests {
         let pressure = PressureGauge::new();
         let landing_public = PublicKey::from(&StaticSecret::from(LANDING_SECRET));
         let line = HandoffLine::from_settings_with_warm_pool(
-            &HandoffSettings {
+            &HandoffOutboundConfig {
                 address: address.ip().to_string(),
                 port: address.port(),
-                pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
+                psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
                 landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public.as_bytes()),
-                connect_timeout_ms: 2_000,
-                first_byte_timeout_ms: 2_000,
-                warm_tcp: true,
+                connect_timeout_ms: Some(2_000),
+                first_byte_timeout_ms: Some(2_000),
+                warm_tcp: Some(true),
             },
             DestinationConnector::new(Duration::from_secs(2)),
             &fd_budget,
@@ -981,14 +983,14 @@ mod tests {
         let fd_budget = FdBudget::new(4_096);
         let landing_public = PublicKey::from(&StaticSecret::from(LANDING_SECRET));
         let line = HandoffLine::from_settings_with_warm_pool(
-            &HandoffSettings {
+            &HandoffOutboundConfig {
                 address: address.ip().to_string(),
                 port: address.port(),
-                pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
+                psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
                 landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public.as_bytes()),
-                connect_timeout_ms: 2_000,
-                first_byte_timeout_ms: 2_000,
-                warm_tcp: true,
+                connect_timeout_ms: Some(2_000),
+                first_byte_timeout_ms: Some(2_000),
+                warm_tcp: Some(true),
             },
             DestinationConnector::new(Duration::from_secs(2)),
             &fd_budget,
@@ -1251,48 +1253,50 @@ mod tests {
     }
 
     fn handoff_vision_handler(landing_address: std::net::SocketAddr) -> VisionHandler {
-        let barrier = DirectBarrierConfig {
+        let barrier = DirectBarrierPolicy {
             max_concurrent: 8,
             max_per_second: 8,
         };
         let landing_public = PublicKey::from(&StaticSecret::from(LANDING_SECRET));
         let outbounds = OutboundRegistry::new(
-            &[OutboundConfig::Handoff {
-                tag: "handoff".to_owned(),
-                settings: HandoffSettings {
+            &std::collections::BTreeMap::from([(
+                "handoff".to_owned(),
+                OutboundConfig::Handoff(HandoffOutboundConfig {
                     address: landing_address.ip().to_string(),
                     port: landing_address.port(),
-                    pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
+                    psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
                     landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public.as_bytes()),
-                    connect_timeout_ms: 1_000,
-                    first_byte_timeout_ms: 1_000,
-                    warm_tcp: false,
-                },
-            }],
+                    connect_timeout_ms: Some(1_000),
+                    first_byte_timeout_ms: Some(2_000),
+                    warm_tcp: Some(false),
+                }),
+            )]),
             &barrier,
             Duration::from_secs(1),
             FdBudget::new(4_096),
         );
         let routing = RoutingTable::compile(
             &RoutingConfig {
-                domain_strategy: DnsStrategy::AsIs,
-                global_rules: Vec::new(),
-                users: vec![UserPolicy {
-                    name: "test-user".to_owned(),
-                    user_ids: vec!["33333333-3333-3333-3333-333333333333".to_owned()],
-                    default_outbound: "handoff".to_owned(),
-                    rules: Vec::new(),
-                }],
+                default: "handoff".to_owned(),
+                strategy: None,
+                rules: None,
+                policies: None,
             },
+            &[UserConfig {
+                id: "33333333-3333-3333-3333-333333333333".to_owned(),
+                short_ids: vec!["0123456789abcdef".to_owned()],
+                label: None,
+                policy: None,
+            }],
             Arc::new(EmptyAssetMatcher),
-            crate::runtime::ResourceGovernor::new(&ResourceGovernorConfig::default()),
+            crate::runtime::ResourceGovernor::new(&ResourceGovernorPolicy::default()),
         )
         .expect("test routing must compile");
-        let governor = ResourceGovernorConfig {
+        let governor = ResourceGovernorPolicy {
             connect_timeout_ms: 1_000,
             handshake_timeout_ms: 1_000,
             fallback_timeout_ms: 1_000,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         VisionHandler::new(outbounds, routing, test_relay(), &governor)
     }
@@ -1682,10 +1686,10 @@ mod tests {
         );
     }
 
-    fn egress_registry(outbounds: &[OutboundConfig]) -> OutboundRegistry {
+    fn egress_registry(name: &str, outbound: OutboundConfig) -> OutboundRegistry {
         OutboundRegistry::new(
-            outbounds,
-            &DirectBarrierConfig::default(),
+            &std::collections::BTreeMap::from([(name.to_owned(), outbound)]),
+            &DirectBarrierPolicy::default(),
             Duration::from_secs(1),
             FdBudget::new(4_096),
         )
@@ -1714,16 +1718,16 @@ mod tests {
             .expect("probe address must exist")
             .port();
         let landing_handler = test_landing_handler().with_egress(
-            egress_registry(&[OutboundConfig::Socks5 {
-                tag: "socks".to_owned(),
-                settings: Socks5Settings {
+            egress_registry(
+                "socks",
+                OutboundConfig::Socks5(Socks5Config {
                     address: socks_address.ip().to_string(),
                     port: socks_address.port(),
                     username: None,
                     password: None,
-                    warm_tcp: false,
-                },
-            }]),
+                    warm_tcp: Some(false),
+                }),
+            ),
             "socks",
         );
         let line_handler = handoff_vision_handler(landing_address);
@@ -1859,11 +1863,15 @@ mod tests {
         let landing_address = landing_listener
             .local_addr()
             .expect("landing address must exist");
+        // `block` is a built-in outbound, so an empty declaration set already
+        // resolves it.
         let landing_handler = test_landing_handler().with_egress(
-            egress_registry(&[OutboundConfig::Blackhole {
-                tag: "block".to_owned(),
-                settings: BlackholeSettings::default(),
-            }]),
+            OutboundRegistry::new(
+                &std::collections::BTreeMap::new(),
+                &DirectBarrierPolicy::default(),
+                Duration::from_secs(1),
+                FdBudget::new(4_096),
+            ),
             "block",
         );
         let line_handler = handoff_vision_handler(landing_address);
@@ -2059,26 +2067,26 @@ mod tests {
     #[test]
     fn handoff_line_rejects_undecodable_settings() {
         assert!(
-            HandoffLine::from_settings(&HandoffSettings {
+            HandoffLine::from_settings(&HandoffOutboundConfig {
                 address: "127.0.0.1".to_owned(),
                 port: 443,
-                pre_shared_key: SecretString::new("not-base64!"),
+                psk: SecretString::new("not-base64!"),
                 landing_public_key: BASE64_URL_SAFE_NO_PAD.encode([0x77; 32]),
-                connect_timeout_ms: 1_000,
-                first_byte_timeout_ms: 1_000,
-                warm_tcp: false,
+                connect_timeout_ms: Some(1_000),
+                first_byte_timeout_ms: Some(1_000),
+                warm_tcp: Some(false),
             })
             .is_none()
         );
         assert!(
-            HandoffLine::from_settings(&HandoffSettings {
+            HandoffLine::from_settings(&HandoffOutboundConfig {
                 address: "127.0.0.1".to_owned(),
                 port: 443,
-                pre_shared_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
+                psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
                 landing_public_key: BASE64_URL_SAFE_NO_PAD.encode([0x77; 16]),
-                connect_timeout_ms: 1_000,
-                first_byte_timeout_ms: 1_000,
-                warm_tcp: false,
+                connect_timeout_ms: Some(1_000),
+                first_byte_timeout_ms: Some(1_000),
+                warm_tcp: Some(false),
             })
             .is_none()
         );

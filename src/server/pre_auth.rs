@@ -147,6 +147,7 @@ pub(crate) async fn begin_authentication(
 
 #[cfg(test)]
 mod tests {
+    use crate::runtime::policy::ResourceGovernorPolicy;
     use std::{net::Ipv4Addr, time::Duration};
 
     use tokio::{
@@ -157,10 +158,7 @@ mod tests {
     };
 
     use super::{PreAuthError, PreAuthGeneration, begin_authentication};
-    use crate::{
-        config::ResourceGovernorConfig,
-        runtime::{AdmissionKind, PressureGauge, ResourceGovernor, ResourcePressure},
-    };
+    use crate::runtime::{AdmissionKind, PressureGauge, ResourceGovernor, ResourcePressure};
 
     async fn tcp_pair() -> (TcpStream, TcpStream) {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -177,7 +175,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn first_byte_exchanges_idle_for_handshake_permit() {
         let (mut client, mut server) = tcp_pair().await;
-        let governor = ResourceGovernor::new(&ResourceGovernorConfig::default());
+        let governor = ResourceGovernor::new(&ResourceGovernorPolicy::default());
         let pressure = PressureGauge::new();
         let generation = PreAuthGeneration::default();
         let task_governor = governor.clone();
@@ -215,7 +213,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn idle_timeout_releases_all_admission_state() {
         let (_client, mut server) = tcp_pair().await;
-        let governor = ResourceGovernor::new(&ResourceGovernorConfig::default());
+        let governor = ResourceGovernor::new(&ResourceGovernorPolicy::default());
         let pressure = PressureGauge::new();
         let generation = PreAuthGeneration::default();
         let task_governor = governor.clone();
@@ -242,7 +240,7 @@ mod tests {
     #[tokio::test]
     async fn zero_byte_peer_retirement_is_distinct_from_authentication_failure() {
         let (client, mut server) = tcp_pair().await;
-        let governor = ResourceGovernor::new(&ResourceGovernorConfig::default());
+        let governor = ResourceGovernor::new(&ResourceGovernorPolicy::default());
         let pressure = PressureGauge::new();
         let generation = PreAuthGeneration::default();
         drop(client);
@@ -267,7 +265,7 @@ mod tests {
     async fn pressure_and_generation_retirement_reclaim_idle_sockets() {
         for reclaim_by_pressure in [true, false] {
             let (_client, mut server) = tcp_pair().await;
-            let governor = ResourceGovernor::new(&ResourceGovernorConfig::default());
+            let governor = ResourceGovernor::new(&ResourceGovernorPolicy::default());
             let pressure = PressureGauge::new();
             let generation = PreAuthGeneration::default();
             let task_governor = governor.clone();
@@ -304,9 +302,9 @@ mod tests {
     async fn idle_admission_limit_rejects_excess_without_a_wait_queue() {
         let (_first_client, mut first_server) = tcp_pair().await;
         let (_second_client, mut second_server) = tcp_pair().await;
-        let policy = ResourceGovernorConfig {
+        let policy = ResourceGovernorPolicy {
             max_pre_auth_idle_connections: 1,
-            ..ResourceGovernorConfig::default()
+            ..ResourceGovernorPolicy::default()
         };
         let governor = ResourceGovernor::new(&policy);
         let pressure = PressureGauge::new();
