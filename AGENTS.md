@@ -155,16 +155,37 @@ the current version, not because an old version behaved that way; automatic
 behavior MAY use reliable environment detection and MUST remain deterministic,
 explainable, and explicitly overridable.
 
-## 9. Migration lives in release announcements, not in the binary
+## 9. One current configuration schema
+
+rust-reality maintains exactly one configuration schema at any time. A breaking
+configuration change **replaces** the schema; it MUST NOT add a parser beside
+the previous one. The repository does not accumulate historical schemas, and a
+schema or version identifier MAY describe the one current contract for
+diagnostics but MUST NOT select a parser.
+
+Contributors MUST NOT add, for configuration: `serde(alias)` for renamed fields,
+legacy or deprecated field names, silently ignored unknown properties,
+compatibility structs, version-dispatched schema selection, in-binary migration
+or normalization of old configurations, compatibility feature flags or runtime
+modes, or extension buckets (such as a flattened `HashMap<String, Value>`) whose
+purpose is to let a future version ignore unknown values.
+
+An old configuration MUST fail. Removed configuration fields are rejected
+strictly; recognizing a removed field name solely to emit a targeted fatal error
+naming its replacement is acceptable, accepting it is not.
+
+This rule is scoped to configuration. It grants nothing with respect to the
+external interoperability §6 requires.
 
 Breaking changes are documented concisely in `CHANGELOG.md`. The complete
 operator-facing old→new migration procedure goes into the GitHub Release notes
 of the release that introduces the break, ending with
 `rust-reality check --config config.json`. The production binary MUST NOT
 contain a version-to-version migration engine, and the repository MUST NOT keep
-a migration-guide archive. Removed configuration fields are rejected strictly;
-recognizing a removed field name solely to emit a targeted fatal error naming
-its replacement is acceptable, accepting it is not.
+a migration-guide archive.
+
+The reasoning and the current schema's design are recorded in
+[ADR 0019](docs/adr/0019-one-current-configuration-schema.md).
 
 ## 10. Diagnostics are part of the product
 

@@ -60,3 +60,4 @@ of the law is what it is.
 | [0016](0016-protocol-core-is-no-std-ready-but-stays-in-place.md) | The protocol core is `no_std`-ready and stays in the main crate | Accepted (deferred action) |
 | [0017](0017-relay-atomic-and-contention-hypotheses-rejected.md) | Relay atomic bookkeeping, pipe-cleanliness typestate, and pool contention | Rejected on measurement |
 | [0018](0018-session-establishment-allocation-has-no-avoidable-headroom.md) | Session-establishment allocation has no avoidable headroom | Accepted (negative result) |
+| [0019](0019-one-current-configuration-schema.md) | One current configuration schema | Accepted |
