@@ -297,14 +297,17 @@ Validates the complete file and writes deterministic, canonical pretty JSON to
 stdout. It never edits the input file in place. Redirect to a new file, inspect
 it, then replace atomically if desired.
 
-### `schema`
+### JSON Schema
+
+The schema is a development artifact, not an operator command. It is rendered
+from the model types by the repository tooling and attached to each release:
 
 ```text
-rust-reality schema > rust-reality.schema.json
+cargo dev config schema > rust-reality.schema.json
 ```
 
-Prints the complete JSON Schema. The schema describes structure and enum types;
-use `check` for cross-reference and security invariants.
+The schema describes structure and enum types; use `check` for cross-reference
+and security invariants, and treat the binary as the final authority.
 
 ## Identity and key commands
 
@@ -349,27 +352,17 @@ Prints JSON containing an independent 32-byte URL-safe unpadded
 `preSharedKey` for one NXR trust relationship. Do not reuse a REALITY key,
 password, or one NXR key across unrelated line/landing pairs.
 
-## Performance command
+## Performance measurement
 
-### `benchmark`
+Performance measurement is a development task and lives in the repository
+tooling, not in the deployed binary:
 
 ```text
-rust-reality benchmark \
-  [--duration-ms <MILLISECONDS>] \
-  [--warmup-ms <MILLISECONDS>]
+cargo bench
+cargo dev bench ...
 ```
 
-Runs bounded in-process hot-path measurements and writes a JSON report suitable
-for archiving and same-host comparisons.
-
-| Option | Default/range | Meaning |
-| --- | --- | --- |
-| `--duration-ms <N>` | `1000`, `90..=30000` | Measured time requested for each case. |
-| `--warmup-ms <N>` | `250`, `1..=10000` | Warm-up before each case. |
-
-The report includes the embedded commit, build/target information, timings,
-operation counts, means, and sample percentiles. It is not an Internet
-throughput test; see the [benchmark policy](benchmarks.md).
+See the [benchmark policy](benchmarks.md).
 
 ## Signals and atomic reload
 

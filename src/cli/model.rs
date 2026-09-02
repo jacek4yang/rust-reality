@@ -15,7 +15,6 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::{
     assets::AssetLoadError,
-    benchmark::BenchmarkError,
     config::LoadError,
     crypto::KeyGenerationError,
     server::{
@@ -56,10 +55,6 @@ pub enum Command {
         #[command(subcommand)]
         command: GenerateCommand,
     },
-    /// Print the JSON Schema of the current configuration.
-    Schema,
-    /// Quantify bounded protocol hot paths and print a machine-readable report.
-    Benchmark(BenchmarkArgs),
 }
 
 /// Material an operator should not invent by hand.
@@ -148,16 +143,6 @@ pub struct CheckCoverArgs {
     pub timeout_ms: u64,
 }
 
-#[derive(Debug, Args)]
-pub struct BenchmarkArgs {
-    /// Measured milliseconds for each benchmark case.
-    #[arg(long, default_value_t = 1_000, value_parser = clap::value_parser!(u64).range(90..=30_000))]
-    pub duration_ms: u64,
-    /// Warm-up milliseconds before each case.
-    #[arg(long, default_value_t = 250, value_parser = clap::value_parser!(u64).range(1..=10_000))]
-    pub warmup_ms: u64,
-}
-
 #[derive(Debug)]
 pub enum CliError {
     Config(LoadError),
@@ -169,7 +154,6 @@ pub enum CliError {
     Json(serde_json::Error),
     Io(io::Error),
     InvalidArgument(&'static str),
-    Benchmark(BenchmarkError),
 }
 
 impl fmt::Display for CliError {
@@ -184,7 +168,6 @@ impl fmt::Display for CliError {
             Self::Json(_) => formatter.write_str("failed to encode JSON output"),
             Self::Io(_) => formatter.write_str("failed to write command output"),
             Self::InvalidArgument(message) => formatter.write_str(message),
-            Self::Benchmark(source) => source.fmt(formatter),
         }
     }
 }
@@ -201,7 +184,6 @@ impl Error for CliError {
             Self::Json(source) => Some(source),
             Self::Io(source) => Some(source),
             Self::InvalidArgument(_) => None,
-            Self::Benchmark(source) => Some(source),
         }
     }
 }
@@ -251,12 +233,6 @@ impl From<serde_json::Error> for CliError {
 impl From<io::Error> for CliError {
     fn from(source: io::Error) -> Self {
         Self::Io(source)
-    }
-}
-
-impl From<BenchmarkError> for CliError {
-    fn from(source: BenchmarkError) -> Self {
-        Self::Benchmark(source)
     }
 }
 

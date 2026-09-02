@@ -45,7 +45,7 @@ JSON；如果内核或 VPS 策略拒绝某个事件，则记录带原始诊断�
 
 | Harness | 用途 |
 |---|---|
-| `rust-reality benchmark`（内置） | 有界、机器可读的进程内协议测量（VLESS 解码、Vision framing、NXR 认证）。 |
+| `cargo bench`（criterion，位于 `benches/`） | 有界的进程内协议测量：VLESS 请求解码、两条 Vision 解码路径，以及 NXR 认证请求编码。 |
 | `cargo bench`（criterion） | VLESS 解码、Vision framing、relay 后端、双栈规划/setup/fallback、自适应 short-ID/身份/tag 查找、REALITY digest 哈希、重放过期/reserve 和 direct admission 争用的回归分析，带基线和图表。 |
 | `cargo dev bench run --suite matrix` | 完整 A/B/C loopback 矩阵（baseline/final/Xray），覆盖 方向 × 载荷 × 并发；每个 cell 都有 origin 饱和、上传计量与隧道绕过守卫，并含端到端完整性校验。`--cells`/`--skip` 可裁剪计划。 |
 | `cargo dev bench run --suite fallback` | 在固定基线 ELF 与候选之间做干净的 fallback A/B：两侧 warn 级日志、直连 listener，两侧固定相同的 relay splice/pipe-pool/buffer 策略，并在计时前逐 slot 校验载荷完整性。 |

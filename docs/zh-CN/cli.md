@@ -269,14 +269,17 @@ rust-reality config format --config <PATH>
 验证完整文件并把确定性的规范美化 JSON 写入 stdout，不会原地编辑输入文件。
 应重定向到新文件，审查后再原子替换。
 
-### `schema`
+### JSON Schema
+
+Schema 属于开发产物，不是运维命令。它由仓库工具从模型类型直接生成，并随每次
+发布一起附带：
 
 ```text
-rust-reality schema > rust-reality.schema.json
+cargo dev config schema > rust-reality.schema.json
 ```
 
-输出完整 JSON Schema。Schema 描述结构和枚举；跨引用与安全不变量必须使用
-`check` 验证。
+Schema 只描述结构和枚举。跨引用和安全不变量要用 `check` 验证，最终以二进制的
+判断为准。
 
 ## 身份与密钥命令
 
@@ -318,25 +321,16 @@ rust-reality node-keygen
 输出包含独立 32 字节 URL-safe 无填充 `preSharedKey` 的 JSON，用于一个 NXR
 信任关系。不要复用 REALITY 密钥、密码，也不要让无关线路机/落地机共享 NXR 密钥。
 
-## 性能命令
+## 性能测量
 
-### `benchmark`
+性能测量属于开发工作，放在仓库工具里，不进入部署的二进制：
 
 ```text
-rust-reality benchmark \
-  [--duration-ms <MILLISECONDS>] \
-  [--warmup-ms <MILLISECONDS>]
+cargo bench
+cargo dev bench ...
 ```
 
-执行有界的进程内热点测量并输出适合归档和同机对比的 JSON。
-
-| 选项 | 默认值/范围 | 含义 |
-| --- | --- | --- |
-| `--duration-ms <N>` | `1000`，`90..=30000` | 每个 case 请求的测量时间。 |
-| `--warmup-ms <N>` | `250`，`1..=10000` | 每个 case 的预热时间。 |
-
-报告包含嵌入 commit、构建/目标信息、计时、操作数、均值和样本分位数。它不是
-互联网吞吐测试；详见[基准策略](benchmarks.md)。
+详见[基准策略](benchmarks.md)。
 
 ## 信号与原子热更新
 
