@@ -9,7 +9,7 @@
 // `cargo dev`, because the deployed daemon is not the project's engineering
 // toolbox.
 
-use std::{error::Error, fmt, io, path::PathBuf};
+use std::{error::Error, fmt, io, path::PathBuf, sync::OnceLock};
 
 use clap::{Args, Parser, Subcommand};
 
@@ -23,10 +23,31 @@ use crate::{
     },
 };
 
+/// The `--version` body: the release version, then the source commit.
+///
+/// The first line stays exactly `rust-reality <version>`, which is the release
+/// contract asserted by the musl CI check, the release workflow and the release
+/// smoke test. The commit follows on its own line so an operator reporting a
+/// problem, and the measurement harness attributing a benchmark, can both name
+/// the exact source a binary was built from.
+fn long_version() -> &'static str {
+    static LONG_VERSION: OnceLock<String> = OnceLock::new();
+    LONG_VERSION
+        .get_or_init(|| {
+            format!(
+                "{}\ncommit: {}",
+                env!("CARGO_PKG_VERSION"),
+                crate::BUILD_COMMIT
+            )
+        })
+        .as_str()
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "rust-reality",
     version,
+    long_version = long_version(),
     about = "Linux-focused VLESS + REALITY + Vision proxy"
 )]
 pub struct Cli {
@@ -257,6 +278,33 @@ mod tests {
 
     fn parse(arguments: &[&str]) -> Cli {
         Cli::try_parse_from(arguments).unwrap_or_else(|error| panic!("must parse: {error}"))
+    }
+
+    #[test]
+    fn long_version_states_the_release_line_then_the_source_commit() {
+        // Three release checks match a whole line against `rust-reality
+        // <version>` — the musl CI check, the release workflow, and the release
+        // smoke test — so the first line is a contract, not a preference.
+        let rendered = format!("rust-reality {}", super::long_version());
+        let mut lines = rendered.lines();
+        assert_eq!(
+            lines.next().unwrap(),
+            concat!("rust-reality ", env!("CARGO_PKG_VERSION"))
+        );
+
+        // The second line is what the measurement harness reads to attribute a
+        // benchmark to an exact source commit; `tools/rr-dev/src/bench/
+        // identity.rs` parses precisely this shape.
+        let commit = lines.next().unwrap().strip_prefix("commit: ").unwrap();
+        assert_eq!(commit, crate::BUILD_COMMIT);
+        assert!(lines.next().is_none(), "no third line: {rendered:?}");
+
+        // An unstamped build says so rather than guessing a commit.
+        assert!(
+            commit == "unknown"
+                || (commit.len() == 40 && commit.bytes().all(|b| b.is_ascii_hexdigit())),
+            "commit must be `unknown` or 40 hex characters: {commit:?}"
+        );
     }
 
     #[test]

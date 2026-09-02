@@ -16,6 +16,17 @@ rust-reality generate    uuid | x25519 | short-id | psk
 
 外加 `--help` 和 `--version`。所有读配置的命令都接受 `-c` / `--config`。
 
+`--version` 会报告发行版本以及构建该二进制所用的确切源码 commit：
+
+```text
+rust-reality 1.9.0
+commit: 075fad6d7277409605c4edcc47fab38dafc9089b
+```
+
+`-V` 只打印第一行。发行构建始终携带 commit；未携带时会如实报告
+`commit: unknown`，而不是猜测。提交问题报告时请附上完整的 `--version`
+输出——这是判断某个可执行文件由哪份源码构建的唯一途径。
+
 | 命令 | 回答什么 |
 | --- | --- |
 | `run` | 提供服务，直到收到 SIGINT 或 SIGTERM |
