@@ -1,11 +1,14 @@
 use std::{error::Error, fmt};
 
+// The pure-Rust backend. It is the `--no-default-features` provider and the
+// oracle the cross-provider equivalence tests compare ring against, so it is
+// never merely dead weight in a default build.
 #[cfg(not(feature = "ring-aead"))]
-use aes_gcm::Aes128Gcm;
 use aes_gcm::{
-    Aes256Gcm,
-    aead::{AeadInOut, KeyInit, Nonce, Tag, array::Array},
+    Aes128Gcm, Aes256Gcm,
+    aead::{AeadInOut, KeyInit, array::Array},
 };
+#[cfg(not(feature = "ring-aead"))]
 use chacha20poly1305::ChaCha20Poly1305;
 
 use super::{CipherSuite, TrafficKeys};
@@ -122,47 +125,78 @@ impl fmt::Display for Tls13RecordError {
 
 impl Error for Tls13RecordError {}
 
-/// AES-128-GCM record primitive.
+/// One TLS 1.3 record AEAD.
 ///
 /// The default backend (feature `ring-aead`, on by default) is ring's
-/// BoringSSL-derived implementation, which measured ≈2.5× faster than
-/// RustCrypto at production record sizes (decision D9; see
-/// docs/en/performance.md). A `--no-default-features` build selects the
-/// pure-Rust RustCrypto backend with identical wire behavior. Only the AEAD
-/// primitive differs: nonce
-/// derivation, sequence ownership, AAD construction, framing, limits, and
-/// error semantics stay in `Tls13RecordLayer`.
+/// BoringSSL-derived implementation for **all three** suites; a
+/// `--no-default-features` build selects the pure-Rust RustCrypto backends with
+/// identical wire behavior. Measured on this repository's exact record shapes,
+/// ring is faster than RustCrypto everywhere — AES-128-GCM ≈2.5x, AES-256-GCM
+/// 1.55x–2.00x, ChaCha20-Poly1305 1.86x–8.58x, the largest margins at the small
+/// records that handshake and control traffic actually use. ring also beat
+/// `aws-lc-rs` in all eight measured AEAD cells, and unlike `aws-lc-rs` it
+/// resolves without `std`, which this module requires: it is inside the
+/// `no_std + alloc` protocol core enforced by
+/// `tests/protocol_core_boundary.rs` (ADR 0016). See docs/en/performance.md.
 ///
-/// Nonce-safety invariant (unchanged by the provider swap):
+/// Only the AEAD primitive differs between backends. Nonce derivation, sequence
+/// ownership, AAD construction, framing, limits, and error semantics stay in
+/// [`Tls13RecordLayer`].
+///
+/// Nonce-safety invariant (unchanged by the provider choice):
 /// `Tls13RecordLayer` is the single source of nonce derivation
 /// (`iv XOR sequence`), it never implements `Clone`, the sequence advances
-/// exactly once per sealed/opened record, and AES-GCM keys are retired at
-/// the conservative 2^24 record limit. ring's `assume_unique_for_key`
-/// therefore always receives a nonce that is unique under this key.
-struct Aes128GcmRecordCipher {
-    #[cfg(not(feature = "ring-aead"))]
-    inner: Box<Aes128Gcm>,
+/// exactly once per sealed/opened record, and AES-GCM keys are retired at the
+/// conservative 2^24 record limit. ring's `assume_unique_for_key` therefore
+/// always receives a nonce that is unique under this key.
+struct RecordCipher {
     #[cfg(feature = "ring-aead")]
     inner: Box<ring::aead::LessSafeKey>,
+    #[cfg(not(feature = "ring-aead"))]
+    inner: RustCryptoRecordCipher,
+    /// Retained so `Debug` names the suite without asking the backend.
+    suite: CipherSuite,
 }
 
-impl Aes128GcmRecordCipher {
-    fn new(key: &[u8]) -> Result<Self, Tls13RecordError> {
-        #[cfg(not(feature = "ring-aead"))]
+/// The pure-Rust backend's per-suite key material.
+#[cfg(not(feature = "ring-aead"))]
+enum RustCryptoRecordCipher {
+    Aes128Gcm(Box<Aes128Gcm>),
+    Aes256Gcm(Box<Aes256Gcm>),
+    ChaCha20Poly1305(Box<ChaCha20Poly1305>),
+}
+
+impl RecordCipher {
+    fn new(suite: CipherSuite, key: &[u8]) -> Result<Self, Tls13RecordError> {
+        #[cfg(feature = "ring-aead")]
         {
-            Aes128Gcm::new_from_slice(key)
-                .map(|cipher| Self {
-                    inner: Box::new(cipher),
+            let algorithm = match suite {
+                CipherSuite::Aes128GcmSha256 => &ring::aead::AES_128_GCM,
+                CipherSuite::Aes256GcmSha384 => &ring::aead::AES_256_GCM,
+                CipherSuite::ChaCha20Poly1305Sha256 => &ring::aead::CHACHA20_POLY1305,
+            };
+            ring::aead::UnboundKey::new(algorithm, key)
+                .map(|key| Self {
+                    inner: Box::new(ring::aead::LessSafeKey::new(key)),
+                    suite,
                 })
                 .map_err(|_| Tls13RecordError::InvalidKey)
         }
-        #[cfg(feature = "ring-aead")]
+        #[cfg(not(feature = "ring-aead"))]
         {
-            ring::aead::UnboundKey::new(&ring::aead::AES_128_GCM, key)
-                .map(|key| Self {
-                    inner: Box::new(ring::aead::LessSafeKey::new(key)),
-                })
-                .map_err(|_| Tls13RecordError::InvalidKey)
+            let inner = match suite {
+                CipherSuite::Aes128GcmSha256 => Aes128Gcm::new_from_slice(key)
+                    .map(Box::new)
+                    .map(RustCryptoRecordCipher::Aes128Gcm),
+                CipherSuite::Aes256GcmSha384 => Aes256Gcm::new_from_slice(key)
+                    .map(Box::new)
+                    .map(RustCryptoRecordCipher::Aes256Gcm),
+                CipherSuite::ChaCha20Poly1305Sha256 => ChaCha20Poly1305::new_from_slice(key)
+                    .map(Box::new)
+                    .map(RustCryptoRecordCipher::ChaCha20Poly1305),
+            }
+            .map_err(|_| Tls13RecordError::InvalidKey)?;
+            Ok(Self { inner, suite })
         }
     }
 
@@ -172,17 +206,6 @@ impl Aes128GcmRecordCipher {
         aad: &[u8],
         plaintext: &mut [u8],
     ) -> Result<[u8; TAG_LEN], Tls13RecordError> {
-        #[cfg(not(feature = "ring-aead"))]
-        {
-            let nonce: Nonce<Aes128Gcm> = Array(*nonce);
-            let tag = self
-                .inner
-                .encrypt_inout_detached(&nonce, aad, plaintext.into())
-                .map_err(|_| Tls13RecordError::AuthenticationFailed)?;
-            let mut output = [0_u8; TAG_LEN];
-            output.copy_from_slice(&tag);
-            Ok(output)
-        }
         #[cfg(feature = "ring-aead")]
         {
             let tag = self
@@ -197,24 +220,48 @@ impl Aes128GcmRecordCipher {
             output.copy_from_slice(tag.as_ref());
             Ok(output)
         }
+        #[cfg(not(feature = "ring-aead"))]
+        {
+            // Each arm copies its own tag type into the fixed output. Unifying
+            // them through a `Vec` would be shorter and would allocate 16 bytes
+            // per record; `allocation_gate` requires the steady-state framed
+            // write path to allocate nothing.
+            let mut output = [0_u8; TAG_LEN];
+            match &self.inner {
+                RustCryptoRecordCipher::Aes128Gcm(cipher) => {
+                    let tag = cipher
+                        .encrypt_inout_detached(&Array(*nonce), aad, plaintext.into())
+                        .map_err(|_| Tls13RecordError::AuthenticationFailed)?;
+                    output.copy_from_slice(&tag);
+                }
+                RustCryptoRecordCipher::Aes256Gcm(cipher) => {
+                    let tag = cipher
+                        .encrypt_inout_detached(&Array(*nonce), aad, plaintext.into())
+                        .map_err(|_| Tls13RecordError::AuthenticationFailed)?;
+                    output.copy_from_slice(&tag);
+                }
+                RustCryptoRecordCipher::ChaCha20Poly1305(cipher) => {
+                    let tag = cipher
+                        .encrypt_inout_detached(&Array(*nonce), aad, plaintext.into())
+                        .map_err(|_| Tls13RecordError::AuthenticationFailed)?;
+                    output.copy_from_slice(&tag);
+                }
+            }
+            Ok(output)
+        }
     }
 
     /// Opens `body` — ciphertext immediately followed by its tag — in place.
+    ///
+    /// On error the body contents are UNSPECIFIED (ring decrypts before
+    /// verifying, RustCrypto does not); callers must not read the buffer
+    /// after a failed open.
     fn open(
         &self,
         nonce: &[u8; NONCE_LEN],
         aad: &[u8],
         body: &mut [u8],
     ) -> Result<(), Tls13RecordError> {
-        #[cfg(not(feature = "ring-aead"))]
-        {
-            let (ciphertext, tag) = split_tag(body)?;
-            let nonce: Nonce<Aes128Gcm> = Array(*nonce);
-            let tag: Tag<Aes128Gcm> = Array(*tag);
-            self.inner
-                .decrypt_inout_detached(&nonce, aad, ciphertext.into(), &tag)
-                .map_err(|_| Tls13RecordError::AuthenticationFailed)
-        }
         #[cfg(feature = "ring-aead")]
         {
             // Mirror split_tag's guard so both providers map an undersized
@@ -232,10 +279,50 @@ impl Aes128GcmRecordCipher {
                 .map_err(|_| Tls13RecordError::AuthenticationFailed)?;
             Ok(())
         }
+        #[cfg(not(feature = "ring-aead"))]
+        {
+            let (ciphertext, tag) = split_tag(body)?;
+            match &self.inner {
+                RustCryptoRecordCipher::Aes128Gcm(cipher) => cipher.decrypt_inout_detached(
+                    &Array(*nonce),
+                    aad,
+                    ciphertext.into(),
+                    &Array(*tag),
+                ),
+                RustCryptoRecordCipher::Aes256Gcm(cipher) => cipher.decrypt_inout_detached(
+                    &Array(*nonce),
+                    aad,
+                    ciphertext.into(),
+                    &Array(*tag),
+                ),
+                RustCryptoRecordCipher::ChaCha20Poly1305(cipher) => cipher.decrypt_inout_detached(
+                    &Array(*nonce),
+                    aad,
+                    ciphertext.into(),
+                    &Array(*tag),
+                ),
+            }
+            .map_err(|_| Tls13RecordError::AuthenticationFailed)
+        }
+    }
+}
+
+impl fmt::Debug for RecordCipher {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self.suite {
+            CipherSuite::Aes128GcmSha256 => "AES-128-GCM",
+            CipherSuite::Aes256GcmSha384 => "AES-256-GCM",
+            CipherSuite::ChaCha20Poly1305Sha256 => "ChaCha20-Poly1305",
+        };
+        formatter.debug_tuple("RecordCipher").field(&name).finish()
     }
 }
 
 /// Splits a contiguous `ciphertext || tag` body into its parts.
+///
+/// ring opens in place against the contiguous body, so only the pure-Rust
+/// backend, whose API takes a detached tag, needs this split.
+#[cfg(not(feature = "ring-aead"))]
 fn split_tag(body: &mut [u8]) -> Result<(&mut [u8], &[u8; TAG_LEN]), Tls13RecordError> {
     if body.len() < TAG_LEN {
         return Err(Tls13RecordError::InvalidLength);
@@ -245,99 +332,6 @@ fn split_tag(body: &mut [u8]) -> Result<(&mut [u8], &[u8; TAG_LEN]), Tls13Record
         .try_into()
         .map_err(|_| Tls13RecordError::InvalidLength)?;
     Ok((ciphertext, tag))
-}
-
-enum RecordCipher {
-    Aes128Gcm(Aes128GcmRecordCipher),
-    Aes256Gcm(Box<Aes256Gcm>),
-    ChaCha20Poly1305(ChaCha20Poly1305),
-}
-
-impl RecordCipher {
-    fn new(suite: CipherSuite, key: &[u8]) -> Result<Self, Tls13RecordError> {
-        match suite {
-            CipherSuite::Aes128GcmSha256 => Aes128GcmRecordCipher::new(key).map(Self::Aes128Gcm),
-            CipherSuite::Aes256GcmSha384 => Aes256Gcm::new_from_slice(key)
-                .map(Box::new)
-                .map(Self::Aes256Gcm)
-                .map_err(|_| Tls13RecordError::InvalidKey),
-            CipherSuite::ChaCha20Poly1305Sha256 => ChaCha20Poly1305::new_from_slice(key)
-                .map(Self::ChaCha20Poly1305)
-                .map_err(|_| Tls13RecordError::InvalidKey),
-        }
-    }
-
-    fn seal(
-        &self,
-        nonce: &[u8; NONCE_LEN],
-        aad: &[u8],
-        plaintext: &mut [u8],
-    ) -> Result<[u8; TAG_LEN], Tls13RecordError> {
-        match self {
-            Self::Aes128Gcm(cipher) => cipher.seal(nonce, aad, plaintext),
-            Self::Aes256Gcm(cipher) => {
-                let nonce: Nonce<Aes256Gcm> = Array(*nonce);
-                let tag = cipher
-                    .encrypt_inout_detached(&nonce, aad, plaintext.into())
-                    .map_err(|_| Tls13RecordError::AuthenticationFailed)?;
-                let mut output = [0_u8; TAG_LEN];
-                output.copy_from_slice(&tag);
-                Ok(output)
-            }
-            Self::ChaCha20Poly1305(cipher) => {
-                let nonce: Nonce<ChaCha20Poly1305> = Array(*nonce);
-                let tag = cipher
-                    .encrypt_inout_detached(&nonce, aad, plaintext.into())
-                    .map_err(|_| Tls13RecordError::AuthenticationFailed)?;
-                let mut output = [0_u8; TAG_LEN];
-                output.copy_from_slice(&tag);
-                Ok(output)
-            }
-        }
-    }
-
-    /// Opens `body` — ciphertext immediately followed by its tag — in place.
-    ///
-    /// On error the body contents are UNSPECIFIED (ring decrypts before
-    /// verifying, RustCrypto does not); callers must not read the buffer
-    /// after a failed open.
-    fn open(
-        &self,
-        nonce: &[u8; NONCE_LEN],
-        aad: &[u8],
-        body: &mut [u8],
-    ) -> Result<(), Tls13RecordError> {
-        match self {
-            Self::Aes128Gcm(cipher) => cipher.open(nonce, aad, body),
-            Self::Aes256Gcm(cipher) => {
-                let (ciphertext, tag) = split_tag(body)?;
-                let nonce: Nonce<Aes256Gcm> = Array(*nonce);
-                let tag: Tag<Aes256Gcm> = Array(*tag);
-                cipher
-                    .decrypt_inout_detached(&nonce, aad, ciphertext.into(), &tag)
-                    .map_err(|_| Tls13RecordError::AuthenticationFailed)
-            }
-            Self::ChaCha20Poly1305(cipher) => {
-                let (ciphertext, tag) = split_tag(body)?;
-                let nonce: Nonce<ChaCha20Poly1305> = Array(*nonce);
-                let tag: Tag<ChaCha20Poly1305> = Array(*tag);
-                cipher
-                    .decrypt_inout_detached(&nonce, aad, ciphertext.into(), &tag)
-                    .map_err(|_| Tls13RecordError::AuthenticationFailed)
-            }
-        }
-    }
-}
-
-impl fmt::Debug for RecordCipher {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            Self::Aes128Gcm(_) => "AES-128-GCM",
-            Self::Aes256Gcm(_) => "AES-256-GCM",
-            Self::ChaCha20Poly1305(_) => "ChaCha20-Poly1305",
-        };
-        formatter.debug_tuple("RecordCipher").field(&name).finish()
-    }
 }
 
 /// Directional TLS 1.3 AEAD state with non-reusable sequence ownership.
@@ -1233,6 +1227,178 @@ mod tests {
                 let wrong_nonce = derive_nonce(sequence.wrapping_add(1));
                 assert!(ring_open(&mut wire.clone(), wrong_nonce, &aad).is_err());
                 assert!(rc_open(&mut wire.clone(), plaintext_len, wrong_nonce, &aad).is_err());
+            }
+        }
+    }
+
+    /// The same cross-provider equivalence the AES-128-GCM test proves, for the
+    /// two suites that moved from RustCrypto to ring.
+    ///
+    /// Both providers are compared as primitives rather than through
+    /// `Tls13RecordLayer`, because the layer compiles against exactly one
+    /// backend at a time; the layer's own nonce derivation (`iv XOR sequence`),
+    /// record sizes and sequence numbers are reproduced here so the comparison
+    /// is the production shape and not an abstract one.
+    ///
+    /// Equality of the sealed bytes is the protocol-compatibility claim.
+    /// Rejection parity is the security claim: a record either provider refuses
+    /// must be refused by the other, or swapping them would change which peer
+    /// is accepted.
+    #[test]
+    fn the_alternate_suites_are_byte_identical_between_rustcrypto_and_ring() {
+        use aes_gcm::{
+            Aes256Gcm as RustCryptoAes256,
+            aead::{AeadInOut, KeyInit as _, array::Array},
+        };
+        use chacha20poly1305::ChaCha20Poly1305 as RustCryptoChaCha;
+
+        let key = [0x42_u8; 32];
+        let iv = [0x24_u8; 12];
+        let aad = [23, 3, 3, 0x40, 0x11];
+        let derive_nonce = |sequence: u64| {
+            let mut nonce = iv;
+            for (nonce_byte, sequence_byte) in nonce[4..].iter_mut().zip(sequence.to_be_bytes()) {
+                *nonce_byte ^= sequence_byte;
+            }
+            nonce
+        };
+
+        let aes = RustCryptoAes256::new(&Array(key));
+        let chacha = RustCryptoChaCha::new(&Array(key));
+
+        for (label, algorithm) in [
+            ("AES-256-GCM", &ring::aead::AES_256_GCM),
+            ("ChaCha20-Poly1305", &ring::aead::CHACHA20_POLY1305),
+        ] {
+            let ring_key = ring::aead::LessSafeKey::new(
+                ring::aead::UnboundKey::new(algorithm, &key).expect("ring key"),
+            );
+            let is_aes = label == "AES-256-GCM";
+
+            for plaintext_len in [0_usize, 1, 64, 1024, 4096, 16_384] {
+                let plaintext: Vec<u8> = (0..plaintext_len)
+                    .map(|index| (index * 31 + 7) as u8)
+                    .collect();
+                for sequence in [0_u64, 1, 255, 65_536, (1 << 24) - 1] {
+                    let nonce = derive_nonce(sequence);
+
+                    let mut rc_body = plaintext.clone();
+                    let rc_tag = if is_aes {
+                        aes.encrypt_inout_detached(
+                            &Array(nonce),
+                            &aad,
+                            rc_body.as_mut_slice().into(),
+                        )
+                        .expect("RustCrypto seal")
+                        .to_vec()
+                    } else {
+                        chacha
+                            .encrypt_inout_detached(
+                                &Array(nonce),
+                                &aad,
+                                rc_body.as_mut_slice().into(),
+                            )
+                            .expect("RustCrypto seal")
+                            .to_vec()
+                    };
+
+                    let mut ring_body = plaintext.clone();
+                    let ring_tag = ring_key
+                        .seal_in_place_separate_tag(
+                            ring::aead::Nonce::assume_unique_for_key(nonce),
+                            ring::aead::Aad::from(&aad),
+                            &mut ring_body,
+                        )
+                        .expect("ring seal");
+
+                    assert_eq!(
+                        rc_body, ring_body,
+                        "{label} ciphertext differs at len {plaintext_len} sequence {sequence}"
+                    );
+                    assert_eq!(
+                        rc_tag,
+                        ring_tag.as_ref(),
+                        "{label} tag differs at len {plaintext_len} sequence {sequence}"
+                    );
+
+                    // Rejection parity: ring opens the contiguous body, so build
+                    // the wire form once and tamper with it.
+                    let mut wire = ring_body.clone();
+                    wire.extend_from_slice(ring_tag.as_ref());
+                    let ring_open = |body: &mut Vec<u8>, nonce: [u8; 12], aad: &[u8]| {
+                        ring_key
+                            .open_in_place(
+                                ring::aead::Nonce::assume_unique_for_key(nonce),
+                                ring::aead::Aad::from(aad),
+                                body.as_mut_slice(),
+                            )
+                            .map(|_| ())
+                    };
+                    let rc_open = |body: &mut Vec<u8>, nonce: [u8; 12], aad: &[u8]| {
+                        let (ciphertext, tag) = body.split_at_mut(plaintext_len);
+                        let tag = *tag.first_chunk::<16>().expect("tag length");
+                        if is_aes {
+                            aes.decrypt_inout_detached(
+                                &Array(nonce),
+                                aad,
+                                ciphertext.into(),
+                                &Array(tag),
+                            )
+                        } else {
+                            chacha.decrypt_inout_detached(
+                                &Array(nonce),
+                                aad,
+                                ciphertext.into(),
+                                &Array(tag),
+                            )
+                        }
+                    };
+
+                    assert!(ring_open(&mut wire.clone(), nonce, &aad).is_ok(), "{label}");
+                    assert!(rc_open(&mut wire.clone(), nonce, &aad).is_ok(), "{label}");
+
+                    let mut bad_tag = wire.clone();
+                    let last = bad_tag.len() - 1;
+                    bad_tag[last] ^= 1;
+                    assert!(
+                        ring_open(&mut bad_tag.clone(), nonce, &aad).is_err(),
+                        "{label}"
+                    );
+                    assert!(rc_open(&mut bad_tag, nonce, &aad).is_err(), "{label}");
+
+                    if plaintext_len > 0 {
+                        let mut bad_ciphertext = wire.clone();
+                        bad_ciphertext[0] ^= 1;
+                        assert!(
+                            ring_open(&mut bad_ciphertext.clone(), nonce, &aad).is_err(),
+                            "{label}"
+                        );
+                        assert!(
+                            rc_open(&mut bad_ciphertext, nonce, &aad).is_err(),
+                            "{label}"
+                        );
+                    }
+
+                    let bad_aad = [23, 3, 3, 0x40, 0x12];
+                    assert!(
+                        ring_open(&mut wire.clone(), nonce, &bad_aad).is_err(),
+                        "{label}"
+                    );
+                    assert!(
+                        rc_open(&mut wire.clone(), nonce, &bad_aad).is_err(),
+                        "{label}"
+                    );
+
+                    let wrong_nonce = derive_nonce(sequence.wrapping_add(1));
+                    assert!(
+                        ring_open(&mut wire.clone(), wrong_nonce, &aad).is_err(),
+                        "{label}"
+                    );
+                    assert!(
+                        rc_open(&mut wire.clone(), wrong_nonce, &aad).is_err(),
+                        "{label}"
+                    );
+                }
             }
         }
     }
