@@ -9,7 +9,6 @@ use std::{
 
 use crate::{
     assets::AssetSnapshot,
-    benchmark::{BenchmarkOptions, run_benchmarks},
     config::{load, node::reality::RealityConfig},
     crypto::{generate_node_key, generate_short_id, generate_uuid, generate_x25519_key_pair},
     server::{
@@ -21,7 +20,7 @@ use crate::{
 use serde_json::json;
 
 use super::model::{
-    BenchmarkArgs, CheckCoverArgs, Cli, CliError, Command, ConfigPath, ExplainArgs, GenerateCommand,
+    CheckCoverArgs, Cli, CliError, Command, ConfigPath, ExplainArgs, GenerateCommand,
 };
 
 pub fn run(cli: Cli) -> Result<(), CliError> {
@@ -40,18 +39,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Command::Format(arguments) => run_format(arguments),
         Command::CheckCover(arguments) => run_check_cover(arguments),
         Command::Generate { command } => run_generate(command),
-        Command::Schema => write_stdout(crate::config::node::schema_json()?),
-        Command::Benchmark(arguments) => run_benchmark(arguments),
     }
-}
-
-pub(crate) fn run_benchmark(arguments: BenchmarkArgs) -> Result<(), CliError> {
-    let report = run_benchmarks(BenchmarkOptions {
-        duration: Duration::from_millis(arguments.duration_ms),
-        warmup: Duration::from_millis(arguments.warmup_ms),
-    })?;
-    let output = serde_json::to_string_pretty(&report)?;
-    write_stdout(format_args!("{output}\n"))
 }
 
 pub(crate) fn run_server(arguments: ConfigPath) -> Result<(), CliError> {

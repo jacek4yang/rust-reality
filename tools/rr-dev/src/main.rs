@@ -824,6 +824,17 @@ enum BenchCommand {
 
 #[derive(Subcommand)]
 enum ConfigCommand {
+    /// Render the JSON Schema of the current configuration.
+    ///
+    /// Derived from the model types, so it cannot drift from what the binary
+    /// accepts. Editors and CI consume it; the release attaches it as an
+    /// asset. The running binary remains the final authority through
+    /// `rust-reality check`.
+    Schema {
+        /// Optional path to write the schema to; stdout when omitted.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     /// Emit a secret-free identity fingerprint for a deployment config.
     Fingerprint {
         /// Path to the config JSON.
@@ -1076,6 +1087,26 @@ fn main() -> ExitCode {
         Command::Release { command } => run_release(&repo, command),
         Command::Fuzz { command } => run_fuzz(&repo, command),
         Command::Config { command } => match command {
+            ConfigCommand::Schema { output } => match rust_reality::config::node::schema_json() {
+                Ok(schema) => {
+                    if let Some(path) = output {
+                        match std::fs::write(&path, &schema) {
+                            Ok(()) => ExitCode::SUCCESS,
+                            Err(error) => {
+                                eprintln!("config schema: {error}");
+                                ExitCode::FAILURE
+                            }
+                        }
+                    } else {
+                        print!("{schema}");
+                        ExitCode::SUCCESS
+                    }
+                }
+                Err(error) => {
+                    eprintln!("config schema: {error}");
+                    ExitCode::FAILURE
+                }
+            },
             ConfigCommand::Fingerprint { config, output } => {
                 match checks::config_identity::report(&config) {
                     Ok(report) => {

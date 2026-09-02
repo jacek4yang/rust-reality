@@ -1,7 +1,6 @@
 //! Core library for the rust-reality server.
 
 pub mod assets;
-pub mod benchmark;
 pub mod cli;
 pub mod config;
 pub mod crypto;

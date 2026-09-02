@@ -47,7 +47,7 @@
 ```shell
 rust-reality --help
 rust-reality COMMAND --help
-rust-reality schema > rust-reality.schema.json
+cargo dev config schema > rust-reality.schema.json
 rust-reality check --config config.json
 ```
 

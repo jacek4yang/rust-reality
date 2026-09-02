@@ -111,6 +111,10 @@ name = "vless_decode"
 harness = false
 
 [[bench]]
+name = "nxr_request"
+harness = false
+
+[[bench]]
 name = "vision"
 harness = false
 

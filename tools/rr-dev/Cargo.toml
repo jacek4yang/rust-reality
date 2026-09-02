@@ -13,6 +13,13 @@ clap = { version = "4.6.5", default-features = false, features = ["derive", "err
 # already standardises on, so the dev plane exercises the same crypto backend.
 rustls = { version = "0.23.43", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pemfile = { version = "2.2.0", default-features = false, features = ["std"] }
+# `cargo dev schema` renders the JSON Schema of the current configuration from
+# the model types themselves, so the schema cannot drift from what the binary
+# accepts. Tooling depending on the production library is the sanctioned
+# direction (AGENTS.md §11 forbids the reverse); ADR 0019 records the boundary
+# decision. Nothing is published from here into the production graph.
+rust-reality = { path = "../.." }
+serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1.4", default-features = false, features = ["process", "std"] }
