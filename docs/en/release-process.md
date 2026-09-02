@@ -130,7 +130,7 @@ cargo dev deploy apply promote --target line --release-id RELEASE \
 
 `inspect` and `plan` are read-only. `apply` refuses to run without the explicit
 `--mutate-remote` acknowledgement. `stage` verifies version, SHA-256, `check`,
-and `self-test` without changing CURRENT. `cutover` prepares PREVIOUS, performs
+and `doctor` without changing CURRENT. `cutover` prepares PREVIOUS, performs
 the shortest stop/symlink/start
 window, verifies the executable and 443, and rejects any unexpected wildcard
 TCP listener introduced during the cutover. Pre-existing unrelated listeners

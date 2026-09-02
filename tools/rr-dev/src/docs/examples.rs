@@ -8,16 +8,34 @@
 //! So every fenced block tagged `json` in `docs/` and both READMEs is
 //! classified and checked here:
 //!
-//! - A block with a top-level `"role"` is a **complete node configuration**.
-//!   It must load through `rust_reality::config` — the same parse and the
-//!   same validation `rust-reality check` performs — and it must already be
-//!   byte-identical to `rust_reality::config::canonical`, so the page shows
-//!   the form the project itself writes.
-//! - Any other block is a **fragment**: a section shown on its own, or a
-//!   sample of some other JSON the project emits. It must still parse as
-//!   JSON, which catches the trailing comma and the unbalanced brace.
-//! - A block that is neither is a hard failure, with the advice to retag the
-//!   fence if the text was never meant to be JSON.
+//! - A **complete node configuration** must load through
+//!   `rust_reality::config` — the same parse and the same validation
+//!   `rust-reality check` performs — and it must already be byte-identical to
+//!   `rust_reality::config::canonical`, so the page shows the form the
+//!   project itself writes.
+//! - A **fragment** is a section quoted on its own, or a sample of JSON this
+//!   project *emits* rather than reads. It must still parse, which catches
+//!   the trailing comma and the unbalanced brace.
+//! - A block that parses as neither is a hard failure, with the advice to
+//!   retag the fence if the text was never meant to be JSON.
+//!
+//! # Telling the three apart
+//!
+//! The classification has to be mechanical, and it is deliberately biased
+//! toward *more* validation:
+//!
+//! 1. A block carrying a report key — `schemaVersion` from `explain --json`,
+//!    or `configuration` from `doctor` — is output, not input. Those keys
+//!    exist in no configuration, so if a report ever loses one the block
+//!    stops being excluded and starts being validated as a configuration,
+//!    which fails loudly rather than silently skipping.
+//! 2. A block with fewer than [`FRAGMENT_KEY_LIMIT`] top-level keys is a
+//!    teaching fragment — `{ "role": "entry" }` and the like.
+//! 3. Everything else that declares `role` is a complete configuration.
+//!
+//! Rule 3 is what catches a page still showing a previous release's shape,
+//! and rule 2 is bounded deliberately: an example large enough to look like a
+//! real file is held to being one.
 //!
 //! The canonical check is deliberately byte-exact. Accepting "semantically
 //! equal but formatted differently" would mean the documentation and the
@@ -98,12 +116,11 @@ pub fn check(repo: &Path, files: &[PathBuf]) -> Outcome {
         let relative = path.strip_prefix(repo).unwrap_or(path).display().to_string();
 
         for block in json_blocks(&markdown) {
-            let at = format!("{relative}:{}", block.line);
-            let declares_role = serde_json::from_str::<serde_json::Value>(&block.body)
-                .is_ok_and(|value| value.get("role").is_some());
-            match check_block(&at, &block.body) {
+            let complete = serde_json::from_str::<serde_json::Value>(&block.body)
+                .is_ok_and(|value| is_configuration(&value));
+            match check_block(&relative, block.line, &block.body) {
                 Some(failure) => outcome.failures.push(failure),
-                None if declares_role => outcome.configurations += 1,
+                None if complete => outcome.configurations += 1,
                 None => outcome.fragments += 1,
             }
         }
@@ -112,8 +129,19 @@ pub fn check(repo: &Path, files: &[PathBuf]) -> Outcome {
     outcome
 }
 
+/// Top-level key count below which a role-declaring block is a fragment.
+///
+/// Four is the smallest complete configuration's key count minus one: every
+/// role requires `role` and `listeners` plus at least two more, so nothing
+/// deployable can sit under this and be mistaken for a teaching snippet.
+const FRAGMENT_KEY_LIMIT: usize = 4;
+
+/// Top-level keys that only appear in JSON this project *emits*.
+const REPORT_KEYS: [&str; 2] = ["schemaVersion", "configuration"];
+
 /// Checks one block, returning at most one failure.
-fn check_block(at: &str, body: &str) -> Option<String> {
+fn check_block(path: &str, line: usize, body: &str) -> Option<String> {
+    let at = format!("{path}:{line}");
     let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
         return Some(format!(
             "{at}: fenced as a JSON block but does not parse as JSON. Fix it, \
@@ -121,17 +149,18 @@ fn check_block(at: &str, body: &str) -> Option<String> {
         ));
     };
 
-    // A fragment is any block that does not declare a role. It has been shown
-    // to parse, which is all that can be asked of a section quoted on its own.
-    value.get("role")?;
+    if !is_configuration(&value) {
+        return None;
+    }
 
-    let path = Path::new(at);
-    let config = match load_bytes(path, body.as_bytes()) {
+    // The diagnostic renders its own `path:line:column` against the block, so
+    // the file is named here and the block's own coordinates come from it.
+    let config = match load_bytes(Path::new(path), body.as_bytes()) {
         Ok(config) => config,
         Err(error) => {
             return Some(format!(
-                "{at}: this example declares a role, so it is a complete \
-                 configuration, and it does not validate:\n{error}"
+                "{at}: this example is a complete configuration, and it does \
+                 not validate. Line numbers below are within the block.\n{error}"
             ));
         }
     };
@@ -150,6 +179,17 @@ fn check_block(at: &str, body: &str) -> Option<String> {
     ))
 }
 
+/// Whether a parsed block is a complete node configuration.
+fn is_configuration(value: &serde_json::Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    if REPORT_KEYS.iter().any(|key| object.contains_key(*key)) {
+        return false;
+    }
+    object.contains_key("role") && object.len() >= FRAGMENT_KEY_LIMIT
+}
+
 /// The 1-indexed line within the block where the two renderings first differ.
 fn first_difference(documented: &str, canonical: &str) -> Option<usize> {
     documented
@@ -165,7 +205,7 @@ fn first_difference(documented: &str, canonical: &str) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Block, check_block, json_blocks};
+    use super::{Block, check_block, is_configuration, json_blocks};
 
     /// A complete, valid, canonical entry node, exactly as a page would show
     /// it. Written out rather than generated: this fixture is what proves the
@@ -237,7 +277,7 @@ mod tests {
 
     #[test]
     fn a_canonical_configuration_passes() {
-        assert_eq!(check_block("page.md:1", CANONICAL_ENTRY), None);
+        assert_eq!(check_block("page.md", 1, CANONICAL_ENTRY), None);
     }
 
     #[test]
@@ -245,14 +285,14 @@ mod tests {
         // A page quoting one section cannot be a whole configuration, and
         // demanding one would make sections undocumentable.
         assert_eq!(
-            check_block("page.md:1", "{ \"routing\": { \"default\": \"direct\" } }"),
+            check_block("page.md", 1, "{ \"routing\": { \"default\": \"direct\" } }"),
             None
         );
     }
 
     #[test]
     fn a_block_that_is_not_json_is_reported_with_the_retag_advice() {
-        let failure = check_block("page.md:12", "{ \"a\": 1, }\n").expect("must fail");
+        let failure = check_block("page.md", 12, "{ \"a\": 1, }\n").expect("must fail");
 
         assert!(failure.starts_with("page.md:12: fenced as a JSON block"));
         assert!(
@@ -265,12 +305,49 @@ mod tests {
     fn a_configuration_that_does_not_validate_carries_the_real_diagnostic() {
         let broken = CANONICAL_ENTRY.replace(r#""default": "direct""#, r#""default": "nowhere""#);
 
-        let failure = check_block("page.md:1", &broken).expect("must fail");
+        let failure = check_block("page.md", 1, &broken).expect("must fail");
 
         assert!(
             failure.contains("routing.default"),
             "the operator-facing diagnostic must survive into the failure: {failure}"
         );
+    }
+
+    #[test]
+    fn output_samples_are_not_mistaken_for_configurations() {
+        // `doctor` and `explain --json` both report a role, and `explain`
+        // reports listeners too. Pages show them, and validating them as
+        // input would be nonsense.
+        for report in [
+            r#"{ "configuration": "ok", "role": "entry", "routing": "ok", "cover": [] }"#,
+            r#"{ "schemaVersion": 3, "role": "entry", "listeners": [], "routing": {} }"#,
+        ] {
+            let value: serde_json::Value = serde_json::from_str(report).expect("fixture parses");
+            assert!(!is_configuration(&value), "must be a report: {report}");
+            assert_eq!(check_block("page.md", 1, report), None);
+        }
+    }
+
+    #[test]
+    fn a_small_role_declaring_fragment_is_a_fragment() {
+        // Pages introduce `role` on its own. Demanding a whole file there
+        // would make the field undocumentable.
+        assert_eq!(check_block("page.md", 1, r#"{ "role": "entry" }"#), None);
+    }
+
+    #[test]
+    fn a_configuration_sized_block_is_held_to_being_one() {
+        // Four top-level keys is enough to look like a real file, so a real
+        // file missing required fields is caught rather than waved through.
+        let incomplete = r#"{ "role": "entry", "reality": {}, "users": [], "routing": {} }"#;
+
+        let failure = check_block("page.md", 1, incomplete).expect("must fail");
+
+        assert!(
+            failure.contains("complete configuration"),
+            "the author needs to know why it was held to that standard: {failure}"
+        );
+        assert!(failure.contains("missing required field"), "{failure}");
     }
 
     #[test]
@@ -280,11 +357,13 @@ mod tests {
         // is caught only because it declares a role.
         let stale = r#"{
   "role": "entry",
-  "inbounds": [{ "protocol": "vless", "port": 443 }]
+  "inbounds": [{ "protocol": "vless", "port": 443 }],
+  "outbounds": [{ "protocol": "direct", "tag": "direct" }],
+  "routing": { "domainStrategy": "IPIfNonMatch" }
 }
 "#;
 
-        let failure = check_block("docs/en/configuration.md:40", stale).expect("must fail");
+        let failure = check_block("docs/en/configuration.md", 40, stale).expect("must fail");
 
         assert!(failure.contains("inbounds"), "{failure}");
     }
@@ -298,7 +377,7 @@ mod tests {
             "  \"routing\": { \"default\": \"direct\" }",
         );
 
-        let failure = check_block("page.md:1", &compact).expect("must fail");
+        let failure = check_block("page.md", 1, &compact).expect("must fail");
 
         assert!(failure.contains("canonical form"), "{failure}");
         assert!(

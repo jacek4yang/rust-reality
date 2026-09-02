@@ -136,9 +136,14 @@ const ROOT_ENTRIES: &[RootEntry] = &[
 const FORBIDDEN_PATH_PREFIXES: &[&str] = &["docs/decisions", "notes", "scripts", "tools/inventory"];
 
 /// File names that always represent transient execution state.
+/// Basenames that are project-state scratch wherever they appear.
+///
+/// `HANDOFF.md` is deliberately *not* here: Handoff is one of this project's
+/// two internal protocols, so a page documenting it is ordinary
+/// documentation. It is caught by path in [`TRANSIENT_STATE_PATHS`] instead,
+/// where the agent-handoff note actually lives.
 const TRANSIENT_STATE_FILES: &[&str] = &[
     "CURRENT.md",
-    "HANDOFF.md",
     "PLAN.md",
     "STATUS.md",
     "TODO.md",
@@ -149,6 +154,9 @@ const TRANSIENT_STATE_FILES: &[&str] = &[
     "progress-ledger.json",
     "project-state.json",
 ];
+
+/// Exact paths that are project-state scratch, matched case-insensitively.
+const TRANSIENT_STATE_PATHS: &[&str] = &["docs/HANDOFF.md", "HANDOFF.md"];
 
 /// Vendor-specific competing agent-policy files. `AGENTS.md` is canonical.
 const COMPETING_AGENT_POLICY_FILES: &[&str] = &[
@@ -189,7 +197,7 @@ const REQUIRED_PATHS: &[&str] = &[
     "docs/adr/README.md",
     "docs/en/architecture.md",
     "docs/en/benchmarks.md",
-    "docs/en/deployment.md",
+    "docs/en/operations/deployment.md",
     "docs/en/development/development-workflow.md",
     "docs/en/development/fuzzing.md",
     "docs/en/development/repository-layout.md",
@@ -230,6 +238,9 @@ pub(super) fn failures(paths: &[&str]) -> Vec<String> {
         if TRANSIENT_STATE_FILES
             .iter()
             .any(|name| basename.eq_ignore_ascii_case(name))
+            || TRANSIENT_STATE_PATHS
+                .iter()
+                .any(|name| path.eq_ignore_ascii_case(name))
         {
             failures.push(format!("transient project-state file: {path}"));
         }
@@ -452,6 +463,19 @@ mod tests {
         ]);
         let failures = failures(&paths);
         assert!(failures.is_empty(), "{failures:?}");
+    }
+
+    /// Handoff is a protocol this project implements, so a page named for it
+    /// is documentation rather than an agent's scratch note.
+    #[test]
+    fn the_handoff_protocol_page_is_not_mistaken_for_a_handoff_note() {
+        let mut paths = canonical_paths();
+        paths.push("docs/en/configuration/handoff.md");
+        paths.push("docs/zh-CN/configuration/handoff.md");
+
+        let violations = failures(&paths);
+
+        assert!(violations.is_empty(), "{violations:?}");
     }
 
     #[test]

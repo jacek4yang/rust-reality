@@ -60,11 +60,21 @@ impl fmt::Debug for RouteContext<'_> {
 }
 
 /// Origin of the selected outbound decision.
+///
+/// The scope says *which list* decided, and it is reported next to the name
+/// of that list, so the two together locate the decision in the file.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RouteScope {
+    /// A rule in `routing.rules`, which every user is subject to.
     Global,
-    User,
-    UserDefault,
+    /// A rule inside the policy the user follows.
+    Policy,
+    /// No rule matched, so the `default` of whichever list applied was used.
+    ///
+    /// That list is `routing` for a user who follows no policy, and
+    /// `routing.policies.<name>` for one who does — which is why the name is
+    /// reported beside this and the wording does not claim a policy exists.
+    DefaultOutbound,
 }
 
 impl RouteScope {
@@ -73,8 +83,8 @@ impl RouteScope {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Global => "global rule",
-            Self::User => "policy rule",
-            Self::UserDefault => "policy default",
+            Self::Policy => "policy rule",
+            Self::DefaultOutbound => "default outbound",
         }
     }
 }
@@ -232,7 +242,7 @@ impl RoutingTable {
             domain,
             self.assets.as_ref(),
         ) {
-            return rule.decision(RouteScope::User);
+            return rule.decision(RouteScope::Policy);
         }
         user.default_decision()
     }
@@ -268,10 +278,10 @@ impl RoutingTable {
             context,
             domain,
             assets,
-            RouteScope::User,
+            RouteScope::Policy,
             pending,
         ) {
-            return Some((rule, RouteScope::User));
+            return Some((rule, RouteScope::Policy));
         }
         None
     }
@@ -468,7 +478,7 @@ impl CompiledUserPolicy {
         RouteDecision {
             outbound: Arc::clone(&self.default_outbound),
             rule_name: Arc::clone(&self.name),
-            scope: RouteScope::UserDefault,
+            scope: RouteScope::DefaultOutbound,
         }
     }
 }
@@ -1377,7 +1387,7 @@ mod tests {
             .expect("configured user must route");
 
         assert_eq!(decision.outbound(), "socks");
-        assert_eq!(decision.scope(), RouteScope::User);
+        assert_eq!(decision.scope(), RouteScope::Policy);
     }
 
     #[test]
@@ -1389,7 +1399,7 @@ mod tests {
             .expect("configured user must route");
 
         assert_eq!(decision.outbound(), "direct");
-        assert_eq!(decision.scope(), RouteScope::UserDefault);
+        assert_eq!(decision.scope(), RouteScope::DefaultOutbound);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1433,7 +1443,7 @@ mod tests {
             .expect("configured user must route without DNS");
 
         assert_eq!(route.decision().outbound(), "direct");
-        assert_eq!(route.decision().scope(), RouteScope::UserDefault);
+        assert_eq!(route.decision().scope(), RouteScope::DefaultOutbound);
         assert!(route.resolved_ips().is_empty());
     }
 
@@ -1872,7 +1882,7 @@ mod tests {
             .iter()
             .find(|rule| rule.matches(context, domain, assets))
         {
-            return rule.decision(RouteScope::User);
+            return rule.decision(RouteScope::Policy);
         }
         user.default_decision()
     }
@@ -2109,7 +2119,7 @@ mod tests {
             resolved_ips: &[],
         };
         let first = naive_select(table, &unresolved);
-        if first.scope() != RouteScope::UserDefault {
+        if first.scope() != RouteScope::DefaultOutbound {
             return Ok(ResolvedRoute::new(first, Vec::new()));
         }
         let resolved_ips = resolve_domain(&table.dns_governor, destination, timeout).await?;

@@ -1,378 +1,332 @@
-# Command-line reference
+# CLI reference
 
 English | [简体中文](../zh-CN/cli.md)
 
-## General behavior
+Seven commands. Each one is a job an operator intentionally does.
 
-```text
-rust-reality [--help] [--version] <COMMAND>
+```
+rust-reality run         -c <config.json>
+rust-reality check       -c <config.json>
+rust-reality doctor      -c <config.json>
+rust-reality explain     -c <config.json> [--json] [--route <HOST>]
+rust-reality format      -c <config.json> [--write]
+rust-reality check-cover --cover <HOST:PORT> [--server-name <NAME>] [--timeout-ms <N>]
+rust-reality generate    uuid | x25519 | short-id | psk
 ```
 
-The program writes primary machine-readable or generated output to stdout and
-diagnostics to stderr. Generation commands that create a public REALITY server
-write the private server JSON to stdout and the client-facing REALITY public
-key to stderr. Redirect them separately.
+Plus `--help` and `--version`. Every command that reads a configuration takes
+`-c` / `--config`.
 
-`--help` is available at every command level. Successful commands return exit
-status 0. Configuration, I/O, network, runtime, and benchmark failures return
-non-zero without printing secret values. Clap reports invalid syntax or ranges
-and prints the relevant usage.
+| command | answers |
+| --- | --- |
+| `run` | serve traffic until SIGINT or SIGTERM |
+| `check` | is this configuration internally valid? |
+| `doctor` | will this configuration actually work on this machine and network? |
+| `explain` | what does this exact configuration resolve to here? |
+| `format` | rewrite my configuration in the canonical, validated form |
+| `check-cover` | is this candidate host usable as a REALITY cover target? |
+| `generate` | produce material I must not invent by hand |
 
-## Server and validation commands
+There is deliberately no benchmark, no schema dump, no profiling, and no
+repository tooling here. A command exists because an operator wants to do it,
+not because a subsystem can expose one — engineering capabilities live in
+`cargo dev`, and the deployed daemon is not the project's toolbox.
 
-### `serve`
-
-```text
-rust-reality serve --config <PATH>
-```
-
-Loads, validates, compiles, and binds the production server in the foreground.
-It installs SIGINT/SIGTERM graceful shutdown and SIGHUP atomic reload handling.
-Use this command in the provided systemd unit.
-
-| Option | Required | Meaning |
-| --- | --- | --- |
-| `-c, --config <PATH>` | yes | Strict JSON configuration file. |
-
-### `run`
-
-```text
-rust-reality run --config <PATH>
-```
-
-Exact alias for `serve`; provided for service-manager command-line conventions.
-
-### `check`
-
-```text
-rust-reality check --config <PATH>
-```
-
-Reads at most 4 MiB, decodes strict JSON, rejects unknown fields, and validates
-all fields and references. It performs no asset download, destination probe, or
-listener bind. Success prints `configuration PATH is valid`.
-
-### `self-test`
-
-```text
-rust-reality self-test --config <PATH>
-```
-
-Runs `check`, downloads or conditionally revalidates all required Geo assets,
-parses them, compiles routing, and performs a real TLS 1.3 compatibility probe
-for every configured REALITY target/SNI pair. It does not bind listeners. The
-JSON report contains configuration, asset, routing, and destination results.
-
-Configured wildcard patterns are never sent as SNI. `self-test` derives a
-concrete SNI from the target hostname only when it matches the wildcard; for
-example, target `www.lmu.edu:443` can probe `*.lmu.edu`.
-
-Run `self-test` on the deployment host before enabling or restarting service;
-network path and cover-target behavior can differ from a development machine.
-
-### `probe-dest`
-
-```text
-rust-reality probe-dest \
-  --target <HOST:PORT> \
-  --server-name <DNS_NAME> \
-  [--timeout-ms <MILLISECONDS>]
-```
-
-Sends an ephemeral TLS ClientHello and verifies that a real cover target has a
-bounded, strictly parseable TLS 1.3 ServerHello suitable for REALITY.
-
-| Option | Required | Default/range | Meaning |
-| --- | --- | --- | --- |
-| `--target <HOST:PORT>` | yes | — | Cover endpoint, including port; bracket IPv6 literals. |
-| `--server-name <DNS_NAME>` | yes | — | ASCII DNS SNI sent in ClientHello. |
-| `--timeout-ms <N>` | no | `5000`, `1..=60000` | Separate absolute bound used by DNS/connect/write/ServerHello work. |
-
-The JSON result is compatibility evidence for that target at that moment, not
-a guarantee that the destination will never change behavior.
-`probe-dest` requires a concrete DNS name; a wildcard is a server-side matching
-pattern and is never a valid ClientHello SNI.
-
-### `runtime explain`
-
-```text
-rust-reality runtime explain --config <PATH> [--json]
-```
-
-Explains the runtime resource plan for one configuration without starting the
-server: it detects the machine (descriptor limits, cgroup v2 CPU and memory
-boundaries), resolves `runtime.profile` to a resource mode, selects the
-bootstrap Tokio pool sizes, and computes the effective numeric policy exactly
-as `serve` would at startup. The command is fully offline: it binds no
-listener, runs no benchmark, and never contacts a running instance.
-
-The human output lists the machine view, the resolved profile and tuning, the
-bootstrap topology, every policy field with its effective value, source
-(`startup-derived`, `operator-override`, `operator-legacy-limit`, or
-`default`), objective multiplier and safety
-floor/cap, and advisory kernel-tuning suggestions (the process never writes
-sysctls). `--json` prints the same report in a stable schema
-(`schemaVersion: 2`) for automation.
-
-Schema 2 split the former single `override` source into `operator-override`
-(pinned by presence in `advanced.overrides`) and `operator-legacy-limit` (pinned by
-an `advanced.limits` value differing from the built-in default), and renamed
-`derived` to `startup-derived`. Automation that matched on `override` or `derived`
-must be updated; the `schemaVersion` field makes the change detectable.
-
-| Option | Required | Meaning |
-| --- | --- | --- |
-| `-c, --config <PATH>` | yes | Strict JSON configuration file. |
-| `--json` | no | Print the machine-readable JSON report instead of the human summary. |
-
-### `runtime report`
-
-```text
-rust-reality runtime report --status-file <PATH> [--json]
-```
-
-Prints the last adaptive-controller snapshot a running instance published to
-its `runtime.statusFile`: the resource-pressure state and every soft ceiling
-with its current value, floor, startup-derived hard bound, held permits, and
-most recent transition (reason and timestamp). The command only reads the
-file; it never contacts the running process. The file exists only on
-instances running `runtime.tuning.mode: adaptive` with `runtime.statusFile`
-set.
-
-| Option | Required | Meaning |
-| --- | --- | --- |
-| `--status-file <PATH>` | yes | Status file published by the running instance (`runtime.statusFile`). |
-| `--json` | no | Print the machine-readable JSON snapshot instead of the human summary. |
-
-## Configuration commands
-
-### `config generate standalone`
-
-```text
-rust-reality config generate standalone \
-  [--listen <IP>] [--port <PORT>] \
-  --target <HOST:PORT> --server-name <DNS_NAME>
-```
-
-Generates one public VLESS + REALITY + Vision inbound, one UUID, one REALITY
-X25519 key pair, two short IDs owned by that UUID, and a direct outbound/user
-policy.
-
-| Option | Required | Default | Meaning |
-| --- | --- | --- | --- |
-| `--listen <IP>` | no | `0.0.0.0` | Public bind address; an unspecified value generates inbound `listen.mode: auto` with separate IPv4 and IPv6 sockets. |
-| `--port <PORT>` | no | `443` | Public TCP port, `1..=65535`. |
-| `--target <HOST:PORT>` | yes | — | REALITY cover target. |
-| `--server-name <DNS_NAME>` | yes | — | Client SNI and allowed server name. |
-
-Canonical JSON is written to stdout; `REALITY public key for the client: ...`
-is written to stderr.
-
-### `config generate line`
-
-```text
-rust-reality config generate line \
-  [--listen <IP>] [--port <PORT>] \
-  --target <HOST:PORT> --server-name <DNS_NAME> \
-  --nxr-address <HOST> [--nxr-port <PORT>] --nxr-key <BASE64>
-```
-
-Generates the same protected public inbound, plus NXR, direct, and blackhole
-outbounds. The generated UUID defaults to the NXR landing outbound.
-
-| Additional option | Required | Default | Meaning |
-| --- | --- | --- | --- |
-| `--nxr-address <HOST>` | yes | — | Landing-node address reachable by the line node. |
-| `--nxr-port <PORT>` | no | `7443` | Firewall-restricted NXR TCP port. |
-| `--nxr-key <BASE64>` | yes | — | URL-safe unpadded 32-byte PSK from `node-keygen`. |
-
-### `config generate landing`
-
-```text
-rust-reality config generate landing \
-  [--listen <IP>] [--port <PORT>] --nxr-key <BASE64>
-```
-
-Generates an internal NXR listener and direct outbound. It contains no public
-VLESS, REALITY, Vision, or TLS state.
-
-| Option | Required | Default | Meaning |
-| --- | --- | --- | --- |
-| `--listen <IP>` | no | `0.0.0.0` | Internal bind address; the generated `auto` policy expands an unspecified address to separate IPv4 and IPv6 sockets. |
-| `--port <PORT>` | no | `7443` | Internal NXR TCP port. |
-| `--nxr-key <BASE64>` | yes | — | Same PSK used by the line node's NXR outbound. |
-
-### `config generate handoff`
-
-```text
-rust-reality config generate handoff \
-  [--listen <IP>] [--port <PORT>] \
-  --server-address <HOST> --target <HOST:PORT> --server-name <DNS_NAME> \
-  --landing-address <HOST> [--landing-port <PORT>] --output-dir <DIR>
-```
-
-Generates a complete Handoff deployment in one step: `line.json` (public
-VLESS + REALITY + Vision line node whose user routes to the handoff
-outbound), `landing.json` (firewall-restricted internal handoff listener),
-and `xray-client.json` (SOCKS-inbound Xray client for the line node). All
-key material is generated independently: the UUID, the REALITY X25519 key
-pair, two short IDs owned by that UUID, the Handoff pre-shared key, and the landing node's
-static X25519 pair. Both server configurations are validated before they
-are written.
-
-| Additional option | Required | Default | Meaning |
-| --- | --- | --- | --- |
-| `--server-address <HOST>` | yes | — | Public line-node address clients dial. |
-| `--landing-address <HOST>` | yes | — | Landing-node address reachable by the line node. Repeat for a multi-landing deployment. |
-| `--landing-port <PORT>` | no | `7443` | Firewall-restricted Handoff TCP port. With repeated `--landing-address`, pass one port for all landings or repeat once per address. |
-| `--output-dir <DIR>` | yes | — | Directory the three files are written to. |
-
-The three file paths are written to stdout; `REALITY public key for the
-client: ...` and `UUID for the client: ...` are written to stderr. The
-Handoff PSK and the private keys exist only in the two server files.
-
-With repeated `--landing-address` the generator writes a multi-landing
-deployment:
+## `run`
 
 ```shell
-rust-reality config generate handoff \
-  --server-address line.example.com \
-  --target cover.example.com:443 \
-  --server-name cover.example.com \
-  --landing-address 10.0.0.2 --landing-port 7443 \
-  --landing-address 10.0.0.3 --landing-port 7443 \
-  --output-dir handoff/
+rust-reality run -c /etc/rust-reality/config.json
 ```
 
-This writes `line.json`, `landing-1.json`, `landing-2.json`, and
-`xray-client.json` (a single landing keeps the unnumbered `landing.json`).
-The line node carries one UUID per landing and routes each UUID's group to
-that landing's handoff outbound (`landing-1`, `landing-2`, ...); each
-landing pair has independent key material, and every emitted server file is
-validated before it is written. `xray-client.json` keeps its single-UUID
-shape and uses the first landing's UUID — assigning further UUIDs to
-clients is an operator choice.
+Binds every configured listener, then serves until SIGINT or SIGTERM. It stays
+in the foreground, which is what systemd and every other supervisor wants.
 
-### `config autotune`
+**Signals**
 
-```text
-rust-reality config autotune \
-  --config <INPUT.json> --output <TUNED.json> \
-  [--report <REPORT.json>] [--scratch-directory <DIR>] \
-  [--duration-ms <N>] [--warmup-ms <N>] \
-  [--storage-mib <N>] [--network-mib <N>] [--dedicated]
-```
-
-Runs bounded host-local protocol, machine/cgroup, storage, and TCP-loopback
-probes, then writes a validated tuned copy and its complete measurement report.
-It never edits the input. Output files are owner-only (`0600`) and published by
-same-directory atomic rename; the report is published first and the validated
-configuration last.
-
-| Option | Required | Default/range | Meaning |
-| --- | --- | --- | --- |
-| `-c, --config <PATH>` | yes | — | Existing valid configuration; credentials, listeners, routing, timeouts, and logging are preserved. |
-| `-o, --output <PATH>` | yes | — | Tuned configuration path; must differ from input and report. |
-| `--report <PATH>` | no | `<OUTPUT>.report.json` | Auditable measurements and the exact selected policy. |
-| `--duration-ms <N>` | no | `900`, `90..=30000` | Measured time per protocol case. |
-| `--warmup-ms <N>` | no | `100`, `1..=10000` | Warm-up per protocol case. |
-| `--storage-mib <N>` | no | `32`, `1..=256` | Bytes written, synced, and read in the scratch directory. |
-| `--network-mib <N>` | no | `32`, `1..=256` | Bytes transferred in each TCP-loopback direction. |
-| `--scratch-directory <DIR>` | no | OS temporary directory | Filesystem measured by the bounded storage probe. |
-| `--dedicated` | no | off | Also switch the copy to `runtime.profile: "dedicated"`; use only when rust-reality owns the host or cgroup. |
-
-Autotune changes only resource-governor, direct-dial, and relay policy. It does
-not choose security protocol, UUID/short-ID ownership, cover target, routing,
-or timeout policy. Inspect the diff and report, run `check`, then deploy through
-the normal restart procedure. See the
-[tuning guide](tuning.md#automatic-measured-starting-policy).
-
-### `config format`
-
-```text
-rust-reality config format --config <PATH>
-```
-
-Validates the complete file and writes deterministic, canonical pretty JSON to
-stdout. It never edits the input file in place. Redirect to a new file, inspect
-it, then replace atomically if desired.
-
-### JSON Schema
-
-The schema is a development artifact, not an operator command. It is rendered
-from the model types by the repository tooling and attached to each release:
-
-```text
-cargo dev config schema > rust-reality.schema.json
-```
-
-The schema describes structure and enum types; use `check` for cross-reference
-and security invariants, and treat the binary as the final authority.
-
-## Identity and key commands
-
-### `uuid`
-
-```text
-rust-reality uuid [COUNT]
-```
-
-Prints one RFC 4122 version 4 UUID per line using OS entropy. `COUNT` defaults
-to 1 and must be `1..=1024`.
-
-### `x25519`
-
-```text
-rust-reality x25519
-```
-
-Prints JSON containing `privateKey` and `publicKey`, both URL-safe unpadded
-base64. Use the private key only in server configuration and the public key in
-the Xray client.
-
-### `mldsa65`
-
-```text
-rust-reality mldsa65 [--seed <BASE64>]
-```
-
-Generates an Xray-compatible ML-DSA-65 seed and verification key. Without
-`--seed`, OS entropy creates a new 32-byte seed. With `--seed`, the value must
-decode from URL-safe unpadded base64 to exactly 32 bytes. JSON output contains
-`seed` and `verify`. This command is compatibility/key tooling; the current
-server configuration has no ML-DSA field.
-
-### `node-keygen`
-
-```text
-rust-reality node-keygen
-```
-
-Prints JSON containing an independent 32-byte URL-safe unpadded
-`preSharedKey` for one NXR trust relationship. Do not reuse a REALITY key,
-password, or one NXR key across unrelated line/landing pairs.
-
-## Performance measurement
-
-Performance measurement is a development task and lives in the repository
-tooling, not in the deployed binary:
-
-```text
-cargo bench
-cargo dev bench ...
-```
-
-See the [benchmark policy](benchmarks.md).
-
-## Signals and atomic reload
-
-| Signal | Behavior |
+| signal | effect |
 | --- | --- |
-| SIGINT / SIGTERM | Stop accepting new work and perform bounded graceful shutdown. |
-| SIGHUP | Load the same path, validate and compile a full candidate, then atomically publish it. |
+| `SIGHUP` | reload the configuration file atomically |
+| `SIGINT`, `SIGTERM` | stop, draining live connections |
 
-A failed SIGHUP keeps the current generation. Existing connections retain the
-generation they started with. Listener topology, `runtime` settings,
-resource-governor policy, direct-barrier policy, relay policy, and NXR
-replay-cache capacity/retention require a restart; see the
-[configuration reference](configuration.md#reload-boundaries).
+A reload compiles the new file completely before publishing it. If anything
+fails, the running configuration keeps serving and the failure is logged as
+`configuration_rejected` with the full diagnostic on stderr. A reload that
+changes a cold setting is refused by name — see
+[the reload summary](configuration/reference.md#reload-summary).
+
+Shutdown waits up to 30 seconds for live relays to finish, then aborts what
+remains.
+
+**Exit status** is non-zero on a bind failure, a signal-installation failure,
+or a listener that stops unexpectedly.
+
+## `check`
+
+```shell
+rust-reality check -c /etc/rust-reality/config.json
+```
+
+```
+/etc/rust-reality/config.json is a valid entry node
+```
+
+Parses, validates every value, and validates every cross-reference. Then it
+stops.
+
+**`check` is strictly offline.** It resolves no names, opens no sockets,
+downloads nothing, and binds nothing. That is a guarantee, not a tendency: it
+is asserted by test. So it runs anywhere — in CI on a laptop, in a container
+with no network, against a file for a machine you are not sitting at.
+
+Failures go to stderr with the offending line, and stdout stays empty:
+
+```
+error: invalid value for `runtime.profile`
+ --> /etc/rust-reality/config.json:3:27
+  |
+3 |   "runtime": { "profile": "server" },
+  |                           ^^^^^^^^ expected "auto", "shared", or "dedicated"
+  |
+  = actual value: "server"
+  = help: use "dedicated" only when this process owns the bounded host or cgroup
+```
+
+Secrets are never echoed; a diagnostic about key material shows `[REDACTED]`.
+
+**Exit status** 0 if valid, non-zero otherwise. Run it before every reload.
+
+## `doctor`
+
+```shell
+rust-reality doctor -c /etc/rust-reality/config.json
+```
+
+Everything `check` does, and then it contacts what the file names: resolves
+DNS, dials the cover target and confirms it still negotiates TLS 1.3, loads
+and parses geo data, and checks filesystem permissions and directories.
+
+It never binds the production listener and never mutates the system.
+
+```json
+{
+  "assets": { "domainLabels": 0, "domainSources": 0, "generation": 0, "ipLabels": 0, "ipSources": 0 },
+  "configuration": "ok",
+  "cover": [
+    {
+      "target": "www.microsoft.com:443",
+      "serverName": "www.microsoft.com",
+      "compatible": true,
+      "cipherSuite": "TLS_AES_256_GCM_SHA384",
+      "keyExchangeGroup": "X25519",
+      "connectMillis": 322,
+      "serverHelloMillis": 319,
+      "totalMillis": 642
+    }
+  ],
+  "role": "entry",
+  "routing": "ok"
+}
+```
+
+Run it before a restart, after changing the cover, and when something that
+used to work has stopped.
+
+## `explain`
+
+```shell
+rust-reality explain -c /etc/rust-reality/config.json
+```
+
+Reports what this exact file resolves to on this machine — the decisions, not
+a dump of internal state:
+
+```
+role: entry
+listeners:
+  0.0.0.0:443, [::]:443 (auto, at least one)
+routing:
+  default: landing-1 (1 rule, strategy resolveIfNoMatch)
+  policy split: default landing-1 (1 rule, 1 user)
+  outbounds: direct, block, landing-1
+  geo data: required by at least one rule
+machine: 4 effective cpus (4 logical), 524288 descriptors, 16194637824 bytes memory (cgroup_v2)
+posture: profile auto -> standard, tuning startup, objective balanced
+runtime: 4 worker threads, 512 blocking threads (tokio-default)
+limits: 25 values, all derived from the machine (--json for the table)
+```
+
+Pinned limits are listed; derived ones are counted. When the host's own
+settings will constrain the process, advisories follow — and they are advisory
+in the strict sense, because this process never writes a sysctl, another
+process's rlimit, or a cgroup file.
+
+Like `check`, it is offline.
+
+### `--json`
+
+The complete report, for automation:
+
+```shell
+rust-reality explain -c config.json --json | jq '.fields[] | select(.source == "operator-pinned")'
+```
+
+Every field carries its value, provenance (`operator-pinned`,
+`startup-derived`, or `default`), the objective multiplier where one applies,
+and the floor and cap. `schemaVersion` identifies the report shape. The report
+contains no key material, so it is safe to attach to a bug report.
+
+### `--route HOST`
+
+Answers where one destination would go, instead of reporting the whole file:
+
+```shell
+rust-reality explain -c config.json --route example.com
+rust-reality explain -c config.json --route 10.1.2.3:443
+rust-reality explain -c config.json --route '[2001:db8::1]:443'
+```
+
+```
+example.com for alice -> landing-1 (routing.policies.split, default outbound)
+```
+
+The answer names the outbound, the list that decided, and how: `global rule`,
+`policy rule`, or `default outbound`. Accepts `host` or `host:port`, including
+bracketed and bare IPv6 literals, and defaults to port 443.
+
+Being offline bounds what it can say, and it says so rather than reporting a
+route the running server would not choose:
+
+```
+note: geo conditions were not evaluated: `explain` is offline, so a rule
+naming geoip: or geosite: was treated as not matching. Use `doctor` to load
+the data.
+```
+
+A landing node is refused: it does not route, it sends every transfer to one
+egress.
+
+## `format`
+
+```shell
+rust-reality format -c config.json           # print it
+rust-reality format -c config.json --write   # rewrite in place
+```
+
+Rewrites a configuration in the canonical form. It is not `jq`, and the
+difference is the point:
+
+1. **It validates.** Its output is always a file this binary accepts. `jq .`
+   will happily pretty-print something the server rejects.
+2. **It orders keys the way the reference documents them** — outbounds before
+   the routing that refers to them, required fields before optional ones.
+   `jq` preserves arbitrary input order and `jq -S` sorts alphabetically,
+   which scatters related fields apart.
+3. **It is round-trip safe by construction**, going through the typed model,
+   so it cannot emit a shape the model cannot read.
+
+The contract, all of it pinned by test:
+
+- deterministic, and **idempotent** — `format(format(x))` is byte-identical
+- **semantics-preserving** — `parse(format(x))` equals `parse(x)`
+- a field you wrote survives even when it equals its default
+- a field you omitted is never expanded into the file
+- invalid input is rejected, not pretty-printed
+
+`--write` goes through a crash-safe atomic write, so a failure leaves no
+partial file. It never transforms an old configuration and is not migration
+tooling: a file from a previous release fails exactly as it fails under
+`check`.
+
+## `check-cover`
+
+```shell
+rust-reality check-cover --cover www.microsoft.com:443
+rust-reality check-cover --cover www.example.org:443 --server-name www.example.org
+```
+
+Checks whether a host is usable as a REALITY cover target, before any
+configuration exists.
+
+| option | default | meaning |
+| --- | --- | --- |
+| `--cover HOST:PORT` | required | the candidate, with its port |
+| `--server-name DNS_NAME` | the cover host | name to send in the ephemeral ClientHello |
+| `--timeout-ms N` | 5000 | absolute DNS, connect, write, and ServerHello deadline |
+
+```json
+{
+  "target": "www.microsoft.com:443",
+  "serverName": "www.microsoft.com",
+  "compatible": true,
+  "cipherSuite": "TLS_AES_256_GCM_SHA384",
+  "keyExchangeGroup": "X25519",
+  "connectMillis": 304,
+  "serverHelloMillis": 1892,
+  "totalMillis": 2197
+}
+```
+
+`compatible: true` is the requirement; the timings are the other half of the
+answer, because the cover's latency lands inside the setup of every connection
+this node will serve.
+
+Run it **on the deployment host** — the answer depends on the network path,
+and a cover that works from a laptop may fail from the VPS. `doctor` runs the
+same check against the cover already in a configuration.
+
+## `generate`
+
+Produces material an operator should not invent by hand, and nothing else.
+There is no command that assembles a configuration, a client profile, or a
+subscription link.
+
+```shell
+rust-reality generate uuid [COUNT] [--json]
+rust-reality generate x25519 [--json]
+rust-reality generate short-id [COUNT] [--bytes N] [--json]
+rust-reality generate psk [--json]
+```
+
+| subcommand | for | notes |
+| --- | --- | --- |
+| `uuid` | `users[].id` | RFC 4122 version 4; `COUNT` up to 1024 |
+| `x25519` | `reality.privateKey`, or a Handoff landing's `landing.privateKey` | one pair per purpose |
+| `short-id` | `users[].shortIds` | `--bytes` 1–8, default 8 |
+| `psk` | an NXR or Handoff `psk` | one per landing |
+
+Human output is labelled:
+
+```
+private key (keep secret): bkuHF6dZ2Elt_dkFKZoXkSUZ6gnLITrUZbRmDggVfuQ
+public key  (give to peers): CyrxYetA0RSs9IxcGpb7vNfQ3GoKm6xTUL5qWdbjUAY
+```
+
+`--json` is the stable machine-readable form, for installers:
+
+```json
+{
+  "privateKey": "005oawzDIFyUCdSjXtgGaP7UgGF7zFEzay4kL_nq9ww",
+  "publicKey": "UWesja3AOowUwLohp5LcPtmE0gZmBSsn8I6623QczzY"
+}
+```
+
+## Exit status
+
+`0` on success. Non-zero on any failure, with the reason on stderr.
+
+Every command writes its result to stdout and its diagnostics to stderr, so
+`rust-reality explain --json -c config.json > report.json` yields a clean
+file even when a warning is printed.
+
+## Development commands
+
+Benchmark suites, profiling, schema generation, repository checks, fuzz
+inventory, and documentation verification are `cargo dev` subcommands in the
+tooling workspace, not part of the shipped binary. See
+[development workflow](development/development-workflow.md).
+
+```shell
+cargo dev check --all          # the full validation gate
+cargo dev config schema        # generate the JSON Schema
+cargo dev docs check           # documentation policy, including every example
+```

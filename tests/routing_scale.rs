@@ -322,13 +322,13 @@ fn indexed_and_linear_paths_match_independent_oracle() {
                     (
                         "fallback",
                         "routing.policies.primary",
-                        RouteScope::UserDefault,
+                        RouteScope::DefaultOutbound,
                     ),
                     |rule| {
                         (
                             rule.outbound.as_str(),
                             rule.name.as_deref().unwrap_or_default(),
-                            RouteScope::User,
+                            RouteScope::Policy,
                         )
                     },
                 );

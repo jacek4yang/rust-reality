@@ -240,7 +240,7 @@ rust-reality serve --config config.tuned.json
 `routing.users[].rules`，最后使用该用户组的 `defaultOutbound`。同一规则中不同
 条件类别之间是 AND；同一类别的多个值之间是 OR。所有字段、默认值、约束、匹配
 器语法、热更新行为和专用资源模式见
-[配置参考](docs/zh-CN/configuration.md)。v1.2 配置在 v1.3 重启前必须把原来共享的
+[配置参考](docs/zh-CN/configuration/reference.md)。v1.2 配置在 v1.3 重启前必须把原来共享的
 `realitySettings.shortIds` 列表移到其所属的 `clients[]` 条目下。
 
 ## 部署
@@ -249,7 +249,7 @@ rust-reality serve --config config.tuned.json
 并原子发布兼容的新配置，已建立连接继续使用旧 generation。请安装并审查
 [`deploy/rust-reality.service`](deploy/rust-reality.service) 提供的 systemd 加固
 基线；验证、服务账号、防火墙规则、升级与回滚见
-[docs/deployment.zh-CN.md](docs/zh-CN/deployment.md)。
+[docs/deployment.zh-CN.md](docs/zh-CN/operations/deployment.md)。
 
 ## 安全
 
@@ -267,8 +267,8 @@ NXR 必须由防火墙限制，其认证后的字节是明文。不要在 issue 
 | 文档索引 | [English](docs/en/index.md) | [简体中文](docs/zh-CN/index.md) |
 | 快速上手 | [English](docs/en/getting-started.md) | [简体中文](docs/zh-CN/getting-started.md) |
 | 命令行参考 | [English](docs/en/cli.md) | [简体中文](docs/zh-CN/cli.md) |
-| 配置参考 | [English](docs/en/configuration.md) | [简体中文](docs/zh-CN/configuration.md) |
-| 部署指南 | [English](docs/en/deployment.md) | [简体中文](docs/zh-CN/deployment.md) |
+| 配置参考 | [English](docs/en/configuration/reference.md) | [简体中文](docs/zh-CN/configuration/reference.md) |
+| 部署指南 | [English](docs/en/operations/deployment.md) | [简体中文](docs/zh-CN/operations/deployment.md) |
 | 协议概览 | [English](docs/en/protocol.md) | [简体中文](docs/zh-CN/protocol.md) |
 | 架构 | [English](docs/en/architecture.md) | [简体中文](docs/zh-CN/architecture.md) |
 | 性能 | [English](docs/en/performance.md) | [简体中文](docs/zh-CN/performance.md) |

@@ -154,8 +154,8 @@ DestinationConnector (one deadline + FD permit/candidate; drain losers)
 ```
 
 The same process-lifetime environment is shared by Direct, REALITY target and
-fallback, SOCKS5/NXR/Handoff server dials, landing direct egress, probes, and
-self-tests. Routing DNS snapshots flow into the planner unchanged instead of
+fallback, SOCKS5/NXR/Handoff server dials, landing direct egress, and the
+checks `doctor` and `check-cover` perform. Routing DNS snapshots flow into the planner unchanged instead of
 triggering a second lookup. A destination intentionally forwarded through a
 remote proxy is never locally resolved. Numeric literals enter the planner
 directly.
@@ -343,7 +343,7 @@ Resolver descriptors are reserved rather than admitted because a cancelled
 those descriptors outlive the connection that asked for them. The safety
 headroom is `max(soft_limit / 16, 64)` in standard mode; the dedicated
 resource mode derives its own larger headroom (see the
-[configuration reference](configuration.md#dedicated-resource-mode)).
+[configuration reference](configuration/runtime-and-resources.md#profile)).
 
 Policy:
 
@@ -469,7 +469,7 @@ Static per-kind admission semaphores (connection, handshake, crypto,
 fallback) plus the lock-free FD budget with pressure hysteresis exist in
 every mode. `runtime.profile: "dedicated"` adds machine-aware budgeting
 and a two-dimensional (FD + memory) pressure model; see the
-[configuration reference](configuration.md#dedicated-resource-mode).
+[configuration reference](configuration/runtime-and-resources.md#profile).
 
 ## Observability
 

@@ -2,343 +2,306 @@
 
 [English](../en/cli.md) | 简体中文
 
-## 通用行为
+七个命令。每一个都是运维会主动去做的一件事。
 
-```text
-rust-reality [--help] [--version] <COMMAND>
+```
+rust-reality run         -c <config.json>
+rust-reality check       -c <config.json>
+rust-reality doctor      -c <config.json>
+rust-reality explain     -c <config.json> [--json] [--route <HOST>]
+rust-reality format      -c <config.json> [--write]
+rust-reality check-cover --cover <HOST:PORT> [--server-name <NAME>] [--timeout-ms <N>]
+rust-reality generate    uuid | x25519 | short-id | psk
 ```
 
-主要机器可读或生成结果写入 stdout，诊断信息写入 stderr。生成公网 REALITY
-服务端的命令会把包含私钥的服务器 JSON 写入 stdout，把供客户端使用的 REALITY
-公钥写入 stderr，必须分别重定向。
+外加 `--help` 和 `--version`。所有读配置的命令都接受 `-c` / `--config`。
 
-每一级命令都支持 `--help`。成功返回退出码 0；配置、I/O、网络、运行时和基准
-失败返回非零且不会打印秘密值。Clap 会报告无效语法或越界参数并输出对应 usage。
+| 命令 | 回答什么 |
+| --- | --- |
+| `run` | 提供服务，直到收到 SIGINT 或 SIGTERM |
+| `check` | 这份配置自身合法吗？ |
+| `doctor` | 这份配置在这台机器和这个网络上真的能用吗？ |
+| `explain` | 这份配置在这里解析成了什么？ |
+| `format` | 把我的配置改写成规范、已校验的形式 |
+| `check-cover` | 这个候选主机能当 REALITY 伪装目标吗？ |
+| `generate` | 生成我不该手写的材料 |
 
-## 服务与验证命令
+这里刻意没有基准测试、没有 schema 导出、没有性能剖析、也没有仓库工具。一个命令的
+存在理由是运维想做这件事，而不是某个子系统能暴露出一个命令——工程能力放在
+`cargo dev` 里，部署出去的守护进程不是本项目的工具箱。
 
-### `serve`
-
-```text
-rust-reality serve --config <PATH>
-```
-
-在前台加载、验证、编译并绑定生产服务。处理 SIGINT/SIGTERM 优雅退出和 SIGHUP
-原子热更新。提供的 systemd unit 使用此命令。
-
-| 选项 | 必填 | 含义 |
-| --- | --- | --- |
-| `-c, --config <PATH>` | 是 | 严格 JSON 配置文件。 |
-
-### `run`
-
-```text
-rust-reality run --config <PATH>
-```
-
-`serve` 的完全等价别名，方便服务管理器使用常见的 `run` 命名。
-
-### `check`
-
-```text
-rust-reality check --config <PATH>
-```
-
-最多读取 4 MiB，解析严格 JSON，拒绝未知字段，并验证所有字段和引用。不会下载
-资产、探测目标或绑定端口。成功时输出 `configuration PATH is valid`。
-
-### `self-test`
-
-```text
-rust-reality self-test --config <PATH>
-```
-
-执行 `check`，下载或条件重验证所需 Geo 资产，完成解析和路由编译，并为每一个
-REALITY target/SNI 组合执行真实 TLS 1.3 兼容探测。不会绑定监听端口。JSON 报告
-包含配置、资产、路由和目标结果。
-
-配置中的通配符模式绝不会作为 SNI 发送。只有 target hostname 与通配符匹配时，
-`self-test` 才从目标导出具体 SNI；例如 `www.lmu.edu:443` 可以探测 `*.lmu.edu`。
-
-启用或重启服务前应在部署机器执行，因为网络路径和目标行为可能与开发机不同。
-
-### `probe-dest`
-
-```text
-rust-reality probe-dest \
-  --target <HOST:PORT> \
-  --server-name <DNS_NAME> \
-  [--timeout-ms <MILLISECONDS>]
-```
-
-发送临时 TLS ClientHello，验证真实伪装目标能否返回有界、严格可解析且适用于
-REALITY 的 TLS 1.3 ServerHello。
-
-| 选项 | 必填 | 默认值/范围 | 含义 |
-| --- | --- | --- | --- |
-| `--target <HOST:PORT>` | 是 | — | 含端口的目标；IPv6 字面量必须加方括号。 |
-| `--server-name <DNS_NAME>` | 是 | — | ClientHello 中发送的 ASCII DNS SNI。 |
-| `--timeout-ms <N>` | 否 | `5000`，`1..=60000` | DNS/连接/写入/ServerHello 工作使用的独立绝对上限。 |
-
-JSON 结果只证明该目标当时的兼容性，不能保证目标以后永远不改变行为。
-`probe-dest` 必须使用具体 DNS 名；通配符只是服务端匹配模式，不是合法 ClientHello SNI。
-
-### `runtime explain`
-
-```text
-rust-reality runtime explain --config <PATH> [--json]
-```
-
-在不启动服务器的情况下解释一份配置的运行时资源方案：检测机器（描述符限制、
-cgroup v2 CPU 与内存边界）、把 `runtime.profile` 解析为资源模式、选定启动时的
-Tokio 线程池尺寸，并完全按 `serve` 启动时的方式计算生效的数值策略。该命令完全
-离线：不绑定监听器、不运行基准，也不接触任何运行中的实例。
-
-人类可读输出列出机器视图、解析出的 profile 与调谐设置、启动拓扑、每个策略字段
-的生效值与来源（`startup-derived`、`operator-override`、`operator-legacy-limit`
-或 `default`）、目标乘数和安全上下限，
-以及仅供参考的内核调优建议（进程绝不写 sysctl）。`--json` 以稳定模式
-（`schemaVersion: 2`）输出同一份报告，便于自动化。
-
-schema 2 将原本单一的 `override` 来源拆分为 `operator-override`（因出现在
-`advanced.overrides` 中而钉死）与 `operator-legacy-limit`（因 `advanced.limits`
-取值不同于内置默认值而钉死），并将 `derived` 重命名为 `startup-derived`。原先匹配
-`override` 或 `derived` 的自动化需要更新；`schemaVersion` 字段使该变更可被检测。
-
-| 选项 | 必填 | 含义 |
-| --- | --- | --- |
-| `-c, --config <PATH>` | 是 | 严格 JSON 配置文件。 |
-| `--json` | 否 | 输出机器可读 JSON 报告，而不是人类可读摘要。 |
-
-### `runtime report`
-
-```text
-rust-reality runtime report --status-file <PATH> [--json]
-```
-
-打印运行中实例发布到其 `runtime.statusFile` 的最后一份自适应控制器快照：
-资源压力状态，以及每个软上限的当前值、下界、启动推导硬界、持有许可数和最近
-一次调整（原因与时间戳）。该命令只读取文件，绝不接触运行中的进程。只有在
-`runtime.tuning.mode: adaptive` 且设置了 `runtime.statusFile` 的实例上该文件
-才存在。
-
-| 选项 | 必填 | 含义 |
-| --- | --- | --- |
-| `--status-file <PATH>` | 是 | 运行中实例发布的状态文件（`runtime.statusFile`）。 |
-| `--json` | 否 | 输出机器可读 JSON 快照，而不是人类可读摘要。 |
-
-## 配置命令
-
-### `config generate standalone`
-
-```text
-rust-reality config generate standalone \
-  [--listen <IP>] [--port <PORT>] \
-  --target <HOST:PORT> --server-name <DNS_NAME>
-```
-
-生成一个公网 VLESS + REALITY + Vision 入站、一个 UUID、一对 REALITY X25519
-密钥、归该 UUID 独占的两个 short ID，以及 direct 出站和用户策略。
-
-| 选项 | 必填 | 默认值 | 含义 |
-| --- | --- | --- | --- |
-| `--listen <IP>` | 否 | `0.0.0.0` | 公网绑定地址；未指定值会生成入站 `listen.mode: auto` 及独立 IPv4/IPv6 套接字。 |
-| `--port <PORT>` | 否 | `443` | 公网 TCP 端口，`1..=65535`。 |
-| `--target <HOST:PORT>` | 是 | — | REALITY 伪装目标。 |
-| `--server-name <DNS_NAME>` | 是 | — | 客户端 SNI 和允许的服务名。 |
-
-规范 JSON 写入 stdout；`REALITY public key for the client: ...` 写入 stderr。
-
-### `config generate line`
-
-```text
-rust-reality config generate line \
-  [--listen <IP>] [--port <PORT>] \
-  --target <HOST:PORT> --server-name <DNS_NAME> \
-  --nxr-address <HOST> [--nxr-port <PORT>] --nxr-key <BASE64>
-```
-
-生成相同的安全公网入站，并加入 NXR、direct 和 blackhole 出站。生成 UUID 默认
-使用 NXR 落地出站。
-
-| 附加选项 | 必填 | 默认值 | 含义 |
-| --- | --- | --- | --- |
-| `--nxr-address <HOST>` | 是 | — | 线路机可访问的落地机地址。 |
-| `--nxr-port <PORT>` | 否 | `7443` | 防火墙限制的 NXR TCP 端口。 |
-| `--nxr-key <BASE64>` | 是 | — | `node-keygen` 生成的 URL-safe 无填充 32 字节 PSK。 |
-
-### `config generate landing`
-
-```text
-rust-reality config generate landing \
-  [--listen <IP>] [--port <PORT>] --nxr-key <BASE64>
-```
-
-生成内部 NXR 监听和 direct 出站，不包含公网 VLESS、REALITY、Vision 或 TLS 状态。
-
-| 选项 | 必填 | 默认值 | 含义 |
-| --- | --- | --- | --- |
-| `--listen <IP>` | 否 | `0.0.0.0` | 内部绑定地址；生成的 `auto` 策略会把未指定地址展开成独立 IPv4/IPv6 套接字。 |
-| `--port <PORT>` | 否 | `7443` | 内部 NXR TCP 端口。 |
-| `--nxr-key <BASE64>` | 是 | — | 与线路机 NXR 出站相同的 PSK。 |
-
-### `config generate handoff`
-
-```text
-rust-reality config generate handoff \
-  [--listen <IP>] [--port <PORT>] \
-  --server-address <HOST> --target <HOST:PORT> --server-name <DNS_NAME> \
-  --landing-address <HOST> [--landing-port <PORT>] --output-dir <DIR>
-```
-
-一步生成完整的 Handoff 部署：`line.json`（公网 VLESS + REALITY + Vision
-线路机，用户默认路由到 handoff 出站）、`landing.json`（防火墙限制的内部
-handoff 监听器）和 `xray-client.json`（面向线路机的 SOCKS 入站 Xray 客户端）。
-所有密钥材料均独立生成：UUID、REALITY X25519 密钥对、归该 UUID 独占的两个 short ID、
-Handoff 预共享密钥，以及落地机的静态 X25519 密钥对。两个服务器配置在写入前
-都会通过完整校验。
-
-| 附加选项 | 必填 | 默认值 | 含义 |
-| --- | --- | --- | --- |
-| `--server-address <HOST>` | 是 | — | 客户端拨号的线路机公网地址。 |
-| `--landing-address <HOST>` | 是 | — | 线路机可访问的落地机地址。重复该标志即生成多落地部署。 |
-| `--landing-port <PORT>` | 否 | `7443` | 防火墙限制的 Handoff TCP 端口。多落地时可只传一个端口应用于全部落地机，或按地址逐一重复。 |
-| `--output-dir <DIR>` | 是 | — | 三个文件的写入目录。 |
-
-三个文件路径写入 stdout；`REALITY public key for the client: ...` 和
-`UUID for the client: ...` 写入 stderr。Handoff PSK 和私钥只存在于两个
-服务器文件中。
-
-重复 `--landing-address` 时生成多落地部署：
+## `run`
 
 ```shell
-rust-reality config generate handoff \
-  --server-address line.example.com \
-  --target cover.example.com:443 \
-  --server-name cover.example.com \
-  --landing-address 10.0.0.2 --landing-port 7443 \
-  --landing-address 10.0.0.3 --landing-port 7443 \
-  --output-dir handoff/
+rust-reality run -c /etc/rust-reality/config.json
 ```
 
-此时写出 `line.json`、`landing-1.json`、`landing-2.json` 和
-`xray-client.json`（单落地仍使用不带序号的 `landing.json`）。线路机为每个
-落地机分配一个 UUID，并把每个 UUID 的用户组路由到对应落地的 handoff 出站
-（`landing-1`、`landing-2`……）；每对落地的密钥材料相互独立，所有服务端文件
-在写出前都经过校验。`xray-client.json` 保持单 UUID 形态，使用第一个落地的
-UUID——是否把其余 UUID 分配给客户端由运维自行决定。
+绑定所有配置的监听器，然后一直服务到 SIGINT 或 SIGTERM。它留在前台，这正是 systemd
+和其它任何进程守护需要的形态。
 
-### `config autotune`
+**信号**
 
-```text
-rust-reality config autotune \
-  --config <INPUT.json> --output <TUNED.json> \
-  [--report <REPORT.json>] [--scratch-directory <DIR>] \
-  [--duration-ms <N>] [--warmup-ms <N>] \
-  [--storage-mib <N>] [--network-mib <N>] [--dedicated]
-```
-
-执行有界的本机协议、机器/cgroup、存储和 TCP loopback 探测，然后写出经过
-完整校验的调优副本及测量报告。输入文件永不修改；输出文件权限为仅所有者
-可读写（`0600`），并通过同目录原子 rename 发布。先发布报告，最后发布已
-校验配置。
-
-| 选项 | 必填 | 默认值/范围 | 含义 |
-| --- | --- | --- | --- |
-| `-c, --config <PATH>` | 是 | — | 现有有效配置；凭据、监听、路由、超时和日志保持不变。 |
-| `-o, --output <PATH>` | 是 | — | 调优配置路径；必须与输入、报告路径不同。 |
-| `--report <PATH>` | 否 | `<OUTPUT>.report.json` | 可审计的完整测量与最终所选 policy。 |
-| `--duration-ms <N>` | 否 | `900`，`90..=30000` | 每个协议 case 的测量时间。 |
-| `--warmup-ms <N>` | 否 | `100`，`1..=10000` | 每个协议 case 的预热时间。 |
-| `--storage-mib <N>` | 否 | `32`，`1..=256` | 在 scratch 目录中写入、同步并读取的数据量。 |
-| `--network-mib <N>` | 否 | `32`，`1..=256` | TCP loopback 每个方向的传输量。 |
-| `--scratch-directory <DIR>` | 否 | 操作系统临时目录 | 有界存储探测要测量的文件系统。 |
-| `--dedicated` | 否 | 关闭 | 同时把副本切换为 `runtime.profile: "dedicated"`；仅在 rust-reality 独占主机或 cgroup 时使用。 |
-
-自动调优只改变 resource governor、Direct 拨号和中继策略；不会替你选择安全
-协议、UUID/short ID 归属、伪装目标、路由或超时策略。审查 diff 与报告，执行
-`check`，再按正常重启流程部署。详见
-[调优指南](tuning.md#自动测量的起始策略)。
-
-### `config format`
-
-```text
-rust-reality config format --config <PATH>
-```
-
-验证完整文件并把确定性的规范美化 JSON 写入 stdout，不会原地编辑输入文件。
-应重定向到新文件，审查后再原子替换。
-
-### JSON Schema
-
-Schema 属于开发产物，不是运维命令。它由仓库工具从模型类型直接生成，并随每次
-发布一起附带：
-
-```text
-cargo dev config schema > rust-reality.schema.json
-```
-
-Schema 只描述结构和枚举。跨引用和安全不变量要用 `check` 验证，最终以二进制的
-判断为准。
-
-## 身份与密钥命令
-
-### `uuid`
-
-```text
-rust-reality uuid [COUNT]
-```
-
-使用操作系统熵，每行输出一个 RFC 4122 version 4 UUID。`COUNT` 默认 1，范围
-`1..=1024`。
-
-### `x25519`
-
-```text
-rust-reality x25519
-```
-
-输出包含 `privateKey` 与 `publicKey` 的 JSON，均采用 URL-safe 无填充 base64。
-私钥只放在服务器配置，公钥提供给 Xray 客户端。
-
-### `mldsa65`
-
-```text
-rust-reality mldsa65 [--seed <BASE64>]
-```
-
-生成兼容 Xray 的 ML-DSA-65 seed 和 verification key。没有 `--seed` 时使用系统熵
-生成新的 32 字节 seed；传入时必须由 URL-safe 无填充 base64 解码为恰好 32 字节。
-JSON 输出包含 `seed` 与 `verify`。这是兼容性/密钥工具，当前服务端配置没有
-ML-DSA 字段。
-
-### `node-keygen`
-
-```text
-rust-reality node-keygen
-```
-
-输出包含独立 32 字节 URL-safe 无填充 `preSharedKey` 的 JSON，用于一个 NXR
-信任关系。不要复用 REALITY 密钥、密码，也不要让无关线路机/落地机共享 NXR 密钥。
-
-## 性能测量
-
-性能测量属于开发工作，放在仓库工具里，不进入部署的二进制：
-
-```text
-cargo bench
-cargo dev bench ...
-```
-
-详见[基准策略](benchmarks.md)。
-
-## 信号与原子热更新
-
-| 信号 | 行为 |
+| 信号 | 效果 |
 | --- | --- |
-| SIGINT / SIGTERM | 停止接收新工作并执行有界优雅退出。 |
-| SIGHUP | 从原路径加载、验证并编译完整候选配置，然后原子发布。 |
+| `SIGHUP` | 原子地重载配置文件 |
+| `SIGINT`、`SIGTERM` | 停止，并排空活跃连接 |
 
-SIGHUP 失败时继续使用当前 generation；已有连接保留启动时的 generation。监听拓扑、
-`runtime` 设置、resource governor、direct barrier、relay 策略和 NXR 重放缓存容量/保留时间必须重启；详见
-[配置参考](configuration.md#热更新边界)。
+重载会先把新文件完整编译出来再发布。任何一步失败，正在跑的配置继续服务，失败记为
+`configuration_rejected`，完整诊断打到 stderr。改动冷配置的重载会被指名拒绝——见
+[热冷一览](configuration/reference.md#热冷一览)。
+
+关停最多等 30 秒让活跃转发跑完，然后中止剩下的。
+
+**退出码**在绑定失败、信号安装失败，或监听器意外停止时非零。
+
+## `check`
+
+```shell
+rust-reality check -c /etc/rust-reality/config.json
+```
+
+```
+/etc/rust-reality/config.json is a valid entry node
+```
+
+解析、校验每一个值、校验每一处交叉引用。然后就停。
+
+**`check` 严格离线。** 它不解析名字、不开 socket、不下载、不绑定。这是保证，不是
+倾向：有测试盯着。所以它在哪儿都能跑——笔记本上的 CI、没有网络的容器、或者针对一台
+你人不在跟前的机器的文件。
+
+失败打到 stderr 并附上出问题的那一行，stdout 保持为空：
+
+```
+error: invalid value for `runtime.profile`
+ --> /etc/rust-reality/config.json:3:27
+  |
+3 |   "runtime": { "profile": "server" },
+  |                           ^^^^^^^^ expected "auto", "shared", or "dedicated"
+  |
+  = actual value: "server"
+  = help: use "dedicated" only when this process owns the bounded host or cgroup
+```
+
+密钥从不回显；关于密钥材料的诊断显示 `[REDACTED]`。
+
+**退出码**合法为 0，否则非零。每次重载之前都跑一下。
+
+## `doctor`
+
+```shell
+rust-reality doctor -c /etc/rust-reality/config.json
+```
+
+做完 `check` 做的一切，然后去联系文件里点名的东西：解析 DNS、拨号伪装目标并确认它
+仍然能协商 TLS 1.3、加载并解析 geo 数据、检查文件权限和目录。
+
+它从不绑定生产监听器，也从不改动系统。
+
+```json
+{
+  "assets": { "domainLabels": 0, "domainSources": 0, "generation": 0, "ipLabels": 0, "ipSources": 0 },
+  "configuration": "ok",
+  "cover": [
+    {
+      "target": "www.microsoft.com:443",
+      "serverName": "www.microsoft.com",
+      "compatible": true,
+      "cipherSuite": "TLS_AES_256_GCM_SHA384",
+      "keyExchangeGroup": "X25519",
+      "connectMillis": 322,
+      "serverHelloMillis": 319,
+      "totalMillis": 642
+    }
+  ],
+  "role": "entry",
+  "routing": "ok"
+}
+```
+
+重启之前、改过伪装目标之后，以及原本好用的东西不好用了的时候，跑它。
+
+## `explain`
+
+```shell
+rust-reality explain -c /etc/rust-reality/config.json
+```
+
+报告这份文件在这台机器上解析成了什么——报的是决定，不是内部状态的堆砌：
+
+```
+role: entry
+listeners:
+  0.0.0.0:443, [::]:443 (auto, at least one)
+routing:
+  default: landing-1 (1 rule, strategy resolveIfNoMatch)
+  policy split: default landing-1 (1 rule, 1 user)
+  outbounds: direct, block, landing-1
+  geo data: required by at least one rule
+machine: 4 effective cpus (4 logical), 524288 descriptors, 16194637824 bytes memory (cgroup_v2)
+posture: profile auto -> standard, tuning startup, objective balanced
+runtime: 4 worker threads, 512 blocking threads (tokio-default)
+limits: 25 values, all derived from the machine (--json for the table)
+```
+
+钉住的上限会逐条列出，推导的只报个数。当主机自身的设置会限制这个进程时，后面会跟
+advisory——而且它们在字面意义上就是"仅供参考"，因为这个进程从不写 sysctl、不写别的
+进程的 rlimit、不写 cgroup 文件。
+
+和 `check` 一样，它是离线的。
+
+### `--json`
+
+完整报告，给自动化用：
+
+```shell
+rust-reality explain -c config.json --json | jq '.fields[] | select(.source == "operator-pinned")'
+```
+
+每个字段都带着它的值、来源（`operator-pinned`、`startup-derived` 或 `default`）、
+适用时的 objective 乘数，以及下限和上限。`schemaVersion` 标识报告形状。报告里没有
+任何密钥材料，所以可以放心附在 bug 报告里。
+
+### `--route HOST`
+
+回答某一个目的地会去哪，而不是报告整份文件：
+
+```shell
+rust-reality explain -c config.json --route example.com
+rust-reality explain -c config.json --route 10.1.2.3:443
+rust-reality explain -c config.json --route '[2001:db8::1]:443'
+```
+
+```
+example.com for alice -> landing-1 (routing.policies.split, default outbound)
+```
+
+回答会点名出站、做决定的那份列表，以及是怎么决定的：`global rule`、`policy rule`
+或 `default outbound`。它接受 `host` 或 `host:port`，包括带方括号和不带方括号的
+IPv6 字面量，端口默认 443。
+
+离线这件事限定了它能说什么，而它会明说，而不是报出一条运行中的服务端不会选的路径：
+
+```
+note: geo conditions were not evaluated: `explain` is offline, so a rule
+naming geoip: or geosite: was treated as not matching. Use `doctor` to load
+the data.
+```
+
+落地节点会被直接拒绝：它不做路由，它把每一次转移都送去同一个出口。
+
+## `format`
+
+```shell
+rust-reality format -c config.json           # 打印
+rust-reality format -c config.json --write   # 原地改写
+```
+
+把配置改写成规范形式。它不是 `jq`，而这个区别正是关键：
+
+1. **它会校验。** 它的输出一定是这个二进制接受的文件。`jq .` 会乐呵呵地把服务端
+   拒绝的东西格式化得很漂亮。
+2. **它按参考手册记载的顺序排键**——出站排在引用它们的路由前面，必填字段排在可选
+   字段前面。`jq` 保留任意的输入顺序，`jq -S` 按字母排序，把相关字段拆得到处都是。
+3. **它在构造上就是往返安全的**，因为它走的是类型化模型，所以不可能产出模型读不回来
+   的形状。
+
+契约，每一条都有测试盯着：
+
+- 确定性，且**幂等**——`format(format(x))` 逐字节相同
+- **保持语义**——`parse(format(x))` 等于 `parse(x)`
+- 你写过的字段即使等于默认值也会留下
+- 你没写的字段永远不会被展开进文件
+- 非法输入被拒绝，而不是被格式化
+
+`--write` 走崩溃安全的原子写，所以失败不会留下半个文件。它从不转换旧配置，也不是
+迁移工具：上一个版本的文件在这里失败的方式，和它在 `check` 下失败的方式完全一样。
+
+## `check-cover`
+
+```shell
+rust-reality check-cover --cover www.microsoft.com:443
+rust-reality check-cover --cover www.example.org:443 --server-name www.example.org
+```
+
+在任何配置存在之前，检查一个主机能不能当 REALITY 伪装目标。
+
+| 选项 | 默认 | 含义 |
+| --- | --- | --- |
+| `--cover HOST:PORT` | 必填 | 候选目标，带端口 |
+| `--server-name DNS_NAME` | 伪装主机名 | 临时 ClientHello 里发送的名字 |
+| `--timeout-ms N` | 5000 | DNS、连接、写入和 ServerHello 的总截止时间 |
+
+```json
+{
+  "target": "www.microsoft.com:443",
+  "serverName": "www.microsoft.com",
+  "compatible": true,
+  "cipherSuite": "TLS_AES_256_GCM_SHA384",
+  "keyExchangeGroup": "X25519",
+  "connectMillis": 304,
+  "serverHelloMillis": 1892,
+  "totalMillis": 2197
+}
+```
+
+`compatible: true` 是硬要求；时延是答案的另一半，因为伪装目标的时延落在这个节点将来
+服务的每一个连接的建立过程里。
+
+**在部署主机上**跑它——答案取决于网络路径，一个在笔记本上能用的伪装目标可能在 VPS
+上不行。`doctor` 会对配置里已有的伪装目标做同样的检查。
+
+## `generate`
+
+生成运维不该手写的材料，仅此而已。没有任何命令会拼出一份配置、一个客户端 profile
+或者一条订阅链接。
+
+```shell
+rust-reality generate uuid [COUNT] [--json]
+rust-reality generate x25519 [--json]
+rust-reality generate short-id [COUNT] [--bytes N] [--json]
+rust-reality generate psk [--json]
+```
+
+| 子命令 | 用于 | 备注 |
+| --- | --- | --- |
+| `uuid` | `users[].id` | RFC 4122 v4；`COUNT` 最多 1024 |
+| `x25519` | `reality.privateKey`，或 Handoff 落地节点的 `landing.privateKey` | 每个用途一对 |
+| `short-id` | `users[].shortIds` | `--bytes` 1–8，默认 8 |
+| `psk` | NXR 或 Handoff 的 `psk` | 每个落地节点一个 |
+
+给人看的输出带标签：
+
+```
+private key (keep secret): bkuHF6dZ2Elt_dkFKZoXkSUZ6gnLITrUZbRmDggVfuQ
+public key  (give to peers): CyrxYetA0RSs9IxcGpb7vNfQ3GoKm6xTUL5qWdbjUAY
+```
+
+`--json` 是稳定的机器可读形式，给安装器用：
+
+```json
+{
+  "privateKey": "005oawzDIFyUCdSjXtgGaP7UgGF7zFEzay4kL_nq9ww",
+  "publicKey": "UWesja3AOowUwLohp5LcPtmE0gZmBSsn8I6623QczzY"
+}
+```
+
+## 退出码
+
+成功为 `0`。任何失败都非零，原因打在 stderr。
+
+每个命令都把结果写到 stdout、把诊断写到 stderr，所以
+`rust-reality explain --json -c config.json > report.json` 即使伴随警告也会得到一个
+干净的文件。
+
+## 开发用命令
+
+基准测试、性能剖析、schema 生成、仓库检查、fuzz 清单和文档校验都是工具工作区里的
+`cargo dev` 子命令，不属于发布出去的二进制。见
+[开发流程](development/development-workflow.md)。
+
+```shell
+cargo dev check --all          # 完整校验闸门
+cargo dev config schema        # 生成 JSON Schema
+cargo dev docs check           # 文档策略，包括每一段示例
+```

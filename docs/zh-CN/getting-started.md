@@ -2,93 +2,246 @@
 
 [English](../en/getting-started.md) | 简体中文
 
-从下载 Release 到跑通单机节点的最短路径。生产加固、线路机/落地机拓扑、升级
-和防火墙规则请继续阅读 [deployment.zh-CN.md](deployment.md)。
+装好二进制、生成手写不出来的那几个值、写一份二十行的配置、连上客户端。
+在一台干净的服务器上大约十五分钟。
 
-## 1. 下载并验证 Release
+配置是你自己写的。没有任何命令会替你生成一份完整配置，这是故意的：文件很短，
+里面每一个字段都是一个决定，而自己写过的人才调得动它。这一页会在每加一个字段
+时说明它为什么在那里。
 
-从[最新 Release](https://github.com/jacek4yang/rust-reality/releases/latest)
-下载适合你平台的压缩包、manifest 和校验文件，安装前验证全部资产：
+## 你需要什么
+
+- 一台有公网 IP 的 Linux 服务器，以及 root 权限。
+- 这台机器上的 443 端口是空的。REALITY 只有待在真正的 TLS 端口上才说得通。
+- 一个会说 VLESS + REALITY + Vision 的客户端——Xray-core，或者任何基于它的
+  应用。
+
+## 1. 安装
+
+从 [最新 release](https://github.com/jacek4yang/rust-reality/releases/latest)
+下载对应平台的压缩包、manifest 和校验和，先校验再安装：
 
 ```shell
 sha256sum --check SHA256SUMS
-# x86-64 GNU/glibc 通用包：
 tar -xzf rust-reality-v<version>-linux-x86_64-generic.tar.gz
-# Alpine/musl 或极简容器使用完全静态包：
-# tar -xzf rust-reality-v<version>-linux-x86_64-musl.tar.gz
-# 或在 x86-64-v3 GNU/glibc CPU 上使用：
-# tar -xzf rust-reality-v<version>-linux-x86_64-v3.tar.gz
-# 在 ARM64（ARMv8.0 含 neon 或更高）上使用：
-# tar -xzf rust-reality-v<version>-linux-aarch64-generic.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 rust-reality --version
 ```
 
-`release-manifest.json` schema v3 记录版本、标签、确切源码 commit、目标三元组、
-源码时间戳、编译器、cargo features，以及每个档位的压缩包名称、SHA-256、目标
-CPU/特性、是否在本机实测，以及最低 CPU 要求。两个 x86-64 通用包都面向
-基线 x86-64：常规发行版选择 GNU/glibc 包，Alpine、其他 musl 系统和极简容器
-选择完全静态 musl 包。v3 包要求 x86-64-v3 微架构级别，没有运行时回退，
-且在验证主机上没有实测优势
-（记录 AEAD 在每个档位都于运行时调度到 AES 硬件），只有确认 CPU 满足条件时才
-应选择。aarch64 包要求 ARMv8.0 含 neon。不要混用不同 Release 的资产。
+按机器挑压缩包：
 
-## 2. 探测伪装目标
+| 压缩包 | 什么时候用 |
+| --- | --- |
+| `linux-x86_64-generic` | 常见的 glibc 发行版 |
+| `linux-x86_64-musl` | Alpine，或者精简容器 |
+| `linux-x86_64-v3` | 你确定 CPU 是 x86-64-v3；它没有运行时回退 |
+| `linux-aarch64-generic` | ARM64，ARMv8.0 带 neon 及以上 |
 
-REALITY 伪装目标必须是服务端可以合理 impersonate 的 TLS 1.3 端点。请在实际
-部署机器上测试候选目标：
+不要把不同 release 的文件混着用。`release-manifest.json` 记录了确切的源码
+commit、编译器、feature，以及每一档压缩包的 SHA-256。
 
-```shell
-rust-reality probe-dest \
-  --target www.microsoft.com:443 \
-  --server-name www.microsoft.com
-```
+## 2. 选一个伪装目标
 
-## 3. 生成单机配置
+REALITY 的做法是：让到你服务器的连接看起来跟到另一台真实主机的 TLS 连接一模
+一样。那台主机就是**伪装目标**（cover target），选它是这次部署里第一个真正的
+决定。
+
+**在服务器上**测候选目标，因为答案取决于网络路径：
 
 ```shell
-rust-reality config generate standalone \
-  --target www.microsoft.com:443 \
-  --server-name www.microsoft.com \
-  > config.json 2> client-values.txt
+rust-reality check-cover --cover www.microsoft.com:443
 ```
 
-生成的 JSON 包含 UUID、REALITY 私钥、归该 UUID 独占的两个 short ID、入站
-`listen.mode: auto`、出站 `network.dial.mode: auto` 和 direct 路由策略。默认监听
-绑定相互独立的 IPv4 与 IPv6 套接字；本地解析的出站对端使用共享自适应策略。客户端所需
-的值（包括 REALITY 公钥）写入标准错误，使服务器私密配置可以单独保存。两个
-输出都应妥善保护；示例目标必须替换成从实际部署机器执行 `probe-dest` 能通过
-的目标。
+一个能用的伪装目标响应要快，并且能协商出 TLS 1.3 + X25519。如果命令给出的
+不是这个结果，就换一个——具体要求和背后的道理在
+[挑选伪装目标](configuration/cover-targets.md)。
 
-## 4. 校验并自测
+## 3. 生成材料
+
+有三类值是编不出来的。在服务器上逐个生成：
 
 ```shell
-rust-reality check --config config.json
-rust-reality self-test --config config.json
+rust-reality generate x25519
+rust-reality generate uuid
+rust-reality generate short-id
 ```
 
-`check` 在不绑定监听端口的情况下验证结构、引用、安全不变量和资源限制。
-`self-test` 进一步检查配置的资产、DNS 和伪装目标。
+`generate x25519` 会打印一对：
 
-## 5. 运行
+```
+private key (keep secret): bkuHF6dZ2Elt_dkFKZoXkSUZ6gnLITrUZbRmDggVfuQ
+public key  (give to peers): CyrxYetA0RSs9IxcGpb7vNfQ3GoKm6xTUL5qWdbjUAY
+```
+
+**私钥**那半写进服务端文件。**公钥**那半写进客户端，别的地方哪儿都不放。把这
+两半弄反，是新部署失败最常见的原因，所以值得多花一秒确认：下面那份服务端文件
+里绝不能出现公钥。
+
+这几个命令都可以加 `--json`，输出机器可读的格式，安装脚本应该消费这个。
+
+## 4. 写配置
+
+新建 `/etc/rust-reality/config.json`：
+
+```json
+{
+  "role": "entry",
+  "listeners": [
+    {
+      "port": 443
+    }
+  ],
+  "reality": {
+    "cover": "www.microsoft.com:443",
+    "privateKey": "ERERERERERERERERERERERERERERERERERERERERERE"
+  },
+  "users": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "shortIds": [
+        "0123456789abcdef"
+      ],
+      "label": "alice"
+    }
+  ],
+  "routing": {
+    "default": "direct"
+  }
+}
+```
+
+> **上面的密钥、UUID 和 short ID 都是占位符。** 它们的格式是对的，好让这一页
+> 的示例能被机器校验——也就是说 `check` 会接受它们，但它看不出这些值是公开的。
+> 在这个节点可达之前，把三个都换成第 3 步的输出。
+
+六个字段，每一个都是一个决定：
+
+- **`role`**——`entry` 表示这个节点面向公网，说 VLESS + REALITY + Vision。
+  另一个角色是 `landing`，见[线路节点与落地节点](configuration/line-landing.md)。
+- **`listeners`**——在哪里收连接。只写 `port` 会同时监听 IPv4 和 IPv6，任意
+  一边起来了就算启动成功。
+- **`reality.cover`**——第 2 步选好的主机，带端口。
+- **`reality.privateKey`**——第 3 步那对里的私钥。
+- **`users`**——谁可以连。`label` 是给你自己的日志和报告看的，对协议没有影响。
+- **`routing.default`**——没有规则命中时流量去哪。`direct` 和 `block` 一直都
+  在，也永远不需要声明。
+
+其余一切都有一个从这台机器推导出来的默认值。第 6 步会让你看到它们推导成了什么。
+
+然后把文件锁上。它里面有私钥：
 
 ```shell
-rust-reality serve --config config.json
+sudo chown root:root /etc/rust-reality/config.json
+sudo chmod 0600 /etc/rust-reality/config.json
 ```
 
-`serve` 在前台运行，适合 systemd 或其他进程管理器。用第 3 步得到的值（地址、
-端口、UUID、公钥、从该 UUID 的 `shortIds` 中选择的一个 short ID、server name、
-flow `xtls-rprx-vision`）配置兼容
-Xray 的客户端，确认流量正常。
+## 5. 校验
 
-## 下一步
+```shell
+rust-reality check -c /etc/rust-reality/config.json
+```
 
-- 线路机 + 受防火墙限制的 NXR 落地机：先用 `rust-reality node-keygen` 生成一
-  个共享 NXR 密钥，然后阅读[部署指南](deployment.md)。
-- 线路机 + Handoff 落地机（转移后该跳只承载 TLS 密文）：用
-  `rust-reality config generate handoff` 一步生成两侧配置，然后阅读
-  [部署指南](deployment.md#线路机与-handoff-落地机)。
-- 全部配置字段：[configuration.zh-CN.md](configuration.md)。
-- 全部命令：[cli.zh-CN.md](cli.md)。
-- 开放监听端口前的安全姿态：
-  [threat-model.zh-CN.md](threat-model.md)。
+```
+/etc/rust-reality/config.json is a valid entry node
+```
+
+`check` 严格离线。它解析、校验每一个值和每一处交叉引用，然后什么都不碰——不查
+DNS、不开 socket、不下载。所以它在哪儿跑都安全，包括在笔记本上的 CI 里。
+
+出问题时，它会指着导致问题的那一行：
+
+```
+error: invalid value for `reality.privateKey`
+ --> /etc/rust-reality/config.json:6:19
+  |
+6 |     "privateKey": "[REDACTED]"
+  |                   ^^^^^^^^^^^^ must be URL-safe unpadded base64 decoding to exactly 32 bytes
+```
+
+注意值本身被打码了。诊断信息从不回显密钥。
+
+## 6. 校验环境
+
+```shell
+rust-reality doctor -c /etc/rust-reality/config.json
+```
+
+`doctor` 做完 `check` 做的一切，然后去联系文件里点名的东西：解析 DNS、拨号伪装
+目标并确认它仍然能协商 TLS 1.3、加载 geo 数据、检查文件权限。它不监听端口，也
+不改动任何东西。
+
+```json
+{
+  "configuration": "ok",
+  "cover": [
+    {
+      "target": "www.microsoft.com:443",
+      "serverName": "www.microsoft.com",
+      "compatible": true,
+      "cipherSuite": "TLS_AES_256_GCM_SHA384",
+      "keyExchangeGroup": "X25519",
+      "totalMillis": 642
+    }
+  ],
+  "role": "entry",
+  "routing": "ok"
+}
+```
+
+想看没写的那些字段在这台机器上推导成了什么：
+
+```shell
+rust-reality explain -c /etc/rust-reality/config.json
+```
+
+```
+role: entry
+listeners:
+  0.0.0.0:443, [::]:443 (auto, at least one)
+routing:
+  default: direct (0 rules, strategy resolveIfNoMatch)
+  outbounds: direct, block
+machine: 4 effective cpus (4 logical), 524288 descriptors, 16194637824 bytes memory (cgroup_v2)
+posture: profile auto -> standard, tuning startup, objective balanced
+runtime: 4 worker threads, 512 blocking threads (tokio-default)
+limits: 25 values, all derived from the machine (--json for the table)
+```
+
+## 7. 启动
+
+```shell
+rust-reality run -c /etc/rust-reality/config.json
+```
+
+`run` 留在前台，一直服务到收到 SIGINT 或 SIGTERM——这正是进程守护需要的形态。
+systemd unit、用什么用户跑、防火墙怎么开，见[部署](operations/deployment.md)。
+
+## 8. 连客户端
+
+客户端需要六个值，其中只有一个不在它拿得到的文件里：
+
+| 客户端字段 | 值 |
+| --- | --- |
+| 地址 | 服务器的 IP 或域名 |
+| 端口 | `443`，来自 `listeners[0].port` |
+| id / UUID | `users[0].id` |
+| 公钥 | 第 3 步那半**公钥**——不是文件里的那个 |
+| short id | 该用户 `shortIds` 里的任意一条 |
+| server name / SNI | `www.microsoft.com`，也就是伪装主机名 |
+| flow | `xtls-rprx-vision` |
+
+flow 永远是 `xtls-rprx-vision`；这个服务端不说别的，所以配置里根本没有这个字段。
+
+随便打开个网页。通了，部署就完成了。
+
+没通的话，[排障](operations/troubleshooting.md)是按症状组织的，开头两条就是绝
+大多数问题的来源：密钥拿反了，以及客户端 SNI 和伪装目标对不上。
+
+## 接下来
+
+- **看懂你刚写的这个文件**——[配置是怎么回事](configuration/index.md)。
+- **加用户、换凭据**——[用户与凭据](configuration/users-and-credentials.md)。
+- **把一部分流量送到别处**——[路由](configuration/routing.md)。
+- **把出口 IP 藏到第二台机器后面**——[线路节点与落地节点](configuration/line-landing.md)。
+- **规规矩矩地交给 systemd**——[部署](operations/deployment.md)。
+- **搞清楚你暴露了什么**——[威胁模型](threat-model.md)。
