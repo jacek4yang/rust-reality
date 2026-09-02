@@ -64,6 +64,21 @@ jobs:
       - name: Run repository quality checks
         run: cargo dev check --all
 
+      # The gate keeps each stage's complete stdout and stderr in files rather
+      # than flooding the terminal, and prints a bounded excerpt. That is right
+      # locally, where the files are still there, and wrong on a runner that is
+      # destroyed straight afterwards: a failing stage becomes a stage name and
+      # an exit status. Retaining the logs is what makes a CI-only failure
+      # diagnosable at all.
+      - name: Retain gate stage logs on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gate-stage-logs
+          path: target/rr-dev/check/
+          if-no-files-found: error
+          retention-days: 7
+
   musl:
     name: x86_64 musl release target
     runs-on: ubuntu-22.04
