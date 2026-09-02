@@ -77,6 +77,16 @@ pub(crate) fn run_server(arguments: ConfigPath) -> Result<(), CliError> {
 /// derivation `run` would perform, and no listener, socket, or file write.
 pub(crate) fn run_explain(arguments: ExplainArgs) -> Result<(), CliError> {
     let config = load(&arguments.config)?;
+    if let Some(destination) = &arguments.route {
+        let answer = crate::explain::explain_route(config.node(), destination)?;
+        return if arguments.json {
+            let mut output = serde_json::to_string_pretty(&answer)?;
+            output.push('\n');
+            write_stdout(output)
+        } else {
+            write_stdout(format_args!("{answer}"))
+        };
+    }
     let machine = crate::runtime::machine::MachineReport::detect();
     let explanation = crate::explain::explain_config(config.node(), &machine);
     if arguments.json {

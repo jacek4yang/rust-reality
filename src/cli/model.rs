@@ -117,6 +117,10 @@ pub struct ExplainArgs {
     /// Print the machine-readable JSON report instead of the human summary.
     #[arg(long)]
     pub json: bool,
+    /// Answer which outbound one destination would take, instead of reporting
+    /// the whole configuration. Accepts `host` or `host:port`.
+    #[arg(long, value_name = "HOST")]
+    pub route: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -150,6 +154,7 @@ pub enum CliError {
     Probe(DestinationProbeError),
     Assets(AssetLoadError),
     Routing(RoutingCompileError),
+    Route(crate::explain::RouteQueryError),
     Server(ProductionServerError),
     Json(serde_json::Error),
     Io(io::Error),
@@ -164,6 +169,7 @@ impl fmt::Display for CliError {
             Self::Probe(source) => source.fmt(formatter),
             Self::Assets(source) => source.fmt(formatter),
             Self::Routing(source) => source.fmt(formatter),
+            Self::Route(source) => source.fmt(formatter),
             Self::Server(source) => source.fmt(formatter),
             Self::Json(_) => formatter.write_str("failed to encode JSON output"),
             Self::Io(_) => formatter.write_str("failed to write command output"),
@@ -180,6 +186,7 @@ impl Error for CliError {
             Self::Probe(source) => Some(source),
             Self::Assets(source) => Some(source),
             Self::Routing(source) => Some(source),
+            Self::Route(source) => Some(source),
             Self::Server(source) => Some(source),
             Self::Json(source) => Some(source),
             Self::Io(source) => Some(source),
@@ -215,6 +222,12 @@ impl From<AssetLoadError> for CliError {
 impl From<RoutingCompileError> for CliError {
     fn from(source: RoutingCompileError) -> Self {
         Self::Routing(source)
+    }
+}
+
+impl From<crate::explain::RouteQueryError> for CliError {
+    fn from(source: crate::explain::RouteQueryError) -> Self {
+        Self::Route(source)
     }
 }
 

@@ -67,6 +67,18 @@ pub enum RouteScope {
     UserDefault,
 }
 
+impl RouteScope {
+    /// The stable name used in reports.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Global => "global rule",
+            Self::User => "policy rule",
+            Self::UserDefault => "policy default",
+        }
+    }
+}
+
 /// One deterministic first-match routing result.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RouteDecision {

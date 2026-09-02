@@ -215,6 +215,83 @@ mod tests {
         );
     }
 
+    /// Renders a validated node the way `rust-reality format` does.
+    fn format(config: &crate::config::ValidatedConfig) -> String {
+        let mut rendered =
+            serde_json::to_string_pretty(config.node()).expect("a validated node must serialise");
+        rendered.push('\n');
+        rendered
+    }
+
+    #[test]
+    fn formatting_is_idempotent_and_preserves_semantics() {
+        let path = Path::new("config.json");
+        let original = load_bytes(path, valid().as_bytes()).expect("the fixture must load");
+
+        let once = format(&original);
+        let reloaded = load_bytes(path, once.as_bytes()).expect("formatted output must reload");
+        let twice = format(&reloaded);
+
+        assert_eq!(once, twice, "formatting twice must be byte-identical");
+        assert_eq!(
+            original.node(),
+            reloaded.node(),
+            "formatting must not change what the configuration means"
+        );
+    }
+
+    #[test]
+    fn formatting_preserves_a_written_value_that_equals_its_default() {
+        // The case presence tracking exists for: an operator who wrote a
+        // default deliberately must still see it after formatting.
+        let json = valid().replace(
+            r#""listeners": [{ "port": 443 }]"#,
+            r#""listeners": [{ "port": 443, "ip": "auto" }]"#,
+        );
+        let config =
+            load_bytes(Path::new("config.json"), json.as_bytes()).expect("the fixture must load");
+
+        let rendered = format(&config);
+
+        assert!(
+            rendered.contains(r#""ip": "auto""#),
+            "an explicit default must survive: {rendered}"
+        );
+    }
+
+    #[test]
+    fn formatting_never_expands_a_default_the_operator_omitted() {
+        let config = load_bytes(Path::new("config.json"), valid().as_bytes()).expect("must load");
+
+        let rendered = format(&config);
+
+        for absent in ["\"ip\"", "\"log\"", "\"runtime\"", "\"dns\"", "\"network\""] {
+            assert!(
+                !rendered.contains(absent),
+                "{absent} was omitted and must stay omitted: {rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn formatting_orders_keys_the_way_the_reference_documents_them() {
+        // Schema declaration order, not alphabetical: `jq -S` would scatter
+        // `reality` away from the identity it belongs to.
+        let config = load_bytes(Path::new("config.json"), valid().as_bytes()).expect("must load");
+
+        let rendered = format(&config);
+        let position = |key: &str| {
+            rendered
+                .find(key)
+                .unwrap_or_else(|| panic!("{key} must be rendered: {rendered}"))
+        };
+
+        assert!(position("\"role\"") < position("\"listeners\""));
+        assert!(position("\"listeners\"") < position("\"reality\""));
+        assert!(position("\"reality\"") < position("\"users\""));
+        assert!(position("\"users\"") < position("\"routing\""));
+    }
+
     #[test]
     fn a_missing_file_reports_its_path_and_carries_no_excerpt() {
         let error =
