@@ -51,11 +51,13 @@ jobs:
           cargo deny --version
           cargo audit --version
 
+      # The single authoritative gate. It covers both workspaces — the
+      # production workspace and the `tools/` tooling workspace that implements
+      # `cargo dev` — and includes the RustCrypto fallback configuration that
+      # used to run as a separate step here, outside anything a contributor
+      # could reproduce with one command.
       - name: Run repository quality checks
         run: cargo dev check --all
-
-      - name: Test RustCrypto fallback configuration
-        run: cargo test --workspace --no-default-features --locked
 
   musl:
     name: x86_64 musl release target

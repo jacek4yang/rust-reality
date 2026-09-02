@@ -40,12 +40,21 @@ cargo test --workspace --locked                     # full default suite
 
 ## Tooling tests
 
-The `rr-dev` tooling workspace has its own suite and gate:
+The `rr-dev` tooling workspace has its own suite, and `cargo dev check` runs it:
+formatting and strict clippy in every scope, the test suite in `--all`. These
+are the commands for running it directly:
 
 ```shell
-cargo test  --manifest-path tools/rr-dev/Cargo.toml -p rr-dev --locked
-cargo clippy --manifest-path tools/rr-dev/Cargo.toml --all-targets --all-features --locked -- -D warnings
+cargo test   --manifest-path tools/Cargo.toml --workspace --locked
+cargo clippy --manifest-path tools/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
 ```
+
+This coverage is load-bearing rather than tidy. `cargo dev` is the repository's
+benchmark, profiling and interoperability authority, so a measurement the gate
+cannot vouch for is not evidence. While the tooling workspace sat outside the
+gate, `cargo dev bench` drifted out of sync with the CLI it drives, Xray
+interoperability rendering broke, and the workspace accumulated hundreds of
+rustfmt diffs — all while the production gate stayed green.
 
 ## What must never be weakened
 

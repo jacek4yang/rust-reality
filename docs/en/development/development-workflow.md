@@ -43,18 +43,29 @@ never merge on focused tests alone.
 
 ```shell
 cargo dev check --all
-cargo test --workspace --no-default-features --locked
 git diff --check
 ```
 
 `cargo dev check --all` runs the repository gate: repository-layout and
 documentation policy checks, `cargo fmt --all --check`, strict clippy,
-`cargo deny`, `cargo doc` with warnings denied, the nextest suite, doc/release
-test profiles, bench compilation, and `cargo audit`. Every cargo stage names
-`--workspace`, so `crates/rr-linux` and `crates/rr-session` are linted,
-documented and tested by the gate rather than silently skipped. CI runs the
-same gate plus the musl release build; the Security workflow adds fuzz shards
-and sanitizers.
+`cargo deny`, `cargo doc` with warnings denied, the nextest suite, the
+RustCrypto `--no-default-features` configuration, doc/release test profiles,
+bench compilation, the tooling test suite, and `cargo audit`. Every cargo stage
+names `--workspace`, so `crates/rr-linux` and `crates/rr-session` are linted,
+documented and tested by the gate rather than silently skipped.
+
+The gate covers **both workspaces**. `--workspace` selects workspace *members*,
+not workspaces, so the `tools/` tooling workspace needs its own stages and gets
+them: formatting and strict clippy in every scope, and the rr-dev test suite in
+the full scope. That separation is a dependency boundary, not a quality
+boundary — repository tooling owns `cargo dev`, and therefore the repository's
+benchmark and interoperability authority. `cargo deny`, `cargo audit` and
+`cargo doc` stay production-only by decision: supply-chain and published-API
+policy exist for the shipped binary, whose dependency graph the tooling
+workspace is deliberately kept out of.
+
+CI runs the same one gate plus the musl release build; the Security workflow
+adds fuzz shards and sanitizers.
 
 ### Check result protocol
 

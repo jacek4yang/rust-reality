@@ -127,6 +127,93 @@ fn docs_step() -> Step {
     }
 }
 
+/// A cargo workspace this gate is responsible for.
+///
+/// The repository keeps repository tooling in its own workspace on purpose, so
+/// development-only dependencies never reach the production dependency graph
+/// (AGENTS.md §11). That separation is a *dependency* boundary, not a *quality*
+/// boundary. A cargo stage that names no manifest selects the production
+/// workspace alone, and for a long time this gate reported `PASS` while `tools/`
+/// carried hundreds of rustfmt diffs, a `cargo dev bench` that no longer matched
+/// the CLI it drove, and broken interoperability rendering. The measurement
+/// authority the performance work depends on lives in that workspace.
+///
+/// Every gate kind that applies to both workspaces is therefore instantiated
+/// once per workspace, from this list, rather than written out by hand for one
+/// of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Workspace {
+    /// The shipped binary: the root package plus `crates/`.
+    Production,
+    /// Repository tooling: `tools/`, which implements `cargo dev`.
+    Tooling,
+}
+
+impl Workspace {
+    /// Every workspace the gate covers, in stage order.
+    const ALL: [Self; 2] = [Self::Production, Self::Tooling];
+
+    /// The manifest path naming this workspace, relative to the repository root.
+    ///
+    /// The production workspace is the one cargo selects by default from the
+    /// repository root, so it names no manifest.
+    const MANIFEST: &'static str = "tools/Cargo.toml";
+
+    /// The cargo arguments selecting this workspace's manifest.
+    fn manifest_args(self) -> &'static [&'static str] {
+        match self {
+            Self::Production => &[],
+            Self::Tooling => &["--manifest-path", Self::MANIFEST],
+        }
+    }
+}
+
+/// Builds a cargo stage whose label is derived from the argument vector.
+///
+/// Deriving the label means a stage can never claim to validate a workspace it
+/// does not actually select.
+fn cargo_stage(repo: &Path, args: &[&str]) -> Step {
+    let label = format!("cargo {}", args.join(" "));
+    cargo(repo, &label, args)
+}
+
+/// `rustfmt`, for one workspace.
+fn fmt_step(repo: &Path, workspace: Workspace) -> Step {
+    let mut args = vec!["fmt"];
+    args.extend_from_slice(workspace.manifest_args());
+    args.extend_from_slice(&["--all", "--check"]);
+    cargo_stage(repo, &args)
+}
+
+/// Strict clippy, for one workspace.
+fn clippy_step(repo: &Path, workspace: Workspace) -> Step {
+    let mut args = vec!["clippy"];
+    args.extend_from_slice(workspace.manifest_args());
+    args.extend_from_slice(&[
+        "--workspace",
+        "--all-targets",
+        "--all-features",
+        "--locked",
+        "--",
+        "-D",
+        "warnings",
+    ]);
+    cargo_stage(repo, &args)
+}
+
+/// The tooling workspace's own test suite — the rr-dev self-tests.
+///
+/// This runs under plain `cargo test` rather than nextest on purpose: the
+/// nextest profiles this repository defines live in the root `.config`, and CI
+/// exports `NEXTEST_PROFILE=ci`, so a nextest invocation against `tools/` would
+/// fail looking for a profile that workspace does not define.
+fn tooling_test_step(repo: &Path) -> Step {
+    let mut args = vec!["test"];
+    args.extend_from_slice(Workspace::Tooling.manifest_args());
+    args.extend_from_slice(&["--workspace", "--all-features", "--locked"]);
+    cargo_stage(repo, &args)
+}
+
 /// The repository-layout policy, as a gate step.
 fn repo_step() -> Step {
     Step::Native {
@@ -164,27 +251,24 @@ impl Scope {
     /// linted, documented, nor tested by a gate that reports `PASS`. That is
     /// not a hypothetical: this gate once reported 15/15 while a workspace
     /// crate held a clippy error, and it ran 816 of the workspace's 874 tests.
+    ///
+    /// `--workspace` selects members, not workspaces. Formatting and lint are
+    /// cheap and run for both workspaces in every scope; the tooling test suite
+    /// is a minute of work and joins the full scope, which is the scope CI runs
+    /// and the one §23 requires before a merge.
+    ///
+    /// `cargo deny`, `cargo audit` and `cargo doc` stay production-only by
+    /// decision, not by omission: supply-chain and published-API policy exist
+    /// for the shipped binary, and AGENTS.md §11 deliberately keeps the tooling
+    /// dependency graph outside it.
     fn cargo_steps(self, repo: &Path) -> Vec<Step> {
         let mut steps = Vec::new();
-        steps.push(cargo(
-            repo,
-            "cargo fmt --all --check",
-            &["fmt", "--all", "--check"],
-        ));
-        steps.push(cargo(
-            repo,
-            "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
-            &[
-                "clippy",
-                "--workspace",
-                "--all-targets",
-                "--all-features",
-                "--locked",
-                "--",
-                "-D",
-                "warnings",
-            ],
-        ));
+        for workspace in Workspace::ALL {
+            steps.push(fmt_step(repo, workspace));
+        }
+        for workspace in Workspace::ALL {
+            steps.push(clippy_step(repo, workspace));
+        }
 
         if self == Self::All {
             steps.push(cargo(
@@ -230,6 +314,16 @@ impl Scope {
         });
 
         if self == Self::All {
+            steps.push(tooling_test_step(repo));
+            // The RustCrypto fallback provider. `--all-features` proves the
+            // default ring AEAD path; only this stage compiles and tests the
+            // pure-Rust one, and a crypto-backend change can break exactly one
+            // of the two. It ran as a separate CI step outside the gate, which
+            // meant a local `cargo dev check --all` did not cover it.
+            steps.push(cargo_stage(
+                repo,
+                &["test", "--workspace", "--no-default-features", "--locked"],
+            ));
             steps.push(cargo(
                 repo,
                 "cargo test --workspace --doc --all-features --locked",
@@ -929,6 +1023,96 @@ mod tests {
             assert!(
                 rendered.contains("--workspace"),
                 "gate stage must not silently skip workspace crates: {label}"
+            );
+        }
+    }
+
+    /// Every external cargo stage, as `(label, argv)`.
+    fn external_stages(scope: Scope) -> Vec<(String, String)> {
+        let repo = repo_root();
+        scope
+            .steps(&repo)
+            .into_iter()
+            .filter_map(|step| match step {
+                Step::External { label, tool } => Some((label, tool.redacted())),
+                Step::Native { .. } | Step::Audit => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_gate_validates_the_tooling_workspace_too() {
+        // The regression this pins down: `--workspace` selects workspace
+        // *members*, so a gate built only from unqualified cargo stages
+        // validates the production workspace and reports PASS while the
+        // tooling workspace — which implements `cargo dev`, and therefore the
+        // repository's entire measurement authority — rots unchecked.
+        let stages = external_stages(Scope::All);
+        for kind in ["cargo fmt", "cargo clippy", "cargo test"] {
+            let covered = stages
+                .iter()
+                .any(|(label, argv)| label.starts_with(kind) && argv.contains(Workspace::MANIFEST));
+            assert!(
+                covered,
+                "the full gate must run `{kind}` against {}: {stages:?}",
+                Workspace::MANIFEST
+            );
+        }
+    }
+
+    #[test]
+    fn formatting_and_lint_cover_both_workspaces_in_every_scope() {
+        for scope in [Scope::Fast, Scope::All] {
+            let stages = external_stages(scope);
+            for kind in ["cargo fmt", "cargo clippy"] {
+                let selecting_tooling = stages
+                    .iter()
+                    .filter(|(label, _)| label.starts_with(kind))
+                    .filter(|(_, argv)| argv.contains(Workspace::MANIFEST))
+                    .count();
+                assert_eq!(
+                    selecting_tooling,
+                    1,
+                    "{kind} must cover the tooling workspace exactly once in the {} scope",
+                    scope.label()
+                );
+                let selecting_production = stages
+                    .iter()
+                    .filter(|(label, _)| label.starts_with(kind))
+                    .filter(|(_, argv)| !argv.contains(Workspace::MANIFEST))
+                    .count();
+                assert_eq!(
+                    selecting_production,
+                    1,
+                    "{kind} must cover the production workspace exactly once in the {} scope",
+                    scope.label()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_full_gate_covers_the_rustcrypto_fallback_provider() {
+        // `--all-features` never builds the pure-Rust AEAD backend, so without
+        // this stage a crypto-provider change can pass the whole gate and break
+        // `--no-default-features` only in CI — or, before this stage existed,
+        // only for whoever ran that command by hand.
+        assert!(
+            external_stages(Scope::All)
+                .iter()
+                .any(|(_, argv)| argv.contains("--no-default-features")),
+            "the full gate must build and test the no-default-features configuration"
+        );
+    }
+
+    #[test]
+    fn a_stage_label_never_misstates_the_workspace_it_selects() {
+        for (label, argv) in external_stages(Scope::All) {
+            assert_eq!(
+                label.contains(Workspace::MANIFEST),
+                argv.contains(Workspace::MANIFEST),
+                "stage label and invocation disagree about the selected workspace: \
+                 {label} vs {argv}"
             );
         }
     }

@@ -44,16 +44,26 @@ cargo build --release --locked          # release profile（thin LTO，codegen-u
 
 ```shell
 cargo dev check --all
-cargo test --workspace --no-default-features --locked
 git diff --check
 ```
 
 `cargo dev check --all` 会运行仓库门禁：仓库布局与文档策略检查、
 `cargo fmt --all --check`、严格 Clippy、`cargo deny`、将警告视为错误的
-`cargo doc`、nextest 测试套件、doc/release 测试 profile、benchmark 编译和
+`cargo doc`、nextest 测试套件、RustCrypto `--no-default-features` 配置、
+doc/release 测试 profile、benchmark 编译、工具测试套件和
 `cargo audit`。每个 cargo 阶段都显式指定 `--workspace`，因此
 `crates/rr-linux` 与 `crates/rr-session` 会被门禁检查、生成文档并运行测试，
-而不会被静默跳过。CI 还会构建 musl release；Security workflow 另外运行
+而不会被静默跳过。
+
+门禁覆盖**两个 workspace**。`--workspace` 选择的是 workspace 的 *成员*，
+而不是多个 workspace，因此 `tools/` 工具 workspace 需要自己的阶段，并且现在
+拥有了：每个 scope 都运行格式化与严格 Clippy，完整 scope 还运行 rr-dev 测试
+套件。这条分界是依赖边界，而非质量边界——工具 workspace 拥有 `cargo dev`，
+因而也拥有仓库的基准测试与互操作性权威。`cargo deny`、`cargo audit` 与
+`cargo doc` 按决策只作用于生产 workspace：供应链与公开 API 策略是为发布二进制
+而存在的，而工具 workspace 被刻意排除在其依赖图之外。
+
+CI 运行同一个门禁，并额外构建 musl release；Security workflow 另外运行
 fuzz shard 和 sanitizer。
 
 ### Check 结果协议

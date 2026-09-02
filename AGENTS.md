@@ -298,29 +298,32 @@ do not merge on focused tests alone):
    the touched workspace.
 3. **Before PR-ready:** documentation checks when docs changed; repository
    layout check when layout changed; affected integration tests.
-4. **Before merge — full authoritative gates:**
-
-   Production workspace:
+4. **Before merge — full authoritative gate:**
 
    ```shell
-   cargo fmt --all -- --check
-   cargo test --workspace --locked
-   cargo test --workspace --no-default-features --locked
-   cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
    cargo dev check --all
    git diff --check
    ```
 
-   Tooling workspace:
+`cargo dev check --all` is the one authoritative gate, and it covers **both**
+workspaces. `--workspace` selects workspace *members*, not workspaces, so the
+tooling workspace has its own stages: `rustfmt` and strict clippy in every
+scope, and the rr-dev test suite in the full scope. The gate also covers the
+`--no-default-features` configuration. The production/tooling split is a
+dependency boundary (§11), never a quality boundary: repository tooling owns
+`cargo dev`, and therefore the repository's benchmark, profiling and
+interoperability authority. A measurement produced by ungated tooling is not
+evidence. `cargo deny`, `cargo audit` and `cargo doc` remain production-only
+by decision — supply-chain and published-API policy exist for the shipped
+binary, whose dependency graph excludes tooling.
 
-   ```shell
-   cargo test  --manifest-path tools/rr-dev/Cargo.toml -p rr-dev --locked
-   cargo clippy --manifest-path tools/rr-dev/Cargo.toml --all-targets --all-features --locked -- -D warnings
-   ```
+Contributors MUST NOT remove a workspace from the gate's coverage; `cargo dev`'s
+own tests enforce that both workspaces stay covered.
 
 Formatting is applied only to intentionally touched files. Contributors MUST
 NOT run `cargo fmt --all` over the tooling workspace casually — recursive
-formatter churn on unrelated tooling files is a known review hazard.
+formatter churn on unrelated tooling files is a known review hazard. The gate
+checks formatting; it never applies it.
 
 ## 15. CI failure classification
 
