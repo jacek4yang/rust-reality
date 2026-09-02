@@ -123,7 +123,7 @@ DestinationConnector（一个截止时间 + 每候选 FD permit；回收落败�
 ```
 
 Direct、REALITY target/fallback、SOCKS5/NXR/Handoff 服务器拨号、landing 直接
-egress、probe 和 self-test 共享同一进程生命周期环境。路由 DNS 快照原样进入 planner，
+egress，以及 `doctor` 和 `check-cover` 执行的检查，共享同一进程生命周期环境。路由 DNS 快照原样进入 planner，
 不会触发第二次查询；有意交给远端代理的目标不会在本地解析；数字字面量直接进入 planner。
 
 启动路由/源地址选择只计算并缓存一次。运行期工作只发生在连接建立阶段：普通计划执行
@@ -275,7 +275,7 @@ effective_dynamic_fd_budget = soft_rlimit - fixed_fd_reserve - safety_headroom
 解析器描述符按预留而非准入处理，因为被取消的 `TcpStream::connect` 无法取消
 其底层阻塞的 `getaddrinfo`；这些描述符的存活期会超过发起它的连接。安全余量在
 标准模式下为 `max(soft_limit / 16, 64)`；专用资源模式使用更大的自有余量
-（见[配置参考](configuration.md#dedicated-resource-mode)）。
+（见[配置参考](configuration/runtime-and-resources.md#profile)）。
 
 策略：
 
@@ -356,7 +356,7 @@ accept 错误按原始 `errno` 分类：
 每种类别的静态准入信号量（连接、握手、密码学、fallback）加上带压力迟滞的
 无锁 FD 预算在所有模式下都存在。`runtime.profile: "dedicated"` 增加
 机器感知预算和二维（FD + 内存）压力模型；见
-[配置参考](configuration.md#dedicated-resource-mode)。
+[配置参考](configuration/runtime-and-resources.md#profile)。
 
 ## 可观测性
 

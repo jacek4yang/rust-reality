@@ -2,17 +2,38 @@
 
 English | [简体中文](../zh-CN/index.md)
 
-## Operator guides
+## Start here
 
 | Document | Purpose |
 | --- | --- |
-| [Getting started](getting-started.md) | Download, verify, minimal configuration, and the first tunnel. |
+| [Getting started](getting-started.md) | Install, generate material, write a configuration, connect a client. |
+| [How configuration works](configuration/index.md) | The rules that hold across the whole file: roles, names, defaults, secrets, reload. |
+| [Troubleshooting](operations/troubleshooting.md) | Organised by symptom, starting with the two failures that account for most of them. |
+
+## Configuration
+
+| Document | Purpose |
+| --- | --- |
+| [Standalone node](configuration/standalone.md) | Build a single-node configuration one decision at a time. |
+| [Users and credentials](configuration/users-and-credentials.md) | What to generate, which half goes where, how to rotate it. |
+| [Cover targets](configuration/cover-targets.md) | Choosing and validating the host this server impersonates. |
+| [Outbounds](configuration/outbounds.md) | The two built-in outbounds and the three you can declare. |
+| [Routing](configuration/routing.md) | Rules, matchers, per-user policies, and geo data. |
+| [Line and landing nodes](configuration/line-landing.md) | Two machines, so the IP clients reach is not the IP traffic leaves from. |
+| [Handoff](configuration/handoff.md) | The same topology, with a landing that cannot read what it forwards. |
+| [Multiple landings](configuration/multi-landing.md) | Several exits, chosen per user. |
+| [DNS and network](configuration/dns-and-network.md) | Resolvers, caching, and outbound address-family policy. |
+| [Runtime and resources](configuration/runtime-and-resources.md) | Machine posture, derived limits, and when pinning is justified. |
+| [Configuration reference](configuration/reference.md) | Every object, field, type, default, and reload rule. |
+
+## Operations
+
+| Document | Purpose |
+| --- | --- |
+| [Linux deployment](operations/deployment.md) | Release verification, systemd, firewall, files, and upgrades. |
 | [CLI reference](cli.md) | Every command, option, default, output, signal, and exit behavior. |
-| [Configuration reference](configuration.md) | Every JSON field, variant, default, validation bound, routing matcher, and reload rule. |
-| [Linux deployment](deployment.md) | Release verification, standalone and line/landing setup, systemd, firewall, files, and upgrades. |
-| [Engineering and release program](release-process.md) | Evidence tiers, PR/tag lifecycle, exact candidates, VPS canaries, rollback, and the v1.7→v2.0 train. |
-| [Capacity planning and tuning](tuning.md) | Machine profiles, resource knobs, cover-target selection, and latency/throughput diagnosis. |
-| [Threat model](threat-model.md) | Security goals, trust boundaries, NXR limitations, resource controls, and non-goals. |
+| [Threat model](threat-model.md) | Security goals, trust boundaries, NXR limitations, and non-goals. |
+| [Engineering and release program](release-process.md) | Evidence tiers, PR/tag lifecycle, canaries, rollback. |
 | [Security policy](../../SECURITY.md) | Supported versions and private vulnerability reporting. |
 
 ## Design and evidence
@@ -47,9 +68,11 @@ The executable is authoritative for command syntax and configuration shape:
 ```shell
 rust-reality --help
 rust-reality COMMAND --help
-cargo dev config schema > rust-reality.schema.json
-rust-reality check --config config.json
+rust-reality check -c config.json
 ```
+
+A JSON Schema for editor completion is attached to each GitHub release, and
+maintainers can generate one with `cargo dev config schema`.
 
 The JSON Schema describes structural types. `check` additionally applies
 cross-field, reference, security, and resource-limit validation documented in

@@ -594,7 +594,7 @@ mod tests {
         let defaulted =
             super::explain_route(&config, "example.com").expect("the query must answer");
         assert_eq!(defaulted.outbound, "direct");
-        assert_eq!(defaulted.scope, "policy default");
+        assert_eq!(defaulted.scope, "default outbound");
     }
 
     #[test]

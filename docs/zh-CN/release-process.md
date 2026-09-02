@@ -48,7 +48,7 @@ ID、SNI/target、flow、endpoint、routing 与 outbound 语义。配置秘密�
 首次迁移先复制已知良好二进制和兼容配置作为最小回滚包。`cargo dev deploy
 inspect` 与 `cargo dev deploy plan` 只读；`cargo dev deploy apply` 没有显式
 `--mutate-remote` 会拒绝执行。`apply stage` 在不切换 CURRENT 的情况下验证版本、
-SHA、`check` 和 `self-test`；`apply cutover` 先准备 PREVIOUS，再以最短
+SHA、`check` 和 `doctor`；`apply cutover` 先准备 PREVIOUS，再以最短
 stop/symlink/start 窗口切换，
 验证二进制与 443，并拒绝切换期间新出现的非预期 wildcard TCP 监听。主机原有的
 无关监听仍由主机管理员负责，部署工具不会擅自停止；启动或监听策略健康失败会

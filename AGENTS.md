@@ -508,5 +508,5 @@ ledger so the next session can reconstruct the state.
 | Security boundaries | [threat model](docs/en/threat-model.md), [security policy](SECURITY.md) |
 | Durable decisions | [ADR index](docs/adr/README.md) |
 | Release engineering | [release process](docs/en/release-process.md) |
-| CLI/configuration/deployment contracts | [CLI](docs/en/cli.md), [configuration](docs/en/configuration.md), [deployment](docs/en/deployment.md) |
+| CLI/configuration/deployment contracts | [CLI](docs/en/cli.md), [configuration](docs/en/configuration/reference.md), [deployment](docs/en/operations/deployment.md) |
 | Chinese mirrors | [Chinese documentation index](docs/zh-CN/index.md) |

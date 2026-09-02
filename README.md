@@ -284,7 +284,7 @@ Routing evaluates `routing.globalRules` in order, then the authenticated
 UUID's `routing.users[].rules` in order, then that user group's
 `defaultOutbound`. Conditions inside one rule are conjunctive across
 categories and alternative values inside a category are ORed. See the
-complete [configuration reference](docs/en/configuration.md) for every field,
+complete [configuration reference](docs/en/configuration/reference.md) for every field,
 default, constraint, matcher syntax, reload behavior, and the dedicated
 resource mode.
 
@@ -295,7 +295,7 @@ gracefully; SIGHUP validates and atomically publishes a compatible
 configuration while established connections keep their generation. Install
 and review [`deploy/rust-reality.service`](deploy/rust-reality.service) for a
 hardened systemd baseline, and follow
-[docs/deployment.md](docs/en/deployment.md) for verification, service accounts,
+[docs/deployment.md](docs/en/operations/deployment.md) for verification, service accounts,
 firewall rules, upgrades, and rollback.
 
 ## Security
@@ -317,8 +317,8 @@ access tokens, or deployment configuration in an issue or log.
 | Documentation index | [English](docs/en/index.md) | [简体中文](docs/zh-CN/index.md) |
 | Getting started | [English](docs/en/getting-started.md) | [简体中文](docs/zh-CN/getting-started.md) |
 | CLI reference | [English](docs/en/cli.md) | [简体中文](docs/zh-CN/cli.md) |
-| Configuration reference | [English](docs/en/configuration.md) | [简体中文](docs/zh-CN/configuration.md) |
-| Deployment | [English](docs/en/deployment.md) | [简体中文](docs/zh-CN/deployment.md) |
+| Configuration reference | [English](docs/en/configuration/reference.md) | [简体中文](docs/zh-CN/configuration/reference.md) |
+| Deployment | [English](docs/en/operations/deployment.md) | [简体中文](docs/zh-CN/operations/deployment.md) |
 | Protocol overview | [English](docs/en/protocol.md) | [简体中文](docs/zh-CN/protocol.md) |
 | Architecture | [English](docs/en/architecture.md) | [简体中文](docs/zh-CN/architecture.md) |
 | Performance | [English](docs/en/performance.md) | [简体中文](docs/zh-CN/performance.md) |

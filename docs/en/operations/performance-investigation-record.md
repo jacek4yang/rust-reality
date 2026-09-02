@@ -129,7 +129,8 @@ runs in the portable software backend), Linux 6.12.100.
 | `.text` | 6,084,903 | 6,087,527 (+2,624, +0.043%) |
 | total binary | 8,256,520 | 8,259,208 (+2,688, +0.033%) |
 
-`rust-reality benchmark`, 8 ABBA blocks (A B B A per block, one pinned core),
+`rust-reality benchmark` (the in-binary harness of that release; the same
+cases now live in `benches/` and run under `cargo dev bench`), 8 ABBA blocks (A B B A per block, one pinned core),
 16 samples per arm, 2,000 ms measured and 500 ms warm-up per case:
 
 | case | baseline ns/op | candidate ns/op | ratio |
