@@ -5,7 +5,6 @@ use std::time::{Duration, Instant};
 use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 use rust_reality::{
-    config::ResourceGovernorConfig,
     protocol::{
         reality::{
             ClientHello, RealityAuthError, ReplayCache, ReplayError, SESSION_ID_OFFSET,
@@ -13,7 +12,7 @@ use rust_reality::{
         },
         vless::{RequestValidationError, UserId, fuzz_validate_short_id_owner},
     },
-    runtime::ResourceGovernor,
+    runtime::{ResourceGovernor, policy::ResourceGovernorPolicy},
 };
 
 #[derive(Arbitrary, Debug)]
@@ -128,11 +127,11 @@ fuzz_target!(|input: &[u8]| {
     malformed[SESSION_ID_OFFSET - 1] = 31;
     assert!(ClientHello::parse_message(&malformed).is_err());
 
-    let config = ResourceGovernorConfig {
+    let config = ResourceGovernorPolicy {
         max_replay_entries: 4,
         handshake_timeout_ms: 10,
         replay_retention_ms: 100,
-        ..ResourceGovernorConfig::default()
+        ..ResourceGovernorPolicy::default()
     };
     let replay = ReplayCache::new(ResourceGovernor::new(&config), &config);
     let started = Instant::now();
