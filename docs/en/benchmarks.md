@@ -390,6 +390,31 @@ and RSS growth over the soak with zero transfer failures.
 - Results are measurements of this host and are not a universal
   performance claim.
 
+## v1.9.0 release comparison evidence
+
+Comparator: Xray-core 26.7.28 (commit `5ca6f4b`, go1.26.0, binary SHA-256
+`23d228d7…04c5268`). v1.9.0 ran **no new comparison campaign**, and this
+section exists to say so rather than to imply one.
+
+v1.9.0 replaced the operator configuration schema, the CLI surface, and the
+public documentation. It changed no wire byte and no data path. The one change
+that touches a per-connection path removes work rather than adding it: the
+`network` and `inboundTag` routing conditions were always true and were
+deleted along with their evaluation guards, so a route decision now evaluates
+strictly fewer predicates than it did in v1.8.0.
+
+The v1.8.0 measurement foundation therefore stands unchanged, together with its
+stated limits. The gate inputs and verdicts behind it are in
+[performance.md](performance.md#v190-release-evidence).
+
+The stock Xray compatibility gate is unchanged in what it proves, and its
+harness was repaired for the new CLI and schema: it now composes the
+rust-reality configuration itself instead of invoking a generator that no
+longer exists. The ML-DSA differential was removed with the command behind it.
+
+The v1.8.0 and earlier headline tables below remain the measurement foundation
+and are unchanged.
+
 ## v1.8.0 release comparison evidence
 
 v1.8.0 introduced no new comparison table. It is an architecture release whose

@@ -2,6 +2,128 @@
 
 All notable user-facing changes to this project are documented in this file.
 
+## [1.9.0] - 2026-09-02
+
+**The operator configuration format changed completely, and configurations
+written for v1.8.0 and earlier are not accepted.** There is no migration path,
+no compatibility mode, and no fallback parser. Write the new file: it is much
+shorter, every field in it is a decision, and
+[docs/en/configuration/standalone.md](docs/en/configuration/standalone.md)
+walks through it. An old file fails immediately, by name, against the line that
+caused it.
+
+Protocol compatibility is untouched. VLESS, REALITY, Vision, the Xray client
+interoperability contract, and the internal NXR and Handoff wire formats are
+byte-identical to v1.8.0. An already-configured client keeps working against a
+server whose configuration file you rewrote.
+
+No data path changed, and the v1.8.0 measurement foundation carries forward
+unchanged; see
+[docs/en/performance.md](docs/en/performance.md#v190-release-evidence) for what
+that claim rests on.
+
+### Changed
+
+- **One current configuration schema.** The document now begins with a `role`
+  of `entry` or `landing`, which decides the shape of everything after it. A
+  field belonging to the other role is rejected by name rather than ignored.
+  Recorded in
+  [ADR 0019](docs/adr/0019-one-current-configuration-schema.md).
+- `outbounds` and `routing.policies` are objects keyed by name, so the key *is*
+  the identity: there is no `tag` field, two entries cannot collide, and a
+  dangling reference is refused with the available names listed.
+- `direct` and `block` are built in and may not be declared. Every
+  configuration could route to them already; now no file has to say so.
+- Routing lives with identity. A user names the policy it follows, and the
+  policy carries its own default and rules, replacing the separate list that
+  mapped UUIDs to groups.
+- **Omitting a field means "derive it from this machine", not "use a
+  constant".** Writing a value pins it, including a value equal to what would
+  have been derived — presence is the signal. `rust-reality explain` reports
+  every value as `operator-pinned`, `startup-derived`, or `default`.
+- One expert override channel, `runtime.limits`, replaces the two that existed.
+  The second one had existed only because the first could not express "pin one
+  field" or "pin to a value equal to the default".
+- Enum values are camelCase throughout: `resolveIfNoMatch`, `preferIpv4`,
+  `dualStack`. The Xray-inherited spellings were configuration vocabulary, not
+  protocol.
+- Duplicate JSON keys are rejected. Every parser silently keeps one of the two,
+  which means the reader of a file and the parser could disagree about it.
+- `explain --route` reports `default outbound` where it previously reported
+  `policy default`, which was untrue for a user that follows no policy.
+
+### Added
+
+- `rust-reality explain --route HOST` answers where one destination would go,
+  naming the outbound, the list that decided, and how. It is offline like the
+  rest of `explain`, so an answer that could not evaluate a `geoip:` or
+  `geosite:` condition says so rather than reporting a route the running server
+  would not choose.
+- `rust-reality format` rewrites a configuration in the canonical form:
+  validated, idempotent, semantics-preserving, and ordered the way the
+  reference documents fields. It never expands a default the operator omitted
+  and never drops one they wrote.
+- `rust-reality generate short-id`, so every value a configuration names can be
+  generated rather than invented.
+- `cargo dev config schema` generates the JSON Schema, attached to each release
+  as an asset rather than tracked in the repository, where it could go stale.
+- `cargo dev docs check` extracts every fenced JSON block from the
+  documentation and both READMEs, validates it with the real parser, and
+  asserts it is already byte-identical to its formatted form.
+
+### Removed
+
+- The whole-configuration generators (`config generate standalone|line|landing|handoff`)
+  and `config autotune`. The binary generates atomic cryptographic and identity
+  material; the operator composes the JSON, so they understand what they deploy.
+- `serve` (use `run`), `self-test` (use `doctor`), `probe-dest` (use
+  `check-cover`), `uuid`/`x25519`/`node-keygen` (use `generate`), `schema` (use
+  `cargo dev config schema`), `benchmark` (use `benches/` and `cargo dev
+  bench`), and `runtime report` (use `systemctl status`, `journalctl`, and `jq`
+  on the status file).
+- `generate mldsa65` and the `libcrux-ml-dsa` dependency. ML-DSA had no
+  configuration field and no consumer in the protocol stack. (`ml-kem`, used by
+  the REALITY hybrid key exchange, is unaffected.)
+- The four `network.dial` timings, the whole `advanced.limits.relay` block,
+  warm-connection sizing, replay entry counts and retention windows, and DNS
+  cache internals: implementation detail derived from the machine, not operator
+  policy.
+- The four ceremony fields — `streamSettings.network`, `streamSettings.security`,
+  `settings.decryption`, and `clients[].flow` — each of which had exactly one
+  legal value.
+- `TuningMode::Fixed`, which existed only to read the deleted limit channel.
+- The `network` and `inboundTag` routing conditions, which were always true.
+
+### Documentation
+
+- The configuration guides are new, task-first, and written natively in both
+  English and Simplified Chinese: how configuration works, building a standalone
+  node, users and credentials, cover targets, outbounds, routing, line and
+  landing nodes, Handoff, multiple landings, DNS and network, runtime and
+  resources, and an exhaustive reference.
+- `operations/troubleshooting.md` is organised by symptom, starting with the two
+  failures that account for most first deployments: the swapped half of the
+  REALITY key pair, and a client SNI that does not match the cover.
+- `deployment.md` moved into `operations/`, and `configuration.md` and
+  `tuning.md` are retired — their operator content is in the guides and their
+  measurement content in `performance/`.
+
+### Internal
+
+- `server/production.rs` (3,770 lines) and `runtime/plan.rs` (1,648) are split
+  by lifetime and by the order the derivation runs. Hot paths were out of scope
+  and are untouched.
+- `EffectivePolicy` is a type distinct from the operator's configuration, so
+  the control plane no longer writes resolved policy back into the object the
+  operator wrote. This refines
+  [ADR 0013](docs/adr/0013-no-compiled-runtime-plan.md) rather than reversing
+  it: no plan layer was added.
+- Six unreachable `RuntimeUpdateError` variants and the `Probes` benchmark
+  inputs were deleted as dead machinery the reset left behind.
+- The `cargo dev bench` harness and the Xray interoperability gate were repaired
+  against the current CLI and schema; they had been broken since the CLI
+  reduction, and nothing in the merge gate ran them.
+
 ## [1.8.0] - 2026-08-26
 
 No configuration migration is required from v1.7.0, and no wire-format,
