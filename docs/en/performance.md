@@ -109,6 +109,38 @@ PSK/resumption, and rare uncollected ClientHello classes intentionally stay on
 the warm-live path. This is a conservative validated-class optimization, not
 a claim of universal TLS indistinguishability.
 
+## v1.9.0 release evidence
+
+Comparator: Xray-core 26.7.28 (commit `5ca6f4b`, go1.26.0, binary SHA-256
+`23d228d7…04c5268`). v1.9.0 is a configuration and documentation release. Its
+performance claim is **neutrality**, and it is claimed on the basis of what
+changed rather than on a new measurement campaign.
+
+No data path was modified. The decomposition in this release moved cold control
+plane — startup, snapshot publication, reload, listener supervision, and the
+policy derivation — between modules within one crate; no function crossed a
+crate boundary, no dispatch became dynamic, and no signature a connection
+traverses changed.
+
+Two changes touch a per-connection path, and both remove work:
+
+- The `network` and `inboundTag` routing conditions were always true for every
+  configuration this server accepts. They and their evaluation guards are gone,
+  so a route decision evaluates strictly fewer predicates.
+- The effective policy is no longer written back into the configuration object,
+  so a reload no longer re-derives and re-compares it. That is control plane,
+  not data path, but it is the reason the reload comparison is now structural.
+
+Removed benchmark inputs are separately value-preserving: `StartupPlan::derive`
+lost its `Probes` parameter, which every caller passed as `Probes::default()`,
+and the arithmetic it fed was identity at that value — `.max(0)` on the
+handshake pool and the direct-dial rate, and the 32 KiB constant for the relay
+buffer. The golden vectors in `runtime/plan/tests.rs` pin the result.
+
+Where a claim would require measurement, none is made. This release did not run
+the four-gate `cargo dev perf evaluate` campaign that v1.8.0 ran, because there
+was no staged data-path change for it to judge.
+
 ## v1.8.0 release evidence
 
 v1.8.0 is an architecture release. It changes no wire byte, no configuration

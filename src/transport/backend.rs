@@ -328,8 +328,10 @@ pub struct RelayContext {
     ///
     /// When set, a direction that moves no byte for this long terminates the
     /// relay instead of parking on a stalled peer forever, pinning its
-    /// descriptors, pipes, map entries and permits. `None` preserves the
-    /// historical unbounded behavior for compatibility entry points and tests.
+    /// descriptors, pipes, map entries and permits. `None` means unbounded,
+    /// which is what [`RelayContext::owned`] and its directional twin give a
+    /// caller that owns both halves and is therefore accountable for the
+    /// stall itself.
     pub liveness: Option<std::time::Duration>,
     /// Whether a source reset ends its direction like an EOF.
     ///
