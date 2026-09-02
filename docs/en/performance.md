@@ -529,10 +529,12 @@ Two consequences, both pinned by measurement:
   speed caps at 2.04×/1.63×. The kernel boundary is the floor that caps any
   AEAD win.
 
-## Record AEAD provider: ring by default
+## Record AEAD provider: ring for every suite
 
-TLS 1.3 `TLS_AES_128_GCM_SHA256` record protection is provided by **ring**
-(BoringSSL-derived C/assembly, statically linked) in the default build.
+TLS 1.3 record protection is provided by **ring** (BoringSSL-derived
+C/assembly, statically linked) in the default build, for **all three** suites:
+`TLS_AES_128_GCM_SHA256`, `TLS_AES_256_GCM_SHA384` and
+`TLS_CHACHA20_POLY1305_SHA256`.
 Building with `--no-default-features` selects the pure-Rust RustCrypto
 aes-gcm provider with no other behavioral change; byte-exact cross-provider
 equivalence and the RFC 8448 vectors are enforced by tests under both
@@ -559,6 +561,37 @@ Measured evidence (validation host above):
 - Supply chain: zero new dependency crates (ring already ships in the
   release graph via ureq/rustls), fully static link, slightly smaller
   binary.
+
+### The alternate suites
+
+AES-256-GCM and ChaCha20-Poly1305 used RustCrypto until the ring backend was
+extended to them. Same record shape, same method:
+
+| record | AES-256-GCM: ring vs RustCrypto | ChaCha20-Poly1305: ring vs RustCrypto |
+| ---: | ---: | ---: |
+| 64 B | 1.55x | **8.58x** |
+| 1 KiB | 1.82x | 3.34x |
+| 4 KiB | 1.95x | 2.21x |
+| 16 KiB | 2.00x | 1.86x |
+
+RustCrypto's ChaCha20-Poly1305 costs 1436 ns for a 64-byte record (0.04 GiB/s):
+per-call overhead, not throughput. Small records are handshake and control
+frames, which is where these suites still do work after Vision Direct takes
+steady-state payload off the record path.
+
+`aws-lc-rs` was measured in the same eight cells and was slower than ring in
+every one, so it is not a candidate for the record layer — and unlike ring it
+requires `std`, which `tls13/record.rs` cannot have: it is inside the `no_std`
+protocol core ADR 0016 defines.
+
+**End-to-end this is performance-neutral, and that is the honest result.** The
+framed A/B measured server CPU/GiB at 0.994 (bootstrap95 [0.993, 1.005]) and
+setup at 0.9925 (bootstrap95 [0.991, 0.999]) — the latter overlapping the
+demonstrated A/A floor. Vision Direct removes record crypto from steady-state
+payload, so a REALITY session only ever seals a handful of records, and a 2x
+primitive on a small term stays small. The change is accepted as provider
+consolidation that is measurably faster per record, byte-identical on the wire,
+free of any new dependency, and not a regression anywhere.
 
 ## Per-session X25519 provider: aws-lc-rs
 

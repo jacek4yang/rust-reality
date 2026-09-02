@@ -6,6 +6,12 @@ All notable user-facing changes to this project are documented in this file.
 
 ### Changed
 
+- AES-256-GCM and ChaCha20-Poly1305 TLS records now use the same ring backend
+  the default build already used for AES-128-GCM: 1.55x–2.00x and 1.86x–8.58x
+  faster per record respectively, byte-identical on the wire, with no new
+  dependency. Whole-session effect is within the measurement floor, because
+  Vision Direct keeps steady-state payload off the record path.
+
 - **Session establishment costs about 12% less server CPU.** The two X25519 key
   agreements every REALITY session performs are now computed by `aws-lc-rs`:
   571 → 503 µs of server CPU per connection, measured as a balanced A/B between
