@@ -22,8 +22,6 @@ use classify::{Classified, SpanTarget};
 use render::Excerpt;
 use source_map::{SourceMap, Span};
 
-use super::ConfigError;
-
 /// One source-oriented configuration diagnostic.
 ///
 /// The structured fields are prepared at construction; [`fmt::Display`]
@@ -55,14 +53,17 @@ impl Diagnostic {
     }
 
     /// Builds the diagnostic for one semantic validation failure.
-    pub(super) fn validation(path: &Path, text: &str, error: &ConfigError) -> Self {
+    ///
+    /// Semantic failures carry a configuration path and a rule, never a source
+    /// position, so the path is resolved against the scanned document here.
+    pub(super) fn validation(path: &Path, text: &str, config_path: &str, message: &str) -> Self {
         let map = SourceMap::scan(text);
-        let span = map.lookup(error.path()).map(source_map::Node::value_span);
+        let span = map.lookup(config_path).map(source_map::Node::value_span);
         let mut classified = Classified::plain(
-            format!("invalid value for `{}`", error.path()),
+            format!("invalid value for `{config_path}`"),
             SpanTarget::None,
         );
-        classified.label = Some(error.message().to_owned());
+        classified.label = Some(message.to_owned());
         Self::assemble(path, &map, text, classified, span)
     }
 

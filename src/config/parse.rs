@@ -191,6 +191,20 @@ fn decode_failure(
     }
 }
 
+/// Reads one file into memory, enforcing the hard size bound.
+///
+/// [`crate::config::load`] needs the bytes after parsing so a semantic failure
+/// can be rendered against the original source, so the bound lives here and is
+/// applied once.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read or exceeds
+/// [`MAX_CONFIG_BYTES`].
+pub(super) fn read_bounded_for_load(path: &Path) -> Result<Vec<u8>, ParseError> {
+    read_bounded(path)
+}
+
 /// Reads one file into memory, enforcing the hard size bound before and after
 /// the read so a file that grows mid-read cannot slip past it.
 fn read_bounded(path: &Path) -> Result<Vec<u8>, ParseError> {

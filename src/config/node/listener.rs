@@ -5,7 +5,7 @@
 //! on a normal HTTPS port, while a landing listener must be restricted at the
 //! firewall to the line node's address.
 
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -54,6 +54,23 @@ impl ListenerConfig {
     #[must_use]
     pub fn ipv6_address(&self) -> Ipv6Addr {
         self.ipv6.unwrap_or(Ipv6Addr::UNSPECIFIED)
+    }
+
+    /// The socket addresses this listener would bind, in family order.
+    ///
+    /// This is what makes two listeners a conflict: distinct entries whose
+    /// expansions overlap would race for the same socket at startup.
+    #[must_use]
+    pub fn bind_addresses(&self) -> Vec<SocketAddr> {
+        let family = self.family();
+        let mut addresses = Vec::with_capacity(2);
+        if family.binds_ipv4() {
+            addresses.push(SocketAddr::new(IpAddr::V4(self.ipv4_address()), self.port));
+        }
+        if family.binds_ipv6() {
+            addresses.push(SocketAddr::new(IpAddr::V6(self.ipv6_address()), self.port));
+        }
+        addresses
     }
 }
 
@@ -141,6 +158,30 @@ mod tests {
         assert!(serde_json::from_str::<ListenerConfig>(r#"{"port":443,"mode":"auto"}"#).is_err());
         assert!(serde_json::from_str::<ListenerConfig>(r#"{"port":443,"ip":"ipv4"}"#).is_err());
         assert!(serde_json::from_str::<ListenerConfig>(r#"{"ip":"auto"}"#).is_err());
+    }
+
+    #[test]
+    fn bind_addresses_expand_per_family() {
+        let auto = parse(r#"{"port":443}"#);
+        assert_eq!(
+            auto.bind_addresses(),
+            [
+                "0.0.0.0:443".parse::<std::net::SocketAddr>().expect("v4"),
+                "[::]:443".parse::<std::net::SocketAddr>().expect("v6"),
+            ]
+        );
+
+        let v4 = parse(r#"{"port":443,"ip":"ipv4Only","ipv4":"10.0.0.5"}"#);
+        assert_eq!(
+            v4.bind_addresses(),
+            ["10.0.0.5:443".parse::<std::net::SocketAddr>().expect("v4")]
+        );
+
+        let v6 = parse(r#"{"port":7443,"ip":"ipv6Only"}"#);
+        assert_eq!(
+            v6.bind_addresses(),
+            ["[::]:7443".parse::<std::net::SocketAddr>().expect("v6")]
+        );
     }
 
     #[test]
