@@ -9,7 +9,9 @@ English | [简体中文](README.zh-CN.md)
 `rust-reality` is a Linux-focused, single-binary proxy server. Its only public
 client entry is **VLESS + REALITY + `xtls-rprx-vision`**. An optional, separate
 NXR protocol carries authenticated per-flow traffic from a public line node to
-a firewall-restricted landing node.
+a firewall-restricted landing node; the Handoff protocol carries the client's
+own TLS session there instead, so the landing forwards ciphertext it cannot
+read.
 
 New contributors should start with [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [documentation index](docs/en/index.md); together they route development work
@@ -19,7 +21,7 @@ to the architecture, repository ownership map, workflow, and test guidance.
 Xray-compatible client
   -> VLESS + REALITY + Vision
   -> rust-reality line or standalone node
-  -> direct | SOCKS5 | blackhole | NXR | Handoff
+  -> direct | block | SOCKS5 | NXR | Handoff
   -> optional NXR or Handoff landing node
   -> destination
 ```
@@ -55,15 +57,17 @@ Xray-compatible client
 - Bounded everything: connections, handshakes, fallbacks, crypto work, replay
   state, buffers, DNS results, descriptors, and splice resources — with
   pressure hysteresis instead of collapse.
-- Exact and one-label wildcard REALITY server names, per-UUID routing groups,
-  UUID-owned multi-short-ID authentication, Xray-compatible GeoIP/GeoSite
-  assets with atomic last-known-good updates.
-- Measured host-local `config autotune` with auditable atomic output, plus
-  cardinality-adaptive UUID/routing/outbound indexes and deadline-driven replay
-  expiry instead of unconditional live-table scans.
-- Strict JSON configuration, atomic SIGHUP reload, secret-free bounded
-  logging, key generation, destination probing, self-test, and schema from
-  one binary.
+- Exact and one-label wildcard REALITY server names, named routing policies a
+  user opts into, UUID-owned multi-short-ID authentication, Xray-compatible
+  GeoIP/GeoSite assets with atomic last-known-good updates.
+- Every admission ceiling, buffer size, and pool bound derived from the
+  machine at startup — no benchmark, no network, deterministic — with
+  `explain` reporting each value's provenance. Plus cardinality-adaptive
+  UUID/routing/outbound indexes and deadline-driven replay expiry instead of
+  unconditional live-table scans.
+- Strict JSON configuration with compiler-style diagnostics, atomic SIGHUP
+  reload, secret-free bounded logging, and seven operator commands: `run`,
+  `check`, `doctor`, `explain`, `format`, `check-cover`, `generate`.
 - Stable Rust: the main protocol crate denies `unsafe` (Linux ABI unsafe is
   isolated in `crates/rr-linux` under explicit SAFETY invariants), no
   panic/unwrap in the production data path, reproducible tagged release
@@ -222,81 +226,125 @@ policy, cover target, and resource limits for their own VPS.
 
 ## Quick start
 
-Download the archive for your platform, the manifest, and checksums from the
-[latest release](https://github.com/jacek4yang/rust-reality/releases/latest),
-then verify all assets before installation:
+Install, generate the material you cannot invent, write about twenty lines of
+JSON, and connect a client.
 
 ```shell
 sha256sum --check SHA256SUMS
-# Generic GNU/glibc x86-64 package:
 tar -xzf rust-reality-v<version>-linux-x86_64-generic.tar.gz
-# On Alpine/musl or in a minimal container, use the static package:
-# tar -xzf rust-reality-v<version>-linux-x86_64-musl.tar.gz
-# Or, on an x86-64-v3 GNU/glibc CPU:
-# tar -xzf rust-reality-v<version>-linux-x86_64-v3.tar.gz
-# On ARM64 (ARMv8.0 with neon or later):
-# tar -xzf rust-reality-v<version>-linux-aarch64-generic.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 ```
 
-`release-manifest.json` schema v3 records every tier's compiler, cargo
-features, target CPU/features, native-measurement status, and minimum CPU
-requirements.
-
-Probe a proposed REALITY cover endpoint and generate a standalone server:
+Pick a cover target and test it **from the server**, because the answer
+depends on the network path:
 
 ```shell
-rust-reality probe-dest \
-  --target www.microsoft.com:443 \
-  --server-name www.microsoft.com
-
-rust-reality config generate standalone \
-  --target www.microsoft.com:443 \
-  --server-name www.microsoft.com \
-  > config.json 2> client-values.txt
-
-rust-reality check --config config.json
-rust-reality config autotune \
-  --config config.json --output config.tuned.json
-rust-reality check --config config.tuned.json
-rust-reality self-test --config config.tuned.json
-rust-reality serve --config config.tuned.json
+rust-reality check-cover --cover www.microsoft.com:443
 ```
 
-The generated JSON contains a UUID, private REALITY key, two UUID-owned short
-IDs, an inbound `listen.mode: auto`, an outbound `network.dial.mode: auto`, and
-a direct-routing policy. The listener creates independent IPv4 and IPv6
-sockets while outbound family selection uses one adaptive process-wide state.
-The client-facing REALITY public key is written to
-standard error so the private server configuration can be captured separately.
-Protect both outputs and replace the example target with a destination that
-passes `probe-dest` from the deployment host. The full walkthrough, including
-the line/landing NXR topology, is in
-[docs/getting-started.md](docs/en/getting-started.md).
+Generate the three values that must not be typed by hand:
+
+```shell
+rust-reality generate x25519     # private half -> server, public half -> client
+rust-reality generate uuid
+rust-reality generate short-id
+```
+
+Write `/etc/rust-reality/config.json`:
+
+```json
+{
+  "role": "entry",
+  "listeners": [
+    {
+      "port": 443
+    }
+  ],
+  "reality": {
+    "cover": "www.microsoft.com:443",
+    "privateKey": "ERERERERERERERERERERERERERERERERERERERERERE"
+  },
+  "users": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "shortIds": [
+        "0123456789abcdef"
+      ],
+      "label": "alice"
+    }
+  ],
+  "routing": {
+    "default": "direct"
+  }
+}
+```
+
+Six fields, each one a decision. Everything else — thread counts, connection
+ceilings, buffer sizes, timeouts, DNS caching, relay strategy — is derived
+from the machine at startup, and `explain` will show you what it decided.
+
+```shell
+rust-reality check   -c /etc/rust-reality/config.json   # offline; never touches anything
+rust-reality doctor  -c /etc/rust-reality/config.json   # dials the cover, resolves DNS
+rust-reality explain -c /etc/rust-reality/config.json   # what the omitted fields became
+rust-reality run     -c /etc/rust-reality/config.json
+```
+
+Point an Xray-compatible client at it with the UUID, the short ID, the
+**public** key from `generate x25519`, the cover hostname as SNI, and flow
+`xtls-rprx-vision`.
+
+There is no command that writes a configuration for you. The file is short,
+every field in it is a decision, and an operator who wrote it can debug it.
+The full walkthrough, including the line/landing topologies, is in
+[getting started](docs/en/getting-started.md).
 
 ## Configuration
 
-Configuration is strict camelCase JSON. Unknown fields, missing required
-references, duplicate UUIDs/tags, unsafe URLs, unbounded limits, plain VLESS,
-and removed acceleration switches are rejected before listeners are bound.
+One strict JSON file. The first field decides the shape of the rest:
 
-Routing evaluates `routing.globalRules` in order, then the authenticated
-UUID's `routing.users[].rules` in order, then that user group's
-`defaultOutbound`. Conditions inside one rule are conjunctive across
-categories and alternative values inside a category are ORed. See the
-complete [configuration reference](docs/en/configuration/reference.md) for every field,
-default, constraint, matcher syntax, reload behavior, and the dedicated
-resource mode.
+- **`role: "entry"`** — a public node: VLESS over REALITY with Vision, users,
+  routing.
+- **`role: "landing"`** — a hidden node behind a firewall, reachable only from
+  an entry node, whose IP is what destinations see.
+
+Unknown fields, unknown enum values, duplicate keys, dangling references, and
+reused key material are all rejected before a listener is bound, with the
+offending line quoted and secrets redacted.
+
+`outbounds` and `routing.policies` are objects keyed by name, so the key *is*
+the identity and there is no `tag` field. `routing.rules` and `listeners` are
+arrays, because first-match order and endpoint multiplicity are real.
+`direct` and `block` always exist and are never declared.
+
+Every field with a machine-dependent default is optional, and **omitting it
+means "derive it"** rather than "use a constant". Writing a value pins it,
+even when it equals what would have been derived — which is why `explain`
+can report each value as `operator-pinned`, `startup-derived`, or `default`.
+
+Configuration written for a release before v1.9 is not accepted, and there is
+no migration path or compatibility mode.
+
+Start with [how configuration works](docs/en/configuration/index.md); the
+[reference](docs/en/configuration/reference.md) states every object, field,
+default, and reload rule.
 
 ## Deployment
 
-`serve`/`run` stay in the foreground for systemd; SIGINT/SIGTERM shut down
-gracefully; SIGHUP validates and atomically publishes a compatible
-configuration while established connections keep their generation. Install
-and review [`deploy/rust-reality.service`](deploy/rust-reality.service) for a
-hardened systemd baseline, and follow
-[docs/deployment.md](docs/en/operations/deployment.md) for verification, service accounts,
-firewall rules, upgrades, and rollback.
+`rust-reality run -c <config>` stays in the foreground for systemd.
+SIGINT/SIGTERM drain live relays and stop; SIGHUP validates and atomically
+publishes a new generation while established connections keep the one that
+admitted them. A reload that changes a cold setting — `role`, `listeners`,
+`network`, `dns`, or any `runtime` field — is refused by name and the running
+configuration keeps serving.
+
+Install and review
+[`deploy/rust-reality.service`](deploy/rust-reality.service) for a hardened
+systemd baseline, and follow
+[deployment](docs/en/operations/deployment.md) for release verification,
+service accounts, firewall boundaries, upgrades, and rollback. When something
+is wrong, [troubleshooting](docs/en/operations/troubleshooting.md) is
+organised by symptom.
 
 ## Security
 
@@ -316,9 +364,16 @@ access tokens, or deployment configuration in an issue or log.
 | --- | --- | --- |
 | Documentation index | [English](docs/en/index.md) | [简体中文](docs/zh-CN/index.md) |
 | Getting started | [English](docs/en/getting-started.md) | [简体中文](docs/zh-CN/getting-started.md) |
-| CLI reference | [English](docs/en/cli.md) | [简体中文](docs/zh-CN/cli.md) |
+| How configuration works | [English](docs/en/configuration/index.md) | [简体中文](docs/zh-CN/configuration/index.md) |
+| Standalone node | [English](docs/en/configuration/standalone.md) | [简体中文](docs/zh-CN/configuration/standalone.md) |
+| Users and credentials | [English](docs/en/configuration/users-and-credentials.md) | [简体中文](docs/zh-CN/configuration/users-and-credentials.md) |
+| Routing | [English](docs/en/configuration/routing.md) | [简体中文](docs/zh-CN/configuration/routing.md) |
+| Line and landing nodes | [English](docs/en/configuration/line-landing.md) | [简体中文](docs/zh-CN/configuration/line-landing.md) |
+| Handoff | [English](docs/en/configuration/handoff.md) | [简体中文](docs/zh-CN/configuration/handoff.md) |
 | Configuration reference | [English](docs/en/configuration/reference.md) | [简体中文](docs/zh-CN/configuration/reference.md) |
+| CLI reference | [English](docs/en/cli.md) | [简体中文](docs/zh-CN/cli.md) |
 | Deployment | [English](docs/en/operations/deployment.md) | [简体中文](docs/zh-CN/operations/deployment.md) |
+| Troubleshooting | [English](docs/en/operations/troubleshooting.md) | [简体中文](docs/zh-CN/operations/troubleshooting.md) |
 | Protocol overview | [English](docs/en/protocol.md) | [简体中文](docs/zh-CN/protocol.md) |
 | Architecture | [English](docs/en/architecture.md) | [简体中文](docs/zh-CN/architecture.md) |
 | Performance | [English](docs/en/performance.md) | [简体中文](docs/zh-CN/performance.md) |
