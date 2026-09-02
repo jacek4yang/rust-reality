@@ -17,7 +17,12 @@ jobs:
   quality:
     name: Repository quality
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The gate now also builds and tests the tooling workspace and the
+    # no-default-features configuration. That measured 13m38s here against the
+    # previous 15-minute bound, which leaves too little headroom: the next small
+    # addition would fail as a timeout rather than as a real defect, and a
+    # timeout is the least diagnosable way for a gate to go red.
+    timeout-minutes: 25
 
     steps:
       - name: Check out repository
