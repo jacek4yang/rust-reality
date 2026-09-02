@@ -12,7 +12,7 @@ trust boundaries are normative in [threat-model.md](threat-model.md).
 Xray-compatible client
   -> VLESS + REALITY + xtls-rprx-vision public listener
   -> UUID policy and routing on the server
-  -> direct | SOCKS5 | blackhole | NXR | Handoff outbound
+  -> direct | block | SOCKS5 | NXR | Handoff outbound
   -> destination
 ```
 
@@ -62,7 +62,7 @@ gate is described in [benchmarks.md](benchmarks.md).
 - **SOCKS5**: outbound to an upstream SOCKS5 server with optional
   username/password authentication. Its optional warm state is TCP-only;
   method negotiation, authentication, and CONNECT remain per-flow.
-- **blackhole**: bounded discard with an optional response delay.
+- **block**: refuse the connection. Built in, and never declared.
 - **NXR**: forwards the flow to a landing node (below).
 - **Handoff**: transfers the whole session to a landing node (below).
 
@@ -106,7 +106,7 @@ bounded nonce cache are checked before any key-agreement work, and every
 failure closes silently with zero response bytes. On success the landing node
 reconstructs the session's TLS record layers and dials the transferred
 destination — directly by default, or through the outbound named by the
-listener's `egress` setting (`direct`, `socks5`, `nxr`, or `blackhole`;
+listener's `egress` setting (`direct`, `block`, or a declared outbound;
 Handoff never chains) — and resumes the session. During a key-rotation window the landing also accepts
 up to two retired pre-shared keys and static key pairs
 (`previousPreSharedKeys`/`previousPrivateKeys`), so peers can rotate without

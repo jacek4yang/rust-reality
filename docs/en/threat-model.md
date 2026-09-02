@@ -8,7 +8,7 @@ English | [简体中文](../zh-CN/threat-model.md)
 Xray-compatible client
   -> VLESS + REALITY + xtls-rprx-vision public listener
   -> UUID policy on the line node
-  -> direct | SOCKS5 | blackhole | NXR | Handoff
+  -> direct | block | SOCKS5 | NXR | Handoff
   -> optional firewall-restricted NXR or Handoff landing node
   -> destination
 ```

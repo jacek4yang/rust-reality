@@ -11,7 +11,7 @@
 兼容 Xray 的客户端
   -> VLESS + REALITY + xtls-rprx-vision 公网 listener
   -> 服务端上的 UUID 策略与路由
-  -> direct | SOCKS5 | blackhole | NXR | Handoff 出站
+  -> direct | block | SOCKS5 | NXR | Handoff 出站
   -> 目标地址
 ```
 
@@ -48,7 +48,7 @@
   限制未认证拨号速率的 direct barrier。
 - **SOCKS5**：指向上游 SOCKS5 服务器的出站，可选用户名/密码认证。可选 warm
   状态只有 TCP；method negotiation、认证与 CONNECT 仍逐流进行。
-- **blackhole**：有界丢弃，可选响应延迟。
+- **block**：拒绝该连接。内置，从不声明。
 - **NXR**：把流量转发到落地机（见下）。
 - **Handoff**：把整个会话转移到落地机（见下）。
 
@@ -82,7 +82,7 @@ TLS 密文。
 条 HKDF-SHA256 链上混合，并以一次 ChaCha20-Poly1305 密封；在任何密钥协商
 之前先检查时间窗和有界 nonce 缓存，任何失败都静默关闭、零响应字节。成功后
 落地机重建会话的 TLS 记录层并连接转移过来的目标——默认直接连接，或经监听器
-`egress` 设置指定的出站（`direct`、`socks5`、`nxr` 或 `blackhole`；Handoff
+`egress` 设置指定的出站（`direct`、`block`，或一个已声明的出站；Handoff
 不链式嵌套）——随后恢复会话。在密钥轮换窗口内，落地机还接受最多两个已退役的
 配对 PSK 和静态密钥对（`previousPreSharedKeys`/`previousPrivateKeys`），从而
 实现不停机轮换；窗口结束后应及时移除退役密钥。落地机不对

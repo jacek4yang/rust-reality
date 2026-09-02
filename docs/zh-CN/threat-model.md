@@ -8,7 +8,7 @@
 兼容 Xray 的客户端
   -> VLESS + REALITY + xtls-rprx-vision 公网监听
   -> 线路机 UUID 策略
-  -> direct | SOCKS5 | blackhole | NXR | Handoff
+  -> direct | block | SOCKS5 | NXR | Handoff
   -> 可选、受防火墙限制的 NXR 或 Handoff 落地机
   -> 目标地址
 ```

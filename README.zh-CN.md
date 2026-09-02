@@ -8,7 +8,8 @@
 
 `rust-reality` 是面向 Linux 的单二进制代理服务端。唯一的公网客户端入口是
 **VLESS + REALITY + `xtls-rprx-vision`**。可选的独立 NXR 协议用于把线路机上
-每一条已认证用户流量转发到仅受防火墙信任的落地机。
+每一条已认证用户流量转发到仅受防火墙信任的落地机；Handoff 协议则改为把客户端
+自己的 TLS 会话送过去，落地机转发的是它读不了的密文。
 
 新贡献者请从 [CONTRIBUTING.md](CONTRIBUTING.md) 和
 [中文文档索引](docs/zh-CN/index.md) 开始；它们会继续指向架构、仓库归属、
@@ -18,7 +19,7 @@
 兼容 Xray 的客户端
   -> VLESS + REALITY + Vision
   -> rust-reality 线路机或单机节点
-  -> direct | SOCKS5 | blackhole | NXR | Handoff
+  -> direct | block | SOCKS5 | NXR | Handoff
   -> 可选的 NXR 或 Handoff 落地机
   -> 目标地址
 ```
@@ -47,13 +48,15 @@
   仍逐字节精确。
 - 一切皆有界：连接、握手、fallback、密码学工作、重放状态、缓冲区、DNS 结果、
   描述符和 splice 资源——压力下迟滞降级而不是崩溃。
-- 支持具体和单标签通配的 REALITY server name、按 UUID 的路由分组、UUID 独占
-  多 short ID 认证，以及兼容 Xray 的 GeoIP/GeoSite 资产（原子 last-known-good
-  更新）。
-- 基于实测的本机 `config autotune`（可审计原子输出），以及按基数自适应的
-  UUID/路由/出站索引和 deadline 驱动的重放过期，不再无条件扫描存活表。
-- 严格 JSON 配置、SIGHUP 原子热更新、不含秘密的有界日志、密钥生成、目标探测、
-  self-test 和 Schema，全部由同一个二进制提供。
+- 支持具体和单标签通配的 REALITY server name、用户按名字选用的路由策略、UUID
+  独占多 short ID 认证，以及兼容 Xray 的 GeoIP/GeoSite 资产（原子
+  last-known-good 更新）。
+- 每一个准入上限、缓冲区大小和池边界都在启动时从机器推导——不跑基准、不走网络、
+  确定性——并由 `explain` 报出每个值的来源。此外还有按基数自适应的 UUID/路由/
+  出站索引，以及 deadline 驱动的重放过期，不再无条件扫描存活表。
+- 严格 JSON 配置与编译器风格的诊断、SIGHUP 原子热更新、不含秘密的有界日志，
+  以及七个运维命令：`run`、`check`、`doctor`、`explain`、`format`、
+  `check-cover`、`generate`。
 - 稳定 Rust：主协议 crate 禁止 `unsafe`（Linux ABI 的 unsafe 隔离在
   `crates/rr-linux` 并有显式 SAFETY 不变量），生产数据路径不使用
   panic/unwrap，标签发布包可复现。
@@ -184,72 +187,111 @@ GNU 或 musl。公网入站不支持纯 VLESS、仅 TLS
 
 ## 快速开始
 
-从[最新 Release](https://github.com/jacek4yang/rust-reality/releases/latest)
-下载适合你平台的压缩包、manifest 和校验文件，安装前验证全部资产：
+装好、生成编不出来的那几个值、写大约二十行 JSON、连上客户端。
 
 ```shell
 sha256sum --check SHA256SUMS
-# x86-64 GNU/glibc 通用包：
 tar -xzf rust-reality-v<version>-linux-x86_64-generic.tar.gz
-# Alpine/musl 或极简容器使用完全静态包：
-# tar -xzf rust-reality-v<version>-linux-x86_64-musl.tar.gz
-# 或在 x86-64-v3 GNU/glibc CPU 上使用：
-# tar -xzf rust-reality-v<version>-linux-x86_64-v3.tar.gz
-# 在 ARM64（ARMv8.0 含 neon 或更高）上使用：
-# tar -xzf rust-reality-v<version>-linux-aarch64-generic.tar.gz
 sudo install -m 0755 rust-reality /usr/local/bin/rust-reality
 ```
 
-`release-manifest.json` schema v3 记录每个档位的编译器、cargo features、目标
-CPU/特性、是否在本机实测，以及最低 CPU 要求。
-
-探测 REALITY 伪装目标并生成单机配置：
+挑一个伪装目标，**在服务器上**测它，因为答案取决于网络路径：
 
 ```shell
-rust-reality probe-dest \
-  --target www.microsoft.com:443 \
-  --server-name www.microsoft.com
-
-rust-reality config generate standalone \
-  --target www.microsoft.com:443 \
-  --server-name www.microsoft.com \
-  > config.json 2> client-values.txt
-
-rust-reality check --config config.json
-rust-reality config autotune \
-  --config config.json --output config.tuned.json
-rust-reality check --config config.tuned.json
-rust-reality self-test --config config.tuned.json
-rust-reality serve --config config.tuned.json
+rust-reality check-cover --cover www.microsoft.com:443
 ```
 
-生成的 JSON 已包含 UUID、REALITY 私钥、归该 UUID 独占的两个 short ID、入站
-`listen.mode: auto`、出站 `network.dial.mode: auto` 和 direct 路由策略。入站使用
-独立 IPv4/IPv6 套接字，出站由进程级自适应状态选择地址族。供客户端
-使用的 REALITY 公钥写入标准错误，使服务器私密配置可以单独保存。两个输出都应
-妥善保护；示例目标必须替换成从实际部署机器执行 `probe-dest` 能通过的目标。
-完整步骤（含线路机/落地机 NXR 拓扑）见
-[docs/getting-started.zh-CN.md](docs/zh-CN/getting-started.md)。
+生成那三个不该手写的值：
+
+```shell
+rust-reality generate x25519     # 私钥那半 -> 服务端，公钥那半 -> 客户端
+rust-reality generate uuid
+rust-reality generate short-id
+```
+
+写 `/etc/rust-reality/config.json`：
+
+```json
+{
+  "role": "entry",
+  "listeners": [
+    {
+      "port": 443
+    }
+  ],
+  "reality": {
+    "cover": "www.microsoft.com:443",
+    "privateKey": "ERERERERERERERERERERERERERERERERERERERERERE"
+  },
+  "users": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "shortIds": [
+        "0123456789abcdef"
+      ],
+      "label": "alice"
+    }
+  ],
+  "routing": {
+    "default": "direct"
+  }
+}
+```
+
+六个字段，每一个都是一个决定。其余一切——线程数、连接上限、缓冲区大小、超时、
+DNS 缓存、转发策略——都在启动时从这台机器推导，`explain` 会告诉你它决定了什么。
+
+```shell
+rust-reality check   -c /etc/rust-reality/config.json   # 离线；什么都不碰
+rust-reality doctor  -c /etc/rust-reality/config.json   # 拨号伪装目标、解析 DNS
+rust-reality explain -c /etc/rust-reality/config.json   # 没写的字段变成了什么
+rust-reality run     -c /etc/rust-reality/config.json
+```
+
+用 UUID、short ID、`generate x25519` 给出的**公钥**、伪装主机名作为 SNI，以及
+flow `xtls-rprx-vision`，把兼容 Xray 的客户端指过来。
+
+没有任何命令会替你写配置。文件很短，里面每个字段都是一个决定，而自己写过的人
+才调得动它。完整流程（包括线路机/落地机拓扑）见
+[快速上手](docs/zh-CN/getting-started.md)。
 
 ## 配置
 
-配置采用严格 camelCase JSON。未知字段、缺失引用、重复 UUID/tag、不安全 URL、
-无界限制、纯 VLESS 和已移除的加速开关都会在监听端口绑定前被拒绝。
+一个严格 JSON 文件。第一个字段决定其余部分的形状：
 
-路由依次匹配 `routing.globalRules`，再依次匹配已认证 UUID 所属
-`routing.users[].rules`，最后使用该用户组的 `defaultOutbound`。同一规则中不同
-条件类别之间是 AND；同一类别的多个值之间是 OR。所有字段、默认值、约束、匹配
-器语法、热更新行为和专用资源模式见
-[配置参考](docs/zh-CN/configuration/reference.md)。v1.2 配置在 v1.3 重启前必须把原来共享的
-`realitySettings.shortIds` 列表移到其所属的 `clients[]` 条目下。
+- **`role: "entry"`**——公网节点：跑在 REALITY 上的 VLESS（Vision flow）、
+  用户、路由。
+- **`role: "landing"`**——防火墙后的隐藏节点，只能被入口节点访问，它的 IP 才是
+  目的地看到的那个。
+
+未知字段、未知枚举值、重复键、悬空引用、复用的密钥材料，全都在监听端口绑定之前
+被拒绝，并附上出问题的那一行，密钥打码。
+
+`outbounds` 和 `routing.policies` 是按名字索引的对象，键**就是**身份，所以没有
+`tag` 字段。`routing.rules` 和 `listeners` 是数组，因为首个命中优先的顺序和端点
+的多重性都是真实存在的。`direct` 和 `block` 一直都在，也从不声明。
+
+凡是有随机器而变的默认值的字段都是可选的，**不写它意味着"推导它"**，而不是"用一个
+常数"。写了一个值就是把它钉住，哪怕它等于推导会得到的值——这正是 `explain` 能把每个
+值报成 `operator-pinned`、`startup-derived` 或 `default` 的原因。
+
+v1.9 之前的 release 写的配置不被接受，没有迁移路径，也没有兼容模式。
+
+从[配置是怎么回事](docs/zh-CN/configuration/index.md)开始；
+[参考手册](docs/zh-CN/configuration/reference.md)列出每个对象、字段、默认值和
+热更新规则。
 
 ## 部署
 
-`serve`/`run` 在前台运行，适合 systemd；SIGINT/SIGTERM 优雅退出；SIGHUP 验证
-并原子发布兼容的新配置，已建立连接继续使用旧 generation。请安装并审查
-[`deploy/rust-reality.service`](deploy/rust-reality.service) 提供的 systemd 加固
-基线；验证、服务账号、防火墙规则、升级与回滚见
-[docs/deployment.zh-CN.md](docs/zh-CN/operations/deployment.md)。
+`rust-reality run -c <config>` 留在前台，适合 systemd。SIGINT/SIGTERM 排空活跃
+转发后停止；SIGHUP 校验并原子发布新的一代，已建立的连接继续使用接纳它们的那一代。
+改动冷配置——`role`、`listeners`、`network`、`dns`，或 `runtime` 的任意字段——的
+重载会被指名拒绝，正在跑的配置继续服务。
+
+请安装并审查 [`deploy/rust-reality.service`](deploy/rust-reality.service) 提供的
+systemd 加固基线；release 验证、服务账号、防火墙边界、升级与回滚见
+[部署](docs/zh-CN/operations/deployment.md)。出问题时，
+[排障](docs/zh-CN/operations/troubleshooting.md)是按症状组织的。
 
 ## 安全
 
@@ -266,9 +308,16 @@ NXR 必须由防火墙限制，其认证后的字节是明文。不要在 issue 
 | --- | --- | --- |
 | 文档索引 | [English](docs/en/index.md) | [简体中文](docs/zh-CN/index.md) |
 | 快速上手 | [English](docs/en/getting-started.md) | [简体中文](docs/zh-CN/getting-started.md) |
+| 配置是怎么回事 | [English](docs/en/configuration/index.md) | [简体中文](docs/zh-CN/configuration/index.md) |
+| 单机节点 | [English](docs/en/configuration/standalone.md) | [简体中文](docs/zh-CN/configuration/standalone.md) |
+| 用户与凭据 | [English](docs/en/configuration/users-and-credentials.md) | [简体中文](docs/zh-CN/configuration/users-and-credentials.md) |
+| 路由 | [English](docs/en/configuration/routing.md) | [简体中文](docs/zh-CN/configuration/routing.md) |
+| 线路节点与落地节点 | [English](docs/en/configuration/line-landing.md) | [简体中文](docs/zh-CN/configuration/line-landing.md) |
+| Handoff | [English](docs/en/configuration/handoff.md) | [简体中文](docs/zh-CN/configuration/handoff.md) |
+| 配置参考手册 | [English](docs/en/configuration/reference.md) | [简体中文](docs/zh-CN/configuration/reference.md) |
 | 命令行参考 | [English](docs/en/cli.md) | [简体中文](docs/zh-CN/cli.md) |
-| 配置参考 | [English](docs/en/configuration/reference.md) | [简体中文](docs/zh-CN/configuration/reference.md) |
 | 部署指南 | [English](docs/en/operations/deployment.md) | [简体中文](docs/zh-CN/operations/deployment.md) |
+| 排障 | [English](docs/en/operations/troubleshooting.md) | [简体中文](docs/zh-CN/operations/troubleshooting.md) |
 | 协议概览 | [English](docs/en/protocol.md) | [简体中文](docs/zh-CN/protocol.md) |
 | 架构 | [English](docs/en/architecture.md) | [简体中文](docs/zh-CN/architecture.md) |
 | 性能 | [English](docs/en/performance.md) | [简体中文](docs/zh-CN/performance.md) |

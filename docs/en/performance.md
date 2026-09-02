@@ -634,7 +634,7 @@ honest figure.
 ## Deployment characterization (v1.0.0)
 
 - **Routing correctness: PASS** — 26/26 (uuid, destination) cases across
-  2 user groups, direct/blackhole/SOCKS5 outbounds, and
+  2 user policies, direct/block/SOCKS5 outbounds, and
   domain/GeoSite/IP/GeoIP/port/late-match/default rules; every UUID
   reached only its intended outbound, byte-verified.
 - **Routing decision tax: none measurable** — simple (1 user),

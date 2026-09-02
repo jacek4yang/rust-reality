@@ -516,7 +516,7 @@ rust-reality——以干净 fallback A/B（1.00–1.03×）为准。
 ## 部署特性（v1.0.0）
 
 - **路由正确性：通过**——26/26 个 (uuid, destination) 用例，覆盖 2 个用户组、
-  direct/blackhole/SOCKS5 出站及 domain/GeoSite/IP/GeoIP/port/迟到/默认规则；
+  direct/block/SOCKS5 出站及 domain/GeoSite/IP/GeoIP/port/迟到/默认规则；
   每个 UUID 只到达其指定出站，均经字节校验。
 - **路由决策开销：不可测**——simple（1 用户）、medium（100 UUID/16 规则）、
   complex（1000 UUID/72 规则）配置均为 896 conn/s、每连接 0.60 ms CPU；
