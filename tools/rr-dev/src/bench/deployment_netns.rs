@@ -5,11 +5,7 @@
 //! can compare warm and cold transport acquisition without shaping the client,
 //! REALITY cover, or peer-to-origin legs.
 
-use std::{
-    os::unix::fs::MetadataExt as _,
-    path::Path,
-    time::Duration,
-};
+use std::{os::unix::fs::MetadataExt as _, path::Path, time::Duration};
 
 use crate::process::Tool;
 
@@ -64,7 +60,9 @@ impl Topology {
     pub fn create(run_id: &str) -> Result<Self, String> {
         for program in ["ip", "tc", "setpriv", "ping"] {
             if !Tool::exists(program) && !Path::new(&iproute2(program)).is_file() {
-                return Err(format!("deployment RTT characterization requires {program}"));
+                return Err(format!(
+                    "deployment RTT characterization requires {program}"
+                ));
             }
         }
         if !super::ipv6_netns::sudo_available() {
@@ -95,7 +93,11 @@ impl Topology {
         let creation = (|| {
             sudo(
                 "ip",
-                &["netns".to_owned(), "add".to_owned(), topology.names.namespace.clone()],
+                &[
+                    "netns".to_owned(),
+                    "add".to_owned(),
+                    topology.names.namespace.clone(),
+                ],
             )?;
             topology.namespace_created = true;
             topology.namespace_identity = namespace_identity(&topology.names.namespace);
@@ -163,7 +165,12 @@ impl Topology {
                     topology.names.namespace_veth.clone(),
                     "up".to_owned(),
                 ],
-                vec!["link".to_owned(), "set".to_owned(), "lo".to_owned(), "up".to_owned()],
+                vec![
+                    "link".to_owned(),
+                    "set".to_owned(),
+                    "lo".to_owned(),
+                    "up".to_owned(),
+                ],
             ] {
                 ip_in(&topology.names.namespace, &args)?;
             }
@@ -194,7 +201,9 @@ impl Topology {
     /// Replaces the qdisc on both directions with half-delay plus loss.
     pub fn apply_profile(&mut self, rtt_ms: u32, loss_percent: f64) -> Result<(), String> {
         if !loss_percent.is_finite() || !(0.0..=100.0).contains(&loss_percent) {
-            return Err(format!("invalid per-direction loss percentage: {loss_percent}"));
+            return Err(format!(
+                "invalid per-direction loss percentage: {loss_percent}"
+            ));
         }
         let delay = format!("{:.3}ms", f64::from(rtt_ms) / 2.0);
         let loss = format!("{loss_percent}%");
@@ -271,10 +280,7 @@ impl Topology {
                 "ip",
                 vec!["-details", "link", "show", "dev", &self.names.host_veth],
             ),
-            (
-                "tc",
-                vec!["qdisc", "show", "dev", &self.names.host_veth],
-            ),
+            ("tc", vec!["qdisc", "show", "dev", &self.names.host_veth]),
         ] {
             let outcome = Tool::new(iproute2(program))
                 .args(args.iter().map(|value| (*value).to_owned()))
@@ -333,7 +339,11 @@ impl Topology {
             if link_ifindex(&self.names.host_veth) == self.host_ifindex {
                 if let Err(error) = sudo(
                     "ip",
-                    &["link".to_owned(), "del".to_owned(), self.names.host_veth.clone()],
+                    &[
+                        "link".to_owned(),
+                        "del".to_owned(),
+                        self.names.host_veth.clone(),
+                    ],
                 ) {
                     errors.push(error);
                 } else {
@@ -355,7 +365,11 @@ impl Topology {
                 terminate_namespace_processes(&self.names.namespace);
                 if let Err(error) = sudo(
                     "ip",
-                    &["netns".to_owned(), "del".to_owned(), self.names.namespace.clone()],
+                    &[
+                        "netns".to_owned(),
+                        "del".to_owned(),
+                        self.names.namespace.clone(),
+                    ],
                 ) {
                     errors.push(error);
                 } else {
@@ -432,15 +446,18 @@ fn command_in(namespace: &str, program: &str, args: &[String]) -> Result<String,
 }
 
 fn namespace_exists(name: &str) -> bool {
-    Path::new("/run/netns").join(name).exists()
-        || Path::new("/var/run/netns").join(name).exists()
+    Path::new("/run/netns").join(name).exists() || Path::new("/var/run/netns").join(name).exists()
 }
 
 fn namespace_identity(name: &str) -> Option<(u64, u64)> {
     [Path::new("/run/netns"), Path::new("/var/run/netns")]
         .into_iter()
         .map(|root| root.join(name))
-        .find_map(|path| std::fs::metadata(path).ok().map(|metadata| (metadata.dev(), metadata.ino())))
+        .find_map(|path| {
+            std::fs::metadata(path)
+                .ok()
+                .map(|metadata| (metadata.dev(), metadata.ino()))
+        })
 }
 
 fn link_exists(name: &str) -> bool {
@@ -469,8 +486,13 @@ fn terminate_namespace_processes(namespace: &str) {
         .collect::<Vec<_>>();
     for signal in ["-TERM", "-KILL"] {
         for (pid, identity) in &processes {
-            if identity.is_some() && super::process::proc_starttime(*pid).as_ref() == identity.as_ref() {
-                let _ = sudo("kill", &[signal.to_owned(), "--".to_owned(), pid.to_string()]);
+            if identity.is_some()
+                && super::process::proc_starttime(*pid).as_ref() == identity.as_ref()
+            {
+                let _ = sudo(
+                    "kill",
+                    &[signal.to_owned(), "--".to_owned(), pid.to_string()],
+                );
             }
         }
         std::thread::sleep(Duration::from_millis(250));

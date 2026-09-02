@@ -148,40 +148,86 @@ pub fn build_certificate(
     let run = |args: Vec<String>| openssl(openssl_bin, &args);
 
     run(owned(&[
-        "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256", "-days", "1",
-        "-subj", &plan.ca_subject,
-        "-addext", "basicConstraints=critical,CA:TRUE",
-        "-addext", "keyUsage=critical,keyCertSign,cRLSign",
-        "-keyout", &path("ca.key"), "-out", &path("ca.crt"),
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-sha256",
+        "-days",
+        "1",
+        "-subj",
+        &plan.ca_subject,
+        "-addext",
+        "basicConstraints=critical,CA:TRUE",
+        "-addext",
+        "keyUsage=critical,keyCertSign,cRLSign",
+        "-keyout",
+        &path("ca.key"),
+        "-out",
+        &path("ca.crt"),
     ]))?;
 
     run(owned(&[
-        "req", "-new", "-newkey", "rsa:2048", "-nodes", "-sha256",
-        "-subj", &plan.leaf_subject,
-        "-addext", "basicConstraints=critical,CA:FALSE",
-        "-addext", "keyUsage=critical,digitalSignature,keyEncipherment",
-        "-addext", "extendedKeyUsage=serverAuth",
-        "-addext", &format!("subjectAltName={}", plan.subject_alt_name),
-        "-keyout", &path("server.key"), "-out", &path("server.csr"),
+        "req",
+        "-new",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-sha256",
+        "-subj",
+        &plan.leaf_subject,
+        "-addext",
+        "basicConstraints=critical,CA:FALSE",
+        "-addext",
+        "keyUsage=critical,digitalSignature,keyEncipherment",
+        "-addext",
+        "extendedKeyUsage=serverAuth",
+        "-addext",
+        &format!("subjectAltName={}", plan.subject_alt_name),
+        "-keyout",
+        &path("server.key"),
+        "-out",
+        &path("server.csr"),
     ]))?;
 
     run(owned(&[
-        "x509", "-req", "-sha256", "-days", "1",
-        "-in", &path("server.csr"),
-        "-CA", &path("ca.crt"), "-CAkey", &path("ca.key"),
-        "-CAcreateserial", "-copy_extensions", "copy",
-        "-out", &path("server.crt"),
+        "x509",
+        "-req",
+        "-sha256",
+        "-days",
+        "1",
+        "-in",
+        &path("server.csr"),
+        "-CA",
+        &path("ca.crt"),
+        "-CAkey",
+        &path("ca.key"),
+        "-CAcreateserial",
+        "-copy_extensions",
+        "copy",
+        "-out",
+        &path("server.crt"),
     ]))?;
 
     if let Some(hostname) = &plan.verify_hostname {
         run(owned(&[
-            "verify", "-CAfile", &path("ca.crt"),
-            "-verify_hostname", hostname, &path("server.crt"),
+            "verify",
+            "-CAfile",
+            &path("ca.crt"),
+            "-verify_hostname",
+            hostname,
+            &path("server.crt"),
         ]))?;
     }
 
     let subject_alt_name = run(owned(&[
-        "x509", "-in", &path("server.crt"), "-noout", "-ext", "subjectAltName",
+        "x509",
+        "-in",
+        &path("server.crt"),
+        "-noout",
+        "-ext",
+        "subjectAltName",
     ]))?;
 
     Ok(CoverCertificate {
@@ -418,12 +464,9 @@ mod tests {
         run.write_new("environment.json", "{\"phase\":\"running\"}\n")
             .unwrap();
 
-        let error = publish_complete_run(
-            &run,
-            "{\"phase\":\"complete\"}\n",
-            "run-1",
-            || Err("run log writers did not stop".to_owned()),
-        )
+        let error = publish_complete_run(&run, "{\"phase\":\"complete\"}\n", "run-1", || {
+            Err("run log writers did not stop".to_owned())
+        })
         .unwrap_err();
 
         assert!(error.contains("log writers did not stop"), "{error}");
@@ -433,19 +476,14 @@ mod tests {
         );
 
         let mut stopped = false;
-        publish_complete_run(
-            &run,
-            "{\"phase\":\"complete\"}\n",
-            "run-1",
-            || {
-                assert!(
-                    !run.join("completion.json").exists(),
-                    "run log writers must stop before publication"
-                );
-                stopped = true;
-                Ok(())
-            },
-        )
+        publish_complete_run(&run, "{\"phase\":\"complete\"}\n", "run-1", || {
+            assert!(
+                !run.join("completion.json").exists(),
+                "run log writers must stop before publication"
+            );
+            stopped = true;
+            Ok(())
+        })
         .unwrap();
         assert!(stopped);
         assert!(run.join("completion.json").is_file());
@@ -471,7 +509,10 @@ mod tests {
     fn only_server_direction_lines_count() {
         assert_no_server_ccs(NO_MIDDLEBOX_TRACE).expect("a client CCS is irrelevant");
         let error = assert_no_server_ccs(MIDDLEBOX_TRACE).unwrap_err();
-        assert!(error.contains("server-direction ChangeCipherSpec"), "{error}");
+        assert!(
+            error.contains("server-direction ChangeCipherSpec"),
+            "{error}"
+        );
     }
 
     /// A trace with no `ServerHello` means the handshake never happened, so an
@@ -661,7 +702,9 @@ fn for_serial_cover(generated: &str, seconds: u64) -> Result<String, String> {
         Value::Number(seconds.to_string()),
     );
     disable_warm_tcp(&mut members)?;
-    Ok(crate::bench::suites::render_compact(&Value::Object(members)))
+    Ok(crate::bench::suites::render_compact(&Value::Object(
+        members,
+    )))
 }
 
 /// Clears `warmTcp` on the first inbound's REALITY cover optimizations.
@@ -872,8 +915,11 @@ pub fn run(suite: &NoCcsSuite) -> Result<Json, String> {
         (ports[0], ports[1], ports[2], ports[3]);
 
     let certificate = build_cover_certificate(&suite.openssl_bin, workspace.path(), &suite.run_id)?;
-    std::fs::write(run.join("certificate-san.txt"), &certificate.subject_alt_name)
-        .map_err(|error| format!("could not record the leaf SAN: {error}"))?;
+    std::fs::write(
+        run.join("certificate-san.txt"),
+        &certificate.subject_alt_name,
+    )
+    .map_err(|error| format!("could not record the leaf SAN: {error}"))?;
 
     let trace_path = run.join("openssl-trace.log");
     let mut cover = Child::spawn(

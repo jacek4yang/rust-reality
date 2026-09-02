@@ -230,7 +230,12 @@ fn prepare_server(
                 inputs.policy,
             )
             .to_python_json();
-            Ok((config, identity, keys.public.clone(), inputs.xray_bin.to_path_buf()))
+            Ok((
+                config,
+                identity,
+                keys.public.clone(),
+                inputs.xray_bin.to_path_buf(),
+            ))
         }
     }
 }
@@ -263,7 +268,11 @@ pub fn rust_server_config(
         json_in::Value::Array(vec![string(&format!("127.0.0.1:{dns_port}"))]),
     )?;
     set_path(&mut members, &["dns", "cache", "minTtlSeconds"], number(5))?;
-    set_path(&mut members, &["dns", "cache", "maxTtlSeconds"], number(3600))?;
+    set_path(
+        &mut members,
+        &["dns", "cache", "maxTtlSeconds"],
+        number(3600),
+    )?;
 
     if !policy.domain_rules.is_empty() {
         let rules: Vec<json_in::Value> = policy

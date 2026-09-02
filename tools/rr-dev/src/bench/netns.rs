@@ -71,7 +71,10 @@ fn privileged(args: &[&str]) -> Result<(), String> {
     let mut elevated = vec!["-n".to_owned()];
     // Resolve the leading tool: sudo has its own secure_path, but being explicit
     // keeps the recorded command and the executed one identical.
-    elevated.push(args.first().map_or_else(String::new, |first| iproute2(first)));
+    elevated.push(
+        args.first()
+            .map_or_else(String::new, |first| iproute2(first)),
+    );
     elevated.extend(args.iter().skip(1).map(|arg| (*arg).to_owned()));
     let outcome = Tool::new("sudo")
         .args(elevated)
@@ -116,6 +119,10 @@ fn link_exists(name: &str) -> bool {
 }
 
 impl CoverLeg {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "canonical formatting expands it; the body is one sequence"
+    )]
     /// Creates the namespace, veth pair, addresses and `netem` delay.
     ///
     /// # Errors
@@ -174,7 +181,14 @@ impl CoverLeg {
             "netns",
             &leg.names.namespace,
         ])?;
-        privileged(&["ip", "addr", "add", HOST_ADDRESS, "dev", &leg.names.host_veth])?;
+        privileged(&[
+            "ip",
+            "addr",
+            "add",
+            HOST_ADDRESS,
+            "dev",
+            &leg.names.host_veth,
+        ])?;
         privileged(&["ip", "link", "set", &leg.names.host_veth, "up"])?;
         privileged(&[
             "ip",

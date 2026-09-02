@@ -80,7 +80,6 @@ pub mod semver {
     }
 }
 
-
 #[cfg(test)]
 mod harness {
     //! End-to-end tests porting the decision-critical invariants of the retired
@@ -101,7 +100,8 @@ mod harness {
     }
 
     fn write_fake_binary(path: &Path) {
-        std::fs::write(path, b"#!/usr/bin/env sh\nprintf fake-release\n").expect("write fake binary");
+        std::fs::write(path, b"#!/usr/bin/env sh\nprintf fake-release\n")
+            .expect("write fake binary");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -117,10 +117,8 @@ mod harness {
         }
     }
     fn scratch(name: &str) -> Scratch {
-        let path = std::env::temp_dir().join(format!(
-            "rr-release-harness-{}-{name}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("rr-release-harness-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("create scratch");
         Scratch(path)
@@ -174,7 +172,10 @@ mod harness {
         expected.push("SHA256SUMS".to_owned());
         expected.push("release-manifest.json".to_owned());
         expected.sort();
-        assert_eq!(present, expected, "aggregate ships only tarballs, manifest and sums");
+        assert_eq!(
+            present, expected,
+            "aggregate ships only tarballs, manifest and sums"
+        );
 
         for tier in Tier::ids() {
             assert!(
@@ -189,7 +190,10 @@ mod harness {
         assert!(manifest.contains("\"tag\": \"v9.8.7\""));
         assert!(manifest.contains("\"target\": \"x86_64-unknown-linux-gnu\""));
         for tier in Tier::ids() {
-            assert!(manifest.contains(&format!("\"tier\": \"{tier}\"")), "manifest lists {tier}");
+            assert!(
+                manifest.contains(&format!("\"tier\": \"{tier}\"")),
+                "manifest lists {tier}"
+            );
         }
     }
 
@@ -213,9 +217,12 @@ mod harness {
         })
         .expect("single-tier package");
 
-        let error =
-            aggregate::aggregate(&partial, "v9.8.7").expect_err("a partial matrix must fail closed");
-        assert!(error.contains("missing aggregated release input"), "{error}");
+        let error = aggregate::aggregate(&partial, "v9.8.7")
+            .expect_err("a partial matrix must fail closed");
+        assert!(
+            error.contains("missing aggregated release input"),
+            "{error}"
+        );
         assert!(!partial.join("release-manifest.json").exists());
         assert!(!partial.join("SHA256SUMS").exists());
     }
@@ -230,11 +237,18 @@ mod harness {
         std::fs::create_dir_all(&poisoned).unwrap();
         package_all(&repo, &fake, &poisoned);
 
-        std::fs::write(poisoned.join("rust-reality-v9.8.7-linux-x86_64-v4.tar.gz"), b"").unwrap();
+        std::fs::write(
+            poisoned.join("rust-reality-v9.8.7-linux-x86_64-v4.tar.gz"),
+            b"",
+        )
+        .unwrap();
 
         let error = aggregate::aggregate(&poisoned, "v9.8.7")
             .expect_err("an unlisted asset must fail closed");
-        assert!(error.contains("unexpected files in aggregate dist directory"), "{error}");
+        assert!(
+            error.contains("unexpected files in aggregate dist directory"),
+            "{error}"
+        );
         assert!(!poisoned.join("release-manifest.json").exists());
         assert!(!poisoned.join("SHA256SUMS").exists());
     }

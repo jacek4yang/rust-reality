@@ -295,7 +295,8 @@ pub fn run(suite: &InteropSuite) -> Result<InteropReport, String> {
         },
     )?;
 
-    let (_server, _client) = start_tunnel(suite, &workspace, &rust, &xray, server_port, socks_port)?;
+    let (_server, _client) =
+        start_tunnel(suite, &workspace, &rust, &xray, server_port, socks_port)?;
 
     let downloaded = workspace.join("download.bin");
     fetch_payload(socks_port, origin_port, &downloaded)?;
@@ -411,11 +412,7 @@ fn start_tunnel(
 /// # Errors
 ///
 /// Returns the curl failure.
-pub fn fetch_payload(
-    socks_port: u16,
-    origin_port: u16,
-    destination: &Path,
-) -> Result<(), String> {
+pub fn fetch_payload(socks_port: u16, origin_port: u16, destination: &Path) -> Result<(), String> {
     let outcome = clean_curl()
         .args([
             "--fail".to_owned(),

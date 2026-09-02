@@ -115,7 +115,6 @@ impl Host {
         argv.extend(command.iter().cloned());
         argv
     }
-
 }
 
 /// The fixed two-host topology the deployment family operates on.
@@ -184,11 +183,7 @@ pub fn redact_secrets(text: &str) -> String {
             Shape::any(),
             "\"password\":\"<redacted:password>\"",
         ),
-        (
-            "\"id\":\"",
-            Shape::uuid(),
-            "\"id\":\"<redacted:uuid>\"",
-        ),
+        ("\"id\":\"", Shape::uuid(), "\"id\":\"<redacted:uuid>\""),
         (
             "\"shortId\":\"",
             Shape::hex(16),
@@ -262,11 +257,7 @@ impl Shape {
             && self.exact_len.is_none_or(|len| value.len() == len)
             && value.iter().all(|byte| (self.charset)(*byte))
             && self.exact_hex_digits.is_none_or(|expected| {
-                value
-                    .iter()
-                    .filter(|byte| byte.is_ascii_hexdigit())
-                    .count()
-                    == expected
+                value.iter().filter(|byte| byte.is_ascii_hexdigit()).count() == expected
             })
     }
 }
@@ -310,10 +301,7 @@ mod tests {
     #[test]
     fn the_canonical_topology_uses_the_fixed_aliases() {
         let topology = Topology::canonical().expect("canonical topology is valid");
-        assert_eq!(
-            topology.host(HostRole::Line).alias(),
-            "rust-reality-vps"
-        );
+        assert_eq!(topology.host(HostRole::Line).alias(), "rust-reality-vps");
         assert_eq!(
             topology.host(HostRole::Landing).alias(),
             "rust-reality-landing-vps"
@@ -323,22 +311,37 @@ mod tests {
     #[test]
     fn ssh_argv_uses_the_alias_and_nothing_but_the_alias() {
         let topology = Topology::new("line-alias", "landing-alias").unwrap();
-        let argv = topology
-            .host(HostRole::Line)
-            .ssh_argv(&["true".to_owned(), "&&".to_owned(), "rm".to_owned()]);
+        let argv = topology.host(HostRole::Line).ssh_argv(&[
+            "true".to_owned(),
+            "&&".to_owned(),
+            "rm".to_owned(),
+        ]);
         // The alias selects user/port/proxy from the operator's config; no
         // address, user, port, identity file, or proxy override is present.
         assert_eq!(
             argv,
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-             "line-alias", "true", "&&", "rm"]
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "line-alias",
+                "true",
+                "&&",
+                "rm"
+            ]
         );
     }
 
     #[test]
     fn sudo_argv_prepends_sudo_n_to_the_remote_command() {
         let topology = Topology::new("line", "landing").unwrap();
-        let argv = topology.host(HostRole::Line).ssh_sudo_argv(&["systemctl".to_owned(), "reload".to_owned(), "rust-reality.service".to_owned()]);
+        let argv = topology.host(HostRole::Line).ssh_sudo_argv(&[
+            "systemctl".to_owned(),
+            "reload".to_owned(),
+            "rust-reality.service".to_owned(),
+        ]);
         assert_eq!(
             &argv[..8],
             [
@@ -352,10 +355,7 @@ mod tests {
                 "-n"
             ]
         );
-        assert_eq!(
-            &argv[8..],
-            ["systemctl", "reload", "rust-reality.service"]
-        );
+        assert_eq!(&argv[8..], ["systemctl", "reload", "rust-reality.service"]);
     }
 
     #[test]

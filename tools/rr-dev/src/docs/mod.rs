@@ -32,7 +32,10 @@ const REQUIRED_PAIRS: &[(&str, &str)] = &[
     ("README.md", "README.zh-CN.md"),
     ("SECURITY.md", "docs/zh-CN/security.md"),
     ("docs/en/index.md", "docs/zh-CN/index.md"),
-    ("docs/en/getting-started.md", "docs/zh-CN/getting-started.md"),
+    (
+        "docs/en/getting-started.md",
+        "docs/zh-CN/getting-started.md",
+    ),
     ("docs/en/cli.md", "docs/zh-CN/cli.md"),
     (
         "docs/en/configuration/index.md",
@@ -95,7 +98,10 @@ const REQUIRED_PAIRS: &[(&str, &str)] = &[
     ("docs/en/performance.md", "docs/zh-CN/performance.md"),
     ("docs/en/benchmarks.md", "docs/zh-CN/benchmarks.md"),
     ("docs/en/threat-model.md", "docs/zh-CN/threat-model.md"),
-    ("docs/en/release-process.md", "docs/zh-CN/release-process.md"),
+    (
+        "docs/en/release-process.md",
+        "docs/zh-CN/release-process.md",
+    ),
     (
         "docs/en/development/development-workflow.md",
         "docs/zh-CN/development/development-workflow.md",

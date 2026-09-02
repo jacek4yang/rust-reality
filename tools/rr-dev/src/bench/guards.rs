@@ -51,7 +51,9 @@ impl LineTracker {
         let Ok(data) = std::fs::read(&self.path) else {
             return Vec::new();
         };
-        let start = usize::try_from(self.offset).unwrap_or(usize::MAX).min(data.len());
+        let start = usize::try_from(self.offset)
+            .unwrap_or(usize::MAX)
+            .min(data.len());
         let fresh = &data[start..];
         let complete = match fresh.iter().rposition(|byte| *byte == b'\n') {
             Some(index) => &fresh[..=index],
@@ -275,7 +277,10 @@ mod tests {
         assert_eq!(tracker.new_lines(), ["one", "two"]);
         assert!(tracker.new_lines().is_empty());
 
-        let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
         file.write_all(b"three\n").unwrap();
         assert_eq!(tracker.new_lines(), ["three"]);
         let _ = std::fs::remove_file(&path);

@@ -113,7 +113,11 @@ pub fn check(repo: &Path, files: &[PathBuf]) -> Outcome {
         let Ok(markdown) = std::fs::read_to_string(path) else {
             continue;
         };
-        let relative = path.strip_prefix(repo).unwrap_or(path).display().to_string();
+        let relative = path
+            .strip_prefix(repo)
+            .unwrap_or(path)
+            .display()
+            .to_string();
 
         for block in json_blocks(&markdown) {
             let complete = serde_json::from_str::<serde_json::Value>(&block.body)

@@ -89,7 +89,10 @@ pub fn smoke(repo: &Path, requested: &[String]) -> Result<String, String> {
     if failures.is_empty() {
         Ok(format!("fuzz smoke: PASS ({} targets)", selected.len()))
     } else {
-        Err(format!("fuzz-smoke failed targets: {}", failures.join(", ")))
+        Err(format!(
+            "fuzz-smoke failed targets: {}",
+            failures.join(", ")
+        ))
     }
 }
 
@@ -109,7 +112,10 @@ fn run_target(
         .map_err(|error| format!("could not create scratch corpus: {error}"))?;
 
     let mut corpus_args: Vec<String> = vec![target_scratch.to_string_lossy().into_owned()];
-    for candidate in [format!("fuzz/seeds/{target}"), format!("fuzz/corpus/{target}")] {
+    for candidate in [
+        format!("fuzz/seeds/{target}"),
+        format!("fuzz/corpus/{target}"),
+    ] {
         if repo.join(&candidate).is_dir() {
             corpus_args.push(candidate);
         }

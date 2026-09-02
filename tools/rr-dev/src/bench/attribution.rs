@@ -68,10 +68,7 @@ impl PerfEvent {
         Json::object([
             ("value", Json::Float(self.value)),
             ("unit", Json::string(self.unit.clone())),
-            (
-                "enabledNanoseconds",
-                Json::Float(self.enabled_nanoseconds),
-            ),
+            ("enabledNanoseconds", Json::Float(self.enabled_nanoseconds)),
             ("runningPercent", Json::Float(self.running_percent)),
         ])
     }
@@ -183,9 +180,7 @@ pub fn parse_csv(text: &str, required: &[&str]) -> Result<PerfRecord, String> {
         missing.sort_unstable();
         return Err(format!("missing perf events: {}", missing.join(", ")));
     }
-    let task_clock_milliseconds = events
-        .get("task-clock")
-        .map_or(0.0, |event| event.value);
+    let task_clock_milliseconds = events.get("task-clock").map_or(0.0, |event| event.value);
     Ok(PerfRecord {
         events,
         task_clock_milliseconds,
@@ -226,9 +221,9 @@ pub fn task_clock_only(text: &str) -> Result<f64, String> {
 
 /// Whether `text` matches the harness's `^[0-9]+(\.[0-9]+)?$`.
 fn is_plain_decimal(text: &str) -> bool {
-    let (integer, fraction) = text.split_once('.').map_or((text, None), |(whole, rest)| {
-        (whole, Some(rest))
-    });
+    let (integer, fraction) = text
+        .split_once('.')
+        .map_or((text, None), |(whole, rest)| (whole, Some(rest)));
     let digits = |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
     digits(integer) && fraction.is_none_or(digits)
 }
@@ -294,7 +289,10 @@ mod tests {
     /// The `SELF_TEST` negative case: multiplexed below 95% must not pass.
     #[test]
     fn a_capture_multiplexed_below_ninety_five_percent_is_rejected() {
-        let low = VALID.replace("12.500,msec,task-clock,100000000,100.00", "12.500,msec,task-clock,100000000,94.99");
+        let low = VALID.replace(
+            "12.500,msec,task-clock,100000000,100.00",
+            "12.500,msec,task-clock,100000000,94.99",
+        );
         let error = parse_csv(&low, &REQUIRED_EVENTS).unwrap_err();
         assert!(error.contains("invalid perf event task-clock"), "{error}");
         // 95.00 exactly is the boundary and is accepted; 100.01 is the upper bound.

@@ -8,10 +8,7 @@
 //! after a successful merge; the release ships only tarballs, the manifest and
 //! `SHA256SUMS`.
 
-use std::{
-    collections::BTreeMap,
-    path::Path,
-};
+use std::{collections::BTreeMap, path::Path};
 
 use crate::{
     perf::{json_in::Value, json_out::Json},
@@ -100,7 +97,10 @@ pub fn aggregate(repo_dist: &Path, tag: &str) -> Result<String, String> {
         let artifact = str_of(&fragment, "artifact")?;
         let expected_name = format!("rust-reality-{tag}-{tier}.tar.gz");
         if artifact != expected_name {
-            return Err(format!("{}: artifact {artifact} != {expected_name}", fragment_path.display()));
+            return Err(format!(
+                "{}: artifact {artifact} != {expected_name}",
+                fragment_path.display()
+            ));
         }
         let archive = repo_dist.join(&artifact);
         let digest = sha256_of(&archive)?;
@@ -168,9 +168,18 @@ fn build_manifest(fragments: &[Value]) -> Result<Json, String> {
             ("cpuTier", value_to_json(fragment.optional("cpuTier"))),
             ("target", value_to_json(fragment.optional("target"))),
             ("targetCpu", value_to_json(fragment.optional("targetCpu"))),
-            ("targetFeatures", value_to_json(fragment.optional("targetFeatures"))),
-            ("measuredNatively", value_to_json(fragment.optional("measuredNatively"))),
-            ("requirements", value_to_json(fragment.optional("requirements"))),
+            (
+                "targetFeatures",
+                value_to_json(fragment.optional("targetFeatures")),
+            ),
+            (
+                "measuredNatively",
+                value_to_json(fragment.optional("measuredNatively")),
+            ),
+            (
+                "requirements",
+                value_to_json(fragment.optional("requirements")),
+            ),
         ]));
     }
 
@@ -181,9 +190,15 @@ fn build_manifest(fragments: &[Value]) -> Result<Json, String> {
         ("tag", value_to_json(first.optional("tag"))),
         ("commit", value_to_json(first.optional("commit"))),
         ("target", value_to_json(generic.optional("target"))),
-        ("sourceDateEpoch", value_to_json(first.optional("sourceDateEpoch"))),
+        (
+            "sourceDateEpoch",
+            value_to_json(first.optional("sourceDateEpoch")),
+        ),
         ("compiler", value_to_json(first.optional("compiler"))),
-        ("cargoFeatures", value_to_json(first.optional("cargoFeatures"))),
+        (
+            "cargoFeatures",
+            value_to_json(first.optional("cargoFeatures")),
+        ),
         ("artifact", value_to_json(generic.optional("artifact"))),
         ("sha256", value_to_json(generic.optional("sha256"))),
         ("artifacts", Json::Array(artifacts)),
@@ -247,9 +262,7 @@ fn str_of(value: &Value, key: &str) -> Result<String, String> {
 }
 
 fn check_int(value: &Value, key: &str, expected: i64, path: &Path) -> Result<(), String> {
-    let observed = value
-        .optional(key)
-        .and_then(|inner| inner.as_int(key).ok());
+    let observed = value.optional(key).and_then(|inner| inner.as_int(key).ok());
     if observed == Some(expected) {
         Ok(())
     } else {

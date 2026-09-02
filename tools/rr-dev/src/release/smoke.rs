@@ -13,10 +13,7 @@
 //! arbitrary target. An optional runner wrapper (e.g. qemu) validates functionality
 //! only and is never native performance evidence.
 
-use std::{
-    io::Read,
-    path::Path,
-};
+use std::{io::Read, path::Path};
 
 use crate::{
     perf::json_in,
@@ -92,7 +89,12 @@ pub fn smoke(repo: &Path, tag: &str, tier_id: &str, asset_dir: &Path) -> Result<
         tool = tool.args(args.iter().copied());
         let out = tool.probe().map_err(|error| error.to_string())?;
         if !out.success() {
-            return Err(format!("{} {:?} exited with {:?}", binary.display(), args, out.code));
+            return Err(format!(
+                "{} {:?} exited with {:?}",
+                binary.display(),
+                args,
+                out.code
+            ));
         }
         Ok(out.stdout)
     };
@@ -138,11 +140,20 @@ pub fn smoke(repo: &Path, tag: &str, tier_id: &str, asset_dir: &Path) -> Result<
 
 /// Validates the self-test report shape and cover identity.
 fn validate_self_test(report: &str, target: &str, server_name: &str) -> Result<(), String> {
-    let value = json_in::parse(report).map_err(|error| format!("self-test is not JSON: {error}"))?;
-    if value.optional("configuration").and_then(|v| v.as_str("configuration").ok()) != Some("ok") {
+    let value =
+        json_in::parse(report).map_err(|error| format!("self-test is not JSON: {error}"))?;
+    if value
+        .optional("configuration")
+        .and_then(|v| v.as_str("configuration").ok())
+        != Some("ok")
+    {
         return Err("self-test configuration is not ok".to_owned());
     }
-    if value.optional("routing").and_then(|v| v.as_str("routing").ok()) != Some("ok") {
+    if value
+        .optional("routing")
+        .and_then(|v| v.as_str("routing").ok())
+        != Some("ok")
+    {
         return Err("self-test routing is not ok".to_owned());
     }
     let destinations = value
@@ -150,17 +161,34 @@ fn validate_self_test(report: &str, target: &str, server_name: &str) -> Result<(
         .and_then(|v| v.as_array("realityDestinations").ok())
         .ok_or_else(|| "self-test has no realityDestinations".to_owned())?;
     if destinations.len() != 1 {
-        return Err(format!("expected exactly one destination, got {}", destinations.len()));
+        return Err(format!(
+            "expected exactly one destination, got {}",
+            destinations.len()
+        ));
     }
     let destination = &destinations[0];
-    if destination.optional("compatible").and_then(|v| v.as_bool("compatible").ok()) != Some(true) {
+    if destination
+        .optional("compatible")
+        .and_then(|v| v.as_bool("compatible").ok())
+        != Some(true)
+    {
         return Err("destination is not compatible".to_owned());
     }
-    if destination.optional("target").and_then(|v| v.as_str("target").ok()) != Some(target) {
+    if destination
+        .optional("target")
+        .and_then(|v| v.as_str("target").ok())
+        != Some(target)
+    {
         return Err(format!("destination target mismatch, expected {target}"));
     }
-    if destination.optional("serverName").and_then(|v| v.as_str("serverName").ok()) != Some(server_name) {
-        return Err(format!("destination serverName mismatch, expected {server_name}"));
+    if destination
+        .optional("serverName")
+        .and_then(|v| v.as_str("serverName").ok())
+        != Some(server_name)
+    {
+        return Err(format!(
+            "destination serverName mismatch, expected {server_name}"
+        ));
     }
     Ok(())
 }
@@ -202,8 +230,18 @@ fn start_loopback_cover(work: &Path) -> Result<(String, String, Option<Cover>), 
     let key = work.join("cover.key");
     let cert_gen = Tool::new("openssl")
         .args([
-            "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=localhost",
-            "-addext", "subjectAltName=DNS:localhost", "-keyout",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-days",
+            "1",
+            "-subj",
+            "/CN=localhost",
+            "-addext",
+            "subjectAltName=DNS:localhost",
+            "-keyout",
         ])
         .arg(key.to_string_lossy().into_owned())
         .arg("-out")
@@ -211,7 +249,10 @@ fn start_loopback_cover(work: &Path) -> Result<(String, String, Option<Cover>), 
         .probe()
         .map_err(|error| format!("openssl cert generation failed: {error}"))?;
     if !cert_gen.success() {
-        return Err(format!("openssl cert generation exited with {:?}", cert_gen.code));
+        return Err(format!(
+            "openssl cert generation exited with {:?}",
+            cert_gen.code
+        ));
     }
 
     let port = free_loopback_port()?;

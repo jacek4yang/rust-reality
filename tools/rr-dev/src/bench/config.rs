@@ -291,14 +291,9 @@ mod tests {
         let plain = xray_server(&identity(), 8443, "PRIVKEY", true).to_python_json();
         assert!(!plain.contains("fallbacks"));
 
-        let with_fallback = xray_server_with_fallback(
-            &identity(),
-            8443,
-            "PRIVKEY",
-            true,
-            Some("127.0.0.1:8080"),
-        )
-        .to_python_json();
+        let with_fallback =
+            xray_server_with_fallback(&identity(), 8443, "PRIVKEY", true, Some("127.0.0.1:8080"))
+                .to_python_json();
         assert!(with_fallback.contains("\"fallbacks\""));
         assert!(with_fallback.contains("\"dest\": \"127.0.0.1:8080\""));
         // Everything else is unchanged.
@@ -308,8 +303,7 @@ mod tests {
 
     #[test]
     fn the_deployment_comparator_routes_only_through_socks() {
-        let rendered = xray_server_with_socks(&identity(), 8443, "PRIVKEY", 1080)
-            .to_python_json();
+        let rendered = xray_server_with_socks(&identity(), 8443, "PRIVKEY", 1080).to_python_json();
         assert!(rendered.contains("\"protocol\": \"socks\""));
         assert!(rendered.contains("\"address\": \"127.0.0.1\""));
         assert!(rendered.contains("\"port\": 1080"));

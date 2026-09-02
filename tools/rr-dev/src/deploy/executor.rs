@@ -163,14 +163,16 @@ pub fn execute(
             ]);
         }
         PlanKind::Stage => {
-            let artifact = artifact.ok_or_else(|| "stage requires candidate identity".to_owned())?;
+            let artifact =
+                artifact.ok_or_else(|| "stage requires candidate identity".to_owned())?;
             validator.validate(artifact)?;
             milestones.push("local-candidate-validated".to_owned());
             stage_remote(transport, host, artifact)?;
             milestones.push("remote-candidate-staged-and-verified".to_owned());
         }
         PlanKind::Cutover => {
-            let artifact = artifact.ok_or_else(|| "cutover requires candidate identity".to_owned())?;
+            let artifact =
+                artifact.ok_or_else(|| "cutover requires candidate identity".to_owned())?;
             artifact.validate()?;
             if let Err(error) = cutover(transport, host, before, artifact) {
                 let rollback = restore_before(transport, host, before);
@@ -201,11 +203,12 @@ pub fn execute(
                 "current-generation-recorded".to_owned(),
                 "pending-release-cleared".to_owned(),
             ]);
-            if plan
-                .actions
-                .iter()
-                .any(|action| matches!(action, crate::deploy::plan::DeploymentAction::PruneOldReleases))
-            {
+            if plan.actions.iter().any(|action| {
+                matches!(
+                    action,
+                    crate::deploy::plan::DeploymentAction::PruneOldReleases
+                )
+            }) {
                 milestones.push("old-generations-pruned".to_owned());
             }
         }
@@ -239,9 +242,9 @@ fn expected_binary(
             plan.actions
                 .iter()
                 .find_map(|action| match action {
-                    crate::deploy::plan::DeploymentAction::VerifyService {
-                        expected_binary,
-                    } => Some(expected_binary.clone()),
+                    crate::deploy::plan::DeploymentAction::VerifyService { expected_binary } => {
+                        Some(expected_binary.clone())
+                    }
                     _ => None,
                 })
                 .ok_or_else(|| format!("cutover {} lacks verification", artifact.release_id))
@@ -280,7 +283,11 @@ fn bootstrap(
                 release_id,
                 baseline_binary,
                 baseline_config,
-            } => Some((release_id.as_str(), baseline_binary.as_str(), baseline_config.as_str())),
+            } => Some((
+                release_id.as_str(),
+                baseline_binary.as_str(),
+                baseline_config.as_str(),
+            )),
             _ => None,
         })
         .ok_or_else(|| "bootstrap plan has no baseline action".to_owned())?;
@@ -464,6 +471,10 @@ fn install_unit(
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "canonical formatting expands it; the body is one sequence"
+)]
 fn stage_remote(
     transport: &mut impl Transport,
     host: &Host,
@@ -484,7 +495,13 @@ fn stage_remote(
     let result = (|| {
         transport.copy_to(host, Path::new(&artifact.binary_path), &binary_remote)?;
         transport.copy_to(host, Path::new(&artifact.config_path), &config_remote)?;
-        run(transport, host, true, &["chmod", "0755", &binary_remote], "chmod staged binary")?;
+        run(
+            transport,
+            host,
+            true,
+            &["chmod", "0755", &binary_remote],
+            "chmod staged binary",
+        )?;
         let digest = checked(
             transport,
             host,
@@ -517,12 +534,56 @@ fn stage_remote(
         let paths = Paths::canonical();
         let binary_dir = format!("{}/{}", paths.releases, artifact.release_id);
         let config_dir = format!("{}/{}", paths.config_releases, artifact.release_id);
-        run(transport, host, true, &["install", "-d", "-m", "0755", &binary_dir], "create binary generation")?;
-        run(transport, host, true, &["install", "-d", "-m", "0750", "-o", "root", "-g", "rust-reality", &config_dir], "create config generation")?;
+        run(
+            transport,
+            host,
+            true,
+            &["install", "-d", "-m", "0755", &binary_dir],
+            "create binary generation",
+        )?;
+        run(
+            transport,
+            host,
+            true,
+            &[
+                "install",
+                "-d",
+                "-m",
+                "0750",
+                "-o",
+                "root",
+                "-g",
+                "rust-reality",
+                &config_dir,
+            ],
+            "create config generation",
+        )?;
         let installed_binary = format!("{binary_dir}/rust-reality");
         let installed_config = format!("{config_dir}/config.json");
-        run(transport, host, true, &["install", "-m", "0755", &binary_remote, &installed_binary], "install candidate binary")?;
-        run(transport, host, true, &["install", "-m", "0640", "-o", "root", "-g", "rust-reality", &config_remote, &installed_config], "install candidate config")?;
+        run(
+            transport,
+            host,
+            true,
+            &["install", "-m", "0755", &binary_remote, &installed_binary],
+            "install candidate binary",
+        )?;
+        run(
+            transport,
+            host,
+            true,
+            &[
+                "install",
+                "-m",
+                "0640",
+                "-o",
+                "root",
+                "-g",
+                "rust-reality",
+                &config_remote,
+                &installed_config,
+            ],
+            "install candidate config",
+        )?;
         let installed_digest = checked(
             transport,
             host,
@@ -558,8 +619,20 @@ fn cutover(
     let paths = Paths::canonical();
     let new_binary = format!("{}/{}", paths.releases, artifact.release_id);
     let new_config = format!("{}/{}", paths.config_releases, artifact.release_id);
-    run(transport, host, true, &["test", "-x", &format!("{new_binary}/rust-reality")], "verify staged binary")?;
-    run(transport, host, true, &["test", "-r", &format!("{new_config}/config.json")], "verify staged config")?;
+    run(
+        transport,
+        host,
+        true,
+        &["test", "-x", &format!("{new_binary}/rust-reality")],
+        "verify staged binary",
+    )?;
+    run(
+        transport,
+        host,
+        true,
+        &["test", "-r", &format!("{new_config}/config.json")],
+        "verify staged config",
+    )?;
     let generations = before
         .generations
         .as_ref()
@@ -572,13 +645,42 @@ fn cutover(
         .current_config
         .as_deref()
         .ok_or_else(|| "cutover snapshot has no CURRENT config".to_owned())?;
-    switch_link(transport, host, old_binary, &paths.previous_binary, "previous")?;
-    switch_link(transport, host, old_config, &paths.previous_config, "previous")?;
-    run(transport, host, true, &["systemctl", "stop", host.service()], "stop service for cutover")?;
+    switch_link(
+        transport,
+        host,
+        old_binary,
+        &paths.previous_binary,
+        "previous",
+    )?;
+    switch_link(
+        transport,
+        host,
+        old_config,
+        &paths.previous_config,
+        "previous",
+    )?;
+    run(
+        transport,
+        host,
+        true,
+        &["systemctl", "stop", host.service()],
+        "stop service for cutover",
+    )?;
     switch_link(transport, host, &new_binary, &paths.current_binary, "next")?;
     switch_link(transport, host, &new_config, &paths.current_config, "next")?;
-    run(transport, host, true, &["systemctl", "start", host.service()], "start cutover service")?;
-    let after = wait_healthy(transport, host, &format!("{new_binary}/rust-reality"), before)?;
+    run(
+        transport,
+        host,
+        true,
+        &["systemctl", "start", host.service()],
+        "start cutover service",
+    )?;
+    let after = wait_healthy(
+        transport,
+        host,
+        &format!("{new_binary}/rust-reality"),
+        before,
+    )?;
     verify_snapshot(before, &after, &format!("{new_binary}/rust-reality"))?;
     install_record(
         transport,
@@ -669,8 +771,20 @@ fn switch_link(
     suffix: &str,
 ) -> Result<(), String> {
     let temporary = format!("{link}.{suffix}");
-    run(transport, host, true, &["ln", "-sfn", target, &temporary], "prepare generation symlink")?;
-    run(transport, host, true, &["mv", "-Tf", &temporary, link], "commit generation symlink")
+    run(
+        transport,
+        host,
+        true,
+        &["ln", "-sfn", target, &temporary],
+        "prepare generation symlink",
+    )?;
+    run(
+        transport,
+        host,
+        true,
+        &["mv", "-Tf", &temporary, link],
+        "commit generation symlink",
+    )
 }
 
 fn wait_healthy(
@@ -690,7 +804,9 @@ fn wait_healthy(
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    Err(format!("service did not become healthy within 10 seconds: {last}"))
+    Err(format!(
+        "service did not become healthy within 10 seconds: {last}"
+    ))
 }
 
 fn verify_snapshot(
@@ -699,7 +815,10 @@ fn verify_snapshot(
     expected_binary: &str,
 ) -> Result<(), String> {
     if !after.service_healthy() || !after.ssh_22_present {
-        return Err(format!("post-deployment service is unhealthy: {}", after.summary_line()));
+        return Err(format!(
+            "post-deployment service is unhealthy: {}",
+            after.summary_line()
+        ));
     }
     if after.executable.as_deref() != Some(expected_binary) {
         return Err(format!(
@@ -771,11 +890,12 @@ fn promote(
         ),
     )?;
     clear_pending(transport, host)?;
-    if plan
-        .actions
-        .iter()
-        .any(|action| matches!(action, crate::deploy::plan::DeploymentAction::PruneOldReleases))
-    {
+    if plan.actions.iter().any(|action| {
+        matches!(
+            action,
+            crate::deploy::plan::DeploymentAction::PruneOldReleases
+        )
+    }) {
         prune(transport, host, generations)?;
     }
     Ok(())
@@ -805,11 +925,39 @@ fn install_record(
     let result = (|| {
         transport.copy_to(host, &local, &remote)?;
         let state = Paths::canonical().state;
-        run(transport, host, true, &["install", "-d", "-m", "0750", "-o", "root", "-g", "rust-reality", &state], "create deployment state directory")?;
-        run(transport, host, true, &["install", "-m", "0600", &remote, &format!("{state}/{name}")], "install deployment state record")
+        run(
+            transport,
+            host,
+            true,
+            &[
+                "install",
+                "-d",
+                "-m",
+                "0750",
+                "-o",
+                "root",
+                "-g",
+                "rust-reality",
+                &state,
+            ],
+            "create deployment state directory",
+        )?;
+        run(
+            transport,
+            host,
+            true,
+            &["install", "-m", "0600", &remote, &format!("{state}/{name}")],
+            "install deployment state record",
+        )
     })();
     let _ = std::fs::remove_file(&local);
-    let cleanup = run(transport, host, false, &["rm", "-rf", "--", &staging], "remove record staging directory");
+    let cleanup = run(
+        transport,
+        host,
+        false,
+        &["rm", "-rf", "--", &staging],
+        "remove record staging directory",
+    );
     match (result, cleanup) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
@@ -1116,7 +1264,13 @@ mod tests {
         assert_eq!(validator.calls, 1);
         assert_eq!(transport.copies.len(), 2);
         assert_eq!(report.after.executable, before.executable);
-        assert!(!transport.commands.iter().any(|argv| argv.first().map(String::as_str) == Some("systemctl") && argv.get(1).map(String::as_str) == Some("stop")));
+        assert!(
+            !transport
+                .commands
+                .iter()
+                .any(|argv| argv.first().map(String::as_str) == Some("systemctl")
+                    && argv.get(1).map(String::as_str) == Some("stop"))
+        );
     }
 
     #[test]
@@ -1135,8 +1289,8 @@ mod tests {
         .unwrap();
         let mut transport = FakeTransport::new();
         transport.running_executable = "/usr/local/bin/rust-reality".to_owned();
-        let unit = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../deploy/rust-reality-vps.service");
+        let unit =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/rust-reality-vps.service");
         let report = execute(
             &mut transport,
             &mut FakeValidator::default(),
@@ -1154,7 +1308,11 @@ mod tests {
         assert_eq!(transport.current, "/opt/rust-reality/releases/baseline-1");
         assert_eq!(transport.previous, transport.current);
         assert!(!transport.commands.iter().any(|argv| {
-            argv == &["systemctl".to_owned(), "stop".to_owned(), "rust-reality.service".to_owned()]
+            argv == &[
+                "systemctl".to_owned(),
+                "stop".to_owned(),
+                "rust-reality.service".to_owned(),
+            ]
         }));
         assert!(
             transport
@@ -1171,7 +1329,11 @@ mod tests {
         let before = snapshot();
         let artifact = artifact();
         let plan = plan_cutover(&before, &artifact).unwrap();
-        assert!(plan.actions.iter().any(|action| matches!(action, DeploymentAction::RecordPending { .. })));
+        assert!(
+            plan.actions
+                .iter()
+                .any(|action| matches!(action, DeploymentAction::RecordPending { .. }))
+        );
         let mut transport = FakeTransport::new();
         let report = execute(
             &mut transport,
@@ -1185,10 +1347,21 @@ mod tests {
         .unwrap();
         assert_eq!(transport.current, "/opt/rust-reality/releases/r2");
         assert_eq!(transport.previous, "/opt/rust-reality/releases/r1");
-        assert_eq!(report.after.executable.as_deref(), Some("/opt/rust-reality/releases/r2/rust-reality"));
-        assert!(transport.copies.iter().any(|path| path.ends_with("/pending")));
+        assert_eq!(
+            report.after.executable.as_deref(),
+            Some("/opt/rust-reality/releases/r2/rust-reality")
+        );
+        assert!(
+            transport
+                .copies
+                .iter()
+                .any(|path| path.ends_with("/pending"))
+        );
         assert!(transport.commands.iter().all(|argv| {
-            !matches!(argv.first().map(String::as_str), Some("sh" | "bash" | "python3"))
+            !matches!(
+                argv.first().map(String::as_str),
+                Some("sh" | "bash" | "python3")
+            )
         }));
     }
 

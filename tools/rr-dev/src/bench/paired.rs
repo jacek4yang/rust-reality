@@ -398,14 +398,16 @@ fn start_origins(
     )?;
     let tls_plan = origin_go::OriginPlan {
         label: "origin-https".to_owned(),
-        listen_address: leg
-            .map_or_else(|| "127.0.0.1".to_owned(), |_| netns::COVER_ADDRESS.to_owned()),
+        listen_address: leg.map_or_else(
+            || "127.0.0.1".to_owned(),
+            |_| netns::COVER_ADDRESS.to_owned(),
+        ),
         port: tls_port,
         payload_dir: workspace.path().to_path_buf(),
         put_log: workspace.join("https-put.jsonl"),
         tls: Some((cert, key)),
-            access_log: None,
-            alpn: None,
+        access_log: None,
+        alpn: None,
     };
     let tls_origin = match leg {
         None => origin_go::start(&binary, workspace, &tls_plan)?,
@@ -893,10 +895,7 @@ fn write_slot_identity(
             "position",
             Json::Int(i64::try_from(entry.position).unwrap_or(i64::MAX)),
         ),
-        (
-            "implementation",
-            Json::string(entry.implementation.clone()),
-        ),
+        ("implementation", Json::string(entry.implementation.clone())),
         (
             "binary",
             Json::object([
@@ -972,8 +971,7 @@ fn summarise(suite: &SetupRateSuite, measured: &[MeasuredSlot]) -> Result<Json, 
 
     let cpu = cpu_summary(suite, measured)?;
     let pools: Vec<PoolSummary> = measured.iter().filter_map(|s| s.pool.clone()).collect();
-    let profiles: Vec<ProfileSummary> =
-        measured.iter().filter_map(|s| s.profile.clone()).collect();
+    let profiles: Vec<ProfileSummary> = measured.iter().filter_map(|s| s.profile.clone()).collect();
     let rows: usize = measured.iter().map(|slot| slot.rows.len()).sum();
 
     Ok(aggregate::summary_document(
@@ -1030,7 +1028,8 @@ fn cpu_summary(suite: &SetupRateSuite, measured: &[MeasuredSlot]) -> Result<Json
     }
     let mut missing = None;
     let blocks = collect_blocks(suite, measured, |slot| {
-        slot.task_clock_ms.map_or_else(Vec::new, |ms| vec![ms * 1000.0 / per_slot])
+        slot.task_clock_ms
+            .map_or_else(Vec::new, |ms| vec![ms * 1000.0 / per_slot])
     });
     for slot in measured {
         if slot.task_clock_ms.is_none() {
@@ -1038,15 +1037,13 @@ fn cpu_summary(suite: &SetupRateSuite, measured: &[MeasuredSlot]) -> Result<Json
         }
     }
     if let Some(name) = missing {
-        return Err(format!("{name} has no task-clock, so CPU cannot be attributed"));
+        return Err(format!(
+            "{name} has no task-clock, so CPU cannot be attributed"
+        ));
     }
     // One perf record per slot, two slots per side per block.
-    let cell = aggregate::paired_cell(
-        &blocks,
-        2,
-        aggregate::SETUP_RATE_CPU_SEED,
-        "setup-rate:cpu",
-    )?;
+    let cell =
+        aggregate::paired_cell(&blocks, 2, aggregate::SETUP_RATE_CPU_SEED, "setup-rate:cpu")?;
     Ok(aggregate::paired_cell_json(
         &cell,
         Some("microsecondsPerConnection"),
@@ -1127,10 +1124,7 @@ fn environment_json(
         (
             "coverModes",
             Json::object([
-                (
-                    "baseline",
-                    Json::string(suite.baseline_cover_mode.as_str()),
-                ),
+                ("baseline", Json::string(suite.baseline_cover_mode.as_str())),
                 (
                     "candidate",
                     Json::string(suite.candidate_cover_mode.as_str()),
@@ -1171,7 +1165,6 @@ fn cover_network_json(suite: &SetupRateSuite, cover_target: &str) -> Json {
         ),
     ])
 }
-
 
 /// The host-exclusive lock attestation.
 ///
@@ -1221,13 +1214,11 @@ mod tests {
         run.write_new("environment.json", "{\"phase\":\"running\"}\n")
             .unwrap();
 
-        let error = publish_complete_setup_rate(
-            &run,
-            "{\"phase\":\"complete\"}\n",
-            "run-1",
-            || Err("cover-leg restoration was not verified".to_owned()),
-        )
-        .unwrap_err();
+        let error =
+            publish_complete_setup_rate(&run, "{\"phase\":\"complete\"}\n", "run-1", || {
+                Err("cover-leg restoration was not verified".to_owned())
+            })
+            .unwrap_err();
 
         assert!(error.contains("restoration was not verified"), "{error}");
         assert!(
@@ -1236,19 +1227,14 @@ mod tests {
         );
 
         let mut checked = false;
-        publish_complete_setup_rate(
-            &run,
-            "{\"phase\":\"complete\"}\n",
-            "run-1",
-            || {
-                assert!(
-                    !run.join("completion.json").exists(),
-                    "the marker must not precede the final restoration check"
-                );
-                checked = true;
-                Ok(())
-            },
-        )
+        publish_complete_setup_rate(&run, "{\"phase\":\"complete\"}\n", "run-1", || {
+            assert!(
+                !run.join("completion.json").exists(),
+                "the marker must not precede the final restoration check"
+            );
+            checked = true;
+            Ok(())
+        })
         .unwrap();
         assert!(checked, "the final restoration check must run");
         assert!(run.join("completion.json").is_file());
@@ -1298,7 +1284,11 @@ mod tests {
 
         let mut bad = suite();
         bad.abba_start = "rust".to_owned();
-        assert!(validate(&bad).unwrap_err().contains("baseline or candidate"));
+        assert!(
+            validate(&bad)
+                .unwrap_err()
+                .contains("baseline or candidate")
+        );
 
         let mut bad = suite();
         bad.cover_netem_rtt_ms = Some(0);
@@ -1325,7 +1315,10 @@ mod tests {
         let high: u16 = fields.next().unwrap().parse().unwrap();
 
         let error = check_ephemeral_range(low, 4).unwrap_err();
-        assert!(error.contains("overlaps the Linux ephemeral range"), "{error}");
+        assert!(
+            error.contains("overlaps the Linux ephemeral range"),
+            "{error}"
+        );
         // Straddling the lower edge from below also overlaps.
         assert!(check_ephemeral_range(low - 2, 8).is_err());
         // Entirely below and entirely above are both fine.
@@ -1459,10 +1452,7 @@ mod tests {
         // candidate, so candidate/baseline is exactly 0.5.
         assert!(cpu.contains("\"baseline\": 50000.0"), "{cpu}");
         assert!(cpu.contains("\"candidate\": 25000.0"), "{cpu}");
-        assert!(
-            cpu.contains("\"medianCandidateVsBaseline\": 0.5"),
-            "{cpu}"
-        );
+        assert!(cpu.contains("\"medianCandidateVsBaseline\": 0.5"), "{cpu}");
     }
 
     #[test]
@@ -1511,10 +1501,7 @@ mod tests {
         // the candidate 1 s/GiB, and candidate/baseline is exactly 0.5.
         assert!(cpu.contains("\"baseline\": 2.0"), "{cpu}");
         assert!(cpu.contains("\"candidate\": 1.0"), "{cpu}");
-        assert!(
-            cpu.contains("\"medianCandidateVsBaseline\": 0.5"),
-            "{cpu}"
-        );
+        assert!(cpu.contains("\"medianCandidateVsBaseline\": 0.5"), "{cpu}");
     }
 
     /// The environment keeps schema 2 and its field names, and says plainly that
@@ -1590,7 +1577,6 @@ mod tests {
         assert!(rendered.contains("\"candidate\": \"prebuilt\""));
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // The fallback A/B suite
@@ -1922,8 +1908,11 @@ fn measure_fallback_slot(
             let raw = std::fs::read_to_string(&csv)
                 .map_err(|error| format!("could not read {}: {error}", csv.display()))?;
             let record = attribution::parse_csv(&raw, &attribution::REQUIRED_EVENTS)?;
-            std::fs::write(slot_dir.join("perf.json"), record.to_json().to_python_json())
-                .map_err(|error| format!("could not write the slot perf record: {error}"))?;
+            std::fs::write(
+                slot_dir.join("perf.json"),
+                record.to_json().to_python_json(),
+            )
+            .map_err(|error| format!("could not write the slot perf record: {error}"))?;
             Some(record.task_clock_milliseconds)
         }
     };
@@ -2059,10 +2048,7 @@ fn write_fallback_identity(
     let document = Json::object([
         ("block", int(entry.block)),
         ("position", int(entry.position)),
-        (
-            "implementation",
-            Json::string(entry.implementation.clone()),
-        ),
+        ("implementation", Json::string(entry.implementation.clone())),
         (
             "binary",
             Json::object([
@@ -2109,7 +2095,10 @@ fn summarise_fallback(suite: &FallbackSuite, measured: &[FallbackSlot]) -> Resul
         if slot.rows.iter().any(|row| {
             row.failed > 0
                 || row.requests != row.concurrency
-                || row.bytes_observed.iter().any(|bytes| *bytes != expected_bytes)
+                || row
+                    .bytes_observed
+                    .iter()
+                    .any(|bytes| *bytes != expected_bytes)
         }) {
             return Err(format!("corrupt sample: {}", slot.slot.directory_name()));
         }
@@ -2277,10 +2266,7 @@ fn fallback_environment_json(
             Json::object([
                 ("splice", Json::Bool(suite.relay.splice)),
                 ("pipePool", Json::Bool(suite.relay.pipe_pool)),
-                (
-                    "bufferKiB",
-                    Json::Int(i64::from(suite.relay.buffer_kib)),
-                ),
+                ("bufferKiB", Json::Int(i64::from(suite.relay.buffer_kib))),
             ]),
         ),
         ("baseline", binary_json(baseline, baseline_build_id)),

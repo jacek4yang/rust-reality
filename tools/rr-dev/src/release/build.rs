@@ -101,7 +101,10 @@ fn run_cargo(
         .args(["--workspace", "--release", "--locked"])
         .args(target_args.iter().copied())
         .current_dir(repo)
-        .env("CARGO_TARGET_DIR", target_dir.to_string_lossy().into_owned())
+        .env(
+            "CARGO_TARGET_DIR",
+            target_dir.to_string_lossy().into_owned(),
+        )
         .env("RUSTFLAGS", rustflags)
         .env("RUST_REALITY_GIT_COMMIT", commit)
         .env("SOURCE_DATE_EPOCH", epoch)

@@ -34,8 +34,7 @@ use crate::{
         evidence::{Publication, RunDirectory},
         host_lock::HostLock,
         identity::{self, Kind},
-        origin_go,
-        origin_tls,
+        origin_go, origin_tls,
         plan::{self, PortLayout, Slot},
         process::Child,
         slot::{self, Attribution},
@@ -326,7 +325,12 @@ fn slot_configuration(
             ports.server,
             cover_target,
             "localhost",
-            Some(&inputs.run.slot_directory(&entry.directory_name())?.join("generate.log")),
+            Some(
+                &inputs
+                    .run
+                    .slot_directory(&entry.directory_name())?
+                    .join("generate.log"),
+            ),
         )?;
         let reality = RealityIdentity {
             uuid: rust_identity.uuid.clone(),
@@ -438,14 +442,8 @@ fn measure_slot(plan: &ComparatorPlan, inputs: &SlotInputs<'_>) -> Result<Measur
     std::fs::write(slot_dir.join("client-config.json"), &client_config)
         .map_err(|error| format!("could not archive the client config: {error}"))?;
 
-    let (mut server, mut client) = launch_slot(
-        plan,
-        inputs,
-        &name,
-        &slot_dir,
-        &server_path,
-        &client_path,
-    )?;
+    let (mut server, mut client) =
+        launch_slot(plan, inputs, &name, &slot_dir, &server_path, &client_path)?;
     let server_pid = server.pid();
     slot::verify_running_image(server_pid, expected_sha, &entry.implementation)?;
 
@@ -514,10 +512,7 @@ fn write_slot_identity(
     let document = Json::object([
         ("block", int(entry.block)),
         ("position", int(entry.position)),
-        (
-            "implementation",
-            Json::string(entry.implementation.clone()),
-        ),
+        ("implementation", Json::string(entry.implementation.clone())),
         (
             "process",
             Json::object([("serverPid", Json::Int(i64::from(server_pid)))]),

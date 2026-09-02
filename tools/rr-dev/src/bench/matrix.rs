@@ -437,48 +437,53 @@ pub fn run_workload(
 ) -> Result<WorkloadOutcome, String> {
     let expected = payload_mib * 1024 * 1024;
     let started = Instant::now();
-    let results: Vec<Transfer> = std::thread::scope(|scope| {
-        let mut handles = Vec::new();
-        for _ in 0..concurrency {
-            match scenario {
-                Scenario::FramedDownload => {
-                    handles.push(scope.spawn(move || curl_download(endpoints, payload_mib, "http")));
-                }
-                Scenario::DirectDownload => {
-                    handles
-                        .push(scope.spawn(move || curl_download(endpoints, payload_mib, "https")));
-                }
-                Scenario::FramedUpload => {
-                    handles.push(scope.spawn(move || {
-                        curl_upload(endpoints, payload_mib, "http", payload_dir)
-                    }));
-                }
-                Scenario::DirectUpload => {
-                    handles.push(scope.spawn(move || {
-                        curl_upload(endpoints, payload_mib, "https", payload_dir)
-                    }));
-                }
-                Scenario::Bidi => {
-                    handles
-                        .push(scope.spawn(move || curl_download(endpoints, payload_mib, "https")));
-                    handles.push(scope.spawn(move || {
-                        curl_upload(endpoints, payload_mib, "https", payload_dir)
-                    }));
-                }
-                Scenario::Fallback => {
-                    handles.push(scope.spawn(move || curl_fallback(endpoints, payload_mib)));
+    let results: Vec<Transfer> =
+        std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for _ in 0..concurrency {
+                match scenario {
+                    Scenario::FramedDownload => {
+                        handles.push(
+                            scope.spawn(move || curl_download(endpoints, payload_mib, "http")),
+                        );
+                    }
+                    Scenario::DirectDownload => {
+                        handles.push(
+                            scope.spawn(move || curl_download(endpoints, payload_mib, "https")),
+                        );
+                    }
+                    Scenario::FramedUpload => {
+                        handles.push(scope.spawn(move || {
+                            curl_upload(endpoints, payload_mib, "http", payload_dir)
+                        }));
+                    }
+                    Scenario::DirectUpload => {
+                        handles.push(scope.spawn(move || {
+                            curl_upload(endpoints, payload_mib, "https", payload_dir)
+                        }));
+                    }
+                    Scenario::Bidi => {
+                        handles.push(
+                            scope.spawn(move || curl_download(endpoints, payload_mib, "https")),
+                        );
+                        handles.push(scope.spawn(move || {
+                            curl_upload(endpoints, payload_mib, "https", payload_dir)
+                        }));
+                    }
+                    Scenario::Fallback => {
+                        handles.push(scope.spawn(move || curl_fallback(endpoints, payload_mib)));
+                    }
                 }
             }
-        }
-        handles
-            .into_iter()
-            .map(|handle| {
-                handle
-                    .join()
-                    .unwrap_or_else(|_| Err("transfer thread panicked".to_owned()))
-            })
-            .collect()
-    });
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .unwrap_or_else(|_| Err("transfer thread panicked".to_owned()))
+                })
+                .collect()
+        });
     let wall_seconds = started.elapsed().as_secs_f64();
 
     let mut per_request = Vec::with_capacity(results.len());
@@ -542,17 +547,12 @@ impl SampleRecord {
         Json::object([
             ("schemaVersion", Json::Int(1)),
             ("commit", Json::string(self.commit.clone())),
-            (
-                "implementation",
-                Json::string(self.implementation.clone()),
-            ),
+            ("implementation", Json::string(self.implementation.clone())),
             ("scenario", Json::string(self.cell.scenario.as_str())),
             ("direction", Json::string(self.cell.scenario.direction())),
             (
                 "payloadBytes",
-                Json::Int(
-                    i64::try_from(self.cell.payload_mib * 1024 * 1024).unwrap_or(i64::MAX),
-                ),
+                Json::Int(i64::try_from(self.cell.payload_mib * 1024 * 1024).unwrap_or(i64::MAX)),
             ),
             (
                 "concurrency",
@@ -581,9 +581,7 @@ impl SampleRecord {
             ("invalid", Json::Bool(self.invalid)),
             (
                 "invalidReason",
-                self.invalid_reason
-                    .clone()
-                    .map_or(Json::Null, Json::string),
+                self.invalid_reason.clone().map_or(Json::Null, Json::string),
             ),
         ])
     }
@@ -627,7 +625,10 @@ mod tests {
         );
         for scenario in SCENARIOS {
             assert_eq!(
-                cells.iter().filter(|cell| cell.scenario == scenario).count(),
+                cells
+                    .iter()
+                    .filter(|cell| cell.scenario == scenario)
+                    .count(),
                 8
             );
         }
@@ -651,9 +652,9 @@ mod tests {
         context.exclude = vec!["*:512:32".to_owned()];
         let cells = context.cells();
         assert!(
-            cells
-                .iter()
-                .all(|cell| cell.key().starts_with("direct-") || cell.key().starts_with("fallback:"))
+            cells.iter().all(
+                |cell| cell.key().starts_with("direct-") || cell.key().starts_with("fallback:")
+            )
         );
         assert!(
             !cells.iter().any(|cell| cell.key().ends_with(":512:32")),
@@ -1036,7 +1037,15 @@ fn start_topology(
             )?;
             (xray_keys.public.clone(), xray_identity.clone())
         } else {
-            start_rust_pair(suite, workspace, binaries, label, &ports, plain, &mut children)?
+            start_rust_pair(
+                suite,
+                workspace,
+                binaries,
+                label,
+                &ports,
+                plain,
+                &mut children,
+            )?
         };
 
         let client_config =
@@ -1120,8 +1129,8 @@ fn start_origins(
                 payload_dir: workspace.path().to_path_buf(),
                 put_log: workspace.join(put_log),
                 tls,
-            access_log: None,
-            alpn: None,
+                access_log: None,
+                alpn: None,
             },
         )?);
     }
@@ -1267,6 +1276,10 @@ struct CellResult {
     records: Vec<SampleRecord>,
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "canonical formatting expands it; the body is one sequence"
+)]
 /// Runs the matrix end to end.
 ///
 /// # Errors
@@ -1360,7 +1373,14 @@ pub fn run(suite: &MatrixSuite) -> Result<MatrixOutcome, String> {
     let summary = summarise(suite, &results, &integrity, &repository.head, &binaries);
     let summary_json = summary.document.to_python_json();
     run.write_new("summary.json", &summary_json)?;
-    let environment = environment_json(suite, &repository, &binaries, port_base, port_count, &budget);
+    let environment = environment_json(
+        suite,
+        &repository,
+        &binaries,
+        port_base,
+        port_count,
+        &budget,
+    );
     run.write_new("environment.json", &environment.to_python_json())?;
     // A completion marker is the final authority boundary. Stop every process
     // capable of mutating run-adjacent logs before crossing it, then require all
@@ -1425,7 +1445,13 @@ fn page_size() -> u64 {
 /// The incremental readers a run keeps over the origin and server logs.
 struct Trackers {
     put: std::collections::BTreeMap<&'static str, crate::bench::guards::LineTracker>,
-    logs: std::collections::BTreeMap<String, (crate::bench::guards::LineTracker, crate::bench::guards::LineTracker)>,
+    logs: std::collections::BTreeMap<
+        String,
+        (
+            crate::bench::guards::LineTracker,
+            crate::bench::guards::LineTracker,
+        ),
+    >,
 }
 
 impl Trackers {
@@ -1909,11 +1935,12 @@ fn summarise_cell(suite: &MatrixSuite, result: &CellResult) -> Json {
         per_impl.push((label.to_owned(), Json::object(entry)));
     }
 
-    let ratio = |numerator: &str, denominator: &str| {
-        match (medians.get(numerator), medians.get(denominator)) {
-            (Some(top), Some(bottom)) if *bottom != 0.0 => Json::Float(top / bottom),
-            _ => Json::Null,
-        }
+    let ratio = |numerator: &str, denominator: &str| match (
+        medians.get(numerator),
+        medians.get(denominator),
+    ) {
+        (Some(top), Some(bottom)) if *bottom != 0.0 => Json::Float(top / bottom),
+        _ => Json::Null,
     };
     Json::object([
         ("scenario", Json::string(result.cell.scenario.as_str())),
@@ -2058,41 +2085,38 @@ fn plan_json(suite: &MatrixSuite) -> Json {
         )
     };
     Json::object([
-                (
-                    "payloadsMiB",
-                    Json::string(
-                        suite
-                            .plan
-                            .payloads_mib
-                            .iter()
-                            .map(u64::to_string)
-                            .collect::<Vec<_>>()
-                            .join(" "),
-                    ),
-                ),
-                ("concurrencies", list(&suite.plan.concurrencies)),
-                ("largeConcurrencies", list(&suite.plan.large_concurrencies)),
-                (
-                    "largePayloadMiB",
-                    Json::Int(i64::try_from(suite.plan.large_payload_mib).unwrap_or(i64::MAX)),
-                ),
-                (
-                    "samples",
-                    Json::Int(i64::try_from(suite.samples).unwrap_or(i64::MAX)),
-                ),
-                (
-                    "samplesLarge",
-                    Json::Int(i64::try_from(suite.samples_large).unwrap_or(i64::MAX)),
-                ),
-                (
-                    "integrityMiB",
-                    Json::Int(i64::try_from(suite.integrity_mib).unwrap_or(i64::MAX)),
-                ),
-                ("abbaStart", Json::string(suite.abba_start.clone())),
-                (
-                    "cells",
-                    Json::string(suite.plan.include.join(" ")),
-                ),
-                ("skip", Json::string(suite.plan.exclude.join(" "))),
+        (
+            "payloadsMiB",
+            Json::string(
+                suite
+                    .plan
+                    .payloads_mib
+                    .iter()
+                    .map(u64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ),
+        ),
+        ("concurrencies", list(&suite.plan.concurrencies)),
+        ("largeConcurrencies", list(&suite.plan.large_concurrencies)),
+        (
+            "largePayloadMiB",
+            Json::Int(i64::try_from(suite.plan.large_payload_mib).unwrap_or(i64::MAX)),
+        ),
+        (
+            "samples",
+            Json::Int(i64::try_from(suite.samples).unwrap_or(i64::MAX)),
+        ),
+        (
+            "samplesLarge",
+            Json::Int(i64::try_from(suite.samples_large).unwrap_or(i64::MAX)),
+        ),
+        (
+            "integrityMiB",
+            Json::Int(i64::try_from(suite.integrity_mib).unwrap_or(i64::MAX)),
+        ),
+        ("abbaStart", Json::string(suite.abba_start.clone())),
+        ("cells", Json::string(suite.plan.include.join(" "))),
+        ("skip", Json::string(suite.plan.exclude.join(" "))),
     ])
 }

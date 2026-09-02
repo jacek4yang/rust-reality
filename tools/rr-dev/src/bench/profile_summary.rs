@@ -1339,9 +1339,7 @@ pub fn cross_class_markdown(
     out.push_str(
         "| class | mode | pass | idle RSS MiB | assets RSS MiB | churn c8 conn/s (p99 ms) | churn c32 conn/s (p99 ms) | 512MiB c1 MiB/s | 512MiB c32 MiB/s | clean lvl (default) | clean lvl (tuned) | first pressure (tuned) | oom | peak cgroup MiB | peak FDs |\n",
     );
-    out.push_str(
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n",
-    );
+    out.push_str("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
     for (_, outcome) in class_rows {
         let rendered = outcome.json.to_python_json();
         let Ok(value) = json_in::parse(&rendered) else {

@@ -61,7 +61,11 @@ impl std::fmt::Display for Error {
             Self::Schema(reason) => write!(formatter, "{reason}"),
             Self::ListFailed(reason) => write!(formatter, "could not list tests: {reason}"),
             Self::MissingTests(missing) => {
-                write!(formatter, "active-probe tests missing:\n{}", missing.join("\n"))
+                write!(
+                    formatter,
+                    "active-probe tests missing:\n{}",
+                    missing.join("\n")
+                )
             }
         }
     }
@@ -83,7 +87,9 @@ pub fn load(repo: &Path) -> Result<Vec<Case>, Error> {
     })?;
     let value = json_in::parse(&manifest_text).map_err(Error::Schema)?;
 
-    let schema = value.optional("schemaVersion").and_then(|v| v.as_int("schemaVersion").ok());
+    let schema = value
+        .optional("schemaVersion")
+        .and_then(|v| v.as_int("schemaVersion").ok());
     if schema != Some(1) {
         return Err(Error::Schema("schemaVersion must be 1".to_owned()));
     }
@@ -97,7 +103,11 @@ pub fn load(repo: &Path) -> Result<Vec<Case>, Error> {
         let test = required_str(case, "test")?;
         let observation = required_str(case, "observation")?;
         ids.push(id.clone());
-        parsed.push(Case { id, test, observation });
+        parsed.push(Case {
+            id,
+            test,
+            observation,
+        });
     }
 
     let required_ids: Vec<String> = required
@@ -140,14 +150,22 @@ pub fn check(repo: &Path) -> Result<String, Error> {
     if !missing.is_empty() {
         return Err(Error::MissingTests(missing));
     }
-    Ok(format!("active-probe manifest: PASS ({} cases)", cases.len()))
+    Ok(format!(
+        "active-probe manifest: PASS ({} cases)",
+        cases.len()
+    ))
 }
 
 /// Lists the library tests via `cargo test --lib ... -- --list`.
 fn list_library_tests(repo: &Path) -> Result<BTreeSet<String>, Error> {
     let outcome = Tool::new("cargo")
         .args([
-            "test", "--lib", "--all-features", "--locked", "--", "--list",
+            "test",
+            "--lib",
+            "--all-features",
+            "--locked",
+            "--",
+            "--list",
         ])
         .current_dir(repo)
         .probe()

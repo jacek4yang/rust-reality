@@ -317,17 +317,17 @@ pub fn validate(args: &NetemArgs) -> Result<NetemReport, String> {
     }
 
     let data_passed = all_errors.is_empty() && missing.is_empty() && unexpected.is_empty();
-    let (performance_report, performance_errors, performance_verdict) =
-        if args.evaluate_performance {
-            if data_passed {
-                let (report, errors, verdict) = mechanism_evaluation(&mechanism_profiles, args);
-                (Some(report), errors, verdict)
-            } else {
-                (None, Vec::new(), "INVALID".to_owned())
-            }
+    let (performance_report, performance_errors, performance_verdict) = if args.evaluate_performance
+    {
+        if data_passed {
+            let (report, errors, verdict) = mechanism_evaluation(&mechanism_profiles, args);
+            (Some(report), errors, verdict)
         } else {
-            (None, Vec::new(), "NOT_EVALUATED".to_owned())
-        };
+            (None, Vec::new(), "INVALID".to_owned())
+        }
+    } else {
+        (None, Vec::new(), "NOT_EVALUATED".to_owned())
+    };
     let passed = data_passed && (!args.evaluate_performance || performance_verdict == "PASS");
 
     let report = Json::object([
@@ -427,9 +427,7 @@ fn mechanism_evaluation(
 ) -> (Json, Vec<String>, String) {
     let mut errors: Vec<String> = Vec::new();
     if args.samples < 6 || args.samples % 2 != 0 {
-        errors.push(
-            "mechanism evaluation requires an even samples count of at least 6".to_owned(),
-        );
+        errors.push("mechanism evaluation requires an even samples count of at least 6".to_owned());
     }
     let expected_rtts: BTreeSet<i64> = args.rtts.iter().copied().collect();
     let expected_losses: BTreeSet<String> = args.losses.iter().copied().map(format_loss).collect();
@@ -518,10 +516,7 @@ fn mechanism_evaluation(
                             ("warmP50Ms", Json::Float(warm_ms)),
                             ("coldP50Ms", Json::Float(cold_ms)),
                             ("removedHandshakeMs", Json::Float(delta_ms)),
-                            (
-                                "removedHandshakePerMeasuredRtt",
-                                Json::Float(normalized),
-                            ),
+                            ("removedHandshakePerMeasuredRtt", Json::Float(normalized)),
                         ]));
                     }
                     Err(message) => {
@@ -548,8 +543,7 @@ fn mechanism_evaluation(
 
             if let Some(point) = point {
                 if point <= 0.0 {
-                    cell_errors
-                        .push("cold-minus-warm latency delta is not positive".to_owned());
+                    cell_errors.push("cold-minus-warm latency delta is not positive".to_owned());
                 }
                 if !(0.65..=1.35).contains(&point) {
                     cell_errors.push(
@@ -561,9 +555,8 @@ fn mechanism_evaluation(
                     && let Some(interval) = interval
                     && interval[0] <= 0.5
                 {
-                    cell_errors.push(
-                        "bootstrap lower bound does not exceed 0.5 measured RTT".to_owned(),
-                    );
+                    cell_errors
+                        .push("bootstrap lower bound does not exceed 0.5 measured RTT".to_owned());
                 }
             }
 
@@ -661,10 +654,7 @@ fn mechanism_report(verdict: &str, cells: &[Json], errors: &[String]) -> Json {
                 (
                     "bootstrapLowerBoundAboveMeasuredRtt",
                     Json::object([
-                        (
-                            "rttsMs",
-                            Json::Array(vec![Json::Int(100), Json::Int(200)]),
-                        ),
+                        ("rttsMs", Json::Array(vec![Json::Int(100), Json::Int(200)])),
                         ("exclusiveMinimum", Json::Float(0.5)),
                     ]),
                 ),
@@ -708,10 +698,7 @@ fn block_medians_ms(
     Ok((warm_ms, cold_ms))
 }
 
-fn median_p50_ms(
-    rows: &BTreeMap<i64, &json_in::Value>,
-    indexes: &[i64; 2],
-) -> Result<f64, String> {
+fn median_p50_ms(rows: &BTreeMap<i64, &json_in::Value>, indexes: &[i64; 2]) -> Result<f64, String> {
     let mut values = Vec::with_capacity(2);
     for index in indexes {
         let row = rows
@@ -1013,8 +1000,7 @@ mod tests {
 
     #[test]
     fn mechanism_evaluation_passes_when_removed_rtt_fraction_is_one() {
-        let root =
-            std::env::temp_dir().join(format!("rr-netem-mech-pass-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("rr-netem-mech-pass-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let (profiles, pool) = build_mechanism_fixture(&root, 1.0);
@@ -1045,8 +1031,7 @@ mod tests {
 
     #[test]
     fn mechanism_evaluation_fails_when_removed_rtt_fraction_is_too_small() {
-        let root =
-            std::env::temp_dir().join(format!("rr-netem-mech-fail-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("rr-netem-mech-fail-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let (profiles, pool) = build_mechanism_fixture(&root, 0.2);

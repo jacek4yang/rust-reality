@@ -3710,7 +3710,7 @@ fn run_deploy_plan(
             expected_version,
             source_commit,
         )
-            .and_then(|artifact| deploy::plan::plan_stage(&snapshot, &artifact)),
+        .and_then(|artifact| deploy::plan::plan_stage(&snapshot, &artifact)),
         DeployPlanOperation::Cutover => deploy_artifact(
             operation,
             release_id,
@@ -3720,7 +3720,7 @@ fn run_deploy_plan(
             expected_version,
             source_commit,
         )
-            .and_then(|artifact| deploy::plan::plan_cutover(&snapshot, &artifact)),
+        .and_then(|artifact| deploy::plan::plan_cutover(&snapshot, &artifact)),
         DeployPlanOperation::Rollback => deploy::plan::plan_rollback(&snapshot),
         DeployPlanOperation::Promote => release_id
             .ok_or_else(|| "--release-id is required for promote".to_owned())
@@ -3847,12 +3847,7 @@ fn run_deploy_apply(
                     .ok_or_else(|| "--baseline-binary is required for bootstrap".to_owned())?;
                 let baseline_config = baseline_config
                     .ok_or_else(|| "--baseline-config is required for bootstrap".to_owned())?;
-                deploy::plan::plan_bootstrap(
-                    &before,
-                    release_id,
-                    baseline_binary,
-                    baseline_config,
-                )
+                deploy::plan::plan_bootstrap(&before, release_id, baseline_binary, baseline_config)
             }),
         DeployPlanOperation::Stage => deploy::plan::plan_stage(
             &before,
@@ -3911,17 +3906,13 @@ fn run_deploy_apply(
 #[allow(clippy::too_many_lines)]
 fn run_deploy(repo: &Path, command: DeployCommand) -> ExitCode {
     match command {
-        DeployCommand::CanaryPlan { plan, output } => {
-            run_canary_plan(plan, output.as_deref())
-        }
+        DeployCommand::CanaryPlan { plan, output } => run_canary_plan(plan, output.as_deref()),
         DeployCommand::CanaryRun {
             plan,
             mutate_remote,
             rollback_on_failure,
         } => run_canary_live(plan, mutate_remote, rollback_on_failure),
-        DeployCommand::Inspect { target, output } => {
-            run_deploy_inspect(target, output.as_deref())
-        }
+        DeployCommand::Inspect { target, output } => run_deploy_inspect(target, output.as_deref()),
         DeployCommand::Plan {
             operation,
             target,

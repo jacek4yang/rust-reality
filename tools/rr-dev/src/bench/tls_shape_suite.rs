@@ -658,11 +658,7 @@ fn proc_children(pid: u32) -> Vec<(u32, Option<String>)> {
         .collect()
 }
 
-fn signal_exact(
-    pid: u32,
-    starttime: Option<&str>,
-    sudo: Option<&Path>,
-) -> Result<(), String> {
+fn signal_exact(pid: u32, starttime: Option<&str>, sudo: Option<&Path>) -> Result<(), String> {
     if starttime.is_some() && crate::bench::process::proc_starttime(pid).as_deref() != starttime {
         return Err(format!(
             "capture process {pid} identity changed before SIGINT"

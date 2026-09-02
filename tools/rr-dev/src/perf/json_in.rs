@@ -11,7 +11,7 @@
 //! and a parse-then-reformat round trip through `f64` would be the obvious place to
 //! lose a digit.
 
-use std::collections::{btree_map::Entry, BTreeMap};
+use std::collections::{BTreeMap, btree_map::Entry};
 
 /// Maximum number of recursively nested arrays and objects in one document.
 ///
@@ -140,9 +140,7 @@ impl Value {
     pub fn as_f64(&self, path: &str) -> Field<f64> {
         match self {
             Self::Number(text) => {
-                let value: f64 = text
-                    .parse()
-                    .map_err(|_| missing(path, "a finite number"))?;
+                let value: f64 = text.parse().map_err(|_| missing(path, "a finite number"))?;
                 if value.is_finite() {
                     Ok(value)
                 } else {
@@ -733,7 +731,11 @@ mod tests {
 
     #[test]
     fn nesting_depth_is_bounded() {
-        let accepted = format!("{}0{}", "[".repeat(MAX_NESTING_DEPTH), "]".repeat(MAX_NESTING_DEPTH));
+        let accepted = format!(
+            "{}0{}",
+            "[".repeat(MAX_NESTING_DEPTH),
+            "]".repeat(MAX_NESTING_DEPTH)
+        );
         assert!(parse(&accepted).is_ok());
         let refused = format!(
             "{}0{}",

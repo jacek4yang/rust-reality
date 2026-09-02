@@ -219,7 +219,10 @@ pub fn run(plan: &Plan) -> Result<String, String> {
     }
 
     let identity = archive(&binary.path, &run_dir, &binary.sha256, &plan.commit)?;
-    run_dir.write_new("freeze.json", &document(&identity, &plan.repo).to_python_json())?;
+    run_dir.write_new(
+        "freeze.json",
+        &document(&identity, &plan.repo).to_python_json(),
+    )?;
     run_dir.write_new(
         "SHA256SUMS",
         &format!("{}  binary/{BINARY_NAME}\n", identity.sha256),

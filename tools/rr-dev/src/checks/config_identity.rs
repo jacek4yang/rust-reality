@@ -107,7 +107,10 @@ pub fn report(config_path: &Path) -> Result<Json, String> {
                         ("present", Json::Bool(true)),
                         ("sha256", Json::string(field.sha256.clone())),
                         ("kind", Json::string(field.kind.clone())),
-                        ("count", Json::Int(i64::try_from(field.count).unwrap_or(i64::MAX))),
+                        (
+                            "count",
+                            Json::Int(i64::try_from(field.count).unwrap_or(i64::MAX)),
+                        ),
                     ]),
                 )
             })
@@ -250,7 +253,10 @@ mod tests {
 
         assert!(!fields.is_empty(), "identity fields must be recorded");
         let encoded = format!("{fields:?}");
-        assert!(!encoded.contains(secret), "no raw secret may survive: {encoded}");
+        assert!(
+            !encoded.contains(secret),
+            "no raw secret may survive: {encoded}"
+        );
         for field in fields.values() {
             assert_eq!(field.sha256.len(), 64, "every field carries a full SHA-256");
         }
@@ -260,7 +266,11 @@ mod tests {
     fn the_fingerprint_is_stable_and_key_order_independent() {
         let a = json_in::parse(r#"{"port":443,"flow":"x"}"#).unwrap();
         let b = json_in::parse(r#"{"flow":"x","port":443}"#).unwrap();
-        assert_eq!(fingerprint(&a), fingerprint(&b), "sorted-key canonicalisation");
+        assert_eq!(
+            fingerprint(&a),
+            fingerprint(&b),
+            "sorted-key canonicalisation"
+        );
     }
 
     #[test]

@@ -353,11 +353,7 @@ mod tests {
     #[test]
     fn a_failing_workload_reports_the_child_diagnostic() {
         // `false` exits 1 with no output; the message must still name the exit.
-        let error = run_workload(
-            &["false".to_owned()],
-            &std::env::temp_dir(),
-        )
-        .unwrap_err();
+        let error = run_workload(&["false".to_owned()], &std::env::temp_dir()).unwrap_err();
         assert!(error.contains("the workload exited"), "{error}");
 
         let error = run_workload(&[], &std::env::temp_dir()).unwrap_err();
@@ -366,8 +362,7 @@ mod tests {
 
     #[test]
     fn a_successful_workload_is_accepted() {
-        run_workload(&["true".to_owned()], &std::env::temp_dir())
-            .expect("a zero exit is success");
+        run_workload(&["true".to_owned()], &std::env::temp_dir()).expect("a zero exit is success");
     }
 
     #[test]
@@ -383,7 +378,11 @@ mod tests {
         let (program, args) = strace_command(
             Path::new("/out/slot/strace.txt"),
             Path::new("/bin/rust-reality"),
-            &["serve".to_owned(), "--config".to_owned(), "/w/s.json".to_owned()],
+            &[
+                "serve".to_owned(),
+                "--config".to_owned(),
+                "/w/s.json".to_owned(),
+            ],
         );
         assert_eq!(program, "strace");
         assert_eq!(
@@ -415,6 +414,9 @@ mod tests {
             std::time::Duration::from_millis(60),
         )
         .unwrap_err();
-        assert!(error.contains("cannot identify the straced server"), "{error}");
+        assert!(
+            error.contains("cannot identify the straced server"),
+            "{error}"
+        );
     }
 }

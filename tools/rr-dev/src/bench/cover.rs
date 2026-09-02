@@ -96,17 +96,19 @@ impl CoverMode {
         let flag = json_in::Value::Bool;
         match (self, role) {
             (Self::Default, _) => None,
-            (Self::Cold, Role::Baseline) => {
-                Some(object(vec![("enabled", flag(true)), ("warmTcp", flag(false))]))
-            }
+            (Self::Cold, Role::Baseline) => Some(object(vec![
+                ("enabled", flag(true)),
+                ("warmTcp", flag(false)),
+            ])),
             (Self::Cold, Role::Candidate) => Some(object(vec![
                 ("enabled", flag(true)),
                 ("warmTcp", flag(false)),
                 ("prebuiltProfiles", flag(false)),
             ])),
-            (Self::Warm, Role::Baseline) => {
-                Some(object(vec![("enabled", flag(true)), ("warmTcp", flag(true))]))
-            }
+            (Self::Warm, Role::Baseline) => Some(object(vec![
+                ("enabled", flag(true)),
+                ("warmTcp", flag(true)),
+            ])),
             (Self::Warm, Role::Candidate) => Some(object(vec![
                 ("enabled", flag(true)),
                 ("warmTcp", flag(true)),
@@ -263,10 +265,7 @@ fn single_record(log: &str, event: &str) -> Result<json_in::Value, String> {
         }
     }
     let [record] = found.as_slice() else {
-        return Err(format!(
-            "expected one {event}, found {}",
-            found.len()
-        ));
+        return Err(format!("expected one {event}, found {}", found.len()));
     };
     Ok(record.clone())
 }

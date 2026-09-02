@@ -99,10 +99,7 @@ impl ThroughputRow {
         Json::object([
             ("block", int(self.block)),
             ("position", int(self.position)),
-            (
-                "implementation",
-                Json::string(self.implementation.clone()),
-            ),
+            ("implementation", Json::string(self.implementation.clone())),
             ("concurrency", int(self.concurrency)),
             ("sampleIndex", int(self.sample_index)),
             ("requests", int(self.requests)),
@@ -473,10 +470,10 @@ mod tests {
             || row.bytes_observed.iter().any(|bytes| *bytes != expected)));
 
         rows[0].bytes_observed = vec![1024];
-        assert!(rows.iter().any(|row| row
-            .bytes_observed
-            .iter()
-            .any(|bytes| *bytes != expected)));
+        assert!(
+            rows.iter()
+                .any(|row| row.bytes_observed.iter().any(|bytes| *bytes != expected))
+        );
 
         rows[0].bytes_observed = vec![expected];
         rows[0].failed = 1;

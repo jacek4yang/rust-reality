@@ -104,9 +104,8 @@ impl RunDirectory {
             ));
         }
         if let Some(parent) = root.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                format!("could not create {}: {error}", parent.display())
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
         }
         make_directory(root)?;
         Ok(Self {
@@ -407,7 +406,9 @@ mod tests {
         let scratch = Scratch::new("write-once");
         let run = RunDirectory::create(&scratch.join("run")).unwrap();
         run.write_new("summary.json", "{}\n").unwrap();
-        let error = run.write_new("summary.json", "{\"tampered\":true}\n").unwrap_err();
+        let error = run
+            .write_new("summary.json", "{\"tampered\":true}\n")
+            .unwrap_err();
         assert!(error.contains("could not create"), "{error}");
         assert_eq!(
             std::fs::read_to_string(run.join("summary.json")).unwrap(),
@@ -452,7 +453,12 @@ mod tests {
 
         let completed = "{\"phase\": \"complete\"}\n";
         let marker = run
-            .publish(Publication::Environment, completed, "run-1", "benchmark-fallback-ab")
+            .publish(
+                Publication::Environment,
+                completed,
+                "run-1",
+                "benchmark-fallback-ab",
+            )
             .unwrap();
 
         assert_eq!(
