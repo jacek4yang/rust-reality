@@ -195,6 +195,22 @@ fn classify_data(path: &str, message: &str) -> Classified {
         classified.help = Some("remove one of the definitions".to_owned());
         return classified;
     }
+    // A name-keyed section reports its own repeat, because a repeated map key
+    // is not a struct field and serde has nothing to say about it. See
+    // `config::node::named`.
+    if let Some(name) = quoted_after(message, "duplicate name `") {
+        let mut classified = Classified::plain(
+            format!("duplicate name `{name}`"),
+            SpanTarget::DuplicateKey {
+                parent: path.to_owned(),
+                name: name.to_owned(),
+            },
+        );
+        classified.label = Some("name defined more than once".to_owned());
+        classified.config_path = non_root_path(path);
+        classified.help = Some("rename one of them: the name is how rules refer to it".to_owned());
+        return classified;
+    }
     if quoted_after(message, "unknown variant `").is_some() {
         let mut classified = Classified::plain(
             format!("invalid value for `{path}`"),

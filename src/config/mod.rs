@@ -4,7 +4,10 @@ mod diagnostic;
 mod generate;
 mod io;
 mod model;
+pub mod node;
+pub mod parse;
 mod schema;
+mod secret;
 mod validate;
 
 pub use diagnostic::Diagnostic;
