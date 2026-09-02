@@ -370,7 +370,7 @@ fn launch_slot(
 ) -> Result<(Child, Child), String> {
     let server_args = if inputs.entry.implementation == "rust" {
         vec![
-            "serve".to_owned(),
+            "run".to_owned(),
             "--config".to_owned(),
             server_path.display().to_string(),
         ]

@@ -20,15 +20,20 @@ use crate::{
 };
 
 /// The client-visible identity fields whose presence and hash are recorded.
+///
+/// These are exactly the values a configured client would have to be told
+/// about again if they changed: where to connect, who it claims to be, and
+/// which cover it fronts. `flow` is not among them any more — this server
+/// speaks Vision and nothing else, so there is no value to drift.
 const IDENTITY_FIELDS: [&str; 8] = [
-    "clients",
-    "flow",
-    "listen",
+    "cover",
+    "id",
+    "listeners",
     "port",
     "privateKey",
     "serverNames",
     "shortIds",
-    "target",
+    "users",
 ];
 
 /// One recorded identity field: present, its content hash, kind and count.
@@ -245,7 +250,7 @@ mod tests {
     fn identity_fields_never_carry_raw_secrets() {
         let secret = "never-emit-this-private-value";
         let document = format!(
-            r#"{{"inbounds":[{{"listen":{{"mode":"ipv4Only","ipv4":"0.0.0.0"}},"port":443,"settings":{{"clients":[{{"id":"{secret}","flow":"xtls-rprx-vision"}}]}},"streamSettings":{{"reality":{{"privateKey":"{secret}","shortIds":["{secret}"],"serverNames":["example.invalid"],"target":"example.invalid:443"}}}}}}]}}"#
+            r#"{{"role":"entry","listeners":[{{"port":443,"ip":"ipv4Only","ipv4":"0.0.0.0"}}],"reality":{{"cover":"example.invalid:443","privateKey":"{secret}","serverNames":["example.invalid"]}},"users":[{{"id":"{secret}","shortIds":["{secret}"]}}],"routing":{{"default":"direct"}}}}"#
         );
         let value = json_in::parse(&document).expect("fixture must parse");
         let mut fields = BTreeMap::new();

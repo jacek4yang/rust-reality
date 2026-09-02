@@ -213,7 +213,7 @@ impl Scope {
             "-i".to_owned(),
             "PATH=/usr/local/bin:/usr/bin:/bin".to_owned(),
             rust_bin.display().to_string(),
-            "serve".to_owned(),
+            "run".to_owned(),
             "--config".to_owned(),
             config.display().to_string(),
         ];
@@ -565,48 +565,6 @@ fn child_object<'a>(
     }
 }
 
-fn first_inbound_mut(
-    root: &mut BTreeMap<String, Value>,
-) -> Result<&mut BTreeMap<String, Value>, String> {
-    match root.get_mut("inbounds") {
-        Some(Value::Array(inbounds)) => match inbounds.first_mut() {
-            Some(Value::Object(inbound)) => Ok(inbound),
-            _ => Err("generated config has no first inbound object".to_owned()),
-        },
-        _ => Err("generated config has no inbounds array".to_owned()),
-    }
-}
-
-fn generated_identity(root: &BTreeMap<String, Value>) -> Result<(String, String), String> {
-    let inbound = match root.get("inbounds") {
-        Some(Value::Array(inbounds)) => inbounds.first(),
-        _ => None,
-    }
-    .ok_or_else(|| "generated config has no first inbound".to_owned())?;
-    let settings = inbound
-        .field("inbound", "settings")
-        .map_err(|error| error.to_string())?;
-    let client = settings
-        .field("settings", "clients")
-        .and_then(|value| value.as_array("settings.clients"))
-        .map_err(|error| error.to_string())?
-        .first()
-        .ok_or_else(|| "generated config has no client".to_owned())?;
-    let uuid = client
-        .str_field("client", "id")
-        .map_err(|error| error.to_string())?
-        .to_owned();
-    let short_id = client
-        .array_field("client", "shortIds")
-        .map_err(|error| error.to_string())?
-        .first()
-        .ok_or_else(|| "generated client has no short id".to_owned())?
-        .as_str("client.shortIds[0]")
-        .map_err(|error| error.to_string())?
-        .to_owned();
-    Ok((uuid, short_id))
-}
-
 fn generate_configs(
     rust_bin: &Path,
     server_port: u16,
@@ -615,73 +573,49 @@ fn generate_configs(
     asset_cache: &Path,
     prefix: &Path,
 ) -> Result<GeneratedConfig, String> {
-    let output = clean_command(rust_bin)
-        .args([
-            "config",
-            "generate",
-            "standalone",
-            "--listen",
-            "127.0.0.1",
-            "--port",
-            &server_port.to_string(),
-            "--target",
-            &format!("127.0.0.1:{tls_origin_port}"),
-            "--server-name",
-            "localhost",
-        ])
-        .output()
-        .map_err(|error| format!("could not generate profile config: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "profile config generation failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let raw = String::from_utf8(output.stdout)
-        .map_err(|_| "generated profile config is not UTF-8".to_owned())?;
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let public_key = stderr
-        .lines()
-        .find_map(|line| line.strip_prefix("REALITY public key for the client: "))
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "config generator emitted no REALITY client public key".to_owned())?
-        .to_owned();
-    let Value::Object(mut root) = json_in::parse(&raw)
-        .map_err(|error| format!("generated profile config is invalid JSON: {error}"))?
-    else {
-        return Err("generated profile config is not an object".to_owned());
+    let pair = rust_reality::crypto::generate_x25519_key_pair()
+        .map_err(|error| format!("could not generate a REALITY key pair: {error}"))?;
+    let (private_key, public_key) = pair.into_parts();
+    let uuid = rust_reality::crypto::generate_uuid()
+        .map_err(|error| format!("could not generate a UUID: {error}"))?
+        .to_string();
+    let short_id = rust_reality::crypto::generate_short_id(8)
+        .map_err(|error| format!("could not generate a short ID: {error}"))?;
+
+    let identity = crate::bench::config::RealityIdentity {
+        uuid: uuid.clone(),
+        short_id: short_id.clone(),
+        server_name: "localhost".to_owned(),
+        target: format!("127.0.0.1:{tls_origin_port}"),
     };
-    let (uuid, short_id) = generated_identity(&root)?;
-    let log = child_object(&mut root, "log")?;
-    log.insert("level".to_owned(), Value::Str("info".to_owned()));
-    let assets = child_object(&mut root, "assets")?;
-    assets.insert(
-        "cacheDirectory".to_owned(),
-        Value::Str(asset_cache.display().to_string()),
-    );
-    assets.insert(
-        "requestTimeoutSeconds".to_owned(),
-        Value::Number("5".to_owned()),
-    );
-    let runtime = child_object(&mut root, "runtime")?;
-    runtime.insert(
-        "profile".to_owned(),
-        Value::Str(
-            if class.mode == "dedicated" {
-                "dedicated"
-            } else {
-                "shared"
-            }
-            .to_owned(),
-        ),
-    );
+    let base = crate::bench::config::RustServer::new(&identity, server_port, private_key.expose())
+        .log_level("info")
+        .assets_cache(asset_cache.display().to_string())
+        .with(
+            "runtime",
+            crate::perf::json_out::Json::object([(
+                "profile",
+                crate::perf::json_out::Json::string(if class.mode == "dedicated" {
+                    "dedicated"
+                } else {
+                    "shared"
+                }),
+            )]),
+        );
+
+    let Value::Object(mut root) = json_in::parse(&base.build().to_python_json())
+        .map_err(|error| format!("the profile config is invalid JSON: {error}"))?
+    else {
+        return Err("the profile config is not an object".to_owned());
+    };
+
     let nogeo_value = Value::Object(root.clone());
     let nogeo = prefix.with_extension("nogeo.json");
     write_new(&nogeo, &suites::render_compact(&nogeo_value))?;
 
     let routing = child_object(&mut root, "routing")?;
     routing.insert(
-        "globalRules".to_owned(),
+        "rules".to_owned(),
         Value::Array(vec![Value::Object(BTreeMap::from([
             ("name".to_owned(), Value::Str("geo-direct".to_owned())),
             ("outbound".to_owned(), Value::Str("direct".to_owned())),
@@ -702,30 +636,27 @@ fn generate_configs(
     let geo = prefix.with_extension("geo.json");
     write_new(&geo, &suites::render_compact(&geo_value))?;
 
-    let advanced = child_object(&mut root, "advanced")?;
-    let limits = child_object(advanced, "limits")?;
-    let governor = child_object(limits, "resourceGovernor")?;
-    governor.insert(
+    // One override channel now: presence in `runtime.limits` pins the value,
+    // and the fields the old `advanced.limits` carried beyond these two are
+    // derived from the machine.
+    let runtime = child_object(&mut root, "runtime")?;
+    let limits = runtime
+        .entry("limits".to_owned())
+        .or_insert_with(|| Value::Object(BTreeMap::new()));
+    let Value::Object(limits) = limits else {
+        return Err("runtime.limits is not an object".to_owned());
+    };
+    limits.insert(
         "maxConnections".to_owned(),
         Value::Number("65536".to_owned()),
     );
-    governor.insert("maxHandshakes".to_owned(), Value::Number("8192".to_owned()));
-    governor.insert(
-        "maxCryptoOperations".to_owned(),
-        Value::Number("4096".to_owned()),
-    );
-    let barrier = child_object(limits, "directBarrier")?;
-    barrier.insert(
-        "maxConcurrent".to_owned(),
-        Value::Number("65536".to_owned()),
-    );
-    barrier.insert("maxPerSecond".to_owned(), Value::Number("65536".to_owned()));
+    limits.insert("maxHandshakes".to_owned(), Value::Number("8192".to_owned()));
     let tuned_value = Value::Object(root);
     let tuned = prefix.with_extension("tuned.json");
     write_new(&tuned, &suites::render_compact(&tuned_value))?;
     for config in [&nogeo, &geo, &tuned] {
         let checked = clean_command(rust_bin)
-            .args(["check", "--config", &config.display().to_string()])
+            .args(["check", "-c", &config.display().to_string()])
             .output()
             .map_err(|error| format!("could not validate {}: {error}", config.display()))?;
         if !checked.status.success() {
@@ -1209,7 +1140,7 @@ fn is_profile_stray(argv: &[String]) -> bool {
         .and_then(|name| name.to_str())
         .unwrap_or(program);
     match name {
-        "rust-reality" => argv.iter().skip(1).any(|arg| arg == "serve"),
+        "rust-reality" => argv.iter().skip(1).any(|arg| arg == "run"),
         "xray" => argv.iter().skip(1).any(|arg| arg == "run"),
         "bench-origin" => argv.iter().skip(1).any(|arg| arg == "--port"),
         _ => false,
@@ -1945,8 +1876,8 @@ mod tests {
         };
         assert!(is_profile_stray(&argv(&[
             "/readonly/rust-reality",
-            "serve",
-            "--config",
+            "run",
+            "-c",
             "/run/config.json",
         ])));
         assert!(is_profile_stray(&argv(&[

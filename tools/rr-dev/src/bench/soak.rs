@@ -306,60 +306,89 @@ pub fn validate(plan: &SoakPlan) -> Result<(), String> {
     Ok(())
 }
 
+/// What one public node in a soak or deployment topology looks like.
+///
+/// The suites used to hand `config generate` an argv and parse its stdout back.
+/// That command is gone, so the shape it took is a type now, which also means a
+/// missing field is a compile error rather than a runtime string mismatch.
+#[derive(Debug, Clone)]
+pub(crate) struct PublicNodeSpec {
+    /// Address to bind.
+    pub listen: String,
+    /// Port to bind.
+    pub port: u16,
+    /// Cover target `host:port`.
+    pub target: String,
+    /// Accepted client SNI.
+    pub server_name: String,
+    /// The landing node this line node routes through, if any.
+    pub landing: Option<crate::bench::config::LandingLink>,
+}
+
+impl PublicNodeSpec {
+    /// A standalone node: no landing, everything dials direct.
+    pub(crate) fn standalone(port: u16, target: &str) -> Self {
+        Self {
+            listen: "127.0.0.1".to_owned(),
+            port,
+            target: target.to_owned(),
+            server_name: "localhost".to_owned(),
+            landing: None,
+        }
+    }
+
+    /// A line node routing through the given landing.
+    pub(crate) fn line(
+        port: u16,
+        target: &str,
+        landing: crate::bench::config::LandingLink,
+    ) -> Self {
+        Self {
+            landing: Some(landing),
+            ..Self::standalone(port, target)
+        }
+    }
+}
+
+/// Builds one public node's configuration and the material a client needs.
+///
+/// # Errors
+///
+/// Returns a message when key generation or the asset-cache patch fails.
 pub(crate) fn generated_public_config(
-    rust_bin: &Path,
-    args: Vec<String>,
+    spec: &PublicNodeSpec,
     workspace: &Workspace,
     cache_label: &str,
 ) -> Result<GeneratedPublicConfig, String> {
-    let outcome = Tool::new(rust_bin.display().to_string())
-        .args(args)
-        .probe()
-        .map_err(|error| format!("rust-reality config generate failed: {error}"))?;
-    if !outcome.success() {
-        return Err(format!(
-            "rust-reality config generate exited {:?}: {}",
-            outcome.code,
-            outcome.stderr.trim_end()
-        ));
+    let pair = rust_reality::crypto::generate_x25519_key_pair()
+        .map_err(|error| format!("could not generate a REALITY key pair: {error}"))?;
+    let (private_key, public_key) = pair.into_parts();
+    let uuid = rust_reality::crypto::generate_uuid()
+        .map_err(|error| format!("could not generate a UUID: {error}"))?
+        .to_string();
+    let short_id = rust_reality::crypto::generate_short_id(8)
+        .map_err(|error| format!("could not generate a short ID: {error}"))?;
+
+    let identity = crate::bench::config::RealityIdentity {
+        uuid: uuid.clone(),
+        short_id: short_id.clone(),
+        server_name: spec.server_name.clone(),
+        target: spec.target.clone(),
+    };
+    let mut server =
+        crate::bench::config::RustServer::new(&identity, spec.port, private_key.expose())
+            .log_level("debug")
+            .assets_cache(workspace.join(cache_label).display().to_string());
+    server.listen.clone_from(&spec.listen);
+    if let Some(link) = &spec.landing {
+        server = server.through_landing(link);
     }
-    let public_key = outcome
-        .stderr
-        .lines()
-        .find_map(|line| line.strip_prefix("REALITY public key for the client: "))
-        .ok_or_else(|| "rust-reality config generate printed no REALITY public key".to_owned())?
-        .to_owned();
-    let raw = outcome.trimmed_stdout();
-    let value = json_in::parse(raw)
-        .map_err(|error| format!("generated rust config is invalid JSON: {error}"))?;
-    let inbound = value
-        .array_field("", "inbounds")
-        .map_err(|error| error.to_string())?
-        .first()
-        .ok_or_else(|| "generated rust config has no inbound".to_owned())?;
-    let client = inbound
-        .field("inbounds[0]", "settings")
-        .and_then(|settings| settings.array_field("inbounds[0].settings", "clients"))
-        .map_err(|error| error.to_string())?
-        .first()
-        .ok_or_else(|| "generated rust config has no client".to_owned())?;
-    let uuid = client
-        .str_field("inbounds[0].settings.clients[0]", "id")
-        .map_err(|error| error.to_string())?
-        .to_owned();
-    let short_id = client
-        .array_field("inbounds[0].settings.clients[0]", "shortIds")
-        .map_err(|error| error.to_string())?
-        .first()
-        .ok_or_else(|| "generated rust config client has no short id".to_owned())?
-        .as_str("inbounds[0].settings.clients[0].shortIds[0]")
-        .map_err(|error| error.to_string())?
-        .to_owned();
+
     Ok(GeneratedPublicConfig {
         public_key,
         uuid,
         short_id,
-        json: patch_server_config(raw, workspace, cache_label, false)?,
+        json: server.build().to_python_json(),
     })
 }
 
@@ -477,23 +506,19 @@ pub(crate) fn patch_socks_outbound(raw: &str, upstream_port: u16) -> Result<Stri
     Ok(suites::render_compact(&Value::Object(root)))
 }
 
-pub(crate) fn node_key(rust_bin: &Path) -> Result<String, String> {
-    let outcome = Tool::new(rust_bin.display().to_string())
-        .arg("node-keygen")
-        .probe()
-        .map_err(|error| format!("rust-reality node-keygen failed: {error}"))?;
-    if !outcome.success() {
-        return Err(format!(
-            "rust-reality node-keygen exited {:?}: {}",
-            outcome.code,
-            outcome.stderr.trim_end()
-        ));
-    }
-    json_in::parse(outcome.trimmed_stdout())
-        .map_err(|error| format!("node-keygen output is invalid JSON: {error}"))?
-        .str_field("", "preSharedKey")
-        .map(str::to_owned)
-        .map_err(|error| error.to_string())
+/// Generates one 32-byte pre-shared key for an internal hop.
+///
+/// In this process rather than through `rust-reality generate psk`: the value
+/// is the same random material either way, and a subprocess plus a JSON parse
+/// buys nothing when the harness already links the library that generates it.
+///
+/// # Errors
+///
+/// Returns a message when the system random source fails.
+pub(crate) fn node_key(_rust_bin: &Path) -> Result<String, String> {
+    rust_reality::crypto::generate_node_key()
+        .map(|key| key.expose().to_owned())
+        .map_err(|error| format!("could not generate a pre-shared key: {error}"))
 }
 
 pub(crate) fn check_config(rust_bin: &Path, config: &Path) -> Result<(), String> {
@@ -528,20 +553,7 @@ fn materialize_native_configs(
 ) -> Result<NativeConfigs, String> {
     let target = format!("127.0.0.1:{}", ports.https_origin);
     let standalone = generated_public_config(
-        &plan.rust_bin,
-        vec![
-            "config".to_owned(),
-            "generate".to_owned(),
-            "standalone".to_owned(),
-            "--listen".to_owned(),
-            "127.0.0.1".to_owned(),
-            "--port".to_owned(),
-            ports.standalone.to_string(),
-            "--target".to_owned(),
-            target.clone(),
-            "--server-name".to_owned(),
-            "localhost".to_owned(),
-        ],
+        &PublicNodeSpec::standalone(ports.standalone, &target),
         workspace,
         "assets-standalone",
     )?;
@@ -629,62 +641,25 @@ fn materialize_native_configs(
     )?;
 
     let nxr_key = node_key(&plan.rust_bin)?;
+    let nxr_link = crate::bench::config::LandingLink {
+        protocol: "nxr",
+        address: "127.0.0.1".to_owned(),
+        port: ports.nxr_landing,
+        psk: nxr_key.clone(),
+        landing_public_key: None,
+    };
     let nxr_line_generated = generated_public_config(
-        &plan.rust_bin,
-        vec![
-            "config".to_owned(),
-            "generate".to_owned(),
-            "line".to_owned(),
-            "--listen".to_owned(),
-            "127.0.0.1".to_owned(),
-            "--port".to_owned(),
-            ports.nxr_line.to_string(),
-            "--target".to_owned(),
-            target.clone(),
-            "--server-name".to_owned(),
-            "localhost".to_owned(),
-            "--nxr-address".to_owned(),
-            "127.0.0.1".to_owned(),
-            "--nxr-port".to_owned(),
-            ports.nxr_landing.to_string(),
-            "--nxr-key".to_owned(),
-            nxr_key.clone(),
-        ],
+        &PublicNodeSpec::line(ports.nxr_line, &target, nxr_link.clone()),
         workspace,
         "assets-nxr-line",
     )?;
-    let nxr_line = workspace.join("nxr-line.json");
-    write_config(&nxr_line, &nxr_line_generated.json)?;
-    let nxr_landing_outcome = Tool::new(plan.rust_bin.display().to_string())
-        .args([
-            "config",
-            "generate",
-            "landing",
-            "--listen",
-            "127.0.0.1",
-            "--port",
-            &ports.nxr_landing.to_string(),
-            "--nxr-key",
-            &nxr_key,
-        ])
-        .probe()
-        .map_err(|error| format!("NXR landing config generation failed: {error}"))?;
-    if !nxr_landing_outcome.success() {
-        return Err(format!(
-            "NXR landing config generation exited {:?}: {}",
-            nxr_landing_outcome.code,
-            nxr_landing_outcome.stderr.trim_end()
-        ));
-    }
+    let nxr_line_path = workspace.join("nxr-line.json");
+    write_config(&nxr_line_path, &nxr_line_generated.json)?;
     let nxr_landing = workspace.join("nxr-landing.json");
     write_config(
         &nxr_landing,
-        &patch_server_config(
-            nxr_landing_outcome.trimmed_stdout(),
-            workspace,
-            "assets-nxr-landing",
-            false,
-        )?,
+        &crate::bench::config::rust_landing("127.0.0.1", ports.nxr_landing, &nxr_link, None)
+            .to_python_json(),
     )?;
     let nxr_client = workspace.join("nxr-client.json");
     write_config(
@@ -703,27 +678,17 @@ fn materialize_native_configs(
         .to_python_json(),
     )?;
 
+    // The SOCKS line node's landing is a placeholder: `patch_socks_outbound`
+    // replaces it below, and the node never dials port 9.
     let socks_generated = generated_public_config(
-        &plan.rust_bin,
-        vec![
-            "config".to_owned(),
-            "generate".to_owned(),
-            "line".to_owned(),
-            "--listen".to_owned(),
-            "127.0.0.1".to_owned(),
-            "--port".to_owned(),
-            ports.socks_line.to_string(),
-            "--target".to_owned(),
-            target,
-            "--server-name".to_owned(),
-            "localhost".to_owned(),
-            "--nxr-address".to_owned(),
-            "127.0.0.1".to_owned(),
-            "--nxr-port".to_owned(),
-            "9".to_owned(),
-            "--nxr-key".to_owned(),
-            nxr_key,
-        ],
+        &PublicNodeSpec::line(
+            ports.socks_line,
+            &target,
+            crate::bench::config::LandingLink {
+                port: 9,
+                ..nxr_link
+            },
+        ),
         workspace,
         "assets-socks-line",
     )?;
@@ -753,7 +718,7 @@ fn materialize_native_configs(
         &standalone_path,
         &handoff_line,
         &handoff_landing,
-        &nxr_line,
+        &nxr_line_path,
         &nxr_landing,
         &socks_line,
     ] {
@@ -765,7 +730,7 @@ fn materialize_native_configs(
         handoff_line,
         handoff_landing,
         handoff_client,
-        nxr_line,
+        nxr_line: nxr_line_path,
         nxr_landing,
         nxr_client,
         socks_line,
@@ -816,7 +781,7 @@ pub(crate) fn spawn_rust(
         label,
         &rust.path,
         &[
-            "serve".to_owned(),
+            "run".to_owned(),
             "--config".to_owned(),
             config.display().to_string(),
         ],

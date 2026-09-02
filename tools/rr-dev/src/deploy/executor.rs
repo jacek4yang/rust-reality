@@ -78,7 +78,7 @@ impl CandidateValidator for SystemCandidateValidator {
                 artifact.version
             ));
         }
-        for subcommand in ["check", "self-test"] {
+        for subcommand in ["check", "doctor"] {
             Tool::new(&artifact.binary_path)
                 .args([
                     subcommand.to_owned(),
@@ -522,7 +522,7 @@ fn stage_remote(
         if version.split_whitespace().nth(1) != Some(artifact.version.as_str()) {
             return Err("remote staged binary version mismatch".to_owned());
         }
-        for subcommand in ["check", "self-test"] {
+        for subcommand in ["check", "doctor"] {
             run(
                 transport,
                 host,

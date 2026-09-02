@@ -236,7 +236,7 @@ pub fn run(suite: &PressureSuite) -> Result<PressureResult, String> {
         format!("--nofile={0}:{0}", suite.nofile_limit),
         "--".to_owned(),
         rust.path.display().to_string(),
-        "serve".to_owned(),
+        "run".to_owned(),
         "--config".to_owned(),
         server_config.display().to_string(),
     ];

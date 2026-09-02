@@ -273,104 +273,56 @@ pub fn generate_identities(
 
 /// Generates one rust-reality server identity for a slot.
 ///
-/// Runs `config generate standalone`, captures the REALITY public key from
-/// stderr, reads the client UUID and short id out of the generated config, and
-/// applies the warn-logging and workspace asset-cache patches the harnesses did
-/// with `jq`. Split out from [`generate_identities`] because the ABBA harnesses
-/// generate a *fresh* identity per slot, while the tunnel suites generate one for
-/// the whole run.
+/// The material is generated in this process rather than by shelling out: the
+/// binary generates atomic values and never whole configurations, so there is
+/// nothing to parse back out of a subprocess. Split out from
+/// [`generate_identities`] because the ABBA harnesses generate a *fresh*
+/// identity per slot, while the tunnel suites generate one for the whole run.
 ///
-/// `stderr_log` archives the generator's stderr, which the slot-based harnesses
-/// kept as `generate.log` beside the slot's other evidence — it is where the
-/// REALITY public key is announced, so a slot that failed to produce one leaves
-/// the reason on disk.
+/// `stderr_log` archives what the removed generator used to announce there —
+/// the REALITY public key — so a slot's evidence still records the value a
+/// client would have needed.
 ///
 /// # Errors
 ///
 /// Returns the first failure in generation order.
 pub fn generate_rust_identity(
     workspace: &Workspace,
-    rust_bin: &std::path::Path,
+    _rust_bin: &std::path::Path,
     rust_port: u16,
     cover_target: &str,
     cover_sni: &str,
     stderr_log: Option<&std::path::Path>,
 ) -> Result<RustIdentity, String> {
-    let outcome = Tool::new(rust_bin.display().to_string())
-        .args([
-            "config",
-            "generate",
-            "standalone",
-            "--listen",
-            "127.0.0.1",
-            "--port",
-            &rust_port.to_string(),
-            "--target",
-            cover_target,
-            "--server-name",
-            cover_sni,
-        ])
-        .probe()
-        .map_err(|error| format!("rust-reality config generate failed: {error}"))?;
-    if let Some(path) = stderr_log {
-        std::fs::write(path, &outcome.stderr)
-            .map_err(|error| format!("could not write {}: {error}", path.display()))?;
-    }
-    if !outcome.success() {
-        return Err(format!(
-            "rust-reality config generate exited {:?}: {}",
-            outcome.code,
-            outcome.stderr.trim_end()
-        ));
-    }
-    let public_key = outcome
-        .stderr
-        .lines()
-        .find_map(|line| line.strip_prefix("REALITY public key for the client: "))
-        .ok_or_else(|| "rust-reality config generate printed no REALITY public key".to_owned())?
-        .to_owned();
-    let raw = outcome.trimmed_stdout();
-    let value = json_in::parse(raw)
-        .map_err(|error| format!("generated rust config is invalid JSON: {error}"))?;
-    let inbounds = value
-        .array_field("", "inbounds")
-        .map_err(|error| format!("generated rust config: {error}"))?;
-    let inbound = inbounds
-        .first()
-        .ok_or_else(|| "generated rust config has no inbound".to_owned())?;
-    let settings = inbound
-        .field("inbound", "settings")
-        .map_err(|error| format!("generated rust config: {error}"))?;
-    let clients = settings
-        .array_field("inbound.settings", "clients")
-        .map_err(|error| format!("generated rust config: {error}"))?;
-    let client = clients
-        .first()
-        .ok_or_else(|| "generated rust config has no inbound client".to_owned())?;
-    let uuid = client
-        .str_field("client", "id")
-        .map_err(|error| format!("generated rust config: {error}"))?
-        .to_owned();
-    let short_id = client
-        .array_field("client", "shortIds")
-        .map_err(|error| format!("generated rust config: {error}"))?
-        .first()
-        .ok_or_else(|| "generated rust config client has no shortIds[0]".to_owned())?
-        .as_str("shortIds[0]")
-        .map_err(|error| format!("generated rust config: {error}"))?
-        .to_owned();
-    let private_key = inbound
-        .field("inbound", "streamSettings")
-        .and_then(|settings| settings.field("inbound.streamSettings", "realitySettings"))
-        .and_then(|reality| {
-            reality.str_field("inbound.streamSettings.realitySettings", "privateKey")
-        })
-        .map_err(|error| format!("generated rust config: {error}"))?
-        .to_owned();
+    let pair = rust_reality::crypto::generate_x25519_key_pair()
+        .map_err(|error| format!("could not generate a REALITY key pair: {error}"))?;
+    let (private_key, public_key) = pair.into_parts();
+    let private_key = private_key.expose().to_owned();
+    let uuid = rust_reality::crypto::generate_uuid()
+        .map_err(|error| format!("could not generate a UUID: {error}"))?
+        .to_string();
+    let short_id = rust_reality::crypto::generate_short_id(8)
+        .map_err(|error| format!("could not generate a short ID: {error}"))?;
 
-    // Patch the generated rust config: warn logging and an ephemeral assets
-    // cache inside the workspace, exactly as the legacy `jq` postprocessing did.
-    let server_json = patch_rust_config(raw, workspace)?;
+    if let Some(path) = stderr_log {
+        std::fs::write(
+            path,
+            format!("REALITY public key for the client: {public_key}\n"),
+        )
+        .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+    }
+
+    let identity = crate::bench::config::RealityIdentity {
+        uuid: uuid.clone(),
+        short_id: short_id.clone(),
+        server_name: cover_sni.to_owned(),
+        target: cover_target.to_owned(),
+    };
+    let server_json = crate::bench::config::RustServer::new(&identity, rust_port, &private_key)
+        .assets_cache(workspace.join("assets").display().to_string())
+        .build()
+        .to_python_json();
+
     Ok(RustIdentity {
         public_key,
         uuid,
@@ -466,6 +418,36 @@ pub fn set_rust_log_level(raw: &str, level: &str) -> Result<String, String> {
     log_fields.insert("level".to_owned(), json_in::Value::Str(level.to_owned()));
     members.insert("log".to_owned(), json_in::Value::Object(log_fields));
     Ok(render_compact(&json_in::Value::Object(members)))
+}
+
+/// Sets one member of `reality.coverOptimization`, creating it if absent.
+///
+/// The optimizations moved to the top-level `reality` object when the inbound
+/// array became a role, so every suite that disables one navigates two levels
+/// instead of four. Creating the object is right: omitting it means every
+/// optimization is enabled, so a suite turning one off is adding a decision
+/// rather than editing one.
+///
+/// # Errors
+///
+/// Returns a message when `reality` or `coverOptimization` exists but is not an
+/// object.
+pub fn set_cover_optimization(
+    members: &mut std::collections::BTreeMap<String, json_in::Value>,
+    key: &str,
+    value: json_in::Value,
+) -> Result<(), String> {
+    let Some(json_in::Value::Object(reality)) = members.get_mut("reality") else {
+        return Err("the config has no reality object".to_owned());
+    };
+    let optimization = reality
+        .entry("coverOptimization".to_owned())
+        .or_insert_with(|| json_in::Value::Object(std::collections::BTreeMap::new()));
+    let json_in::Value::Object(optimization) = optimization else {
+        return Err("reality.coverOptimization is not an object".to_owned());
+    };
+    optimization.insert(key.to_owned(), value);
+    Ok(())
 }
 
 /// Renders a parsed JSON value as compact one-line JSON. The children only parse
@@ -584,7 +566,7 @@ pub fn launch_processes(
         "rust-server",
         &binaries[0].path,
         &[
-            "serve".to_owned(),
+            "run".to_owned(),
             "--config".to_owned(),
             config_arg("rust-server.json"),
         ],

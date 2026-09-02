@@ -3,9 +3,8 @@
 //! Executing the packaged binary is the authoritative CPU+OS feature gate: a host
 //! that cannot run a tier must fail the release rather than publish an untested
 //! optimized artifact. This verifies the asset SHA-256, extracts the tarball, and
-//! drives the binary through `--version`, `--help`, `schema`, `config generate`,
-//! `check` and `self-test`, asserting the self-test reports a single compatible
-//! REALITY destination pointing at the cover.
+//! drives the binary through `--version`, `--help`, `generate`, `check`, and
+//! `doctor`, asserting the environment report names a single compatible cover.
 //!
 //! The release workflow smokes against a real local TLS 1.3 peer. When no cover is
 //! supplied via the environment overrides, a loopback `openssl s_server` cover is
@@ -26,8 +25,8 @@ use crate::{
 /// # Errors
 ///
 /// Returns a message on an invalid tag, unknown tier, a missing or corrupt asset,
-/// a failed binary invocation, or a self-test that does not report exactly one
-/// compatible destination matching the cover.
+/// a failed binary invocation, or a `doctor` report that does not name exactly
+/// one compatible cover matching the one supplied.
 pub fn smoke(repo: &Path, tag: &str, tier_id: &str, asset_dir: &Path) -> Result<String, String> {
     if !semver::is_stable_release_tag(tag) {
         return Err(format!("invalid release tag: {tag}"));
@@ -108,61 +107,66 @@ pub fn smoke(repo: &Path, tag: &str, tier_id: &str, asset_dir: &Path) -> Result<
         ));
     }
     run(&["--help"])?;
-    let schema = run(&["schema"])?;
-    json_in::parse(&schema).map_err(|error| format!("schema is not valid JSON: {error}"))?;
+
+    // The packaged binary generates its own material, which also proves the
+    // random source works on this host before anything depends on it.
+    let keys = run(&["generate", "x25519", "--json"])?;
+    let keys =
+        json_in::parse(&keys).map_err(|error| format!("generate x25519 is not JSON: {error}"))?;
+    let private_key = keys
+        .str_field("", "privateKey")
+        .map_err(|error| format!("generate x25519: {error}"))?
+        .to_owned();
+    let uuid = run(&["generate", "uuid"])?.trim().to_owned();
+    let short_id = run(&["generate", "short-id"])?.trim().to_owned();
 
     let config_dir = extract.join("config");
     std::fs::create_dir_all(&config_dir)
         .map_err(|error| format!("could not create config dir: {error}"))?;
-    let config = run(&[
-        "config",
-        "generate",
-        "standalone",
-        "--listen",
-        "127.0.0.1",
-        "--port",
-        "19443",
-        "--target",
-        &cover_target,
-        "--server-name",
-        &cover_server_name,
-    ])?;
+    let identity = crate::bench::config::RealityIdentity {
+        uuid,
+        short_id,
+        server_name: cover_server_name.clone(),
+        target: cover_target.clone(),
+    };
+    let config = crate::bench::config::RustServer::new(&identity, 19_443, &private_key)
+        .build()
+        .to_python_json();
     let config_path = config_dir.join("standalone.json");
     std::fs::write(&config_path, &config)
         .map_err(|error| format!("could not write config: {error}"))?;
 
     run(&["check", "--config", &config_path.to_string_lossy()])?;
-    let self_test = run(&["self-test", "--config", &config_path.to_string_lossy()])?;
-    validate_self_test(&self_test, &cover_target, &cover_server_name)?;
+    let doctor = run(&["doctor", "--config", &config_path.to_string_lossy()])?;
+    validate_doctor(&doctor, &cover_target, &cover_server_name)?;
 
     Ok(format!("{} packaged binary smoke: PASS", tier.id))
 }
 
-/// Validates the self-test report shape and cover identity.
-fn validate_self_test(report: &str, target: &str, server_name: &str) -> Result<(), String> {
-    let value =
-        json_in::parse(report).map_err(|error| format!("self-test is not JSON: {error}"))?;
+/// Validates the `doctor` report shape and cover identity.
+fn validate_doctor(report: &str, target: &str, server_name: &str) -> Result<(), String> {
+    let value = json_in::parse(report).map_err(|error| format!("doctor is not JSON: {error}"))?;
     if value
         .optional("configuration")
         .and_then(|v| v.as_str("configuration").ok())
         != Some("ok")
     {
-        return Err("self-test configuration is not ok".to_owned());
+        return Err("doctor configuration is not ok".to_owned());
     }
     if value
         .optional("routing")
         .and_then(|v| v.as_str("routing").ok())
         != Some("ok")
     {
-        return Err("self-test routing is not ok".to_owned());
+        return Err("doctor routing is not ok".to_owned());
     }
     let destinations = value
-        .optional("realityDestinations")
-        .and_then(|v| v.as_array("realityDestinations").ok())
-        .ok_or_else(|| "self-test has no realityDestinations".to_owned())?;
+        .optional("cover")
+        .and_then(|v| v.as_array("cover").ok())
+        .ok_or_else(|| "doctor reported no cover".to_owned())?;
     if destinations.len() != 1 {
         return Err(format!(
-            "expected exactly one destination, got {}",
+            "expected exactly one cover, got {}",
             destinations.len()
         ));
     }
@@ -172,23 +176,21 @@ fn validate_self_test(report: &str, target: &str, server_name: &str) -> Result<(
         .and_then(|v| v.as_bool("compatible").ok())
         != Some(true)
     {
-        return Err("destination is not compatible".to_owned());
+        return Err("the cover is not compatible".to_owned());
     }
     if destination
         .optional("target")
         .and_then(|v| v.as_str("target").ok())
         != Some(target)
     {
-        return Err(format!("destination target mismatch, expected {target}"));
+        return Err(format!("cover target mismatch, expected {target}"));
     }
     if destination
         .optional("serverName")
         .and_then(|v| v.as_str("serverName").ok())
         != Some(server_name)
     {
-        return Err(format!(
-            "destination serverName mismatch, expected {server_name}"
-        ));
+        return Err(format!("cover serverName mismatch, expected {server_name}"));
     }
     Ok(())
 }
@@ -311,19 +313,19 @@ mod tests {
 
     #[test]
     fn a_well_formed_self_test_report_is_accepted() {
-        let report = r#"{"configuration":"ok","routing":"ok","realityDestinations":[{"compatible":true,"target":"127.0.0.1:9","serverName":"localhost"}]}"#;
-        assert!(validate_self_test(report, "127.0.0.1:9", "localhost").is_ok());
+        let report = r#"{"configuration":"ok","routing":"ok","cover":[{"compatible":true,"target":"127.0.0.1:9","serverName":"localhost"}]}"#;
+        assert!(validate_doctor(report, "127.0.0.1:9", "localhost").is_ok());
     }
 
     #[test]
     fn a_wrong_destination_count_is_rejected() {
         let report = r#"{"configuration":"ok","routing":"ok","realityDestinations":[]}"#;
-        assert!(validate_self_test(report, "127.0.0.1:9", "localhost").is_err());
+        assert!(validate_doctor(report, "127.0.0.1:9", "localhost").is_err());
     }
 
     #[test]
     fn an_incompatible_destination_is_rejected() {
         let report = r#"{"configuration":"ok","routing":"ok","realityDestinations":[{"compatible":false,"target":"127.0.0.1:9","serverName":"localhost"}]}"#;
-        assert!(validate_self_test(report, "127.0.0.1:9", "localhost").is_err());
+        assert!(validate_doctor(report, "127.0.0.1:9", "localhost").is_err());
     }
 }

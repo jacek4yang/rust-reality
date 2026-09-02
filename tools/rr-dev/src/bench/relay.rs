@@ -1,46 +1,27 @@
 //! Pinning the relay policy a fallback measurement runs under.
 //!
-//! `benchmark-fallback-ab.sh` compares two builds on the REALITY *fallback* relay
-//! path, so the relay's own knobs — splice, the pipe pool, the buffer size — must
-//! be identical on both sides or the comparison measures configuration rather than
-//! code.
+//! `benchmark-fallback-ab.sh` compares two builds on the REALITY *fallback*
+//! relay path, so the relay's knobs must be identical on both sides or the
+//! comparison measures configuration rather than code.
 //!
-//! ## Why the schema is probed rather than assumed
+//! ## What can still be pinned, and what cannot
 //!
-//! The two binaries under test can be from different generations, and the relay
-//! policy moved between them: it lives at `.advanced.limits.relay` in the current
-//! schema and at `.policy.relay` in the older one. The script therefore asked each
-//! *generated config* which shape it had, rather than deciding from the A/B role —
-//! as its comment put it, "A/B role does not imply a configuration generation: a
-//! patch release compares two binaries from the same generation".
+//! Two of the three knobs survive as operator policy: `splice` and `pipePool`
+//! are escape hatches for a kernel that reports a capability and then
+//! misbehaves, so they are pinnable in `runtime.limits`.
 //!
-//! A config with neither path is a hard error. Silently skipping the patch would
-//! run one side on defaults and report the difference as a code change.
+//! The buffer size is not. It is derived from the machine, and the objective
+//! moves it one tier per step among 16, 32, and 64 KiB — which is exactly the
+//! three sizes the old `bufferBytes` field could usefully hold. So a run that
+//! wants a specific tier states the objective that selects it, and a size
+//! outside those three is refused rather than silently rounded, because a
+//! fallback A/B that thought it pinned 48 KiB and got 32 would report the
+//! difference as a code change.
 
 use crate::{
     bench::suites::render_compact,
     perf::json_in::{self, Value},
 };
-
-/// Where a generated config keeps its relay policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RelaySchema {
-    /// The current schema: `advanced.limits.relay`.
-    AdvancedLimits,
-    /// The older schema: `policy.relay`.
-    Policy,
-}
-
-impl RelaySchema {
-    /// The dotted path this schema keeps the relay policy at.
-    #[must_use]
-    pub const fn path(self) -> &'static str {
-        match self {
-            Self::AdvancedLimits => ".advanced.limits.relay",
-            Self::Policy => ".policy.relay",
-        }
-    }
-}
 
 /// The relay knobs a fallback run pins on both sides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,7 +30,7 @@ pub struct RelayPolicy {
     pub splice: bool,
     /// Whether the relay pools pipes.
     pub pipe_pool: bool,
-    /// Relay buffer size in KiB; recorded in bytes.
+    /// Relay buffer tier in KiB. One of 16, 32, or 64.
     pub buffer_kib: u32,
 }
 
@@ -63,75 +44,72 @@ impl Default for RelayPolicy {
     }
 }
 
-/// Detects which relay schema a generated config uses.
-///
-/// # Errors
-///
-/// Returns the script's message when the config carries neither shape.
-pub fn detect(config: &Value) -> Result<RelaySchema, String> {
-    let is_object = |value: Option<&Value>| matches!(value, Some(Value::Object(_)));
-    if is_object(
-        config
-            .field("", "advanced")
-            .ok()
-            .and_then(|advanced| advanced.field("advanced", "limits").ok())
-            .and_then(|limits| limits.field("advanced.limits", "relay").ok()),
-    ) {
-        return Ok(RelaySchema::AdvancedLimits);
+impl RelayPolicy {
+    /// Rejects a combination the server would refuse at startup.
+    ///
+    /// Pooling exists to reuse splice pipes, so pooling without splice is not a
+    /// weaker configuration but a contradictory one. Catching it here means an
+    /// A/B run fails with this sentence rather than with a server that never
+    /// binds.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the pool is enabled without splice.
+    pub const fn check(self) -> Result<(), &'static str> {
+        if self.pipe_pool && !self.splice {
+            return Err("pipePool cannot be enabled while splice is disabled: \
+                        the pool holds splice pipes");
+        }
+        Ok(())
     }
-    if is_object(
-        config
-            .field("", "policy")
-            .ok()
-            .and_then(|policy| policy.field("policy", "relay").ok()),
-    ) {
-        return Ok(RelaySchema::Policy);
+
+    /// The `runtime.objective` that selects this buffer tier.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the size is not one of the three tiers.
+    pub const fn objective(self) -> Result<&'static str, &'static str> {
+        match self.buffer_kib {
+            16 => Ok("latency"),
+            32 => Ok("balanced"),
+            64 => Ok("throughput"),
+            _ => Err("relay buffer must be 16, 32, or 64 KiB: the derivation \
+                      selects one of three tiers and rounding would make an A/B \
+                      report a configuration difference as a code change"),
+        }
     }
-    Err("generated configuration has no canonical relay policy".to_owned())
 }
 
-/// Pins `policy` into a generated config, whichever schema it uses.
+/// Pins `policy` into a generated config.
 ///
 /// # Errors
 ///
-/// Returns a message when the config is not an object or carries no relay policy.
+/// Returns a message when the config is not an object, the knobs contradict
+/// each other, or the buffer tier is not one the derivation can select.
 pub fn apply(config_json: &str, policy: RelayPolicy) -> Result<String, String> {
+    policy.check().map_err(str::to_owned)?;
+    let objective = policy.objective().map_err(str::to_owned)?;
     let value = json_in::parse(config_json)
         .map_err(|error| format!("the generated server config is invalid JSON: {error}"))?;
-    let schema = detect(&value)?;
     let Value::Object(mut members) = value else {
         return Err("the generated server config is not an object".to_owned());
     };
 
-    let relay = {
-        let outer = match schema {
-            RelaySchema::AdvancedLimits => {
-                let Some(Value::Object(advanced)) = members.get_mut("advanced") else {
-                    return Err("the config has no advanced object".to_owned());
-                };
-                let Some(Value::Object(limits)) = advanced.get_mut("limits") else {
-                    return Err("the config has no advanced.limits object".to_owned());
-                };
-                limits
-            }
-            RelaySchema::Policy => {
-                let Some(Value::Object(policy_object)) = members.get_mut("policy") else {
-                    return Err("the config has no policy object".to_owned());
-                };
-                policy_object
-            }
-        };
-        let Some(Value::Object(relay)) = outer.get_mut("relay") else {
-            return Err("the config has no relay object".to_owned());
-        };
-        relay
+    let runtime = members
+        .entry("runtime".to_owned())
+        .or_insert_with(|| Value::Object(std::collections::BTreeMap::new()));
+    let Value::Object(runtime) = runtime else {
+        return Err("the config's runtime is not an object".to_owned());
     };
-    relay.insert("splice".to_owned(), Value::Bool(policy.splice));
-    relay.insert("pipePool".to_owned(), Value::Bool(policy.pipe_pool));
-    relay.insert(
-        "bufferBytes".to_owned(),
-        Value::Number((u64::from(policy.buffer_kib) * 1024).to_string()),
-    );
+    runtime.insert("objective".to_owned(), Value::Str(objective.to_owned()));
+    let limits = runtime
+        .entry("limits".to_owned())
+        .or_insert_with(|| Value::Object(std::collections::BTreeMap::new()));
+    let Value::Object(limits) = limits else {
+        return Err("the config's runtime.limits is not an object".to_owned());
+    };
+    limits.insert("splice".to_owned(), Value::Bool(policy.splice));
+    limits.insert("pipePool".to_owned(), Value::Bool(policy.pipe_pool));
     Ok(render_compact(&Value::Object(members)))
 }
 
@@ -139,72 +117,99 @@ pub fn apply(config_json: &str, policy: RelayPolicy) -> Result<String, String> {
 mod tests {
     use super::*;
 
-    /// The script's own `SELF_TEST` cases, verbatim.
+    const BASE: &str = r#"{"role":"entry",
+        "listeners":[{"port":8443,"ip":"ipv4Only","ipv4":"127.0.0.1"}],
+        "reality":{"cover":"dl.google.com:443",
+                   "privateKey":"ERERERERERERERERERERERERERERERERERERERERERE"},
+        "users":[{"id":"11111111-1111-4111-8111-111111111111",
+                  "shortIds":["0123456789abcdef"]}],
+        "routing":{"default":"direct"},"log":{"level":"warn"}}"#;
+
     #[test]
-    fn the_script_self_test_schema_selection_is_reproduced() {
-        let current = json_in::parse(r#"{"advanced":{"limits":{"relay":{}}}}"#).unwrap();
-        assert_eq!(detect(&current).unwrap(), RelaySchema::AdvancedLimits);
-        assert!(detect(&current).unwrap().path().starts_with(".advanced"));
+    fn each_buffer_tier_maps_onto_the_objective_that_selects_it() {
+        for (kib, objective) in [(16, "latency"), (32, "balanced"), (64, "throughput")] {
+            let policy = RelayPolicy {
+                buffer_kib: kib,
+                ..RelayPolicy::default()
+            };
 
-        let legacy = json_in::parse(r#"{"policy":{"relay":{}}}"#).unwrap();
-        assert_eq!(detect(&legacy).unwrap(), RelaySchema::Policy);
-        assert!(detect(&legacy).unwrap().path().starts_with(".policy"));
-
-        let missing = json_in::parse("{}").unwrap();
-        assert_eq!(
-            detect(&missing).unwrap_err(),
-            "generated configuration has no canonical relay policy"
-        );
+            assert_eq!(policy.objective(), Ok(objective));
+        }
     }
 
-    /// A relay key that is present but not an object is not a relay policy.
+    /// Rounding would let a fallback A/B believe it had pinned a size it did
+    /// not get, and report the resulting difference as a code change.
     #[test]
-    fn a_non_object_relay_is_not_accepted_as_a_policy() {
-        let wrong = json_in::parse(r#"{"advanced":{"limits":{"relay":true}}}"#).unwrap();
-        assert!(detect(&wrong).is_err());
-        let wrong = json_in::parse(r#"{"policy":{"relay":[]}}"#).unwrap();
-        assert!(detect(&wrong).is_err());
+    fn a_size_outside_the_three_tiers_is_refused_rather_than_rounded() {
+        let policy = RelayPolicy {
+            buffer_kib: 48,
+            ..RelayPolicy::default()
+        };
+
+        let error = apply(BASE, policy).unwrap_err();
+
+        assert!(error.contains("16, 32, or 64"), "{error}");
     }
 
     #[test]
-    fn the_policy_is_pinned_into_whichever_schema_the_config_uses() {
+    fn the_policy_is_pinned_and_the_result_still_validates() {
         let policy = RelayPolicy {
             splice: false,
-            pipe_pool: true,
+            pipe_pool: false,
             buffer_kib: 64,
         };
-        let current = apply(
-            r#"{"advanced":{"limits":{"relay":{"existing":1}}},"log":{}}"#,
-            policy,
-        )
-        .unwrap();
-        assert!(current.contains(r#""splice":false"#));
-        assert!(current.contains(r#""pipePool":true"#));
-        assert!(current.contains(r#""bufferBytes":65536"#));
-        assert!(current.contains(r#""existing":1"#), "other keys survive");
 
-        let legacy = apply(r#"{"policy":{"relay":{}},"log":{}}"#, policy).unwrap();
-        assert!(legacy.contains(r#""bufferBytes":65536"#));
-        assert!(legacy.contains(r#""policy""#));
-        assert!(!legacy.contains("advanced"));
+        let pinned = apply(BASE, policy).unwrap();
+
+        assert!(pinned.contains(r#""splice":false"#));
+        assert!(pinned.contains(r#""pipePool":false"#));
+        assert!(pinned.contains(r#""objective":"throughput""#));
+        rust_reality::config::load_bytes(std::path::Path::new("relay.json"), pinned.as_bytes())
+            .unwrap_or_else(|error| panic!("a pinned relay config must validate:\n{error}"));
     }
 
-    /// Skipping the patch would run one side on defaults and report the
-    /// difference as a code change, so a config with neither shape is fatal.
+    /// An existing `runtime` block is merged into, not replaced: the profile a
+    /// suite already chose has to survive.
     #[test]
-    fn a_config_without_a_relay_policy_is_refused() {
-        let error = apply(r#"{"log":{}}"#, RelayPolicy::default()).unwrap_err();
-        assert!(error.contains("no canonical relay policy"), "{error}");
-        assert!(apply("not json", RelayPolicy::default()).is_err());
+    fn an_existing_runtime_block_survives() {
+        let with_profile = BASE.replace(
+            r#""log":{"level":"warn"}"#,
+            r#""runtime":{"profile":"dedicated"},"log":{"level":"warn"}"#,
+        );
+
+        let pinned = apply(&with_profile, RelayPolicy::default()).unwrap();
+
+        assert!(pinned.contains(r#""profile":"dedicated""#));
+        assert!(pinned.contains(r#""splice":true"#));
     }
 
     #[test]
     fn the_default_policy_matches_the_script_defaults() {
         let policy = RelayPolicy::default();
+
         assert!(policy.splice);
         assert!(policy.pipe_pool);
         assert_eq!(policy.buffer_kib, 32);
-        let pinned = apply(r#"{"advanced":{"limits":{"relay":{}}}}"#, policy).unwrap();
-        assert!(pinned.contains(r#""bufferBytes":32768"#));
+        assert_eq!(policy.objective(), Ok("balanced"));
+    }
+
+    /// The server refuses this combination, so the harness refuses it first.
+    #[test]
+    fn pooling_without_splice_is_refused_before_the_server_sees_it() {
+        let policy = RelayPolicy {
+            splice: false,
+            pipe_pool: true,
+            buffer_kib: 32,
+        };
+
+        let error = apply(BASE, policy).unwrap_err();
+
+        assert!(error.contains("pipePool cannot be enabled"), "{error}");
+    }
+
+    #[test]
+    fn malformed_input_is_refused() {
+        assert!(apply("not json", RelayPolicy::default()).is_err());
+        assert!(apply("[]", RelayPolicy::default()).is_err());
     }
 }

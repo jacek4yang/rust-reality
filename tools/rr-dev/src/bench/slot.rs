@@ -378,11 +378,7 @@ mod tests {
         let (program, args) = strace_command(
             Path::new("/out/slot/strace.txt"),
             Path::new("/bin/rust-reality"),
-            &[
-                "serve".to_owned(),
-                "--config".to_owned(),
-                "/w/s.json".to_owned(),
-            ],
+            &["run".to_owned(), "-c".to_owned(), "/w/s.json".to_owned()],
         );
         assert_eq!(program, "strace");
         assert_eq!(
@@ -397,8 +393,8 @@ mod tests {
                 "-o",
                 "/out/slot/strace.txt",
                 "/bin/rust-reality",
-                "serve",
-                "--config",
+                "run",
+                "-c",
                 "/w/s.json",
             ]
         );

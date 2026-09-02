@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn redaction_hides_identity_values_but_keeps_structure() {
-        let config = r#"{"inbounds":[{"settings":{"clients":[{"id":"0d67a4b2-3f0c-4c1e-9a2b-6f5e8d7c6b5a","shortIds":["0123456789abcdef"]}]}}],"outbounds":[],"privateKey":"kQ1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1v"}"#;
+        let config = r#"{"role":"entry","users":[{"id":"0d67a4b2-3f0c-4c1e-9a2b-6f5e8d7c6b5a","shortIds":["0123456789abcdef"]}],"reality":{"privateKey":"kQ1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1v"}}"#;
         let redacted = redact_secrets(config);
         assert!(redacted.contains("<redacted:uuid>"), "{redacted}");
         assert!(redacted.contains("<redacted:short-id>"), "{redacted}");
@@ -376,7 +376,7 @@ mod tests {
         assert!(!redacted.contains("0123456789abcdef"), "{redacted}");
         assert!(!redacted.contains("kQ1b2C3d4E5f6G7h8"), "{redacted}");
         // Structure survives so a redacted document stays diffable.
-        assert!(redacted.contains("\"inbounds\""));
+        assert!(redacted.contains("\"users\""));
     }
 
     #[test]

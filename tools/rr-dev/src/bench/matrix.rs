@@ -1182,7 +1182,7 @@ fn start_rust_pair(
             format!("{label}{suffix}-server"),
             &binary.path,
             &[
-                "serve".to_owned(),
+                "run".to_owned(),
                 "--config".to_owned(),
                 path.display().to_string(),
             ],

@@ -1204,20 +1204,10 @@ fn run_cost_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Result
         let socks_port = state.port()?;
         let uuids = generate_uuids(&state.rust, variant.uuids)?;
         let generated = soak::generated_public_config(
-            &state.rust.path,
-            vec![
-                "config".to_owned(),
-                "generate".to_owned(),
-                "standalone".to_owned(),
-                "--listen".to_owned(),
-                "127.0.0.1".to_owned(),
-                "--port".to_owned(),
-                server_port.to_string(),
-                "--target".to_owned(),
-                format!("127.0.0.1:{}", fixture.cover_port),
-                "--server-name".to_owned(),
-                "localhost".to_owned(),
-            ],
+            &soak::PublicNodeSpec::standalone(
+                server_port,
+                &format!("127.0.0.1:{}", fixture.cover_port),
+            ),
             &state.workspace,
             &format!("assets-cost-{}", variant.label),
         )?;
@@ -1352,19 +1342,10 @@ fn run_topology_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Re
     let standalone = deployment_public_config(
         state,
         "standalone",
-        vec![
-            "config".to_owned(),
-            "generate".to_owned(),
-            "standalone".to_owned(),
-            "--listen".to_owned(),
-            "127.0.0.1".to_owned(),
-            "--port".to_owned(),
-            standalone_port.to_string(),
-            "--target".to_owned(),
-            format!("127.0.0.1:{}", fixture.cover_port),
-            "--server-name".to_owned(),
-            "localhost".to_owned(),
-        ],
+        &soak::PublicNodeSpec::standalone(
+            standalone_port,
+            &format!("127.0.0.1:{}", fixture.cover_port),
+        ),
     )?;
     spawn_generated_rust(state, "topo-a", standalone_port, &standalone.json)?;
     let standalone_identity = identity_for(&standalone, fixture.cover_port);
@@ -1383,7 +1364,7 @@ fn run_topology_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Re
     let nxr_line = deployment_public_config(
         state,
         "nxr-line",
-        line_generation_args(
+        &line_spec(
             nxr_line_port,
             fixture.cover_port,
             nxr_landing_port,
@@ -1407,7 +1388,7 @@ fn run_topology_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Re
     let socks_line = deployment_public_config(
         state,
         "socks-line",
-        line_generation_args(socks_line_port, fixture.cover_port, 9, &nxr_key),
+        &line_spec(socks_line_port, fixture.cover_port, 9, &nxr_key),
     )?;
     let socks_json = soak::patch_socks_outbound(&socks_line.json, upstream_socks)?;
     spawn_generated_rust(state, "topo-c-line", socks_line_port, &socks_json)?;
@@ -1498,43 +1479,41 @@ fn run_topology_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Re
 fn deployment_public_config(
     state: &RunState<'_>,
     label: &str,
-    args: Vec<String>,
+    spec: &soak::PublicNodeSpec,
 ) -> Result<soak::GeneratedPublicConfig, String> {
-    let mut generated = soak::generated_public_config(
-        &state.rust.path,
-        args,
-        &state.workspace,
-        &format!("assets-{label}"),
-    )?;
+    let mut generated =
+        soak::generated_public_config(spec, &state.workspace, &format!("assets-{label}"))?;
     generated.json = suites::set_rust_log_level(&generated.json, "warn")?;
     Ok(generated)
 }
 
-fn line_generation_args(
+fn line_spec(
     line_port: u16,
     cover_port: u16,
     landing_port: u16,
     key: &str,
-) -> Vec<String> {
-    vec![
-        "config".to_owned(),
-        "generate".to_owned(),
-        "line".to_owned(),
-        "--listen".to_owned(),
-        "127.0.0.1".to_owned(),
-        "--port".to_owned(),
-        line_port.to_string(),
-        "--target".to_owned(),
-        format!("127.0.0.1:{cover_port}"),
-        "--server-name".to_owned(),
-        "localhost".to_owned(),
-        "--nxr-address".to_owned(),
-        "127.0.0.1".to_owned(),
-        "--nxr-port".to_owned(),
-        landing_port.to_string(),
-        "--nxr-key".to_owned(),
-        key.to_owned(),
-    ]
+) -> soak::PublicNodeSpec {
+    line_spec_to(line_port, cover_port, "127.0.0.1", landing_port, key)
+}
+
+fn line_spec_to(
+    line_port: u16,
+    cover_port: u16,
+    peer_address: &str,
+    peer_port: u16,
+    key: &str,
+) -> soak::PublicNodeSpec {
+    soak::PublicNodeSpec::line(
+        line_port,
+        &format!("127.0.0.1:{cover_port}"),
+        crate::bench::config::LandingLink {
+            protocol: "nxr",
+            address: peer_address.to_owned(),
+            port: peer_port,
+            psk: key.to_owned(),
+            landing_public_key: None,
+        },
+    )
 }
 
 fn landing_config(
@@ -1555,34 +1534,21 @@ fn landing_config_at(
     key: &str,
     level: &str,
 ) -> Result<String, String> {
-    let outcome = Tool::new(state.rust.path.display().to_string())
-        .args([
-            "config".to_owned(),
-            "generate".to_owned(),
-            "landing".to_owned(),
-            "--listen".to_owned(),
-            listen.to_owned(),
-            "--port".to_owned(),
-            port.to_string(),
-            "--nxr-key".to_owned(),
-            key.to_owned(),
-        ])
-        .probe()
-        .map_err(|error| format!("{label} config generation failed: {error}"))?;
-    if !outcome.success() {
-        return Err(format!(
-            "{label} config generation exited {:?}: {}",
-            outcome.code,
-            outcome.stderr.trim_end()
-        ));
-    }
-    let patched = soak::patch_server_config(
-        outcome.trimmed_stdout(),
-        &state.workspace,
-        &format!("assets-{label}"),
-        false,
-    )?;
-    suites::set_rust_log_level(&patched, level)
+    let _ = (state, label);
+    let rendered = crate::bench::config::rust_landing(
+        listen,
+        port,
+        &crate::bench::config::LandingLink {
+            protocol: "nxr",
+            address: listen.to_owned(),
+            port,
+            psk: key.to_owned(),
+            landing_public_key: None,
+        },
+        None,
+    )
+    .to_python_json();
+    suites::set_rust_log_level(&rendered, level)
 }
 
 fn spawn_generated_rust(
@@ -2077,7 +2043,7 @@ fn build_rtt_nxr_pair(
     let generated = deployment_public_config(
         state,
         "rtt-nxr-line-base",
-        line_generation_args_to(
+        &line_spec_to(
             warm_line_port,
             fixture.cover_port,
             super::deployment_netns::PEER_ADDRESS,
@@ -2148,25 +2114,6 @@ fn build_rtt_nxr_pair(
     Ok(())
 }
 
-fn line_generation_args_to(
-    line_port: u16,
-    cover_port: u16,
-    peer_address: &str,
-    peer_port: u16,
-    key: &str,
-) -> Vec<String> {
-    let mut args = line_generation_args(line_port, cover_port, peer_port, key);
-    let address = args
-        .iter()
-        .position(|value| value == "--nxr-address")
-        .and_then(|index| args.get_mut(index + 1));
-    if let Some(address) = address {
-        address.clear();
-        address.push_str(peer_address);
-    }
-    args
-}
-
 fn spawn_rtt_namespace_rust(
     state: &RunState<'_>,
     topology: &super::deployment_netns::Topology,
@@ -2183,7 +2130,7 @@ fn spawn_rtt_namespace_rust(
         &format!("deployment-{label}"),
         &state.rust.path,
         &[
-            "serve".to_owned(),
+            "run".to_owned(),
             "--config".to_owned(),
             config_path.display().to_string(),
         ],
@@ -2268,7 +2215,7 @@ fn build_rtt_socks_pair(
     let generated = deployment_public_config(
         state,
         "rtt-socks-line-base",
-        line_generation_args_to(
+        &line_spec_to(
             warm_line_port,
             fixture.cover_port,
             super::deployment_netns::PEER_ADDRESS,
@@ -2356,44 +2303,51 @@ fn build_rtt_handoff_pair(
     let cold_landing_port = state.port()?;
     let warm_socks = state.port()?;
     let cold_socks = state.port()?;
-    let generated_dir = state.workspace.join("rtt-handoff-generated");
-    let outcome = Tool::new(state.rust.path.display().to_string())
-        .args([
-            "config".to_owned(),
-            "generate".to_owned(),
-            "handoff".to_owned(),
-            "--listen".to_owned(),
-            "127.0.0.1".to_owned(),
-            "--port".to_owned(),
-            warm_line_port.to_string(),
-            "--server-address".to_owned(),
-            "127.0.0.1".to_owned(),
-            "--target".to_owned(),
-            format!("127.0.0.1:{}", fixture.cover_port),
-            "--server-name".to_owned(),
-            "localhost".to_owned(),
-            "--landing-address".to_owned(),
-            super::deployment_netns::PEER_ADDRESS.to_owned(),
-            "--landing-port".to_owned(),
-            warm_landing_port.to_string(),
-            "--output-dir".to_owned(),
-            generated_dir.display().to_string(),
-        ])
-        .probe()
-        .map_err(|error| format!("RTT handoff config generation failed: {error}"))?;
-    if !outcome.success() {
-        return Err(format!(
-            "RTT handoff config generation exited {:?}: {}",
-            outcome.code,
-            outcome.stderr.trim_end()
-        ));
-    }
-    let line_raw = std::fs::read_to_string(generated_dir.join("line.json"))
-        .map_err(|error| format!("could not read generated handoff line: {error}"))?;
-    let landing_raw = std::fs::read_to_string(generated_dir.join("landing.json"))
-        .map_err(|error| format!("could not read generated handoff landing: {error}"))?;
-    let xray_raw = std::fs::read_to_string(generated_dir.join("xray-client.json"))
-        .map_err(|error| format!("could not read generated handoff client: {error}"))?;
+
+    // A Handoff pair is two independent secrets: the shared pre-shared key, and
+    // the landing's own X25519 pair whose public half the line node carries.
+    let handoff_psk = soak::node_key(&state.rust.path)?;
+    let landing_pair = rust_reality::crypto::generate_x25519_key_pair()
+        .map_err(|error| format!("could not generate the landing key pair: {error}"))?;
+    let (landing_private, landing_public) = landing_pair.into_parts();
+    let reality = rust_reality::crypto::generate_x25519_key_pair()
+        .map_err(|error| format!("could not generate the REALITY key pair: {error}"))?;
+    let (reality_private, reality_public) = reality.into_parts();
+    let uuid = rust_reality::crypto::generate_uuid()
+        .map_err(|error| format!("could not generate a UUID: {error}"))?
+        .to_string();
+    let short_id = rust_reality::crypto::generate_short_id(8)
+        .map_err(|error| format!("could not generate a short ID: {error}"))?;
+
+    let identity = crate::bench::config::RealityIdentity {
+        uuid: uuid.clone(),
+        short_id: short_id.clone(),
+        server_name: "localhost".to_owned(),
+        target: format!("127.0.0.1:{}", fixture.cover_port),
+    };
+    let link = crate::bench::config::LandingLink {
+        protocol: "handoff",
+        address: super::deployment_netns::PEER_ADDRESS.to_owned(),
+        port: warm_landing_port,
+        psk: handoff_psk,
+        landing_public_key: Some(landing_public),
+    };
+    let line_raw =
+        crate::bench::config::RustServer::new(&identity, warm_line_port, reality_private.expose())
+            .through_landing(&link)
+            .build()
+            .to_python_json();
+    let landing_raw = crate::bench::config::rust_landing(
+        super::deployment_netns::PEER_ADDRESS,
+        warm_landing_port,
+        &link,
+        Some(landing_private.expose()),
+    )
+    .to_python_json();
+    let xray_raw =
+        crate::bench::config::xray_client(&identity, warm_line_port, warm_socks, &reality_public)
+            .to_python_json();
+
     let line_base = soak::patch_server_config(
         &line_raw,
         &state.workspace,
@@ -2685,7 +2639,7 @@ fn run_longflow_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Re
     let line = deployment_public_config(
         state,
         "longflow-line",
-        line_generation_args(line_port, fixture.cover_port, landing_port, &key),
+        &line_spec(line_port, fixture.cover_port, landing_port, &key),
     )?;
     let landing = landing_config(state, "longflow-landing", landing_port, &key, "debug")?;
     let landing_path = state.workspace.join("longflow-landing.json");
@@ -2696,7 +2650,7 @@ fn run_longflow_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Re
         "deployment-longflow-landing",
         &state.rust.path,
         &[
-            "serve".to_owned(),
+            "run".to_owned(),
             "--config".to_owned(),
             landing_path.display().to_string(),
         ],
@@ -2838,10 +2792,6 @@ fn prepare_shared_fixture(state: &mut RunState<'_>) -> Result<SharedFixture, Str
     })
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one bounded section keeps process ownership and its proof visibly together"
-)]
 fn run_routing_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Result<(), String> {
     let fixed_socks_port = state.port()?;
     let server_port = state.port()?;
@@ -2861,20 +2811,10 @@ fn run_routing_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Res
     )?;
     let uuids = generate_uuids(&state.rust, 4)?;
     let generated = soak::generated_public_config(
-        &state.rust.path,
-        vec![
-            "config".to_owned(),
-            "generate".to_owned(),
-            "standalone".to_owned(),
-            "--listen".to_owned(),
-            "127.0.0.1".to_owned(),
-            "--port".to_owned(),
-            server_port.to_string(),
-            "--target".to_owned(),
-            format!("127.0.0.1:{}", fixture.cover_port),
-            "--server-name".to_owned(),
-            "localhost".to_owned(),
-        ],
+        &soak::PublicNodeSpec::standalone(
+            server_port,
+            &format!("127.0.0.1:{}", fixture.cover_port),
+        ),
         &state.workspace,
         "assets-routing-base",
     )?;

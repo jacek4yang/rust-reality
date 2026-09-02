@@ -508,7 +508,7 @@ fn launch_slot(
     socks_port: u16,
 ) -> Result<SlotProcesses, String> {
     let server_args = vec![
-        "serve".to_owned(),
+        "run".to_owned(),
         "--config".to_owned(),
         workspace
             .join(&format!("{name}.server.json"))
@@ -1855,7 +1855,7 @@ fn measure_fallback_slot(
         format!("{name}-server"),
         &binary.path,
         &[
-            "serve".to_owned(),
+            "run".to_owned(),
             "--config".to_owned(),
             server_path.display().to_string(),
         ],
