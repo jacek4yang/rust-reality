@@ -78,6 +78,10 @@ pub struct Report {
     pub failures: Vec<String>,
     /// How many Markdown files were considered.
     pub files: usize,
+    /// Complete node configurations validated and found canonical.
+    pub configurations: usize,
+    /// Fenced JSON blocks that parse but are sections rather than whole files.
+    pub fragments: usize,
 }
 
 impl Report {
@@ -92,8 +96,10 @@ impl Report {
     pub fn render(&self) -> String {
         if self.is_clean() {
             return format!(
-                "documentation links verified across {} Markdown files",
-                self.files
+                "documentation verified across {} Markdown files: links resolve, \
+                 {} JSON configurations validate and are canonical, \
+                 {} JSON fragments parse",
+                self.files, self.configurations, self.fragments
             );
         }
         let mut text = String::from("documentation validation failed:\n");
@@ -103,6 +109,8 @@ impl Report {
         text
     }
 }
+
+pub mod examples;
 
 /// Runs every documentation policy against `repo`.
 #[must_use]
@@ -119,12 +127,16 @@ pub fn check(repo: &Path) -> Report {
     }
 
     failures.extend(forbidden_phrase_failures(repo, &files));
+    let examples = examples::check(repo, &files);
+    failures.extend(examples.failures);
     failures.extend(release_headline_failures(repo));
     failures.extend(link_failures(repo, &files));
 
     Report {
         failures,
         files: files.len(),
+        configurations: examples.configurations,
+        fragments: examples.fragments,
     }
 }
 
@@ -916,14 +928,20 @@ mod tests {
     }
 
     #[test]
-    fn a_clean_report_renders_the_legacy_summary_line() {
+    fn a_clean_report_says_what_it_verified() {
+        // The counts are the point: a check that validated no configurations
+        // must not read the same as one that validated every page.
         let report = Report {
             failures: Vec::new(),
             files: 39,
+            configurations: 7,
+            fragments: 12,
         };
+
         assert_eq!(
             report.render(),
-            "documentation links verified across 39 Markdown files"
+            "documentation verified across 39 Markdown files: links resolve, \
+             7 JSON configurations validate and are canonical, 12 JSON fragments parse"
         );
     }
 
@@ -932,6 +950,8 @@ mod tests {
         let report = Report {
             failures: vec!["a: bad".to_owned(), "b: worse".to_owned()],
             files: 2,
+            configurations: 0,
+            fragments: 0,
         };
         let rendered = report.render();
         assert!(rendered.starts_with("documentation validation failed:"));

@@ -215,13 +215,7 @@ mod tests {
         );
     }
 
-    /// Renders a validated node the way `rust-reality format` does.
-    fn format(config: &crate::config::ValidatedConfig) -> String {
-        let mut rendered =
-            serde_json::to_string_pretty(config.node()).expect("a validated node must serialise");
-        rendered.push('\n');
-        rendered
-    }
+    use crate::config::canonical as format;
 
     #[test]
     fn formatting_is_idempotent_and_preserves_semantics() {

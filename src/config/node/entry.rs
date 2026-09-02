@@ -30,18 +30,22 @@ pub struct EntryConfig {
     pub reality: RealityConfig,
     /// Authorized client identities.
     pub users: Vec<UserConfig>,
-    /// Where traffic goes.
-    pub routing: RoutingConfig,
     /// Declared outbound transports, keyed by name.
     ///
     /// Absent means only the built-in `direct` and `block` outbounds exist,
     /// which is everything a standalone node needs.
+    ///
+    /// Declared above `routing` despite being optional, because that is the
+    /// order it reads in: these names are what `routing` refers to, so the
+    /// canonical form defines them before it uses them.
     #[serde(
         default,
         deserialize_with = "super::named::optional_unique_map",
         skip_serializing_if = "Option::is_none"
     )]
     pub outbounds: Option<BTreeMap<String, OutboundConfig>>,
+    /// Where traffic goes.
+    pub routing: RoutingConfig,
     /// GeoIP and GeoSite data. Consulted only when a routing rule names a
     /// `geoip:` or `geosite:` condition.
     #[serde(default, skip_serializing_if = "Option::is_none")]

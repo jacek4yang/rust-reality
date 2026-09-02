@@ -411,49 +411,50 @@ rust-reality self-test --config config.json
 并继续运行旧配置（VERIFIED 事件）。每次 reload 之后，确认你得到的
 是哪一个。
 
-**完整示例——1C1G 的完整调优 limits。** 这个块嵌入生成的 standalone
-配置（含 `"runtime": {"profile": "dedicated", "tuning": {"mode":
-"fixed"}}`）后能通过 `check --config`。与默认值不同的只有
-`maxConnections`；其余照列是因为每个标注"对象存在时必填"的字段在
-其对象出现时都必须提供。
+**完整示例——1C1G 的调优配置。** 只钉住一个上限，其余一概不写：这就
+是现在专家调优的全部形状。写在 `runtime.limits` 里就是钉住，不写就是
+"照这台机器推导"。下面这份文件能通过 `rust-reality check`，而
+`rust-reality explain` 会把 `maxConnections` 报为 `operator-pinned`，
+其余每个值报为 `startup-derived`。
 
 ```json
-"advanced": {
-  "limits": {
-    "resourceGovernor": {
-      "maxConnections": 8000,
-      "maxHandshakes": 1024,
-      "maxFallbacks": 512,
-      "maxCryptoOperations": 128,
-      "maxReplayEntries": 65536,
-      "maxDnsLookups": 64,
-      "replayRetentionMs": 120000,
-      "clientHelloTimeoutMs": 3000,
-      "handshakeTimeoutMs": 10000,
-      "connectTimeoutMs": 10000,
-      "fallbackTimeoutMs": 120000
-    },
-    "directBarrier": {
-      "maxConcurrent": 2048,
-      "maxPerSecond": 4096
-    },
-    "relay": {
-      "bufferBytes": 32768,
-      "maxPooledBuffers": 4096,
-      "maxSpliceRelays": 256,
-      "maxRelayMemoryBytes": 536870912,
-      "splice": true,
-      "pipePool": true,
-      "maxPooledPipes": 256
+{
+  "role": "entry",
+  "listeners": [
+    {
+      "port": 443
+    }
+  ],
+  "reality": {
+    "cover": "www.microsoft.com:443",
+    "privateKey": "ERERERERERERERERERERERERERERERERERERERERERE"
+  },
+  "users": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "shortIds": [
+        "0123456789abcdef"
+      ],
+      "label": "alice"
+    }
+  ],
+  "routing": {
+    "default": "direct"
+  },
+  "runtime": {
+    "profile": "dedicated",
+    "limits": {
+      "maxConnections": 8000
     }
   }
 }
 ```
 
-注意 relay 块原样未动：1 GiB 上默认池仍然放得下（§7 公式：128 MiB +
-256 MiB ≤ 512 MiB 天花板），因为内存预算由会话主导而非池。然后重启
-——`advanced.limits` 需要重启——并在日志中确认 `server_starting`、
-`machine_report`、`descriptor_budget_report` 和 `listener_started`。
+这个钉子没点名的一切仍然跟着机器走，relay 池也一样：1 GiB 上推导出的
+缓冲区与管道预算本来就落在内存天花板之内，因为内存预算由会话主导而非
+池。`runtime.limits` 属于冷配置，所以要重启而不是热更新——然后在日志
+中确认 `server_starting`、`machine_report`、`descriptor_budget_report`
+和 `listener_started`。
 
 ## 11. REALITY 伪装目标选择
 
@@ -554,50 +555,110 @@ DNS 进入决策路径的实测成本是每连接 ≈0.12 ms（MEASURED-LOCAL）
 存根（`systemd-resolved` 或同类），把 `/etc/resolv.conf` 指向它，并让
 `dns.timeoutMs` 保持诚实。
 
-已验证示例——三个用户组：A 直连，B 中国直连、默认走 NXR 落地，C 经
-上游 SOCKS5 过滤。完整配置（下面的路由加上匹配的 `outbounds` 和占位
-UUID）通过 `check --config`（VERIFIED）。匹配器语法：社区 DAT 文件的
-`geosite:`/`geoip:` 标签，域名的 `domain:`/`full:`/`keyword:`/
-`regexp:` 前缀，IP 的 CIDR。
+已验证示例——三个用户组：A 直接出站，B 中国直连、默认走 NXR 落地，
+C 经上游 SOCKS5 过滤。路由现在跟着身份走：用户点名自己遵循哪条策略，
+策略自带默认出站和规则，因此不再需要一份把 UUID 映射到组的单独名单。
+匹配器语法：社区 DAT 文件的 `geosite:`/`geoip:` 标签，域名的
+`domain:`/`full:`/`keyword:`/`regexp:` 前缀，IP 的 CIDR。
 
 ```json
-"outbounds": [
-  { "protocol": "direct", "tag": "direct" },
-  { "protocol": "blackhole", "tag": "block" },
-  { "protocol": "nxr", "tag": "nxr-landing",
-    "settings": { "address": "10.0.0.2", "port": 7443,
-                  "preSharedKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" } },
-  { "protocol": "socks5", "tag": "upstream-socks",
-    "settings": { "address": "127.0.0.1", "port": 1080 } }
-],
-"routing": {
-  "domainStrategy": "IPIfNonMatch",
-  "globalRules": [
-    { "name": "reject-private", "outbound": "block", "ip": ["geoip:private"] }
+{
+  "role": "entry",
+  "listeners": [
+    {
+      "port": 443
+    }
   ],
+  "reality": {
+    "cover": "www.microsoft.com:443",
+    "privateKey": "ERERERERERERERERERERERERERERERERERERERERERE"
+  },
   "users": [
-    { "name": "group-a-direct",
-      "userIds": ["11111111-1111-4111-8111-111111111111"],
-      "defaultOutbound": "direct", "rules": [] },
-    { "name": "group-b-cn-direct",
-      "userIds": ["22222222-2222-4222-8222-222222222222"],
-      "defaultOutbound": "nxr-landing",
-      "rules": [
-        { "name": "cn-direct", "outbound": "direct",
-          "domain": ["geosite:cn"], "ip": ["geoip:cn"] }
-      ] },
-    { "name": "group-c-filtered",
-      "userIds": ["33333333-3333-4333-8333-333333333333"],
-      "defaultOutbound": "upstream-socks",
-      "rules": [
-        { "name": "block-ads", "outbound": "block",
-          "domain": ["geosite:category-ads-all"] }
-      ] }
-  ]
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "shortIds": [
+        "0123456789abcdef"
+      ],
+      "label": "group-a"
+    },
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "shortIds": [
+        "fedcba9876543210"
+      ],
+      "label": "group-b",
+      "policy": "cn-direct"
+    },
+    {
+      "id": "33333333-3333-4333-8333-333333333333",
+      "shortIds": [
+        "00112233445566aa"
+      ],
+      "label": "group-c",
+      "policy": "filtered"
+    }
+  ],
+  "outbounds": {
+    "landing-1": {
+      "type": "nxr",
+      "address": "10.0.0.2",
+      "port": 7443,
+      "psk": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    "upstream-socks": {
+      "type": "socks5",
+      "address": "127.0.0.1",
+      "port": 1080
+    }
+  },
+  "routing": {
+    "default": "direct",
+    "strategy": "resolveIfNoMatch",
+    "rules": [
+      {
+        "name": "block-private",
+        "ip": [
+          "geoip:private"
+        ],
+        "outbound": "block"
+      }
+    ],
+    "policies": {
+      "cn-direct": {
+        "default": "landing-1",
+        "rules": [
+          {
+            "name": "cn-stays-home",
+            "domain": [
+              "geosite:cn"
+            ],
+            "ip": [
+              "geoip:cn"
+            ],
+            "outbound": "direct"
+          }
+        ]
+      },
+      "filtered": {
+        "default": "upstream-socks",
+        "rules": [
+          {
+            "name": "block-ads",
+            "domain": [
+              "geosite:category-ads-all"
+            ],
+            "outbound": "block"
+          }
+        ]
+      }
+    }
+  }
 }
 ```
 
-三个 UUID 都是占位符；换成真实客户端 ID。outbounds 和路由可热更新，
+三个 UUID 和两组 short ID 都是占位符；换成 `rust-reality generate` 生成
+的材料。`direct` 和 `block` 是内置的，永远不声明——这份文件声明的两个
+outbound 就是它真正会拨号的那两个。outbounds、用户和路由全都是热配置，
 改组和规则不需要重启（§10）。
 
 ## 13. 延迟诊断
