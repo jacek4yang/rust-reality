@@ -38,7 +38,10 @@ pub fn verify(repo: &Path, tag: &str, main_ref: &str) -> Result<String, String> 
         ));
     }
 
-    let tag_commit = git(repo, &["rev-parse", "--verify", &format!("{tag}^{{commit}}")])?;
+    let tag_commit = git(
+        repo,
+        &["rev-parse", "--verify", &format!("{tag}^{{commit}}")],
+    )?;
     let head_commit = git(repo, &["rev-parse", "--verify", "HEAD"])?;
     let tag_commit = tag_commit.trim();
     let head_commit = head_commit.trim();

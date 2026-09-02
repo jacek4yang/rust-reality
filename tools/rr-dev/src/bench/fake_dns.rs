@@ -324,8 +324,15 @@ mod tests {
         let question = parse_question(&packet).unwrap();
         let response = build_response(&packet, &question, Ipv4Addr::LOCALHOST, 300);
         assert_eq!(&response[0..2], &packet[0..2], "the id is echoed");
-        assert_eq!(u16::from_be_bytes([response[2], response[3]]) & 0x8000, 0x8000);
-        assert_eq!(u16::from_be_bytes([response[6], response[7]]), 1, "one answer");
+        assert_eq!(
+            u16::from_be_bytes([response[2], response[3]]) & 0x8000,
+            0x8000
+        );
+        assert_eq!(
+            u16::from_be_bytes([response[6], response[7]]),
+            1,
+            "one answer"
+        );
         assert_eq!(&response[response.len() - 4..], &[127, 0, 0, 1]);
         // TTL sits just before the two-byte rdlength and the four address bytes.
         let ttl_at = response.len() - 10;
@@ -347,7 +354,11 @@ mod tests {
         let packet = query("warm.dnsbench", TYPE_AAAA, CLASS_IN);
         let question = parse_question(&packet).unwrap();
         let response = build_response(&packet, &question, Ipv4Addr::LOCALHOST, 300);
-        assert_eq!(u16::from_be_bytes([response[6], response[7]]), 0, "no answers");
+        assert_eq!(
+            u16::from_be_bytes([response[6], response[7]]),
+            0,
+            "no answers"
+        );
         assert_eq!(
             u16::from_be_bytes([response[8], response[9]]),
             1,
@@ -359,9 +370,7 @@ mod tests {
             "RCODE must be NOERROR, not NXDOMAIN"
         );
         assert!(
-            response
-                .windows(7)
-                .any(|window| window == b"invalid"),
+            response.windows(7).any(|window| window == b"invalid"),
             "the SOA names the invalid zone"
         );
     }

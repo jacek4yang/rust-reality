@@ -96,17 +96,19 @@ impl CoverMode {
         let flag = json_in::Value::Bool;
         match (self, role) {
             (Self::Default, _) => None,
-            (Self::Cold, Role::Baseline) => {
-                Some(object(vec![("enabled", flag(true)), ("warmTcp", flag(false))]))
-            }
+            (Self::Cold, Role::Baseline) => Some(object(vec![
+                ("enabled", flag(true)),
+                ("warmTcp", flag(false)),
+            ])),
             (Self::Cold, Role::Candidate) => Some(object(vec![
                 ("enabled", flag(true)),
                 ("warmTcp", flag(false)),
                 ("prebuiltProfiles", flag(false)),
             ])),
-            (Self::Warm, Role::Baseline) => {
-                Some(object(vec![("enabled", flag(true)), ("warmTcp", flag(true))]))
-            }
+            (Self::Warm, Role::Baseline) => Some(object(vec![
+                ("enabled", flag(true)),
+                ("warmTcp", flag(true)),
+            ])),
             (Self::Warm, Role::Candidate) => Some(object(vec![
                 ("enabled", flag(true)),
                 ("warmTcp", flag(true)),
@@ -156,31 +158,14 @@ pub fn apply(
     members.insert("log".to_owned(), json_in::Value::Object(log));
 
     if let Some(optimization) = mode.optimization(role) {
-        set_reality_field(&mut members, "coverOptimization", optimization)?;
+        let json_in::Value::Object(fields) = optimization else {
+            return Err("the cover optimization override is not an object".to_owned());
+        };
+        for (key, value) in fields {
+            crate::bench::suites::set_cover_optimization(&mut members, &key, value)?;
+        }
     }
     Ok(render_compact(&json_in::Value::Object(members)))
-}
-
-/// Sets `inbounds[0].streamSettings.realitySettings.<key>`.
-fn set_reality_field(
-    members: &mut std::collections::BTreeMap<String, json_in::Value>,
-    key: &str,
-    value: json_in::Value,
-) -> Result<(), String> {
-    let Some(json_in::Value::Array(inbounds)) = members.get_mut("inbounds") else {
-        return Err("the server config has no inbounds array".to_owned());
-    };
-    let Some(json_in::Value::Object(inbound)) = inbounds.first_mut() else {
-        return Err("the server config has no inbounds[0] object".to_owned());
-    };
-    let Some(json_in::Value::Object(stream)) = inbound.get_mut("streamSettings") else {
-        return Err("inbounds[0] has no streamSettings object".to_owned());
-    };
-    let Some(json_in::Value::Object(reality)) = stream.get_mut("realitySettings") else {
-        return Err("streamSettings has no realitySettings object".to_owned());
-    };
-    reality.insert(key.to_owned(), value);
-    Ok(())
 }
 
 /// The cover-pool checkout counters one slot reported.
@@ -263,10 +248,7 @@ fn single_record(log: &str, event: &str) -> Result<json_in::Value, String> {
         }
     }
     let [record] = found.as_slice() else {
-        return Err(format!(
-            "expected one {event}, found {}",
-            found.len()
-        ));
+        return Err(format!("expected one {event}, found {}", found.len()));
     };
     Ok(record.clone())
 }
@@ -403,9 +385,14 @@ pub fn aggregate_profile(slots: &[ProfileSummary]) -> Json {
 mod tests {
     use super::*;
 
-    const CONFIG: &str = r#"{"log":{"level":"warn"},"inbounds":[{"port":443,
-        "streamSettings":{"network":"tcp","security":"reality",
-        "realitySettings":{"target":"dl.google.com:443"}}}]}"#;
+    const CONFIG: &str = r#"{"role":"entry",
+        "listeners":[{"port":8443,"ip":"ipv4Only","ipv4":"127.0.0.1"}],
+        "reality":{"cover":"dl.google.com:443",
+                   "privateKey":"ERERERERERERERERERERERERERERERERERERERERERE"},
+        "users":[{"id":"11111111-1111-4111-8111-111111111111",
+                  "shortIds":["0123456789abcdef"]}],
+        "routing":{"default":"direct"},
+        "assets":{"cacheDirectory":"/w"},"log":{"level":"warn"}}"#;
 
     #[test]
     fn the_cover_modes_parse_and_round_trip() {

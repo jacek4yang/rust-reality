@@ -188,7 +188,10 @@ pub fn reserve_block(width: usize) -> Result<u16, String> {
 fn user_namespace() -> String {
     std::env::var("USER")
         .ok()
-        .filter(|user| user.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+        .filter(|user| {
+            user.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        })
         .filter(|user| !user.is_empty())
         .unwrap_or_else(|| std::process::id().to_string())
 }
@@ -253,7 +256,10 @@ mod tests {
     #[test]
     fn a_reserved_block_is_contiguous_and_above_the_ephemeral_range() {
         let base = reserve_block(8).expect("a block of eight ports is available");
-        assert!(base >= 61_000, "base {base} must sit above the ephemeral range");
+        assert!(
+            base >= 61_000,
+            "base {base} must sit above the ephemeral range"
+        );
         assert!(u32::from(base) + 8 <= 65_536);
         // Every port in the block binds now that the probe released them.
         let held: Vec<TcpListener> = (0..8)

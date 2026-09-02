@@ -20,15 +20,20 @@ use crate::{
 };
 
 /// The client-visible identity fields whose presence and hash are recorded.
+///
+/// These are exactly the values a configured client would have to be told
+/// about again if they changed: where to connect, who it claims to be, and
+/// which cover it fronts. `flow` is not among them any more — this server
+/// speaks Vision and nothing else, so there is no value to drift.
 const IDENTITY_FIELDS: [&str; 8] = [
-    "clients",
-    "flow",
-    "listen",
+    "cover",
+    "id",
+    "listeners",
     "port",
     "privateKey",
     "serverNames",
     "shortIds",
-    "target",
+    "users",
 ];
 
 /// One recorded identity field: present, its content hash, kind and count.
@@ -107,7 +112,10 @@ pub fn report(config_path: &Path) -> Result<Json, String> {
                         ("present", Json::Bool(true)),
                         ("sha256", Json::string(field.sha256.clone())),
                         ("kind", Json::string(field.kind.clone())),
-                        ("count", Json::Int(i64::try_from(field.count).unwrap_or(i64::MAX))),
+                        (
+                            "count",
+                            Json::Int(i64::try_from(field.count).unwrap_or(i64::MAX)),
+                        ),
                     ]),
                 )
             })
@@ -242,7 +250,7 @@ mod tests {
     fn identity_fields_never_carry_raw_secrets() {
         let secret = "never-emit-this-private-value";
         let document = format!(
-            r#"{{"inbounds":[{{"listen":{{"mode":"ipv4Only","ipv4":"0.0.0.0"}},"port":443,"settings":{{"clients":[{{"id":"{secret}","flow":"xtls-rprx-vision"}}]}},"streamSettings":{{"reality":{{"privateKey":"{secret}","shortIds":["{secret}"],"serverNames":["example.invalid"],"target":"example.invalid:443"}}}}}}]}}"#
+            r#"{{"role":"entry","listeners":[{{"port":443,"ip":"ipv4Only","ipv4":"0.0.0.0"}}],"reality":{{"cover":"example.invalid:443","privateKey":"{secret}","serverNames":["example.invalid"]}},"users":[{{"id":"{secret}","shortIds":["{secret}"]}}],"routing":{{"default":"direct"}}}}"#
         );
         let value = json_in::parse(&document).expect("fixture must parse");
         let mut fields = BTreeMap::new();
@@ -250,7 +258,10 @@ mod tests {
 
         assert!(!fields.is_empty(), "identity fields must be recorded");
         let encoded = format!("{fields:?}");
-        assert!(!encoded.contains(secret), "no raw secret may survive: {encoded}");
+        assert!(
+            !encoded.contains(secret),
+            "no raw secret may survive: {encoded}"
+        );
         for field in fields.values() {
             assert_eq!(field.sha256.len(), 64, "every field carries a full SHA-256");
         }
@@ -260,7 +271,11 @@ mod tests {
     fn the_fingerprint_is_stable_and_key_order_independent() {
         let a = json_in::parse(r#"{"port":443,"flow":"x"}"#).unwrap();
         let b = json_in::parse(r#"{"flow":"x","port":443}"#).unwrap();
-        assert_eq!(fingerprint(&a), fingerprint(&b), "sorted-key canonicalisation");
+        assert_eq!(
+            fingerprint(&a),
+            fingerprint(&b),
+            "sorted-key canonicalisation"
+        );
     }
 
     #[test]

@@ -123,7 +123,7 @@ pub fn start_leg(inputs: &LegInputs<'_>) -> Result<Leg, String> {
         .map_err(|error| format!("could not write {}: {error}", server_path.display()))?;
     let server_args = if implementation == Implementation::Rust {
         vec![
-            "serve".to_owned(),
+            "run".to_owned(),
             "--config".to_owned(),
             server_path.display().to_string(),
         ]
@@ -230,7 +230,12 @@ fn prepare_server(
                 inputs.policy,
             )
             .to_python_json();
-            Ok((config, identity, keys.public.clone(), inputs.xray_bin.to_path_buf()))
+            Ok((
+                config,
+                identity,
+                keys.public.clone(),
+                inputs.xray_bin.to_path_buf(),
+            ))
         }
     }
 }
@@ -263,7 +268,11 @@ pub fn rust_server_config(
         json_in::Value::Array(vec![string(&format!("127.0.0.1:{dns_port}"))]),
     )?;
     set_path(&mut members, &["dns", "cache", "minTtlSeconds"], number(5))?;
-    set_path(&mut members, &["dns", "cache", "maxTtlSeconds"], number(3600))?;
+    set_path(
+        &mut members,
+        &["dns", "cache", "maxTtlSeconds"],
+        number(3600),
+    )?;
 
     if !policy.domain_rules.is_empty() {
         let rules: Vec<json_in::Value> = policy
@@ -281,10 +290,10 @@ pub fn rust_server_config(
                 json_in::Value::Object(rule)
             })
             .collect();
-        set_path(&mut members, &["routing", "domainStrategy"], string("AsIs"))?;
+        set_path(&mut members, &["routing", "strategy"], string("asIs"))?;
         set_path(
             &mut members,
-            &["routing", "globalRules"],
+            &["routing", "rules"],
             json_in::Value::Array(rules),
         )?;
     }
@@ -293,12 +302,9 @@ pub fn rust_server_config(
 
 /// Sets one leaf of a nested object, creating intermediate objects as needed.
 ///
-/// This is `jq`'s `.a.b = c`, and the distinction from replacing `.a` outright is
-/// load-bearing: the generated config's `routing` carries a `users` block that
-/// binds the client UUID to an outbound, and its `dns` carries timeouts and
-/// negative-cache bounds. Replacing either object drops those — the server then
-/// refuses to start, or silently runs with different cache behaviour than the
-/// harness intended.
+/// This is `jq`'s `.a.b = c`, and the distinction from replacing `.a` outright
+/// is load-bearing: `routing` carries the required `default`, and replacing the
+/// object would drop it and leave a file the server refuses.
 ///
 /// # Errors
 ///
@@ -515,14 +521,28 @@ pub fn worst_case_target(count: usize) -> String {
 mod tests {
     use super::*;
 
-    /// A generated config carries more than the harness sets: `routing.users`
-    /// binds the client UUID to an outbound, and `dns` carries timeouts.
-    const GENERATED: &str = r#"{"log":{"level":"warn"},"assets":{"cacheDirectory":"/w"},
+    /// What the shared builder emits, plus the `dns` block this suite is about.
+    /// `routing.default` is required, so the patch must merge rather than
+    /// replace — that is what the surviving assertions below check.
+    const GENERATED: &str = r#"{"role":"entry",
+        "listeners":[{"port":8443,"ip":"ipv4Only","ipv4":"127.0.0.1"}],
+        "reality":{"cover":"dl.google.com:443",
+                   "privateKey":"ERERERERERERERERERERERERERERERERERERERERERE"},
+        "users":[{"id":"11111111-1111-4111-8111-111111111111",
+                  "shortIds":["0123456789abcdef"]}],
+        "routing":{"default":"direct"},
         "dns":{"servers":["system"],"timeoutMs":5000,
                "cache":{"maxEntries":1024,"minTtlSeconds":5,"negativeTtlSeconds":60}},
-        "routing":{"domainStrategy":"IPIfNonMatch","globalRules":[],
-                   "users":[{"name":"direct-users","defaultOutbound":"direct"}]},
-        "inbounds":[{"port":443,"streamSettings":{"realitySettings":{}}}]}"#;
+        "assets":{"cacheDirectory":"/w"},"log":{"level":"warn"}}"#;
+
+    /// The patched result must still be a configuration the server accepts.
+    fn assert_valid(rendered: &str) {
+        rust_reality::config::load_bytes(
+            std::path::Path::new("resolver.json"),
+            rendered.as_bytes(),
+        )
+        .unwrap_or_else(|error| panic!("the resolver suite must emit a valid config:\n{error}"));
+    }
 
     #[test]
     fn the_rust_config_points_at_the_fake_resolver_with_pinned_cache_bounds() {
@@ -537,10 +557,10 @@ mod tests {
         assert!(patched.contains(r#""negativeTtlSeconds":60"#));
         assert!(patched.contains(r#""maxEntries":1024"#));
         assert!(
-            patched.contains("direct-users"),
-            "routing.users binds the client to an outbound and must survive"
+            patched.contains(r#""default":"direct""#),
+            "routing.default is required and must survive the patch"
         );
-        assert!(patched.contains(r#""domainStrategy":"IPIfNonMatch""#));
+        assert_valid(&patched);
     }
 
     #[test]
@@ -549,11 +569,12 @@ mod tests {
             domain_rules: rule_domains(3),
         };
         let rust = rust_server_config(GENERATED, 5353, &policy).unwrap();
-        assert!(rust.contains(r#""domainStrategy":"AsIs""#));
+        assert!(rust.contains(r#""strategy":"asIs""#));
         assert!(rust.contains(r#""name":"r0""#));
         assert!(rust.contains(r#""rule-2.routingbench""#));
-        // The user binding survives the routing patch, or the server will not start.
-        assert!(rust.contains("direct-users"));
+        // The required default survives the routing patch, or the server refuses.
+        assert!(rust.contains(r#""default":"direct""#));
+        assert_valid(&rust);
 
         let identity = RealityIdentity {
             uuid: "u".to_owned(),

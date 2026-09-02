@@ -146,8 +146,11 @@ impl SampleRow {
             fields.push(("connectionsPerSecond".to_owned(), Json::Float(rate)));
             let latencies = &self.latencies_seconds;
             // p50 is `good[len // 2]`, which is the floor rank at 0.5.
-            for (name, fraction) in [("p50Seconds", 0.5), ("p95Seconds", 0.95), ("p99Seconds", 0.99)]
-            {
+            for (name, fraction) in [
+                ("p50Seconds", 0.5),
+                ("p95Seconds", 0.95),
+                ("p99Seconds", 0.99),
+            ] {
                 if let Ok(value) = aggregate::floor_percentile(latencies, fraction) {
                     fields.push((name.to_owned(), Json::Float(value)));
                 }
@@ -297,9 +300,7 @@ pub fn connect_through(
 
 /// Index of the `\r\n\r\n` that ends the response head.
 fn find_head_end(buffer: &[u8]) -> Option<usize> {
-    buffer
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
+    buffer.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
 fn read_exact(stream: &mut TcpStream, count: usize) -> Option<Vec<u8>> {
@@ -416,12 +417,7 @@ pub fn run_slot_to(
     let mut rows = Vec::with_capacity(plan.concurrencies.len() * plan.samples);
     for concurrency in &plan.concurrencies {
         for sample_index in 0..plan.samples {
-            rows.push(run_sample_to(
-                plan,
-                destination,
-                *concurrency,
-                sample_index,
-            ));
+            rows.push(run_sample_to(plan, destination, *concurrency, sample_index));
         }
     }
     let expected = plan.samples * plan.concurrencies.len();
@@ -560,12 +556,18 @@ mod tests {
                         if stream.read_exact(&mut address).is_err() {
                             return;
                         }
-                        if stream.write_all(&[0x05, 0x00, 0, 1, 127, 0, 0, 1, 0, 0]).is_err() {
+                        if stream
+                            .write_all(&[0x05, 0x00, 0, 1, 127, 0, 0, 1, 0, 0])
+                            .is_err()
+                        {
                             return;
                         }
                         let mut request = [0_u8; 1024];
                         let _ = stream.read(&mut request);
-                        let head = format!("HTTP/1.0 {status}\r\nContent-Length: {}\r\n\r\n", body.len());
+                        let head = format!(
+                            "HTTP/1.0 {status}\r\nContent-Length: {}\r\n\r\n",
+                            body.len()
+                        );
                         let _ = stream.write_all(head.as_bytes());
                         let _ = stream.write_all(body);
                         let _ = stream.flush();
@@ -647,13 +649,20 @@ mod tests {
         let server = FakeSocks::start(b"xpayload", "200 OK");
         let plan = plan(server.port, 8);
         let row = run_sample(&plan, 4, 0);
-        assert_eq!(row.connections, 8, "the pool size caps parallelism, not work");
+        assert_eq!(
+            row.connections, 8,
+            "the pool size caps parallelism, not work"
+        );
         assert_eq!(row.failed, 0);
         assert_eq!(row.latencies_seconds.len(), 8);
         assert!(row.wall_seconds > 0.0);
         assert!(row.connections_per_second().unwrap() > 0.0);
         // Latencies are stored ascending, as `sorted(...)` produced them.
-        assert!(row.latencies_seconds.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert!(
+            row.latencies_seconds
+                .windows(2)
+                .all(|pair| pair[0] <= pair[1])
+        );
     }
 
     #[test]
@@ -757,8 +766,8 @@ mod tests {
                 payload_dir: workspace.path().to_path_buf(),
                 put_log: workspace.join("http-put.jsonl"),
                 tls: None,
-            access_log: None,
-            alpn: None,
+                access_log: None,
+                alpn: None,
             },
         )
         .expect("the origin becomes ready");

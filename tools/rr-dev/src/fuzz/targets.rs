@@ -50,7 +50,11 @@ impl std::fmt::Display for Error {
                 path.display()
             ),
             Self::Invalid { failures } => {
-                write!(formatter, "fuzz target validation failed: {}", failures.join("; "))
+                write!(
+                    formatter,
+                    "fuzz target validation failed: {}",
+                    failures.join("; ")
+                )
             }
             Self::Shard(reason) => write!(formatter, "{reason}"),
         }
@@ -112,7 +116,9 @@ pub fn all(repo: &Path) -> Result<Vec<String>, Error> {
     source_paths.sort_unstable();
     for source in &source_paths {
         if !declared_paths.contains(source) {
-            failures.push(format!("undeclared fuzz target source: fuzz/fuzz_targets/{source}"));
+            failures.push(format!(
+                "undeclared fuzz target source: fuzz/fuzz_targets/{source}"
+            ));
         }
     }
 
@@ -237,8 +243,14 @@ mod tests {
         assert_eq!(
             extracted,
             vec![
-                Target { name: "alpha".to_owned(), path: "fuzz_targets/alpha.rs".to_owned() },
-                Target { name: "beta".to_owned(), path: "fuzz_targets/beta.rs".to_owned() },
+                Target {
+                    name: "alpha".to_owned(),
+                    path: "fuzz_targets/alpha.rs".to_owned()
+                },
+                Target {
+                    name: "beta".to_owned(),
+                    path: "fuzz_targets/beta.rs".to_owned()
+                },
             ]
         );
     }
@@ -260,7 +272,10 @@ mod tests {
         union.sort();
         let mut expected = all_targets;
         expected.sort();
-        assert_eq!(union, expected, "shards must cover every target exactly once");
+        assert_eq!(
+            union, expected,
+            "shards must cover every target exactly once"
+        );
     }
 
     #[test]

@@ -273,8 +273,7 @@ pub fn parse_direct_events(log: &std::path::Path) -> DirectSummary {
 fn validate_direct_summary(summary: &DirectSummary) -> Result<(), String> {
     if summary.tunnel_bypass_detected {
         return Err(
-            "Vision-Direct tunnel guard observed no server connections beyond readiness"
-                .to_owned(),
+            "Vision-Direct tunnel guard observed no server connections beyond readiness".to_owned(),
         );
     }
     if summary.connections == 0 {
@@ -526,10 +525,8 @@ pub fn run_loopback(
 
     // Materialize tunnels first (4 ports). Then reserve an origin port and
     // launch the HTTP origin inside the same workspace.
-    let run = suites::materialize_with_rust_log_level(
-        &context,
-        plan.tls_origin.then_some("debug"),
-    )?;
+    let run =
+        suites::materialize_with_rust_log_level(&context, plan.tls_origin.then_some("debug"))?;
 
     let origin_port = crate::bench::workspace::reserve_ports(1)
         .map_err(RunError::Setup)?

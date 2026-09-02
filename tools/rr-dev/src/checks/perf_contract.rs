@@ -48,6 +48,10 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "canonical formatting expands it; the body is one sequence"
+)]
 /// Validates both manifests, returning a PASS line on success.
 ///
 /// # Errors
@@ -57,12 +61,21 @@ pub fn check(repo: &Path) -> Result<String, Error> {
     let contract = read(repo, CONTRACT)?;
     let baseline = read(repo, BASELINE)?;
 
-    require(int(&contract, "schemaVersion")? == 1, "contract schemaVersion must be 1")?;
-    require(int(&baseline, "schemaVersion")? == 1, "baseline schemaVersion must be 1")?;
+    require(
+        int(&contract, "schemaVersion")? == 1,
+        "contract schemaVersion must be 1",
+    )?;
+    require(
+        int(&baseline, "schemaVersion")? == 1,
+        "baseline schemaVersion must be 1",
+    )?;
 
     let families = string_array(&contract, "workloadFamilies")?;
     let unique: BTreeSet<&String> = families.iter().collect();
-    require(unique.len() == families.len(), "workloadFamilies must be unique")?;
+    require(
+        unique.len() == families.len(),
+        "workloadFamilies must be unique",
+    )?;
 
     require(
         int_array(&contract, "concurrency")? == [1, 8, 32, 64],
@@ -100,13 +113,19 @@ pub fn check(repo: &Path) -> Result<String, Error> {
         let number = value
             .as_f64(key)
             .map_err(|_| Error(format!("equivalence margin {key} is not a number")))?;
-        require(number >= 0.0, &format!("equivalence margin {key} must be >= 0"))?;
+        require(
+            number >= 0.0,
+            &format!("equivalence margin {key} must be >= 0"),
+        )?;
     }
     let descriptors = margins
         .get("descriptors")
         .and_then(|value| value.as_f64("descriptors").ok())
         .ok_or_else(|| Error("descriptors margin missing".to_owned()))?;
-    require((descriptors - 0.0).abs() < f64::EPSILON, "descriptors margin must be 0")?;
+    require(
+        (descriptors - 0.0).abs() < f64::EPSILON,
+        "descriptors margin must be 0",
+    )?;
 
     let host = baseline
         .optional("host")
@@ -156,7 +175,10 @@ pub fn check(repo: &Path) -> Result<String, Error> {
         let count = value
             .as_f64(key)
             .map_err(|_| Error(format!("allocation baseline {key} is not a number")))?;
-        require((count - 0.0).abs() < f64::EPSILON, &format!("allocation baseline {key} must be 0"))?;
+        require(
+            (count - 0.0).abs() < f64::EPSILON,
+            &format!("allocation baseline {key} must be 0"),
+        )?;
     }
 
     Ok("performance/cache contract: PASS".to_owned())
@@ -191,7 +213,10 @@ fn int_array(value: &Value, key: &str) -> Result<Vec<i64>, Error> {
         .ok_or_else(|| Error(format!("{key} must be an array")))?;
     items
         .iter()
-        .map(|item| item.as_int(key).map_err(|_| Error(format!("{key} must contain integers"))))
+        .map(|item| {
+            item.as_int(key)
+                .map_err(|_| Error(format!("{key} must contain integers")))
+        })
         .collect()
 }
 

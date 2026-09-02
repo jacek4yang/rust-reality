@@ -95,19 +95,26 @@ impl ArtifactIdentity {
         if !id_ok {
             failures.push("release_id must match [A-Za-z0-9][A-Za-z0-9._-]{0,95}".to_owned());
         }
-        if self.binary_sha256.len() != 64 || self.binary_sha256.bytes().any(|b| !b.is_ascii_hexdigit() || b.is_ascii_uppercase()) {
+        if self.binary_sha256.len() != 64
+            || self
+                .binary_sha256
+                .bytes()
+                .any(|b| !b.is_ascii_hexdigit() || b.is_ascii_uppercase())
+        {
             failures.push("binary_sha256 must be 64 lowercase hex characters".to_owned());
         }
         let version_ok = {
             let parts: Vec<&str> = self.version.split(['.', '-']).collect();
             parts.len() >= 3
-                && parts[..3].iter().all(|part| {
-                    !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())
-                })
-                && parts[2..]
+                && parts[..3]
                     .iter()
-                    .all(|part| !part.is_empty())
-                && self.version.bytes().next().is_some_and(|byte| byte.is_ascii_digit())
+                    .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+                && parts[2..].iter().all(|part| !part.is_empty())
+                && self
+                    .version
+                    .bytes()
+                    .next()
+                    .is_some_and(|byte| byte.is_ascii_digit())
         };
         if !version_ok {
             failures.push("version must be a semantic version like 1.9.0".to_owned());
@@ -223,7 +230,10 @@ impl DeploymentAction {
                 ("baselineConfig", Json::string(baseline_config.clone())),
             ]),
             Self::InstallUnit => Json::object([("action", Json::string("install-unit"))]),
-            Self::Stage { release_id, binary_sha256 } => Json::object([
+            Self::Stage {
+                release_id,
+                binary_sha256,
+            } => Json::object([
                 ("action", Json::string("stage")),
                 ("releaseId", Json::string(release_id.clone())),
                 ("binarySha256", Json::string(binary_sha256.clone())),
@@ -357,16 +367,16 @@ impl DeploymentPlan {
             ("target", Json::string(self.target.clone())),
             (
                 "actions",
-                Json::Array(
-                    self.actions
-                        .iter()
-                        .map(DeploymentAction::to_json)
-                        .collect(),
-                ),
+                Json::Array(self.actions.iter().map(DeploymentAction::to_json).collect()),
             ),
             (
                 "rationale",
-                Json::Array(self.rationale.iter().map(|line| Json::string(line.clone())).collect()),
+                Json::Array(
+                    self.rationale
+                        .iter()
+                        .map(|line| Json::string(line.clone()))
+                        .collect(),
+                ),
             ),
         ])
     }
@@ -423,10 +433,7 @@ pub fn plan_stage(
                 binary_sha256: artifact.binary_sha256.clone(),
             },
             DeploymentAction::VerifyService {
-                expected_binary: format!(
-                    "{}/{}/rust-reality",
-                    paths.releases, artifact.release_id
-                ),
+                expected_binary: format!("{}/{}/rust-reality", paths.releases, artifact.release_id),
             },
         ],
         rationale,
@@ -450,7 +457,11 @@ pub fn plan_cutover(
             snapshot.alias, snapshot.service_state, snapshot.service_443_present
         ));
     }
-    let Some(previous) = snapshot.generations.as_ref().map(|g| g.current_binary.clone()) else {
+    let Some(previous) = snapshot
+        .generations
+        .as_ref()
+        .map(|g| g.current_binary.clone())
+    else {
         return Err("refusing to cut over: no CURRENT/PREVIOUS generation pointers observed; run bootstrap-equivalent setup first".to_owned());
     };
     let Some(current_binary) = previous else {
@@ -467,7 +478,10 @@ pub fn plan_cutover(
     let rationale = vec![
         format!("CURRENT is {current_binary}"),
         format!("PREVIOUS will be {current_binary}"),
-        format!("candidate {} ({})", artifact.release_id, artifact.binary_sha256),
+        format!(
+            "candidate {} ({})",
+            artifact.release_id, artifact.binary_sha256
+        ),
     ];
     Ok(DeploymentPlan {
         kind: PlanKind::Cutover,
@@ -475,11 +489,17 @@ pub fn plan_cutover(
         actions: vec![
             // Snapshot the pre-cutover unexpected-public-listener set, then the
             // switch. The rollback is a *constructed* plan, not a shell trap.
-            DeploymentAction::SwitchCurrent { release_id: artifact.release_id.clone() },
+            DeploymentAction::SwitchCurrent {
+                release_id: artifact.release_id.clone(),
+            },
             DeploymentAction::RestartService,
-            DeploymentAction::VerifyService { expected_binary: new_binary.clone() },
+            DeploymentAction::VerifyService {
+                expected_binary: new_binary.clone(),
+            },
             DeploymentAction::VerifyNoNewPublicListeners,
-            DeploymentAction::RecordPending { release_id: artifact.release_id.clone() },
+            DeploymentAction::RecordPending {
+                release_id: artifact.release_id.clone(),
+            },
         ],
         rationale,
     })
@@ -520,7 +540,9 @@ pub fn plan_rollback(snapshot: &super::snapshot::HostSnapshot) -> Result<Deploym
                 release_id: release_id_of(&previous_binary),
             },
             DeploymentAction::RestartService,
-            DeploymentAction::VerifyService { expected_binary: format!("{previous_binary}/rust-reality") },
+            DeploymentAction::VerifyService {
+                expected_binary: format!("{previous_binary}/rust-reality"),
+            },
             DeploymentAction::VerifyNoNewPublicListeners,
             DeploymentAction::ClearPending,
         ],
@@ -567,9 +589,7 @@ pub fn plan_promote(
         ));
     }
     let mut actions = vec![
-        DeploymentAction::VerifyService {
-            expected_binary,
-        },
+        DeploymentAction::VerifyService { expected_binary },
         DeploymentAction::RecordPromoted {
             release_id: release_id.to_owned(),
         },
@@ -628,9 +648,13 @@ pub fn rollback_for(plan: &DeploymentPlan) -> Option<DeploymentPlan> {
             kind: PlanKind::Rollback,
             target: plan.target.clone(),
             actions: vec![
-                DeploymentAction::SwitchCurrent { release_id: String::from("PREVIOUS") },
+                DeploymentAction::SwitchCurrent {
+                    release_id: String::from("PREVIOUS"),
+                },
                 DeploymentAction::RestartService,
-                DeploymentAction::VerifyService { expected_binary: String::from("PREVIOUS") },
+                DeploymentAction::VerifyService {
+                    expected_binary: String::from("PREVIOUS"),
+                },
                 DeploymentAction::VerifyNoNewPublicListeners,
             ],
             rationale: vec![format!("automatic rollback of failed {}", plan.kind.name())],
@@ -654,8 +678,14 @@ mod tests {
             executable_sha256: Some("a".repeat(64)),
             version: Some("rust-reality 1.8.0".into()),
             listeners: vec![
-                Listener { address: "0.0.0.0".into(), port: 22 },
-                Listener { address: "[::]".into(), port: 443 },
+                Listener {
+                    address: "0.0.0.0".into(),
+                    port: 22,
+                },
+                Listener {
+                    address: "[::]".into(),
+                    port: 443,
+                },
             ],
             ssh_22_present: true,
             service_443_present: true,
@@ -717,16 +747,21 @@ mod tests {
         .unwrap();
         assert_eq!(plan.kind, PlanKind::Bootstrap);
         assert_eq!(
-            plan.actions.iter().map(DeploymentAction::verb).collect::<Vec<_>>(),
+            plan.actions
+                .iter()
+                .map(DeploymentAction::verb)
+                .collect::<Vec<_>>(),
             ["bootstrap", "install-unit"]
         );
-        assert!(plan_bootstrap(
-            &healthy_snapshot("line"),
-            "baseline-1",
-            "/usr/local/bin/rust-reality",
-            "/etc/rust-reality/config.json",
-        )
-        .is_err());
+        assert!(
+            plan_bootstrap(
+                &healthy_snapshot("line"),
+                "baseline-1",
+                "/usr/local/bin/rust-reality",
+                "/etc/rust-reality/config.json",
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -753,16 +788,26 @@ mod tests {
         let verbs: Vec<_> = plan.actions.iter().map(DeploymentAction::verb).collect();
         assert_eq!(
             verbs,
-            ["switch-current", "restart-service", "verify-service",
-             "verify-no-new-public-listeners", "record-pending"]
+            [
+                "switch-current",
+                "restart-service",
+                "verify-service",
+                "verify-no-new-public-listeners",
+                "record-pending"
+            ]
         );
-        assert!(plan.rationale.iter().any(|line| line.contains("PREVIOUS will be")));
+        assert!(
+            plan.rationale
+                .iter()
+                .any(|line| line.contains("PREVIOUS will be"))
+        );
     }
 
     #[test]
     fn cutover_refuses_redeploying_the_running_generation() {
         let mut snapshot = healthy_snapshot("line");
-        snapshot.generations.as_mut().unwrap().current_binary = Some("/opt/rust-reality/releases/r2".into());
+        snapshot.generations.as_mut().unwrap().current_binary =
+            Some("/opt/rust-reality/releases/r2".into());
         let error = plan_cutover(&snapshot, &candidate()).unwrap_err();
         assert!(error.contains("already serves"), "{error}");
     }
@@ -781,8 +826,13 @@ mod tests {
         let verbs: Vec<_> = plan.actions.iter().map(DeploymentAction::verb).collect();
         assert_eq!(
             verbs,
-            ["switch-current", "restart-service", "verify-service",
-             "verify-no-new-public-listeners", "clear-pending"]
+            [
+                "switch-current",
+                "restart-service",
+                "verify-service",
+                "verify-no-new-public-listeners",
+                "clear-pending"
+            ]
         );
         assert!(plan.rationale[0].contains("releases/r0"));
     }
@@ -813,7 +863,10 @@ mod tests {
         assert!(rollback.rationale[0].contains("automatic rollback of failed cutover"));
 
         let rollback_plan = plan_rollback(&healthy_snapshot("line")).unwrap();
-        assert!(rollback_for(&rollback_plan).is_none(), "a failed rollback is retried");
+        assert!(
+            rollback_for(&rollback_plan).is_none(),
+            "a failed rollback is retried"
+        );
     }
 
     #[test]

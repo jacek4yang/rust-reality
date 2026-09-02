@@ -207,7 +207,8 @@ fn set_mode(_path: &Path, _mode: u32) -> Result<(), String> {
 #[cfg(unix)]
 fn is_executable(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+    std::fs::metadata(path)
+        .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
 }
 
 #[cfg(not(unix))]
@@ -272,7 +273,12 @@ struct FragmentInput<'a> {
 }
 
 fn build_fragment(input: &FragmentInput) -> Json {
-    let features: Vec<Json> = input.tier.feature_list().into_iter().map(Json::string).collect();
+    let features: Vec<Json> = input
+        .tier
+        .feature_list()
+        .into_iter()
+        .map(Json::string)
+        .collect();
     let cargo_features: Vec<Json> = input
         .cargo_features
         .split(',')

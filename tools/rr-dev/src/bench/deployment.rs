@@ -23,11 +23,10 @@ use crate::{
         host_lock::HostLock,
         identity::{self, Binary, Kind},
         process::Child,
-        runner,
-        soak,
+        runner, soak,
         workspace::{self, Workspace},
     },
-    deploy::netem::{self, NetemArgs, LEGS},
+    deploy::netem::{self, LEGS, NetemArgs},
     hash,
     perf::{json_in, json_in::Value, json_out::Json},
     process::Tool,
@@ -203,7 +202,12 @@ impl Plan {
             },
             PlanKind::Smoke => Self {
                 kind,
-                sections: vec![Section::Routing, Section::Cost, Section::Nxr, Section::Longflow],
+                sections: vec![
+                    Section::Routing,
+                    Section::Cost,
+                    Section::Nxr,
+                    Section::Longflow,
+                ],
                 samples: 1,
                 connections: 2,
                 concurrencies: vec![2],
@@ -248,12 +252,9 @@ impl Plan {
         self.rtts_ms
             .iter()
             .flat_map(|rtt| {
-                self.losses_percent.iter().map(move |loss| {
-                    format!(
-                        "rtt{rtt}-loss{}",
-                        loss_token(*loss)
-                    )
-                })
+                self.losses_percent
+                    .iter()
+                    .map(move |loss| format!("rtt{rtt}-loss{}", loss_token(*loss)))
             })
             .collect()
     }
@@ -295,7 +296,12 @@ impl Plan {
             ("formal", Json::Bool(self.kind.formal())),
             (
                 "sections",
-                Json::Array(self.sections.iter().map(|section| Json::string(section.name())).collect()),
+                Json::Array(
+                    self.sections
+                        .iter()
+                        .map(|section| Json::string(section.name()))
+                        .collect(),
+                ),
             ),
             ("samples", count(self.samples)),
             ("connectionsPerSample", count(self.connections)),
@@ -322,7 +328,12 @@ impl Plan {
             ),
             (
                 "perDirectionLossPercent",
-                Json::Array(self.losses_percent.iter().map(|value| Json::Float(*value)).collect()),
+                Json::Array(
+                    self.losses_percent
+                        .iter()
+                        .map(|value| Json::Float(*value))
+                        .collect(),
+                ),
             ),
             ("rttConnectionsPerSample", count(self.rtt_connections)),
             ("rttConcurrencies", counts(&self.rtt_concurrencies)),
@@ -385,10 +396,7 @@ pub(crate) fn routing_config(input: &RoutingConfigInput<'_>) -> Result<RoutingCo
             object([
                 ("protocol", string("blackhole")),
                 ("tag", string("block")),
-                (
-                    "settings",
-                    object([("responseDelayMs", number(0))]),
-                ),
+                ("settings", object([("responseDelayMs", number(0))])),
             ]),
             object([
                 ("protocol", string("socks5")),
@@ -418,7 +426,10 @@ pub(crate) fn routing_config(input: &RoutingConfigInput<'_>) -> Result<RoutingCo
                     rule(
                         "global-block-geosite",
                         "block",
-                        [("domain", strings([format!("geosite:{}", input.geosite_label)]))],
+                        [(
+                            "domain",
+                            strings([format!("geosite:{}", input.geosite_label)]),
+                        )],
                     ),
                     rule(
                         "global-block-port",
@@ -493,10 +504,7 @@ pub(crate) fn routing_config(input: &RoutingConfigInput<'_>) -> Result<RoutingCo
     // port makes that fallback deterministic and keeps the routing proof off the
     // public network while satisfying production's HTTPS-only source policy.
     assets.insert("requestTimeoutSeconds".to_owned(), number(1));
-    assets.insert(
-        "geoip".to_owned(),
-        string("https://127.0.0.1:9/geoip.dat"),
-    );
+    assets.insert("geoip".to_owned(), string("https://127.0.0.1:9/geoip.dat"));
     assets.insert(
         "geosite".to_owned(),
         string("https://127.0.0.1:9/geosite.dat"),
@@ -525,7 +533,10 @@ pub(crate) fn scale_config(input: &ScaleConfigInput<'_>) -> Result<String, Strin
         return Err("routing-cost scale requires at least one UUID".to_owned());
     }
     if !matches!(input.strategy, "AsIs" | "IPIfNonMatch" | "IPOnDemand") {
-        return Err(format!("unknown routing domain strategy: {}", input.strategy));
+        return Err(format!(
+            "unknown routing domain strategy: {}",
+            input.strategy
+        ));
     }
     let mut root = root_object(input.base)?;
     let base_client = first_client(&root)?.clone();
@@ -546,7 +557,10 @@ pub(crate) fn scale_config(input: &ScaleConfigInput<'_>) -> Result<String, Strin
         ("name", string("measured")),
         ("userIds", strings([input.uuids[0].clone()])),
         ("defaultOutbound", string("direct")),
-        ("rules", Value::Array(scale_rules(input.rules, input.with_ip, ""))),
+        (
+            "rules",
+            Value::Array(scale_rules(input.rules, input.with_ip, "")),
+        ),
     ])];
     if input.uuids.len() > 1 {
         users.push(object([
@@ -649,9 +663,13 @@ fn clients_with_owned_short_ids(
                 first_ids.clone()
             } else {
                 let short_id = (0_u16..=255)
-                    .map(|salt| hash::sha256_hex(format!("{uuid}:{salt}").as_bytes())[..16].to_owned())
+                    .map(|salt| {
+                        hash::sha256_hex(format!("{uuid}:{salt}").as_bytes())[..16].to_owned()
+                    })
                     .find(|candidate| !used.contains(&candidate.to_ascii_lowercase()))
-                    .ok_or_else(|| "could not derive a unique short ID for VLESS client".to_owned())?;
+                    .ok_or_else(|| {
+                        "could not derive a unique short ID for VLESS client".to_owned()
+                    })?;
                 used.insert(short_id.to_ascii_lowercase());
                 vec![short_id]
             };
@@ -673,7 +691,11 @@ fn scale_rules(count: usize, with_ip: bool, prefix: &str) -> Vec<Value> {
         .map(|index| {
             let kind = index % if with_ip { 5 } else { 4 };
             let (suffix, field, value) = match kind {
-                0 => ("full", "domain", format!("full:host{index}.scale-example.test")),
+                0 => (
+                    "full",
+                    "domain",
+                    format!("full:host{index}.scale-example.test"),
+                ),
                 1 => ("keyword", "domain", format!("keyword:needle-{index}-scale")),
                 2 => (
                     "regexp",
@@ -701,12 +723,21 @@ fn rule<const N: usize>(name: &str, outbound: &str, fields: [(&str, Value); N]) 
         ("name".to_owned(), string(name)),
         ("outbound".to_owned(), string(outbound)),
     ]);
-    rule.extend(fields.into_iter().map(|(key, value)| (key.to_owned(), value)));
+    rule.extend(
+        fields
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value)),
+    );
     Value::Object(rule)
 }
 
 fn object<K: Into<String>>(entries: impl IntoIterator<Item = (K, Value)>) -> Value {
-    Value::Object(entries.into_iter().map(|(key, value)| (key.into(), value)).collect())
+    Value::Object(
+        entries
+            .into_iter()
+            .map(|(key, value)| (key.into(), value))
+            .collect(),
+    )
 }
 
 fn string(value: impl Into<String>) -> Value {
@@ -714,7 +745,12 @@ fn string(value: impl Into<String>) -> Value {
 }
 
 fn strings(values: impl IntoIterator<Item = impl Into<String>>) -> Value {
-    Value::Array(values.into_iter().map(|value| string(value.into())).collect())
+    Value::Array(
+        values
+            .into_iter()
+            .map(|value| string(value.into()))
+            .collect(),
+    )
 }
 
 fn number(value: u64) -> Value {
@@ -1026,13 +1062,7 @@ impl RunState<'_> {
         let path = self.workspace.join(&format!("{label}.json"));
         soak::write_config(
             &path,
-            &config::xray_client(
-                identity,
-                server_port,
-                socks_port,
-                public_key,
-            )
-            .to_python_json(),
+            &config::xray_client(identity, server_port, socks_port, public_key).to_python_json(),
         )?;
         let child = soak::spawn_xray_client(
             label,
@@ -1093,7 +1123,9 @@ pub(crate) fn run(plan: &RunPlan) -> Result<RunOutcome, String> {
         run_longflow_section(&mut state, &fixture)?;
     }
     let summary = deployment_run_summary(&state)?;
-    let summary_path = state.run.write_new("summary.json", &summary.to_python_json())?;
+    let summary_path = state
+        .run
+        .write_new("summary.json", &summary.to_python_json())?;
     let contract = run_contract(&state, &summary_path)?;
     let marker_path = state.run.publish(
         Publication::Contract,
@@ -1172,20 +1204,10 @@ fn run_cost_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Result
         let socks_port = state.port()?;
         let uuids = generate_uuids(&state.rust, variant.uuids)?;
         let generated = soak::generated_public_config(
-            &state.rust.path,
-            vec![
-                "config".to_owned(),
-                "generate".to_owned(),
-                "standalone".to_owned(),
-                "--listen".to_owned(),
-                "127.0.0.1".to_owned(),
-                "--port".to_owned(),
-                server_port.to_string(),
-                "--target".to_owned(),
-                format!("127.0.0.1:{}", fixture.cover_port),
-                "--server-name".to_owned(),
-                "localhost".to_owned(),
-            ],
+            &soak::PublicNodeSpec::standalone(
+                server_port,
+                &format!("127.0.0.1:{}", fixture.cover_port),
+            ),
             &state.workspace,
             &format!("assets-cost-{}", variant.label),
         )?;
@@ -1196,9 +1218,13 @@ fn run_cost_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Result
             global_rules: variant.global_rules,
             with_ip: variant.with_ip,
             strategy: variant.strategy,
-            assets: &state.workspace.join(&format!("assets-cost-{}", variant.label)),
+            assets: &state
+                .workspace
+                .join(&format!("assets-cost-{}", variant.label)),
         })?;
-        let config_path = state.workspace.join(&format!("cost-{}.json", variant.label));
+        let config_path = state
+            .workspace
+            .join(&format!("cost-{}.json", variant.label));
         soak::write_config(&config_path, &json)?;
         soak::check_config(&state.rust.path, &config_path)?;
         let server = soak::spawn_rust(
@@ -1207,7 +1233,9 @@ fn run_cost_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Result
             &config_path,
             &state.workspace,
             &isolated_environment(),
-            &state.workspace.join(&format!("cost-{}-server.log", variant.label)),
+            &state
+                .workspace
+                .join(&format!("cost-{}-server.log", variant.label)),
             server_port,
         )?;
         state.children.push(server);
@@ -1229,12 +1257,8 @@ fn run_cost_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Result
         } else {
             super::workload::Destination::Loopback
         };
-        if super::workload::connect_through(
-            socks_port,
-            &destination,
-            fixture.route_origin_port,
-        )
-        .is_none()
+        if super::workload::connect_through(socks_port, &destination, fixture.route_origin_port)
+            .is_none()
         {
             return Err(format!(
                 "deployment cost {} warm-up did not reach the native origin",
@@ -1280,7 +1304,8 @@ fn setup_row_json(row: &super::workload::SampleRow) -> String {
             ("p95Seconds", 0.95),
             ("p99Seconds", 0.99),
         ] {
-            if let Ok(value) = super::aggregate::floor_percentile(&row.latencies_seconds, fraction) {
+            if let Ok(value) = super::aggregate::floor_percentile(&row.latencies_seconds, fraction)
+            {
                 fields.push((name, Json::Float(value)));
             }
         }
@@ -1317,19 +1342,10 @@ fn run_topology_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Re
     let standalone = deployment_public_config(
         state,
         "standalone",
-        vec![
-            "config".to_owned(),
-            "generate".to_owned(),
-            "standalone".to_owned(),
-            "--listen".to_owned(),
-            "127.0.0.1".to_owned(),
-            "--port".to_owned(),
-            standalone_port.to_string(),
-            "--target".to_owned(),
-            format!("127.0.0.1:{}", fixture.cover_port),
-            "--server-name".to_owned(),
-            "localhost".to_owned(),
-        ],
+        &soak::PublicNodeSpec::standalone(
+            standalone_port,
+            &format!("127.0.0.1:{}", fixture.cover_port),
+        ),
     )?;
     spawn_generated_rust(state, "topo-a", standalone_port, &standalone.json)?;
     let standalone_identity = identity_for(&standalone, fixture.cover_port);
@@ -1348,7 +1364,7 @@ fn run_topology_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Re
     let nxr_line = deployment_public_config(
         state,
         "nxr-line",
-        line_generation_args(
+        &line_spec(
             nxr_line_port,
             fixture.cover_port,
             nxr_landing_port,
@@ -1372,7 +1388,7 @@ fn run_topology_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Re
     let socks_line = deployment_public_config(
         state,
         "socks-line",
-        line_generation_args(socks_line_port, fixture.cover_port, 9, &nxr_key),
+        &line_spec(socks_line_port, fixture.cover_port, 9, &nxr_key),
     )?;
     let socks_json = soak::patch_socks_outbound(&socks_line.json, upstream_socks)?;
     spawn_generated_rust(state, "topo-c-line", socks_line_port, &socks_json)?;
@@ -1463,43 +1479,41 @@ fn run_topology_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Re
 fn deployment_public_config(
     state: &RunState<'_>,
     label: &str,
-    args: Vec<String>,
+    spec: &soak::PublicNodeSpec,
 ) -> Result<soak::GeneratedPublicConfig, String> {
-    let mut generated = soak::generated_public_config(
-        &state.rust.path,
-        args,
-        &state.workspace,
-        &format!("assets-{label}"),
-    )?;
+    let mut generated =
+        soak::generated_public_config(spec, &state.workspace, &format!("assets-{label}"))?;
     generated.json = suites::set_rust_log_level(&generated.json, "warn")?;
     Ok(generated)
 }
 
-fn line_generation_args(
+fn line_spec(
     line_port: u16,
     cover_port: u16,
     landing_port: u16,
     key: &str,
-) -> Vec<String> {
-    vec![
-        "config".to_owned(),
-        "generate".to_owned(),
-        "line".to_owned(),
-        "--listen".to_owned(),
-        "127.0.0.1".to_owned(),
-        "--port".to_owned(),
-        line_port.to_string(),
-        "--target".to_owned(),
-        format!("127.0.0.1:{cover_port}"),
-        "--server-name".to_owned(),
-        "localhost".to_owned(),
-        "--nxr-address".to_owned(),
-        "127.0.0.1".to_owned(),
-        "--nxr-port".to_owned(),
-        landing_port.to_string(),
-        "--nxr-key".to_owned(),
-        key.to_owned(),
-    ]
+) -> soak::PublicNodeSpec {
+    line_spec_to(line_port, cover_port, "127.0.0.1", landing_port, key)
+}
+
+fn line_spec_to(
+    line_port: u16,
+    cover_port: u16,
+    peer_address: &str,
+    peer_port: u16,
+    key: &str,
+) -> soak::PublicNodeSpec {
+    soak::PublicNodeSpec::line(
+        line_port,
+        &format!("127.0.0.1:{cover_port}"),
+        crate::bench::config::LandingLink {
+            protocol: "nxr",
+            address: peer_address.to_owned(),
+            port: peer_port,
+            psk: key.to_owned(),
+            landing_public_key: None,
+        },
+    )
 }
 
 fn landing_config(
@@ -1520,34 +1534,21 @@ fn landing_config_at(
     key: &str,
     level: &str,
 ) -> Result<String, String> {
-    let outcome = Tool::new(state.rust.path.display().to_string())
-        .args([
-            "config".to_owned(),
-            "generate".to_owned(),
-            "landing".to_owned(),
-            "--listen".to_owned(),
-            listen.to_owned(),
-            "--port".to_owned(),
-            port.to_string(),
-            "--nxr-key".to_owned(),
-            key.to_owned(),
-        ])
-        .probe()
-        .map_err(|error| format!("{label} config generation failed: {error}"))?;
-    if !outcome.success() {
-        return Err(format!(
-            "{label} config generation exited {:?}: {}",
-            outcome.code,
-            outcome.stderr.trim_end()
-        ));
-    }
-    let patched = soak::patch_server_config(
-        outcome.trimmed_stdout(),
-        &state.workspace,
-        &format!("assets-{label}"),
-        false,
-    )?;
-    suites::set_rust_log_level(&patched, level)
+    let _ = (state, label);
+    let rendered = crate::bench::config::rust_landing(
+        listen,
+        port,
+        &crate::bench::config::LandingLink {
+            protocol: "nxr",
+            address: listen.to_owned(),
+            port,
+            psk: key.to_owned(),
+            landing_public_key: None,
+        },
+        None,
+    )
+    .to_python_json();
+    suites::set_rust_log_level(&rendered, level)
 }
 
 fn spawn_generated_rust(
@@ -1616,7 +1617,9 @@ fn transport_line_config(
         unreachable!("the protocol lookup only matches outbound objects")
     };
     let Some(Value::Object(settings)) = outbound.get_mut("settings") else {
-        return Err(format!("generated {protocol} outbound has no settings object"));
+        return Err(format!(
+            "generated {protocol} outbound has no settings object"
+        ));
     };
     settings.insert("address".to_owned(), string(address));
     settings.insert("port".to_owned(), number(u64::from(outbound_port)));
@@ -1624,11 +1627,7 @@ fn transport_line_config(
     Ok(suites::render_compact(&Value::Object(root)))
 }
 
-fn landing_variant_config(
-    raw: &str,
-    inbound_port: u16,
-    cache: &Path,
-) -> Result<String, String> {
+fn landing_variant_config(raw: &str, inbound_port: u16, cache: &Path) -> Result<String, String> {
     let mut root = root_object(raw)?;
     let Some(Value::Object(assets)) = root.get_mut("assets") else {
         return Err("generated landing config has no assets object".to_owned());
@@ -1911,7 +1910,11 @@ fn spawn_rtt_namespace_origin(
         "--payload-dir".to_owned(),
         fixture.payload_a.display().to_string(),
         "--put-log".to_owned(),
-        state.workspace.join("rtt-origin-put.jsonl").display().to_string(),
+        state
+            .workspace
+            .join("rtt-origin-put.jsonl")
+            .display()
+            .to_string(),
         "--label".to_owned(),
         "deployment-rtt-origin".to_owned(),
     ];
@@ -1990,18 +1993,16 @@ fn wait_for_namespace_http(
         format!("http://127.0.0.1:{port}/payload.bin"),
     ];
     while Instant::now() < deadline {
-        let ready = super::ipv6_netns::command_in(
-            namespace,
-            Path::new("curl"),
-            &args,
-            environment,
-        )
-        .is_ok_and(|outcome| outcome.success());
+        let ready = super::ipv6_netns::command_in(namespace, Path::new("curl"), &args, environment)
+            .is_ok_and(|outcome| outcome.success());
         if ready {
             return Ok(());
         }
         if !child.is_alive() {
-            return Err(format!("{} exited before namespace HTTP readiness", child.label()));
+            return Err(format!(
+                "{} exited before namespace HTTP readiness",
+                child.label()
+            ));
         }
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -2042,7 +2043,7 @@ fn build_rtt_nxr_pair(
     let generated = deployment_public_config(
         state,
         "rtt-nxr-line-base",
-        line_generation_args_to(
+        &line_spec_to(
             warm_line_port,
             fixture.cover_port,
             super::deployment_netns::PEER_ADDRESS,
@@ -2113,25 +2114,6 @@ fn build_rtt_nxr_pair(
     Ok(())
 }
 
-fn line_generation_args_to(
-    line_port: u16,
-    cover_port: u16,
-    peer_address: &str,
-    peer_port: u16,
-    key: &str,
-) -> Vec<String> {
-    let mut args = line_generation_args(line_port, cover_port, peer_port, key);
-    let address = args
-        .iter()
-        .position(|value| value == "--nxr-address")
-        .and_then(|index| args.get_mut(index + 1));
-    if let Some(address) = address {
-        address.clear();
-        address.push_str(peer_address);
-    }
-    args
-}
-
 fn spawn_rtt_namespace_rust(
     state: &RunState<'_>,
     topology: &super::deployment_netns::Topology,
@@ -2148,7 +2130,7 @@ fn spawn_rtt_namespace_rust(
         &format!("deployment-{label}"),
         &state.rust.path,
         &[
-            "serve".to_owned(),
+            "run".to_owned(),
             "--config".to_owned(),
             config_path.display().to_string(),
         ],
@@ -2233,7 +2215,7 @@ fn build_rtt_socks_pair(
     let generated = deployment_public_config(
         state,
         "rtt-socks-line-base",
-        line_generation_args_to(
+        &line_spec_to(
             warm_line_port,
             fixture.cover_port,
             super::deployment_netns::PEER_ADDRESS,
@@ -2321,44 +2303,51 @@ fn build_rtt_handoff_pair(
     let cold_landing_port = state.port()?;
     let warm_socks = state.port()?;
     let cold_socks = state.port()?;
-    let generated_dir = state.workspace.join("rtt-handoff-generated");
-    let outcome = Tool::new(state.rust.path.display().to_string())
-        .args([
-            "config".to_owned(),
-            "generate".to_owned(),
-            "handoff".to_owned(),
-            "--listen".to_owned(),
-            "127.0.0.1".to_owned(),
-            "--port".to_owned(),
-            warm_line_port.to_string(),
-            "--server-address".to_owned(),
-            "127.0.0.1".to_owned(),
-            "--target".to_owned(),
-            format!("127.0.0.1:{}", fixture.cover_port),
-            "--server-name".to_owned(),
-            "localhost".to_owned(),
-            "--landing-address".to_owned(),
-            super::deployment_netns::PEER_ADDRESS.to_owned(),
-            "--landing-port".to_owned(),
-            warm_landing_port.to_string(),
-            "--output-dir".to_owned(),
-            generated_dir.display().to_string(),
-        ])
-        .probe()
-        .map_err(|error| format!("RTT handoff config generation failed: {error}"))?;
-    if !outcome.success() {
-        return Err(format!(
-            "RTT handoff config generation exited {:?}: {}",
-            outcome.code,
-            outcome.stderr.trim_end()
-        ));
-    }
-    let line_raw = std::fs::read_to_string(generated_dir.join("line.json"))
-        .map_err(|error| format!("could not read generated handoff line: {error}"))?;
-    let landing_raw = std::fs::read_to_string(generated_dir.join("landing.json"))
-        .map_err(|error| format!("could not read generated handoff landing: {error}"))?;
-    let xray_raw = std::fs::read_to_string(generated_dir.join("xray-client.json"))
-        .map_err(|error| format!("could not read generated handoff client: {error}"))?;
+
+    // A Handoff pair is two independent secrets: the shared pre-shared key, and
+    // the landing's own X25519 pair whose public half the line node carries.
+    let handoff_psk = soak::node_key(&state.rust.path)?;
+    let landing_pair = rust_reality::crypto::generate_x25519_key_pair()
+        .map_err(|error| format!("could not generate the landing key pair: {error}"))?;
+    let (landing_private, landing_public) = landing_pair.into_parts();
+    let reality = rust_reality::crypto::generate_x25519_key_pair()
+        .map_err(|error| format!("could not generate the REALITY key pair: {error}"))?;
+    let (reality_private, reality_public) = reality.into_parts();
+    let uuid = rust_reality::crypto::generate_uuid()
+        .map_err(|error| format!("could not generate a UUID: {error}"))?
+        .to_string();
+    let short_id = rust_reality::crypto::generate_short_id(8)
+        .map_err(|error| format!("could not generate a short ID: {error}"))?;
+
+    let identity = crate::bench::config::RealityIdentity {
+        uuid: uuid.clone(),
+        short_id: short_id.clone(),
+        server_name: "localhost".to_owned(),
+        target: format!("127.0.0.1:{}", fixture.cover_port),
+    };
+    let link = crate::bench::config::LandingLink {
+        protocol: "handoff",
+        address: super::deployment_netns::PEER_ADDRESS.to_owned(),
+        port: warm_landing_port,
+        psk: handoff_psk,
+        landing_public_key: Some(landing_public),
+    };
+    let line_raw =
+        crate::bench::config::RustServer::new(&identity, warm_line_port, reality_private.expose())
+            .through_landing(&link)
+            .build()
+            .to_python_json();
+    let landing_raw = crate::bench::config::rust_landing(
+        super::deployment_netns::PEER_ADDRESS,
+        warm_landing_port,
+        &link,
+        Some(landing_private.expose()),
+    )
+    .to_python_json();
+    let xray_raw =
+        crate::bench::config::xray_client(&identity, warm_line_port, warm_socks, &reality_public)
+            .to_python_json();
+
     let line_base = soak::patch_server_config(
         &line_raw,
         &state.workspace,
@@ -2642,10 +2631,7 @@ fn write_new_file(path: &Path, contents: &str) -> Result<(), String> {
         .map_err(|error| format!("could not sync {}: {error}", path.display()))
 }
 
-fn run_longflow_section(
-    state: &mut RunState<'_>,
-    fixture: &SharedFixture,
-) -> Result<(), String> {
+fn run_longflow_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Result<(), String> {
     let line_port = state.port()?;
     let landing_port = state.port()?;
     let socks_port = state.port()?;
@@ -2653,7 +2639,7 @@ fn run_longflow_section(
     let line = deployment_public_config(
         state,
         "longflow-line",
-        line_generation_args(line_port, fixture.cover_port, landing_port, &key),
+        &line_spec(line_port, fixture.cover_port, landing_port, &key),
     )?;
     let landing = landing_config(state, "longflow-landing", landing_port, &key, "debug")?;
     let landing_path = state.workspace.join("longflow-landing.json");
@@ -2664,7 +2650,7 @@ fn run_longflow_section(
         "deployment-longflow-landing",
         &state.rust.path,
         &[
-            "serve".to_owned(),
+            "run".to_owned(),
             "--config".to_owned(),
             landing_path.display().to_string(),
         ],
@@ -2689,9 +2675,7 @@ fn run_longflow_section(
         &client_identity,
     )?;
     let payload_mib = state.plan.program.longflow_mib;
-    let payload = fixture
-        .payload_a
-        .join(format!("payload-{payload_mib}.bin"));
+    let payload = fixture.payload_a.join(format!("payload-{payload_mib}.bin"));
     let rows = run_socks_throughput(&SocksThroughputPlan {
         label: "longflow".to_owned(),
         socks_port,
@@ -2808,14 +2792,7 @@ fn prepare_shared_fixture(state: &mut RunState<'_>) -> Result<SharedFixture, Str
     })
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one bounded section keeps process ownership and its proof visibly together"
-)]
-fn run_routing_section(
-    state: &mut RunState<'_>,
-    fixture: &SharedFixture,
-) -> Result<(), String> {
+fn run_routing_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Result<(), String> {
     let fixed_socks_port = state.port()?;
     let server_port = state.port()?;
     let socks_ports = [state.port()?, state.port()?, state.port()?, state.port()?];
@@ -2834,20 +2811,10 @@ fn run_routing_section(
     )?;
     let uuids = generate_uuids(&state.rust, 4)?;
     let generated = soak::generated_public_config(
-        &state.rust.path,
-        vec![
-            "config".to_owned(),
-            "generate".to_owned(),
-            "standalone".to_owned(),
-            "--listen".to_owned(),
-            "127.0.0.1".to_owned(),
-            "--port".to_owned(),
-            server_port.to_string(),
-            "--target".to_owned(),
-            format!("127.0.0.1:{}", fixture.cover_port),
-            "--server-name".to_owned(),
-            "localhost".to_owned(),
-        ],
+        &soak::PublicNodeSpec::standalone(
+            server_port,
+            &format!("127.0.0.1:{}", fixture.cover_port),
+        ),
         &state.workspace,
         "assets-routing-base",
     )?;
@@ -2950,11 +2917,7 @@ fn generate_uuids(binary: &Binary, count: usize) -> Result<Vec<String>, String> 
 }
 
 fn write_inverted_payload(path: &Path, size: u64) -> Result<(), String> {
-    let chunk: Vec<u8> = (0_u8..=255)
-        .rev()
-        .cycle()
-        .take(256 * 4096)
-        .collect();
+    let chunk: Vec<u8> = (0_u8..=255).rev().cycle().take(256 * 4096).collect();
     let mut file = std::fs::File::create(path)
         .map_err(|error| format!("could not create {}: {error}", path.display()))?;
     let mut remaining = size;
@@ -2987,10 +2950,16 @@ fn write_environment(state: &RunState<'_>) -> Result<(), String> {
         ("schemaVersion", Json::Int(1)),
         ("runId", Json::string(&state.plan.run_id)),
         ("harnessCommit", Json::string(commit.trimmed_stdout())),
-        ("rustRealityBin", Json::string(state.rust.path.display().to_string())),
+        (
+            "rustRealityBin",
+            Json::string(state.rust.path.display().to_string()),
+        ),
         ("rustRealitySha256", Json::string(&state.rust.sha256)),
         ("rustRealityIdentity", Json::string(&state.rust.identity)),
-        ("xrayBin", Json::string(state.xray.path.display().to_string())),
+        (
+            "xrayBin",
+            Json::string(state.xray.path.display().to_string()),
+        ),
         ("xraySha256", Json::string(&state.xray.sha256)),
         ("xrayIdentity", Json::string(&state.xray.identity)),
         ("hostLock", Json::string(state.lock.device_inode())),
@@ -3153,7 +3122,9 @@ fn setup_artifact(
     let rows = read_jsonl(&path)?;
     if rows.len() != expected_rows
         || rows.iter().any(|row| {
-            row.optional("failed").and_then(|value| value.as_int("failed").ok()) != Some(0)
+            row.optional("failed")
+                .and_then(|value| value.as_int("failed").ok())
+                != Some(0)
                 || row
                     .optional("connections")
                     .and_then(|value| value.as_int("connections").ok())
@@ -3342,9 +3313,7 @@ fn probe_route(case: RouteCase) -> RouteResult {
         // The legacy probe classified any socket/runtime failure as blocked.
         // Preserve that contract only for cases whose reviewed expectation is
         // blocked; an identical failure on an allowed case remains an error.
-        Err(error)
-            if error.blocked || matches!(case.expect, RouteExpectation::Blocked) =>
-        {
+        Err(error) if error.blocked || matches!(case.expect, RouteExpectation::Blocked) => {
             ("blocked".to_owned(), error.detail)
         }
         Err(error) => ("error".to_owned(), error.detail),
@@ -3402,7 +3371,10 @@ fn socks_http_body(case: &RouteCase) -> Result<Vec<u8>, RouteError> {
     let mut reply = [0_u8; 4];
     stream.read_exact(&mut reply).map_err(route_blocked)?;
     if reply[1] != 0 {
-        return Err(route_blocked(format!("SOCKS connect rejected ({})", reply[1])));
+        return Err(route_blocked(format!(
+            "SOCKS connect rejected ({})",
+            reply[1]
+        )));
     }
     let bound = match reply[3] {
         1 => 4,
@@ -3469,7 +3441,11 @@ pub fn routing_summary(results: &[RouteResult]) -> Json {
         ("failed", count(results.len().saturating_sub(passed))),
         (
             "verdict",
-            Json::string(if passed == results.len() { "PASS" } else { "FAIL" }),
+            Json::string(if passed == results.len() {
+                "PASS"
+            } else {
+                "FAIL"
+            }),
         ),
     ])
 }
@@ -3555,16 +3531,18 @@ impl SocksThroughputRow {
 /// # Errors
 ///
 /// Returns the first failed transfer or integrity mismatch.
-pub fn run_socks_throughput(
-    plan: &SocksThroughputPlan,
-) -> Result<Vec<SocksThroughputRow>, String> {
+pub fn run_socks_throughput(plan: &SocksThroughputPlan) -> Result<Vec<SocksThroughputRow>, String> {
     if plan.samples == 0 || plan.concurrencies.is_empty() || plan.payload_mib == 0 {
         return Err("SOCKS throughput dimensions must be positive".to_owned());
     }
     let mut rows = Vec::with_capacity(plan.samples * plan.concurrencies.len());
     for concurrency in &plan.concurrencies {
         for sample_index in 0..plan.samples {
-            rows.push(run_socks_throughput_sample(plan, *concurrency, sample_index)?);
+            rows.push(run_socks_throughput_sample(
+                plan,
+                *concurrency,
+                sample_index,
+            )?);
         }
     }
     Ok(rows)
@@ -3626,8 +3604,7 @@ fn run_socks_throughput_sample(
     };
     let wall_seconds = started.elapsed().as_secs_f64();
     #[expect(clippy::cast_precision_loss, reason = "bounded benchmark dimensions")]
-    let throughput_mib_per_second =
-        (plan.payload_mib as f64) * (concurrency as f64) / wall_seconds;
+    let throughput_mib_per_second = (plan.payload_mib as f64) * (concurrency as f64) / wall_seconds;
     Ok(SocksThroughputRow {
         label: plan.label.clone(),
         concurrency,
@@ -3643,8 +3620,14 @@ fn curl_socks(plan: &SocksThroughputPlan, output: Option<&Path>) -> Result<f64, 
     let expected_bytes = plan.payload_mib * 1024 * 1024;
     let mut curl = Tool::new("curl");
     for name in [
-        "ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy",
-        "NO_PROXY", "no_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "NO_PROXY",
+        "no_proxy",
     ] {
         curl = curl.env(name, "");
     }
@@ -3682,7 +3665,9 @@ fn curl_socks(plan: &SocksThroughputPlan, output: Option<&Path>) -> Result<f64, 
         .and_then(|value| value.parse::<f64>().ok())
         .ok_or_else(|| "throughput curl returned no duration".to_owned())?;
     if bytes != expected_bytes {
-        return Err(format!("throughput short read: {bytes} of {expected_bytes}"));
+        return Err(format!(
+            "throughput short read: {bytes} of {expected_bytes}"
+        ));
     }
     Ok(seconds)
 }
@@ -3744,12 +3729,7 @@ impl RelayEvidence {
             ("connectionCompletedEvents", count(self.completed)),
             (
                 "relayBackends",
-                Json::Array(
-                    self.completed_backends
-                        .iter()
-                        .map(Json::string)
-                        .collect(),
-                ),
+                Json::Array(self.completed_backends.iter().map(Json::string).collect()),
             ),
             ("eventsMissingRelayBackend", count(self.missing_backend)),
             (
@@ -3758,7 +3738,11 @@ impl RelayEvidence {
             ),
             (
                 "verdict",
-                Json::string(if self.passes(expected) { "PASS" } else { "FAIL" }),
+                Json::string(if self.passes(expected) {
+                    "PASS"
+                } else {
+                    "FAIL"
+                }),
             ),
         ])
     }
@@ -3776,7 +3760,10 @@ pub fn relay_evidence(log: &str) -> RelayEvidence {
         completed_backends: BTreeSet::new(),
         missing_backend: 0,
     };
-    for value in log.lines().filter_map(|line| json_in::parse(line.trim()).ok()) {
+    for value in log
+        .lines()
+        .filter_map(|line| json_in::parse(line.trim()).ok())
+    {
         let event = value.optional("event").and_then(json_string);
         match event {
             Some("relay_backend_report") => {
@@ -3823,7 +3810,13 @@ const fn json_bool(value: &json_in::Value) -> Option<bool> {
 }
 
 fn all_sections() -> Vec<Section> {
-    vec![Section::Routing, Section::Cost, Section::Nxr, Section::Rtt, Section::Longflow]
+    vec![
+        Section::Routing,
+        Section::Cost,
+        Section::Nxr,
+        Section::Rtt,
+        Section::Longflow,
+    ]
 }
 
 fn formal_throughput() -> Vec<ThroughputCell> {
@@ -3919,7 +3912,12 @@ mod tests {
         assert_eq!(smoke.samples, 1);
         assert_eq!(smoke.connections, 2);
         assert_eq!(smoke.longflow_mib, 1);
-        assert!(smoke.to_json().to_python_json().contains("\"formal\": false"));
+        assert!(
+            smoke
+                .to_json()
+                .to_python_json()
+                .contains("\"formal\": false")
+        );
     }
 
     #[test]
@@ -3948,9 +3946,7 @@ mod tests {
         let value = json_in::parse(&config.json).unwrap();
         assert_eq!(value.str_field("", "sentinel").unwrap(), "keep");
         assert!(
-            value
-                .array_field("", "inbounds")
-                .unwrap()[0]
+            value.array_field("", "inbounds").unwrap()[0]
                 .field("inbounds[0]", "streamSettings")
                 .unwrap()
                 .field("inbounds[0].streamSettings", "sentinel")
@@ -3966,9 +3962,7 @@ mod tests {
                 .unwrap(),
             "https://127.0.0.1:9/geosite.dat"
         );
-        let clients = value
-            .array_field("", "inbounds")
-            .unwrap()[0]
+        let clients = value.array_field("", "inbounds").unwrap()[0]
             .field("inbounds[0]", "settings")
             .unwrap()
             .array_field("inbounds[0].settings", "clients")
@@ -3976,7 +3970,10 @@ mod tests {
         assert_eq!(clients.len(), 4);
         let routing = value.field("", "routing").unwrap();
         assert_eq!(routing.array_field("routing", "users").unwrap().len(), 2);
-        assert_eq!(routing.array_field("routing", "globalRules").unwrap().len(), 3);
+        assert_eq!(
+            routing.array_field("routing", "globalRules").unwrap().len(),
+            3
+        );
         assert!(
             value
                 .field("", "assets")
@@ -4003,9 +4000,7 @@ mod tests {
         .unwrap();
         let value = json_in::parse(&json).unwrap();
         assert_eq!(value.str_field("", "sentinel").unwrap(), "keep");
-        let clients = value
-            .array_field("", "inbounds")
-            .unwrap()[0]
+        let clients = value.array_field("", "inbounds").unwrap()[0]
             .field("inbounds[0]", "settings")
             .unwrap()
             .array_field("inbounds[0].settings", "clients")
@@ -4018,14 +4013,20 @@ mod tests {
         );
         let users = routing.array_field("routing", "users").unwrap();
         assert_eq!(users.len(), 2);
-        assert_eq!(users[0].array_field("routing.users[0]", "rules").unwrap().len(), 16);
+        assert_eq!(
+            users[0]
+                .array_field("routing.users[0]", "rules")
+                .unwrap()
+                .len(),
+            16
+        );
         let global = routing.array_field("routing", "globalRules").unwrap();
         assert_eq!(global.len(), 4);
-        assert!(
-            global
-                .iter()
-                .all(|rule| rule.str_field("rule", "name").unwrap().starts_with("global-"))
-        );
+        assert!(global.iter().all(|rule| {
+            rule.str_field("rule", "name")
+                .unwrap()
+                .starts_with("global-")
+        }));
     }
 
     #[test]
@@ -4050,7 +4051,10 @@ mod tests {
         })
         .unwrap();
         assert_eq!(cases.len(), 26);
-        assert_eq!(cases.iter().filter(|case| case.group == "alpha").count(), 14);
+        assert_eq!(
+            cases.iter().filter(|case| case.group == "alpha").count(),
+            14
+        );
         assert_eq!(cases.iter().filter(|case| case.group == "beta").count(), 12);
         assert_eq!(
             cases
@@ -4081,7 +4085,11 @@ mod tests {
             seconds: 0.1,
             passed: true,
         }];
-        assert!(routing_summary(&results).to_python_json().contains("\"verdict\": \"PASS\""));
+        assert!(
+            routing_summary(&results)
+                .to_python_json()
+                .contains("\"verdict\": \"PASS\"")
+        );
     }
 
     #[test]
@@ -4093,7 +4101,9 @@ mod tests {
 "#;
         let evidence = relay_evidence(log);
         assert!(evidence.passes("splice"));
-        let rendered = evidence.to_json(Path::new("landing.log"), "splice").to_python_json();
+        let rendered = evidence
+            .to_json(Path::new("landing.log"), "splice")
+            .to_python_json();
         assert!(rendered.contains("\"perConnectionBackendEvidence\": \"not-emitted\""));
     }
 

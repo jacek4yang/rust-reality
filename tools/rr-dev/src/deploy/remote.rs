@@ -42,7 +42,8 @@ impl Reply {
         } else {
             Err(format!(
                 "{context} failed with status {}{}",
-                self.code.map_or_else(|| "signal".to_owned(), |code| code.to_string()),
+                self.code
+                    .map_or_else(|| "signal".to_owned(), |code| code.to_string()),
                 if self.stderr.trim().is_empty() {
                     String::new()
                 } else {

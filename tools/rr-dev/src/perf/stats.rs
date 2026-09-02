@@ -239,7 +239,10 @@ impl std::fmt::Display for StatsError {
                 "{metric}: fewer than three complete ABBA blocks ({found})"
             ),
             Self::BootstrapIterations { metric, found } => {
-                write!(formatter, "{metric}: invalid bootstrap iteration count {found}")
+                write!(
+                    formatter,
+                    "{metric}: invalid bootstrap iteration count {found}"
+                )
             }
             Self::EmptySample => write!(formatter, "tail-latency sample list is empty"),
             Self::NonFiniteSample { index } => {
@@ -252,7 +255,10 @@ impl std::fmt::Display for StatsError {
                 write!(formatter, "{name} produced a non-finite result")
             }
             Self::InvalidMedianRatio { metric } => {
-                write!(formatter, "{metric}: median ratio is not positive and finite")
+                write!(
+                    formatter,
+                    "{metric}: median ratio is not positive and finite"
+                )
             }
         }
     }
@@ -799,8 +805,7 @@ mod tests {
             let input: Vec<f64> = fixture.iter().map(|value| f64::from(*value)).collect();
             let (observed_lower, observed_upper) =
                 exact_sign_flip_pvalues("integer-oracle", &input).expect("valid fixture");
-            let (expected_lower, expected_upper, denominator) =
-                integer_sign_flip_oracle(&fixture);
+            let (expected_lower, expected_upper, denominator) = integer_sign_flip_oracle(&fixture);
             assert_eq!(
                 observed_lower,
                 f64::from(expected_lower) / f64::from(denominator)

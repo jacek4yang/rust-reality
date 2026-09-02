@@ -179,12 +179,7 @@ impl HostSnapshot {
                     .collect(),
             ),
         ));
-        object.push((
-            "restarts",
-            self.restarts.map_or(Json::Null, |restarts| {
-                Json::Int(restarts)
-            }),
-        ));
+        object.push(("restarts", self.restarts.map_or(Json::Null, Json::Int)));
         object.push((
             "generations",
             self.generations
@@ -400,7 +395,9 @@ fn optional_readlink(
     }
     let value = reply.stdout.trim();
     if !value.starts_with('/') || value.chars().any(char::is_whitespace) {
-        return Err(format!("inspect generation pointer {path} returned {value:?}"));
+        return Err(format!(
+            "inspect generation pointer {path} returned {value:?}"
+        ));
     }
     Ok(Some(value.to_owned()))
 }
@@ -457,10 +454,13 @@ pub fn from_json(text: &str) -> Result<HostSnapshot, String> {
         executable_sha256: optional_string(&root, "executableSha256")?,
         version: optional_string(&root, "version")?,
         listeners,
-        ssh_22_present: json_field(json_field(root.field("snapshot", "ssh22Present"))?
-            .as_bool("snapshot.ssh22Present"))?,
-        service_443_present: json_field(json_field(root.field("snapshot", "service443Present"))?
-            .as_bool("snapshot.service443Present"))?,
+        ssh_22_present: json_field(
+            json_field(root.field("snapshot", "ssh22Present"))?.as_bool("snapshot.ssh22Present"),
+        )?,
+        service_443_present: json_field(
+            json_field(root.field("snapshot", "service443Present"))?
+                .as_bool("snapshot.service443Present"),
+        )?,
         restarts: optional_i64(&root, "restarts")?,
         generations,
     })
@@ -478,9 +478,7 @@ fn optional_string(value: &json_in::Value, key: &str) -> Result<Option<String>, 
 fn optional_i64(value: &json_in::Value, key: &str) -> Result<Option<i64>, String> {
     match json_field(value.field("snapshot", key))? {
         json_in::Value::Null => Ok(None),
-        value => Ok(Some(json_field(
-            value.as_int(&format!("snapshot.{key}")),
-        )?)),
+        value => Ok(Some(json_field(value.as_int(&format!("snapshot.{key}")))?)),
     }
 }
 
@@ -521,8 +519,7 @@ trait OptionalJson {
 
 impl OptionalJson for Json {
     fn from_optional(value: Option<&String>) -> Json {
-        value
-            .map_or(Json::Null, |text| Json::string(text.clone()))
+        value.map_or(Json::Null, |text| Json::string(text.clone()))
     }
 }
 
@@ -549,31 +546,17 @@ mod tests {
             let stdout = match joined.as_str() {
                 "systemctl is-active rust-reality.service" => "active\n",
                 "systemctl show rust-reality.service -p MainPID --value" => "4242\n",
-                "readlink -f /proc/4242/exe" => {
-                    "/opt/rust-reality/releases/r2/rust-reality\n"
-                }
+                "readlink -f /proc/4242/exe" => "/opt/rust-reality/releases/r2/rust-reality\n",
                 "sha256sum /opt/rust-reality/releases/r2/rust-reality" => {
                     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  /opt/rust-reality/releases/r2/rust-reality\n"
                 }
-                "/opt/rust-reality/releases/r2/rust-reality --version" => {
-                    "rust-reality 1.9.0\n"
-                }
-                "ss -ltnH" => {
-                    "LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*\nLISTEN 0 4096 [::]:443 [::]:*\n"
-                }
+                "/opt/rust-reality/releases/r2/rust-reality --version" => "rust-reality 1.9.0\n",
+                "ss -ltnH" => "LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*\nLISTEN 0 4096 [::]:443 [::]:*\n",
                 "systemctl show rust-reality.service -p NRestarts --value" => "3\n",
-                "readlink -f /opt/rust-reality/current" => {
-                    "/opt/rust-reality/releases/r2\n"
-                }
-                "readlink -f /etc/rust-reality/current" => {
-                    "/etc/rust-reality/releases/r2\n"
-                }
-                "readlink -f /opt/rust-reality/previous" => {
-                    "/opt/rust-reality/releases/r1\n"
-                }
-                "readlink -f /etc/rust-reality/previous" => {
-                    "/etc/rust-reality/releases/r1\n"
-                }
+                "readlink -f /opt/rust-reality/current" => "/opt/rust-reality/releases/r2\n",
+                "readlink -f /etc/rust-reality/current" => "/etc/rust-reality/releases/r2\n",
+                "readlink -f /opt/rust-reality/previous" => "/opt/rust-reality/releases/r1\n",
+                "readlink -f /etc/rust-reality/previous" => "/etc/rust-reality/releases/r1\n",
                 _ => return Err(format!("unexpected fake command {joined}")),
             };
             Ok(Reply {
@@ -592,19 +575,31 @@ mod tests {
     fn listeners_parse_from_ss_output_shapes() {
         assert_eq!(
             parse_listener("0.0.0.0:443"),
-            Some(Listener { address: "0.0.0.0".into(), port: 443 })
+            Some(Listener {
+                address: "0.0.0.0".into(),
+                port: 443
+            })
         );
         assert_eq!(
             parse_listener("[::]:22"),
-            Some(Listener { address: "[::]".into(), port: 22 })
+            Some(Listener {
+                address: "[::]".into(),
+                port: 22
+            })
         );
         assert_eq!(
             parse_listener("*:9100"),
-            Some(Listener { address: "*".into(), port: 9100 })
+            Some(Listener {
+                address: "*".into(),
+                port: 9100
+            })
         );
         assert_eq!(
             parse_listener("127.0.0.1:8080"),
-            Some(Listener { address: "127.0.0.1".into(), port: 8080 })
+            Some(Listener {
+                address: "127.0.0.1".into(),
+                port: 8080
+            })
         );
         assert_eq!(parse_listener(""), None);
         assert_eq!(parse_listener("garbage"), None);
@@ -620,10 +615,22 @@ mod tests {
             executable_sha256: Some("a".repeat(64)),
             version: Some("rust-reality 1.9.0".into()),
             listeners: vec![
-                Listener { address: "0.0.0.0".into(), port: 22 },
-                Listener { address: "[::]".into(), port: 443 },
-                Listener { address: "127.0.0.1".into(), port: 9100 },
-                Listener { address: "0.0.0.0".into(), port: 19999 },
+                Listener {
+                    address: "0.0.0.0".into(),
+                    port: 22,
+                },
+                Listener {
+                    address: "[::]".into(),
+                    port: 443,
+                },
+                Listener {
+                    address: "127.0.0.1".into(),
+                    port: 9100,
+                },
+                Listener {
+                    address: "0.0.0.0".into(),
+                    port: 19999,
+                },
             ],
             ssh_22_present: true,
             service_443_present: true,
@@ -646,7 +653,10 @@ mod tests {
             executable: Some("/opt/rust-reality/current/rust-reality".into()),
             executable_sha256: Some("b".repeat(64)),
             version: Some("rust-reality 1.9.0".into()),
-            listeners: vec![Listener { address: "0.0.0.0".into(), port: 22 }],
+            listeners: vec![Listener {
+                address: "0.0.0.0".into(),
+                port: 22,
+            }],
             ssh_22_present: true,
             service_443_present: false,
             restarts: Some(2),
@@ -681,7 +691,10 @@ mod tests {
 
     #[test]
     fn complete_ss_rows_and_address_only_fixtures_parse() {
-        assert_eq!(parse_ss_listener("LISTEN 0 4096 0.0.0.0:443 0.0.0.0:*"), parse_listener("0.0.0.0:443"));
+        assert_eq!(
+            parse_ss_listener("LISTEN 0 4096 0.0.0.0:443 0.0.0.0:*"),
+            parse_listener("0.0.0.0:443")
+        );
         assert_eq!(parse_ss_listener("[::]:22"), parse_listener("[::]:22"));
         assert_eq!(parse_ss_listener("not enough fields"), None);
     }

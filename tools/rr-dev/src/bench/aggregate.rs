@@ -282,12 +282,13 @@ pub fn floor_percentile(values: &[f64], fraction: f64) -> Result<f64, String> {
         return Err("cannot take a percentile of an empty sample".to_owned());
     }
     if !fraction.is_finite() || !(0.0..=1.0).contains(&fraction) {
-        return Err(format!(
-            "percentile fraction {fraction} is outside 0..=1"
-        ));
+        return Err(format!("percentile fraction {fraction} is outside 0..=1"));
     }
     if let Some(index) = values.iter().position(|value| !value.is_finite()) {
-        return Err(format!("percentile observation {} is not finite", index + 1));
+        return Err(format!(
+            "percentile observation {} is not finite",
+            index + 1
+        ));
     }
     let mut ordered = values.to_vec();
     ordered.sort_unstable_by(f64::total_cmp);
@@ -401,11 +402,7 @@ mod tests {
     #[test]
     fn paired_cells_reject_non_finite_negative_and_overflowing_values() {
         for bad in [-1.0, f64::NAN, f64::INFINITY] {
-            let data = blocks(&[
-                (&[1.0], &[1.0]),
-                (&[1.0], &[bad]),
-                (&[1.0], &[1.0]),
-            ]);
+            let data = blocks(&[(&[1.0], &[1.0]), (&[1.0], &[bad]), (&[1.0], &[1.0])]);
             let error = paired_cell(&data, 1, FALLBACK_CPU_SEED, "x").unwrap_err();
             assert!(error.contains("candidate observation 1"), "{bad}: {error}");
         }
@@ -416,7 +413,10 @@ mod tests {
             (&[1.0], &[1.0]),
         ]);
         let error = paired_cell(&data, 1, FALLBACK_CPU_SEED, "x").unwrap_err();
-        assert!(error.contains("ratio is not positive and finite"), "{error}");
+        assert!(
+            error.contains("ratio is not positive and finite"),
+            "{error}"
+        );
     }
 
     /// The bootstrap refuses to interval-estimate from fewer than three blocks,
@@ -439,11 +439,7 @@ mod tests {
 
     #[test]
     fn the_paired_cell_document_matches_the_legacy_shape() {
-        let data = blocks(&[
-            (&[10.0], &[11.0]),
-            (&[10.0], &[12.0]),
-            (&[10.0], &[13.0]),
-        ]);
+        let data = blocks(&[(&[10.0], &[11.0]), (&[10.0], &[12.0]), (&[10.0], &[13.0])]);
         let cell = paired_cell(&data, 1, SETUP_RATE_CPU_SEED, "setup:cpu").unwrap();
         let rendered = paired_cell_json(&cell, None).to_python_json();
         assert!(rendered.contains("\"blocks\""));
@@ -536,8 +532,7 @@ mod tests {
         assert!(rendered.contains("\"status\": \"COMPLETE\""));
         assert!(rendered.contains("\"performanceVerdict\": \"NOT_EVALUATED\""));
         assert!(
-            rendered
-                .contains("\"method\": \"alternating balanced ABBA blocks; block bootstrap\"")
+            rendered.contains("\"method\": \"alternating balanced ABBA blocks; block bootstrap\"")
         );
         assert!(rendered.contains("\"slotCount\": 12"));
         assert!(rendered.contains("\"rawSampleCount\": 108"));

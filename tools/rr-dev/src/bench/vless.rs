@@ -266,7 +266,11 @@ mod tests {
                 .collect::<Vec<String>>(),
             "an unshuffled order would run mode by mode"
         );
-        assert_eq!(order, measurement_order(5), "the seed makes it reproducible");
+        assert_eq!(
+            order,
+            measurement_order(5),
+            "the seed makes it reproducible"
+        );
         assert_eq!(order[0], "vless-encryption");
     }
 
@@ -327,7 +331,9 @@ mod tests {
             }
             summary.push((mode.to_owned(), Json::object(fields)));
         }
-        let rendered = ratios_json(&Json::object(summary)).unwrap().to_python_json();
+        let rendered = ratios_json(&Json::object(summary))
+            .unwrap()
+            .to_python_json();
         assert!(rendered.contains("\"encryptedToNoneP50Throughput\": 0.8"));
         assert!(rendered.contains("\"encryptedToNoneMeanServerCpuPerGiB\": 2.0"));
         assert!(rendered.contains("\"encryptedToNoneP50ConnectionsPerSecond\": 0.8"));
@@ -492,10 +498,7 @@ fn client_config(
                 ("protocol", Json::string("socks")),
                 (
                     "settings",
-                    Json::object([
-                        ("auth", Json::string("noauth")),
-                        ("udp", Json::Bool(false)),
-                    ]),
+                    Json::object([("auth", Json::string("noauth")), ("udp", Json::Bool(false))]),
                 ),
             ])]),
         ),
@@ -530,10 +533,7 @@ fn client_config(
                             "realitySettings",
                             Json::object([
                                 ("fingerprint", Json::string("chrome")),
-                                (
-                                    "serverName",
-                                    Json::string(identity.server_name.clone()),
-                                ),
+                                ("serverName", Json::string(identity.server_name.clone())),
                                 ("publicKey", Json::string(public_key)),
                                 ("shortId", Json::string(identity.short_id.clone())),
                                 ("spiderX", Json::string("/")),
@@ -651,9 +651,8 @@ fn setup_sample(
         reason = "connection counts here are small integers"
     )]
     let count = latencies.len() as f64;
-    let percentile = |fraction: f64| {
-        stats::nearest_rank(&latencies, fraction).unwrap_or(0.0) * 1000.0
-    };
+    let percentile =
+        |fraction: f64| stats::nearest_rank(&latencies, fraction).unwrap_or(0.0) * 1000.0;
     Ok(ModeSample {
         mode: leg.mode.to_owned(),
         values: vec![

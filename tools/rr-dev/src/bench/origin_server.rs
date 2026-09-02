@@ -524,10 +524,11 @@ pub fn serve_with_tls(
         let Ok(stream) = stream else {
             continue;
         };
-        let client = stream.peer_addr().map_or(
-            IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
-            |address| address.ip(),
-        );
+        let client = stream
+            .peer_addr()
+            .map_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), |address| {
+                address.ip()
+            });
         let shared = Arc::clone(&shared);
         let acceptor = acceptor.clone();
         std::thread::spawn(move || {

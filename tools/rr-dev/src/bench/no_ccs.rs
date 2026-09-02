@@ -148,40 +148,86 @@ pub fn build_certificate(
     let run = |args: Vec<String>| openssl(openssl_bin, &args);
 
     run(owned(&[
-        "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256", "-days", "1",
-        "-subj", &plan.ca_subject,
-        "-addext", "basicConstraints=critical,CA:TRUE",
-        "-addext", "keyUsage=critical,keyCertSign,cRLSign",
-        "-keyout", &path("ca.key"), "-out", &path("ca.crt"),
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-sha256",
+        "-days",
+        "1",
+        "-subj",
+        &plan.ca_subject,
+        "-addext",
+        "basicConstraints=critical,CA:TRUE",
+        "-addext",
+        "keyUsage=critical,keyCertSign,cRLSign",
+        "-keyout",
+        &path("ca.key"),
+        "-out",
+        &path("ca.crt"),
     ]))?;
 
     run(owned(&[
-        "req", "-new", "-newkey", "rsa:2048", "-nodes", "-sha256",
-        "-subj", &plan.leaf_subject,
-        "-addext", "basicConstraints=critical,CA:FALSE",
-        "-addext", "keyUsage=critical,digitalSignature,keyEncipherment",
-        "-addext", "extendedKeyUsage=serverAuth",
-        "-addext", &format!("subjectAltName={}", plan.subject_alt_name),
-        "-keyout", &path("server.key"), "-out", &path("server.csr"),
+        "req",
+        "-new",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-sha256",
+        "-subj",
+        &plan.leaf_subject,
+        "-addext",
+        "basicConstraints=critical,CA:FALSE",
+        "-addext",
+        "keyUsage=critical,digitalSignature,keyEncipherment",
+        "-addext",
+        "extendedKeyUsage=serverAuth",
+        "-addext",
+        &format!("subjectAltName={}", plan.subject_alt_name),
+        "-keyout",
+        &path("server.key"),
+        "-out",
+        &path("server.csr"),
     ]))?;
 
     run(owned(&[
-        "x509", "-req", "-sha256", "-days", "1",
-        "-in", &path("server.csr"),
-        "-CA", &path("ca.crt"), "-CAkey", &path("ca.key"),
-        "-CAcreateserial", "-copy_extensions", "copy",
-        "-out", &path("server.crt"),
+        "x509",
+        "-req",
+        "-sha256",
+        "-days",
+        "1",
+        "-in",
+        &path("server.csr"),
+        "-CA",
+        &path("ca.crt"),
+        "-CAkey",
+        &path("ca.key"),
+        "-CAcreateserial",
+        "-copy_extensions",
+        "copy",
+        "-out",
+        &path("server.crt"),
     ]))?;
 
     if let Some(hostname) = &plan.verify_hostname {
         run(owned(&[
-            "verify", "-CAfile", &path("ca.crt"),
-            "-verify_hostname", hostname, &path("server.crt"),
+            "verify",
+            "-CAfile",
+            &path("ca.crt"),
+            "-verify_hostname",
+            hostname,
+            &path("server.crt"),
         ]))?;
     }
 
     let subject_alt_name = run(owned(&[
-        "x509", "-in", &path("server.crt"), "-noout", "-ext", "subjectAltName",
+        "x509",
+        "-in",
+        &path("server.crt"),
+        "-noout",
+        "-ext",
+        "subjectAltName",
     ]))?;
 
     Ok(CoverCertificate {
@@ -259,10 +305,6 @@ pub fn cover_server_args(port: u16, certificate: &CoverCertificate) -> Vec<Strin
 
 /// The gate's `summary.json`.
 #[must_use]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "these are exactly the fields the recorded summary carries"
-)]
 pub fn summary_json(
     run_id: &str,
     rust: &crate::bench::identity::Binary,
@@ -271,7 +313,6 @@ pub fn summary_json(
     completed_at: &str,
     ports: [u16; 4],
     payload_sha256: &str,
-    mldsa_sha256: &str,
 ) -> Json {
     let binary = |bin: &crate::bench::identity::Binary| {
         Json::object([
@@ -343,7 +384,6 @@ pub fn summary_json(
                 ("serverChangeCipherSpec", Json::Bool(false)),
                 ("payloadBytes", Json::Int(1_048_576)),
                 ("payloadSha256", Json::string(payload_sha256)),
-                ("mldsa65VerifySha256", Json::string(mldsa_sha256)),
             ]),
         ),
         ("trace", Json::string("openssl-trace.log")),
@@ -418,12 +458,9 @@ mod tests {
         run.write_new("environment.json", "{\"phase\":\"running\"}\n")
             .unwrap();
 
-        let error = publish_complete_run(
-            &run,
-            "{\"phase\":\"complete\"}\n",
-            "run-1",
-            || Err("run log writers did not stop".to_owned()),
-        )
+        let error = publish_complete_run(&run, "{\"phase\":\"complete\"}\n", "run-1", || {
+            Err("run log writers did not stop".to_owned())
+        })
         .unwrap_err();
 
         assert!(error.contains("log writers did not stop"), "{error}");
@@ -433,19 +470,14 @@ mod tests {
         );
 
         let mut stopped = false;
-        publish_complete_run(
-            &run,
-            "{\"phase\":\"complete\"}\n",
-            "run-1",
-            || {
-                assert!(
-                    !run.join("completion.json").exists(),
-                    "run log writers must stop before publication"
-                );
-                stopped = true;
-                Ok(())
-            },
-        )
+        publish_complete_run(&run, "{\"phase\":\"complete\"}\n", "run-1", || {
+            assert!(
+                !run.join("completion.json").exists(),
+                "run log writers must stop before publication"
+            );
+            stopped = true;
+            Ok(())
+        })
         .unwrap();
         assert!(stopped);
         assert!(run.join("completion.json").is_file());
@@ -471,7 +503,10 @@ mod tests {
     fn only_server_direction_lines_count() {
         assert_no_server_ccs(NO_MIDDLEBOX_TRACE).expect("a client CCS is irrelevant");
         let error = assert_no_server_ccs(MIDDLEBOX_TRACE).unwrap_err();
-        assert!(error.contains("server-direction ChangeCipherSpec"), "{error}");
+        assert!(
+            error.contains("server-direction ChangeCipherSpec"),
+            "{error}"
+        );
     }
 
     /// A trace with no `ServerHello` means the handshake never happened, so an
@@ -539,14 +574,19 @@ mod tests {
     }
 
     /// A generated config, trimmed to the members this adaptation touches.
-    const GENERATED: &str = r#"{"assets":{"cacheDirectory":"/w"},
-        "inbounds":[{"streamSettings":{"realitySettings":{
-        "coverOptimization":{"enabled":true,"warmTcp":true,"prebuiltProfiles":true}}}}]}"#;
+    const GENERATED: &str = r#"{"role":"entry",
+        "listeners":[{"port":8443,"ip":"ipv4Only","ipv4":"127.0.0.1"}],
+        "reality":{"cover":"dl.google.com:443",
+                   "privateKey":"ERERERERERERERERERERERERERERERERERERERERERE",
+                   "coverOptimization":{"enabled":true,"warmTcp":true,"prebuiltProfiles":true}},
+        "users":[{"id":"11111111-1111-4111-8111-111111111111",
+                  "shortIds":["0123456789abcdef"]}],
+        "routing":{"default":"direct"},
+        "assets":{"cacheDirectory":"/w"},"log":{"level":"warn"}}"#;
 
     #[test]
     fn the_serial_cover_adaptation_relaxes_the_probe_and_stops_warm_pooling() {
         let adapted = for_serial_cover(GENERATED, 15).unwrap();
-        assert!(adapted.contains(r#""requestTimeoutSeconds":15"#));
         // The pool is the whole reason this suite hung against `s_server`.
         assert!(adapted.contains(r#""warmTcp":false"#));
         // Only `warmTcp` moves: the cover optimizations stay on, so the
@@ -559,10 +599,10 @@ mod tests {
     fn the_serial_cover_adaptation_fails_closed_on_an_unexpected_shape() {
         // Silently skipping a renamed knob would resurrect a 20-second hang
         // that looks like a REALITY fault rather than a config drift.
-        let error = for_serial_cover(r#"{"assets":{},"inbounds":[{}]}"#, 15).unwrap_err();
-        assert!(error.contains("streamSettings"), "{error}");
-        let error = for_serial_cover(r#"{"assets":{},"inbounds":[]}"#, 15).unwrap_err();
-        assert!(error.contains("first inbound"), "{error}");
+        let error = for_serial_cover(r#"{"assets":{}}"#, 15).unwrap_err();
+        assert!(error.contains("reality"), "{error}");
+        let error = for_serial_cover(r#"{"reality":true}"#, 15).unwrap_err();
+        assert!(error.contains("reality"), "{error}");
     }
 
     #[test]
@@ -587,7 +627,6 @@ mod tests {
             "2026-08-29T05:50:07Z",
             [1, 2, 3, 4],
             &"b".repeat(64),
-            &"c".repeat(64),
         )
         .to_python_json();
         assert!(rendered.contains("\"serverChangeCipherSpec\": false"));
@@ -653,41 +692,28 @@ fn for_serial_cover(generated: &str, seconds: u64) -> Result<String, String> {
     let Value::Object(mut members) = value else {
         return Err("the generated config is not an object".to_owned());
     };
-    let Some(Value::Object(assets)) = members.get_mut("assets") else {
-        return Err("the generated config has no assets object".to_owned());
-    };
-    assets.insert(
-        "requestTimeoutSeconds".to_owned(),
-        Value::Number(seconds.to_string()),
-    );
+    // The asset request timeout is derived now, so a serial-cover run states
+    // only the thing it is actually about: no speculative cover socket.
+    let _ = seconds;
     disable_warm_tcp(&mut members)?;
-    Ok(crate::bench::suites::render_compact(&Value::Object(members)))
+    Ok(crate::bench::suites::render_compact(&Value::Object(
+        members,
+    )))
 }
 
-/// Clears `warmTcp` on the first inbound's REALITY cover optimizations.
+/// Clears `warmTcp` on the REALITY cover optimizations.
 ///
 /// # Errors
 ///
-/// Returns a message when the inbound is missing or is not the expected shape.
+/// Returns a message when `reality` is missing or is not an object.
 fn disable_warm_tcp(
     members: &mut std::collections::BTreeMap<String, crate::perf::json_in::Value>,
 ) -> Result<(), String> {
-    use crate::perf::json_in::Value;
-    let Some(Value::Array(inbounds)) = members.get_mut("inbounds") else {
-        return Err("the generated config has no inbounds array".to_owned());
-    };
-    let Some(Value::Object(inbound)) = inbounds.first_mut() else {
-        return Err("the generated config has no first inbound object".to_owned());
-    };
-    let mut current = inbound;
-    for key in ["streamSettings", "realitySettings", "coverOptimization"] {
-        let Some(Value::Object(next)) = current.get_mut(key) else {
-            return Err(format!("the first inbound has no {key} object"));
-        };
-        current = next;
-    }
-    current.insert("warmTcp".to_owned(), Value::Bool(false));
-    Ok(())
+    crate::bench::suites::set_cover_optimization(
+        members,
+        "warmTcp",
+        crate::perf::json_in::Value::Bool(false),
+    )
 }
 
 /// Writes the 1 MiB payload and starts the native origin.
@@ -757,7 +783,7 @@ fn start_tunnel(
         "rust-server",
         &rust.path,
         &[
-            "serve".to_owned(),
+            "run".to_owned(),
             "--config".to_owned(),
             server_path.display().to_string(),
         ],
@@ -872,8 +898,11 @@ pub fn run(suite: &NoCcsSuite) -> Result<Json, String> {
         (ports[0], ports[1], ports[2], ports[3]);
 
     let certificate = build_cover_certificate(&suite.openssl_bin, workspace.path(), &suite.run_id)?;
-    std::fs::write(run.join("certificate-san.txt"), &certificate.subject_alt_name)
-        .map_err(|error| format!("could not record the leaf SAN: {error}"))?;
+    std::fs::write(
+        run.join("certificate-san.txt"),
+        &certificate.subject_alt_name,
+    )
+    .map_err(|error| format!("could not record the leaf SAN: {error}"))?;
 
     let trace_path = run.join("openssl-trace.log");
     let mut cover = Child::spawn(
@@ -914,8 +943,6 @@ pub fn run(suite: &NoCcsSuite) -> Result<Json, String> {
     if observed_sha != expected_sha {
         return Err("Xray interoperability payload SHA-256 mismatch".to_owned());
     }
-    let verify = interop::mldsa65_differential(&rust.path, &xray.path, interop::MLDSA_SEED)?;
-
     // Stop the cover explicitly so its trace is flushed before it is read.
     cover.terminate();
     let trace = std::fs::read_to_string(&trace_path)
@@ -937,7 +964,6 @@ pub fn run(suite: &NoCcsSuite) -> Result<Json, String> {
         &crate::bench::evidence::now_utc()?,
         ports,
         &observed_sha,
-        &interop::verify_digest(&verify),
     );
     let document = summary.to_python_json();
     run.write_new("summary.json", &document)?;

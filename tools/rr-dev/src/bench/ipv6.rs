@@ -785,8 +785,9 @@ pub struct ServerPlan {
     pub ipv6: String,
     /// Cover target, `host:port` with IPv6 bracketed.
     pub target: String,
-    /// Extra `network.dial` members, merged over the generated defaults.
-    pub dial: Vec<(String, Json)>,
+    /// `network.ip`, the outbound address-family policy. Absent leaves it
+    /// derived, which is what most cases want.
+    pub dial: Option<String>,
 }
 
 impl ServerPlan {
@@ -800,22 +801,23 @@ impl ServerPlan {
             ipv4: "127.0.0.1".to_owned(),
             ipv6: "::1".to_owned(),
             target: target.to_owned(),
-            dial: Vec::new(),
+            dial: None,
         }
     }
 
-    /// Sets `network.dial.mode`.
+    /// Sets `network.ip`.
     #[must_use]
-    pub fn dialling(mut self, mode: &str) -> Self {
-        self.dial.push(("mode".to_owned(), Json::string(mode)));
+    pub fn dialling(mut self, policy: &str) -> Self {
+        self.dial = Some(policy.to_owned());
         self
     }
 
-    /// The `listen` object this plan describes.
+    /// The `listeners[0]` object this plan describes.
     #[must_use]
-    pub fn listen_json(&self) -> Json {
+    pub fn listener_json(&self) -> Json {
         Json::object([
-            ("mode", Json::string(self.mode.as_str())),
+            ("port", Json::Int(i64::from(self.port))),
+            ("ip", Json::string(self.mode.as_str())),
             ("ipv4", Json::string(&self.ipv4)),
             ("ipv6", Json::string(&self.ipv6)),
         ])
@@ -861,11 +863,11 @@ pub fn materialize_server(
         COVER_SNI,
         Some(&workspace.join(&format!("{}.generate.log", plan.name))),
     )?;
-    let config = patch_server_config(
-        &generated.server_json,
+    let config = server_config(
+        &generated,
         plan,
         &workspace.join(&format!("assets-{}", plan.name)),
-    )?;
+    );
     let config_path = workspace.join(&format!("{}.server.json", plan.name));
     std::fs::write(&config_path, config)
         .map_err(|error| format!("could not write {}: {error}", config_path.display()))?;
@@ -879,170 +881,86 @@ pub fn materialize_server(
     })
 }
 
-/// Applies an IPv6 server plan to a generated standalone config.
-fn patch_server_config(raw: &str, plan: &ServerPlan, cache: &Path) -> Result<String, String> {
-    use crate::perf::json_in::{self, Value};
-
-    fn object(
-        value: Value,
-        path: &str,
-    ) -> Result<std::collections::BTreeMap<String, Value>, String> {
-        let Value::Object(members) = value else {
-            return Err(format!("generated rust config {path} is not an object"));
-        };
-        Ok(members)
-    }
-
-    let value = json_in::parse(raw)
-        .map_err(|error| format!("generated rust config is invalid JSON: {error}"))?;
-    let mut root = object(value, "root")?;
-    let inbounds = root
-        .remove("inbounds")
-        .ok_or_else(|| "generated rust config has no inbounds".to_owned())?;
-    let Value::Array(mut inbounds) = inbounds else {
-        return Err("generated rust config inbounds is not an array".to_owned());
+/// Renders the rust-reality config one IPv6 server plan describes.
+///
+/// The suite is *about* the listener and the dial policy, so it supplies both
+/// and takes everything else from the shared builder.
+fn server_config(
+    generated: &crate::bench::suites::RustIdentity,
+    plan: &ServerPlan,
+    cache: &Path,
+) -> String {
+    let identity = crate::bench::config::RealityIdentity {
+        uuid: generated.uuid.clone(),
+        short_id: generated.short_id.clone(),
+        server_name: COVER_SNI.to_owned(),
+        target: plan.target.clone(),
     };
-    if inbounds.len() != 1 {
-        return Err(format!(
-            "generated rust config has {} inbounds, expected exactly one",
-            inbounds.len()
-        ));
+    let mut server =
+        crate::bench::config::RustServer::new(&identity, plan.port, &generated.private_key)
+            .listener(plan.listener_json())
+            .assets_cache(cache.display().to_string());
+    if let Some(policy) = &plan.dial {
+        server = server.with("network", Json::object([("ip", Json::string(policy))]));
     }
-    let mut inbound = object(inbounds.remove(0), "inbounds[0]")?;
-    inbound.insert(
-        "listen".to_owned(),
-        json_in::parse(&plan.listen_json().to_jq_json())
-            .map_err(|error| format!("listener plan is invalid JSON: {error}"))?,
-    );
-    inbound.insert("port".to_owned(), Value::Number(plan.port.to_string()));
-
-    let stream = inbound
-        .remove("streamSettings")
-        .ok_or_else(|| "generated rust config has no inbounds[0].streamSettings".to_owned())?;
-    let mut stream = object(stream, "inbounds[0].streamSettings")?;
-    let reality = stream.remove("realitySettings").ok_or_else(|| {
-        "generated rust config has no inbounds[0].streamSettings.realitySettings".to_owned()
-    })?;
-    let mut reality = object(reality, "inbounds[0].streamSettings.realitySettings")?;
-    reality.insert("target".to_owned(), Value::Str(plan.target.clone()));
-    stream.insert("realitySettings".to_owned(), Value::Object(reality));
-    inbound.insert("streamSettings".to_owned(), Value::Object(stream));
-    root.insert(
-        "inbounds".to_owned(),
-        Value::Array(vec![Value::Object(inbound)]),
-    );
-
-    let mut assets = match root.remove("assets") {
-        Some(value) => object(value, "assets")?,
-        None => std::collections::BTreeMap::new(),
-    };
-    assets.insert(
-        "cacheDirectory".to_owned(),
-        Value::Str(cache.display().to_string()),
-    );
-    assets.insert(
-        "requestTimeoutSeconds".to_owned(),
-        Value::Number("5".to_owned()),
-    );
-    root.insert("assets".to_owned(), Value::Object(assets));
-
-    let network = root
-        .remove("network")
-        .ok_or_else(|| "generated rust config has no network".to_owned())?;
-    let mut network = object(network, "network")?;
-    let dial = network
-        .remove("dial")
-        .ok_or_else(|| "generated rust config has no network.dial".to_owned())?;
-    let mut dial = object(dial, "network.dial")?;
-    for (name, value) in &plan.dial {
-        let value = json_in::parse(&value.to_jq_json())
-            .map_err(|error| format!("dial plan field {name} is invalid JSON: {error}"))?;
-        dial.insert(name.clone(), value);
-    }
-    network.insert("dial".to_owned(), Value::Object(dial));
-    root.insert("network".to_owned(), Value::Object(network));
-    Ok(crate::bench::suites::render_compact(&Value::Object(root)))
+    server.build().to_python_json()
 }
 
 #[cfg(test)]
 mod config_tests {
     use super::*;
-    use crate::perf::json_in;
 
-    const GENERATED: &str = r#"{
-      "inbounds":[{"listen":"127.0.0.1","port":1,
-        "streamSettings":{"realitySettings":{"target":"old.test:443","keep":true}}}],
-      "assets":{"cacheDirectory":"old"},
-      "network":{"dial":{"mode":"auto","routeRefreshSeconds":30}},
-      "untouched":{"value":7}
-    }"#;
-
-    #[test]
-    fn a_server_plan_patches_only_the_ipv6_runtime_fields() {
-        let plan = ServerPlan::dual_stack("s", 62_001, "[::1]:8443").dialling("preferIpv6");
-        let rendered = patch_server_config(GENERATED, &plan, Path::new("/run/assets-s")).unwrap();
-        let value = json_in::parse(&rendered).unwrap();
-        assert_eq!(
-            value.int_field("root", "untouched").unwrap_err().path,
-            "root.untouched"
-        );
-        let inbound = &value.array_field("root", "inbounds").unwrap()[0];
-        assert_eq!(inbound.int_field("inbound", "port").unwrap(), 62_001);
-        let listen = inbound.field("inbound", "listen").unwrap();
-        assert_eq!(listen.str_field("listen", "mode").unwrap(), "dualStack");
-        assert_eq!(listen.str_field("listen", "ipv4").unwrap(), "127.0.0.1");
-        assert_eq!(listen.str_field("listen", "ipv6").unwrap(), "::1");
-        let stream = inbound.field("inbound", "streamSettings").unwrap();
-        let reality = stream.field("stream", "realitySettings").unwrap();
-        assert_eq!(
-            reality.str_field("reality", "target").unwrap(),
-            "[::1]:8443"
-        );
-        assert!(
-            reality
-                .field("reality", "keep")
-                .unwrap()
-                .as_bool("keep")
-                .unwrap()
-        );
-        let assets = value.field("root", "assets").unwrap();
-        assert_eq!(
-            assets.str_field("assets", "cacheDirectory").unwrap(),
-            "/run/assets-s"
-        );
-        assert_eq!(
-            assets.int_field("assets", "requestTimeoutSeconds").unwrap(),
-            5
-        );
-        let dial = value
-            .field("root", "network")
-            .unwrap()
-            .field("network", "dial")
-            .unwrap();
-        assert_eq!(dial.str_field("dial", "mode").unwrap(), "preferIpv6");
-        assert_eq!(dial.int_field("dial", "routeRefreshSeconds").unwrap(), 30);
-        assert_eq!(
-            value
-                .field("root", "untouched")
-                .unwrap()
-                .int_field("untouched", "value")
-                .unwrap(),
-            7
-        );
+    fn identity() -> crate::bench::suites::RustIdentity {
+        crate::bench::suites::RustIdentity {
+            public_key: "MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM".to_owned(),
+            uuid: "11111111-1111-4111-8111-111111111111".to_owned(),
+            short_id: "0123456789abcdef".to_owned(),
+            private_key: "ERERERERERERERERERERERERERERERERERERERERERE".to_owned(),
+            server_json: String::new(),
+        }
     }
 
+    /// The plan's listener and dial policy are what this suite varies, and the
+    /// result has to be something the server will actually accept.
     #[test]
-    fn config_shape_drift_fails_closed() {
-        let plan = ServerPlan::dual_stack("s", 62_001, "[::1]:8443");
-        let error = patch_server_config("{}", &plan, Path::new("/run/assets")).unwrap_err();
-        assert!(error.contains("no inbounds"), "{error}");
-        let error = patch_server_config(
-            r#"{"inbounds":[],"network":{"dial":{}}}"#,
-            &plan,
-            Path::new("/run/assets"),
-        )
-        .unwrap_err();
-        assert!(error.contains("expected exactly one"), "{error}");
+    fn a_server_plan_renders_its_listener_and_dial_policy() {
+        let plan = ServerPlan::dual_stack("s", 62_001, "[::1]:8443").dialling("preferIpv6");
+
+        let rendered = server_config(&identity(), &plan, Path::new("/run/assets-s"));
+
+        let config = rust_reality::config::load_bytes(Path::new("ipv6.json"), rendered.as_bytes())
+            .unwrap_or_else(|error| panic!("the IPv6 plan must render a valid config:\n{error}"));
+        let node = config.node();
+        let listener = &node.listeners()[0];
+        assert_eq!(listener.port, 62_001);
+        assert_eq!(
+            listener.family(),
+            rust_reality::config::node::listener::ListenFamily::DualStack
+        );
+        assert_eq!(
+            node.network().ip(),
+            rust_reality::config::node::network::DialPolicy::PreferIpv6
+        );
+        assert!(rendered.contains("/run/assets-s"));
+        assert!(rendered.contains("[::1]:8443"));
+    }
+
+    /// Every listener mode this phase exercises must produce a valid file, so a
+    /// mode that stopped being spelled the same way fails here rather than in a
+    /// namespace three minutes into a run.
+    #[test]
+    fn every_listener_mode_renders_a_valid_config() {
+        for mode in ListenerMode::ALL {
+            let mut plan = ServerPlan::dual_stack("s", 62_001, "[::1]:8443");
+            plan.mode = mode;
+
+            let rendered = server_config(&identity(), &plan, Path::new("/run/assets"));
+
+            rust_reality::config::load_bytes(Path::new("ipv6.json"), rendered.as_bytes())
+                .unwrap_or_else(|error| {
+                    panic!("{} must render a valid config:\n{error}", mode.as_str())
+                });
+        }
     }
 }
 
@@ -1191,7 +1109,7 @@ fn start_server_raw(
         format!("rust-{}", server.name),
         rust_bin,
         &[
-            "serve".to_owned(),
+            "run".to_owned(),
             "--config".to_owned(),
             server.config_path.display().to_string(),
         ],
@@ -1303,7 +1221,7 @@ fn start_server_in_namespace(
         &format!("rust-{}", server.name),
         rust_bin,
         &[
-            "serve".to_owned(),
+            "run".to_owned(),
             "--config".to_owned(),
             server.config_path.display().to_string(),
         ],
@@ -1346,7 +1264,7 @@ fn run_disabled_ipv6_listener_cases(
             ipv4: "0.0.0.0".to_owned(),
             ipv6: "::1".to_owned(),
             target: "[::1]:1".to_owned(),
-            dial: Vec::new(),
+            dial: None,
         };
         let ipv6_only = materialize_server(workspace, rust_bin, &ipv6_only_plan)?;
         let mut child = start_server_in_namespace(
@@ -1381,7 +1299,7 @@ fn run_disabled_ipv6_listener_cases(
             ipv4: "127.0.0.1".to_owned(),
             ipv6: "::".to_owned(),
             target: "[::1]:1".to_owned(),
-            dial: Vec::new(),
+            dial: None,
         };
         let auto = materialize_server(workspace, rust_bin, &auto_plan)?;
         let mut child =
@@ -1444,7 +1362,7 @@ pub fn run_local_listener_phase(
             ipv4: "127.0.0.1".to_owned(),
             ipv6: "::1".to_owned(),
             target: "[::1]:1".to_owned(),
-            dial: Vec::new(),
+            dial: None,
         };
         let materialized = materialize_server(workspace, rust_bin, &plan)?;
         let mut child = start_server_raw(workspace, run, rust_bin, &materialized, ca_certificate)?;
@@ -1508,7 +1426,7 @@ pub fn run_local_listener_phase(
         ipv4: "127.0.0.1".to_owned(),
         ipv6: "2001:db8::ffff".to_owned(),
         target: "[::1]:1".to_owned(),
-        dial: Vec::new(),
+        dial: None,
     };
     let bad = materialize_server(workspace, rust_bin, &bad_plan)?;
     let mut child = start_server_raw(workspace, run, rust_bin, &bad, ca_certificate)?;
@@ -1533,7 +1451,7 @@ pub fn run_local_listener_phase(
         ipv4: "0.0.0.0".to_owned(),
         ipv6: "::1".to_owned(),
         target: "[::1]:1".to_owned(),
-        dial: Vec::new(),
+        dial: None,
     };
     let owner = materialize_server(workspace, rust_bin, &owner_plan)?;
     let mut owner_child = start_server_raw(workspace, run, rust_bin, &owner, ca_certificate)?;
@@ -1550,7 +1468,7 @@ pub fn run_local_listener_phase(
         ipv4: "127.0.0.1".to_owned(),
         ipv6: "::1".to_owned(),
         target: "[::1]:1".to_owned(),
-        dial: Vec::new(),
+        dial: None,
     };
     let contender = materialize_server(workspace, rust_bin, &contender_plan)?;
     let mut contender_child =
@@ -1874,17 +1792,17 @@ fn run_no_alpn_characterization(
             certificate.ca_certificate.display().to_string(),
         )
         .args([
-            "probe-dest".to_owned(),
-            "--target".to_owned(),
+            "check-cover".to_owned(),
+            "--cover".to_owned(),
             target.clone(),
             "--server-name".to_owned(),
             COVER_SNI.to_owned(),
         ])
         .probe()
-        .map_err(|error| format!("could not run no-ALPN destination probe: {error}"))?;
+        .map_err(|error| format!("could not run the no-ALPN cover check: {error}"))?;
     if !probe.success() {
         return Err(format!(
-            "no-ALPN destination probe exited {:?}: {}",
+            "no-ALPN cover check exited {:?}: {}",
             probe.code,
             probe.stderr.trim_end()
         ));
@@ -1910,7 +1828,7 @@ fn run_no_alpn_characterization(
         ipv4: "127.0.0.1".to_owned(),
         ipv6: "::".to_owned(),
         target,
-        dial: Vec::new(),
+        dial: None,
     };
     let server = materialize_server(workspace, rust_bin, &server_plan)?;
     let mut server_child = start_server_raw(
@@ -2341,7 +2259,7 @@ pub fn run_global_phase(
         ipv4: "0.0.0.0".to_owned(),
         ipv6: address.clone(),
         target: format!("[::1]:{cover_port}"),
-        dial: vec![("mode".to_owned(), Json::string("ipv6Only"))],
+        dial: Some("ipv6Only".to_owned()),
     };
     let server = materialize_server(workspace, rust_bin, &plan)?;
     let mut server_child = start_server_raw(
@@ -2506,7 +2424,7 @@ pub fn run_transfer_phase(
         ipv4: "0.0.0.0".to_owned(),
         ipv6: "::1".to_owned(),
         target: format!("[::1]:{cover_port}"),
-        dial: Vec::new(),
+        dial: None,
     };
     let server = materialize_server(workspace, rust_bin, &plan)?;
     let mut server_child = start_server_raw(
@@ -2829,11 +2747,9 @@ fn run_namespace_resilience(
             ipv4: "0.0.0.0".to_owned(),
             ipv6: "2001:db8:a::2".to_owned(),
             target: format!("[::1]:{}", ports[0]),
-            dial: vec![
-                ("mode".to_owned(), Json::string("auto")),
-                ("routeRefreshSeconds".to_owned(), Json::Int(2)),
-                ("hardFailurePenaltySeconds".to_owned(), Json::Int(3)),
-            ],
+            // The route-refresh and failure-penalty knobs are gone: they were
+            // internal heuristics, and the process now derives them.
+            dial: Some("auto".to_owned()),
         };
         let server = materialize_server(workspace, rust_bin, &server_plan)?;
         let mut server_child = start_server_in_namespace(

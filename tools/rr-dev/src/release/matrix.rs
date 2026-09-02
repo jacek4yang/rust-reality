@@ -166,7 +166,10 @@ mod tests {
     #[test]
     fn an_unknown_tier_is_rejected_with_the_known_list() {
         let error = Tier::resolve("linux-riscv64-generic").expect_err("unknown tier must fail");
-        assert!(error.contains("unknown release tier: linux-riscv64-generic"), "{error}");
+        assert!(
+            error.contains("unknown release tier: linux-riscv64-generic"),
+            "{error}"
+        );
         assert!(error.contains("linux-x86_64-generic"), "{error}");
     }
 
@@ -175,7 +178,10 @@ mod tests {
         let rendered = github_matrix();
         assert!(rendered.starts_with("matrix={\"include\":["));
         for tier in &TIERS {
-            assert!(rendered.contains(&format!("\"tier\":\"{}\"", tier.id)), "{rendered}");
+            assert!(
+                rendered.contains(&format!("\"tier\":\"{}\"", tier.id)),
+                "{rendered}"
+            );
         }
         // Well-formed single-line JSON body.
         assert_eq!(rendered.matches("\"tier\":").count(), TIERS.len());
@@ -184,6 +190,9 @@ mod tests {
     #[test]
     fn cpu_tier_aliases_are_stable() {
         let aliases: Vec<&str> = TIERS.iter().map(|tier| tier.cpu_tier).collect();
-        assert_eq!(aliases, ["portable", "portable-musl", "x86-64-v3", "aarch64-generic"]);
+        assert_eq!(
+            aliases,
+            ["portable", "portable-musl", "x86-64-v3", "aarch64-generic"]
+        );
     }
 }

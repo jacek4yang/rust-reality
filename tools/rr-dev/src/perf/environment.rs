@@ -15,10 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::{
-    perf::json_out::Json,
-    process::Tool,
-};
+use crate::{perf::json_out::Json, process::Tool};
 
 /// The fixed `perf stat` event set, matching the script.
 const STAT_EVENTS: &str = "task-clock,cycles,instructions,branches,branch-misses,cache-references,cache-misses,context-switches,cpu-migrations,page-faults";
@@ -174,10 +171,15 @@ fn run_c2c(command: &[String]) -> Result<Capture, String> {
     } else {
         None
     };
-    let report_stderr = report.as_ref().map(|r| r.stderr.clone()).unwrap_or_default();
+    let report_stderr = report
+        .as_ref()
+        .map(|r| r.stderr.clone())
+        .unwrap_or_default();
     let diagnostic = format!("{}{report_stderr}", record.stderr);
     let unavailable = !record.success() && is_unavailable(&diagnostic);
-    let report_ok = report.as_ref().is_some_and(crate::process::Outcome::success);
+    let report_ok = report
+        .as_ref()
+        .is_some_and(crate::process::Outcome::success);
     let status = if unavailable {
         Status::Unavailable
     } else if record.success() && report_ok {
@@ -190,10 +192,15 @@ fn run_c2c(command: &[String]) -> Result<Capture, String> {
         exit_code: record.code,
         report_exit_code: report.as_ref().and_then(|r| r.code),
         raw: String::new(),
-        report: report.as_ref().map(|r| r.stdout.clone()).unwrap_or_default(),
+        report: report
+            .as_ref()
+            .map(|r| r.stdout.clone())
+            .unwrap_or_default(),
         diagnostic,
         unavailable_reason: unavailable.then(|| {
-            format!("{}{report_stderr}", record.stderr).trim().to_owned()
+            format!("{}{report_stderr}", record.stderr)
+                .trim()
+                .to_owned()
         }),
         workload_stdout_sha256: String::new(),
     })
@@ -203,19 +210,31 @@ fn build_evidence(kind: Kind, options: &Options, binary: &Path, capture: &Captur
     let command: Vec<Json> = options.command.iter().cloned().map(Json::string).collect();
     let mut entries: Vec<(String, Json)> = vec![
         ("schemaVersion".to_owned(), Json::Int(1)),
-        ("tool".to_owned(), Json::string(format!("perf-{}", kind_tool(kind)))),
+        (
+            "tool".to_owned(),
+            Json::string(format!("perf-{}", kind_tool(kind))),
+        ),
         ("status".to_owned(), Json::string(capture.status.as_str())),
         (
             "binary".to_owned(),
             Json::object([
                 ("path", Json::string(binary.to_string_lossy().into_owned())),
-                ("sha256", Json::string(options.binary_sha256.to_ascii_lowercase())),
+                (
+                    "sha256",
+                    Json::string(options.binary_sha256.to_ascii_lowercase()),
+                ),
             ]),
         ),
         ("command".to_owned(), Json::Array(command)),
         ("perfVersion".to_owned(), Json::string(perf_version())),
-        ("kernel".to_owned(), Json::string(platform("uname", &["-r"]))),
-        ("machine".to_owned(), Json::string(platform("uname", &["-m"]))),
+        (
+            "kernel".to_owned(),
+            Json::string(platform("uname", &["-r"])),
+        ),
+        (
+            "machine".to_owned(),
+            Json::string(platform("uname", &["-m"])),
+        ),
     ];
     match kind {
         Kind::Stat => {
@@ -230,11 +249,17 @@ fn build_evidence(kind: Kind, options: &Options, binary: &Path, capture: &Captur
         }
         Kind::C2c => {
             entries.push(("recordExitCode".to_owned(), int_or_null(capture.exit_code)));
-            entries.push(("reportExitCode".to_owned(), int_or_null(capture.report_exit_code)));
+            entries.push((
+                "reportExitCode".to_owned(),
+                int_or_null(capture.report_exit_code),
+            ));
             entries.push(("report".to_owned(), Json::string(capture.report.clone())));
         }
     }
-    entries.push(("diagnostic".to_owned(), Json::string(capture.diagnostic.clone())));
+    entries.push((
+        "diagnostic".to_owned(),
+        Json::string(capture.diagnostic.clone()),
+    ));
     entries.push((
         "unavailableReason".to_owned(),
         capture
@@ -257,7 +282,9 @@ fn classify(success: bool, unavailable: bool) -> Status {
 
 fn is_unavailable(diagnostic: &str) -> bool {
     let lowered = diagnostic.to_ascii_lowercase();
-    UNAVAILABLE_MARKERS.iter().any(|marker| lowered.contains(marker))
+    UNAVAILABLE_MARKERS
+        .iter()
+        .any(|marker| lowered.contains(marker))
 }
 
 const fn kind_tool(kind: Kind) -> &'static str {
@@ -295,9 +322,12 @@ fn canonical(path: &Path) -> Result<PathBuf, String> {
 fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
     let temp = path.with_file_name(format!(
         ".{}.tmp",
-        path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+        path.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
     ));
-    std::fs::write(&temp, contents).map_err(|error| format!("could not write evidence: {error}"))?;
+    std::fs::write(&temp, contents)
+        .map_err(|error| format!("could not write evidence: {error}"))?;
     std::fs::rename(&temp, path).map_err(|error| format!("could not place evidence: {error}"))
 }
 
@@ -307,7 +337,9 @@ mod tests {
 
     #[test]
     fn permission_diagnostics_are_classified_unavailable() {
-        assert!(is_unavailable("Error: Access to performance monitoring is restricted"));
+        assert!(is_unavailable(
+            "Error: Access to performance monitoring is restricted"
+        ));
         assert!(is_unavailable("perf_event_open: Permission denied"));
         assert!(!is_unavailable("workload exited with status 1"));
     }

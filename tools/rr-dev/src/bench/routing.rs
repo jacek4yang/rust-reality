@@ -59,10 +59,7 @@ impl ScaleSample {
     pub fn to_json(&self) -> Json {
         let count = |value: usize| Json::Int(i64::try_from(value).unwrap_or(i64::MAX));
         Json::object([
-            (
-                "implementation",
-                Json::string(self.implementation.clone()),
-            ),
+            ("implementation", Json::string(self.implementation.clone())),
             ("ruleCount", count(self.rule_count)),
             ("block", count(self.block)),
             ("sampleIndex", count(self.sample_index)),
@@ -301,7 +298,11 @@ mod tests {
         let rendered = method_json().to_python_json();
         assert!(rendered.contains("LAST rule: worst-case full walk"));
         assert!(rendered.contains("no geosite/geoip files"));
-        assert!(limitations_json().to_python_json().contains("exact + subdomain"));
+        assert!(
+            limitations_json()
+                .to_python_json()
+                .contains("exact + subdomain")
+        );
     }
 }
 

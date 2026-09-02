@@ -443,23 +443,11 @@ fn serial_rust_config(generated: &RustIdentity, target: &str) -> Result<String, 
     let Value::Object(mut root) = value else {
         return Err("generated rust config is not an object".to_owned());
     };
-    let Some(Value::Array(inbounds)) = root.get_mut("inbounds") else {
-        return Err("generated rust config has no inbounds array".to_owned());
+    let Some(Value::Object(reality)) = root.get_mut("reality") else {
+        return Err("generated rust config has no reality object".to_owned());
     };
-    let Some(Value::Object(inbound)) = inbounds.first_mut() else {
-        return Err("generated rust config has no first inbound".to_owned());
-    };
-    let Some(Value::Object(stream)) = inbound.get_mut("streamSettings") else {
-        return Err("generated rust config has no streamSettings".to_owned());
-    };
-    let Some(Value::Object(reality)) = stream.get_mut("realitySettings") else {
-        return Err("generated rust config has no realitySettings".to_owned());
-    };
-    reality.insert("target".to_owned(), Value::Str(target.to_owned()));
-    let Some(Value::Object(optimization)) = reality.get_mut("coverOptimization") else {
-        return Err("generated rust config has no coverOptimization".to_owned());
-    };
-    optimization.insert("warmTcp".to_owned(), Value::Bool(false));
+    reality.insert("cover".to_owned(), Value::Str(target.to_owned()));
+    crate::bench::suites::set_cover_optimization(&mut root, "warmTcp", Value::Bool(false))?;
     Ok(crate::bench::suites::render_compact(&Value::Object(root)))
 }
 
@@ -658,11 +646,7 @@ fn proc_children(pid: u32) -> Vec<(u32, Option<String>)> {
         .collect()
 }
 
-fn signal_exact(
-    pid: u32,
-    starttime: Option<&str>,
-    sudo: Option<&Path>,
-) -> Result<(), String> {
+fn signal_exact(pid: u32, starttime: Option<&str>, sudo: Option<&Path>) -> Result<(), String> {
     if starttime.is_some() && crate::bench::process::proc_starttime(pid).as_deref() != starttime {
         return Err(format!(
             "capture process {pid} identity changed before SIGINT"
@@ -1143,7 +1127,7 @@ fn run_rust_sample(context: &RunContext<'_>, sample: usize) -> Result<Measuremen
         "tls-shape-rust-reality",
         &context.rust.path,
         &[
-            "serve".to_owned(),
+            "run".to_owned(),
             "--config".to_owned(),
             context.rust_config.display().to_string(),
         ],
@@ -1247,7 +1231,7 @@ fn capture_stock_xray_hello(
         "tls-shape-capture-rust-reality",
         &context.rust.path,
         &[
-            "serve".to_owned(),
+            "run".to_owned(),
             "--config".to_owned(),
             context.rust_config.display().to_string(),
         ],
@@ -1591,7 +1575,7 @@ fn run_record_delay_case(
         format!("record-delay-rust-{case_id}"),
         &context.rust.path,
         &[
-            "serve".to_owned(),
+            "run".to_owned(),
             "--config".to_owned(),
             server_config.display().to_string(),
         ],
@@ -1948,7 +1932,15 @@ fn reference_identity_json(reference: &ReferenceBinary) -> Json {
 mod tests {
     use super::*;
 
-    const GENERATED: &str = r#"{"assets":{"cacheDirectory":"/w"},"inbounds":[{"settings":{"clients":[{"id":"u","shortIds":["s"]}]},"streamSettings":{"realitySettings":{"privateKey":"p","target":"old:443","coverOptimization":{"enabled":true,"warmTcp":true,"prebuiltProfiles":true}}}}]}"#;
+    const GENERATED: &str = r#"{"role":"entry",
+        "listeners":[{"port":8443,"ip":"ipv4Only","ipv4":"127.0.0.1"}],
+        "reality":{"cover":"dl.google.com:443",
+                   "privateKey":"ERERERERERERERERERERERERERERERERERERERERERE",
+                   "coverOptimization":{"enabled":true,"warmTcp":true,"prebuiltProfiles":true}},
+        "users":[{"id":"11111111-1111-4111-8111-111111111111",
+                  "shortIds":["0123456789abcdef"]}],
+        "routing":{"default":"direct"},
+        "assets":{"cacheDirectory":"/w"},"log":{"level":"warn"}}"#;
 
     fn identity() -> RustIdentity {
         RustIdentity {
@@ -1961,9 +1953,9 @@ mod tests {
     }
 
     #[test]
-    fn serial_reference_config_changes_only_target_and_pool_timing() {
+    fn serial_reference_config_changes_only_the_cover_and_pool_timing() {
         let rendered = serial_rust_config(&identity(), "127.0.0.1:9443").unwrap();
-        assert!(rendered.contains(r#""target":"127.0.0.1:9443""#));
+        assert!(rendered.contains(r#""cover":"127.0.0.1:9443""#));
         assert!(rendered.contains(r#""warmTcp":false"#));
         assert!(rendered.contains(r#""enabled":true"#));
         assert!(rendered.contains(r#""prebuiltProfiles":true"#));

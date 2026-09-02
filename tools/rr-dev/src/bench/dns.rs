@@ -243,9 +243,7 @@ pub fn method_json(
     Json::object([
         (
             "resolver",
-            Json::string(
-                "loopback fake DNS (bench::fake_dns), TTL 300s, A=127.0.0.1, AAAA NODATA",
-            ),
+            Json::string("loopback fake DNS (bench::fake_dns), TTL 300s, A=127.0.0.1, AAAA NODATA"),
         ),
         (
             "client",
@@ -255,7 +253,10 @@ pub fn method_json(
             "coldNames",
             Json::string("fresh unique names per round (never cached)"),
         ),
-        ("warmNames", Json::string("final cold round's names repeated")),
+        (
+            "warmNames",
+            Json::string("final cold round's names repeated"),
+        ),
         (
             "burstName",
             Json::string("one identical fresh name for all concurrent connections"),
@@ -318,7 +319,10 @@ mod tests {
         let names = burst_names("xray", 32);
         assert_eq!(names.len(), 32);
         assert_eq!(
-            names.iter().collect::<std::collections::BTreeSet<_>>().len(),
+            names
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
             1
         );
         assert_eq!(names[0], "burst-xray.dnsbench");
@@ -526,8 +530,12 @@ pub fn run(suite: &DnsSuite) -> Result<crate::bench::paired::SuiteOutcome, Strin
     // Two origins plus a server/SOCKS pair per implementation.
     let port_base = crate::bench::workspace::reserve_block(6)?;
     let (origin_port, cover_port) = (port_base, port_base + 1);
-    let _origins =
-        crate::bench::resolver::start_origins(suite.repo.as_path(), &workspace, origin_port, cover_port)?;
+    let _origins = crate::bench::resolver::start_origins(
+        suite.repo.as_path(),
+        &workspace,
+        origin_port,
+        cover_port,
+    )?;
 
     let mut summary: Vec<(String, Json)> = Vec::with_capacity(2);
     for (index, implementation) in [Implementation::Rust, Implementation::Xray]

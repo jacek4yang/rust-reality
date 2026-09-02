@@ -691,10 +691,7 @@ fn ladder_sample(
                     .map(|(before, after)| after - before),
             ),
         ),
-        (
-            "logEvents",
-            marker_json(&markers),
-        ),
+        ("logEvents", marker_json(&markers)),
         ("logEventBaseline", marker_json(baseline_markers)),
         (
             "latestPressureState",

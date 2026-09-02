@@ -152,8 +152,16 @@ fn evaluate_traffic(report: &Value, reasons: &mut Vec<String>) -> Option<i64> {
         reasons.push("traffic must be an object".to_owned());
         return None;
     };
-    let attempted = strict_int(traffic.get("connectionsAttempted"), "traffic.connectionsAttempted", reasons);
-    let successful = strict_int(traffic.get("connectionsSuccessful"), "traffic.connectionsSuccessful", reasons);
+    let attempted = strict_int(
+        traffic.get("connectionsAttempted"),
+        "traffic.connectionsAttempted",
+        reasons,
+    );
+    let successful = strict_int(
+        traffic.get("connectionsSuccessful"),
+        "traffic.connectionsSuccessful",
+        reasons,
+    );
     if let (Some(attempted), Some(successful)) = (attempted, successful) {
         if attempted < 500 {
             reasons.push("traffic.connectionsAttempted must be at least 500".to_owned());
@@ -260,7 +268,11 @@ fn resource_reasons(report: &Value) -> Vec<String> {
             };
             let mut row = [0_i64; 3];
             for (slot, name) in ["rssKiB", "fd", "threads"].iter().enumerate() {
-                match strict_int(fields.get(*name), &format!("resources.{host}[{index}].{name}"), &mut reasons) {
+                match strict_int(
+                    fields.get(*name),
+                    &format!("resources.{host}[{index}].{name}"),
+                    &mut reasons,
+                ) {
                     Some(value) => row[slot] = value,
                     None => sample_ok = false,
                 }
@@ -300,7 +312,12 @@ fn resource_reasons(report: &Value) -> Vec<String> {
 }
 
 /// Renders the verdict JSON exactly like the Python (`indent=2, sort_keys=True`).
-fn render(reasons: &[String], candidate: Option<&Value>, elapsed: Option<&Value>, ok: bool) -> String {
+fn render(
+    reasons: &[String],
+    candidate: Option<&Value>,
+    elapsed: Option<&Value>,
+    ok: bool,
+) -> String {
     let verdict = Json::object([
         ("schemaVersion", Json::Int(1)),
         ("gate", Json::string("dual-vps-active-release-canary")),
@@ -315,7 +332,12 @@ fn render(reasons: &[String], candidate: Option<&Value>, elapsed: Option<&Value>
     verdict.to_python_json()
 }
 
-fn check_string_fields(object: Option<&Value>, label: &str, fields: &[&str], reasons: &mut Vec<String>) {
+fn check_string_fields(
+    object: Option<&Value>,
+    label: &str,
+    fields: &[&str],
+    reasons: &mut Vec<String>,
+) {
     let Some(Value::Object(members)) = object else {
         reasons.push(format!("{label} must be an object"));
         return;
@@ -331,7 +353,9 @@ fn check_string_fields(object: Option<&Value>, label: &str, fields: &[&str], rea
 /// Reads a JSON integer, rejecting booleans and floats like the Python `integer`.
 fn int(value: &Value) -> Option<i64> {
     match value {
-        Value::Number(text) if !text.contains('.') && !text.contains('e') && !text.contains('E') => {
+        Value::Number(text)
+            if !text.contains('.') && !text.contains('e') && !text.contains('E') =>
+        {
             text.parse().ok()
         }
         _ => None,
@@ -427,7 +451,11 @@ mod tests {
         let checks: String = REQUIRED_CHECKS
             .iter()
             .map(|name| {
-                let value = if *name == "lineReload" { "false" } else { "true" };
+                let value = if *name == "lineReload" {
+                    "false"
+                } else {
+                    "true"
+                };
                 format!("\"{name}\":{value}")
             })
             .collect::<Vec<_>>()
@@ -442,7 +470,8 @@ mod tests {
             let _ = write!(samples, "{{\"rssKiB\":20000,\"fd\":{fd},\"threads\":4}}");
         }
         samples.push(']');
-        let _ = write!(text, 
+        let _ = write!(
+            text,
             r#"{{
               "schemaVersion":1,
               "candidate":{{"commit":"{a}","sha256":"{b}","buildId":"{c}","version":"1.7.0","target":"t","rustc":"r"}},
@@ -454,14 +483,24 @@ mod tests {
               "landingRejections":{{"count":4,"authenticationOrProtocol":0}},
               "resources":{{"line":{samples},"landing":{samples}}}
             }}"#,
-            a = "a".repeat(40), b = "b".repeat(64), c = "c".repeat(40), d = "d".repeat(64), e = "e".repeat(40),
+            a = "a".repeat(40),
+            b = "b".repeat(64),
+            c = "c".repeat(40),
+            d = "d".repeat(64),
+            e = "e".repeat(40),
         );
         let _ = base;
         let report = json_in::parse(&text).expect("bad fixture parses");
         let (reasons, _, _) = evaluate(&report);
         assert!(!reasons.is_empty());
-        assert!(reasons.iter().any(|r| r.contains("lineReload")), "{reasons:?}");
-        assert!(reasons.iter().any(|r| r.contains("maxConnecting")), "{reasons:?}");
+        assert!(
+            reasons.iter().any(|r| r.contains("lineReload")),
+            "{reasons:?}"
+        );
+        assert!(
+            reasons.iter().any(|r| r.contains("maxConnecting")),
+            "{reasons:?}"
+        );
         assert!(reasons.iter().any(|r| r.contains("FD")), "{reasons:?}");
     }
 
@@ -479,7 +518,9 @@ mod tests {
         let report = Value::Object(members);
         let (reasons, _, _) = evaluate(&report);
         assert!(
-            reasons.iter().any(|r| r.contains("authentication/protocol")),
+            reasons
+                .iter()
+                .any(|r| r.contains("authentication/protocol")),
             "{reasons:?}"
         );
     }

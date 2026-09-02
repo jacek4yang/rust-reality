@@ -203,9 +203,8 @@ impl Plan {
                 self.xray_sha256
             ));
         }
-        let config_text = std::fs::read_to_string(&self.xray_config).map_err(|error| {
-            format!("read Xray config {}: {error}", self.xray_config.display())
-        })?;
+        let config_text = std::fs::read_to_string(&self.xray_config)
+            .map_err(|error| format!("read Xray config {}: {error}", self.xray_config.display()))?;
         let config = json_in::parse(&config_text)
             .map_err(|error| format!("Xray config is not JSON: {error}"))?;
         let inbounds = config
@@ -256,11 +255,20 @@ impl Plan {
         Json::object([
             ("schemaVersion", Json::Int(1)),
             ("candidate", self.candidate.to_json()),
-            ("xrayBinary", Json::string(self.xray_bin.display().to_string())),
+            (
+                "xrayBinary",
+                Json::string(self.xray_bin.display().to_string()),
+            ),
             ("xraySha256", Json::string(self.xray_sha256.clone())),
-            ("xrayConfig", Json::string(self.xray_config.display().to_string())),
+            (
+                "xrayConfig",
+                Json::string(self.xray_config.display().to_string()),
+            ),
             ("socksPort", Json::Int(i64::from(self.socks_port))),
-            ("linePublicIpv4", Json::string(self.line_public_ipv4.to_string())),
+            (
+                "linePublicIpv4",
+                Json::string(self.line_public_ipv4.to_string()),
+            ),
             ("smallUrl", Json::string(self.small_url.clone())),
             ("oneMibUrl", Json::string(self.one_mib_url.clone())),
             ("largeUrl", Json::string(self.large_url.clone())),
@@ -273,16 +281,16 @@ impl Plan {
                 "payloadLarge",
                 Json::string(self.payload_large.display().to_string()),
             ),
-            ("evidenceDirectory", Json::string(self.out_dir.display().to_string())),
+            (
+                "evidenceDirectory",
+                Json::string(self.out_dir.display().to_string()),
+            ),
             (
                 "sampleIntervalSeconds",
                 Json::Int(i64::try_from(self.sample_interval_seconds).unwrap_or(i64::MAX)),
             ),
             ("schedule", self.schedule().to_json()),
-            (
-                "rollbackOnFailure",
-                Json::Bool(self.rollback_on_failure),
-            ),
+            ("rollbackOnFailure", Json::Bool(self.rollback_on_failure)),
         ])
     }
 }
@@ -453,10 +461,7 @@ impl ResourceSample {
             ),
             ("pid", Json::Int(i64::from(self.pid))),
             ("rssKiB", Json::Int(self.rss_kib)),
-            (
-                "pssKiB",
-                self.pss_kib.map_or(Json::Null, Json::Int),
-            ),
+            ("pssKiB", self.pss_kib.map_or(Json::Null, Json::Int)),
             ("fd", Json::Int(self.fd)),
             ("threads", Json::Int(self.threads)),
         ])
@@ -614,10 +619,7 @@ impl Report {
                         Json::Int(self.journals.target_ready_peak),
                     ),
                     ("maxReady", Json::Int(256)),
-                    (
-                        "connectingPeak",
-                        Json::Int(self.journals.connecting_peak),
-                    ),
+                    ("connectingPeak", Json::Int(self.journals.connecting_peak)),
                     ("maxConnecting", Json::Int(64)),
                 ]),
             ),
@@ -894,7 +896,10 @@ fn run_inner(plan: &Plan, topology: &Topology) -> Result<RunOutcome, String> {
 
 fn verify_candidate(snapshot: &HostSnapshot, candidate: &Candidate) -> Result<(), String> {
     if !snapshot.service_healthy() || !snapshot.ssh_22_present {
-        return Err(format!("candidate host is unhealthy: {}", snapshot.summary_line()));
+        return Err(format!(
+            "candidate host is unhealthy: {}",
+            snapshot.summary_line()
+        ));
     }
     if snapshot.executable_sha256.as_deref() != Some(candidate.sha256.as_str()) {
         return Err(format!(
@@ -970,11 +975,7 @@ fn token_value<'a>(tokens: &'a [&str], key: &str) -> Option<&'a str> {
         .find_map(|pair| (pair[0] == key).then_some(pair[1]))
 }
 
-fn remote_unit(
-    transport: &mut impl Transport,
-    host: &Host,
-    action: &str,
-) -> Result<(), String> {
+fn remote_unit(transport: &mut impl Transport, host: &Host, action: &str) -> Result<(), String> {
     checked(
         transport,
         host,
@@ -996,15 +997,18 @@ fn wait_candidate(
 ) -> Result<bool, String> {
     let mut last = String::new();
     for _ in 0..100 {
-        match inspect(transport, host).and_then(|snapshot| {
-            verify_candidate(&snapshot, candidate).map(|()| snapshot)
-        }) {
+        match inspect(transport, host)
+            .and_then(|snapshot| verify_candidate(&snapshot, candidate).map(|()| snapshot))
+        {
             Ok(_) => return Ok(true),
             Err(error) => last = error,
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    Err(format!("{} did not recover within 10 seconds: {last}", host.alias()))
+    Err(format!(
+        "{} did not recover within 10 seconds: {last}",
+        host.alias()
+    ))
 }
 
 fn run_request_batch(
@@ -1102,31 +1106,20 @@ fn run_integrity(
     let large = plan.out_dir.join("download-large.bin");
     curl_request(plan, &plan.large_url, Some(&large), None, 120)?;
     compare_files(&large, &plan.payload_large)?;
-    curl_request(
-        plan,
-        &plan.upload_url,
-        None,
-        Some(&plan.payload_large),
-        120,
-    )?;
+    curl_request(plan, &plan.upload_url, None, Some(&plan.payload_large), 120)?;
     let bidi = plan.out_dir.join("download-bidirectional.bin");
     let bidi_url = format!("{}/bidi", plan.upload_url.trim_end_matches('/'));
     let (download, upload) = std::thread::scope(|scope| {
-        let download = scope.spawn(|| {
-            curl_request(plan, &plan.large_url, Some(&bidi), None, 120)
-        });
-        let upload = scope.spawn(|| {
-            curl_request(
-                plan,
-                &bidi_url,
-                None,
-                Some(&plan.payload_large),
-                120,
-            )
-        });
+        let download = scope.spawn(|| curl_request(plan, &plan.large_url, Some(&bidi), None, 120));
+        let upload =
+            scope.spawn(|| curl_request(plan, &bidi_url, None, Some(&plan.payload_large), 120));
         (
-            download.join().unwrap_or_else(|_| Err("download worker panicked".to_owned())),
-            upload.join().unwrap_or_else(|_| Err("upload worker panicked".to_owned())),
+            download
+                .join()
+                .unwrap_or_else(|_| Err("download worker panicked".to_owned())),
+            upload
+                .join()
+                .unwrap_or_else(|_| Err("upload worker panicked".to_owned())),
         )
     });
     download?;
@@ -1169,7 +1162,8 @@ fn compare_files(observed: &Path, expected: &Path) -> Result<(), String> {
         .metadata()
         .map_err(|error| format!("reference {}: {error}", expected.display()))?
         .len();
-    if observed_size != expected_size || hash::sha256_file(observed)? != hash::sha256_file(expected)?
+    if observed_size != expected_size
+        || hash::sha256_file(observed)? != hash::sha256_file(expected)?
     {
         return Err(format!(
             "download integrity mismatch: {} versus {}",
