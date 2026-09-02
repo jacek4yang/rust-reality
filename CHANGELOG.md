@@ -2,6 +2,17 @@
 
 All notable user-facing changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- `--version` now reports the exact source commit the binary was built from, on
+  its own `commit:` line after the unchanged `rust-reality <version>` line.
+  `-V` still prints that first line alone. A binary built without the stamp
+  reports `commit: unknown` rather than guessing. Include the full `--version`
+  output in bug reports: it is the only way to know which source produced a
+  given executable.
+
 ## [1.9.0] - 2026-09-02
 
 **The operator configuration format changed completely, and configurations

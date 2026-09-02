@@ -4,8 +4,8 @@
 //! binary under test is an absolute regular executable, recorded its SHA-256 and
 //! GNU build ID, and captured a version identity the report could attribute
 //! results to. [`Binary`] reproduces that contract with typed parsing: a
-//! `rust-reality` binary must emit its self-benchmark JSON whose
-//! `environment.gitCommit` is a 40-hex commit, and an `xray` binary must print a
+//! `rust-reality` binary must report a 40-hex source commit on the `commit:`
+//! line of its own `--version` output, and an `xray` binary must print a
 //! version line on the first line of `xray version`.
 //!
 //! Nothing here runs a shell: every invocation is typed argv.
@@ -117,35 +117,69 @@ pub fn register(
     })
 }
 
-/// Captures a rust-reality binary's benchmark identity: the `environment` object
-/// of its self-benchmark JSON.
+/// Captures a rust-reality binary's identity from its own `--version` output.
+///
+/// This used to run `rust-reality benchmark` and read the `environment` object
+/// of the self-benchmark JSON. That subcommand was deliberately removed from the
+/// deployed binary — the daemon is not the project's engineering toolbox — but
+/// nothing replaced the identity it carried, so every `Kind::Rust` registration
+/// has been failing since. The replacement asks the binary the same question
+/// through the surface an operator already uses:
+///
+/// ```text
+/// rust-reality 1.9.0
+/// commit: 075fad6d7277409605c4edcc47fab38dafc9089b
+/// ```
+///
+/// The captured identity keeps the `environment` object shape that recorded
+/// evidence and [`embedded_commit`] already read, so existing evidence stays
+/// comparable.
 fn rust_identity(path: &Path) -> Result<String, String> {
     let outcome = Tool::new(path.display().to_string())
-        .args(["benchmark", "--duration-ms", "90", "--warmup-ms", "1"])
+        .args(["--version"])
         .probe()
-        .map_err(|error| format!("rust-reality benchmark identity failed: {error}"))?;
+        .map_err(|error| format!("rust-reality --version failed: {error}"))?;
     if !outcome.success() {
         return Err(format!(
-            "rust-reality benchmark identity exited {:?}: {}",
+            "rust-reality --version exited {:?}: {}",
             outcome.code,
             outcome.stderr.trim_end()
         ));
     }
-    let value = crate::perf::json_in::parse(outcome.trimmed_stdout())
-        .map_err(|error| format!("rust-reality benchmark JSON is invalid: {error}"))?;
-    let environment = value
-        .field("", "environment")
-        .map_err(|error| format!("rust-reality benchmark JSON: {error}"))?;
-    let commit = environment
-        .field("environment", "gitCommit")
-        .and_then(|commit| commit.as_str("environment.gitCommit"))
-        .map_err(|error| format!("rust-reality benchmark JSON: {error}"))?;
+    let stdout = outcome.trimmed_stdout();
+    let version = stdout
+        .lines()
+        .next()
+        .and_then(|line| line.strip_prefix("rust-reality "))
+        .map(str::trim)
+        .ok_or_else(|| {
+            format!("rust-reality --version has no `rust-reality <version>` first line: {stdout:?}")
+        })?;
+    let commit = stdout
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("commit:"))
+        .map(str::trim)
+        .ok_or_else(|| format!("rust-reality --version has no `commit:` line: {stdout:?}"))?;
     if !crate::perf::evidence::is_commit_hex(commit) {
         return Err(format!(
-            "rust-reality benchmark JSON has no valid 40-hex environment.gitCommit: {commit}"
+            "rust-reality --version reports no valid 40-hex commit: {commit:?}; \
+             build it with RUST_REALITY_GIT_COMMIT set, for example through \
+             `cargo dev perf freeze`"
         ));
     }
-    Ok(serde_compatible_environment(environment))
+    Ok(rust_environment(version, commit))
+}
+
+/// Renders the captured identity in the recorded `environment` object shape.
+fn rust_environment(version: &str, commit: &str) -> String {
+    fn escape(text: &str) -> String {
+        text.replace('\\', "\\\\").replace('"', "\\\"")
+    }
+    format!(
+        "{{\"gitCommit\":\"{}\",\"version\":\"{}\"}}",
+        escape(commit),
+        escape(version)
+    )
 }
 
 /// Reads the source commit out of a captured rust-reality identity object.
@@ -179,32 +213,6 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(not(unix))]
 fn is_executable_file(path: &Path) -> bool {
     path.is_file()
-}
-
-/// Renders the captured `environment` object back to compact JSON for the report.
-fn serde_compatible_environment(environment: &crate::perf::json_in::Value) -> String {
-    use crate::perf::json_in::Value;
-    fn render(value: &Value) -> String {
-        match value {
-            Value::Null => "null".to_owned(),
-            Value::Bool(flag) => flag.to_string(),
-            Value::Number(text) => text.clone(),
-            Value::Str(text) => format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\"")),
-            Value::Array(items) => format!(
-                "[{}]",
-                items.iter().map(render).collect::<Vec<_>>().join(",")
-            ),
-            Value::Object(members) => format!(
-                "{{{}}}",
-                members
-                    .iter()
-                    .map(|(key, value)| format!("\"{key}\":{}", render(value)))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
-        }
-    }
-    render(environment)
 }
 
 /// Captures an xray binary's version identity: the first line of `xray version`.
@@ -278,27 +286,33 @@ mod tests {
     }
 
     #[test]
-    fn a_rust_kind_requires_the_git_commit_field() {
+    fn a_rust_kind_requires_a_forty_hex_commit_line() {
         let dir = scratch("rust");
         let script = dir.join("tool");
-        std::fs::write(&script, "#!/bin/sh\nprintf '{}\\n'\n").unwrap();
+
+        // A binary that reports only its version carries no provenance.
+        std::fs::write(&script, "#!/bin/sh\nprintf 'rust-reality 1.9.0\\n'\n").unwrap();
         make_executable(&script);
         let error = register("tool", &script, "", Kind::Rust).unwrap_err();
-        assert!(error.contains("environment"), "{error}");
+        assert!(error.contains("no `commit:` line"), "{error}");
 
+        // An unstamped ordinary `cargo build` must be refused, by name, with the
+        // remedy: this is the failure a contributor is most likely to hit.
         std::fs::write(
             &script,
-            "#!/bin/sh\nprintf '{\"environment\":{\"gitCommit\":\"short\"}}\\n'\n",
+            "#!/bin/sh\nprintf 'rust-reality 1.9.0\\ncommit: unknown\\n'\n",
         )
         .unwrap();
         make_executable(&script);
         let error = register("tool", &script, "", Kind::Rust).unwrap_err();
         assert!(error.contains("40-hex"), "{error}");
+        assert!(error.contains("RUST_REALITY_GIT_COMMIT"), "{error}");
 
+        // Upper-case hex is not the recorded form.
         std::fs::write(
             &script,
             format!(
-                "#!/bin/sh\nprintf '{{\"environment\":{{\"gitCommit\":\"{}\"}}}}\\n'\n",
+                "#!/bin/sh\nprintf 'rust-reality 1.9.0\\ncommit: {}\\n'\n",
                 "A".repeat(40)
             ),
         )
@@ -310,15 +324,43 @@ mod tests {
         let commit = "a".repeat(40);
         std::fs::write(
             &script,
-            format!("#!/bin/sh\nprintf '{{\"environment\":{{\"gitCommit\":\"{commit}\"}}}}\\n'\n"),
+            format!("#!/bin/sh\nprintf 'rust-reality 1.9.0\\ncommit: {commit}\\n'\n"),
         )
         .unwrap();
         make_executable(&script);
         let binary = register("tool", &script, "", Kind::Rust).expect("valid identity");
         assert_eq!(binary.path, script.canonicalize().unwrap());
         assert_eq!(binary.sha256.len(), 64);
-        assert!(binary.identity.contains(&commit));
+        assert_eq!(embedded_commit(&binary.identity).unwrap(), commit);
+        assert!(binary.identity.contains("\"version\":\"1.9.0\""));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_captured_identity_matches_the_production_version_contract() {
+        // The counterpart of `rust_reality::cli::model::tests::
+        // long_version_states_the_release_line_then_the_source_commit`. The
+        // previous capture parsed a `rust-reality benchmark` JSON document that
+        // the deployed binary had already stopped emitting, and every rr-dev
+        // test mocked that format — so the tests passed while every real
+        // `Kind::Rust` registration failed. Pinning the exact bytes the
+        // production binary prints is what makes that impossible to repeat
+        // silently.
+        let stdout = "rust-reality 1.9.0\ncommit: 075fad6d7277409605c4edcc47fab38dafc9089b";
+        let version = stdout
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix("rust-reality "))
+            .unwrap();
+        let commit = stdout
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("commit:"))
+            .map(str::trim)
+            .unwrap();
+        assert_eq!(version, "1.9.0");
+        assert!(crate::perf::evidence::is_commit_hex(commit));
+        let identity = rust_environment(version, commit);
+        assert_eq!(embedded_commit(&identity).unwrap(), commit);
     }
 
     #[test]

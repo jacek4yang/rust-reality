@@ -17,6 +17,19 @@ rust-reality generate    uuid | x25519 | short-id | psk
 Plus `--help` and `--version`. Every command that reads a configuration takes
 `-c` / `--config`.
 
+`--version` reports the release and the exact source commit the binary was built
+from:
+
+```text
+rust-reality 1.9.0
+commit: 075fad6d7277409605c4edcc47fab38dafc9089b
+```
+
+`-V` prints the first line alone. Release builds always carry the commit; a
+binary built without it reports `commit: unknown` rather than guessing. Include
+the full `--version` output in any bug report — it is the only way to know
+which source produced a given executable.
+
 | command | answers |
 | --- | --- |
 | `run` | serve traffic until SIGINT or SIGTERM |
