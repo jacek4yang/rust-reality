@@ -1312,7 +1312,9 @@ mod tests {
         let pid = child.id();
         // `/proc/<pid>/exe` resolves symlinks, so compare against the resolved
         // path rather than whatever `PATH` lookup happened to return.
-        let expected = expected.canonicalize().unwrap_or_else(|_| expected.to_owned());
+        let expected = expected
+            .canonicalize()
+            .unwrap_or_else(|_| expected.to_owned());
         let exe = PathBuf::from(format!("/proc/{pid}/exe"));
         let deadline = Instant::now() + BUDGET;
         let mut last = String::new();
