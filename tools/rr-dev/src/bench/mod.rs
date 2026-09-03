@@ -64,6 +64,7 @@ pub mod report;
 pub mod resolver;
 pub mod routing;
 pub mod runner;
+pub mod schedstat;
 pub mod slot;
 pub mod soak;
 pub mod socks_server;

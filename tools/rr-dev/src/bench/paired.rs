@@ -41,6 +41,7 @@ use crate::{
         plan::{self, PortLayout, Slot},
         process::Child,
         relay::{self, RelayPolicy},
+        schedstat,
         slot::{self, Attribution},
         throughput::{self, ThroughputRow},
         workload::{SampleRow, SetupRatePlan},
@@ -232,6 +233,32 @@ fn register_binaries(suite: &SetupRateSuite) -> Result<PairedBinaries, String> {
     })
 }
 
+/// Proves the chosen attribution mode can actually run here, before a slot
+/// depends on it.
+///
+/// A mode that only fails at the first measured slot has already spent a host
+/// lock, a workspace and a warm-up on a question that was decidable up front.
+///
+/// # Errors
+///
+/// Returns the missing requirement, named.
+fn require_attribution_support(attribution: Attribution) -> Result<(), String> {
+    match attribution {
+        Attribution::Perf(_) if !Tool::exists("perf") => {
+            Err("MEASURE_MODE=perf requires perf".to_owned())
+        }
+        Attribution::Strace if !Tool::exists("strace") => {
+            Err("MEASURE_MODE=strace requires strace".to_owned())
+        }
+        // Reading this process's own threads proves the interface exists and is
+        // readable; schedstat needs no tool and no privilege beyond that.
+        Attribution::Schedstat => schedstat::CpuSnapshot::capture(std::process::id())
+            .map(|_| ())
+            .map_err(|error| format!("MEASURE_MODE=schedstat requires a readable /proc: {error}")),
+        _ => Ok(()),
+    }
+}
+
 /// Runs the paired setup-rate suite end to end.
 ///
 /// # Errors
@@ -245,15 +272,7 @@ pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
             return Err(format!("required program unavailable: {program}"));
         }
     }
-    match suite.attribution {
-        Attribution::Perf(_) if !Tool::exists("perf") => {
-            return Err("MEASURE_MODE=perf requires perf".to_owned());
-        }
-        Attribution::Strace if !Tool::exists("strace") => {
-            return Err("MEASURE_MODE=strace requires strace".to_owned());
-        }
-        _ => {}
-    }
+    require_attribution_support(suite.attribution)?;
 
     let binaries = register_binaries(suite)?;
     let repository = attest::repository_state(&suite.repo, attest::Dirtiness::IncludingUntracked)?;
@@ -676,6 +695,15 @@ fn measure_slot(
 
     let samples_path = slot_dir.join("samples.json");
     let perf_csv = slot_dir.join("perf.csv");
+    // Sampled immediately either side of the workload so the window is the same
+    // one `perf stat -p <pid> -- <workload>` bounds.
+    let schedstat_before = match suite.attribution {
+        Attribution::Schedstat => Some((
+            schedstat::CpuSnapshot::capture(server_pid)?,
+            std::time::Instant::now(),
+        )),
+        _ => None,
+    };
     let workload_result = slot::drive(
         &workload,
         &samples_path,
@@ -684,6 +712,10 @@ fn measure_slot(
         &perf_csv,
         workspace.path(),
     );
+    let schedstat_after = match (&workload_result, &schedstat_before) {
+        (Ok(()), Some(_)) => Some(schedstat::CpuSnapshot::capture(server_pid)?),
+        _ => None,
+    };
     match workload_result {
         Ok(()) => {
             if let Some(profile) = profile {
@@ -710,6 +742,21 @@ fn measure_slot(
             )
             .map_err(|error| format!("could not write the slot perf record: {error}"))?;
             Some(record.task_clock_milliseconds)
+        }
+        Attribution::Schedstat => {
+            let (before, started) = schedstat_before
+                .as_ref()
+                .ok_or("schedstat mode did not sample the server before the workload")?;
+            let after = schedstat_after
+                .as_ref()
+                .ok_or("schedstat mode did not sample the server after the workload")?;
+            let measured = schedstat::delta(before, after, started.elapsed().as_nanos())?;
+            std::fs::write(
+                slot_dir.join("schedstat.json"),
+                measured.to_json().to_python_json(),
+            )
+            .map_err(|error| format!("could not write the slot schedstat record: {error}"))?;
+            Some(measured.milliseconds())
         }
     };
 
@@ -1013,9 +1060,12 @@ fn collect_blocks(
         .collect()
 }
 
-/// The per-connection CPU comparison, absent outside `perf` mode.
+/// The per-connection CPU comparison, absent from the modes that claim no CPU.
 fn cpu_summary(suite: &SetupRateSuite, measured: &[MeasuredSlot]) -> Result<Json, String> {
-    if !matches!(suite.attribution, Attribution::Perf(_)) {
+    if !matches!(
+        suite.attribution,
+        Attribution::Perf(_) | Attribution::Schedstat
+    ) {
         return Ok(Json::Null);
     }
     #[expect(
@@ -1107,6 +1157,7 @@ fn environment_json(
                 Attribution::Wall => "wall",
                 Attribution::Perf(_) => "perf",
                 Attribution::Strace => "strace",
+                Attribution::Schedstat => "schedstat",
             }),
         ),
         (
@@ -1898,7 +1949,9 @@ fn measure_fallback_slot(
     let samples_path = slot_dir.join("samples.json");
     let argv = throughput_argv(&plan, Some(&samples_path))?;
     let task_clock_ms = match suite.attribution {
-        Attribution::Wall | Attribution::Strace => {
+        // The fallback suite's guard admits only perf and wall, so schedstat
+        // reaching here would be a construction error rather than an option.
+        Attribution::Wall | Attribution::Strace | Attribution::Schedstat => {
             slot::run_workload(&argv, workspace.path())?;
             None
         }

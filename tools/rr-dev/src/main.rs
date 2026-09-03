@@ -659,8 +659,9 @@ enum BenchCommand {
         /// label (`baseline` for the paired suites, `rust` for the comparator).
         #[arg(long, default_value = "")]
         abba_start: String,
-        /// `perf` attributes server CPU, `strace` counts receive syscalls, and
-        /// `wall` records rates only.
+        /// `perf` attributes server CPU, `schedstat` attributes it without
+        /// `perf` or `sudo`, `strace` counts receive syscalls, and `wall`
+        /// records rates only.
         #[arg(long, default_value = "perf")]
         measure_mode: String,
         /// Capture an identity-bound `perf record` from the benchmark-owned server.
@@ -3148,9 +3149,11 @@ fn run_bench_setup_rate(repo: &Path, args: &SetupRateArgs<'_>) -> ExitCode {
         "perf" => bench::slot::Attribution::Perf(&bench::attribution::REQUIRED_EVENTS),
         "wall" => bench::slot::Attribution::Wall,
         "strace" => bench::slot::Attribution::Strace,
+        "schedstat" => bench::slot::Attribution::Schedstat,
         other => {
             eprintln!(
-                "bench run setup-rate: MEASURE_MODE must be perf, strace or wall, got {other}"
+                "bench run setup-rate: MEASURE_MODE must be perf, schedstat, strace or wall, \
+                 got {other}"
             );
             return ExitCode::from(2);
         }

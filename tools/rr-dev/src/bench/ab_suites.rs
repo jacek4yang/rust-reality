@@ -472,8 +472,9 @@ fn measure_slot(plan: &ComparatorPlan, inputs: &SlotInputs<'_>) -> Result<Measur
     )?;
 
     let task_clock_ms = match plan.attribution {
-        // The comparator never had a strace mode; its guard rejects it up front.
-        Attribution::Wall | Attribution::Strace => None,
+        // The comparator never had a strace or schedstat mode; its guard
+        // rejects both up front.
+        Attribution::Wall | Attribution::Strace | Attribution::Schedstat => None,
         Attribution::Perf(_) => {
             let raw = std::fs::read_to_string(&perf_csv)
                 .map_err(|error| format!("could not read {}: {error}", perf_csv.display()))?;
@@ -772,6 +773,7 @@ fn contract_json(
                 Attribution::Wall => "wall",
                 Attribution::Perf(_) => "perf",
                 Attribution::Strace => "strace",
+                Attribution::Schedstat => "schedstat",
             }),
         ),
         (
@@ -977,7 +979,9 @@ mod tests {
                     server_pid: 3,
                     task_clock_ms: match attribution {
                         Attribution::Wall | Attribution::Strace => None,
-                        Attribution::Perf(_) => Some(if scale > 1.0 { 100.0 } else { 200.0 }),
+                        Attribution::Perf(_) | Attribution::Schedstat => {
+                            Some(if scale > 1.0 { 100.0 } else { 200.0 })
+                        }
                     },
                     rows,
                 }
