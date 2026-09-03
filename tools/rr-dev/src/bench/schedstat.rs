@@ -295,13 +295,26 @@ mod tests {
         let measured = delta(&before, &after, elapsed.as_nanos()).expect("a live child yields CPU");
         assert_eq!(measured.threads_exited, 0, "a busy shell keeps its thread");
         assert_eq!(measured.unattributed_bound_nanoseconds, 0);
-        // A spinning process gets most of a core; half the window is a floor
-        // loose enough to survive a loaded machine and tight enough to fail if
-        // only the group leader were read, or if the units were wrong.
-        let floor = elapsed.as_secs_f64() * 1000.0 / 2.0;
+
+        // What this test uniquely proves is that `/proc` parsing works against
+        // a real process and that its runtime advances. It must not assert a
+        // share of a CPU: on an oversubscribed machine — which is what CI is —
+        // a spinning child gets whatever the scheduler spares, and an earlier
+        // version of this assertion failed at 100.8ms against a 101.6ms floor
+        // for exactly that reason. The exact arithmetic of summing, units and
+        // bounds is pinned by the table-driven tests above, which do not
+        // depend on the scheduler at all.
+        let window_ms = elapsed.as_secs_f64() * 1000.0;
         assert!(
-            measured.milliseconds() > floor,
-            "a spinning child must register more than {floor:.1}ms of CPU, got {:.1}ms",
+            measured.milliseconds() > 5.0,
+            "a spinning child must register real CPU, got {:.1}ms over {window_ms:.1}ms",
+            measured.milliseconds()
+        );
+        // A single-threaded child cannot consume more CPU than the window it
+        // ran in, so anything far above it would mean the sum double-counts.
+        assert!(
+            measured.milliseconds() < window_ms * 1.5,
+            "a single-threaded child cannot burn {:.1}ms of CPU in {window_ms:.1}ms",
             measured.milliseconds()
         );
     }
