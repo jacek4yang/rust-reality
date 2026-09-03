@@ -24,11 +24,11 @@ use crate::{
         evidence::{Publication, RunDirectory, utc_timestamp},
         host_lock::HostLock,
         identity::{self, Kind},
-        process::{Child, proc_starttime},
+        process::proc_starttime,
         runner,
     },
     hash,
-    perf::{json_in, json_out::Json},
+    perf::json_out::Json,
     process::{Outcome, RunningTool, Tool},
 };
 
@@ -36,9 +36,6 @@ use crate::{
 pub mod bundle;
 
 const MAX_RECORD_SECONDS: u64 = 300;
-const MAX_DURATION_MS: u64 = 600_000;
-const MIN_BENCHMARK_WARMUP_MS: u64 = 1;
-const MAX_BENCHMARK_WARMUP_MS: u64 = 10_000;
 const MAX_FREQUENCY: u32 = 9_999;
 const MAX_DWARF_BYTES: u32 = 65_528;
 const MAX_PERF_OUTPUT_BYTES: usize = 64 * 1024;
@@ -49,49 +46,32 @@ const PERF_STDERR: &str = "perf.stderr";
 const PERF_INTERRUPT_GRACE: Duration = Duration::from_secs(5);
 const PERF_ATTACH_SETTLE: Duration = Duration::from_millis(100);
 
-/// Which process supplies samples to `perf record`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
-    /// Launch and own `rust-reality benchmark`.
-    BuiltIn,
-    /// Attach to an already-running, exactly identified server.
-    AttachServer,
-}
-
-impl Mode {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::BuiltIn => "built-in",
-            Self::AttachServer => "attach-server",
-        }
-    }
-}
+/// How a capture obtains its samples, recorded in the evidence.
+///
+/// There is one lifecycle: attach to an already-running, exactly identified
+/// server. This is a constant rather than a choice, and it is still written to
+/// the metadata because a capture record should say how it was obtained without
+/// the reader having to know which tool version produced it.
+const CAPTURE_MODE: &str = "attach-server";
 
 /// One forensic profile capture request.
 #[derive(Debug, Clone)]
 pub struct Plan {
-    /// Repository root used as the child working directory.
-    pub repo: PathBuf,
-    /// Capture mode.
-    pub mode: Mode,
     /// Exact rust-reality binary.
     pub binary: PathBuf,
     /// Required expected binary SHA-256.
     pub binary_sha256: String,
     /// Required source commit embedded in the binary identity.
     pub expected_source_commit: String,
-    /// Existing server PID for attach mode.
-    pub server_pid: Option<u32>,
+    /// The running server to profile. Required: a capture without a live,
+    /// identified target has nothing to attach to.
+    pub server_pid: u32,
     /// New absolute evidence directory.
     pub out_dir: PathBuf,
     /// Stable publication identifier.
     pub run_id: String,
     /// Maximum capture duration.
     pub record_seconds: u64,
-    /// Built-in benchmark duration.
-    pub duration_ms: u64,
-    /// Built-in benchmark warmup.
-    pub warmup_ms: u64,
     /// `perf record` event selector.
     pub event: String,
     /// Sampling frequency.
@@ -149,7 +129,6 @@ struct Status {
     perf_elapsed_millis: Option<u64>,
     perf_deadline_reached: Option<bool>,
     perf_benchmark_stopped: Option<bool>,
-    workload_exit: Option<i32>,
     process: Option<ProcessIdentity>,
 }
 
@@ -263,12 +242,6 @@ pub fn validate(plan: &Plan) -> Result<(), String> {
     if plan.record_seconds == 0 || plan.record_seconds > MAX_RECORD_SECONDS {
         return Err("--record-seconds must be in 1..=300".to_owned());
     }
-    if plan.duration_ms == 0 || plan.duration_ms > MAX_DURATION_MS {
-        return Err("--duration-ms must be in 1..=600000".to_owned());
-    }
-    if !(MIN_BENCHMARK_WARMUP_MS..=MAX_BENCHMARK_WARMUP_MS).contains(&plan.warmup_ms) {
-        return Err("--warmup-ms must be in 1..=10000".to_owned());
-    }
     if plan.frequency == 0 || plan.frequency > MAX_FREQUENCY {
         return Err("--frequency must be in 1..=9999".to_owned());
     }
@@ -278,13 +251,10 @@ pub fn validate(plan: &Plan) -> Result<(), String> {
     if !validate_call_graph(&plan.call_graph) {
         return Err("--call-graph must be fp, lbr, dwarf, or dwarf,BYTES<=65528".to_owned());
     }
-    match (plan.mode, plan.server_pid) {
-        (Mode::BuiltIn, None) | (Mode::AttachServer, Some(1..)) => Ok(()),
-        (Mode::BuiltIn, Some(_)) => Err("--pid is valid only with --mode attach-server".to_owned()),
-        (Mode::AttachServer, _) => {
-            Err("--pid is required and must be positive with --mode attach-server".to_owned())
-        }
+    if plan.server_pid == 0 {
+        return Err("--pid must be a positive running server PID".to_owned());
     }
+    Ok(())
 }
 
 fn inspect_process(
@@ -389,14 +359,15 @@ fn metadata(
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs());
     Json::object([
-        ("schemaVersion", Json::Int(2)),
+        // 3: the `builtIn` block is gone with the lifecycle it described.
+        ("schemaVersion", Json::Int(3)),
         ("state", Json::string(state)),
         (
             "exitCode",
             exit_code.map_or(Json::Null, |code| Json::Int(i64::from(code))),
         ),
         ("runId", Json::string(&plan.run_id)),
-        ("mode", Json::string(plan.mode.as_str())),
+        ("mode", Json::string(CAPTURE_MODE)),
         ("captureAuthority", authority_json(authority)),
         (
             "updatedAt",
@@ -451,27 +422,6 @@ fn metadata(
             ]),
         ),
         (
-            "builtIn",
-            (plan.mode == Mode::BuiltIn).then_or(Json::Null, || {
-                Json::object([
-                    (
-                        "durationMs",
-                        Json::Int(i64::try_from(plan.duration_ms).unwrap_or(i64::MAX)),
-                    ),
-                    (
-                        "warmupMs",
-                        Json::Int(i64::try_from(plan.warmup_ms).unwrap_or(i64::MAX)),
-                    ),
-                    (
-                        "exitCode",
-                        status
-                            .workload_exit
-                            .map_or(Json::Null, |code| Json::Int(i64::from(code))),
-                    ),
-                ])
-            }),
-        ),
-        (
             "host",
             Json::object([
                 ("hostname", Json::string(tool_stdout("hostname", &[]))),
@@ -500,21 +450,6 @@ fn authority_json(authority: &CaptureAuthority) -> Json {
             ("suite", Json::string(suite)),
             ("benchmarkRunId", Json::string(benchmark_run_id)),
         ]),
-    }
-}
-
-trait ThenOr {
-    fn then_or<F>(self, otherwise: Json, value: F) -> Json
-    where
-        F: FnOnce() -> Json;
-}
-
-impl ThenOr for bool {
-    fn then_or<F>(self, otherwise: Json, value: F) -> Json
-    where
-        F: FnOnce() -> Json,
-    {
-        if self { value() } else { otherwise }
     }
 }
 
@@ -632,6 +567,32 @@ fn perf_tool(plan: &Plan, pid: u32, perf_data: &Path) -> Tool {
     ])
 }
 
+/// Renders the archived `perf report`.
+///
+/// `perf record` runs under `sudo`, so the samples carry kernel addresses.
+/// Reporting them unprivileged under `kptr_restrict` prints raw hex where
+/// kernel symbols belong, which makes the archived report useless for exactly
+/// the kernel-side cost these captures exist to explain. The report therefore
+/// runs with the privilege the record already required.
+///
+/// `-f` is required because the capture has been chowned back to the invoking
+/// user by this point: `perf` refuses a file owned by neither the current user
+/// nor root, and running as root makes a user-owned file exactly that case.
+fn report_tool(perf_data: &Path) -> Tool {
+    Tool::new("sudo").args([
+        "-n".to_owned(),
+        "perf".to_owned(),
+        "report".to_owned(),
+        "--stdio".to_owned(),
+        "--no-children".to_owned(),
+        "-f".to_owned(),
+        "--sort".to_owned(),
+        "comm,dso,symbol".to_owned(),
+        "-i".to_owned(),
+        perf_data.display().to_string(),
+    ])
+}
+
 fn benchmark_perf_tool(plan: &Plan, pid: u32, run_dir: &RunDirectory) -> Tool {
     perf_tool(plan, pid, &run_dir.join("perf.data"))
         .timeout(Duration::from_secs(
@@ -677,7 +638,6 @@ fn perf_failure(run_dir: &RunDirectory, exit_code: i32) -> String {
 }
 
 fn verify_capture_evidence(
-    plan: &Plan,
     run_dir: &RunDirectory,
     binary: &identity::Binary,
     build_id: &str,
@@ -701,27 +661,6 @@ fn verify_capture_evidence(
         ])
         .run()
         .map_err(|error| format!("could not take ownership of perf data: {error}"))?;
-    if plan.mode == Mode::BuiltIn {
-        let benchmark_json = run_dir.join("benchmark.json");
-        let raw = std::fs::read_to_string(&benchmark_json)
-            .map_err(|error| format!("could not read {}: {error}", benchmark_json.display()))?;
-        let measured = json_in::parse(&raw)
-            .and_then(|value| {
-                value
-                    .field("benchmark", "environment")
-                    .and_then(|environment| environment.field("benchmark.environment", "gitCommit"))
-                    .and_then(|commit| commit.as_str("benchmark.environment.gitCommit"))
-                    .map(str::to_owned)
-                    .map_err(|error| error.to_string())
-            })
-            .map_err(|error| format!("built-in benchmark JSON: {error}"))?;
-        if measured != plan.expected_source_commit {
-            return Err(format!(
-                "built-in benchmark source identity changed: expected {}, got {measured}",
-                plan.expected_source_commit
-            ));
-        }
-    }
     if hash::sha256_file(&binary.path)? != binary.sha256 {
         return Err("source binary changed after profiling".to_owned());
     }
@@ -739,16 +678,7 @@ fn verify_capture_evidence(
         ));
     }
     run_dir.write_new("perf-buildids.txt", &buildids)?;
-    let report_outcome = Tool::new("perf")
-        .args([
-            "report",
-            "--stdio",
-            "--no-children",
-            "--sort",
-            "comm,dso,symbol",
-            "-i",
-            &perf_data.display().to_string(),
-        ])
+    let report_outcome = report_tool(&perf_data)
         .probe()
         .map_err(|error| format!("perf report could not start: {error}"))?;
     if !report_outcome.success() {
@@ -860,17 +790,13 @@ impl BenchmarkCapture<'_> {
         capture_preflight()?;
         let expected_source_commit = identity::embedded_commit(&binary.identity)?;
         let plan = Plan {
-            repo: PathBuf::new(),
-            mode: Mode::AttachServer,
             binary: binary.path.clone(),
             binary_sha256: binary.sha256.clone(),
             expected_source_commit,
-            server_pid: Some(server_pid),
+            server_pid,
             out_dir,
             run_id: format!("{benchmark_run_id}-hotspot"),
             record_seconds: profile.record_seconds,
-            duration_ms: MIN_BENCHMARK_WARMUP_MS,
-            warmup_ms: MIN_BENCHMARK_WARMUP_MS,
             event: profile.event.clone(),
             frequency: profile.frequency,
             call_graph: profile.call_graph.clone(),
@@ -1032,13 +958,7 @@ impl BenchmarkCapture<'_> {
         if interrupted && !matches!(outcome.code, Some(0 | 130) | None) {
             return Err(perf_failure(&self.run_dir, outcome.code.unwrap_or(128)));
         }
-        verify_capture_evidence(
-            &self.plan,
-            &self.run_dir,
-            &self.binary,
-            &self.build_id,
-            &self.archived,
-        )?;
+        verify_capture_evidence(&self.run_dir, &self.binary, &self.build_id, &self.archived)?;
         let perf_data_sha256 = hash::sha256_file(&self.run_dir.join("perf.data"))?;
         atomic_metadata(
             &self.run_dir.join("metadata.json"),
@@ -1121,54 +1041,13 @@ fn execute(
     status: &mut Status,
 ) -> Result<(), String> {
     let perf_data = run_dir.join("perf.data");
-    let benchmark_json = run_dir.join("benchmark.json");
-    let benchmark_stderr = run_dir.join("benchmark.stderr");
-    let mut owned = match plan.mode {
-        Mode::BuiltIn => {
-            let mut child = Child::spawn_split_isolated(
-                "built-in hotspot workload",
-                &binary.path,
-                &[
-                    "benchmark".to_owned(),
-                    "--duration-ms".to_owned(),
-                    plan.duration_ms.to_string(),
-                    "--warmup-ms".to_owned(),
-                    plan.warmup_ms.to_string(),
-                ],
-                &plan.repo,
-                &[("PATH".to_owned(), "/usr/local/bin:/usr/bin:/bin".to_owned())],
-                &benchmark_json,
-                &benchmark_stderr,
-            )
-            .map_err(|error| error.to_string())?;
-            std::thread::sleep(Duration::from_millis(500));
-            if !child.is_alive() {
-                return Err(format!(
-                    "built-in benchmark exited before perf attached; see {}",
-                    benchmark_stderr.display()
-                ));
-            }
-            status.process = Some(inspect_process(child.pid(), &binary.sha256, build_id)?);
-            Some(child)
-        }
-        Mode::AttachServer => {
-            let pid = plan.server_pid.expect("validated attach PID");
-            status.process = Some(inspect_process(pid, &binary.sha256, build_id)?);
-            None
-        }
-    };
-    let pid = status
-        .process
-        .as_ref()
-        .expect("process identity recorded")
-        .pid;
+    status.process = Some(inspect_process(plan.server_pid, &binary.sha256, build_id)?);
+    let pid = plan.server_pid;
     let perf = record_perf(plan, run_dir, pid, &perf_data)?;
     status.perf_exit = Some(perf.exit_code);
     status.perf_elapsed_millis = Some(perf.elapsed_millis);
     status.perf_deadline_reached = Some(perf.completion == Some(PerfCompletion::Deadline));
-    if let Some(child) = owned.as_mut() {
-        status.workload_exit = Some(child.wait()?);
-    } else if perf.completion.is_some()
+    if perf.completion.is_some()
         && let Some(process) = status.process.as_mut()
     {
         verify_process(process)?;
@@ -1176,13 +1055,7 @@ fn execute(
     if perf.completion.is_none() {
         return Err(perf_failure(run_dir, perf.exit_code));
     }
-    if status.workload_exit.is_some_and(|code| code != 0) {
-        return Err(format!(
-            "built-in workload failed with exit code {}",
-            status.workload_exit.unwrap_or(128)
-        ));
-    }
-    verify_capture_evidence(plan, run_dir, binary, build_id, archived)
+    verify_capture_evidence(run_dir, binary, build_id, archived)
 }
 
 /// Captures and publishes an identity-bound hotspot profile.
@@ -1323,17 +1196,13 @@ mod tests {
 
     fn plan() -> Plan {
         Plan {
-            repo: PathBuf::from("/repo"),
-            mode: Mode::BuiltIn,
             binary: PathBuf::from("/readonly/rust-reality"),
             binary_sha256: "a".repeat(64),
             expected_source_commit: "b".repeat(40),
-            server_pid: None,
+            server_pid: 4242,
             out_dir: PathBuf::from("/tmp/hotspot-new"),
             run_id: "hotspot-test".to_owned(),
             record_seconds: 35,
-            duration_ms: 10_000,
-            warmup_ms: 1_000,
             event: "cycles:u".to_owned(),
             frequency: 999,
             call_graph: "fp".to_owned(),
@@ -1368,9 +1237,12 @@ mod tests {
         invalid.call_graph = "dwarf,65529".to_owned();
         assert!(validate(&invalid).is_err());
         invalid = plan();
-        invalid.mode = Mode::AttachServer;
-        assert!(validate(&invalid).is_err());
-        invalid.server_pid = Some(42);
+        invalid.server_pid = 0;
+        assert_eq!(
+            validate(&invalid).unwrap_err(),
+            "--pid must be a positive running server PID"
+        );
+        invalid.server_pid = 42;
         assert!(validate(&invalid).is_ok());
     }
 
@@ -1487,10 +1359,9 @@ mod tests {
         let (binary, build_id) = live_binary();
         let root = scratch.join("run");
         let mut plan = plan();
-        plan.mode = Mode::AttachServer;
         plan.binary = binary.path.clone();
         plan.binary_sha256.clone_from(&binary.sha256);
-        plan.server_pid = Some(std::process::id());
+        plan.server_pid = std::process::id();
         plan.out_dir.clone_from(&root);
         plan.run_id = "benchmark-owned-hotspot".to_owned();
         let authority = CaptureAuthority::Benchmark {
@@ -1508,7 +1379,6 @@ mod tests {
             perf_elapsed_millis: Some(100),
             perf_deadline_reached: Some(false),
             perf_benchmark_stopped: Some(true),
-            workload_exit: None,
         };
         std::fs::write(run.join("perf.data"), b"identity-bound perf fixture")
             .expect("write perf fixture");
@@ -1567,10 +1437,9 @@ mod tests {
         let (binary, build_id) = live_binary();
         let root = scratch.join("run");
         let mut plan = plan();
-        plan.mode = Mode::AttachServer;
         plan.binary = binary.path.clone();
         plan.binary_sha256.clone_from(&binary.sha256);
-        plan.server_pid = Some(std::process::id());
+        plan.server_pid = std::process::id();
         plan.out_dir.clone_from(&root);
         let authority = CaptureAuthority::Benchmark {
             suite: "setup-rate".to_owned(),
@@ -1629,6 +1498,24 @@ mod tests {
     }
 
     #[test]
+    fn the_archived_report_is_rendered_with_the_privilege_the_record_required() {
+        let record = perf_tool(&plan(), 42, Path::new("/tmp/perf.data")).redacted();
+        let report = report_tool(Path::new("/tmp/perf.data")).redacted();
+        assert_eq!(
+            report,
+            "sudo -n perf report --stdio --no-children -f --sort comm,dso,symbol \
+             -i /tmp/perf.data"
+        );
+        // The point is the pairing: a privileged record whose report is not
+        // privileged resolves kernel frames to raw addresses, which is what the
+        // stored evidence used to contain.
+        assert!(record.starts_with("sudo -n "), "{record}");
+        assert!(report.starts_with("sudo -n "), "{report}");
+        // A user-owned capture read as root needs the ownership override.
+        assert!(report.contains(" -f "), "{report}");
+    }
+
+    #[test]
     fn perf_records_the_target_until_its_exit_or_the_bounded_deadline() {
         let command = perf_tool(&plan(), 42, Path::new("/tmp/perf.data")).redacted();
         assert_eq!(
@@ -1651,23 +1538,6 @@ mod tests {
             None
         );
         assert_eq!(perf_completion(128, Duration::from_secs(35), 35), None);
-    }
-
-    #[test]
-    fn built_in_warmup_matches_the_benchmark_cli_contract() {
-        for warmup_ms in [MIN_BENCHMARK_WARMUP_MS, MAX_BENCHMARK_WARMUP_MS] {
-            let mut valid = plan();
-            valid.warmup_ms = warmup_ms;
-            assert!(validate(&valid).is_ok(), "{warmup_ms}");
-        }
-        for warmup_ms in [0, MAX_BENCHMARK_WARMUP_MS + 1] {
-            let mut invalid = plan();
-            invalid.warmup_ms = warmup_ms;
-            assert_eq!(
-                validate(&invalid).unwrap_err(),
-                "--warmup-ms must be in 1..=10000"
-            );
-        }
     }
 
     #[test]
