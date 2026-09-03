@@ -1291,19 +1291,57 @@ mod tests {
 
     /// Binds a freshly spawned target once its `execve` has completed.
     ///
-    /// Bounded rather than unbounded: a target that never becomes the expected
-    /// executable is a real failure and must not hang the suite.
-    fn bind_after_exec(pid: u32, sha256: &str, build_id: &str) -> ProcessIdentity {
-        const ATTEMPTS: u32 = 400;
+    /// Waits with a `readlink`, not with a hash. `inspect_process` computes the
+    /// SHA-256 of `/proc/<pid>/exe`, and before the exec lands that link still
+    /// names *this* test binary — 177 MB of it. On a saturated machine one such
+    /// hash took **38 seconds**, by which time the 30-second fixture had exited
+    /// normally and every later attempt saw a zombie; the loop then blamed the
+    /// disappearance rather than the wait. That is issue #220. Comparing the
+    /// link target first is O(1) and removes the cause.
+    ///
+    /// Bounded by wall time rather than by attempt count, because an attempt is
+    /// not a constant: 400 iterations bound nothing when one of them can take
+    /// most of a minute.
+    fn bind_after_exec(
+        child: &mut std::process::Child,
+        expected: &Path,
+        sha256: &str,
+        build_id: &str,
+    ) -> ProcessIdentity {
+        use std::time::Instant;
+
+        const BUDGET: Duration = Duration::from_secs(10);
+        let pid = child.id();
+        // `/proc/<pid>/exe` resolves symlinks, so compare against the resolved
+        // path rather than whatever `PATH` lookup happened to return.
+        let expected = expected
+            .canonicalize()
+            .unwrap_or_else(|_| expected.to_owned());
+        let exe = PathBuf::from(format!("/proc/{pid}/exe"));
+        let deadline = Instant::now() + BUDGET;
         let mut last = String::new();
-        for _ in 0..ATTEMPTS {
-            match inspect_process(pid, sha256, build_id) {
-                Ok(identity) => return identity,
-                Err(error) => last = error,
+        while Instant::now() < deadline {
+            match std::fs::read_link(&exe) {
+                Ok(target) if target == expected => match inspect_process(pid, sha256, build_id) {
+                    Ok(identity) => return identity,
+                    Err(error) => last = error,
+                },
+                Ok(target) => last = format!("PID {pid} is still {}", target.display()),
+                Err(error) => last = format!("PID {pid} has no executable image: {error}"),
             }
             std::thread::sleep(Duration::from_millis(5));
         }
-        panic!("target never became the expected executable: {last}");
+        // A dead fixture and a slow exec are different failures, and the
+        // difference is what took four CI runs to see the first time.
+        let fate = match child.try_wait() {
+            Ok(Some(status)) => format!("the fixture had already exited with {status}"),
+            Ok(None) => "the fixture is still running".to_owned(),
+            Err(error) => format!("the fixture could not be waited for: {error}"),
+        };
+        panic!(
+            "target never became {} within {BUDGET:?}: {fate}; last observation: {last}",
+            expected.display()
+        );
     }
 
     #[test]
@@ -1325,7 +1363,7 @@ mod tests {
         // that state — it attaches to an already-running server — so wait for
         // the exec to land rather than binding a half-started process. Under
         // load this window is wide enough to matter.
-        let mut identity = bind_after_exec(child_pid, &sha256, &build_id);
+        let mut identity = bind_after_exec(&mut child, &sleep, &sha256, &build_id);
         child.kill().expect("kill target");
         child.wait().expect("reap target");
         let error = verify_process(&mut identity).unwrap_err();
