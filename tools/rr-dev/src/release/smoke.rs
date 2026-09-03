@@ -12,7 +12,7 @@
 //! arbitrary target. An optional runner wrapper (e.g. qemu) validates functionality
 //! only and is never native performance evidence.
 
-use std::{io::Read, path::Path};
+use std::path::Path;
 
 use crate::{
     perf::json_in,
@@ -293,13 +293,19 @@ fn free_loopback_port() -> Result<u16, String> {
 }
 
 /// Polls until the loopback port accepts a TCP connection or times out.
+///
+/// A completed `connect` is the whole of the evidence wanted: the cover is
+/// listening. Reading from the stream would not add anything, and a zero-length
+/// read in particular is **not** the no-op it looks like — Linux's
+/// `sock_rcvlowat` clamps a zero receive threshold up to one byte, so
+/// `read(&mut [])` on a connected TCP socket blocks until the peer sends
+/// something or hangs up. Against `openssl s_server`, which says nothing until
+/// a TLS handshake, that is forever. It is what hung every tier of the v1.9.0
+/// release.
 fn wait_for_port(port: u16) -> Result<(), String> {
     let address = format!("127.0.0.1:{port}");
     for _ in 0..100 {
-        if let Ok(mut stream) = std::net::TcpStream::connect(&address) {
-            // Immediately drop; we only needed to confirm the listener is up.
-            let mut scratch = [0_u8; 0];
-            let _ = stream.read(&mut scratch);
+        if std::net::TcpStream::connect(&address).is_ok() {
             return Ok(());
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -310,6 +316,42 @@ fn wait_for_port(port: u16) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The readiness probe must return against a peer that accepts and then
+    /// says nothing, which is exactly what a TLS server does before its
+    /// handshake — and is the shape that hung the v1.9.0 release.
+    #[test]
+    fn readiness_returns_against_a_silent_peer() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind cover stand-in");
+        let port = listener.local_addr().expect("port").port();
+        // Accept and hold, writing nothing, until the test drops the listener.
+        let accepted = std::thread::spawn(move || listener.accept().map(|(stream, _)| stream));
+
+        let started = std::time::Instant::now();
+        wait_for_port(port).expect("a listening port must be reported ready");
+        let elapsed = started.elapsed();
+
+        drop(accepted.join().expect("accept thread"));
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "readiness took {elapsed:?}; it must not wait for the peer to speak"
+        );
+    }
+
+    /// A port with nothing behind it must fail closed rather than hang, and
+    /// must do so inside its own bound.
+    #[test]
+    fn readiness_fails_closed_on_a_dead_port() {
+        // Bind and immediately release, so the port is almost certainly unused.
+        let port = free_loopback_port().expect("reserve a port");
+        let started = std::time::Instant::now();
+        let outcome = wait_for_port(port);
+        assert!(outcome.is_err(), "a dead port must not be reported ready");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(30),
+            "the readiness bound must hold"
+        );
+    }
 
     #[test]
     fn a_well_formed_self_test_report_is_accepted() {
