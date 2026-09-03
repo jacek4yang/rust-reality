@@ -15,7 +15,7 @@ use std::{
     fmt::Write as _,
     os::unix::fs::PermissionsExt as _,
     path::{Path, PathBuf},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use crate::{
@@ -1308,6 +1308,8 @@ mod tests {
         sha256: &str,
         build_id: &str,
     ) -> ProcessIdentity {
+        use std::time::Instant;
+
         const BUDGET: Duration = Duration::from_secs(10);
         let pid = child.id();
         // `/proc/<pid>/exe` resolves symlinks, so compare against the resolved
