@@ -41,6 +41,13 @@ pub enum Attribution {
     /// Unlike `perf`, this wraps the server rather than the workload, so the
     /// workload itself runs unwrapped.
     Strace,
+    /// Server CPU read from `/proc/<pid>/task/*/schedstat` around the workload.
+    ///
+    /// Wraps nothing: the workload runs unwrapped and the caller samples the
+    /// server's accumulated per-thread runtime on either side of it. This is
+    /// the mode for a host that has no `perf` binary, which a host can be
+    /// while still being entirely representative of production hardware.
+    Schedstat,
 }
 
 /// Builds the argv for the workload child.
@@ -164,8 +171,11 @@ pub fn drive(
 ) -> Result<(), String> {
     let argv = workload_argv(plan, Some(output))?;
     match attribution {
-        // strace wraps the server, not the workload, so the workload runs plain.
-        Attribution::Wall | Attribution::Strace => run_workload(&argv, cwd),
+        // strace wraps the server, not the workload, and schedstat wraps
+        // nothing at all, so in both cases the workload runs plain.
+        Attribution::Wall | Attribution::Strace | Attribution::Schedstat => {
+            run_workload(&argv, cwd)
+        }
         Attribution::Perf(events) => {
             run_workload_under_perf(&argv, server_pid, events, perf_csv, cwd)
         }
