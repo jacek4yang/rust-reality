@@ -30,7 +30,7 @@ use std::{
 };
 
 use crate::{
-    bench::process::proc_starttime,
+    bench::{process::proc_starttime, schedstat},
     perf::{json_in, json_out::Json},
 };
 
@@ -83,13 +83,45 @@ fn read_i64(path: &Path) -> Option<i64> {
     std::fs::read_to_string(path).ok()?.trim().parse().ok()
 }
 
+/// Total CPU the server has consumed, in nanoseconds.
+///
+/// This used to read `utime + stime` from `/proc/<pid>/stat`, which the kernel
+/// reports in `USER_HZ` clock ticks — 10 ms. Over the 288 connections a churn
+/// cell measures that is ±35 µs/session of quantisation, roughly 9% of the
+/// figure being reported, which cannot support a verdict in the 1–2 vCPU
+/// envelope where verdicts now have to be made.
+///
+/// `se.sum_exec_runtime`, summed across the process's threads, is the same
+/// quantity at nanosecond resolution, and is what the setup-rate suite's
+/// `schedstat` mode already uses.
+///
+/// One semantic difference is deliberate and bounded: per-thread accounting
+/// loses a thread's remaining runtime if it exits inside the window, whereas
+/// `/proc/<pid>/stat` accumulates it. The measured servers run a Tokio runtime
+/// whose workers are created at startup and live for the process, so no thread
+/// churn occurs here; the setup-rate path, which produces acceptance-grade
+/// numbers, uses [`schedstat::delta`] instead and refuses a sample whose
+/// unattributed bound could matter.
+fn process_cpu_nanoseconds(pid: u32) -> Option<u128> {
+    schedstat::CpuSnapshot::capture(pid)
+        .ok()
+        .map(|snapshot| snapshot.total_nanoseconds())
+}
+
+/// Total CPU consumed, in seconds, for the absolute resource sample.
 fn process_cpu_seconds(pid: u32) -> Option<f64> {
-    let raw = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let end = raw.rfind(')')?;
-    let fields: Vec<&str> = raw[end + 1..].split_whitespace().collect();
-    let user = fields.get(11)?.parse::<u64>().ok()?;
-    let system = fields.get(12)?.parse::<u64>().ok()?;
-    Some((user + system) as f64 / 100.0)
+    process_cpu_nanoseconds(pid).map(nanoseconds_to_seconds)
+}
+
+/// Converts a nanosecond total to seconds for reporting.
+fn nanoseconds_to_seconds(nanoseconds: u128) -> f64 {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a benchmark window is far below the 2^53 nanoseconds f64 represents exactly"
+    )]
+    {
+        nanoseconds as f64 / 1_000_000_000.0
+    }
 }
 
 fn process_rss_bytes(pid: u32) -> Option<i64> {
@@ -299,7 +331,7 @@ pub fn churn(
     for &concurrency in concurrencies {
         let _ = one_churn_connection(socks_port, origin_port);
         for sample_index in 0..samples {
-            let cpu_before = process_cpu_seconds(server_pid).unwrap_or(0.0);
+            let cpu_before = process_cpu_nanoseconds(server_pid).unwrap_or(0);
             let started = Instant::now();
             let next = AtomicUsize::new(0);
             let mut latencies = Vec::new();
@@ -338,7 +370,10 @@ pub fn churn(
             });
             latencies.sort_unstable_by(f64::total_cmp);
             let wall = started.elapsed().as_secs_f64();
-            let cpu = process_cpu_seconds(server_pid).unwrap_or(cpu_before) - cpu_before;
+            let cpu_nanoseconds = process_cpu_nanoseconds(server_pid)
+                .unwrap_or(cpu_before)
+                .saturating_sub(cpu_before);
+            let cpu = nanoseconds_to_seconds(cpu_nanoseconds);
             let mut fields: Vec<(String, Json)> = vec![
                 ("cell".to_owned(), Json::string("churn")),
                 (
@@ -351,6 +386,10 @@ pub fn churn(
                 ),
                 ("wallSeconds".to_owned(), Json::Float(wall)),
                 ("serverCpuSeconds".to_owned(), Json::Float(cpu)),
+                (
+                    "serverCpuNanoseconds".to_owned(),
+                    Json::Int(i64::try_from(cpu_nanoseconds).unwrap_or(i64::MAX)),
+                ),
                 (
                     "connections".to_owned(),
                     Json::Int(i64::try_from(latencies.len()).unwrap_or(i64::MAX)),
@@ -416,7 +455,7 @@ pub fn download(
 ) -> Result<Vec<Json>, String> {
     let mut rows = Vec::new();
     for sample_index in 0..samples {
-        let cpu_before = process_cpu_seconds(server_pid).unwrap_or(0.0);
+        let cpu_before = process_cpu_nanoseconds(server_pid).unwrap_or(0);
         let started = Instant::now();
         let mut children = Vec::new();
         for _ in 0..concurrency {
@@ -472,7 +511,10 @@ pub fn download(
             times.push(elapsed);
         }
         let wall = started.elapsed().as_secs_f64();
-        let cpu = process_cpu_seconds(server_pid).unwrap_or(cpu_before) - cpu_before;
+        let cpu_nanoseconds = process_cpu_nanoseconds(server_pid)
+            .unwrap_or(cpu_before)
+            .saturating_sub(cpu_before);
+        let cpu = nanoseconds_to_seconds(cpu_nanoseconds);
         let total: u64 = sizes.iter().sum();
         rows.push(Json::object([
             ("cell", Json::string("download")),
@@ -486,6 +528,10 @@ pub fn download(
             ),
             ("wallSeconds", Json::Float(wall)),
             ("serverCpuSeconds", Json::Float(cpu)),
+            (
+                "serverCpuNanoseconds",
+                Json::Int(i64::try_from(cpu_nanoseconds).unwrap_or(i64::MAX)),
+            ),
             (
                 "totalBytes",
                 Json::Int(i64::try_from(total).unwrap_or(i64::MAX)),
@@ -870,6 +916,46 @@ mod tests {
         assert_eq!(percentile(&values, 0.50), Some(50.0));
         assert_eq!(percentile(&values, 0.95), Some(95.0));
         assert_eq!(percentile(&values, 0.99), Some(99.0));
+    }
+
+    #[test]
+    fn cpu_accounting_resolves_below_a_clock_tick() {
+        // The previous implementation read `utime + stime` from
+        // /proc/<pid>/stat, whose unit is a 10 ms USER_HZ tick, so a window
+        // shorter than a tick measured either 0 or 10 ms. A churn cell's
+        // ±35 µs/session of quantisation came from exactly that.
+        //
+        // Measured on a dedicated spinning child, because this function sums
+        // every thread of the target: run against the test binary it would see
+        // the whole parallel suite's CPU, not the window under test.
+        if !crate::process::Tool::exists("sh") {
+            return;
+        }
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "while :; do :; done"])
+            .spawn()
+            .expect("start a busy child");
+        let pid = child.id();
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
+        let before = process_cpu_nanoseconds(pid).expect("a live child is readable");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let after = process_cpu_nanoseconds(pid).expect("the child is still readable");
+
+        let _ = child.kill();
+        let _ = child.wait();
+
+        let delta = after.saturating_sub(before);
+        assert!(delta > 0, "a spinning child must register CPU");
+        // The resolution claim, stated so it cannot be satisfied by accident:
+        // a USER_HZ counter can only ever report whole 10 ms ticks, so any
+        // value that is not tick-aligned proves sub-tick accounting. A
+        // nanosecond reading lands exactly on a 10 ms boundary with
+        // probability ~1e-7.
+        assert!(
+            !delta.is_multiple_of(10_000_000),
+            "a tick-aligned delta means tick-resolution accounting: {delta} ns"
+        );
     }
 
     #[test]
