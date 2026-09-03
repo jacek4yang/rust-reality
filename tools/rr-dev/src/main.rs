@@ -944,12 +944,9 @@ enum PerfCommand {
         #[arg(long)]
         output: PathBuf,
     },
-    /// Capture an identity-bound hotspot profile from the built-in benchmark or
-    /// an already-running server.
+    /// Capture an identity-bound hotspot profile from an already-running,
+    /// exactly identified server.
     Hotspot {
-        /// Process lifecycle used for the capture.
-        #[arg(long, value_enum)]
-        mode: HotspotMode,
         /// Exact rust-reality binary to archive and measure.
         #[arg(long)]
         binary: PathBuf,
@@ -959,9 +956,9 @@ enum PerfCommand {
         /// Required source commit embedded in the binary.
         #[arg(long)]
         expected_source_commit: String,
-        /// Existing rust-reality server PID for attach mode.
+        /// PID of the exactly identified rust-reality server to profile.
         #[arg(long)]
-        pid: Option<u32>,
+        pid: u32,
         /// New absolute evidence directory.
         #[arg(long)]
         out_dir: PathBuf,
@@ -971,12 +968,6 @@ enum PerfCommand {
         /// Maximum seconds spent recording.
         #[arg(long, default_value_t = 35)]
         record_seconds: u64,
-        /// Built-in benchmark case duration.
-        #[arg(long, default_value_t = 10_000)]
-        duration_ms: u64,
-        /// Built-in benchmark warmup duration.
-        #[arg(long, default_value_t = 1_000)]
-        warmup_ms: u64,
         /// `perf record` event selector.
         #[arg(long, default_value = "cycles:u")]
         event: String,
@@ -1058,15 +1049,7 @@ enum EnvironmentTool {
     C2c,
 }
 
-#[derive(Clone, Copy, clap::ValueEnum)]
-enum HotspotMode {
-    /// Launch and own the built-in benchmark.
-    BuiltIn,
-    /// Attach to an existing exactly identified server.
-    AttachServer,
-}
-
-#[derive(Subcommand)]
+#[derive(Clone, Copy, clap::ValueEnum, Subcommand)]
 enum DocsCommand {
     /// Validate bilingual coverage, local links, stale wording and release headlines.
     Check,
@@ -1248,7 +1231,6 @@ fn run_perf(repo: &std::path::Path, command: PerfCommand) -> ExitCode {
             }
         }
         PerfCommand::Hotspot {
-            mode,
             binary,
             binary_sha256,
             expected_source_commit,
@@ -1256,19 +1238,11 @@ fn run_perf(repo: &std::path::Path, command: PerfCommand) -> ExitCode {
             out_dir,
             run_id,
             record_seconds,
-            duration_ms,
-            warmup_ms,
             event,
             frequency,
             call_graph,
         } => {
-            let mode = match mode {
-                HotspotMode::BuiltIn => perf::hotspot::Mode::BuiltIn,
-                HotspotMode::AttachServer => perf::hotspot::Mode::AttachServer,
-            };
             match perf::hotspot::run(&perf::hotspot::Plan {
-                repo: repo.to_path_buf(),
-                mode,
                 binary,
                 binary_sha256,
                 expected_source_commit,
@@ -1276,8 +1250,6 @@ fn run_perf(repo: &std::path::Path, command: PerfCommand) -> ExitCode {
                 out_dir,
                 run_id,
                 record_seconds,
-                duration_ms,
-                warmup_ms,
                 event,
                 frequency,
                 call_graph,
