@@ -1,0 +1,373 @@
+{
+  "harness": {
+    "batchMs": 25,
+    "commit": "feb0cbb145f5e7f6d25ddc8e13afd2f2a5be1a07",
+    "equivalenceChecks": 36,
+    "equivalenceFailures": 0,
+    "repetitions": 25,
+    "seeds": {
+      "independentRerun": 7,
+      "run": 1
+    },
+    "source": "benches/crypto_providers.rs"
+  },
+  "hosts": {
+    "i3-8100-no-sha-ni": {
+      "aaFloorMedianPct": null,
+      "clockGhz": 3.6,
+      "cpu": "Intel Core i3-8100 (Coffee Lake)",
+      "kernel": "6.12.100+deb13-amd64",
+      "note": "repository pin; established measurement host",
+      "pinning": "taskset -c 2",
+      "shaNi": false,
+      "toolchain": "1.96.0",
+      "topology": "4C/4T, 1 socket, 1 NUMA"
+    },
+    "i5-1240P-e-core-sha-ni": {
+      "clockGhzMax": 3.3,
+      "cpu": "12th Gen Intel Core i5-1240P E-core (Gracemont)",
+      "hybridModeCaaFloorMedianPct": 1.6,
+      "hybridModeCaaFloorP90Pct": 5.16,
+      "pinning": "taskset -c 10",
+      "shaNi": true
+    },
+    "i5-1240P-p-core-sha-ni": {
+      "aaFloorMedianPct": 1.39,
+      "aaFloorP90Pct": 3.13,
+      "aaFloorWidestPct": 7.32,
+      "binarySha256": "455456b5326724c9bbd5eaa55506e002e7eb148bfe69ab761d7b3c9d417f9cac",
+      "buildId": "6e0837d21b7a5ecc2bb811f6c27ec9e896d0b286",
+      "clockGhzMax": 4.4,
+      "cpu": "12th Gen Intel Core i5-1240P (Alder Lake-P)",
+      "kernel": "7.0.0-30-generic",
+      "microcode": "0x43b",
+      "perf": "NOT_AVAILABLE - no perf binary on host; installing forbidden",
+      "pinning": "taskset -c 6",
+      "pmuMasks": {
+        "cpu_atom": "8-15",
+        "cpu_core": "0-7"
+      },
+      "shaNi": true,
+      "toolchain": "1.98.0",
+      "topology": "4 P-core (SMT) + 8 E-core = 12C/16T, 1 socket, 1 NUMA"
+    }
+  },
+  "issue": 213,
+  "kind": "crypto-provider-primitive-hardware-tiers",
+  "medianNsPerOp": {
+    "i3-8100-no-sha-ni": {
+      "ed25519-sign-sha256-130b": {
+        "aws-lc-rs": 9544.8,
+        "ring": 26945.6,
+        "rustcrypto": 19321.8
+      },
+      "ed25519-sign-sha384-146b": {
+        "aws-lc-rs": 9582.0,
+        "ring": 26937.0,
+        "rustcrypto": 19330.9
+      },
+      "hkdf-expand-label-sha256": {
+        "aws-lc-rs": 896.5,
+        "ring": 780.6,
+        "rustcrypto": 1263.5
+      },
+      "hkdf-expand-label-sha384": {
+        "aws-lc-rs": 1168.8,
+        "ring": 1028.5,
+        "rustcrypto": 1368.9
+      },
+      "hkdf-extract-sha256": {
+        "aws-lc-rs": 948.5,
+        "ring": 751.8,
+        "rustcrypto": 1859.4
+      },
+      "hkdf-extract-sha384": {
+        "aws-lc-rs": 1205.8,
+        "ring": 994.0,
+        "rustcrypto": 2023.6
+      },
+      "hkdf-sha256-reality-auth": {
+        "aws-lc-rs": 1762.3,
+        "ring": 1524.4,
+        "rustcrypto": 2497.8
+      },
+      "hmac-sha256-finished": {
+        "aws-lc-rs": 947.1,
+        "ring": 751.9,
+        "rustcrypto": 1244.8
+      },
+      "hmac-sha384-finished": {
+        "aws-lc-rs": 1206.5,
+        "ring": 994.0,
+        "rustcrypto": 1362.5
+      },
+      "hmac-sha512-cert-binding": {
+        "aws-lc-rs": 1207.8,
+        "ring": 990.8,
+        "rustcrypto": 1376.8
+      },
+      "sha256-digest-1400": {
+        "aws-lc-rs": 3649.0,
+        "ring": 3653.3,
+        "rustcrypto": 6707.5
+      },
+      "sha256-digest-517": {
+        "aws-lc-rs": 1494.4,
+        "ring": 1444.9,
+        "rustcrypto": 2673.0
+      },
+      "sha384-digest-1400": {
+        "aws-lc-rs": 2620.1,
+        "ring": 2661.7,
+        "rustcrypto": 3727.9
+      },
+      "sha384-digest-517": {
+        "aws-lc-rs": 1111.7,
+        "ring": 1121.5,
+        "rustcrypto": 1588.5
+      },
+      "transcript-sha256-hybrid": {
+        "aws-lc-rs": 8946.7,
+        "ring": 8791.9,
+        "rustcrypto": 15878.7
+      },
+      "transcript-sha256-x25519": {
+        "aws-lc-rs": 3529.9,
+        "ring": 3307.4,
+        "rustcrypto": 5865.1
+      },
+      "transcript-sha384-hybrid": {
+        "aws-lc-rs": 7094.4,
+        "ring": 6846.1,
+        "rustcrypto": 9555.1
+      },
+      "transcript-sha384-x25519": {
+        "aws-lc-rs": 3177.3,
+        "ring": 2931.1,
+        "rustcrypto": 4038.9
+      }
+    },
+    "i5-1240P-e-core-sha-ni": {
+      "ed25519-sign-sha256-130b": {
+        "aws-lc-rs": 24011.7,
+        "ring": 40628.0,
+        "rustcrypto": 33022.6
+      },
+      "ed25519-sign-sha384-146b": {
+        "aws-lc-rs": 23979.8,
+        "ring": 40545.2,
+        "rustcrypto": 32931.1
+      },
+      "hkdf-expand-label-sha256": {
+        "aws-lc-rs": 429.4,
+        "ring": 268.3,
+        "rustcrypto": 216.0
+      },
+      "hkdf-expand-label-sha384": {
+        "aws-lc-rs": 8244.0,
+        "ring": 8049.7,
+        "rustcrypto": 1376.2
+      },
+      "hkdf-extract-sha256": {
+        "aws-lc-rs": 553.5,
+        "ring": 258.1,
+        "rustcrypto": 261.9
+      },
+      "hkdf-extract-sha384": {
+        "aws-lc-rs": 8381.6,
+        "ring": 8039.5,
+        "rustcrypto": 2005.9
+      },
+      "hkdf-sha256-reality-auth": {
+        "aws-lc-rs": 811.9,
+        "ring": 483.4,
+        "rustcrypto": 399.2
+      },
+      "hmac-sha256-finished": {
+        "aws-lc-rs": 552.9,
+        "ring": 258.1,
+        "rustcrypto": 183.4
+      },
+      "hmac-sha384-finished": {
+        "aws-lc-rs": 8384.8,
+        "ring": 8036.5,
+        "rustcrypto": 1345.5
+      },
+      "hmac-sha512-cert-binding": {
+        "aws-lc-rs": 8379.0,
+        "ring": 8019.7,
+        "rustcrypto": 1362.6
+      },
+      "sha256-digest-1400": {
+        "aws-lc-rs": 717.9,
+        "ring": 739.6,
+        "rustcrypto": 741.1
+      },
+      "sha256-digest-517": {
+        "aws-lc-rs": 293.7,
+        "ring": 314.1,
+        "rustcrypto": 326.0
+      },
+      "sha384-digest-1400": {
+        "aws-lc-rs": 23694.9,
+        "ring": 23723.1,
+        "rustcrypto": 4112.6
+      },
+      "sha384-digest-517": {
+        "aws-lc-rs": 9907.6,
+        "ring": 9909.7,
+        "rustcrypto": 1743.3
+      },
+      "transcript-sha256-hybrid": {
+        "aws-lc-rs": 1983.6,
+        "ring": 1926.0,
+        "rustcrypto": 1855.3
+      },
+      "transcript-sha256-x25519": {
+        "aws-lc-rs": 947.4,
+        "ring": 887.8,
+        "rustcrypto": 825.6
+      },
+      "transcript-sha384-hybrid": {
+        "aws-lc-rs": 59713.7,
+        "ring": 59442.7,
+        "rustcrypto": 10296.7
+      },
+      "transcript-sha384-x25519": {
+        "aws-lc-rs": 24218.2,
+        "ring": 23986.7,
+        "rustcrypto": 4195.7
+      }
+    },
+    "i5-1240P-p-core-sha-ni": {
+      "ed25519-sign-sha256-130b": {
+        "aws-lc-rs": 7110.5,
+        "ring": 17705.5,
+        "rustcrypto": 13486.4
+      },
+      "ed25519-sign-sha384-146b": {
+        "aws-lc-rs": 7025.9,
+        "ring": 17654.6,
+        "rustcrypto": 13359.3
+      },
+      "hkdf-expand-label-sha256": {
+        "aws-lc-rs": 277.7,
+        "ring": 212.7,
+        "rustcrypto": 183.9
+      },
+      "hkdf-expand-label-sha384": {
+        "aws-lc-rs": 835.1,
+        "ring": 748.6,
+        "rustcrypto": 839.8
+      },
+      "hkdf-extract-sha256": {
+        "aws-lc-rs": 306.2,
+        "ring": 213.6,
+        "rustcrypto": 235.4
+      },
+      "hkdf-extract-sha384": {
+        "aws-lc-rs": 861.2,
+        "ring": 746.6,
+        "rustcrypto": 1205.8
+      },
+      "hkdf-sha256-reality-auth": {
+        "aws-lc-rs": 530.1,
+        "ring": 456.1,
+        "rustcrypto": 371.6
+      },
+      "hmac-sha256-finished": {
+        "aws-lc-rs": 309.2,
+        "ring": 213.2,
+        "rustcrypto": 163.3
+      },
+      "hmac-sha384-finished": {
+        "aws-lc-rs": 862.2,
+        "ring": 746.5,
+        "rustcrypto": 806.2
+      },
+      "hmac-sha512-cert-binding": {
+        "aws-lc-rs": 858.5,
+        "ring": 735.9,
+        "rustcrypto": 810.5
+      },
+      "sha256-digest-1400": {
+        "aws-lc-rs": 708.7,
+        "ring": 735.0,
+        "rustcrypto": 714.1
+      },
+      "sha256-digest-517": {
+        "aws-lc-rs": 284.9,
+        "ring": 314.1,
+        "rustcrypto": 311.9
+      },
+      "sha384-digest-1400": {
+        "aws-lc-rs": 1889.7,
+        "ring": 1933.2,
+        "rustcrypto": 2321.0
+      },
+      "sha384-digest-517": {
+        "aws-lc-rs": 802.5,
+        "ring": 829.2,
+        "rustcrypto": 973.2
+      },
+      "transcript-sha256-hybrid": {
+        "aws-lc-rs": 1868.6,
+        "ring": 1850.7,
+        "rustcrypto": 1779.9
+      },
+      "transcript-sha256-x25519": {
+        "aws-lc-rs": 843.5,
+        "ring": 815.3,
+        "rustcrypto": 743.0
+      },
+      "transcript-sha384-hybrid": {
+        "aws-lc-rs": 5187.2,
+        "ring": 4961.9,
+        "rustcrypto": 5845.8
+      },
+      "transcript-sha384-x25519": {
+        "aws-lc-rs": 2311.3,
+        "ring": 2143.6,
+        "rustcrypto": 2440.7
+      }
+    }
+  },
+  "perSessionOperationCounts": {
+    "counts": {
+      "hkdf-expand-label-sha256": 16,
+      "hkdf-extract-sha256": 3,
+      "hkdf-sha256-reality-auth": 1,
+      "hmac-sha256-finished": 2,
+      "hmac-sha512-cert-binding": 1,
+      "transcript-sha256-x25519": 1
+    },
+    "source": "audited from Tls13KeySchedule::new, traffic_keys x4, finished_verify_data x2, application_traffic_secrets, build_server_flight_inner, derive_auth_key, forge_certificate",
+    "suite": "TLS_AES_128_GCM_SHA256"
+  },
+  "perSessionShaHkdfHmacNs": {
+    "i3-8100-no-sha-ni": {
+      "aws-lc-rs": 25583.7,
+      "ring": 22071.4,
+      "rustcrypto": 38023.5
+    },
+    "i5-1240P-e-core-sha-ni": {
+      "aws-lc-rs": 19775.0,
+      "ring": 14974.2,
+      "rustcrypto": 7195.9
+    },
+    "i5-1240P-p-core-sha-ni": {
+      "aws-lc-rs": 8212.3,
+      "ring": 6477.7,
+      "rustcrypto": 5900.3
+    }
+  },
+  "schema": "crypto-provider-primitive/1",
+  "transactions": [
+    "T7 SHA/HKDF/HMAC",
+    "T8 Ed25519"
+  ],
+  "verdicts": {
+    "T7": "REJECTED_END_TO_END_REGRESSION - retain sha2/hkdf/hmac",
+    "T8": "REJECTED_ARCHITECTURAL_COMPLEXITY - retain ed25519-dalek"
+  }
+}
