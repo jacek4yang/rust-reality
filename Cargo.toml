@@ -10,7 +10,7 @@ resolver = "3"
 name = "rust-reality"
 version = "1.9.0"
 edition = "2024"
-rust-version = "1.96"
+rust-version = "1.98"
 description = "A from-scratch Rust implementation of VLESS and REALITY"
 license = "MIT OR Apache-2.0"
 publish = false
@@ -27,7 +27,10 @@ aes-gcm = { version = "0.11.0", default-features = false, features = ["aes", "ze
 # only; `aws-lc-sys` is never used directly and no FFI is written here, so the
 # crate stays `#![deny(unsafe_code)]`. Non-FIPS: X25519 is not a reason to opt
 # into a FIPS build.
-aws-lc-rs = { version = "1.18.1", default-features = false, features = ["aws-lc-sys"] }
+# EXPERIMENT ONLY — never merge. A temporary path dependency for the X25519
+# whole-product A/B (rust-reality#225). The accepted implementation moves into
+# this tree; it never ships as a path or Git dependency.
+fastcrypto = { path = "../../fastcrypto-rs/crates/fastcrypto", default-features = false }
 base64 = { version = "0.22.1", default-features = false, features = ["std"] }
 clap = { version = "4.6.5", default-features = false, features = ["derive", "error-context", "help", "std", "suggestions", "usage"] }
 chacha20 = { version = "0.10.1", default-features = false, features = ["zeroize"] }

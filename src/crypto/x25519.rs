@@ -22,9 +22,7 @@
 //! test, so the rejection is expressed here as `None` and both call sites map it
 //! to the protocol error they already had.
 
-use aws_lc_rs::agreement::{
-    EphemeralPrivateKey, PrivateKey, UnparsedPublicKey, X25519, agree, agree_ephemeral,
-};
+use fastcrypto::x25519::{EphemeralSecret, StaticSecret};
 use zeroize::Zeroizing;
 
 /// An X25519 shared secret.
@@ -54,22 +52,12 @@ impl core::fmt::Display for X25519Error {
 
 impl core::error::Error for X25519Error {}
 
-/// Copies an agreed secret out of the provider's buffer.
-///
-/// X25519 always agrees on exactly 32 bytes, so a different length is a broken
-/// provider rather than a peer-triggered condition.
-fn shared_secret(secret: &[u8]) -> Result<SharedSecret, ()> {
-    <[u8; 32]>::try_from(secret)
-        .map(Zeroizing::new)
-        .map_err(drop)
-}
-
 /// A long-lived X25519 private key, imported once per configuration generation.
 ///
 /// Not `Clone`: one configuration generation owns one key. Cloning would copy
 /// secret material to satisfy a derive rather than a requirement.
 pub struct StaticX25519Key {
-    inner: PrivateKey,
+    inner: StaticSecret,
 }
 
 impl StaticX25519Key {
@@ -83,9 +71,9 @@ impl StaticX25519Key {
     /// Returns [`X25519Error::InvalidPrivateKey`] if the provider rejects the
     /// bytes.
     pub fn new(private_key: &[u8; 32]) -> Result<Self, X25519Error> {
-        PrivateKey::from_private_key(&X25519, private_key)
-            .map(|inner| Self { inner })
-            .map_err(|_| X25519Error::InvalidPrivateKey)
+        Ok(Self {
+            inner: StaticSecret::from_bytes(*private_key),
+        })
     }
 
     /// Derives the matching public key.
@@ -94,11 +82,7 @@ impl StaticX25519Key {
     ///
     /// Returns [`X25519Error::KeyGeneration`] if the provider cannot derive it.
     pub fn public_key(&self) -> Result<[u8; 32], X25519Error> {
-        self.inner
-            .compute_public_key()
-            .ok()
-            .and_then(|public| <[u8; 32]>::try_from(public.as_ref()).ok())
-            .ok_or(X25519Error::KeyGeneration)
+        Ok(self.inner.public_key())
     }
 
     /// Agrees with a peer public key.
@@ -107,13 +91,9 @@ impl StaticX25519Key {
     /// caller must treat as an authentication failure.
     #[must_use]
     pub fn agree(&self, peer_public_key: &[u8; 32]) -> Option<SharedSecret> {
-        agree(
-            &self.inner,
-            UnparsedPublicKey::new(&X25519, &peer_public_key[..]),
-            (),
-            shared_secret,
-        )
-        .ok()
+        self.inner
+            .agree(peer_public_key)
+            .map(|secret| Zeroizing::new(*secret.as_bytes()))
     }
 }
 
@@ -128,7 +108,7 @@ impl core::fmt::Debug for StaticX25519Key {
 /// The public share is available while the key is held; [`Self::agree`] takes
 /// `self`, so the private key cannot outlive its single agreement.
 pub struct EphemeralX25519Key {
-    inner: EphemeralPrivateKey,
+    inner: EphemeralSecret,
     public_key: [u8; 32],
 }
 
@@ -145,13 +125,10 @@ impl EphemeralX25519Key {
     /// Returns [`X25519Error::KeyGeneration`] if generation or public-key
     /// derivation fails.
     pub fn generate() -> Result<Self, X25519Error> {
-        let inner = EphemeralPrivateKey::generate(&X25519, &aws_lc_rs::rand::SystemRandom::new())
-            .map_err(|_| X25519Error::KeyGeneration)?;
-        let public_key = inner
-            .compute_public_key()
-            .ok()
-            .and_then(|public| <[u8; 32]>::try_from(public.as_ref()).ok())
-            .ok_or(X25519Error::KeyGeneration)?;
+        let mut seed = [0_u8; 32];
+        getrandom::fill(&mut seed).map_err(|_| X25519Error::KeyGeneration)?;
+        let inner = EphemeralSecret::from_bytes(seed);
+        let public_key = *inner.public_key();
         Ok(Self { inner, public_key })
     }
 
@@ -166,13 +143,9 @@ impl EphemeralX25519Key {
     /// Returns `None` for a non-contributory or malformed peer share.
     #[must_use]
     pub fn agree(self, peer_public_key: &[u8; 32]) -> Option<SharedSecret> {
-        agree_ephemeral(
-            self.inner,
-            UnparsedPublicKey::new(&X25519, &peer_public_key[..]),
-            (),
-            shared_secret,
-        )
-        .ok()
+        self.inner
+            .agree(peer_public_key)
+            .map(|secret| Zeroizing::new(*secret.as_bytes()))
     }
 }
 
