@@ -964,7 +964,7 @@ fn classify_profile_message(
     }
 
     let mut digest = Sha256::new();
-    digest.update(b"rust-reality/client-hello-profile/v1\0");
+    digest.update(b"rust-reality/client-hello-profile/v2\0");
     digest.update(
         reader
             .read_u16()
@@ -992,18 +992,17 @@ fn classify_profile_message(
     if cipher_bytes_len < 2 || cipher_bytes_len % 2 != 0 {
         return Err(ClientHelloClassError::Malformed);
     }
-    digest.update(
-        u16::try_from(cipher_bytes_len)
+    // Suite identity is a capability; the order and the GREASE entries are
+    // not (RFC 8701). uTLS Chrome shuffles the GREASE cipher's position per
+    // handshake, which split one client across many classes.
+    hash_canonical_values(
+        reader
+            .read_bytes(cipher_bytes_len)
             .map_err(|_| ClientHelloClassError::Malformed)?
-            .to_be_bytes(),
+            .chunks_exact(2)
+            .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]])),
+        &mut digest,
     );
-    for bytes in reader
-        .read_bytes(cipher_bytes_len)
-        .map_err(|_| ClientHelloClassError::Malformed)?
-        .chunks_exact(2)
-    {
-        digest.update(canonical_grease(u16::from_be_bytes([bytes[0], bytes[1]])).to_be_bytes());
-    }
 
     let compression_len = usize::from(
         reader
@@ -1054,8 +1053,15 @@ fn classify_profile_message(
             let body = extensions
                 .read_bytes(extension_len)
                 .map_err(|_| ClientHelloClassError::Malformed)?;
+            // A GREASE extension carries no semantics (RFC 8701), and uTLS
+            // Chrome includes a random subset of them per handshake. Their
+            // presence and their placeholder bytes must not split one
+            // capability set into many classes.
+            if is_grease(extension_type) {
+                continue;
+            }
             let body_digest = normalized_extension_digest(extension_type, body)?;
-            normalized_extensions.push((canonical_grease(extension_type), body_digest));
+            normalized_extensions.push((extension_type, body_digest));
         }
     }
     normalized_extensions.sort_unstable();
@@ -1072,6 +1078,27 @@ fn classify_profile_message(
     Ok(NormalizedClientHelloClass(output))
 }
 
+/// Hashes a capability vector as a **set**: GREASE values are dropped, the
+/// remainder is sorted, and the sorted count and values enter the digest.
+///
+/// uTLS fingerprints shuffle GREASE entries through cipher, group and version
+/// vectors on every handshake. Order and GREASE carry no negotiation meaning
+/// for this server — it selects by its own configuration and revalidates the
+/// chosen capability against the real client at materialization — so folding
+/// them away merges one capability set into one class instead of many.
+fn hash_canonical_values(values: impl Iterator<Item = u16>, digest: &mut Sha256) {
+    let mut canonical: Vec<u16> = values.filter(|value| !is_grease(*value)).collect();
+    canonical.sort_unstable();
+    digest.update(
+        u16::try_from(canonical.len())
+            .expect("a ClientHello vector cannot exceed a u16 count")
+            .to_be_bytes(),
+    );
+    for value in canonical {
+        digest.update(value.to_be_bytes());
+    }
+}
+
 fn normalized_extension_digest(
     extension_type: u16,
     body: &[u8],
@@ -1079,7 +1106,7 @@ fn normalized_extension_digest(
     let mut digest = Sha256::new();
     digest.update(canonical_grease(extension_type).to_be_bytes());
     match extension_type {
-        EXT_SUPPORTED_GROUPS | EXT_SIGNATURE_ALGORITHMS => {
+        EXT_SUPPORTED_GROUPS => {
             let mut reader = Reader::new(body);
             let vector_len = usize::from(
                 reader
@@ -1089,21 +1116,36 @@ fn normalized_extension_digest(
             if vector_len == 0 || vector_len % 2 != 0 || vector_len != reader.remaining() {
                 return Err(ClientHelloClassError::Malformed);
             }
-            digest.update(
-                u16::try_from(vector_len)
+            // Same semantics as the cipher list: the offered set is the
+            // capability, and GREASE entries plus their shuffled positions
+            // are not.
+            hash_canonical_values(
+                reader
+                    .read_bytes(vector_len)
                     .map_err(|_| ClientHelloClassError::Malformed)?
-                    .to_be_bytes(),
+                    .chunks_exact(2)
+                    .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]])),
+                &mut digest,
             );
-            while !reader.is_empty() {
-                digest.update(
-                    canonical_grease(
-                        reader
-                            .read_u16()
-                            .map_err(|_| ClientHelloClassError::Malformed)?,
-                    )
-                    .to_be_bytes(),
-                );
+        }
+        EXT_SIGNATURE_ALGORITHMS => {
+            let mut reader = Reader::new(body);
+            let vector_len = usize::from(
+                reader
+                    .read_u16()
+                    .map_err(|_| ClientHelloClassError::Malformed)?,
+            );
+            if vector_len == 0 || vector_len % 2 != 0 || vector_len != reader.remaining() {
+                return Err(ClientHelloClassError::Malformed);
             }
+            hash_canonical_values(
+                reader
+                    .read_bytes(vector_len)
+                    .map_err(|_| ClientHelloClassError::Malformed)?
+                    .chunks_exact(2)
+                    .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]])),
+                &mut digest,
+            );
         }
         EXT_SUPPORTED_VERSIONS => {
             let mut reader = Reader::new(body);
@@ -1115,18 +1157,14 @@ fn normalized_extension_digest(
             if vector_len == 0 || vector_len % 2 != 0 || vector_len != reader.remaining() {
                 return Err(ClientHelloClassError::Malformed);
             }
-            digest
-                .update([u8::try_from(vector_len).map_err(|_| ClientHelloClassError::Malformed)?]);
-            while !reader.is_empty() {
-                digest.update(
-                    canonical_grease(
-                        reader
-                            .read_u16()
-                            .map_err(|_| ClientHelloClassError::Malformed)?,
-                    )
-                    .to_be_bytes(),
-                );
-            }
+            hash_canonical_values(
+                reader
+                    .read_bytes(vector_len)
+                    .map_err(|_| ClientHelloClassError::Malformed)?
+                    .chunks_exact(2)
+                    .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]])),
+                &mut digest,
+            );
         }
         EXT_KEY_SHARE => normalize_key_shares(body, &mut digest)?,
         EXT_PADDING => {
@@ -1204,6 +1242,13 @@ fn normalize_key_shares(body: &[u8], digest: &mut Sha256) -> Result<(), ClientHe
     Ok(())
 }
 
+///
+/// Every hashed quantity is structural, never variable: the payload and
+/// encapsulation lengths enter only through their presence in the framing,
+/// not through their values. uTLS Chrome randomizes the GREASE ECH payload
+/// length per handshake (observed: four 32-byte-step sizes across 40
+/// connections), and a length that carried into the digest split one
+/// capability set into one class per random draw.
 fn normalize_grease_ech(body: &[u8], digest: &mut Sha256) -> Result<(), ClientHelloClassError> {
     let mut reader = Reader::new(body);
     if reader
@@ -1214,22 +1259,20 @@ fn normalize_grease_ech(body: &[u8], digest: &mut Sha256) -> Result<(), ClientHe
         return Err(ClientHelloClassError::Malformed);
     }
     digest.update([0]);
-    digest.update(
-        reader
-            .read_u16()
-            .map_err(|_| ClientHelloClassError::Malformed)?
-            .to_be_bytes(),
-    );
-    digest.update(
-        reader
-            .read_u16()
-            .map_err(|_| ClientHelloClassError::Malformed)?
-            .to_be_bytes(),
-    );
+    // Version and config-id bytes: read for framing, never hashed. Their
+    // values are per-handshake variance.
+    reader
+        .read_u16()
+        .map_err(|_| ClientHelloClassError::Malformed)?;
+    reader
+        .read_u16()
+        .map_err(|_| ClientHelloClassError::Malformed)?;
     reader
         .read_u8()
         .map_err(|_| ClientHelloClassError::Malformed)?;
     digest.update(b"grease-config-id");
+    // Two length-prefixed blobs (encapsulation and payload). Their contents
+    // and sizes are variance, not capability; the framing is the validation.
     for label in [b"grease-encapsulation".as_slice(), b"grease-payload"] {
         let length = usize::from(
             reader
@@ -1239,11 +1282,6 @@ fn normalize_grease_ech(body: &[u8], digest: &mut Sha256) -> Result<(), ClientHe
         reader
             .read_bytes(length)
             .map_err(|_| ClientHelloClassError::Malformed)?;
-        digest.update(
-            u16::try_from(length)
-                .map_err(|_| ClientHelloClassError::Malformed)?
-                .to_be_bytes(),
-        );
         digest.update(label);
     }
     if !reader.is_empty() {
@@ -1845,6 +1883,154 @@ mod tests {
         );
     }
 
+    /// A minimal ClientHello with an explicit cipher list, mirroring the
+    /// fixture skeleton so GREASE placement can be varied exactly the way the
+    /// captured uTLS Chrome hellos vary it.
+    fn hello_with_ciphers_and_groups(ciphers: &[u16], groups: Option<&[u16]>) -> Vec<u8> {
+        let base = client_hello([0x10; 32], &[0x20; 32], "www.example.com", &[b"h2"]);
+        // Replace the single fixture cipher with the requested list.
+        // header(4) + legacy version(2) + random(32) + session-id length(1)
+        // + session-id(32)
+        let cipher_len_offset = 4 + 2 + 32 + 1 + 32;
+        let old_len = usize::from(u16::from_be_bytes([
+            base[cipher_len_offset],
+            base[cipher_len_offset + 1],
+        ]));
+        let mut out = Vec::with_capacity(base.len() + ciphers.len() * 2);
+        out.extend_from_slice(&base[..cipher_len_offset]);
+        out.extend_from_slice(
+            &u16::try_from(ciphers.len() * 2)
+                .expect("test ciphers fit")
+                .to_be_bytes(),
+        );
+        for cipher in ciphers {
+            out.extend_from_slice(&cipher.to_be_bytes());
+        }
+        out.extend_from_slice(&base[cipher_len_offset + 2 + old_len..]);
+        // The cipher list grew or shrank; the handshake length must follow.
+        let body_len = out.len() - 4;
+        out[1..4]
+            .copy_from_slice(&u32::try_from(body_len).expect("length fits").to_be_bytes()[1..]);
+
+        let Some(groups) = groups else {
+            return out;
+        };
+        // Replace the fixture supported_versions extension with a
+        // supported_groups one carrying the requested values.
+        let segments = extension_segments(&out).expect("base extensions must parse");
+        let version = segments
+            .iter()
+            .find(|segment| segment.extension_type == 0x002b)
+            .expect("fixture carries supported_versions");
+        let mut rebuilt: Vec<u8> = Vec::with_capacity(out.len());
+        rebuilt.extend_from_slice(&out[..version.wire.start]);
+        let mut body = Vec::new();
+        body.extend_from_slice(
+            &u16::try_from(groups.len() * 2)
+                .expect("groups fit")
+                .to_be_bytes(),
+        );
+        for group in groups {
+            body.extend_from_slice(&group.to_be_bytes());
+        }
+        rebuilt.extend_from_slice(&0x000a_u16.to_be_bytes());
+        rebuilt.extend_from_slice(
+            &u16::try_from(body.len())
+                .expect("groups body")
+                .to_be_bytes(),
+        );
+        rebuilt.extend_from_slice(&body);
+        rebuilt.extend_from_slice(&out[version.wire.end..]);
+        // The extension vector and handshake lengths grow by the delta.
+        // The extension-vector length field precedes the FIRST extension;
+        // supported_versions is not necessarily first.
+        let vector_len_offset = segments[0].wire.start - 2;
+        let declared = usize::from(u16::from_be_bytes([
+            rebuilt[vector_len_offset],
+            rebuilt[vector_len_offset + 1],
+        ]));
+        let delta = 4 + body.len() - (version.wire.end - version.wire.start);
+        rebuilt[vector_len_offset..vector_len_offset + 2].copy_from_slice(
+            &u16::try_from(declared + delta)
+                .expect("new length fits")
+                .to_be_bytes(),
+        );
+        let body_len = rebuilt.len() - 4;
+        rebuilt[1..4]
+            .copy_from_slice(&u32::try_from(body_len).expect("length fits").to_be_bytes()[1..]);
+        rebuilt
+    }
+
+    #[test]
+    fn grease_cipher_position_and_order_do_not_split_the_class() {
+        let plain = [0x1301_u16, 0x1302, 0x1303];
+        let grease_first = [0x1a1a_u16, 0x1301, 0x1302, 0x1303];
+        let grease_last = [0x1301_u16, 0x1302, 0x1303, 0x0a0a];
+        let reordered = [0x1303_u16, 0x1302, 0x1301];
+        let class = |ciphers: &[u16]| {
+            ClientHello::parse_message(&hello_with_ciphers_and_groups(ciphers, None))
+                .expect("cipher-list ClientHello must parse")
+                .normalized_profile_class()
+                .expect("class must normalize")
+        };
+        let base = class(&plain);
+        assert_eq!(base, class(&grease_first), "GREASE cipher at the front");
+        assert_eq!(base, class(&grease_last), "GREASE cipher at the back");
+        assert_eq!(
+            base,
+            class(&reordered),
+            "preference order is not a capability"
+        );
+        let different = class(&[0x1302_u16]);
+        assert_ne!(
+            base, different,
+            "a different suite set is a different class"
+        );
+    }
+
+    #[test]
+    fn grease_group_positions_normalize_but_a_real_group_change_does_not() {
+        let plain = [X25519_GROUP];
+        let shuffled = [0x3a3a_u16, X25519_GROUP, 0x2a2a];
+        let hybrid = [0x2a2a_u16, X25519_MLKEM768_GROUP, X25519_GROUP];
+        let class = |groups: &[u16]| {
+            ClientHello::parse_message(&hello_with_ciphers_and_groups(&[0x1301_u16], Some(groups)))
+                .expect("group-list ClientHello must parse")
+                .normalized_profile_class()
+                .expect("class must normalize")
+        };
+        let base = class(&plain);
+        assert_eq!(
+            base,
+            class(&shuffled),
+            "GREASE groups at shuffled positions"
+        );
+        assert_ne!(
+            base,
+            class(&hybrid),
+            "adding a real group is a capability change"
+        );
+    }
+
+    #[test]
+    fn a_grease_extension_coming_and_going_does_not_split_the_class() {
+        let bare = client_hello([0x10; 32], &[0x20; 32], "www.example.com", &[b"h2"]);
+        let with_grease = append_extension(bare.clone(), 0xaaaa, &[0x0a]);
+        let with_other_grease = append_extension(bare.clone(), 0x4a4a, &[]);
+        let class = |message: &Vec<u8>| {
+            ClientHello::parse_message(message)
+                .expect("ClientHello must parse")
+                .normalized_profile_class()
+                .expect("class must normalize")
+        };
+        let base = class(&bare);
+        assert_eq!(base, class(&with_grease));
+        assert_eq!(base, class(&with_other_grease));
+        // A real extension still splits the class: presence is semantic.
+        let with_session_ticket = append_extension(bare, 0x0023, &[1, 2, 3]);
+        assert_ne!(base, class(&with_session_ticket));
+    }
+
     #[test]
     fn grease_ech_content_normalizes_but_observable_length_does_not() {
         let base = client_hello([0x10; 32], &[0x20; 32], "www.example.com", &[b"h2"]);
@@ -1866,9 +2052,10 @@ mod tests {
             first.normalized_profile_class(),
             second.normalized_profile_class()
         );
-        assert_ne!(
+        assert_eq!(
             first.normalized_profile_class(),
-            longer.normalized_profile_class()
+            longer.normalized_profile_class(),
+            "the GREASE ECH payload length is variance, not capability"
         );
     }
 
