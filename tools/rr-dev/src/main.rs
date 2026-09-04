@@ -646,8 +646,10 @@ enum BenchCommand {
         /// Payload size in MiB (xray suite).
         #[arg(long, default_value_t = 64)]
         payload_mib: u64,
-        /// Balanced ABBA blocks of four slots (setup-rate suites).
-        #[arg(long, default_value_t = 3)]
+        /// Balanced ABBA blocks of four slots (setup-rate suites). The default is
+        /// the count below which the block bootstrap resolves nothing; lower it
+        /// only for a characterization run whose numbers nothing will cite.
+        #[arg(long, default_value_t = bench::aggregate::RESOLVING_BLOCKS)]
         blocks: usize,
         /// Connections per sample (setup-rate suites).
         #[arg(long, default_value_t = 96)]

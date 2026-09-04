@@ -63,3 +63,4 @@ of the law is what it is.
 | [0019](0019-one-current-configuration-schema.md) | One current configuration schema | Accepted |
 | [0020](0020-aws-lc-rs-computes-per-session-x25519.md) | `aws-lc-rs` computes the per-session X25519 agreements | Accepted on measurement |
 | [0021](0021-sha-hkdf-hmac-and-ed25519-stay-on-rustcrypto.md) | SHA, HKDF, HMAC and Ed25519 stay on RustCrypto | Rejected on measurement |
+| [0022](0022-paired-block-resolution.md) | A paired benchmark interval must not outrun its block count | Accepted |
