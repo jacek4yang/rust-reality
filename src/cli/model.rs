@@ -16,7 +16,7 @@ use clap::{Args, Parser, Subcommand};
 use crate::{
     assets::AssetLoadError,
     config::LoadError,
-    crypto::KeyGenerationError,
+    crypto::EntropyError,
     server::{
         probe::DestinationProbeError, production::ProductionServerError,
         routing::RoutingCompileError,
@@ -171,7 +171,7 @@ pub struct CheckCoverArgs {
 #[derive(Debug)]
 pub enum CliError {
     Config(LoadError),
-    Key(KeyGenerationError),
+    Key(EntropyError),
     Probe(DestinationProbeError),
     Assets(AssetLoadError),
     Routing(RoutingCompileError),
@@ -222,8 +222,8 @@ impl From<LoadError> for CliError {
     }
 }
 
-impl From<KeyGenerationError> for CliError {
-    fn from(source: KeyGenerationError) -> Self {
+impl From<EntropyError> for CliError {
+    fn from(source: EntropyError) -> Self {
         Self::Key(source)
     }
 }

@@ -647,7 +647,7 @@ pub fn seal_transfer(
     let ephemeral = EphemeralSecret::random_from_rng(&mut UnwrapErr(SysRng));
     let ephemeral_public = PublicKey::from(&ephemeral);
     let mut nonce = [0_u8; NONCE_LEN];
-    getrandom::fill(&mut nonce).map_err(|_| HandoffError::Random)?;
+    crate::crypto::entropy::fill(&mut nonce).map_err(|_| HandoffError::Random)?;
 
     let mut blob = Zeroizing::new(Vec::new());
     encode_blob(state, &mut blob)?;

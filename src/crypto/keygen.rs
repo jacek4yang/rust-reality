@@ -1,27 +1,12 @@
-use std::{error::Error, fmt};
-
 use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 use uuid::Uuid;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroize;
 
-use crate::config::SecretString;
-
-/// Operating-system random generation failed.
-#[derive(Debug)]
-pub struct KeyGenerationError(getrandom::Error);
-
-impl fmt::Display for KeyGenerationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("operating-system random generation failed")
-    }
-}
-
-impl Error for KeyGenerationError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        Some(&self.0)
-    }
-}
+use crate::{
+    config::SecretString,
+    crypto::entropy::{self, EntropyError},
+};
 
 /// One URL-safe, unpadded X25519 key pair compatible with REALITY.
 #[derive(Debug)]
@@ -55,8 +40,8 @@ impl X25519KeyPair {
 /// # Errors
 ///
 /// Returns an error if the operating system cannot provide random bytes.
-pub fn generate_uuid() -> Result<Uuid, KeyGenerationError> {
-    let mut bytes = random_bytes::<16>()?;
+pub fn generate_uuid() -> Result<Uuid, EntropyError> {
+    let mut bytes = entropy::bytes::<16>()?;
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     Ok(Uuid::from_bytes(bytes))
@@ -70,10 +55,10 @@ pub fn generate_uuid() -> Result<Uuid, KeyGenerationError> {
 /// # Errors
 ///
 /// Returns an error if the operating system cannot provide random bytes.
-pub fn generate_short_id(bytes: u8) -> Result<String, KeyGenerationError> {
+pub fn generate_short_id(bytes: u8) -> Result<String, EntropyError> {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let width = usize::from(bytes.clamp(1, 8));
-    let random = random_bytes::<8>()?;
+    let random = entropy::bytes::<8>()?;
     let mut encoded = String::with_capacity(width * 2);
     for byte in random.into_iter().take(width) {
         encoded.push(char::from(HEX[usize::from(byte >> 4)]));
@@ -87,8 +72,8 @@ pub fn generate_short_id(bytes: u8) -> Result<String, KeyGenerationError> {
 /// # Errors
 ///
 /// Returns an error if the operating system cannot provide random bytes.
-pub fn generate_x25519_key_pair() -> Result<X25519KeyPair, KeyGenerationError> {
-    let secret = StaticSecret::from(random_bytes::<32>()?);
+pub fn generate_x25519_key_pair() -> Result<X25519KeyPair, EntropyError> {
+    let secret = StaticSecret::from(entropy::bytes::<32>()?);
     let public = PublicKey::from(&secret);
     Ok(X25519KeyPair {
         private_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(secret.to_bytes())),
@@ -101,18 +86,11 @@ pub fn generate_x25519_key_pair() -> Result<X25519KeyPair, KeyGenerationError> {
 /// # Errors
 ///
 /// Returns an error if the operating system cannot provide random bytes.
-pub fn generate_node_key() -> Result<SecretString, KeyGenerationError> {
-    let mut bytes = random_bytes::<32>()?;
+pub fn generate_node_key() -> Result<SecretString, EntropyError> {
+    let mut bytes = entropy::bytes::<32>()?;
     let encoded = BASE64_URL_SAFE_NO_PAD.encode(bytes);
     bytes.zeroize();
     Ok(SecretString::new(encoded))
-}
-
-/// Draws `LENGTH` bytes from the operating system entropy source.
-fn random_bytes<const LENGTH: usize>() -> Result<[u8; LENGTH], KeyGenerationError> {
-    let mut bytes = [0_u8; LENGTH];
-    getrandom::fill(&mut bytes).map_err(KeyGenerationError)?;
-    Ok(bytes)
 }
 
 #[cfg(test)]

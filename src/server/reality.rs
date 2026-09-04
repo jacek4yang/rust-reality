@@ -575,7 +575,7 @@ impl RealityAcceptor {
         let profiles = self.profiles.as_ref()?;
         let profile = profiles.lookup(hello)?;
         let mut server_random = [0_u8; 32];
-        getrandom::fill(&mut server_random).ok()?;
+        crate::crypto::entropy::fill(&mut server_random).ok()?;
         let materialized = match profile.materialize(hello, server_random) {
             Ok(materialized) => materialized,
             Err(_) => {

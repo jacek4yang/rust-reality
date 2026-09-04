@@ -249,9 +249,10 @@ impl ProbeClientHello {
         let mut random = [0_u8; 32];
         let mut session_id = [0_u8; SESSION_ID_LEN];
         let mut private_bytes = Zeroizing::new([0_u8; 32]);
-        getrandom::fill(&mut random).map_err(|_| DestinationProbeError::Random)?;
-        getrandom::fill(&mut session_id).map_err(|_| DestinationProbeError::Random)?;
-        getrandom::fill(private_bytes.as_mut()).map_err(|_| DestinationProbeError::Random)?;
+        crate::crypto::entropy::fill(&mut random).map_err(|_| DestinationProbeError::Random)?;
+        crate::crypto::entropy::fill(&mut session_id).map_err(|_| DestinationProbeError::Random)?;
+        crate::crypto::entropy::fill(private_bytes.as_mut())
+            .map_err(|_| DestinationProbeError::Random)?;
         let private = StaticSecret::from(*private_bytes);
         let public = PublicKey::from(&private).to_bytes();
 

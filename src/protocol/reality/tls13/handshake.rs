@@ -676,7 +676,8 @@ fn agree_key_share(
             let encapsulation_key =
                 EncapsulationKey768::new(&encoded).map_err(|_| RealityHandshakeError::MlKem)?;
             let mut randomness = Zeroizing::new(ml_kem::B32::default());
-            getrandom::fill(randomness.as_mut()).map_err(|_| RealityHandshakeError::Random)?;
+            crate::crypto::entropy::fill(randomness.as_mut())
+                .map_err(|_| RealityHandshakeError::Random)?;
             let (ciphertext, mlkem_shared) =
                 encapsulation_key.encapsulate_deterministic(&randomness);
             let mlkem_shared = Zeroizing::new(mlkem_shared);

@@ -586,7 +586,7 @@ fn profile_is_current(
 
 fn jittered_ttl() -> Duration {
     let mut bytes = [0_u8; 8];
-    if getrandom::fill(&mut bytes).is_err() {
+    if crate::crypto::entropy::fill(&mut bytes).is_err() {
         return PROFILE_TTL;
     }
     let spread = PROFILE_TTL_JITTER.as_secs().saturating_mul(2).max(1);

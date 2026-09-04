@@ -831,7 +831,7 @@ fn fresh_nxr_request(
         .map_err(|_| OutboundConnectError::NxrClock)?
         .as_secs();
     let mut nonce = [0_u8; 16];
-    getrandom::fill(&mut nonce).map_err(|_| OutboundConnectError::NxrRandom)?;
+    crate::crypto::entropy::fill(&mut nonce).map_err(|_| OutboundConnectError::NxrRandom)?;
     let mut request = Vec::new();
     encode_request(destination, timestamp, nonce, &settings.key, &mut request)
         .map_err(OutboundConnectError::NxrProtocol)?;

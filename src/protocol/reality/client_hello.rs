@@ -656,7 +656,7 @@ fn fresh_x25519_secret() -> Result<StaticSecret, CoverProbeError> {
 }
 
 fn fill_random(bytes: &mut [u8]) -> Result<(), CoverProbeError> {
-    getrandom::fill(bytes).map_err(|_| CoverProbeError::Random)
+    crate::crypto::entropy::fill(bytes).map_err(|_| CoverProbeError::Random)
 }
 
 #[derive(Clone)]
