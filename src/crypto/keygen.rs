@@ -1,11 +1,13 @@
 use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 use uuid::Uuid;
-use x25519_dalek::{PublicKey, StaticSecret};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     config::SecretString,
-    crypto::entropy::{self, EntropyError},
+    crypto::{
+        entropy::{self, EntropyError},
+        x25519::StaticX25519Key,
+    },
 };
 
 /// One URL-safe, unpadded X25519 key pair compatible with REALITY.
@@ -67,17 +69,25 @@ pub fn generate_short_id(bytes: u8) -> Result<String, EntropyError> {
     Ok(encoded)
 }
 
-/// Generates one X25519 key pair using `x25519-dalek` and OS entropy.
+/// Generates one X25519 key pair from OS entropy.
+///
+/// Derives the public half through [`StaticX25519Key`] — the same boundary the
+/// server imports the configured key with — so a generated pair is validated by
+/// the implementation that will use it rather than by a second one that merely
+/// agrees today. The private key is the 32 drawn bytes verbatim: X25519 clamps
+/// at use, so there is nothing to normalise on the way out.
 ///
 /// # Errors
 ///
 /// Returns an error if the operating system cannot provide random bytes.
 pub fn generate_x25519_key_pair() -> Result<X25519KeyPair, EntropyError> {
-    let secret = StaticSecret::from(entropy::bytes::<32>()?);
-    let public = PublicKey::from(&secret);
+    let mut secret = Zeroizing::new(entropy::bytes::<32>()?);
+    let public = StaticX25519Key::new(&secret).public_key();
+    let encoded_private = BASE64_URL_SAFE_NO_PAD.encode(secret.as_slice());
+    secret.zeroize();
     Ok(X25519KeyPair {
-        private_key: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(secret.to_bytes())),
-        public_key: BASE64_URL_SAFE_NO_PAD.encode(public.as_bytes()),
+        private_key: SecretString::new(encoded_private),
+        public_key: BASE64_URL_SAFE_NO_PAD.encode(public),
     })
 }
 
@@ -97,6 +107,9 @@ pub fn generate_node_key() -> Result<SecretString, EntropyError> {
 mod tests {
     use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
     use uuid::{Variant, Version};
+    // Kept deliberately: deriving the public half with an *independent*
+    // implementation is what makes the check below evidence rather than a
+    // tautology. Production no longer uses it here.
     use x25519_dalek::{PublicKey, StaticSecret};
 
     use super::{generate_node_key, generate_short_id, generate_uuid, generate_x25519_key_pair};
@@ -129,6 +142,9 @@ mod tests {
         );
     }
 
+    /// The generated public half must be what an independent implementation
+    /// derives from the generated private half, or a configuration this tool
+    /// produced would not authenticate against a server that imports it.
     #[test]
     fn x25519_public_key_matches_private_key() {
         let pair = generate_x25519_key_pair().expect("OS randomness must be available in tests");
