@@ -62,7 +62,6 @@ subtle = { version = "2.6.1", default-features = false }
 tokio = { version = "1.52.3", default-features = false, features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 ureq = { version = "3.3.0", default-features = false, features = ["rustls"] }
 uuid = { version = "1.24.0", default-features = false, features = ["std"] }
-x25519-dalek = { version = "3.0.0", default-features = false, features = ["precomputed-tables", "static_secrets", "zeroize"] }
 zeroize = { version = "1.9.0", default-features = false, features = ["alloc", "derive"] }
 hickory-resolver = { version = "0.26.1", default-features = false, features = ["tokio"] }
 
@@ -110,6 +109,10 @@ fuzzing = []
 # `tests/x25519_differential.rs` compares our X25519 against. Production no
 # longer uses it, which `cargo tree -e normal` proves.
 aws-lc-rs = { version = "1.18.1", default-features = false, features = ["aws-lc-sys"] }
+# Same status: the oracle the in-file differential tests and
+# `tests/x25519_differential.rs` compare `rr-crypto` against. C3c removed the
+# last production call site; `cargo tree -e normal` proves it is test-only.
+x25519-dalek = { version = "3.0.0", default-features = false, features = ["precomputed-tables", "static_secrets", "zeroize"] }
 allocation-counter = "0.8.1"
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 ring = { version = "0.17.14", default-features = false }

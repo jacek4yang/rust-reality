@@ -15,7 +15,6 @@ use rust_reality::protocol::{
     reality::tls13::{CipherSuite, TrafficKeys},
     vless::{Address, Destination},
 };
-use x25519_dalek::{PublicKey, StaticSecret};
 
 // Handoff continuation reconstruction target: builds a structured
 // ContinuationState, seals it into a LINE→LANDING transfer message, and
@@ -143,9 +142,11 @@ fuzz_target!(|input: &[u8]| {
 
     // Fixed synthetic landing key material; never a real key.
     let psk = HandoffPsk::new([0x55; 32]);
-    let landing_secret = StaticSecret::from([0x77; 32]);
-    let landing_public = PublicKey::from(&landing_secret);
-    let keys = HandoffLandingKeys::single(HandoffPsk::new([0x55; 32]), landing_secret);
+    let landing_public = rust_reality::crypto::StaticX25519Key::new(&[0x77; 32]).public_key();
+    let keys = HandoffLandingKeys::single(
+        HandoffPsk::new([0x55; 32]),
+        rust_reality::crypto::StaticX25519Key::new(&[0x77; 32]),
+    );
     let client_random = [0x42; 32];
     let timestamp = 1_700_000_000_u64;
 

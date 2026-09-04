@@ -43,15 +43,13 @@ use chacha20poly1305::{
     ChaCha20Poly1305, KeyInit,
     aead::{AeadInOut, Nonce, Tag, array::Array},
 };
-use getrandom::SysRng;
-use getrandom::rand_core::UnwrapErr;
 use hkdf::Hkdf;
 use sha2::Sha256;
-use x25519_dalek::{EphemeralSecret, PublicKey, StaticSecret};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use super::reality::tls13::{CipherSuite, TrafficKeys};
 use super::vless::{Address, Destination};
+use crate::crypto::{EphemeralX25519Key, StaticX25519Key};
 
 /// Handoff wire protocol version carried in the fixed header.
 pub const HANDOFF_PROTOCOL_VERSION: u8 = 1;
@@ -153,24 +151,27 @@ pub const MAX_PREVIOUS_KEYS: usize = 2;
 /// zero-downtime rotation window follow. Senders always seal with the active
 /// pair only, so previous keys never change the wire format — they only widen
 /// what the landing will open while line nodes move to the new key material.
-/// `Debug` never reveals key bytes.
+/// `Debug` never reveals key bytes. Secrets are shared behind `Arc` rather
+/// than cloned: `Clone` exists so one compiled handler can fan out across
+/// connections, and copying key material to satisfy that derive would widen
+/// the zeroization high-water mark for no requirement.
 #[derive(Clone)]
 pub struct HandoffLandingKeys {
     active_psk: HandoffPsk,
     previous_psks: Vec<HandoffPsk>,
-    active_secret: StaticSecret,
-    previous_secrets: Vec<StaticSecret>,
+    active_secret: Arc<StaticX25519Key>,
+    previous_secrets: Vec<Arc<StaticX25519Key>>,
 }
 
 impl HandoffLandingKeys {
     /// A landing that accepts exactly one active key pair — the steady state
     /// outside any rotation window.
     #[must_use]
-    pub fn single(active_psk: HandoffPsk, active_secret: StaticSecret) -> Self {
+    pub fn single(active_psk: HandoffPsk, active_secret: StaticX25519Key) -> Self {
         Self {
             active_psk,
             previous_psks: Vec::new(),
-            active_secret,
+            active_secret: Arc::new(active_secret),
             previous_secrets: Vec::new(),
         }
     }
@@ -184,8 +185,8 @@ impl HandoffLandingKeys {
     pub fn with_previous(
         active_psk: HandoffPsk,
         previous_psks: Vec<HandoffPsk>,
-        active_secret: StaticSecret,
-        previous_secrets: Vec<StaticSecret>,
+        active_secret: StaticX25519Key,
+        previous_secrets: Vec<StaticX25519Key>,
     ) -> Option<Self> {
         if previous_psks.len() > MAX_PREVIOUS_KEYS || previous_secrets.len() > MAX_PREVIOUS_KEYS {
             return None;
@@ -193,8 +194,8 @@ impl HandoffLandingKeys {
         Some(Self {
             active_psk,
             previous_psks,
-            active_secret,
-            previous_secrets,
+            active_secret: Arc::new(active_secret),
+            previous_secrets: previous_secrets.into_iter().map(Arc::new).collect(),
         })
     }
 
@@ -207,13 +208,13 @@ impl HandoffLandingKeys {
     /// where one list moved and the other has not. The bound is 3 x 3 by
     /// [`MAX_PREVIOUS_KEYS`], and every entry is tried only after the single
     /// hoisted nonce reserve.
-    fn candidates(&self) -> impl Iterator<Item = (&HandoffPsk, &StaticSecret)> {
+    fn candidates(&self) -> impl Iterator<Item = (&HandoffPsk, &StaticX25519Key)> {
         std::iter::once(&self.active_psk)
             .chain(&self.previous_psks)
             .flat_map(|psk| {
                 std::iter::once(&self.active_secret)
                     .chain(&self.previous_secrets)
-                    .map(move |secret| (psk, secret))
+                    .map(move |secret| (psk, Arc::as_ref(secret)))
             })
     }
 
@@ -639,13 +640,13 @@ pub fn message_len_from_header(header: &[u8]) -> Result<usize, HandoffError> {
 pub fn seal_transfer(
     state: &ContinuationState,
     psk: &HandoffPsk,
-    landing_public: &PublicKey,
+    landing_public: &[u8; 32],
     client_random: [u8; 32],
     timestamp: u64,
     output: &mut Vec<u8>,
 ) -> Result<(), HandoffError> {
-    let ephemeral = EphemeralSecret::random_from_rng(&mut UnwrapErr(SysRng));
-    let ephemeral_public = PublicKey::from(&ephemeral);
+    let ephemeral = EphemeralX25519Key::generate().map_err(|_| HandoffError::Random)?;
+    let ephemeral_public = *ephemeral.public_key();
     let mut nonce = [0_u8; NONCE_LEN];
     crate::crypto::entropy::fill(&mut nonce).map_err(|_| HandoffError::Random)?;
 
@@ -655,18 +656,18 @@ pub fn seal_transfer(
     let header = encode_header(
         timestamp,
         nonce,
-        ephemeral_public.as_bytes(),
+        &ephemeral_public,
         &client_random,
         state.user_id(),
         blob_len,
     );
 
-    let shared = ephemeral.diffie_hellman(landing_public);
-    if !shared.was_contributory() {
-        return Err(HandoffError::Authentication);
-    }
-    let (key, aead_nonce) =
-        derive_aead(&header, shared.as_bytes(), psk, landing_public.as_bytes())?;
+    // A non-contributory LANDING share agrees to all zeros, which would
+    // authenticate nothing; the contributory check is folded into `None`.
+    let shared = ephemeral
+        .agree(landing_public)
+        .ok_or(HandoffError::Authentication)?;
+    let (key, aead_nonce) = derive_aead(&header, &shared, psk, landing_public)?;
     let cipher =
         ChaCha20Poly1305::new_from_slice(key.as_slice()).map_err(|_| HandoffError::Crypto)?;
     let nonce_bytes: Nonce<ChaCha20Poly1305> = Array(*aead_nonce);
@@ -724,7 +725,7 @@ pub fn open_transfer(
     }
     replay.reserve(header.nonce)?;
 
-    let ephemeral_public = PublicKey::from(header.ephemeral_public);
+    let ephemeral_public = header.ephemeral_public;
     let ciphertext_end = HEADER_LEN
         .checked_add(header.blob_len)
         .ok_or(HandoffError::Length)?;
@@ -751,17 +752,11 @@ pub fn open_transfer(
     // closed Authentication error is ever reported when none matches.
     let mut decrypted = false;
     for (psk, landing_secret) in keys.candidates() {
-        let shared = landing_secret.diffie_hellman(&ephemeral_public);
-        if !shared.was_contributory() {
+        let Some(shared) = landing_secret.agree(&ephemeral_public) else {
             continue;
-        }
-        let landing_public = PublicKey::from(landing_secret);
-        let (key, aead_nonce) = derive_aead(
-            &header.raw,
-            shared.as_bytes(),
-            psk,
-            landing_public.as_bytes(),
-        )?;
+        };
+        let landing_public = landing_secret.public_key();
+        let (key, aead_nonce) = derive_aead(&header.raw, &shared, psk, &landing_public)?;
         let cipher =
             ChaCha20Poly1305::new_from_slice(key.as_slice()).map_err(|_| HandoffError::Crypto)?;
         let nonce_bytes: Nonce<ChaCha20Poly1305> = Array(*aead_nonce);
@@ -1185,7 +1180,7 @@ mod tests {
         CONTINUATION_STATE_VERSION, ContinuationState, HANDOFF_PROTOCOL_VERSION, HEADER_LEN,
         HandoffError, HandoffLandingKeys, HandoffPsk, HandoffReplayCache, MAX_BLOB_LEN,
         MAX_MESSAGE_LEN, MAX_PENDING_CIPHERTEXT_LEN, MAX_PREFETCHED_PLAINTEXT_LEN,
-        MAX_PREVIOUS_KEYS, MonotonicInstant, NONCE_LEN, decode_blob, encode_blob,
+        MAX_PREVIOUS_KEYS, MonotonicInstant, NONCE_LEN, StaticX25519Key, decode_blob, encode_blob,
         message_len_from_header, open_transfer, seal_transfer,
     };
     use crate::protocol::reality::tls13::{CipherSuite, TrafficKeys};
@@ -1194,10 +1189,13 @@ mod tests {
     const NOW: u64 = 1_700_000_000;
     const WINDOW: u64 = 30;
 
-    fn landing_key_pair(seed: u8) -> (StaticSecret, PublicKey) {
-        let secret = StaticSecret::from([seed; 32]);
-        let public = PublicKey::from(&secret);
-        (secret, public)
+    /// Key material for one landing, derived independently: the public half
+    /// comes from `x25519-dalek`, so every seal/open round trip in this module
+    /// also verifies the production public-key derivation against the
+    /// previous provider.
+    fn landing_key_pair(seed: u8) -> ([u8; 32], [u8; 32]) {
+        let public = PublicKey::from(&StaticSecret::from([seed; 32])).to_bytes();
+        ([seed; 32], public)
     }
 
     fn test_state(pending: Vec<u8>, prefetched: Vec<u8>) -> ContinuationState {
@@ -1227,7 +1225,7 @@ mod tests {
         HandoffReplayCache::new(1_024, Duration::from_secs(120)).expect("test cache")
     }
 
-    fn seal(state: &ContinuationState, psk: &HandoffPsk, public: &PublicKey) -> Vec<u8> {
+    fn seal(state: &ContinuationState, psk: &HandoffPsk, public: &[u8; 32]) -> Vec<u8> {
         let mut message = Vec::new();
         seal_transfer(state, psk, public, [0x44; 32], NOW, &mut message)
             .expect("test state must seal");
@@ -1237,13 +1235,13 @@ mod tests {
     fn open_error(
         message: &[u8],
         psk: &HandoffPsk,
-        secret: &StaticSecret,
+        secret: &[u8; 32],
         cache: &HandoffReplayCache,
         now: u64,
     ) -> HandoffError {
         open_transfer(
             message,
-            &HandoffLandingKeys::single(psk.clone(), secret.clone()),
+            &HandoffLandingKeys::single(psk.clone(), StaticX25519Key::new(secret)),
             cache,
             now,
             WINDOW,
@@ -1281,7 +1279,7 @@ mod tests {
 
         let opened = open_transfer(
             &message,
-            &HandoffLandingKeys::single(psk, landing_secret),
+            &HandoffLandingKeys::single(psk, StaticX25519Key::new(&landing_secret)),
             &test_cache(),
             NOW,
             WINDOW,
@@ -1308,7 +1306,7 @@ mod tests {
             assert!(message.len() <= MAX_MESSAGE_LEN);
             let opened = open_transfer(
                 &message,
-                &HandoffLandingKeys::single(psk.clone(), landing_secret.clone()),
+                &HandoffLandingKeys::single(psk.clone(), StaticX25519Key::new(&landing_secret)),
                 &test_cache(),
                 NOW,
                 WINDOW,
@@ -1371,7 +1369,7 @@ mod tests {
 
         open_transfer(
             &message,
-            &HandoffLandingKeys::single(psk.clone(), landing_secret.clone()),
+            &HandoffLandingKeys::single(psk.clone(), StaticX25519Key::new(&landing_secret)),
             &cache,
             NOW,
             WINDOW,
@@ -1406,7 +1404,7 @@ mod tests {
         // Boundary values inside the window still authenticate.
         open_transfer(
             &message,
-            &HandoffLandingKeys::single(psk, landing_secret),
+            &HandoffLandingKeys::single(psk, StaticX25519Key::new(&landing_secret)),
             &test_cache(),
             NOW + WINDOW,
             WINDOW,
@@ -1481,14 +1479,14 @@ mod tests {
 
     /// A landing mid-rotation: the new pair is active, the retired pair is
     /// still accepted inside the bounded window.
-    fn rotating_landing_keys() -> (HandoffLandingKeys, PublicKey, PublicKey) {
+    fn rotating_landing_keys() -> (HandoffLandingKeys, [u8; 32], [u8; 32]) {
         let (old_secret, old_public) = landing_key_pair(0x90);
         let (new_secret, new_public) = landing_key_pair(0x91);
         let keys = HandoffLandingKeys::with_previous(
             HandoffPsk::new([0x66; 32]),
             vec![HandoffPsk::new([0x65; 32])],
-            new_secret,
-            vec![old_secret],
+            StaticX25519Key::new(&new_secret),
+            vec![StaticX25519Key::new(&old_secret)],
         )
         .expect("bounded previous lists must build");
         (keys, old_public, new_public)
@@ -1521,8 +1519,10 @@ mod tests {
 
         // Once the retired keys are dropped the window is closed: the same
         // old-key transfer fails closed while the active pair still opens.
-        let closed_keys =
-            HandoffLandingKeys::single(HandoffPsk::new([0x66; 32]), landing_key_pair(0x91).0);
+        let closed_keys = HandoffLandingKeys::single(
+            HandoffPsk::new([0x66; 32]),
+            StaticX25519Key::new(&landing_key_pair(0x91).0),
+        );
         assert!(!closed_keys.rotation_window_open());
         assert_eq!(
             open_with_keys(&old_message, &closed_keys, &test_cache()),
@@ -1550,9 +1550,8 @@ mod tests {
             .expect("active PSK with the retired static key must open");
 
         // A pair outside every candidate still fails closed.
-        let (outside_secret, outside_public) = landing_key_pair(0x92);
+        let (_, outside_public) = landing_key_pair(0x92);
         let outside_message = seal(&state, &HandoffPsk::new([0x67; 32]), &outside_public);
-        drop(outside_secret);
         assert_eq!(
             open_with_keys(&outside_message, &window_keys, &test_cache()),
             Err(HandoffError::Authentication)
@@ -1638,33 +1637,19 @@ mod tests {
 
     #[test]
     fn previous_key_lists_are_bounded() {
-        let (secret, _) = landing_key_pair(0x93);
+        let secret = || StaticX25519Key::new(&landing_key_pair(0x93).0);
         let psk = || HandoffPsk::new([0x68; 32]);
         let too_many_psks = vec![psk(), psk(), psk()];
         assert!(
-            HandoffLandingKeys::with_previous(psk(), too_many_psks, secret.clone(), Vec::new())
+            HandoffLandingKeys::with_previous(psk(), too_many_psks, secret(), Vec::new()).is_none()
+        );
+        let too_many_secrets = vec![secret(), secret(), secret()];
+        assert!(
+            HandoffLandingKeys::with_previous(psk(), Vec::new(), secret(), too_many_secrets)
                 .is_none()
         );
-        let too_many_secrets = vec![secret.clone(), secret.clone(), secret];
-        assert!(
-            HandoffLandingKeys::with_previous(
-                psk(),
-                Vec::new(),
-                landing_key_pair(0x93).0,
-                too_many_secrets
-            )
-            .is_none()
-        );
         let at_bound = vec![psk(), psk()];
-        assert!(
-            HandoffLandingKeys::with_previous(
-                psk(),
-                at_bound,
-                landing_key_pair(0x93).0,
-                Vec::new()
-            )
-            .is_some()
-        );
+        assert!(HandoffLandingKeys::with_previous(psk(), at_bound, secret(), Vec::new()).is_some());
         assert_eq!(MAX_PREVIOUS_KEYS, 2);
     }
 
@@ -1697,7 +1682,7 @@ mod tests {
             let message = seal(&state, &psk, &landing_public);
             let opened = open_transfer(
                 &message,
-                &HandoffLandingKeys::single(psk.clone(), landing_secret.clone()),
+                &HandoffLandingKeys::single(psk.clone(), StaticX25519Key::new(&landing_secret)),
                 &test_cache(),
                 NOW,
                 WINDOW,
@@ -1780,7 +1765,7 @@ mod tests {
         let keys = HandoffLandingKeys::with_previous(
             psk,
             vec![HandoffPsk::new([0x65; 32])],
-            secret,
+            StaticX25519Key::new(&secret),
             Vec::new(),
         )
         .expect("bounded previous lists must build");
