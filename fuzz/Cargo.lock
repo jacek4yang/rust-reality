@@ -1178,6 +1178,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rr-crypto"
+version = "0.1.0"
+dependencies = [
+ "zeroize",
+]
+
+[[package]]
 name = "rr-linux"
 version = "0.1.0"
 dependencies = [
@@ -1191,7 +1198,7 @@ version = "0.1.0"
 
 [[package]]
 name = "rust-reality"
-version = "1.8.0"
+version = "1.9.0"
 dependencies = [
  "aes-gcm",
  "aho-corasick",
@@ -1209,6 +1216,7 @@ dependencies = [
  "ml-kem",
  "regex",
  "ring",
+ "rr-crypto",
  "rr-linux",
  "rr-session",
  "schemars",

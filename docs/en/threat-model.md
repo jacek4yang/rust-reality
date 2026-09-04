@@ -50,10 +50,20 @@ collector, not arbitrary user observations, is authoritative; it publishes
 only after four controlled responses agree. Profiles erase cover random,
 session ID, ephemeral key exchange, and traffic secrets, expire with jitter,
 and never cross configuration generations. Unknown GREASE/ECH shapes,
-unsupported PSK, unexpected EncryptedExtensions, profile disagreement, stale
+unsupported PSK, malformed EncryptedExtensions, profile disagreement, stale
 state, or local-flight sizing failure selects live cover instead of guessing.
 An authorized client can at most consume one of 16 bounded nomination slots;
 it cannot publish cover semantics or influence an existing validated profile.
+
+The collector reads the cover's EncryptedExtensions for two things only: proof
+that the record decrypts under the reconstructed schedule, and the ALPN the
+cover selected. Every other structurally valid extension is discarded, because
+the local flight — on the live path as much as the prebuilt one — emits its own
+ALPN-only EncryptedExtensions and pads to the cover's observed record length,
+so a discarded extension is one the server flight would never have carried.
+An accepted `early_data` is the exception: it asserts a 0-RTT negotiation the
+class model excludes, and that class stays live-only. See
+[ADR 0025](../adr/0025-cover-profiles-observe-but-do-not-reproduce-encrypted-extensions.md).
 
 This does not claim universal TLS indistinguishability. The narrower objective
 is no clear deterministic semantic difference for a validated class: selected
