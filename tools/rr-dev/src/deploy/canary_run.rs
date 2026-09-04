@@ -1291,6 +1291,9 @@ fn sample_host(
     )?;
     let rss_kib = proc_status_value(&status, "VmRSS:").unwrap_or(0);
     let threads = proc_status_value(&status, "Threads:").unwrap_or(0);
+    // One line per descriptor, with no format string: a `-printf` escape does
+    // not survive the remote login shell, and counting its output silently
+    // reported one descriptor for every process that had any (#229).
     let descriptors = checked(
         transport,
         host,
@@ -1302,8 +1305,6 @@ fn sample_host(
             "1".to_owned(),
             "-maxdepth".to_owned(),
             "1".to_owned(),
-            "-printf".to_owned(),
-            "x\\n".to_owned(),
         ],
         "sample descriptors",
     )?;
@@ -1321,7 +1322,13 @@ fn sample_host(
         pid,
         rss_kib,
         pss_kib,
-        fd: i64::try_from(descriptors.lines().count()).unwrap_or(i64::MAX),
+        fd: i64::try_from(
+            descriptors
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .count(),
+        )
+        .unwrap_or(i64::MAX),
         threads,
     })
 }
