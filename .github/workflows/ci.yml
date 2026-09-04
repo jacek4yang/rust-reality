@@ -91,10 +91,14 @@ jobs:
       - name: Install Rust toolchain
         run: rustup toolchain install
 
-      - name: Install the AArch64 target and cross linker
+      - name: Install the AArch64 target and cross toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends gcc-aarch64-linux-gnu
+          # libc6-dev-arm64-cross is not pulled in by the compiler package, and
+          # without it `ring`'s C build fails on a missing target header rather
+          # than on anything to do with this repository.
+          sudo apt-get install --yes --no-install-recommends \
+            gcc-aarch64-linux-gnu libc6-dev-arm64-cross
           rustup target add aarch64-unknown-linux-gnu
 
       # `crates/rr-crypto` carries AArch64 assembly that nothing else in this
