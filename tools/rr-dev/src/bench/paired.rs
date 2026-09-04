@@ -342,7 +342,11 @@ pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
 
     verify_binaries_unchanged(&[&binaries.baseline, &binaries.candidate, &binaries.xray])?;
 
-    let summary = summarise(suite, &measured)?;
+    let summary = summarise(
+        suite,
+        &measured,
+        run_kind(&binaries.baseline.sha256, &binaries.candidate.sha256),
+    )?;
     let summary_json = summary.to_python_json();
     run.write_new("summary.json", &summary_json)?;
     let raw: Vec<String> = measured
@@ -967,8 +971,27 @@ fn write_slot_identity(
         .map_err(|error| format!("could not write the slot identity: {error}"))
 }
 
+/// Whether both sides of a paired run are literally the same artifact.
+///
+/// A same-binary run is a **control**: it measures the harness, the host and the
+/// slot order, and nothing about a change. Recording that distinction in the
+/// summary is what lets an archived report be read later as the measurement
+/// floor it is, instead of as a comparison whose candidate happened to be
+/// byte-identical.
+fn run_kind(baseline_sha256: &str, candidate_sha256: &str) -> &'static str {
+    if baseline_sha256 == candidate_sha256 {
+        "control"
+    } else {
+        "comparison"
+    }
+}
+
 /// Aggregates the paired slots into `summary.json` schema 3.
-fn summarise(suite: &SetupRateSuite, measured: &[MeasuredSlot]) -> Result<Json, String> {
+fn summarise(
+    suite: &SetupRateSuite,
+    measured: &[MeasuredSlot],
+    run_kind: &str,
+) -> Result<Json, String> {
     let expected_slots = suite.blocks * 4;
     if measured.len() != expected_slots {
         return Err(format!(
@@ -1027,6 +1050,7 @@ fn summarise(suite: &SetupRateSuite, measured: &[MeasuredSlot]) -> Result<Json, 
         measured.len(),
         rows,
         [
+            ("runKind".to_owned(), Json::string(run_kind)),
             ("cells".to_owned(), Json::object(cells)),
             ("serverCpuPerConnection".to_owned(), cpu),
             ("coverPool".to_owned(), cover::aggregate_pool(&pools)),
@@ -1428,7 +1452,7 @@ mod tests {
     #[test]
     fn the_summary_is_schema_three_with_paired_cells_and_cpu() {
         let context = small_suite();
-        let rendered = summarise(&context, &measured(3, 1, true))
+        let rendered = summarise(&context, &measured(3, 1, true), "comparison")
             .unwrap()
             .to_python_json();
         assert!(rendered.contains("\"schemaVersion\": 3"));
@@ -1436,7 +1460,9 @@ mod tests {
         assert!(rendered.contains("\"slotCount\": 12"));
         // The candidate is twice as fast, so the throughput ratio is 2.
         assert!(rendered.contains("\"medianCandidateVsBaseline\": 2.0"));
-        assert!(rendered.contains("\"bootstrap95\""));
+        // Three blocks: the interval exists but is not called `bootstrap95`.
+        assert!(rendered.contains("\"bootstrap95Unresolved\""));
+        assert!(rendered.contains("\"resolutionCaveat\""));
         // It also uses half the CPU per connection.
         assert!(rendered.contains("\"unit\": \"microsecondsPerConnection\""));
         // No shaped cover leg, so no cover counters were collected.
@@ -1444,11 +1470,30 @@ mod tests {
         assert!(rendered.contains("\"coverProfile\": null"));
     }
 
+    /// A same-binary run is a control, and the summary has to say so: it is the
+    /// only thing that lets an archived report be read as a measurement floor
+    /// rather than as a comparison (#228).
+    #[test]
+    fn the_summary_names_a_same_binary_run_a_control() {
+        let context = small_suite();
+        let comparison = summarise(&context, &measured(3, 1, true), run_kind("aa", "bb"))
+            .unwrap()
+            .to_python_json();
+        assert!(
+            comparison.contains("\"runKind\": \"comparison\""),
+            "{comparison}"
+        );
+        let control = summarise(&context, &measured(3, 1, true), run_kind("aa", "aa"))
+            .unwrap()
+            .to_python_json();
+        assert!(control.contains("\"runKind\": \"control\""), "{control}");
+    }
+
     #[test]
     fn wall_mode_records_a_null_cpu_summary() {
         let mut context = small_suite();
         context.attribution = Attribution::Wall;
-        let rendered = summarise(&context, &measured(3, 1, false))
+        let rendered = summarise(&context, &measured(3, 1, false), "comparison")
             .unwrap()
             .to_python_json();
         assert!(rendered.contains("\"serverCpuPerConnection\": null"));
@@ -1461,7 +1506,7 @@ mod tests {
         let mut slots = measured(3, 1, true);
         slots.truncate(11);
         assert!(
-            summarise(&context, &slots)
+            summarise(&context, &slots, "comparison")
                 .unwrap_err()
                 .contains("missing ABBA slots")
         );
@@ -1469,7 +1514,7 @@ mod tests {
         let mut slots = measured(3, 1, true);
         slots[2].rows[0].failed = 1;
         assert!(
-            summarise(&context, &slots)
+            summarise(&context, &slots, "comparison")
                 .unwrap_err()
                 .contains("failed setup sample")
         );
@@ -1477,7 +1522,7 @@ mod tests {
         let mut slots = measured(3, 1, true);
         slots[4].rows.clear();
         assert!(
-            summarise(&context, &slots)
+            summarise(&context, &slots, "comparison")
                 .unwrap_err()
                 .contains("missing samples")
         );
@@ -1485,7 +1530,7 @@ mod tests {
         let mut slots = measured(3, 1, true);
         slots[0].task_clock_ms = None;
         assert!(
-            summarise(&context, &slots)
+            summarise(&context, &slots, "comparison")
                 .unwrap_err()
                 .contains("no task-clock")
         );
@@ -1813,7 +1858,11 @@ pub fn run_fallback(suite: &FallbackSuite) -> Result<SuiteOutcome, String> {
 
     verify_binaries_unchanged(&[&baseline, &candidate])?;
 
-    let summary = summarise_fallback(suite, &measured)?;
+    let summary = summarise_fallback(
+        suite,
+        &measured,
+        run_kind(&baseline.sha256, &candidate.sha256),
+    )?;
     let summary_json = summary.to_python_json();
     run.write_new("summary.json", &summary_json)?;
     let raw: Vec<String> = measured
@@ -2131,7 +2180,11 @@ fn write_fallback_identity(
 }
 
 /// Aggregates the fallback slots into `summary.json` schema 2.
-fn summarise_fallback(suite: &FallbackSuite, measured: &[FallbackSlot]) -> Result<Json, String> {
+fn summarise_fallback(
+    suite: &FallbackSuite,
+    measured: &[FallbackSlot],
+    run_kind: &str,
+) -> Result<Json, String> {
     let expected_slots = suite.blocks * 4;
     if measured.len() != expected_slots {
         return Err(format!(
@@ -2183,6 +2236,7 @@ fn summarise_fallback(suite: &FallbackSuite, measured: &[FallbackSlot]) -> Resul
         measured.len(),
         rows,
         [
+            ("runKind".to_owned(), Json::string(run_kind)),
             ("cells".to_owned(), Json::object(cells)),
             ("serverCpuPerGiB".to_owned(), cpu),
         ],

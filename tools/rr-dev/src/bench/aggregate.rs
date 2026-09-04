@@ -41,6 +41,28 @@ pub const SETUP_RATE_CELL_SEED_BASE: u64 = 0x0052_5200;
 /// `benchmark-setup-rate.sh` seeds its CPU-per-connection summary with `0x5252C0`.
 pub const SETUP_RATE_CPU_SEED: u64 = 0x0052_52C0;
 
+/// Fewest ABBA blocks whose block bootstrap resolves anything.
+///
+/// The block bootstrap resamples *blocks*. With three of them there are 27
+/// distinct resamples and the 95% interval degenerates to roughly the range of
+/// three numbers — an interval that looks like a confidence bound while carrying
+/// no information about the sampling distribution. The release evaluator already
+/// refuses to render a verdict below [`stats::MIN_EXACT_BLOCKS`] complete blocks;
+/// a `bench run` summary is the same kind of evidence read by the same people,
+/// so it uses the same floor rather than a second, softer number.
+///
+/// A same-binary A/A ladder measured what the difference is worth: see
+/// `docs/en/benchmarks.md`.
+pub const RESOLVING_BLOCKS: usize = stats::MIN_EXACT_BLOCKS;
+
+/// What a paired summary says about an interval it is not entitled to publish.
+pub const RESOLUTION_CAVEAT: &str = concat!(
+    "fewer than the resolving block count: the block bootstrap resampled too few ",
+    "blocks for this interval to describe the sampling distribution, so it is ",
+    "reported as the range of the observed blocks and must not be read as a ",
+    "confidence bound or cited as resolution"
+);
+
 /// The `method` string the two paired harnesses record.
 pub const PAIRED_METHOD: &str = "alternating balanced ABBA blocks; block bootstrap";
 
@@ -76,6 +98,49 @@ pub struct PairedCell {
     pub median_ratio: f64,
     /// The deterministic 95% block-bootstrap interval, for reporting only.
     pub bootstrap95: [f64; 2],
+}
+
+impl PairedCell {
+    /// Whether this cell has enough blocks for its interval to mean anything.
+    #[must_use]
+    pub fn resolves(&self) -> bool {
+        self.blocks.len() >= RESOLVING_BLOCKS
+    }
+
+    /// The observed spread of the per-block ratios: smallest, largest, and
+    /// sample standard deviation.
+    ///
+    /// The dispersion the run actually saw, beside the interval derived from it.
+    /// It is the number that says whether a sub-percent median difference is
+    /// distinguishable from the block-to-block noise of the same measurement.
+    #[must_use]
+    pub fn spread(&self) -> (f64, f64, f64) {
+        let ratios: Vec<f64> = self.blocks.iter().map(|block| block.ratio).collect();
+        let minimum = ratios.iter().copied().fold(f64::INFINITY, f64::min);
+        let maximum = ratios.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        (minimum, maximum, sample_standard_deviation(&ratios))
+    }
+}
+
+/// The sample standard deviation, or zero for fewer than two values.
+///
+/// Local to this module on purpose: the evaluator's statistics are the ones a
+/// verdict depends on, and this is a descriptive number for a report.
+fn sample_standard_deviation(values: &[f64]) -> f64 {
+    if values.len() < 2 {
+        return 0.0;
+    }
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "block counts are bounded by the suite's 3..=20 range"
+    )]
+    let count = values.len() as f64;
+    let mean = stats::fsum(values) / count;
+    let deviations: Vec<f64> = values
+        .iter()
+        .map(|value| (value - mean) * (value - mean))
+        .collect();
+    (stats::fsum(&deviations) / (count - 1.0)).sqrt()
 }
 
 /// Aggregates one paired cell.
@@ -163,20 +228,43 @@ pub fn paired_cell_json(cell: &PairedCell, unit: Option<&str>) -> Json {
             ])
         })
         .collect();
+    let (minimum, maximum, deviation) = cell.spread();
+    let interval = Json::Array(vec![
+        Json::Float(cell.bootstrap95[0]),
+        Json::Float(cell.bootstrap95[1]),
+    ]);
     let mut fields: Vec<(String, Json)> = vec![
         ("blocks".to_owned(), Json::Array(blocks)),
+        (
+            "blockCount".to_owned(),
+            Json::Int(i64::try_from(cell.blocks.len()).unwrap_or(i64::MAX)),
+        ),
         (
             "medianCandidateVsBaseline".to_owned(),
             Json::Float(cell.median_ratio),
         ),
         (
-            "bootstrap95".to_owned(),
-            Json::Array(vec![
-                Json::Float(cell.bootstrap95[0]),
-                Json::Float(cell.bootstrap95[1]),
+            "blockRatioSpread".to_owned(),
+            Json::object([
+                ("min", Json::Float(minimum)),
+                ("max", Json::Float(maximum)),
+                ("standardDeviation", Json::Float(deviation)),
             ]),
         ),
     ];
+    // Below the resolving block count the interval is published under a name no
+    // reader and no future consumer can mistake for a resolved bound. Dropping
+    // it entirely would hide the run's own dispersion; calling it `bootstrap95`
+    // invites exactly the reading that produced #228.
+    if cell.resolves() {
+        fields.push(("bootstrap95".to_owned(), interval));
+    } else {
+        fields.push(("bootstrap95Unresolved".to_owned(), interval));
+        fields.push((
+            "resolutionCaveat".to_owned(),
+            Json::string(RESOLUTION_CAVEAT),
+        ));
+    }
     if let Some(unit) = unit {
         fields.push(("unit".to_owned(), Json::string(unit)));
     }
@@ -445,12 +533,81 @@ mod tests {
         assert!(rendered.contains("\"blocks\""));
         assert!(rendered.contains("\"candidateVsBaseline\""));
         assert!(rendered.contains("\"medianCandidateVsBaseline\": 1.2"));
-        assert!(rendered.contains("\"bootstrap95\""));
+        assert!(rendered.contains("\"blockCount\": 3"));
+        assert!(rendered.contains("\"blockRatioSpread\""));
         assert!(!rendered.contains("\"unit\""));
 
         // A CPU summary is the same object plus the unit.
         let rendered = paired_cell_json(&cell, Some("secondsPerGiB")).to_python_json();
         assert!(rendered.contains("\"unit\": \"secondsPerGiB\""));
+    }
+
+    /// Below the resolving block count the interval must not be published under
+    /// the name a reader treats as a confidence bound (#228).
+    #[test]
+    fn an_unresolving_cell_renames_its_interval_and_states_why() {
+        let data = blocks(&[(&[10.0], &[11.0]), (&[10.0], &[12.0]), (&[10.0], &[13.0])]);
+        let cell = paired_cell(&data, 1, SETUP_RATE_CPU_SEED, "setup:cpu").unwrap();
+        assert!(!cell.resolves());
+        let rendered = paired_cell_json(&cell, None).to_python_json();
+        assert!(
+            !rendered.contains("\"bootstrap95\""),
+            "a three-block cell must not publish a `bootstrap95` key: {rendered}"
+        );
+        assert!(rendered.contains("\"bootstrap95Unresolved\""), "{rendered}");
+        assert!(rendered.contains("\"resolutionCaveat\""), "{rendered}");
+    }
+
+    /// At the resolving block count the interval is published normally, and the
+    /// caveat disappears rather than being carried as decoration.
+    #[test]
+    fn a_resolving_cell_publishes_bootstrap95_without_a_caveat() {
+        let pairs: Vec<(Vec<f64>, Vec<f64>)> = (0..RESOLVING_BLOCKS)
+            .map(|index| {
+                #[expect(clippy::cast_precision_loss, reason = "small block index")]
+                let candidate = 11.0 + index as f64 * 0.1;
+                (vec![10.0], vec![candidate])
+            })
+            .collect();
+        let data: Vec<BlockObservations> = pairs
+            .iter()
+            .map(|(baseline, candidate)| BlockObservations {
+                baseline: baseline.clone(),
+                candidate: candidate.clone(),
+            })
+            .collect();
+        let cell = paired_cell(&data, 1, SETUP_RATE_CPU_SEED, "setup:cpu").unwrap();
+        assert!(cell.resolves());
+        let rendered = paired_cell_json(&cell, None).to_python_json();
+        assert!(rendered.contains("\"bootstrap95\""), "{rendered}");
+        assert!(
+            !rendered.contains("\"bootstrap95Unresolved\""),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("\"resolutionCaveat\""), "{rendered}");
+        assert!(
+            rendered.contains(&format!("\"blockCount\": {RESOLVING_BLOCKS}")),
+            "{rendered}"
+        );
+    }
+
+    /// The reported spread is the observed dispersion, not the interval.
+    #[test]
+    fn the_block_spread_reports_the_observed_dispersion() {
+        let data = blocks(&[(&[10.0], &[9.0]), (&[10.0], &[10.0]), (&[10.0], &[11.0])]);
+        let cell = paired_cell(&data, 1, SETUP_RATE_CPU_SEED, "setup:cpu").unwrap();
+        let (minimum, maximum, deviation) = cell.spread();
+        assert!((minimum - 0.9).abs() < 1e-12);
+        assert!((maximum - 1.1).abs() < 1e-12);
+        assert!((deviation - 0.1).abs() < 1e-12, "{deviation}");
+    }
+
+    /// The default must not sit below the count at which an interval means
+    /// something; that pairing is the whole point of #228.
+    #[test]
+    fn the_resolving_block_count_is_the_evaluators_own_floor() {
+        assert_eq!(RESOLVING_BLOCKS, stats::MIN_EXACT_BLOCKS);
+        assert!(RESOLVING_BLOCKS >= 3);
     }
 
     /// The floor rank and the evaluator's nearest rank genuinely disagree; picking
