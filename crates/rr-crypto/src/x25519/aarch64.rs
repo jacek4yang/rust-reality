@@ -178,6 +178,7 @@ pub(crate) fn variant() -> Variant {
 }
 
 /// Clears the dispatch cache. Only useful for tests that want to re-probe.
+#[cfg(test)]
 pub(crate) fn reset_cache() {
     CACHE.store(0, Ordering::Relaxed);
 }
