@@ -29,12 +29,12 @@
 //! from `reality/auth.rs` and `reality/tls13/handshake.rs`, both deliberately
 //! outside the enforced list.
 //!
-//! That confinement is also why this binary links **two** X25519
-//! implementations: `aws-lc-rs` for the two per-session agreements, and
-//! `x25519-dalek` where the caller is inside the `no_std` core or does not
-//! justify the `std` provider. It is a symptom of the provider being
-//! `std`-only, not a design choice, and it resolves when a `no_std`-capable
-//! X25519 replaces it.
+//! The binary once linked **three** X25519 implementations — `aws-lc-rs` for
+//! the per-session agreements, `x25519-dalek` everywhere the caller sat inside
+//! the `no_std` core, and the wrappers here on top of `rr-crypto`. C3b and C3c
+//! collapsed that: `rr-crypto` computes every production agreement, and
+//! `x25519-dalek` survives only as the independent test oracle, which is the
+//! one use a second implementation is actually for.
 //!
 //! # Secret ownership
 //!

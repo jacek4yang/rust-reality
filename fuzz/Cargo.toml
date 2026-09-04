@@ -13,7 +13,6 @@ libfuzzer-sys = "0.4"
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
 rust-reality = { path = "..", features = ["fuzzing"] }
 rr-session = { path = "../crates/rr-session" }
-x25519-dalek = { version = "3.0.0", default-features = false, features = ["static_secrets"] }
 
 [[bin]]
 name = "wire_parsers"
