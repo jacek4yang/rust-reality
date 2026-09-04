@@ -27,6 +27,50 @@ harnesses; the design-level evidence behind the numbers lives in
 - Declined backends and failed cells are recorded as declines/failures, never
   as fabricated numbers.
 
+### Paired block count, and what an interval is allowed to claim
+
+The paired suites (`setup-rate`, `fallback`) compare two builds in balanced
+ABBA blocks and summarise each cell with a deterministic 95% block bootstrap.
+The bootstrap resamples **blocks**. Below a certain block count there are too
+few of them for the interval to describe a sampling distribution at all, and it
+degenerates to roughly the range of the observed blocks — while still looking
+like a tight confidence bound.
+
+`--blocks` therefore defaults to the same floor the release evaluator already
+enforces (12 complete blocks; see [ADR 0022](../adr/0022-paired-block-resolution.md)).
+Below it, a cell publishes `bootstrap95Unresolved` and a `resolutionCaveat`
+instead of `bootstrap95`, so a low-resolution interval cannot be archived, cited,
+or parsed as if it had resolved something. Every cell also carries `blockCount`
+and `blockRatioSpread` — the observed minimum, maximum and standard deviation of
+the per-block ratios — because that spread, not the interval, is what says
+whether a sub-percent median is distinguishable from the run's own noise. The
+summary records `runKind`, which is `control` when both sides are the same
+artifact, so a same-binary A/A run identifies itself in the archive.
+
+**What the floor is measured against.** A same-binary A/A ladder on the
+laboratory host (i5-1240P, four P-cores pinned with `taskset -c 0,2,4,6`,
+`--measure-mode schedstat`, one frozen ELF on both sides, 20 runs), on
+`serverCpuPerConnection`:
+
+| blocks | A/A runs | reported an interval excluding 1.0 | median ratio | reported interval width |
+| ---: | ---: | ---: | --- | --- |
+| 3 | 14 | **4** | 0.9968 – 1.0107 | 0.27% – 2.00% |
+| 12 | 4 | **0** | 0.9987 – 1.0019 | 0.57% – 0.79% |
+| 20 | 2 | **0** | 1.0032 – 1.0043 | 0.91% – 1.51% |
+
+Four identical-binary runs in fourteen were declared significantly different at
+three blocks, against a nominal 5%. The width column is the sharper finding: at
+three blocks the reported width is the luck of three draws rather than the run's
+real uncertainty, so a run can report ±0.13% *and* exclude 1.0 while an
+identical run reports ±1%. At twelve it settles near 0.7% and tracks the
+dispersion it came from. Full evidence and the rejected alternatives are in
+[ADR 0022](../adr/0022-paired-block-resolution.md).
+
+The cost of the default is small and worth stating: for the `setup-rate` shape
+on that host, three blocks take about 56 seconds and twelve about three and a
+half minutes. A characterization run may still pass a lower `--blocks`; its
+artifact will say what it is.
+
 ### Active-probe regression contract
 
 `tools/fixtures/active-probe-cases.json` is the canonical deterministic case

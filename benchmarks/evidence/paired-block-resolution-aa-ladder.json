@@ -1,0 +1,515 @@
+{
+  "adr": "docs/adr/0022-paired-block-resolution.md",
+  "byBlockCount": {
+    "12": {
+      "excludedOne": 0,
+      "medianRatioRange": [
+        0.998686,
+        1.001859
+      ],
+      "reportedWidthRange": [
+        0.005743,
+        0.007935
+      ],
+      "runs": 4,
+      "withinRunBlockSdRange": [
+        0.003931,
+        0.007109
+      ]
+    },
+    "20": {
+      "excludedOne": 0,
+      "medianRatioRange": [
+        1.003221,
+        1.00428
+      ],
+      "reportedWidthRange": [
+        0.009081,
+        0.015052
+      ],
+      "runs": 2,
+      "withinRunBlockSdRange": [
+        0.023478,
+        0.02366
+      ]
+    },
+    "3": {
+      "excludedOne": 4,
+      "medianRatioRange": [
+        0.996817,
+        1.010709
+      ],
+      "reportedWidthRange": [
+        0.002728,
+        0.019968
+      ],
+      "runs": 14,
+      "withinRunBlockSdRange": [
+        0.001542,
+        0.010413
+      ]
+    }
+  },
+  "conclusion": {
+    "consequenceForIssue225": "the X25519 whole-product candidate's expected -0.06% of server CPU is about three times below the demonstrated floor on this host, so its honest verdict is ACCEPTED_ARCHITECTURAL_CONSOLIDATION_PERFORMANCE_NEUTRAL",
+    "decision": "RESOLVING_BLOCKS = perf::stats::MIN_EXACT_BLOCKS",
+    "resolvedFloorAtTwelveBlocksPct": 0.2
+  },
+  "consistencyCheck": {
+    "directlyMeasuredRateAtThreeBlocks": 0.286,
+    "limit": "offered only as a consistency check at three blocks; subsampling then bootstrapping is not the same operation as running that many blocks, so it is not a calibrated error rate at larger counts",
+    "method": "subsample each run's own blocks and re-run the harness's exact estimator (CPython-compatible generator, same seeds, same percentile indices)",
+    "resampledExclusionRateAtThreeBlocks": 0.282
+  },
+  "firstBlockIsNotCold": {
+    "conclusion": "the per-slot warm-up leaves no measurable first-block penalty",
+    "firstBlockMeanRatio": 0.999332,
+    "laterBlockMeanRatio": 1.000716
+  },
+  "harness": {
+    "binaryBuildId": "a4c7546fe71887d7ea93d60b9ee040f13216935a",
+    "binarySha256": "e0a1e635cbeec76452e2d27211055252fe68b8499b506cf7dce2bb565abb5b3e",
+    "bothSidesIdentical": true,
+    "command": "cargo dev bench run --suite setup-rate --measure-mode schedstat --blocks N --rust-bin X --baseline-bin X",
+    "concurrencies": [
+      1,
+      8,
+      32
+    ],
+    "connectionsPerSample": 96,
+    "finishedUtc": "2026-09-04T05:29:38Z",
+    "metric": "serverCpuPerConnection",
+    "sourceCommit": "81a204d0a9cb85d859dea51b70ece7dda5e0de62",
+    "startedUtc": "2026-09-04T04:52:37Z"
+  },
+  "host": {
+    "cpu": "12th Gen Intel Core i5-1240P (Alder Lake-P)",
+    "governor": "powersave, turbo enabled, frequency not pinned",
+    "note": "Laptop. The two twenty-block runs each caught two blocks whose baseline slot cost 316-324 us/connection against a ~305 us run median; that is sporadic host interference, and it is why their block sd is 2.4%.",
+    "packageTemperatureCelsius": {
+      "afterLadder": 51,
+      "beforeLadder": 50,
+      "peakObserved": 94
+    },
+    "pinning": "taskset -c 0,2,4,6",
+    "recordedAaFloorForTopologyPct": 0.54,
+    "toolchain": "1.96.0",
+    "topology": "4 P-cores pinned, no SMT sibling in the set"
+  },
+  "issue": 228,
+  "kind": "same-binary A/A ladder establishing the paired block-count floor",
+  "question": "How often does `cargo dev bench run`'s paired block bootstrap report an interval excluding 1.0 when both sides are the same binary, as a function of block count?",
+  "runs": [
+    {
+      "blockRatioSd": 0.007109,
+      "blockRatios": [
+        0.988541,
+        0.995666,
+        1.000488,
+        0.996601,
+        1.00051,
+        1.001845,
+        0.98572,
+        0.991687,
+        0.996883,
+        1.000781,
+        1.011748,
+        1.00457
+      ],
+      "blocks": 12,
+      "excludesOne": false,
+      "medianRatio": 0.998686,
+      "reportedBootstrap95": [
+        0.993676,
+        1.001313
+      ],
+      "reportedWidth": 0.007637,
+      "run": "aa-b12-01"
+    },
+    {
+      "blockRatioSd": 0.004082,
+      "blockRatios": [
+        1.000767,
+        1.000434,
+        1.005369,
+        0.997953,
+        0.995617,
+        1.004961,
+        1.001356,
+        1.0037,
+        0.995523,
+        1.000883,
+        0.991782,
+        0.998358
+      ],
+      "blocks": 12,
+      "excludesOne": false,
+      "medianRatio": 1.0006,
+      "reportedBootstrap95": [
+        0.996785,
+        1.002528
+      ],
+      "reportedWidth": 0.005743,
+      "run": "aa-b12-02"
+    },
+    {
+      "blockRatioSd": 0.006323,
+      "blockRatios": [
+        0.992039,
+        1.00036,
+        1.005525,
+        1.002875,
+        1.005283,
+        0.988664,
+        0.999511,
+        0.996802,
+        1.006925,
+        1.006658,
+        1.009859,
+        1.000844
+      ],
+      "blocks": 12,
+      "excludesOne": false,
+      "medianRatio": 1.001859,
+      "reportedBootstrap95": [
+        0.998156,
+        1.006091
+      ],
+      "reportedWidth": 0.007935,
+      "run": "aa-b12-03"
+    },
+    {
+      "blockRatioSd": 0.003931,
+      "blockRatios": [
+        0.996482,
+        0.997101,
+        0.997259,
+        1.008522,
+        1.001353,
+        0.995944,
+        1.002838,
+        0.998763,
+        1.005017,
+        1.002832,
+        0.99969,
+        1.003986
+      ],
+      "blocks": 12,
+      "excludesOne": false,
+      "medianRatio": 1.000522,
+      "reportedBootstrap95": [
+        0.99718,
+        1.003412
+      ],
+      "reportedWidth": 0.006232,
+      "run": "aa-b12-04"
+    },
+    {
+      "blockRatioSd": 0.02366,
+      "blockRatios": [
+        1.00551,
+        1.004289,
+        1.001215,
+        1.005658,
+        0.997461,
+        1.003856,
+        1.007411,
+        0.995441,
+        1.012542,
+        1.069916,
+        0.991907,
+        0.994574,
+        1.004642,
+        1.006328,
+        1.011022,
+        1.00427,
+        0.959938,
+        0.995546,
+        0.941016,
+        1.00523
+      ],
+      "blocks": 20,
+      "excludesOne": false,
+      "medianRatio": 1.00428,
+      "reportedBootstrap95": [
+        0.996504,
+        1.005584
+      ],
+      "reportedWidth": 0.009081,
+      "run": "aa-b20-01"
+    },
+    {
+      "blockRatioSd": 0.023478,
+      "blockRatios": [
+        1.004793,
+        1.000155,
+        0.997347,
+        0.995923,
+        1.062558,
+        1.004261,
+        1.003192,
+        1.021369,
+        0.98442,
+        1.011418,
+        0.955961,
+        1.003249,
+        1.011289,
+        1.037073,
+        0.99668,
+        0.961786,
+        1.012968,
+        1.012309,
+        0.978117,
+        0.993083
+      ],
+      "blocks": 20,
+      "excludesOne": false,
+      "medianRatio": 1.003221,
+      "reportedBootstrap95": [
+        0.996301,
+        1.011353
+      ],
+      "reportedWidth": 0.015052,
+      "run": "aa-b20-02"
+    },
+    {
+      "blockRatioSd": 0.006049,
+      "blockRatios": [
+        1.000827,
+        1.005146,
+        0.993199
+      ],
+      "blocks": 3,
+      "excludesOne": false,
+      "medianRatio": 1.000827,
+      "reportedBootstrap95": [
+        0.993199,
+        1.005146
+      ],
+      "reportedWidth": 0.011947,
+      "run": "aa-b3-01"
+    },
+    {
+      "blockRatioSd": 0.009249,
+      "blockRatios": [
+        1.005638,
+        0.998949,
+        0.987357
+      ],
+      "blocks": 3,
+      "excludesOne": false,
+      "medianRatio": 0.998949,
+      "reportedBootstrap95": [
+        0.987357,
+        1.005638
+      ],
+      "reportedWidth": 0.018281,
+      "run": "aa-b3-02"
+    },
+    {
+      "blockRatioSd": 0.002167,
+      "blockRatios": [
+        1.005235,
+        1.001043,
+        1.002183
+      ],
+      "blocks": 3,
+      "excludesOne": true,
+      "medianRatio": 1.002183,
+      "reportedBootstrap95": [
+        1.001043,
+        1.005235
+      ],
+      "reportedWidth": 0.004192,
+      "run": "aa-b3-03"
+    },
+    {
+      "blockRatioSd": 0.005475,
+      "blockRatios": [
+        1.002306,
+        1.001624,
+        0.9925
+      ],
+      "blocks": 3,
+      "excludesOne": false,
+      "medianRatio": 1.001624,
+      "reportedBootstrap95": [
+        0.9925,
+        1.002306
+      ],
+      "reportedWidth": 0.009806,
+      "run": "aa-b3-04"
+    },
+    {
+      "blockRatioSd": 0.002942,
+      "blockRatios": [
+        0.999916,
+        0.999762,
+        0.994745
+      ],
+      "blocks": 3,
+      "excludesOne": true,
+      "medianRatio": 0.999762,
+      "reportedBootstrap95": [
+        0.994745,
+        0.999916
+      ],
+      "reportedWidth": 0.005171,
+      "run": "aa-b3-05"
+    },
+    {
+      "blockRatioSd": 0.00267,
+      "blockRatios": [
+        0.999313,
+        0.996817,
+        0.993977
+      ],
+      "blocks": 3,
+      "excludesOne": true,
+      "medianRatio": 0.996817,
+      "reportedBootstrap95": [
+        0.993977,
+        0.999313
+      ],
+      "reportedWidth": 0.005336,
+      "run": "aa-b3-06"
+    },
+    {
+      "blockRatioSd": 0.010413,
+      "blockRatios": [
+        0.994238,
+        1.010709,
+        1.01351
+      ],
+      "blocks": 3,
+      "excludesOne": false,
+      "medianRatio": 1.010709,
+      "reportedBootstrap95": [
+        0.994238,
+        1.01351
+      ],
+      "reportedWidth": 0.019273,
+      "run": "aa-b3-07"
+    },
+    {
+      "blockRatioSd": 0.003564,
+      "blockRatios": [
+        1.002248,
+        1.000821,
+        0.995487
+      ],
+      "blocks": 3,
+      "excludesOne": false,
+      "medianRatio": 1.000821,
+      "reportedBootstrap95": [
+        0.995487,
+        1.002248
+      ],
+      "reportedWidth": 0.006761,
+      "run": "aa-b3-08"
+    },
+    {
+      "blockRatioSd": 0.00906,
+      "blockRatios": [
+        1.011897,
+        0.994268,
+        0.999454
+      ],
+      "blocks": 3,
+      "excludesOne": false,
+      "medianRatio": 0.999454,
+      "reportedBootstrap95": [
+        0.994268,
+        1.011897
+      ],
+      "reportedWidth": 0.017629,
+      "run": "aa-b3-09"
+    },
+    {
+      "blockRatioSd": 0.001542,
+      "blockRatios": [
+        1.002202,
+        1.00232,
+        1.004929
+      ],
+      "blocks": 3,
+      "excludesOne": true,
+      "medianRatio": 1.00232,
+      "reportedBootstrap95": [
+        1.002202,
+        1.004929
+      ],
+      "reportedWidth": 0.002728,
+      "run": "aa-b3-10"
+    },
+    {
+      "blockRatioSd": 0.006439,
+      "blockRatios": [
+        0.990443,
+        1.002715,
+        0.999961
+      ],
+      "blocks": 3,
+      "excludesOne": false,
+      "medianRatio": 0.999961,
+      "reportedBootstrap95": [
+        0.990443,
+        1.002715
+      ],
+      "reportedWidth": 0.012272,
+      "run": "aa-b3-11"
+    },
+    {
+      "blockRatioSd": 0.002048,
+      "blockRatios": [
+        1.002175,
+        1.000901,
+        0.998166
+      ],
+      "blocks": 3,
+      "excludesOne": false,
+      "medianRatio": 1.000901,
+      "reportedBootstrap95": [
+        0.998166,
+        1.002175
+      ],
+      "reportedWidth": 0.004008,
+      "run": "aa-b3-12"
+    },
+    {
+      "blockRatioSd": 0.005869,
+      "blockRatios": [
+        0.994287,
+        1.00061,
+        1.006013
+      ],
+      "blocks": 3,
+      "excludesOne": false,
+      "medianRatio": 1.00061,
+      "reportedBootstrap95": [
+        0.994287,
+        1.006013
+      ],
+      "reportedWidth": 0.011725,
+      "run": "aa-b3-13"
+    },
+    {
+      "blockRatioSd": 0.010028,
+      "blockRatios": [
+        0.987788,
+        0.999393,
+        1.007756
+      ],
+      "blocks": 3,
+      "excludesOne": false,
+      "medianRatio": 0.999393,
+      "reportedBootstrap95": [
+        0.987788,
+        1.007756
+      ],
+      "reportedWidth": 0.019968,
+      "run": "aa-b3-14"
+    }
+  ],
+  "schema": 1
+}
