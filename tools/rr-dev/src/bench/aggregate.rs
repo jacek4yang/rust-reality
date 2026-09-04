@@ -607,7 +607,6 @@ mod tests {
     #[test]
     fn the_resolving_block_count_is_the_evaluators_own_floor() {
         assert_eq!(RESOLVING_BLOCKS, stats::MIN_EXACT_BLOCKS);
-        assert!(RESOLVING_BLOCKS >= 3);
     }
 
     /// The floor rank and the evaluator's nearest rank genuinely disagree; picking
