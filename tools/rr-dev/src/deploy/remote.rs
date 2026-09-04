@@ -54,12 +54,81 @@ impl Reply {
     }
 }
 
+/// Characters the remote login shell would act on rather than pass through.
+///
+/// `sshd` does not receive an argv. It joins the client's arguments with spaces
+/// and hands the result to the remote login shell, which parses it a second
+/// time. An element containing any of these is not the string the remote
+/// program receives.
+const REMOTE_SHELL_ACTIVE: &[char] = &[
+    '\\', '\'', '"', '`', '$', ';', '&', '|', '<', '>', '(', ')', '{', '}', '[', ']', '*', '?',
+    '~', '#', '!',
+];
+
+/// Rejects an argv the remote login shell would rewrite before `exec`.
+///
+/// This boundary is the only place that knows a second parse happens, so it is
+/// the only place that can turn silent corruption into a failure. A `find`
+/// format of `%f\n`, written as the Rust literal `"%f\\n"`, arrives at the shell
+/// unquoted, loses its backslash, and reaches `find` as `%fn` — a command that
+/// succeeds while producing something the caller never asked for.
+///
+/// # Errors
+///
+/// Returns a diagnostic naming the offending element and character.
+pub fn validate_remote_argv(argv: &[String]) -> Result<(), String> {
+    let Some((program, _)) = argv.split_first() else {
+        return Err("deployment transport received an empty argv".to_owned());
+    };
+    if program.is_empty() {
+        return Err("deployment transport received an empty remote program".to_owned());
+    }
+    for (index, element) in argv.iter().enumerate() {
+        if element.is_empty() {
+            return Err(format!("remote argv element {index} is empty"));
+        }
+        if let Some(character) = element
+            .chars()
+            .find(|c| c.is_whitespace() || c.is_control() || REMOTE_SHELL_ACTIVE.contains(c))
+        {
+            return Err(format!(
+                "remote argv element {index} contains {character:?}, which the remote login \
+                 shell would reinterpret: {element:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Administrative operations required by the deployment executor.
 pub trait Transport {
     /// Runs one command through the host's ordinary SSH identity.
-    fn run(&mut self, host: &Host, privileged: bool, argv: &[String]) -> Result<Reply, String>;
+    ///
+    /// Validation lives here, in the provided method, so no implementation and
+    /// no call site can reach a host with an argv the remote shell would
+    /// rewrite. Implementations provide [`Transport::dispatch`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the transport's own failure, or a rejected argv.
+    fn run(&mut self, host: &Host, privileged: bool, argv: &[String]) -> Result<Reply, String> {
+        validate_remote_argv(argv)?;
+        self.dispatch(host, privileged, argv)
+    }
+
+    /// Executes an argv that [`Transport::run`] has already validated.
+    ///
+    /// # Errors
+    ///
+    /// Returns the transport's own failure.
+    fn dispatch(&mut self, host: &Host, privileged: bool, argv: &[String])
+    -> Result<Reply, String>;
 
     /// Copies one local file into a non-privileged remote staging path.
+    ///
+    /// # Errors
+    ///
+    /// Returns the transport's own failure, or an unsafe staging path.
     fn copy_to(&mut self, host: &Host, local: &Path, remote: &str) -> Result<(), String>;
 }
 
@@ -85,7 +154,12 @@ impl SystemTransport {
 }
 
 impl Transport for SystemTransport {
-    fn run(&mut self, host: &Host, privileged: bool, argv: &[String]) -> Result<Reply, String> {
+    fn dispatch(
+        &mut self,
+        host: &Host,
+        privileged: bool,
+        argv: &[String],
+    ) -> Result<Reply, String> {
         let command = if privileged {
             host.ssh_sudo_argv(argv)
         } else {
@@ -158,5 +232,88 @@ mod tests {
             .copy_to(&host, Path::new("/tmp/candidate"), "/etc/passwd")
             .unwrap_err();
         assert!(error.contains("unsafe remote staging"), "{error}");
+    }
+
+    #[test]
+    fn ordinary_administrative_argv_is_accepted() {
+        for argv in [
+            vec![
+                "systemctl",
+                "show",
+                "rust-reality.service",
+                "-p",
+                "MainPID",
+                "--value",
+            ],
+            vec![
+                "find",
+                "/opt/rust-reality/releases",
+                "-mindepth",
+                "1",
+                "-maxdepth",
+                "1",
+            ],
+            vec![
+                "install",
+                "-m",
+                "0640",
+                "-o",
+                "root",
+                "-g",
+                "rust-reality",
+                "/tmp/a",
+                "/etc/b",
+            ],
+            vec![
+                "journalctl",
+                "-u",
+                "rust-reality.service",
+                "--since",
+                "@1788495754",
+            ],
+            vec![
+                "rm",
+                "-rf",
+                "--",
+                "/opt/rust-reality/releases/v1.9.0-official",
+            ],
+        ] {
+            let owned: Vec<String> = argv.iter().map(|value| (*value).to_owned()).collect();
+            validate_remote_argv(&owned).expect("administrative argv should be accepted");
+        }
+    }
+
+    #[test]
+    fn a_backslash_escape_is_rejected_before_it_reaches_a_host() {
+        let argv = [
+            "find".to_owned(),
+            "/proc/1/fd".to_owned(),
+            "-printf".to_owned(),
+            "%f\\n".to_owned(),
+        ];
+        let error = validate_remote_argv(&argv).unwrap_err();
+        assert!(error.contains("element 3"), "{error}");
+        assert!(error.contains("reinterpret"), "{error}");
+    }
+
+    #[test]
+    fn shell_active_characters_and_blank_elements_are_rejected() {
+        for element in [
+            "a b",
+            "$HOME",
+            "one;two",
+            "glob*",
+            "quote'd",
+            "`sub`",
+            "new\nline",
+            "",
+        ] {
+            let argv = ["echo".to_owned(), element.to_owned()];
+            assert!(
+                validate_remote_argv(&argv).is_err(),
+                "{element:?} should be rejected"
+            );
+        }
+        assert!(validate_remote_argv(&[]).is_err());
     }
 }

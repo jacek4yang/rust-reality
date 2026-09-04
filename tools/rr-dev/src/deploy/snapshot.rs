@@ -536,7 +536,7 @@ mod tests {
     struct FakeTransport;
 
     impl Transport for FakeTransport {
-        fn run(
+        fn dispatch(
             &mut self,
             _host: &Host,
             _privileged: bool,

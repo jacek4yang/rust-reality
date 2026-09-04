@@ -1017,23 +1017,26 @@ fn prune(
             .flatten()
             .filter_map(|path| path.rsplit('/').next())
             .collect();
+        // `find` prints one absolute path per line without a format string.
+        // Asking it for `%f` would mean sending a backslash escape through the
+        // remote login shell, which strips it (#229); the basename is ours to
+        // take, and `keep` already holds basenames.
         let entries = checked(
             transport,
             host,
             true,
-            &strings(&[
-                "find",
-                root,
-                "-mindepth",
-                "1",
-                "-maxdepth",
-                "1",
-                "-printf",
-                "%f\\n",
-            ]),
+            &strings(&["find", root, "-mindepth", "1", "-maxdepth", "1"]),
             "list release generations",
         )?;
-        for entry in entries.lines().filter(|entry| !entry.is_empty()) {
+        let prefix = format!("{root}/");
+        for line in entries
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+        {
+            let entry = line.strip_prefix(&prefix).ok_or_else(|| {
+                format!("release listing returned {line:?}, which is not directly below {root}")
+            })?;
             validate_release_id(entry)?;
             if !keep.contains(entry) {
                 run(
@@ -1074,7 +1077,7 @@ mod tests {
     use super::*;
     use crate::deploy::{
         host::{HostRole, Topology},
-        plan::{DeploymentAction, plan_cutover, plan_rollback, plan_stage},
+        plan::{DeploymentAction, plan_cutover, plan_promote, plan_rollback, plan_stage},
         remote::Reply,
         snapshot::{GenerationPointers, Listener},
     };
@@ -1123,7 +1126,7 @@ mod tests {
     }
 
     impl Transport for FakeTransport {
-        fn run(
+        fn dispatch(
             &mut self,
             _host: &Host,
             _privileged: bool,
@@ -1161,6 +1164,14 @@ mod tests {
                 format!("{}\n", self.previous)
             } else if joined == "readlink -f /etc/rust-reality/previous" {
                 format!("{}\n", self.config_previous)
+            } else if let Some(root) = joined
+                .strip_prefix("find ")
+                .and_then(|rest| rest.strip_suffix(" -mindepth 1 -maxdepth 1"))
+                .filter(|root| root.ends_with("rust-reality/releases"))
+            {
+                // One absolute path per line, which is what `find` prints
+                // without a format string.
+                format!("{root}/r0\n{root}/r1\n{root}/r2\n")
             } else if argv.first().map(String::as_str) == Some("ln") {
                 let target = argv[2].clone();
                 let temporary = &argv[3];
@@ -1387,6 +1398,59 @@ mod tests {
         assert!(error.contains("rolled back"), "{error}");
         assert_eq!(transport.current, "/opt/rust-reality/releases/r1");
         assert_eq!(transport.config_current, "/etc/rust-reality/releases/r1");
+    }
+
+    #[test]
+    fn promote_prunes_exactly_the_generations_that_are_neither_current_nor_previous() {
+        let topology = Topology::canonical().unwrap();
+        let host = topology.host(HostRole::Line);
+        let mut before = snapshot();
+        before.executable = Some("/opt/rust-reality/releases/r2/rust-reality".to_owned());
+        before.generations = Some(GenerationPointers {
+            current_binary: Some("/opt/rust-reality/releases/r2".to_owned()),
+            current_config: Some("/etc/rust-reality/releases/r2".to_owned()),
+            previous_binary: Some("/opt/rust-reality/releases/r1".to_owned()),
+            previous_config: Some("/etc/rust-reality/releases/r1".to_owned()),
+        });
+        let plan = plan_promote(&before, "r2", true).unwrap();
+        let mut transport = FakeTransport::new();
+        transport.current = "/opt/rust-reality/releases/r2".to_owned();
+        transport.config_current = "/etc/rust-reality/releases/r2".to_owned();
+        transport.previous = "/opt/rust-reality/releases/r1".to_owned();
+        transport.config_previous = "/etc/rust-reality/releases/r1".to_owned();
+        transport.running_executable = "/opt/rust-reality/releases/r2/rust-reality".to_owned();
+
+        let report = execute(
+            &mut transport,
+            &mut FakeValidator::default(),
+            host,
+            &plan,
+            &before,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(
+            report
+                .milestones
+                .contains(&"old-generations-pruned".to_owned())
+        );
+        let removed: Vec<&String> = transport
+            .commands
+            .iter()
+            .filter(|argv| argv.first().map(String::as_str) == Some("rm"))
+            .map(|argv| argv.last().expect("rm names a path"))
+            .filter(|path| path.contains("rust-reality/releases/"))
+            .collect();
+        assert_eq!(
+            removed,
+            vec![
+                "/opt/rust-reality/releases/r0",
+                "/etc/rust-reality/releases/r0"
+            ],
+            "prune must delete r0 and keep CURRENT r2 and PREVIOUS r1"
+        );
     }
 
     #[test]
