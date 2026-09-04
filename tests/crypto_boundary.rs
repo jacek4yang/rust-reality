@@ -105,13 +105,17 @@ const PROVIDERS: &[(&str, &[&str])] = &[
     ),
     // The signature provider, used once per session for CertificateVerify.
     ("ed25519_dalek", &["src/protocol/reality/tls13/messages.rs"]),
-    // The **second** X25519 implementation in this binary. It exists because
-    // `aws-lc-rs` requires `std` and `client_hello.rs` is inside the `no_std`
-    // core, not because two providers were wanted. A `no_std`-capable X25519
-    // collapses this list into `src/crypto/x25519.rs` alone.
+    // The **second** X25519 implementation in this binary. It existed because
+    // `aws-lc-rs` required `std` while `client_hello.rs` sits inside the
+    // `no_std` core — not because two providers were wanted. C3b removed that
+    // constraint: `rr-crypto` is `no_std`, so these call sites can collapse
+    // onto `crypto::x25519`, one reviewable step at a time.
     //
-    // `auth.rs`, `x25519.rs`, `handshake.rs` and `reload.rs` name it only from
-    // test or `fuzzing`-feature code.
+    // `auth.rs`, `x25519.rs`, `handshake.rs`, `reload.rs` and now `keygen.rs`
+    // name it only from test or `fuzzing`-feature code — as an independent
+    // oracle, which is a reason to keep it rather than an omission. The scan
+    // does not distinguish test code on purpose: "which files know about this
+    // crate" is the property worth constraining.
     (
         "x25519_dalek",
         &[
