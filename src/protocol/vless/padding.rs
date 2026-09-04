@@ -39,7 +39,7 @@ impl PaddingRng {
     /// Returns [`EntropyUnavailable`] when `getrandom` fails.
     pub fn from_os() -> Result<Self, EntropyUnavailable> {
         let mut seed = [0_u8; 44];
-        getrandom::fill(&mut seed).map_err(|_| EntropyUnavailable)?;
+        crate::crypto::entropy::fill(&mut seed).map_err(|_| EntropyUnavailable)?;
         let generator = Self::from_seed(&seed);
         seed.zeroize();
         Ok(generator)

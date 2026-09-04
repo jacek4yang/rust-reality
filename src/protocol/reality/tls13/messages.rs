@@ -76,7 +76,7 @@ impl CertificateIdentity {
     /// Returns an error when the operating system cannot provide randomness.
     pub fn generate() -> Result<Self, HandshakeMessageError> {
         let mut seed = Zeroizing::new([0_u8; 32]);
-        getrandom::fill(seed.as_mut()).map_err(|_| HandshakeMessageError::Random)?;
+        crate::crypto::entropy::fill(seed.as_mut()).map_err(|_| HandshakeMessageError::Random)?;
         Ok(Self {
             signing_key: SigningKey::from_bytes(&seed),
         })
