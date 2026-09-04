@@ -67,3 +67,4 @@ of the law is what it is.
 | [0023](0023-rr-crypto-is-the-unsafe-crypto-boundary.md) | `rr-crypto` is the crate where cryptographic `unsafe` lives | Accepted |
 | [0024](0024-early-prepare-has-no-rtt-to-remove.md) | Early Prepare has no RTT to remove | Rejected on measurement |
 | [0025](0025-cover-profiles-observe-but-do-not-reproduce-encrypted-extensions.md) | Cover profiles observe, but do not reproduce, EncryptedExtensions | Accepted |
+| [0026](0026-profile-classes-hash-capability-sets.md) | Profile classes hash capability sets, not GREASE variance | Accepted |
