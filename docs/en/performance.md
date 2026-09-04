@@ -104,10 +104,55 @@ the repository's longer formal release evaluator remains a release gate and
 is not relabeled as having passed here.
 
 The evidence covers a stable single-modal local cover and Xray's Chrome 133
-ClientHello family. Multi-modal covers, unrecognized encrypted extensions,
-PSK/resumption, and rare uncollected ClientHello classes intentionally stay on
-the warm-live path. This is a conservative validated-class optimization, not
-a claim of universal TLS indistinguishability.
+ClientHello family. Multi-modal covers, PSK/resumption, and rare uncollected
+ClientHello classes intentionally stay on the warm-live path. This is a
+conservative validated-class optimization, not a claim of universal TLS
+indistinguishability. The original rule also excluded any cover whose
+EncryptedExtensions carried more than ALPN; the next section is why that was
+wrong and what it cost.
+
+## v2.0 development: cover profiles against real covers
+
+The section above measured tier 3 against a **controlled local Go/OpenSSL
+cover**, whose EncryptedExtensions carried ALPN and nothing else. That is the
+only reason it validated. Against real covers the collector rejected every
+observation, so tier 3 never activated anywhere, in the lab or in production,
+and every authenticated handshake paid a live cover interaction.
+[ADR 0025](../adr/0025-cover-profiles-observe-but-do-not-reproduce-encrypted-extensions.md)
+records the rule and the fix; this is the measurement.
+
+Class: LOCAL_SYNTHETIC. One network namespace joined by a veth pair,
+`netem delay 25ms` per direction on the client-to-LINE leg only, measured RTT
+50.1 ms; cover and origin legs unshaped so the cover cost stays visible rather
+than being shaped into the result. Client: unmodified Xray-core 26.7.28
+(`5ca6f4b`, `go1.26.5`), VLESS + REALITY + Vision through its SOCKS inbound.
+40 sequential authenticated sessions per cell, each a full connection setup.
+
+| Cover | Arm | Profile state | Hits | p50 | p90 | p95 | p99 |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| production-class | before | `unavailable` | 0/40 | 343.0 ms | 1026.3 ms | 1106.6 ms | 1194.9 ms |
+| production-class | after | `validated` | 34/40 | 157.0 ms | 332.4 ms | 600.3 ms | 900.2 ms |
+| production-class, warm | after | `validated` | 34/34 | 156.9 ms | 157.3 ms | 157.5 ms | 271.1 ms |
+| Google-class | before | `unavailable` | 0/40 | 209.7 ms | 213.1 ms | 214.7 ms | 216.8 ms |
+| Google-class | after | `unstable` | 0/40 | 209.6 ms | 212.9 ms | 215.4 ms | 230.6 ms |
+
+The mechanism claim is the warm steady state, not the aggregate: 156.9 ms
+against a 50.1 ms RTT is three round trips — TCP, TLS, and request/response —
+plus about 7 ms of endpoint scheduling. That is the floor for this topology, so
+the cover interaction is absent from the authenticated path rather than merely
+cheaper. The six misses in the `after` production-class cell are the
+connections before collection published, which is the documented tier-3 cold
+start.
+
+The Google-class cover is unchanged within noise, and deliberately so. Its
+observations now decrypt and parse, but its coalesced flight length varies by a
+byte or two between them, so the four-way consensus refuses to publish and the
+class reports `unstable` with four disagreements instead of the previous
+`refresh_failure`. A cover whose shape is not stable still gets no profile;
+that is the consensus rule working, and relaxing it is a separate decision.
+
+The before/after binaries were built from the same tree with only
+`src/protocol/reality/tls13/cover_profile.rs` differing.
 
 ## v1.9.0 release evidence
 

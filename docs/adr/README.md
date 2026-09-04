@@ -65,3 +65,5 @@ of the law is what it is.
 | [0021](0021-sha-hkdf-hmac-and-ed25519-stay-on-rustcrypto.md) | SHA, HKDF, HMAC and Ed25519 stay on RustCrypto | Rejected on measurement |
 | [0022](0022-paired-block-resolution.md) | A paired benchmark interval must not outrun its block count | Accepted |
 | [0023](0023-rr-crypto-is-the-unsafe-crypto-boundary.md) | `rr-crypto` is the crate where cryptographic `unsafe` lives | Accepted |
+| [0024](0024-early-prepare-has-no-rtt-to-remove.md) | Early Prepare has no RTT to remove | Rejected on measurement |
+| [0025](0025-cover-profiles-observe-but-do-not-reproduce-encrypted-extensions.md) | Cover profiles observe, but do not reproduce, EncryptedExtensions | Accepted |
