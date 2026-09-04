@@ -1,0 +1,40 @@
+[package]
+name = "rr-crypto"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+description = "The no_std cryptographic implementation boundary: architecture-specific assembly behind a safe API"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+# The only dependency, and the reason is the boundary this crate exists to
+# hold: secrets that live here must clear themselves, and the trait for that
+# has to be the same one the protocol crate uses or the property does not
+# compose across the call.
+zeroize = { version = "1.9.0", default-features = false }
+
+[dev-dependencies]
+# Provenance verification only: `vendored_upstream_matches_the_recorded_digests`
+# hashes the vendored upstream sources against the digests `PROVENANCE.md`
+# pins. A dev-dependency does not enter the production graph, which
+# `cargo tree -e normal` proves.
+sha2 = { version = "0.11.0", default-features = false }
+
+[lints.rust]
+# `unsafe` is permitted here and nowhere else in the production graph, which is
+# the whole point of the crate. It is not permitted to be casual: every block
+# states the invariant that makes it sound, and `undocumented_unsafe_blocks`
+# below turns that from a convention into a build failure.
+unsafe_op_in_unsafe_fn = "deny"
+unreachable_pub = "warn"
+unused_must_use = "deny"
+missing_docs = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+allow_attributes_without_reason = "warn"
+dbg_macro = "deny"
+todo = "deny"
+undocumented_unsafe_blocks = "deny"
+unimplemented = "deny"

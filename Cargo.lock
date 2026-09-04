@@ -1327,6 +1327,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rr-crypto"
+version = "0.1.0"
+dependencies = [
+ "sha2",
+ "zeroize",
+]
+
+[[package]]
 name = "rr-linux"
 version = "0.1.0"
 dependencies = [
@@ -1361,6 +1369,7 @@ dependencies = [
  "ml-kem",
  "regex",
  "ring",
+ "rr-crypto",
  "rr-linux",
  "rr-session",
  "schemars",
