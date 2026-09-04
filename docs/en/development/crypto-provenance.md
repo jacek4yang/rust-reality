@@ -55,7 +55,13 @@ used about this code, because none of them is true of this build.
 project's X25519, reached through `aws-lc-rs` → `aws-lc-sys` → a vendored
 ~2.6 MB C libcrypto with a CMake/C build. Importing the four routines directly
 keeps the arithmetic and drops the build system: `global_asm!`, no build script,
-no C toolchain, and about 164 KB of `.text` plus `.rodata` instead of 2.6 MB.
+no CMake, and about 164 KB of `.text` plus `.rodata` instead of 2.6 MB.
+
+This does **not** make the build C-free, and the distinction is worth stating
+because it is easy to overclaim. `ring` also compiles C, through `cc-rs`, and it
+is reachable via `ureq -> rustls`, so a C compiler remains a build requirement
+for this repository. What leaves with `aws-lc-rs` is CMake, its build script and
+the vendored libcrypto.
 
 **Exact transformation.** For each of the four units:
 

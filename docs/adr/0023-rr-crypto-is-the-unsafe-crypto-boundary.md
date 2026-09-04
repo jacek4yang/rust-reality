@@ -70,9 +70,15 @@ primitives rust-reality performs, in the shapes it performs them.
   intention.
 - Verifying that the committed assembly is upstream's mechanical expansion needs
   a C preprocessor. That is a **test-time** requirement and it skips with a
-  message when `cpp` is absent, so the claim "the build needs no C toolchain"
-  stays true without qualification and CI still checks the expansion on every
-  change.
+  message when `cpp` is absent, so a developer without one can still run the
+  suite; CI has one and checks the expansion on every change.
+- **This does not make the build C-free, and the claim should not be made.**
+  `ring` compiles C through `cc-rs`, and it is reachable through
+  `ureq -> rustls` for asset downloads, so it cannot leave the graph. What
+  removing `aws-lc-rs` removes is **CMake**, the build script that drives it,
+  and ~2.6 MB of vendored libcrypto — not the C compiler. The AArch64 CI job
+  proved the distinction the expensive way: it failed on `ring`'s C build for a
+  missing cross libc, with `rr-crypto` itself compiling cleanly.
 - Roughly 3 MB of vendored assembly enters the tree: four expanded `.s` files
   and their upstream `.S` originals per architecture, plus the licence. Every
   file is inside the 512 KiB per-object limit, so no exception is needed. It
@@ -113,7 +119,7 @@ primitives rust-reality performs, in the shapes it performs them.
 
 - Issue #225 for the migration ledger and the measured X25519 position:
   parity on the arithmetic, the value being −24.65% binary, −2 production
-  crates, and removal of the only C toolchain requirement.
+  crates, and removal of the CMake build and the vendored libcrypto.
 - `crates/rr-crypto` tests: RFC 7748 §5.2/§6.1 vectors including the
   1,000-iteration case, both compiled variants agreeing, the committed assembly
   reproducing from upstream, and the vendored inputs pinned by SHA-256.
