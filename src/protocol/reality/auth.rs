@@ -455,8 +455,7 @@ impl RealityAuthenticator {
             return Err(RealityAuthConfigError::DuplicateShortId);
         }
         Ok(Self {
-            private_key: StaticX25519Key::new(&private_bytes)
-                .map_err(|_| RealityAuthConfigError::InvalidPrivateKey)?,
+            private_key: StaticX25519Key::new(&private_bytes),
             server_names,
             short_ids: ShortIdOwnerIndex::from_sorted(short_ids),
             max_time_diff_ms: config.max_time_diff_ms(),

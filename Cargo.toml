@@ -19,15 +19,6 @@ publish = false
 arc-swap = { version = "1.9.2", default-features = false }
 aho-corasick = { version = "1.1.4", default-features = false, features = ["perf-literal", "std"] }
 aes-gcm = { version = "0.11.0", default-features = false, features = ["aes", "zeroize"] }
-# The X25519 provider for the two per-session key agreements (REALITY
-# authentication and the TLS key exchange). Selected on measurement: 2.4x
-# faster variable-base agreement and 1.9x faster complete TLS ECDHE than
-# x25519-dalek on this repository's exact operation shapes, with byte-identical
-# results and identical non-contributory rejection. The high-level safe API
-# only; `aws-lc-sys` is never used directly and no FFI is written here, so the
-# crate stays `#![deny(unsafe_code)]`. Non-FIPS: X25519 is not a reason to opt
-# into a FIPS build.
-aws-lc-rs = { version = "1.18.1", default-features = false, features = ["aws-lc-sys"] }
 base64 = { version = "0.22.1", default-features = false, features = ["std"] }
 clap = { version = "4.6.5", default-features = false, features = ["derive", "error-context", "help", "std", "suggestions", "usage"] }
 chacha20 = { version = "0.10.1", default-features = false, features = ["zeroize"] }
@@ -44,6 +35,11 @@ hkdf = "0.13.0"
 hmac = { version = "0.13.0", features = ["zeroize"] }
 ml-kem = { version = "0.3.2", default-features = false, features = ["zeroize"] }
 regex = { version = "1.12.3", default-features = false, features = ["perf", "std", "unicode"] }
+# The cryptographic implementation boundary (ADR 0023): X25519 from
+# s2n-bignum's assembly, `no_std`, and the only crate in this graph where
+# `unsafe` is permitted. Replaces `aws-lc-rs`, which required CMake and a
+# 2.6 MB vendored libcrypto to reach the same routines.
+rr-crypto = { path = "crates/rr-crypto", version = "0.1.0" }
 rr-session = { path = "crates/rr-session", version = "0.1.0" }
 ring = { version = "0.17.14", default-features = false, optional = true }
 schemars = { version = "1.2.2", default-features = false, features = ["derive", "std"] }
@@ -110,11 +106,10 @@ ring-aead = ["dep:ring"]
 fuzzing = []
 
 [dev-dependencies]
-# The crypto implementation crate, as a dev-dependency until C3b actually
-# switches `src/crypto/x25519.rs` onto it. Landing the implementation and its
-# differential evidence without touching the production graph means the shipped
-# binary is unchanged by this step, and `cargo tree -e normal` proves it.
-rr-crypto = { path = "crates/rr-crypto", version = "0.1.0" }
+# Retained as a **dev-dependency only**: the independent oracle
+# `tests/x25519_differential.rs` compares our X25519 against. Production no
+# longer uses it, which `cargo tree -e normal` proves.
+aws-lc-rs = { version = "1.18.1", default-features = false, features = ["aws-lc-sys"] }
 allocation-counter = "0.8.1"
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 ring = { version = "0.17.14", default-features = false }

@@ -11,6 +11,10 @@
 //! vendor crate, and a module that quietly acquires a new provider import
 //! fails here instead of arriving unnoticed.
 //!
+//! A crate whose list is **empty** is forbidden in production source
+//! altogether — that is what a finished migration looks like, and it is why a
+//! completed entry is emptied rather than removed.
+//!
 //! # What is scanned
 //!
 //! Every `.rs` file under `src/` and `crates/`, with `//` line comments
@@ -30,10 +34,12 @@ use std::{collections::BTreeSet, fs, path::Path};
 /// Sorted by path within each crate. Adding or removing a file here is a
 /// deliberate architectural act; the test fails until the list matches.
 const PROVIDERS: &[(&str, &[&str])] = &[
-    // The one `std`-only provider in the graph, and therefore the one
-    // `tests/protocol_core_boundary.rs` forbids inside the `no_std` core by
-    // name. Confined to the X25519 boundary. C3 removes it entirely.
-    ("aws_lc_rs", &["src/crypto/x25519.rs"]),
+    // **Empty on purpose: forbidden in production source.** C3b removed it;
+    // `rr-crypto` computes X25519 now. It survives as a dev-dependency, the
+    // independent oracle `tests/x25519_differential.rs` compares against, and
+    // `tests/` is outside this scan. A production file naming it again fails
+    // here, which is the point of keeping the entry rather than deleting it.
+    ("aws_lc_rs", &[]),
     // The default TLS 1.3 record AEAD, behind the `ring-aead` feature.
     // `ring` is also reached through `ureq -> rustls`, so removing this use
     // would not remove the crate.
@@ -284,11 +290,10 @@ fn the_boundary_lists_are_not_vacuous() {
 
     let mut missing = Vec::new();
     for (krate, files) in PROVIDERS {
-        assert!(
-            !files.is_empty(),
-            "`{krate}` has no listed file; delete the entry rather than \
-             leaving a rule that constrains nothing"
-        );
+        // An empty list is the strongest form of the rule, not a vacuous one:
+        // it says the crate must not appear in production source at all. That
+        // is what a completed migration looks like, and deleting the entry
+        // instead would silently stop checking.
         for file in *files {
             if !known.contains(file) {
                 missing.push(format!(

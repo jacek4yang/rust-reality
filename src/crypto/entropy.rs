@@ -60,11 +60,12 @@ impl core::error::Error for EntropyError {
 
 /// Fills `destination` with cryptographically secure random bytes.
 ///
-/// This is the signature [`fastcrypto`-style fill-own-storage constructors][1]
-/// take, so a secret type can be handed this function directly and never let
-/// the caller hold a copy of the material.
-///
-/// [1]: https://github.com/jacek4yang/fastcrypto-rs/pull/15
+/// Written to feed a fill-own-storage secret constructor: the destination is
+/// the secret's final location, so no caller-side copy of the material exists
+/// to leak or to forget to clear. `rr_crypto::EphemeralSecret::from_entropy`
+/// is the consumer, and it wants a fixed-size array, so the call site spells a
+/// one-token closure for the coercion — a slice keeps this usable for the
+/// draws that are not 32 bytes.
 ///
 /// # Errors
 ///
