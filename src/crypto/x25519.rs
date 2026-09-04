@@ -17,15 +17,24 @@
 //! no dynamic dispatch, no runtime selection, and no configuration surface.
 //! Which implementation computes X25519 is a build decision.
 //!
-//! Non-contributory shares are rejected. `aws-lc-rs` returns an error where
-//! `x25519-dalek` returned an all-zero shared secret that the caller had to
-//! test, so the rejection is expressed here as `None` and both call sites map it
-//! to the protocol error they already had.
+//! Non-contributory shares are rejected. The RFC 7748 §6.1 check is on the
+//! agreed output, so it also covers the non-canonical encodings of the
+//! small-order points; the rejection is expressed here as `None` and both call
+//! sites map it to the protocol error they already had.
+//!
+//! # Entropy
+//!
+//! The ephemeral secret is filled **in place** by [`crate::crypto::entropy`],
+//! through `rr-crypto`'s fill-own-storage constructor. The scalar is never
+//! written to a caller-side buffer, so there is nothing here for a caller to
+//! forget to clear — which is exactly the defect the experimental integration
+//! had, and #232 records why the incumbent could not be given the same
+//! treatment: `aws-lc-rs` seals its `SecureRandom` trait, so the only way to
+//! give it a faster entropy source was to import raw bytes and hold them.
 
-use aws_lc_rs::agreement::{
-    EphemeralPrivateKey, PrivateKey, UnparsedPublicKey, X25519, agree, agree_ephemeral,
-};
 use zeroize::Zeroizing;
+
+use crate::crypto::entropy;
 
 /// An X25519 shared secret.
 pub type SharedSecret = Zeroizing<[u8; 32]>;
@@ -54,51 +63,36 @@ impl core::fmt::Display for X25519Error {
 
 impl core::error::Error for X25519Error {}
 
-/// Copies an agreed secret out of the provider's buffer.
-///
-/// X25519 always agrees on exactly 32 bytes, so a different length is a broken
-/// provider rather than a peer-triggered condition.
-fn shared_secret(secret: &[u8]) -> Result<SharedSecret, ()> {
-    <[u8; 32]>::try_from(secret)
-        .map(Zeroizing::new)
-        .map_err(drop)
-}
-
 /// A long-lived X25519 private key, imported once per configuration generation.
 ///
 /// Not `Clone`: one configuration generation owns one key. Cloning would copy
 /// secret material to satisfy a derive rather than a requirement.
 pub struct StaticX25519Key {
-    inner: PrivateKey,
+    inner: rr_crypto::StaticSecret,
 }
 
 impl StaticX25519Key {
     /// Imports the configured 32-byte private key.
     ///
-    /// Accepts exactly what the previous implementation accepted: any 32 bytes,
-    /// clamped by the primitive at use, matching Xray's REALITY key semantics.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`X25519Error::InvalidPrivateKey`] if the provider rejects the
-    /// bytes.
-    pub fn new(private_key: &[u8; 32]) -> Result<Self, X25519Error> {
-        PrivateKey::from_private_key(&X25519, private_key)
-            .map(|inner| Self { inner })
-            .map_err(|_| X25519Error::InvalidPrivateKey)
+    /// Infallible, and that is a change of type rather than of behaviour: every
+    /// 32-byte string is a valid X25519 scalar, clamped by the primitive at
+    /// use, matching Xray's REALITY key semantics. The previous provider
+    /// returned a `Result` it could not populate, and a `Result` that is always
+    /// `Ok` teaches a caller to write an error path that never runs.
+    #[must_use]
+    pub fn new(private_key: &[u8; 32]) -> Self {
+        Self {
+            inner: rr_crypto::StaticSecret::from_bytes(*private_key),
+        }
     }
 
     /// Derives the matching public key.
     ///
-    /// # Errors
-    ///
-    /// Returns [`X25519Error::KeyGeneration`] if the provider cannot derive it.
-    pub fn public_key(&self) -> Result<[u8; 32], X25519Error> {
-        self.inner
-            .compute_public_key()
-            .ok()
-            .and_then(|public| <[u8; 32]>::try_from(public.as_ref()).ok())
-            .ok_or(X25519Error::KeyGeneration)
+    /// Infallible for the same reason as [`Self::new`]: fixed-base scalar
+    /// multiplication of a valid scalar has no failure mode.
+    #[must_use]
+    pub fn public_key(&self) -> [u8; 32] {
+        self.inner.public_key()
     }
 
     /// Agrees with a peer public key.
@@ -107,13 +101,9 @@ impl StaticX25519Key {
     /// caller must treat as an authentication failure.
     #[must_use]
     pub fn agree(&self, peer_public_key: &[u8; 32]) -> Option<SharedSecret> {
-        agree(
-            &self.inner,
-            UnparsedPublicKey::new(&X25519, &peer_public_key[..]),
-            (),
-            shared_secret,
-        )
-        .ok()
+        self.inner
+            .agree(peer_public_key)
+            .map(|secret| Zeroizing::new(*secret.as_bytes()))
     }
 }
 
@@ -128,37 +118,32 @@ impl core::fmt::Debug for StaticX25519Key {
 /// The public share is available while the key is held; [`Self::agree`] takes
 /// `self`, so the private key cannot outlive its single agreement.
 pub struct EphemeralX25519Key {
-    inner: EphemeralPrivateKey,
-    public_key: [u8; 32],
+    inner: rr_crypto::EphemeralSecret,
 }
 
 impl EphemeralX25519Key {
     /// Generates one ephemeral key pair.
     ///
-    /// The provider draws from its own CSPRNG. `aws-lc-rs` ignores the
-    /// `SecureRandom` argument of `EphemeralPrivateKey::generate` and uses
-    /// AWS-LC's internal DRBG, so passing one here would imply a control this
-    /// code does not have.
+    /// The entropy is drawn straight into the key's own storage by
+    /// [`entropy::fill`], so the scalar never exists in a buffer this function
+    /// owns and there is no caller-side copy to clear.
     ///
     /// # Errors
     ///
-    /// Returns [`X25519Error::KeyGeneration`] if generation or public-key
-    /// derivation fails.
+    /// Returns [`X25519Error::KeyGeneration`] if the operating system refuses
+    /// to provide entropy.
     pub fn generate() -> Result<Self, X25519Error> {
-        let inner = EphemeralPrivateKey::generate(&X25519, &aws_lc_rs::rand::SystemRandom::new())
-            .map_err(|_| X25519Error::KeyGeneration)?;
-        let public_key = inner
-            .compute_public_key()
-            .ok()
-            .and_then(|public| <[u8; 32]>::try_from(public.as_ref()).ok())
-            .ok_or(X25519Error::KeyGeneration)?;
-        Ok(Self { inner, public_key })
+        // `fill` takes a slice and the constructor offers a fixed-size array;
+        // the closure is the coercion and nothing else.
+        rr_crypto::EphemeralSecret::from_entropy(|scalar| entropy::fill(scalar))
+            .map(|inner| Self { inner })
+            .map_err(|_| X25519Error::KeyGeneration)
     }
 
     /// The public share to send in the server key share.
     #[must_use]
     pub const fn public_key(&self) -> &[u8; 32] {
-        &self.public_key
+        self.inner.public_key()
     }
 
     /// Consumes the key to agree with the peer's public key.
@@ -166,13 +151,9 @@ impl EphemeralX25519Key {
     /// Returns `None` for a non-contributory or malformed peer share.
     #[must_use]
     pub fn agree(self, peer_public_key: &[u8; 32]) -> Option<SharedSecret> {
-        agree_ephemeral(
-            self.inner,
-            UnparsedPublicKey::new(&X25519, &peer_public_key[..]),
-            (),
-            shared_secret,
-        )
-        .ok()
+        self.inner
+            .agree(peer_public_key)
+            .map(|secret| Zeroizing::new(*secret.as_bytes()))
     }
 }
 
@@ -180,7 +161,7 @@ impl core::fmt::Debug for EphemeralX25519Key {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("EphemeralX25519Key")
-            .field("public_key", &self.public_key)
+            .field("public_key", self.inner.public_key())
             .finish()
     }
 }
@@ -223,14 +204,14 @@ mod tests {
         let bob_public = hex32("de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f");
         let expected = hex32("4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742");
 
-        let key = StaticX25519Key::new(&alice).expect("RFC 7748 private key");
-        assert_eq!(key.public_key().expect("public key"), alice_public);
+        let key = StaticX25519Key::new(&alice);
+        assert_eq!(key.public_key(), alice_public);
         assert_eq!(*key.agree(&bob_public).expect("shared secret"), expected);
     }
 
     #[test]
     fn every_low_order_peer_share_is_refused() {
-        let key = StaticX25519Key::new(&[0x11; 32]).expect("private key");
+        let key = StaticX25519Key::new(&[0x11; 32]);
         for encoded in ADVERSARIAL {
             assert!(
                 key.agree(&hex32(encoded)).is_none(),
@@ -244,18 +225,22 @@ mod tests {
         // The configured REALITY key is 32 raw base64url bytes with no further
         // validation. A configuration that worked before must still work.
         for bytes in [[0x00_u8; 32], [0xff_u8; 32], [0x11_u8; 32]] {
-            let key = StaticX25519Key::new(&bytes).expect("configured key");
-            key.public_key().expect("public key");
+            let key = StaticX25519Key::new(&bytes);
+            let _ = key.public_key();
         }
         for encoded in ADVERSARIAL {
-            StaticX25519Key::new(&hex32(encoded)).expect("configured key");
+            // Infallible by construction now; what the loop still proves is
+            // that these encodings reach the primitive rather than being
+            // rejected earlier, and that deriving from them does not panic.
+            let key = StaticX25519Key::new(&hex32(encoded));
+            let _ = key.public_key();
         }
     }
 
     #[test]
     fn an_ephemeral_exchange_agrees_with_a_static_peer() {
-        let peer = StaticX25519Key::new(&[0x22; 32]).expect("peer key");
-        let peer_public = peer.public_key().expect("peer public key");
+        let peer = StaticX25519Key::new(&[0x22; 32]);
+        let peer_public = peer.public_key();
 
         let ephemeral = EphemeralX25519Key::generate().expect("ephemeral key");
         let server_public = *ephemeral.public_key();
@@ -316,10 +301,7 @@ mod tests {
             let expected =
                 x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(private))
                     .to_bytes();
-            let actual = StaticX25519Key::new(&private)
-                .expect("configured key")
-                .public_key()
-                .expect("public key");
+            let actual = StaticX25519Key::new(&private).public_key();
             assert_eq!(actual, expected, "derivation differs for {private:02x?}");
         }
     }
@@ -334,7 +316,6 @@ mod tests {
                 x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(peer_secret))
                     .to_bytes();
             let ours = StaticX25519Key::new(&private)
-                .expect("configured key")
                 .agree(&peer)
                 .map(|secret| *secret);
             assert_eq!(
@@ -354,7 +335,7 @@ mod tests {
         // reduction could plausibly diverge. Divergence here would change which
         // client authenticates.
         let private = [0x11_u8; 32];
-        let key = StaticX25519Key::new(&private).expect("configured key");
+        let key = StaticX25519Key::new(&private);
         for encoded in ADVERSARIAL.iter().chain(&[
             "cdeb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800",
             "4c9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f11d7",
@@ -369,7 +350,7 @@ mod tests {
 
     #[test]
     fn neither_key_type_reveals_secret_material_when_formatted() {
-        let key = StaticX25519Key::new(&[0x11; 32]).expect("private key");
+        let key = StaticX25519Key::new(&[0x11; 32]);
         assert_eq!(format!("{key:?}"), "StaticX25519Key");
         let ephemeral = EphemeralX25519Key::generate().expect("ephemeral key");
         let rendered = format!("{ephemeral:?}");

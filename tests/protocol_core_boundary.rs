@@ -149,11 +149,16 @@ fn the_protocol_core_uses_no_std_only_facility() {
         // `std`-only path, and is easier to add by accident: the import reads
         // like any other crypto import. ADR 0016's audit specifically checked
         // that no crate in this layer's closure enables `std` — including
-        // `ring`, which resolves without it. `aws-lc-rs` does require `std`, so
-        // it is confined to `crypto::x25519` and used only from `auth.rs` and
-        // `handshake.rs`, both deliberately outside this list. Migrating
-        // `record.rs` or `messages.rs` to it would be an architecture decision
-        // with an ADR, not an import.
+        // `ring`, which resolves without it.
+        //
+        // `aws-lc-rs` is the one that did, and C3b (ADR 0023) removed it from
+        // the production graph entirely: X25519 now comes from `rr-crypto`,
+        // which is `no_std` and `core`-only. The rule is kept because a
+        // dev-dependency is still resolvable and an import here would still be
+        // wrong — but the constraint it used to express is gone, and with it
+        // the reason this binary carried two X25519 implementations. Nothing
+        // now stops this layer from using `crypto::x25519` directly, which is
+        // what makes collapsing the `x25519-dalek` call sites possible.
         (
             "aws_lc_rs",
             "aws-lc-rs requires `std`; this layer must compile against `core` + `alloc`",
