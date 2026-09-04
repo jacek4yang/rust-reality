@@ -79,6 +79,47 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  aarch64:
+    name: aarch64 cross build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - name: Install the AArch64 target and cross toolchain
+        run: |
+          sudo apt-get update
+          # libc6-dev-arm64-cross is not pulled in by the compiler package, and
+          # without it `ring`'s C build fails on a missing target header rather
+          # than on anything to do with this repository.
+          sudo apt-get install --yes --no-install-recommends \
+            gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+          rustup target add aarch64-unknown-linux-gnu
+
+      # `crates/rr-crypto` carries AArch64 assembly that nothing else in this
+      # workflow compiles: before this job existed, a change to it would have
+      # failed for the first time during a release build. The library alone is
+      # enough to assemble it and is fast; the release job still builds the
+      # whole binary.
+      - name: Build the crypto crate for AArch64
+        run: cargo build --locked -p rr-crypto --target aarch64-unknown-linux-gnu
+
+      - name: Build the release binary for AArch64
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --locked --release --target aarch64-unknown-linux-gnu
+
+      - name: Verify the binary is AArch64
+        run: |
+          binary=target/aarch64-unknown-linux-gnu/release/rust-reality
+          test -x "$binary"
+          readelf -h "$binary" | grep -F 'Machine:' | grep -F 'AArch64'
+
   musl:
     name: x86_64 musl release target
     runs-on: ubuntu-22.04

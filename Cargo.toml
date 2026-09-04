@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/rr-linux", "crates/rr-session"]
+members = [".", "crates/rr-crypto", "crates/rr-linux", "crates/rr-session"]
 # `tools/` is an independent workspace holding repository tooling. Excluding it
 # keeps development-only dependencies out of the production dependency graph,
 # release artifacts and supply-chain policy.
@@ -110,6 +110,11 @@ ring-aead = ["dep:ring"]
 fuzzing = []
 
 [dev-dependencies]
+# The crypto implementation crate, as a dev-dependency until C3b actually
+# switches `src/crypto/x25519.rs` onto it. Landing the implementation and its
+# differential evidence without touching the production graph means the shipped
+# binary is unchanged by this step, and `cargo tree -e normal` proves it.
+rr-crypto = { path = "crates/rr-crypto", version = "0.1.0" }
 allocation-counter = "0.8.1"
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 ring = { version = "0.17.14", default-features = false }

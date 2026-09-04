@@ -59,10 +59,18 @@ const PROVIDERS: &[(&str, &[&str])] = &[
     // ChaCha12 backs the Vision padding CSPRNG. Not an AEAD use.
     ("chacha20", &["src/protocol/vless/padding.rs"]),
     // Digest, MAC and KDF: the C2 migration surface. Eight, three and three
-    // files respectively today.
+    // files in `src/` today.
+    //
+    // The two `crates/rr-crypto` entries are a different thing and do not
+    // shrink with C2: they are a **dev-dependency**, used by
+    // `vendored_upstream_matches_the_recorded_digests` to hash the vendored
+    // upstream assembly against the digests the provenance record pins. They
+    // are not in the production graph, which `cargo tree -e normal` shows.
     (
         "sha2",
         &[
+            "crates/rr-crypto/src/x25519/aarch64.rs",
+            "crates/rr-crypto/src/x25519/x86_64.rs",
             "src/protocol/handoff.rs",
             "src/protocol/nxr.rs",
             "src/protocol/reality/auth.rs",
