@@ -100,10 +100,10 @@ fn check_renders_the_shared_diagnostic_on_stderr() {
     );
 }
 
-/// The whole point of the reset: a file written for the previous release must
-/// fail, immediately and legibly, rather than being partially accepted.
+/// The bounded landing exception does not accept a previous-release entry.
+/// It must fail immediately at the unsupported protocol, never partially load.
 #[test]
-fn a_previous_release_configuration_fails_with_a_targeted_error() {
+fn a_previous_release_entry_fails_with_a_targeted_error() {
     let path = workspace(
         "v18-config",
         r#"{
@@ -149,12 +149,12 @@ fn a_previous_release_configuration_fails_with_a_targeted_error() {
 
     assert!(
         !output.status.success(),
-        "a previous-release configuration must not be accepted"
+        "a previous-release entry configuration must not be accepted"
     );
     let stderr = String::from_utf8(output.stderr).expect("diagnostics must be UTF-8");
     assert!(
-        stderr.contains("`role`"),
-        "the operator learns which field decides the shape: {stderr}"
+        stderr.contains("`inbounds[0].protocol`") && stderr.contains("handoff"),
+        "the operator learns the bounded landing exception's protocol: {stderr}"
     );
 }
 
