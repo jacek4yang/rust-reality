@@ -38,6 +38,19 @@ rather than adding a second syntax. To annotate a deployment, keep notes
 beside the file, or use `label` on a user — the one field that exists purely
 for humans.
 
+## Existing v1.8 Handoff landings
+
+v2 accepts an existing v1.8 configuration with one Handoff listener, one direct
+outbound, empty routing and the old default numeric settings under automatic
+resource derivation. Keys, addresses, timeouts, DNS and the 120-second default
+replay retention are preserved. `serve --config` remains accepted for existing
+systemd units. Unsupported legacy settings fail; they are never silently
+ignored. See [ADR 0027](../../adr/0027-preserve-the-existing-v18-handoff-landing.md).
+
+Use `check --config` before upgrading the binary. Loading and checking do not
+rewrite the file. `format` explicitly renders the current form; do not use
+`format --write` during a deployment that requires unchanged configuration.
+
 ## Role first
 
 The first field decides the shape of everything after it:

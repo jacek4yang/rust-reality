@@ -5,6 +5,8 @@
 Accepted for v1.9.0. This decision breaks every existing configuration file and
 authorizes no wire-format, protocol, or client-interoperability change.
 
+For v2.0.0, [ADR 0027](0027-preserve-the-existing-v18-handoff-landing.md) adds a bounded input exception for an existing Handoff landing whose production configuration and systemd invocation must remain unchanged. The current runtime model and all other strictness rules remain in force.
+
 ## Context
 
 The v1.8 configuration model grew by accretion. Several of its structures now

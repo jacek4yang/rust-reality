@@ -101,6 +101,8 @@ the operator-facing references live under `docs/en/` and `docs/zh-CN/`.
 
 ## 4. Forward-only project
 
+**v2.0.0 deployment exception:** [ADR 0027](docs/adr/0027-preserve-the-existing-v18-handoff-landing.md) permits the bounded v1.8 Handoff/direct landing input and the existing `serve --config` invocation so an operator can upgrade the binary with configuration and service identity unchanged. This exception does not permit general migration machinery or silently discarded settings. The restrictions below apply outside that explicit subset.
+
 rust-reality supports the **current contract only**. Backward compatibility
 between rust-reality releases is **not a design goal**. Breaking changes are
 acceptable whenever they produce a better architecture, configuration model,

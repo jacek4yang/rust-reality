@@ -273,9 +273,7 @@ pub(super) fn compile_handoff_replays(
         usize::try_from(crate::server::nxr::REPLAY_NONCE_CAPACITY)
             .map_err(|_| HandoffLandingConfigError::Capacity)
             .map_err(RuntimeUpdateError::Handoff)?,
-        Duration::from_secs(crate::server::nxr::replay_retention_seconds(
-            settings.timing().max_time_difference_seconds,
-        )),
+        Duration::from_secs(settings.nonce_retention_seconds()),
     )
     .map_err(HandoffLandingConfigError::Replay)
     .map_err(RuntimeUpdateError::Handoff)?;
