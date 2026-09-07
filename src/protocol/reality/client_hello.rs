@@ -1002,7 +1002,7 @@ fn classify_profile_message(
             .chunks_exact(2)
             .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]])),
         &mut digest,
-    );
+    )?;
 
     let compression_len = usize::from(
         reader
@@ -1035,10 +1035,12 @@ fn classify_profile_message(
         if !reader.is_empty() {
             return Err(ClientHelloClassError::Malformed);
         }
+        let mut extension_count = 0;
         while !extensions.is_empty() {
-            if normalized_extensions.len() >= MAX_EXTENSIONS {
+            if extension_count >= MAX_EXTENSIONS {
                 return Err(ClientHelloClassError::Malformed);
             }
+            extension_count += 1;
             let extension_type = extensions
                 .read_u16()
                 .map_err(|_| ClientHelloClassError::Malformed)?;
@@ -1086,17 +1088,26 @@ fn classify_profile_message(
 /// for this server — it selects by its own configuration and revalidates the
 /// chosen capability against the real client at materialization — so folding
 /// them away merges one capability set into one class instead of many.
-fn hash_canonical_values(values: impl Iterator<Item = u16>, digest: &mut Sha256) {
-    let mut canonical: Vec<u16> = values.filter(|value| !is_grease(*value)).collect();
+fn hash_canonical_values(
+    values: impl ExactSizeIterator<Item = u16>,
+    digest: &mut Sha256,
+) -> Result<(), ClientHelloClassError> {
+    let mut canonical = Vec::new();
+    canonical
+        .try_reserve_exact(values.len())
+        .map_err(|_| ClientHelloClassError::BufferAllocation)?;
+    canonical.extend(values.filter(|value| !is_grease(*value)));
     canonical.sort_unstable();
+    canonical.dedup();
     digest.update(
         u16::try_from(canonical.len())
-            .expect("a ClientHello vector cannot exceed a u16 count")
+            .map_err(|_| ClientHelloClassError::Malformed)?
             .to_be_bytes(),
     );
     for value in canonical {
         digest.update(value.to_be_bytes());
     }
+    Ok(())
 }
 
 fn normalized_extension_digest(
@@ -1126,7 +1137,7 @@ fn normalized_extension_digest(
                     .chunks_exact(2)
                     .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]])),
                 &mut digest,
-            );
+            )?;
         }
         EXT_SIGNATURE_ALGORITHMS => {
             let mut reader = Reader::new(body);
@@ -1145,7 +1156,7 @@ fn normalized_extension_digest(
                     .chunks_exact(2)
                     .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]])),
                 &mut digest,
-            );
+            )?;
         }
         EXT_SUPPORTED_VERSIONS => {
             let mut reader = Reader::new(body);
@@ -1164,7 +1175,7 @@ fn normalized_extension_digest(
                     .chunks_exact(2)
                     .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]])),
                 &mut digest,
-            );
+            )?;
         }
         EXT_KEY_SHARE => normalize_key_shares(body, &mut digest)?,
         EXT_PADDING => {
@@ -2032,7 +2043,37 @@ mod tests {
     }
 
     #[test]
-    fn grease_ech_content_normalizes_but_observable_length_does_not() {
+    fn the_classifier_counts_grease_towards_the_wire_extension_bound() {
+        let base = client_hello([0x10; 32], &[0x20; 32], "www.example.com", &[b"h2"]);
+        let mut message = append_extension(base, 0xaaaa, &[]);
+        let existing = extension_segments(&message)
+            .expect("fixture segments")
+            .len();
+        for index in existing..super::MAX_EXTENSIONS {
+            message = append_extension(message, 0x4000 + u16::try_from(index).unwrap(), &[]);
+        }
+        assert!(super::classify_profile_message(&message).is_ok());
+        let oversized = append_extension(message, 0x4a4a, &[]);
+        assert_eq!(
+            super::classify_profile_message(&oversized),
+            Err(ClientHelloClassError::Malformed)
+        );
+        assert!(ClientHello::parse_message(&oversized).is_err());
+    }
+
+    #[test]
+    fn repeated_cipher_capabilities_do_not_split_the_class() {
+        let class = |ciphers: &[u16]| {
+            ClientHello::parse_message(&hello_with_ciphers_and_groups(ciphers, None))
+                .expect("fixture hello")
+                .normalized_profile_class()
+                .expect("fixture class")
+        };
+        assert_eq!(class(&[0x1301, 0x1302]), class(&[0x1302, 0x1301, 0x1301]));
+    }
+
+    #[test]
+    fn grease_ech_content_and_length_do_not_split_the_class() {
         let base = client_hello([0x10; 32], &[0x20; 32], "www.example.com", &[b"h2"]);
         let ech = |fill: u8, payload_len: usize| {
             let mut body = vec![0, 0, 1, 0, 1, fill, 0, 32];
