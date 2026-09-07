@@ -1291,6 +1291,33 @@ mod tests {
     }
 
     #[test]
+    fn cloned_landing_handlers_share_keys_across_concurrent_transfers() {
+        let (secret, public) = landing_key_pair(0x77);
+        let psk = HandoffPsk::new([0x55; 32]);
+        let keys = HandoffLandingKeys::single(psk.clone(), StaticX25519Key::new(&secret));
+        let lifetime = std::sync::Arc::downgrade(&keys.active_secret);
+        let cache = test_cache();
+        std::thread::scope(|scope| {
+            for index in 0..8 {
+                let handler = keys.clone();
+                let psk = &psk;
+                let cache = &cache;
+                scope.spawn(move || {
+                    let state = test_state(vec![index; 1024], vec![index; 64]);
+                    let message = seal(&state, psk, &public);
+                    let opened = open_transfer(&message, &handler, cache, NOW, WINDOW)
+                        .expect("concurrent transfer must authenticate");
+                    assert_states_equal(opened.state(), &state);
+                });
+            }
+            drop(keys);
+        });
+        // The generation owner was dropped before joining. The last handler
+        // must release the allocation whose secret has zeroize-on-drop.
+        assert!(lifetime.upgrade().is_none());
+    }
+
+    #[test]
     fn empty_and_maximum_pending_buffers_round_trip() {
         let (landing_secret, landing_public) = landing_key_pair(0x78);
         let psk = HandoffPsk::new([0x56; 32]);

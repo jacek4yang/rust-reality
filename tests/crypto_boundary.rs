@@ -34,6 +34,15 @@ use std::{collections::BTreeSet, fs, path::Path};
 /// Sorted by path within each crate. Adding or removing a file here is a
 /// deliberate architectural act; the test fails until the list matches.
 const PROVIDERS: &[(&str, &[&str])] = &[
+    // The protocol wrapper is the production entrance. The cover-profile
+    // fixture names the implementation directly only inside cfg(test).
+    (
+        "rr_crypto",
+        &[
+            "src/crypto/x25519.rs",
+            "src/protocol/reality/tls13/cover_profile.rs",
+        ],
+    ),
     // **Empty on purpose: forbidden in production source.** C3b removed it;
     // `rr-crypto` computes X25519 now. It survives as a dev-dependency, the
     // independent oracle `tests/x25519_differential.rs` compares against, and
@@ -134,6 +143,46 @@ const PROVIDERS: &[(&str, &[&str])] = &[
     // Constant-time comparison, one production use: the client Finished check.
     ("subtle", &["src/protocol/reality/tls13/handshake.rs"]),
 ];
+
+/// Source spelling alone cannot detect an unused, renamed or transitive
+/// provider dependency. Inspect Cargo's resolved normal graph as well.
+#[test]
+fn the_normal_dependency_graph_excludes_retired_and_research_providers() {
+    let output = std::process::Command::new(env!("CARGO"))
+        .args([
+            "tree",
+            "--locked",
+            "--offline",
+            "--all-features",
+            "--package",
+            "rust-reality",
+            "--edges",
+            "normal",
+            "--prefix",
+            "none",
+        ])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("Cargo must be available to verify the normal graph");
+    assert!(
+        output.status.success(),
+        "cargo tree failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let graph = String::from_utf8(output.stdout).expect("Cargo graph must be UTF-8");
+    assert!(
+        graph.starts_with("rust-reality v"),
+        "Cargo returned no root graph"
+    );
+    for line in graph.lines() {
+        let name = line.split_whitespace().next().expect("nonempty graph row");
+        assert!(
+            !matches!(name, "x25519-dalek" | "aws-lc-rs" | "aws-lc-sys")
+                && !line.contains("fastcrypto"),
+            "retired or research provider in the normal graph: {line}"
+        );
+    }
+}
 
 /// Files permitted to reach the operating-system entropy source directly.
 ///
