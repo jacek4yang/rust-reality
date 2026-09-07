@@ -673,7 +673,7 @@ mod tests {
 
     #[test]
     fn serves_payloads_stats_and_uploads() {
-        let root = std::env::temp_dir().join(format!("rr-origin-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("rr-origin-server-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let body: Vec<u8> = (0..=255_u8).cycle().take(300_000).collect();
         std::fs::write(root.join("payload.bin"), &body).unwrap();
