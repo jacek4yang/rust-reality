@@ -6,6 +6,12 @@
 候选二进制证据高于路线图估计；发布时间不能凌驾于协议正确性、安全性和受保护
 性能路径。
 
+v2 二进制升级期间，生产配置字节、身份、路由、systemd 语义、SSH 别名、防火墙和
+云网络策略均保持不变。使用现有代际目录；即使官方产物替换候选，也保留升级前的
+回滚二进制。配置拒绝属于软件兼容性缺陷，不授权改写管理员的配置文件。
+有限的 v1.8 Handoff/direct 输入与 `serve --config` 调用见
+[ADR 0027](../adr/0027-preserve-the-existing-v18-handoff-landing.md)。
+
 ## 分层证据
 
 | 层级 | 阻塞发布 | 时间预算 | 回答的问题 |
@@ -52,8 +58,8 @@ SHA、`check` 和 `doctor`；`apply cutover` 先准备 PREVIOUS，再以最短
 stop/symlink/start 窗口切换，
 验证二进制与 443，并拒绝切换期间新出现的非预期 wildcard TCP 监听。主机原有的
 无关监听仍由主机管理员负责，部署工具不会擅自停止；启动或监听策略健康失败会
-自动恢复旧代际。后续互操作或 canary 失败执行 `rollback`。`promote` 只保留
-CURRENT 与 PREVIOUS；裁剪软件代际永远不能删除持久身份。
+自动恢复旧代际。后续互操作或 canary 失败执行 `rollback`。`promote` 记录验收；
+可选裁剪是独立操作，不得删除升级前保留的回滚版本或持久身份。
 
 ## 双 VPS 主动 canary
 
@@ -77,7 +83,14 @@ generation 退休、LANDING 恢复、至少 500 次有界连接、pool 上界、
 并计入有界可复用 splice pipe pool，不会把预热后的进程与未负载起点做错误
 比较。受控 LANDING restart 可以产生少量、有上界的 outbound failure，但不允许任何
 authentication/protocol rejection。短 canary 不外推 MiB/hour；RSS 无需逐字节回到起点。
-NXR 在同一 LANDING 443 上顺序做短补充验证，之后恢复预期日常配置。
+如果切换协议模式需要修改生产配置，应在本地完成该补充测试。
+
+实际生产拓扑由已确认的配置决定。如果公网 LINE 使用 SOCKS5 而非 Handoff，必须
+如实报告，不能为了符合上图改动用户、凭据或路由。验证原有公网路径，同时以明确
+授权、单独标注的补充测试使用 LINE 上仅监听 loopback 的入口连接现有限制访问的
+LANDING:443。这证明真实 WAN 链路，不代表公网 LINE 监听器使用 Handoff。
+不允许临时 wildcard/公网监听。历史 v1.8 补充证据中的配置改动属于当时的授权，
+不能作为本次 v2 二进制升级修改配置的依据。
 
 ## 标签、官方产物与回滚
 
