@@ -650,8 +650,13 @@ fn materialize_native_configs(
     let nxr_landing = workspace.join("nxr-landing.json");
     write_config(
         &nxr_landing,
-        &crate::bench::config::rust_landing("127.0.0.1", ports.nxr_landing, &nxr_link, None)
-            .to_python_json(),
+        &patch_server_config(
+            &crate::bench::config::rust_landing("127.0.0.1", ports.nxr_landing, &nxr_link, None)
+                .to_python_json(),
+            workspace,
+            "assets-nxr-landing",
+            false,
+        )?,
     )?;
     let nxr_client = workspace.join("nxr-client.json");
     write_config(
@@ -2637,6 +2642,13 @@ mod tests {
         let json = |path: &Path| -> serde_json::Value {
             serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
         };
+        for path in configs.rust_paths() {
+            assert_eq!(
+                json(path)["log"]["level"],
+                "debug",
+                "every server must emit generation events for the reload gate"
+            );
+        }
         let line = json(&configs.handoff_line);
         let landing = json(&configs.handoff_landing);
         let client = json(&configs.handoff_client);
