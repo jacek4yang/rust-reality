@@ -26,6 +26,9 @@
 
 ## 核心亮点
 
+- v2 的自有协议使用统一的 X25519 边界；哈希、AEAD、签名和 ML-KEM 保留成熟的
+  委托实现。参见[实现清单](docs/zh-CN/development/crypto-providers.md)与
+  [有限的落地配置兼容范围](docs/adr/0027-preserve-the-existing-v18-handoff-landing.md)。
 - 公网 VLESS + REALITY + Vision 数据路径兼容 Xray-core 26.7.28，并以未经修改的
   Xray 客户端做端到端门禁。
 - 已认证 REALITY 建连会在精确、保守的 ClientHello class 准备好时使用已验证的

@@ -28,6 +28,10 @@ Xray-compatible client
 
 ## Highlights
 
+- v2 uses a single owned X25519 boundary for its protocols and retains mature
+  delegated hashes, AEAD, signatures and ML-KEM. See the
+  [provider mapping](docs/en/development/crypto-providers.md) and
+  [bounded landing compatibility](docs/adr/0027-preserve-the-existing-v18-handoff-landing.md).
 - Xray-core 26.7.28-compatible public VLESS + REALITY + Vision data path,
   gated end to end with an unmodified Xray client.
 - Authenticated REALITY setup uses a validated prebuilt cover profile when an
