@@ -480,7 +480,7 @@ async fn collect_observation(
         .governor
         .try_acquire(AdmissionKind::CryptoOperation)
         .map_err(|_| CollectionFailure::Unavailable)?;
-    CoverProfile::from_controlled_observation(candidate.class, &probe, target, plan, first_record)
+    CoverProfile::from_controlled_observation(candidate.class, probe, target, plan, first_record)
         .map_err(|_| CollectionFailure::Unavailable)
 }
 

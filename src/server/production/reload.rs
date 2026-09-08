@@ -274,8 +274,7 @@ mod tests {
             handoff::{ContinuationState, HandoffPsk, seal_transfer},
             reality::tls13::{CipherSuite, TrafficKeys},
         };
-        let landing_public =
-            x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(landing_secret));
+        let landing_public = crate::crypto::StaticX25519Key::new(&landing_secret).public_key();
         let state = ContinuationState::new(
             CipherSuite::ChaCha20Poly1305Sha256,
             TrafficKeys::from_raw_parts(&[0x11; 32], [0x21; 12]).expect("client keys"),

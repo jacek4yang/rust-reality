@@ -5,8 +5,6 @@ use tokio::{
     io::AsyncWriteExt,
     time::{self, Instant},
 };
-use x25519_dalek::{PublicKey, StaticSecret};
-use zeroize::Zeroizing;
 
 use crate::config::node::network::NetworkConfig;
 use crate::{
@@ -248,13 +246,11 @@ impl ProbeClientHello {
         validate_server_name(server_name)?;
         let mut random = [0_u8; 32];
         let mut session_id = [0_u8; SESSION_ID_LEN];
-        let mut private_bytes = Zeroizing::new([0_u8; 32]);
         crate::crypto::entropy::fill(&mut random).map_err(|_| DestinationProbeError::Random)?;
         crate::crypto::entropy::fill(&mut session_id).map_err(|_| DestinationProbeError::Random)?;
-        crate::crypto::entropy::fill(private_bytes.as_mut())
-            .map_err(|_| DestinationProbeError::Random)?;
-        let private = StaticSecret::from(*private_bytes);
-        let public = PublicKey::from(&private).to_bytes();
+        let public = *crate::crypto::EphemeralX25519Key::generate()
+            .map_err(|_| DestinationProbeError::Random)?
+            .public_key();
 
         let mut extensions = Vec::with_capacity(256);
         let mut names = vec![0];

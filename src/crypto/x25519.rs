@@ -284,9 +284,9 @@ mod tests {
 
     /// The previous provider, as an independent oracle.
     ///
-    /// `x25519-dalek` remains a production dependency for key generation, the
-    /// destination probe and the handoff control channel, so this compares two
-    /// real implementations rather than one implementation against itself.
+    /// Since C3c, `x25519-dalek` is a dev-dependency and an oracle only: this
+    /// compares two real implementations rather than one implementation
+    /// against itself.
     fn dalek_agree(private: &[u8; 32], peer: &[u8; 32]) -> Option<[u8; 32]> {
         let shared = x25519_dalek::StaticSecret::from(*private)
             .diffie_hellman(&x25519_dalek::PublicKey::from(*peer));

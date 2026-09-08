@@ -34,6 +34,15 @@ use std::{collections::BTreeSet, fs, path::Path};
 /// Sorted by path within each crate. Adding or removing a file here is a
 /// deliberate architectural act; the test fails until the list matches.
 const PROVIDERS: &[(&str, &[&str])] = &[
+    // The protocol wrapper is the production entrance. The cover-profile
+    // fixture names the implementation directly only inside cfg(test).
+    (
+        "rr_crypto",
+        &[
+            "src/crypto/x25519.rs",
+            "src/protocol/reality/tls13/cover_profile.rs",
+        ],
+    ),
     // **Empty on purpose: forbidden in production source.** C3b removed it;
     // `rr-crypto` computes X25519 now. It survives as a dev-dependency, the
     // independent oracle `tests/x25519_differential.rs` compares against, and
@@ -105,17 +114,13 @@ const PROVIDERS: &[(&str, &[&str])] = &[
     ),
     // The signature provider, used once per session for CertificateVerify.
     ("ed25519_dalek", &["src/protocol/reality/tls13/messages.rs"]),
-    // The **second** X25519 implementation in this binary. It existed because
-    // `aws-lc-rs` required `std` while `client_hello.rs` sits inside the
-    // `no_std` core — not because two providers were wanted. C3b removed that
-    // constraint: `rr-crypto` is `no_std`, so these call sites can collapse
-    // onto `crypto::x25519`, one reviewable step at a time.
-    //
-    // `auth.rs`, `x25519.rs`, `handshake.rs`, `reload.rs` and now `keygen.rs`
-    // name it only from test or `fuzzing`-feature code — as an independent
-    // oracle, which is a reason to keep it rather than an omission. The scan
-    // does not distinguish test code on purpose: "which files know about this
-    // crate" is the property worth constraining.
+    // C3c removed the last production call site: every remaining `src/` file
+    // names `x25519_dalek` only from test code — the independent oracle the
+    // in-file differential tests and `tests/x25519_differential.rs` compare
+    // `rr-crypto` against. Keeping the oracle is deliberate; the entry is now
+    // also the tripwire that keeps production from naming the crate again.
+    // The scan does not distinguish test code on purpose: "which files know
+    // about this crate" is the property worth constraining.
     (
         "x25519_dalek",
         &[
@@ -123,11 +128,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
             "src/crypto/x25519.rs",
             "src/protocol/handoff.rs",
             "src/protocol/reality/auth.rs",
-            "src/protocol/reality/client_hello.rs",
             "src/protocol/reality/tls13/handshake.rs",
-            "src/server/handoff.rs",
-            "src/server/probe.rs",
-            "src/server/production/reload.rs",
         ],
     ),
     // Post-quantum KEM. Deliberately delegated in v2 (issue #225): the
@@ -143,22 +144,59 @@ const PROVIDERS: &[(&str, &[&str])] = &[
     ("subtle", &["src/protocol/reality/tls13/handshake.rs"]),
 ];
 
+/// Source spelling alone cannot detect an unused, renamed or transitive
+/// provider dependency. Inspect Cargo's resolved normal graph as well.
+#[test]
+fn the_normal_dependency_graph_excludes_retired_and_research_providers() {
+    let output = std::process::Command::new(env!("CARGO"))
+        .args([
+            "tree",
+            "--locked",
+            "--offline",
+            "--all-features",
+            "--package",
+            "rust-reality",
+            "--edges",
+            "normal",
+            "--prefix",
+            "none",
+        ])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("Cargo must be available to verify the normal graph");
+    assert!(
+        output.status.success(),
+        "cargo tree failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let graph = String::from_utf8(output.stdout).expect("Cargo graph must be UTF-8");
+    assert!(
+        graph.starts_with("rust-reality v"),
+        "Cargo returned no root graph"
+    );
+    for line in graph.lines() {
+        let name = line.split_whitespace().next().expect("nonempty graph row");
+        assert!(
+            !matches!(name, "x25519-dalek" | "aws-lc-rs" | "aws-lc-sys")
+                && !line.contains("fastcrypto"),
+            "retired or research provider in the normal graph: {line}"
+        );
+    }
+}
+
 /// Files permitted to reach the operating-system entropy source directly.
 ///
-/// `crypto::entropy` is the single cryptographic source. The other three are
+/// `crypto::entropy` is the single cryptographic source. The other two are
 /// exceptions with stated reasons, and each is expected to disappear or stay
-/// forever on its own merits rather than by neglect.
+/// forever on its own merits rather than by neglect. C3c removed the third:
+/// `protocol/handoff.rs` drew through `getrandom::SysRng` only because
+/// `x25519_dalek::EphemeralSecret::random_from_rng` demanded an RNG object;
+/// its migration onto `EphemeralX25519Key::generate` folded that draw back
+/// into the owned source.
 const ENTROPY_SITES: &[(&str, &str)] = &[
     (
         "src/crypto/entropy.rs",
         "the owner: every cryptographic draw in the program goes through it",
-    ),
-    (
-        "src/protocol/handoff.rs",
-        "`getrandom::SysRng` as a `rand_core` CSPRNG, because \
-         `x25519_dalek::EphemeralSecret::random_from_rng` takes an RNG object \
-         rather than a fill function. Same source, different spelling; it goes \
-         when that call site does",
     ),
     (
         "src/assets/mod.rs",

@@ -50,10 +50,10 @@ pub(crate) struct CoverProfile {
 }
 
 impl CoverProfile {
-    /// Validates one controlled response and erases every per-session field.
+    /// Consumes one probe, validates its response and erases per-session state.
     pub(crate) fn from_controlled_observation(
         class: NormalizedClientHelloClass,
-        probe: &CoverProbe,
+        mut probe: CoverProbe,
         target: ServerHelloTemplate,
         plan: CoverHandshakePlan,
         first_encrypted_record: &[u8],
@@ -545,7 +545,7 @@ mod equivalence {
             shape: CoverHandshakeRecordShape::Coalesced { wire_len: 4_096 },
         };
         let profile =
-            CoverProfile::from_controlled_observation(class, &probe, target, plan, &sealed)
+            CoverProfile::from_controlled_observation(class, probe, target, plan, &sealed)
                 .expect("the cover observation must become a profile");
         let materialized = profile
             .materialize(&client, [0x5a; 32])
