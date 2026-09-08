@@ -163,9 +163,26 @@ pub struct HandoffLandingConfig {
     /// milliseconds. Absent means 10000.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connect_timeout_ms: Option<u64>,
+    /// Retention of verified nonces, in seconds. Absent derives twice the
+    /// accepted clock skew plus one second. A longer explicit retention
+    /// preserves an existing landing's replay policy during binary upgrades.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce_retention_seconds: Option<u64>,
 }
 
 impl HandoffLandingConfig {
+    /// Effective monotonic replay retention; validation enforces the minimum
+    /// authentication window and the bounded maximum.
+    #[must_use]
+    pub fn nonce_retention_seconds(&self) -> u64 {
+        self.nonce_retention_seconds.unwrap_or_else(|| {
+            self.timing()
+                .max_time_difference_seconds
+                .saturating_mul(2)
+                .saturating_add(1)
+        })
+    }
+
     /// The resolved timing policy.
     #[must_use]
     pub fn timing(&self) -> LandingTiming {

@@ -260,6 +260,9 @@ Hot, including key rotation. Landing nodes only. Tagged by `protocol`.
 | `connectTimeoutMs` | integer | no | `10000` |
 | `preAuthIdleTimeoutMs` | integer | no | `60000` |
 | `maxTimeDifferenceSeconds` | integer | no | `30` |
+| `nonceRetentionSeconds` | integer | no | twice `maxTimeDifferenceSeconds` plus one second |
+
+Replay retention is cold: changing its effective value requires a restart. It must cover twice the accepted clock skew plus one second and may not exceed 86400 seconds. The replay cache remains bounded to 65536 entries.
 
 At most two retired keys per list, each distinct from the active one. Senders
 always seal with the active key; the retired ones exist so a rotation can be

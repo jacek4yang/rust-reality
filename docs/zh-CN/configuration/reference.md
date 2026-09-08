@@ -244,6 +244,9 @@ short ID 是 2–16 个十六进制字符，个数为偶数。客户端每个连
 | `connectTimeoutMs` | 整数 | 否 | `10000` |
 | `preAuthIdleTimeoutMs` | 整数 | 否 | `60000` |
 | `maxTimeDifferenceSeconds` | 整数 | 否 | `30` |
+| `nonceRetentionSeconds` | 整数 | 否 | `maxTimeDifferenceSeconds` 的两倍加一秒 |
+
+重放保留时间是冷设置：有效值变化需要重启。它必须覆盖允许时钟偏差的两倍加一秒，且不得超过 86400 秒。重放缓存仍以 65536 条记录为上限。
 
 每个列表最多两个退役密钥，且都要与当前密钥不同。发送方永远用当前密钥封装；退役密钥
 的存在只是为了让轮换可以一台一台做。要尽快删掉——见

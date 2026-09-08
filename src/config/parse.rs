@@ -136,10 +136,13 @@ pub fn parse_bytes(path: &Path, bytes: &[u8]) -> Result<NodeConfig, ParseError> 
     };
 
     match role {
-        Role::Entry => deserialize::<EntryConfig>(path, &text, bytes)
+        Some(Role::Entry) => deserialize::<EntryConfig>(path, &text, bytes)
             .map(|entry| NodeConfig::Entry(Box::new(entry))),
-        Role::Landing => deserialize::<LandingConfig>(path, &text, bytes)
+        Some(Role::Landing) => deserialize::<LandingConfig>(path, &text, bytes)
             .map(|landing| NodeConfig::Landing(Box::new(landing))),
+        None => deserialize::<super::landing_v18::LandingV18>(path, &text, bytes)?
+            .into_node()
+            .map_err(|message| decode_failure(path, &text, "", serde::de::Error::custom(message))),
     }
 }
 
@@ -148,13 +151,27 @@ pub fn parse_bytes(path: &Path, bytes: &[u8]) -> Result<NodeConfig, ParseError> 
 /// Unknown fields are deliberately tolerated here: this pass only chooses which
 /// strict type the second pass uses, and rejecting an unknown field before the
 /// role is known would report it against the wrong shape.
-fn role_of(bytes: &[u8]) -> Result<Role, serde_json::Error> {
+fn role_of(bytes: &[u8]) -> Result<Option<Role>, serde_json::Error> {
     #[derive(Deserialize)]
     struct RoleOnly {
-        role: Role,
+        #[serde(default, deserialize_with = "present_role")]
+        role: Option<Role>,
+        #[serde(default, deserialize_with = "present_inbounds")]
+        inbounds: bool,
     }
 
-    serde_json::from_slice::<RoleOnly>(bytes).map(|peek| peek.role)
+    // An explicitly null/invalid role never falls back to the v1.8 reader.
+    fn present_role<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Role>, D::Error> {
+        Role::deserialize(d).map(Some)
+    }
+    fn present_inbounds<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+        serde::de::IgnoredAny::deserialize(d).map(|_| true)
+    }
+    let peek = serde_json::from_slice::<RoleOnly>(bytes)?;
+    if peek.role.is_none() && !peek.inbounds {
+        return Err(serde::de::Error::missing_field("role"));
+    }
+    Ok(peek.role)
 }
 
 /// Deserializes the whole document into one role's type, tracking field paths.
