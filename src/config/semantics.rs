@@ -382,6 +382,17 @@ fn validate_landing_protocol(protocol: &LandingProtocol) -> Result<(), SemanticE
             settings.previous_private_keys(),
             &settings.private_key,
         )?;
+        let minimum = settings
+            .timing()
+            .max_time_difference_seconds
+            .saturating_mul(2)
+            .saturating_add(1);
+        if !(minimum..=86_400).contains(&settings.nonce_retention_seconds()) {
+            return fail(
+                "landing.nonceRetentionSeconds",
+                "must cover twice the accepted clock skew plus one second and not exceed 86400 seconds",
+            );
+        }
     }
 
     let timing = protocol.timing();

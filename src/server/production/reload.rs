@@ -49,6 +49,12 @@ pub(super) fn ensure_hot_compatible(
     if candidate.dns() != current.node.dns() {
         return Err(RuntimeUpdateError::DnsPolicyChanged);
     }
+    // Nonces and their original expiry deadlines survive generation changes.
+    // Rebuilding the cache would permit replay; silently keeping it would
+    // ignore the new policy. Retention changes therefore require a restart.
+    if replay_retention(&candidate) != replay_retention(&current.node) {
+        return Err(RuntimeUpdateError::ReplayPolicyChanged);
+    }
     // The runtime posture is cold: the descriptor budget, the memory monitor,
     // and every admission ceiling were sized against it before the first
     // listener bound. The resource mode compares resolved values against one
@@ -68,6 +74,15 @@ pub(super) fn ensure_hot_compatible(
         return Err(RuntimeUpdateError::ResourceModeChanged);
     }
     Ok(candidate)
+}
+
+fn replay_retention(node: &NodeConfig) -> Option<u64> {
+    node.as_landing().map(|landing| match &landing.landing {
+        LandingProtocol::Handoff(settings) => settings.nonce_retention_seconds(),
+        LandingProtocol::Nxr(settings) => crate::server::nxr::replay_retention_seconds(
+            settings.timing().max_time_difference_seconds,
+        ),
+    })
 }
 
 /// What a bound socket speaks, for the reload topology comparison.
@@ -143,6 +158,42 @@ mod tests {
             Err(RuntimeUpdateError::ListenerTopologyChanged)
         ));
         assert!(Arc::ptr_eq(&previous, &server.runtime.load()));
+    }
+
+    #[test]
+    fn replay_retention_changes_keep_the_previous_generation_and_require_restart() {
+        let base = rotation_config(
+            unused_loopback_port(),
+            ROTATION_PSK_A,
+            ROTATION_SECRET_A,
+            &[],
+            &[],
+        );
+        let server = ProductionServer::from_config(base.clone()).expect("landing must compile");
+        let previous = server.runtime.load();
+        server
+            .runtime
+            .publish(base.clone().into_node())
+            .expect("unchanged config must reload");
+        let mut replacement = base.into_node();
+        let NodeConfig::Landing(landing) = &mut replacement else {
+            panic!("landing fixture");
+        };
+        let crate::config::node::landing::LandingProtocol::Handoff(settings) = &mut landing.landing
+        else {
+            panic!("handoff fixture");
+        };
+        settings.nonce_retention_seconds = Some(120);
+        let last_good = server.runtime.load();
+        assert!(matches!(
+            server.runtime.publish(replacement),
+            Err(RuntimeUpdateError::ReplayPolicyChanged)
+        ));
+        assert!(Arc::ptr_eq(&last_good, &server.runtime.load()));
+        assert!(
+            !Arc::ptr_eq(&previous, &last_good),
+            "the unchanged reload published normally"
+        );
     }
 
     #[test]

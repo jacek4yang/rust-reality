@@ -38,6 +38,7 @@ pub enum RuntimeUpdateError {
     ListenerTopologyChanged,
     NetworkDialPolicyChanged,
     DnsPolicyChanged,
+    ReplayPolicyChanged,
     ResourceModeChanged,
     Relay(TcpRelayConfigError),
     GenerationExhausted,
@@ -76,6 +77,9 @@ impl fmt::Display for RuntimeUpdateError {
             Self::DnsPolicyChanged => {
                 formatter.write_str("DNS resolver policy requires a process restart")
             }
+            Self::ReplayPolicyChanged => {
+                formatter.write_str("landing replay retention requires a process restart")
+            }
             Self::ResourceModeChanged => formatter.write_str(
                 "runtime profile, tuning, or resource-mode changes require a process restart",
             ),
@@ -103,6 +107,7 @@ impl Error for RuntimeUpdateError {
             | Self::ListenerTopologyChanged
             | Self::NetworkDialPolicyChanged
             | Self::DnsPolicyChanged
+            | Self::ReplayPolicyChanged
             | Self::ResourceModeChanged
             | Self::GenerationExhausted
             | Self::Unavailable => None,

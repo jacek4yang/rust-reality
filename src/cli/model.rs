@@ -58,6 +58,7 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Serve traffic until SIGINT or SIGTERM.
+    #[command(alias = "serve")]
     Run(ConfigPath),
     /// Check that a configuration is internally valid. Never touches the
     /// network, binds a port, or downloads anything.
@@ -404,9 +405,26 @@ mod tests {
     }
 
     #[test]
+    fn the_existing_systemd_serve_invocation_runs_the_same_server() {
+        let cli = Cli::try_parse_from([
+            "rust-reality",
+            "serve",
+            "--config",
+            "/etc/rust-reality/current/config.json",
+        ])
+        .expect("the deployed v1.8 unit must remain usable");
+        let Command::Run(arguments) = cli.command else {
+            panic!("serve must use the current run path");
+        };
+        assert_eq!(
+            arguments.config,
+            std::path::PathBuf::from("/etc/rust-reality/current/config.json")
+        );
+    }
+
+    #[test]
     fn the_removed_commands_are_gone_without_aliases() {
         for removed in [
-            vec!["serve", "-c", "config.json"],
             vec!["self-test", "-c", "config.json"],
             vec!["probe-dest", "--target", "a:443", "--server-name", "a"],
             vec!["uuid"],
