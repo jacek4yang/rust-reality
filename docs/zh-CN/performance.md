@@ -103,6 +103,13 @@ failure。顺序 collector 和会重复排队正在收集 class 的 controller �
 ClientHello class 会有意留在 warm-live 路径。这是保守的已验证 class 优化，
 不是对所有 TLS 行为都完全相同的声明。
 
+## v2.0.0 发布证据
+
+v2.0.0 确定[生产密码学实现](development/crypto-providers.md)，并将下面的测量保持为
+历史证据，不作新的全矩阵 Xray 性能对比主张。Intel LOCAL_KVM 数据支持 ADR 0029
+中的小型部署决策，不代表 Zen 生产性能。发布流程将正确性、资源恢复和 canary
+结果绑定到实际部署的精确二进制字节。
+
 ## v1.9.0 发布证据
 
 对比对象：Xray-core 26.7.28（commit `5ca6f4b`、go1.26.0、二进制 SHA-256

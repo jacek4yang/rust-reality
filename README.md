@@ -79,6 +79,11 @@ Xray-compatible client
 
 ## Performance vs Xray-core
 
+v2.0.0 retains these tables as historical comparison references. They are not
+new v2 measurements or production Internet performance claims. Current provider
+decisions and their evidence limits are recorded in
+[ADR 0028](docs/adr/0028-finalize-the-v2-crypto-provider-set.md).
+
 Comparator: Xray-core 26.7.28 (commit `5ca6f4b`, go1.26.0, binary SHA-256
 `23d228d7…04c5268`) — the same binary that gates interoperability. Every
 v1.9.0 protected Xray-comparison number below retains the v1.6.1 measurement

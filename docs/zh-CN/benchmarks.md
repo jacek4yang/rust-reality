@@ -357,6 +357,14 @@ soak 期间的描述符、线程与 RSS 增长均平坦，零传输失败。
 - DNS 各阶段使用 loopback 上游（RTT 约 0 ms）。
 - 这些是本机测量结果，不是普遍性能结论。
 
+## v2.0.0 发布对比证据
+
+v2.0.0 保留下列历史对比表格及其原始产物、硬件归属。X25519 的结论是算术性能
+持平下的架构整合；cover class 改动测量的是缓存分类，不是新的 CPU 加速。
+密码学实现与 worker 选择由 ADR 0028、0029 确定。精确候选的正确性、打包、
+LOCAL_KVM、LOCAL_SYNTHETIC 和生产 canary 证据在 GitHub release/tracker 中绑定
+对应产物，不能替代或重新标注历史性能数据。
+
 ## v1.9.0 发布对比证据
 
 对比对象：Xray-core 26.7.28（commit `5ca6f4b`、go1.26.0、二进制 SHA-256

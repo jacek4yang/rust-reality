@@ -154,6 +154,15 @@ that is the consensus rule working, and relaxing it is a separate decision.
 The before/after binaries were built from the same tree with only
 `src/protocol/reality/tls13/cover_profile.rs` differing.
 
+## v2.0.0 release evidence
+
+v2.0.0 finalizes the [production crypto providers](development/crypto-providers.md)
+and preserves the historical measurements below as historical evidence. The
+release makes no new full-matrix Xray comparison claim. Intel LOCAL_KVM data
+supports the bounded deployment-envelope decisions in ADR 0029; it is not Zen
+production performance evidence. The release process binds correctness,
+resource recovery and canary results to the exact deployed bytes.
+
 ## v1.9.0 release evidence
 
 Comparator: Xray-core 26.7.28 (commit `5ca6f4b`, go1.26.0, binary SHA-256
