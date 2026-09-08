@@ -266,6 +266,19 @@ struct NativeConfigs {
     socks_client: PathBuf,
 }
 
+impl NativeConfigs {
+    fn rust_paths(&self) -> [&Path; 6] {
+        [
+            &self.standalone,
+            &self.handoff_line,
+            &self.handoff_landing,
+            &self.nxr_line,
+            &self.nxr_landing,
+            &self.socks_line,
+        ]
+    }
+}
+
 /// Validates the bounded native plan.
 ///
 /// # Errors
@@ -408,28 +421,31 @@ pub(crate) fn patch_server_config(
         return Err("generated rust config has no log object".to_owned());
     };
     log.insert("level".to_owned(), Value::Str("debug".to_owned()));
-    let Some(Value::Object(assets)) = root.get_mut("assets") else {
-        return Err("generated rust config has no assets object".to_owned());
-    };
-    assets.insert(
-        "cacheDirectory".to_owned(),
-        Value::Str(workspace.join(cache_label).display().to_string()),
-    );
+    match root.get("role") {
+        Some(Value::Str(role)) if role == "entry" => {
+            let assets = root
+                .entry("assets".to_owned())
+                .or_insert_with(|| Value::Object(BTreeMap::new()));
+            let Value::Object(assets) = assets else {
+                return Err("generated entry assets must be an object".to_owned());
+            };
+            assets.insert(
+                "cacheDirectory".to_owned(),
+                Value::Str(workspace.join(cache_label).display().to_string()),
+            );
+        }
+        Some(Value::Str(role)) if role == "landing" => {}
+        _ => return Err("generated config must have a current node role".to_owned()),
+    }
     if serial_cover {
-        let Some(Value::Array(inbounds)) = root.get_mut("inbounds") else {
-            return Err("generated rust config has no inbounds array".to_owned());
+        let Some(Value::Object(reality)) = root.get_mut("reality") else {
+            return Err("serial cover requires an entry reality object".to_owned());
         };
-        let Some(Value::Object(inbound)) = inbounds.first_mut() else {
-            return Err("generated rust config has no first inbound".to_owned());
-        };
-        let Some(Value::Object(stream)) = inbound.get_mut("streamSettings") else {
-            return Err("generated rust config has no streamSettings".to_owned());
-        };
-        let Some(Value::Object(reality)) = stream.get_mut("realitySettings") else {
-            return Err("generated rust config has no realitySettings".to_owned());
-        };
-        let Some(Value::Object(optimization)) = reality.get_mut("coverOptimization") else {
-            return Err("generated rust config has no coverOptimization".to_owned());
+        let optimization = reality
+            .entry("coverOptimization".to_owned())
+            .or_insert_with(|| Value::Object(BTreeMap::new()));
+        let Value::Object(optimization) = optimization else {
+            return Err("coverOptimization must be an object".to_owned());
         };
         optimization.insert("warmTcp".to_owned(), Value::Bool(false));
         optimization.insert("prebuiltProfiles".to_owned(), Value::Bool(false));
@@ -461,48 +477,31 @@ pub(crate) fn patch_socks_outbound(raw: &str, upstream_port: u16) -> Result<Stri
     let Value::Object(mut root) = value else {
         return Err("generated SOCKS line config is not an object".to_owned());
     };
-    let Some(Value::Array(outbounds)) = root.get_mut("outbounds") else {
-        return Err("generated SOCKS line config has no outbounds array".to_owned());
+    let Some(Value::Object(outbounds)) = root.get_mut("outbounds") else {
+        return Err("generated SOCKS line config has no outbounds object".to_owned());
     };
-    outbounds.retain(
-        |outbound| match outbound.str_field("outbounds[]", "protocol") {
-            Ok(protocol) => protocol != "nxr",
-            Err(_) => true,
-        },
+    if outbounds.len() != 1
+        || outbounds
+            .get("landing-1")
+            .and_then(|outbound| outbound.str_field("outbound", "type").ok())
+            != Some("nxr")
+    {
+        return Err("SOCKS fixture requires exactly one NXR placeholder outbound".to_owned());
+    }
+    outbounds.insert(
+        "landing-1".to_owned(),
+        Value::Object(
+            [
+                ("type".to_owned(), Value::Str("socks5".to_owned())),
+                ("address".to_owned(), Value::Str("127.0.0.1".to_owned())),
+                ("port".to_owned(), Value::Number(upstream_port.to_string())),
+            ]
+            .into_iter()
+            .collect(),
+        ),
     );
-    outbounds.push(Value::Object(
-        [
-            ("protocol".to_owned(), Value::Str("socks5".to_owned())),
-            ("tag".to_owned(), Value::Str("via-socks".to_owned())),
-            (
-                "settings".to_owned(),
-                Value::Object(
-                    [
-                        ("address".to_owned(), Value::Str("127.0.0.1".to_owned())),
-                        ("port".to_owned(), Value::Number(upstream_port.to_string())),
-                        ("warmTcp".to_owned(), Value::Bool(true)),
-                    ]
-                    .into_iter()
-                    .collect(),
-                ),
-            ),
-        ]
-        .into_iter()
-        .collect(),
-    ));
-    let Some(Value::Object(routing)) = root.get_mut("routing") else {
-        return Err("generated SOCKS line config has no routing object".to_owned());
-    };
-    let Some(Value::Array(users)) = routing.get_mut("users") else {
-        return Err("generated SOCKS line config has no routing users".to_owned());
-    };
-    let Some(Value::Object(user)) = users.first_mut() else {
-        return Err("generated SOCKS line config has no first routing user".to_owned());
-    };
-    user.insert(
-        "defaultOutbound".to_owned(),
-        Value::Str("via-socks".to_owned()),
-    );
+    // Keep the declared outbound name and routing.default together. The
+    // placeholder PSK belongs to NXR and must not cross into SOCKS config.
     Ok(suites::render_compact(&Value::Object(root)))
 }
 
@@ -544,7 +543,7 @@ pub(crate) fn write_config(path: &Path, contents: &str) -> Result<(), String> {
 
 #[expect(
     clippy::too_many_lines,
-    reason = "one transaction materializes and production-checks the four soak topologies"
+    reason = "one transaction materializes the four soak topologies"
 )]
 fn materialize_native_configs(
     plan: &SoakPlan,
@@ -577,55 +576,41 @@ fn materialize_native_configs(
     )?;
 
     let handoff_dir = workspace.join("handoff-generated");
-    let handoff = Tool::new(plan.rust_bin.display().to_string())
-        .args([
-            "config",
-            "generate",
-            "handoff",
-            "--listen",
-            "127.0.0.1",
-            "--port",
-            &ports.handoff_line.to_string(),
-            "--server-address",
-            "127.0.0.1",
-            "--target",
-            &format!("localhost:{}", ports.handoff_cover),
-            "--server-name",
-            "localhost",
-            "--landing-address",
-            "127.0.0.1",
-            "--landing-port",
-            &ports.handoff_landing.to_string(),
-            "--output-dir",
-            &handoff_dir.display().to_string(),
-        ])
-        .probe()
-        .map_err(|error| format!("handoff config generation failed: {error}"))?;
-    if !handoff.success() {
-        return Err(format!(
-            "handoff config generation exited {:?}: {}",
-            handoff.code,
-            handoff.stderr.trim_end()
-        ));
-    }
+    std::fs::create_dir_all(&handoff_dir)
+        .map_err(|error| format!("could not create Handoff fixture directory: {error}"))?;
+    let pair = rust_reality::crypto::generate_x25519_key_pair()
+        .map_err(|error| format!("could not generate Handoff landing key: {error}"))?;
+    let (private_key, public_key) = pair.into_parts();
+    let link = config::LandingLink {
+        protocol: "handoff",
+        address: "127.0.0.1".to_owned(),
+        port: ports.handoff_landing,
+        psk: node_key(&plan.rust_bin)?,
+        landing_public_key: Some(public_key),
+    };
+    let handoff_target = format!("localhost:{}", ports.handoff_cover);
+    let generated = generated_public_config(
+        &PublicNodeSpec::line(ports.handoff_line, &handoff_target, link.clone()),
+        workspace,
+        "assets-handoff-line",
+    )?;
     let handoff_line = handoff_dir.join("line.json");
     let handoff_landing = handoff_dir.join("landing.json");
     let handoff_client = handoff_dir.join("xray-client.json");
     write_config(
         &handoff_line,
-        &patch_server_config(
-            &std::fs::read_to_string(&handoff_line)
-                .map_err(|error| format!("could not read handoff line config: {error}"))?,
-            workspace,
-            "assets-handoff-line",
-            true,
-        )?,
+        &patch_server_config(&generated.json, workspace, "assets-handoff-line", true)?,
     )?;
     write_config(
         &handoff_landing,
         &patch_server_config(
-            &std::fs::read_to_string(&handoff_landing)
-                .map_err(|error| format!("could not read handoff landing config: {error}"))?,
+            &config::rust_landing(
+                "127.0.0.1",
+                ports.handoff_landing,
+                &link,
+                Some(private_key.expose()),
+            )
+            .to_python_json(),
             workspace,
             "assets-handoff-landing",
             false,
@@ -633,11 +618,18 @@ fn materialize_native_configs(
     )?;
     write_config(
         &handoff_client,
-        &patch_xray_socks_port(
-            &std::fs::read_to_string(&handoff_client)
-                .map_err(|error| format!("could not read handoff Xray config: {error}"))?,
+        &config::xray_client(
+            &RealityIdentity {
+                uuid: generated.uuid,
+                short_id: generated.short_id,
+                server_name: "localhost".to_owned(),
+                target: handoff_target,
+            },
+            ports.handoff_line,
             ports.handoff_socks,
-        )?,
+            &generated.public_key,
+        )
+        .to_python_json(),
     )?;
 
     let nxr_key = node_key(&plan.rust_bin)?;
@@ -658,8 +650,13 @@ fn materialize_native_configs(
     let nxr_landing = workspace.join("nxr-landing.json");
     write_config(
         &nxr_landing,
-        &crate::bench::config::rust_landing("127.0.0.1", ports.nxr_landing, &nxr_link, None)
-            .to_python_json(),
+        &patch_server_config(
+            &crate::bench::config::rust_landing("127.0.0.1", ports.nxr_landing, &nxr_link, None)
+                .to_python_json(),
+            workspace,
+            "assets-nxr-landing",
+            false,
+        )?,
     )?;
     let nxr_client = workspace.join("nxr-client.json");
     write_config(
@@ -714,16 +711,6 @@ fn materialize_native_configs(
         .to_python_json(),
     )?;
 
-    for path in [
-        &standalone_path,
-        &handoff_line,
-        &handoff_landing,
-        &nxr_line_path,
-        &nxr_landing,
-        &socks_line,
-    ] {
-        check_config(&plan.rust_bin, path)?;
-    }
     Ok(NativeConfigs {
         standalone: standalone_path,
         standalone_client: standalone_client_path,
@@ -1279,6 +1266,9 @@ pub fn run_rust(plan: &SoakPlan) -> Result<RustSoakOutcome, String> {
     resolved_plan.xray_bin.clone_from(&xray.path);
     resolved_plan.openssl_bin.clone_from(&openssl.path);
     let configs = materialize_native_configs(&resolved_plan, &workspace, ports)?;
+    for path in configs.rust_paths() {
+        check_config(&resolved_plan.rust_bin, path)?;
+    }
 
     let payload = origin_go::write_pattern_payload(workspace.path(), PAYLOAD_MIB)?;
     let payload_sha256 = hash::sha256_file(&payload)?;
@@ -2636,6 +2626,63 @@ mod tests {
             minimum_rounds: 1,
             distributed_interval: Duration::from_mins(30),
         }
+    }
+
+    #[test]
+    fn every_native_soak_config_uses_the_current_validated_schema() {
+        let workspace = Workspace::create("soak-config-contract").unwrap();
+        let ports = NativePorts::reserve().unwrap();
+        // The named binary need not exist: materialization owns test identities
+        // directly, and never calls a removed configuration-generator command.
+        let configs = materialize_native_configs(&plan(), &workspace, ports).unwrap();
+        for path in configs.rust_paths() {
+            rust_reality::config::load(path)
+                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        }
+        let json = |path: &Path| -> serde_json::Value {
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+        };
+        for path in configs.rust_paths() {
+            assert_eq!(
+                json(path)["log"]["level"],
+                "debug",
+                "every server must emit generation events for the reload gate"
+            );
+        }
+        let line = json(&configs.handoff_line);
+        let landing = json(&configs.handoff_landing);
+        let client = json(&configs.handoff_client);
+        assert_eq!(line["routing"]["default"], "landing-1");
+        assert_eq!(
+            line["outbounds"]["landing-1"]["psk"],
+            landing["landing"]["psk"]
+        );
+        assert_eq!(
+            line["outbounds"]["landing-1"]["port"],
+            landing["listeners"][0]["port"]
+        );
+        assert_ne!(
+            line["reality"]["privateKey"],
+            landing["landing"]["privateKey"]
+        );
+        assert_eq!(client["inbounds"][0]["port"], ports.handoff_socks);
+        assert_eq!(line["reality"]["coverOptimization"]["warmTcp"], false);
+        assert_eq!(
+            line["reality"]["coverOptimization"]["prebuiltProfiles"],
+            false
+        );
+        assert!(
+            landing.get("assets").is_none(),
+            "landing has no asset configuration"
+        );
+        let socks = json(&configs.socks_line);
+        assert_eq!(socks["routing"]["default"], "landing-1");
+        assert_eq!(socks["outbounds"]["landing-1"]["type"], "socks5");
+        assert_eq!(
+            socks["outbounds"]["landing-1"]["port"],
+            ports.socks_upstream
+        );
+        assert!(socks["outbounds"]["landing-1"].get("psk").is_none());
     }
 
     fn process(fds: u64, rss: u64, hwm: u64, threads: u64) -> ProcessResources {
