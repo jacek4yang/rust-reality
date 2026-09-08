@@ -1,5 +1,6 @@
 use std::{error::Error, fmt, ops::Range, sync::Arc};
 
+use crate::crypto::EphemeralX25519Key;
 use ml_kem::{
     DecapsulationKey768, Seed,
     array::Array as MlKemArray,
@@ -7,7 +8,6 @@ use ml_kem::{
     ml_kem_768::Ciphertext,
 };
 use sha2::{Digest, Sha256};
-use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
 /// Maximum accepted ClientHello handshake message, including its four-byte header.
@@ -146,8 +146,8 @@ pub(crate) struct CoverProbeTemplate {
 pub(crate) struct CoverProbe {
     hello: ClientHello,
     wire_record: Vec<u8>,
-    x25519: Option<StaticSecret>,
-    hybrid_x25519: Option<StaticSecret>,
+    x25519: Option<EphemeralX25519Key>,
+    hybrid_x25519: Option<EphemeralX25519Key>,
     hybrid_mlkem: Option<DecapsulationKey768>,
 }
 
@@ -525,7 +525,7 @@ impl CoverProbeTemplate {
             match share.group {
                 X25519_GROUP if output.len() == 32 && x25519.is_none() => {
                     let secret = fresh_x25519_secret()?;
-                    output.copy_from_slice(&PublicKey::from(&secret).to_bytes());
+                    output.copy_from_slice(secret.public_key());
                     x25519 = Some(secret);
                 }
                 X25519_MLKEM768_GROUP
@@ -538,7 +538,7 @@ impl CoverProbeTemplate {
                     let decapsulation = DecapsulationKey768::from_seed(seed);
                     let encapsulation = decapsulation.encapsulation_key().to_bytes();
                     let secret = fresh_x25519_secret()?;
-                    let public = PublicKey::from(&secret).to_bytes();
+                    let public = secret.public_key();
                     output
                         .get_mut(..MLKEM768_ENCAP_KEY_LEN)
                         .ok_or(CoverProbeError::Malformed)?
@@ -546,7 +546,7 @@ impl CoverProbeTemplate {
                     output
                         .get_mut(MLKEM768_ENCAP_KEY_LEN..)
                         .ok_or(CoverProbeError::Malformed)?
-                        .copy_from_slice(&public);
+                        .copy_from_slice(public);
                     hybrid_x25519 = Some(secret);
                     hybrid_mlkem = Some(decapsulation);
                 }
@@ -596,22 +596,21 @@ impl CoverProbe {
     }
 
     pub(crate) fn shared_secret(
-        &self,
+        &mut self,
         group: u16,
         server_exchange: &[u8],
     ) -> Result<CoverProbeSharedSecret, CoverProbeError> {
         let mut output = Zeroizing::new([0_u8; 64]);
         let len = match group {
             X25519_GROUP => {
-                let secret = self.x25519.as_ref().ok_or(CoverProbeError::Malformed)?;
+                let secret = self.x25519.take().ok_or(CoverProbeError::Malformed)?;
                 let public: [u8; 32] = server_exchange
                     .try_into()
                     .map_err(|_| CoverProbeError::Malformed)?;
-                let shared = secret.diffie_hellman(&PublicKey::from(public));
-                if !shared.was_contributory() {
-                    return Err(CoverProbeError::NonContributoryKey);
-                }
-                output[..32].copy_from_slice(shared.as_bytes());
+                let shared = secret
+                    .agree(&public)
+                    .ok_or(CoverProbeError::NonContributoryKey)?;
+                output[..32].copy_from_slice(shared.as_slice());
                 32
             }
             X25519_MLKEM768_GROUP => {
@@ -633,14 +632,12 @@ impl CoverProbe {
                     .decapsulate(&ciphertext);
                 let x25519 = self
                     .hybrid_x25519
-                    .as_ref()
+                    .take()
                     .ok_or(CoverProbeError::Malformed)?
-                    .diffie_hellman(&PublicKey::from(server_public));
-                if !x25519.was_contributory() {
-                    return Err(CoverProbeError::NonContributoryKey);
-                }
+                    .agree(&server_public)
+                    .ok_or(CoverProbeError::NonContributoryKey)?;
                 output[..32].copy_from_slice(mlkem.as_ref());
-                output[32..].copy_from_slice(x25519.as_bytes());
+                output[32..].copy_from_slice(x25519.as_slice());
                 64
             }
             _ => return Err(CoverProbeError::UnsupportedKeyShare),
@@ -649,10 +646,8 @@ impl CoverProbe {
     }
 }
 
-fn fresh_x25519_secret() -> Result<StaticSecret, CoverProbeError> {
-    let mut bytes = Zeroizing::new([0_u8; 32]);
-    fill_random(bytes.as_mut())?;
-    Ok(StaticSecret::from(*bytes))
+fn fresh_x25519_secret() -> Result<EphemeralX25519Key, CoverProbeError> {
+    EphemeralX25519Key::generate().map_err(|_| CoverProbeError::Random)
 }
 
 fn fill_random(bytes: &mut [u8]) -> Result<(), CoverProbeError> {
@@ -1673,6 +1668,40 @@ mod tests {
         X25519_GROUP, X25519_MLKEM768_GROUP, X25519_MLKEM768_SHARE_LEN, extension_segments,
         fixtures::{client_hello, client_hello_with_key_share, record},
     };
+
+    #[test]
+    fn a_controlled_probe_consumes_its_ephemeral_agreement() {
+        let hello = ClientHello::parse_message(&client_hello(
+            [0x11; 32],
+            &[0x22; 32],
+            "www.example.com",
+            &[b"h2"],
+        ))
+        .expect("fixture hello");
+        let template = hello.controlled_cover_probe_template().expect("template");
+        let peer = crate::crypto::StaticX25519Key::new(&[0x33; 32]);
+        let mut probe = template.generate(0).expect("probe");
+        let share = probe.hello().peer_x25519().expect("probe share");
+        let expected = peer.agree(&share).expect("peer agreement");
+        let agreed = probe
+            .shared_secret(X25519_GROUP, &peer.public_key())
+            .expect("agreement");
+        assert_eq!(agreed.as_bytes(), expected.as_slice());
+        assert!(matches!(
+            probe.shared_secret(X25519_GROUP, &peer.public_key()),
+            Err(super::CoverProbeError::Malformed)
+        ));
+
+        let mut rejected = template.generate(1).expect("fresh probe");
+        assert!(matches!(
+            rejected.shared_secret(X25519_GROUP, &[0; 32]),
+            Err(super::CoverProbeError::NonContributoryKey)
+        ));
+        assert!(matches!(
+            rejected.shared_secret(X25519_GROUP, &peer.public_key()),
+            Err(super::CoverProbeError::Malformed)
+        ));
+    }
 
     #[test]
     fn parses_fields_without_copying_variable_payloads() {

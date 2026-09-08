@@ -35,9 +35,9 @@ pub mod fuzzing {
         aead::{AeadInOut, Nonce, array::Array},
     };
     use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
-    use x25519_dalek::{PublicKey, StaticSecret};
 
     use super::{RealityAuthenticator, derive_auth_key};
+    use crate::crypto::StaticX25519Key;
     use crate::{
         config::{SecretString, node::reality::RealityConfig},
         protocol::{
@@ -86,11 +86,12 @@ pub mod fuzzing {
         const SERVER_SECRET: [u8; 32] = [0x11; 32];
         const SERVER_NAME: &str = "www.example.com";
 
-        let server_secret = StaticSecret::from(SERVER_SECRET);
-        let client_secret = StaticSecret::from(spec.client_secret);
-        let client_public = PublicKey::from(&client_secret).to_bytes();
-        let shared = client_secret.diffie_hellman(&PublicKey::from(&server_secret));
-        let auth_key = derive_auth_key(shared.as_bytes(), &spec.random)
+        let server_public = StaticX25519Key::new(&SERVER_SECRET).public_key();
+        let client_public = StaticX25519Key::new(&spec.client_secret).public_key();
+        let shared = StaticX25519Key::new(&spec.client_secret)
+            .agree(&server_public)
+            .expect("the fixture secrets agree");
+        let auth_key = derive_auth_key(&shared, &spec.random)
             .expect("REALITY HKDF output has a fixed valid length");
         let zero_message = client_hello_with_key_share(
             spec.random,

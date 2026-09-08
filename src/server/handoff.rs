@@ -17,13 +17,13 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::crypto::StaticX25519Key;
 use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 use tokio::{
     io::AsyncReadExt,
     net::TcpStream,
     time::{self, Instant},
 };
-use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
 use crate::{
@@ -70,7 +70,7 @@ pub struct HandoffLine {
     address: Arc<str>,
     port: u16,
     psk: HandoffPsk,
-    landing_public: PublicKey,
+    landing_public: [u8; 32],
     connect_timeout: Duration,
     first_byte_timeout: Duration,
     connector: DestinationConnector,
@@ -106,7 +106,7 @@ impl HandoffLine {
             address: Arc::from(settings.address.as_str()),
             port: settings.port,
             psk: HandoffPsk::new(psk),
-            landing_public: PublicKey::from(public),
+            landing_public: public,
             connect_timeout: Duration::from_millis(settings.connect_timeout_ms()),
             first_byte_timeout: Duration::from_millis(settings.first_byte_timeout_ms()),
             connector: connector.with_timeout(Duration::from_millis(settings.connect_timeout_ms())),
@@ -439,12 +439,12 @@ impl HandoffLandingHandler {
         let previous_secrets = settings
             .previous_private_keys()
             .iter()
-            .map(|key| decode_key(key).map(StaticSecret::from))
+            .map(|key| decode_key(key).map(|bytes| StaticX25519Key::new(&bytes)))
             .collect::<Result<Vec<_>, _>>()?;
         let keys = HandoffLandingKeys::with_previous(
             HandoffPsk::new(psk),
             previous_psks,
-            StaticSecret::from(secret),
+            StaticX25519Key::new(&secret),
             previous_secrets,
         )
         .ok_or(HandoffLandingConfigError::Key)?;
@@ -804,13 +804,13 @@ mod tests {
     };
     use std::{io, net::Ipv4Addr, sync::Arc, time::Duration};
 
+    use crate::crypto::StaticX25519Key;
     use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::{TcpListener, TcpStream},
         time::timeout,
     };
-    use x25519_dalek::{PublicKey, StaticSecret};
 
     use super::{
         HandoffLandingError, HandoffLandingHandler, HandoffLine, HandoffLineError, resume_tls,
@@ -865,7 +865,7 @@ mod tests {
         let replay = HandoffReplayCache::new(1_024, Duration::from_secs(120))
             .expect("test replay cache must compile");
         HandoffLandingHandler::new(
-            HandoffLandingKeys::single(HandoffPsk::new(PSK), StaticSecret::from(LANDING_SECRET)),
+            HandoffLandingKeys::single(HandoffPsk::new(PSK), StaticX25519Key::new(&LANDING_SECRET)),
             replay,
             30,
             Duration::from_secs(1),
@@ -876,12 +876,12 @@ mod tests {
     }
 
     fn handoff_line(address: std::net::SocketAddr) -> HandoffLine {
-        let landing_public = PublicKey::from(&StaticSecret::from(LANDING_SECRET));
+        let landing_public = StaticX25519Key::new(&LANDING_SECRET).public_key();
         HandoffLine::from_settings(&HandoffOutboundConfig {
             address: address.ip().to_string(),
             port: address.port(),
             psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
-            landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public.as_bytes()),
+            landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public),
             connect_timeout_ms: Some(1_000),
             first_byte_timeout_ms: Some(1_000),
             warm_tcp: Some(false),
@@ -906,13 +906,13 @@ mod tests {
         };
         let fd_budget = FdBudget::new(4_096);
         let pressure = PressureGauge::new();
-        let landing_public = PublicKey::from(&StaticSecret::from(LANDING_SECRET));
+        let landing_public = StaticX25519Key::new(&LANDING_SECRET).public_key();
         let line = HandoffLine::from_settings_with_warm_pool(
             &HandoffOutboundConfig {
                 address: address.ip().to_string(),
                 port: address.port(),
                 psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
-                landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public.as_bytes()),
+                landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public),
                 connect_timeout_ms: Some(2_000),
                 first_byte_timeout_ms: Some(2_000),
                 warm_tcp: Some(true),
@@ -981,13 +981,13 @@ mod tests {
             shrink_delay_ms: 30_000,
         };
         let fd_budget = FdBudget::new(4_096);
-        let landing_public = PublicKey::from(&StaticSecret::from(LANDING_SECRET));
+        let landing_public = StaticX25519Key::new(&LANDING_SECRET).public_key();
         let line = HandoffLine::from_settings_with_warm_pool(
             &HandoffOutboundConfig {
                 address: address.ip().to_string(),
                 port: address.port(),
                 psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
-                landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public.as_bytes()),
+                landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public),
                 connect_timeout_ms: Some(2_000),
                 first_byte_timeout_ms: Some(2_000),
                 warm_tcp: Some(true),
@@ -1059,7 +1059,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn valid_handoff_authenticates_across_the_pre_auth_idle_age_matrix() {
         let state = test_state(Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 9));
-        let landing_public = PublicKey::from(&StaticSecret::from(LANDING_SECRET));
+        let landing_public = StaticX25519Key::new(&LANDING_SECRET).public_key();
         for (index, idle_age) in [0, 1, 5, 15, 30, 59].into_iter().enumerate() {
             let (mut client, server) = tcp_pair().await;
             let handler = test_landing_handler();
@@ -1257,7 +1257,7 @@ mod tests {
             max_concurrent: 8,
             max_per_second: 8,
         };
-        let landing_public = PublicKey::from(&StaticSecret::from(LANDING_SECRET));
+        let landing_public = StaticX25519Key::new(&LANDING_SECRET).public_key();
         let outbounds = OutboundRegistry::new(
             &std::collections::BTreeMap::from([(
                 "handoff".to_owned(),
@@ -1265,7 +1265,7 @@ mod tests {
                     address: landing_address.ip().to_string(),
                     port: landing_address.port(),
                     psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
-                    landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public.as_bytes()),
+                    landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public),
                     connect_timeout_ms: Some(1_000),
                     first_byte_timeout_ms: Some(2_000),
                     warm_tcp: Some(false),
@@ -1341,7 +1341,7 @@ mod tests {
             .expect("landing must bind");
         let address = listener.local_addr().expect("landing address must exist");
         let handler = test_landing_handler();
-        let landing_public = PublicKey::from(&StaticSecret::from(LANDING_SECRET));
+        let landing_public = StaticX25519Key::new(&LANDING_SECRET).public_key();
         // Port 9 is the discard sink: nothing listens, so an authenticated
         // transfer fails at the destination dial — proving it passed every
         // authentication step.
@@ -1946,7 +1946,7 @@ mod tests {
             HandoffLandingHandler::new(
                 HandoffLandingKeys::single(
                     HandoffPsk::new([0x66; 32]),
-                    StaticSecret::from(LANDING_SECRET),
+                    StaticX25519Key::new(&LANDING_SECRET),
                 ),
                 replay,
                 30,
