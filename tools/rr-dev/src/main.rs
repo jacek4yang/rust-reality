@@ -270,6 +270,30 @@ enum DeployCommand {
 /// Shared inputs for planning and running the active dual-VPS canary.
 #[derive(Debug, Clone, Args)]
 struct CanaryArgs {
+    /// Native LINE inventory saved before candidate cutover.
+    #[arg(long)]
+    line_baseline: PathBuf,
+    /// Native LANDING inventory saved before candidate cutover.
+    #[arg(long)]
+    landing_baseline: PathBuf,
+    /// LANDING origin access JSONL with per-request SHA-256 receipts.
+    #[arg(long)]
+    origin_access_log: String,
+    /// Separately staged rust-reality-canary-<name>.service on LINE.
+    #[arg(long)]
+    supplemental_line_service: Option<String>,
+    /// Sole loopback listener of the supplemental service.
+    #[arg(long)]
+    supplemental_line_port: Option<u16>,
+    /// Second SOCKS inbound in the Xray config, routed through public LINE.
+    #[arg(long)]
+    public_socks_port: Option<u16>,
+    /// Reference download URL through unchanged public LINE.
+    #[arg(long)]
+    public_url: Option<String>,
+    /// Independently retained bytes of the public-path reference download.
+    #[arg(long)]
+    public_payload: Option<PathBuf>,
     /// Exact stock Xray binary.
     #[arg(long)]
     xray_bin: PathBuf,
@@ -3536,8 +3560,25 @@ fn run_deploy_inspect(target: DeployTarget, output: Option<&Path>) -> ExitCode {
     }
 }
 
-fn build_canary_plan(arguments: CanaryArgs, rollback_on_failure: bool) -> deploy::canary_run::Plan {
-    deploy::canary_run::Plan {
+fn build_canary_plan(
+    arguments: CanaryArgs,
+    rollback_on_failure: bool,
+) -> Result<deploy::canary_run::Plan, String> {
+    let supplemental = match (
+        arguments.supplemental_line_service, arguments.supplemental_line_port,
+        arguments.public_socks_port, arguments.public_url, arguments.public_payload,
+    ) {
+        (None, None, None, None, None) => None,
+        (Some(service), Some(port), Some(public_socks_port), Some(public_url), Some(public_payload)) => Some(deploy::canary_run::Supplemental {
+            service, port, public_socks_port, public_url, public_payload,
+        }),
+        _ => return Err("supplemental Handoff requires --supplemental-line-service, --supplemental-line-port, --public-socks-port, --public-url and --public-payload together".to_owned()),
+    };
+    Ok(deploy::canary_run::Plan {
+        line_baseline: arguments.line_baseline,
+        landing_baseline: arguments.landing_baseline,
+        origin_access_log: arguments.origin_access_log,
+        supplemental,
         candidate: deploy::canary_run::Candidate {
             commit: arguments.candidate_commit,
             sha256: arguments.candidate_sha256,
@@ -3561,11 +3602,17 @@ fn build_canary_plan(arguments: CanaryArgs, rollback_on_failure: bool) -> deploy
         duration_seconds: arguments.duration_seconds,
         sample_interval_seconds: arguments.sample_interval_seconds,
         rollback_on_failure,
-    }
+    })
 }
 
 fn run_canary_plan(arguments: CanaryArgs, output: Option<&Path>) -> ExitCode {
-    let plan = build_canary_plan(arguments, true);
+    let plan = match build_canary_plan(arguments, true) {
+        Ok(plan) => plan,
+        Err(error) => {
+            eprintln!("deploy canary-plan: {error}");
+            return ExitCode::from(2);
+        }
+    };
     if let Err(error) = plan.validate() {
         eprintln!("deploy canary-plan: {error}");
         return ExitCode::from(2);
@@ -3590,7 +3637,13 @@ fn run_canary_live(
         );
         return ExitCode::from(2);
     }
-    let plan = build_canary_plan(arguments, rollback_on_failure);
+    let plan = match build_canary_plan(arguments, rollback_on_failure) {
+        Ok(plan) => plan,
+        Err(error) => {
+            eprintln!("deploy canary-run: {error}");
+            return ExitCode::from(2);
+        }
+    };
     let topology = match deploy::host::Topology::canonical() {
         Ok(topology) => topology,
         Err(error) => {

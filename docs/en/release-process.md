@@ -192,6 +192,33 @@ Historical v1.8 supplemental evidence in `benchmarks/evidence/releases/`
 records a different, previously authorized procedure; it does not authorize
 configuration changes during the v2 binary upgrade.
 
+Pass native inventory snapshots captured **before cutover** as `--line-baseline`
+and `--landing-baseline`. The canary compares wildcard address/port pairs before
+and after traffic against those snapshots: an unrelated existing listener is
+preserved, while a new listener or address family fails the gate. The LANDING
+TCP/443 firewall restriction is checked again after recovery.
+
+For supplemental Handoff, stage a dedicated `rust-reality-canary-<name>.service`
+on the canonical LINE alias, with the candidate binary and one loopback listener.
+Supply `--supplemental-line-service` and `--supplemental-line-port` together with
+`--public-socks-port`, `--public-url` and `--public-payload`. The stock-Xray config
+must contain two explicitly loopback SOCKS inbounds, routed separately to the
+supplemental entry (through an SSH loopback forward) and the unchanged public
+LINE endpoint. No host alias, public service unit or routing configuration is
+replaced. The runner verifies the supplemental process owns only its declared
+loopback listener, reloads both LINE processes, and checks public download bytes
+at startup, every phase and final recovery. The report labels the topology and
+evaluates separate public-LINE and supplemental-LINE resource samples using the
+same reviewed LINE bounds. Rollback still acts on the production generations;
+the operator removes the temporary supplemental unit and SSH forward afterward.
+
+Run the loopback origin with `cargo dev bench origin --access-log PATH`
+and pass that remote path as `--origin-access-log`. The one-MiB payload must be
+exactly one MiB and the large payload must be larger. Download, upload and
+concurrent download/upload checks require exact bytes/SHA-256. Upload receipts
+must be newly appended and match each run-specific PUT path, length and digest;
+an old receipt or a matching length alone cannot establish integrity.
+
 ## Phase 5 — tag, publish, and deploy official artifacts
 
 After exact-main Tier A/B gates pass, create and push an annotated tag, then

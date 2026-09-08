@@ -19,7 +19,7 @@ use crate::perf::{
 };
 
 /// The checks every release canary must report as `true`.
-pub const REQUIRED_CHECKS: [&str; 23] = [
+pub const REQUIRED_CHECKS: [&str; 25] = [
     "lineSsh",
     "landingSsh",
     "lineServiceActive",
@@ -43,6 +43,8 @@ pub const REQUIRED_CHECKS: [&str; 23] = [
     "noRestartLoop",
     "noAuthenticationRegression",
     "noReplayRegression",
+    "publicPathIntegrity",
+    "supplementalListenerPolicy",
 ];
 
 /// The reviewed FD ceilings per host: `(final, peak)`.
@@ -103,6 +105,12 @@ fn evaluate(report: &Value) -> (Vec<String>, Option<&Value>, Option<&Value>) {
 
     if report.optional("schemaVersion").and_then(int) != Some(1) {
         reasons.push("schemaVersion must be 1".to_owned());
+    }
+    if !matches!(report.optional("topology"), Some(Value::Str(value)) if value == "public-handoff" || value == "supplemental-loopback-handoff")
+    {
+        reasons.push(
+            "topology must identify public-handoff or supplemental-loopback-handoff".to_owned(),
+        );
     }
 
     let candidate = report.optional("candidate");
@@ -249,7 +257,12 @@ fn resource_reasons(report: &Value) -> Vec<String> {
     let Some(Value::Object(resources)) = report.optional("resources") else {
         return vec!["resources must be an object".to_owned()];
     };
-    for (host, final_fd, peak_fd) in FD_LIMITS {
+    let supplemental = matches!(report.optional("topology"), Some(Value::Str(value)) if value == "supplemental-loopback-handoff");
+    let mut limits = FD_LIMITS.to_vec();
+    if supplemental {
+        limits.push(("publicLine", 768, 2_048));
+    }
+    for (host, final_fd, peak_fd) in limits {
         let Some(Value::Array(samples)) = resources.get(host) else {
             reasons.push(format!("resources.{host} requires at least 12 samples"));
             continue;
@@ -418,6 +431,7 @@ mod tests {
         let text = format!(
             r#"{{
               "schemaVersion":1,
+              "topology":"public-handoff",
               "candidate":{{"commit":"{a}","sha256":"{b}","buildId":"{c}","version":"1.7.0","target":"x86_64-unknown-linux-gnu","rustc":"rustc 1.96.0"}},
               "comparator":{{"name":"Xray","version":"26.7.28","sha256":"{d}","buildId":"{e}"}},
               "elapsedSeconds":600,
@@ -440,6 +454,64 @@ mod tests {
     fn a_healthy_canary_passes() {
         let (reasons, _, _) = evaluate(&fixture());
         assert!(reasons.is_empty(), "healthy canary must pass: {reasons:?}");
+    }
+
+    #[test]
+    fn supplemental_run_requires_public_path_and_its_own_resource_recovery() {
+        let mut report = fixture();
+        let Value::Object(root) = &mut report else {
+            panic!("fixture object");
+        };
+        root.insert(
+            "topology".to_owned(),
+            Value::Str("supplemental-loopback-handoff".to_owned()),
+        );
+        assert!(
+            evaluate(&report)
+                .0
+                .iter()
+                .any(|reason| reason.contains("resources.publicLine"))
+        );
+        let Value::Object(root) = &mut report else {
+            panic!("fixture object");
+        };
+        let Some(Value::Object(resources)) = root.get_mut("resources") else {
+            panic!("resource object");
+        };
+        resources.insert("publicLine".to_owned(), resources["line"].clone());
+        assert!(evaluate(&report).0.is_empty());
+        let Value::Object(root) = &mut report else {
+            panic!("fixture object");
+        };
+        let Some(Value::Object(checks)) = root.get_mut("checks") else {
+            panic!("checks object");
+        };
+        checks.insert("publicPathIntegrity".to_owned(), Value::Bool(false));
+        assert!(
+            evaluate(&report)
+                .0
+                .iter()
+                .any(|reason| reason.contains("publicPathIntegrity"))
+        );
+        let Value::Object(root) = &mut report else {
+            panic!("fixture object");
+        };
+        let Some(Value::Object(resources)) = root.get_mut("resources") else {
+            panic!("resource object");
+        };
+        let Some(Value::Array(samples)) = resources.get_mut("publicLine") else {
+            panic!("samples array");
+        };
+        let Some(Value::Object(last)) = samples.last_mut() else {
+            panic!("sample object");
+        };
+        last.insert("fd".to_owned(), Value::Number("3000".to_owned()));
+        assert!(
+            evaluate(&report)
+                .0
+                .iter()
+                .any(|reason| reason.contains("publicLine final FD"))
+        );
     }
 
     #[test]
