@@ -34,6 +34,9 @@ use crate::{
     process::Tool,
 };
 
+mod topology;
+pub use topology::Supplemental;
+
 /// Identity of the rust-reality candidate running on both remote hosts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
@@ -142,6 +145,14 @@ pub struct Plan {
     pub xray_config: PathBuf,
     /// Loopback SOCKS port in that config.
     pub socks_port: u16,
+    /// Native inventory snapshots captured before either candidate cutover.
+    pub line_baseline: PathBuf,
+    /// Native LANDING inventory captured before candidate cutover.
+    pub landing_baseline: PathBuf,
+    /// Separately monitored loopback Handoff entry when public LINE uses SOCKS5.
+    pub supplemental: Option<Supplemental>,
+    /// Remote origin access JSONL containing per-request SHA-256 receipts.
+    pub origin_access_log: String,
     /// LINE's public IPv4, used to validate LANDING firewall ownership.
     pub line_public_ipv4: Ipv4Addr,
     /// Small request URL for active connection traffic.
@@ -174,6 +185,7 @@ impl Plan {
     /// Returns a fail-closed diagnostic before any host is contacted.
     pub fn validate(&self) -> Result<(), String> {
         self.candidate.validate()?;
+        topology::validate(self)?;
         if !lower_hex(&self.xray_sha256, 64) {
             return Err("Xray SHA-256 must be 64 lowercase hex characters".to_owned());
         }
@@ -210,20 +222,7 @@ impl Plan {
         let inbounds = config
             .array_field("xray", "inbounds")
             .map_err(|error| error.to_string())?;
-        let has_loopback_socks = inbounds.iter().any(|inbound| {
-            inbound.optional("protocol").and_then(string) == Some("socks")
-                && inbound.optional("listen").and_then(string) == Some("127.0.0.1")
-                && inbound
-                    .optional("port")
-                    .and_then(|value| value.as_int("xray.inbounds[].port").ok())
-                    == Some(i64::from(self.socks_port))
-        });
-        if !has_loopback_socks {
-            return Err(format!(
-                "Xray config has no 127.0.0.1:{} SOCKS inbound",
-                self.socks_port
-            ));
-        }
+        topology::validate_inbounds(inbounds, self)?;
         if self.out_dir.exists() || self.out_dir.is_symlink() {
             return Err(format!(
                 "canary output must not exist: {}",
@@ -265,6 +264,11 @@ impl Plan {
                 Json::string(self.xray_config.display().to_string()),
             ),
             ("socksPort", Json::Int(i64::from(self.socks_port))),
+            ("topology", topology::plan_json(self)),
+            (
+                "originAccessLog",
+                Json::string(self.origin_access_log.clone()),
+            ),
             (
                 "linePublicIpv4",
                 Json::string(self.line_public_ipv4.to_string()),
@@ -567,6 +571,8 @@ pub struct Report {
     pub line_resources: Vec<ResourceSample>,
     /// LANDING resource samples.
     pub landing_resources: Vec<ResourceSample>,
+    /// Additional public LINE samples when `line` measures supplemental Handoff.
+    pub public_line_resources: Option<Vec<ResourceSample>>,
 }
 
 impl Report {
@@ -584,6 +590,14 @@ impl Report {
     pub fn to_json(&self) -> Json {
         Json::object([
             ("schemaVersion", Json::Int(1)),
+            (
+                "topology",
+                Json::string(if self.public_line_resources.is_some() {
+                    "supplemental-loopback-handoff"
+                } else {
+                    "public-handoff"
+                }),
+            ),
             ("candidate", self.candidate.to_json()),
             ("comparator", self.comparator.to_json()),
             ("elapsedSeconds", Json::Int(self.elapsed_seconds)),
@@ -654,6 +668,14 @@ impl Report {
                                 .collect(),
                         ),
                     ),
+                    (
+                        "publicLine",
+                        self.public_line_resources
+                            .as_ref()
+                            .map_or(Json::Null, |samples| {
+                                Json::Array(samples.iter().map(ResourceSample::to_json).collect())
+                            }),
+                    ),
                 ]),
             ),
         ])
@@ -723,11 +745,25 @@ fn run_inner(plan: &Plan, topology: &Topology) -> Result<RunOutcome, String> {
     let landing_before = inspect(&mut transport, landing)?;
     verify_candidate(&line_before, &plan.candidate)?;
     verify_candidate(&landing_before, &plan.candidate)?;
-    if !line_before.unexpected_public_ports().is_empty()
-        || !landing_before.unexpected_public_ports().is_empty()
-    {
-        return Err("LINE or LANDING exposes an unexpected wildcard listener".to_owned());
-    }
+    topology::listeners_unchanged(&plan.line_baseline, &line_before)?;
+    topology::listeners_unchanged(&plan.landing_baseline, &landing_before)?;
+    let supplemental_host = plan
+        .supplemental
+        .as_ref()
+        .map(|value| value.host(line))
+        .transpose()?;
+    let supplemental_before =
+        if let (Some(host), Some(value)) = (&supplemental_host, &plan.supplemental) {
+            Some(topology::verify_supplemental(
+                &mut transport,
+                host,
+                &plan.candidate,
+                value.port,
+            )?)
+        } else {
+            None
+        };
+    let handoff_line = supplemental_host.as_ref().unwrap_or(line);
     let firewall = checked(
         &mut transport,
         landing,
@@ -755,6 +791,11 @@ fn run_inner(plan: &Plan, topology: &Topology) -> Result<RunOutcome, String> {
     .map_err(|error| error.to_string())?;
     xray.wait_for_port(plan.socks_port, Duration::from_secs(10))
         .map_err(|error| error.to_string())?;
+    if let Some(supplemental) = &plan.supplemental {
+        xray.wait_for_port(supplemental.public_socks_port, Duration::from_secs(10))
+            .map_err(|error| error.to_string())?;
+    }
+    topology::public_probe(plan)?;
 
     let schedule = plan.schedule();
     let started = Instant::now();
@@ -765,8 +806,9 @@ fn run_inner(plan: &Plan, topology: &Topology) -> Result<RunOutcome, String> {
     let attempted = AtomicI64::new(0);
     let successful = AtomicI64::new(0);
     let sampler = ResourceSampler::start(
-        line.clone(),
+        handoff_line.clone(),
         landing.clone(),
+        supplemental_host.as_ref().map(|_| line.clone()),
         started,
         Duration::from_secs(plan.sample_interval_seconds),
     );
@@ -779,6 +821,9 @@ fn run_inner(plan: &Plan, topology: &Topology) -> Result<RunOutcome, String> {
         match phase.name {
             "post-line-reload" => {
                 remote_unit(&mut transport, line, "reload")?;
+                if let Some(host) = &supplemental_host {
+                    remote_unit(&mut transport, host, "reload")?;
+                }
                 line_reload = true;
             }
             "post-landing-restart" => {
@@ -792,6 +837,7 @@ fn run_inner(plan: &Plan, topology: &Topology) -> Result<RunOutcome, String> {
             }
             _ => {}
         }
+        topology::public_probe(plan)?;
         let phase_deadline = Duration::from_secs(phase.end_second);
         while started.elapsed() < phase_deadline {
             if phase.concurrency > 0 {
@@ -808,15 +854,50 @@ fn run_inner(plan: &Plan, topology: &Topology) -> Result<RunOutcome, String> {
         }
     }
     remote_unit(&mut transport, line, "reload")?;
+    if let Some(host) = &supplemental_host {
+        remote_unit(&mut transport, host, "reload")?;
+    }
     std::thread::sleep(Duration::from_secs(2));
-    let (line_resources, landing_resources) = sampler.finish()?;
+    topology::public_probe(plan)?;
+    let (line_resources, landing_resources, public_line_resources) = sampler.finish()?;
     xray.terminate();
 
     let line_after = inspect(&mut transport, line)?;
     let landing_after = inspect(&mut transport, landing)?;
     verify_candidate(&line_after, &plan.candidate)?;
     verify_candidate(&landing_after, &plan.candidate)?;
-    let line_journal = journal_since(&mut transport, line, started_epoch)?;
+    topology::listeners_unchanged(&plan.line_baseline, &line_after)?;
+    topology::listeners_unchanged(&plan.landing_baseline, &landing_after)?;
+    let supplemental_after =
+        if let (Some(host), Some(value)) = (&supplemental_host, &plan.supplemental) {
+            Some(topology::verify_supplemental(
+                &mut transport,
+                host,
+                &plan.candidate,
+                value.port,
+            )?)
+        } else {
+            None
+        };
+    let firewall_after = checked(
+        &mut transport,
+        landing,
+        true,
+        &["iptables-save".to_owned()],
+        "reinspect LANDING firewall",
+    )?;
+    if !firewall_line_only(&firewall_after, plan.line_public_ipv4) {
+        return Err("LANDING firewall restriction changed during canary".to_owned());
+    }
+    let line_journal = journal_since(&mut transport, handoff_line, started_epoch)?;
+    if supplemental_host.is_some() {
+        let public_journal = journal_since(&mut transport, line, started_epoch)?;
+        std::fs::write(
+            plan.out_dir.join("public-line-journal.jsonl"),
+            public_journal,
+        )
+        .map_err(|error| format!("write public LINE journal: {error}"))?;
+    }
     let landing_journal = journal_since(&mut transport, landing, started_epoch)?;
     std::fs::write(plan.out_dir.join("line-journal.jsonl"), &line_journal)
         .map_err(|error| format!("write LINE journal: {error}"))?;
@@ -837,6 +918,8 @@ fn run_inner(plan: &Plan, topology: &Topology) -> Result<RunOutcome, String> {
         "landingCandidateIdentity",
         "stockXray",
         "noReplayRegression",
+        "publicPathIntegrity",
+        "supplementalListenerPolicy",
     ] {
         checks.insert(name.to_owned(), true);
     }
@@ -860,7 +943,9 @@ fn run_inner(plan: &Plan, topology: &Topology) -> Result<RunOutcome, String> {
     checks.insert(
         "noRestartLoop".to_owned(),
         line_before.restarts == line_after.restarts
-            && landing_before.restarts == landing_after.restarts,
+            && landing_before.restarts == landing_after.restarts
+            && supplemental_before.as_ref().map(|value| value.restarts)
+                == supplemental_after.as_ref().map(|value| value.restarts),
     );
     checks.insert(
         "noAuthenticationRegression".to_owned(),
@@ -877,6 +962,7 @@ fn run_inner(plan: &Plan, topology: &Topology) -> Result<RunOutcome, String> {
         journals,
         line_resources,
         landing_resources,
+        public_line_resources,
     }
     .to_json()
     .to_python_json();
@@ -1106,9 +1192,24 @@ fn run_integrity(
     let large = plan.out_dir.join("download-large.bin");
     curl_request(plan, &plan.large_url, Some(&large), None, 120)?;
     compare_files(&large, &plan.payload_large)?;
-    curl_request(plan, &plan.upload_url, None, Some(&plan.payload_large), 120)?;
+    let read_receipts = |transport: &mut _| {
+        checked(
+            transport,
+            landing,
+            true,
+            &["cat".to_owned(), plan.origin_access_log.clone()],
+            "read LANDING origin receipts",
+        )
+    };
+    let receipts_before = read_receipts(transport)?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let upload_url = format!("{}/canary-{nonce}", plan.upload_url.trim_end_matches('/'));
+    curl_request(plan, &upload_url, None, Some(&plan.payload_large), 120)?;
     let bidi = plan.out_dir.join("download-bidirectional.bin");
-    let bidi_url = format!("{}/bidi", plan.upload_url.trim_end_matches('/'));
+    let bidi_url = format!("{upload_url}/bidi");
     let (download, upload) = std::thread::scope(|scope| {
         let download = scope.spawn(|| curl_request(plan, &plan.large_url, Some(&bidi), None, 120));
         let upload =
@@ -1125,16 +1226,10 @@ fn run_integrity(
     download?;
     upload?;
     compare_files(&bidi, &plan.payload_large)?;
-    let put_log = checked(
-        transport,
-        landing,
-        true,
-        &[
-            "cat".to_owned(),
-            "/var/lib/rust-reality/canary-put.jsonl".to_owned(),
-        ],
-        "read LANDING canary upload log",
-    )?;
+    let receipts_after = read_receipts(transport)?;
+    let new_receipts = receipts_after
+        .strip_prefix(&receipts_before)
+        .ok_or_else(|| "origin receipts rotated or changed during integrity checks".to_owned())?;
     let expected_bytes = i64::try_from(
         plan.payload_large
             .metadata()
@@ -1142,15 +1237,38 @@ fn run_integrity(
             .len(),
     )
     .map_err(|_| "large payload length exceeds evaluator range".to_owned())?;
-    let matching_puts = json_records(&put_log)
-        .filter(|value| integer_field(value, "bytes") == expected_bytes)
-        .count();
-    if matching_puts < 2 {
-        return Err(format!(
-            "LANDING upload log has {matching_puts} matching writes, expected at least 2"
-        ));
+    let digest = hash::sha256_file(&plan.payload_large)?;
+    for url in [&upload_url, &bidi_url] {
+        let path = url
+            .split_once("://")
+            .and_then(|(_, authority)| authority.split_once('/'))
+            .map(|(_, path)| format!("/{path}"))
+            .ok_or_else(|| "upload URL has no path".to_owned())?;
+        if !upload_receipt_matches(new_receipts, &path, expected_bytes, &digest) {
+            return Err(
+                "LANDING origin lacks a fresh PUT receipt with the exact path, length and SHA-256"
+                    .to_owned(),
+            );
+        }
     }
+    std::fs::write(
+        plan.out_dir.join("integrity-origin-receipts.jsonl"),
+        new_receipts,
+    )
+    .map_err(|error| format!("retain origin receipts: {error}"))?;
     Ok(())
+}
+
+fn upload_receipt_matches(receipts: &str, path: &str, bytes: i64, digest: &str) -> bool {
+    json_records(receipts)
+        .filter(|value| {
+            value.optional("method").and_then(string) == Some("PUT")
+                && value.optional("path").and_then(string) == Some(path)
+                && integer_field(value, "bytes") == bytes
+                && value.optional("sha256").and_then(string) == Some(digest)
+        })
+        .count()
+        == 1
 }
 
 fn compare_files(observed: &Path, expected: &Path) -> Result<(), String> {
@@ -1187,7 +1305,11 @@ fn sample_pair(
     Ok(())
 }
 
-type ResourceSeries = (Vec<ResourceSample>, Vec<ResourceSample>);
+type ResourceSeries = (
+    Vec<ResourceSample>,
+    Vec<ResourceSample>,
+    Option<Vec<ResourceSample>>,
+);
 
 struct ResourceSampler {
     stop: Arc<AtomicBool>,
@@ -1195,13 +1317,20 @@ struct ResourceSampler {
 }
 
 impl ResourceSampler {
-    fn start(line: Host, landing: Host, started: Instant, interval: Duration) -> Self {
+    fn start(
+        line: Host,
+        landing: Host,
+        public_line: Option<Host>,
+        started: Instant,
+        interval: Duration,
+    ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
         let handle = std::thread::spawn(move || {
             let mut transport = SystemTransport;
             let mut line_resources = Vec::new();
             let mut landing_resources = Vec::new();
+            let mut public_line_resources = public_line.as_ref().map(|_| Vec::new());
             while !worker_stop.load(Ordering::Acquire) {
                 sample_pair(
                     &mut transport,
@@ -1211,9 +1340,12 @@ impl ResourceSampler {
                     &mut line_resources,
                     &mut landing_resources,
                 )?;
+                if let (Some(host), Some(samples)) = (&public_line, &mut public_line_resources) {
+                    samples.push(sample_host(&mut transport, host, started)?);
+                }
                 std::thread::park_timeout(interval);
             }
-            Ok((line_resources, landing_resources))
+            Ok((line_resources, landing_resources, public_line_resources))
         });
         Self {
             stop,
@@ -1498,6 +1630,7 @@ not json
             },
             line_resources: samples(),
             landing_resources: samples(),
+            public_line_resources: None,
         };
         let json = report.to_json().to_python_json();
         match super::super::canary::evaluate_text(&json) {
@@ -1513,6 +1646,48 @@ not json
         let mut candidate = candidate();
         candidate.sha256 = "UPPER".to_owned();
         assert!(candidate.validate().is_err());
+    }
+
+    #[test]
+    fn upload_integrity_requires_exact_receipt_not_just_length() {
+        let receipt =
+            r#"{"method":"PUT","path":"/upload/run/bidi","bytes":2097152,"sha256":"correct"}"#;
+        assert!(upload_receipt_matches(
+            receipt,
+            "/upload/run/bidi",
+            2_097_152,
+            "correct"
+        ));
+        assert!(!upload_receipt_matches(
+            receipt,
+            "/upload/run/bidi",
+            2_097_152,
+            "corrupt"
+        ));
+        assert!(!upload_receipt_matches(
+            receipt,
+            "/upload/old/bidi",
+            2_097_152,
+            "correct"
+        ));
+        assert!(!upload_receipt_matches(
+            receipt,
+            "/upload/run/bidi",
+            1_048_576,
+            "correct"
+        ));
+        assert!(!upload_receipt_matches(
+            &receipt.replace("PUT", "GET"),
+            "/upload/run/bidi",
+            2_097_152,
+            "correct"
+        ));
+        assert!(!upload_receipt_matches(
+            &format!("{receipt}\n{receipt}"),
+            "/upload/run/bidi",
+            2_097_152,
+            "correct"
+        ));
     }
 
     #[test]

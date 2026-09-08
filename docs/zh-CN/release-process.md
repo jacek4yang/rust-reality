@@ -92,6 +92,28 @@ LANDING:443。这证明真实 WAN 链路，不代表公网 LINE 监听器使用 
 不允许临时 wildcard/公网监听。历史 v1.8 补充证据中的配置改动属于当时的授权，
 不能作为本次 v2 二进制升级修改配置的依据。
 
+使用 `--line-baseline` 和 `--landing-baseline` 传入**切换前**由原生 inventory
+保存的快照。canary 在流量开始前和恢复后，对照快照比较 wildcard 地址/端口对：
+保留无关的已有监听，新增监听或地址族则失败。恢复后再次检查 LANDING TCP/443
+防火墙限制。
+
+补充 Handoff 使用 canonical LINE alias 上单独暂存的
+`rust-reality-canary-<name>.service`，运行候选二进制并仅监听一个 loopback 端口。
+同时传入 `--supplemental-line-service`、`--supplemental-line-port`、
+`--public-socks-port`、`--public-url`、`--public-payload`。stock-Xray 配置必须有两个
+明确绑定 loopback 的 SOCKS inbound，分别路由到补充入口（通过 SSH loopback
+forward）及原有公网 LINE endpoint。不得替换 host alias、公网服务 unit 或路由配置。
+runner 验证补充进程仅持有声明的 loopback 监听，reload 两个 LINE 进程，并在启动、
+每个阶段及最终恢复时校验公网下载内容。报告明确标注拓扑，公网 LINE 与补充 LINE
+分别采样，使用相同的已评审 LINE 资源上界。自动回滚仍作用于生产 generation；
+测试结束后删除临时补充 unit 和 SSH forward。
+
+loopback origin 使用 `cargo dev bench origin --access-log PATH`，通过
+`--origin-access-log` 传入远端日志路径。one-MiB payload 必须恰好一 MiB，large
+payload 必须更大。下载、上传和并发双向检查要求内容/SHA-256 精确一致。上传回执
+必须是新追加的记录，并匹配本次运行唯一 PUT 路径、长度和摘要；旧回执或仅长度
+相同不能证明完整性。
+
 ## 标签、官方产物与回滚
 
 精确 main 的 A/B 层通过后创建 annotated tag，推送并以 `gh run watch` 监控现有
