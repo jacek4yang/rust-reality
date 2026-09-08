@@ -69,3 +69,4 @@ of the law is what it is.
 | [0025](0025-cover-profiles-observe-but-do-not-reproduce-encrypted-extensions.md) | Cover profiles observe, but do not reproduce, EncryptedExtensions | Accepted |
 | [0027](0027-preserve-the-existing-v18-handoff-landing.md) | Preserve the existing v1.8 Handoff landing | Accepted for v2.0.0 |
 | [0028](0028-finalize-the-v2-crypto-provider-set.md) | Finalize the v2 cryptographic provider set | Accepted |
+| [0029](0029-retain-automatic-runtime-worker-selection.md) | Retain automatic runtime worker selection | Accepted |

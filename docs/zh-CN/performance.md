@@ -11,6 +11,18 @@ v1.0.0 发布对比矩阵见
 [benchmarks.zh-CN.md](benchmarks.md)。v1.6.0、v1.5.1 与 v1.5.0 的证据在下面紧随的
 章节中，v1.0.0 表格作为该版本的历史发布测量保持不变。
 
+## v2 的密码学实现与小型 KVM 运行时
+
+v2 的生产密码学实现见[实现清单](development/crypto-providers.md)。自有协议的
+X25519 已归入 `rr-crypto`；AWS-LC 和 x25519-dalek 只保留为开发期 oracle。
+历史 AWS-LC 测量的二进制增量不代表最终 v2 产物。
+
+[Issue #219](https://github.com/jacek4yang/rust-reality/issues/219) 的本地 KVM
+测量表明，自动使用两个 Tokio worker 会增加建立连接的 CPU 成本，但在并发八时
+提升吞吐量。v2 保持自动选择，不增加未经独立验证的 worker 数量配置项。
+[ADR 0029](../adr/0029-retain-automatic-runtime-worker-selection.md) 记录了这个取舍；
+Intel 虚拟机数据不代表 AMD Zen 生产性能。
+
 ## v1.7 开发证据：已认证 cover TCP 预热
 
 第一阶段的 cover 时延优化仍以真实 TLS cover 为权威，只把 TCP 三次握手移入有界

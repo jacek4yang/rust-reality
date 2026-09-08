@@ -638,14 +638,24 @@ primitive on a small term stays small. The change is accepted as provider
 consolidation that is measurably faster per record, byte-identical on the wire,
 free of any new dependency, and not a regression anywhere.
 
-## Per-session X25519 provider: aws-lc-rs
+## Small KVM guests and runtime workers
 
-The two X25519 agreements every REALITY session performs — authentication
-against the configured key, and the TLS key exchange — are computed by
-**aws-lc-rs** (non-FIPS, high-level safe API). Key generation, the destination
-probe and the handoff control channel still use `x25519-dalek`, which therefore
-remains an independent oracle for the cross-provider equivalence tests. The
-decision and its revisit conditions are [ADR 0020](../adr/0020-aws-lc-rs-computes-per-session-x25519.md).
+The completed local KVM comparison in
+[issue #219](https://github.com/jacek4yang/rust-reality/issues/219) found that
+automatic two-worker setup spends more CPU per connection but improves
+throughput at concurrency eight. v2 retains automatic selection: a separate
+worker setting needs an isolated daemon comparison and a demonstrated benefit
+for the actual traffic mix. [ADR 0029](../adr/0029-retain-automatic-runtime-worker-selection.md)
+records the measured tradeoff and the limits of the Intel guest evidence.
+
+## Historical per-session X25519 comparison: aws-lc-rs
+
+This comparison established the earlier move of two session agreements to
+**aws-lc-rs**. v2 subsequently consolidated rust-reality's X25519 operations in
+`rr-crypto`; `aws-lc-rs` and `x25519-dalek` are now dev-only oracles. The
+current provider decision is [ADR 0028](../adr/0028-finalize-the-v2-crypto-provider-set.md).
+The historical measurements below remain valid for their named artifacts;
+their binary-size cost does not describe the final v2 binary.
 
 Measured evidence (validation host above; Coffee Lake i3-8100, AES-NI + AVX2 +
 BMI2 + ADX, **no SHA-NI**):
