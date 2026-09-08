@@ -61,7 +61,7 @@ of the law is what it is.
 | [0017](0017-relay-atomic-and-contention-hypotheses-rejected.md) | Relay atomic bookkeeping, pipe-cleanliness typestate, and pool contention | Rejected on measurement |
 | [0018](0018-session-establishment-allocation-has-no-avoidable-headroom.md) | Session-establishment allocation has no avoidable headroom | Accepted (negative result) |
 | [0019](0019-one-current-configuration-schema.md) | One current configuration schema | Accepted |
-| [0020](0020-aws-lc-rs-computes-per-session-x25519.md) | `aws-lc-rs` computes the per-session X25519 agreements | Accepted on measurement |
+| [0020](0020-aws-lc-rs-computes-per-session-x25519.md) | `aws-lc-rs` computes the per-session X25519 agreements | Superseded by ADR 0028 |
 | [0021](0021-sha-hkdf-hmac-and-ed25519-stay-on-rustcrypto.md) | SHA, HKDF, HMAC and Ed25519 stay on RustCrypto | Rejected on measurement |
 | [0022](0022-paired-block-resolution.md) | A paired benchmark interval must not outrun its block count | Accepted |
 | [0023](0023-rr-crypto-is-the-unsafe-crypto-boundary.md) | `rr-crypto` is the crate where cryptographic `unsafe` lives | Accepted |
@@ -69,3 +69,5 @@ of the law is what it is.
 | [0025](0025-cover-profiles-observe-but-do-not-reproduce-encrypted-extensions.md) | Cover profiles observe, but do not reproduce, EncryptedExtensions | Accepted |
 | [0026](0026-profile-classes-hash-capability-sets.md) | Profile classes hash capability sets, not GREASE variance | Accepted |
 | [0027](0027-preserve-the-existing-v18-handoff-landing.md) | Preserve the existing v1.8 Handoff landing | Accepted for v2.0.0 |
+| [0028](0028-finalize-the-v2-crypto-provider-set.md) | Finalize the v2 cryptographic provider set | Accepted |
+| [0029](0029-retain-automatic-runtime-worker-selection.md) | Retain automatic runtime worker selection | Accepted |

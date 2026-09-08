@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted on measurement. Scoped to the two per-session X25519 call sites. It
+Superseded by ADR 0028. The measurements below remain historical evidence.
+
+The original decision was scoped to the two per-session X25519 call sites. It
 authorizes no protocol, wire-format, or configuration change, and it does not
 decide anything about the other cryptographic primitives.
 

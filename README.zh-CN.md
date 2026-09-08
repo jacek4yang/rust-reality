@@ -26,6 +26,9 @@
 
 ## 核心亮点
 
+- v2 的自有协议使用统一的 X25519 边界；哈希、AEAD、签名和 ML-KEM 保留成熟的
+  委托实现。参见[实现清单](docs/zh-CN/development/crypto-providers.md)与
+  [有限的落地配置兼容范围](docs/adr/0027-preserve-the-existing-v18-handoff-landing.md)。
 - 公网 VLESS + REALITY + Vision 数据路径兼容 Xray-core 26.7.28，并以未经修改的
   Xray 客户端做端到端门禁。
 - 已认证 REALITY 建连会在精确、保守的 ClientHello class 准备好时使用已验证的
@@ -62,6 +65,10 @@
   panic/unwrap，标签发布包可复现。
 
 ## 与 Xray-core 的性能对比
+
+v2.0.0 将下表保留为历史对比参考，不把它们表述为新的 v2 测量或生产互联网性能。
+当前密码学实现选择及证据边界见
+[ADR 0028](docs/adr/0028-finalize-the-v2-crypto-provider-set.md)。
 
 对比对象：Xray-core 26.7.28（提交 `5ca6f4b`，go1.26.0，二进制 SHA-256
 `23d228d7…04c5268`）——即互操作测试所用的同一二进制。v1.9.0 受保护的

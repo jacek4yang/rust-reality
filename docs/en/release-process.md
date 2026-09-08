@@ -7,6 +7,14 @@ state, required GitHub checks, and retained exact-candidate evidence override a
 roadmap estimate. A release never trades protocol correctness, security, or a
 protected performance path for schedule.
 
+For the v2 binary upgrade, production configuration bytes, identity, routing,
+systemd semantics, SSH aliases, firewall and cloud network policy are immutable.
+Use the existing generation layout. Preserve the original rollback binary even
+when the official artifact replaces a validated candidate. A configuration
+rejection is a software compatibility defect; it does not authorize rewriting
+the operator's file. The bounded v1.8 Handoff/direct input and `serve --config`
+invocation are specified by [ADR 0027](../adr/0027-preserve-the-existing-v18-handoff-landing.md).
+
 ## Evidence tiers and invalidation
 
 Release validation is intentionally time-bounded:
@@ -125,7 +133,7 @@ cargo dev deploy apply cutover --target line --release-id RELEASE \
   --output cutover-evidence.json
 # application canary
 cargo dev deploy apply promote --target line --release-id RELEASE \
-  --prune-old-releases --mutate-remote --output promote-evidence.json
+  --mutate-remote --output promote-evidence.json
 ```
 
 `inspect` and `plan` are read-only. `apply` refuses to run without the explicit
@@ -137,8 +145,9 @@ TCP listener introduced during the cutover. Pre-existing unrelated listeners
 remain the host operator's responsibility and are not silently disabled by the
 deployment tool. Any startup or listener-policy failure automatically restores
 the old generation. A later interoperability or canary failure runs `rollback`.
-Promotion keeps CURRENT and PREVIOUS and prunes older replaceable software;
-persistent identity is never pruned with release directories.
+Promotion records acceptance. Optional pruning is separate and must not remove
+the retained pre-upgrade rollback release; persistent identity is never pruned
+with release directories.
 
 ## Phase 4 — dual-VPS active canary
 
@@ -168,19 +177,20 @@ real; FD recovery also uses reviewed absolute ceilings that account for the
 bounded reusable splice-pipe pool rather than comparing a warmed process to
 its pre-traffic descriptor count. The controlled restart may cause a small,
 bounded number of outbound failures, but authentication/protocol rejection is
-never accepted. The short canary does not extrapolate a MiB/hour slope. NXR
-receives a separate compact run on the same LANDING 443, after which the
-intended daily configuration is restored.
+never accepted. The short canary does not extrapolate a MiB/hour slope. Test
+additional protocol modes locally when selecting them would change production
+configuration.
 
-When a canary leg cannot exercise a specific topology gap (for example the
-v1.8.0 release where neither the formal loopback legs nor the canary reached
-the LINE-to-LANDING Handoff/NXR path), the established alternative is a
-**supplemental real-WAN run** that extends the live daily configuration
-instead of replacing it: identities, users, and routing are copied verbatim
-(hash-verified), one canary-only user is appended, and the daily generation is
-restored afterwards with the live configuration hash verified byte-identical.
-A compact durable record of such a run lives in
-`benchmarks/evidence/releases/` (`v1.8-supplemental-dual-vps-evidence.md`).
+The inventory determines which topology the existing public listener actually
+serves. If it uses SOCKS5 rather than Handoff, report that difference explicitly;
+do not change users, credentials or routing to manufacture the diagram above.
+Validate the unchanged public path and use an authorized, separately labelled
+supplemental Handoff run with a loopback-only LINE entry and the existing
+restricted LANDING:443. This demonstrates the real WAN leg, not Handoff routing
+on the public LINE listener. No temporary wildcard/public listener is permitted.
+Historical v1.8 supplemental evidence in `benchmarks/evidence/releases/`
+records a different, previously authorized procedure; it does not authorize
+configuration changes during the v2 binary upgrade.
 
 ## Phase 5 — tag, publish, and deploy official artifacts
 

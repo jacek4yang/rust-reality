@@ -4,6 +4,14 @@ All notable user-facing changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-09-08
+
+v2 finalizes the cryptographic boundary while retaining the VLESS + REALITY +
+Vision client contract and the existing NXR/Handoff wire formats. Current v1.9
+configuration remains valid. A bounded v1.8 Handoff/direct landing input is
+also accepted so the deployed landing can upgrade without rewriting identity,
+routing, resource policy, or its systemd invocation.
+
 ### Changed
 
 - AES-256-GCM and ChaCha20-Poly1305 TLS records now use the same ring backend
@@ -12,14 +20,23 @@ All notable user-facing changes to this project are documented in this file.
   dependency. Whole-session effect is within the measurement floor, because
   Vision Direct keeps steady-state payload off the record path.
 
-- **Session establishment costs about 12% less server CPU.** The two X25519 key
-  agreements every REALITY session performs are now computed by `aws-lc-rs`:
-  571 → 503 µs of server CPU per connection, measured as a balanced A/B between
-  frozen binaries and reproduced with the ordering reversed. No protocol,
-  configuration, or interoperability change — Xray interoperability is verified
-  for both the X25519 and X25519MLKEM768 key-exchange groups, and the hybrid
-  shared secret is byte-identical. The binary grows by about 2.6 MB as a result.
-  See [ADR 0020](docs/adr/0020-aws-lc-rs-computes-per-session-x25519.md).
+- All rust-reality X25519 operations now use `rr-crypto`, a small `no_std`
+  boundary around provenance-pinned mature s2n-bignum routines. x86_64 and
+  AArch64 retain CPU-safe runtime dispatch. AWS-LC and x25519-dalek remain only
+  as independent development oracles; the normal production graph contains
+  neither provider and has no fastcrypto research dependency. Arithmetic parity
+  and reduced production dependencies are the accepted result, without a new
+  whole-product speed claim. See
+  [ADR 0028](docs/adr/0028-finalize-the-v2-crypto-provider-set.md).
+- SHA/HMAC/HKDF, Ed25519, ML-KEM, and AEAD remain on their mature delegated
+  providers. A discarded optimization experiment is not a reason to migrate.
+- Cover-probe ephemeral keys are consumed after agreement. LANDING static keys
+  are immutable and shared across handlers until their final owner drops.
+- Automatic Tokio worker selection is retained. The local KVM comparison shows
+  a CPU/throughput tradeoff; a new worker setting remains post-v2 work.
+- Cover-profile classes normalize GREASE and capability-set ordering. The class
+  digest remains a lookup hint; the actual ClientHello is still validated and
+  materialized against concrete capabilities before authenticated use.
 
 ### Added
 
@@ -29,6 +46,18 @@ All notable user-facing changes to this project are documented in this file.
   reports `commit: unknown` rather than guessing. Include the full `--version`
   output in bug reports: it is the only way to know which source produced a
   given executable.
+- The existing `serve --config` invocation selects the same runtime as `run`.
+  The limited v1.8 Handoff/direct reader rejects unknown settings, unsupported
+  routes and non-default numeric overrides instead of silently discarding them.
+  Existing nonce retention is preserved; changing the effective replay-cache
+  retention requires restart rather than partially applying a reload.
+- The crypto dependency gate checks the normal graph as well as exact source
+  ownership, and fails closed if the graph cannot be inspected.
+
+### Fixed
+
+- Native soak fixtures use the current configuration builders, and all LANDING
+  fixtures emit the generation events required to validate reloads.
 
 ## [1.9.0] - 2026-09-02
 

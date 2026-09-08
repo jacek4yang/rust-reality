@@ -434,6 +434,16 @@ and RSS growth over the soak with zero transfer failures.
 - Results are measurements of this host and are not a universal
   performance claim.
 
+## v2.0.0 release comparison evidence
+
+v2.0.0 retains the historical comparator tables below with their original
+artifact and hardware attribution. The X25519 decision is architectural
+consolidation at arithmetic parity; the cover-class change measures cache
+classification, not a new CPU speedup. Provider and worker decisions are final
+in ADRs 0028 and 0029. Exact candidate correctness, package, LOCAL_KVM,
+LOCAL_SYNTHETIC and production-canary evidence is bound to the release artifact
+in its GitHub release/tracker; it does not replace historical performance data.
+
 ## v1.9.0 release comparison evidence
 
 Comparator: Xray-core 26.7.28 (commit `5ca6f4b`, go1.26.0, binary SHA-256
