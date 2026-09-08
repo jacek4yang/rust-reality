@@ -34,6 +34,9 @@ routing, resource policy, or its systemd invocation.
   are immutable and shared across handlers until their final owner drops.
 - Automatic Tokio worker selection is retained. The local KVM comparison shows
   a CPU/throughput tradeoff; a new worker setting remains post-v2 work.
+- Cover-profile classes normalize GREASE and capability-set ordering. The class
+  digest remains a lookup hint; the actual ClientHello is still validated and
+  materialized against concrete capabilities before authenticated use.
 
 ### Added
 
