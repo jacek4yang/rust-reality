@@ -1599,50 +1599,38 @@ fn transport_line_config(
         "cacheDirectory".to_owned(),
         string(cache.display().to_string()),
     );
-    let Some(Value::Array(inbounds)) = root.get_mut("inbounds") else {
-        return Err("generated transport config has no inbounds array".to_owned());
-    };
-    let Some(Value::Object(inbound)) = inbounds.first_mut() else {
-        return Err("generated transport config has no first inbound".to_owned());
-    };
-    inbound.insert("port".to_owned(), number(u64::from(inbound_port)));
-    let Some(Value::Array(outbounds)) = root.get_mut("outbounds") else {
-        return Err("generated transport config has no outbounds array".to_owned());
+    replace_listener_port(&mut root, inbound_port)?;
+    let Some(Value::Object(outbounds)) = root.get_mut("outbounds") else {
+        return Err("generated transport config has no outbounds object".to_owned());
     };
     let outbound = outbounds
-        .iter_mut()
-        .find(|outbound| outbound.str_field("outbound", "protocol") == Ok(protocol))
+        .values_mut()
+        .find(|outbound| outbound.str_field("outbound", "type") == Ok(protocol))
         .ok_or_else(|| format!("generated transport config has no {protocol} outbound"))?;
-    let Some(Value::Object(outbound)) = Some(outbound) else {
-        unreachable!("the protocol lookup only matches outbound objects")
+    let Value::Object(outbound) = outbound else {
+        unreachable!("the type lookup only matches outbound objects")
     };
-    let Some(Value::Object(settings)) = outbound.get_mut("settings") else {
-        return Err(format!(
-            "generated {protocol} outbound has no settings object"
-        ));
-    };
-    settings.insert("address".to_owned(), string(address));
-    settings.insert("port".to_owned(), number(u64::from(outbound_port)));
-    settings.insert("warmTcp".to_owned(), Value::Bool(warm_tcp));
+    outbound.insert("address".to_owned(), string(address));
+    outbound.insert("port".to_owned(), number(u64::from(outbound_port)));
+    outbound.insert("warmTcp".to_owned(), Value::Bool(warm_tcp));
     Ok(suites::render_compact(&Value::Object(root)))
 }
 
-fn landing_variant_config(raw: &str, inbound_port: u16, cache: &Path) -> Result<String, String> {
+fn replace_listener_port(root: &mut BTreeMap<String, Value>, port: u16) -> Result<(), String> {
+    let Some(Value::Array(listeners)) = root.get_mut("listeners") else {
+        return Err("generated transport config has no listeners array".to_owned());
+    };
+    let [Value::Object(listener)] = listeners.as_mut_slice() else {
+        return Err("generated transport config must have exactly one listener object".to_owned());
+    };
+    listener.insert("port".to_owned(), number(u64::from(port)));
+    Ok(())
+}
+
+fn landing_variant_config(raw: &str, inbound_port: u16) -> Result<String, String> {
     let mut root = root_object(raw)?;
-    let Some(Value::Object(assets)) = root.get_mut("assets") else {
-        return Err("generated landing config has no assets object".to_owned());
-    };
-    assets.insert(
-        "cacheDirectory".to_owned(),
-        string(cache.display().to_string()),
-    );
-    let Some(Value::Array(inbounds)) = root.get_mut("inbounds") else {
-        return Err("generated landing config has no inbounds array".to_owned());
-    };
-    let Some(Value::Object(inbound)) = inbounds.first_mut() else {
-        return Err("generated landing config has no first inbound".to_owned());
-    };
-    inbound.insert("port".to_owned(), number(u64::from(inbound_port)));
+    // Current landing nodes have no entry-side asset cache.
+    replace_listener_port(&mut root, inbound_port)?;
     Ok(suites::render_compact(&Value::Object(root)))
 }
 
@@ -2363,16 +2351,8 @@ fn build_rtt_handoff_pair(
         )?,
         "warn",
     )?;
-    let warm_landing = landing_variant_config(
-        &landing_base,
-        warm_landing_port,
-        &state.workspace.join("assets-rtt-handoff-warm-landing"),
-    )?;
-    let cold_landing = landing_variant_config(
-        &landing_base,
-        cold_landing_port,
-        &state.workspace.join("assets-rtt-handoff-cold-landing"),
-    )?;
+    let warm_landing = landing_variant_config(&landing_base, warm_landing_port)?;
+    let cold_landing = landing_variant_config(&landing_base, cold_landing_port)?;
     spawn_rtt_namespace_rust(
         state,
         topology,
@@ -3855,6 +3835,129 @@ fn counts(values: &[usize]) -> Json {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn transport_fixture(protocol: &'static str) -> (String, config::LandingLink) {
+        let identity = config::RealityIdentity {
+            uuid: "11111111-2222-4333-8444-555555555555".to_owned(),
+            short_id: "0123abcd".to_owned(),
+            server_name: "localhost".to_owned(),
+            target: "127.0.0.1:443".to_owned(),
+        };
+        let key = "ERERERERERERERERERERERERERERERERERERERERERE";
+        let link = config::LandingLink {
+            protocol,
+            address: "127.0.0.1".to_owned(),
+            port: 7443,
+            psk: "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI".to_owned(),
+            landing_public_key: (protocol == "handoff")
+                .then(|| "MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM".to_owned()),
+        };
+        let raw = config::RustServer::new(&identity, 8443, key)
+            .assets_cache("/tmp/assets-original")
+            .through_landing(&link)
+            .build()
+            .to_python_json();
+        (raw, link)
+    }
+
+    #[test]
+    fn rtt_transport_variants_validate_current_schema_and_preserve_identity() {
+        for protocol in ["nxr", "handoff", "socks5"] {
+            let (mut raw, _) = transport_fixture(if protocol == "socks5" {
+                "nxr"
+            } else {
+                protocol
+            });
+            if protocol == "socks5" {
+                raw = soak::patch_socks_outbound(&raw, 1080).unwrap();
+            }
+            let original = json_in::parse(&raw).unwrap();
+            for warm in [false, true] {
+                let changed = transport_line_config(
+                    &raw,
+                    9443,
+                    protocol,
+                    "192.0.2.2",
+                    7444,
+                    warm,
+                    "info",
+                    Path::new("/tmp/assets-variant"),
+                )
+                .unwrap();
+                rust_reality::config::load_bytes(Path::new("variant.json"), changed.as_bytes())
+                    .unwrap_or_else(|error| panic!("{protocol} warm={warm}: {error}"));
+                let changed = json_in::parse(&changed).unwrap();
+                for field in ["role", "reality", "users", "routing"] {
+                    assert_eq!(changed.field("", field), original.field("", field));
+                }
+                assert_eq!(
+                    changed.array_field("", "listeners").unwrap()[0]
+                        .int_field("listener", "port")
+                        .unwrap(),
+                    9443
+                );
+                let mut expected = root_object(&raw).unwrap();
+                replace_listener_port(&mut expected, 9443).unwrap();
+                assert_eq!(
+                    changed.field("", "listeners").unwrap(),
+                    expected.get("listeners").unwrap()
+                );
+                let Value::Object(outbounds) = changed.field("", "outbounds").unwrap() else {
+                    panic!()
+                };
+                let outbound = outbounds
+                    .values()
+                    .find(|o| o.str_field("", "type") == Ok(protocol))
+                    .unwrap();
+                assert_eq!(outbound.str_field("", "address").unwrap(), "192.0.2.2");
+                assert_eq!(outbound.int_field("", "port").unwrap(), 7444);
+                assert_eq!(outbound.field("", "warmTcp").unwrap(), &Value::Bool(warm));
+                let Value::Object(original_outbounds) = original.field("", "outbounds").unwrap()
+                else {
+                    panic!()
+                };
+                let previous = original_outbounds
+                    .values()
+                    .find(|o| o.str_field("", "type") == Ok(protocol))
+                    .unwrap();
+                for field in ["psk", "landingPublicKey", "username", "password"] {
+                    assert_eq!(outbound.optional(field), previous.optional(field));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rtt_landing_variants_validate_without_entry_assets() {
+        for protocol in ["nxr", "handoff"] {
+            let (_, link) = transport_fixture(protocol);
+            let raw = config::rust_landing(
+                "192.0.2.2",
+                7443,
+                &link,
+                (protocol == "handoff").then_some("REREREREREREREREREREREREREREREREREREREREREQ"),
+            )
+            .to_python_json();
+            let changed = landing_variant_config(&raw, 7444).unwrap();
+            rust_reality::config::load_bytes(Path::new("landing.json"), changed.as_bytes())
+                .unwrap();
+            let mut expected = root_object(&raw).unwrap();
+            replace_listener_port(&mut expected, 7444).unwrap();
+            assert_eq!(json_in::parse(&changed).unwrap(), Value::Object(expected));
+            assert!(!changed.contains("assets"));
+        }
+    }
+
+    #[test]
+    fn rtt_variants_reject_retired_or_ambiguous_listener_shapes() {
+        for raw in [
+            r#"{"inbounds":[{"port":8443}]}"#,
+            r#"{"listeners":[]}"#,
+            r#"{"listeners":[{"port":8443},{"port":8444}]}"#,
+        ] {
+            assert!(landing_variant_config(raw, 9443).is_err());
+        }
+    }
 
     fn generated_base() -> &'static str {
         r#"{
