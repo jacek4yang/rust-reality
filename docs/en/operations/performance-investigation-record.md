@@ -438,3 +438,70 @@ the kernel. Future performance work should target deployment-level variables —
 CPU features such as SHA-NI, connection-rate capacity governed by X25519, and
 network-stack tuning — rather than further Rust-level optimisation of these
 paths.
+
+## Post-v2 work retained after tracker retirement
+
+The v2.0.0 tracking issues for crypto providers, deployment-envelope resource
+characterisation, and connection setup are closed when their release scope is
+settled. This section preserves the useful work that remains without treating
+unperformed characterisation as a release defect. The exact release gate and
+artifact requirements remain in [the release process](../release-process.md).
+
+### Connection establishment: cover-tail research
+
+[Issue #238](https://github.com/jacek4yang/rust-reality/issues/238) is retired
+from the v2.0.0 tracker. Early Prepare remains rejected by
+[ADR 0024](../../adr/0024-early-prepare-has-no-rtt-to-remove.md): the supported
+Xray client writes its first application record immediately after
+`ClientFinished`, so the proposed message has no RTT to remove. Warm Handoff,
+real-cover observation, and GREASE-free capability classification are covered
+by ADRs 0007, 0025, and 0026.
+
+The remaining work is post-v2 research:
+
+- a cover whose coalesced flight shape is not byte-stable remains on the live
+  cover path;
+- a new profile class pays the bounded collection cost until four observations
+  agree; and
+- the cold-start tail and profile cardinality need more deployment-shaped
+  measurement before any prewarming or consensus change is considered.
+
+Reopen this work for a reproducible interoperability, security, or resource
+failure, or when controlled evidence shows that the documented fallback bounds
+are not met. Reopen Early Prepare only under ADR 0024's stated conditions.
+
+### Deployment envelope: resource and relay characterisation
+
+[Issue #219](https://github.com/jacek4yang/rust-reality/issues/219) is retired
+from the v2.0.0 tracker. The release evidence covers bounded admission, file
+descriptor ownership, cancellation, reload, shutdown, recovery, constrained
+KVM operation, and byte-integrity under churn. It does not claim that every
+historical measurement row was completed.
+
+The remaining characterisation belongs in a later deployment study:
+
+- relay CPU per GiB in the supported 1–2 vCPU class;
+- kernel memory, RSS per active connection, and the FD-pressure ladder;
+- wakeups, context switches, and steal attribution on representative guests;
+- long-horizon memory-slope and OOM-boundary measurements; and
+- per-transfer Handoff X25519 cost.
+
+These measurements become release work only if they expose a correctness or
+resource-bound failure such as unbounded task or memory growth, an FD leak, an
+OOM under documented limits, or a cancellation/shutdown defect. A more precise
+performance number by itself does not reopen the v2.0.0 release tracker.
+
+### Cryptography: frozen provider set
+
+[Issue #225](https://github.com/jacek4yang/rust-reality/issues/225) is complete
+under [ADR 0028](../../adr/0028-finalize-the-v2-crypto-provider-set.md). The
+production set uses `rr-crypto` for X25519, RustCrypto for SHA/HMAC/HKDF and
+the selected protocol primitives, ring for the default TLS record AEAD path,
+and the existing delegated Ed25519 and ML-KEM implementations. `aws-lc-rs`,
+`x25519-dalek`, and fastcrypto remain outside the normal production graph as
+development oracles and experiments only.
+
+The provider set should be reconsidered only for a security defect, an
+unsupported release target, or a reproducible whole-product benefit on the
+deployment envelope that justifies the compatibility and maintenance cost.
+Research availability alone is not a v2 release requirement.
