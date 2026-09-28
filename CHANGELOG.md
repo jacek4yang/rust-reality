@@ -4,6 +4,19 @@ All notable user-facing changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- IP-based routing now uses the configured shared DNS resolver, including its
+  cache and coalescing, instead of bypassing it through the system resolver.
+- Configuration generations share file-log rotation and byte accounting;
+  pending reload signals are retained while an update is running.
+
+### Changed
+
+- DNS eviction copies only the selected key; file-log writes no longer scan
+  rotated files on every event; cached cover classes skip probe-template work.
+- Developer tooling hashes files with bounded streaming storage.
+
 ## [2.0.0] - 2026-09-08
 
 v2 finalizes the cryptographic boundary while retaining the VLESS + REALITY +

@@ -61,6 +61,7 @@ pub(super) struct RuntimeStore {
 /// Reload swaps routing and protocol snapshots only — these ceilings and
 /// rate gates must never multiply while old sessions hold old permits.
 pub(super) struct ProcessAuthorities {
+    pub(super) log_sinks: crate::logging::LogSinks,
     pub(super) governor: ResourceGovernor,
     pub(super) direct_barrier: DirectBarrier,
     pub(super) warm_pools: WarmPoolAuthority,
@@ -117,6 +118,7 @@ impl RuntimeStore {
             &self.pressure,
             &self.authorities,
         )?;
+        candidate.logger.activate()?;
         self.current.store(Arc::new(candidate));
         self.generation.store(generation, Ordering::Release);
         // Publish first so an accept racing this update can only observe a

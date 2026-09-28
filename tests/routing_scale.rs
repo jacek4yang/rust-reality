@@ -288,7 +288,11 @@ fn compile(rules: Vec<RouteRule>) -> RoutingTable {
         &config,
         &[primary_user()],
         Arc::new(StubAssets),
-        ResourceGovernor::new(&ResourceGovernorPolicy::default()),
+        rust_reality::server::dns::DnsResolver::system(
+            ResourceGovernor::new(&ResourceGovernorPolicy::default()),
+            Duration::from_secs(5),
+            &Default::default(),
+        ),
     )
     .expect("randomized routing config must compile")
 }
@@ -380,7 +384,11 @@ fn global_rules_precede_user_rules_at_scale() {
         &config,
         &[primary_user()],
         Arc::new(StubAssets),
-        ResourceGovernor::new(&ResourceGovernorPolicy::default()),
+        rust_reality::server::dns::DnsResolver::system(
+            ResourceGovernor::new(&ResourceGovernorPolicy::default()),
+            Duration::from_secs(5),
+            &Default::default(),
+        ),
     )
     .expect("config must compile");
     let destination = Destination::new(Address::Domain("Contended.TEST".to_owned()), 443);

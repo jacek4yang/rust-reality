@@ -399,7 +399,11 @@ fn fixture(size: usize, case: Case) -> Fixture {
             user("22222222-2222-2222-2222-222222222222", "secondary"),
         ],
         Arc::new(bench_assets()),
-        ResourceGovernor::new(&ResourceGovernorPolicy::default()),
+        rust_reality::server::dns::DnsResolver::system(
+            ResourceGovernor::new(&ResourceGovernorPolicy::default()),
+            Duration::from_secs(5),
+            &Default::default(),
+        ),
     )
     .expect("bench routing table must compile");
     Fixture {

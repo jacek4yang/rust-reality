@@ -205,13 +205,16 @@ impl CoverProfiles {
     }
 
     /// Returns a validated, unexpired exact-class profile without network I/O.
-    pub(crate) fn lookup(&self, hello: &ClientHello) -> Option<Arc<CoverProfile>> {
+    pub(crate) fn lookup(
+        &self,
+        class: Option<NormalizedClientHelloClass>,
+    ) -> Option<Arc<CoverProfile>> {
         if self.inner.lifecycle.load(Ordering::Acquire) != LIFECYCLE_ACTIVE {
             self.inner.metrics.disabled.fetch_add(1, Ordering::Relaxed);
             self.inner.metrics.miss.fetch_add(1, Ordering::Relaxed);
             return None;
         }
-        let Ok(class) = hello.normalized_profile_class() else {
+        let Some(class) = class else {
             self.inner.metrics.miss.fetch_add(1, Ordering::Relaxed);
             return None;
         };
@@ -228,7 +231,7 @@ impl CoverProfiles {
             }
             if entry.generation == self.inner.generation {
                 self.inner.metrics.stale.fetch_add(1, Ordering::Relaxed);
-                enqueue(&self.inner, entry.template.clone(), now);
+                enqueue(&self.inner, class, now, || Some(entry.template.clone()));
             }
         }
         self.inner.metrics.miss.fetch_add(1, Ordering::Relaxed);
@@ -242,10 +245,7 @@ impl CoverProfiles {
     /// Atomically removes a profile that could not reproduce the current
     /// authenticated flight. The same connection immediately uses live cover;
     /// only later controlled consensus can republish the class.
-    pub(crate) fn invalidate(&self, hello: &ClientHello) {
-        let Ok(class) = hello.normalized_profile_class() else {
-            return;
-        };
+    pub(crate) fn invalidate(&self, class: NormalizedClientHelloClass) {
         let publication = lock(&self.inner.publication);
         let current = self.inner.published.load();
         if !current.iter().any(|entry| entry.class == class) {
@@ -274,14 +274,16 @@ impl CoverProfiles {
     /// Admits one sanitized class only after ClientFinished and replay commit.
     /// Authenticated user traffic nominates a bounded class, but controlled
     /// cover probes alone determine the published semantics.
-    pub(crate) fn nominate(&self, hello: &ClientHello) {
+    pub(crate) fn nominate(&self, hello: &ClientHello, class: Option<NormalizedClientHelloClass>) {
         if self.inner.lifecycle.load(Ordering::Acquire) != LIFECYCLE_ACTIVE {
             return;
         }
-        let Ok(template) = hello.controlled_cover_probe_template() else {
+        let Some(class) = class else {
             return;
         };
-        enqueue(&self.inner, template, Instant::now());
+        enqueue(&self.inner, class, Instant::now(), || {
+            hello.controlled_cover_probe_template().ok()
+        });
     }
 
     pub(crate) fn snapshot(&self) -> CoverProfileSnapshot {
@@ -315,8 +317,12 @@ impl CoverProfiles {
     }
 }
 
-fn enqueue(inner: &Arc<CoverProfilesInner>, template: CoverProbeTemplate, now: Instant) {
-    let class = template.class();
+fn enqueue(
+    inner: &Arc<CoverProfilesInner>,
+    class: NormalizedClientHelloClass,
+    now: Instant,
+    make_template: impl FnOnce() -> Option<CoverProbeTemplate>,
+) {
     let published = inner.published.load();
     if published
         .iter()
@@ -343,6 +349,14 @@ fn enqueue(inner: &Arc<CoverProfilesInner>, template: CoverProbeTemplate, now: I
         return;
     }
     if !collection_capacity_available(known, queue.candidates.len(), replaces_existing) {
+        return;
+    }
+    // Admission precedes the allocation and sanitization of a ClientHello copy.
+    // Cached, queued and cooling-down classes therefore do no template work.
+    let Some(template) = make_template() else {
+        return;
+    };
+    if template.class() != class {
         return;
     }
     queue.candidates.push_back(Candidate { class, template });
@@ -609,6 +623,80 @@ mod tests {
         LIFECYCLE_CREATED, MAX_PROFILE_CLASSES, collection_capacity_available,
         derive_profile_state, first_encrypted_record_range, profile_is_current,
     };
+
+    #[test]
+    fn nominating_a_cached_class_needs_no_template_allocation() {
+        use crate::{
+            protocol::reality::tls13::profile_test_fixture,
+            runtime::{ResourceGovernor, policy::ResourceGovernorPolicy},
+            transport::{FdBudget, TcpRelay, TcpRelayConfig},
+        };
+        let (hello, profile) = profile_test_fixture();
+        let class = hello.normalized_profile_class().expect("class");
+        let policy = ResourceGovernorPolicy::default();
+        let governor = ResourceGovernor::new(&policy);
+        let relay = TcpRelay::new(
+            TcpRelayConfig {
+                buffer_bytes: 32768,
+                max_pooled_buffers: 1,
+                max_splice_relays: 0,
+                splice: false,
+                pipe_pool: false,
+                max_pooled_pipes: 0,
+            },
+            FdBudget::new(128),
+        )
+        .expect("relay");
+        let fallback = super::RealityFallback::new("127.0.0.1:9", governor.clone(), &policy, relay);
+        let profiles =
+            super::CoverProfiles::new(1, fallback, governor, std::time::Duration::from_secs(1));
+        profiles.inner.lifecycle.store(
+            super::LIFECYCLE_ACTIVE,
+            std::sync::atomic::Ordering::Release,
+        );
+        let template = hello.controlled_cover_probe_template().expect("template");
+        profiles
+            .inner
+            .published
+            .store(std::sync::Arc::new(vec![super::PublishedProfile {
+                generation: 1,
+                class,
+                profile: std::sync::Arc::new(profile),
+                template,
+                expires_at: tokio::time::Instant::now() + std::time::Duration::from_secs(60),
+            }]));
+        let measured = allocation_counter::measure(|| {
+            for _ in 0..100 {
+                profiles.nominate(&hello, Some(class));
+            }
+        });
+        assert_eq!(
+            measured.count_total, 0,
+            "cached nominations must not construct discarded templates: {measured:?}"
+        );
+        assert!(super::lock(&profiles.inner.queue).candidates.is_empty());
+        profiles
+            .inner
+            .published
+            .store(std::sync::Arc::new(Vec::new()));
+        super::lock(&profiles.inner.queue).in_flight = Some(class);
+        let measured = allocation_counter::measure(|| profiles.nominate(&hello, Some(class)));
+        assert_eq!(
+            measured.count_total, 0,
+            "an in-flight class needs no second template"
+        );
+        super::lock(&profiles.inner.queue).in_flight = None;
+        profiles.nominate(&hello, Some(class));
+        assert_eq!(super::lock(&profiles.inner.queue).candidates.len(), 1);
+        let measured = allocation_counter::measure(|| profiles.nominate(&hello, Some(class)));
+        assert_eq!(
+            measured.count_total, 0,
+            "an already queued class needs no second template"
+        );
+        profiles.deactivate();
+        profiles.nominate(&hello, Some(class));
+        assert!(super::lock(&profiles.inner.queue).candidates.is_empty());
+    }
 
     #[test]
     fn a_full_cache_can_refresh_but_cannot_admit_a_new_class() {

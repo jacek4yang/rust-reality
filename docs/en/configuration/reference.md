@@ -296,7 +296,9 @@ Cold. The resolver is installed once for the process.
 
 Exactly `["system"]` uses the operating system resolver through
 `getaddrinfo`, honouring `/etc/resolv.conf`. `"system"` may not be mixed with
-other entries.
+other entries. IP and GeoIP routing decisions use this same resolver, cache,
+and in-flight query coalescing as outbound connections. The resolved address
+snapshot is passed from routing to the connector.
 
 ### DnsCache
 
@@ -350,6 +352,12 @@ imply each other.
 | `maxBytes` | integer | no | 64 MiB |
 | `maxFiles` | integer | no | `8` |
 | `maxTotalBytes` | integer | no | `maxBytes` × `maxFiles` |
+
+New and existing sessions writing to the same canonical file path share one
+writer and retention counter. A successful reload applies its retention limits
+to that writer; preparing a rejected configuration does not replace the limits.
+Startup, reload and rotation reconcile the retained files. Ordinary writes
+account for bytes in memory without scanning the filesystem.
 
 ## Runtime
 
@@ -413,3 +421,7 @@ are implementation detail derived from the machine. See
 A reload that changes a cold setting is refused by name, and the running
 configuration keeps serving. Established connections always finish on the
 generation that admitted them.
+
+Reload signals received during a configuration or asset update coalesce into
+one pending request. After the active update finishes, that request reads the
+latest configuration file; updates never run concurrently.

@@ -677,3 +677,102 @@ async fn connector_dials_cached_static_targets_without_re_resolving() {
         "static configured targets are not re-resolved per connection"
     );
 }
+
+#[tokio::test]
+async fn ip_routing_uses_configured_dns_cache_and_coalesces_across_tables() {
+    use rust_reality::{
+        assets::EmptyAssetMatcher,
+        config::node::{
+            routing::{DomainStrategy, RouteRule, RoutingConfig},
+            user::UserConfig,
+        },
+        protocol::vless::{Address, Destination, UserId},
+        server::routing::RoutingTable,
+    };
+    for strategy in [
+        DomainStrategy::ResolveIfNoMatch,
+        DomainStrategy::ResolveOnDemand,
+    ] {
+        let server = FakeDns::start().await;
+        server.set(
+            "routing.test",
+            Scenario::answers(&[7], &[], 300).with_delay(Duration::from_millis(30)),
+        );
+        let resolver = resolver(&server, 2_000);
+        let config = RoutingConfig {
+            default: "blocked".into(),
+            strategy: Some(strategy),
+            policies: None,
+            rules: Some(vec![RouteRule {
+                ip: Some(vec!["192.0.2.0/24".into()]),
+                outbound: "direct".into(),
+                ..Default::default()
+            }]),
+        };
+        let users = [UserConfig {
+            id: "11111111-1111-1111-1111-111111111111".into(),
+            short_ids: vec!["aa".into()],
+            label: None,
+            policy: None,
+        }];
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..32 {
+            let table = RoutingTable::compile(
+                &config,
+                &users,
+                Arc::new(EmptyAssetMatcher),
+                resolver.clone(),
+            )
+            .expect("compile routing");
+            tasks.spawn(async move {
+                table
+                    .select_with_dns(
+                        UserId::new([0x11; 16]),
+                        "entry",
+                        &Destination::new(Address::Domain("routing.test".into()), 443),
+                        strategy,
+                        BUDGET,
+                    )
+                    .await
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            let route = result
+                .expect("task")
+                .expect("configured DNS must resolve for IP routing");
+            assert_eq!(route.decision().outbound(), "direct");
+            assert_eq!(route.resolved_ips(), &[v4(7)]);
+        }
+        assert_eq!(
+            resolver.metrics().upstream_queries,
+            1,
+            "all tables share one flight"
+        );
+        assert!(resolver.metrics().coalesced > 0);
+        let queries = server.query_count();
+        let table = RoutingTable::compile(
+            &config,
+            &users,
+            Arc::new(EmptyAssetMatcher),
+            resolver.clone(),
+        )
+        .expect("reload routing");
+        let route = table
+            .select_with_dns(
+                UserId::new([0x11; 16]),
+                "entry",
+                &Destination::new(Address::Domain("routing.test".into()), 443),
+                strategy,
+                BUDGET,
+            )
+            .await
+            .expect("cached route");
+        assert_eq!(route.resolved_ips(), &[v4(7)]);
+        assert_eq!(
+            server.query_count(),
+            queries,
+            "new routing generation retains the shared cache"
+        );
+        assert_eq!(resolver.metrics().cache_hits, 1);
+    }
+}

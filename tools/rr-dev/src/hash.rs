@@ -9,7 +9,7 @@
 //! workspace, this implements FIPS 180-4 SHA-256 directly. It is verified against
 //! the standard test vectors.
 
-use std::fmt::Write as _;
+use std::{fmt::Write as _, io::Read as _};
 
 const H0: [u32; 8] = [
     0x6a09_e667,
@@ -95,8 +95,20 @@ const K: [u32; 64] = [
 ///
 /// Returns a message when the file cannot be read.
 pub fn sha256_file(path: &std::path::Path) -> Result<String, String> {
-    let bytes = std::fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    Ok(sha256_hex(&bytes))
+    let mut file =
+        std::fs::File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let mut state = Sha256::new();
+    let mut buffer = vec![0_u8; 64 * 1024];
+    loop {
+        let read = match file.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(format!("{}: {error}", path.display())),
+        };
+        state.update(&buffer[..read]);
+    }
+    Ok(state.finish_hex())
 }
 
 /// Returns the lowercase hex SHA-256 of `data`.
@@ -308,6 +320,35 @@ impl Default for Sha256 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_hashes_match_the_oracle_across_read_and_padding_boundaries() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let directory =
+            std::env::temp_dir().join(format!("rr-dev-file-hash-{}-{stamp}", std::process::id()));
+        std::fs::create_dir(&directory).expect("test directory");
+        let path = directory.join("input");
+        for length in [0, 1, 55, 56, 63, 64, 65, 65_535, 65_536, 65_537, 131_097] {
+            let bytes: Vec<u8> = (0..length)
+                .map(|index| u8::try_from(index % 251).expect("bounded"))
+                .collect();
+            std::fs::write(&path, &bytes).expect("input");
+            assert_eq!(
+                sha256_file(&path).expect("file hash"),
+                sha256_hex(&bytes),
+                "length={length}"
+            );
+        }
+        assert!(
+            sha256_file(&directory).is_err(),
+            "reading a directory is an error"
+        );
+        assert!(sha256_file(&directory.join("missing")).is_err());
+        std::fs::remove_dir_all(directory).expect("cleanup");
+    }
 
     #[test]
     fn matches_the_standard_vectors() {

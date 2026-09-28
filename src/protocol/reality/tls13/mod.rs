@@ -22,6 +22,8 @@ pub use application_io::{
 pub(crate) use cover_profile::CoverProfile;
 #[cfg(feature = "fuzzing")]
 pub use cover_profile::fuzz_cover_profile_extensions;
+#[cfg(test)]
+pub(crate) use cover_profile::profile_test_fixture;
 pub(crate) use handshake::build_server_flight_with_shape;
 pub use handshake::{
     EstablishedTls, ExportedTlsState, RealityHandshakeError, ServerFlight, build_server_flight,

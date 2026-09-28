@@ -4,9 +4,9 @@
 //! address family fails at startup rather than half-serving. Once bound, this
 //! is a single `select!` over the four things that can happen to a running
 //! server: a signal, a listener dying, a reload request, and a scheduled
-//! asset refresh. Exactly one update runs at a time — a second SIGHUP while
-//! one is in flight is dropped, not queued, because the newest configuration
-//! is the one the operator meant either way.
+//! asset refresh. Exactly one update runs at a time. The bounded signal channel
+//! retains one pending reload while busy, coalescing additional requests; once
+//! the active update finishes, the pending request reads the latest file.
 
 use std::{future::Future, io, sync::Arc, time::Duration};
 
@@ -181,8 +181,8 @@ where
                     None => Err(ProductionServerError::ListenerStopped),
                 };
             }
-            requested = reload_receiver.recv(), if managed_updates && !reload_receiver.is_closed() => {
-                if requested.is_some() && update_tasks.is_empty() {
+            requested = reload_receiver.recv(), if managed_updates && update_tasks.is_empty() && !reload_receiver.is_closed() => {
+                if requested.is_some() {
                     if let Some(path) = server.config_path.clone() {
                         let runtime = Arc::clone(&server.runtime);
                         update_tasks.spawn_blocking(move || {
@@ -302,6 +302,78 @@ mod tests {
         },
         transport::FdBudget,
     };
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn reload_during_an_update_is_coalesced_and_reads_the_latest_file() {
+        let port = unused_loopback_port();
+        let directory =
+            std::env::temp_dir().join(format!("rust-reality-reload-{}-{port}", std::process::id()));
+        std::fs::create_dir(&directory).expect("temporary directory");
+        let path = directory.join("config.json");
+        std::fs::write(&path, crate::config::canonical(&entry_config(port)))
+            .expect("initial config");
+        let server = ProductionServer::from_path(&path).expect("server");
+        let runtime = std::sync::Arc::clone(&server.runtime);
+        let held_runtime = std::sync::Arc::clone(&runtime);
+        let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let holder = std::thread::spawn(move || {
+            let _guard = held_runtime.update.lock().expect("update lock");
+            locked_tx.send(()).expect("lock ready");
+            let _ = release_rx.recv();
+        });
+        locked_rx.recv().expect("update gate held");
+        let (reload_tx, reload_rx) = tokio::sync::mpsc::channel(1);
+        let (stop_tx, stop_rx) = oneshot::channel();
+        let running = tokio::spawn(super::supervise(
+            server,
+            async {
+                let _ = stop_rx.await;
+                Ok(())
+            },
+            reload_rx,
+            true,
+        ));
+        reload_tx.send(()).await.expect("first reload");
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while reload_tx.capacity() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("first update starts");
+        let latest = crate::server::production::fixture::with_extra_rule(port, "latest");
+        std::fs::write(&path, crate::config::canonical(&latest)).expect("latest config");
+        reload_tx.send(()).await.expect("pending reload");
+        for _ in 0..32 {
+            assert!(
+                reload_tx.try_send(()).is_err(),
+                "extra signals coalesce into the pending request"
+            );
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            reload_tx.capacity(),
+            0,
+            "a busy update must not consume its successor"
+        );
+        release_tx.send(()).expect("release update");
+        holder.join().expect("gate thread");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while runtime.load().generation != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both updates publish");
+        assert_eq!(runtime.load().node, latest.into_node());
+        stop_tx.send(()).expect("shutdown");
+        running
+            .await
+            .expect("supervisor task")
+            .expect("shutdown succeeds");
+        std::fs::remove_dir_all(directory).expect("cleanup");
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn binds_all_listeners_and_stops_on_injected_shutdown() {

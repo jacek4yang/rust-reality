@@ -5,3 +5,5 @@ mod sink;
 pub use sink::{
     AdmissionResource, BackendStatus, LogEvent, LogWriteError, Logger, RejectionReason,
 };
+
+pub(crate) use sink::LogSinks;

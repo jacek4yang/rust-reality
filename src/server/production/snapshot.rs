@@ -55,7 +55,7 @@ impl RuntimeSnapshot {
         pressure: &PressureGauge,
         authorities: &ProcessAuthorities,
     ) -> Result<Self, RuntimeUpdateError> {
-        let logger = Logger::new(&config.log())?;
+        let logger = authorities.log_sinks.prepare(&config.log())?;
         let pre_auth_generation = PreAuthGeneration::default();
         let network = config.network();
 
@@ -72,7 +72,6 @@ impl RuntimeSnapshot {
                     tcp_relay.clone(),
                     pressure,
                     authorities.direct_barrier.clone(),
-                    authorities.governor.clone(),
                     authorities.network_environment.clone(),
                     generation,
                     authorities.warm_pools.clone(),

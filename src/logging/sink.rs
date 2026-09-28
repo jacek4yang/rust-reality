@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     error::Error,
     ffi::OsString,
     fmt,
@@ -6,7 +7,7 @@ use std::{
     io::{self, Write},
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -588,11 +589,66 @@ enum Sink {
     File(Mutex<RotatingFile>),
 }
 
+/// File sinks belong to the process, while filtering belongs to a configuration generation.
+#[derive(Default)]
+pub(crate) struct LogSinks {
+    files: Mutex<HashMap<PathBuf, Weak<Sink>>>,
+}
+
+impl LogSinks {
+    pub(crate) fn prepare(&self, config: &LogConfig) -> Result<Logger, LogWriteError> {
+        let (sink, retention) = match (config.output(), config.file.as_ref()) {
+            (LogOutput::None, _) => (Arc::new(Sink::None), None),
+            (LogOutput::Stderr | LogOutput::Journald, _) => (Arc::new(Sink::Stderr), None),
+            (LogOutput::File, Some(file)) => {
+                let mut config = file.clone();
+                let parent = file
+                    .path
+                    .parent()
+                    .filter(|path| !path.as_os_str().is_empty())
+                    .unwrap_or_else(|| Path::new("."));
+                fs::create_dir_all(parent)?;
+                // Resolve aliases before selecting the one writer for an active file.
+                config.path = if file.path.exists() {
+                    fs::canonicalize(&file.path)?
+                } else {
+                    fs::canonicalize(parent)?.join(file.path.file_name().ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidInput, "log path must name a file")
+                    })?)
+                };
+                let mut files = self.files.lock().map_err(|_| LogWriteError::Unavailable)?;
+                files.retain(|_, sink| sink.strong_count() != 0);
+                let sink = match files.get(&config.path).and_then(Weak::upgrade) {
+                    Some(sink) => sink,
+                    None => {
+                        let sink = Arc::new(Sink::File(Mutex::new(RotatingFile::open(&config)?)));
+                        files.insert(config.path.clone(), Arc::downgrade(&sink));
+                        sink
+                    }
+                };
+                (sink, Some(Arc::new(config)))
+            }
+            (LogOutput::File, None) => {
+                return Err(LogWriteError::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "file log settings are missing",
+                )));
+            }
+        };
+        Ok(Logger {
+            minimum_level: config.level(),
+            sink,
+            retention,
+        })
+    }
+}
+
 /// Cloneable, level-filtered logger with a fixed secret-free event vocabulary.
 #[derive(Clone)]
 pub struct Logger {
     minimum_level: LogLevel,
     sink: Arc<Sink>,
+    retention: Option<Arc<FileLogConfig>>,
 }
 
 impl Logger {
@@ -607,21 +663,18 @@ impl Logger {
     /// Returns an error if a file sink directory cannot be created, the active file
     /// cannot be opened, or existing rotations cannot be brought within bounds.
     pub fn new(config: &LogConfig) -> Result<Self, LogWriteError> {
-        let sink = match (config.output(), config.file.as_ref()) {
-            (LogOutput::None, _) => Sink::None,
-            (LogOutput::Stderr | LogOutput::Journald, _) => Sink::Stderr,
-            (LogOutput::File, Some(file)) => Sink::File(Mutex::new(RotatingFile::open(file)?)),
-            (LogOutput::File, None) => {
-                return Err(LogWriteError::Io(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "file log settings are missing",
-                )));
-            }
-        };
-        Ok(Self {
-            minimum_level: config.level(),
-            sink: Arc::new(sink),
-        })
+        LogSinks::default().prepare(config)
+    }
+
+    /// Applies the prepared retention only after the candidate generation has compiled.
+    /// Older loggers share this writer and cannot restore an older retention policy.
+    pub(crate) fn activate(&self) -> Result<(), LogWriteError> {
+        if let (Sink::File(file), Some(config)) = (self.sink.as_ref(), &self.retention) {
+            file.lock()
+                .map_err(|_| LogWriteError::Unavailable)?
+                .reconfigure(config)?;
+        }
+        Ok(())
     }
 
     /// Emits one structured event if its level passes the configured filter.
@@ -684,6 +737,7 @@ struct RotatingFile {
     max_bytes: u64,
     max_files: u16,
     max_total_bytes: u64,
+    rotations: Vec<u64>,
 }
 
 impl RotatingFile {
@@ -702,13 +756,36 @@ impl RotatingFile {
             max_bytes: config.max_bytes(),
             max_files: config.max_files(),
             max_total_bytes: config.max_total_bytes(),
+            rotations: Vec::new(),
         };
-        state.remove_out_of_range_rotations()?;
+        state.reconcile()?;
         if state.bytes >= state.max_bytes {
             state.rotate()?;
         }
         state.prune_total()?;
         Ok(state)
+    }
+
+    fn reconfigure(&mut self, config: &FileLogConfig) -> Result<(), LogWriteError> {
+        // Reopen and reconcile only at publication. Keep the previous limits if
+        // preparing the replacement fails; every generation shares this lock.
+        let replacement = Self::open(config)?;
+        *self = replacement;
+        Ok(())
+    }
+
+    fn reconcile(&mut self) -> Result<(), LogWriteError> {
+        self.remove_out_of_range_rotations()?;
+        self.rotations.clear();
+        for index in 1..self.max_files {
+            let bytes = match fs::metadata(rotated_path(&self.path, index)) {
+                Ok(metadata) => metadata.len(),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => 0,
+                Err(error) => return Err(error.into()),
+            };
+            self.rotations.push(bytes);
+        }
+        Ok(())
     }
 
     fn write(&mut self, encoded: &[u8]) -> Result<(), LogWriteError> {
@@ -719,10 +796,12 @@ impl RotatingFile {
         if self.bytes > 0 && self.bytes.saturating_add(encoded_len) > self.max_bytes {
             self.rotate()?;
         }
-        self.file
-            .as_mut()
-            .ok_or(LogWriteError::Unavailable)?
-            .write_all(encoded)?;
+        let file = self.file.as_mut().ok_or(LogWriteError::Unavailable)?;
+        if let Err(error) = file.write_all(encoded) {
+            // write_all may have written a prefix before failing.
+            self.bytes = file.metadata()?.len();
+            return Err(error.into());
+        }
         self.bytes = self.bytes.saturating_add(encoded_len);
         self.prune_total()
     }
@@ -746,6 +825,8 @@ impl RotatingFile {
         }
         self.file = Some(open_append(&self.path)?);
         self.bytes = 0;
+        // Rotation is cold; rescan here to account for external changes and holes.
+        self.reconcile()?;
         self.prune_total()
     }
 
@@ -756,26 +837,23 @@ impl RotatingFile {
         Ok(())
     }
 
-    fn prune_total(&self) -> Result<(), LogWriteError> {
-        let mut rotations = Vec::new();
-        let mut total = self.bytes;
-        for index in 1..self.max_files {
-            let path = rotated_path(&self.path, index);
-            match fs::metadata(&path) {
-                Ok(metadata) => {
-                    total = total.saturating_add(metadata.len());
-                    rotations.push((path, metadata.len()));
-                }
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-        for (path, bytes) in rotations.into_iter().rev() {
+    fn prune_total(&mut self) -> Result<(), LogWriteError> {
+        let mut total = self
+            .rotations
+            .iter()
+            .fold(self.bytes, |total, bytes| total.saturating_add(*bytes));
+        for (index, bytes) in self.rotations.iter_mut().enumerate().rev() {
             if total <= self.max_total_bytes {
                 break;
             }
-            remove_file_if_present(&path)?;
-            total = total.saturating_sub(bytes);
+            if *bytes != 0 {
+                remove_file_if_present(&rotated_path(
+                    &self.path,
+                    u16::try_from(index + 1).map_err(|_| LogWriteError::Unavailable)?,
+                ))?;
+                total = total.saturating_sub(*bytes);
+                *bytes = 0;
+            }
         }
         Ok(())
     }
@@ -946,6 +1024,107 @@ mod tests {
         assert!(files.len() <= 3);
         assert!(total <= 512);
         assert!(path.exists());
+        cleanup(&directory);
+    }
+
+    #[test]
+    fn generations_share_rotation_and_only_published_retention_takes_effect() {
+        let directory = test_directory();
+        let path = directory.join("events.log");
+        let registry = super::LogSinks::default();
+        let mut config = LogConfig {
+            level: Some(LogLevel::Debug),
+            output: Some(LogOutput::File),
+            file: Some(FileLogConfig {
+                path: path.clone(),
+                max_bytes: Some(4096),
+                max_files: Some(2),
+                max_total_bytes: Some(8192),
+            }),
+        };
+        let old = registry.prepare(&config).expect("old logger");
+        let new = registry.prepare(&config).expect("new logger");
+        assert!(std::sync::Arc::ptr_eq(&old.sink, &new.sink));
+        let event = LogEvent::ConnectionAccepted {
+            peer: SocketAddr::from((Ipv4Addr::LOCALHOST, 12345)),
+        };
+        for _ in 0..24 {
+            old.emit(&event).expect("old write");
+        }
+        for _ in 0..24 {
+            new.emit(&event).expect("new write");
+        }
+        for entry in fs::read_dir(&directory).expect("directory") {
+            assert!(entry.expect("entry").metadata().expect("metadata").len() <= 4096);
+        }
+        config.file.as_mut().expect("file config").max_bytes = Some(256);
+        config.file.as_mut().expect("file config").max_total_bytes = Some(512);
+        let candidate = registry.prepare(&config).expect("prepare smaller limits");
+        let super::Sink::File(sink) = old.sink.as_ref() else {
+            panic!("file sink")
+        };
+        assert_eq!(
+            sink.lock().expect("sink").max_bytes,
+            4096,
+            "preparing an unpublished candidate cannot alter the live policy"
+        );
+        candidate.activate().expect("publish smaller limits");
+        for _ in 0..20 {
+            old.emit(&event).expect("old logger follows new retention");
+            new.emit(&event).expect("new logger follows new retention");
+        }
+        let sizes: Vec<u64> = fs::read_dir(&directory)
+            .expect("directory")
+            .map(|entry| entry.expect("entry").metadata().expect("metadata").len())
+            .collect();
+        assert!(sizes.iter().all(|size| *size <= 256));
+        assert!(sizes.iter().sum::<u64>() <= 512);
+        cleanup(&directory);
+    }
+
+    #[test]
+    fn returning_to_a_log_path_reuses_the_writer_held_by_older_sessions() {
+        let directory = test_directory();
+        let registry = super::LogSinks::default();
+        let mut config = LogConfig {
+            output: Some(LogOutput::File),
+            file: Some(FileLogConfig {
+                path: directory.join("a.log"),
+                max_bytes: None,
+                max_files: None,
+                max_total_bytes: None,
+            }),
+            ..LogConfig::default()
+        };
+        let first = registry.prepare(&config).expect("first path");
+        config.file.as_mut().expect("file").path = directory.join("b.log");
+        let other = registry.prepare(&config).expect("second path");
+        config.file.as_mut().expect("file").path = directory.join(".").join("a.log");
+        let returned = registry.prepare(&config).expect("return to path alias");
+        assert!(std::sync::Arc::ptr_eq(&first.sink, &returned.sink));
+        assert!(!std::sync::Arc::ptr_eq(&first.sink, &other.sink));
+        cleanup(&directory);
+    }
+
+    #[test]
+    fn steady_file_writes_do_not_allocate_rotation_paths() {
+        let directory = test_directory();
+        let mut file = super::RotatingFile::open(&FileLogConfig {
+            path: directory.join("events.log"),
+            max_bytes: Some(65536),
+            max_files: Some(8),
+            max_total_bytes: None,
+        })
+        .expect("file");
+        let measured = allocation_counter::measure(|| {
+            for _ in 0..100 {
+                file.write(b"{\"event\":\"test\"}\n").expect("write");
+            }
+        });
+        assert_eq!(
+            measured.count_total, 0,
+            "ordinary writes must not build rotation paths: {measured:?}"
+        );
         cleanup(&directory);
     }
 

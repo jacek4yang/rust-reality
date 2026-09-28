@@ -113,6 +113,7 @@ pub(super) fn build(
     // protocol snapshots only — admission ceilings and the direct-dial
     // barrier must never multiply while old sessions hold old permits.
     let authorities = ProcessAuthorities {
+        log_sinks: crate::logging::LogSinks::default(),
         governor: ResourceGovernor::with_pressure(&policy.governor, pressure.clone()),
         direct_barrier: DirectBarrier::with_pressure(&policy.direct_barrier, pressure.clone()),
         warm_pools: WarmPoolAuthority::new(
@@ -153,6 +154,7 @@ pub(super) fn build(
         &pressure,
         &authorities,
     )?;
+    initial.logger.activate().map_err(RuntimeUpdateError::Log)?;
     let listeners = initial
         .node
         .listeners()

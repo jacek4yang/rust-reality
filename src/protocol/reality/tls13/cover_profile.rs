@@ -344,6 +344,11 @@ impl<'a> Reader<'a> {
 }
 
 #[cfg(test)]
+pub(crate) fn profile_test_fixture() -> (ClientHello, CoverProfile) {
+    equivalence::observed_profile(&[])
+}
+
+#[cfg(test)]
 mod equivalence {
     //! The proof obligation behind discarding observed extensions.
     //!
@@ -504,7 +509,7 @@ mod equivalence {
 
     /// Builds the flight for `client` from a cover observation containing
     /// `extensions`, once through a materialized profile and once live.
-    fn both_paths(extensions: &[(u16, Vec<u8>)]) -> (Vec<u8>, Vec<u8>) {
+    pub(super) fn observed_profile(extensions: &[(u16, Vec<u8>)]) -> (ClientHello, CoverProfile) {
         let client = client();
         let class = client
             .normalized_profile_class()
@@ -547,6 +552,13 @@ mod equivalence {
         let profile =
             CoverProfile::from_controlled_observation(class, probe, target, plan, &sealed)
                 .expect("the cover observation must become a profile");
+        (client, profile)
+    }
+
+    fn both_paths(extensions: &[(u16, Vec<u8>)]) -> (Vec<u8>, Vec<u8>) {
+        let (client, profile) = observed_profile(extensions);
+        let plan = profile.plan;
+        let cover_public = StaticSecret::from_bytes(COVER_SECRET).public_key();
         let materialized = profile
             .materialize(&client, [0x5a; 32])
             .expect("the profile must materialize for its own class");

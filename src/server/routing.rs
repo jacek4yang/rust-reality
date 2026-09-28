@@ -5,7 +5,6 @@ use std::{
 
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use regex::{Regex, RegexBuilder};
-use tokio::time;
 use uuid::Uuid;
 
 pub use crate::assets::{AssetMatcher, AssetSource, EmptyAssetMatcher};
@@ -15,10 +14,9 @@ use crate::{
         user::UserConfig,
     },
     protocol::vless::{Address, Destination, UserId},
+    server::dns::{DnsError, DnsResolver, IpFamily},
     user_map::AdaptiveUserMap,
 };
-
-const MAX_RESOLVED_IPS: usize = 64;
 
 /// Measured crossover on the release build (benches/routing.rs): below 64
 /// rules the compact ordered scan wins; at 64+ rules the compiled candidate
@@ -122,7 +120,7 @@ pub struct RoutingTable {
     users: Arc<AdaptiveUserMap<Arc<CompiledUserPolicy>>>,
     assets: Arc<dyn AssetMatcher>,
     global_has_ip_rules: bool,
-    dns_governor: crate::runtime::ResourceGovernor,
+    dns: DnsResolver,
 }
 
 impl RoutingTable {
@@ -135,7 +133,7 @@ impl RoutingTable {
         config: &RoutingConfig,
         clients: &[UserConfig],
         assets: Arc<dyn AssetMatcher>,
-        dns_governor: crate::runtime::ResourceGovernor,
+        dns: DnsResolver,
     ) -> Result<Self, RoutingCompileError> {
         let global_rules = compile_rules(config.rules(), "routing.rules")?;
         let global_index = RuleIndex::build(&global_rules);
@@ -179,7 +177,7 @@ impl RoutingTable {
             users: Arc::new(AdaptiveUserMap::from_entries(users)),
             assets,
             global_has_ip_rules,
-            dns_governor,
+            dns,
         })
     }
 
@@ -342,7 +340,7 @@ impl RoutingTable {
             {
                 return Ok(ResolvedRoute::new(rule.decision(scope), Vec::new()));
             }
-            let resolved_ips = resolve_domain(&self.dns_governor, destination, timeout).await?;
+            let resolved_ips = resolve_domain(&self.dns, destination, timeout).await?;
             let resolved = RouteContext {
                 user_id,
                 inbound_tag,
@@ -357,7 +355,7 @@ impl RoutingTable {
             return Ok(ResolvedRoute::new(user.default_decision(), resolved_ips));
         }
 
-        let resolved_ips = resolve_domain(&self.dns_governor, destination, timeout).await?;
+        let resolved_ips = resolve_domain(&self.dns, destination, timeout).await?;
         let resolved = RouteContext {
             user_id,
             inbound_tag,
@@ -512,75 +510,29 @@ impl ResolvedRoute {
 }
 
 async fn resolve_domain(
-    governor: &crate::runtime::ResourceGovernor,
+    resolver: &DnsResolver,
     destination: &Destination,
     timeout: Duration,
 ) -> Result<Vec<IpAddr>, RouteResolutionError> {
     let Address::Domain(domain) = destination.address() else {
         return Ok(Vec::new());
     };
-    // A numeric literal carried as a domain "resolves" to itself; skip the
-    // blocking resolver pool entirely.
-    if let Ok(ip) = domain.parse::<IpAddr>() {
-        return Ok(vec![ip]);
-    }
-    let lookup = (domain.to_owned(), destination.port());
-    resolve_domain_with(
-        governor,
-        move || std::net::ToSocketAddrs::to_socket_addrs(&lookup),
-        timeout,
-    )
-    .await
-}
-
-/// Resolves through `lookup` on a blocking thread, bounding both the wait and,
-/// independently, the underlying operation.
-///
-/// The permit is held inside the blocking task, so an async timeout or a
-/// cancelled future can abandon the wait but never the accounting: the
-/// underlying resolver operation holds one bounded slot until it actually
-/// returns, and the DNS pool bounds every queued and running operation alike
-/// (there is no separate unbounded request queue).
-async fn resolve_domain_with<F, I>(
-    governor: &crate::runtime::ResourceGovernor,
-    lookup: F,
-    timeout: Duration,
-) -> Result<Vec<IpAddr>, RouteResolutionError>
-where
-    F: FnOnce() -> io::Result<I> + Send + 'static,
-    I: IntoIterator<Item = std::net::SocketAddr> + Send + 'static,
-{
-    let permit = governor
-        .try_acquire(crate::runtime::AdmissionKind::DnsLookup)
-        .map_err(|_| RouteResolutionError::DnsLimit)?;
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-    tokio::task::spawn_blocking(move || {
-        let result = lookup();
-        drop(permit);
-        let _ignored = sender.send(result);
-    });
-    let addresses = time::timeout(timeout, receiver)
+    let addresses = resolver
+        .resolve(domain, IpFamily::Any, timeout)
         .await
-        .map_err(|_| RouteResolutionError::DnsTimeout)?
-        .map_err(|_| RouteResolutionError::Dns(io::Error::other("DNS resolver task failed")))?
-        .map_err(RouteResolutionError::Dns)?;
+        .map_err(|error| match error {
+            DnsError::Timeout => RouteResolutionError::DnsTimeout,
+            DnsError::Limit => RouteResolutionError::DnsLimit,
+            DnsError::NoAddresses | DnsError::NotFound { .. } => RouteResolutionError::NoAddresses,
+            DnsError::TooManyAddresses => RouteResolutionError::TooManyAddresses,
+            DnsError::Allocation => RouteResolutionError::Allocation,
+            other => RouteResolutionError::Dns(io::Error::other(other)),
+        })?;
     let mut resolved = Vec::new();
     resolved
-        .try_reserve_exact(MAX_RESOLVED_IPS)
+        .try_reserve_exact(addresses.len())
         .map_err(|_| RouteResolutionError::Allocation)?;
-    for address in addresses {
-        let ip = address.ip();
-        if resolved.contains(&ip) {
-            continue;
-        }
-        if resolved.len() == MAX_RESOLVED_IPS {
-            return Err(RouteResolutionError::TooManyAddresses);
-        }
-        resolved.push(ip);
-    }
-    if resolved.is_empty() {
-        return Err(RouteResolutionError::NoAddresses);
-    }
+    resolved.extend_from_slice(&addresses);
     Ok(resolved)
 }
 
@@ -1310,7 +1262,11 @@ impl Error for RouteResolutionError {
 #[cfg(test)]
 mod tests {
     use crate::runtime::policy::ResourceGovernorPolicy;
-    use std::{net::Ipv4Addr, sync::Arc, time::Duration};
+    use std::{
+        net::{IpAddr, Ipv4Addr},
+        sync::Arc,
+        time::Duration,
+    };
 
     use super::{
         EmptyAssetMatcher, ResolvedRoute, RouteContext, RouteResolutionError, RouteScope,
@@ -1483,208 +1439,14 @@ mod tests {
                 policy: Some("primary".to_owned()),
             }],
             Arc::new(EmptyAssetMatcher),
-            crate::runtime::ResourceGovernor::new(
-                &crate::runtime::policy::ResourceGovernorPolicy::default(),
+            crate::server::dns::DnsResolver::system(
+                crate::runtime::ResourceGovernor::new(&ResourceGovernorPolicy::default()),
+                Duration::from_secs(5),
+                &Default::default(),
             ),
         )
         .expect("routing must compile")
     }
-
-    use std::net::{IpAddr, SocketAddr};
-
-    use super::resolve_domain_with;
-    use crate::runtime::ResourceGovernor;
-
-    fn tiny_dns_governor(permits: u32) -> ResourceGovernor {
-        ResourceGovernor::new(&ResourceGovernorPolicy {
-            max_dns_lookups: permits,
-            ..ResourceGovernorPolicy::default()
-        })
-    }
-
-    fn one_addr() -> Vec<SocketAddr> {
-        vec![SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
-            443,
-        )]
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn dns_resolution_succeeds_through_the_bounded_pool() {
-        let governor = tiny_dns_governor(1);
-        let resolved = resolve_domain_with(&governor, || Ok(one_addr()), Duration::from_secs(1))
-            .await
-            .expect("resolution must succeed");
-        assert_eq!(resolved, [IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))]);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn numeric_domain_resolves_without_the_blocking_pool() {
-        use super::resolve_domain;
-        use crate::protocol::vless::{Address, Destination};
-
-        // Zero DNS permits: any blocking-pool resolution would be denied.
-        let governor = tiny_dns_governor(0);
-
-        let literal = Destination::new(Address::Domain("192.0.2.1".to_owned()), 443);
-        let resolved = resolve_domain(&governor, &literal, Duration::from_secs(1))
-            .await
-            .expect("numeric literal must resolve without the DNS pool");
-        assert_eq!(resolved, [IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))]);
-
-        let hostname = Destination::new(Address::Domain("example.com".to_owned()), 443);
-        let error = resolve_domain(&governor, &hostname, Duration::from_secs(1))
-            .await
-            .expect_err("hostname must still require the bounded DNS pool");
-        assert!(
-            matches!(error, RouteResolutionError::DnsLimit),
-            "expected DnsLimit, got {error}"
-        );
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn dns_failure_maps_to_the_dns_error_variant() {
-        let governor = tiny_dns_governor(1);
-        let error = resolve_domain_with(
-            &governor,
-            || Err::<Vec<SocketAddr>, io::Error>(io::Error::other("NXDOMAIN")),
-            Duration::from_secs(1),
-        )
-        .await
-        .expect_err("a resolver error must propagate");
-        assert!(
-            matches!(error, RouteResolutionError::Dns(_)),
-            "expected Dns, got {error}"
-        );
-    }
-
-    /// A gated blocking operation whose "syscall" the test controls.
-    struct GatedLookup {
-        start: std::sync::mpsc::Receiver<()>,
-    }
-
-    impl GatedLookup {
-        fn channel() -> (std::sync::mpsc::Sender<()>, Self) {
-            let (sender, receiver) = std::sync::mpsc::channel();
-            (sender, Self { start: receiver })
-        }
-
-        fn run(self) -> io::Result<Vec<SocketAddr>> {
-            let _ignored = self.start.recv();
-            Ok(one_addr())
-        }
-    }
-
-    async fn assert_permit_held(governor: &ResourceGovernor) {
-        assert!(
-            governor
-                .try_acquire(crate::runtime::AdmissionKind::DnsLookup)
-                .is_err(),
-            "the DNS permit must remain held while the operation runs"
-        );
-    }
-
-    async fn assert_permit_released(governor: &ResourceGovernor) {
-        for _ in 0..200 {
-            if governor
-                .try_acquire(crate::runtime::AdmissionKind::DnsLookup)
-                .is_ok()
-            {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-        panic!("the DNS permit must be released once the operation terminates");
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn async_timeout_keeps_the_permit_until_the_operation_terminates() {
-        let governor = tiny_dns_governor(1);
-        let (gate, lookup) = GatedLookup::channel();
-        let resolution =
-            resolve_domain_with(&governor, move || lookup.run(), Duration::from_millis(20));
-        let outcome = resolution.await;
-        assert!(
-            matches!(outcome, Err(RouteResolutionError::DnsTimeout)),
-            "the async wait must time out, got {outcome:?}"
-        );
-        assert_permit_held(&governor).await;
-        drop(gate);
-        assert_permit_released(&governor).await;
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn a_cancelled_future_keeps_the_permit_until_the_operation_terminates() {
-        let governor = tiny_dns_governor(1);
-        let (gate, lookup) = GatedLookup::channel();
-        let spawned_governor = governor.clone();
-        let resolution = tokio::spawn(async move {
-            resolve_domain_with(&spawned_governor, move || lookup.run(), Duration::MAX).await
-        });
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        resolution.abort();
-        tokio::task::yield_now().await;
-        assert_permit_held(&governor).await;
-        drop(gate);
-        assert_permit_released(&governor).await;
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn pool_saturation_denies_new_lookups_without_queuing() {
-        let governor = tiny_dns_governor(1);
-        let (_gate, lookup) = GatedLookup::channel();
-        let _first = governor
-            .try_acquire(crate::runtime::AdmissionKind::DnsLookup)
-            .expect("the single permit must be acquirable");
-        let outcome =
-            resolve_domain_with(&governor, move || lookup.run(), Duration::from_secs(1)).await;
-        assert!(
-            matches!(outcome, Err(RouteResolutionError::DnsLimit)),
-            "saturation must fail fast rather than queue, got {outcome:?}"
-        );
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn routing_compilation_shares_one_process_authority() {
-        let governor = tiny_dns_governor(1);
-        let (_gate, lookup_a) = GatedLookup::channel();
-        let (gate_b, lookup_b) = GatedLookup::channel();
-        // Table A's operation occupies the only slot; table B compiled from a
-        // "new generation" must see the same exhausted pool.
-        let occupied = governor
-            .try_acquire(crate::runtime::AdmissionKind::DnsLookup)
-            .expect("table A must take the slot");
-        let outcome_b =
-            resolve_domain_with(&governor, move || lookup_b.run(), Duration::from_secs(1)).await;
-        assert!(matches!(outcome_b, Err(RouteResolutionError::DnsLimit)));
-        drop(occupied);
-        drop(gate_b);
-        let _unused = lookup_a;
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn process_shutdown_stays_bounded_with_a_running_lookup() {
-        let governor = tiny_dns_governor(1);
-        let (gate, lookup) = GatedLookup::channel();
-        let spawned_governor = governor.clone();
-        let resolution = tokio::spawn(async move {
-            resolve_domain_with(&spawned_governor, move || lookup.run(), Duration::MAX).await
-        });
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        // The wait is abandoned; the blocking operation is released by the gate
-        // and the task settles deterministically afterwards.
-        resolution.abort();
-        drop(gate);
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while !resolution.is_finished() {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("the aborted task must settle");
-    }
-
-    use std::io;
 
     fn context(destination: &Destination) -> RouteContext<'_> {
         RouteContext {
@@ -1934,8 +1696,10 @@ mod tests {
                 user("ffffffff-ffff-ffff-ffff-ffffffffffff", "second"),
             ],
             Arc::new(StubAssets),
-            crate::runtime::ResourceGovernor::new(
-                &crate::runtime::policy::ResourceGovernorPolicy::default(),
+            crate::server::dns::DnsResolver::system(
+                crate::runtime::ResourceGovernor::new(&ResourceGovernorPolicy::default()),
+                Duration::from_secs(5),
+                &Default::default(),
             ),
         )
         .expect("randomized routing config must compile")
@@ -1979,8 +1743,10 @@ mod tests {
                 policy: Some("primary".to_owned()),
             }],
             Arc::new(StubAssets),
-            crate::runtime::ResourceGovernor::new(
-                &crate::runtime::policy::ResourceGovernorPolicy::default(),
+            crate::server::dns::DnsResolver::system(
+                crate::runtime::ResourceGovernor::new(&ResourceGovernorPolicy::default()),
+                Duration::from_secs(5),
+                &Default::default(),
             ),
         )
         .expect("compiles");
@@ -2122,7 +1888,7 @@ mod tests {
         if first.scope() != RouteScope::DefaultOutbound {
             return Ok(ResolvedRoute::new(first, Vec::new()));
         }
-        let resolved_ips = resolve_domain(&table.dns_governor, destination, timeout).await?;
+        let resolved_ips = resolve_domain(&table.dns, destination, timeout).await?;
         let resolved = RouteContext {
             user_id,
             inbound_tag,

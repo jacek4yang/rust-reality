@@ -764,8 +764,12 @@ pub fn explain_route(
         &entry.routing,
         &entry.users,
         Arc::new(EmptyAssetMatcher),
-        crate::runtime::ResourceGovernor::new(
-            &crate::runtime::policy::ResourceGovernorPolicy::default(),
+        crate::server::dns::DnsResolver::system(
+            crate::runtime::ResourceGovernor::new(
+                &crate::runtime::policy::ResourceGovernorPolicy::default(),
+            ),
+            std::time::Duration::from_secs(5),
+            &Default::default(),
         ),
     )
     .map_err(RouteQueryError::Compile)?;

@@ -1289,7 +1289,11 @@ mod tests {
                 policy: None,
             }],
             Arc::new(EmptyAssetMatcher),
-            crate::runtime::ResourceGovernor::new(&ResourceGovernorPolicy::default()),
+            crate::server::dns::DnsResolver::system(
+                crate::runtime::ResourceGovernor::new(&ResourceGovernorPolicy::default()),
+                Duration::from_secs(5),
+                &Default::default(),
+            ),
         )
         .expect("test routing must compile");
         let governor = ResourceGovernorPolicy {

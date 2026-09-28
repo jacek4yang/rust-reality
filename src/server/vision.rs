@@ -209,7 +209,6 @@ impl VisionHandler {
         relay: TcpRelay,
         pressure: &crate::runtime::PressureGauge,
         direct_barrier: crate::runtime::DirectBarrier,
-        governor: crate::runtime::ResourceGovernor,
         network_environment: crate::network::NetworkEnvironment,
         generation: u64,
         warm_authority: super::warm_pool::WarmPoolAuthority,
@@ -222,7 +221,6 @@ impl VisionHandler {
             Some((
                 pressure.clone(),
                 direct_barrier,
-                governor,
                 network_environment,
                 generation,
                 warm_authority,
@@ -238,7 +236,6 @@ impl VisionHandler {
         authorities: Option<(
             crate::runtime::PressureGauge,
             crate::runtime::DirectBarrier,
-            crate::runtime::ResourceGovernor,
             crate::network::NetworkEnvironment,
             u64,
             super::warm_pool::WarmPoolAuthority,
@@ -248,15 +245,8 @@ impl VisionHandler {
         let connect_timeout = Duration::from_millis(governor.connect_timeout_ms);
         let declared = entry.outbounds.clone().unwrap_or_default();
         let network = entry.network.unwrap_or_default();
-        let (outbounds, dns_governor) = match authorities {
-            Some((
-                _pressure,
-                direct_barrier,
-                dns_governor,
-                network_environment,
-                generation,
-                warm_authority,
-            )) => (
+        let (outbounds, dns) = match authorities {
+            Some((_pressure, direct_barrier, network_environment, generation, warm_authority)) => (
                 OutboundRegistry::with_warm_pools(
                     &declared,
                     direct_barrier,
@@ -268,7 +258,7 @@ impl VisionHandler {
                     warm_authority,
                     &policy.warm_connections,
                 ),
-                dns_governor,
+                super::dns::shared(),
             ),
             None => (
                 OutboundRegistry::with_barrier_and_network(
@@ -279,12 +269,12 @@ impl VisionHandler {
                     &network,
                     crate::network::NetworkEnvironment::detect(),
                 ),
-                crate::runtime::ResourceGovernor::new(governor),
+                super::dns::shared(),
             ),
         };
         Ok(Self::new_with_dns(
             outbounds,
-            RoutingTable::compile(&entry.routing, &entry.users, assets, dns_governor)?,
+            RoutingTable::compile(&entry.routing, &entry.users, assets, dns)?,
             relay,
             governor,
             entry.routing.strategy(),
@@ -3824,9 +3814,7 @@ mod tests {
                 policy: None,
             }],
             Arc::new(EmptyAssetMatcher),
-            crate::runtime::ResourceGovernor::new(
-                &crate::runtime::policy::ResourceGovernorPolicy::default(),
-            ),
+            crate::server::dns::shared(),
         )
         .expect("test routing must compile");
         let relay = crate::transport::TcpRelay::new(

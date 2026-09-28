@@ -458,8 +458,13 @@ impl RealityAcceptor {
         let handshake_deadline = handshake_started
             .checked_add(self.handshake_timeout)
             .ok_or(RealityAcceptError::HandshakeWriteTimeout)?;
+        // Reuse the authenticated class through lookup and post-Finished nomination.
+        let profile_class = self
+            .profiles
+            .as_ref()
+            .and_then(|_| hello.normalized_profile_class().ok());
         let prepared = if let Some(prepared) =
-            self.try_prebuilt_flight(&hello, authenticated.auth_key())
+            self.try_prebuilt_flight(&hello, authenticated.auth_key(), profile_class)
         {
             prepared
         } else {
@@ -535,7 +540,7 @@ impl RealityAcceptor {
             .commit_after_client_finished()
             .map_err(RealityAcceptError::Replay)?;
         if let Some(profiles) = &self.profiles {
-            profiles.nominate(&hello);
+            profiles.nominate(&hello, profile_class);
         }
         drop(handshake_permit);
 
@@ -571,15 +576,17 @@ impl RealityAcceptor {
         &self,
         hello: &crate::protocol::reality::ClientHello,
         auth_key: &crate::protocol::reality::AuthKey,
+        class: Option<crate::protocol::reality::NormalizedClientHelloClass>,
     ) -> Option<PreparedServerFlight> {
         let profiles = self.profiles.as_ref()?;
-        let profile = profiles.lookup(hello)?;
+        let profile = profiles.lookup(class)?;
+        let class = class?;
         let mut server_random = [0_u8; 32];
         crate::crypto::entropy::fill(&mut server_random).ok()?;
         let materialized = match profile.materialize(hello, server_random) {
             Ok(materialized) => materialized,
             Err(_) => {
-                profiles.invalidate(hello);
+                profiles.invalidate(class);
                 return None;
             }
         };
@@ -597,7 +604,7 @@ impl RealityAcceptor {
         ) {
             Ok(flight) => flight,
             Err(_) => {
-                profiles.invalidate(hello);
+                profiles.invalidate(class);
                 return None;
             }
         };

@@ -1,10 +1,10 @@
-//! Shared DNS resolution front-end for every connector-side lookup path.
+//! Shared DNS resolution front-end for routing and every connector-side lookup path.
 //!
 //! One [`DnsResolver`] serves fallback cover targets, fixed SOCKS5/NXR/Handoff
 //! peers, and per-session destinations. It provides a TTL-bounded positive
 //! cache, a bounded negative cache, singleflight coalescing of concurrent
 //! identical lookups, one absolute timeout, and upstream concurrency governed
-//! by the same `DnsLookup` admission pool as the routing path.
+//! by the process-lifetime `DnsLookup` admission pool.
 //!
 //! Two backends exist. The system backend (getaddrinfo) exposes no TTLs, so
 //! per release policy it never populates the dynamic caches (the optional
@@ -28,7 +28,7 @@
 //! flight; dropping a hickory query cancels it and releases the permit at
 //! once; a system getaddrinfo call cannot be cancelled, so its permit is held
 //! inside the blocking task until the call actually returns — the same
-//! documented trade-off as `routing::resolve_domain_with`.
+//! bounded operation regardless of which caller requested it.
 
 use std::{
     collections::HashMap,
@@ -203,19 +203,28 @@ impl DnsBackend for SystemBackend {
         name: &'a str,
         permit: AdmissionPermit,
     ) -> Pin<Box<dyn Future<Output = Result<UpstreamAnswer, UpstreamError>> + Send + 'a>> {
-        Box::pin(async move {
-            let (sender, receiver) = tokio::sync::oneshot::channel();
-            let name = name.to_owned();
-            tokio::task::spawn_blocking(move || {
-                let result = system_lookup(&name);
-                drop(permit);
-                let _ignored = sender.send(result);
-            });
-            receiver
-                .await
-                .map_err(|_| UpstreamError::Failed(Arc::from("system resolver task failed")))?
-        })
+        let name = name.to_owned();
+        Box::pin(system_lookup_with(permit, move || system_lookup(&name)))
     }
+}
+
+// The blocking operation owns its permit even when its async waiter is cancelled.
+async fn system_lookup_with<F>(
+    permit: AdmissionPermit,
+    lookup: F,
+) -> Result<UpstreamAnswer, UpstreamError>
+where
+    F: FnOnce() -> Result<UpstreamAnswer, UpstreamError> + Send + 'static,
+{
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    tokio::task::spawn_blocking(move || {
+        let result = lookup();
+        drop(permit);
+        let _ignored = sender.send(result);
+    });
+    receiver
+        .await
+        .map_err(|_| UpstreamError::Failed(Arc::from("system resolver task failed")))?
 }
 
 fn system_lookup(name: &str) -> Result<UpstreamAnswer, UpstreamError> {
@@ -824,9 +833,9 @@ fn evict_pressure(inner: &ResolverInner, slots: &mut HashMap<CacheKey, Slot>, no
     if slots.len() >= inner.bounds.max_entries {
         let victim = slots
             .iter()
-            .filter_map(|(key, slot)| Some((key.clone(), slot.expires_at()?)))
+            .filter_map(|(key, slot)| Some((key, slot.expires_at()?)))
             .min_by_key(|(_, expires)| *expires)
-            .map(|(key, _)| key);
+            .map(|(key, _)| key.clone());
         if let Some(victim) = victim {
             slots.remove(&victim);
             inner.metrics.bump(&inner.metrics.evictions);
@@ -1231,6 +1240,68 @@ mod tests {
 
     fn v6(last: u8) -> IpAddr {
         IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, u16::from(last)))
+    }
+
+    #[test]
+    fn full_cache_eviction_allocates_only_the_removed_key() {
+        let count = 1024;
+        let resolver = DnsResolver::system(
+            ResourceGovernor::new(&ResourceGovernorPolicy::default()),
+            Duration::from_secs(1),
+            &DnsCacheConfig {
+                max_entries: Some(count),
+                ..Default::default()
+            },
+        );
+        let now = time::Instant::now();
+        let mut slots = resolver.locked_slots();
+        let ips: Arc<[IpAddr]> = Arc::from([v4(1)]);
+        for index in 0..count {
+            slots.insert(
+                super::CacheKey {
+                    class: super::QueryClass::Dynamic,
+                    name: format!("name-{index}.test").into_boxed_str(),
+                },
+                super::Slot::Positive {
+                    ips: Arc::clone(&ips),
+                    expires: now + Duration::from_secs(1 + u64::from(index)),
+                },
+            );
+        }
+        let measured =
+            allocation_counter::measure(|| super::evict_pressure(&resolver.inner, &mut slots, now));
+        assert_eq!(
+            measured.count_total, 1,
+            "only the selected key is owned: {measured:?}"
+        );
+        assert_eq!(slots.len(), count as usize - 1);
+        assert!(!slots.contains_key(&super::CacheKey {
+            class: super::QueryClass::Dynamic,
+            name: "name-0.test".into()
+        }));
+    }
+
+    #[tokio::test]
+    async fn numeric_names_do_not_require_dns_admission() {
+        let resolver = DnsResolver::system(
+            ResourceGovernor::new(&ResourceGovernorPolicy {
+                max_dns_lookups: 0,
+                ..Default::default()
+            }),
+            Duration::from_secs(1),
+            &DnsCacheConfig::default(),
+        );
+        let ips = resolver
+            .resolve("192.0.2.1", IpFamily::Any, Duration::from_secs(1))
+            .await
+            .expect("literal bypasses DNS");
+        assert_eq!(ips.as_ref(), &[v4(1)]);
+        assert!(matches!(
+            resolver
+                .resolve("name.test", IpFamily::Any, Duration::from_secs(1))
+                .await,
+            Err(DnsError::Limit)
+        ));
     }
 
     #[test]
@@ -2079,5 +2150,229 @@ mod tests {
             .expect_err("overlong names are rejected");
         assert!(matches!(error, DnsError::InvalidName));
         assert_eq!(harness.backend.calls(), 0);
+    }
+
+    // Regression coverage moved from routing's deleted duplicate system resolver.
+    struct BlockingBackend<F>(std::sync::Mutex<Option<F>>);
+
+    impl<F, I> DnsBackend for BlockingBackend<F>
+    where
+        F: FnOnce() -> io::Result<I> + Send + 'static,
+        I: IntoIterator<Item = SocketAddr> + Send + 'static,
+    {
+        fn lookup<'a>(
+            &'a self,
+            _name: &'a str,
+            permit: crate::runtime::AdmissionPermit,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<UpstreamAnswer, UpstreamError>> + Send + 'a,
+            >,
+        > {
+            let lookup = self
+                .0
+                .lock()
+                .expect("lookup mutex")
+                .take()
+                .expect("one lookup");
+            Box::pin(super::system_lookup_with(permit, move || {
+                let addresses = lookup()
+                    .map_err(|error| UpstreamError::Failed(Arc::from(error.to_string())))?;
+                let mut ips = Vec::new();
+                for address in addresses {
+                    super::push_unique(&mut ips, address.ip())?;
+                }
+                Ok(UpstreamAnswer { ips, ttl: None })
+            }))
+        }
+    }
+
+    async fn resolve_domain_with<F, I>(
+        governor: &ResourceGovernor,
+        lookup: F,
+        timeout: Duration,
+    ) -> Result<Vec<IpAddr>, DnsError>
+    where
+        F: FnOnce() -> io::Result<I> + Send + 'static,
+        I: IntoIterator<Item = SocketAddr> + Send + 'static,
+    {
+        let resolver = DnsResolver::with_backend(
+            Box::new(BlockingBackend(std::sync::Mutex::new(Some(lookup)))),
+            governor.clone(),
+            Duration::from_secs(30),
+            &DnsCacheConfig::default(),
+            None,
+        );
+        resolver
+            .resolve("gated.test", IpFamily::Any, timeout)
+            .await
+            .map(|ips| ips.to_vec())
+    }
+
+    use std::{io, net::SocketAddr};
+
+    fn tiny_dns_governor(permits: u32) -> ResourceGovernor {
+        ResourceGovernor::new(&ResourceGovernorPolicy {
+            max_dns_lookups: permits,
+            ..ResourceGovernorPolicy::default()
+        })
+    }
+
+    fn one_addr() -> Vec<SocketAddr> {
+        vec![SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
+            443,
+        )]
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dns_resolution_succeeds_through_the_bounded_pool() {
+        let governor = tiny_dns_governor(1);
+        let resolved = resolve_domain_with(&governor, || Ok(one_addr()), Duration::from_secs(1))
+            .await
+            .expect("resolution must succeed");
+        assert_eq!(resolved, [IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dns_failure_maps_to_the_dns_error_variant() {
+        let governor = tiny_dns_governor(1);
+        let error = resolve_domain_with(
+            &governor,
+            || Err::<Vec<SocketAddr>, io::Error>(io::Error::other("NXDOMAIN")),
+            Duration::from_secs(1),
+        )
+        .await
+        .expect_err("a resolver error must propagate");
+        assert!(
+            matches!(error, DnsError::Failed(_)),
+            "expected Dns, got {error}"
+        );
+    }
+
+    /// A gated blocking operation whose "syscall" the test controls.
+    struct GatedLookup {
+        start: std::sync::mpsc::Receiver<()>,
+    }
+
+    impl GatedLookup {
+        fn channel() -> (std::sync::mpsc::Sender<()>, Self) {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            (sender, Self { start: receiver })
+        }
+
+        fn run(self) -> io::Result<Vec<SocketAddr>> {
+            let _ignored = self.start.recv();
+            Ok(one_addr())
+        }
+    }
+
+    async fn assert_permit_held(governor: &ResourceGovernor) {
+        assert!(
+            governor
+                .try_acquire(crate::runtime::AdmissionKind::DnsLookup)
+                .is_err(),
+            "the DNS permit must remain held while the operation runs"
+        );
+    }
+
+    async fn assert_permit_released(governor: &ResourceGovernor) {
+        for _ in 0..200 {
+            if governor
+                .try_acquire(crate::runtime::AdmissionKind::DnsLookup)
+                .is_ok()
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("the DNS permit must be released once the operation terminates");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn async_timeout_keeps_the_permit_until_the_operation_terminates() {
+        let governor = tiny_dns_governor(1);
+        let (gate, lookup) = GatedLookup::channel();
+        let resolution =
+            resolve_domain_with(&governor, move || lookup.run(), Duration::from_millis(20));
+        let outcome = resolution.await;
+        assert!(
+            matches!(outcome, Err(DnsError::Timeout)),
+            "the async wait must time out, got {outcome:?}"
+        );
+        assert_permit_held(&governor).await;
+        drop(gate);
+        assert_permit_released(&governor).await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_cancelled_future_keeps_the_permit_until_the_operation_terminates() {
+        let governor = tiny_dns_governor(1);
+        let (gate, lookup) = GatedLookup::channel();
+        let spawned_governor = governor.clone();
+        let resolution = tokio::spawn(async move {
+            resolve_domain_with(&spawned_governor, move || lookup.run(), Duration::MAX).await
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        resolution.abort();
+        tokio::task::yield_now().await;
+        assert_permit_held(&governor).await;
+        drop(gate);
+        assert_permit_released(&governor).await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pool_saturation_denies_new_lookups_without_queuing() {
+        let governor = tiny_dns_governor(1);
+        let (_gate, lookup) = GatedLookup::channel();
+        let _first = governor
+            .try_acquire(crate::runtime::AdmissionKind::DnsLookup)
+            .expect("the single permit must be acquirable");
+        let outcome =
+            resolve_domain_with(&governor, move || lookup.run(), Duration::from_secs(1)).await;
+        assert!(
+            matches!(outcome, Err(DnsError::Limit)),
+            "saturation must fail fast rather than queue, got {outcome:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn routing_compilation_shares_one_process_authority() {
+        let governor = tiny_dns_governor(1);
+        let (_gate, lookup_a) = GatedLookup::channel();
+        let (gate_b, lookup_b) = GatedLookup::channel();
+        // Table A's operation occupies the only slot; table B compiled from a
+        // "new generation" must see the same exhausted pool.
+        let occupied = governor
+            .try_acquire(crate::runtime::AdmissionKind::DnsLookup)
+            .expect("table A must take the slot");
+        let outcome_b =
+            resolve_domain_with(&governor, move || lookup_b.run(), Duration::from_secs(1)).await;
+        assert!(matches!(outcome_b, Err(DnsError::Limit)));
+        drop(occupied);
+        drop(gate_b);
+        let _unused = lookup_a;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn process_shutdown_stays_bounded_with_a_running_lookup() {
+        let governor = tiny_dns_governor(1);
+        let (gate, lookup) = GatedLookup::channel();
+        let spawned_governor = governor.clone();
+        let resolution = tokio::spawn(async move {
+            resolve_domain_with(&spawned_governor, move || lookup.run(), Duration::MAX).await
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        // The wait is abandoned; the blocking operation is released by the gate
+        // and the task settles deterministically afterwards.
+        resolution.abort();
+        drop(gate);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !resolution.is_finished() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the aborted task must settle");
     }
 }

@@ -202,9 +202,7 @@ fn routing_table() -> RoutingTable {
             policy: Some("primary".to_owned()),
         }],
         Arc::new(EmptyAssetMatcher),
-        rust_reality::runtime::ResourceGovernor::new(
-            &rust_reality::runtime::policy::ResourceGovernorPolicy::default(),
-        ),
+        rust_reality::server::dns::shared(),
     )
     .expect("benchmark routing must compile")
 }

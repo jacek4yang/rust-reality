@@ -147,12 +147,13 @@ pub(crate) fn run_doctor(arguments: ConfigPath) -> Result<(), CliError> {
 
     let assets = Arc::new(AssetSnapshot::load(entry)?);
     let summary = assets.summary();
-    RoutingTable::compile(
-        &entry.routing,
-        &entry.users,
-        assets,
+    let resolver = crate::server::dns::DnsResolver::from_config(
+        &node.dns(),
         crate::runtime::ResourceGovernor::new(&policy.governor),
-    )?;
+    )
+    .map_err(io::Error::other)?;
+    let _ = crate::server::dns::install_shared(resolver.clone());
+    RoutingTable::compile(&entry.routing, &entry.users, assets, resolver)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
