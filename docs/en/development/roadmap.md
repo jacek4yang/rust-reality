@@ -1,5 +1,7 @@
 # Roadmap
 
+[简体中文](../../zh-CN/development/roadmap.md) | English
+
 rust-reality will evolve in three qualified stages. Each stage establishes a stable baseline before the next begins.
 
 The project keeps one public compatibility boundary: VLESS + REALITY behavior must remain compatible with current Xray-core clients. Internal implementation may evolve aggressively as long as correctness, interoperability, traffic behavior, and protected performance do not regress.
@@ -12,7 +14,7 @@ New capabilities may introduce optional configuration where new information is g
 
 ## Phase 1 — LINE → LANDING reliability
 
-Tracking: #253
+Tracking: [#253](https://github.com/jacek4yang/rust-reality/issues/253)
 
 First establish a production-grade reliability baseline for the existing LINE → LANDING path.
 
@@ -22,7 +24,7 @@ Phase 2 starts only after this baseline passes correctness, interoperability, fa
 
 ## Phase 2 — unified rust-reality client
 
-Tracking: #254
+Tracking: [#254](https://github.com/jacek4yang/rust-reality/issues/254)
 
 Absorb rust-reality-client into this repository and make client operation a first-class role of the shared rust-reality core.
 
@@ -32,7 +34,7 @@ Phase 3 starts only after both single-LINE and multi-LINE client operation are s
 
 ## Phase 3 — unified high-performance transport core
 
-Tracking: #255
+Tracking: [#255](https://github.com/jacek4yang/rust-reality/issues/255)
 
 Complete the transition to a general high-performance core for client, LINE, LANDING, direct, NXR, and Handoff deployments.
 

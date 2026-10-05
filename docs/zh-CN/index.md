@@ -56,6 +56,7 @@
 | --- | --- |
 | [贡献指南](../../CONTRIBUTING.md) | 如何搭建环境、验证并合入一个变更。 |
 | [仓库布局与变更路由](../en/development/repository-layout.md) | 每个目录负责什么，某类变更应放在哪里（英文记录）。 |
+| [路线图](development/roadmap.md) | 三个验证阶段：服务端可靠性、统一客户端、传输演进。 |
 | [开发工作流](development/development-workflow.md) | 构建、`cargo dev` 工具、验证升级阶梯、GitHub 治理和 PR 规则。 |
 | [密码学实现](development/crypto-providers.md) | 生产实现、开发期 oracle 和依赖清单复现。 |
 | [测试](../en/development/testing.md) | 验证分层、聚焦运行和工具链门禁（英文记录）。 |
