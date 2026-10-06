@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python3",
+    "-c",
+    "import json,os,pathlib,platform; root=pathlib.Path(\"/sys/fs/cgroup\"); names=(\"memory.max\",\"memory.current\",\"cpu.max\",\"pids.max\"); print(json.dumps({\"kernel\":platform.release(),\"machine\":platform.machine(),\"libc\":platform.libc_ver(),\"affinity\":sorted(os.sched_getaffinity(0)),\"cgroup_root\":{n:(root/n).read_text().strip() for n in names if (root/n).is_file()},\"meminfo_selected\":{k.strip():v.strip() for k,v in (s.split(\":\",1) for s in pathlib.Path(\"/proc/meminfo\").read_text().splitlines()) if k.strip() in (\"MemTotal\",\"MemAvailable\",\"SwapTotal\",\"SwapFree\")}},indent=2))"
+  ],
+  "cwd": "/home/jacek/Projects/rust-reality",
+  "started": "2026-10-06T08:49:52.402755+00:00",
+  "ended": "2026-10-06T08:49:52.446480+00:00",
+  "duration_seconds": 0.043535260017961264,
+  "exit_code": 0,
+  "streams": {
+    "stdout": "16b0b96366bae19e6168c9c1403658947c029ea0742cc3d60aef505544dc4bac",
+    "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

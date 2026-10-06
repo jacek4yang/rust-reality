@@ -18,3 +18,9 @@ Allocation stacks were not collected in either historical run. See
 [issue #261](https://github.com/jacek4yang/rust-reality/issues/261) for the
 investigation ledger and the pinned experimental source. Passing repeats must
 not supersede the failed observations.
+
+The [pinned-source allocation diagnostic](pinned-profile/README.md) retains a
+second resource-gate failure, actual service allocation/free traces, allocator
+snapshots, process observations, and the separately identified diagnostic
+inputs. Its profiling and trace-accounting limits do not establish the cause
+of the historical failure.

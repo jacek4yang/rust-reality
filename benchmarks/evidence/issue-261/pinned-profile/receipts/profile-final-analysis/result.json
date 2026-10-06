@@ -1,0 +1,15 @@
+{
+  "command": [
+    "python3",
+    "/home/jacek/.cache/rr-261-investigation/analyze_profile.py"
+  ],
+  "cwd": "/home/jacek/Projects/rust-reality",
+  "started": "2026-10-06T08:51:03.475550+00:00",
+  "ended": "2026-10-06T08:55:43.199583+00:00",
+  "duration_seconds": 279.72380093694665,
+  "exit_code": 1,
+  "streams": {
+    "stdout": "bfb02bd7b4a1d51c19aa01207029ca0b75533e79c9267a3c0def24e85b2f2360",
+    "stderr": "7311483d908e44c89af526dbc74e1a6f8c00f99cd22a50bbd24c688a05d5b2e6"
+  }
+}

@@ -1,0 +1,224 @@
+{
+  "soak-handoff-landing.malloc-info": {
+    "origin_monotonic_seconds": 783800.36989678,
+    "snapshots": 181,
+    "nearest_observations": [
+      {
+        "pid": 1658407,
+        "relative_seconds": 880.0275575709529,
+        "arenas": 18,
+        "system_current_bytes": 3203072,
+        "totals_bytes": {
+          "rest": 2635307,
+          "mmap": 790528
+        }
+      },
+      {
+        "pid": 1658407,
+        "relative_seconds": 960.0302207260393,
+        "arenas": 19,
+        "system_current_bytes": 3571712,
+        "totals_bytes": {
+          "rest": 2979369,
+          "mmap": 790528
+        }
+      },
+      {
+        "pid": 1658407,
+        "relative_seconds": 1800.0555529509438,
+        "arenas": 19,
+        "system_current_bytes": 3850240,
+        "totals_bytes": {
+          "rest": 3245740,
+          "mmap": 790528
+        }
+      }
+    ],
+    "note": "Relative to first allocator snapshot; not the native workload clock. Reported free space includes profiler/observer effects and is not a product-live-byte estimate."
+  },
+  "soak-handoff-line.malloc-info": {
+    "origin_monotonic_seconds": 783800.390780243,
+    "snapshots": 181,
+    "nearest_observations": [
+      {
+        "pid": 1658426,
+        "relative_seconds": 880.0258342720335,
+        "arenas": 19,
+        "system_current_bytes": 2928640,
+        "totals_bytes": {
+          "rest": 2517585,
+          "mmap": 790528
+        }
+      },
+      {
+        "pid": 1658426,
+        "relative_seconds": 960.0279722280102,
+        "arenas": 19,
+        "system_current_bytes": 2932736,
+        "totals_bytes": {
+          "rest": 2492081,
+          "mmap": 790528
+        }
+      },
+      {
+        "pid": 1658426,
+        "relative_seconds": 1800.0542570670368,
+        "arenas": 19,
+        "system_current_bytes": 2981888,
+        "totals_bytes": {
+          "rest": 2526766,
+          "mmap": 790528
+        }
+      }
+    ],
+    "note": "Relative to first allocator snapshot; not the native workload clock. Reported free space includes profiler/observer effects and is not a product-live-byte estimate."
+  },
+  "soak-nxr-landing.malloc-info": {
+    "origin_monotonic_seconds": 783800.452948241,
+    "snapshots": 181,
+    "nearest_observations": [
+      {
+        "pid": 1658459,
+        "relative_seconds": 880.0246626839507,
+        "arenas": 18,
+        "system_current_bytes": 3067904,
+        "totals_bytes": {
+          "rest": 2523636,
+          "mmap": 790528
+        }
+      },
+      {
+        "pid": 1658459,
+        "relative_seconds": 960.0269113610266,
+        "arenas": 19,
+        "system_current_bytes": 3268608,
+        "totals_bytes": {
+          "rest": 2701027,
+          "mmap": 790528
+        }
+      },
+      {
+        "pid": 1658459,
+        "relative_seconds": 1800.0510840179631,
+        "arenas": 19,
+        "system_current_bytes": 3407872,
+        "totals_bytes": {
+          "rest": 2835766,
+          "mmap": 790528
+        }
+      }
+    ],
+    "note": "Relative to first allocator snapshot; not the native workload clock. Reported free space includes profiler/observer effects and is not a product-live-byte estimate."
+  },
+  "soak-nxr-line.malloc-info": {
+    "origin_monotonic_seconds": 783800.473750859,
+    "snapshots": 181,
+    "nearest_observations": [
+      {
+        "pid": 1658478,
+        "relative_seconds": 880.0248623319203,
+        "arenas": 18,
+        "system_current_bytes": 2924544,
+        "totals_bytes": {
+          "rest": 2492125,
+          "mmap": 790528
+        }
+      },
+      {
+        "pid": 1658478,
+        "relative_seconds": 960.0272299359785,
+        "arenas": 19,
+        "system_current_bytes": 3059712,
+        "totals_bytes": {
+          "rest": 2586309,
+          "mmap": 790528
+        }
+      },
+      {
+        "pid": 1658478,
+        "relative_seconds": 1800.0542187179672,
+        "arenas": 19,
+        "system_current_bytes": 3063808,
+        "totals_bytes": {
+          "rest": 2582748,
+          "mmap": 790528
+        }
+      }
+    ],
+    "note": "Relative to first allocator snapshot; not the native workload clock. Reported free space includes profiler/observer effects and is not a product-live-byte estimate."
+  },
+  "soak-socks-line.malloc-info": {
+    "origin_monotonic_seconds": 783800.557175937,
+    "snapshots": 181,
+    "nearest_observations": [
+      {
+        "pid": 1658518,
+        "relative_seconds": 880.0273401370505,
+        "arenas": 18,
+        "system_current_bytes": 2936832,
+        "totals_bytes": {
+          "rest": 2508519,
+          "mmap": 790528
+        }
+      },
+      {
+        "pid": 1658518,
+        "relative_seconds": 960.0300440370338,
+        "arenas": 19,
+        "system_current_bytes": 3076096,
+        "totals_bytes": {
+          "rest": 2604615,
+          "mmap": 790528
+        }
+      },
+      {
+        "pid": 1658518,
+        "relative_seconds": 1800.0591515729902,
+        "arenas": 19,
+        "system_current_bytes": 3256320,
+        "totals_bytes": {
+          "rest": 2764454,
+          "mmap": 790528
+        }
+      }
+    ],
+    "note": "Relative to first allocator snapshot; not the native workload clock. Reported free space includes profiler/observer effects and is not a product-live-byte estimate."
+  },
+  "soak-standalone.malloc-info": {
+    "origin_monotonic_seconds": 783800.62014705,
+    "snapshots": 181,
+    "nearest_observations": [
+      {
+        "pid": 1658560,
+        "relative_seconds": 880.0277049699798,
+        "arenas": 18,
+        "system_current_bytes": 3141632,
+        "totals_bytes": {
+          "rest": 2664745,
+          "mmap": 790528
+        }
+      },
+      {
+        "pid": 1658560,
+        "relative_seconds": 960.0301500289934,
+        "arenas": 18,
+        "system_current_bytes": 3141632,
+        "totals_bytes": {
+          "rest": 2662887,
+          "mmap": 790528
+        }
+      },
+      {
+        "pid": 1658560,
+        "relative_seconds": 1800.057033917983,
+        "arenas": 18,
+        "system_current_bytes": 3141632,
+        "totals_bytes": {
+          "rest": 2652116,
+          "mmap": 790528
+        }
+      }
+    ],
+    "note": "Relative to first allocator snapshot; not the native workload clock. Reported free space includes profiler/observer effects and is not a product-live-byte estimate."
+  }
+}

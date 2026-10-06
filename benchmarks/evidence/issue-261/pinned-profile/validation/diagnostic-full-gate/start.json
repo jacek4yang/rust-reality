@@ -1,0 +1,16 @@
+{
+  "command": [
+    "env",
+    "CARGO_TARGET_DIR=/tmp/rr-261-investigation/unmodified-tools-target",
+    "XDG_RUNTIME_DIR=/home/jacek/.cache/rr-261-investigation/diagnostic-gate-runtime",
+    "XDG_CACHE_HOME=/home/jacek/.cache/rr-261-investigation/diagnostic-gate-cache",
+    "cargo",
+    "dev",
+    "check",
+    "--all",
+    "--output",
+    "agent"
+  ],
+  "cwd": "/tmp/rr-261-investigation/diagnostic-tool",
+  "started": "2026-10-06T08:51:29.170594+00:00"
+}

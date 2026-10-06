@@ -1,0 +1,33 @@
+{
+  "kernel": "7.0.0-30-generic",
+  "machine": "x86_64",
+  "libc": [
+    "glibc",
+    "2.43"
+  ],
+  "affinity": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "cgroup_root": {},
+  "meminfo_selected": {
+    "MemTotal": "40736400 kB",
+    "MemAvailable": "33663520 kB",
+    "SwapTotal": "0 kB",
+    "SwapFree": "0 kB"
+  }
+}

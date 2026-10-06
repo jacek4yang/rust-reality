@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python3",
+    "-c",
+    "import pathlib,json,hashlib; root=pathlib.Path(\"/home/jacek/.cache/rr-261-investigation/runtime/rust-reality/soak-rust-1658305-1791274821659484214\"); payload=root/\"payload-4.bin\"; expected=hashlib.file_digest(payload.open(\"rb\"),\"sha256\").hexdigest(); files=sorted(root.glob(\"round-*.bin\")); records=[{\"name\":p.name,\"bytes\":p.stat().st_size,\"sha256\":hashlib.file_digest(p.open(\"rb\"),\"sha256\").hexdigest()} for p in files]; result={\"expected_bytes\":payload.stat().st_size,\"expected_sha256\":expected,\"files\":records,\"all_payloads_match\":all(d[\"bytes\"]==payload.stat().st_size and d[\"sha256\"]==expected for d in records),\"scope\":\"Independent retained-body check; unavailable failed-run churn/transfer counters are not reconstructed.\"}; print(json.dumps(result)); assert result[\"all_payloads_match\"]"
+  ],
+  "cwd": "/home/jacek/Projects/rust-reality",
+  "started": "2026-10-06T08:56:26.017262+00:00",
+  "ended": "2026-10-06T08:56:30.616756+00:00",
+  "duration_seconds": 4.59926684293896,
+  "exit_code": 0,
+  "streams": {
+    "stdout": "df8021532a415c06087dfcfb2188734272ebb2df0118872c1603378dd73bb53f",
+    "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

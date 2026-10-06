@@ -1,0 +1,2 @@
+benchmark workspace retained: /home/jacek/.cache/rr-261-investigation/runtime/rust-reality/soak-rust-1658305-1791274821659484214
+bench run soak: aggregate soak resources exceeded bounds: ResourceSummary { fd_growth: -6, fd_peak_growth: 8, thread_growth: -1, thread_peak_growth: 4, rss_growth_mib: 4.7578125, rss_peak_growth_mib: 5.2109375, rss_sampled_peak_growth_mib: 5.19921875, rss_tail_slope_mib_per_hour: 3.28946920427229, pss_available: true, pss_growth_mib: Some(4.3271484375), pss_peak_growth_mib: Some(4.76953125), pss_tail_slope_mib_per_hour: Some(3.169552473496796) }
