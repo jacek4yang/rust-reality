@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python3",
+    "-c",
+    "import pathlib,json,hashlib; r=pathlib.Path(\"/home/jacek/.cache/rr-261-investigation/control-1800\"); rows=[json.loads(x) for x in (r/\"smaps.jsonl\").read_text().splitlines()]; latest={row[\"label\"]:row for row in rows}; lineage={}; environments={};\nfor role,row in latest.items():\n root=pathlib.Path(\"/proc\")/str(row[\"pid\"]); stat=(root/\"stat\").read_text().rsplit(\")\",1)[1].split(); parent=stat[1]; pstat=(pathlib.Path(\"/proc\")/parent/\"stat\").read_text().rsplit(\")\",1)[1].split(); lineage[role]={\"pid\":row[\"pid\"],\"pid_starttime\":row[\"starttime\"],\"harness_pid\":int(parent),\"harness_starttime\":pstat[19],\"harness_exe\":str((pathlib.Path(\"/proc\")/parent/\"exe\").resolve())}; data=(root/\"environ\").read_bytes(); pairs=dict(x.split(b\"=\",1) for x in data.split(b\"\\0\") if b\"=\" in x); selected={k.decode():v.decode() for k,v in pairs.items() if k in (b\"LD_PRELOAD\",b\"DUMP_HEAPTRACK_OUTPUT\",b\"RR_261_MALLOC_INFO\",b\"GLIBC_TUNABLES\") or k.startswith(b\"MALLOC_\")}; assert not selected,(role,selected); environments[role]={\"pid\":row[\"pid\"],\"pid_starttime\":row[\"starttime\"],\"environment_sha256\":hashlib.sha256(data).hexdigest(),\"allocator_environment\":selected}\nassert len(lineage)==6; assert len({x[\"harness_pid\"] for x in lineage.values()})==1; (r/\"process-lineage.json\").write_text(json.dumps(lineage,indent=2)+\"\\n\"); (r/\"allocator-environment.json\").write_text(json.dumps(environments,indent=2)+\"\\n\"); print(json.dumps({\"lineage\":lineage,\"allocator_environments\":environments},indent=2))"
+  ],
+  "cwd": "/home/jacek/Projects/rust-reality",
+  "started": "2026-10-06T09:10:52.922643+00:00",
+  "ended": "2026-10-06T09:10:53.002257+00:00",
+  "duration_seconds": 0.07942937908228487,
+  "exit_code": 0,
+  "streams": {
+    "stdout": "6985d5be1be701f8fbb228869a311a7f55fa4532fb8b17c325edde35363475f7",
+    "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

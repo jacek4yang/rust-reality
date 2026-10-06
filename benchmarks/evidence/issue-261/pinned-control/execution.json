@@ -1,0 +1,62 @@
+{
+  "command": [
+    "/tmp/rr-261-investigation/bin/rr-dev-diagnostic-v2",
+    "--repo",
+    "/home/jacek/Projects/rust-reality",
+    "bench",
+    "run",
+    "--suite",
+    "soak",
+    "--soak-implementation",
+    "rust",
+    "--rust-bin",
+    "/tmp/rr-261-investigation/product-target/release/rust-reality",
+    "--xray-bin",
+    "/tmp/rr-261-investigation/xray/xray",
+    "--openssl-bin",
+    "/tmp/rr-261-investigation/openssl/bin/openssl",
+    "--soak-seconds",
+    "1800",
+    "--soak-round-sleep-ms",
+    "5000",
+    "--soak-min-rounds",
+    "3",
+    "--soak-distributed-interval-seconds",
+    "60",
+    "--run-id",
+    "issue261-control-1800",
+    "--out-dir",
+    "/home/jacek/.cache/rr-261-investigation/control-1800-evidence"
+  ],
+  "started": "2026-10-06T09:06:32.004414+00:00",
+  "started_monotonic_seconds": 786569.503041278,
+  "clock_ticks_per_second": 100,
+  "harness_sha256": "b9f7731d49e450cdbaccd8171a8051574c9e5195a15d013d22d8ebd3b7a20cc0",
+  "binary_inputs": {
+    "--rust-bin": {
+      "path": "/tmp/rr-261-investigation/product-target/release/rust-reality",
+      "sha256": "b8ab364ca79c9debe18b2f96eed02dc9b7d80847e71475e08991f3aa63c99ace"
+    },
+    "--xray-bin": {
+      "path": "/tmp/rr-261-investigation/xray/xray",
+      "sha256": "c4ae6798c38e0e5343b192406746333cd0ba7ff3eb984f8c4b9939dcb68c3f8a"
+    },
+    "--openssl-bin": {
+      "path": "/tmp/rr-261-investigation/openssl/bin/openssl",
+      "sha256": "df2276b9115e640209991ee2aa9cf897d674042299c014553037832f1beb2226"
+    }
+  },
+  "environment": {
+    "RR_261_HEAPTRACK_DIR": null,
+    "XDG_RUNTIME_DIR": "/home/jacek/.cache/rr-261-investigation/runtime"
+  },
+  "sampler_sha256": "4fac6f8b8358432d856b345d4a06e1511072c6233f4a48af2d7b6f2697d0cab4",
+  "ended": "2026-10-06T09:39:39.133197+00:00",
+  "exit_code": 0,
+  "duration_seconds": 1987.1288389270194,
+  "streams": {
+    "stdout": "7a57628b9553823996bfdd64bee96e466c6a533d78712e9812f2c153ecbfe3b0",
+    "stderr": "3123eead4f5b5371795f41f6e14d2eb0fa05c3c4c39ab177172f56b82603f2ac",
+    "smaps.jsonl": "6d6d7d9856b609ebbd950ff33245ef79690dc86da7a1604b7b4cfa2edab36ec2"
+  }
+}

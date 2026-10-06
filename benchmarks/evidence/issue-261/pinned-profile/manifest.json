@@ -698,7 +698,140 @@
       "original_bytes": 0,
       "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "encoding": "identity"
+    },
+    {
+      "path": "receipts/standalone-first-conflict-ordering/start.json",
+      "bytes": 790,
+      "sha256": "101d9ced494ffb59eccaf0eb767ac1c00eed99a8bc8d5f6bc7e9e557fb99ed58",
+      "original_bytes": 790,
+      "original_sha256": "101d9ced494ffb59eccaf0eb767ac1c00eed99a8bc8d5f6bc7e9e557fb99ed58",
+      "encoding": "identity"
+    },
+    {
+      "path": "receipts/standalone-first-conflict-ordering/result.json",
+      "bytes": 1081,
+      "sha256": "b05a1ee29cf2f05067c51a878513e7f3509dd059a141381dca76896ca8e030e0",
+      "original_bytes": 1081,
+      "original_sha256": "b05a1ee29cf2f05067c51a878513e7f3509dd059a141381dca76896ca8e030e0",
+      "encoding": "identity"
+    },
+    {
+      "path": "receipts/standalone-first-conflict-ordering/stdout",
+      "bytes": 2319,
+      "sha256": "8658af1540d6596b92ab423d2806ecbbc7f148951494bd9b32db902414c04419",
+      "original_bytes": 2319,
+      "original_sha256": "8658af1540d6596b92ab423d2806ecbbc7f148951494bd9b32db902414c04419",
+      "encoding": "identity"
+    },
+    {
+      "path": "receipts/standalone-first-conflict-ordering/stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original_bytes": 0,
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "encoding": "identity"
+    },
+    {
+      "path": "receipts/standalone-moved-reallocation-stack/start.json",
+      "bytes": 515,
+      "sha256": "cb82a00c704ffe7eaa0d1d61db910f6d3bfafb4d0972f63f70728aab6303fb86",
+      "original_bytes": 515,
+      "original_sha256": "cb82a00c704ffe7eaa0d1d61db910f6d3bfafb4d0972f63f70728aab6303fb86",
+      "encoding": "identity"
+    },
+    {
+      "path": "receipts/standalone-moved-reallocation-stack/result.json",
+      "bytes": 804,
+      "sha256": "a4f0f818d036b294de46fb188030213637ee37096fa30d26b1975fd472904e61",
+      "original_bytes": 804,
+      "original_sha256": "a4f0f818d036b294de46fb188030213637ee37096fa30d26b1975fd472904e61",
+      "encoding": "identity"
+    },
+    {
+      "path": "receipts/standalone-moved-reallocation-stack/stdout",
+      "bytes": 6393,
+      "sha256": "1a4ace326c5cf6f1a10b7f929988da56aff2351babe39d6b606baa1e62738890",
+      "original_bytes": 6393,
+      "original_sha256": "1a4ace326c5cf6f1a10b7f929988da56aff2351babe39d6b606baa1e62738890",
+      "encoding": "identity"
+    },
+    {
+      "path": "receipts/standalone-moved-reallocation-stack/stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original_bytes": 0,
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "encoding": "identity"
+    },
+    {
+      "path": "receipts/heaptrack-realloc-machine-code/start.json",
+      "bytes": 272,
+      "sha256": "1986ea59e34eb76bf57af51e2ff5a044196c0fb9ac4ed04365bccc520ce0b39c",
+      "original_bytes": 272,
+      "original_sha256": "1986ea59e34eb76bf57af51e2ff5a044196c0fb9ac4ed04365bccc520ce0b39c",
+      "encoding": "identity"
+    },
+    {
+      "path": "receipts/heaptrack-realloc-machine-code/result.json",
+      "bytes": 564,
+      "sha256": "e330e6abadd4eae6c38ba7874bf2a48e8811cb351b10d332623290d4e023ae6c",
+      "original_bytes": 564,
+      "original_sha256": "e330e6abadd4eae6c38ba7874bf2a48e8811cb351b10d332623290d4e023ae6c",
+      "encoding": "identity"
+    },
+    {
+      "path": "receipts/heaptrack-realloc-machine-code/stdout",
+      "bytes": 1268,
+      "sha256": "fe9d41862192b7f57d445ddbaf70210d602cafc5ad3acc4e75e062e74db811ab",
+      "original_bytes": 1268,
+      "original_sha256": "fe9d41862192b7f57d445ddbaf70210d602cafc5ad3acc4e75e062e74db811ab",
+      "encoding": "identity"
+    },
+    {
+      "path": "receipts/heaptrack-realloc-machine-code/stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original_bytes": 0,
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "encoding": "identity"
+    },
+    {
+      "path": "receipts/profiled-resident-mapping-deltas/start.json",
+      "bytes": 1226,
+      "sha256": "754627a978c27c5a03ca2ac39413f1ea38a73d035eec5aeaceba357672230778",
+      "original_bytes": 1226,
+      "original_sha256": "754627a978c27c5a03ca2ac39413f1ea38a73d035eec5aeaceba357672230778",
+      "encoding": "identity"
+    },
+    {
+      "path": "receipts/profiled-resident-mapping-deltas/result.json",
+      "bytes": 1516,
+      "sha256": "1468209272eb6787c4c56926d848759aa7181639f74c152536eb7e2a29bb4a70",
+      "original_bytes": 1516,
+      "original_sha256": "1468209272eb6787c4c56926d848759aa7181639f74c152536eb7e2a29bb4a70",
+      "encoding": "identity"
+    },
+    {
+      "path": "receipts/profiled-resident-mapping-deltas/stdout",
+      "bytes": 24535,
+      "sha256": "7f3e3266769832312e820d73ac4edfff5bdfdb69911b8308e876e5a704d7d0a8",
+      "original_bytes": 24535,
+      "original_sha256": "7f3e3266769832312e820d73ac4edfff5bdfdb69911b8308e876e5a704d7d0a8",
+      "encoding": "identity"
+    },
+    {
+      "path": "receipts/profiled-resident-mapping-deltas/stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original_bytes": 0,
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "encoding": "identity"
     }
   ],
-  "diagnostic_validation": "cargo dev check --all: 19/19 PASS on the isolated dbf4773 source plus archived diagnostic patch"
+  "diagnostic_validation": "cargo dev check --all: 19/19 PASS on the isolated dbf4773 source plus archived diagnostic patch",
+  "transfer_failure_guard": {
+    "source": "dbf4773475e7d30a6753f8b90a7db3850cf7f135:tools/rr-dev/src/bench/soak.rs",
+    "counted_mixed_transfer_and_churn_failures": 0,
+    "basis": "Resource verdict follows the failures != 0 guard; failed summary does not serialize this counter."
+  }
 }

@@ -1,0 +1,45 @@
+
+/tmp/rr-261-investigation/heaptrack/usr/lib/heaptrack/libheaptrack_preload.so:     file format elf64-x86-64
+
+
+Disassembly of section .init:
+
+Disassembly of section .plt:
+
+Disassembly of section .plt.got:
+
+Disassembly of section .text:
+
+0000000000007eb0 <realloc@@Base>:
+    7eb0:	push   %rbp
+    7eb1:	mov    %rsp,%rbp
+    7eb4:	push   %r12
+    7eb6:	mov    %rsi,%r12
+    7eb9:	push   %rbx
+    7eba:	mov    %rdi,%rbx
+    7ebd:	sub    $0x10,%rsp
+    7ec1:	mov    0x4220(%rip),%rax        # c0e8 <mi_calloc@@Base+0x3a88>
+    7ec8:	test   %rax,%rax
+    7ecb:	je     7f00 <realloc@@Base+0x50>
+    7ecd:	mov    %r12,%rsi
+    7ed0:	mov    %rbx,%rdi
+    7ed3:	call   *%rax
+    7ed5:	test   %rax,%rax
+    7ed8:	je     7ef0 <realloc@@Base+0x40>
+    7eda:	mov    %rax,%rdx
+    7edd:	mov    %r12,%rsi
+    7ee0:	mov    %rbx,%rdi
+    7ee3:	mov    %rax,-0x18(%rbp)
+    7ee7:	call   7ea0 <heaptrack_realloc@@Base>
+    7eec:	mov    -0x18(%rbp),%rax
+    7ef0:	add    $0x10,%rsp
+    7ef4:	pop    %rbx
+    7ef5:	pop    %r12
+    7ef7:	pop    %rbp
+    7ef8:	ret
+    7ef9:	nopl   0x0(%rax)
+    7f00:	call   6b20 <heaptrack_init@@Base+0xc40>
+    7f05:	mov    0x41dc(%rip),%rax        # c0e8 <mi_calloc@@Base+0x3a88>
+    7f0c:	jmp    7ecd <realloc@@Base+0x1d>
+
+Disassembly of section .fini:

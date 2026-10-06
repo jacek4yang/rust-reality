@@ -1,0 +1,404 @@
+{
+  "schema": "rr-issue261-comparison/v1",
+  "root_cause_proven": false,
+  "product_fix": null,
+  "unchanged_pss_tail_limit_mib_per_hour": 2.0,
+  "observations": [
+    {
+      "label": "historical-failed",
+      "source": "3b581bdc9d4fbd55fc9e6b02caab67e0d6860949",
+      "directory": "failed",
+      "product_sha256": "1c77e38ed55fe8189d6fa0c0b2d655f1de609e1f2d8747e97bfcebaf0b38fcd3",
+      "native_ok": false,
+      "resource_samples": 303,
+      "round_observations": 299,
+      "native_pss_tail_slope_mib_per_hour": 3.59646558073809,
+      "recomputed_pss_tail_slope_mib_per_hour": 3.59646558073809,
+      "pss_growth_mib": 4.150390625,
+      "native_end_seconds": 1807.344372638,
+      "terminal_completion_present": false,
+      "roles": {
+        "handoff-landing": {
+          "pss_tail_slope_mib_per_hour": 1.6450881945985816,
+          "stable_identity": true
+        },
+        "handoff-line": {
+          "pss_tail_slope_mib_per_hour": 0.021178724828033235,
+          "stable_identity": true
+        },
+        "nxr-landing": {
+          "pss_tail_slope_mib_per_hour": 0.07312853233043934,
+          "stable_identity": true
+        },
+        "nxr-line": {
+          "pss_tail_slope_mib_per_hour": 1.75403139358302,
+          "stable_identity": true
+        },
+        "socks-line": {
+          "pss_tail_slope_mib_per_hour": -0.007691861291721239,
+          "stable_identity": true
+        },
+        "standalone": {
+          "pss_tail_slope_mib_per_hour": 0.11073059668973702,
+          "stable_identity": true
+        }
+      }
+    },
+    {
+      "label": "historical-passed",
+      "source": "3b581bdc9d4fbd55fc9e6b02caab67e0d6860949",
+      "directory": "passed",
+      "product_sha256": "1c77e38ed55fe8189d6fa0c0b2d655f1de609e1f2d8747e97bfcebaf0b38fcd3",
+      "native_ok": true,
+      "resource_samples": 279,
+      "round_observations": 275,
+      "native_pss_tail_slope_mib_per_hour": 0.43275649056905435,
+      "recomputed_pss_tail_slope_mib_per_hour": 0.4327564905690544,
+      "pss_growth_mib": 3.8427734375,
+      "native_end_seconds": 1806.978953439,
+      "terminal_completion_present": true,
+      "roles": {
+        "handoff-landing": {
+          "pss_tail_slope_mib_per_hour": 0.07851448409595717,
+          "stable_identity": true
+        },
+        "handoff-line": {
+          "pss_tail_slope_mib_per_hour": 0.26593437842959283,
+          "stable_identity": true
+        },
+        "nxr-landing": {
+          "pss_tail_slope_mib_per_hour": 0.008961164560285496,
+          "stable_identity": true
+        },
+        "nxr-line": {
+          "pss_tail_slope_mib_per_hour": 0.026874002302818514,
+          "stable_identity": true
+        },
+        "socks-line": {
+          "pss_tail_slope_mib_per_hour": 0.01586869029209554,
+          "stable_identity": true
+        },
+        "standalone": {
+          "pss_tail_slope_mib_per_hour": 0.036603770888304854,
+          "stable_identity": true
+        }
+      }
+    },
+    {
+      "label": "pinned-profile",
+      "source": "dbf4773475e7d30a6753f8b90a7db3850cf7f135",
+      "directory": "pinned-profile/native",
+      "product_sha256": "b8ab364ca79c9debe18b2f96eed02dc9b7d80847e71475e08991f3aa63c99ace",
+      "native_ok": false,
+      "resource_samples": 251,
+      "round_observations": 247,
+      "native_pss_tail_slope_mib_per_hour": 3.169552473496796,
+      "recomputed_pss_tail_slope_mib_per_hour": 3.1695524734967955,
+      "pss_growth_mib": 4.3271484375,
+      "native_end_seconds": 1807.222343384,
+      "terminal_completion_present": false,
+      "roles": {
+        "handoff-landing": {
+          "pss_tail_slope_mib_per_hour": 1.1799774881468847,
+          "stable_identity": true
+        },
+        "handoff-line": {
+          "pss_tail_slope_mib_per_hour": 0.313628744492169,
+          "stable_identity": true
+        },
+        "nxr-landing": {
+          "pss_tail_slope_mib_per_hour": 0.6950365720092934,
+          "stable_identity": true
+        },
+        "nxr-line": {
+          "pss_tail_slope_mib_per_hour": 0.08876283549108116,
+          "stable_identity": true
+        },
+        "socks-line": {
+          "pss_tail_slope_mib_per_hour": 0.9084875843196912,
+          "stable_identity": true
+        },
+        "standalone": {
+          "pss_tail_slope_mib_per_hour": -0.016340750962323475,
+          "stable_identity": true
+        }
+      }
+    },
+    {
+      "label": "pinned-control",
+      "source": "dbf4773475e7d30a6753f8b90a7db3850cf7f135",
+      "directory": "pinned-control/native",
+      "product_sha256": "b8ab364ca79c9debe18b2f96eed02dc9b7d80847e71475e08991f3aa63c99ace",
+      "native_ok": true,
+      "resource_samples": 254,
+      "round_observations": 250,
+      "native_pss_tail_slope_mib_per_hour": 1.9199330424137997,
+      "recomputed_pss_tail_slope_mib_per_hour": 1.9199330424137995,
+      "pss_growth_mib": 4.2421875,
+      "native_end_seconds": 1811.110318132,
+      "terminal_completion_present": true,
+      "roles": {
+        "handoff-landing": {
+          "pss_tail_slope_mib_per_hour": 0.03044803673321225,
+          "stable_identity": true
+        },
+        "handoff-line": {
+          "pss_tail_slope_mib_per_hour": 0.30940727129668877,
+          "stable_identity": true
+        },
+        "nxr-landing": {
+          "pss_tail_slope_mib_per_hour": 0.7385683526002327,
+          "stable_identity": true
+        },
+        "nxr-line": {
+          "pss_tail_slope_mib_per_hour": 0.12100330513587108,
+          "stable_identity": true
+        },
+        "socks-line": {
+          "pss_tail_slope_mib_per_hour": 0.3486577641958386,
+          "stable_identity": true
+        },
+        "standalone": {
+          "pss_tail_slope_mib_per_hour": 0.37184831245195626,
+          "stable_identity": true
+        }
+      }
+    }
+  ],
+  "local_processes": {
+    "profile": {
+      "rounds": 247,
+      "roles": {
+        "handoff-landing.log": {
+          "samples": 889,
+          "stable_identity": true,
+          "sampled_cpu_seconds": 11.19,
+          "sampled_seconds": 1804.0083552800352,
+          "first_pss_kib": 7355,
+          "last_pss_kib": 8689,
+          "first_anonymous_kib": 6172,
+          "last_anonymous_kib": 7496,
+          "thread_range": [
+            19,
+            20
+          ],
+          "fd_range": [
+            20,
+            24
+          ]
+        },
+        "handoff-line.log": {
+          "samples": 889,
+          "stable_identity": true,
+          "sampled_cpu_seconds": 11.22,
+          "sampled_seconds": 1804.0079978550784,
+          "first_pss_kib": 7626,
+          "last_pss_kib": 7643,
+          "first_anonymous_kib": 6272,
+          "last_anonymous_kib": 6312,
+          "thread_range": [
+            19,
+            20
+          ],
+          "fd_range": [
+            24,
+            28
+          ]
+        },
+        "nxr-landing.log": {
+          "samples": 889,
+          "stable_identity": true,
+          "sampled_cpu_seconds": 11.13,
+          "sampled_seconds": 1804.0077288129833,
+          "first_pss_kib": 7015,
+          "last_pss_kib": 7814,
+          "first_anonymous_kib": 5956,
+          "last_anonymous_kib": 6740,
+          "thread_range": [
+            19,
+            20
+          ],
+          "fd_range": [
+            20,
+            26
+          ]
+        },
+        "nxr-line.log": {
+          "samples": 889,
+          "stable_identity": true,
+          "sampled_cpu_seconds": 11.2,
+          "sampled_seconds": 1804.0078089700546,
+          "first_pss_kib": 7632,
+          "last_pss_kib": 8104,
+          "first_anonymous_kib": 6244,
+          "last_anonymous_kib": 6740,
+          "thread_range": [
+            19,
+            20
+          ],
+          "fd_range": [
+            28,
+            30
+          ]
+        },
+        "socks-line.log": {
+          "samples": 889,
+          "stable_identity": true,
+          "sampled_cpu_seconds": 11.31,
+          "sampled_seconds": 1804.0078573930077,
+          "first_pss_kib": 7509,
+          "last_pss_kib": 8224,
+          "first_anonymous_kib": 6240,
+          "last_anonymous_kib": 6980,
+          "thread_range": [
+            19,
+            20
+          ],
+          "fd_range": [
+            28,
+            30
+          ]
+        },
+        "standalone.log": {
+          "samples": 889,
+          "stable_identity": true,
+          "sampled_cpu_seconds": 25.88,
+          "sampled_seconds": 1804.0077162759844,
+          "first_pss_kib": 7070,
+          "last_pss_kib": 8164,
+          "first_anonymous_kib": 5792,
+          "last_anonymous_kib": 6768,
+          "thread_range": [
+            19,
+            19
+          ],
+          "fd_range": [
+            24,
+            28
+          ]
+        }
+      },
+      "cpu_scope": "First to last two-second process observations. Control includes additional terminal-binding idle time. These are diagnostic observations, not a calibrated performance comparison."
+    },
+    "control": {
+      "rounds": 250,
+      "roles": {
+        "handoff-landing.log": {
+          "samples": 965,
+          "stable_identity": true,
+          "sampled_cpu_seconds": 0.25,
+          "sampled_seconds": 1952.442993982113,
+          "first_pss_kib": 3107,
+          "last_pss_kib": 3186,
+          "first_anonymous_kib": 932,
+          "last_anonymous_kib": 2248,
+          "thread_range": [
+            17,
+            18
+          ],
+          "fd_range": [
+            15,
+            17
+          ]
+        },
+        "handoff-line.log": {
+          "samples": 965,
+          "stable_identity": true,
+          "sampled_cpu_seconds": 0.25,
+          "sampled_seconds": 1952.4431109529687,
+          "first_pss_kib": 3609,
+          "last_pss_kib": 2426,
+          "first_anonymous_kib": 780,
+          "last_anonymous_kib": 1380,
+          "thread_range": [
+            17,
+            18
+          ],
+          "fd_range": [
+            15,
+            21
+          ]
+        },
+        "nxr-landing.log": {
+          "samples": 964,
+          "stable_identity": true,
+          "sampled_cpu_seconds": 0.17,
+          "sampled_seconds": 1950.4297650739318,
+          "first_pss_kib": 1798,
+          "last_pss_kib": 2719,
+          "first_anonymous_kib": 1004,
+          "last_anonymous_kib": 1904,
+          "thread_range": [
+            17,
+            18
+          ],
+          "fd_range": [
+            19,
+            23
+          ]
+        },
+        "nxr-line.log": {
+          "samples": 964,
+          "stable_identity": true,
+          "sampled_cpu_seconds": 0.35,
+          "sampled_seconds": 1950.4298484789906,
+          "first_pss_kib": 2431,
+          "last_pss_kib": 2739,
+          "first_anonymous_kib": 1296,
+          "last_anonymous_kib": 1604,
+          "thread_range": [
+            17,
+            18
+          ],
+          "fd_range": [
+            23,
+            27
+          ]
+        },
+        "socks-line.log": {
+          "samples": 964,
+          "stable_identity": true,
+          "sampled_cpu_seconds": 0.36,
+          "sampled_seconds": 1950.4300452289172,
+          "first_pss_kib": 2271,
+          "last_pss_kib": 2992,
+          "first_anonymous_kib": 1156,
+          "last_anonymous_kib": 1892,
+          "thread_range": [
+            17,
+            18
+          ],
+          "fd_range": [
+            23,
+            25
+          ]
+        },
+        "standalone.log": {
+          "samples": 964,
+          "stable_identity": true,
+          "sampled_cpu_seconds": 15.06,
+          "sampled_seconds": 1950.4301378621021,
+          "first_pss_kib": 2358,
+          "last_pss_kib": 2960,
+          "first_anonymous_kib": 1224,
+          "last_anonymous_kib": 1828,
+          "thread_range": [
+            17,
+            17
+          ],
+          "fd_range": [
+            19,
+            23
+          ]
+        }
+      },
+      "cpu_scope": "First to last two-second process observations. Control includes additional terminal-binding idle time. These are diagnostic observations, not a calibrated performance comparison."
+    }
+  },
+  "limits": [
+    "One local profile/control pair does not isolate profiling effects from ordinary run variation.",
+    "Local glibc 2.43 and 16 workers differ from the historical ubuntu-24.04 workflow and observed thread counts.",
+    "Standalone profiled pointer-accounting conflict is rejected; no complete six-process heap attribution.",
+    "Neither local run provides 12-hour qualification or an allocation trace of the historical failure."
+  ]
+}

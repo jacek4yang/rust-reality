@@ -6,9 +6,12 @@ tail-slope gate: **3.169552473 MiB/hour**, limit **2.0**. The native observation
 contain 247 round samples and all **96 distributed integrity samples passed**.
 Final native image binding was **not run**; no successful completion or
 qualification is claimed. The failed summary does not serialize mixed-transfer
-or churn failure counters. An independent check verifies the expected size and
-SHA256 of all 741 retained full-transfer bodies, without reconstructing those
-missing counters.
+or churn failure counters. Reaching the resource gate nevertheless establishes
+zero counted failures by the pinned source's preceding
+[transfer guard](https://github.com/jacek4yang/rust-reality/blob/dbf4773475e7d30a6753f8b90a7db3850cf7f135/tools/rr-dev/src/bench/soak.rs#L1601-L1629).
+This is a source-derived result, not a serialized counter. An independent check
+also verifies the expected size and SHA256 of all 741 retained full-transfer
+bodies.
 
 [manifest.json](manifest.json) records source/build/binary/patch identities and
 the SHA256 and size of every retained member. Identity-encoded native files
@@ -39,6 +42,15 @@ Standalone's raw trace has conflicting live-pointer records. Its checked
 timeline failed and is preserved under `rejected-standalone-timeline.stderr`
 and `receipts/profile-final-analysis/`. No repaired standalone attribution is
 published. Heaptrack's own report is retained with this limitation.
+
+The first conflict has a 533-byte Vision request buffer and a new 512-byte
+target-flight buffer recorded at the same address before the old free. That
+free is immediately followed by the Vision buffer's moved 1186-byte
+reallocation. The exact preload disassembly calls real `realloc` before its
+recording callback, matching the
+[upstream hook order](https://github.com/KDE/heaptrack/blob/v1.5.0/src/track/heaptrack_preload.cpp#L220-L233).
+These records explain the diagnostic ordering failure; they do not identify
+the unprofiled historical memory failure's cause.
 
 The workstation used Ubuntu 26.04, glibc 2.43, and 16 worker CPUs. Profiling and
 the observer add threads, allocations, and resident memory; allocator XML
