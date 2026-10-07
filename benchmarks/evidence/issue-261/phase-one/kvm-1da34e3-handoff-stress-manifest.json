@@ -1,0 +1,122 @@
+{
+  "scope": "LOCAL_KVM",
+  "sourceCommit": "1da34e37a2b38a774eb3fc14764c108356606963",
+  "candidateElfSha256": "47bd2151d9348562ec547c0867f3cbd9b72d35b28255cce8e7fd240f30deec9a",
+  "cell": "handoff-stress",
+  "claim": "raw evidence; verdict remains in evaluator receipts, never inferred from archive creation",
+  "exclusions": [
+    "secret-bearing configurations",
+    "SSH credentials",
+    "executables",
+    "deterministic payload binaries"
+  ],
+  "members": [
+    {
+      "path": "controller/Cargo.lock",
+      "bytes": 6659,
+      "sha256": "8ce4be86766be170f1fb9fc65a5672958e1d6f02c54a564c069a27ccfb1f232e"
+    },
+    {
+      "path": "controller/Cargo.toml",
+      "bytes": 167,
+      "sha256": "00f69c2b950031c5a530f1f30da589a67ded7153bd66a13eeb15a84bf5d33731"
+    },
+    {
+      "path": "controller/src/main.rs",
+      "bytes": 36083,
+      "sha256": "44ea1822256117264388c74d42b417d4a5950b3c7be1b4185c2ae1c9a0372ee6"
+    },
+    {
+      "path": "evaluators/audit-faults.py",
+      "bytes": 5085,
+      "sha256": "87860e59873585de25a6284dbcf69467138cafb689c6ac310e2708844980af6b"
+    },
+    {
+      "path": "evaluators/audit-lifecycle.py",
+      "bytes": 4926,
+      "sha256": "bf062a605c7cfd46380cec95cc0397cffd3be7cb71518e05928c976d16ee56c3"
+    },
+    {
+      "path": "evaluators/audit-stress.py",
+      "bytes": 5074,
+      "sha256": "1a9da09d015a7382fc37e5004f64f1fabcb56419afd3690cd966e4118279fd10"
+    },
+    {
+      "path": "evaluators/large-integrity.py",
+      "bytes": 2448,
+      "sha256": "580608ab8e1a2cd264c5d10b36773fe8f7cb7e0a5575f8c0ff25186ddfaa0ff4"
+    },
+    {
+      "path": "metadata/handoff-oom-audit.json",
+      "bytes": 17650,
+      "sha256": "73c994c82acca897466ab13150324b26add683cdb9754f3fe4d0388e43355825"
+    },
+    {
+      "path": "metadata/handoff-stress-audit.json",
+      "bytes": 9273,
+      "sha256": "fa7b94853c70cb57e8acfb3b0a2489f1fb2d7019fc007baf3dca1c43c66dd86e"
+    },
+    {
+      "path": "metadata/provision-attestation.json",
+      "bytes": 8313,
+      "sha256": "ec5becc24705ee9623a39fd0649c68031f3e6290e4f08fd4fdc8227016fdec71"
+    },
+    {
+      "path": "metadata/scope.json",
+      "bytes": 568,
+      "sha256": "55d9d47695c84b9d056417ecb7107cff178757aed1390261b48b7c068f3121f2"
+    },
+    {
+      "path": "raw/complete.json",
+      "bytes": 104,
+      "sha256": "478f09ea2d7fc1c7b10beb9ca15b87fb9c61e3f2acd7ed3e253d7533179fdcbe"
+    },
+    {
+      "path": "raw/events.jsonl",
+      "bytes": 641478,
+      "sha256": "1bafa06e290213dc0b389fa955d8f20afc580eb25edd45702975b2929035161a"
+    },
+    {
+      "path": "raw/landing-cover-147586.log",
+      "bytes": 19,
+      "sha256": "c8da06e837627e2a082bd3d2d7618d64d8756ad04e55efe6b82021cb7bfcd78d"
+    },
+    {
+      "path": "raw/landing-origin-147387.log",
+      "bytes": 21,
+      "sha256": "2bb2556239546c5c472e16554295c777180fbc7a3fb196e4591ff1b32f223d3d"
+    },
+    {
+      "path": "raw/landing-server-147189.log",
+      "bytes": 362773,
+      "sha256": "5381b94442c5766147c8c065915c57fe3982c371c1a10db8c94b5204c1ca10cd"
+    },
+    {
+      "path": "raw/line-a-client-146574.log",
+      "bytes": 67955,
+      "sha256": "9ff0c457edb362b9ece4f3b85e192e59559d89929e6fe0e9f38f5e43b5f46ee8"
+    },
+    {
+      "path": "raw/line-a-server-146370.log",
+      "bytes": 704915,
+      "sha256": "3c3a0f6950719da3316e843ea379d7d8c28129068f8e3b3ffce42cda665db9bc"
+    },
+    {
+      "path": "raw/line-b-client-146987.log",
+      "bytes": 67955,
+      "sha256": "500e44120dbf561a30da8852b8d42f6b58a57dd3c7cca56341edd022c6c1a073"
+    },
+    {
+      "path": "raw/line-b-server-146784.log",
+      "bytes": 704919,
+      "sha256": "e6029ce905757b759cf2aa2258ffe3d3659bb10b93d3b0148bf9764bae757d9e"
+    },
+    {
+      "path": "raw/upload-receipts.jsonl",
+      "bytes": 754,
+      "sha256": "77f4829c197eda799692546b4e88550ee0ad97d338e7287294f6f2cd02844441"
+    }
+  ],
+  "archiveBytes": 166216,
+  "archiveSha256": "48b92d64954690684da029c9176267a9adb73858c5c5bf06784102e1aefc763c"
+}

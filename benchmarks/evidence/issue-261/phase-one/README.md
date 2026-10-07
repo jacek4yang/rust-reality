@@ -350,3 +350,53 @@ pattern differs from the earlier standalone-dominated failure. Residency
 samples alone do not identify allocator-live objects; bounded-retention
 attribution depends on the separate occupancy and allocator experiments, not
 on selecting a more favorable tail or erasing a failed qualification.
+
+## Frozen `1da34e3` KVM stress and resource attribution
+
+The immutable local ELF is
+`47bd2151d9348562ec547c0867f3cbd9b72d35b28255cce8e7fd240f30deec9a`.
+The retained controller, evaluator sources, raw events and distinct guest boot
+identities are bound by the following manifests:
+
+- [Handoff repeated stress](kvm-1da34e3-handoff-stress-manifest.json):
+  eight no-restart cycles, 100 transfers per LINE per cycle, concurrency 8/32,
+  1,600 successful transfers and 18 resource samples per role; strict audit passes.
+- [Handoff lifecycle](kvm-1da34e3-handoff-lifecycle-manifest.json):
+  7,784/7,784 transfers, 53 samples per role, stream progress across reload and
+  exact received prefixes at deliberate LANDING termination; strict audit passes.
+- [Handoff network faults](kvm-1da34e3-handoff-faults-manifest.json):
+  50/100/200 ms RTT, 100 ms with 1% per-egress loss, isolated LINE-A partition,
+  unaffected LINE-B flow, and LANDING restart; unchanged recovery/resource
+  checks pass.
+- [Handoff 4 MiB integrity](kvm-1da34e3-handoff-large-manifest.json):
+  simultaneous upload/download on each LINE, exact hashes and unique new
+  origin PUT receipts.
+- [NXR repeated stress](kvm-1da34e3-nxr-stress-failed-manifest.json):
+  all 1,600 transfers complete, but the fixed LANDING recovery FD ceiling fails.
+  It is not a successful stress qualification.
+- [NXR drain discriminator](kvm-1da34e3-nxr-drain-manifest.json):
+  additional finite work and 48 same-process observations distinguish retained
+  pipe descriptors from lingering network connections.
+
+Archives exceeding the unchanged 512 KiB tracked-object limit are partitioned
+into independently readable XZ tar files. Their manifests verify every original
+member exactly once and retain the original combined archive identity.
+Configurations, SSH credentials, executables and deterministic payload copies
+are excluded; resource samples bind the executable identity.
+
+The [pipe census](kvm-1da34e3-pipe-retention.json) explains the NXR failure.
+Startup `explain` derives `maxSpliceRelays=61` and `maxPooledPipes=122` on the
+2-vCPU/2-GiB LANDING. After saturation, 122 unique pipes retain 244 descriptors.
+Read-only `FIONREAD` queries find zero pending bytes at every pipe end. Together
+with 12 sockets and seven other descriptors, the stable idle total is 263,
+above the fixed 256 ceiling. It remains exactly 263 across all 48 observations,
+including another 100-transfer workload and 45 seconds of quiet, with unchanged
+PID/starttime. Stress recovery points are 267–275 because additional sockets
+remain transiently present.
+
+`PipePool::give_back` retains only drained pipes and caps their count at `keep`;
+descriptor permits remain owned by the pipes. This is quantitatively bounded
+resource retention, not a demonstrated FD leak. Nevertheless, the fixed recovery
+ceiling remains failed. No pool shrinking, lower concurrency, raised threshold
+or longer-wait acceptance workaround is applied. Reconciling the qualification
+envelope with the intended bounded production policy requires explicit review.

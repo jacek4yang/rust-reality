@@ -1,0 +1,218 @@
+{
+  "scope": "LOCAL_KVM",
+  "sourceCommit": "1da34e37a2b38a774eb3fc14764c108356606963",
+  "candidateElfSha256": "47bd2151d9348562ec547c0867f3cbd9b72d35b28255cce8e7fd240f30deec9a",
+  "cell": "handoff-faults",
+  "claim": "raw evidence; verdict remains in evaluator receipts, never inferred from archive creation",
+  "exclusions": [
+    "secret-bearing configurations",
+    "SSH credentials",
+    "executables",
+    "deterministic payload binaries"
+  ],
+  "members": [
+    {
+      "path": "controller/Cargo.lock",
+      "bytes": 6659,
+      "sha256": "8ce4be86766be170f1fb9fc65a5672958e1d6f02c54a564c069a27ccfb1f232e",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "controller/Cargo.toml",
+      "bytes": 167,
+      "sha256": "00f69c2b950031c5a530f1f30da589a67ded7153bd66a13eeb15a84bf5d33731",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "controller/src/main.rs",
+      "bytes": 36083,
+      "sha256": "44ea1822256117264388c74d42b417d4a5950b3c7be1b4185c2ae1c9a0372ee6",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "evaluators/audit-faults.py",
+      "bytes": 5085,
+      "sha256": "87860e59873585de25a6284dbcf69467138cafb689c6ac310e2708844980af6b",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "evaluators/audit-lifecycle.py",
+      "bytes": 4926,
+      "sha256": "bf062a605c7cfd46380cec95cc0397cffd3be7cb71518e05928c976d16ee56c3",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "evaluators/audit-stress.py",
+      "bytes": 5074,
+      "sha256": "1a9da09d015a7382fc37e5004f64f1fabcb56419afd3690cd966e4118279fd10",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "evaluators/large-integrity.py",
+      "bytes": 2448,
+      "sha256": "580608ab8e1a2cd264c5d10b36773fe8f7cb7e0a5575f8c0ff25186ddfaa0ff4",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "metadata/handoff-faults-audit.json",
+      "bytes": 7703,
+      "sha256": "c2195a12f7926e921956d52dc38ac3e444e0bb959f3725552332b111e658a941",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "metadata/handoff-oom-audit.json",
+      "bytes": 17650,
+      "sha256": "73c994c82acca897466ab13150324b26add683cdb9754f3fe4d0388e43355825",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "metadata/provision-attestation.json",
+      "bytes": 8313,
+      "sha256": "ec5becc24705ee9623a39fd0649c68031f3e6290e4f08fd4fdc8227016fdec71",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "metadata/scope.json",
+      "bytes": 568,
+      "sha256": "55d9d47695c84b9d056417ecb7107cff178757aed1390261b48b7c068f3121f2",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "raw/complete.json",
+      "bytes": 174,
+      "sha256": "bf5a4a2efe5ce3e9d07bf094de43591f686cf98f3421bdc8da033f8cd74b5e43",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "raw/events.jsonl",
+      "bytes": 549712,
+      "sha256": "eb393b38f5c6579a609a672a3ee706abb44573da459f6fd5a3caf022eb21afa2",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "raw/landing-cover-259997.log",
+      "bytes": 19,
+      "sha256": "c8da06e837627e2a082bd3d2d7618d64d8756ad04e55efe6b82021cb7bfcd78d",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "raw/landing-cover-464682.log",
+      "bytes": 19,
+      "sha256": "c8da06e837627e2a082bd3d2d7618d64d8756ad04e55efe6b82021cb7bfcd78d",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "raw/landing-origin-259797.log",
+      "bytes": 21,
+      "sha256": "2bb2556239546c5c472e16554295c777180fbc7a3fb196e4591ff1b32f223d3d",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "raw/landing-origin-464493.log",
+      "bytes": 21,
+      "sha256": "2bb2556239546c5c472e16554295c777180fbc7a3fb196e4591ff1b32f223d3d",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "raw/landing-server-259604.log",
+      "bytes": 802170,
+      "sha256": "d65bdad026b5327f45930eb8c65b0755a0578250f3bd7275a6fcb8f314f4c8c6",
+      "archive": "kvm-1da34e3-handoff-faults-part-4.tar.xz"
+    },
+    {
+      "path": "raw/landing-server-464298.log",
+      "bytes": 36209,
+      "sha256": "96d37f79207b694d7cd4cd8d2d59fee1cfc2b7b6bf6e5d0c765bdb013d1a8539",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "raw/line-a-client-258893.log",
+      "bytes": 415555,
+      "sha256": "ace412a21e45f23e61ea4f2caaa4c149dd7e08f26e53b695650f640fc512da1a",
+      "archive": "kvm-1da34e3-handoff-faults-part-1.tar.xz"
+    },
+    {
+      "path": "raw/line-a-client-463578.log",
+      "bytes": 419663,
+      "sha256": "c832b30ec57c2d292ee7bba79b2ed35317243fa51d33583041c184ec18fbe54c",
+      "archive": "kvm-1da34e3-handoff-faults-part-1.tar.xz"
+    },
+    {
+      "path": "raw/line-a-server-258677.log",
+      "bytes": 4322638,
+      "sha256": "8ba116bf40e986c822a69ff0d48e36d7e0988b0e03e91584b31001aaf3f9942a",
+      "archive": "kvm-1da34e3-handoff-faults-part-4.tar.xz"
+    },
+    {
+      "path": "raw/line-a-server-463362.log",
+      "bytes": 4365384,
+      "sha256": "52cc896349a2b3cc719809e9cdac269b87071e3671b29ca106f83ff0ae38e639",
+      "archive": "kvm-1da34e3-handoff-faults-part-2.tar.xz"
+    },
+    {
+      "path": "raw/line-b-client-259396.log",
+      "bytes": 417372,
+      "sha256": "380b7bef1ae33a846ee1fa29af99f83958fd60bf6ba0822d368a38aa4c308479",
+      "archive": "kvm-1da34e3-handoff-faults-part-2.tar.xz"
+    },
+    {
+      "path": "raw/line-b-client-464101.log",
+      "bytes": 421638,
+      "sha256": "668ff277cc352320bd154386e2a4d900ca8d2c738281bef79f1c12e215f5d1fd",
+      "archive": "kvm-1da34e3-handoff-faults-part-2.tar.xz"
+    },
+    {
+      "path": "raw/line-b-server-259190.log",
+      "bytes": 4341097,
+      "sha256": "8f71b5e736aa48765598539cab08d0ec983b9eba2b03ccf53bfd66e39097682d",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "raw/line-b-server-463892.log",
+      "bytes": 4385487,
+      "sha256": "6f7f9eab93c4eca81a75b9cec27760abadc66a8c8778dfa7853d8b52a3d5f348",
+      "archive": "kvm-1da34e3-handoff-faults-part-1.tar.xz"
+    },
+    {
+      "path": "raw/unaffected-flow.log",
+      "bytes": 1135,
+      "sha256": "1e56add12636e0d5243572d447df149349cf27e753f812f6af29f73eabd95107",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "raw/unaffected-flow/terminal.json",
+      "bytes": 373,
+      "sha256": "a03edbefeac5f3e98ff82ed75381c6a82b066649108d7254eba1c454080df63b",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    },
+    {
+      "path": "raw/upload-receipts.jsonl",
+      "bytes": 754,
+      "sha256": "be23ea6541b3d4fce8edfc4b2751e67c051710f086b1cf9bf725e92ff686c58c",
+      "archive": "kvm-1da34e3-handoff-faults-part-3.tar.xz"
+    }
+  ],
+  "originalArchiveSha256": "51866c1bf0ad82dd1889f051a5a6a756f20906a461e5e4e6004b965f412f4b8d",
+  "archives": [
+    {
+      "path": "kvm-1da34e3-handoff-faults-part-1.tar.xz",
+      "bytes": 318212,
+      "sha256": "ea8ea6107409babbed332149784d3ad79001604f9ea8cd4342ef37c7f3a07d1a"
+    },
+    {
+      "path": "kvm-1da34e3-handoff-faults-part-2.tar.xz",
+      "bytes": 317444,
+      "sha256": "d7659d049f6691bf57688dfce5e5aaa5866cf33fc8c9883bb331100de47ca599"
+    },
+    {
+      "path": "kvm-1da34e3-handoff-faults-part-3.tar.xz",
+      "bytes": 333828,
+      "sha256": "644ab885cd22ac6d257dd05218c8ca08e5d9028a39be3ee972d3086f3dfc6324"
+    },
+    {
+      "path": "kvm-1da34e3-handoff-faults-part-4.tar.xz",
+      "bytes": 318544,
+      "sha256": "7c4d3c33be8c99a66fd8c4c67b3ba16f740033046288b2b4527fd4424ea5d637"
+    }
+  ]
+}

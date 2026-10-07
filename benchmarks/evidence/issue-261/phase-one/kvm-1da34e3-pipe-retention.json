@@ -1,0 +1,1375 @@
+{
+  "scope": "LOCAL_KVM",
+  "sourceCommit": "1da34e37a2b38a774eb3fc14764c108356606963",
+  "candidateElfSha256": "47bd2151d9348562ec547c0867f3cbd9b72d35b28255cce8e7fd240f30deec9a",
+  "verdict": "FAIL: fixed LANDING recovery FD ceiling256; bounded retained pipes are not an acceptance exemption",
+  "finding": "122 empty retained splice pipes account for244 descriptors; all48 independent post-load/quiet observations retain263 totalFDs with unchanged process identity",
+  "productionChange": "none: do not shrink a deliberately bounded pipe cache solely to satisfy a conflicting fixture envelope",
+  "existingLimit": 256,
+  "maxSpliceRelays": 61,
+  "maxPooledPipes": 122,
+  "machine": {
+    "logicalCpus": 2,
+    "effectiveCpus": 2,
+    "fdSoftLimit": 1024,
+    "fdHardLimit": 1048576,
+    "memorySource": "cgroup_v2",
+    "memoryTotalBytes": 2063220736,
+    "memoryCurrentBytes": 2236416,
+    "cpuPeriodMicroseconds": 100000,
+    "tenancyBoundaryObservable": false
+  },
+  "census": {
+    "pid": 135062,
+    "starttime": "2328008",
+    "bootId": "225b7ddf-05ba-4b23-ba7f-f1725b1a0ca3",
+    "descriptorKinds": {
+      "/dev/null": 2,
+      "/home/rrtest/qualification/candidate-1da34e3/nxr/server.log": 2,
+      "anon_inode": 3,
+      "socket": 12,
+      "pipe": 244
+    },
+    "pipeDescriptors": 244,
+    "uniquePipes": 122,
+    "pendingBytesSumAcrossEnds": 0,
+    "pipes": [
+      {
+        "fd": 20,
+        "target": "pipe:[374507]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 21,
+        "target": "pipe:[374507]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 22,
+        "target": "pipe:[374508]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 23,
+        "target": "pipe:[374508]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 26,
+        "target": "pipe:[374518]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 27,
+        "target": "pipe:[374518]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 28,
+        "target": "pipe:[374519]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 29,
+        "target": "pipe:[374519]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 32,
+        "target": "pipe:[375380]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 33,
+        "target": "pipe:[375380]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 34,
+        "target": "pipe:[375381]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 35,
+        "target": "pipe:[375381]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 37,
+        "target": "pipe:[374522]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 38,
+        "target": "pipe:[374522]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 39,
+        "target": "pipe:[374523]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 40,
+        "target": "pipe:[374523]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 45,
+        "target": "pipe:[374529]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 46,
+        "target": "pipe:[374529]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 47,
+        "target": "pipe:[374530]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 48,
+        "target": "pipe:[374530]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 49,
+        "target": "pipe:[374531]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 50,
+        "target": "pipe:[374531]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 51,
+        "target": "pipe:[374532]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 52,
+        "target": "pipe:[374532]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 56,
+        "target": "pipe:[375386]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 57,
+        "target": "pipe:[375386]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 58,
+        "target": "pipe:[375387]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 59,
+        "target": "pipe:[375387]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 62,
+        "target": "pipe:[375392]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 63,
+        "target": "pipe:[375392]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 64,
+        "target": "pipe:[375393]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 65,
+        "target": "pipe:[375393]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 67,
+        "target": "pipe:[375396]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 68,
+        "target": "pipe:[375396]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 69,
+        "target": "pipe:[375397]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 70,
+        "target": "pipe:[375397]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 73,
+        "target": "pipe:[374538]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 74,
+        "target": "pipe:[374538]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 75,
+        "target": "pipe:[374539]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 76,
+        "target": "pipe:[374539]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 80,
+        "target": "pipe:[374543]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 81,
+        "target": "pipe:[374543]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 82,
+        "target": "pipe:[374544]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 83,
+        "target": "pipe:[374544]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 85,
+        "target": "pipe:[375407]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 86,
+        "target": "pipe:[375407]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 87,
+        "target": "pipe:[375408]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 88,
+        "target": "pipe:[375408]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 92,
+        "target": "pipe:[375414]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 93,
+        "target": "pipe:[375414]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 94,
+        "target": "pipe:[375415]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 95,
+        "target": "pipe:[375415]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 98,
+        "target": "pipe:[374546]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 99,
+        "target": "pipe:[374546]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 100,
+        "target": "pipe:[374547]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 101,
+        "target": "pipe:[374547]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 104,
+        "target": "pipe:[374551]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 105,
+        "target": "pipe:[374551]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 106,
+        "target": "pipe:[374552]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 107,
+        "target": "pipe:[374552]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 110,
+        "target": "pipe:[374556]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 111,
+        "target": "pipe:[374556]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 112,
+        "target": "pipe:[374557]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 113,
+        "target": "pipe:[374557]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 116,
+        "target": "pipe:[375425]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 117,
+        "target": "pipe:[375425]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 118,
+        "target": "pipe:[375426]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 119,
+        "target": "pipe:[375426]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 121,
+        "target": "pipe:[374559]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 122,
+        "target": "pipe:[374559]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 123,
+        "target": "pipe:[374560]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 124,
+        "target": "pipe:[374560]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 128,
+        "target": "pipe:[374564]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 129,
+        "target": "pipe:[374564]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 130,
+        "target": "pipe:[374566]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 131,
+        "target": "pipe:[374566]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 134,
+        "target": "pipe:[374574]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 135,
+        "target": "pipe:[374574]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 136,
+        "target": "pipe:[374575]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 137,
+        "target": "pipe:[374575]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 140,
+        "target": "pipe:[375434]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 141,
+        "target": "pipe:[375434]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 142,
+        "target": "pipe:[375435]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 143,
+        "target": "pipe:[375435]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 146,
+        "target": "pipe:[375437]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 147,
+        "target": "pipe:[375437]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 148,
+        "target": "pipe:[375438]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 149,
+        "target": "pipe:[375438]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 152,
+        "target": "pipe:[374605]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 153,
+        "target": "pipe:[374605]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 154,
+        "target": "pipe:[374606]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 155,
+        "target": "pipe:[374606]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 157,
+        "target": "pipe:[374641]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 158,
+        "target": "pipe:[374641]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 159,
+        "target": "pipe:[374642]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 160,
+        "target": "pipe:[374642]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 164,
+        "target": "pipe:[377224]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 165,
+        "target": "pipe:[377224]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 166,
+        "target": "pipe:[377225]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 167,
+        "target": "pipe:[377225]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 170,
+        "target": "pipe:[377255]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 171,
+        "target": "pipe:[377255]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 172,
+        "target": "pipe:[377256]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 173,
+        "target": "pipe:[377256]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 175,
+        "target": "pipe:[377258]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 176,
+        "target": "pipe:[377258]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 177,
+        "target": "pipe:[377259]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 178,
+        "target": "pipe:[377259]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 182,
+        "target": "pipe:[377392]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 183,
+        "target": "pipe:[377392]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 184,
+        "target": "pipe:[377393]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 185,
+        "target": "pipe:[377393]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 188,
+        "target": "pipe:[377397]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 189,
+        "target": "pipe:[377397]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 190,
+        "target": "pipe:[377398]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 191,
+        "target": "pipe:[377398]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 196,
+        "target": "pipe:[376811]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 197,
+        "target": "pipe:[376811]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 198,
+        "target": "pipe:[376812]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 199,
+        "target": "pipe:[376812]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 200,
+        "target": "pipe:[376813]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 201,
+        "target": "pipe:[376813]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 202,
+        "target": "pipe:[376814]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 203,
+        "target": "pipe:[376814]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 210,
+        "target": "pipe:[377970]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 211,
+        "target": "pipe:[377970]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 212,
+        "target": "pipe:[377971]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 213,
+        "target": "pipe:[377971]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 216,
+        "target": "pipe:[377804]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 217,
+        "target": "pipe:[377804]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 218,
+        "target": "pipe:[377805]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 219,
+        "target": "pipe:[377805]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 222,
+        "target": "pipe:[377810]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 223,
+        "target": "pipe:[377810]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 224,
+        "target": "pipe:[377811]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 225,
+        "target": "pipe:[377811]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 228,
+        "target": "pipe:[377976]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 229,
+        "target": "pipe:[377976]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 230,
+        "target": "pipe:[377977]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 231,
+        "target": "pipe:[377977]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 234,
+        "target": "pipe:[377981]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 235,
+        "target": "pipe:[377981]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 236,
+        "target": "pipe:[377982]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 237,
+        "target": "pipe:[377982]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 239,
+        "target": "pipe:[377985]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 240,
+        "target": "pipe:[377985]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 241,
+        "target": "pipe:[377986]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 242,
+        "target": "pipe:[377986]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 244,
+        "target": "pipe:[377817]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 245,
+        "target": "pipe:[377817]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 246,
+        "target": "pipe:[377818]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 247,
+        "target": "pipe:[377818]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 251,
+        "target": "pipe:[377823]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 252,
+        "target": "pipe:[377823]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 253,
+        "target": "pipe:[377824]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 254,
+        "target": "pipe:[377824]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 257,
+        "target": "pipe:[377829]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 258,
+        "target": "pipe:[377829]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 259,
+        "target": "pipe:[377830]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 260,
+        "target": "pipe:[377830]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 264,
+        "target": "pipe:[377836]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 265,
+        "target": "pipe:[377836]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 266,
+        "target": "pipe:[377837]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 267,
+        "target": "pipe:[377837]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 269,
+        "target": "pipe:[377839]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 270,
+        "target": "pipe:[377839]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 271,
+        "target": "pipe:[377840]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 272,
+        "target": "pipe:[377840]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 275,
+        "target": "pipe:[377846]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 276,
+        "target": "pipe:[377846]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 277,
+        "target": "pipe:[377847]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 278,
+        "target": "pipe:[377847]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 282,
+        "target": "pipe:[377852]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 283,
+        "target": "pipe:[377852]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 284,
+        "target": "pipe:[377853]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 285,
+        "target": "pipe:[377853]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 287,
+        "target": "pipe:[377856]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 288,
+        "target": "pipe:[377856]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 289,
+        "target": "pipe:[378881]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 290,
+        "target": "pipe:[378881]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 292,
+        "target": "pipe:[378883]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 293,
+        "target": "pipe:[378883]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 294,
+        "target": "pipe:[378884]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 295,
+        "target": "pipe:[378884]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 298,
+        "target": "pipe:[378890]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 299,
+        "target": "pipe:[378890]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 300,
+        "target": "pipe:[378891]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 301,
+        "target": "pipe:[378891]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 303,
+        "target": "pipe:[378894]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 304,
+        "target": "pipe:[378894]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 305,
+        "target": "pipe:[378895]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 306,
+        "target": "pipe:[378895]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 311,
+        "target": "pipe:[378903]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 312,
+        "target": "pipe:[378903]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 313,
+        "target": "pipe:[378904]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 314,
+        "target": "pipe:[378904]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 318,
+        "target": "pipe:[378910]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 319,
+        "target": "pipe:[378910]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 320,
+        "target": "pipe:[378911]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 321,
+        "target": "pipe:[378911]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 322,
+        "target": "pipe:[378912]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 323,
+        "target": "pipe:[378912]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 324,
+        "target": "pipe:[378913]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 325,
+        "target": "pipe:[378913]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 330,
+        "target": "pipe:[378922]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 331,
+        "target": "pipe:[378922]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 332,
+        "target": "pipe:[378923]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 333,
+        "target": "pipe:[378923]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 335,
+        "target": "pipe:[378926]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 336,
+        "target": "pipe:[378926]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 337,
+        "target": "pipe:[378927]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 338,
+        "target": "pipe:[378927]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 341,
+        "target": "pipe:[378931]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 342,
+        "target": "pipe:[378931]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 343,
+        "target": "pipe:[378932]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 344,
+        "target": "pipe:[378932]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 347,
+        "target": "pipe:[378938]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 348,
+        "target": "pipe:[378938]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 349,
+        "target": "pipe:[378939]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 350,
+        "target": "pipe:[378939]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 353,
+        "target": "pipe:[378943]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 354,
+        "target": "pipe:[378943]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 355,
+        "target": "pipe:[378944]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 356,
+        "target": "pipe:[378944]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 360,
+        "target": "pipe:[378951]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 361,
+        "target": "pipe:[378951]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 362,
+        "target": "pipe:[378952]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 363,
+        "target": "pipe:[378952]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 365,
+        "target": "pipe:[378955]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 366,
+        "target": "pipe:[378955]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 367,
+        "target": "pipe:[378956]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 368,
+        "target": "pipe:[378956]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 372,
+        "target": "pipe:[378962]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 373,
+        "target": "pipe:[378962]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 374,
+        "target": "pipe:[378963]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 375,
+        "target": "pipe:[378963]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 377,
+        "target": "pipe:[378965]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 378,
+        "target": "pipe:[378965]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 379,
+        "target": "pipe:[378966]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 380,
+        "target": "pipe:[378966]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 384,
+        "target": "pipe:[378973]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 385,
+        "target": "pipe:[378973]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 386,
+        "target": "pipe:[378974]",
+        "pendingBytes": 0
+      },
+      {
+        "fd": 387,
+        "target": "pipe:[378974]",
+        "pendingBytes": 0
+      }
+    ]
+  },
+  "censusReceiptSha256": "b514c778848c9f4a55f43e7368a6318d2c7a80ddd67da1570df2fe92d3ed3db9",
+  "cliIdentitySha256": "4e8612a281000158d5845f6fcce9c826ea62e19296714e61cd48fcafb6eded92",
+  "stressLandingSamples": [
+    {
+      "label": "baseline",
+      "fds": 119,
+      "pipes": 96,
+      "rssKiB": 7028
+    },
+    {
+      "label": "cycle-0-load",
+      "fds": 149,
+      "pipes": 96,
+      "rssKiB": 7048
+    },
+    {
+      "label": "cycle-0-recovered",
+      "fds": 135,
+      "pipes": 116,
+      "rssKiB": 7136
+    },
+    {
+      "label": "cycle-1-load",
+      "fds": 209,
+      "pipes": 124,
+      "rssKiB": 7156
+    },
+    {
+      "label": "cycle-1-recovered",
+      "fds": 267,
+      "pipes": 244,
+      "rssKiB": 7596
+    },
+    {
+      "label": "cycle-2-load",
+      "fds": 299,
+      "pipes": 244,
+      "rssKiB": 7596
+    },
+    {
+      "label": "cycle-2-recovered",
+      "fds": 267,
+      "pipes": 244,
+      "rssKiB": 7560
+    },
+    {
+      "label": "cycle-3-load",
+      "fds": 335,
+      "pipes": 244,
+      "rssKiB": 7568
+    },
+    {
+      "label": "cycle-3-recovered",
+      "fds": 270,
+      "pipes": 244,
+      "rssKiB": 8180
+    },
+    {
+      "label": "cycle-4-load",
+      "fds": 307,
+      "pipes": 244,
+      "rssKiB": 8180
+    },
+    {
+      "label": "cycle-4-recovered",
+      "fds": 271,
+      "pipes": 244,
+      "rssKiB": 8084
+    },
+    {
+      "label": "cycle-5-load",
+      "fds": 339,
+      "pipes": 244,
+      "rssKiB": 8088
+    },
+    {
+      "label": "cycle-5-recovered",
+      "fds": 273,
+      "pipes": 244,
+      "rssKiB": 8200
+    },
+    {
+      "label": "cycle-6-load",
+      "fds": 307,
+      "pipes": 244,
+      "rssKiB": 8200
+    },
+    {
+      "label": "cycle-6-recovered",
+      "fds": 275,
+      "pipes": 244,
+      "rssKiB": 8192
+    },
+    {
+      "label": "cycle-7-load",
+      "fds": 339,
+      "pipes": 244,
+      "rssKiB": 8192
+    },
+    {
+      "label": "cycle-7-recovered",
+      "fds": 273,
+      "pipes": 244,
+      "rssKiB": 8200
+    },
+    {
+      "label": "final",
+      "fds": 281,
+      "pipes": 244,
+      "rssKiB": 8200
+    }
+  ],
+  "quietSamples": 48,
+  "quietSeconds": 45.219012013985775,
+  "sourceOwner": "src/transport/tcp_relay.rs PipePool::give_back retains only drained pipes and caps free.len() at keep; FdPermit lives with each pipe",
+  "noGateOrProductionThresholdChanged": true
+}
