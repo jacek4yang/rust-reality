@@ -400,3 +400,30 @@ resource retention, not a demonstrated FD leak. Nevertheless, the fixed recovery
 ceiling remains failed. No pool shrinking, lower concurrency, raised threshold
 or longer-wait acceptance workaround is applied. Reconciling the qualification
 envelope with the intended bounded production policy requires explicit review.
+
+## Exact-source gates and candidate package identities
+
+The [gate/package manifest](candidate-1da34e3-gates-manifest.json) binds 126
+members in `candidate-1da34e3-gates.tar.xz`, SHA-256
+`5ed9a725b5a9580cde58af902ad26efa4f9b98f72d8159c59a5d9363ad9c4801`.
+It retains all 19 local authoritative-gate stage logs, package build/smoke
+receipts and tier/ELF identities. The source gate passes; its success does not
+override the separate failed native PSS gate.
+
+Existing exact-source tests exercise replay expiry/refill, stale-generation
+retirement, credential isolation, whole-session inactivity, write-stall
+timeouts, half-close and cancellation. Their actual release-test outputs are
+retained, rather than claiming that operation-count stress represents a month
+of elapsed time.
+
+Native ARM64 Actions job 112721709827 in run 37599983901 builds, packages
+and executes the candidate on aarch64 Linux with glibc 2.35.
+Artifact 11472806292 ZIP SHA-256 is
+`9a83bde9e2a1fa428e7f4b2b2ab7e823f837b1e376620e040515c07740487ef2`;
+package SHA-256 is
+`8b25884e50d8d6555c59a626984781daa471e4789f7883e96d8f0fb04559a025`,
+and unpacked ELF SHA-256 is
+`6218b3345f0bbe68286bd1eb63d68f2955ddc902b0a011978775f1282d17295b`.
+This is a native build/package execution receipt, not local ARM64 proxy or
+real-WAN qualification. The existing version label `2.0.1` does not identify
+a newly created tag or published release.
