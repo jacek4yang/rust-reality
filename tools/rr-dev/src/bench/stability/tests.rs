@@ -32,7 +32,7 @@ fn fixture() -> Value {
             "name":role,"process":process(role),"vcpus":if name.ends_with("/constrained") {1} else {2},
             "memory_limit_bytes":1_073_741_824_u64,"swap_limit_bytes":0,"startup":artifact(),
             "policy":{
-                "fixed_fds":7,"fixed_descriptor_targets":["/dev/null","/fixture/server.log","/fixture/server.log","anon_inode:[eventpoll]","anon_inode:[eventfd]","anon_inode:[eventpoll]","anon_inode:[eventfd]"],"listener_sockets":1,"idle_inbound_capacity":16,"dynamic_fd_budget":4096,"pipe_pair_capacity":122,
+                "runtime_unix_sockets":0,"fixed_fds":7,"fixed_descriptor_targets":["/dev/null","/fixture/server.log","/fixture/server.log","anon_inode:[eventpoll]","anon_inode:[eventfd]","anon_inode:[eventpoll]","anon_inode:[eventfd]"],"listener_sockets":1,"idle_inbound_capacity":16,"dynamic_fd_budget":4096,"pipe_pair_capacity":122,
                 "warm_socket_capacity":11,"active_socket_capacity":128,"relay_fd_capacity":128,
                 "soft_fd_limit":8192,"replay_capacity":65536,"replay_expiry_ms":120_000,"retirement_deadline_ms":30000
             }
@@ -47,7 +47,7 @@ fn fixture() -> Value {
                 let samples: Vec<_> = contract.roles.iter().map(|role| json!({
                     "observation":{"path":format!("{name}-{index}-{offset}-{role}"),"sha256":hash::sha256_hex(format!("{name}-{index}-{offset}-{role}").as_bytes())},"role":role,"process":process(role),"rss_kib":16384,"hwm_kib":16384,"pss_kib":12000,"anonymous_kib":10000,"threads":4,
                     "descriptors":{
-                        "total":263,"idle_inbound_sockets":0,"fixed":7,"listener_sockets":1,"warm_sockets":11,"active_sockets":0,
+                        "runtime_unix_sockets":0,"total":263,"idle_inbound_sockets":0,"fixed":7,"listener_sockets":1,"warm_sockets":11,"active_sockets":0,
                         "active_relay_fds":0,"retained_pipe_pairs":122,"dirty_retained_pipe_bytes":0,
                         "held_dynamic_permits":256,"reserved_dynamic_permits":1,"unexplained":0
                     },
@@ -307,6 +307,65 @@ fn native_reconstruction_and_resource_gate_fail_closed() {
 }
 
 #[test]
+fn runtime_unix_descriptors_have_kernel_backed_fixed_startup_ownership() {
+    let evidence = schema::parse(&serde_json::to_vec(&fixture()).unwrap()).unwrap();
+    let sample = &evidence.cells[0].cycles[0].checkpoints[0].samples[0];
+    let policy = &evidence.cells[0].roles[0].policy;
+    let mut raw =
+        schema::parse_observation(&serde_json::to_vec(&raw_observation(sample, policy)).unwrap())
+            .unwrap();
+    // Tokio retains both ends of its signal socket pair and a cloned receiver.
+    for (fd, inode) in [(997, 900), (998, 901), (999, 900)] {
+        raw.descriptors.insert(fd, format!("socket:[{inode}]"));
+    }
+    raw.unix_sockets = Some("Num RefCount Protocol Flags Type St Inode Path\n0000000000000000: 00000003 00000000 00000000 0001 03 900\n0000000000000000: 00000003 00000000 00000000 0001 03 901\n".to_owned());
+    let startup = super::observation::startup_policy(&raw, 1).unwrap();
+    let normalized =
+        super::observation::normalize(&raw, &startup, "native", sample.observation.clone())
+            .unwrap();
+    assert_eq!(normalized.descriptors.runtime_unix_sockets, 3);
+    assert_eq!(
+        evaluate::evaluate_native_resources(&startup, &normalized, &normalized, true).verdict,
+        Verdict::Pass
+    );
+    raw.descriptors.insert(1000, "socket:[900]".to_owned());
+    assert!(
+        super::observation::normalize(&raw, &startup, "native", sample.observation.clone())
+            .is_err()
+    );
+}
+
+#[test]
+fn collection_receipts_reject_substitution_and_exclude_unowned_socket_paths() {
+    let digest = "a".repeat(64);
+    let valid = format!("{digest}  /proc/42/exe\n");
+    assert_eq!(
+        super::observation::digest_receipt(&valid, "/proc/42/exe").unwrap(),
+        digest
+    );
+    for changed in [
+        valid.replace("42", "43"),
+        format!("{valid}{valid}"),
+        valid.replace('a', "z"),
+    ] {
+        assert!(super::observation::digest_receipt(&changed, "/proc/42/exe").is_err());
+    }
+    let table = "Num RefCount Protocol Flags Type St Inode Path\n0000000000000000: 00000003 00000000 00000000 0001 03 100\n0000000000000000: 00000003 00000000 00000000 0001 03 101 /unrelated/private/path\n";
+    let owned = [(3, "socket:[100]".to_owned())].into_iter().collect();
+    let retained = super::observation::owned_unix_rows(table, &owned).unwrap();
+    assert!(retained.contains("03 100\n"));
+    assert!(!retained.contains("101"));
+    assert!(!retained.contains("private"));
+    for changed in [
+        table.replace("100", "-1"),
+        table.replace("101", "100"),
+        table.replace("Num", "unexpected"),
+    ] {
+        assert!(super::observation::owned_unix_rows(&changed, &owned).is_err());
+    }
+}
+
+#[test]
 fn artifact_verification_rejects_missing_changed_and_escaping_objects() {
     let workspace = Workspace::create("stability-artifacts").unwrap();
     let mut artifact = schema::Artifact {
@@ -333,7 +392,7 @@ fn raw_observation(sample: &schema::Sample, policy: &schema::Policy) -> Value {
     for target in &policy.fixed_descriptor_targets {
         descriptors.insert(descriptors.len().to_string(), json!(target));
     }
-    for index in 0..12 {
+    for index in 1..=12 {
         descriptors.insert(
             descriptors.len().to_string(),
             json!(format!("socket:[{index}]")),
@@ -357,7 +416,7 @@ fn raw_observation(sample: &schema::Sample, policy: &schema::Policy) -> Value {
         "initial_executable_sha256":sample.process.executable_sha256,"final_executable_sha256":sample.process.executable_sha256,
         "status":"VmRSS: 16384 kB\nVmHWM: 16384 kB\nThreads: 4\n","smaps_rollup":"Pss: 12000 kB\nAnonymous: 10000 kB\n",
         "limits":"Max open files            8192                 8192                 files\n",
-        "descriptors":descriptors,"closed_during_read":[],"ownership_log":log,"errors":[]
+        "descriptors":descriptors,"unix_sockets":"Num RefCount Protocol Flags Type St Inode Path\n","closed_during_read":[],"ownership_log":log,"errors":[]
     })
 }
 

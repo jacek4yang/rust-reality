@@ -107,6 +107,12 @@ handshake, fallback, cryptographic and DNS work at recovery. Declared capacities
 and deadlines must match the actual running authorities. These observations do
 not claim an allocator-byte census.
 
+Fixed runtime Unix sockets are distinguished from TCP using kernel inode rows
+for the selected process; their count cannot grow beyond startup. The collector
+retains no unrelated namespace socket paths. Executable hashing uses the same
+`sha256sum` primitive as release tooling so debug-build hashing does not consume
+the sampling window; missing or malformed hash receipts still fail closed.
+
 `cargo dev bench stability-fixture --fixture PATH --output FRESH_DIRECTORY`
 boots the preserved, owned three-guest KVM fixture, checks guest CPU/swap and
 process identities, retains launch/serial/terminal receipts, and stops only the

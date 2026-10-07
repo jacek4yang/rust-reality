@@ -748,6 +748,7 @@ fn evaluate_owners(
         .and_then(|total| total.checked_add(fd.active_relay_fds));
     let total = dynamic
         .and_then(|total| total.checked_add(fd.fixed))
+        .and_then(|total| total.checked_add(fd.runtime_unix_sockets))
         .and_then(|total| total.checked_add(fd.listener_sockets));
     report.require(
         total == Some(fd.total) && fd.unexplained == 0,
@@ -757,6 +758,7 @@ fn evaluate_owners(
     );
     report.require(
         fd.fixed == policy.fixed_fds
+            && fd.runtime_unix_sockets == policy.runtime_unix_sockets
             && u64::try_from(policy.fixed_descriptor_targets.len()).ok() == Some(policy.fixed_fds)
             && fd.listener_sockets == policy.listener_sockets
             && fd.total <= policy.soft_fd_limit

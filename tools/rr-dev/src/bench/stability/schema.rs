@@ -139,6 +139,7 @@ pub struct Role {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Policy {
+    pub runtime_unix_sockets: u64,
     pub fixed_fds: u64,
     pub fixed_descriptor_targets: Vec<String>,
     pub listener_sockets: u64,
@@ -191,6 +192,7 @@ pub struct Sample {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Descriptors {
+    pub runtime_unix_sockets: u64,
     pub idle_inbound_sockets: u64,
     pub total: u64,
     pub fixed: u64,
@@ -298,6 +300,8 @@ pub struct Observation {
     /// Each successfully resolved descriptor, keyed by its actual number.
     #[serde(deserialize_with = "unique_descriptors")]
     pub descriptors: BTreeMap<u32, String>,
+    /// Kernel Unix-socket rows referenced by this process's descriptors only.
+    pub unix_sockets: Option<String>,
     /// Descriptor numbers whose target disappeared during inspection.
     pub closed_during_read: Vec<u32>,
     /// Full debug log at this checkpoint, not a retrospectively selected tail.

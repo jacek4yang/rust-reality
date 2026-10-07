@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{bench::evidence::RunDirectory, hash};
+use crate::bench::evidence::RunDirectory;
 
 use super::{
     collect,
@@ -143,8 +143,8 @@ impl<'a> Qualification<'a> {
                     &policy,
                     name,
                     Artifact {
+                        sha256: collect::file_digest(&self.run.join(&file))?,
                         path: file,
-                        sha256: hash::sha256_hex(bytes.as_bytes()),
                     },
                 )?;
                 let baseline = process

@@ -36,7 +36,7 @@ Predetermined cycle indices, concurrency, observation offsets, tolerance and
 deadlines prevent omitted cycles or retrospective window selection.
 
 Reconcile the external descriptor census with actual startup policy: fixed
-non-socket descriptors, listener sockets, warm sockets, bounded zero-byte
+non-socket descriptors, runtime Unix sockets, listener sockets, warm sockets, bounded zero-byte
 pre-auth inbound sockets, active session sockets,
 active relay descriptors and retained pipe pairs have separate owners. Count
 reserved permits separately from descriptors already opened: admission reserves
@@ -47,6 +47,8 @@ listener task counts may retain exactly those idle owners after recovery, never
 additional completed or cancelled tasks. Declared capacities and deadlines must
 match the running resource authorities' observations. Unexplained descriptors fail. The existing
 LINE recovery and role-specific peak FD ceilings remain additional bounds.
+Runtime Unix sockets require matching kernel table rows and a fixed startup
+count; merely labeling an unexplained TCP socket as runtime-owned is invalid.
 
 Memory acceptance combines deterministic owner/lifetime regressions with
 fixed-work resource qualification. Completed connections, cancelled work,

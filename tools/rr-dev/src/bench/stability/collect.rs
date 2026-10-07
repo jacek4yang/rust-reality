@@ -6,7 +6,7 @@
 
 use std::{collections::BTreeMap, fs, io::Read as _, path::Path, time::SystemTime};
 
-use crate::{bench::process::proc_starttime, hash};
+use crate::{bench::process::proc_starttime, process::Tool};
 
 use super::schema::Observation;
 
@@ -47,6 +47,22 @@ fn read(path: &Path, errors: &mut Vec<String>) -> Option<String> {
     )
 }
 
+/// Hash a retained file or running executable with the same coreutils primitive
+/// used by release tooling. Sampling must not depend on rr-dev's debug/release
+/// code-generation speed; the entire observation still has its fixed deadline.
+///
+/// # Errors
+/// Fails on missing files, tool failures, timeouts or malformed digest receipts.
+pub fn file_digest(path: &Path) -> Result<String, String> {
+    let path = path.to_str().ok_or("non-UTF-8 digest path")?;
+    let outcome = Tool::new("sha256sum")
+        .args(["--", path])
+        .timeout(std::time::Duration::from_secs(2))
+        .run()
+        .map_err(|error| error.to_string())?;
+    super::observation::digest_receipt(&outcome.stdout, path)
+}
+
 /// Collect raw observations for one explicitly selected local process.
 ///
 /// # Errors
@@ -63,7 +79,7 @@ pub fn observe(pid: u32, log: &Path) -> Result<Observation, String> {
         &mut errors,
     );
     let initial_executable_sha256 = retain(
-        hash::sha256_file(&root.join("exe")),
+        file_digest(&root.join("exe")),
         "initial executable identity",
         &mut errors,
     );
@@ -110,6 +126,13 @@ pub fn observe(pid: u32, log: &Path) -> Result<Observation, String> {
         }
     }
     let ownership_log = read(log, &mut errors);
+    let unix_sockets = read(&root.join("net/unix"), &mut errors).and_then(|table| {
+        retain(
+            super::observation::owned_unix_rows(&table, &descriptors),
+            "owned Unix socket rows",
+            &mut errors,
+        )
+    });
     // Do not use `?` before both terminal identity reads have been attempted.
     let final_start_ticks = retain(
         proc_starttime(pid).ok_or_else(|| "process unavailable".to_owned()),
@@ -117,7 +140,7 @@ pub fn observe(pid: u32, log: &Path) -> Result<Observation, String> {
         &mut errors,
     );
     let final_executable_sha256 = retain(
-        hash::sha256_file(&root.join("exe")),
+        file_digest(&root.join("exe")),
         "final executable identity",
         &mut errors,
     );
@@ -134,6 +157,7 @@ pub fn observe(pid: u32, log: &Path) -> Result<Observation, String> {
         smaps_rollup,
         limits,
         descriptors,
+        unix_sockets,
         closed_during_read,
         ownership_log,
         errors,

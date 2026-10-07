@@ -12,6 +12,10 @@ mod schema;
 mod vm;
 
 libfuzzer_sys::fuzz_target!(|bytes: &[u8]| {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        let _ = observation::digest_receipt(text, "/proc/42/exe");
+        let _ = observation::owned_unix_rows(text, &std::collections::BTreeMap::new());
+    }
     if let Ok(fixture) = schema::parse_vm_fixture(bytes) {
         let root = std::path::Path::new("/fixture");
         let _ = vm::validate(root, &fixture);

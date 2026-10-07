@@ -20,6 +20,104 @@ fn field(text: &str, name: &str) -> Result<u64, String> {
         .map_err(|_| format!("invalid {name}"))
 }
 
+/// Read the exact coreutils digest receipt for a known file argument.
+///
+/// # Errors
+/// Rejects malformed, additional or substituted file records.
+pub fn digest_receipt(output: &str, file: &str) -> Result<String, String> {
+    let suffix = format!("  {file}\n");
+    let digest = output
+        .strip_suffix(&suffix)
+        .ok_or("digest receipt names another file")?;
+    if !super::evaluate::digest(digest, 64) {
+        return Err("invalid digest receipt".to_owned());
+    }
+    Ok(digest.to_owned())
+}
+
+fn unix_rows(table: &str) -> Result<BTreeMap<u64, &str>, String> {
+    let mut lines = table.lines();
+    if lines
+        .next()
+        .map(|line| line.split_whitespace().collect::<Vec<_>>())
+        != Some(vec![
+            "Num", "RefCount", "Protocol", "Flags", "Type", "St", "Inode", "Path",
+        ])
+    {
+        return Err("invalid Unix socket table header".to_owned());
+    }
+    let mut rows = BTreeMap::new();
+    for line in lines {
+        let fields: Vec<_> = line.split_whitespace().take(7).collect();
+        if fields.len() != 7
+            || !fields[0].ends_with(':')
+            || fields[1..6]
+                .iter()
+                .any(|field| u64::from_str_radix(field, 16).is_err())
+        {
+            return Err("invalid Unix socket table row".to_owned());
+        }
+        let inode = fields[6]
+            .parse::<u64>()
+            .map_err(|_| "invalid Unix socket inode")?;
+        if inode == 0 || rows.insert(inode, line).is_some() {
+            return Err("duplicate or zero Unix socket inode".to_owned());
+        }
+    }
+    Ok(rows)
+}
+
+fn socket_inode(target: &str) -> Result<Option<u64>, String> {
+    target
+        .strip_prefix("socket:[")
+        .map(|number| {
+            number
+                .strip_suffix(']')
+                .and_then(|number| number.parse::<u64>().ok())
+                .filter(|inode| *inode > 0)
+                .ok_or_else(|| "invalid socket descriptor target".to_owned())
+        })
+        .transpose()
+}
+
+/// Retain unmodified kernel rows only for sockets owned by the selected process.
+/// Other namespace sockets and their potentially private paths are not evidence.
+///
+/// # Errors
+/// Rejects malformed kernel tables and descriptor targets.
+pub fn owned_unix_rows(table: &str, descriptors: &BTreeMap<u32, String>) -> Result<String, String> {
+    let rows = unix_rows(table)?;
+    let mut owned = BTreeSet::new();
+    for target in descriptors.values() {
+        if let Some(inode) = socket_inode(target)? {
+            owned.insert(inode);
+        }
+    }
+    let mut output = "Num RefCount Protocol Flags Type St Inode Path\n".to_owned();
+    for (inode, row) in rows {
+        if owned.contains(&inode) {
+            output.push_str(row);
+            output.push('\n');
+        }
+    }
+    Ok(output)
+}
+
+fn runtime_unix_count(raw: &Observation) -> Result<u64, String> {
+    let rows = unix_rows(
+        raw.unix_sockets
+            .as_deref()
+            .ok_or("missing Unix socket observation")?,
+    )?;
+    let mut count = 0;
+    for target in raw.descriptors.values() {
+        if socket_inode(target)?.is_some_and(|inode| rows.contains_key(&inode)) {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case", deny_unknown_fields)]
 enum Event {
@@ -316,13 +414,22 @@ pub fn verify(raw: &Observation, sample: &Sample, policy: &Policy) -> Result<(),
         return Err("normalized ownership differs from debug observations".to_owned());
     }
     let mut fixed = policy.fixed_descriptor_targets.clone();
+    let unix_count = runtime_unix_count(raw)?;
+    if unix_count != policy.runtime_unix_sockets
+        || unix_count != sample.descriptors.runtime_unix_sockets
+    {
+        return Err("runtime Unix socket count differs from startup inventory".to_owned());
+    }
+    let unix = unix_rows(raw.unix_sockets.as_deref().ok_or("missing Unix sockets")?)?;
     let mut sockets = 0_u64;
     let mut pipes = 0_u64;
     for target in raw.descriptors.values() {
         if let Some(index) = fixed.iter().position(|expected| expected == target) {
             fixed.swap_remove(index);
-        } else if target.starts_with("socket:[") && target.ends_with(']') {
-            sockets += 1;
+        } else if let Some(inode) = socket_inode(target)? {
+            if !unix.contains_key(&inode) {
+                sockets += 1;
+            }
         } else if target.starts_with("pipe:[") && target.ends_with(']') {
             pipes += 1;
         } else {
@@ -382,6 +489,7 @@ pub fn startup_policy(raw: &Observation, listeners: u64) -> Result<Policy, Strin
         .cloned()
         .collect();
     Ok(Policy {
+        runtime_unix_sockets: runtime_unix_count(raw)?,
         fixed_fds: u64::try_from(fixed_descriptor_targets.len())
             .map_err(|_| "descriptor count overflow")?,
         fixed_descriptor_targets,
@@ -418,13 +526,16 @@ pub fn normalize(
     let ownership = read_ownership(raw, policy.listener_sockets)?;
     let status = raw.status.as_deref().ok_or("missing status")?;
     let smaps = raw.smaps_rollup.as_deref().ok_or("missing smaps_rollup")?;
+    let unix_count = runtime_unix_count(raw)?;
     let sockets = u64::try_from(
         raw.descriptors
             .values()
             .filter(|target| target.starts_with("socket:["))
             .count(),
     )
-    .map_err(|_| "socket count overflow")?;
+    .map_err(|_| "socket count overflow")?
+    .checked_sub(unix_count)
+    .ok_or("Unix socket count overflow")?;
     let pipes = u64::try_from(
         raw.descriptors
             .values()
@@ -478,6 +589,7 @@ pub fn normalize(
         anonymous_kib: field(smaps, "Anonymous:")?,
         threads: field(status, "Threads:")?,
         descriptors: Descriptors {
+            runtime_unix_sockets: unix_count,
             total: u64::try_from(raw.descriptors.len()).map_err(|_| "descriptor overflow")?,
             fixed: policy.fixed_fds,
             listener_sockets: policy.listener_sockets,
