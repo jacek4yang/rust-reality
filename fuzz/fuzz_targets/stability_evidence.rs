@@ -12,6 +12,8 @@ mod evaluate;
 mod execution;
 #[path = "../../tools/rr-dev/src/bench/stability/native_evaluate.rs"]
 mod native_evaluate;
+#[path = "../../tools/rr-dev/src/bench/stability/native_interop.rs"]
+mod native_interop;
 #[path = "../../tools/rr-dev/src/bench/stability/observation.rs"]
 mod observation;
 #[path = "../../tools/rr-dev/src/bench/stability/schema.rs"]
@@ -26,6 +28,8 @@ mod vm;
 libfuzzer_sys::fuzz_target!(|bytes: &[u8]| {
     let _ = checks::parse_ci(bytes);
     let _ = checks::parse_gate(bytes);
+    let _ = native_interop::parse(bytes);
+    let _ = native_interop::parse_environment(bytes);
     let _ = test_receipt::parse(bytes);
     let _ = action::parse(bytes);
     let _ = action::warm_tcp_config(bytes);

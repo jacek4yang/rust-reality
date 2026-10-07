@@ -10,6 +10,7 @@ pub mod fixture;
 pub mod guest;
 pub mod native;
 pub mod native_evaluate;
+pub mod native_interop;
 pub mod observation;
 pub mod schema;
 pub mod test_receipt;
@@ -136,6 +137,7 @@ fn verify_required_check(
     let contract: schema::Contract =
         serde_json::from_str(schema::CONTRACT).expect("compiled contract");
     match check.name.as_str() {
+        "native-interop" => verify_interop_receipt(root, check, identity),
         "native-resources" => verify_native_receipt(root, &check.output, identity),
         "local-full-gate" => {
             let gate = checks::verify_gate(&read_artifact(root, &check.output)?, check, identity,
@@ -167,6 +169,62 @@ fn verify_required_check(
         }
         _ => Err("required check lacks a supported executable receipt; an opaque success claim cannot qualify".to_owned()),
     }
+}
+
+fn verify_interop_receipt(
+    root: &Path,
+    check: &schema::Check,
+    identity: &schema::Identity,
+) -> Result<Report, String> {
+    let receipt = native_interop::parse(&read_artifact(root, &check.output)?)?;
+    let environment =
+        native_interop::parse_environment(&read_artifact(root, &identity.environment)?)?;
+    native_interop::verify(
+        &receipt,
+        &environment,
+        check,
+        identity,
+        crate::bench::no_ccs::REQUIRED_OPENSSL_PREFIX,
+    )?;
+    let directory = Path::new(&check.output.path)
+        .parent()
+        .ok_or("missing interop directory")?;
+    let observation = |name: &str| -> Result<Vec<u8>, String> {
+        let path = directory.join(name);
+        let mut found = check
+            .observations
+            .iter()
+            .filter(|artifact| Path::new(&artifact.path) == path);
+        let artifact = found
+            .next()
+            .ok_or("missing interoperability raw observation")?;
+        if found.next().is_some() {
+            return Err("duplicate interoperability observation".to_owned());
+        }
+        read_artifact(root, artifact)
+    };
+    let source = observation("payload-1.bin")?;
+    let received = observation("download.bin")?;
+    if source.len() as u64 != receipt.assertions.payload_bytes
+        || source != received
+        || hash::sha256_hex(&source) != receipt.assertions.payload_sha256
+        || !source
+            .iter()
+            .copied()
+            .eq((0_u8..=255).cycle().take(source.len()))
+    {
+        return Err(
+            "interoperability payload does not reproduce the exact received bytes".to_owned(),
+        );
+    }
+    let trace = observation(&receipt.trace)?;
+    crate::bench::no_ccs::assert_no_server_ccs(
+        std::str::from_utf8(&trace).map_err(|error| error.to_string())?,
+    )?;
+    Ok(Report {
+        verdict: Verdict::Pass,
+        findings: Vec::new(),
+    })
 }
 
 fn verify_cell_actions(

@@ -930,6 +930,8 @@ pub fn run(suite: &NoCcsSuite) -> Result<Json, String> {
     )?;
 
     let (mut origin, expected_sha) = start_origin(suite, &workspace, origin_port)?;
+    std::fs::copy(workspace.join("payload-1.bin"), run.join("payload-1.bin"))
+        .map_err(|error| format!("retain interoperability source payload: {error}"))?;
     server
         .wait_for_port(server_port, std::time::Duration::from_secs(30))
         .map_err(|error| error.to_string())?;
@@ -937,7 +939,7 @@ pub fn run(suite: &NoCcsSuite) -> Result<Json, String> {
         .wait_for_port(socks_port, std::time::Duration::from_secs(30))
         .map_err(|error| error.to_string())?;
 
-    let downloaded = workspace.join("download.bin");
+    let downloaded = run.join("download.bin");
     interop::fetch_payload(socks_port, origin_port, &downloaded)?;
     let observed_sha = hash::sha256_file(&downloaded)?;
     if observed_sha != expected_sha {

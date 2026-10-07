@@ -198,6 +198,105 @@ fn external_image_digest_observes_the_callers_running_executable() {
 }
 
 #[test]
+fn native_interop_reconstructs_payload_trace_and_external_image_bindings() {
+    let workspace = Workspace::create("interop-receipt").unwrap();
+    let save = |name: &str, bytes: &[u8]| {
+        std::fs::write(workspace.join(name), bytes).unwrap();
+        schema::Artifact {
+            path: name.to_owned(),
+            sha256: hash::sha256_hex(bytes),
+        }
+    };
+    let binary = |name: &str, bytes: &[u8], identity: &str| crate::bench::identity::Binary {
+        label: name.to_owned(),
+        path: name.into(),
+        sha256: hash::sha256_hex(bytes),
+        identity: identity.to_owned(),
+    };
+    let rust = binary("rust-reality", b"product", "product");
+    let xray = binary("xray", b"stock", "stock Xray");
+    let openssl = binary(
+        "openssl",
+        b"openssl",
+        "OpenSSL 3.5.6 7 Apr 2026\nbuilt on: fixture\n",
+    );
+    let mut evidence: schema::Evidence = serde_json::from_value(fixture()).unwrap();
+    evidence.identity.candidate = save("rust-reality", b"product");
+    evidence.identity.environment = save("environment.json", &serde_json::to_vec(&json!({
+        "host_kernel":"Linux", "xray_sha256":xray.sha256,"xray_identity":xray.identity,"openssl_sha256":openssl.sha256
+    })).unwrap());
+    let payload: Vec<_> = (0_u8..=255).cycle().take(1_048_576).collect();
+    let summary: Value = serde_json::from_str(
+        &crate::bench::no_ccs::summary_json(
+            "interop-test",
+            &rust,
+            &xray,
+            &openssl,
+            "2026-10-08T00:00:00Z",
+            [1001, 1002, 1003, 1004],
+            &hash::sha256_hex(&payload),
+        )
+        .to_python_json(),
+    )
+    .unwrap();
+    let mut check = evidence
+        .checks
+        .iter()
+        .find(|check| check.name == "native-interop")
+        .unwrap()
+        .clone();
+    check.argv = concat!(
+        "synthetic-object bench run --suite no-ccs-interop --rust-bin rust-reality ",
+        "--xray-bin xray --openssl-bin openssl --run-id interop-test --out-dir ."
+    )
+    .split_whitespace()
+    .map(str::to_owned)
+    .collect();
+    check.output = save("summary.json", &serde_json::to_vec(&summary).unwrap());
+    check.observations = vec![
+        save("payload-1.bin", &payload),
+        save("download.bin", &payload),
+        save(
+            "openssl-trace.log",
+            b">>> TLS 1.3, Handshake, ServerHello\n",
+        ),
+        save("xray", b"stock"),
+        save("openssl", b"openssl"),
+    ];
+    assert!(super::verify_interop_receipt(workspace.path(), &check, &evidence.identity).is_ok());
+    for (pointer, bad) in [
+        ("/rustReality/sha256", json!("c".repeat(64))),
+        ("/xray/sha256", json!("d".repeat(64))),
+        ("/xray/immutableDuringRun", json!(false)),
+        ("/openssl/middlebox", json!(true)),
+        ("/topology/ports/cover", json!(1002)),
+        ("/assertions/serverHello", json!(false)),
+        ("/assertions/payloadBytes", json!(-1)),
+        ("/ok", json!(false)),
+    ] {
+        let mut altered = summary.clone();
+        *altered.pointer_mut(pointer).unwrap() = bad;
+        check.output = save("summary.json", &serde_json::to_vec(&altered).unwrap());
+        assert!(
+            super::verify_interop_receipt(workspace.path(), &check, &evidence.identity).is_err(),
+            "{pointer}"
+        );
+    }
+    check.output = save("summary.json", &serde_json::to_vec(&summary).unwrap());
+    check.observations[1] = save("download.bin", b"corrupt");
+    assert!(super::verify_interop_receipt(workspace.path(), &check, &evidence.identity).is_err());
+    check.observations[1] = save("download.bin", &payload);
+    check.observations[2] = save(
+        "openssl-trace.log",
+        b">>> ServerHello\n>>> ChangeCipherSpec\n",
+    );
+    assert!(super::verify_interop_receipt(workspace.path(), &check, &evidence.identity).is_err());
+    check.observations[2] = save("openssl-trace.log", b">>> ServerHello\n");
+    check.observations.pop();
+    assert!(super::verify_interop_receipt(workspace.path(), &check, &evidence.identity).is_err());
+}
+
+#[test]
 fn bounded_empty_permit_backed_retention_above_historical_fd_proxy_passes() {
     assert_eq!(verdict(&fixture()), Verdict::Pass);
 }

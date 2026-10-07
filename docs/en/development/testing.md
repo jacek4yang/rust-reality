@@ -189,3 +189,7 @@ final retrieval retains previously collected data without an unbounded memory
 copy. A failed attempt keeps its partial cell, raw files and terminal status.
 The VM runner does not supply the separate required native, CI, security or
 package-check receipts: absent receipts keep aggregate qualification NOT RUN.
+The native interoperability receipt retains the exact source and downloaded
+payloads and the OpenSSL handshake trace. Offline verification checks their
+bytes, the absence of server CCS, the pinned external executables and the
+prescribed stock-Xray command; a summary claiming success alone cannot pass.
