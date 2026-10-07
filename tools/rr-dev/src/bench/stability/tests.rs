@@ -1180,6 +1180,15 @@ fn native_offline_verification_reconstructs_bound_raw_samples() {
 
 #[test]
 fn checked_in_seeds_reach_valid_resource_and_vm_reconstruction() {
+    let pressure = super::native_pressure::parse(include_bytes!(
+        "../../../../../fuzz/seeds/stability_evidence/seed_native_pressure"
+    ))
+    .unwrap();
+    super::native_pressure::transitions(
+        include_bytes!("../../../../../fuzz/seeds/stability_evidence/seed_pressure_events.jsonl"),
+        &pressure,
+    )
+    .unwrap();
     let raw = schema::parse_observation(include_bytes!(
         "../../../../../fuzz/seeds/stability_evidence/seed_owned_unix.json"
     ))

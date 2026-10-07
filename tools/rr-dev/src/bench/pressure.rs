@@ -286,6 +286,7 @@ pub fn run(suite: &PressureSuite) -> Result<PressureResult, String> {
         socks_port,
         echo_port,
         &run.join("server.log"),
+        &run,
     ) {
         Ok(result) => result,
         Err(error) => {
@@ -343,6 +344,8 @@ pub fn run(suite: &PressureSuite) -> Result<PressureResult, String> {
             "xray.log",
             "pressure-result.json",
             "gate-summary.json",
+            "control-received.bin",
+            "recovery-received.bin",
         ],
     )?;
     run.publish(
@@ -360,6 +363,7 @@ fn exercise(
     socks_port: u16,
     echo_port: u16,
     server_log: &Path,
+    run: &RunDirectory,
 ) -> Result<PressureResult, String> {
     let budget = wait_event(
         server,
@@ -372,7 +376,7 @@ fn exercise(
 
     let mut held = Vec::new();
     let mut control = open_tunnel(socks_port, echo_port, Duration::from_secs(5))?;
-    echo_payload(&mut control, b"control-before-pressure")?;
+    echo_payload(&mut control, b"control-before-pressure", None)?;
     held.push(control);
 
     let mut fill_failures = 0;
@@ -381,7 +385,7 @@ fn exercise(
             return Err("server exited while filling descriptor budget".to_owned());
         }
         if let Ok(mut tunnel) = open_tunnel(socks_port, echo_port, Duration::from_secs(2)) {
-            if echo_payload(&mut tunnel, format!("held-{index}").as_bytes()).is_ok() {
+            if echo_payload(&mut tunnel, format!("held-{index}").as_bytes(), None).is_ok() {
                 held.push(tunnel);
             } else {
                 fill_failures += 1;
@@ -423,7 +427,11 @@ fn exercise(
     }
 
     let control_payload: Vec<u8> = (0_u8..=255).cycle().take(4096).collect();
-    echo_payload(&mut held[0], &control_payload)?;
+    echo_payload(
+        &mut held[0],
+        &control_payload,
+        Some(&run.join("control-received.bin")),
+    )?;
     let control_sha256 = hash::sha256_hex(&control_payload);
 
     held.truncate(1);
@@ -440,7 +448,11 @@ fn exercise(
 
     let recovery_payload: Vec<u8> = (0_u8..=255).cycle().take(65_536).collect();
     let mut recovery = open_tunnel(socks_port, echo_port, Duration::from_secs(8))?;
-    echo_payload(&mut recovery, &recovery_payload)?;
+    echo_payload(
+        &mut recovery,
+        &recovery_payload,
+        Some(&run.join("recovery-received.bin")),
+    )?;
     let recovery_sha256 = hash::sha256_hex(&recovery_payload);
     drop(recovery);
     drop(held);
@@ -470,7 +482,7 @@ fn storm(socks_port: u16, echo_port: u16, connections: usize) -> (usize, usize) 
                 else {
                     return false;
                 };
-                echo_payload(&mut tunnel, b"storm").is_ok()
+                echo_payload(&mut tunnel, b"storm", None).is_ok()
             })
         })
         .collect();
@@ -535,18 +547,45 @@ fn discard(stream: &mut TcpStream, length: usize) -> Result<(), String> {
         .map_err(|error| format!("SOCKS bound address failed: {error}"))
 }
 
-fn echo_payload(stream: &mut TcpStream, payload: &[u8]) -> Result<(), String> {
+fn echo_payload(
+    stream: &mut TcpStream,
+    payload: &[u8],
+    receipt: Option<&Path>,
+) -> Result<(), String> {
     stream
         .write_all(payload)
         .map_err(|error| format!("echo send failed: {error}"))?;
-    let mut received = vec![0; payload.len()];
-    stream
-        .read_exact(&mut received)
-        .map_err(|error| format!("echo receive failed: {error}"))?;
-    if received != payload {
-        return Err("echo integrity mismatch".to_owned());
+    let mut received = Vec::with_capacity(payload.len());
+    let attempted = (|| {
+        let mut buffer = [0; 8192];
+        while received.len() < payload.len() {
+            let available = (payload.len() - received.len()).min(buffer.len());
+            let count = stream
+                .read(&mut buffer[..available])
+                .map_err(|error| format!("echo receive failed: {error}"))?;
+            if count == 0 {
+                return Err("echo ended before the complete payload".to_owned());
+            }
+            received.extend_from_slice(&buffer[..count]);
+        }
+        if received != payload {
+            return Err("echo integrity mismatch".to_owned());
+        }
+        Ok(())
+    })();
+    let saved = receipt.map_or(Ok(()), |path| {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .and_then(|mut file| file.write_all(&received))
+            .map_err(|error| format!("retain pressure echo bytes: {error}"))
+    });
+    match (attempted, saved) {
+        (Err(primary), Err(secondary)) => Err(format!("{primary}; {secondary}")),
+        (Err(error), _) | (_, Err(error)) => Err(error),
+        _ => Ok(()),
     }
-    Ok(())
 }
 
 fn wait_event(
@@ -923,5 +962,164 @@ mod tests {
         assert!(rendered.contains("\"stormFailures\": 12"));
         assert!(rendered.contains("\"expectedRecoverySha256\""));
         assert!(rendered.contains(&"b".repeat(64)));
+    }
+
+    fn receipt_fixture(
+        dir: &Workspace,
+    ) -> (
+        crate::bench::stability::schema::Identity,
+        crate::bench::stability::schema::Check,
+        serde_json::Value,
+    ) {
+        use crate::bench::stability::schema::{Artifact, Check, Identity};
+        let save = |name: &str, bytes: &[u8]| {
+            std::fs::write(dir.join(name), bytes).unwrap();
+            Artifact {
+                path: name.to_owned(),
+                sha256: hash::sha256_hex(bytes),
+            }
+        };
+        let binary = |name: &str| Binary {
+            label: name.to_owned(),
+            path: name.into(),
+            sha256: hash::sha256_hex(name.as_bytes()),
+            identity: "fixture identity".to_owned(),
+        };
+        let source = "c".repeat(40);
+        let identity = Identity {
+            source_commit: source.clone(), source_archive: save("source", b"source"),
+            candidate: save("rust-reality", b"rust-reality"), evaluator: save("rr-dev", b"rr-dev"),
+            contract: save("contract", b"contract"), workload: save("workload", b"workload"),
+            environment: save("environment", &serde_json::to_vec(&serde_json::json!({
+                "host_kernel":"Linux","xray_identity":"stock Xray","xray_sha256":binary("xray").sha256,"openssl_sha256":binary("openssl").sha256
+            })).unwrap()),
+        };
+        let control: Vec<_> = (0_u8..=255).cycle().take(4096).collect();
+        let recovery: Vec<_> = (0_u8..=255).cycle().take(65536).collect();
+        let result = PressureResult {
+            server_pid: 123,
+            effective_budget: 64,
+            baseline_fd_count: 12,
+            pressure_fd_count: 80,
+            successful_held: 31,
+            fill_failures: 1,
+            storm_successes: 0,
+            storm_failures: 12,
+            high_units: 60,
+            normal_units: 4,
+            control_sha256: hash::sha256_hex(&control),
+            recovery_sha256: hash::sha256_hex(&recovery),
+        };
+        let summary: serde_json::Value = serde_json::from_str(
+            &summary_json(
+                &suite(),
+                &result,
+                &binary("rust-reality"),
+                &binary("xray"),
+                &binary("openssl"),
+                Path::new("rr-dev"),
+                &identity.evaluator.sha256,
+                [1001, 1002, 1003, 1004],
+                &source,
+                &"d".repeat(64),
+                &"e".repeat(64),
+            )
+            .unwrap()
+            .to_python_json(),
+        )
+        .unwrap();
+        let log = concat!(
+            "{\"event\":\"descriptor_budget_report\",\"timestampUnixMs\":1,\"level\":\"info\",\"fd_effective_budget\":64}\n",
+            "{\"event\":\"descriptor_pressure_changed\",\"timestampUnixMs\":2,\"level\":\"info\",\"fd_effective_budget\":64,\"fd_units_in_use\":60,\"fd_pressure_state\":\"high\"}\n",
+            "{\"event\":\"descriptor_pressure_changed\",\"timestampUnixMs\":3,\"level\":\"info\",\"fd_effective_budget\":64,\"fd_units_in_use\":4,\"fd_pressure_state\":\"normal\"}\n"
+        );
+        let argv = format!(
+            "rr-dev bench run --suite descriptor-pressure --rust-bin rust-reality --xray-bin xray --openssl-bin openssl --nofile-limit 192 --max-held-connections 96 --storm-connections 12 --run-id {} --out-dir .",
+            suite().run_id
+        );
+        let check = Check {
+            name: "native-descriptor-pressure".to_owned(),
+            source_commit: source,
+            candidate_sha256: identity.candidate.sha256.clone(),
+            argv: argv.split_whitespace().map(str::to_owned).collect(),
+            exit_code: Some(0),
+            completed: true,
+            executed_cases: 1,
+            failed_cases: 0,
+            output: save("gate-summary.json", &serde_json::to_vec(&summary).unwrap()),
+            observations: vec![
+                save("server.log", log.as_bytes()),
+                save("control-received.bin", &control),
+                save("recovery-received.bin", &recovery),
+                save("xray", b"xray"),
+                save("openssl", b"openssl"),
+            ],
+        };
+        (identity, check, summary)
+    }
+
+    #[test]
+    fn offline_pressure_requires_real_transitions_and_exact_echoes() {
+        use crate::bench::stability::verify_pressure_receipt;
+        use serde_json::json;
+        let dir = Workspace::create("pressure-offline").unwrap();
+        let (identity, check, summary) = receipt_fixture(&dir);
+        assert!(verify_pressure_receipt(dir.path(), &check, &identity).is_ok());
+        for (pointer, bad) in [
+            ("/nofile/soft", json!(8192)),
+            ("/result/stormFailures", json!(0)),
+            ("/result/highTransitionUnits", json!(0)),
+            ("/result/effectiveBudget", json!(65)),
+            ("/result/successfulHeldConnectionsAtPressure", json!(1)),
+            ("/result/pressureFdCount", json!(193)),
+            ("/repositoryHead", json!("f".repeat(40))),
+            ("/binaries/rrDevHelpers/immutableDuringRun", json!(false)),
+        ] {
+            let mut value = summary.clone();
+            *value.pointer_mut(pointer).unwrap() = bad;
+            let bytes = serde_json::to_vec(&value).unwrap();
+            std::fs::write(dir.join("gate-summary.json"), &bytes).unwrap();
+            let mut changed = check.clone();
+            changed.output.sha256 = hash::sha256_hex(&bytes);
+            assert!(
+                verify_pressure_receipt(dir.path(), &changed, &identity).is_err(),
+                "{pointer}"
+            );
+        }
+        std::fs::write(
+            dir.join("gate-summary.json"),
+            serde_json::to_vec(&summary).unwrap(),
+        )
+        .unwrap();
+        for (index, content) in [(0, b"{}\n".as_slice()), (1, b"corrupt"), (2, b"partial")] {
+            let mut changed = check.clone();
+            let original = std::fs::read(dir.join(&changed.observations[index].path)).unwrap();
+            std::fs::write(dir.join(&changed.observations[index].path), content).unwrap();
+            changed.observations[index].sha256 = hash::sha256_hex(content);
+            assert!(verify_pressure_receipt(dir.path(), &changed, &identity).is_err());
+            std::fs::write(dir.join(&changed.observations[index].path), original).unwrap();
+        }
+    }
+
+    #[test]
+    fn interrupted_echo_retains_only_the_received_prefix() {
+        let dir = Workspace::create("pressure-prefix").unwrap();
+        let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let peer = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 7];
+            stream.read_exact(&mut request).unwrap();
+            stream.write_all(b"pay").unwrap();
+        });
+        let mut stream = TcpStream::connect(address).unwrap();
+        let path = dir.join("received");
+        assert!(
+            echo_payload(&mut stream, b"payload", Some(&path))
+                .unwrap_err()
+                .contains("ended before")
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"pay");
+        peer.join().unwrap();
     }
 }

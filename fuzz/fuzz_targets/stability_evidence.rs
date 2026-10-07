@@ -14,6 +14,8 @@ mod execution;
 mod native_evaluate;
 #[path = "../../tools/rr-dev/src/bench/stability/native_interop.rs"]
 mod native_interop;
+#[path = "../../tools/rr-dev/src/bench/stability/native_pressure.rs"]
+mod native_pressure;
 #[path = "../../tools/rr-dev/src/bench/stability/observation.rs"]
 mod observation;
 #[path = "../../tools/rr-dev/src/bench/stability/schema.rs"]
@@ -30,6 +32,12 @@ libfuzzer_sys::fuzz_target!(|bytes: &[u8]| {
     let _ = checks::parse_gate(bytes);
     let _ = native_interop::parse(bytes);
     let _ = native_interop::parse_environment(bytes);
+    let _ = native_pressure::parse(bytes);
+    if let Ok(receipt) = native_pressure::parse(include_bytes!(
+        "../seeds/stability_evidence/seed_native_pressure"
+    )) {
+        let _ = native_pressure::transitions(bytes, &receipt);
+    }
     let _ = test_receipt::parse(bytes);
     let _ = action::parse(bytes);
     let _ = action::warm_tcp_config(bytes);

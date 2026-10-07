@@ -198,3 +198,8 @@ The native interoperability receipt retains the exact source and downloaded
 payloads and the OpenSSL handshake trace. Offline verification checks their
 bytes, the absence of server CCS, the pinned external executables and the
 prescribed stock-Xray command; a summary claiming success alone cannot pass.
+Descriptor-pressure receipts require the fixed 192-descriptor limit, 96-stream
+fill bound and 12-connection storm. Offline verification reconstructs the startup
+budget and high-to-normal transition, verifies the 4-KiB control and 64-KiB
+recovery echoes, and rejects missing raw logs or bytes. Interrupted echoes retain
+their actual received prefix, preserving the original failure.

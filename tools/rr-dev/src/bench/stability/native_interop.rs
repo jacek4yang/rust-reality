@@ -83,6 +83,15 @@ pub struct Environment {
     openssl_sha256: String,
 }
 
+impl Environment {
+    pub fn binds_external_images(&self, xray: &str, openssl: &str) -> bool {
+        !self.host_kernel.is_empty()
+            && !self.xray_identity.is_empty()
+            && self.xray_sha256 == xray
+            && self.openssl_sha256 == openssl
+    }
+}
+
 pub fn parse(bytes: &[u8]) -> Result<Receipt, String> {
     serde_json::from_slice(bytes).map_err(|error| error.to_string())
 }
