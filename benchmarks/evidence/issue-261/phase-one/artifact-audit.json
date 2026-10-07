@@ -1,0 +1,519 @@
+[
+  {
+    "artifact": 11358675348,
+    "source": "ff2977abb7e6986d7f75093351cfc406e946f2d7",
+    "binary": "572acd698a879d6ceb006f797c3ee23087002e71d65db959b27e53b2d8ecc212",
+    "verifiedMembers": 45,
+    "bindings": {
+      "interop": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "53cf2979766143608a7716318528c447c75f316c804cec8ad7299db55de584a0"
+      },
+      "mechanism": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "9275b77653dacf505a10360655417f037df2cd07cb58bfa63c37de4ab19261cd"
+      },
+      "pressure": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "5b334a3255cc346ba8966a3ddc254ea5edbc78941b24f3e0d1b041bc4516de9f"
+      },
+      "soak": "NOT RETAINED"
+    },
+    "missing": [
+      "soak/environment.json",
+      "soak/completion.json"
+    ],
+    "samples": 280,
+    "aggregateTailMiBPerHour": 2.6239527481529477,
+    "roles": {
+      "handoff-landing": {
+        "growthMiB": 0.75,
+        "tailMiBPerHour": 0.014547716823261836,
+        "pidStarttimes": [
+          [
+            56582,
+            "219171"
+          ]
+        ]
+      },
+      "handoff-line": {
+        "growthMiB": 0.3271484375,
+        "tailMiBPerHour": 1.1345050495399507,
+        "pidStarttimes": [
+          [
+            56587,
+            "219173"
+          ]
+        ]
+      },
+      "nxr-landing": {
+        "growthMiB": 0.6865234375,
+        "tailMiBPerHour": 0.17475313289363703,
+        "pidStarttimes": [
+          [
+            56601,
+            "219177"
+          ]
+        ]
+      },
+      "nxr-line": {
+        "growthMiB": 0.6103515625,
+        "tailMiBPerHour": 1.2112002687280812,
+        "pidStarttimes": [
+          [
+            56606,
+            "219179"
+          ]
+        ]
+      },
+      "socks-line": {
+        "growthMiB": 0.380859375,
+        "tailMiBPerHour": 0.08438911066784965,
+        "pidStarttimes": [
+          [
+            56627,
+            "219185"
+          ]
+        ]
+      },
+      "standalone": {
+        "growthMiB": 1.0986328125,
+        "tailMiBPerHour": 0.004557469500167302,
+        "pidStarttimes": [
+          [
+            56650,
+            "219189"
+          ]
+        ]
+      }
+    },
+    "reload": [
+      {
+        "label": "before-reload",
+        "monotonicSeconds": 901.335858332
+      },
+      {
+        "label": "after-reload",
+        "monotonicSeconds": 902.739559387
+      }
+    ],
+    "summaryVerdict": false
+  },
+  {
+    "artifact": 11365897422,
+    "source": "3b581bdc9d4fbd55fc9e6b02caab67e0d6860949",
+    "binary": "1c77e38ed55fe8189d6fa0c0b2d655f1de609e1f2d8747e97bfcebaf0b38fcd3",
+    "verifiedMembers": 45,
+    "bindings": {
+      "interop": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "dff50d83a13c9cc35b57e775664d876bbb4a27538d7300497a06248cf1d6216e"
+      },
+      "mechanism": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "c4e642c3d4c53d47348895d5963d337cd5e593bcb64dde3dddccc56fca217d97"
+      },
+      "pressure": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "01e5088b21b1d24ae3f33af14ced326a6f2dea077288479f51edab2ed43b9e3f"
+      },
+      "soak": "NOT RETAINED"
+    },
+    "missing": [
+      "soak/environment.json",
+      "soak/completion.json"
+    ],
+    "samples": 303,
+    "aggregateTailMiBPerHour": 3.59646558073809,
+    "roles": {
+      "handoff-landing": {
+        "growthMiB": 0.8603515625,
+        "tailMiBPerHour": 1.6450881945985818,
+        "pidStarttimes": [
+          [
+            56344,
+            "188159"
+          ]
+        ]
+      },
+      "handoff-line": {
+        "growthMiB": 0.181640625,
+        "tailMiBPerHour": 0.021178724828033235,
+        "pidStarttimes": [
+          [
+            56349,
+            "188161"
+          ]
+        ]
+      },
+      "nxr-landing": {
+        "growthMiB": 0.6240234375,
+        "tailMiBPerHour": 0.07312853233043934,
+        "pidStarttimes": [
+          [
+            56363,
+            "188166"
+          ]
+        ]
+      },
+      "nxr-line": {
+        "growthMiB": 0.8232421875,
+        "tailMiBPerHour": 1.75403139358302,
+        "pidStarttimes": [
+          [
+            56368,
+            "188168"
+          ]
+        ]
+      },
+      "socks-line": {
+        "growthMiB": 0.693359375,
+        "tailMiBPerHour": -0.0076918612917212395,
+        "pidStarttimes": [
+          [
+            56388,
+            "188174"
+          ]
+        ]
+      },
+      "standalone": {
+        "growthMiB": 0.9677734375,
+        "tailMiBPerHour": 0.11073059668973702,
+        "pidStarttimes": [
+          [
+            56410,
+            "188178"
+          ]
+        ]
+      }
+    },
+    "reload": [
+      {
+        "label": "before-reload",
+        "monotonicSeconds": 904.154810628
+      },
+      {
+        "label": "after-reload",
+        "monotonicSeconds": 905.4305789
+      }
+    ],
+    "summaryVerdict": false
+  },
+  {
+    "artifact": 11368625773,
+    "source": "3b581bdc9d4fbd55fc9e6b02caab67e0d6860949",
+    "binary": "1c77e38ed55fe8189d6fa0c0b2d655f1de609e1f2d8747e97bfcebaf0b38fcd3",
+    "verifiedMembers": 47,
+    "bindings": {
+      "interop": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "8ab48888b91dc5edb91e756e15fd110eae5cbc4d5fe43749081663bf5d629d84"
+      },
+      "mechanism": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "c72021f042be8402be557fa06514e01ac759fcb5b4d504ced64e29d2b0761935"
+      },
+      "pressure": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "15d35905fd2a29f116ca6d2003992be4e42c2d062006bb7a3b61ece5a65f4d51"
+      },
+      "soak": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "468d2a66905d4498415848c4731323b6e1db365cd4aed3d22b1919cc27480e00"
+      }
+    },
+    "missing": [],
+    "samples": 279,
+    "aggregateTailMiBPerHour": 0.43275649056905446,
+    "roles": {
+      "handoff-landing": {
+        "growthMiB": 0.94921875,
+        "tailMiBPerHour": 0.07851448409595717,
+        "pidStarttimes": [
+          [
+            56559,
+            "217280"
+          ]
+        ]
+      },
+      "handoff-line": {
+        "growthMiB": 0.34765625,
+        "tailMiBPerHour": 0.26593437842959283,
+        "pidStarttimes": [
+          [
+            56564,
+            "217282"
+          ]
+        ]
+      },
+      "nxr-landing": {
+        "growthMiB": 0.556640625,
+        "tailMiBPerHour": 0.008961164560285496,
+        "pidStarttimes": [
+          [
+            56578,
+            "217287"
+          ]
+        ]
+      },
+      "nxr-line": {
+        "growthMiB": 0.416015625,
+        "tailMiBPerHour": 0.026874002302818514,
+        "pidStarttimes": [
+          [
+            56583,
+            "217289"
+          ]
+        ]
+      },
+      "socks-line": {
+        "growthMiB": 0.4892578125,
+        "tailMiBPerHour": 0.01586869029209554,
+        "pidStarttimes": [
+          [
+            56604,
+            "217295"
+          ]
+        ]
+      },
+      "standalone": {
+        "growthMiB": 1.083984375,
+        "tailMiBPerHour": 0.036603770888304854,
+        "pidStarttimes": [
+          [
+            56627,
+            "217299"
+          ]
+        ]
+      }
+    },
+    "reload": [
+      {
+        "label": "before-reload",
+        "monotonicSeconds": 903.34950174
+      },
+      {
+        "label": "after-reload",
+        "monotonicSeconds": 904.742352905
+      }
+    ],
+    "summaryVerdict": true
+  },
+  {
+    "artifact": 11415921286,
+    "source": "c3bda40d73309fd33d6c941c40a27be44e662a46",
+    "binary": "3c12a078d63a42a86be885712caa2bac925bca25bc7431e2678d542ea7305423",
+    "verifiedMembers": 45,
+    "bindings": {
+      "interop": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "bd51827dcb06f4281d7d76dea00985f4943d84bf6de48e3e612c4a452c7f3b32"
+      },
+      "mechanism": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "e834d02b738b21c81683b3eb6efe11a963a0d0f883661a049569795ba9e19cd7"
+      },
+      "pressure": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "76ac7c5a0d521a275f76849d364b22963c8d3f53df130a191d5cde1da4d538e6"
+      },
+      "soak": "NOT RETAINED"
+    },
+    "missing": [
+      "soak/environment.json",
+      "soak/completion.json"
+    ],
+    "samples": 283,
+    "aggregateTailMiBPerHour": 2.634096776805896,
+    "roles": {
+      "handoff-landing": {
+        "growthMiB": 0.791015625,
+        "tailMiBPerHour": 0.06194133287110355,
+        "pidStarttimes": [
+          [
+            56376,
+            "196903"
+          ]
+        ]
+      },
+      "handoff-line": {
+        "growthMiB": 0.1044921875,
+        "tailMiBPerHour": 0.12428336291060263,
+        "pidStarttimes": [
+          [
+            56381,
+            "196905"
+          ]
+        ]
+      },
+      "nxr-landing": {
+        "growthMiB": 0.26171875,
+        "tailMiBPerHour": 0.06876944795858064,
+        "pidStarttimes": [
+          [
+            56396,
+            "196910"
+          ]
+        ]
+      },
+      "nxr-line": {
+        "growthMiB": 0.76953125,
+        "tailMiBPerHour": 0.5458834699450731,
+        "pidStarttimes": [
+          [
+            56401,
+            "196912"
+          ]
+        ]
+      },
+      "socks-line": {
+        "growthMiB": 0.673828125,
+        "tailMiBPerHour": 0.12975321410904825,
+        "pidStarttimes": [
+          [
+            56422,
+            "196918"
+          ]
+        ]
+      },
+      "standalone": {
+        "growthMiB": 1.3125,
+        "tailMiBPerHour": 1.7034659490114878,
+        "pidStarttimes": [
+          [
+            56445,
+            "196922"
+          ]
+        ]
+      }
+    },
+    "reload": [
+      {
+        "label": "before-reload",
+        "monotonicSeconds": 906.488221011
+      },
+      {
+        "label": "after-reload",
+        "monotonicSeconds": 907.897701783
+      }
+    ],
+    "summaryVerdict": false
+  },
+  {
+    "artifact": 11429711879,
+    "source": "ec0d0a3a99769c121930c0ab5c6a5db13d052cea",
+    "binary": "d7d32f53e73bc0dcc8565a287165e9ecf3188e2ee0ae19c1c7f6e3de30902e34",
+    "verifiedMembers": 47,
+    "bindings": {
+      "interop": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "5eea3aaae75538c079807b31c595b46faf5517b35f8bfeed97eee0743fa3402e"
+      },
+      "mechanism": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "0b06bf506c5707c46ae9950974c177f832e4f4cc0163f36097b9e09f2af7c900"
+      },
+      "pressure": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "f9fd3623a032c213e9de99522c107e99b6ec9d4212d86fd404ec061cb76fc48b"
+      },
+      "soak": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "1ce0b3e5661890b4563968d043fdc60fdd24bb67979d7793c0784c3a8446f7c3"
+      }
+    },
+    "missing": [],
+    "samples": 285,
+    "aggregateTailMiBPerHour": 1.3897217392802663,
+    "roles": {
+      "handoff-landing": {
+        "growthMiB": 0.9775390625,
+        "tailMiBPerHour": 0.5016437719183635,
+        "pidStarttimes": [
+          [
+            56437,
+            "198644"
+          ]
+        ]
+      },
+      "handoff-line": {
+        "growthMiB": 0.2705078125,
+        "tailMiBPerHour": 0.3299755235244277,
+        "pidStarttimes": [
+          [
+            56442,
+            "198646"
+          ]
+        ]
+      },
+      "nxr-landing": {
+        "growthMiB": 0.2265625,
+        "tailMiBPerHour": 0.13593115842918543,
+        "pidStarttimes": [
+          [
+            56457,
+            "198650"
+          ]
+        ]
+      },
+      "nxr-line": {
+        "growthMiB": 0.5302734375,
+        "tailMiBPerHour": 0.19563497664139665,
+        "pidStarttimes": [
+          [
+            56462,
+            "198652"
+          ]
+        ]
+      },
+      "socks-line": {
+        "growthMiB": 0.41015625,
+        "tailMiBPerHour": 0.15732241626348242,
+        "pidStarttimes": [
+          [
+            56483,
+            "198658"
+          ]
+        ]
+      },
+      "standalone": {
+        "growthMiB": 1.05078125,
+        "tailMiBPerHour": 0.06921389250341052,
+        "pidStarttimes": [
+          [
+            56505,
+            "198662"
+          ]
+        ]
+      }
+    },
+    "reload": [
+      {
+        "label": "before-reload",
+        "monotonicSeconds": 902.784759929
+      },
+      {
+        "label": "after-reload",
+        "monotonicSeconds": 904.187126567
+      }
+    ],
+    "summaryVerdict": true
+  }
+]

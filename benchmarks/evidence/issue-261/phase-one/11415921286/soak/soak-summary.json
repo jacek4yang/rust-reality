@@ -1,0 +1,124 @@
+{
+  "binaries": {
+    "rustReality": {
+      "identity": "{\"gitCommit\":\"c3bda40d73309fd33d6c941c40a27be44e662a46\",\"version\":\"2.0.1\"}",
+      "sha256": "3c12a078d63a42a86be885712caa2bac925bca25bc7431e2678d542ea7305423"
+    }
+  },
+  "durationSeconds": 1800.0,
+  "error": "aggregate soak resources exceeded bounds: ResourceSummary { fd_growth: -6, fd_peak_growth: 8, thread_growth: -1, thread_peak_growth: 4, rss_growth_mib: 4.48828125, rss_peak_growth_mib: 5.046875, rss_sampled_peak_growth_mib: 4.63671875, rss_tail_slope_mib_per_hour: 2.6511783207586785, pss_available: true, pss_growth_mib: Some(3.9130859375), pss_peak_growth_mib: Some(4.0517578125), pss_tail_slope_mib_per_hour: Some(2.6340967768058956) }",
+  "failedScope": "aggregate",
+  "failureStage": "resource-gate",
+  "finalIdentityCheck": "not-run",
+  "harness": "soak",
+  "implementation": "rust-reality",
+  "longHorizonQualified": false,
+  "memorySlopeGateBasis": {
+    "aggregate": "pss",
+    "perProcess": "rss"
+  },
+  "memoryTailSlopeGateApplied": true,
+  "ok": false,
+  "resourceAggregate": {
+    "fdGrowth": -6,
+    "fdPeakGrowth": 8,
+    "pssAvailable": true,
+    "pssGrowthMiB": 3.9130859375,
+    "pssSampledPeakGrowthMiB": 4.0517578125,
+    "pssTailSlopeMiBPerHour": 2.6340967768058956,
+    "rssGrowthMiB": 4.48828125,
+    "rssPeakGrowthMiB": 5.046875,
+    "rssSampledPeakGrowthMiB": 4.63671875,
+    "rssTailSlopeMiBPerHour": 2.6511783207586785,
+    "threadGrowth": -1,
+    "threadPeakGrowth": 4
+  },
+  "resourceByProcess": {
+    "handoff-landing": {
+      "fdGrowth": 0,
+      "fdPeakGrowth": 2,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.791015625,
+      "pssSampledPeakGrowthMiB": 0.79296875,
+      "pssTailSlopeMiBPerHour": 0.06194133287110354,
+      "rssGrowthMiB": 0.8515625,
+      "rssPeakGrowthMiB": 0.9765625,
+      "rssSampledPeakGrowthMiB": 0.85546875,
+      "rssTailSlopeMiBPerHour": 0.06837583000859408,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 1
+    },
+    "handoff-line": {
+      "fdGrowth": 0,
+      "fdPeakGrowth": 2,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.1044921875,
+      "pssSampledPeakGrowthMiB": 0.1044921875,
+      "pssTailSlopeMiBPerHour": 0.1242833629106026,
+      "rssGrowthMiB": 0.171875,
+      "rssPeakGrowthMiB": 0.171875,
+      "rssSampledPeakGrowthMiB": 0.171875,
+      "rssTailSlopeMiBPerHour": 0.12615913806574514,
+      "threadGrowth": -1,
+      "threadPeakGrowth": 0
+    },
+    "nxr-landing": {
+      "fdGrowth": -2,
+      "fdPeakGrowth": 2,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.26171875,
+      "pssSampledPeakGrowthMiB": 0.26171875,
+      "pssTailSlopeMiBPerHour": 0.0687694479585806,
+      "rssGrowthMiB": 0.30859375,
+      "rssPeakGrowthMiB": 0.30859375,
+      "rssSampledPeakGrowthMiB": 0.30859375,
+      "rssTailSlopeMiBPerHour": 0.07630962254506976,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 1
+    },
+    "nxr-line": {
+      "fdGrowth": -2,
+      "fdPeakGrowth": 2,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.76953125,
+      "pssSampledPeakGrowthMiB": 0.857421875,
+      "pssTailSlopeMiBPerHour": 0.545883469945073,
+      "rssGrowthMiB": 0.7890625,
+      "rssPeakGrowthMiB": 0.87890625,
+      "rssSampledPeakGrowthMiB": 0.87890625,
+      "rssTailSlopeMiBPerHour": 0.5457156800736455,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 1
+    },
+    "socks-line": {
+      "fdGrowth": -2,
+      "fdPeakGrowth": 0,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.673828125,
+      "pssSampledPeakGrowthMiB": 0.76953125,
+      "pssTailSlopeMiBPerHour": 0.12975321410904825,
+      "rssGrowthMiB": 0.7109375,
+      "rssPeakGrowthMiB": 0.80859375,
+      "rssSampledPeakGrowthMiB": 0.80859375,
+      "rssTailSlopeMiBPerHour": 0.12989981885709315,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 1
+    },
+    "standalone": {
+      "fdGrowth": 0,
+      "fdPeakGrowth": 2,
+      "pssAvailable": true,
+      "pssGrowthMiB": 1.3125,
+      "pssSampledPeakGrowthMiB": 1.4404296875,
+      "pssTailSlopeMiBPerHour": 1.7034659490114874,
+      "rssGrowthMiB": 1.65625,
+      "rssPeakGrowthMiB": 1.90625,
+      "rssSampledPeakGrowthMiB": 1.78515625,
+      "rssTailSlopeMiBPerHour": 1.7047182312085316,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 0
+    }
+  },
+  "runId": "37459735433-soak",
+  "schemaVersion": 3
+}
