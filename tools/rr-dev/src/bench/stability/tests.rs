@@ -88,7 +88,7 @@ fn transfer_receipts_reconstruct_exact_payloads_and_fresh_origin_appends() {
     assert!(super::verify_transfer_files(workspace.path(), &corrupt).is_err());
 }
 
-fn fixture() -> Value {
+pub(super) fn fixture() -> Value {
     let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
     let cells: Vec<_> = contract.cells.iter().map(|name| {
         let roles: Vec<_> = contract.roles.iter().map(|role| json!({

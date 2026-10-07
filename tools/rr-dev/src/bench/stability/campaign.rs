@@ -295,7 +295,12 @@ fn assemble_roles(
                 artifact("environment-after.json")?,
             ],
             terminal_status: artifact("terminal-status.json")?,
-            server_logs: if name == "landing" {
+            server_logs: if name == "landing"
+                && cell_root
+                    .join(name)
+                    .join("server-before-restart.log")
+                    .is_file()
+            {
                 vec![
                     artifact("server-before-restart.log")?,
                     artifact("server.log")?,
@@ -968,6 +973,45 @@ fn execute(repo: &Path, plan: &Plan, root: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failure_before_restart_retains_all_available_role_logs() {
+        let workspace = Workspace::create("stability-partial-roles").unwrap();
+        let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
+        let mut cell: schema::Cell =
+            serde_json::from_value(super::super::tests::fixture()["cells"][0].clone()).unwrap();
+        cell.completed = false;
+        cell.roles.clear();
+        for role in &contract.roles {
+            let directory = workspace.join(role);
+            fs::create_dir(&directory).unwrap();
+            fs::write(
+                directory.join("cycle-0-0.json"),
+                include_bytes!("../../../../../fuzz/seeds/stability_evidence/seed_owned_unix.json"),
+            )
+            .unwrap();
+            for name in [
+                "startup-server.json",
+                "environment-before.json",
+                "environment-after.json",
+                "terminal-status.json",
+                "server.log",
+            ] {
+                fs::write(directory.join(name), b"retained raw evidence").unwrap();
+            }
+        }
+        assemble_roles(
+            workspace.path(),
+            workspace.path(),
+            &mut cell,
+            false,
+            &contract,
+        )
+        .unwrap();
+        assert_eq!(cell.roles.len(), 3);
+        assert!(cell.roles.iter().all(|role| role.server_logs.len() == 1));
+        assert!(!cell.completed);
+    }
 
     #[test]
     fn failed_freeze_retains_primary_and_refuses_to_overwrite_the_attempt() {

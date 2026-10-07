@@ -132,6 +132,11 @@ VM 启动及终态回执必须与冻结身份匹配。前后内核观察绑定 C
 指定数据接口、实际安装及恢复的 netem 延迟/丢包、真实陈旧套接字清理、受控
 SIGKILL 回执、稳定的温/冷配置哈希，以及期限内的重载发布记录。
 
+VM 测试应使用冻结的 release 构建工具：
+`RUST_REALITY_GIT_COMMIT=$(git rev-parse HEAD) cargo build --release --manifest-path tools/Cargo.toml -p rr-dev`，
+然后以相同输入调用 `tools/target/release/rr-dev bench stability-run`。
+执行期间，来宾绑定的物理核心及其 SMT 同胞线程不得运行其他编译或测试工作。
+
 `cargo dev bench stability-run --fixture PATH --output FRESH_DIRECTORY
 --candidate FROZEN_BINARY --xray XRAY_BINARY --openssl OPENSSL_BINARY` 执行四个
 本地 VM 测试单元。要求工作区干净且提交与候选二进制内嵌提交一致，并保留来源、

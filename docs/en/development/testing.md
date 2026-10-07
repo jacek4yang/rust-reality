@@ -180,6 +180,11 @@ receipt, stable warm/cold configuration hashes and timely reload publications.
 --candidate FROZEN_BINARY --xray XRAY_BINARY --openssl OPENSSL_BINARY` drives
 the four local VM cells. It requires a clean checkout at the candidate's embedded
 commit and preserves source, contract, harness and executable copies. Each stress
+campaign should use the frozen release-built harness:
+`RUST_REALITY_GIT_COMMIT=$(git rev-parse HEAD) cargo build --release --manifest-path tools/Cargo.toml -p rr-dev`,
+then invoke `tools/target/release/rr-dev bench stability-run` with the same inputs.
+Keep the guests' pinned physical cores, including SMT siblings, free of other
+compilation and test work throughout execution. Each stress
 cycle starts with a concurrency-sized wave of 4-MiB uploads paced at 256 KiB/s,
 then completes at least 100 transfers per LINE. Echo probes retain exact received
 prefixes across fault boundaries; directional probes include concurrent upload
