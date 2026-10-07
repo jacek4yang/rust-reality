@@ -11,7 +11,9 @@ use aes_gcm::{
 #[cfg(not(feature = "ring-aead"))]
 use chacha20poly1305::ChaCha20Poly1305;
 
-use super::{CipherSuite, TrafficKeys};
+use zeroize::Zeroizing;
+
+use super::{CipherSuite, TrafficKeys, TrafficSecret, keys::derive_traffic_keys};
 
 const HEADER_LEN: usize = 5;
 const TAG_LEN: usize = 16;
@@ -21,6 +23,7 @@ const LEGACY_RECORD_VERSION: [u8; 2] = [3, 3];
 const MAX_INNER_PLAINTEXT_LEN: usize = MAX_PLAINTEXT_LEN + 1;
 const MAX_CIPHERTEXT_LEN: usize = MAX_INNER_PLAINTEXT_LEN + TAG_LEN;
 const AES_GCM_RECORD_LIMIT: u64 = 1 << 24;
+const CHACHA20_POLY1305_RECORD_LIMIT: u64 = 1 << 62;
 
 /// Header, authenticated inner content type, and AEAD tag around an unpadded record.
 pub(crate) const UNPADDED_RECORD_WIRE_OVERHEAD: usize = HEADER_LEN + 1 + TAG_LEN;
@@ -101,8 +104,10 @@ impl<'a> OpenedRecord<'a> {
 /// A TLS 1.3 record could not be sealed or authenticated.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Tls13RecordError {
-    /// Traffic key length does not match the selected cipher suite.
+    /// A traffic secret or derived key does not match the selected suite.
     InvalidKey,
+    /// The record layer was not constructed from an evolvable traffic secret.
+    KeyUpdateUnavailable,
     /// The record length, padding, or framing is outside the fixed TLS bounds.
     InvalidLength,
     /// The outer record type or legacy version is invalid for encrypted data.
@@ -146,9 +151,10 @@ impl Error for Tls13RecordError {}
 /// Nonce-safety invariant (unchanged by the provider choice):
 /// `Tls13RecordLayer` is the single source of nonce derivation
 /// (`iv XOR sequence`), it never implements `Clone`, the sequence advances
-/// exactly once per sealed/opened record, and AES-GCM keys are retired at the
-/// conservative 2^24 record limit. ring's `assume_unique_for_key` therefore
-/// always receives a nonce that is unique under this key.
+/// exactly once per sealed/opened record, AES-GCM generations are retired at
+/// the conservative 2^24 record limit, and ChaCha20-Poly1305 generations at
+/// RFC 8446's 2^62 limit. ring's `assume_unique_for_key` therefore always
+/// receives a nonce that is unique under this key.
 struct RecordCipher {
     #[cfg(feature = "ring-aead")]
     inner: Box<ring::aead::LessSafeKey>,
@@ -198,6 +204,51 @@ impl RecordCipher {
             .map_err(|_| Tls13RecordError::InvalidKey)?;
             Ok(Self { inner, suite })
         }
+    }
+
+    /// Replaces the key inside the existing cipher allocation.
+    ///
+    /// The backend key is fully constructed before assignment, so failure
+    /// leaves the current cipher untouched and KeyUpdate adds no allocation.
+    fn rekey(&mut self, suite: CipherSuite, key: &[u8]) -> Result<(), Tls13RecordError> {
+        #[cfg(feature = "ring-aead")]
+        {
+            let algorithm = match suite {
+                CipherSuite::Aes128GcmSha256 => &ring::aead::AES_128_GCM,
+                CipherSuite::Aes256GcmSha384 => &ring::aead::AES_256_GCM,
+                CipherSuite::ChaCha20Poly1305Sha256 => &ring::aead::CHACHA20_POLY1305,
+            };
+            let next = ring::aead::UnboundKey::new(algorithm, key)
+                .map(ring::aead::LessSafeKey::new)
+                .map_err(|_| Tls13RecordError::InvalidKey)?;
+            *self.inner = next;
+        }
+        #[cfg(not(feature = "ring-aead"))]
+        {
+            match (&mut self.inner, suite) {
+                (RustCryptoRecordCipher::Aes128Gcm(current), CipherSuite::Aes128GcmSha256) => {
+                    let next =
+                        Aes128Gcm::new_from_slice(key).map_err(|_| Tls13RecordError::InvalidKey)?;
+                    **current = next;
+                }
+                (RustCryptoRecordCipher::Aes256Gcm(current), CipherSuite::Aes256GcmSha384) => {
+                    let next =
+                        Aes256Gcm::new_from_slice(key).map_err(|_| Tls13RecordError::InvalidKey)?;
+                    **current = next;
+                }
+                (
+                    RustCryptoRecordCipher::ChaCha20Poly1305(current),
+                    CipherSuite::ChaCha20Poly1305Sha256,
+                ) => {
+                    let next = ChaCha20Poly1305::new_from_slice(key)
+                        .map_err(|_| Tls13RecordError::InvalidKey)?;
+                    **current = next;
+                }
+                _ => return Err(Tls13RecordError::InvalidKey),
+            }
+        }
+        self.suite = suite;
+        Ok(())
     }
 
     fn seal(
@@ -337,19 +388,25 @@ fn split_tag(body: &mut [u8]) -> Result<(&mut [u8], &[u8; TAG_LEN]), Tls13Record
 /// Directional TLS 1.3 AEAD state with non-reusable sequence ownership.
 ///
 /// The type deliberately does not implement `Clone`: copying it would reuse a
-/// key/nonce pair and break AEAD security. The traffic keys are retained so
-/// the layer can be exported exactly once via [`Tls13RecordLayer::into_exported_state`]
-/// at a session-handoff boundary; export consumes the layer, so a live
-/// session's key and sequence never have two owners.
+/// key/nonce pair and break AEAD security. Application layers retain the
+/// current traffic secret so they can evolve it or export it exactly once at a
+/// session-handoff boundary. Handshake layers retain no generation secret and
+/// therefore cannot be exported or updated.
 pub struct Tls13RecordLayer {
     cipher: RecordCipher,
     suite: CipherSuite,
-    keys: TrafficKeys,
+    iv: Zeroizing<[u8; NONCE_LEN]>,
+    traffic: TrafficState,
     sequence: u64,
 }
 
+enum TrafficState {
+    Handshake,
+    Application(TrafficSecret),
+}
+
 impl Tls13RecordLayer {
-    /// Consumes one direction's derived traffic key and IV.
+    /// Constructs a non-evolvable handshake record layer from derived keys.
     ///
     /// # Errors
     ///
@@ -359,7 +416,30 @@ impl Tls13RecordLayer {
         Ok(Self {
             cipher,
             suite,
-            keys,
+            iv: Zeroizing::new(*keys.iv()),
+            traffic: TrafficState::Handshake,
+            sequence: 0,
+        })
+    }
+
+    /// Constructs an evolvable application record layer from its traffic secret.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a traffic secret whose hash does not match the suite or whose
+    /// derived key cannot initialize the suite's record cipher.
+    pub fn from_traffic_secret(
+        suite: CipherSuite,
+        traffic_secret: TrafficSecret,
+    ) -> Result<Self, Tls13RecordError> {
+        let keys = derive_traffic_keys(suite, &traffic_secret)
+            .map_err(|_| Tls13RecordError::InvalidKey)?;
+        let cipher = RecordCipher::new(suite, keys.key())?;
+        Ok(Self {
+            cipher,
+            suite,
+            iv: Zeroizing::new(*keys.iv()),
+            traffic: TrafficState::Application(traffic_secret),
             sequence: 0,
         })
     }
@@ -370,35 +450,75 @@ impl Tls13RecordLayer {
         self.sequence
     }
 
-    /// Consumes the layer and exports its key material and current sequence.
+    /// Returns whether exactly one safe old-generation record remains.
     ///
-    /// This is the session-handoff escape hatch: the exported state is the
-    /// only remaining owner of this direction's key and sequence, and it can
-    /// be turned back into a working layer with
-    /// [`Tls13RecordLayer::from_exported_state`] on the same suite.
+    /// A writer uses that final record for `KeyUpdate`, completes its write,
+    /// and only then advances the traffic secret. No configurable threshold is
+    /// involved, and this check performs no allocation or cryptographic work.
     #[must_use]
-    pub fn into_exported_state(self) -> ExportedRecordState {
-        ExportedRecordState {
+    pub const fn needs_key_update(&self) -> bool {
+        self.sequence >= self.key_usage_limit() - 1
+    }
+
+    /// Atomically advances an application layer to its next traffic secret.
+    ///
+    /// The next secret, key, IV, and cipher are all constructed before any live
+    /// state changes. If any derivation or cipher initialization fails, the
+    /// current generation and sequence remain intact. The sequence resets only
+    /// after the replacement cipher is ready.
+    ///
+    /// # Errors
+    ///
+    /// Rejects handshake-only layers and traffic-secret derivation or cipher
+    /// initialization failures.
+    pub fn update_traffic_secret(&mut self) -> Result<(), Tls13RecordError> {
+        let current = match &self.traffic {
+            TrafficState::Application(secret) => secret,
+            TrafficState::Handshake => return Err(Tls13RecordError::KeyUpdateUnavailable),
+        };
+        let next_secret = current
+            .updated()
+            .map_err(|_| Tls13RecordError::InvalidKey)?;
+        let next_keys = derive_traffic_keys(self.suite, &next_secret)
+            .map_err(|_| Tls13RecordError::InvalidKey)?;
+        let next_iv = Zeroizing::new(*next_keys.iv());
+
+        self.cipher.rekey(self.suite, next_keys.key())?;
+        self.iv = next_iv;
+        self.traffic = TrafficState::Application(next_secret);
+        self.sequence = 0;
+        Ok(())
+    }
+
+    /// Consumes an application layer and exports its current secret and sequence.
+    ///
+    /// This is the session-handoff escape hatch: the exported state is the only
+    /// remaining owner of this direction's generation secret and sequence.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a handshake-only layer, which has no application traffic secret.
+    pub fn into_exported_state(self) -> Result<ExportedRecordState, Tls13RecordError> {
+        let traffic_secret = match self.traffic {
+            TrafficState::Application(secret) => secret,
+            TrafficState::Handshake => return Err(Tls13RecordError::KeyUpdateUnavailable),
+        };
+        Ok(ExportedRecordState {
             suite: self.suite,
-            keys: self.keys,
+            traffic_secret,
             sequence: self.sequence,
-        }
+        })
     }
 
     /// Rebuilds a working layer from previously exported state.
     ///
     /// # Errors
     ///
-    /// Rejects key material whose length does not match the exported suite and
-    /// sequences that already reached the suite's per-key record limit.
+    /// Rejects a secret whose hash does not match the suite and sequences that
+    /// already reached the suite's per-key record limit.
     pub fn from_exported_state(state: ExportedRecordState) -> Result<Self, Tls13RecordError> {
-        let cipher = RecordCipher::new(state.suite, state.keys.key())?;
-        let layer = Self {
-            cipher,
-            suite: state.suite,
-            keys: state.keys,
-            sequence: state.sequence,
-        };
+        let mut layer = Self::from_traffic_secret(state.suite, state.traffic_secret)?;
+        layer.sequence = state.sequence;
         layer.ensure_key_available()?;
         Ok(layer)
     }
@@ -662,13 +782,15 @@ impl Tls13RecordLayer {
         })
     }
 
+    const fn key_usage_limit(&self) -> u64 {
+        match self.suite {
+            CipherSuite::Aes128GcmSha256 | CipherSuite::Aes256GcmSha384 => AES_GCM_RECORD_LIMIT,
+            CipherSuite::ChaCha20Poly1305Sha256 => CHACHA20_POLY1305_RECORD_LIMIT,
+        }
+    }
+
     fn ensure_key_available(&self) -> Result<(), Tls13RecordError> {
-        let available = match self.suite {
-            CipherSuite::Aes128GcmSha256 | CipherSuite::Aes256GcmSha384 => {
-                self.sequence < AES_GCM_RECORD_LIMIT
-            }
-            CipherSuite::ChaCha20Poly1305Sha256 => self.sequence < u64::MAX,
-        };
+        let available = self.sequence < self.key_usage_limit();
         if available {
             Ok(())
         } else {
@@ -685,7 +807,7 @@ impl Tls13RecordLayer {
     }
 
     fn nonce(&self) -> [u8; NONCE_LEN] {
-        let mut nonce = *self.keys.iv();
+        let mut nonce = *self.iv;
         let encoded = self.sequence.to_be_bytes();
         for (nonce_byte, sequence_byte) in nonce[4..].iter_mut().zip(encoded) {
             *nonce_byte ^= sequence_byte;
@@ -700,33 +822,33 @@ impl fmt::Debug for Tls13RecordLayer {
             .debug_struct("Tls13RecordLayer")
             .field("suite", &self.suite)
             .field("sequence", &self.sequence)
-            .field("key_material", &"[REDACTED]")
+            .field("traffic_secret", &"[REDACTED]")
             .finish()
     }
 }
 
 /// One record direction's exported application-traffic state.
 ///
-/// Created only by consuming a live [`Tls13RecordLayer`], so the key/sequence
-/// pair of a session can never end up with two owners. The key material is
+/// Created only by consuming a live application [`Tls13RecordLayer`], so the
+/// generation secret and sequence can never have two owners. The secret is
 /// zeroized on drop and never appears in `Debug` output.
 pub struct ExportedRecordState {
     suite: CipherSuite,
-    keys: TrafficKeys,
+    traffic_secret: TrafficSecret,
     sequence: u64,
 }
 
 impl ExportedRecordState {
-    /// Returns the cipher suite the exported keys belong to.
+    /// Returns the cipher suite the exported secret belongs to.
     #[must_use]
     pub const fn suite(&self) -> CipherSuite {
         self.suite
     }
 
-    /// Returns the exported AEAD key and static IV.
+    /// Returns the exported generation secret.
     #[must_use]
-    pub const fn keys(&self) -> &TrafficKeys {
-        &self.keys
+    pub const fn traffic_secret(&self) -> &TrafficSecret {
+        &self.traffic_secret
     }
 
     /// Returns how many records had been sealed or opened at export time.
@@ -735,39 +857,28 @@ impl ExportedRecordState {
         self.sequence
     }
 
-    /// Separates the exported state into suite, key material, and sequence.
-    ///
-    /// Ownership of the key material moves to the caller exactly once; the
-    /// exported state is consumed, so the key/sequence pair still never has
-    /// two owners.
+    /// Separates the exported state into suite, generation secret, and sequence.
     #[must_use]
-    pub fn into_parts(self) -> (CipherSuite, TrafficKeys, u64) {
-        (self.suite, self.keys, self.sequence)
+    pub fn into_parts(self) -> (CipherSuite, TrafficSecret, u64) {
+        (self.suite, self.traffic_secret, self.sequence)
     }
 
     /// Reassembles one direction's exported state from received parts.
     ///
-    /// This is the receiving side of a session handoff: the parts arrive from
-    /// an authenticated transfer channel, and this constructor enforces the
-    /// one structural invariant that can be checked without building the
-    /// cipher — the key length must match the suite. The sequence ceiling is
-    /// enforced when the state becomes a working layer again through
-    /// [`Tls13RecordLayer::from_exported_state`].
-    ///
     /// # Errors
     ///
-    /// Rejects key material whose length does not match the suite.
+    /// Rejects a traffic secret whose hash does not match the suite.
     pub fn from_parts(
         suite: CipherSuite,
-        keys: TrafficKeys,
+        traffic_secret: TrafficSecret,
         sequence: u64,
     ) -> Result<Self, Tls13RecordError> {
-        if keys.key().len() != suite.key_len() {
+        if traffic_secret.algorithm() != suite.hash() {
             return Err(Tls13RecordError::InvalidKey);
         }
         Ok(Self {
             suite,
-            keys,
+            traffic_secret,
             sequence,
         })
     }
@@ -779,7 +890,7 @@ impl fmt::Debug for ExportedRecordState {
             .debug_struct("ExportedRecordState")
             .field("suite", &self.suite)
             .field("sequence", &self.sequence)
-            .field("key_material", &"[REDACTED]")
+            .field("traffic_secret", &"[REDACTED]")
             .finish()
     }
 }
@@ -873,7 +984,7 @@ mod tests {
     use super::{ContentType, Tls13RecordError, Tls13RecordLayer};
     use crate::protocol::reality::tls13::{
         CipherSuite, HashAlgorithm, Tls13KeySchedule, Tls13KeyScheduleError, TrafficKeys,
-        TranscriptHash,
+        TrafficSecret, TranscriptHash,
     };
 
     #[test]
@@ -1033,7 +1144,9 @@ mod tests {
 
             // Export after three records: the imported opener must authenticate
             // the original writer's fourth record.
-            let exported_reader = up_reader.into_exported_state();
+            let exported_reader = up_reader
+                .into_exported_state()
+                .expect("application reader state must export");
             assert_eq!(exported_reader.suite(), suite);
             assert_eq!(exported_reader.sequence(), 3);
             let mut imported_reader = Tls13RecordLayer::from_exported_state(exported_reader)
@@ -1055,9 +1168,11 @@ mod tests {
 
             // And vice versa: a record sealed by the imported writer must
             // authenticate on the original reader.
-            let mut imported_writer =
-                Tls13RecordLayer::from_exported_state(down_writer.into_exported_state())
-                    .expect("exported writer state must rebuild");
+            let exported_writer = down_writer
+                .into_exported_state()
+                .expect("application writer state must export");
+            let mut imported_writer = Tls13RecordLayer::from_exported_state(exported_writer)
+                .expect("exported writer state must rebuild");
             let mut reply = Vec::new();
             imported_writer
                 .seal_into(
@@ -1076,36 +1191,121 @@ mod tests {
     }
 
     #[test]
-    fn exported_state_preserves_key_material_and_redacts_debug() {
-        let (writer, mut reader) = paired_layers(CipherSuite::ChaCha20Poly1305Sha256);
-        let exported = writer.into_exported_state();
-        let key = exported.keys().key().to_vec();
-        let iv = *exported.keys().iv();
-        assert_eq!(key.len(), 32);
+    fn exported_state_preserves_generation_secret_and_redacts_debug() {
+        let suite = CipherSuite::ChaCha20Poly1305Sha256;
+        let (writer, mut reader) = paired_layers(suite);
+        let exported = writer
+            .into_exported_state()
+            .expect("application state must export");
+        let secret = exported.traffic_secret().as_bytes().to_vec();
+        assert_eq!(secret.len(), suite.hash().output_len());
 
-        let rebuilt_keys = TrafficKeys::from_raw_parts(&key, iv).expect("raw parts must rebuild");
-        let mut reference =
-            Tls13RecordLayer::new(CipherSuite::ChaCha20Poly1305Sha256, rebuilt_keys)
-                .expect("reference layer must initialize");
+        let rebuilt_secret =
+            TrafficSecret::from_bytes(suite.hash(), &secret).expect("raw secret must rebuild");
+        let mut reference = Tls13RecordLayer::from_traffic_secret(suite, rebuilt_secret)
+            .expect("reference layer must initialize");
         let mut imported =
             Tls13RecordLayer::from_exported_state(exported).expect("exported state must rebuild");
         let mut record = Vec::new();
         imported
-            .seal_into(ContentType::ApplicationData, b"same-key", 0, &mut record)
+            .seal_into(ContentType::ApplicationData, b"same-secret", 0, &mut record)
             .expect("imported layer must seal");
         let mut peer_copy = record.clone();
         let opened = reader
             .open_in_place(&mut peer_copy)
             .expect("original peer must open");
-        assert_eq!(opened.plaintext(), b"same-key");
+        assert_eq!(opened.plaintext(), b"same-secret");
         let opened = reference
             .open_in_place(&mut record)
-            .expect("raw-parts layer must agree on the first record");
-        assert_eq!(opened.plaintext(), b"same-key");
+            .expect("raw-secret layer must agree on the first record");
+        assert_eq!(opened.plaintext(), b"same-secret");
 
         let rendered = format!("{imported:?}");
         assert!(rendered.contains("[REDACTED]"));
-        assert!(!rendered.contains("dbfa"));
+        assert!(!rendered.contains("42424242"));
+    }
+
+    #[test]
+    fn traffic_update_rekeys_both_peers_and_resets_sequence() {
+        for suite in [
+            CipherSuite::Aes128GcmSha256,
+            CipherSuite::Aes256GcmSha384,
+            CipherSuite::ChaCha20Poly1305Sha256,
+        ] {
+            let (mut writer, mut reader) = paired_layers(suite);
+            let mut before = Vec::new();
+            writer
+                .seal_into(ContentType::ApplicationData, b"before", 0, &mut before)
+                .expect("old generation must seal");
+            reader
+                .open_in_place(&mut before)
+                .expect("old generation must open");
+            assert_eq!(writer.records_used(), 1);
+            assert_eq!(reader.records_used(), 1);
+
+            writer
+                .update_traffic_secret()
+                .expect("writer secret must update");
+            reader
+                .update_traffic_secret()
+                .expect("reader secret must update");
+            assert_eq!(writer.records_used(), 0);
+            assert_eq!(reader.records_used(), 0);
+
+            let mut after = Vec::new();
+            writer
+                .seal_into(ContentType::ApplicationData, b"after", 0, &mut after)
+                .expect("new generation must seal");
+            let opened = reader
+                .open_in_place(&mut after)
+                .expect("new generation must open");
+            assert_eq!(opened.plaintext(), b"after");
+            assert_eq!(writer.records_used(), 1);
+            assert_eq!(reader.records_used(), 1);
+        }
+    }
+
+    #[test]
+    fn handshake_layer_rejects_update_without_changing_sequence() {
+        let schedule = rfc8448_schedule();
+        let keys = schedule
+            .traffic_keys(schedule.client_handshake_secret())
+            .expect("handshake keys must derive");
+        let mut records = Tls13RecordLayer::new(CipherSuite::Aes128GcmSha256, keys)
+            .expect("handshake record layer must initialize");
+        let mut wire = Vec::new();
+        records
+            .seal_into(ContentType::Handshake, b"one", 0, &mut wire)
+            .expect("handshake record must seal");
+        assert_eq!(
+            records.update_traffic_secret(),
+            Err(Tls13RecordError::KeyUpdateUnavailable)
+        );
+        assert_eq!(records.records_used(), 1);
+    }
+
+    #[test]
+    fn proactive_update_threshold_leaves_one_safe_record() {
+        for (suite, limit) in [
+            (CipherSuite::Aes128GcmSha256, super::AES_GCM_RECORD_LIMIT),
+            (CipherSuite::Aes256GcmSha384, super::AES_GCM_RECORD_LIMIT),
+            (
+                CipherSuite::ChaCha20Poly1305Sha256,
+                super::CHACHA20_POLY1305_RECORD_LIMIT,
+            ),
+        ] {
+            let (mut records, _) = paired_layers(suite);
+            records.sequence = limit - 2;
+            assert!(!records.needs_key_update());
+            records.sequence = limit - 1;
+            assert!(records.needs_key_update());
+            assert!(records.ensure_key_available().is_ok());
+            records.sequence = limit;
+            assert_eq!(
+                records.ensure_key_available(),
+                Err(Tls13RecordError::KeyUsageExhausted)
+            );
+        }
     }
 
     #[test]
@@ -1404,20 +1604,16 @@ mod tests {
     }
 
     fn paired_layers(suite: CipherSuite) -> (Tls13RecordLayer, Tls13RecordLayer) {
-        let transcript = suite.hash().digest(b"ClientHelloServerHello");
-        let writer_schedule = Tls13KeySchedule::new(suite, &[0x42; 32], &transcript)
-            .expect("test schedule must derive");
-        let reader_schedule = Tls13KeySchedule::new(suite, &[0x42; 32], &transcript)
-            .expect("test schedule must derive");
-        let writer_keys = writer_schedule
-            .traffic_keys(writer_schedule.server_handshake_secret())
-            .expect("test write keys must derive");
-        let reader_keys = reader_schedule
-            .traffic_keys(reader_schedule.server_handshake_secret())
-            .expect("test read keys must derive");
+        let secret_len = suite.hash().output_len();
+        let writer_secret = TrafficSecret::from_bytes(suite.hash(), &[0x42; 48][..secret_len])
+            .expect("test write secret must match suite");
+        let reader_secret = TrafficSecret::from_bytes(suite.hash(), &[0x42; 48][..secret_len])
+            .expect("test read secret must match suite");
         (
-            Tls13RecordLayer::new(suite, writer_keys).expect("test writer must initialize"),
-            Tls13RecordLayer::new(suite, reader_keys).expect("test reader must initialize"),
+            Tls13RecordLayer::from_traffic_secret(suite, writer_secret)
+                .expect("test writer must initialize"),
+            Tls13RecordLayer::from_traffic_secret(suite, reader_secret)
+                .expect("test reader must initialize"),
         )
     }
 

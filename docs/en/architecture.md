@@ -307,13 +307,13 @@ LINE_OWNED -> HANDOFF_IN_PROGRESS -> LANDING_OWNED | ABORTED
 - **HANDOFF_IN_PROGRESS** — LINE exports the continuation state and seals it
   into one single-flight transfer (a fresh ephemeral X25519 exchange against
   the landing node's static key, mixed with the pair PSK, ChaCha20-Poly1305
-  over the full transcript). What crosses the channel, by class: the session
-  key material (both directions' application traffic keys and IVs), the
-  record sequences and cipher suite, the routing decision (VLESS user id and
-  destination), and the in-flight buffers (client random, read-ahead
-  ciphertext the reader already consumed, prefetched request payload). After
-  the transfer write completes, LINE drops its copy of the continuation state
-  and holds no TLS or Vision state for the session again.
+  over the full transcript). What crosses the channel, by class: both
+  directions' current application traffic secrets, record sequences, cipher
+  suite, and any pending KeyUpdate response obligation; the routing decision
+  (VLESS user id and destination); and the in-flight buffers (client random,
+  read-ahead ciphertext the reader already consumed, and prefetched request
+  payload). After the transfer write completes, LINE drops its copy of the
+  continuation state and holds no TLS or Vision state for the session again.
 - **LANDING_OWNED** — LANDING verifies the transfer (header, timestamp,
   replay cache, key agreement, AEAD, consistency checks — in that order),
   reconstructs the record layers, feeds the transferred pending bytes first,

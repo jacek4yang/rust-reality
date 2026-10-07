@@ -159,27 +159,26 @@ struct Peers {
 
 fn peers() -> Peers {
     let suite = CipherSuite::Aes128GcmSha256;
-    let schedule = schedule(suite);
-    let secrets = schedule
+    let server_secrets = schedule(suite)
         .application_traffic_secrets(&suite.hash().digest(b"server finished"))
-        .expect("application secrets must derive");
-    let layer = |secret| {
-        Tls13RecordLayer::new(
-            suite,
-            schedule
-                .traffic_keys(secret)
-                .expect("traffic keys must derive"),
-        )
-        .expect("record layer must initialize")
-    };
+        .expect("server application secrets must derive");
+    let client_secrets = schedule(suite)
+        .application_traffic_secrets(&suite.hash().digest(b"server finished"))
+        .expect("client application secrets must derive");
+    let (server_client_secret, server_server_secret) = server_secrets.into_parts();
+    let (client_write_secret, client_read_secret) = client_secrets.into_parts();
     Peers {
         server: EstablishedTls::from_test_records(
             suite,
-            layer(secrets.client()),
-            layer(secrets.server()),
+            Tls13RecordLayer::from_traffic_secret(suite, server_client_secret)
+                .expect("server read record layer must initialize"),
+            Tls13RecordLayer::from_traffic_secret(suite, server_server_secret)
+                .expect("server write record layer must initialize"),
         ),
-        client_write: layer(secrets.client()),
-        client_read: layer(secrets.server()),
+        client_write: Tls13RecordLayer::from_traffic_secret(suite, client_write_secret)
+            .expect("client write record layer must initialize"),
+        client_read: Tls13RecordLayer::from_traffic_secret(suite, client_read_secret)
+            .expect("client read record layer must initialize"),
     }
 }
 

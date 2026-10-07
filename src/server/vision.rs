@@ -19,7 +19,7 @@ use tokio::{
 };
 
 use crate::protocol::{
-    handoff::ContinuationState,
+    handoff::{ContinuationState, HandoffError},
     reality::tls13::{
         IdleDeadline, IdleError, MAX_PLAINTEXT_LEN, TlsApplicationIoError, TlsApplicationReader,
         TlsApplicationWriter, VectoredRead,
@@ -442,14 +442,15 @@ impl VisionHandler {
     /// Transfers one boundary-session to a Handoff landing node, then relays
     /// the client socket against the handoff socket raw in both directions.
     ///
-    /// The continuation carries both record layers, the reader's read-ahead
+    /// The continuation carries both current traffic secrets and record
+    /// sequences, any owed KeyUpdate response, the reader's read-ahead
     /// ciphertext, and the prefetched VLESS payload; afterwards this node
     /// never decrypts or frames the session again. Any failure — dial, seal,
     /// or write — leaves the abort guard armed, so the client socket is reset
     /// rather than half-closed and the session is never served locally with
     /// consumed state. A successful transfer always produces immediate
-    /// downlink (the response header and opening Vision frame are LANDING's
-    /// first sealed record), while every rejection closes the connection
+    /// downlink (an owed KeyUpdate response, otherwise the response header and
+    /// opening Vision frame), while every rejection closes the connection
     /// silently; the first landing byte is therefore awaited with a bounded
     /// deadline before the relay starts, and its absence — close, stall, or
     /// non-TLS bytes — is classified as rejection while every descriptor is
@@ -466,17 +467,24 @@ impl VisionHandler {
         client_random: [u8; 32],
     ) -> Result<VisionRelayStats, VisionSessionError> {
         let (pending, client_read_half, client_records) = client_reader.into_handoff_parts();
-        let (client_write_half, server_records) = client_writer.into_handoff_parts();
+        let (client_write_half, server_records, key_update_response_pending) =
+            client_writer.into_handoff_parts();
         // Phase one: the client socket is the only descriptor that exists, so
         // it is the only thing to reset. Its guard borrows the read half, so
         // the transfer below cannot consume or close the socket while the
         // guard could still fire.
         let (transferred, server_sequence) = {
             let mut client_abort = SocketAbortGuard::new(&client_read_half);
-            let (suite, client_traffic, client_sequence) =
-                client_records.into_exported_state().into_parts();
-            let (_suite, server_traffic, server_sequence) =
-                server_records.into_exported_state().into_parts();
+            let (suite, client_traffic_secret, client_sequence) = client_records
+                .into_exported_state()
+                .map_err(|_| HandoffLineError::Transfer(HandoffError::State))
+                .map_err(VisionSessionError::HandoffLine)?
+                .into_parts();
+            let (_suite, server_traffic_secret, server_sequence) = server_records
+                .into_exported_state()
+                .map_err(|_| HandoffLineError::Transfer(HandoffError::State))
+                .map_err(VisionSessionError::HandoffLine)?
+                .into_parts();
             let prefetched = request
                 .buffer
                 .get(request.prefetched.clone())
@@ -484,10 +492,11 @@ impl VisionHandler {
                 .to_vec();
             let state = ContinuationState::new(
                 suite,
-                client_traffic,
+                client_traffic_secret,
                 client_sequence,
-                server_traffic,
+                server_traffic_secret,
                 server_sequence,
+                key_update_response_pending,
                 *request.user_id.as_bytes(),
                 request.destination,
                 pending,
@@ -499,8 +508,8 @@ impl VisionHandler {
                 .transfer(self.relay.fd_budget(), &state, client_random)
                 .await
                 .map_err(VisionSessionError::HandoffLine)?;
-            // The sealed continuation is on the wire; its key material must not
-            // live across the first-byte probe and the session relay below.
+            // The sealed continuation is on the wire; its generation secrets
+            // must not live across the first-byte probe and session relay.
             drop(state);
             client_abort.disarm();
             (transferred, server_sequence)
@@ -627,14 +636,16 @@ fn session_stats(uplink: DirectionStats, downlink: DirectionStats) -> VisionRela
 /// Runs the standard Vision relay for a session resumed from a Handoff
 /// transfer on a landing node.
 ///
-/// The resumed halves carry the transferred record layers, and the reader is
-/// preloaded with the read-ahead ciphertext the previous owner had already
-/// consumed from the kernel, so the client-visible record stream continues
-/// exactly at the boundary. `prefetched_plaintext` enters the fresh Vision
-/// decoder before any decrypted record, mirroring the freshly accepted path.
-/// The response header and opening Vision frame are the first client-visible
-/// server record. The transfer channel preserves whether it is sealed at
-/// sequence zero or, after a cover-shaped empty ApplicationData record, one.
+/// The resumed halves carry the transferred generation secrets and record
+/// sequences, and the reader is preloaded with the read-ahead ciphertext the
+/// previous owner had already consumed from the kernel, so the client-visible
+/// record stream continues exactly at the boundary. `prefetched_plaintext`
+/// enters the fresh Vision decoder before any decrypted record, mirroring the
+/// freshly accepted path. An owed KeyUpdate response precedes application
+/// output; otherwise the response header and opening Vision frame are the
+/// first client-visible server record. The transfer preserves whether it is
+/// sealed at sequence zero or, after a cover-shaped empty ApplicationData
+/// record, one.
 pub(crate) async fn run_resumed_session(
     client_reader: TlsApplicationReader<OwnedReadHalf>,
     client_writer: TlsApplicationWriter<OwnedWriteHalf>,
@@ -862,7 +873,7 @@ impl AbortableSocket for TlsApplicationWriter<OwnedWriteHalf> {
     }
 
     fn release_aborted(self) {
-        let (half, _records) = self.into_handoff_parts();
+        let (half, _records, _key_update_response_pending) = self.into_handoff_parts();
         half.forget();
     }
 }
@@ -2373,8 +2384,8 @@ mod tests {
         config::node::{routing::RoutingConfig, user::UserConfig},
         protocol::{
             reality::tls13::{
-                CipherSuite, ContentType, EstablishedTls, Tls13KeySchedule, Tls13RecordLayer,
-                TlsApplicationIo, read_tls_record,
+                CipherSuite, ContentType, EstablishedTls, Tls13RecordLayer, TlsApplicationIo,
+                TrafficSecret, read_tls_record,
             },
             vless::{
                 Command, UserId, VERSION, VISION_FLOW, VISION_FRAME_SIZE, VisionCommand,
@@ -3907,47 +3918,22 @@ mod tests {
 
     fn tls_states() -> (EstablishedTls, Tls13RecordLayer, Tls13RecordLayer) {
         let suite = CipherSuite::Aes128GcmSha256;
-        let schedule = Tls13KeySchedule::new(
-            suite,
-            &[0x11; 32],
-            &suite.hash().digest(b"Vision server hello transcript"),
-        )
-        .expect("test schedule must initialize");
-        let secrets = schedule
-            .application_traffic_secrets(&suite.hash().digest(b"Vision test transcript"))
-            .expect("test application secrets must derive");
-        let server_client_records = Tls13RecordLayer::new(
-            suite,
-            schedule
-                .traffic_keys(secrets.client())
-                .expect("client keys must derive"),
-        )
-        .expect("server read records must initialize");
-        let server_server_records = Tls13RecordLayer::new(
-            suite,
-            schedule
-                .traffic_keys(secrets.server())
-                .expect("server keys must derive"),
-        )
-        .expect("server write records must initialize");
-        let client_write_records = Tls13RecordLayer::new(
-            suite,
-            schedule
-                .traffic_keys(secrets.client())
-                .expect("client keys must derive"),
-        )
-        .expect("client write records must initialize");
-        let client_read_records = Tls13RecordLayer::new(
-            suite,
-            schedule
-                .traffic_keys(secrets.server())
-                .expect("server keys must derive"),
-        )
-        .expect("client read records must initialize");
+        let client_layer = || {
+            let secret = TrafficSecret::from_bytes(suite.hash(), &[0x31; 32])
+                .expect("client secret must import");
+            Tls13RecordLayer::from_traffic_secret(suite, secret)
+                .expect("client record layer must initialize")
+        };
+        let server_layer = || {
+            let secret = TrafficSecret::from_bytes(suite.hash(), &[0x32; 32])
+                .expect("server secret must import");
+            Tls13RecordLayer::from_traffic_secret(suite, secret)
+                .expect("server record layer must initialize")
+        };
         (
-            EstablishedTls::from_test_records(suite, server_client_records, server_server_records),
-            client_write_records,
-            client_read_records,
+            EstablishedTls::from_test_records(suite, client_layer(), server_layer()),
+            client_layer(),
+            server_layer(),
         )
     }
 

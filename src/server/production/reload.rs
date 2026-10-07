@@ -323,15 +323,17 @@ mod tests {
     fn rotation_message(psk: [u8; 32], landing_secret: [u8; 32]) -> Vec<u8> {
         use crate::protocol::{
             handoff::{ContinuationState, HandoffPsk, seal_transfer},
-            reality::tls13::{CipherSuite, TrafficKeys},
+            reality::tls13::{CipherSuite, TrafficSecret},
         };
         let landing_public = crate::crypto::StaticX25519Key::new(&landing_secret).public_key();
+        let suite = CipherSuite::ChaCha20Poly1305Sha256;
         let state = ContinuationState::new(
-            CipherSuite::ChaCha20Poly1305Sha256,
-            TrafficKeys::from_raw_parts(&[0x11; 32], [0x21; 12]).expect("client keys"),
+            suite,
+            TrafficSecret::from_bytes(suite.hash(), &[0x11; 32]).expect("client secret"),
             1,
-            TrafficKeys::from_raw_parts(&[0x12; 32], [0x22; 12]).expect("server keys"),
+            TrafficSecret::from_bytes(suite.hash(), &[0x12; 32]).expect("server secret"),
             0,
+            false,
             [0x33; 16],
             Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 9),
             Vec::new(),
