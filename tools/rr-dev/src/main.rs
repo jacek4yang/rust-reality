@@ -392,6 +392,19 @@ enum DeployPlanOperation {
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)]
 enum BenchCommand {
+    /// Verify boot/identity of the owned KVM fixture, then stop those guests.
+    /// This preflight does not run or pass candidate qualification.
+    StabilityFixture {
+        /// Preserved three-guest fixture directory supplied by the operator.
+        #[arg(long)]
+        fixture: PathBuf,
+        /// Fresh directory for launch, boot, serial and final-identity receipts.
+        #[arg(long)]
+        output: PathBuf,
+        /// Use the required 1-vCPU/1-GiB LANDING profile.
+        #[arg(long)]
+        constrained: bool,
+    },
     /// Collect a raw, process-bound Linux observation inside an owned fixture.
     StabilityObserve {
         /// Exact local PID selected by the fixture controller.
@@ -1533,6 +1546,26 @@ fn resolve_targets(
 #[allow(clippy::too_many_lines)]
 fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
     match command {
+        BenchCommand::StabilityFixture {
+            fixture,
+            output,
+            constrained,
+        } => {
+            match bench::stability::fixture::Machines::start(fixture, output, *constrained)
+                .and_then(|mut machines| machines.finalize())
+            {
+                Ok(()) => {
+                    println!(
+                        "Owned fixture boot and process identities verified; candidate qualification NOT RUN."
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         BenchCommand::StabilityObserve { pid, log } => {
             match bench::stability::collect::observe(*pid, log) {
                 Ok(observation) => {

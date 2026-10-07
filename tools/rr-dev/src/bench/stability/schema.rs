@@ -279,6 +279,7 @@ pub struct Observation {
     /// Unmodified process descriptor limits.
     pub limits: Option<String>,
     /// Each successfully resolved descriptor, keyed by its actual number.
+    #[serde(deserialize_with = "unique_descriptors")]
     pub descriptors: BTreeMap<u32, String>,
     /// Descriptor numbers whose target disappeared during inspection.
     pub closed_during_read: Vec<u32>,
@@ -325,4 +326,30 @@ pub fn parse_vm_fixture(bytes: &[u8]) -> Result<VmFixture, String> {
         return Err("VM fixture exceeds 64 KiB".to_owned());
     }
     serde_json::from_slice(bytes).map_err(|error| format!("invalid VM fixture: {error}"))
+}
+
+fn unique_descriptors<'de, D>(deserializer: D) -> Result<BTreeMap<u32, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct Unique;
+    impl<'de> serde::de::Visitor<'de> for Unique {
+        type Value = BTreeMap<u32, String>;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("distinct numeric descriptor identities")
+        }
+        fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::MapAccess<'de>,
+        {
+            let mut entries = BTreeMap::new();
+            while let Some((number, target)) = map.next_entry::<u32, String>()? {
+                if entries.insert(number, target).is_some() {
+                    return Err(serde::de::Error::custom("duplicate descriptor identity"));
+                }
+            }
+            Ok(entries)
+        }
+    }
+    deserializer.deserialize_map(Unique)
 }

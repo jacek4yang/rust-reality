@@ -315,3 +315,18 @@ fn raw_observations_cannot_be_reused_for_another_cycle_or_window() {
     assert!(super::observation::verify_checkpoint_time(&raw, 7000, 0, 2000).is_err());
     assert!(super::observation::verify_checkpoint_time(&raw, u64::MAX, 1, 2000).is_err());
 }
+
+#[test]
+fn raw_descriptor_keys_cannot_overwrite_an_observation() {
+    let evidence = schema::parse(&serde_json::to_vec(&fixture()).unwrap()).unwrap();
+    let sample = &evidence.cells[0].cycles[0].checkpoints[0].samples[0];
+    let policy = &evidence.cells[0].roles[0].policy;
+    let raw = serde_json::to_string(&raw_observation(sample, policy)).unwrap();
+    for key in ["0", "00"] {
+        let duplicate = raw.replace(
+            "\"descriptors\":{",
+            &format!("\"descriptors\":{{\"{key}\":\"forged\","),
+        );
+        assert!(schema::parse_observation(duplicate.as_bytes()).is_err());
+    }
+}

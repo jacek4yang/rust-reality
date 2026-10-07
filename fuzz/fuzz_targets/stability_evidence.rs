@@ -13,7 +13,12 @@ mod vm;
 
 libfuzzer_sys::fuzz_target!(|bytes: &[u8]| {
     if let Ok(fixture) = schema::parse_vm_fixture(bytes) {
-        let _ = vm::validate(std::path::Path::new("/fixture"), &fixture);
+        let root = std::path::Path::new("/fixture");
+        let _ = vm::validate(root, &fixture);
+        for constrained in [false, true] {
+            let _ =
+                vm::launch_commands(root, &fixture, std::path::Path::new("/output"), constrained);
+        }
     }
     if let Ok(raw) = schema::parse_observation(bytes) {
         // Exercise the exact raw-field parser with arbitrary retained text.

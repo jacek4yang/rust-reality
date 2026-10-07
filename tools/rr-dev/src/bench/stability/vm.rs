@@ -178,6 +178,68 @@ fn roles(fixture: &VmFixture) -> [(&str, &VmSpec); 3] {
     ]
 }
 
+/// Produce the bounded qualification launch commands after validation.
+///
+/// Disks use QEMU's temporary snapshot mode: previous fixture evidence and guest
+/// files remain immutable. Each invocation uses fresh serial paths and disables the unused QMP/monitor endpoints.
+///
+/// # Errors
+/// Returns the same fixture-validation errors as [`validate`].
+pub fn launch_commands(
+    root: &Path,
+    fixture: &VmFixture,
+    output: &Path,
+    constrained: bool,
+) -> Result<Vec<(String, Vec<String>)>, String> {
+    validate(root, fixture)?;
+    if !output.is_absolute()
+        || output.to_str().is_none()
+        || output.to_string_lossy().contains([',', '\n', '\r'])
+    {
+        return Err("fixture output must be an absolute QEMU-safe UTF-8 path".to_owned());
+    }
+    let mut commands = Vec::new();
+    for (role, spec) in roles(fixture) {
+        let mut command = spec.command.clone();
+        for index in 0..command.len().saturating_sub(1) {
+            match command[index].as_str() {
+                "-serial" => {
+                    command[index + 1] = format!(
+                        "file:{}",
+                        output.join(format!("{role}-serial.log")).display()
+                    );
+                }
+                "-smp" if constrained && role == "landing" => {
+                    "1".clone_into(&mut command[index + 1]);
+                }
+                "-m" if constrained && role == "landing" => {
+                    "1024".clone_into(&mut command[index + 1]);
+                }
+                "-c" if constrained && role == "landing" => {
+                    spec.cores
+                        .split(',')
+                        .next()
+                        .expect("validated affinity")
+                        .clone_into(&mut command[index + 1]);
+                }
+                _ => {}
+            }
+        }
+        let qmp = command
+            .iter()
+            .position(|arg| arg == "-qmp")
+            .expect("validated QMP argv");
+        command.drain(qmp..qmp + 2);
+        command.extend([
+            "-monitor".to_owned(),
+            "none".to_owned(),
+            "-snapshot".to_owned(),
+        ]);
+        commands.push((role.to_owned(), command));
+    }
+    Ok(commands)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,6 +262,43 @@ mod tests {
         fixture.line_a.command = expected_command(root, "line-a", &fixture.line_a, [3101, 3102]);
         fixture.line_b.command = expected_command(root, "line-b", &fixture.line_b, [3101, 3102]);
         fixture
+    }
+
+    #[test]
+    fn launch_profiles_preserve_disks_and_disable_unused_control_endpoints() {
+        let root = Path::new("/fixture");
+        let fixture = fixture(root);
+        let original = fixture.landing.command.clone();
+        for constrained in [false, true] {
+            let commands =
+                launch_commands(root, &fixture, Path::new("/fresh-run"), constrained).unwrap();
+            let landing = &commands[0].1;
+            assert!(landing.iter().any(|arg| arg == "-snapshot"));
+            assert!(!landing.iter().any(|arg| arg == "-qmp"));
+            assert!(landing.windows(2).any(|pair| pair == ["-monitor", "none"]));
+            assert!(
+                landing
+                    .windows(2)
+                    .any(|pair| pair == ["-smp", if constrained { "1" } else { "2" }])
+            );
+            assert!(
+                landing
+                    .windows(2)
+                    .any(|pair| pair == ["-m", if constrained { "1024" } else { "2048" }])
+            );
+            assert!(
+                landing
+                    .windows(2)
+                    .any(|pair| pair == ["-serial", "file:/fresh-run/landing-serial.log"])
+            );
+            assert!(
+                landing
+                    .iter()
+                    .any(|arg| arg == "file=/fixture/landing/disk.qcow2,if=virtio,format=qcow2")
+            );
+        }
+        assert_eq!(fixture.landing.command, original);
+        assert!(launch_commands(root, &fixture, Path::new("/unsafe,run"), false).is_err());
     }
 
     #[test]

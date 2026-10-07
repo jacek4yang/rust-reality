@@ -95,3 +95,11 @@ normalized sample references its raw observation; offline verification checks
 fresh ownership records, the full listener task set (including completed or
 cancelled work), replay occupancy, generation retirement, permit counts and the
 startup descriptor census. It does not claim an allocator-byte census.
+
+`cargo dev bench stability-fixture --fixture PATH --output FRESH_DIRECTORY`
+boots the preserved, owned three-guest KVM fixture, checks guest CPU/swap and
+process identities, retains launch/serial/terminal receipts, and stops only the
+children it owns. `--constrained` selects 1 vCPU / 1 GiB for LANDING. Temporary
+QEMU disk snapshots preserve the existing guest disks; QMP/monitor endpoints are
+disabled and SSH uses pinned host keys on loopback. This is fixture preflight,
+not candidate qualification; its output explicitly reports qualification NOT RUN.
