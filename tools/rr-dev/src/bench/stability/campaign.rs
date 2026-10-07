@@ -294,6 +294,16 @@ fn assemble_roles(
                 artifact("environment-before.json")?,
                 artifact("environment-after.json")?,
             ],
+            clocks: [
+                super::workload::artifact(
+                    root,
+                    &cell_root.join(format!("{name}-clock-before.json")),
+                )?,
+                super::workload::artifact(
+                    root,
+                    &cell_root.join(format!("{name}-clock-after.json")),
+                )?,
+            ],
             terminal_status: artifact("terminal-status.json")?,
             server_logs: if name == "landing"
                 && cell_root
@@ -671,6 +681,9 @@ fn run_cell(
                 collect::unix_ms()?
             ));
         prepare(plan, &machines, &private, topology)?;
+        for role in &contract.roles {
+            machines.clock_probe(role, true)?;
+        }
         let epoch = collect::unix_ms()?
             .checked_add(30000)
             .ok_or("workload epoch overflow")?;
@@ -715,6 +728,7 @@ fn run_cell(
             epoch,
             sources: sources.clone(),
             clock: (collect::unix_ms()?, Instant::now()),
+            max_clock_drift_ms: contract.clock_max_drift_ms,
         };
         workload(&machines, &mut helpers, &driver, &mut cell, &contract)
     })();
@@ -764,6 +778,11 @@ fn run_cell(
             finalization.push(error.to_string());
         }
         if let Err(error) = machines.retrieve(&role, &cell_root.join(&role)) {
+            finalization.push(error);
+        }
+    }
+    for role in &contract.roles {
+        if let Err(error) = machines.clock_probe(role, false) {
             finalization.push(error);
         }
     }
@@ -984,6 +1003,13 @@ mod tests {
         cell.roles.clear();
         for role in &contract.roles {
             let directory = workspace.join(role);
+            for phase in ["before", "after"] {
+                fs::write(
+                    workspace.join(&format!("{role}-clock-{phase}.json")),
+                    b"retained clock receipt",
+                )
+                .unwrap();
+            }
             fs::create_dir(&directory).unwrap();
             fs::write(
                 directory.join("cycle-0-0.json"),

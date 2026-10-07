@@ -150,6 +150,7 @@ struct Session<'a> {
     server: Option<Child>,
     helpers: Vec<(Child, String)>,
     clock: (u64, Instant),
+    max_clock_drift_ms: u64,
 }
 
 impl Session<'_> {
@@ -324,7 +325,7 @@ impl Session<'_> {
             let now = collect::unix_ms()?;
             let elapsed = u64::try_from(self.clock.1.elapsed().as_millis())
                 .map_err(|_| "guest clock overflow")?;
-            if now.abs_diff(self.clock.0.saturating_add(elapsed)) > 2000 {
+            if now.abs_diff(self.clock.0.saturating_add(elapsed)) > self.max_clock_drift_ms {
                 return Err("guest wall clock moved relative to monotonic execution".to_owned());
             }
             if now >= epoch {
@@ -538,13 +539,22 @@ impl Session<'_> {
                 .started_unix_ms
                 .checked_add(offset)
                 .ok_or("guest schedule overflow")?;
-            self.wait_until(epoch)?;
+            self.wait_until(
+                epoch
+                    .checked_add(contract.clock_guard_ms())
+                    .ok_or("clock guard overflow")?,
+            )?;
             match event {
                 Event::Capture(name) => self.capture(&name)?,
                 Event::Begin(name) => self.fault(&name, true)?,
                 Event::End(name) => self.fault(&name, false)?,
             }
-            if collect::unix_ms()?.saturating_sub(epoch) > contract.checkpoint_tolerance_ms {
+            if collect::unix_ms()?
+                .checked_add(contract.clock_guard_ms())
+                .ok_or("clock deadline overflow")?
+                .saturating_sub(epoch)
+                > contract.checkpoint_tolerance_ms
+            {
                 return Err(format!("guest event at {offset} missed its fixed deadline"));
             }
         }
@@ -575,6 +585,9 @@ fn run_in(plan: &Plan, root: PathBuf) -> Result<(), String> {
         server: None,
         helpers: Vec::new(),
         clock: (collect::unix_ms()?, Instant::now()),
+        max_clock_drift_ms: serde_json::from_str::<schema::Contract>(schema::CONTRACT)
+            .expect("compiled contract")
+            .clock_max_drift_ms,
     };
     let primary = session.execute();
     let mut finalization = Vec::new();

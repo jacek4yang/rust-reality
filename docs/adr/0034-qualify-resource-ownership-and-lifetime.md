@@ -90,6 +90,16 @@ replace the original failure.
 
 ## Consequences
 
+The host workload and guest observations share an explicitly bounded clock.
+Before starting product processes, the owned snapshot guests disable NTP and
+set their clocks from the controller. Before/after SSH date receipts retain
+the host request interval, guest boot identity and command outcomes. Every
+possible observation instant must satisfy the contract's 250 ms offset bound;
+round trips above 500 ms and local wall/monotonic drift above 50 ms fail.
+Sampling reserves 350 ms for offset and both clocks' drift inside the existing two-second
+window. Clock correction is never performed during a product lifetime. These
+requirements prevent a skewed guest baseline from overlapping host traffic.
+
 The replacement is a new qualification transaction, not a waiver for the two
 historical failures. Full local gates, exact-head CI/Security, native
 interoperability/mechanism/pressure qualification and the complete multi-node

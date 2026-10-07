@@ -93,7 +93,7 @@ pub(super) fn fixture() -> Value {
     let cells: Vec<_> = contract.cells.iter().map(|name| {
         let roles: Vec<_> = contract.roles.iter().map(|role| json!({
             "name":role,"process":process(role),"vcpus":if name.ends_with("/constrained") {1} else {2},
-            "memory_limit_bytes":1_073_741_824_u64,"swap_limit_bytes":0,"startup":artifact(),"environment":[artifact(),artifact()],"terminal_status":artifact(),"server_logs":[artifact()],
+            "memory_limit_bytes":1_073_741_824_u64,"swap_limit_bytes":0,"startup":artifact(),"environment":[artifact(),artifact()],"clocks":[artifact(),artifact()],"terminal_status":artifact(),"server_logs":[artifact()],
             "policy":{
                 "runtime_unix_sockets":0,"fixed_fds":7,"fixed_descriptor_targets":["/dev/null","/fixture/server.log","/fixture/server.log","anon_inode:[eventpoll]","anon_inode:[eventfd]","anon_inode:[eventpoll]","anon_inode:[eventfd]"],"listener_sockets":1,"idle_inbound_capacity":16,"dynamic_fd_budget":4096,"pipe_pair_capacity":122,
                 "warm_socket_capacity":11,"active_socket_capacity":128,"relay_fd_capacity":128,
@@ -655,7 +655,7 @@ fn fault_actions_require_successful_commands_and_timely_generation_publication()
     let role = &cell.roles[0];
     let fault = &cell.faults[0];
     let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
-    let started = cell.started_unix_ms + fault.started_ms;
+    let started = cell.started_unix_ms + fault.started_ms + contract.clock_guard_ms();
     let action = json!({"role":role.name,"boot_id":role.process.boot_id,"started_unix_ms":started,
         "completed_unix_ms":started+1,"name":fault.name,"begin":true,"commands":[],"error":null,
         "configuration_sha256":"c".repeat(64),"warm_tcp":true,"termination_signal":null});
@@ -709,7 +709,7 @@ fn network_fault_commands_cannot_substitute_interface_exit_status_or_kernel_rece
         .find(|fault| fault.name == "rtt-50")
         .unwrap();
     let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
-    let started = cell.started_unix_ms + fault.started_ms;
+    let started = cell.started_unix_ms + fault.started_ms + contract.clock_guard_ms();
     let command = |argv: Vec<&str>, stdout: &str, offset: u64| {
         json!({"argv":argv,
         "stdout":stdout,"stderr":"","exit_code":0,"started_unix_ms":started+offset,"completed_unix_ms":started+offset+1})

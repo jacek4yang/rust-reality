@@ -19,6 +19,9 @@ pub struct Contract {
     pub concurrency: Vec<u64>,
     pub checkpoint_offsets_ms: Vec<u64>,
     pub checkpoint_tolerance_ms: u64,
+    pub clock_max_offset_ms: u64,
+    pub clock_max_roundtrip_ms: u64,
+    pub clock_max_drift_ms: u64,
     pub cycle_interval_ms: u64,
     pub load_start_ms: u64,
     pub fault_interval_ms: u64,
@@ -55,6 +58,10 @@ pub struct Contract {
 }
 
 impl Contract {
+    pub fn clock_guard_ms(&self) -> u64 {
+        self.clock_max_offset_ms
+            .saturating_add(self.clock_max_drift_ms.saturating_mul(2))
+    }
     pub fn fault_concurrency(&self, name: &str) -> u64 {
         if name.starts_with("rtt-") {
             self.rtt_concurrency_per_line
@@ -177,6 +184,7 @@ pub struct Role {
     pub policy: Policy,
     pub startup: Artifact,
     pub environment: [Artifact; 2],
+    pub clocks: [Artifact; 2],
     pub terminal_status: Artifact,
     pub server_logs: Vec<Artifact>,
 }

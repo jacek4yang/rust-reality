@@ -34,7 +34,7 @@ pub struct Machines {
     _lock: HostLock,
 }
 
-fn save(path: &Path, value: &serde_json::Value) -> Result<(), String> {
+fn save(path: &Path, value: &impl serde::Serialize) -> Result<(), String> {
     fs::write(
         path,
         serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?,
@@ -311,6 +311,99 @@ impl Machines {
             .run()
             .map_err(|error| error.to_string())?;
         Ok(())
+    }
+
+    /// Bind the owned guest clock to the host before product startup, or verify
+    /// that binding after execution. Clock changes never occur during workload.
+    ///
+    /// # Errors
+    /// Retains command/probe receipts before reporting setup, skew or I/O failure.
+    pub fn clock_probe(&self, role: &str, before: bool) -> Result<(), String> {
+        use super::{clock, collect};
+        let boot = self.verify_guest(role)?.to_owned();
+        let contract: schema::Contract =
+            serde_json::from_str(schema::CONTRACT).expect("compiled contract");
+        let mut commands = Vec::new();
+        let mut errors = Vec::new();
+        if before {
+            for step in 0..2 {
+                let started = collect::unix_ms()?;
+                let argv = if step == 0 {
+                    ["sudo", "-n", "timedatectl", "set-ntp", "false"]
+                        .map(str::to_owned)
+                        .to_vec()
+                } else {
+                    clock::set_argv(started)
+                };
+                let outcome = self
+                    .ssh(role, &argv.iter().map(String::as_str).collect::<Vec<_>>())?
+                    .probe();
+                let completed = collect::unix_ms()?;
+                let mut command = clock::Command {
+                    argv,
+                    started_unix_ms: started,
+                    completed_unix_ms: completed,
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    errors: Vec::new(),
+                };
+                match outcome {
+                    Ok(outcome) => {
+                        command.exit_code = outcome.code;
+                        command.stdout = outcome.stdout;
+                        command.stderr = outcome.stderr;
+                    }
+                    Err(error) => command.errors.push(error.to_string()),
+                }
+                let failed = command.exit_code != Some(0) || !command.errors.is_empty();
+                commands.push(command);
+                if failed {
+                    errors.push(format!("{role}: guest clock setup step {step} failed"));
+                    break;
+                }
+            }
+        }
+        let host_before_unix_ms = collect::unix_ms()?;
+        let outcome = self.ssh(role, &["date", "--utc", "+%s%3N"])?.probe();
+        let host_after_unix_ms = collect::unix_ms()?;
+        let mut probe = clock::Probe {
+            role: role.to_owned(),
+            phase: if before { "before" } else { "after" }.to_owned(),
+            boot_id: boot,
+            host_before_unix_ms,
+            host_after_unix_ms,
+            date_exit_code: None,
+            date_stdout: String::new(),
+            date_stderr: String::new(),
+            commands,
+            errors,
+        };
+        match outcome {
+            Ok(outcome) => {
+                probe.date_exit_code = outcome.code;
+                probe.date_stdout = outcome.stdout;
+                probe.date_stderr = outcome.stderr;
+            }
+            Err(error) => probe.errors.push(error.to_string()),
+        }
+        let checked = probe.errors.first().map_or_else(
+            || clock::verify(&probe, &contract),
+            |error| Err(error.clone()),
+        );
+        let written = save(
+            &self
+                .output
+                .join(format!("{role}-clock-{}.json", probe.phase)),
+            &probe,
+        );
+        match (checked, written) {
+            (Err(primary), Err(secondary)) => Err(format!(
+                "{primary}; clock evidence finalization also failed: {secondary}"
+            )),
+            (Err(error), _) | (_, Err(error)) => Err(error),
+            _ => Ok(()),
+        }
     }
 
     /// Stage one fixed campaign asset through SFTP-backed scp. Operator SSH

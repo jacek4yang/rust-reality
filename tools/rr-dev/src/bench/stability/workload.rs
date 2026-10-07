@@ -35,6 +35,7 @@ pub struct Driver<'a> {
     pub epoch: u64,
     pub sources: [Artifact; 2],
     pub clock: (u64, Instant),
+    pub max_clock_drift_ms: u64,
 }
 
 pub fn artifact(root: &Path, path: &Path) -> Result<Artifact, String> {
@@ -62,7 +63,7 @@ impl Driver<'_> {
         let now = collect::unix_ms()?;
         let elapsed =
             u64::try_from(self.clock.1.elapsed().as_millis()).map_err(|_| "host clock overflow")?;
-        if now.abs_diff(self.clock.0.saturating_add(elapsed)) > 2000 {
+        if now.abs_diff(self.clock.0.saturating_add(elapsed)) > self.max_clock_drift_ms {
             return Err("host wall clock moved relative to monotonic execution".to_owned());
         }
         now.checked_sub(self.epoch)
@@ -556,6 +557,7 @@ mod tests {
                 epoch: now - 1,
                 sources: [source.clone(), source],
                 clock: (now, Instant::now()),
+                max_clock_drift_ms: 50,
             };
             let result = driver.prefix("prefix", port, 1000, true);
             peer.join().unwrap();

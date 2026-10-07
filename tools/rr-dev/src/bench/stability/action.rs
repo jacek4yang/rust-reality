@@ -207,9 +207,15 @@ pub fn verify(
     if action.name != fault.name
         || action.role != role.name
         || action.boot_id != role.process.boot_id
-        || action.started_unix_ms < scheduled
+        || scheduled
+            .checked_add(contract.clock_guard_ms())
+            .is_none_or(|time| action.started_unix_ms < time)
         || action.completed_unix_ms < action.started_unix_ms
-        || action.completed_unix_ms.saturating_sub(scheduled) > contract.checkpoint_tolerance_ms
+        || action
+            .completed_unix_ms
+            .checked_add(contract.clock_guard_ms())
+            .zip(scheduled.checked_add(contract.checkpoint_tolerance_ms))
+            .is_none_or(|(end, deadline)| end > deadline)
         || action.error.is_some()
         || !action
             .commands

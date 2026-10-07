@@ -3,6 +3,7 @@
 pub mod action;
 pub mod campaign;
 pub mod checks;
+pub mod clock;
 pub mod collect;
 pub mod evaluate;
 pub mod execution;
@@ -103,13 +104,13 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
                 if let Some(role) = cell.roles.iter().find(|role| role.name == sample.role) {
                     let verified = read_artifact(root, &sample.observation).and_then(|bytes| {
                         let raw = schema::parse_observation(&bytes)?;
-                        observation::verify_checkpoint_time(
+                        clock::checkpoint(
                             &raw,
                             cell.started_unix_ms,
                             started_ms
                                 .checked_add(checkpoint.offset_ms)
                                 .ok_or("checkpoint overflow")?,
-                            contract.checkpoint_tolerance_ms,
+                            &contract,
                         )?;
                         observation::verify(&raw, sample, &role.policy)
                     });
@@ -326,6 +327,20 @@ fn verify_cell_actions(
     Ok(())
 }
 
+fn verify_role_clocks(
+    root: &Path,
+    role: &schema::Role,
+    contract: &schema::Contract,
+    started: u64,
+    completed_after: u64,
+) -> Result<(), String> {
+    for (index, artifact) in role.clocks.iter().enumerate() {
+        let probe = clock::parse(&read_artifact(root, artifact)?)?;
+        clock::verify_lifetime(&probe, contract, role, index == 0, started, completed_after)?;
+    }
+    Ok(())
+}
+
 fn verify_cell_execution(
     root: &Path,
     cell: &schema::Cell,
@@ -350,6 +365,7 @@ fn verify_cell_execution(
     let mut panics = 0_u64;
     let mut rejections = 0_u64;
     for role in &cell.roles {
+        verify_role_clocks(root, role, contract, cell.started_unix_ms, completed_after)?;
         execution::startup(&read_artifact(root, &role.startup)?, role)?;
         let before = execution::parse_environment(&read_artifact(root, &role.environment[0])?)?;
         let after = execution::parse_environment(&read_artifact(root, &role.environment[1])?)?;
@@ -587,6 +603,7 @@ fn artifacts(evidence: &Evidence) -> Vec<&Artifact> {
     for cell in &evidence.cells {
         artifacts.push(&cell.terminal);
         artifacts.extend(cell.roles.iter().map(|role| &role.startup));
+        artifacts.extend(cell.roles.iter().flat_map(|role| &role.clocks));
     }
     artifacts
 }

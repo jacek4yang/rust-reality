@@ -168,6 +168,12 @@ Offline evaluation requires every integrity checkpoint, including recovered owne
 memory and process identity checks after the final transfer. Raw `/proc` fields
 must have their exact kernel units and shape; numeric prefixes alone are invalid.
 VM startup and terminal receipts are checked against the frozen identities.
+Before product startup, the controller synchronizes only the owned snapshot
+guests and disables their NTP service. Before/after clock receipts bind each
+guest boot to host request intervals: offset at most 250 ms, round trip at most
+500 ms, and local wall/monotonic drift at most 50 ms. Sampling reserves 350 ms
+inside the existing two-second deadline. Missing or skewed clocks invalidate
+the shared workload schedule; clocks are never corrected during a run.
 Before/after kernel observations bind CPU, memory, swap, boot and OOM counters;
 complete product logs bind both LANDING process lifetimes and expose protocol
 rejections or panics. Missing outcomes and substituted logs are INVALID.

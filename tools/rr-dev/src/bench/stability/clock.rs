@@ -1,0 +1,268 @@
+//! Host/guest clock bindings for the single fixed VM workload schedule.
+#![allow(missing_docs)]
+
+use serde::{Deserialize, Serialize};
+
+use super::schema::{Contract, Observation};
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Command {
+    pub argv: Vec<String>,
+    pub started_unix_ms: u64,
+    pub completed_unix_ms: u64,
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Probe {
+    pub role: String,
+    pub phase: String,
+    pub boot_id: String,
+    pub host_before_unix_ms: u64,
+    pub host_after_unix_ms: u64,
+    pub date_exit_code: Option<i32>,
+    pub date_stdout: String,
+    pub date_stderr: String,
+    pub commands: Vec<Command>,
+    pub errors: Vec<String>,
+}
+
+pub fn parse(bytes: &[u8]) -> Result<Probe, String> {
+    serde_json::from_slice(bytes).map_err(|error| error.to_string())
+}
+
+pub fn date_millis(text: &str) -> Result<u64, String> {
+    let number = text
+        .strip_suffix('\n')
+        .ok_or("incomplete guest date receipt")?;
+    if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("guest date is not an exact integer timestamp".to_owned());
+    }
+    let value = number.parse().map_err(|_| "guest date overflow")?;
+    if value == 0 {
+        return Err("zero guest date".to_owned());
+    }
+    Ok(value)
+}
+
+pub fn set_argv(time: u64) -> Vec<String> {
+    vec![
+        "sudo".to_owned(),
+        "-n".to_owned(),
+        "date".to_owned(),
+        "--utc".to_owned(),
+        format!("--set=@{}.{:03}", time / 1000, time % 1000),
+        "+%s%3N".to_owned(),
+    ]
+}
+
+pub fn verify(probe: &Probe, contract: &Contract) -> Result<(), String> {
+    let guest = date_millis(&probe.date_stdout)?;
+    // Every possible observation instant in the SSH interval must satisfy the
+    // skew bound. An overlap with the interval alone would understate uncertainty.
+    if !probe.errors.is_empty()
+        || probe.date_exit_code != Some(0)
+        || !probe.date_stderr.is_empty()
+        || probe.boot_id.is_empty()
+        || !contract.roles.contains(&probe.role)
+        || probe.host_after_unix_ms < probe.host_before_unix_ms
+        || probe.host_after_unix_ms - probe.host_before_unix_ms > contract.clock_max_roundtrip_ms
+        || guest
+            .checked_add(contract.clock_max_offset_ms)
+            .is_none_or(|end| end < probe.host_after_unix_ms)
+        || probe
+            .host_before_unix_ms
+            .checked_add(contract.clock_max_offset_ms)
+            .is_none_or(|end| end < guest)
+    {
+        return Err("guest clock is not bounded to the host workload schedule".to_owned());
+    }
+    match probe.phase.as_str() {
+        "before" => {
+            let [ntp, set] = probe.commands.as_slice() else {
+                return Err("missing guest clock setup observations".to_owned());
+            };
+            if ntp.argv != ["sudo", "-n", "timedatectl", "set-ntp", "false"]
+                || set.argv != set_argv(set.started_unix_ms)
+                || ntp.completed_unix_ms > set.started_unix_ms
+                || set.completed_unix_ms > probe.host_before_unix_ms
+                || date_millis(&set.stdout)? != set.started_unix_ms
+            {
+                return Err("clock setup or ordering was substituted".to_owned());
+            }
+            for command in &probe.commands {
+                if command.exit_code != Some(0)
+                    || !command.errors.is_empty()
+                    || !command.stderr.is_empty()
+                    || command.completed_unix_ms < command.started_unix_ms
+                {
+                    return Err("guest clock setup did not complete successfully".to_owned());
+                }
+            }
+        }
+        "after" if probe.commands.is_empty() => {}
+        _ => return Err("unexpected clock phase or clock mutation after startup".to_owned()),
+    }
+    Ok(())
+}
+
+pub fn checkpoint(
+    raw: &Observation,
+    epoch: u64,
+    offset: u64,
+    contract: &Contract,
+) -> Result<(), String> {
+    let start = epoch
+        .checked_add(offset)
+        .ok_or("clock-bound checkpoint overflow")?;
+    let earliest = start
+        .checked_add(contract.clock_guard_ms())
+        .ok_or("clock guard overflow")?;
+    let latest = start
+        .checked_add(contract.checkpoint_tolerance_ms)
+        .ok_or("clock deadline overflow")?;
+    if raw.started_unix_ms < earliest
+        || raw.completed_unix_ms < raw.started_unix_ms
+        || raw
+            .completed_unix_ms
+            .checked_add(contract.clock_guard_ms())
+            .is_none_or(|time| time > latest)
+    {
+        return Err("checkpoint uncertainty escapes its fixed host-time window".to_owned());
+    }
+    Ok(())
+}
+
+pub fn verify_lifetime(
+    probe: &Probe,
+    contract: &Contract,
+    role: &super::schema::Role,
+    before: bool,
+    started: u64,
+    completed_after: u64,
+) -> Result<(), String> {
+    verify(probe, contract)?;
+    if probe.role != role.name
+        || probe.boot_id != role.process.boot_id
+        || probe.phase != if before { "before" } else { "after" }
+        || (before && probe.host_after_unix_ms > started)
+        || (!before && probe.host_before_unix_ms < completed_after)
+    {
+        return Err("clock receipts do not bind the complete role lifetime".to_owned());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn probe() -> Probe {
+        Probe {
+            role: "landing".to_owned(),
+            phase: "before".to_owned(),
+            boot_id: "boot".to_owned(),
+            host_before_unix_ms: 1030,
+            host_after_unix_ms: 1050,
+            date_exit_code: Some(0),
+            date_stdout: "1040\n".to_owned(),
+            date_stderr: String::new(),
+            errors: Vec::new(),
+            commands: vec![
+                Command {
+                    argv: ["sudo", "-n", "timedatectl", "set-ntp", "false"]
+                        .map(str::to_owned)
+                        .to_vec(),
+                    started_unix_ms: 1000,
+                    completed_unix_ms: 1010,
+                    exit_code: Some(0),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    errors: Vec::new(),
+                },
+                Command {
+                    argv: set_argv(1010),
+                    started_unix_ms: 1010,
+                    completed_unix_ms: 1020,
+                    exit_code: Some(0),
+                    stdout: "1010\n".to_owned(),
+                    stderr: String::new(),
+                    errors: Vec::new(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn shared_epochs_reject_skew_uncertainty_and_missing_setup() {
+        let contract: Contract = serde_json::from_str(super::super::schema::CONTRACT).unwrap();
+        verify(&probe(), &contract).unwrap();
+        for time in [
+            "21000\n",
+            "1\n",
+            "NaN\n",
+            "1040",
+            "+1040\n",
+            "18446744073709551616\n",
+        ] {
+            let mut changed = probe();
+            changed.date_stdout = time.to_owned();
+            assert!(verify(&changed, &contract).is_err());
+        }
+        let mut changed = probe();
+        changed.host_after_unix_ms += 1000;
+        assert!(verify(&changed, &contract).is_err());
+        let mut changed = probe();
+        changed.commands.clear();
+        assert!(verify(&changed, &contract).is_err());
+        let mut changed = probe();
+        changed.commands[0].exit_code = Some(1);
+        assert!(verify(&changed, &contract).is_err());
+        let mut changed = probe();
+        changed.commands[1].argv = set_argv(999);
+        assert!(verify(&changed, &contract).is_err());
+    }
+
+    #[test]
+    fn sampling_reserves_clock_uncertainty_inside_the_existing_deadline() {
+        let contract: Contract = serde_json::from_str(super::super::schema::CONTRACT).unwrap();
+        let mut raw = super::super::schema::parse_observation(include_bytes!(
+            "../../../../../fuzz/seeds/stability_evidence/seed_owned_unix.json"
+        ))
+        .unwrap();
+        raw.started_unix_ms = 10_000 + contract.clock_guard_ms();
+        raw.completed_unix_ms = 11_000;
+        checkpoint(&raw, 10_000, 0, &contract).unwrap();
+        raw.started_unix_ms -= 1;
+        assert!(checkpoint(&raw, 10_000, 0, &contract).is_err());
+        raw.started_unix_ms += 1;
+        raw.completed_unix_ms = 12_000 - contract.clock_guard_ms() + 1;
+        assert!(checkpoint(&raw, 10_000, 0, &contract).is_err());
+        assert!(checkpoint(&raw, u64::MAX, 1, &contract).is_err());
+    }
+
+    #[test]
+    fn clock_receipts_bind_role_boot_and_complete_lifetime() {
+        let contract: Contract = serde_json::from_str(super::super::schema::CONTRACT).unwrap();
+        let evidence: super::super::schema::Evidence =
+            serde_json::from_value(super::super::tests::fixture()).unwrap();
+        let role = &evidence.cells[0].roles[0];
+        let mut value = probe();
+        value.role.clone_from(&role.name);
+        value.boot_id.clone_from(&role.process.boot_id);
+        verify_lifetime(&value, &contract, role, true, 1060, 2000).unwrap();
+        assert!(verify_lifetime(&value, &contract, role, true, 1049, 2000).is_err());
+        assert!(verify_lifetime(&value, &contract, role, false, 1000, 2000).is_err());
+        value.phase = "after".to_owned();
+        value.commands.clear();
+        verify_lifetime(&value, &contract, role, false, 500, 1030).unwrap();
+        assert!(verify_lifetime(&value, &contract, role, false, 500, 1031).is_err());
+        value.boot_id.push('x');
+        assert!(verify_lifetime(&value, &contract, role, false, 500, 1030).is_err());
+    }
+}

@@ -20,6 +20,8 @@ mod netem;
 mod action;
 #[path = "../../tools/rr-dev/src/bench/stability/checks.rs"]
 mod checks;
+#[path = "../../tools/rr-dev/src/bench/stability/clock.rs"]
+mod clock;
 #[path = "../../tools/rr-dev/src/bench/stability/evaluate.rs"]
 mod evaluate;
 #[path = "../../tools/rr-dev/src/bench/stability/execution.rs"]
@@ -42,6 +44,10 @@ mod transfer;
 mod vm;
 
 libfuzzer_sys::fuzz_target!(|bytes: &[u8]| {
+    if let Ok(probe) = clock::parse(bytes) {
+        let contract = serde_json::from_str(schema::CONTRACT).unwrap();
+        let _ = clock::verify(&probe, &contract);
+    }
     if let Ok(text) = std::str::from_utf8(bytes) {
         let args = netem::NetemArgs {
             profiles: "/fixture/profiles".into(),
