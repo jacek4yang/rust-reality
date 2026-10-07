@@ -64,6 +64,15 @@ impl Contract {
         (self.cycles as u64) * self.cycle_interval_ms
             + (self.faults.len() as u64) * self.fault_interval_ms
     }
+
+    pub fn integrity_offsets(&self) -> [u64; 4] {
+        [
+            0,
+            10_000,
+            self.integrity_duration_ms,
+            self.integrity_duration_ms + self.integrity_recovery_ms,
+        ]
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -121,6 +130,7 @@ pub struct Cell {
     pub cycles: Vec<Cycle>,
     pub faults: Vec<Fault>,
     pub integrity: Vec<Transfer>,
+    pub integrity_checkpoints: Vec<Checkpoint>,
     pub unexpected_exits: u64,
     pub panics: u64,
     pub oom_kills: u64,

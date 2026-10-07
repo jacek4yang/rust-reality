@@ -150,6 +150,9 @@ RTT/loss windows last 60 seconds for the concurrency-4 matrix; other fault
 intervals last 10 seconds. The directional integrity window lasts 60 seconds,
 followed by 180 seconds of recovery. These schedules are fixed in the executable
 contract before qualification, including on constrained LANDING guests.
+Offline evaluation requires every integrity checkpoint, including recovered owner,
+memory and process identity checks after the final transfer. Raw `/proc` fields
+must have their exact kernel units and shape; numeric prefixes alone are invalid.
 
 `cargo dev bench stability-run --fixture PATH --output FRESH_DIRECTORY
 --candidate FROZEN_BINARY --xray XRAY_BINARY --openssl OPENSSL_BINARY` drives

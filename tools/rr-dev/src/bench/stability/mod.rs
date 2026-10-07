@@ -55,23 +55,7 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
         serde_json::from_str(schema::CONTRACT).expect("compiled stability contract");
     let mut observation_hashes = std::collections::BTreeSet::new();
     for cell in &evidence.cells {
-        for transfer in cell
-            .cycles
-            .iter()
-            .flat_map(|cycle| &cycle.transfers)
-            .chain(cell.integrity.iter())
-            .chain(cell.faults.iter().flat_map(|fault| {
-                fault
-                    .during_transfers
-                    .iter()
-                    .chain(&fault.recovery_transfers)
-                    .chain(std::iter::once(&fault.affected_prefix))
-            }))
-        {
-            if let Err(error) = verify_transfer_files(root, transfer) {
-                report.reject(Verdict::Invalid, &transfer.id, &error);
-            }
-        }
+        verify_cell_transfers(root, cell, &mut report);
         for (started_ms, checkpoint) in cell
             .cycles
             .iter()
@@ -87,6 +71,11 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
                     .iter()
                     .map(move |checkpoint| (fault.started_ms, checkpoint))
             }))
+            .chain(
+                cell.integrity_checkpoints
+                    .iter()
+                    .map(|checkpoint| (contract.integrity_start(), checkpoint)),
+            )
         {
             for sample in &checkpoint.samples {
                 if !observation_hashes.insert(&sample.observation.sha256) {
@@ -126,6 +115,26 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
         );
     }
     Ok(report)
+}
+
+fn verify_cell_transfers(root: &Path, cell: &schema::Cell, report: &mut Report) {
+    for transfer in cell
+        .cycles
+        .iter()
+        .flat_map(|cycle| &cycle.transfers)
+        .chain(cell.integrity.iter())
+        .chain(cell.faults.iter().flat_map(|fault| {
+            fault
+                .during_transfers
+                .iter()
+                .chain(&fault.recovery_transfers)
+                .chain(std::iter::once(&fault.affected_prefix))
+        }))
+    {
+        if let Err(error) = verify_transfer_files(root, transfer) {
+            report.reject(Verdict::Invalid, &transfer.id, &error);
+        }
+    }
 }
 
 fn verify_transfer_files(root: &Path, transfer: &schema::Transfer) -> Result<(), String> {

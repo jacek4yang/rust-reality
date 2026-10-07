@@ -103,12 +103,7 @@ fn schedule(contract: &schema::Contract) -> Vec<(u64, Event)> {
             ));
         }
     }
-    for offset in [
-        0,
-        10000,
-        contract.integrity_duration_ms,
-        contract.integrity_duration_ms + contract.integrity_recovery_ms,
-    ] {
+    for offset in contract.integrity_offsets() {
         events.push((
             contract.integrity_start() + offset,
             Event::Capture(format!("integrity-{offset}")),

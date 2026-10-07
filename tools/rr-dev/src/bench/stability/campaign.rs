@@ -337,6 +337,15 @@ fn assemble(
         cell.faults[index].after_processes.clone_from(&bindings);
         cell.faults[index].checkpoints = checkpoints;
     }
+    for offset in contract.integrity_offsets() {
+        cell.integrity_checkpoints.push(checkpoint(
+            root,
+            cell_root,
+            cell,
+            &format!("integrity-{offset}"),
+            offset,
+        )?);
+    }
     cell.final_processes = checkpoint(root, cell_root, cell, "terminal", 0)?
         .samples
         .into_iter()
@@ -576,6 +585,7 @@ fn run_cell(
         cycles: Vec::new(),
         faults: Vec::new(),
         integrity: Vec::new(),
+        integrity_checkpoints: Vec::new(),
         unexpected_exits: 0,
         panics: 0,
         oom_kills: 0,

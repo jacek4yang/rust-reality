@@ -12,12 +12,22 @@ fn field(text: &str, name: &str) -> Result<u64, String> {
     if matches.next().is_some() {
         return Err(format!("duplicate {name}"));
     }
-    value
-        .split_whitespace()
-        .next()
-        .ok_or_else(|| format!("empty {name}"))?
-        .parse()
-        .map_err(|_| format!("invalid {name}"))
+    let fields: Vec<_> = value.split_whitespace().collect();
+    let number = match (name, fields.as_slice()) {
+        ("Threads:", [number]) | ("VmRSS:" | "VmHWM:" | "Pss:" | "Anonymous:", [number, "kB"]) => {
+            *number
+        }
+        ("Max open files", [soft, hard, "files"])
+            if *hard == "unlimited" || hard.parse::<u64>().is_ok() =>
+        {
+            *soft
+        }
+        _ => return Err(format!("invalid fields or units for {name}")),
+    };
+    if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(format!("invalid {name}"));
+    }
+    number.parse().map_err(|_| format!("invalid {name}"))
 }
 
 /// Read the exact coreutils digest receipt for a known file argument.

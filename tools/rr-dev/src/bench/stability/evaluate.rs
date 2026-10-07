@@ -630,6 +630,7 @@ fn evaluate_cell(report: &mut Report, evidence: &Evidence, contract: &Contract, 
             "final process identity differs from the last verified process",
         );
     }
+    evaluate_integrity_checkpoints(report, contract, cell, &expected_processes);
     for line in ["line-a", "line-b"] {
         for size in &contract.payload_bytes {
             for direction in &contract.directions {
@@ -647,6 +648,56 @@ fn evaluate_cell(report: &mut Report, evidence: &Evidence, contract: &Contract, 
                     Verdict::Invalid,
                     scope,
                     "missing fresh 1/4 MiB directional integrity cell",
+                );
+            }
+        }
+    }
+}
+
+fn evaluate_integrity_checkpoints(
+    report: &mut Report,
+    contract: &Contract,
+    cell: &Cell,
+    expected_processes: &BTreeMap<String, schema::ProcessIdentity>,
+) {
+    let offsets = contract.integrity_offsets();
+    report.require(
+        cell.integrity_checkpoints.len() == offsets.len(),
+        Verdict::Invalid,
+        &cell.name,
+        "missing integrity recovery checkpoints",
+    );
+    for (index, checkpoint) in cell.integrity_checkpoints.iter().enumerate() {
+        let scheduled = contract.integrity_start().checked_add(checkpoint.offset_ms);
+        report.require(
+            offsets.get(index) == Some(&checkpoint.offset_ms)
+                && scheduled.is_some_and(|time| {
+                    checkpoint.observed_ms >= time
+                        && checkpoint.observed_ms - time <= contract.checkpoint_tolerance_ms
+                })
+                && same_names(
+                    checkpoint.samples.iter().map(|sample| sample.role.as_str()),
+                    &contract.roles,
+                ),
+            Verdict::Invalid,
+            &cell.name,
+            "integrity observation window or roles substituted",
+        );
+        for sample in &checkpoint.samples {
+            report.require(
+                expected_processes.get(&sample.role) == Some(&sample.process),
+                Verdict::Fail,
+                &cell.name,
+                "unexpected process change during integrity recovery",
+            );
+            if let Some(role) = cell.roles.iter().find(|role| role.name == sample.role) {
+                evaluate_sample(
+                    report,
+                    contract,
+                    cell,
+                    role,
+                    sample,
+                    Some(&checkpoint.offset_ms) == offsets.last(),
                 );
             }
         }

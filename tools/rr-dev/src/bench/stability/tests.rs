@@ -156,7 +156,16 @@ fn fixture() -> Value {
                 }
             }
         }
-        json!({"name":name,"started_unix_ms":10000,"started":true,"completed":true,"roles":roles,"cycles":cycles,"faults":faults,
+        let integrity_checkpoints: Vec<_> = contract.integrity_offsets().iter().map(|offset| {
+            let mut checkpoint = faults.last().unwrap()["checkpoints"][0].clone();
+            checkpoint["offset_ms"] = json!(offset);
+            checkpoint["observed_ms"] = json!(contract.integrity_start()+offset);
+            for sample in checkpoint["samples"].as_array_mut().unwrap() {
+                sample["observation"] = json!({"path":format!("{name}-integrity-{offset}-{}",sample["role"]),"sha256":hash::sha256_hex(format!("{name}-integrity-{offset}-{}",sample["role"]).as_bytes())});
+            }
+            checkpoint
+        }).collect();
+        json!({"name":name,"started_unix_ms":10000,"started":true,"completed":true,"roles":roles,"cycles":cycles,"faults":faults,"integrity_checkpoints":integrity_checkpoints,
             "final_processes":bindings,"integrity":integrity,"unexpected_exits":0,"panics":0,"oom_kills":0,"unexpected_rejections":0,"terminal":artifact()})
     }).collect();
     let checks: Vec<_> = contract.required_checks.iter().map(|name| json!({
@@ -228,6 +237,16 @@ fn identity_integrity_receipt_and_coverage_mutations_are_rejected() {
         ),
         ("/cells/0/integrity/0/upload/receipt_offset", json!(99)),
         ("/cells/0/integrity/0/upload/appended_matches", json!(2)),
+        ("/cells/0/integrity_checkpoints", json!([])),
+        ("/cells/0/integrity_checkpoints/3/observed_ms", json!(0)),
+        (
+            "/cells/0/integrity_checkpoints/3/samples/0/owners/retired_generations",
+            json!(1),
+        ),
+        (
+            "/cells/0/integrity_checkpoints/3/samples/0/process/pid",
+            json!(999),
+        ),
         ("/cells/0/oom_kills", json!(1)),
         ("/cells/0/unexpected_exits", json!(1)),
         ("/cells/0/cycles/0/checkpoints/1/observed_ms", json!(5000)),
@@ -732,6 +751,16 @@ fn normalized_ownership_requires_fresh_complete_raw_observations() {
         ("/ownership_log", Value::Null),
         ("/descriptors/20", json!("/unexpected-open-file")),
         ("/errors", json!(["permission denied"])),
+        (
+            "/status",
+            json!("VmRSS: 16384 MB\nVmHWM: 16384 kB\nThreads: 4\n"),
+        ),
+        (
+            "/status",
+            json!("VmRSS: 16384 kB\nVmHWM: 16384 kB\nThreads: 4 trailing\n"),
+        ),
+        ("/smaps_rollup", json!("Pss: 12000\nAnonymous: 10000 kB\n")),
+        ("/limits", json!("Max open files 8192 garbage files\n")),
     ] {
         let mut changed = raw.clone();
         *changed.pointer_mut(pointer).unwrap() = value;

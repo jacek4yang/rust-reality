@@ -112,6 +112,8 @@ Linux 原始状态、比例内存、描述符目标、限制及完整调试日�
 并发 4 的 RTT/丢包矩阵窗口为 60 秒，其他故障区间为 10 秒。方向完整性验证窗口
 为 60 秒，随后恢复 180 秒。这些时间表在验收前固定于可执行契约，对受限资源的
 LANDING 客体同样适用。
+离线评估要求完整的方向验证检查点，包括最后一次传输后的所有权、内存及进程身份
+恢复检查。原始 `/proc` 字段必须具有内核规定的单位及格式，仅有数字前缀无效。
 
 `cargo dev bench stability-run --fixture PATH --output FRESH_DIRECTORY
 --candidate FROZEN_BINARY --xray XRAY_BINARY --openssl OPENSSL_BINARY` 执行四个
