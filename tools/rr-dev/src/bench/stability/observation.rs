@@ -227,6 +227,8 @@ pub fn read_ownership(observation: &Observation, listeners: u64) -> Result<Owner
             } => {
                 if timestamp > observation.completed_unix_ms
                     || level != "info"
+                    || Some(generation)
+                        != current.map_or(Some(0), |previous: u64| previous.checked_add(1))
                     || !published.insert(generation)
                 {
                     return Err("invalid generation publication history".to_owned());
@@ -328,6 +330,7 @@ pub fn read_ownership(observation: &Observation, listeners: u64) -> Result<Owner
     if !fresh(timestamp)
         || current != Some(generation)
         || !published.contains(&0)
+        || !retired.is_subset(&published)
         || retired.contains(&generation)
     {
         return Err("stale ownership or incomplete generation history".to_owned());

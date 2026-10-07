@@ -590,6 +590,61 @@ fn raw_observation(sample: &schema::Sample, policy: &schema::Policy) -> Value {
 }
 
 #[test]
+fn ownership_requires_contiguous_publications_and_known_retirements() {
+    let evidence = schema::parse(&serde_json::to_vec(&fixture()).unwrap()).unwrap();
+    let sample = &evidence.cells[0].cycles[0].checkpoints[0].samples[0];
+    let policy = &evidence.cells[0].roles[0].policy;
+    let mut raw = raw_observation(sample, policy);
+    let original = raw["ownership_log"].as_str().unwrap().to_owned();
+    let publication = |generation| {
+        format!(
+            "{}\n",
+            json!({"timestampUnixMs":2,"level":"info","event":"configuration_published","generation":generation})
+        )
+    };
+    let retirement = |generation| {
+        format!(
+            "{}\n",
+            json!({"timestampUnixMs":3,"level":"debug","event":"generation_retired","generation":generation})
+        )
+    };
+    let (initial, counters) = original.split_once('\n').unwrap();
+    let observe = |log: String| {
+        raw["ownership_log"] = json!(log);
+        let parsed = schema::parse_observation(&serde_json::to_vec(&raw).unwrap()).unwrap();
+        super::observation::read_ownership(&parsed, 1)
+    };
+    let mut observe = observe;
+    let counters = counters.replace("\"generation\":0", "\"generation\":2");
+    assert!(observe(format!("{initial}\n{}{counters}", publication(2))).is_err());
+    assert!(
+        observe(format!(
+            "{initial}\n{}{}{counters}",
+            publication(2),
+            publication(1)
+        ))
+        .is_err()
+    );
+    assert!(
+        observe(format!(
+            "{initial}\n{}{}{}{counters}",
+            publication(1),
+            publication(2),
+            retirement(99)
+        ))
+        .is_err()
+    );
+    // Retirement of the old runtime may race the next publication's log. Both
+    // complete histories are valid, and every unretired old owner is counted.
+    for history in [
+        format!("{}{}{}", retirement(0), publication(1), publication(2)),
+        format!("{}{}{}", publication(1), publication(2), retirement(0)),
+    ] {
+        observe(format!("{initial}\n{history}{counters}")).unwrap();
+    }
+}
+
+#[test]
 fn normalized_ownership_requires_fresh_complete_raw_observations() {
     let evidence = schema::parse(&serde_json::to_vec(&fixture()).unwrap()).unwrap();
     let sample = &evidence.cells[0].cycles[0].checkpoints[0].samples[0];
