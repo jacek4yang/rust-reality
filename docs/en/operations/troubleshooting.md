@@ -330,6 +330,12 @@ and session/dial deadlines retain `timeout`. A configured egress admission
 failure also emits the existing `admission_limited` event. These categories
 separate local limits from network refusal without changing admission policy.
 
+Established Vision/NXR socket failures, such as a broken pipe after LANDING
+exits, use `outbound` with `failure.stage: "session_relay"`; typed timeouts and
+resource failures retain their categories. These failures are not `protocol`
+rejections: that category denotes malformed protocol input, not a broken
+established connection.
+
 Set `log.level` to `debug` for per-connection events. It is verbose, and it is
 the level at which a single connection's life can be followed end to end.
 
