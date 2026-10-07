@@ -20,6 +20,9 @@ All notable user-facing changes to this project are documented in this file.
 
 ### Fixed
 
+- Native soak failures retain collected observations and attempt final identity
+  checks; terminal evidence preserves the original error if finalization fails.
+
 - Established Vision/NXR socket failures (including a broken pipe when LANDING
   exits) retain typed outbound, timeout, or resource-limit diagnostics instead
   of being misreported as malformed protocol input.

@@ -856,10 +856,17 @@ the repository.
 
 ### Failed native soak resource gates
 
-A native soak that reaches resource acceptance retains resource and distributed
-samples before evaluating the unchanged limits. A rejection writes a partial
-`soak-summary.json` with `ok=false`, the failing scope and aggregate/per-process
-metrics; final binary-identity checks are marked not run. No successful
-`environment.json` or completion marker is published. These diagnostics do not
-qualify the run. Earlier transfer, sampling or process failures can still exit
-before this resource-stage retention point.
+A native soak writes `execution-terminal.json` on success or failure after its
+fresh output directory is created. Once workload execution starts, every error
+path retains collected resource/distributed observations, origin logs, and
+attempts every final process and executable identity check while children are
+still owned. `attempt-environment.json` retains binary identities and workload
+parameters before setup; `attempt-terminal.json` records workload/finalization
+errors independently. Setup failures explicitly mark final verification as not
+reached. A finalization error never replaces the original workload failure.
+
+A resource rejection additionally writes `soak-summary.json` with `ok=false`,
+the failing scope and aggregate/per-process metrics. Success-only
+`environment.json` and `completion.json` are not published for these failures.
+An interrupted process can leave incomplete evidence; missing terminal records
+never establish success.

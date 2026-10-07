@@ -1249,6 +1249,37 @@ fn ports_json(ports: NativePorts) -> Json {
 #[allow(clippy::too_many_lines)]
 pub fn run_rust(plan: &SoakPlan) -> Result<RustSoakOutcome, String> {
     validate(plan)?;
+    let run = RunDirectory::create(&plan.out_dir)?;
+    let result = run_rust_attempt(plan, &run);
+    let terminal = Json::object([
+        ("runId", Json::string(&plan.run_id)),
+        ("ok", Json::Bool(result.is_ok())),
+        (
+            "error",
+            result.as_ref().err().map_or(Json::Null, Json::string),
+        ),
+        (
+            "finalIdentityCheck",
+            Json::string(if run.join("attempt-terminal.json").is_file() {
+                "see attempt-terminal.json"
+            } else {
+                "not-reached"
+            }),
+        ),
+    ]);
+    match run.write_new("execution-terminal.json", &terminal.to_python_json()) {
+        Ok(_) => result,
+        Err(error) => Err(format!(
+            "{}; terminal evidence: {error}",
+            result
+                .err()
+                .unwrap_or_else(|| "workload completed".to_owned())
+        )),
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn run_rust_attempt(plan: &SoakPlan, run: &RunDirectory) -> Result<RustSoakOutcome, String> {
     let rust = identity::register("rust-reality", &plan.rust_bin, "", Kind::Rust)?;
     let xray = identity::register("xray", &plan.xray_bin, "", Kind::Xray)?;
     let openssl = external_binary("openssl", &plan.openssl_bin, &["version", "-a"])?;
@@ -1256,9 +1287,30 @@ pub fn run_rust(plan: &SoakPlan) -> Result<RustSoakOutcome, String> {
         .map_err(|error| format!("could not resolve the rr-dev executable: {error}"))?;
     let rr_dev_sha256 = hash::sha256_file(&rr_dev)?;
     let _lock = HostLock::acquire(&runner::default_lock_path())?;
-    let run = RunDirectory::create(&plan.out_dir)?;
     std::fs::create_dir(run.join("distributed"))
         .map_err(|error| format!("could not create distributed evidence directory: {error}"))?;
+    // Retain provenance before workload setup can fail. This is deliberately
+    // separate from the success-only environment/completion publication.
+    run.write_new(
+        "attempt-environment.json",
+        &Json::object([
+            ("runId", Json::string(&plan.run_id)),
+            ("rustIdentity", Json::string(&rust.identity)),
+            ("rustSha256", Json::string(&rust.sha256)),
+            ("xrayIdentity", Json::string(&xray.identity)),
+            ("xraySha256", Json::string(&xray.sha256)),
+            ("opensslIdentity", Json::string(&openssl.identity)),
+            ("opensslSha256", Json::string(&openssl.sha256)),
+            ("evaluatorSha256", Json::string(&rr_dev_sha256)),
+            ("durationSeconds", Json::Float(plan.duration.as_secs_f64())),
+            (
+                "distributedIntervalSeconds",
+                Json::Float(plan.distributed_interval.as_secs_f64()),
+            ),
+            ("minimumRounds", usize_json(plan.minimum_rounds)),
+        ])
+        .to_python_json(),
+    )?;
     let workspace = Workspace::create("soak-rust")?;
     let ports = NativePorts::reserve()?;
     let mut resolved_plan = plan.clone();
@@ -1507,7 +1559,7 @@ pub fn run_rust(plan: &SoakPlan) -> Result<RustSoakOutcome, String> {
     ])?;
     let started = Instant::now();
     let mut distributed = DistributedRun {
-        run: &run,
+        run,
         started,
         http_origin_port: ports.http_origin,
         socks_ports: [ports.handoff_socks, ports.nxr_socks, ports.socks_client],
@@ -1516,15 +1568,58 @@ pub fn run_rust(plan: &SoakPlan) -> Result<RustSoakOutcome, String> {
         attempts: 0,
         samples: Vec::with_capacity(planned_attempts * 3),
     };
-    distributed.attempt("start");
-    let mut snapshots = vec![capture_processes("start", started.elapsed(), &identities)?];
+    let mut snapshots = Vec::new();
     let mut rounds = 0;
     let mut failures = 0;
-    let reload_at = plan.duration.div_f64(2.0);
-    let mut reload_triggered = false;
-    let mut next_distributed = plan.distributed_interval;
-    while started.elapsed() < plan.duration {
-        if !reload_triggered && started.elapsed() >= reload_at {
+    let mut shaped = 0;
+    let attempted = (|| {
+        distributed.attempt("start");
+        snapshots.push(capture_processes("start", started.elapsed(), &identities)?);
+        let reload_at = plan.duration.div_f64(2.0);
+        let mut reload_triggered = false;
+        let mut next_distributed = plan.distributed_interval;
+        while started.elapsed() < plan.duration {
+            if !reload_triggered && started.elapsed() >= reload_at {
+                let mut reload_processes = [
+                    (&mut handoff_line, handoff_line_log.as_path()),
+                    (&mut handoff_landing, handoff_landing_log.as_path()),
+                    (&mut nxr_line, nxr_line_log.as_path()),
+                    (&mut nxr_landing, nxr_landing_log.as_path()),
+                    (&mut socks_line, socks_line_log.as_path()),
+                ];
+                run_reload_phase(
+                    started,
+                    &mut snapshots,
+                    &identities,
+                    &mut distributed,
+                    &mut reload_processes,
+                )?;
+                reload_triggered = true;
+            }
+            rounds += 1;
+            failures += run_round(
+                &workspace,
+                rounds,
+                ports.standalone_socks,
+                ports.standalone,
+                ports.https_origin,
+                ports.http_origin,
+                &payload_sha256,
+            );
+            while next_distributed < plan.duration && started.elapsed() >= next_distributed {
+                distributed.attempt("interval");
+                next_distributed += plan.distributed_interval;
+            }
+            snapshots.push(capture_processes(
+                &format!("round-{rounds}"),
+                started.elapsed(),
+                &identities,
+            )?);
+            if started.elapsed() < plan.duration && !plan.round_sleep.is_zero() {
+                std::thread::sleep(plan.round_sleep);
+            }
+        }
+        if !reload_triggered {
             let mut reload_processes = [
                 (&mut handoff_line, handoff_line_log.as_path()),
                 (&mut handoff_landing, handoff_landing_log.as_path()),
@@ -1539,95 +1634,71 @@ pub fn run_rust(plan: &SoakPlan) -> Result<RustSoakOutcome, String> {
                 &mut distributed,
                 &mut reload_processes,
             )?;
-            reload_triggered = true;
         }
-        rounds += 1;
-        failures += run_round(
-            &workspace,
-            rounds,
-            ports.standalone_socks,
-            ports.standalone,
-            ports.https_origin,
-            ports.http_origin,
-            &payload_sha256,
-        );
         while next_distributed < plan.duration && started.elapsed() >= next_distributed {
             distributed.attempt("interval");
             next_distributed += plan.distributed_interval;
         }
-        snapshots.push(capture_processes(
-            &format!("round-{rounds}"),
-            started.elapsed(),
-            &identities,
-        )?);
-        if started.elapsed() < plan.duration && !plan.round_sleep.is_zero() {
-            std::thread::sleep(plan.round_sleep);
-        }
-    }
-    if !reload_triggered {
-        let mut reload_processes = [
-            (&mut handoff_line, handoff_line_log.as_path()),
-            (&mut handoff_landing, handoff_landing_log.as_path()),
-            (&mut nxr_line, nxr_line_log.as_path()),
-            (&mut nxr_landing, nxr_landing_log.as_path()),
-            (&mut socks_line, socks_line_log.as_path()),
-        ];
-        run_reload_phase(
-            started,
-            &mut snapshots,
-            &identities,
-            &mut distributed,
-            &mut reload_processes,
-        )?;
-    }
-    while next_distributed < plan.duration && started.elapsed() >= next_distributed {
-        distributed.attempt("interval");
-        next_distributed += plan.distributed_interval;
-    }
-    distributed.attempt("end");
-    publish_final_downloads(&distributed)?;
-    std::thread::sleep(Duration::from_secs(5));
-    snapshots.push(capture_processes("end", started.elapsed(), &identities)?);
+        distributed.attempt("end");
+        publish_final_downloads(&distributed)?;
+        std::thread::sleep(Duration::from_secs(5));
+        snapshots.push(capture_processes("end", started.elapsed(), &identities)?);
 
-    let shaped = wait_for_proxy_completion(&mut shape_proxy, &shape_log, distributed.attempts)?;
-    let handoff_rejections = connection_rejections(&handoff_landing_log)?;
-    let nxr_rejections = connection_rejections(&nxr_landing_log)?;
-    validate_distributed(
-        &distributed,
-        planned_attempts,
-        shaped,
-        &handoff_rejections,
-        &nxr_rejections,
-    )?;
-    if rounds < plan.minimum_rounds {
-        return Err(format!(
-            "soak completed {rounds} rounds, requires {}",
-            plan.minimum_rounds
-        ));
-    }
-    if failures != 0 {
-        return Err(format!("soak observed {failures} transfer failure(s)"));
-    }
-    let resources = summarize_aggregate_resources(&snapshots)?;
-    let resources_by_process = summarize_each_process(&snapshots)?;
-    let slope_gate_applied = plan.duration >= Duration::from_mins(30);
-    // Preserve observations before a resource verdict can return. Failed gates
-    // must remain diagnosable without publishing a success completion marker.
-    let distributed_json = retain_native_observations(
+        shaped = wait_for_proxy_completion(&mut shape_proxy, &shape_log, distributed.attempts)?;
+        let handoff_rejections = connection_rejections(&handoff_landing_log)?;
+        let nxr_rejections = connection_rejections(&nxr_landing_log)?;
+        validate_distributed(
+            &distributed,
+            planned_attempts,
+            shaped,
+            &handoff_rejections,
+            &nxr_rejections,
+        )?;
+        if rounds < plan.minimum_rounds {
+            return Err(format!(
+                "soak completed {rounds} rounds, requires {}",
+                plan.minimum_rounds
+            ));
+        }
+        if failures != 0 {
+            return Err(format!("soak observed {failures} transfer failure(s)"));
+        }
+        let resources = summarize_aggregate_resources(&snapshots)?;
+        let resources_by_process = summarize_each_process(&snapshots)?;
+        let slope_gate_applied = plan.duration >= Duration::from_mins(30);
+        check_native_resource_gate(
+            run,
+            plan,
+            &rust,
+            &resources,
+            &resources_by_process,
+            slope_gate_applied,
+        )?;
+
+        Ok((resources, resources_by_process, slope_gate_applied))
+    })();
+    // Every finalizer is attempted while the children and workspace are alive.
+    // A failed workload must not suppress raw observations or identity checks.
+    let mut finalization = Vec::new();
+    let observations = retain_native_observations(
         &distributed,
         &snapshots,
         plan.distributed_interval,
         planned_attempts,
         shaped,
-    )?;
-    check_native_resource_gate(
-        &run,
-        plan,
-        &rust,
-        &resources,
-        &resources_by_process,
-        slope_gate_applied,
-    )?;
+    );
+    finalization.push((
+        "observations".to_owned(),
+        observations.as_ref().map(|_| ()).map_err(Clone::clone),
+    ));
+    for (label, pid, starttime) in &identities {
+        let check = if proc_starttime(*pid).as_ref() == Some(starttime) {
+            Ok(())
+        } else {
+            Err(format!("{label} process identity changed or exited"))
+        };
+        finalization.push((format!("process:{label}"), check));
+    }
 
     for (pid, label) in [
         (standalone.pid(), "standalone"),
@@ -1637,7 +1708,10 @@ pub fn run_rust(plan: &SoakPlan) -> Result<RustSoakOutcome, String> {
         (nxr_landing.pid(), "NXR landing"),
         (socks_line.pid(), "SOCKS line"),
     ] {
-        crate::bench::slot::verify_running_image(pid, &rust.sha256, label)?;
+        finalization.push((
+            format!("image:{label}"),
+            crate::bench::slot::verify_running_image(pid, &rust.sha256, label),
+        ));
     }
     for (pid, label) in [
         (standalone_xray.pid(), "standalone Xray"),
@@ -1645,24 +1719,53 @@ pub fn run_rust(plan: &SoakPlan) -> Result<RustSoakOutcome, String> {
         (nxr_xray.pid(), "NXR Xray"),
         (socks_xray.pid(), "SOCKS Xray"),
     ] {
-        crate::bench::slot::verify_running_image(pid, &xray.sha256, label)?;
+        finalization.push((
+            format!("image:{label}"),
+            crate::bench::slot::verify_running_image(pid, &xray.sha256, label),
+        ));
     }
     for (pid, label) in [
         (tls_origin.pid(), "HTTPS origin"),
         (clear_origin.pid(), "HTTP origin"),
         (socks_upstream.pid(), "SOCKS5 upstream"),
     ] {
-        crate::bench::slot::verify_running_image(pid, &rr_dev_sha256, label)?;
+        finalization.push((
+            format!("image:{label}"),
+            crate::bench::slot::verify_running_image(pid, &rr_dev_sha256, label),
+        ));
     }
-    crate::bench::slot::verify_running_image(cover.pid(), &openssl.sha256, "OpenSSL cover")?;
-    no_ccs::assert_unchanged(&rust)?;
-    no_ccs::assert_unchanged(&xray)?;
-    if hash::sha256_file(&openssl.path)? != openssl.sha256 {
-        return Err("OpenSSL changed during the soak".to_owned());
+    finalization.push((
+        "image:OpenSSL cover".to_owned(),
+        crate::bench::slot::verify_running_image(cover.pid(), &openssl.sha256, "OpenSSL cover"),
+    ));
+    for binary in [&rust, &xray, &openssl] {
+        finalization.push((
+            format!("file:{}", binary.label),
+            no_ccs::assert_unchanged(binary),
+        ));
     }
-    if hash::sha256_file(&rr_dev)? != rr_dev_sha256 {
-        return Err("rr-dev changed during the soak".to_owned());
+    finalization.push((
+        "file:rr-dev".to_owned(),
+        hash::sha256_file(&rr_dev).and_then(|actual| {
+            if actual == rr_dev_sha256 {
+                Ok(())
+            } else {
+                Err("rr-dev changed during the soak".to_owned())
+            }
+        }),
+    ));
+    for (label, destination) in [
+        ("soak-origin-http", "origin-http.log"),
+        ("soak-origin-https", "origin-https.log"),
+    ] {
+        finalization.push((
+            destination.to_owned(),
+            copy_origin_log(&workspace, run, label, destination),
+        ));
     }
+    let (resources, resources_by_process, slope_gate_applied) =
+        finalize_native_attempt(run, attempted, &finalization)?;
+    let distributed_json = observations?;
 
     let resource_by_process_json = Json::object(
         resources_by_process
@@ -1805,8 +1908,6 @@ pub fn run_rust(plan: &SoakPlan) -> Result<RustSoakOutcome, String> {
     cover.terminate();
     clear_origin.terminate();
     tls_origin.terminate();
-    copy_origin_log(&workspace, &run, "soak-origin-http", "origin-http.log")?;
-    copy_origin_log(&workspace, &run, "soak-origin-https", "origin-https.log")?;
     run.publish(
         Publication::Environment,
         &document,
@@ -2400,6 +2501,61 @@ fn retain_native_observations(
     Ok(summary)
 }
 
+/// Retain all attempted finalizers, preserving the first workload error even if
+/// an evidence write or a final identity check also fails.
+fn finalize_native_attempt<T>(
+    run: &RunDirectory,
+    attempted: Result<T, String>,
+    checks: &[(String, Result<(), String>)],
+) -> Result<T, String> {
+    let failures = checks
+        .iter()
+        .filter_map(|(label, result)| {
+            result
+                .as_ref()
+                .err()
+                .map(|error| format!("{label}: {error}"))
+        })
+        .collect::<Vec<_>>();
+    let primary = attempted.as_ref().err().cloned();
+    let terminal = Json::object([
+        ("ok", Json::Bool(primary.is_none() && failures.is_empty())),
+        (
+            "primaryError",
+            primary.as_ref().map_or(Json::Null, Json::string),
+        ),
+        (
+            "checks",
+            Json::Array(
+                checks
+                    .iter()
+                    .map(|(label, result)| {
+                        Json::object([
+                            ("name", Json::string(label)),
+                            ("ok", Json::Bool(result.is_ok())),
+                            (
+                                "error",
+                                result.as_ref().err().map_or(Json::Null, Json::string),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+    ]);
+    let retained = run.write_new("attempt-terminal.json", &terminal.to_python_json());
+    let mut errors = primary.into_iter().collect::<Vec<_>>();
+    errors.extend(failures);
+    if let Err(error) = retained {
+        errors.push(format!("terminal evidence: {error}"));
+    }
+    if errors.is_empty() {
+        attempted
+    } else {
+        Err(errors.join("; finalization: "))
+    }
+}
+
 fn check_native_resource_gate(
     run: &RunDirectory,
     plan: &SoakPlan,
@@ -2437,7 +2593,10 @@ fn check_native_resource_gate(
         ("failureStage", Json::string("resource-gate")),
         ("failedScope", Json::string(scope)),
         ("error", Json::string(&error)),
-        ("finalIdentityCheck", Json::string("not-run")),
+        (
+            "finalIdentityCheck",
+            Json::string("see attempt-terminal.json"),
+        ),
         ("longHorizonQualified", Json::Bool(false)),
         (
             "binaries",
@@ -2855,6 +3014,76 @@ mod tests {
     }
 
     #[test]
+    fn setup_failure_retains_terminal_without_claiming_identity_verification() {
+        let workspace = Workspace::create("soak-setup-failure").unwrap();
+        let mut plan = plan();
+        plan.out_dir = workspace.join("run");
+        plan.rust_bin = workspace.join("missing-binary");
+        let error = run_rust(&plan).unwrap_err();
+        let terminal: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(plan.out_dir.join("execution-terminal.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(terminal["ok"], false);
+        assert_eq!(terminal["error"], error);
+        assert_eq!(terminal["finalIdentityCheck"], "not-reached");
+        assert!(!plan.out_dir.join("completion.json").exists());
+    }
+
+    #[test]
+    fn finalization_preserves_primary_error_and_every_check() {
+        let workspace = Workspace::create("soak-finalization-failures").unwrap();
+        let run = RunDirectory::create(&workspace.join("run")).unwrap();
+        let checks = vec![
+            ("resources".to_owned(), Err("disk full".to_owned())),
+            (
+                "server identity".to_owned(),
+                Err("process exited".to_owned()),
+            ),
+            ("binary identity".to_owned(), Ok(())),
+        ];
+        let error =
+            finalize_native_attempt::<()>(&run, Err("payload mismatch".to_owned()), &checks)
+                .unwrap_err();
+        assert!(error.starts_with("payload mismatch"));
+        assert!(error.contains("disk full"));
+        assert!(error.contains("process exited"));
+        let raw = std::fs::read(run.join("attempt-terminal.json")).unwrap();
+        let terminal: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(terminal["primaryError"], "payload mismatch");
+        assert_eq!(terminal["checks"].as_array().unwrap().len(), 3);
+        assert_eq!(terminal["ok"], false);
+        let error =
+            finalize_native_attempt::<()>(&run, Err("original failure".to_owned()), &checks)
+                .unwrap_err();
+        assert!(error.starts_with("original failure"));
+        assert!(error.contains("terminal evidence:"));
+        assert_eq!(
+            std::fs::read(run.join("attempt-terminal.json")).unwrap(),
+            raw
+        );
+        assert!(!run.join("completion.json").exists());
+    }
+
+    #[test]
+    fn failed_final_identity_check_rejects_successful_workload() {
+        let workspace = Workspace::create("soak-final-identity-failure").unwrap();
+        let run = RunDirectory::create(&workspace.join("run")).unwrap();
+        let error = finalize_native_attempt(
+            &run,
+            Ok(42),
+            &[("image".to_owned(), Err("changed".to_owned()))],
+        )
+        .unwrap_err();
+        assert!(error.contains("image: changed"));
+        let terminal: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(run.join("attempt-terminal.json")).unwrap())
+                .unwrap();
+        assert_eq!(terminal["ok"], false);
+        assert!(terminal["primaryError"].is_null());
+    }
+
+    #[test]
     fn resource_gate_failures_retain_observations_without_success_markers() {
         for (growth, expected_scope) in [(1024, "aggregate"), (512, "server"), (0, "")] {
             let workspace = Workspace::create("soak-resource-evidence").unwrap();
@@ -2940,7 +3169,7 @@ mod tests {
                 assert!(second_error.starts_with(&error));
                 assert!(second_error.contains("failed to retain resource diagnostics:"));
                 assert_eq!(read_json("soak-summary.json"), summary);
-                assert_eq!(summary["finalIdentityCheck"], "not-run");
+                assert_eq!(summary["finalIdentityCheck"], "see attempt-terminal.json");
                 assert_eq!(summary["longHorizonQualified"], false);
                 assert_eq!(summary["binaries"]["rustReality"]["sha256"], binary.sha256);
                 assert_eq!(
