@@ -94,3 +94,57 @@ role trajectories. Actual service policy is machine-derived, not necessarily
 65536 entries; actual occupancy and allocator residency must be measured.
 The shared REALITY authority survives reload, and expiry is lazy: waiting
 120 seconds without a cache operation does not itself free entries.
+
+## Fixed-work allocator discriminator
+
+[fixed-work-manifest.json](fixed-work-manifest.json) binds the source and 711
+members of [fixed-work-diagnostic.tar.xz](fixed-work-diagnostic.tar.xz).
+Both sequential host runs use the unchanged frozen `ec0d0a3` executable
+identified above: four batches of 100 hash-checked 4 MiB transfers per public
+topology, concurrency four, six process roles, and generation-one reload after
+batch two. Both complete 1600 transfers without failures. Checkpoints add
+approximately five seconds of observation overhead; the final observations are
+at 920.402 and 916.923 seconds, not a nominal ten-minute qualification.
+No native threshold or acceptance window is changed.
+
+The control has no preload. The observer adds one sampling thread and one log
+descriptor per process, reads `malloc_info` every ten seconds, and changes no
+allocator settings. These runs use host glibc 2.43, not the hosted qualification
+environment. Smaps mapping geometry and numeric fields are retained; file
+pathnames are redacted and original private-file hashes recorded.
+
+| Role | Control final anonymous KiB | Observer final anonymous KiB | Observer arena system bytes | Observer free bytes | Non-free upper bound bytes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Handoff LANDING | 4444 | 4620 | 5410816 | 4934635 | 1266709 |
+| Handoff LINE | 2628 | 2516 | 3522560 | 3035225 | 1277863 |
+| NXR LANDING | 1292 | 1488 | 3010560 | 2655384 | 1145704 |
+| NXR LINE | 4604 | 6136 | 6885376 | 6406639 | 1269265 |
+| SOCKS LINE | 3960 | 4044 | 4751360 | 4284249 | 1257639 |
+| Standalone | 3644 | 4368 | 5103616 | 4638172 | 1255972 |
+
+Allocator totals use XML root totals once, not the sum of root and per-heap
+copies. The upper bound is `system.current - fast - rest + mmap`; all six final
+`mmap` totals are 790528 bytes. It includes unreported free/tcache space and
+allocator overhead: it is **not** an exact live-object count. Arena system
+space is not resident space either.
+
+All roles retain stable PID/starttime pairs through reload. The final ten
+allocator snapshots have unchanged arena counts/system/mmap totals; non-free
+upper bounds vary by at most 50 bytes per role. Final control thread counts are
+17; observer counts are 18. The 32 retained pipe descriptors in Handoff LINE
+and NXR LANDING are separately classified, not called live connections.
+
+The control's fourth batch adds 724 KiB to Handoff LANDING residency without
+later quiet growth; the observer instead has late increases of 188 KiB in NXR
+LINE and 388 KiB in standalone. In the observer's late plateaus, standalone
+arena system growth is 397312 bytes and free growth 386378 bytes, while the
+non-free upper bound changes by 10934 bytes. NXR LINE residency grows with
+unchanged arena system size and approximately 15 KiB non-free growth. These
+observations demonstrate that resident growth cannot be equated to matching
+live-object growth.
+
+This checkpoint supports allocator high-water retention as a substantial
+contributor, but does not establish a universal bound or retrospectively assign
+every historical failed sample to a stack. Historical failures remain failed.
+These measurements do not quantify how many resident pages an explicit
+allocator trim would return; no production trimming change is justified here.
