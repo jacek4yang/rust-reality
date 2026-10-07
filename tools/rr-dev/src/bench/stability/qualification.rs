@@ -42,16 +42,38 @@ pub enum Case {
     ExactHeadSecurity,
     /// Unfiltered library tests proving all required lifecycle regressions.
     Lifecycle,
+    /// Stock-Xray byte-exact interoperability with the pinned OpenSSL cover.
+    NativeInterop,
+    /// Reviewed native RTT/mechanism and performance matrix.
+    NativeMechanism,
+    /// Fixed descriptor-pressure admission and recovery workload.
+    NativeDescriptorPressure,
+    /// Thirty-minute native ownership workload and fixed recovery checkpoints.
+    NativeResources,
 }
 
 impl Case {
-    fn name(self) -> &'static str {
+    pub(super) fn name(self) -> &'static str {
         match self {
             Self::LocalFullGate => "local-full-gate",
             Self::ExactHeadCi => "exact-head-ci",
             Self::ExactHeadSecurity => "exact-head-security",
             Self::Lifecycle => "lifecycle",
+            Self::NativeInterop => "native-interop",
+            Self::NativeMechanism => "native-mechanism",
+            Self::NativeDescriptorPressure => "native-descriptor-pressure",
+            Self::NativeResources => "native-resources",
         }
+    }
+
+    fn native(self) -> bool {
+        matches!(
+            self,
+            Self::NativeInterop
+                | Self::NativeMechanism
+                | Self::NativeDescriptorPressure
+                | Self::NativeResources
+        )
     }
 }
 
@@ -124,6 +146,10 @@ fn command(
         ]
         .map(str::to_owned)
         .to_vec(),
+        Case::NativeInterop
+        | Case::NativeMechanism
+        | Case::NativeDescriptorPressure
+        | Case::NativeResources => super::native_check::command(plan.case, directory, identity)?,
     })
 }
 
@@ -179,6 +205,9 @@ pub fn run(repo: &Path, plan: &Plan) -> Result<(), String> {
     }
     let directory = root.join(format!("required-{}", plan.case.name()));
     let argv = command(plan, &directory, &evidence.identity)?;
+    if plan.case.native() {
+        super::native_check::verify_inputs(root, &evidence.identity)?;
+    }
     // The fresh directory reserves this attempt even if execution is interrupted.
     fs::create_dir(&directory).map_err(|error| error.to_string())?;
     fs::write(directory.join("evidence-before.json"), &bytes).map_err(|error| error.to_string())?;
@@ -187,7 +216,7 @@ pub fn run(repo: &Path, plan: &Plan) -> Result<(), String> {
     let stderr = directory.join("stderr.log");
     fs::write(&output, []).map_err(|error| error.to_string())?;
     fs::write(&stderr, []).map_err(|error| error.to_string())?;
-    let executable = if matches!(plan.case, Case::LocalFullGate) {
+    let executable = if matches!(plan.case, Case::LocalFullGate) || plan.case.native() {
         std::env::current_exe().map_err(|error| error.to_string())?
     } else {
         PathBuf::from(&argv[0])
@@ -221,6 +250,11 @@ pub fn run(repo: &Path, plan: &Plan) -> Result<(), String> {
         Err(error) => Some(error.to_string()),
     };
     if let Err(error) = source_binding(repo, &evidence.identity) {
+        finalization_errors.push(error);
+    }
+    if plan.case.native()
+        && let Err(error) = super::native_check::verify_inputs(root, &evidence.identity)
+    {
         finalization_errors.push(error);
     }
     for artifact in [&evidence.identity.evaluator, &evidence.identity.contract] {
@@ -285,9 +319,23 @@ pub fn run(repo: &Path, plan: &Plan) -> Result<(), String> {
     })();
     let retained = (|| {
         terminal?;
-        let output = workload::artifact(root, &output)?;
+        let output = if plan.case.native() {
+            let proof = directory
+                .join("run")
+                .join(super::native_check::proof(plan.case));
+            // A failed suite may have no summary. Preserve the actual command output;
+            // the component evaluator will reject the missing proof independently.
+            workload::artifact(root, if proof.is_file() { &proof } else { &output })?
+        } else {
+            workload::artifact(root, &output)?
+        };
         let execution = workload::artifact(root, &directory.join("terminal.json"))?;
         let mut observations = Vec::new();
+        if plan.case.native() {
+            super::native_check::retain(root, &directory.join("run"), &mut observations)?;
+            observations.push(workload::artifact(root, &root.join("xray"))?);
+            observations.push(workload::artifact(root, &root.join("openssl"))?);
+        }
         if matches!(plan.case, Case::LocalFullGate) && directory.join("logs").is_dir() {
             for entry in fs::read_dir(directory.join("logs")).map_err(|error| error.to_string())? {
                 let entry = entry.map_err(|error| error.to_string())?;
@@ -300,6 +348,7 @@ pub fn run(repo: &Path, plan: &Plan) -> Result<(), String> {
             let executed_cases = match plan.case {
                 Case::LocalFullGate => crate::check::required_stage_labels().len() as u64,
                 Case::Lifecycle => contract.deterministic_tests[&name].len() as u64,
+                Case::NativeMechanism => 18,
                 _ => 1,
             };
             let check = schema::Check {
@@ -315,8 +364,13 @@ pub fn run(repo: &Path, plan: &Plan) -> Result<(), String> {
                 output: output.clone(),
                 observations: observations.clone(),
             };
-            if let Err(error) = super::verify_required_check(root, &check, &evidence.identity) {
-                errors.push(format!("{}: {error}", check.name));
+            match super::verify_required_check(root, &check, &evidence.identity) {
+                Ok(report) if report.verdict == super::evaluate::Verdict::Pass => {}
+                Ok(report) => errors.push(format!(
+                    "{}: {:?}: {:?}",
+                    check.name, report.verdict, report.findings
+                )),
+                Err(error) => errors.push(format!("{}: {error}", check.name)),
             }
             evidence.checks.push(check);
         }

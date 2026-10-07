@@ -10,6 +10,7 @@ pub mod execution;
 pub mod fixture;
 pub mod guest;
 pub mod native;
+mod native_check;
 pub mod native_evaluate;
 pub mod native_interop;
 pub mod native_mechanism;
@@ -172,7 +173,10 @@ fn verify_required_check(
         "native-mechanism" => verify_mechanism_receipt(root, check, identity),
         "package-gnu" | "package-musl" | "package-v3" | "package-aarch64" => package::verify(root, check, identity),
         "native-descriptor-pressure" => verify_pressure_receipt(root, check, identity),
-        "native-resources" => verify_native_receipt(root, &check.output, identity),
+        "native-resources" => {
+            checks::verify_native_resources_command(check, identity)?;
+            verify_native_receipt(root, &check.output, identity)
+        },
         "local-full-gate" => {
             let gate = checks::verify_gate(&read_artifact(root, &check.output)?, check, identity,
                 &crate::check::required_stage_labels())?;

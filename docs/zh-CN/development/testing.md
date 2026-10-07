@@ -161,6 +161,10 @@ VM 执行器退出后，使用 `cargo dev bench stability-check --evidence BUNDL
 所属子进程身份、原始 stdout/stderr、终态以及最终源码和可执行文件身份检查，
 失败时也不例外。收集器串行更新汇总证据，并拒绝覆盖任何既有检查尝试。
 完成后仍须单独离线评估整个证据包；收集成功本身不表示发布就绪。
+同一收集器还使用冻结的候选程序、Xray 和 OpenSSL 副本执行 `native-interop`、
+`native-mechanism`、`native-descriptor-pressure` 和 `native-resources`。
+命令固定既有套件参数、保留嵌套的原始观测，并拒绝缩短原生测试时长或恢复覆盖。
+这些独占主机的负载必须在 VM 活动释放主机锁后执行。
 原生互操作性凭据保留源载荷、实际下载字节和 OpenSSL 握手跟踪。离线校验
 核对字节完全一致、服务端未发送 CCS、固定的外部可执行文件及规定的 stock-Xray
 命令；仅有声称成功的摘要不能通过。

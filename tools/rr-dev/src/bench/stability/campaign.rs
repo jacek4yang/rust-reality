@@ -859,6 +859,7 @@ fn freeze(
     )?;
     let xray = identity::register("stock Xray", &plan.xray, "", identity::Kind::Xray)?;
     let evaluator_sha256 = collect::running_image_digest()?;
+    let openssl_sha256 = collect::file_digest(&plan.openssl)?;
     let source = identity::embedded_commit(&candidate.identity)?;
     if rust_reality::BUILD_COMMIT != source {
         return Err("build the frozen harness with RUST_REALITY_GIT_COMMIT set to the candidate source commit".to_owned());
@@ -889,6 +890,7 @@ fn freeze(
             "rr-dev",
         ),
         (&plan.xray, "xray"),
+        (&plan.openssl, "openssl"),
     ] {
         fs::copy(path, root.join(name)).map_err(|error| error.to_string())?;
     }
@@ -896,6 +898,7 @@ fn freeze(
         ("rust-reality", &candidate.sha256),
         ("rr-dev", &evaluator_sha256),
         ("xray", &xray.sha256),
+        ("openssl", &openssl_sha256),
     ] {
         if collect::file_digest(&root.join(name))? != *expected {
             return Err(format!("{name}: executable changed while freezing inputs"));
@@ -919,7 +922,7 @@ fn freeze(
     )?;
     save(
         &root.join("environment.json"),
-        &json!({"host_kernel":Tool::new("uname").arg("-srm").run().map_err(|error| error.to_string())?.stdout,"xray_sha256":xray.sha256,"xray_identity":xray.identity,"openssl_sha256":collect::file_digest(&plan.openssl)?}),
+        &json!({"host_kernel":Tool::new("uname").arg("-srm").run().map_err(|error| error.to_string())?.stdout,"xray_sha256":xray.sha256,"xray_identity":xray.identity,"openssl_sha256":openssl_sha256}),
     )?;
     let art = |name: &str| super::workload::artifact(root, &root.join(name));
     let identity = schema::Identity {

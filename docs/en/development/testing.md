@@ -213,6 +213,11 @@ child identity, raw stdout/stderr, terminal result and final source/executable
 checks, including on failure. Collection serializes aggregate updates and refuses
 to replace any previous check attempt. Evaluate the completed bundle separately;
 collection alone does not establish readiness.
+The same collector runs `native-interop`, `native-mechanism`,
+`native-descriptor-pressure` and `native-resources` with the frozen candidate,
+Xray and OpenSSL copies. It fixes the existing suite arguments, retains nested
+raw observations and rejects shortened native duration or recovery coverage.
+Run these host-exclusive workloads after the VM campaign has released its lock.
 The native interoperability receipt retains the exact source and downloaded
 payloads and the OpenSSL handshake trace. Offline verification checks their
 bytes, the absence of server CCS, the pinned external executables and the

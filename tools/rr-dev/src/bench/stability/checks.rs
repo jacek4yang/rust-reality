@@ -72,6 +72,52 @@ pub fn verify_execution(
 
 pub const CI_FIELDS: &str = "headSha,workflowName,status,conclusion,databaseId,url,event";
 
+pub fn verify_native_resources_command(check: &Check, identity: &Identity) -> Result<(), String> {
+    let contract: super::schema::Contract =
+        serde_json::from_str(super::schema::CONTRACT).expect("compiled contract");
+    let argv = &check.argv;
+    if argv.len() != 25 {
+        return Err("missing native resource command".to_owned());
+    }
+    let expected = [
+        identity.evaluator.path.as_str(),
+        "bench",
+        "run",
+        "--suite",
+        "soak",
+        "--rust-bin",
+        &argv[6],
+        "--xray-bin",
+        &argv[8],
+        "--openssl-bin",
+        &argv[10],
+        "--soak-seconds",
+        &(contract.native_duration_ms / 1000).to_string(),
+        "--soak-min-rounds",
+        &contract.native_minimum_rounds.to_string(),
+        "--soak-round-sleep-ms",
+        "5000",
+        "--soak-distributed-interval-seconds",
+        "1800",
+        "--soak-implementation",
+        "rust",
+        "--run-id",
+        "native-resources",
+        "--out-dir",
+        &argv[24],
+    ];
+    if !argv.iter().map(String::as_str).eq(expected)
+        || check.name != "native-resources"
+        || check.executed_cases != 1
+        || [6, 8, 10, 24]
+            .iter()
+            .any(|index| !std::path::Path::new(&argv[*index]).is_absolute())
+    {
+        return Err("native resource command does not preserve its fixed workload".to_owned());
+    }
+    Ok(())
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CiRun {
