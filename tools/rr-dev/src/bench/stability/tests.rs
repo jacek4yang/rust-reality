@@ -131,7 +131,8 @@ fn fixture() -> Value {
                 bindings[2]["identity"]["start_ticks"] = json!(200);
             }
             let started = u64::try_from(contract.cycles).unwrap() * contract.cycle_interval_ms + u64::try_from(index).unwrap() * contract.fault_interval_ms;
-            let recovery: Vec<_> = (0..100).map(|count| transfer(&format!("{name}-{fault}-recovery-{count}"),"line-a","download",started+10000,1_048_576)).collect();
+            let restored = started + contract.fault_duration(fault);
+            let recovery: Vec<_> = (0..100).map(|count| transfer(&format!("{name}-{fault}-recovery-{count}"),"line-a","download",restored,1_048_576)).collect();
             let during: Vec<_> = ["line-a","line-b"].into_iter().flat_map(|line| (0..100).map(move |count| transfer(&format!("{name}-{fault}-{line}-during-{count}"),line,"download",started+1,1_048_576))).collect();
             let checkpoints: Vec<_> = contract.fault_checkpoint_offsets_ms.iter().map(|offset| {
                 let mut checkpoint = cycles[0]["checkpoints"][0].clone();
@@ -143,7 +144,7 @@ fn fixture() -> Value {
                 }
                 checkpoint
             }).collect();
-            json!({"name":fault,"started_ms":started,"restored_ms":started+10000,"first_admission_ms":started+10001,
+            json!({"name":fault,"started_ms":started,"restored_ms":restored,"first_admission_ms":restored+1,
                 "before_processes":before,"after_processes":bindings.clone(),"recovery_transfers":recovery,"affected_prefix":transfer(&format!("{name}-{fault}-prefix"),"line-a","download",started,4096),
                 "during_transfers":during,"checkpoints":checkpoints,"expected_failures":[],"unexpected_failures":0})
         }).collect();

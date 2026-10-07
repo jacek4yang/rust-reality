@@ -23,6 +23,9 @@ pub struct Contract {
     pub load_start_ms: u64,
     pub fault_interval_ms: u64,
     pub fault_duration_ms: u64,
+    pub rtt_duration_ms: u64,
+    pub integrity_duration_ms: u64,
+    pub integrity_recovery_ms: u64,
     pub fault_checkpoint_offsets_ms: Vec<u64>,
     pub native_recovery_offsets_ms: Vec<u64>,
     pub native_recovered_rss_growth_kib: u64,
@@ -46,6 +49,21 @@ pub struct Contract {
     pub payload_bytes: Vec<u64>,
     pub directions: Vec<String>,
     pub required_checks: Vec<String>,
+}
+
+impl Contract {
+    pub fn fault_duration(&self, name: &str) -> u64 {
+        if name.starts_with("rtt-") {
+            self.rtt_duration_ms
+        } else {
+            self.fault_duration_ms
+        }
+    }
+
+    pub fn integrity_start(&self) -> u64 {
+        (self.cycles as u64) * self.cycle_interval_ms
+            + (self.faults.len() as u64) * self.fault_interval_ms
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

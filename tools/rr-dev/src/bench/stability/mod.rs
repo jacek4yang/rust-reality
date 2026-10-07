@@ -3,6 +3,7 @@
 pub mod collect;
 pub mod evaluate;
 pub mod fixture;
+pub mod guest;
 pub mod native;
 pub mod native_evaluate;
 pub mod observation;

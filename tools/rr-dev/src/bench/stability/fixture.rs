@@ -1,6 +1,7 @@
 //! Execution of the validated, owned local system-VM fixture.
 
 use std::{
+    collections::BTreeMap,
     fs,
     net::{Ipv4Addr, SocketAddrV4, TcpListener},
     path::{Path, PathBuf},
@@ -27,6 +28,8 @@ pub struct Machines {
     output: PathBuf,
     fixture: VmFixture,
     children: Vec<Child>,
+    boots: BTreeMap<String, String>,
+    starts: BTreeMap<String, String>,
     qemu_sha256: Option<String>,
     _lock: HostLock,
 }
@@ -64,6 +67,8 @@ impl Machines {
             output,
             fixture,
             children: Vec::new(),
+            boots: BTreeMap::new(),
+            starts: BTreeMap::new(),
             qemu_sha256: None,
             _lock: lock,
         };
@@ -133,6 +138,11 @@ impl Machines {
             )
             .map_err(|error| error.to_string())?;
             self.children.push(child);
+            let child = self.children.last().expect("owned child");
+            self.starts.insert(
+                role.clone(),
+                proc_starttime(child.pid()).ok_or("missing owned QEMU identity")?,
+            );
             let started = Instant::now();
             loop {
                 if !self.children.last_mut().expect("owned child").is_alive() {
@@ -157,9 +167,10 @@ impl Machines {
                 .run()
                 .map_err(|error| error.to_string())?;
             let boot_id = boot.stdout.trim().to_owned();
-            if boot_id.is_empty() || !boots.insert(boot_id) {
+            if boot_id.is_empty() || !boots.insert(boot_id.clone()) {
                 return Err("guests did not expose distinct system boot identities".to_owned());
             }
+            self.boots.insert(role.clone(), boot_id);
             fs::write(
                 self.output.join(format!("{role}-boot-id.txt")),
                 &boot.stdout,
@@ -211,12 +222,6 @@ impl Machines {
     /// # Errors
     /// Rejects unknown roles and commands containing a NUL byte.
     pub fn ssh(&self, role: &str, argv: &[&str]) -> Result<Tool, String> {
-        let port = match role {
-            "landing" => self.fixture.landing.ssh_port,
-            "line-a" => self.fixture.line_a.ssh_port,
-            "line-b" => self.fixture.line_b.ssh_port,
-            _ => return Err("unknown owned guest role".to_owned()),
-        };
         if argv.is_empty() || argv.iter().any(|arg| arg.contains('\0')) {
             return Err("invalid guest argv".to_owned());
         }
@@ -226,34 +231,149 @@ impl Machines {
             .collect::<Vec<_>>()
             .join(" ");
         Ok(Tool::new("ssh")
-            .args([
-                "-F".to_owned(),
-                "/dev/null".to_owned(),
-                "-i".to_owned(),
-                self.root.join("test-key").display().to_string(),
-                "-o".to_owned(),
-                format!(
-                    "UserKnownHostsFile={}",
-                    self.root.join("known_hosts").display()
-                ),
-                "-o".to_owned(),
-                "StrictHostKeyChecking=yes".to_owned(),
-                "-o".to_owned(),
-                "BatchMode=yes".to_owned(),
-                "-o".to_owned(),
-                "IdentitiesOnly=yes".to_owned(),
-                "-o".to_owned(),
-                "ConnectTimeout=3".to_owned(),
-                "-o".to_owned(),
-                "ServerAliveInterval=5".to_owned(),
-                "-o".to_owned(),
-                "ServerAliveCountMax=2".to_owned(),
-                "-p".to_owned(),
-                port.to_string(),
-                "rrtest@127.0.0.1".to_owned(),
-                command,
-            ])
+            .args(self.transport_options(role, false)?)
+            .args(["rrtest@127.0.0.1".to_owned(), command])
             .timeout(Duration::from_secs(15)))
+    }
+
+    fn transport_options(&self, role: &str, scp: bool) -> Result<Vec<String>, String> {
+        let port = match role {
+            "landing" => self.fixture.landing.ssh_port,
+            "line-a" => self.fixture.line_a.ssh_port,
+            "line-b" => self.fixture.line_b.ssh_port,
+            _ => return Err("unknown owned guest role".to_owned()),
+        };
+        Ok(vec![
+            "-F".to_owned(),
+            "/dev/null".to_owned(),
+            "-i".to_owned(),
+            self.root.join("test-key").display().to_string(),
+            "-o".to_owned(),
+            format!(
+                "UserKnownHostsFile={}",
+                self.root.join("known_hosts").display()
+            ),
+            "-o".to_owned(),
+            "StrictHostKeyChecking=yes".to_owned(),
+            "-o".to_owned(),
+            "BatchMode=yes".to_owned(),
+            "-o".to_owned(),
+            "IdentitiesOnly=yes".to_owned(),
+            "-o".to_owned(),
+            "ConnectTimeout=3".to_owned(),
+            "-o".to_owned(),
+            "ServerAliveInterval=5".to_owned(),
+            "-o".to_owned(),
+            "ServerAliveCountMax=2".to_owned(),
+            if scp { "-P" } else { "-p" }.to_owned(),
+            port.to_string(),
+        ])
+    }
+
+    /// Recheck the owned QEMU process and the guest's boot identity before
+    /// staging inputs or executing workload operations.
+    ///
+    /// # Errors
+    /// Rejects replaced/exited QEMU processes, guest reboots and failed SSH.
+    pub fn verify_guest(&self, role: &str) -> Result<&str, String> {
+        let child = self
+            .children
+            .iter()
+            .find(|child| child.label() == role)
+            .ok_or("unknown owned QEMU role")?;
+        if proc_starttime(child.pid()).as_ref() != self.starts.get(role) {
+            return Err(format!("{role}: owned QEMU identity changed"));
+        }
+        crate::bench::slot::verify_running_image(
+            child.pid(),
+            self.qemu_sha256.as_deref().ok_or("unbound QEMU image")?,
+            role,
+        )?;
+        let expected = self.boots.get(role).ok_or("missing guest boot identity")?;
+        let observed = self
+            .ssh(role, &["cat", "/proc/sys/kernel/random/boot_id"])?
+            .run()
+            .map_err(|error| error.to_string())?;
+        if observed.stdout.trim() != expected {
+            return Err(format!("{role}: guest boot identity changed"));
+        }
+        Ok(expected)
+    }
+
+    /// Create the campaign's private input directory in one verified guest.
+    /// Existing campaign state is rejected, never overwritten.
+    ///
+    /// # Errors
+    /// Returns identity, SSH or pre-existing-directory errors.
+    pub fn prepare_inputs(&self, role: &str) -> Result<(), String> {
+        self.verify_guest(role)?;
+        self.ssh(role, &["mkdir", "-m", "700", "/home/rrtest/rr-stability"])?
+            .run()
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    /// Stage one fixed campaign asset through SFTP-backed scp. Operator SSH
+    /// configuration is ignored; no remote command or arbitrary path is accepted.
+    ///
+    /// # Errors
+    /// Rejects invalid asset names, changed guests and transfer failures.
+    pub fn stage(&self, role: &str, source: &Path, name: &str) -> Result<(), String> {
+        if name.is_empty()
+            || name.starts_with('.')
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"-._".contains(&byte))
+        {
+            return Err("invalid guest campaign asset name".to_owned());
+        }
+        self.verify_guest(role)?;
+        Tool::new("scp")
+            .args(self.transport_options(role, true)?)
+            .arg("--")
+            .args([
+                source.display().to_string(),
+                format!("rrtest@127.0.0.1:/home/rrtest/rr-stability/{name}"),
+            ])
+            .timeout(Duration::from_mins(2))
+            .run()
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    /// Retrieve the guest's evidence tree, which is separate from private inputs.
+    ///
+    /// # Errors
+    /// Rejects changed guests, an existing destination or a failed transfer.
+    pub fn retrieve(&self, role: &str, destination: &Path) -> Result<(), String> {
+        if destination.exists() {
+            return Err("guest evidence destination already exists".to_owned());
+        }
+        self.verify_guest(role)?;
+        Tool::new("scp")
+            .args(self.transport_options(role, true)?)
+            .arg("-r")
+            .arg("--")
+            .args([
+                "rrtest@127.0.0.1:/home/rrtest/rr-stability/output".to_owned(),
+                destination.display().to_string(),
+            ])
+            .timeout(Duration::from_mins(2))
+            .run()
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    /// Host loopback SOCKS port forwarded to the selected owned LINE guest.
+    ///
+    /// # Errors
+    /// Rejects LANDING and unknown roles.
+    pub fn socks_port(&self, role: &str) -> Result<u16, String> {
+        match role {
+            "line-a" => Ok(self.fixture.line_a.socks_port),
+            "line-b" => Ok(self.fixture.line_b.socks_port),
+            _ => Err("SOCKS workload requires a LINE guest".to_owned()),
+        }
     }
 
     fn identities(&self) -> Vec<serde_json::Value> {

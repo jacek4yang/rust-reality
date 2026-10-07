@@ -392,6 +392,9 @@ enum DeployPlanOperation {
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)]
 enum BenchCommand {
+    /// Owned-fixture child: execute the fixed guest campaign schedule.
+    #[command(hide = true)]
+    StabilityGuest(bench::stability::guest::Plan),
     /// Verify boot/identity of the owned KVM fixture, then stop those guests.
     /// This preflight does not run or pass candidate qualification.
     StabilityFixture {
@@ -1546,6 +1549,13 @@ fn resolve_targets(
 #[allow(clippy::too_many_lines)]
 fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
     match command {
+        BenchCommand::StabilityGuest(plan) => match bench::stability::guest::run(plan) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::FAILURE
+            }
+        },
         BenchCommand::StabilityFixture {
             fixture,
             output,

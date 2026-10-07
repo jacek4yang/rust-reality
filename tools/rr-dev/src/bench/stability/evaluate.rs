@@ -466,7 +466,7 @@ fn evaluate_cell(report: &mut Report, evidence: &Evidence, contract: &Contract, 
                 == Some(fault.started_ms)
                 && contract.faults.get(index) == Some(&fault.name)
                 && fault.restored_ms.checked_sub(fault.started_ms)
-                    == Some(contract.fault_duration_ms),
+                    == Some(contract.fault_duration(&fault.name)),
             Verdict::Invalid,
             scope,
             "fault order, start or duration differs from the frozen schedule",
@@ -638,6 +638,11 @@ fn evaluate_cell(report: &mut Report, evidence: &Evidence, contract: &Contract, 
                         transfer.line == line
                             && transfer.direction == *direction
                             && transfer.expected_bytes == *size
+                            && transfer.started_ms >= contract.integrity_start()
+                            && transfer.completed_ms
+                                <= contract
+                                    .integrity_start()
+                                    .saturating_add(contract.integrity_duration_ms)
                     }),
                     Verdict::Invalid,
                     scope,

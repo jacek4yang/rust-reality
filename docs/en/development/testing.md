@@ -135,3 +135,18 @@ children it owns. `--constrained` selects 1 vCPU / 1 GiB for LANDING. Temporary
 QEMU disk snapshots preserve the existing guest disks; QMP/monitor endpoints are
 disabled and SSH uses pinned host keys on loopback. This is fixture preflight,
 not candidate qualification; its output explicitly reports qualification NOT RUN.
+
+The internal guest helper owns the server, stock-Xray client and origin children.
+It verifies the controller's guest boot identity and frozen executable digests,
+then follows the contract's absolute schedule. Evidence collection never moves
+a missed deadline. Reload, warm/cold changes, stale-pool eviction, abrupt LANDING
+restart and data-interface netem actions retain action receipts and netem command
+output. Restart
+requires the owned process identity and confirms termination by SIGKILL. Startup
+and execution failures retain the primary error and attempted final observations.
+Private configuration is staged separately from the retrieved evidence tree.
+
+RTT/loss windows last 60 seconds for the concurrency-4 matrix; other fault
+intervals last 10 seconds. The directional integrity window lasts 60 seconds,
+followed by 180 seconds of recovery. These schedules are fixed in the executable
+contract before qualification, including on constrained LANDING guests.
