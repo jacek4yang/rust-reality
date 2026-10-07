@@ -128,7 +128,8 @@ pub fn verify_gate(
         || gate.command != "check"
         || gate.scope != "all"
         || gate.status != "PASS"
-        || gate.log_directory.is_empty()
+        || gate.log_directory != check.argv[6]
+        || !std::path::Path::new(&gate.log_directory).is_absolute()
         || gate.attempted != labels.len()
         || gate.passed != labels.len()
         || gate.total != labels.len()

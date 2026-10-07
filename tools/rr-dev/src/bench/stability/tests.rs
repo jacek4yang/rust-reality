@@ -352,7 +352,7 @@ fn required_checks_cannot_turn_opaque_success_or_another_ci_head_into_pass() {
 #[test]
 fn authoritative_gate_receipt_requires_every_current_stage_and_retained_log() {
     let workspace = Workspace::create("full-gate-receipt").unwrap();
-    std::fs::create_dir(workspace.join("logs")).unwrap();
+    std::fs::create_dir_all(workspace.join("retained/gate/logs")).unwrap();
     let evidence: schema::Evidence = serde_json::from_value(fixture()).unwrap();
     let mut check = evidence.checks[0].clone();
     let labels = crate::check::required_stage_labels();
@@ -364,11 +364,11 @@ fn authoritative_gate_receipt_requires_every_current_stage_and_retained_log() {
         "--output".to_owned(),
         "json".to_owned(),
         "--log-dir".to_owned(),
-        "logs".to_owned(),
+        "/original-run/logs".to_owned(),
     ];
     let stages: Vec<_> = labels.iter().enumerate().map(|(index,label)| {
         for suffix in ["stdout","stderr"] {
-            let path = format!("logs/{index}.{suffix}");
+            let path = format!("retained/gate/logs/{index}.{suffix}");
             std::fs::write(workspace.join(&path), b"retained stage output\n").unwrap();
             check.observations.push(schema::Artifact {path,sha256:hash::sha256_hex(b"retained stage output\n")});
         }
@@ -381,9 +381,9 @@ fn authoritative_gate_receipt_requires_every_current_stage_and_retained_log() {
         "stages":stages,"status":"PASS","total":labels.len()});
     let bind = |value: &Value, check: &mut schema::Check| {
         let bytes = serde_json::to_vec(value).unwrap();
-        std::fs::write(workspace.join("gate.json"), &bytes).unwrap();
+        std::fs::write(workspace.join("retained/gate/gate.json"), &bytes).unwrap();
         check.output = schema::Artifact {
-            path: "gate.json".to_owned(),
+            path: "retained/gate/gate.json".to_owned(),
             sha256: hash::sha256_hex(&bytes),
         };
     };
@@ -399,8 +399,11 @@ fn authoritative_gate_receipt_requires_every_current_stage_and_retained_log() {
         ("/stages/0/label", json!("true")),
         ("/stages/0/reason", json!("failed")),
         ("/stages/0/stdoutLog", json!("0.stderr")),
+        ("/stages/0/stdoutLog", json!("..")),
+        ("/stages/0/stdoutLog", json!("/absolute.log")),
         ("/total", json!(1)),
         ("/scope", json!("fast")),
+        ("/logDirectory", json!("/substituted-run/logs")),
         ("/stages", json!([])),
     ] {
         let mut invalid = receipt.clone();
@@ -412,6 +415,9 @@ fn authoritative_gate_receipt_requires_every_current_stage_and_retained_log() {
         );
     }
     bind(&receipt, &mut check);
+    check.argv[6] = "/another-run/logs".to_owned();
+    assert!(super::verify_required_check(workspace.path(), &check, &evidence.identity).is_err());
+    check.argv[6] = "/original-run/logs".to_owned();
     check.observations.pop();
     assert!(super::verify_required_check(workspace.path(), &check, &evidence.identity).is_err());
 }

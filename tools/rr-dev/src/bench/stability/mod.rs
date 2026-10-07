@@ -155,10 +155,13 @@ fn verify_required_check(
             let mut names = std::collections::BTreeSet::new();
             for stage in &gate.stages {
                 for name in [&stage.stdout_log, &stage.stderr_log] {
-                    if Path::new(name).components().count() != 1 || !names.insert(name) {
+                    if !matches!(Path::new(name).components().collect::<Vec<_>>().as_slice(), [Component::Normal(_)]) || !names.insert(name) {
                         return Err("gate stage logs were reused or escaped their directory".to_owned());
                     }
-                    let path = Path::new(&check.argv[6]).join(name);
+                    // Original absolute paths bind the execution receipt. Retained logs
+                    // live beside that receipt so the evidence bundle is relocatable.
+                    let path = Path::new(&check.output.path).parent()
+                        .ok_or("missing gate receipt directory")?.join("logs").join(name);
                     let artifact = check.observations.iter().find(|artifact| Path::new(&artifact.path) == path)
                         .ok_or("missing retained gate stage log")?;
                     verify_artifact(root, artifact)?;
