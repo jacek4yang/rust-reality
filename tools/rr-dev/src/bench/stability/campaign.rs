@@ -833,7 +833,7 @@ fn freeze(
         identity::Kind::Rust,
     )?;
     let xray = identity::register("stock Xray", &plan.xray, "", identity::Kind::Xray)?;
-    let evaluator_sha256 = collect::file_digest(Path::new("/proc/self/exe"))?;
+    let evaluator_sha256 = collect::running_image_digest()?;
     let source = identity::embedded_commit(&candidate.identity)?;
     if rust_reality::BUILD_COMMIT != source {
         return Err("build the frozen harness with RUST_REALITY_GIT_COMMIT set to the candidate source commit".to_owned());

@@ -236,8 +236,7 @@ impl Session<'_> {
             &collect::guest_environment()?,
         )?;
         let harness = self.root.join("rr-dev");
-        if collect::file_digest(&std::env::current_exe().map_err(|error| error.to_string())?)?
-            != self.plan.evaluator_sha256
+        if collect::running_image_digest()? != self.plan.evaluator_sha256
             || collect::file_digest(&harness)? != self.plan.evaluator_sha256
         {
             return Err("guest harness image differs from the frozen evaluator".to_owned());

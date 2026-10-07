@@ -83,6 +83,15 @@ pub fn file_digest(path: &Path) -> Result<String, String> {
     super::observation::digest_receipt(&outcome.stdout, path)
 }
 
+/// Hash the running controller image, including when its pathname was replaced.
+///
+/// # Errors
+/// Returns an error if the kernel image or digest command cannot be read.
+pub fn running_image_digest() -> Result<String, String> {
+    // `self` inside sha256sum would name that child, not this controller.
+    file_digest(Path::new(&format!("/proc/{}/exe", std::process::id())))
+}
+
 /// Collect raw observations for one explicitly selected local process.
 ///
 /// # Errors

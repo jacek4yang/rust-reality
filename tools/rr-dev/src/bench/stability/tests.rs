@@ -190,6 +190,14 @@ fn verdict(value: &Value) -> Verdict {
 }
 
 #[test]
+fn external_image_digest_observes_the_callers_running_executable() {
+    assert_eq!(
+        super::collect::running_image_digest().unwrap(),
+        hash::sha256_file(std::path::Path::new("/proc/self/exe")).unwrap()
+    );
+}
+
+#[test]
 fn bounded_empty_permit_backed_retention_above_historical_fd_proxy_passes() {
     assert_eq!(verdict(&fixture()), Verdict::Pass);
 }
