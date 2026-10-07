@@ -79,6 +79,13 @@ retired generations, memory envelopes, payload corruption, stale upload
 receipts, missing samples, process replacement, changed binaries and invalid
 numbers. Synthetic evaluator fixtures are unit tests, never campaign evidence.
 
+The contract fixes load starts, fault order and observation windows before
+execution. Transfer intervals must demonstrate the requested concurrency.
+Partition progress and RTT/loss coverage require transfers during the fault;
+post-fault checkpoints must recover ownership, including after process restart.
+Reused raw observations, excess unopened permits and memory high-water marks
+above the peak envelope fail verification.
+
 For qualification, debug logs include one-second `resource_ownership` and
 `connection_task_ownership` observations and `generation_retired` events. The
 pipe observation inspects retained pipe bytes and reports a missing value if

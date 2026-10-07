@@ -37,9 +37,32 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
     }
     let contract: schema::Contract =
         serde_json::from_str(schema::CONTRACT).expect("compiled stability contract");
+    let mut observation_hashes = std::collections::BTreeSet::new();
     for cell in &evidence.cells {
-        for checkpoint in cell.cycles.iter().flat_map(|cycle| &cycle.checkpoints) {
+        for (started_ms, checkpoint) in cell
+            .cycles
+            .iter()
+            .flat_map(|cycle| {
+                cycle
+                    .checkpoints
+                    .iter()
+                    .map(move |checkpoint| (cycle.started_ms, checkpoint))
+            })
+            .chain(cell.faults.iter().flat_map(|fault| {
+                fault
+                    .checkpoints
+                    .iter()
+                    .map(move |checkpoint| (fault.started_ms, checkpoint))
+            }))
+        {
             for sample in &checkpoint.samples {
+                if !observation_hashes.insert(&sample.observation.sha256) {
+                    report.reject(
+                        Verdict::Invalid,
+                        &cell.name,
+                        "raw observation reused across checkpoints",
+                    );
+                }
                 if let Some(role) = cell.roles.iter().find(|role| role.name == sample.role) {
                     let verified = verify_artifact(root, &sample.observation).and_then(|()| {
                         let file = File::open(root.join(&sample.observation.path))
@@ -52,7 +75,9 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
                         observation::verify_checkpoint_time(
                             &raw,
                             cell.started_unix_ms,
-                            checkpoint.observed_ms,
+                            started_ms
+                                .checked_add(checkpoint.offset_ms)
+                                .ok_or("checkpoint overflow")?,
                             contract.checkpoint_tolerance_ms,
                         )?;
                         observation::verify(&raw, sample, &role.policy)

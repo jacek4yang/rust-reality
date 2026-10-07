@@ -39,12 +39,13 @@ fn fixture() -> Value {
         })).collect();
         let cycles: Vec<_> = (0..contract.cycles).map(|index| {
             let started = u64::try_from(index).unwrap() * contract.cycle_interval_ms;
+            let concurrency = contract.concurrency[index];
             let transfers: Vec<_> = ["line-a","line-b"].into_iter().flat_map(|line| {
-                (0..100).map(move |count| transfer(&format!("{name}-{index}-{line}-{count}"),line,"download",started,1_048_576))
+                (0..100).map(move |count| transfer(&format!("{name}-{index}-{line}-{count}"),line,"download",started+contract.load_start_ms+(count/concurrency)*10,1_048_576))
             }).collect();
             let checkpoints: Vec<_> = contract.checkpoint_offsets_ms.iter().map(|offset| {
                 let samples: Vec<_> = contract.roles.iter().map(|role| json!({
-                    "observation":artifact(),"role":role,"process":process(role),"rss_kib":16384,"pss_kib":12000,"anonymous_kib":10000,"threads":4,
+                    "observation":{"path":format!("{name}-{index}-{offset}-{role}"),"sha256":hash::sha256_hex(format!("{name}-{index}-{offset}-{role}").as_bytes())},"role":role,"process":process(role),"rss_kib":16384,"hwm_kib":16384,"pss_kib":12000,"anonymous_kib":10000,"threads":4,
                     "descriptors":{
                         "total":263,"idle_inbound_sockets":0,"fixed":7,"listener_sockets":1,"warm_sockets":11,"active_sockets":0,
                         "active_relay_fds":0,"retained_pipe_pairs":122,"dirty_retained_pipe_bytes":0,
@@ -66,11 +67,22 @@ fn fixture() -> Value {
                 bindings[2]["identity"]["pid"] = json!(43);
                 bindings[2]["identity"]["start_ticks"] = json!(200);
             }
-            let started = 2_000_000 + u64::try_from(index).unwrap() * 100_000;
+            let started = u64::try_from(contract.cycles).unwrap() * contract.cycle_interval_ms + u64::try_from(index).unwrap() * contract.fault_interval_ms;
             let recovery: Vec<_> = (0..100).map(|count| transfer(&format!("{name}-{fault}-recovery-{count}"),"line-a","download",started+10000,1_048_576)).collect();
+            let during: Vec<_> = ["line-a","line-b"].into_iter().flat_map(|line| (0..100).map(move |count| transfer(&format!("{name}-{fault}-{line}-during-{count}"),line,"download",started+1,1_048_576))).collect();
+            let checkpoints: Vec<_> = contract.fault_checkpoint_offsets_ms.iter().map(|offset| {
+                let mut checkpoint = cycles[0]["checkpoints"][0].clone();
+                checkpoint["offset_ms"] = json!(offset);
+                checkpoint["observed_ms"] = json!(started+offset);
+                for sample in checkpoint["samples"].as_array_mut().unwrap() {
+                    sample["observation"] = json!({"path":format!("{name}-{fault}-{offset}-{}",sample["role"]),"sha256":hash::sha256_hex(format!("{name}-{fault}-{offset}-{}",sample["role"]).as_bytes())});
+                    sample["process"] = bindings.iter().find(|binding| binding["role"] == sample["role"]).unwrap()["identity"].clone();
+                }
+                checkpoint
+            }).collect();
             json!({"name":fault,"started_ms":started,"restored_ms":started+10000,"first_admission_ms":started+10001,
                 "before_processes":before,"after_processes":bindings.clone(),"recovery_transfers":recovery,"affected_prefix":transfer(&format!("{name}-{fault}-prefix"),"line-a","download",started,4096),
-                "line_b_progress_bytes":4096,"expected_failures":[],"unexpected_failures":0})
+                "during_transfers":during,"checkpoints":checkpoints,"expected_failures":[],"unexpected_failures":0})
         }).collect();
         let mut integrity = Vec::new();
         for line in ["line-a","line-b"] {
@@ -122,7 +134,7 @@ fn adversarial_resource_mutations_fail() {
         ("owners/fallbacks", 1),
         ("owners/crypto_operations", 1),
         ("owners/dns_lookups", 1),
-        ("rss_kib", 100_000),
+        ("hwm_kib", 150_000),
     ] {
         let mut changed = valid.clone();
         *changed
@@ -202,6 +214,63 @@ fn strict_schema_rejects_unknown_fields_and_invalid_numbers() {
 }
 
 #[test]
+fn fault_receipts_cannot_hide_late_retention_or_substitute_coverage() {
+    let valid = fixture();
+    for (pointer, value) in [
+        ("/cells/0/faults/0/checkpoints", json!([])),
+        (
+            "/cells/0/faults/0/checkpoints/4/samples/0/owners/retired_generations",
+            json!(1),
+        ),
+        (
+            "/cells/0/faults/0/checkpoints/4/samples/0/owners/tracked_connection_tasks",
+            json!(1),
+        ),
+        (
+            "/cells/0/faults/0/checkpoints/4/samples/0/hwm_kib",
+            json!(150_000),
+        ),
+        (
+            "/cells/0/faults/4/checkpoints/0/samples/2/process/pid",
+            json!(42),
+        ),
+        ("/cells/0/faults/5/during_transfers", json!([])),
+        ("/cells/0/faults/6/during_transfers", json!([])),
+        ("/cells/0/faults/0/started_ms", json!(1)),
+        ("/cells/0/faults/0/checkpoints/4/observed_ms", json!(1)),
+        ("/cells/0/cycles/0/transfers/0/started_ms", json!(0)),
+        ("/cells/0/cycles/0/concurrency", json!(32)),
+    ] {
+        let mut changed = valid.clone();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        assert_ne!(verdict(&changed), Verdict::Pass, "{pointer}");
+    }
+    let mut changed = valid.clone();
+    changed["cells"][0]["cycles"][1]["checkpoints"][0]["samples"][0]["observation"] =
+        valid["cells"][0]["cycles"][0]["checkpoints"][0]["samples"][0]["observation"].clone();
+    assert_eq!(verdict(&changed), Verdict::Invalid);
+    let mut changed = valid;
+    for transfer in changed["cells"][0]["cycles"][0]["transfers"]
+        .as_array_mut()
+        .unwrap()
+    {
+        transfer["started_ms"] = json!(3000);
+        transfer["completed_ms"] = json!(3001);
+    }
+    assert_eq!(verdict(&changed), Verdict::Invalid);
+}
+
+#[test]
+fn recovered_permits_cannot_be_hidden_as_unopened_reservations() {
+    let mut changed = fixture();
+    let descriptors =
+        &mut changed["cells"][0]["cycles"][7]["checkpoints"][7]["samples"][0]["descriptors"];
+    descriptors["reserved_dynamic_permits"] = json!(2);
+    descriptors["held_dynamic_permits"] = json!(257);
+    assert_eq!(verdict(&changed), Verdict::Fail);
+}
+
+#[test]
 fn artifact_verification_rejects_missing_changed_and_escaping_objects() {
     let workspace = Workspace::create("stability-artifacts").unwrap();
     let mut artifact = schema::Artifact {
@@ -250,7 +319,7 @@ fn raw_observation(sample: &schema::Sample, policy: &schema::Policy) -> Value {
         "pid":sample.process.pid,"started_unix_ms":10000,"completed_unix_ms":10050,
         "initial_start_ticks":"100","final_start_ticks":"100","boot_id":sample.process.boot_id,
         "initial_executable_sha256":sample.process.executable_sha256,"final_executable_sha256":sample.process.executable_sha256,
-        "status":"VmRSS: 16384 kB\nThreads: 4\n","smaps_rollup":"Pss: 12000 kB\nAnonymous: 10000 kB\n",
+        "status":"VmRSS: 16384 kB\nVmHWM: 16384 kB\nThreads: 4\n","smaps_rollup":"Pss: 12000 kB\nAnonymous: 10000 kB\n",
         "limits":"Max open files            8192                 8192                 files\n",
         "descriptors":descriptors,"closed_during_read":[],"ownership_log":log,"errors":[]
     })
@@ -273,7 +342,7 @@ fn normalized_ownership_requires_fresh_complete_raw_observations() {
         ("/closed_during_read", json!([123])),
         (
             "/status",
-            json!("VmRSS: 16384 kB\nVmRSS: 16384 kB\nThreads: 4\n"),
+            json!("VmRSS: 16384 kB\nVmRSS: 16384 kB\nVmHWM: 16384 kB\nThreads: 4\n"),
         ),
         ("/smaps_rollup", Value::Null),
         ("/completed_unix_ms", json!(12001)),

@@ -206,6 +206,7 @@ pub fn evaluate(evidence: &Evidence, contract_sha256: &str) -> Report {
                 fault
                     .recovery_transfers
                     .iter()
+                    .chain(&fault.during_transfers)
                     .chain(std::iter::once(&fault.affected_prefix))
             }))
         {
@@ -241,6 +242,22 @@ fn same_names<'a>(actual: impl Iterator<Item = &'a str>, required: &[String]) ->
 #[allow(clippy::too_many_lines)]
 fn evaluate_cell(report: &mut Report, evidence: &Evidence, contract: &Contract, cell: &Cell) {
     let scope = cell.name.as_str();
+    let mut observations = BTreeSet::new();
+    for sample in cell
+        .cycles
+        .iter()
+        .flat_map(|cycle| &cycle.checkpoints)
+        .chain(cell.faults.iter().flat_map(|fault| &fault.checkpoints))
+        .flat_map(|checkpoint| &checkpoint.samples)
+    {
+        report.require(
+            digest(&sample.observation.sha256, 64)
+                && observations.insert(&sample.observation.sha256),
+            Verdict::Invalid,
+            scope,
+            "missing or reused raw observation",
+        );
+    }
     report.require(
         same_names(
             cell.roles.iter().map(|role| role.name.as_str()),
@@ -350,13 +367,27 @@ fn evaluate_cell(report: &mut Report, evidence: &Evidence, contract: &Contract, 
                 scope,
                 "insufficient transfers per LINE per cycle",
             );
+            report.require(
+                peak_concurrency(
+                    cycle
+                        .transfers
+                        .iter()
+                        .filter(|transfer| transfer.line == line),
+                ) == Some(cycle.concurrency),
+                Verdict::Invalid,
+                scope,
+                "transfer intervals did not exercise the prescribed concurrency",
+            );
         }
         for transfer in &cycle.transfers {
             let load_end = cycle
                 .started_ms
                 .checked_add(contract.checkpoint_offsets_ms[4]);
             report.require(
-                transfer.started_ms >= cycle.started_ms
+                cycle
+                    .started_ms
+                    .checked_add(contract.load_start_ms)
+                    .is_some_and(|start| transfer.started_ms >= start)
                     && load_end.is_some_and(|end| transfer.completed_ms <= end),
                 Verdict::Invalid,
                 scope,
@@ -399,63 +430,7 @@ fn evaluate_cell(report: &mut Report, evidence: &Evidence, contract: &Contract, 
                         .checkpoint_offsets_ms
                         .last()
                         .expect("recovery checkpoint");
-                evaluate_owners(report, scope, &role.policy, sample, recovered);
-                let fd_ceiling = if role.name == "landing" {
-                    contract.peak_landing_fds
-                } else if recovered {
-                    contract.recovered_line_fds
-                } else {
-                    contract.peak_line_fds
-                };
-                report.require(
-                    sample.descriptors.total <= fd_ceiling,
-                    Verdict::Fail,
-                    scope,
-                    "unchanged peak/LINE descriptor envelope exceeded",
-                );
-
-                let baseline = cell
-                    .cycles
-                    .first()
-                    .and_then(|cycle| cycle.checkpoints.first())
-                    .and_then(|checkpoint| {
-                        checkpoint
-                            .samples
-                            .iter()
-                            .find(|baseline| baseline.role == sample.role)
-                    });
-                if let Some(baseline) = baseline {
-                    let rss_limit = if recovered {
-                        contract.recovered_rss_growth_kib
-                    } else {
-                        contract.peak_rss_growth_kib
-                    };
-                    let thread_limit = if recovered {
-                        contract.recovered_thread_growth
-                    } else {
-                        contract.peak_thread_growth
-                    };
-                    report.require(
-                        sample.rss_kib.saturating_sub(baseline.rss_kib) <= rss_limit
-                            && sample.threads.saturating_sub(baseline.threads) <= thread_limit,
-                        Verdict::Fail,
-                        scope,
-                        "absolute memory/thread envelope exceeded",
-                    );
-                } else {
-                    report.reject(Verdict::Invalid, scope, "missing process baseline");
-                }
-                report.require(
-                    sample.rss_kib > 0
-                        && sample.rss_kib <= role.memory_limit_bytes / 1024
-                        && sample.pss_kib > 0
-                        && sample.pss_kib <= sample.rss_kib
-                        && sample.anonymous_kib <= sample.rss_kib
-                        && sample.threads > 0,
-                    Verdict::Invalid,
-                    scope,
-                    "invalid or missing memory/thread observation",
-                );
+                evaluate_sample(report, contract, cell, role, sample, recovered);
             }
         }
     }
@@ -473,17 +448,23 @@ fn evaluate_cell(report: &mut Report, evidence: &Evidence, contract: &Contract, 
         .iter()
         .map(|role| (role.name.clone(), role.process.clone()))
         .collect();
-    let mut last_fault_end = contract
+    let first_fault = contract
         .cycle_interval_ms
         .saturating_mul(contract.cycles as u64);
-    for fault in &cell.faults {
+    for (index, fault) in cell.faults.iter().enumerate() {
         report.require(
-            fault.started_ms >= last_fault_end,
+            u64::try_from(index)
+                .ok()
+                .and_then(|index| index.checked_mul(contract.fault_interval_ms))
+                .and_then(|offset| first_fault.checked_add(offset))
+                == Some(fault.started_ms)
+                && contract.faults.get(index) == Some(&fault.name)
+                && fault.restored_ms.checked_sub(fault.started_ms)
+                    == Some(contract.fault_duration_ms),
             Verdict::Invalid,
             scope,
-            "overlapping or reordered fault interval",
+            "fault order, start or duration differs from the frozen schedule",
         );
-        last_fault_end = fault.restored_ms;
         for (bindings, before) in [
             (&fault.before_processes, true),
             (&fault.after_processes, false),
@@ -520,6 +501,43 @@ fn evaluate_cell(report: &mut Report, evidence: &Evidence, contract: &Contract, 
             .collect();
 
         report.require(
+            fault.checkpoints.len() == contract.fault_checkpoint_offsets_ms.len(),
+            Verdict::Invalid,
+            scope,
+            "missing post-fault ownership checkpoints",
+        );
+        for (index, checkpoint) in fault.checkpoints.iter().enumerate() {
+            let scheduled = fault.started_ms.checked_add(checkpoint.offset_ms);
+            report.require(
+                contract.fault_checkpoint_offsets_ms.get(index) == Some(&checkpoint.offset_ms)
+                    && scheduled.is_some_and(|time| {
+                        checkpoint.observed_ms >= time
+                            && checkpoint.observed_ms - time <= contract.checkpoint_tolerance_ms
+                    })
+                    && same_names(
+                        checkpoint.samples.iter().map(|sample| sample.role.as_str()),
+                        &contract.roles,
+                    ),
+                Verdict::Invalid,
+                scope,
+                "missing, late or substituted post-fault checkpoint",
+            );
+            for sample in &checkpoint.samples {
+                report.require(
+                    expected_processes.get(&sample.role) == Some(&sample.process),
+                    Verdict::Fail,
+                    scope,
+                    "post-fault sample changed process identity",
+                );
+                if let Some(role) = cell.roles.iter().find(|role| role.name == sample.role) {
+                    let recovered =
+                        Some(&checkpoint.offset_ms) == contract.fault_checkpoint_offsets_ms.last();
+                    evaluate_sample(report, contract, cell, role, sample, recovered);
+                }
+            }
+        }
+
+        report.require(
             fault.restored_ms >= fault.started_ms
                 && fault.first_admission_ms >= fault.restored_ms
                 && fault.first_admission_ms - fault.restored_ms <= contract.recovery_deadline_ms,
@@ -539,22 +557,52 @@ fn evaluate_cell(report: &mut Report, evidence: &Evidence, contract: &Contract, 
         );
         report.require(
             fault.recovery_transfers.len() >= 100
-                && fault
-                    .recovery_transfers
-                    .iter()
-                    .all(|transfer| transfer.started_ms >= fault.restored_ms),
+                && fault.recovery_transfers.iter().all(|transfer| {
+                    transfer.started_ms >= fault.restored_ms
+                        && fault
+                            .restored_ms
+                            .checked_add(contract.recovery_deadline_ms)
+                            .is_some_and(|end| transfer.completed_ms <= end)
+                }),
             Verdict::Invalid,
             scope,
             "missing fresh post-fault recovery transfers",
         );
         if fault.name == "line-a-partition" {
             report.require(
-                fault.line_b_progress_bytes > 0
+                fault
+                    .during_transfers
+                    .iter()
+                    .any(|transfer| transfer.line == "line-b" && transfer.received_bytes > 0)
                     && fault.restored_ms.checked_sub(fault.started_ms) == Some(10_000),
                 Verdict::Fail,
                 scope,
                 "LINE-B made no progress or partition duration changed",
             );
+        }
+        report.require(
+            fault.during_transfers.iter().all(|transfer| {
+                transfer.started_ms >= fault.started_ms
+                    && transfer.completed_ms <= fault.restored_ms
+            }),
+            Verdict::Invalid,
+            scope,
+            "during-fault receipt lies outside its fixed interval",
+        );
+        if fault.name.starts_with("rtt-") {
+            for line in ["line-a", "line-b"] {
+                report.require(
+                    fault
+                        .during_transfers
+                        .iter()
+                        .filter(|transfer| transfer.line == line)
+                        .count()
+                        >= usize::try_from(contract.transfers_per_line).unwrap_or(usize::MAX),
+                    Verdict::Invalid,
+                    scope,
+                    "RTT/loss workload was not exercised while shaping was active",
+                );
+            }
         }
     }
     report.require(
@@ -592,6 +640,96 @@ fn evaluate_cell(report: &mut Report, evidence: &Evidence, contract: &Contract, 
             }
         }
     }
+}
+
+fn peak_concurrency<'a>(transfers: impl Iterator<Item = &'a Transfer>) -> Option<u64> {
+    let mut events = Vec::new();
+    for transfer in transfers {
+        if transfer.started_ms >= transfer.completed_ms {
+            return None;
+        }
+        events.push((transfer.started_ms, 1_i64));
+        events.push((transfer.completed_ms, -1_i64));
+    }
+    events.sort_unstable();
+    let mut active = 0_i64;
+    let mut peak = 0_i64;
+    for (_, change) in events {
+        active = active.checked_add(change)?;
+        peak = peak.max(active);
+    }
+    u64::try_from(peak).ok()
+}
+
+fn evaluate_sample(
+    report: &mut Report,
+    contract: &Contract,
+    cell: &Cell,
+    role: &schema::Role,
+    sample: &Sample,
+    recovered: bool,
+) {
+    let scope = cell.name.as_str();
+    evaluate_owners(report, scope, &role.policy, sample, recovered);
+    let fd_ceiling = if role.name == "landing" {
+        contract.peak_landing_fds
+    } else if recovered {
+        contract.recovered_line_fds
+    } else {
+        contract.peak_line_fds
+    };
+    report.require(
+        sample.descriptors.total <= fd_ceiling,
+        Verdict::Fail,
+        scope,
+        "unchanged peak/LINE descriptor envelope exceeded",
+    );
+
+    let baseline = cell
+        .cycles
+        .first()
+        .and_then(|cycle| cycle.checkpoints.first())
+        .and_then(|checkpoint| {
+            checkpoint
+                .samples
+                .iter()
+                .find(|baseline| baseline.role == sample.role)
+        });
+    if let Some(baseline) = baseline {
+        let rss_limit = if recovered {
+            contract.recovered_rss_growth_kib
+        } else {
+            contract.peak_rss_growth_kib
+        };
+        let thread_limit = if recovered {
+            contract.recovered_thread_growth
+        } else {
+            contract.peak_thread_growth
+        };
+        report.require(
+            sample.rss_kib.saturating_sub(baseline.rss_kib) <= rss_limit
+                && sample.hwm_kib.saturating_sub(baseline.hwm_kib) <= contract.peak_rss_growth_kib
+                && sample.threads.saturating_sub(baseline.threads) <= thread_limit,
+            Verdict::Fail,
+            scope,
+            "absolute memory/thread envelope exceeded",
+        );
+    } else {
+        report.reject(Verdict::Invalid, scope, "missing process baseline");
+    }
+    report.require(
+        sample.rss_kib > 0
+            && sample.hwm_kib >= sample.rss_kib
+            && sample.hwm_kib <= role.memory_limit_bytes / 1024
+            && sample.rss_kib <= role.memory_limit_bytes / 1024
+            && sample.pss_kib > 0
+            && sample.pss_kib <= sample.rss_kib
+            && sample.anonymous_kib <= sample.rss_kib
+            && sample.threads > 0,
+        Verdict::Invalid,
+        scope,
+        "invalid or missing memory/thread observation",
+    );
 }
 
 fn evaluate_owners(
@@ -653,6 +791,7 @@ fn evaluate_owners(
         report.require(
             fd.active_sockets == 0
                 && fd.active_relay_fds == 0
+                && fd.reserved_dynamic_permits == policy.listener_sockets
                 && owners.admitted_connections == owners.pre_auth_idle_connections
                 && owners.tracked_connection_tasks == owners.pre_auth_idle_connections
                 && owners.retired_generations == 0

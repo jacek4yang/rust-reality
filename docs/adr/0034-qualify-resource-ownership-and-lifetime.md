@@ -65,7 +65,15 @@ RSS/thread envelopes, pressure recovery and OOM rejection. RSS/PSS slopes are
 diagnostics, with no acceptance threshold.
 
 Every predefined cycle retains baseline, load and recovered observations for
-each exact process. Payloads and received prefixes are byte-exact; upload
+each exact process. Baseline collection ends before the fixed load start;
+transfer intervals must exercise the prescribed concurrency. Faults have fixed
+order, intervals and post-fault recovery checkpoints, including replacement
+process identities after controlled restart. Partition progress and RTT/loss
+coverage require transfer receipts within the active fault interval. Raw
+observations cannot be reused, and process-lifetime memory high-water marks
+remain inside the peak envelope. At recovery, unopened descriptor reservations
+may cover only the existing listeners' pending accepts.
+Payloads and received prefixes are byte-exact; upload
 receipts must be fresh and unique. Process replacement, missing case coverage,
 changed binaries, panics, OOMs and unexpected protocol/authentication rejection
 cannot pass. Execution, collection and verdict calculation remain separate

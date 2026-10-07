@@ -284,6 +284,7 @@ pub fn verify(raw: &Observation, sample: &Sample, policy: &Policy) -> Result<(),
     let status = raw.status.as_deref().ok_or("missing status")?;
     let smaps = raw.smaps_rollup.as_deref().ok_or("missing smaps_rollup")?;
     if field(status, "VmRSS:")? != sample.rss_kib
+        || field(status, "VmHWM:")? != sample.hwm_kib
         || field(status, "Threads:")? != sample.threads
         || field(smaps, "Pss:")? != sample.pss_kib
         || field(smaps, "Anonymous:")? != sample.anonymous_kib
