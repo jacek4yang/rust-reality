@@ -18,11 +18,74 @@ fn transfer(id: &str, line: &str, direction: &str, started: u64, size: u64) -> V
     json!({
         "id":id,"line":line,"direction":direction,"started_ms":started,"completed_ms":started+1,
         "expected_bytes":size,"received_bytes":size,"expected_sha256":"b".repeat(64),"received_sha256":"b".repeat(64),
+        "source":artifact(),"download":if direction == "upload" { Value::Null } else { artifact() },
         "upload": if direction == "download" { Value::Null } else { json!({
+            "access_log_before":artifact(),"access_log_after":artifact(),
             "path":format!("/{id}"),"log_boundary":100,"receipt_offset":100,"appended_matches":1,
             "bytes":size,"sha256":"b".repeat(64)
         })}
     })
+}
+
+#[test]
+fn transfer_receipts_reconstruct_exact_payloads_and_fresh_origin_appends() {
+    let workspace = Workspace::create("stability-transfer").unwrap();
+    let save = |name: &str, bytes: &[u8]| {
+        std::fs::write(workspace.join(name), bytes).unwrap();
+        schema::Artifact {
+            path: name.to_owned(),
+            sha256: hash::sha256_hex(bytes),
+        }
+    };
+    let source = save("source", b"payload");
+    let download = save("download", b"payload");
+    let row = |path: &str| {
+        format!(
+            "{}\n",
+            json!({"server":"landing","method":"PUT","path":path,"client":"127.0.0.1","bytes":7,"sha256":source.sha256})
+        )
+    };
+    let before = row("/earlier");
+    let after = format!("{before}{}", row("/fresh"));
+    let mut value = transfer("fresh", "line-a", "bidirectional", 0, 7);
+    value["source"] = json!(source);
+    value["download"] = json!(download);
+    value["expected_sha256"] = json!(source.sha256);
+    value["received_sha256"] = json!(source.sha256);
+    value["upload"] = json!({
+        "access_log_before":save("before", before.as_bytes()),
+        "access_log_after":save("after", after.as_bytes()),
+        "path":"/fresh","log_boundary":before.len(),"receipt_offset":before.len(),
+        "appended_matches":1,"bytes":7,"sha256":source.sha256
+    });
+    let transfer: schema::Transfer = serde_json::from_value(value).unwrap();
+    super::verify_transfer_files(workspace.path(), &transfer).unwrap();
+    let receipt = transfer.upload.as_ref().unwrap();
+    for invalid in [
+        before.clone(),
+        format!("{after}{}", row("/fresh")),
+        format!("{}{}", row("/fresh"), row("/fresh")),
+        after.trim_end().to_owned(),
+        after.replace("\"bytes\":7", "\"bytes\":8"),
+        after.replace("\"bytes\":7", "\"bytes\":7,\"bytes\":7"),
+        after.replace("\"bytes\":7", "\"bytes\":7,\"unobserved\":0"),
+    ] {
+        assert!(
+            super::transfer::verify_upload(before.as_bytes(), invalid.as_bytes(), receipt).is_err()
+        );
+    }
+    let mut stale = receipt.clone();
+    stale.log_boundary = 0;
+    assert!(super::transfer::verify_upload(before.as_bytes(), after.as_bytes(), &stale).is_err());
+    let mut corrupt = transfer.clone();
+    corrupt.download = Some(save("corrupt", b"payloae"));
+    assert!(super::verify_transfer_files(workspace.path(), &corrupt).is_err());
+    corrupt = transfer.clone();
+    corrupt.download = None;
+    assert!(super::verify_transfer_files(workspace.path(), &corrupt).is_err());
+    corrupt = transfer;
+    corrupt.source = save("wrong-source", b"different");
+    assert!(super::verify_transfer_files(workspace.path(), &corrupt).is_err());
 }
 
 fn fixture() -> Value {

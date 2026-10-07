@@ -236,12 +236,16 @@ pub struct Transfer {
     pub received_bytes: u64,
     pub expected_sha256: String,
     pub received_sha256: String,
+    pub source: Artifact,
+    pub download: Option<Artifact>,
     pub upload: Option<UploadReceipt>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct UploadReceipt {
+    pub access_log_before: Artifact,
+    pub access_log_after: Artifact,
     pub path: String,
     pub log_boundary: u64,
     pub receipt_offset: u64,

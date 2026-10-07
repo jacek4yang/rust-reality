@@ -7,6 +7,7 @@ pub mod native;
 pub mod native_evaluate;
 pub mod observation;
 pub mod schema;
+pub mod transfer;
 pub mod vm;
 
 use std::{
@@ -51,6 +52,23 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
         serde_json::from_str(schema::CONTRACT).expect("compiled stability contract");
     let mut observation_hashes = std::collections::BTreeSet::new();
     for cell in &evidence.cells {
+        for transfer in cell
+            .cycles
+            .iter()
+            .flat_map(|cycle| &cycle.transfers)
+            .chain(cell.integrity.iter())
+            .chain(cell.faults.iter().flat_map(|fault| {
+                fault
+                    .during_transfers
+                    .iter()
+                    .chain(&fault.recovery_transfers)
+                    .chain(std::iter::once(&fault.affected_prefix))
+            }))
+        {
+            if let Err(error) = verify_transfer_files(root, transfer) {
+                report.reject(Verdict::Invalid, &transfer.id, &error);
+            }
+        }
         for (started_ms, checkpoint) in cell
             .cycles
             .iter()
@@ -105,6 +123,36 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
         );
     }
     Ok(report)
+}
+
+fn verify_transfer_files(root: &Path, transfer: &schema::Transfer) -> Result<(), String> {
+    let source = read_artifact(root, &transfer.source)?;
+    if u64::try_from(source.len()).ok() != Some(transfer.expected_bytes)
+        || transfer.source.sha256 != transfer.expected_sha256
+    {
+        return Err("source payload does not reproduce the expected bytes and digest".to_owned());
+    }
+    match (&transfer.download, transfer.direction.as_str()) {
+        (None, "upload") => {}
+        (Some(download), "download" | "bidirectional") => {
+            let received = read_artifact(root, download)?;
+            if received != source
+                || u64::try_from(received.len()).ok() != Some(transfer.received_bytes)
+                || download.sha256 != transfer.received_sha256
+            {
+                return Err("received payload or prefix differs from retained source".to_owned());
+            }
+        }
+        _ => return Err("missing or unrelated received payload artifact".to_owned()),
+    }
+    if let Some(upload) = &transfer.upload {
+        transfer::verify_upload(
+            &read_artifact(root, &upload.access_log_before)?,
+            &read_artifact(root, &upload.access_log_after)?,
+            upload,
+        )?;
+    }
+    Ok(())
 }
 
 fn read_artifact(root: &Path, artifact: &Artifact) -> Result<Vec<u8>, String> {

@@ -10,10 +10,27 @@ mod native_evaluate;
 mod observation;
 #[path = "../../tools/rr-dev/src/bench/stability/schema.rs"]
 mod schema;
+#[path = "../../tools/rr-dev/src/bench/stability/transfer.rs"]
+mod transfer;
 #[path = "../../tools/rr-dev/src/bench/stability/vm.rs"]
 mod vm;
 
 libfuzzer_sys::fuzz_target!(|bytes: &[u8]| {
+    let artifact = schema::Artifact {
+        path: "raw".to_owned(),
+        sha256: "a".repeat(64),
+    };
+    let upload = schema::UploadReceipt {
+        access_log_before: artifact.clone(),
+        access_log_after: artifact,
+        path: "/fresh".to_owned(),
+        log_boundary: 0,
+        receipt_offset: 0,
+        appended_matches: 1,
+        bytes: 7,
+        sha256: "a".repeat(64),
+    };
+    let _ = transfer::verify_upload(&[], bytes, &upload);
     if let Ok(text) = std::str::from_utf8(bytes) {
         let _ = observation::digest_receipt(text, "/proc/42/exe");
         let _ = observation::owned_unix_rows(text, &std::collections::BTreeMap::new());

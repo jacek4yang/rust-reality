@@ -79,6 +79,14 @@ retired generations, memory envelopes, payload corruption, stale upload
 receipts, missing samples, process replacement, changed binaries and invalid
 numbers. Synthetic evaluator fixtures are unit tests, never campaign evidence.
 
+Each transfer retains its source payload and received download or prefix. The
+offline verifier compares their bytes and reconstructs PUT receipts from hashed
+origin access-log snapshots captured before and after the batch. It rejects
+rewritten prefixes, claimed boundaries that differ from the retained snapshot,
+old or duplicate request paths, truncated records and changed payload files.
+Generation publication histories must be contiguous from startup; omitted
+publications or retirements of unknown generations invalidate the observation.
+
 The contract fixes load starts, fault order and observation windows before
 execution. Transfer intervals must demonstrate the requested concurrency.
 Partition progress and RTT/loss coverage require transfers during the fault;
