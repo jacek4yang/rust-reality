@@ -1,0 +1,250 @@
+{
+  "scope": "LOCAL_KVM_AND_EXACT_SOURCE_GATES",
+  "sourceCommit": "1da34e37a2b38a774eb3fc14764c108356606963",
+  "policyCommit": "0fdb4c8710b78e07cdcf42529474de41799f6ead",
+  "candidateElf": {
+    "buildId": "3b2c0519e3cf6ed3caf013855506875838378854",
+    "bytes": 7607144,
+    "path": "/home/jacek/.cache/rr-phase1-closure/frozen-1da34e3/binary/rust-reality",
+    "sha256": "47bd2151d9348562ec547c0867f3cbd9b72d35b28255cce8e7fd240f30deec9a"
+  },
+  "overallVerdict": "FAIL: publication qualification is not satisfied",
+  "localFullGate": "PASS19/19",
+  "actions": [
+    {
+      "run": 37599983901,
+      "workflow": "CI",
+      "verdict": "PASS"
+    },
+    {
+      "run": 37599983871,
+      "workflow": "Security",
+      "verdict": "PASS"
+    },
+    {
+      "run": 37599984014,
+      "workflow": "Native",
+      "verdict": "FAIL",
+      "pssTailMiBPerHour": 2.1149081966315397,
+      "unchangedLimit": 2.0,
+      "soakTerminalBinding": "NOT RETAINED"
+    }
+  ],
+  "kvmChecks": [
+    {
+      "case": "high-handoff-lifecycle",
+      "verdict": "PASS",
+      "auditSha256": "db90adf942dc3fa677cc5a31556b9c5d275c620cff3e2afc32f664a481bc4e81"
+    },
+    {
+      "case": "high-handoff-faults",
+      "verdict": "PASS",
+      "auditSha256": "c2195a12f7926e921956d52dc38ac3e444e0bb959f3725552332b111e658a941"
+    },
+    {
+      "case": "high-nxr-lifecycle",
+      "verdict": "PASS",
+      "auditSha256": "69380a36088ae92f2b3fc5b0b51d28bd328c39b7179677de7acb67ce0604be1a"
+    },
+    {
+      "case": "high-nxr-faults",
+      "verdict": "PASS",
+      "auditSha256": "8c1b3c0d457aac3710ca92069114b50287b5d2e240fbb31465a4f9f49e64fd22"
+    },
+    {
+      "case": "low-handoff-stress-recovery-integrity",
+      "verdict": "PASS",
+      "auditSha256": "950a326e0ebf0bddb0525e7e0bfde51030080c4ef5071f8f1bd63b3b7043d1e7",
+      "cycles": 8,
+      "transfersPerLinePerCycle": 100,
+      "postKillTransfers": 100,
+      "firstRecoverySeconds": 0.3315109660000002
+    },
+    {
+      "case": "low-nxr-stress-recovery-integrity",
+      "verdict": "PASS",
+      "auditSha256": "0fbcddc372838d697f57269c41bc160248b52b6689f1ebe1ef3e7fe330bf792a",
+      "cycles": 8,
+      "transfersPerLinePerCycle": 100,
+      "postKillTransfers": 100,
+      "firstRecoverySeconds": 0.24804903099999986
+    },
+    {
+      "case": "high-handoff-stress",
+      "verdict": "PASS",
+      "cycles": 8,
+      "transfersPerLinePerCycle": 100
+    },
+    {
+      "case": "high-nxr-stress",
+      "verdict": "FAIL",
+      "reason": "LANDING recovery FD exceeds256; pipe census attributes244 descriptors to122 drained bounded retained pipes; idle total263 remains above256"
+    }
+  ],
+  "packageSmoke": {
+    "verdict": "PASS",
+    "cells": [
+      {
+        "tier": "linux-x86_64-generic",
+        "topology": "handoff",
+        "elfSha256": "59a35eb454cb6040572815aa4c85780b45be57738ec026c14b844a60775ab98f",
+        "verifiedAttempts": 106,
+        "largeIntegrity": "PASS"
+      },
+      {
+        "tier": "linux-x86_64-generic",
+        "topology": "nxr",
+        "elfSha256": "59a35eb454cb6040572815aa4c85780b45be57738ec026c14b844a60775ab98f",
+        "verifiedAttempts": 106,
+        "largeIntegrity": "PASS"
+      },
+      {
+        "tier": "linux-x86_64-musl",
+        "topology": "handoff",
+        "elfSha256": "372804aa9ed45cbd9b19fa2487fac14f445c33045879abe4edb21dd03e3bc612",
+        "verifiedAttempts": 106,
+        "largeIntegrity": "PASS"
+      },
+      {
+        "tier": "linux-x86_64-musl",
+        "topology": "nxr",
+        "elfSha256": "372804aa9ed45cbd9b19fa2487fac14f445c33045879abe4edb21dd03e3bc612",
+        "verifiedAttempts": 106,
+        "largeIntegrity": "PASS"
+      },
+      {
+        "tier": "linux-x86_64-v3",
+        "topology": "handoff",
+        "elfSha256": "d6da3c51600b674e0928552c18bd14c16200d6d8fc74bdc849986a2b3ed35920",
+        "verifiedAttempts": 106,
+        "largeIntegrity": "PASS"
+      },
+      {
+        "tier": "linux-x86_64-v3",
+        "topology": "nxr",
+        "elfSha256": "d6da3c51600b674e0928552c18bd14c16200d6d8fc74bdc849986a2b3ed35920",
+        "verifiedAttempts": 106,
+        "largeIntegrity": "PASS"
+      }
+    ]
+  },
+  "artifactInventory": {
+    "artifact": "rust-reality-v2.0.1-linux-x86_64-generic.tar.gz",
+    "artifacts": [
+      {
+        "artifact": "rust-reality-v2.0.1-linux-x86_64-generic.tar.gz",
+        "cpuTier": "portable",
+        "measuredNatively": true,
+        "requirements": {
+          "architecture": "x86_64",
+          "isaLevel": "x86-64",
+          "requiredCpuFeatures": [
+            "sse2"
+          ],
+          "runtimeDispatch": true
+        },
+        "sha256": "9e4a2ffc67c23d4a877505ca3935578e717f3d911718bd8d24e1d45a616badda",
+        "target": "x86_64-unknown-linux-gnu",
+        "targetCpu": "x86-64",
+        "targetFeatures": [],
+        "tier": "linux-x86_64-generic"
+      },
+      {
+        "artifact": "rust-reality-v2.0.1-linux-x86_64-musl.tar.gz",
+        "cpuTier": "portable-musl",
+        "measuredNatively": true,
+        "requirements": {
+          "architecture": "x86_64",
+          "dynamicLoaderRequired": false,
+          "isaLevel": "x86-64",
+          "libc": "musl",
+          "linkage": "static",
+          "requiredCpuFeatures": [
+            "sse2"
+          ],
+          "runtimeDispatch": true
+        },
+        "sha256": "1d6a63a977a7d5ca738183662eca134ecfaaa805f754e0f71bc48208a7ccc132",
+        "target": "x86_64-unknown-linux-musl",
+        "targetCpu": "x86-64",
+        "targetFeatures": [],
+        "tier": "linux-x86_64-musl"
+      },
+      {
+        "artifact": "rust-reality-v2.0.1-linux-x86_64-v3.tar.gz",
+        "cpuTier": "x86-64-v3",
+        "measuredNatively": true,
+        "requirements": {
+          "architecture": "x86_64",
+          "isaLevel": "x86-64-v3",
+          "requiredCpuFeatures": [
+            "avx",
+            "avx2",
+            "bmi1",
+            "bmi2",
+            "cx16",
+            "f16c",
+            "fma",
+            "lahf_lm",
+            "lzcnt",
+            "movbe",
+            "popcnt",
+            "sse3",
+            "sse4_1",
+            "sse4_2",
+            "ssse3",
+            "xsave"
+          ],
+          "requiresOsAvxState": true,
+          "runtimeDispatch": true
+        },
+        "sha256": "21a8926b43b35f17443dfbf759857d4f15116bd8c89479d03670a356eb62d507",
+        "target": "x86_64-unknown-linux-gnu",
+        "targetCpu": "x86-64-v3",
+        "targetFeatures": [],
+        "tier": "linux-x86_64-v3"
+      },
+      {
+        "artifact": "rust-reality-v2.0.1-linux-aarch64-generic.tar.gz",
+        "cpuTier": "aarch64-generic",
+        "measuredNatively": true,
+        "requirements": {
+          "architecture": "aarch64",
+          "isaLevel": "armv8-a",
+          "requiredCpuFeatures": [
+            "neon"
+          ],
+          "runtimeDispatch": true
+        },
+        "sha256": "8b25884e50d8d6555c59a626984781daa471e4789f7883e96d8f0fb04559a025",
+        "target": "aarch64-unknown-linux-gnu",
+        "targetCpu": "generic",
+        "targetFeatures": [],
+        "tier": "linux-aarch64-generic"
+      }
+    ],
+    "cargoFeatures": [
+      "default"
+    ],
+    "commit": "1da34e37a2b38a774eb3fc14764c108356606963",
+    "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "package": "rust-reality",
+    "schemaVersion": 3,
+    "sha256": "9e4a2ffc67c23d4a877505ca3935578e717f3d911718bd8d24e1d45a616badda",
+    "sourceDateEpoch": 1791364871,
+    "tag": "v2.0.1",
+    "target": "x86_64-unknown-linux-gnu",
+    "version": "2.0.1"
+  },
+  "causalLimits": [
+    "Finite replay occupancy/allocation and allocator-trim counterfactual support bounded high-water retention in exercised workloads, not a universal resident-memory ceiling.",
+    "Pipe descriptors are empty and bounded, but this attribution does not waive the fixed recovery ceiling.",
+    "A failed native PSS metric is retained; no repeated blind soak, altered window or speculative allocator fix."
+  ],
+  "authorizationAndScope": [
+    "No merge, new tag, release, production access, deployment or real-WAN canary.",
+    "System KVM guests have distinct kernels/boot IDs, not independent physical hosts.",
+    "Operation-count stress is not elapsed-month equivalence.",
+    "Official-tier package ELFs have source-bound smoke receipts; they are not byte-identical to the KVM-exercised perf-freeze ELF."
+  ]
+}

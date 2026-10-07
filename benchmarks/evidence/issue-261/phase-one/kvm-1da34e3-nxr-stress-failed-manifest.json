@@ -1,0 +1,118 @@
+{
+  "scope": "LOCAL_KVM",
+  "sourceCommit": "1da34e37a2b38a774eb3fc14764c108356606963",
+  "candidateElfSha256": "47bd2151d9348562ec547c0867f3cbd9b72d35b28255cce8e7fd240f30deec9a",
+  "cell": "nxr-stress",
+  "claim": "raw evidence; verdict remains in evaluator receipts, never inferred from archive creation",
+  "exclusions": [
+    "secret-bearing configurations",
+    "SSH credentials",
+    "executables",
+    "deterministic payload binaries"
+  ],
+  "members": [
+    {
+      "path": "controller/Cargo.lock",
+      "bytes": 6659,
+      "sha256": "8ce4be86766be170f1fb9fc65a5672958e1d6f02c54a564c069a27ccfb1f232e"
+    },
+    {
+      "path": "controller/Cargo.toml",
+      "bytes": 167,
+      "sha256": "00f69c2b950031c5a530f1f30da589a67ded7153bd66a13eeb15a84bf5d33731"
+    },
+    {
+      "path": "controller/src/main.rs",
+      "bytes": 36083,
+      "sha256": "44ea1822256117264388c74d42b417d4a5950b3c7be1b4185c2ae1c9a0372ee6"
+    },
+    {
+      "path": "evaluators/audit-faults.py",
+      "bytes": 5085,
+      "sha256": "87860e59873585de25a6284dbcf69467138cafb689c6ac310e2708844980af6b"
+    },
+    {
+      "path": "evaluators/audit-lifecycle.py",
+      "bytes": 4926,
+      "sha256": "bf062a605c7cfd46380cec95cc0397cffd3be7cb71518e05928c976d16ee56c3"
+    },
+    {
+      "path": "evaluators/audit-stress.py",
+      "bytes": 5074,
+      "sha256": "1a9da09d015a7382fc37e5004f64f1fabcb56419afd3690cd966e4118279fd10"
+    },
+    {
+      "path": "evaluators/large-integrity.py",
+      "bytes": 2448,
+      "sha256": "580608ab8e1a2cd264c5d10b36773fe8f7cb7e0a5575f8c0ff25186ddfaa0ff4"
+    },
+    {
+      "path": "metadata/provision-attestation.json",
+      "bytes": 8313,
+      "sha256": "ec5becc24705ee9623a39fd0649c68031f3e6290e4f08fd4fdc8227016fdec71"
+    },
+    {
+      "path": "metadata/scope.json",
+      "bytes": 568,
+      "sha256": "55d9d47695c84b9d056417ecb7107cff178757aed1390261b48b7c068f3121f2"
+    },
+    {
+      "path": "raw/complete.json",
+      "bytes": 104,
+      "sha256": "aee418628858888ada5a479c1b8b47e8e4e490b9ca1e5bbc1cef312ab6952b73"
+    },
+    {
+      "path": "raw/events.jsonl",
+      "bytes": 647338,
+      "sha256": "765daa5f97aa943cacdcfda8d139b9c024147486857fd8c9119a563fd4c29ca4"
+    },
+    {
+      "path": "raw/landing-cover-143590.log",
+      "bytes": 19,
+      "sha256": "c8da06e837627e2a082bd3d2d7618d64d8756ad04e55efe6b82021cb7bfcd78d"
+    },
+    {
+      "path": "raw/landing-origin-143392.log",
+      "bytes": 21,
+      "sha256": "2bb2556239546c5c472e16554295c777180fbc7a3fb196e4591ff1b32f223d3d"
+    },
+    {
+      "path": "raw/landing-server-143193.log",
+      "bytes": 365275,
+      "sha256": "57bc7d815716b9f5f5d0e52ee2a7baa42514484cf04a9504f12d86efdebc50c8"
+    },
+    {
+      "path": "raw/line-a-client-142580.log",
+      "bytes": 67872,
+      "sha256": "01f4aad86ad67e12385002de66aa91b5be474dab4e47d466df31ab6c547eea54"
+    },
+    {
+      "path": "raw/line-a-server-142375.log",
+      "bytes": 657042,
+      "sha256": "4936b4d59f2328d0cb11c1265db75dae7d65c38df1721cf149e10ba524bc2123"
+    },
+    {
+      "path": "raw/line-b-client-142992.log",
+      "bytes": 68030,
+      "sha256": "388c7bbfdcdcc4e541954af3cc4bf5281a613483359b62adcae7cc5717457244"
+    },
+    {
+      "path": "raw/line-b-server-142790.log",
+      "bytes": 658576,
+      "sha256": "c35bd437d092304fa8534b0790c24469c4eb27d2889eb7ced27e70e82d35b85b"
+    },
+    {
+      "path": "raw/upload-receipts.jsonl",
+      "bytes": 746,
+      "sha256": "905e6470ab959501ff75c2e781d3aba8fa9a4e335d7a42ba9c0688370b8d7bc5"
+    }
+  ],
+  "originalArchiveSha256": "21744b17e838a64387693fad75e85cb7df7b3a87f0c94d12ac167a688fc078af",
+  "archives": [
+    {
+      "path": "kvm-1da34e3-nxr-stress-failed.tar.xz",
+      "bytes": 94056,
+      "sha256": "21744b17e838a64387693fad75e85cb7df7b3a87f0c94d12ac167a688fc078af"
+    }
+  ]
+}

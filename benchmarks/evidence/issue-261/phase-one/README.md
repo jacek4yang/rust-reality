@@ -238,3 +238,259 @@ bindings. [Artifact manifest](11466264441/manifest.json) records ZIP SHA-256
 `4c5a79f4e6dbb6fb1f5adefd2cbe7c00977ddca75c1f34b19c9ed3f8dc94fcea`.
 Aggregate PSS tail is 1.821038584 MiB/hour against the unchanged 2.0 limit.
 This pass neither erases the preceding failure nor qualifies a subsequent head.
+
+## Frozen candidate `583ffed`
+
+This checkpoint freezes source
+`583ffed78f3a943b8a2235d158060a537ec284b2`. Its local
+`cargo dev check --all` passes all 19 stages in 750.3 seconds.
+CI 37586749887 and Security 37586749683 pass.
+
+Native run 37586749806 passes with aggregate PSS tail
+0.617346461 MiB/hour against the unchanged 2.0 limit.
+[Audit](11469499077/audit.json) verifies all 47 checksum entries and all four
+completion/evidence bindings. [Manifest](11469499077/manifest.json) retains the
+public-safe textual evidence; the frozen binary remains in the original
+artifact. ZIP SHA-256:
+`0b8b475df7178c42ee8682840991f18bc0f57de2a09fc6dbd974d18dc82ecfd0`.
+Hosted ELF:
+`c8bbb90090ee51d34071c8ff1a3849c8bf2ebe9438730c9ba99d855671aaa675`.
+Locally frozen ELF:
+`b261d4a25a88d057ceb7c5f50c06f3a8041ec95b609c3d1349785264f20a830f`.
+They have the same source identity, not byte-identical build environments.
+
+The [checkpoint manifest](candidate-checkpoint-583ffed-manifest.json) binds
+`candidate-checkpoint-583ffed.tar.xz`, SHA-256
+`dd6dc9b9a37b00268f0bceab020df8fc936bbd0ed3c31b47144e5881248a00af`.
+Its 53 members include local gate/freeze receipts, native ARM package bindings,
+and failed/passed disposable-driver diagnostics. ARM artifact 11466936938
+comes from the native Ubuntu 22.04 ARM CI job; its package SHA-256 is
+`45636400901ad61550dfe5ee4e65d5fcfce225d1d05c9ed9466cc9b1ce1cd230`.
+The existing version is a package-format label, not a newly created release.
+
+The initial NXR KVM lifecycle is incomplete: its sampler aborted when an
+enumerated `/proc/<pid>/fd` entry closed before `readlink`. A short live
+reproducer names that exact path; a deterministic closed-descriptor regression
+fails before and passes after the diagnostic-only correction. The corrected
+sampler retains enumerated descriptors in its count, marks disappearing
+targets explicitly, and still fails on process disappearance or other errors.
+Its live confirmation completes 1,620 samples in 20 seconds, observing one
+close race without aborting. A separate failed smoke detects reused upload
+paths in an append-only origin log. The corrected verifier uses the captured
+pre-transfer append boundary and requires one new PUT receipt per upload with
+the exact length/hash. Neither correction changes production code or turns
+the original failed/incomplete runs into passes.
+
+This evidence is not real-WAN Tier B and does not authorize publication.
+
+## Established socket failure classification
+
+The complete NXR KVM lifecycle at `583ffed` exposes a diagnostic defect:
+deliberately killing LANDING produces LINE `protocol` rejections with
+`failure.stage=session_relay`, `cause=io`, and `errno=32`. The lifecycle
+controller completes, but the strict rejection audit fails. Native success
+does not erase that failure or establish release readiness.
+
+`vision_rejection_reason` let ordinary established `Io` and `Relay` errors
+fall through to the malformed-input category. The narrow production fix at
+`1da34e37a2b38a774eb3fc14764c108356606963` reuses the existing typed I/O
+classifier, preserving write-stall timeout precedence and genuine protocol
+errors. It changes no transport behavior or memory-management policy.
+
+The [causal manifest](established-io-classification-manifest.json) binds
+103 members in `established-io-classification.tar.xz`, SHA-256
+`306b4f5dfd7956a0204859b66e9e7ddf4c9caf6eb8ab13620318782f56d03aae`.
+It retains the failed original audit inputs, failing-before/passing-after
+regression, production-module/workspace tests, strict clippy receipts, and a
+short real two-LINE NXR kill/recovery smoke. Both LINEs report
+`outbound/session_relay/io/errno=32` after the fix; each received prefix is
+299,008 exact bytes. One hundred recovery transfers and simultaneous
+upload/download integrity pass. This debug smoke binds the changed source
+and ELF hashes explicitly; it is not frozen release qualification.
+The initial 529,300-byte XZ representation exceeded the repository's unchanged
+524,288-byte tracked-object limit. Stronger compression produces 409,456 bytes
+with the identical uncompressed tar and all 103 member hashes unchanged.
+The manifest retains both compressed identities and the tar hash.
+
+The initial clippy failure records disappearing build directories during an
+owner-reported accidental checkout deletion. Recovery from pushed commits
+restores the changed source byte-for-byte against the pre-deletion smoke
+identity; production tests and strict clippy then pass. The failure is retained,
+not relabeled as a successful run.
+
+The original disposable auditor also names a nonexistent `nxr_relay` stage.
+The schema's canonical stage is `session_relay`. Correcting that diagnostic
+assumption must not admit `protocol` rejections or relax the controlled-kill
+window, integrity, resource, or soak gates.
+
+## Native qualification at `1da34e3`
+
+Run 37599984014 fails the unchanged aggregate PSS-tail gate:
+2.114908197 MiB/hour against 2.0. Artifact 11475024301 has ZIP SHA-256
+`349e641bfe55f287ba1fd43ce2a1baa2243ae1de37351832691d90973eeb688c`;
+its frozen ELF is
+`cbdb0e790f0dbd7d3c749587dd73978cbc86cf2958d2fe0a44210fa11e6cd726`.
+The audit verifies 45 checksum entries and complete interoperability,
+mechanism and descriptor-pressure terminal bindings. Soak fails before
+environment/completion/final-identity records: those bindings remain absent.
+
+The [retention manifest](native-1da34e3-manifest.json) binds 47 members in
+`native-1da34e3.tar.xz`, SHA-256
+`bc6575a13e24593e836a3f4a394cf968073a2e2e4ac8455ab1a6b96c34e7e18b`.
+It retains all public textual native members, the original failed summary,
+raw trajectories, checksum/identity records and diagnostic decomposition.
+The original gate uses the 140-sample tail from 903.628 to 1807.586 seconds;
+the decomposition does not change that window, threshold or verdict.
+
+Aggregate PSS grows 3.307617 MiB, RSS 3.914063 MiB, FD count falls by six and
+thread count falls by one. Tail contributions are Handoff LANDING 0.827684,
+Handoff LINE 0.792078, SOCKS LINE 0.504068, NXR LANDING 0.007765, NXR LINE
+-0.015047 and standalone -0.001640 MiB/hour. Thus this run's contribution
+pattern differs from the earlier standalone-dominated failure. Residency
+samples alone do not identify allocator-live objects; bounded-retention
+attribution depends on the separate occupancy and allocator experiments, not
+on selecting a more favorable tail or erasing a failed qualification.
+
+## Frozen `1da34e3` KVM stress and resource attribution
+
+The immutable local ELF is
+`47bd2151d9348562ec547c0867f3cbd9b72d35b28255cce8e7fd240f30deec9a`.
+The retained controller, evaluator sources, raw events and distinct guest boot
+identities are bound by the following manifests:
+
+- [Handoff repeated stress](kvm-1da34e3-handoff-stress-manifest.json):
+  eight no-restart cycles, 100 transfers per LINE per cycle, concurrency 8/32,
+  1,600 successful transfers and 18 resource samples per role; strict audit passes.
+- [Handoff lifecycle](kvm-1da34e3-handoff-lifecycle-manifest.json):
+  7,784/7,784 transfers, 53 samples per role, stream progress across reload and
+  exact received prefixes at deliberate LANDING termination; strict audit passes.
+- [Handoff network faults](kvm-1da34e3-handoff-faults-manifest.json):
+  50/100/200 ms RTT, 100 ms with 1% per-egress loss, isolated LINE-A partition,
+  unaffected LINE-B flow, and LANDING restart; unchanged recovery/resource
+  checks pass.
+- [Handoff 4 MiB integrity](kvm-1da34e3-handoff-large-manifest.json):
+  simultaneous upload/download on each LINE, exact hashes and unique new
+  origin PUT receipts.
+- [NXR repeated stress](kvm-1da34e3-nxr-stress-failed-manifest.json):
+  all 1,600 transfers complete, but the fixed LANDING recovery FD ceiling fails.
+  It is not a successful stress qualification.
+- [NXR drain discriminator](kvm-1da34e3-nxr-drain-manifest.json):
+  additional finite work and 48 same-process observations distinguish retained
+  pipe descriptors from lingering network connections.
+
+Archives exceeding the unchanged 512 KiB tracked-object limit are partitioned
+into independently readable XZ tar files. Their manifests verify every original
+member exactly once and retain the original combined archive identity.
+Configurations, SSH credentials, executables and deterministic payload copies
+are excluded; resource samples bind the executable identity.
+
+The [pipe census](kvm-1da34e3-pipe-retention.json) explains the NXR failure.
+Startup `explain` derives `maxSpliceRelays=61` and `maxPooledPipes=122` on the
+2-vCPU/2-GiB LANDING. After saturation, 122 unique pipes retain 244 descriptors.
+Read-only `FIONREAD` queries find zero pending bytes at every pipe end. Together
+with 12 sockets and seven other descriptors, the stable idle total is 263,
+above the fixed 256 ceiling. It remains exactly 263 across all 48 observations,
+including another 100-transfer workload and 45 seconds of quiet, with unchanged
+PID/starttime. Stress recovery points are 267–275 because additional sockets
+remain transiently present.
+
+`PipePool::give_back` retains only drained pipes and caps their count at `keep`;
+descriptor permits remain owned by the pipes. This is quantitatively bounded
+resource retention, not a demonstrated FD leak. Nevertheless, the fixed recovery
+ceiling remains failed. No pool shrinking, lower concurrency, raised threshold
+or longer-wait acceptance workaround is applied. Reconciling the qualification
+envelope with the intended bounded production policy requires explicit review.
+
+## Exact-source gates and candidate package identities
+
+The [gate/package manifest](candidate-1da34e3-gates-manifest.json) binds 126
+members in `candidate-1da34e3-gates.tar.xz`, SHA-256
+`5ed9a725b5a9580cde58af902ad26efa4f9b98f72d8159c59a5d9363ad9c4801`.
+It retains all 19 local authoritative-gate stage logs, package build/smoke
+receipts and tier/ELF identities. The source gate passes; its success does not
+override the separate failed native PSS gate.
+
+Existing exact-source tests exercise replay expiry/refill, stale-generation
+retirement, credential isolation, whole-session inactivity, write-stall
+timeouts, half-close and cancellation. Their actual release-test outputs are
+retained, rather than claiming that operation-count stress represents a month
+of elapsed time.
+
+Native ARM64 Actions job 112721709827 in run 37599983901 builds, packages
+and executes the candidate on aarch64 Linux with glibc 2.35.
+Artifact 11472806292 ZIP SHA-256 is
+`9a83bde9e2a1fa428e7f4b2b2ab7e823f837b1e376620e040515c07740487ef2`;
+package SHA-256 is
+`8b25884e50d8d6555c59a626984781daa471e4789f7883e96d8f0fb04559a025`,
+and unpacked ELF SHA-256 is
+`6218b3345f0bbe68286bd1eb63d68f2955ddc902b0a011978775f1282d17295b`.
+This is a native build/package execution receipt, not local ARM64 proxy or
+real-WAN qualification. The existing version label `2.0.1` does not identify
+a newly created tag or published release.
+
+## NXR lifecycle, network faults and actual package execution
+
+The [NXR lifecycle manifest](kvm-1da34e3-nxr-lifecycle-manifest.json) retains
+7,768/7,768 successful transfers and 53 resource samples per role. Both
+continuous streams progress across LINE reload and have exact received
+prefixes at deliberate LANDING termination. Both EPIPE diagnostics are
+`outbound/session_relay/io/errno32`; the strict lifecycle audit passes.
+Warm/stale/cold counters and completed admissions following generation-one
+publication are retained for both LINEs in both topologies.
+
+The [NXR fault manifest](kvm-1da34e3-nxr-faults-manifest.json) retains the
+complete RTT/loss/partition/restart matrix. Each shaped-network cell completes
+100/100 transfers; recovery completes 400/400 post-netem, 100/100
+post-partition and 100/100 post-kill. First successful new transfer is
+5.483 seconds after partition restoration and 0.104 seconds after restart.
+The unaffected LINE-B flow sends and receives the same 1,228,800 bytes/hash.
+All unchanged final/peak resource envelopes pass for this lifecycle/fault
+workload; that does not override the separate failed no-restart stress cell.
+All three guest kernels report zero OOM kills since boot.
+The [4 MiB manifest](kvm-1da34e3-nxr-large-manifest.json) binds simultaneous
+upload/download on each LINE with unique fresh origin receipts.
+
+The [unpacked-package manifest](candidate-1da34e3-package-kvm-manifest.json)
+binds 102 members in `candidate-1da34e3-package-kvm.tar.xz`, SHA-256
+`bdc24e7d44918be438e9c88ed2d3c872de155d9cd966ff5f94026a7b9a9d8133`.
+GNU generic, static musl and x86-64-v3 packages each run through stock Xray
+in both Handoff and NXR topologies: six cells, each with 106 verified
+readiness/transfer/bidirectional attempts plus simultaneous 4 MiB
+upload/download on both LINEs. Every cell passes.
+
+These official-tier package ELFs differ from the local `perf freeze` ELF:
+GNU generic `59a35eb454cb6040572815aa4c85780b45be57738ec026c14b844a60775ab98f`,
+musl `372804aa9ed45cbd9b19fa2487fac14f445c33045879abe4edb21dd03e3bc612`,
+and v3 `d6da3c51600b674e0928552c18bd14c16200d6d8fc74bdc849986a2b3ed35920`.
+All bind source `1da34e3`; package smoke is not presented as full resource
+qualification of every distinct ELF or as publication authorization.
+
+## Constrained LANDING and qualification verdict
+
+QMP and guest receipts bind three new boot IDs with one vCPU and 1 GiB RAM
+per guest, including LANDING. Both topologies pass eight no-daemon-restart
+cycles of 100 transfers per LINE per cycle, concurrency 8/32 and 18 resource
+samples per role:
+
+- Handoff: [stress](kvm-1da34e3-low-handoff-stress-manifest.json),
+  [kill/recovery](kvm-1da34e3-low-handoff-recovery-manifest.json),
+  [4 MiB integrity](kvm-1da34e3-low-handoff-large-manifest.json).
+- NXR: [stress](kvm-1da34e3-low-nxr-stress-manifest.json),
+  [kill/recovery](kvm-1da34e3-low-nxr-recovery-manifest.json),
+  [4 MiB integrity](kvm-1da34e3-low-nxr-large-manifest.json).
+
+LANDING stress final/peak FD counts are 32/96 for Handoff and 153/212 for NXR;
+each has two threads. First successful new admission after deliberate
+LANDING restart is 0.332 seconds for Handoff and 0.248 seconds for NXR,
+followed by 100 consecutive successful transfers in each case. All unchanged
+FD/thread/RSS envelopes, fresh bidirectional integrity receipts and zero-OOM
+checks pass. This constrained case does not erase the high-profile NXR failure.
+
+The [immutable qualification verdict](candidate-1da34e3-qualification-verdict.json)
+is **FAIL**, with two explicit acceptance blockers: native aggregate PSS
+2.114908197 MiB/hour exceeds 2.0, and high-profile NXR retains 263 idle FDs
+against the fixed 256 recovery ceiling. Causal attribution is not a waiver.
+No production memory change, lower stress, raised threshold or blind soak
+rerun is justified by these results. The candidate package inventory and
+distinct source/ELF scopes remain available for review; no merge, new tag,
+release or production deployment is represented by this evidence.

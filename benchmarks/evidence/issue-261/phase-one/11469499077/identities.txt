@@ -1,0 +1,36 @@
+source=583ffed78f3a943b8a2235d158060a537ec284b2
+run=37586749806
+attempt=1
+image=ubuntu24
+image_version=20260927.320.1
+rustc 1.96.0 (ac68faa20 2026-05-25)
+binary: rustc
+commit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96
+commit-date: 2026-05-25
+host: x86_64-unknown-linux-gnu
+release: 1.96.0
+LLVM version: 22.1.2
+cargo 1.96.0 (30a34c682 2026-05-25)
+cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+Copyright (C) 2023 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+Linux runnervm8df0l 6.17.0-1022-azure #22-Ubuntu SMP Mon Jul 27 17:24:03 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+Xray 26.9.9 (Xray, Penetrates Everything.) 52a412d (go1.27.1 linux/amd64)
+A unified platform for anti-censorship.
+OpenSSL 3.5.6 7 Apr 2026 (Library: OpenSSL 3.5.6 7 Apr 2026)
+built on: Wed Oct  7 07:33:30 2026 UTC
+platform: linux-x86_64
+options:  bn(64,64)
+compiler: gcc -fPIC -pthread -m64 -Wa,--noexecstack -Wall -O3 -DOPENSSL_USE_NODELETE -DL_ENDIAN -DOPENSSL_PIC -DOPENSSL_BUILDING_OPENSSL -DNDEBUG
+OPENSSLDIR: "/home/runner/work/_temp/rr-fixtures/openssl/ssl"
+ENGINESDIR: "/home/runner/work/_temp/rr-fixtures/openssl/lib64/engines-3"
+MODULESDIR: "/home/runner/work/_temp/rr-fixtures/openssl/lib64/ossl-modules"
+Seeding source: os-specific
+CPUINFO: OPENSSL_ia32cap=0xfeda3203078bffff:0x00405fc6f1bf07a9:0x0000002000000010:0x0000000000000000:0x0000000000000000
+c4ae6798c38e0e5343b192406746333cd0ba7ff3eb984f8c4b9939dcb68c3f8a  /home/runner/work/_temp/rr-fixtures/xray/xray
+8a0a3eecaecac1209af608c9906e17bd051ccc1ec0b90e85aba2015c02834348  /home/runner/work/_temp/rr-fixtures/openssl/bin/openssl
+1d1bcb4e1b0d9f25e11c3d07f55f007b93814162a785cb39f43272d4fd1ac908  tools/target/debug/rr-dev
+ea100630ca3199e312cfa8f795d7c1a30df23deb29bebac1ee8a4c639542e38d  Cargo.lock
+e188cc9ab7f6126325dd719f82367d9c1a53977a05a2fde552918f0b84f3cd8d  tools/Cargo.lock

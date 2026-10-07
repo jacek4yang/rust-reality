@@ -1,0 +1,239 @@
+{
+  "binaries": {
+    "openssl": {
+      "identity": "OpenSSL 3.5.6 7 Apr 2026 (Library: OpenSSL 3.5.6 7 Apr 2026)\nbuilt on: Wed Oct  7 07:33:30 2026 UTC\nplatform: linux-x86_64\noptions:  bn(64,64)\ncompiler: gcc -fPIC -pthread -m64 -Wa,--noexecstack -Wall -O3 -DOPENSSL_USE_NODELETE -DL_ENDIAN -DOPENSSL_PIC -DOPENSSL_BUILDING_OPENSSL -DNDEBUG\nOPENSSLDIR: \"/home/runner/work/_temp/rr-fixtures/openssl/ssl\"\nENGINESDIR: \"/home/runner/work/_temp/rr-fixtures/openssl/lib64/engines-3\"\nMODULESDIR: \"/home/runner/work/_temp/rr-fixtures/openssl/lib64/ossl-modules\"\nSeeding source: os-specific\nCPUINFO: OPENSSL_ia32cap=0xfeda3203078bffff:0x00405fc6f1bf07a9:0x0000002000000010:0x0000000000000000:0x0000000000000000",
+      "path": "/home/runner/work/_temp/rr-fixtures/openssl/bin/openssl",
+      "sha256": "8a0a3eecaecac1209af608c9906e17bd051ccc1ec0b90e85aba2015c02834348"
+    },
+    "rrDevHelpers": {
+      "path": "/home/runner/work/rust-reality/rust-reality/tools/target/debug/rr-dev",
+      "sha256": "1d1bcb4e1b0d9f25e11c3d07f55f007b93814162a785cb39f43272d4fd1ac908"
+    },
+    "rustReality": {
+      "identity": "{\"gitCommit\":\"583ffed78f3a943b8a2235d158060a537ec284b2\",\"version\":\"2.0.1\"}",
+      "path": "/home/runner/work/_temp/qualification/frozen/binary/rust-reality",
+      "sha256": "c8bbb90090ee51d34071c8ff1a3849c8bf2ebe9438730c9ba99d855671aaa675"
+    },
+    "xray": {
+      "identity": "Xray 26.9.9 (Xray, Penetrates Everything.) 52a412d (go1.27.1 linux/amd64)",
+      "path": "/home/runner/work/_temp/rr-fixtures/xray/xray",
+      "sha256": "c4ae6798c38e0e5343b192406746333cd0ba7ff3eb984f8c4b9939dcb68c3f8a"
+    }
+  },
+  "completedAt": "2026-10-07T08:24:21Z",
+  "configSha256": {
+    "handoffLanding": "73332581249ac4075f73e8faa5e4f4b9db4e3d1af23820081ae24bc9233d73da",
+    "handoffLine": "9b33f79c76822a9df280ad622094f6baa4e74e951d9c075ff97b7def4462fbe5",
+    "nxrLanding": "73829c03de25727e4f74700345b9f94fcbaad30a7f5f8a647b0453a362151476",
+    "nxrLine": "3536fa810869e185231b1623660ec062309cb2b3f2b6f194fc0e4e06e3b50aa4",
+    "socksLine": "fc0cca3dd614e34781e4f3d3fd7070e95ea106d337bdccd0a69df9bad4210c11",
+    "standalone": "1a79d89d0459280bc06b4cc828fb9b2f535d5e235f45ae40ede354336aa8e217"
+  },
+  "distributedGates": {
+    "attempts": 32,
+    "handoffSeq1": {
+      "allPayloadBytes": true,
+      "allPayloadSha256": true,
+      "allServerSequenceOne": true,
+      "attempts": 32,
+      "failures": 0,
+      "successes": 32
+    },
+    "intervalSeconds": 60,
+    "nxrByteIntegrity": {
+      "allPayloadBytes": true,
+      "allPayloadSha256": true,
+      "allServerSequenceOne": null,
+      "attempts": 32,
+      "failures": 0,
+      "successes": 32
+    },
+    "ok": true,
+    "payloadBytes": 1048576,
+    "payloadSha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83",
+    "proxy": {
+      "appendedWireLength": 139,
+      "shaped": 32
+    },
+    "reload": {
+      "expectedGeneration": 1,
+      "triggerAttempts": 1
+    },
+    "requiredAttempts": 32,
+    "schemaVersion": 3,
+    "socks5ByteIntegrity": {
+      "allPayloadBytes": true,
+      "allPayloadSha256": true,
+      "allServerSequenceOne": null,
+      "attempts": 32,
+      "failures": 0,
+      "successes": 32
+    }
+  },
+  "durationSeconds": 1800.0,
+  "elapsedSeconds": 1879.509915847,
+  "harness": "soak",
+  "implementation": "rust-reality",
+  "longHorizonQualified": false,
+  "memorySlopeGateBasis": {
+    "aggregate": "pss",
+    "perProcess": "rss"
+  },
+  "memoryTailSlopeGateApplied": true,
+  "minimumRounds": 3,
+  "ok": true,
+  "payloadBytes": 4194304,
+  "payloadSha256": "2b07811057df887086f06a67edc6ebf911de8b6741156e7a2eb1416a4b8b1b2e",
+  "portBlock": [
+    45985,
+    41777,
+    46083,
+    44269,
+    41771,
+    35625,
+    38957,
+    43541,
+    42893,
+    44063,
+    42269,
+    43987,
+    37827,
+    37049,
+    35027
+  ],
+  "ports": {
+    "handoffCover": 35625,
+    "handoffCoverUpstream": 41771,
+    "handoffLanding": 43541,
+    "handoffLine": 38957,
+    "handoffSocks": 42893,
+    "httpOrigin": 44269,
+    "httpsOrigin": 46083,
+    "nxrLanding": 42269,
+    "nxrLine": 44063,
+    "nxrSocks": 43987,
+    "socksClient": 35027,
+    "socksLine": 37827,
+    "socksUpstream": 37049,
+    "standalone": 45985,
+    "standaloneSocks": 41777
+  },
+  "resourceAggregate": {
+    "fdGrowth": -6,
+    "fdPeakGrowth": 8,
+    "pssAvailable": true,
+    "pssGrowthMiB": 3.400390625,
+    "pssSampledPeakGrowthMiB": 3.681640625,
+    "pssTailSlopeMiBPerHour": 0.6173464607121423,
+    "rssGrowthMiB": 3.984375,
+    "rssPeakGrowthMiB": 4.42578125,
+    "rssSampledPeakGrowthMiB": 4.27734375,
+    "rssTailSlopeMiBPerHour": 0.6371754763989609,
+    "threadGrowth": -1,
+    "threadPeakGrowth": 4
+  },
+  "resourceByProcess": {
+    "handoff-landing": {
+      "fdGrowth": 0,
+      "fdPeakGrowth": 2,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.8359375,
+      "pssSampledPeakGrowthMiB": 0.8359375,
+      "pssTailSlopeMiBPerHour": 0.4177139958122711,
+      "rssGrowthMiB": 0.9375,
+      "rssPeakGrowthMiB": 0.9375,
+      "rssSampledPeakGrowthMiB": 0.9375,
+      "rssTailSlopeMiBPerHour": 0.42541498530928706,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 1
+    },
+    "handoff-line": {
+      "fdGrowth": 0,
+      "fdPeakGrowth": 2,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.2900390625,
+      "pssSampledPeakGrowthMiB": 0.2900390625,
+      "pssTailSlopeMiBPerHour": 0.06691170524843973,
+      "rssGrowthMiB": 0.3125,
+      "rssPeakGrowthMiB": 0.3125,
+      "rssSampledPeakGrowthMiB": 0.3125,
+      "rssTailSlopeMiBPerHour": 0.06744134960973838,
+      "threadGrowth": -1,
+      "threadPeakGrowth": 0
+    },
+    "nxr-landing": {
+      "fdGrowth": -2,
+      "fdPeakGrowth": 2,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.2509765625,
+      "pssSampledPeakGrowthMiB": 0.2509765625,
+      "pssTailSlopeMiBPerHour": 0.06650726178732139,
+      "rssGrowthMiB": 0.30078125,
+      "rssPeakGrowthMiB": 0.30078125,
+      "rssSampledPeakGrowthMiB": 0.30078125,
+      "rssTailSlopeMiBPerHour": 0.07440966862416563,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 1
+    },
+    "nxr-line": {
+      "fdGrowth": -2,
+      "fdPeakGrowth": 2,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.4853515625,
+      "pssSampledPeakGrowthMiB": 0.5966796875,
+      "pssTailSlopeMiBPerHour": -0.012246597343698614,
+      "rssGrowthMiB": 0.5078125,
+      "rssPeakGrowthMiB": 0.703125,
+      "rssSampledPeakGrowthMiB": 0.62109375,
+      "rssTailSlopeMiBPerHour": -0.01149231851520083,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 1
+    },
+    "socks-line": {
+      "fdGrowth": -2,
+      "fdPeakGrowth": 0,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.5439453125,
+      "pssSampledPeakGrowthMiB": 0.6943359375,
+      "pssTailSlopeMiBPerHour": -0.12454800672131923,
+      "rssGrowthMiB": 0.56640625,
+      "rssPeakGrowthMiB": 0.71875,
+      "rssSampledPeakGrowthMiB": 0.71875,
+      "rssTailSlopeMiBPerHour": -0.12401836236002056,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 1
+    },
+    "standalone": {
+      "fdGrowth": 0,
+      "fdPeakGrowth": 2,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.994140625,
+      "pssSampledPeakGrowthMiB": 1.18359375,
+      "pssTailSlopeMiBPerHour": 0.20300810192912785,
+      "rssGrowthMiB": 1.359375,
+      "rssPeakGrowthMiB": 1.55078125,
+      "rssSampledPeakGrowthMiB": 1.55078125,
+      "rssTailSlopeMiBPerHour": 0.20542015373099137,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 0
+    }
+  },
+  "resources": {
+    "fdGrowth": -6,
+    "fdPeakGrowth": 8,
+    "pssAvailable": true,
+    "pssGrowthMiB": 3.400390625,
+    "pssSampledPeakGrowthMiB": 3.681640625,
+    "pssTailSlopeMiBPerHour": 0.6173464607121423,
+    "rssGrowthMiB": 3.984375,
+    "rssPeakGrowthMiB": 4.42578125,
+    "rssSampledPeakGrowthMiB": 4.27734375,
+    "rssTailSlopeMiBPerHour": 0.6371754763989609,
+    "threadGrowth": -1,
+    "threadPeakGrowth": 4
+  },
+  "rounds": 281,
+  "runId": "37586749806-soak",
+  "schemaVersion": 3,
+  "transferFailures": 0
+}
