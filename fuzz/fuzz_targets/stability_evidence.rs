@@ -16,6 +16,7 @@ mod transfer;
 mod vm;
 
 libfuzzer_sys::fuzz_target!(|bytes: &[u8]| {
+    let _ = transfer::ipv4_socks_reply(bytes);
     let artifact = schema::Artifact {
         path: "raw".to_owned(),
         sha256: "a".repeat(64),

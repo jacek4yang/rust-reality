@@ -144,9 +144,23 @@ restart and data-interface netem actions retain action receipts and netem comman
 output. Restart
 requires the owned process identity and confirms termination by SIGKILL. Startup
 and execution failures retain the primary error and attempted final observations.
-Private configuration is staged separately from the retrieved evidence tree.
+Private configuration remains under the owned fixture, outside the evidence bundle.
 
 RTT/loss windows last 60 seconds for the concurrency-4 matrix; other fault
 intervals last 10 seconds. The directional integrity window lasts 60 seconds,
 followed by 180 seconds of recovery. These schedules are fixed in the executable
 contract before qualification, including on constrained LANDING guests.
+
+`cargo dev bench stability-run --fixture PATH --output FRESH_DIRECTORY
+--candidate FROZEN_BINARY --xray XRAY_BINARY --openssl OPENSSL_BINARY` drives
+the four local VM cells. It requires a clean checkout at the candidate's embedded
+commit and preserves source, contract, harness and executable copies. Each stress
+cycle starts with a concurrency-sized wave of 4-MiB uploads paced at 256 KiB/s,
+then completes at least 100 transfers per LINE. Echo probes retain exact received
+prefixes across fault boundaries; directional probes include concurrent upload
+and download legs. Curl ignores user configuration and proxy environment values.
+Completed guest observations also stream into bounded host files, so a failed
+final retrieval retains previously collected data without an unbounded memory
+copy. A failed attempt keeps its partial cell, raw files and terminal status.
+The VM runner does not supply the separate required native, CI, security or
+package-check receipts: absent receipts keep aggregate qualification NOT RUN.

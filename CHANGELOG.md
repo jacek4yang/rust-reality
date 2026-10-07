@@ -9,6 +9,8 @@ All notable user-facing changes to this project are documented in this file.
 - Stability evidence uses a strict offline ownership contract with distinct
   PASS, FAIL, NOT_RUN and INVALID verdicts. Historical resource failures retain
   their original verdicts; replacement qualification requires a frozen candidate.
+  The maintained local VM runner records fixed-cycle transfers, received prefixes,
+  fault actions and guest observations; separate required checks remain mandatory.
 
 - Release qualification accepts isolated QEMU multi-node stress and fault
   evidence without mandatory dual-VPS access or an additional long soak.

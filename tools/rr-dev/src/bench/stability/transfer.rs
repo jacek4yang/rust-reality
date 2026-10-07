@@ -1,6 +1,6 @@
 //! Reconstruction of upload receipts from the origin's immutable log snapshots.
 
-use super::schema::{MAX_EVIDENCE_BYTES, UploadReceipt};
+use super::schema::{Artifact, MAX_EVIDENCE_BYTES, UploadReceipt};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -20,9 +20,32 @@ struct Access {
 /// # Errors
 /// Rejects malformed, truncated, rewritten, stale or duplicate log receipts.
 pub fn verify_upload(before: &[u8], after: &[u8], receipt: &UploadReceipt) -> Result<(), String> {
+    let observed = reconstruct_upload(
+        before,
+        after,
+        &receipt.path,
+        receipt.access_log_before.clone(),
+        receipt.access_log_after.clone(),
+    )?;
+    if observed != *receipt {
+        return Err("claimed upload receipt differs from the raw origin append".to_owned());
+    }
+    Ok(())
+}
+
+/// Build the canonical upload receipt from fresh origin-log bytes.
+///
+/// # Errors
+/// Rejects incomplete, rewritten, stale, missing and duplicate requests.
+pub fn reconstruct_upload(
+    before: &[u8],
+    after: &[u8],
+    path: &str,
+    access_log_before: Artifact,
+    access_log_after: Artifact,
+) -> Result<UploadReceipt, String> {
     if after.len() > MAX_EVIDENCE_BYTES
         || !after.starts_with(before)
-        || u64::try_from(before.len()).ok() != Some(receipt.log_boundary)
         || (!before.is_empty() && !before.ends_with(b"\n"))
         || !after.ends_with(b"\n")
     {
@@ -30,7 +53,8 @@ pub fn verify_upload(before: &[u8], after: &[u8], receipt: &UploadReceipt) -> Re
     }
     let text = std::str::from_utf8(after).map_err(|error| error.to_string())?;
     let mut offset = 0_u64;
-    let mut matches = 0_u64;
+    let mut matched = None;
+    let boundary = u64::try_from(before.len()).map_err(|_| "origin log boundary overflow")?;
     for line in text.split_inclusive('\n') {
         let row: Access = serde_json::from_str(line)
             .map_err(|error| format!("invalid origin access row: {error}"))?;
@@ -42,20 +66,35 @@ pub fn verify_upload(before: &[u8], after: &[u8], receipt: &UploadReceipt) -> Re
         {
             return Err("incomplete origin access row".to_owned());
         }
-        if row.path == receipt.path && row.method == "PUT" {
-            if offset < receipt.log_boundary
-                || offset != receipt.receipt_offset
-                || row.bytes != receipt.bytes
-                || row.sha256 != receipt.sha256
-            {
-                return Err("stale or mismatched upload receipt".to_owned());
+        if row.path == path && row.method == "PUT" {
+            if offset < boundary || matched.is_some() {
+                return Err("stale or duplicate upload receipt".to_owned());
             }
-            matches += 1;
+            matched = Some((offset, row.bytes, row.sha256));
         }
         offset += u64::try_from(line.len()).map_err(|_| "origin log offset overflow")?;
     }
-    if matches != 1 || receipt.appended_matches != matches {
-        return Err("missing or duplicate upload receipt".to_owned());
+    let (receipt_offset, bytes, sha256) = matched.ok_or("missing upload receipt")?;
+    Ok(UploadReceipt {
+        access_log_before,
+        access_log_after,
+        path: path.to_owned(),
+        log_boundary: boundary,
+        receipt_offset,
+        appended_matches: 1,
+        bytes,
+        sha256,
+    })
+}
+
+/// Validate the fixed IPv4 SOCKS reply used by the isolated echo-prefix probe.
+///
+/// # Errors
+/// Rejects incomplete, rejected or substituted protocol responses.
+pub fn ipv4_socks_reply(bytes: &[u8]) -> Result<(), String> {
+    if bytes.len() == 10 && bytes[..4] == [5, 0, 0, 1] {
+        Ok(())
+    } else {
+        Err("invalid IPv4 SOCKS connect reply".to_owned())
     }
-    Ok(())
 }

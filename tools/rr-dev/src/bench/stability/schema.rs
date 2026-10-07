@@ -259,7 +259,7 @@ pub struct Transfer {
     pub upload: Option<UploadReceipt>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct UploadReceipt {
     pub access_log_before: Artifact,

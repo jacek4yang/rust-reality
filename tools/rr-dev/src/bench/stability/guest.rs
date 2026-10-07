@@ -16,6 +16,7 @@ use crate::{
 use clap::{Args, ValueEnum};
 use std::{
     fs,
+    io::Write as _,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -118,11 +119,33 @@ fn schedule(contract: &schema::Contract) -> Vec<(u64, Event)> {
 }
 
 fn save(path: &Path, value: &impl serde::Serialize) -> Result<(), String> {
-    fs::write(
-        path,
-        serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?,
+    let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .and_then(|mut file| file.write_all(&bytes))
+        .map_err(|error| format!("write fresh guest evidence: {error}"))?;
+    // Forward every completed receipt immediately. A later SSH/SFTP failure
+    // must not erase observations already collected inside a temporary VM.
+    let mut output = std::io::stdout().lock();
+    output
+        .write_all(b"{\"name\":")
+        .map_err(|error| error.to_string())?;
+    serde_json::to_writer(
+        &mut output,
+        &path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("invalid evidence filename")?,
     )
-    .map_err(|error| format!("write guest evidence: {error}"))
+    .map_err(|error| error.to_string())?;
+    output
+        .write_all(b",\"value\":")
+        .and_then(|()| output.write_all(&bytes))
+        .and_then(|()| output.write_all(b"}\n"))
+        .and_then(|()| output.flush())
+        .map_err(|error| format!("stream guest evidence: {error}"))
 }
 
 struct Session<'a> {
@@ -138,6 +161,7 @@ impl Session<'_> {
     fn start_child(
         &self,
         label: &str,
+        receipt: &str,
         program: &Path,
         args: &[String],
         port: u16,
@@ -163,7 +187,7 @@ impl Session<'_> {
         let ready = child.wait_for_port(port, Duration::from_secs(10));
         let identity = collect::file_digest(Path::new(&format!("/proc/{}/exe", child.pid())));
         let written = save(
-            &self.output.join(format!("startup-{label}.json")),
+            &self.output.join(format!("startup-{receipt}.json")),
             &serde_json::json!({
                 "label":label,"pid":child.pid(),"start_ticks":crate::bench::process::proc_starttime(child.pid()),
                 "image_sha256":identity.as_ref().ok(),"image_error":identity.as_ref().err(),
@@ -180,13 +204,18 @@ impl Session<'_> {
         Ok(child)
     }
 
-    fn start_server(&mut self) -> Result<(), String> {
+    fn start_server(&mut self, restart: bool) -> Result<(), String> {
         let candidate = self.root.join("rust-reality");
         if collect::file_digest(&candidate)? != self.plan.candidate_sha256 {
             return Err("guest product image changed".to_owned());
         }
         let child = self.start_child(
             "server",
+            if restart {
+                "server-after-restart"
+            } else {
+                "server"
+            },
             Path::new("/usr/bin/prlimit"),
             &[
                 "--nofile=8192:8192".to_owned(),
@@ -226,11 +255,12 @@ impl Session<'_> {
                     access_log: Some(self.output.join(format!("{label}-access.jsonl"))),
                     alpn: None,
                 });
-                let child = self.start_child(label, &harness, &args, port)?;
+                let child = self.start_child(label, label, &harness, &args, port)?;
                 self.helpers
                     .push((child, self.plan.evaluator_sha256.clone()));
             }
             let child = self.start_child(
+                "echo",
                 "echo",
                 &harness,
                 &[
@@ -244,13 +274,14 @@ impl Session<'_> {
             self.helpers
                 .push((child, self.plan.evaluator_sha256.clone()));
         }
-        self.start_server()?;
+        self.start_server(false)?;
         if self.plan.role != Role::Landing {
             let xray = self.root.join("xray");
             if collect::file_digest(&xray)? != self.plan.xray_sha256 {
                 return Err("guest Xray image changed".to_owned());
             }
             let child = self.start_child(
+                "xray",
                 "xray",
                 &xray,
                 &[
@@ -286,6 +317,11 @@ impl Session<'_> {
 
     fn wait_until(&mut self, epoch: u64) -> Result<(), String> {
         loop {
+            if self.root.join("stop").exists() {
+                return Err(
+                    "controller stopped the workload; final observations attempted".to_owned(),
+                );
+            }
             self.alive()?;
             let now = collect::unix_ms()?;
             let elapsed = u64::try_from(self.clock.1.elapsed().as_millis())
@@ -444,7 +480,7 @@ impl Session<'_> {
                     .map_err(|error| error.to_string())?;
                     Ok(())
                 } else {
-                    self.start_server()
+                    self.start_server(true)
                 }
             }
             "line-a-partition" | "rtt-50" | "rtt-100" | "rtt-200" | "rtt-100-loss-1" => {
@@ -559,6 +595,16 @@ fn run_in(plan: &Plan, root: PathBuf) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_guest_receipt_is_never_replaced_by_a_later_attempt() {
+        let workspace =
+            crate::bench::workspace::Workspace::create("guest-immutable-receipt").unwrap();
+        let path = workspace.join("receipt.json");
+        save(&path, &serde_json::json!({"attempt":1})).unwrap();
+        let original = fs::read(&path).unwrap();
+        assert!(save(&path, &serde_json::json!({"attempt":2})).is_err());
+        assert_eq!(fs::read(path).unwrap(), original);
+    }
     #[test]
     fn guest_start_failure_retains_primary_and_attempted_final_observation() {
         let workspace = crate::bench::workspace::Workspace::create("guest-finalization").unwrap();

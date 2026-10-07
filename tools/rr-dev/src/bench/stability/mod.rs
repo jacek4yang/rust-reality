@@ -1,5 +1,6 @@
 //! Exact-candidate stability qualification and offline evidence verification.
 
+pub mod campaign;
 pub mod collect;
 pub mod evaluate;
 pub mod fixture;
@@ -10,6 +11,7 @@ pub mod observation;
 pub mod schema;
 pub mod transfer;
 pub mod vm;
+pub mod workload;
 
 use std::{
     fs::File,
