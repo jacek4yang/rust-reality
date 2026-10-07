@@ -152,6 +152,23 @@ journalctl -u rust-reality -f
 `"none"` 在编码之前就丢弃所有事件。它同时也会把 warn 级的拒绝和准入信号静音，所以除非
 日志本身不可接受，否则优先用 `level` 过滤。
 
+### 库级只读遥测
+
+嵌入 `ProductionServer` 的程序可以先取得 `server.telemetry()`，再把服务移入
+`run` 或 `run_until`。观察句柄的 `snapshot()` 返回
+`Option<TransportTelemetrySnapshot>`，按 cover／Handoff／NXR／SOCKS5 四类给出
+固定的整数聚合。句柄仅持有弱引用，不延长服务寿命；运行时销毁后返回 `None`。
+
+这是**同进程 Rust 库接口**，不是 HTTP 端点，也不能直接读取另一个运行中 CLI
+进程。它不创建监听器、后台任务、定时器或持久化存储。独立的服务管理程序可以
+自行决定如何导出结果。采集会短暂使用已有池锁，因此应控制采样频率，不要逐包轮询。
+
+每次读取固定一个配置代次。计数不包含旧代次会话，池替换后重新累计；计算速率或
+差值时应以 `generation` 区分。各池独立采样，不是事务快照，并发下
+`hits + misses` 不一定等于 `checkouts`。启动前也可能取得快照，因此有快照不代表
+已就绪或对端健康。输出只有固定类别与整数，不包含端点、出口名称、UUID、凭证、
+错误原文或流量内容。
+
 ### 预连接传输诊断
 
 配置代次退出时，`transport_pool_summary`（Handoff、NXR 和 SOCKS5）与

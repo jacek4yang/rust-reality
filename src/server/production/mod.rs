@@ -33,11 +33,13 @@ mod resources;
 mod snapshot;
 mod store;
 mod supervisor;
+mod telemetry;
 
 #[cfg(test)]
 mod fixture;
 
 pub use error::{ProductionServerError, RuntimeUpdateError};
+pub use telemetry::{TransportPoolTotals, TransportTelemetry, TransportTelemetrySnapshot};
 
 use std::{
     future::Future,
@@ -125,6 +127,16 @@ impl ProductionServer {
             runtime,
             config_path,
         })
+    }
+
+    /// Returns a read-only observer for current-generation transport pools.
+    ///
+    /// The observer holds only a weak reference and does not keep the server
+    /// or retired generations alive. It can be retained when `run` consumes
+    /// this server. Collection is on demand; no task or listener is created.
+    #[must_use]
+    pub fn telemetry(&self) -> TransportTelemetry {
+        TransportTelemetry::new(&self.runtime)
     }
 
     /// Returns the live resource-pressure gauge.

@@ -173,6 +173,28 @@ With `"file"`, `log.file` is required, and `maxBytes`, `maxFiles`, and
 rejection and admission signal, so prefer a `level` filter unless logging
 itself is unacceptable.
 
+### Read-only library telemetry
+
+Programs embedding `ProductionServer` can retain `server.telemetry()` before
+moving the server into `run` or `run_until`. Calling the observer's `snapshot()`
+returns `Option<TransportTelemetrySnapshot>` with fixed cover/Handoff/NXR/SOCKS5
+integer totals. The observer uses a weak reference: it does not keep the server
+alive, and returns `None` once the runtime has been dropped.
+
+This is an **in-process Rust library interface**, not an HTTP endpoint or an
+interface to another running CLI process. It creates no listener, background
+task, timer or persistent storage. A separate service manager can decide how to
+export it. Collection briefly uses existing pool locks, so choose a reasonable
+sampling rate rather than polling on every packet.
+
+Each call pins one configuration generation. Counts exclude old-generation
+sessions and reset with pool replacement; key rates/deltas by `generation`.
+Pools are sampled independently: this is not a transactional snapshot and
+concurrent `hits + misses` can differ from `checkouts`. A snapshot can exist
+before startup; its existence does not establish readiness or peer health.
+Only fixed classes and integer totals are exposed, without endpoints, outbound
+names, UUIDs, credentials, message text, or traffic contents.
+
 ### Warm transport diagnostics
 
 When a configuration generation retires, `transport_pool_summary` (Handoff,

@@ -218,7 +218,7 @@ impl RuntimeSnapshot {
             emit(
                 &self.logger,
                 &LogEvent::TransportPoolSummary {
-                    transport: snapshot.transport,
+                    transport: snapshot.transport.as_str(),
                     generation: pool.generation,
                     pool_ready: pool.ready,
                     pool_connecting: pool.connecting,
