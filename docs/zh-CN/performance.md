@@ -163,9 +163,10 @@ v1.8.0 是架构发布：不改变任何 wire 字节、配置结构或部署身�
 四处 panic 点减少了 256 字节，之后的改动没有新增任何机器码。
 
 本证据的两点局限明确说明而非暗示：这些 leg 覆盖 REALITY setup、fallback、
-Vision framed、Vision Direct 与双向传输，**不**覆盖 Handoff 与 NXR——后者在发布
-时由双 VPS 主动 canary 覆盖；此外先前的 Xray 对比头条数据是在 v1.7.0 与 v1.6.1
-二进制上测得，这里沿用是因为已正式确立中性，而非在此重新测量。
+Vision framed、Vision Direct 与双向传输，**不**覆盖 Handoff 与 NXR——后者需要
+独立的[多节点发布资格验证](release-process.md#分层证据)。此外先前的 Xray 对比
+头条数据是在 v1.7.0 与 v1.6.1 二进制上测得，这里沿用是因为已正式确立中性，
+而非在此重新测量。
 
 [docs/en/operations/memory-audit-v1.8.md](../en/operations/memory-audit-v1.8.md) 记录所有权映射、拷贝台账、分配台账与异步 future
 尺寸，包括一处仍存在于 v1.8 的实测重复——因为它的修复未通过受保护路径门禁。

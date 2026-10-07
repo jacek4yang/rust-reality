@@ -170,15 +170,13 @@ combined prebuilt-cover plus warm-LANDING, protected-path, and soak evidence
 remain separate retained release artifacts; no missing artifact is inferred
 from this focused matrix.
 
-Release evidence has three tiers. Tier A is the mandatory focused mechanism
-gate above and is budgeted for approximately 10–20 minutes. Tier B is the
-mandatory approximately ten-minute dual-VPS active canary evaluated by
-`cargo dev deploy canary`. Tier C is an optional hours-long or overnight
-soak. Tier C may find long-horizon retention defects, but it no longer blocks
-publication or the next development worktree. The Tier B memory gate compares
-baseline, burst peak, and post-recovery FD/thread/RSS envelopes; it does not
-extrapolate a precise MiB/hour slope from ten minutes or claim equivalence to
-long-duration evidence.
+Release acceptance is defined in the [release process](release-process.md#evidence-tiers-and-invalidation).
+Tier A retains the focused mechanism gate. Tier B requires repeated pressure/
+recovery and isolated multi-node fault evidence; QEMU system VMs can satisfy
+it without real dual-VPS access. Tier C extended soak is optional. Existing
+required native checks and resource thresholds remain unchanged. Operation
+counts do not simulate elapsed months, and local VM evidence is not WAN
+evidence; see [ADR 0033](../adr/0033-stress-and-virtual-machines-qualify-releases.md).
 
 ## Canonical v1.0.0 samples
 

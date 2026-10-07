@@ -134,11 +134,11 @@ EWMA、growth 与 shrink 计数。debug/instrumented run 可解释 phase，不�
 idle-age、burst、prebuilt-cover + warm-LANDING 组合、protected path 与 soak 是独立保留
 的 release artifact；不能从本聚焦 matrix 推断缺失证据。
 
-发布证据分三层：A 层是上述强制聚焦机制门禁，预算约 10–20 分钟；B 层是由
-`cargo dev deploy canary` 评估的强制约十分钟双 VPS 主动 canary；C 层是可选的
-数小时或整夜 soak。C 层仍可发现长期保持问题，但不再阻塞发布或下一开发 worktree。
-B 层内存门禁比较基线、burst 峰值和恢复后的 FD/thread/RSS 包络，不会从十分钟
-外推精确 MiB/hour，也不声称等价于长期证据。
+发布验收以[发布流程](release-process.md#分层证据)为准。A 层保留聚焦机制门禁；
+B 层要求重复压力／恢复与隔离多节点故障证据，QEMU 系统虚拟机可以达标，无需
+真实双 VPS。C 层长期 soak 可选。已有必需原生检查与资源阈值不变。操作次数
+不能模拟经过数个月，本地 VM 证据也不是 WAN 证据；见
+[ADR 0033](../adr/0033-stress-and-virtual-machines-qualify-releases.md)。
 
 ## v1.0.0 规范样本
 
