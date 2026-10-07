@@ -6,6 +6,11 @@ All notable user-facing changes to this project are documented in this file.
 
 ### Changed
 
+- Release qualification accepts isolated QEMU multi-node stress and fault
+  evidence without mandatory dual-VPS access or an additional long soak.
+  Exact-head quality/security gates, resource bounds, temporal-boundary tests
+  and release-artifact checks remain required; real-WAN rollout validation
+  and production authorization stay separate.
 - Connection-task bookkeeping submits the accepted future directly rather than
   wrapping it in another large async state, reducing task storage without an
   extra allocation, lock, or change to connection limits and cancellation.

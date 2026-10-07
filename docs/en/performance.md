@@ -229,11 +229,11 @@ by deleting four panic sites and nothing after it added any machine code at all.
 
 Two limits of this evidence are stated rather than implied. These legs exercise
 REALITY setup, fallback, Vision framed, Vision Direct, and bidirectional
-transfer; they do **not** exercise Handoff or NXR, which are covered at release
-time by the dual-VPS active canary. And the earlier headline Xray-comparison
-tables were measured on the v1.7.0 and v1.6.1 binaries; they are carried forward
-because neutrality was formally established, not because they were re-measured
-here.
+transfer; they do **not** exercise Handoff or NXR, which require separate
+[multi-node release qualification](release-process.md#evidence-tiers-and-invalidation).
+The earlier headline Xray-comparison tables were measured on the v1.7.0 and
+v1.6.1 binaries; they are carried forward because neutrality was formally
+established, not because they were re-measured here.
 
 [docs/en/operations/memory-audit-v1.8.md](operations/memory-audit-v1.8.md) records the ownership map, copy ledger, allocation
 ledger, and async future sizes, including one measured duplication that remains

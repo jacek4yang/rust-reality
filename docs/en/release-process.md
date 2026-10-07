@@ -22,25 +22,99 @@ Release validation is intentionally time-bounded:
 | Tier | Blocking | Budget | Question |
 | --- | --- | --- | --- |
 | A — focused formal gate | yes | about 10–20 minutes | Does the exact production binary implement the claimed mechanism, preserve integrity, and avoid protected-path regression? |
-| B — dual-VPS active canary | yes | about 10 minutes | Does the exact candidate deploy, operate over a real WAN, survive churn/reload/LANDING restart, and recover bounded resources? |
+| B — stress and isolated multi-node qualification | yes | bounded work and explicit fault cases | Does the exact candidate preserve integrity and recover bounded resources under repeated load, reload, partition and restart? QEMU system VMs qualify. |
 | C — extended soak | no | hours or overnight | Does long-horizon operation reveal retention or rare network behavior? |
 
-Tier C remains useful nightly, post-release, or during a focused leak
-investigation. It is not a publication prerequisite and must not stall the
-next worktree. A ten-minute canary is described only as high-density lifecycle
-evidence, never as proof that no long-term leak exists.
+Tier B may run entirely in isolated QEMU system VMs; real dual-VPS access is
+not a publication prerequisite. A real-WAN canary remains separately labelled
+deployment evidence. Tier C remains useful nightly, post-release, or during a
+focused investigation, but an additional hours-long or multi-day soak is not
+required for publication. Existing required native checks are not skipped or
+made optional by calling them a soak.
+
+Stress compresses operation counts, not elapsed time. It cannot establish a
+month of uptime, exercise an untriggered timer, or reproduce a real WAN merely
+by increasing concurrency. Time-dependent boundaries need deterministic tests;
+untested calendar, kernel and network behavior remains explicit.
+The rationale is [ADR 0033](../adr/0033-stress-and-virtual-machines-qualify-releases.md).
 
 Every retained artifact records the commit, binary SHA-256, ELF Build ID,
 version, rustc, target, features, host, kernel, workload, raw samples, and
 integrity result. Source changes invalidate evidence by dependency, not by
-ritual: a transport change reruns transport gates and the canary; a docs-only
+ritual: a transport change reruns transport gates and multi-node qualification; a docs-only
 change does not invalidate an immutable transport binary; release packaging
 changes rerun package and official-artifact smoke tests.
 
+### Tier B — stress and isolated multi-node qualification
+
+The following is the publication acceptance contract, not a claim that starting
+VMs or completing a throughput benchmark is sufficient:
+
+1. **Provenance and isolation.** Use the immutable release candidate and pinned
+   stock Xray. Record executable hashes, build identities, fixture/controller/
+   evaluator source hashes, commands, guest images, acceleration mode, kernels,
+   distinct boot IDs, CPU/RAM/swap limits and network topology. Use two LINE
+   guests and one LANDING guest with separate kernels; user-mode QEMU or three
+   processes in one guest is not this test. Host forwards are loopback-only;
+   faults affect only owned guest links, never the host or production network.
+2. **Interoperability and pressure.** Run the existing exact-candidate native
+   interoperability, mechanism and descriptor-pressure gates with their
+   unchanged contracts. Exercise Handoff and NXR through stock Xray on both
+   LINEs. Include a 1-vCPU/1-GiB LANDING resource/recovery case as well as the
+   ordinary multi-worker case. No OOM, panic, unexpected process exit,
+   authentication/protocol regression or corrupted bytes is acceptable.
+3. **Repeated finite stress.** For each topology, complete at least eight
+   load/drain/recovery cycles without restarting the daemons. Each cycle must
+   complete at least 100 authenticated transfers through each LINE; include
+   concurrency 8 and 32, steady load and bursts. Record attempts, successful
+   operations, bytes, errors and quiescent checkpoints, not just elapsed time.
+   All non-fault transfers must succeed. Bounded retained capacity is allowed;
+   unexplained growth in live resources across recovered cycles is not.
+4. **Lifecycle and fault matrix.** Preserve a bidirectional stream across LINE
+   reload and prove old-generation retirement and new admissions. Exercise warm
+   reuse, stale retirement and cold fallback. Kill/restart LANDING, isolate
+   LINE-A's data link for 10 seconds while LINE-B continues, and exercise
+   50/100/200-ms RTT plus a 100-ms/1%-loss case. After each restored fault,
+   require the first new admission within the declared recovery bound and then
+   100 consecutive successful new transfers, each within its deadline. A killed
+   process need not preserve its old TCP streams; their received prefixes must
+   remain exact. Count every induced failure and bind it to the fault window;
+   do not accept protocol/authentication rejection or hide a restart loop.
+5. **Integrity and resources.** Verify exact bytes/SHA-256 for 1-MiB and larger
+   downloads, uploads and simultaneous bidirectional traffic. Upload receipts
+   must be newly appended for unique run-specific paths. Retain at least 12
+   identity-bound resource samples per role spanning baseline, load, peak and
+   recovery; sample each stress cycle's recovered state without PID replacement.
+   Preserve the reviewed final/peak ceilings: LINE FD 768/2,048, LANDING FD
+   256/1,024, threads baseline +8/+16 and RSS baseline +32/+96 MiB. Retain PSS,
+   anonymous memory and process start times for attribution. Do not require
+   RSS to return byte-for-byte, infer a leak from residency alone, or extrapolate
+   a short run into a monthly memory prediction.
+6. **Temporal boundaries.** Record deterministic tests for the affected replay/
+   TTL, generation/credential retirement, shared inactivity, write-stall,
+   half-close and cancellation contracts. Use explicit time inputs or controlled
+   test-runtime time where supported. Do not shorten production deadlines,
+   change real clocks or replace these tests with a larger connection count.
+7. **Reviewable verdict.** Retain every case and failure, raw samples, integrity
+   receipts and a fail-closed audit against the criteria above. Fixture and
+   evaluator code must be reviewable and validated; a hand-written success
+   Boolean is not evidence. Missing cases remain not-run. Label the scope
+   `LOCAL_QEMU` or `LOCAL_KVM`, never `dual-vps-active-release-canary`. A release
+   PR must identify the exact evidence and record the reviewer's acceptance.
+
+Use `cargo dev perf freeze`, `cargo dev check --all`, existing
+`cargo dev bench run --suite no-ccs-interop`, `--suite deployment` with
+`--deployment-plan mechanism`, and `--suite descriptor-pressure` for the
+repository-owned portions; supply the same frozen `--rust-bin` and pinned
+reference binaries. The VM fixture adds guest isolation and the fault/stress
+cases; it does not replace these commands. The existing
+`cargo dev deploy canary` evaluator remains WAN-specific and must not be fed
+fabricated SSH/firewall assertions to make a local run look like a VPS run.
+
 ## Phase 0 — verify current state
 
-Before mutation inspect local Git, `origin/main`, open PRs and checks, releases,
-worktrees, and both SSH hosts:
+Before repository mutation inspect local Git, `origin/main`, open PRs and
+checks, releases and worktrees:
 
 ```shell
 git fetch origin --prune
@@ -50,13 +124,14 @@ gh repo view
 gh pr list
 gh pr checks PR
 gh release list
-ssh rust-reality-vps true
-ssh rust-reality-landing-vps true
 ```
 
-Record service names, executable/configuration paths and hashes, listeners,
-users, limits, and firewall shape without exporting secret values. An unknown
-or unhealthy live service stops deployment; it does not justify blind repair.
+Before separately authorized live deployment, inspect both logical SSH roles
+and record service names, executable/configuration paths and hashes, listeners,
+users, limits and firewall shape without exporting secrets. An unknown or
+unhealthy live service stops deployment; it does not block independent local
+qualification or authorize blind repair. Publication alone requires no
+production SSH connection.
 
 ## Phase 1 — finish and merge a feature PR
 
@@ -97,6 +172,11 @@ Create an immutable worktree from merged main and build with the official
 release scripts. The candidate must report the intended version. Run affected
 fast final gates, then Tier A and Tier B. Never overwrite a binary while it is
 being evaluated.
+
+The deployment steps below apply only to a separately authorized live rollout.
+They are not additional publication prerequisites when Tier B was qualified in
+QEMU. Repository review/merge and tag/publication authorization remain distinct
+from permission to touch a live host.
 
 ## Phase 3 — permanent LINE deployment
 
@@ -150,6 +230,9 @@ the retained pre-upgrade rollback release; persistent identity is never pruned
 with release directories.
 
 ## Phase 4 — dual-VPS active canary
+
+This is real-WAN deployment validation, not a mandatory publication environment.
+Keep its reports and gate identity separate from local VM qualification.
 
 LANDING port 443 is allowed only from the LINE public IPv4 `/32`; port 22 is
 never changed. Origins are loopback-only. Handoff is the primary topology:
@@ -233,9 +316,12 @@ gh run watch RUN_ID
 
 Do not create a duplicate release. Verify the tag commit, full asset matrix,
 `SHA256SUMS`, `release-manifest.json`, generic/musl smoke, and aarch64 policy.
-Download the official artifact, verify it, deploy it over the candidate,
-repeat compatibility/integrity smoke, and leave it running. Failure restores
-PREVIOUS and is fixed forward with the appropriate patch release.
+Download and verify the official artifacts, then repeat compatibility/integrity
+smoke in the qualified isolated environment. Publication does not require a
+production deployment. For an independently authorized live rollout, deploy
+the official artifact over the candidate, repeat the deployment canary, and
+retain PREVIOUS. A rollout failure restores PREVIOUS and is fixed forward with
+the appropriate patch release.
 
 ## Phase 6 — v1.8 Session Engine
 
