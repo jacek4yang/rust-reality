@@ -1568,8 +1568,11 @@ fn run_rust_attempt(plan: &SoakPlan, run: &RunDirectory) -> Result<RustSoakOutco
             ("nxr-landing", &nxr_landing_log),
             ("socks-line", &socks_line_log),
         ],
+        &rust,
+        &rr_dev_sha256,
+        plan.duration,
     )?;
-    let started = Instant::now();
+    let mut started = Instant::now();
     let mut distributed = DistributedRun {
         run,
         started,
@@ -1586,6 +1589,8 @@ fn run_rust_attempt(plan: &SoakPlan, run: &RunDirectory) -> Result<RustSoakOutco
     let mut shaped = 0;
     let attempted = (|| {
         ownership.begin()?;
+        started = Instant::now();
+        distributed.started = started;
         distributed.attempt("start");
         snapshots.push(capture_processes("start", started.elapsed(), &identities)?);
         let reload_at = plan.duration.div_f64(2.0);
@@ -1686,7 +1691,6 @@ fn run_rust_attempt(plan: &SoakPlan, run: &RunDirectory) -> Result<RustSoakOutco
     // Every finalizer is attempted while the children and workspace are alive.
     // A failed workload must not suppress raw observations or identity checks.
     let mut finalization = Vec::new();
-    finalization.push(("terminal ownership".to_owned(), ownership.finalize()));
     let observations = retain_native_observations(
         &distributed,
         &snapshots,
@@ -1770,6 +1774,8 @@ fn run_rust_attempt(plan: &SoakPlan, run: &RunDirectory) -> Result<RustSoakOutco
             copy_origin_log(&workspace, run, label, destination),
         ));
     }
+    let ownership_finalization = ownership.finalize(attempted.as_ref().err(), &finalization);
+    finalization.push(("terminal ownership".to_owned(), ownership_finalization));
     let (resources, resources_by_process) = finalize_native_attempt(run, attempted, &finalization)?;
     let distributed_json = observations?;
 

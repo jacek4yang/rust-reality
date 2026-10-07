@@ -49,9 +49,15 @@ impl Report {
         .expect("the precedence contains every verdict");
     }
 
-    fn require(&mut self, condition: bool, verdict: Verdict, scope: &str, reason: &str) {
+    pub(super) fn require(&mut self, condition: bool, verdict: Verdict, scope: &str, reason: &str) {
         if !condition {
             self.reject(verdict, scope, reason);
+        }
+    }
+
+    pub(super) fn extend(&mut self, other: Self) {
+        for finding in other.findings {
+            self.reject(finding.verdict, &finding.scope, &finding.reason);
         }
     }
 }
@@ -232,7 +238,7 @@ pub fn evaluate(evidence: &Evidence, contract_sha256: &str) -> Report {
     report
 }
 
-fn same_names<'a>(actual: impl Iterator<Item = &'a str>, required: &[String]) -> bool {
+pub(super) fn same_names<'a>(actual: impl Iterator<Item = &'a str>, required: &[String]) -> bool {
     let actual: Vec<_> = actual.collect();
     actual.len() == required.len()
         && actual.into_iter().collect::<BTreeSet<_>>()

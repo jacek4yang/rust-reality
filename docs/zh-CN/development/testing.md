@@ -66,6 +66,11 @@ cargo clippy --manifest-path tools/Cargo.toml --workspace --all-targets --all-fe
 故障后的检查点（包括进程重启后）必须证明所有权恢复。重复使用原始观察、额外
 未打开描述符的预留许可，以及超出峰值包络的内存高水位，均无法通过验证。
 
+必需的 `native-resources` 检查引用原生持续测试生成的 `native-resources.json`。
+离线验证会重新读取全部绑定的原始观察，核验启动策略、六个进程的身份、轮次覆盖、
+固定恢复窗口以及各进程和汇总资源包络。短时集成测试的 PASS 不得替代必需的
+30 分钟负载。来源、工具或契约替换、最终身份缺失及原始观察文件变更均会被拒绝。
+
 验收时，debug 日志包含每秒的 `resource_ownership`、
 `connection_task_ownership` 观察以及 `generation_retired` 事件。管道观察检查
 保留管道的未读字节；检查失败会记录缺失值，不以零代替。这些观察并非分配器普查。

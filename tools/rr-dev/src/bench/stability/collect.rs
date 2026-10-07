@@ -10,7 +10,7 @@ use crate::{bench::process::proc_starttime, process::Tool};
 
 use super::schema::Observation;
 
-fn unix_ms() -> Result<u64, String> {
+pub(super) fn unix_ms() -> Result<u64, String> {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_err(|error| format!("observation clock: {error}"))?

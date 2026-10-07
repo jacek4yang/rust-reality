@@ -365,6 +365,175 @@ fn collection_receipts_reject_substitution_and_exclude_unowned_socket_paths() {
     }
 }
 
+fn native_fixture() -> Value {
+    let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
+    let base = fixture();
+    let mut policy = base["cells"][0]["roles"][0]["policy"].clone();
+    policy["active_socket_capacity"] = json!(4096);
+    policy["relay_fd_capacity"] = json!(4096);
+    let policies: Vec<_> = contract
+        .native_roles
+        .iter()
+        .map(|role| json!({"role":role,"policy":policy}))
+        .collect();
+    let workload = 11_000_u64;
+    let recovery = workload + contract.native_duration_ms;
+    let mut phases = vec![("baseline".to_owned(), 10_000)];
+    phases.extend((1..=3).map(|round| (format!("round-{round}"), workload + round * 1000)));
+    phases.extend(
+        contract
+            .native_recovery_offsets_ms
+            .iter()
+            .map(|offset| (format!("recovery-{offset}"), recovery + offset)),
+    );
+    phases.push(("terminal".to_owned(), recovery + 181_000));
+    let checkpoints: Vec<_> = phases.into_iter().map(|(phase, time)| {
+        let samples: Vec<_> = contract.native_roles.iter().enumerate().map(|(index, role)| {
+            let mut sample = base["cells"][0]["cycles"][0]["checkpoints"][0]["samples"][0].clone();
+            sample["role"] = json!(role);
+            sample["process"]["pid"] = json!(42+index);
+            sample["process"]["boot_id"] = json!("native-boot");
+            sample["observation"] = json!({"path":format!("{phase}-{role}.json"),"sha256":hash::sha256_hex(format!("{phase}-{role}").as_bytes())});
+            sample
+        }).collect();
+        let observations: Vec<_> = samples.iter().map(|sample| sample["observation"].clone()).collect();
+        json!({"phase":phase,"started_unix_ms":time,"observations":observations,"samples":samples,"errors":[]})
+    }).collect();
+    json!({"source_commit":"c".repeat(40),"candidate_sha256":"a".repeat(64),"evaluator_sha256":"a".repeat(64),
+        "contract_sha256":hash::sha256_hex(schema::CONTRACT.as_bytes()),"duration_ms":contract.native_duration_ms,
+        "workload_started_unix_ms":workload,"recovery_started_unix_ms":recovery,"policies":policies,"checkpoints":checkpoints,
+        "primary_error":null,"finalization_errors":[]})
+}
+
+#[test]
+fn native_offline_coverage_and_identity_cannot_be_claimed_from_a_short_pass() {
+    let evaluate = |value: &Value| {
+        let receipt = schema::parse_native(&serde_json::to_vec(value).unwrap()).unwrap();
+        super::native_evaluate::evaluate(
+            &receipt,
+            &"c".repeat(40),
+            &"a".repeat(64),
+            &"a".repeat(64),
+            &hash::sha256_hex(schema::CONTRACT.as_bytes()),
+        )
+        .verdict
+    };
+    let valid = native_fixture();
+    assert_eq!(evaluate(&valid), Verdict::Pass);
+    for (pointer, value) in [
+        ("/duration_ms", json!(30_000)),
+        ("/candidate_sha256", json!("d".repeat(64))),
+        ("/source_commit", json!("d".repeat(40))),
+        ("/evaluator_sha256", json!("d".repeat(64))),
+        (
+            "/checkpoints/6/samples/0/owners/retired_generations",
+            json!(1),
+        ),
+        ("/checkpoints/6/samples/0/hwm_kib", json!(100_000)),
+        ("/checkpoints/6/samples/0/process/pid", json!(999)),
+        ("/checkpoints/0/samples/0/process/pid", json!(43)),
+        ("/checkpoints/6/started_unix_ms", json!(1)),
+        ("/checkpoints/6/samples", json!([])),
+        ("/checkpoints/6/phase", json!("round-1")),
+        ("/primary_error", json!("workload failed")),
+        ("/finalization_errors", json!(["changed binary"])),
+    ] {
+        let mut changed = valid.clone();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        assert_ne!(evaluate(&changed), Verdict::Pass, "{pointer}");
+    }
+}
+
+#[test]
+fn native_offline_verification_reconstructs_bound_raw_samples() {
+    let workspace = Workspace::create("stability-native-offline").unwrap();
+    let mut receipt =
+        schema::parse_native(&serde_json::to_vec(&native_fixture()).unwrap()).unwrap();
+    for checkpoint in &mut receipt.checkpoints {
+        for (index, sample) in checkpoint.samples.iter_mut().enumerate() {
+            let policy = &receipt
+                .policies
+                .iter()
+                .find(|policy| policy.role == sample.role)
+                .unwrap()
+                .policy;
+            let mut raw = raw_observation(sample, policy);
+            raw["started_unix_ms"] = json!(checkpoint.started_unix_ms);
+            raw["completed_unix_ms"] = json!(checkpoint.started_unix_ms + 1);
+            raw["ownership_log"] = json!(raw["ownership_log"].as_str().unwrap().replace(
+                "\"timestampUnixMs\":9000",
+                &format!("\"timestampUnixMs\":{}", checkpoint.started_unix_ms - 1000)
+            ));
+            let bytes = serde_json::to_vec(&raw).unwrap();
+            std::fs::write(workspace.join(&sample.observation.path), &bytes).unwrap();
+            sample.observation.sha256 = hash::sha256_hex(&bytes);
+            checkpoint.observations[index] = sample.observation.clone();
+        }
+    }
+    let bytes = serde_json::to_vec(&receipt).unwrap();
+    std::fs::write(workspace.join("native.json"), &bytes).unwrap();
+    let artifact = schema::Artifact {
+        path: "native.json".to_owned(),
+        sha256: hash::sha256_hex(&bytes),
+    };
+    let evidence = schema::parse(&serde_json::to_vec(&fixture()).unwrap()).unwrap();
+    assert_eq!(
+        super::verify_native_receipt(workspace.path(), &artifact, &evidence.identity)
+            .unwrap()
+            .verdict,
+        Verdict::Pass
+    );
+    std::fs::write(
+        workspace.join(&receipt.checkpoints[6].samples[0].observation.path),
+        b"changed",
+    )
+    .unwrap();
+    assert_eq!(
+        super::verify_native_receipt(workspace.path(), &artifact, &evidence.identity)
+            .unwrap()
+            .verdict,
+        Verdict::Invalid
+    );
+}
+
+#[test]
+fn checked_in_seeds_reach_valid_resource_and_vm_reconstruction() {
+    let raw = schema::parse_observation(include_bytes!(
+        "../../../../../fuzz/seeds/stability_evidence/seed_owned_unix.json"
+    ))
+    .unwrap();
+    let policy = super::observation::startup_policy(&raw, 1).unwrap();
+    let artifact = schema::Artifact {
+        path: "synthetic.json".to_owned(),
+        sha256: "a".repeat(64),
+    };
+    let sample = super::observation::normalize(&raw, &policy, "seed", artifact).unwrap();
+    assert_eq!(
+        evaluate::evaluate_native_resources(&policy, &sample, &sample, true).verdict,
+        Verdict::Pass
+    );
+    let native = schema::parse_native(include_bytes!(
+        "../../../../../fuzz/seeds/stability_evidence/seed_native_receipt.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        super::native_evaluate::evaluate(
+            &native,
+            &"a".repeat(40),
+            &"a".repeat(64),
+            &"a".repeat(64),
+            &"a".repeat(64)
+        )
+        .verdict,
+        Verdict::Pass
+    );
+    let vm = schema::parse_vm_fixture(include_bytes!(
+        "../../../../../fuzz/seeds/stability_evidence/seed_vm_fixture.json"
+    ))
+    .unwrap();
+    super::vm::validate(std::path::Path::new("/fixture"), &vm).unwrap();
+}
+
 #[test]
 fn artifact_verification_rejects_missing_changed_and_escaping_objects() {
     let workspace = Workspace::create("stability-artifacts").unwrap();

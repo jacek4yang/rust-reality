@@ -4,6 +4,7 @@ pub mod collect;
 pub mod evaluate;
 pub mod fixture;
 pub mod native;
+pub mod native_evaluate;
 pub mod observation;
 pub mod schema;
 pub mod vm;
@@ -36,6 +37,16 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
             report.reject(Verdict::Invalid, "artifact", &error);
         }
     }
+    for check in evidence
+        .checks
+        .iter()
+        .filter(|check| check.name == "native-resources")
+    {
+        match verify_native_receipt(root, &check.output, &evidence.identity) {
+            Ok(native) => report.extend(native),
+            Err(error) => report.reject(Verdict::Invalid, "native-resources", &error),
+        }
+    }
     let contract: schema::Contract =
         serde_json::from_str(schema::CONTRACT).expect("compiled stability contract");
     let mut observation_hashes = std::collections::BTreeSet::new();
@@ -65,13 +76,7 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
                     );
                 }
                 if let Some(role) = cell.roles.iter().find(|role| role.name == sample.role) {
-                    let verified = verify_artifact(root, &sample.observation).and_then(|()| {
-                        let file = File::open(root.join(&sample.observation.path))
-                            .map_err(|error| error.to_string())?;
-                        let mut bytes = Vec::new();
-                        file.take((schema::MAX_EVIDENCE_BYTES + 1) as u64)
-                            .read_to_end(&mut bytes)
-                            .map_err(|error| error.to_string())?;
+                    let verified = read_artifact(root, &sample.observation).and_then(|bytes| {
                         let raw = schema::parse_observation(&bytes)?;
                         observation::verify_checkpoint_time(
                             &raw,
@@ -98,6 +103,99 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
             "evaluator",
             "execute the frozen evaluator named by this evidence",
         );
+    }
+    Ok(report)
+}
+
+fn read_artifact(root: &Path, artifact: &Artifact) -> Result<Vec<u8>, String> {
+    verify_artifact(root, artifact)?;
+    let file = File::open(root.join(&artifact.path)).map_err(|error| error.to_string())?;
+    let mut bytes = Vec::new();
+    file.take((schema::MAX_EVIDENCE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() > schema::MAX_EVIDENCE_BYTES {
+        return Err("evidence object exceeds 64 MiB".to_owned());
+    }
+    Ok(bytes)
+}
+
+fn verify_native_receipt(
+    root: &Path,
+    artifact: &Artifact,
+    identity: &schema::Identity,
+) -> Result<Report, String> {
+    let receipt = schema::parse_native(&read_artifact(root, artifact)?)?;
+    let contract: schema::Contract =
+        serde_json::from_str(schema::CONTRACT).expect("compiled contract");
+    let mut report = native_evaluate::evaluate(
+        &receipt,
+        &identity.source_commit,
+        &identity.candidate.sha256,
+        &identity.evaluator.sha256,
+        &identity.contract.sha256,
+    );
+    let root = root.join(
+        Path::new(&artifact.path)
+            .parent()
+            .ok_or("native receipt has no directory")?,
+    );
+    for checkpoint in &receipt.checkpoints {
+        for artifact in &checkpoint.observations {
+            if let Err(error) = verify_artifact(&root, artifact) {
+                report.reject(Verdict::Invalid, "native-resources", &error);
+            }
+        }
+        for sample in &checkpoint.samples {
+            let result = (|| {
+                let raw = schema::parse_observation(&read_artifact(&root, &sample.observation)?)?;
+                let policy = &receipt
+                    .policies
+                    .iter()
+                    .find(|policy| policy.role == sample.role)
+                    .ok_or("missing native policy")?
+                    .policy;
+                let scheduled = if let Some(offset) = checkpoint.phase.strip_prefix("recovery-") {
+                    receipt
+                        .recovery_started_unix_ms
+                        .and_then(|start| {
+                            offset
+                                .parse::<u64>()
+                                .ok()
+                                .and_then(|offset| start.checked_add(offset))
+                        })
+                        .ok_or("invalid native recovery schedule")?
+                } else {
+                    checkpoint.started_unix_ms
+                };
+                observation::verify_checkpoint_time(
+                    &raw,
+                    0,
+                    scheduled,
+                    contract.checkpoint_tolerance_ms,
+                )?;
+                observation::verify(&raw, sample, policy)?;
+                if checkpoint.phase == "baseline" {
+                    if receipt
+                        .workload_started_unix_ms
+                        .is_none_or(|start| raw.completed_unix_ms > start)
+                        || observation::startup_policy(&raw, policy.listener_sockets)? != *policy
+                    {
+                        return Err("native baseline or policy was substituted".to_owned());
+                    }
+                } else if checkpoint.phase.starts_with("round-")
+                    && receipt
+                        .recovery_started_unix_ms
+                        .is_none_or(|start| raw.completed_unix_ms > start)
+                {
+                    return Err("native round observation continued into recovery".to_owned());
+                }
+                Ok(())
+            })();
+            if let Err(error) = result {
+                report.reject(Verdict::Invalid, "native-resources", &error);
+            }
+        }
     }
     Ok(report)
 }

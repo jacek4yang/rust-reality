@@ -28,6 +28,9 @@ pub struct Contract {
     pub native_recovered_rss_growth_kib: u64,
     pub native_peak_hwm_growth_kib: u64,
     pub native_thread_growth: u64,
+    pub native_duration_ms: u64,
+    pub native_minimum_rounds: usize,
+    pub native_roles: Vec<String>,
     pub recovery_deadline_ms: u64,
     pub transfer_deadline_ms: u64,
     pub recovered_rss_growth_kib: u64,
@@ -45,7 +48,7 @@ pub struct Contract {
     pub required_checks: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Artifact {
     pub path: String,
@@ -136,7 +139,7 @@ pub struct Role {
 }
 
 /// Capacities derived from actual startup policy, never fitted to observations.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Policy {
     pub runtime_unix_sockets: u64,
@@ -269,6 +272,47 @@ pub fn parse(bytes: &[u8]) -> Result<Evidence, String> {
         return Err("stability evidence exceeds 64 MiB".to_owned());
     }
     serde_json::from_slice(bytes).map_err(|error| format!("invalid stability evidence: {error}"))
+}
+
+/// Raw native-resource receipt referenced by the required native-resources check.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeEvidence {
+    pub source_commit: String,
+    pub candidate_sha256: String,
+    pub evaluator_sha256: String,
+    pub contract_sha256: String,
+    pub duration_ms: u64,
+    pub workload_started_unix_ms: Option<u64>,
+    pub recovery_started_unix_ms: Option<u64>,
+    pub policies: Vec<NativePolicy>,
+    pub checkpoints: Vec<NativeCheckpoint>,
+    pub primary_error: Option<String>,
+    pub finalization_errors: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativePolicy {
+    pub role: String,
+    pub policy: Policy,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCheckpoint {
+    pub phase: String,
+    pub started_unix_ms: u64,
+    pub observations: Vec<Artifact>,
+    pub samples: Vec<Sample>,
+    pub errors: Vec<String>,
+}
+
+pub fn parse_native(bytes: &[u8]) -> Result<NativeEvidence, String> {
+    if bytes.len() > MAX_EVIDENCE_BYTES {
+        return Err("native evidence exceeds 64 MiB".to_owned());
+    }
+    serde_json::from_slice(bytes).map_err(|error| format!("invalid native evidence: {error}"))
 }
 
 /// One attempted observation, including partial evidence on failure.

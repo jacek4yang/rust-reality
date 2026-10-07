@@ -86,6 +86,13 @@ post-fault checkpoints must recover ownership, including after process restart.
 Reused raw observations, excess unopened permits and memory high-water marks
 above the peak envelope fail verification.
 
+The required `native-resources` check references `native-resources.json` from
+the native soak. Offline verification reopens every bound raw observation and
+checks startup policy, all six process identities, round coverage, fixed recovery
+windows, and per-process/aggregate envelopes. A short integration PASS cannot
+stand in for the required 30-minute workload. Source, harness and contract
+substitution, missing final identities or changed observation files are rejected.
+
 For qualification, debug logs include one-second `resource_ownership` and
 `connection_task_ownership` observations and `generation_retired` events. The
 pipe observation inspects retained pipe bytes and reports a missing value if

@@ -4,6 +4,8 @@
 // tooling control plane into the production library or fuzz target graph.
 #[path = "../../tools/rr-dev/src/bench/stability/evaluate.rs"]
 mod evaluate;
+#[path = "../../tools/rr-dev/src/bench/stability/native_evaluate.rs"]
+mod native_evaluate;
 #[path = "../../tools/rr-dev/src/bench/stability/observation.rs"]
 mod observation;
 #[path = "../../tools/rr-dev/src/bench/stability/schema.rs"]
@@ -43,5 +45,14 @@ libfuzzer_sys::fuzz_target!(|bytes: &[u8]| {
     }
     if let Ok(evidence) = schema::parse(bytes) {
         let _ = evaluate::evaluate(&evidence, &"a".repeat(64));
+    }
+    if let Ok(native) = schema::parse_native(bytes) {
+        let _ = native_evaluate::evaluate(
+            &native,
+            &"a".repeat(40),
+            &"a".repeat(64),
+            &"a".repeat(64),
+            &"a".repeat(64),
+        );
     }
 });

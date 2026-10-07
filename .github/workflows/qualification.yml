@@ -160,6 +160,7 @@ jobs:
               'soak/distributed-gates.json', 'soak/handoff-cover-certificate-san.txt',
               'soak/attempt-environment.json', 'soak/attempt-terminal.json',
               'soak/execution-terminal.json',
+              'soak/native-resources.json',
           ]
           # Native ownership receipts contain the product's fixed secret-free
           # event vocabulary and /proc observations, never generated configs.
