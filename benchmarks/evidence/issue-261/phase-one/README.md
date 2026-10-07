@@ -427,3 +427,40 @@ and unpacked ELF SHA-256 is
 This is a native build/package execution receipt, not local ARM64 proxy or
 real-WAN qualification. The existing version label `2.0.1` does not identify
 a newly created tag or published release.
+
+## NXR lifecycle, network faults and actual package execution
+
+The [NXR lifecycle manifest](kvm-1da34e3-nxr-lifecycle-manifest.json) retains
+7,768/7,768 successful transfers and 53 resource samples per role. Both
+continuous streams progress across LINE reload and have exact received
+prefixes at deliberate LANDING termination. Both EPIPE diagnostics are
+`outbound/session_relay/io/errno32`; the strict lifecycle audit passes.
+Warm/stale/cold counters and completed admissions following generation-one
+publication are retained for both LINEs in both topologies.
+
+The [NXR fault manifest](kvm-1da34e3-nxr-faults-manifest.json) retains the
+complete RTT/loss/partition/restart matrix. Each shaped-network cell completes
+100/100 transfers; recovery completes 400/400 post-netem, 100/100
+post-partition and 100/100 post-kill. First successful new transfer is
+5.483 seconds after partition restoration and 0.104 seconds after restart.
+The unaffected LINE-B flow sends and receives the same 1,228,800 bytes/hash.
+All unchanged final/peak resource envelopes pass for this lifecycle/fault
+workload; that does not override the separate failed no-restart stress cell.
+All three guest kernels report zero OOM kills since boot.
+The [4 MiB manifest](kvm-1da34e3-nxr-large-manifest.json) binds simultaneous
+upload/download on each LINE with unique fresh origin receipts.
+
+The [unpacked-package manifest](candidate-1da34e3-package-kvm-manifest.json)
+binds 102 members in `candidate-1da34e3-package-kvm.tar.xz`, SHA-256
+`bdc24e7d44918be438e9c88ed2d3c872de155d9cd966ff5f94026a7b9a9d8133`.
+GNU generic, static musl and x86-64-v3 packages each run through stock Xray
+in both Handoff and NXR topologies: six cells, each with 106 verified
+readiness/transfer/bidirectional attempts plus simultaneous 4 MiB
+upload/download on both LINEs. Every cell passes.
+
+These official-tier package ELFs differ from the local `perf freeze` ELF:
+GNU generic `59a35eb454cb6040572815aa4c85780b45be57738ec026c14b844a60775ab98f`,
+musl `372804aa9ed45cbd9b19fa2487fac14f445c33045879abe4edb21dd03e3bc612`,
+and v3 `d6da3c51600b674e0928552c18bd14c16200d6d8fc74bdc849986a2b3ed35920`.
+All bind source `1da34e3`; package smoke is not presented as full resource
+qualification of every distinct ELF or as publication authorization.
