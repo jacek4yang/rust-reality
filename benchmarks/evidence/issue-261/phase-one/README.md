@@ -241,10 +241,10 @@ This pass neither erases the preceding failure nor qualifies a subsequent head.
 
 ## Frozen candidate `583ffed`
 
-The executable candidate remains
-`583ffed78f3a943b8a2235d158060a537ec284b2`; subsequent evidence-only commits do
-not change that identity. Local `cargo dev check --all` passes all 19 stages in
-750.3 seconds. CI 37586749887 and Security 37586749683 pass.
+This checkpoint freezes source
+`583ffed78f3a943b8a2235d158060a537ec284b2`. Its local
+`cargo dev check --all` passes all 19 stages in 750.3 seconds.
+CI 37586749887 and Security 37586749683 pass.
 
 Native run 37586749806 passes with aggregate PSS tail
 0.617346461 MiB/hour against the unchanged 2.0 limit.
@@ -282,3 +282,39 @@ the exact length/hash. Neither correction changes production code or turns
 the original failed/incomplete runs into passes.
 
 This evidence is not real-WAN Tier B and does not authorize publication.
+
+## Established socket failure classification
+
+The complete NXR KVM lifecycle at `583ffed` exposes a diagnostic defect:
+deliberately killing LANDING produces LINE `protocol` rejections with
+`failure.stage=session_relay`, `cause=io`, and `errno=32`. The lifecycle
+controller completes, but the strict rejection audit fails. Native success
+does not erase that failure or establish release readiness.
+
+`vision_rejection_reason` let ordinary established `Io` and `Relay` errors
+fall through to the malformed-input category. The narrow production fix at
+`1da34e37a2b38a774eb3fc14764c108356606963` reuses the existing typed I/O
+classifier, preserving write-stall timeout precedence and genuine protocol
+errors. It changes no transport behavior or memory-management policy.
+
+The [causal manifest](established-io-classification-manifest.json) binds
+103 members in `established-io-classification.tar.xz`, SHA-256
+`5c5a1b021b65beb1c872527c6c823fc9cc6e6029ac9ed10f6d41c7c877df63f6`.
+It retains the failed original audit inputs, failing-before/passing-after
+regression, production-module/workspace tests, strict clippy receipts, and a
+short real two-LINE NXR kill/recovery smoke. Both LINEs report
+`outbound/session_relay/io/errno=32` after the fix; each received prefix is
+299,008 exact bytes. One hundred recovery transfers and simultaneous
+upload/download integrity pass. This debug smoke binds the changed source
+and ELF hashes explicitly; it is not frozen release qualification.
+
+The initial clippy failure records disappearing build directories during an
+owner-reported accidental checkout deletion. Recovery from pushed commits
+restores the changed source byte-for-byte against the pre-deletion smoke
+identity; production tests and strict clippy then pass. The failure is retained,
+not relabeled as a successful run.
+
+The original disposable auditor also names a nonexistent `nxr_relay` stage.
+The schema's canonical stage is `session_relay`. Correcting that diagnostic
+assumption must not admit `protocol` rejections or relax the controlled-kill
+window, integrity, resource, or soak gates.
