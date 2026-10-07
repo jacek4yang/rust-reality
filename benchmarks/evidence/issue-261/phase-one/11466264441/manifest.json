@@ -1,0 +1,64 @@
+{
+  "artifact": {
+    "id": 11466264441,
+    "node_id": "MDg6QXJ0aWZhY3QxMTQ2NjI2NDQ0MQ==",
+    "name": "native-qualification-240ea59a67bd13d9d86e3707a9d43533d6a44fdb",
+    "size_in_bytes": 3430974,
+    "url": "https://api.github.com/repos/jacek4yang/rust-reality/actions/artifacts/11466264441",
+    "archive_download_url": "https://api.github.com/repos/jacek4yang/rust-reality/actions/artifacts/11466264441/zip",
+    "expired": false,
+    "digest": "sha256:4c5a79f4e6dbb6fb1f5adefd2cbe7c00977ddca75c1f34b19c9ed3f8dc94fcea",
+    "created_at": "2026-10-07T07:13:42Z",
+    "updated_at": "2026-10-07T07:13:42Z",
+    "expires_at": "2026-11-06T07:13:41Z",
+    "workflow_run": {
+      "id": 37579723782,
+      "repository_id": 1305592924,
+      "head_repository_id": 1305592924,
+      "head_branch": "phase/1-memory-closure",
+      "head_sha": "240ea59a67bd13d9d86e3707a9d43533d6a44fdb"
+    }
+  },
+  "retainedMembers": [
+    {
+      "path": "PUBLICATION.json",
+      "sha256": "16d60036189b5671180894f856109b6645ab1b578ec6c13d2e09aa2742b94370",
+      "bytes": 2258
+    },
+    {
+      "path": "SHA256SUMS",
+      "sha256": "4ef77bd5f75b2a6600147af49fe65779b83c0638e3ca5ce1eb32303e25b556a2",
+      "bytes": 4658
+    },
+    {
+      "path": "frozen/freeze.json",
+      "sha256": "9faafe428140ded5cf61a8b35e51cd00996f4362f4c79202ee17133330005fa3",
+      "bytes": 435
+    },
+    {
+      "path": "soak/resources.jsonl",
+      "sha256": "b1a091f83905ddd1e3d0fa072085ddea3bb8bf44edfb8a3e93fefbfaa83dc77d",
+      "bytes": 330368
+    },
+    {
+      "path": "soak/soak-summary.json",
+      "sha256": "32eda44ca5b716feb6c399b09f2aa7e04d15371f468af0aa8120268331987bb0",
+      "bytes": 7976
+    },
+    {
+      "path": "soak/distributed-gates.json",
+      "sha256": "03d3dcfdba753c01e493bca3ae5a031cd44a5cb1ba8063c2e9b1ee2ad590e760",
+      "bytes": 902
+    },
+    {
+      "path": "soak/distributed-samples.jsonl",
+      "sha256": "07a9321d90f3a545bf0b6f7937a70981fb70b58cde100313317bd12a77be2f27",
+      "bytes": 38560
+    },
+    {
+      "path": "soak/completion.json",
+      "sha256": "9d6c5eafe13257c1ccef19fe3d4f6d3207c73dbf9f26a92c453df87065cfadff",
+      "bytes": 309
+    }
+  ]
+}

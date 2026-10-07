@@ -148,3 +148,93 @@ contributor, but does not establish a universal bound or retrospectively assign
 every historical failed sample to a stack. Historical failures remain failed.
 These measurements do not quantify how many resident pages an explicit
 allocator trim would return; no production trimming change is justified here.
+
+## Candidate native failure at `63c3523`
+
+Native run 37574005711 failed the unchanged aggregate PSS tail gate:
+2.351475833 MiB/hour exceeds 2.0. The
+[artifact manifest](11463444612/manifest.json) and
+[independent audit](11463444612/audit.json) retain artifact 11463444612,
+ZIP SHA-256
+`f478518fe579e14affd0bf6890809764d7503944ea1e27834b551295c2aef7c5`.
+All 45 original member hashes match. Artifact workflow head/run identity,
+publication source/run identity and frozen source identity agree.
+The frozen executable is
+`43ed02c8aeb5b1007940306a3206847270df9841d05a45613f36fc79e5aa17d6`.
+
+| Role | Tail MiB/hour |
+| --- | ---: |
+| Handoff LANDING | 0.025719885 |
+| Handoff LINE | 0.344840078 |
+| NXR LANDING | 0.090880509 |
+| NXR LINE | 0.396356651 |
+| SOCKS LINE | 0.229012553 |
+| Standalone | 1.264666158 |
+
+FD growth is -6 and thread growth -1. Interoperability, mechanism and
+descriptor-pressure completion/evidence bindings pass; the failed soak has no
+retained terminal completion binding. Its resource samples remain a failure,
+not a successful candidate qualification. This source changes the replay
+regression and evidence, not production memory behavior.
+
+## Allocator counterfactual and mixed standalone discriminator
+
+[Manifest](allocator-counterfactual-manifest.json) binds the 1,223-member
+`allocator-counterfactual.tar.xz` archive, SHA-256
+`0f61ce6ff63fe7bf630ea50ad440ed511263b225db8fc3dcbbf985e1a4504e48`.
+It contains raw numeric smaps observations with file paths redacted, root-only
+allocator accounting, analysis scripts, diagnostic driver sources and the
+observer source. Configuration secrets are not included.
+
+The Ubuntu 24.04/glibc 2.39 guest control and observer each complete the same
+1,600 hash-checked transfers with zero failures. A final diagnostic-only
+`malloc_trim(0)` probe runs after work and idle recovery, not during traffic.
+PID/starttime, FD and thread counts remain unchanged across the probe:
+
+| Role | Released anonymous/PSS KiB | Non-free upper-bound delta, bytes |
+| --- | ---: | ---: |
+| Handoff LANDING | 1,140 | -13 |
+| Handoff LINE | 272 | -1 |
+| NXR LANDING | 32 | -10 |
+| NXR LINE | 1,516 | +1 |
+| SOCKS LINE | 924 | -3 |
+| Standalone | 1,280 | -2 |
+
+The released 5,164 KiB were allocator-owned free pages, not live objects
+destroyed by the probe. `system - free + mmap` remains an upper bound including
+tcache/overhead, not a precise count of live Rust objects. Guest and host differ
+in libc, CPU count and automatically derived resource policy; their absolute
+totals are not a controlled worker-count comparison.
+
+The standalone discriminator uses the native mixed round: TLS/Vision, framed
+cleartext, direct TLS fallback and range churn. Control and observer each
+complete 200 rounds, 600 hash-checked full 4 MiB transfers and 3,200 range
+requests, with zero failures and a generation reload after round 100.
+Range requests retain the native success checks, not an added payload hash.
+During the last four batches, control anonymous residency is 1,816–1,820 KiB;
+observer residency is 1,988 KiB throughout, including the final quiet interval.
+The diagnostic trim releases another 484 KiB from standalone with exactly zero
+change in its non-free upper bound. Other roles are idle controls in this
+experiment, not distributed workload coverage.
+
+The archived historical owner ledger uses only the five previously validated
+distributed Heaptrack traces. Between approximately 880 and 1,780 seconds,
+their live requested bytes increase by 1,336–4,296 bytes per role while arena
+system bytes increase by 53,248–647,168 bytes. The invalid historical standalone
+pointer trace remains excluded. Allocation-origin grouping is not complete Rust
+ownership attribution; observer and native clocks are not conflated.
+
+Together with the replay expiry/capacity experiment, these observations support
+bounded container capacity and allocator high-water retention in the exercised
+workloads. They do not establish a universal resident-memory ceiling or justify
+production trimming, allocator replacement, or a changed acceptance threshold.
+
+## Native qualification at `240ea59`
+
+Run 37579723782 passes the full authoritative gate, interoperability, mechanism,
+descriptor pressure and the unchanged 30-minute soak. The
+[artifact audit](11466264441/audit.json) verifies all 47 members and terminal
+bindings. [Artifact manifest](11466264441/manifest.json) records ZIP SHA-256
+`4c5a79f4e6dbb6fb1f5adefd2cbe7c00977ddca75c1f34b19c9ed3f8dc94fcea`.
+Aggregate PSS tail is 1.821038584 MiB/hour against the unchanged 2.0 limit.
+This pass neither erases the preceding failure nor qualifies a subsequent head.
