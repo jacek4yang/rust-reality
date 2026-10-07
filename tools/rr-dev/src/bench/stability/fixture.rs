@@ -13,7 +13,7 @@ use super::{
     schema::{self, VmFixture},
     vm,
 };
-use crate::bench::{host_lock::HostLock, runner};
+use crate::bench::{host_lock::HostLock, runner, workspace::Workspace};
 
 use crate::{
     bench::process::{Child, proc_starttime},
@@ -222,6 +222,15 @@ impl Machines {
     /// # Errors
     /// Rejects unknown roles and commands containing a NUL byte.
     pub fn ssh(&self, role: &str, argv: &[&str]) -> Result<Tool, String> {
+        self.ssh_channel(role, argv, None)
+    }
+
+    fn ssh_channel(
+        &self,
+        role: &str,
+        argv: &[&str],
+        socket: Option<&Path>,
+    ) -> Result<Tool, String> {
         if argv.is_empty() || argv.iter().any(|arg| arg.contains('\0')) {
             return Err("invalid guest argv".to_owned());
         }
@@ -230,10 +239,67 @@ impl Machines {
             .map(|arg| format!("'{}'", arg.replace('\'', "'\\''")))
             .collect::<Vec<_>>()
             .join(" ");
-        Ok(Tool::new("ssh")
-            .args(self.transport_options(role, false)?)
+        let mut tool = Tool::new("ssh").args(self.transport_options(role, false)?);
+        if let Some(socket) = socket {
+            tool = tool.args([
+                "-S".to_owned(),
+                socket.display().to_string(),
+                "-oControlMaster=no".to_owned(),
+            ]);
+        }
+        Ok(tool
             .args(["rrtest@127.0.0.1".to_owned(), command])
             .timeout(Duration::from_secs(15)))
+    }
+
+    fn clock_channel(&self, role: &str, socket: &Path, before: bool) -> Result<Child, String> {
+        let mut argv = self.transport_options(role, false)?;
+        argv.extend([
+            "-M".to_owned(),
+            "-N".to_owned(),
+            "-oControlPersist=no".to_owned(),
+            "-S".to_owned(),
+            socket.display().to_string(),
+            "rrtest@127.0.0.1".to_owned(),
+        ]);
+        let phase = if before { "before" } else { "after" };
+        let mut child = Child::spawn(
+            format!("clock-{role}"),
+            Path::new("ssh"),
+            &argv,
+            &self.root,
+            &[],
+            &self
+                .output
+                .join(format!("{role}-clock-transport-{phase}.log")),
+        )
+        .map_err(|error| error.to_string())?;
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            if !child.is_alive() || Instant::now() >= deadline {
+                return Err(format!(
+                    "{role}: owned clock transport did not become ready"
+                ));
+            }
+            if socket.exists() {
+                let outcome = Tool::new("ssh")
+                    .args(self.transport_options(role, false)?)
+                    .args([
+                        "-S".to_owned(),
+                        socket.display().to_string(),
+                        "-O".to_owned(),
+                        "check".to_owned(),
+                        "rrtest@127.0.0.1".to_owned(),
+                    ])
+                    .timeout(Duration::from_secs(2))
+                    .probe()
+                    .map_err(|error| error.to_string())?;
+                if outcome.success() {
+                    return Ok(child);
+                }
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
     fn transport_options(&self, role: &str, scp: bool) -> Result<Vec<String>, String> {
@@ -321,6 +387,12 @@ impl Machines {
     pub fn clock_probe(&self, role: &str, before: bool) -> Result<(), String> {
         use super::{clock, collect};
         let boot = self.verify_guest(role)?.to_owned();
+        // Authentication precedes the one measured exchange. The master is an
+        // owned foreground child and its private socket cannot reuse an operator
+        // connection. Dropping the guard closes it on success and failure.
+        let transport = Workspace::create("stability-clock")?;
+        let socket = transport.join("control");
+        let mut channel = self.clock_channel(role, &socket, before)?;
         let contract: schema::Contract =
             serde_json::from_str(schema::CONTRACT).expect("compiled contract");
         let mut commands = Vec::new();
@@ -336,7 +408,11 @@ impl Machines {
                     clock::set_argv(started)
                 };
                 let outcome = self
-                    .ssh(role, &argv.iter().map(String::as_str).collect::<Vec<_>>())?
+                    .ssh_channel(
+                        role,
+                        &argv.iter().map(String::as_str).collect::<Vec<_>>(),
+                        Some(&socket),
+                    )?
                     .probe();
                 let completed = collect::unix_ms()?;
                 let mut command = clock::Command {
@@ -365,8 +441,13 @@ impl Machines {
             }
         }
         let host_before_unix_ms = collect::unix_ms()?;
-        let outcome = self.ssh(role, &["date", "--utc", "+%s%3N"])?.probe();
+        let outcome = self
+            .ssh_channel(role, &["date", "--utc", "+%s%3N"], Some(&socket))?
+            .probe();
         let host_after_unix_ms = collect::unix_ms()?;
+        if !channel.is_alive() {
+            errors.push("owned clock transport exited during observation".to_owned());
+        }
         let mut probe = clock::Probe {
             role: role.to_owned(),
             phase: if before { "before" } else { "after" }.to_owned(),

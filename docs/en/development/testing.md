@@ -173,7 +173,10 @@ guests and disables their NTP service. Before/after clock receipts bind each
 guest boot to host request intervals: offset at most 250 ms, round trip at most
 500 ms, and local wall/monotonic drift at most 50 ms. Sampling reserves 350 ms
 inside the existing two-second deadline. Missing or skewed clocks invalidate
-the shared workload schedule; clocks are never corrected during a run.
+the shared workload schedule; clocks are never corrected during a run. The
+controller establishes a private, owned SSH control connection before measuring
+each clock exchange, then closes it on success or failure. Authentication time
+does not become clock uncertainty, and an operator's SSH connection is never reused.
 Before/after kernel observations bind CPU, memory, swap, boot and OOM counters;
 complete product logs bind both LANDING process lifetimes and expose protocol
 rejections or panics. Missing outcomes and substituted logs are INVALID.
