@@ -28,6 +28,8 @@ sharded smoke passes over all targets on every PR. The current set covers:
 - REALITY authentication round trip and session-engine semantics
   (`reality_auth_round_trip`, `session_semantics`).
 
+- Strict stability evidence parsing and offline ownership evaluation (`stability_evidence`); the target compiles the maintained tooling parser and evaluator directly, without linking tooling into the production binary.
+
 ## Commands
 
 ```shell

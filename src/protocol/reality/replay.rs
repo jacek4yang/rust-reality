@@ -557,6 +557,55 @@ mod tests {
     }
 
     #[test]
+    fn saturated_replay_storage_reuses_allocation_after_expiry() {
+        let cache = test_cache(300);
+        let start = Instant::now();
+        let ttl = Duration::from_millis(100);
+        let cycle = |index: u32| {
+            let now = start + ttl * index;
+            for id in 0_u64..300 {
+                let mut bytes = [0; 32];
+                bytes[0] = u8::try_from(id % 16).unwrap();
+                bytes[8..16].copy_from_slice(&id.to_ne_bytes());
+                let mut reservation = cache.reserve_key_at(ReplayKey(bytes), now).unwrap();
+                reservation.commit_at(now).unwrap();
+            }
+            assert_eq!(cache.entry_count(), 300);
+            assert_eq!(cache.purge_expired_at(now + ttl), 300);
+            assert_eq!(cache.entry_count(), 0);
+            assert_eq!(
+                cache
+                    .inner
+                    .governor
+                    .in_flight(crate::runtime::AdmissionKind::ReplayEntry),
+                0
+            );
+        };
+        cycle(0);
+        let retained: [_; 16] = std::array::from_fn(|index| {
+            let shard = super::lock_recover(&cache.inner.shards[index]);
+            (shard.entries.capacity(), shard.expirations.capacity())
+        });
+        let allocation = allocation_counter::measure(|| {
+            for index in 1..129 {
+                cycle(index);
+            }
+        });
+        assert_eq!(
+            allocation.count_total, 0,
+            "identical saturated cycles reuse storage"
+        );
+        assert_eq!(allocation.bytes_current, 0);
+        for (index, capacities) in retained.iter().enumerate() {
+            let shard = super::lock_recover(&cache.inner.shards[index]);
+            assert_eq!(
+                (shard.entries.capacity(), shard.expirations.capacity()),
+                *capacities
+            );
+        }
+    }
+
+    #[test]
     fn expired_pending_reservation_cannot_remove_replacement() {
         let cache = test_cache(2);
         let now = Instant::now();

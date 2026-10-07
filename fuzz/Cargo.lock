@@ -1198,7 +1198,7 @@ version = "0.1.0"
 
 [[package]]
 name = "rust-reality"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "aes-gcm",
  "aho-corasick",
@@ -1239,6 +1239,7 @@ dependencies = [
  "libfuzzer-sys",
  "rr-session",
  "rust-reality",
+ "serde",
  "serde_json",
 ]
 

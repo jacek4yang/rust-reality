@@ -1,6 +1,6 @@
 # ADR 0033: Stress and virtual machines qualify releases
 
-Status: Accepted
+Status: Superseded by ADR 0034
 
 ## Context
 

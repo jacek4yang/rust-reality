@@ -392,6 +392,12 @@ enum DeployPlanOperation {
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)]
 enum BenchCommand {
+    /// Evaluate a frozen stability evidence bundle offline.
+    StabilityEvaluate {
+        /// Strict evidence JSON; referenced objects are relative to its directory.
+        #[arg(long)]
+        evidence: PathBuf,
+    },
     /// List the benchmark suites and the legacy scripts they supersede.
     List,
     /// Validate the benchmark environment (tools, host lock, workspace, ports).
@@ -1518,6 +1524,28 @@ fn resolve_targets(
 #[allow(clippy::too_many_lines)]
 fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
     match command {
+        BenchCommand::StabilityEvaluate { evidence } => {
+            match bench::stability::evaluate_path(evidence) {
+                Ok(report) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&report).expect("serializable verdict")
+                    );
+                    if report.verdict == bench::stability::evaluate::Verdict::Pass {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::FAILURE
+                    }
+                }
+                Err(error) => {
+                    println!(
+                        "{}",
+                        serde_json::json!({"verdict": "INVALID", "error": error})
+                    );
+                    ExitCode::FAILURE
+                }
+            }
+        }
         BenchCommand::ShapeProxy {
             listen_port,
             upstream_port,

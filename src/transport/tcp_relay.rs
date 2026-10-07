@@ -878,6 +878,10 @@ struct PipePoolStats {
 #[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PipePoolSnapshot {
+    /// Empty pipe pairs currently owned by the idle pool.
+    pub retained_pairs: u64,
+    /// Sum of queued bytes in retained pipes; `None` means inspection failed.
+    pub pending_bytes: Option<u64>,
     /// Retrievals answered without any pipe syscall.
     pub hits: u64,
     /// Retrievals that created a pipe.
@@ -952,7 +956,13 @@ impl PipePool {
     }
 
     fn snapshot(&self) -> PipePoolSnapshot {
+        let free = lock_recover(&self.free);
+        let pending_bytes = free.iter().try_fold(0_u64, |total, pipe| {
+            total.checked_add(rr_linux::socket::pending_input(pipe.pair.read_fd()).ok()? as u64)
+        });
         PipePoolSnapshot {
+            retained_pairs: free.len() as u64,
+            pending_bytes,
             hits: self.stats.hits.load(Ordering::Relaxed),
             misses: self.stats.misses.load(Ordering::Relaxed),
             discards: self.stats.discards.load(Ordering::Relaxed),
@@ -1910,6 +1920,57 @@ mod tests {
         assert_eq!(pool.snapshot().hits, 1);
         assert_eq!(budget.in_use(), baseline, "a hit acquires nothing new");
         drop(second);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn saturated_pipe_pool_reuses_bounded_storage_and_descriptor_permits() {
+        const KEEP: usize = 8;
+        let budget = FdBudget::new(16);
+        let pool = super::PipePool::new(8, budget.clone());
+        let mut retained_capacity = None;
+        let mut retained_descriptors = None;
+        for _ in 0..128 {
+            let pipes: [_; KEEP] = std::array::from_fn(|_| pool.take().expect("bounded take"));
+            assert_eq!(budget.in_use(), 16);
+            assert!(pool.take().is_none(), "all descriptor permits are owned");
+            for pipe in pipes {
+                assert_eq!(
+                    rr_linux::socket::pending_input(pipe.pair.read_fd()).unwrap(),
+                    0
+                );
+                pool.give_back(pipe);
+            }
+            let free = super::lock_recover(&pool.free);
+            assert_eq!(free.len(), KEEP);
+            assert_eq!(budget.in_use(), 16, "retained pipes retain their permits");
+            let mut descriptors: [_; KEEP] =
+                std::array::from_fn(|index| free[index].pair.read_fd().as_raw_fd());
+            descriptors.sort_unstable();
+            assert_eq!(
+                *retained_capacity.get_or_insert(free.capacity()),
+                free.capacity()
+            );
+            assert_eq!(
+                retained_descriptors.get_or_insert(descriptors),
+                &descriptors
+            );
+        }
+        let allocation = allocation_counter::measure(|| {
+            for _ in 0..128 {
+                let pipes: [_; KEEP] = std::array::from_fn(|_| pool.take().expect("warm take"));
+                for pipe in pipes {
+                    pool.give_back(pipe);
+                }
+            }
+        });
+        assert_eq!(
+            allocation.count_total, 0,
+            "saturated reuse allocates nothing"
+        );
+        assert_eq!(allocation.bytes_current, 0);
+        drop(pool);
+        assert_eq!(budget.in_use(), 0, "pool retirement releases every permit");
     }
 
     #[cfg(target_os = "linux")]

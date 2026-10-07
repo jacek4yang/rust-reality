@@ -565,8 +565,7 @@ impl HandoffReplayCache {
         }
     }
 
-    #[cfg(test)]
-    fn entry_count(&self) -> usize {
+    pub(crate) fn entry_count(&self) -> usize {
         self.inner.used.load(Ordering::Acquire)
     }
 }

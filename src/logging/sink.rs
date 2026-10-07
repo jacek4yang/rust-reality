@@ -82,6 +82,37 @@ pub struct BackendStatus {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum LogEvent {
+    /// Debug proof that an immutable generation has released its final owner.
+    GenerationRetired {
+        /// Retired immutable generation.
+        generation: u64,
+    },
+    /// Debug snapshot of listener-owned tasks, including completed unreaped tasks.
+    ConnectionTaskOwnership {
+        /// Bound listener, already present in startup diagnostics.
+        address: SocketAddr,
+        /// Tasks still owned by this listener's join set.
+        tracked_tasks: usize,
+    },
+    /// Off-path debug snapshot of current process resource ownership.
+    ResourceOwnership {
+        /// Current immutable generation.
+        generation: u64,
+        /// Live admitted connections.
+        active_connections: u64,
+        /// Occupied REALITY, Handoff and NXR replay entries after expiry maintenance.
+        replay_entries: u64,
+        /// Held process descriptor permits, including pre-creation reservations.
+        fd_units_in_use: u64,
+        /// Idle retained pipe pairs, when supported by this platform.
+        retained_pipe_pairs: Option<u64>,
+        /// Queued bytes in idle pipes; absent when inspection failed.
+        retained_pipe_bytes: Option<u64>,
+        /// Warm sockets held by the process-lifetime authority.
+        warm_ready: u64,
+        /// Speculative connections held by that authority.
+        warm_connecting: u64,
+    },
     /// Process startup began.
     ServerStarting,
     /// A complete validated configuration was published.
@@ -513,7 +544,10 @@ impl LogEvent {
             | Self::CoverPoolSummary { .. }
             | Self::TransportPoolSummary { .. }
             | Self::CoverProfileSummary { .. } => LogLevel::Info,
-            Self::ConnectionAccepted { .. }
+            Self::ResourceOwnership { .. }
+            | Self::GenerationRetired { .. }
+            | Self::ConnectionTaskOwnership { .. }
+            | Self::ConnectionAccepted { .. }
             | Self::ConnectionClosed { .. }
             | Self::CoverFlightSelected { .. }
             | Self::ConnectionCompleted { .. } => LogLevel::Debug,

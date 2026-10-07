@@ -63,8 +63,11 @@ soak 就被跳过或改为可选。
 5. **完整性与资源。** 对 1 MiB 及更大载荷的下载、上传和并发双向传输验证精确
    字节/SHA-256；上传回执必须是本次唯一路径的新追加记录。每个角色至少保留
    12 个绑定身份的资源样本，覆盖基线、负载、峰值与恢复；每轮压力恢复都采样，
-   不允许替换 PID。保留既有最终/峰值上界：LINE FD 768/2,048、LANDING FD
-   256/1,024、线程基线 +8/+16、RSS 基线 +32/+96 MiB。记录 PSS、匿名内存与
+   不允许替换 PID。恢复后的 LANDING 描述符和内存生命周期证据采用冻结的
+   [所有权契约](../../benchmarks/contracts/stability.json) 及
+   [ADR 0034](../adr/0034-qualify-resource-ownership-and-lifetime.md)。保留 LINE FD
+   768/2,048、LANDING 峰值 FD 1,024、线程基线 +8/+16、RSS 基线 +32/+96 MiB。
+   记录 PSS、匿名内存与
    进程启动时间用于归因。RSS 不必逐字节回到起点，不能仅凭驻留量判断泄漏，
    也不能把短测试外推为一个月的内存预测。
 6. **时间边界。** 保留相关 replay/TTL、generation/credential 退休、共享不活动、

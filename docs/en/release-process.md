@@ -85,8 +85,11 @@ VMs or completing a throughput benchmark is sufficient:
    must be newly appended for unique run-specific paths. Retain at least 12
    identity-bound resource samples per role spanning baseline, load, peak and
    recovery; sample each stress cycle's recovered state without PID replacement.
-   Preserve the reviewed final/peak ceilings: LINE FD 768/2,048, LANDING FD
-   256/1,024, threads baseline +8/+16 and RSS baseline +32/+96 MiB. Retain PSS,
+   Use the frozen [ownership contract](../../benchmarks/contracts/stability.json)
+   and [ADR 0034](../adr/0034-qualify-resource-ownership-and-lifetime.md) for
+   recovered LANDING descriptors and memory lifetime evidence. Preserve LINE FD
+   768/2,048, LANDING peak FD 1,024, threads baseline +8/+16 and RSS baseline
+   +32/+96 MiB. Retain PSS,
    anonymous memory and process start times for attribution. Do not require
    RSS to return byte-for-byte, infer a leak from residency alone, or extrapolate
    a short run into a monthly memory prediction.

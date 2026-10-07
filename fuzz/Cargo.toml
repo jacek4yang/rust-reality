@@ -10,6 +10,7 @@ cargo-fuzz = true
 [dependencies]
 arbitrary = { version = "1.4", features = ["derive"] }
 libfuzzer-sys = "0.4"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
 rust-reality = { path = "..", features = ["fuzzing"] }
 rr-session = { path = "../crates/rr-session" }
@@ -125,6 +126,13 @@ members = ["."]
 [[bin]]
 name = "nested_tls_prefix"
 path = "fuzz_targets/nested_tls_prefix.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stability_evidence"
+path = "fuzz_targets/stability_evidence.rs"
 test = false
 doc = false
 bench = false

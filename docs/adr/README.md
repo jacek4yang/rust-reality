@@ -72,4 +72,5 @@ of the law is what it is.
 | [0028](0028-finalize-the-v2-crypto-provider-set.md) | Finalize the v2 cryptographic provider set | Accepted |
 | [0029](0029-retain-automatic-runtime-worker-selection.md) | Retain automatic runtime worker selection | Accepted |
 | [0030](0030-shared-authenticated-session-activity.md) | Shared authenticated session activity | Accepted |
-| [0033](0033-stress-and-virtual-machines-qualify-releases.md) | Stress and isolated QEMU system VMs qualify releases; WAN rollout evidence stays separate | Accepted |
+| [0033](0033-stress-and-virtual-machines-qualify-releases.md) | Stress and isolated QEMU system VMs qualify releases; WAN rollout evidence stays separate | Superseded by ADR 0034 |
+| [0034](0034-qualify-resource-ownership-and-lifetime.md) | Qualify resource ownership and lifetime | Accepted |

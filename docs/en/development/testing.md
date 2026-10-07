@@ -62,3 +62,26 @@ Do not weaken or delete an existing gate, assertion, or sanitizer profile to
 make a change easier. If a gate is genuinely wrong, fix the gate in a reviewed
 change with a documented reason; silent gate-weakening is treated as a process
 violation (see [AGENTS.md](../../../AGENTS.md)).
+
+## Offline stability evidence
+
+`cargo dev bench stability-evaluate --evidence /path/to/evidence.json` verifies
+all bound objects and evaluates the frozen ownership contract. Execute the
+exact evaluator binary named by the bundle. Relative object paths cannot escape
+the bundle or traverse symlinks. PASS requires every required check and case;
+FAIL records demonstrated violations, NOT_RUN identifies absent cases, and
+INVALID identifies malformed or incomplete evidence. The report retains each
+finding even when INVALID takes precedence in the aggregate verdict.
+
+The schema and pure evaluator are fuzzed together. Adversarial tests cover
+leaked sockets, dirty/excessive pipes, missing permits, transient retention,
+retired generations, memory envelopes, payload corruption, stale upload
+receipts, missing samples, process replacement, changed binaries and invalid
+numbers. Synthetic evaluator fixtures are unit tests, never campaign evidence.
+
+For qualification, debug logs include one-second `resource_ownership` and
+`connection_task_ownership` observations and `generation_retired` events. The
+pipe observation inspects retained pipe bytes and reports a missing value if
+inspection fails; it never substitutes zero for failure. These observations are
+not an allocator census. Replay expiry reclamation runs on the maintenance
+cadence in both resource modes; authentication deadlines remain unchanged.

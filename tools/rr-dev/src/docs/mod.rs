@@ -29,6 +29,10 @@ use std::{
 
 /// Operator documents that must exist in both languages.
 const REQUIRED_PAIRS: &[(&str, &str)] = &[
+    (
+        "docs/en/development/testing.md",
+        "docs/zh-CN/development/testing.md",
+    ),
     ("README.md", "README.zh-CN.md"),
     ("SECURITY.md", "docs/zh-CN/security.md"),
     ("docs/en/index.md", "docs/zh-CN/index.md"),

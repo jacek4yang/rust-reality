@@ -19,6 +19,7 @@ rustls-pemfile = { version = "2.2.0", default-features = false, features = ["std
 # direction (AGENTS.md §11 forbids the reverse); ADR 0019 records the boundary
 # decision. Nothing is published from here into the production graph.
 rust-reality = { path = "../.." }
+serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
 
 [target.'cfg(unix)'.dependencies]

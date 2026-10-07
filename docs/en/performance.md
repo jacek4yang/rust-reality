@@ -491,7 +491,9 @@ contains prefetched payload, instead of reserving a full record up front.
 Replay caches combine a hash table for exact duplicate detection with a
 deadline min-heap for expiry. REALITY purges the selected shard; NXR/Handoff
 also do so on the normal reserve path and scan all sixteen shards only after
-real global capacity pressure. With 4,096 live nonces, reserving a batch of 64
+real global capacity pressure. The off-path resource maintenance task also
+reclaims expired entries once per second while idle; it does not change the
+reserve-path algorithm or authentication deadlines. With 4,096 live nonces, reserving a batch of 64
 fell from 593.18 µs for the legacy full-retain path to 17.43 µs (**34.0×**);
 purging a no-expiry live set is cardinality-independent at about 282 ns rather
 than 10.54 µs. REALITY keys are already server-computed SHA-256 digests, so its

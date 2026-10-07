@@ -6,6 +6,10 @@ All notable user-facing changes to this project are documented in this file.
 
 ### Changed
 
+- Stability evidence uses a strict offline ownership contract with distinct
+  PASS, FAIL, NOT_RUN and INVALID verdicts. Historical resource failures retain
+  their original verdicts; replacement qualification requires a frozen candidate.
+
 - Release qualification accepts isolated QEMU multi-node stress and fault
   evidence without mandatory dual-VPS access or an additional long soak.
   Exact-head quality/security gates, resource bounds, temporal-boundary tests
@@ -19,6 +23,10 @@ All notable user-facing changes to this project are documented in this file.
   in the caller's existing future. Wire and configuration formats are unchanged.
 
 ### Fixed
+
+- Idle replay entries release occupancy on the one-second resource maintenance
+  cadence in both resource modes, without changing replay deadlines. Debug logs
+  expose bounded resource ownership and generation retirement for qualification.
 
 - Native soak failures retain collected observations and attempt final identity
   checks; terminal evidence preserves the original error if finalization fails.
