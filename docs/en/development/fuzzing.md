@@ -21,8 +21,8 @@ sharded smoke passes over all targets on every PR. The current set covers:
 - Handoff header, blob, authenticated transfer open, and round trip
   (`handoff_header`, `handoff_blob`, `handoff_open_transfer`, `handoff_round_trip`);
 - cover ServerHello flight parsing (`cover_flight`);
-- TLS 1.3 record open/seal and transcript-hash differential
-  (`tls13_record`, `transcript_diff`);
+- TLS 1.3 record open/seal, post-handshake KeyUpdate reconstruction, and
+  transcript-hash differential (`tls13_record`, `key_update`, `transcript_diff`);
 - configuration JSON deserialization on the exact `load_config` decode path
   (`config_json`, `config_diagnostic`);
 - REALITY authentication round trip and session-engine semantics

@@ -12,7 +12,7 @@ use rust_reality::protocol::{
         ContinuationState, HandoffLandingKeys, HandoffPsk, HandoffReplayCache, open_transfer,
         seal_transfer,
     },
-    reality::tls13::{CipherSuite, TrafficKeys},
+    reality::tls13::{CipherSuite, TrafficSecret},
     vless::{Address, Destination},
 };
 
@@ -27,12 +27,11 @@ const MAX_BUFFERED: usize = 4096;
 #[derive(Debug)]
 struct StateSpec {
     suite: CipherSuite,
-    client_key: [u8; 32],
-    client_iv: [u8; 12],
+    client_secret: [u8; 48],
     client_sequence: u64,
-    server_key: [u8; 32],
-    server_iv: [u8; 12],
+    server_secret: [u8; 48],
     server_sequence: u64,
+    key_update_response_pending: bool,
     user_id: [u8; 16],
     destination: Destination,
     pending: Vec<u8>,
@@ -67,14 +66,13 @@ impl<'a> Arbitrary<'a> for StateSpec {
         prefetched.truncate(MAX_BUFFERED);
         Ok(Self {
             suite,
-            client_key: u.arbitrary()?,
-            client_iv: u.arbitrary()?,
+            client_secret: u.arbitrary()?,
             client_sequence: u.arbitrary::<u32>()?.into(),
-            server_key: u.arbitrary()?,
-            server_iv: u.arbitrary()?,
+            server_secret: u.arbitrary()?,
             // The landing accepts only a server-direction sequence of zero
             // or one; two reaches the rejection path.
             server_sequence: u64::from(u.arbitrary::<u8>()? % 3),
+            key_update_response_pending: u.arbitrary()?,
             user_id: u.arbitrary()?,
             destination: Destination::new(address, port),
             pending,
@@ -83,18 +81,30 @@ impl<'a> Arbitrary<'a> for StateSpec {
     }
 }
 
-fn traffic_keys(suite: CipherSuite, key: &[u8; 32], iv: [u8; 12]) -> Option<TrafficKeys> {
-    let key_len = match suite {
-        CipherSuite::Aes128GcmSha256 => 16,
-        CipherSuite::Aes256GcmSha384 | CipherSuite::ChaCha20Poly1305Sha256 => 32,
-    };
-    TrafficKeys::from_raw_parts(&key[..key_len], iv).ok()
+fn traffic_secret(suite: CipherSuite, bytes: &[u8; 48]) -> Option<TrafficSecret> {
+    let length = suite.hash().output_len();
+    TrafficSecret::from_bytes(suite.hash(), bytes.get(..length)?).ok()
 }
 
 fn assert_states_equal(opened: &ContinuationState, expected: &StateSpec) {
     assert_eq!(opened.suite(), expected.suite, "suite diverged");
+    let secret_len = expected.suite.hash().output_len();
+    assert_eq!(
+        opened.client_traffic_secret().as_bytes(),
+        &expected.client_secret[..secret_len],
+        "client traffic secret diverged"
+    );
+    assert_eq!(
+        opened.server_traffic_secret().as_bytes(),
+        &expected.server_secret[..secret_len],
+        "server traffic secret diverged"
+    );
     assert_eq!(opened.client_sequence(), expected.client_sequence);
     assert_eq!(opened.server_sequence(), expected.server_sequence);
+    assert_eq!(
+        opened.key_update_response_pending(),
+        expected.key_update_response_pending
+    );
     assert_eq!(opened.user_id(), &expected.user_id, "user id diverged");
     assert_eq!(
         opened.destination(),
@@ -120,18 +130,19 @@ fuzz_target!(|input: &[u8]| {
     };
     let mutation_offset = unstructured.arbitrary::<u16>().unwrap_or(0);
 
-    let Some(client_traffic) = traffic_keys(spec.suite, &spec.client_key, spec.client_iv) else {
+    let Some(client_traffic_secret) = traffic_secret(spec.suite, &spec.client_secret) else {
         return;
     };
-    let Some(server_traffic) = traffic_keys(spec.suite, &spec.server_key, spec.server_iv) else {
+    let Some(server_traffic_secret) = traffic_secret(spec.suite, &spec.server_secret) else {
         return;
     };
     let Ok(state) = ContinuationState::new(
         spec.suite,
-        client_traffic,
+        client_traffic_secret,
         spec.client_sequence,
-        server_traffic,
+        server_traffic_secret,
         spec.server_sequence,
+        spec.key_update_response_pending,
         spec.user_id,
         spec.destination.clone(),
         spec.pending.clone(),

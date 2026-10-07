@@ -119,5 +119,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "key_update"
+path = "fuzz_targets/key_update.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 members = ["."]

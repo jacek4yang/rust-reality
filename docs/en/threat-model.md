@@ -124,13 +124,13 @@ transport when that threat exists.
 
 Handoff transfers an accepted session's full TLS ownership from the line node
 to a landing node over one single-flight channel. The transfer message carries
-the session's traffic keys, so the channel is sealed: a fresh ephemeral X25519
-exchange against the landing node's static key, mixed with the pair PSK in one
-HKDF-SHA256 chain, one ChaCha20-Poly1305 seal with the entire header as
-associated data. AEAD open success is the mutual key confirmation: the landing
-node proves its static key, the line node proves the PSK. Replay protection is
-a timestamp window plus a bounded nonce cache, checked before any key-agreement
-work.
+the session's current traffic secrets, so the channel is sealed: a fresh
+ephemeral X25519 exchange against the landing node's static key, mixed with the
+pair PSK in one HKDF-SHA256 chain, one ChaCha20-Poly1305 seal with the entire
+header as associated data. AEAD open success is the mutual key confirmation:
+the landing node proves its static key, the line node proves the PSK. Replay
+protection is a timestamp window plus a bounded nonce cache, checked before any
+key-agreement work.
 
 Forward secrecy is bounded by the landing node's static key: compromising that
 key retroactively exposes every recorded transfer it answered, and with them

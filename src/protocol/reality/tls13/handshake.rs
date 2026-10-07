@@ -114,8 +114,8 @@ impl EstablishedTls {
     ///
     /// # Errors
     ///
-    /// Rejects mismatched direction suites, key material that does not match
-    /// its suite, and sequences that already reached a per-key record limit.
+    /// Rejects mismatched direction suites, generation secrets that do not
+    /// match their suite, and sequences that reached a per-key record limit.
     pub fn from_exported_state(state: ExportedTlsState) -> Result<Self, Tls13RecordError> {
         if state.client.suite() != state.server.suite() {
             return Err(Tls13RecordError::InvalidKey);
@@ -154,11 +154,11 @@ impl fmt::Debug for EstablishedTls {
 
 /// Both directions' exported application-traffic state of one session.
 ///
-/// The single owner of a session's key material between export on one node
-/// and reconstruction on another; each direction is exported from its record
-/// layer via [`Tls13RecordLayer::into_exported_state`] and paired through
-/// [`ExportedTlsState::from_directions`]. Key material is zeroized on drop
-/// and never appears in `Debug` output.
+/// The single owner of a session's generation secrets between export on one
+/// node and reconstruction on another; each direction is exported from its
+/// record layer via [`Tls13RecordLayer::into_exported_state`] and paired through
+/// [`ExportedTlsState::from_directions`]. Secrets are zeroized on drop and
+/// never appear in `Debug` output.
 pub struct ExportedTlsState {
     client: ExportedRecordState,
     server: ExportedRecordState,
@@ -400,10 +400,11 @@ fn build_server_flight_inner(
     let through_server_finished = transcript_hasher.snapshot();
     let expected_client_finished = schedule
         .finished_verify_data(schedule.client_handshake_secret(), &through_server_finished)?;
-    let application = schedule.application_traffic_secrets(&through_server_finished)?;
-    let client_application_keys = schedule.traffic_keys(application.client())?;
-    let server_application_keys = schedule.traffic_keys(application.server())?;
-    let mut server_application_records = Tls13RecordLayer::new(suite, server_application_keys)?;
+    let (client_application_secret, server_application_secret) = schedule
+        .application_traffic_secrets(&through_server_finished)?
+        .into_parts();
+    let mut server_application_records =
+        Tls13RecordLayer::from_traffic_secret(suite, server_application_secret)?;
 
     let flight_plaintext = transcript
         .get(flight_plaintext_start..)
@@ -524,7 +525,10 @@ fn build_server_flight_inner(
         expected_client_finished,
         established: EstablishedTls {
             suite,
-            client_records: Tls13RecordLayer::new(suite, client_application_keys)?,
+            client_records: Tls13RecordLayer::from_traffic_secret(
+                suite,
+                client_application_secret,
+            )?,
             server_records: server_application_records,
         },
     })
@@ -727,8 +731,9 @@ mod tests {
         tls13::{
             CertificateIdentity, CipherSuite, ContentType, CoverHandshakePlan,
             CoverHandshakeRecordShape, MAX_TLS_RECORD_WIRE_LEN, ServerHelloTemplate,
-            Tls13KeySchedule, Tls13RecordLayer, TrafficKeys, change_cipher_spec_record,
-            encrypted_extensions, finished_message, read_client_finished,
+            Tls13KeySchedule, Tls13RecordLayer, TrafficKeys, TrafficSecret,
+            change_cipher_spec_record, encrypted_extensions, finished_message,
+            read_client_finished,
         },
     };
 
@@ -1354,13 +1359,10 @@ mod tests {
         // `established` plays the server's view; `client_*` plays the remote
         // client holding identical key material for each direction.
         let make_layer = || {
-            let transcript = suite.hash().digest(b"ClientHelloServerHello");
-            let schedule = Tls13KeySchedule::new(suite, &[0x42; 32], &transcript)
-                .expect("test schedule must derive");
-            let keys = schedule
-                .traffic_keys(schedule.server_handshake_secret())
-                .expect("test keys must derive");
-            Tls13RecordLayer::new(suite, keys).expect("test layer must initialize")
+            let secret = TrafficSecret::from_bytes(suite.hash(), &[0x42; 48])
+                .expect("test traffic secret must match the suite hash");
+            Tls13RecordLayer::from_traffic_secret(suite, secret)
+                .expect("test layer must initialize")
         };
         let mut client_writer = make_layer();
         let mut client_reader = make_layer();
@@ -1379,8 +1381,12 @@ mod tests {
         }
 
         let (client_records, server_records) = established.into_record_layers();
-        let client_exported = client_records.into_exported_state();
-        let server_exported = server_records.into_exported_state();
+        let client_exported = client_records
+            .into_exported_state()
+            .expect("application state must export");
+        let server_exported = server_records
+            .into_exported_state()
+            .expect("application state must export");
         assert_eq!(client_exported.sequence(), 2);
         assert_eq!(server_exported.sequence(), 0);
         let exported = ExportedTlsState::from_directions(client_exported, server_exported);

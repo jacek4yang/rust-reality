@@ -47,7 +47,7 @@ use hkdf::Hkdf;
 use sha2::Sha256;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
-use super::reality::tls13::{CipherSuite, TrafficKeys};
+use super::reality::tls13::{CipherSuite, ExportedRecordState, ExportedTlsState, TrafficSecret};
 use super::vless::{Address, Destination};
 use crate::crypto::{EphemeralX25519Key, StaticX25519Key};
 
@@ -56,7 +56,7 @@ pub const HANDOFF_PROTOCOL_VERSION: u8 = 1;
 
 /// Continuation-state blob version carried in the header and repeated inside
 /// the sealed blob.
-pub const CONTINUATION_STATE_VERSION: u8 = 1;
+pub const CONTINUATION_STATE_VERSION: u8 = 2;
 
 const MAGIC: [u8; 4] = *b"HND1";
 
@@ -240,18 +240,21 @@ impl fmt::Debug for HandoffLandingKeys {
 ///
 /// Fields are encoded explicitly (no serde, no memory layout); the two
 /// variable-length byte strings are bounded by
-/// `MAX_PENDING_CIPHERTEXT_LEN` and `MAX_PREFETCHED_PLAINTEXT_LEN`. Key
-/// material and buffered plaintext are zeroized on drop; `Debug` is redacted.
+/// `MAX_PENDING_CIPHERTEXT_LEN` and `MAX_PREFETCHED_PLAINTEXT_LEN`. Current
+/// traffic secrets and buffered plaintext are zeroized on drop; `Debug` is
+/// redacted.
 #[derive(Zeroize, ZeroizeOnDrop)]
 pub struct ContinuationState {
     #[zeroize(skip)]
     suite: CipherSuite,
-    client_traffic: TrafficKeys,
-    server_traffic: TrafficKeys,
+    client_traffic_secret: TrafficSecret,
+    server_traffic_secret: TrafficSecret,
     #[zeroize(skip)]
     client_sequence: u64,
     #[zeroize(skip)]
     server_sequence: u64,
+    #[zeroize(skip)]
+    key_update_response_pending: bool,
     user_id: [u8; USER_ID_LEN],
     #[zeroize(skip)]
     destination: Destination,
@@ -259,27 +262,38 @@ pub struct ContinuationState {
     prefetched_plaintext: Vec<u8>,
 }
 
+/// The move-only parts needed to install one verified continuation.
+pub type ContinuationParts = (
+    ExportedTlsState,
+    [u8; USER_ID_LEN],
+    Destination,
+    Vec<u8>,
+    Vec<u8>,
+    bool,
+);
+
 impl ContinuationState {
     /// Assembles one continuation state, enforcing every field bound.
     ///
     /// # Errors
     ///
-    /// Rejects traffic keys whose length disagrees with the suite and pending
+    /// Rejects traffic secrets whose hash disagrees with the suite and pending
     /// buffers above their caps.
     #[allow(clippy::too_many_arguments, reason = "one parameter per blob field")]
     pub fn new(
         suite: CipherSuite,
-        client_traffic: TrafficKeys,
+        client_traffic_secret: TrafficSecret,
         client_sequence: u64,
-        server_traffic: TrafficKeys,
+        server_traffic_secret: TrafficSecret,
         server_sequence: u64,
+        key_update_response_pending: bool,
         user_id: [u8; USER_ID_LEN],
         destination: Destination,
         pending_ciphertext: Vec<u8>,
         prefetched_plaintext: Vec<u8>,
     ) -> Result<Self, HandoffError> {
-        if client_traffic.key().len() != suite.key_len()
-            || server_traffic.key().len() != suite.key_len()
+        if client_traffic_secret.algorithm() != suite.hash()
+            || server_traffic_secret.algorithm() != suite.hash()
         {
             return Err(HandoffError::State);
         }
@@ -290,10 +304,11 @@ impl ContinuationState {
         }
         Ok(Self {
             suite,
-            client_traffic,
-            server_traffic,
+            client_traffic_secret,
+            server_traffic_secret,
             client_sequence,
             server_sequence,
+            key_update_response_pending,
             user_id,
             destination,
             pending_ciphertext,
@@ -307,16 +322,16 @@ impl ContinuationState {
         self.suite
     }
 
-    /// Returns the client-direction AEAD key and static IV.
+    /// Returns the client-direction current traffic secret.
     #[must_use]
-    pub const fn client_traffic(&self) -> &TrafficKeys {
-        &self.client_traffic
+    pub const fn client_traffic_secret(&self) -> &TrafficSecret {
+        &self.client_traffic_secret
     }
 
-    /// Returns the server-direction AEAD key and static IV.
+    /// Returns the server-direction current traffic secret.
     #[must_use]
-    pub const fn server_traffic(&self) -> &TrafficKeys {
-        &self.server_traffic
+    pub const fn server_traffic_secret(&self) -> &TrafficSecret {
+        &self.server_traffic_secret
     }
 
     /// Returns the client-direction record sequence at the boundary.
@@ -329,6 +344,12 @@ impl ContinuationState {
     #[must_use]
     pub const fn server_sequence(&self) -> u64 {
         self.server_sequence
+    }
+
+    /// Returns whether the writer owes its peer a KeyUpdate response.
+    #[must_use]
+    pub const fn key_update_response_pending(&self) -> bool {
+        self.key_update_response_pending
     }
 
     /// Returns the session's VLESS user identifier.
@@ -354,6 +375,46 @@ impl ContinuationState {
     pub fn prefetched_plaintext(&self) -> &[u8] {
         &self.prefetched_plaintext
     }
+
+    /// Consumes the continuation and moves its generation secrets into TLS state.
+    ///
+    /// Zero-valued replacement secrets are left behind solely so this
+    /// zeroizing type can complete its drop; the live generation secrets and
+    /// sequences each leave exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an internal suite/secret disagreement.
+    pub fn into_parts(mut self) -> Result<ContinuationParts, HandoffError> {
+        let algorithm = self.suite.hash();
+        let client_secret = std::mem::replace(
+            &mut self.client_traffic_secret,
+            TrafficSecret::zeroed(algorithm),
+        );
+        let server_secret = std::mem::replace(
+            &mut self.server_traffic_secret,
+            TrafficSecret::zeroed(algorithm),
+        );
+        let client =
+            ExportedRecordState::from_parts(self.suite, client_secret, self.client_sequence)
+                .map_err(|_| HandoffError::State)?;
+        let server =
+            ExportedRecordState::from_parts(self.suite, server_secret, self.server_sequence)
+                .map_err(|_| HandoffError::State)?;
+        let tls = ExportedTlsState::from_directions(client, server);
+        let destination = std::mem::replace(
+            &mut self.destination,
+            Destination::new(Address::Ipv4(Ipv4Addr::UNSPECIFIED), 0),
+        );
+        Ok((
+            tls,
+            self.user_id,
+            destination,
+            std::mem::take(&mut self.pending_ciphertext),
+            std::mem::take(&mut self.prefetched_plaintext),
+            self.key_update_response_pending,
+        ))
+    }
 }
 
 impl fmt::Debug for ContinuationState {
@@ -363,6 +424,10 @@ impl fmt::Debug for ContinuationState {
             .field("suite", &self.suite)
             .field("client_sequence", &self.client_sequence)
             .field("server_sequence", &self.server_sequence)
+            .field(
+                "key_update_response_pending",
+                &self.key_update_response_pending,
+            )
             .field("pending_ciphertext_len", &self.pending_ciphertext.len())
             .field("prefetched_plaintext_len", &self.prefetched_plaintext.len())
             .finish_non_exhaustive()
@@ -393,6 +458,12 @@ impl OpenedTransfer {
     #[must_use]
     pub const fn state(&self) -> &ContinuationState {
         &self.state
+    }
+
+    /// Consumes the verified transfer and returns its continuation state.
+    #[must_use]
+    pub fn into_state(self) -> ContinuationState {
+        self.state
     }
 }
 
@@ -903,8 +974,9 @@ fn encode_blob(state: &ContinuationState, output: &mut Vec<u8>) -> Result<(), Ha
     let address_length = bounded_address_length(state.destination())?;
     let total = 1_usize
         .checked_add(2)
-        .and_then(|length| length.checked_add(2 * (1 + 32 + 12)))
+        .and_then(|length| length.checked_add(2 * state.suite().hash().output_len()))
         .and_then(|length| length.checked_add(2 * 8))
+        .and_then(|length| length.checked_add(1))
         .and_then(|length| length.checked_add(USER_ID_LEN))
         .and_then(|length| length.checked_add(1 + 2 + address_length + 2))
         .and_then(|length| length.checked_add(4 + state.pending_ciphertext().len()))
@@ -917,10 +989,11 @@ fn encode_blob(state: &ContinuationState, output: &mut Vec<u8>) -> Result<(), Ha
         .map_err(|_| HandoffError::Allocation)?;
     output.push(CONTINUATION_STATE_VERSION);
     output.extend_from_slice(&state.suite().wire_value().to_be_bytes());
-    encode_traffic_keys(state.client_traffic(), output);
-    encode_traffic_keys(state.server_traffic(), output);
+    encode_traffic_secret(state.client_traffic_secret(), output);
+    encode_traffic_secret(state.server_traffic_secret(), output);
     output.extend_from_slice(&state.client_sequence().to_be_bytes());
     output.extend_from_slice(&state.server_sequence().to_be_bytes());
+    output.push(u8::from(state.key_update_response_pending()));
     output.extend_from_slice(state.user_id());
     encode_address(state.destination(), output);
     output.extend_from_slice(&state.destination().port().to_be_bytes());
@@ -950,10 +1023,8 @@ fn encode_address(destination: &Destination, output: &mut Vec<u8>) {
     }
 }
 
-fn encode_traffic_keys(keys: &TrafficKeys, output: &mut Vec<u8>) {
-    output.push(u8::try_from(keys.key().len()).unwrap_or(0));
-    output.extend_from_slice(keys.key());
-    output.extend_from_slice(keys.iv());
+fn encode_traffic_secret(secret: &TrafficSecret, output: &mut Vec<u8>) {
+    output.extend_from_slice(secret.as_bytes());
 }
 
 fn encode_bounded_bytes(bytes: &[u8], output: &mut Vec<u8>) {
@@ -968,10 +1039,15 @@ fn decode_blob(blob: &[u8]) -> Result<ContinuationState, HandoffError> {
         return Err(HandoffError::State);
     }
     let suite = CipherSuite::from_wire(cursor.u16()?).ok_or(HandoffError::State)?;
-    let client_traffic = decode_traffic_keys(&mut cursor)?;
-    let server_traffic = decode_traffic_keys(&mut cursor)?;
+    let client_traffic_secret = decode_traffic_secret(&mut cursor, suite)?;
+    let server_traffic_secret = decode_traffic_secret(&mut cursor, suite)?;
     let client_sequence = cursor.u64()?;
     let server_sequence = cursor.u64()?;
+    let key_update_response_pending = match cursor.u8()? {
+        0 => false,
+        1 => true,
+        _ => return Err(HandoffError::State),
+    };
     let user_id: [u8; USER_ID_LEN] = cursor
         .take(USER_ID_LEN)?
         .try_into()
@@ -984,10 +1060,11 @@ fn decode_blob(blob: &[u8]) -> Result<ContinuationState, HandoffError> {
     }
     ContinuationState::new(
         suite,
-        client_traffic,
+        client_traffic_secret,
         client_sequence,
-        server_traffic,
+        server_traffic_secret,
         server_sequence,
+        key_update_response_pending,
         user_id,
         destination,
         pending_ciphertext,
@@ -995,14 +1072,12 @@ fn decode_blob(blob: &[u8]) -> Result<ContinuationState, HandoffError> {
     )
 }
 
-fn decode_traffic_keys(cursor: &mut BlobCursor<'_>) -> Result<TrafficKeys, HandoffError> {
-    let key_len = usize::from(cursor.u8()?);
-    let key = cursor.take(key_len)?;
-    let iv: [u8; 12] = cursor
-        .take(12)?
-        .try_into()
-        .map_err(|_| HandoffError::State)?;
-    TrafficKeys::from_raw_parts(key, iv).map_err(|_| HandoffError::State)
+fn decode_traffic_secret(
+    cursor: &mut BlobCursor<'_>,
+    suite: CipherSuite,
+) -> Result<TrafficSecret, HandoffError> {
+    TrafficSecret::from_bytes(suite.hash(), cursor.take(suite.hash().output_len())?)
+        .map_err(|_| HandoffError::State)
 }
 
 fn decode_destination(cursor: &mut BlobCursor<'_>) -> Result<Destination, HandoffError> {
@@ -1183,7 +1258,7 @@ mod tests {
         MAX_PREVIOUS_KEYS, MonotonicInstant, NONCE_LEN, StaticX25519Key, decode_blob, encode_blob,
         message_len_from_header, open_transfer, seal_transfer,
     };
-    use crate::protocol::reality::tls13::{CipherSuite, TrafficKeys};
+    use crate::protocol::reality::tls13::{CipherSuite, HashAlgorithm, TrafficSecret};
     use crate::protocol::vless::{Address, Destination};
 
     const NOW: u64 = 1_700_000_000;
@@ -1207,12 +1282,14 @@ mod tests {
         prefetched: Vec<u8>,
         server_sequence: u64,
     ) -> ContinuationState {
+        let suite = CipherSuite::ChaCha20Poly1305Sha256;
         ContinuationState::new(
-            CipherSuite::ChaCha20Poly1305Sha256,
-            TrafficKeys::from_raw_parts(&[0x11; 32], [0x21; 12]).expect("client keys"),
+            suite,
+            TrafficSecret::from_bytes(suite.hash(), &[0x11; 32]).expect("client secret"),
             0x0102_0304_0506_0708,
-            TrafficKeys::from_raw_parts(&[0x12; 32], [0x22; 12]).expect("server keys"),
+            TrafficSecret::from_bytes(suite.hash(), &[0x12; 32]).expect("server secret"),
             server_sequence,
+            true,
             [0x33; 16],
             Destination::new(Address::Domain("example.com".to_owned()), 443),
             pending,
@@ -1252,10 +1329,20 @@ mod tests {
 
     fn assert_states_equal(opened: &ContinuationState, expected: &ContinuationState) {
         assert_eq!(opened.suite(), expected.suite());
-        assert_eq!(opened.client_traffic(), expected.client_traffic());
-        assert_eq!(opened.server_traffic(), expected.server_traffic());
+        assert_eq!(
+            opened.client_traffic_secret(),
+            expected.client_traffic_secret()
+        );
+        assert_eq!(
+            opened.server_traffic_secret(),
+            expected.server_traffic_secret()
+        );
         assert_eq!(opened.client_sequence(), expected.client_sequence());
         assert_eq!(opened.server_sequence(), expected.server_sequence());
+        assert_eq!(
+            opened.key_update_response_pending(),
+            expected.key_update_response_pending()
+        );
         assert_eq!(opened.user_id(), expected.user_id());
         assert_eq!(opened.destination(), expected.destination());
         assert_eq!(opened.pending_ciphertext(), expected.pending_ciphertext());
@@ -1459,32 +1546,41 @@ mod tests {
             );
         }
         assert_eq!(HANDOFF_PROTOCOL_VERSION, 1);
-        assert_eq!(CONTINUATION_STATE_VERSION, 1);
+        assert_eq!(CONTINUATION_STATE_VERSION, 2);
     }
 
     #[test]
-    fn v1_blob_vector_remains_byte_compatible() {
+    fn v2_blob_vector_pins_generation_secrets_and_pending_response() {
         let state = test_state(Vec::new(), Vec::new());
         let mut blob = Vec::new();
-        encode_blob(&state, &mut blob).expect("v1 state must encode");
+        encode_blob(&state, &mut blob).expect("v2 state must encode");
 
-        // SHA-256 of the v1 blob containing the fixed keys, sequences, user,
-        // example.com:443 destination, and empty pending buffers from
-        // `test_state`. This pins every encoded byte while keeping the test
-        // vector compact and independent of the decoder.
+        // SHA-256 of the v2 blob containing the fixed generation secrets,
+        // sequences, pending KeyUpdate response, user, example.com:443
+        // destination, and empty pending buffers from `test_state`.
         let digest: [u8; 32] = Sha256::digest(&blob).into();
-        assert_eq!(blob.len(), 149);
+        assert_eq!(blob.len(), 124);
         assert_eq!(
             digest,
             [
-                0x40, 0xa7, 0x62, 0xd4, 0x67, 0x8d, 0x13, 0xfc, 0x3d, 0x44, 0x33, 0x03, 0xc6, 0x41,
-                0xc4, 0x17, 0x02, 0x12, 0xdc, 0xe9, 0xe5, 0x1c, 0x12, 0xe2, 0x98, 0xd9, 0x4a, 0x65,
-                0xf8, 0x45, 0xe2, 0x93,
+                0x88, 0xde, 0x8c, 0x29, 0xdb, 0xe9, 0x76, 0xf1, 0xb3, 0x7e, 0xc2, 0x63, 0x54, 0xc2,
+                0x3f, 0xd1, 0x3f, 0xb6, 0xfd, 0x33, 0x96, 0xbf, 0x18, 0x8c, 0x7b, 0xa1, 0x83, 0xb4,
+                0x0c, 0x91, 0x1b, 0xe9,
             ]
         );
 
-        let decoded = decode_blob(&blob).expect("the pinned v1 blob must still decode");
+        let decoded = decode_blob(&blob).expect("the pinned v2 blob must decode");
         assert_states_equal(&decoded, &state);
+    }
+
+    #[test]
+    fn v2_blob_rejects_non_boolean_pending_response() {
+        let state = test_state(Vec::new(), Vec::new());
+        let mut blob = Vec::new();
+        encode_blob(&state, &mut blob).expect("v2 state must encode");
+        let pending_response_offset = 1 + 2 + 2 * 32 + 2 * 8;
+        blob[pending_response_offset] = 2;
+        assert_eq!(decode_blob(&blob).unwrap_err(), HandoffError::State);
     }
 
     #[test]
@@ -1729,12 +1825,14 @@ mod tests {
     #[test]
     fn oversized_pending_buffers_are_rejected_at_construction() {
         let pending = vec![0; MAX_PENDING_CIPHERTEXT_LEN + 1];
+        let suite = CipherSuite::Aes128GcmSha256;
         let oversized = ContinuationState::new(
-            CipherSuite::Aes128GcmSha256,
-            TrafficKeys::from_raw_parts(&[0x11; 16], [0x21; 12]).expect("client keys"),
+            suite,
+            TrafficSecret::from_bytes(suite.hash(), &[0x11; 32]).expect("client secret"),
             0,
-            TrafficKeys::from_raw_parts(&[0x12; 16], [0x22; 12]).expect("server keys"),
+            TrafficSecret::from_bytes(suite.hash(), &[0x12; 32]).expect("server secret"),
             0,
+            false,
             [0x33; 16],
             Destination::new(Address::Ipv4(std::net::Ipv4Addr::LOCALHOST), 443),
             pending,
@@ -1745,13 +1843,15 @@ mod tests {
             HandoffError::State,
             "oversized pending buffer must be rejected"
         );
-        // Suite/key-length disagreement is rejected too.
+        // Suite/hash disagreement is rejected too.
         let mismatched = ContinuationState::new(
-            CipherSuite::Aes128GcmSha256,
-            TrafficKeys::from_raw_parts(&[0x11; 32], [0x21; 12]).expect("client keys"),
+            suite,
+            TrafficSecret::from_bytes(HashAlgorithm::Sha384, &[0x11; 48])
+                .expect("mismatched client secret"),
             0,
-            TrafficKeys::from_raw_parts(&[0x12; 16], [0x22; 12]).expect("server keys"),
+            TrafficSecret::from_bytes(suite.hash(), &[0x12; 32]).expect("server secret"),
             0,
+            false,
             [0x33; 16],
             Destination::new(Address::Ipv4(std::net::Ipv4Addr::LOCALHOST), 443),
             Vec::new(),

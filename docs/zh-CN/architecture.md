@@ -245,11 +245,11 @@ LINE_OWNED -> HANDOFF_IN_PROGRESS -> LANDING_OWNED | ABORTED
   VLESS 请求、客户端 socket。
 - **HANDOFF_IN_PROGRESS** —— LINE 导出续接状态并密封成一次单程转移
   （用 fresh ephemeral X25519 对落地机静态密钥交换，与成对 PSK 混合，以
-  完整 transcript 做 ChaCha20-Poly1305）。穿越信道的内容按类划分：会话
-  密钥材料（两个方向的应用流量密钥与 IV）、记录序号与密码套件、路由
-  决策（VLESS 用户 id 与目标），以及在途缓冲（client random、读取器已
-  消费的预读密文、预取的请求负载）。转移写入完成后，LINE 立即丢弃自己
-  的续接状态副本，此后不再持有该会话的任何 TLS 或 Vision 状态。
+  完整 transcript 做 ChaCha20-Poly1305）。穿越信道的内容按类划分：两个方向
+  当前的应用流量秘密值、记录序号、密码套件及任何待发送的 KeyUpdate 响应；
+  路由决策（VLESS 用户 id 与目标）；以及在途缓冲（client random、读取器已
+  消费的预读密文及预取的请求负载）。转移写入完成后，LINE 立即丢弃自己的
+  续接状态副本，此后不再持有该会话的任何 TLS 或 Vision 状态。
 - **LANDING_OWNED** —— LANDING 依序验证转移（头部、时间戳、重放缓存、
   密钥协商、AEAD、一致性检查），重建记录层，先喂入转移来的待处理字节，
   直接连接目标，然后运行标准的 Vision relay。它的首个密封记录（VLESS

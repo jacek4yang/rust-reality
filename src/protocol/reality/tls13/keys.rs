@@ -121,15 +121,33 @@ impl HashAlgorithm {
         if secret.algorithm != self {
             return Err(Tls13KeyScheduleError::HashMismatch);
         }
-        let info = encode_hkdf_label(label, context, output.len())?;
+        let full_label_len = TLS13_LABEL_PREFIX
+            .len()
+            .checked_add(label.len())
+            .ok_or(Tls13KeyScheduleError::InvalidLength)?;
+        let output_len = u16::try_from(output.len())
+            .map_err(|_| Tls13KeyScheduleError::InvalidLength)?
+            .to_be_bytes();
+        let full_label_len =
+            [u8::try_from(full_label_len).map_err(|_| Tls13KeyScheduleError::InvalidLength)?];
+        let context_len =
+            [u8::try_from(context.len()).map_err(|_| Tls13KeyScheduleError::InvalidLength)?];
+        let info = [
+            output_len.as_slice(),
+            full_label_len.as_slice(),
+            TLS13_LABEL_PREFIX,
+            label,
+            context_len.as_slice(),
+            context,
+        ];
         match self {
             Self::Sha256 => Hkdf::<Sha256>::from_prk(secret.as_bytes())
                 .map_err(|_| Tls13KeyScheduleError::Crypto)?
-                .expand(&info, output)
+                .expand_multi_info(&info, output)
                 .map_err(|_| Tls13KeyScheduleError::InvalidLength),
             Self::Sha384 => Hkdf::<Sha384>::from_prk(secret.as_bytes())
                 .map_err(|_| Tls13KeyScheduleError::Crypto)?
-                .expand(&info, output)
+                .expand_multi_info(&info, output)
                 .map_err(|_| Tls13KeyScheduleError::InvalidLength),
         }
     }
@@ -315,8 +333,52 @@ impl fmt::Debug for Secret {
 }
 
 /// One directional TLS traffic secret, zeroized on drop.
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Zeroize, ZeroizeOnDrop)]
 pub struct TrafficSecret(Secret);
+
+impl TrafficSecret {
+    /// Rebuilds a directional traffic secret from its exact hash-sized bytes.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a byte string whose length does not match `algorithm`.
+    pub fn from_bytes(
+        algorithm: HashAlgorithm,
+        bytes: &[u8],
+    ) -> Result<Self, Tls13KeyScheduleError> {
+        if bytes.len() != algorithm.output_len() {
+            return Err(Tls13KeyScheduleError::InvalidLength);
+        }
+        let mut secret = Secret::zeroed(algorithm);
+        secret.as_bytes_mut().copy_from_slice(bytes);
+        Ok(Self(secret))
+    }
+
+    /// Returns the hash-sized traffic-secret bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+
+    pub(crate) const fn algorithm(&self) -> HashAlgorithm {
+        self.0.algorithm
+    }
+
+    pub(crate) const fn zeroed(algorithm: HashAlgorithm) -> Self {
+        Self(Secret::zeroed(algorithm))
+    }
+
+    /// Derives the next traffic secret as specified by RFC 8446 section 7.2.
+    ///
+    /// This is `HKDF-Expand-Label(secret, "traffic upd", "", Hash.length)`;
+    /// unlike `Derive-Secret`, the context is empty rather than `Hash("")`.
+    pub(crate) fn updated(&self) -> Result<Self, Tls13KeyScheduleError> {
+        let algorithm = self.0.algorithm;
+        let mut next = Secret::zeroed(algorithm);
+        algorithm.expand_label(&self.0, b"traffic upd", &[], next.as_bytes_mut())?;
+        Ok(Self(next))
+    }
+}
 
 impl fmt::Debug for TrafficSecret {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -333,12 +395,11 @@ pub struct TrafficKeys {
 }
 
 impl TrafficKeys {
-    /// Rebuilds one direction's exported AEAD key material.
+    /// Constructs one direction's AEAD key material from raw components.
     ///
     /// Only the two key lengths the supported cipher suites use (16 and 32
     /// bytes) are accepted; consistency between the key length and a cipher
-    /// suite is enforced when a record layer is reconstructed from the
-    /// returned value.
+    /// suite is enforced when a handshake record layer consumes the value.
     ///
     /// # Errors
     ///
@@ -426,6 +487,12 @@ impl ApplicationTrafficSecrets {
     #[must_use]
     pub const fn server(&self) -> &TrafficSecret {
         &self.server
+    }
+
+    /// Separates the directional secrets while preserving their sole ownership.
+    #[must_use]
+    pub fn into_parts(self) -> (TrafficSecret, TrafficSecret) {
+        (self.client, self.server)
     }
 }
 
@@ -532,23 +599,7 @@ impl Tls13KeySchedule {
         &self,
         traffic_secret: &TrafficSecret,
     ) -> Result<TrafficKeys, Tls13KeyScheduleError> {
-        let hash = self.suite.hash();
-        if traffic_secret.0.algorithm != hash {
-            return Err(Tls13KeyScheduleError::HashMismatch);
-        }
-        let key_len = self.suite.key_len();
-        let mut keys = TrafficKeys {
-            key: [0_u8; 32],
-            key_len,
-            iv: [0_u8; 12],
-        };
-        let key = keys
-            .key
-            .get_mut(..key_len)
-            .ok_or(Tls13KeyScheduleError::InvalidLength)?;
-        hash.expand_label(&traffic_secret.0, b"key", &[], key)?;
-        hash.expand_label(&traffic_secret.0, b"iv", &[], &mut keys.iv)?;
-        Ok(keys)
+        derive_traffic_keys(self.suite, traffic_secret)
     }
 
     /// Computes TLS Finished `verify_data` over an explicit transcript digest.
@@ -613,34 +664,27 @@ impl fmt::Debug for Tls13KeySchedule {
     }
 }
 
-fn encode_hkdf_label(
-    label: &[u8],
-    context: &[u8],
-    output_len: usize,
-) -> Result<Vec<u8>, Tls13KeyScheduleError> {
-    let full_label_len = TLS13_LABEL_PREFIX
-        .len()
-        .checked_add(label.len())
+pub(crate) fn derive_traffic_keys(
+    suite: CipherSuite,
+    traffic_secret: &TrafficSecret,
+) -> Result<TrafficKeys, Tls13KeyScheduleError> {
+    let hash = suite.hash();
+    if traffic_secret.0.algorithm != hash {
+        return Err(Tls13KeyScheduleError::HashMismatch);
+    }
+    let key_len = suite.key_len();
+    let mut keys = TrafficKeys {
+        key: [0_u8; 32],
+        key_len,
+        iv: [0_u8; 12],
+    };
+    let key = keys
+        .key
+        .get_mut(..key_len)
         .ok_or(Tls13KeyScheduleError::InvalidLength)?;
-    let full_label_len =
-        u8::try_from(full_label_len).map_err(|_| Tls13KeyScheduleError::InvalidLength)?;
-    let context_len =
-        u8::try_from(context.len()).map_err(|_| Tls13KeyScheduleError::InvalidLength)?;
-    let output_len = u16::try_from(output_len).map_err(|_| Tls13KeyScheduleError::InvalidLength)?;
-    let capacity = 2_usize
-        .checked_add(1)
-        .and_then(|value| value.checked_add(usize::from(full_label_len)))
-        .and_then(|value| value.checked_add(1))
-        .and_then(|value| value.checked_add(context.len()))
-        .ok_or(Tls13KeyScheduleError::InvalidLength)?;
-    let mut info = Vec::with_capacity(capacity);
-    info.extend_from_slice(&output_len.to_be_bytes());
-    info.push(full_label_len);
-    info.extend_from_slice(TLS13_LABEL_PREFIX);
-    info.extend_from_slice(label);
-    info.push(context_len);
-    info.extend_from_slice(context);
-    Ok(info)
+    hash.expand_label(&traffic_secret.0, b"key", &[], key)?;
+    hash.expand_label(&traffic_secret.0, b"iv", &[], &mut keys.iv)?;
+    Ok(keys)
 }
 
 /// Fuzz entry point: asserts the incremental transcript hash equals the
@@ -664,7 +708,10 @@ pub fn fuzz_transcript_snapshot_matches(algorithm: HashAlgorithm, chunks: &[&[u8
 
 #[cfg(test)]
 mod tests {
-    use super::{CipherSuite, HashAlgorithm, Tls13KeySchedule, TranscriptHash, TranscriptHasher};
+    use super::{
+        CipherSuite, HashAlgorithm, Tls13KeySchedule, TrafficSecret, TranscriptHash,
+        TranscriptHasher, derive_traffic_keys,
+    };
 
     #[test]
     fn rfc8448_simple_handshake_schedule_matches() {
@@ -751,6 +798,33 @@ mod tests {
             hex_vec("9f02283b6c9c07efc26bb9f2ac92e356")
         );
         assert_eq!(server_keys.iv(), &hex_array("cf782b88dd83549aadf1e984"));
+    }
+
+    #[test]
+    fn rfc8446_traffic_update_uses_empty_context() {
+        let current = TrafficSecret::from_bytes(
+            HashAlgorithm::Sha256,
+            &hex_vec("a11af9f05531f856ad47116b45a950328204b4f44bfb6b3a4b4f1f3fcb631643"),
+        )
+        .expect("RFC 8448 server application secret must import");
+        let next = current.updated().expect("traffic secret must update");
+        assert_eq!(
+            next.as_bytes(),
+            hex_vec("51921b8aa3001976eb401d0a4319a8516416a6c56001a357e5d162031e84f916")
+        );
+        let keys = derive_traffic_keys(CipherSuite::Aes128GcmSha256, &next)
+            .expect("updated keys must derive");
+        assert_eq!(keys.key(), hex_vec("2e63be99d67b39097feb9786cf7a15a0"));
+        assert_eq!(keys.iv(), &hex_array("628a0a8298ac953baef4255a"));
+    }
+
+    #[test]
+    fn traffic_secret_debug_is_redacted() {
+        let secret = TrafficSecret::from_bytes(HashAlgorithm::Sha256, &[0xab; 32])
+            .expect("test secret must import");
+        let rendered = format!("{secret:?}");
+        assert!(rendered.contains("[REDACTED]"));
+        assert!(!rendered.contains("abababab"));
     }
 
     #[test]

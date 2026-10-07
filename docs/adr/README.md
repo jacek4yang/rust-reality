@@ -46,7 +46,7 @@ of the law is what it is.
 | [0002](0002-io-uring-removed.md) | io_uring relay backend removed | Accepted |
 | [0003](0003-do-not-stack-vless-encryption-on-reality.md) | Do not stack VLESS Encryption on REALITY | Accepted |
 | [0004](0004-cover-derived-tls-handshake-shape.md) | Derive the TLS handshake shape from the cover | Accepted |
-| [0005](0005-handoff-server-record-sequences.md) | Restore Handoff at server record sequence 0 or 1 | Accepted |
+| [0005](0005-handoff-server-record-sequences.md) | Restore Handoff at server record sequence 0 or 1 | Accepted; continuation-version decision superseded by ADR 0031 |
 | [0006](0006-prebuilt-reality-cover-profiles.md) | Prebuilt REALITY cover profiles | Accepted |
 | [0007](0007-adaptive-line-to-landing-warm-connections.md) | Adaptive LINE-to-LANDING warm connections | Accepted |
 | [0008](0008-session-engine-runtime-and-transport-boundaries.md) | Session Engine, Runtime Adapter, and Transport boundaries | Accepted for incremental implementation |
@@ -72,3 +72,4 @@ of the law is what it is.
 | [0028](0028-finalize-the-v2-crypto-provider-set.md) | Finalize the v2 cryptographic provider set | Accepted |
 | [0029](0029-retain-automatic-runtime-worker-selection.md) | Retain automatic runtime worker selection | Accepted |
 | [0030](0030-shared-authenticated-session-activity.md) | Shared authenticated session activity | Accepted |
+| [0031](0031-handoff-transfers-keyupdate-capable-state.md) | Handoff transfers KeyUpdate-capable TLS state | Accepted |

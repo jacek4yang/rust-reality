@@ -24,6 +24,7 @@ live in [development/fuzzing.md](../development/fuzzing.md).
 | Handoff continuation reconstruction | `seal_transfer`→`open_transfer` field equality + corruption rejection | `handoff_round_trip` |
 | Cover ServerHello flight parsing (nested TLS detector path) | `tls13::fuzz_cover_flight` (read_target_server_flight driver) | `cover_flight` |
 | TLS 1.3 record open/seal | `Tls13RecordLayer::seal_into` / `open_in_place` | `tls13_record` (per-suite round trip + truncation/coalescing/bitflip rejection) |
+| TLS 1.3 post-handshake KeyUpdate reconstruction and record-boundary enforcement | `tls13::fuzz_key_update_fragments` | `key_update` |
 | Handshake transcript hash | `TranscriptHasher` vs `HashAlgorithm::digest` | `transcript_diff` (differential: incremental == one-shot for all chunkings) |
 | Config JSON deserialization + normalization + validation | `config::fuzz_decode_config` (exact `load_config` decode path) | `config_json` (structured generator via `arbitrary`, all values synthetic) |
 | REALITY authentication round trip | REALITY auth handshake | `reality_auth_round_trip` |
