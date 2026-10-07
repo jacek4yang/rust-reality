@@ -322,3 +322,31 @@ The original disposable auditor also names a nonexistent `nxr_relay` stage.
 The schema's canonical stage is `session_relay`. Correcting that diagnostic
 assumption must not admit `protocol` rejections or relax the controlled-kill
 window, integrity, resource, or soak gates.
+
+## Native qualification at `1da34e3`
+
+Run 37599984014 fails the unchanged aggregate PSS-tail gate:
+2.114908197 MiB/hour against 2.0. Artifact 11475024301 has ZIP SHA-256
+`349e641bfe55f287ba1fd43ce2a1baa2243ae1de37351832691d90973eeb688c`;
+its frozen ELF is
+`cbdb0e790f0dbd7d3c749587dd73978cbc86cf2958d2fe0a44210fa11e6cd726`.
+The audit verifies 45 checksum entries and complete interoperability,
+mechanism and descriptor-pressure terminal bindings. Soak fails before
+environment/completion/final-identity records: those bindings remain absent.
+
+The [retention manifest](native-1da34e3-manifest.json) binds 47 members in
+`native-1da34e3.tar.xz`, SHA-256
+`bc6575a13e24593e836a3f4a394cf968073a2e2e4ac8455ab1a6b96c34e7e18b`.
+It retains all public textual native members, the original failed summary,
+raw trajectories, checksum/identity records and diagnostic decomposition.
+The original gate uses the 140-sample tail from 903.628 to 1807.586 seconds;
+the decomposition does not change that window, threshold or verdict.
+
+Aggregate PSS grows 3.307617 MiB, RSS 3.914063 MiB, FD count falls by six and
+thread count falls by one. Tail contributions are Handoff LANDING 0.827684,
+Handoff LINE 0.792078, SOCKS LINE 0.504068, NXR LANDING 0.007765, NXR LINE
+-0.015047 and standalone -0.001640 MiB/hour. Thus this run's contribution
+pattern differs from the earlier standalone-dominated failure. Residency
+samples alone do not identify allocator-live objects; bounded-retention
+attribution depends on the separate occupancy and allocator experiments, not
+on selecting a more favorable tail or erasing a failed qualification.
