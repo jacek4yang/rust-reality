@@ -6,6 +6,7 @@
 
 #![no_std]
 
+mod client_race;
 mod rendezvous;
 mod transfer;
 mod vision;
@@ -15,3 +16,5 @@ pub use transfer::{AttemptTransport, CommittedWrite, RetryableProgress, WritePro
 pub use vision::{
     Direction, DirectionState, InvalidTransition, RawDecision, RawRelayGrant, RawRelayTransition,
 };
+
+pub use client_race::{ClientAdoption, ClientCancellations, ClientCandidate, ClientRace};

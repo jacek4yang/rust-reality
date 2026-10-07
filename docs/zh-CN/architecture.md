@@ -389,3 +389,21 @@ debug 日志，否则保持静默。压力回收仍作为 resource-limit 信号�
 第一字节到达后，后续失败仍使用原有封闭原因词表和短认证截止时间。
 
 任何事件都不携带目标地址、SNI 值、UUID、密钥或载荷。
+
+## 共享的客户端线格式边界
+
+VLESS 模块提供客户端侧的 `encode_vision_tcp_request` 与 `decode_response`，
+复用服务端的 `UserId`、`Destination` 和 Addons 模型。它们是不分配堆内存的
+线格式操作，尚未启用客户端监听器或客户端运行角色。调用方负责缓冲区、
+连接建立、截止时间与取消。请求校验失败时输出缓冲区保持不变；响应解析
+借用输入并保留响应头之后的全部应用数据。
+
+VLESS 响应由版本和带长度前缀的 Addons protobuf 构成，第二个字节不是错误码。
+仅有合法响应头不能证明任意对端已连通目标。路由选择和应用数据提交策略
+仍由线格式层之上的逻辑负责。
+
+客户端候选所有权由 `rr-session::ClientRace` 定义，
+`runtime::client::select_client_transport` 驱动：最多两个认证尝试、一个总截止时间、
+唯一被选中的传输，落选任务不在后台继续运行。两个候选都必须停在目标请求之前。
+参见 [ADR 0032](../adr/0032-client-candidates-stop-before-destination-open.md)。
+这些基础能力尚未接入 REALITY 客户端握手或本地入站。

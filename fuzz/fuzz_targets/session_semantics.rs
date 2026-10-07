@@ -525,6 +525,33 @@ impl Session {
 }
 
 fuzz_target!(|bytes: &[u8]| {
+    let mut race = rr_session::ClientRace::new();
+    let mut grants = 0;
+    let mut alternate_starts = 0;
+    let mut terminal = false;
+    for byte in bytes.iter().take(MAX_EVENTS) {
+        use rr_session::ClientCandidate::{Alternate, Primary};
+        match byte % 6 {
+            0 => alternate_starts += u8::from(race.start_alternate()),
+            1 => {
+                let accepted = race.fail(Primary);
+                assert!(!terminal || !accepted);
+            }
+            2 => {
+                let accepted = race.fail(Alternate);
+                assert!(!terminal || !accepted);
+            }
+            3 => grants += u8::from(race.adopt(Primary).is_some()),
+            4 => grants += u8::from(race.adopt(Alternate).is_some()),
+            _ => {
+                let _ = race.cancel();
+            }
+        }
+        assert!(grants <= 1 && alternate_starts <= 1);
+        assert!(!terminal || race.is_terminal());
+        terminal = race.is_terminal();
+    }
+
     let mut unstructured = Unstructured::new(bytes);
     let Ok(input) = Input::arbitrary(&mut unstructured) else {
         return;

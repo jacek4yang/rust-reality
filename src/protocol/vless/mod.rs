@@ -1,4 +1,5 @@
 mod addons;
+mod client;
 mod decode;
 mod padding;
 mod read;
@@ -38,4 +39,9 @@ pub use validate::{RequestValidationError, UserRegistry, authorize_authenticated
 pub use vision::{
     VISION_FRAME_SIZE, VisionCommand, VisionDecodeError, VisionDecoder, VisionEncodeError,
     VisionEncoder, VisionFramePlan, VisionMode, VisionPayload,
+};
+
+pub use client::{
+    DecodeResponse, RequestEncodeError, ResponseDecodeError, decode_response,
+    encode_vision_tcp_request,
 };

@@ -8,6 +8,9 @@ live in [development/fuzzing.md](../development/fuzzing.md).
 
 ## Covered
 
+The shared client VLESS response decoder and TCP request encoder round trips
+are exercised by `wire_parsers`, including preservation of trailing payload.
+
 | Attack surface | Entry point(s) | Fuzz target |
 | --- | --- | --- |
 | VLESS request decode (owned + zero-copy ref) | `vless::decode_request`, `fuzz_decode_request_ref` | `wire_parsers` |

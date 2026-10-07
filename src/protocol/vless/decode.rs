@@ -321,7 +321,7 @@ fn decode_domain_ref<'a>(cursor: &mut Cursor<'a>) -> Result<AddressRef<'a>, Deco
     Ok(AddressRef::Domain(domain))
 }
 
-const fn is_domain_byte(byte: u8) -> bool {
+pub(super) const fn is_domain_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.' || byte == b'_'
 }
 struct Cursor<'a> {

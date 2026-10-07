@@ -14,8 +14,8 @@ Targets live in `fuzz/fuzz_targets/`, one `fuzz_target!` binary each. The
 manifest is validated by `cargo dev fuzz targets`; CI's Security workflow runs
 sharded smoke passes over all targets on every PR. The current set covers:
 
-- VLESS request decode, REALITY ClientHello record/message parse and extension
-  walk, NXR header/decode round trips (`wire_parsers`, `nxr_round_trip`);
+- VLESS request decode/client encode round trips and response decode, REALITY
+  ClientHello record/message parse and extension walk, NXR header/decode round trips (`wire_parsers`, `nxr_round_trip`);
 - Vision decoder single-shot and fragmented transitions
   (`vision_decoder`, `vision_transitions`);
 - Handoff header, blob, authenticated transfer open, and round trip
