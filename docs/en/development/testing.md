@@ -219,3 +219,6 @@ publication chain and final identity checks. Relocation resolves original paths
 only through retained artifact bindings; missing rows, substituted files or a
 recorded PASS that disagrees with recomputation cannot qualify. WAN evaluation
 continues to use its separate existing workflow and acceptance rules.
+All four package checks require the native execution bundles described in the
+[release process](../release-process.md). Offline verification rejects missing
+commands, changed images, wrong tiers, emulation and archive/binary substitution.

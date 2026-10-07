@@ -28,7 +28,7 @@ sharded smoke passes over all targets on every PR. The current set covers:
 - REALITY authentication round trip and session-engine semantics
   (`reality_auth_round_trip`, `session_semantics`).
 
-- Strict stability evidence, native interoperability/mechanism/descriptor-pressure, CI/full-gate/libtest and VM clock/kernel/startup/terminal/fault-action receipts, netem observations/state, product logs, origin upload receipts, fixed IPv4 SOCKS echo replies and offline ownership evaluation (`stability_evidence`); the target compiles the maintained tooling parser and evaluator directly, without linking tooling into the production binary.
+- Strict stability evidence, native interoperability/mechanism/descriptor-pressure, package execution/tier metadata, CI/full-gate/libtest and VM clock/kernel/startup/terminal/fault-action receipts, netem observations/state, product logs, origin upload receipts, fixed IPv4 SOCKS echo replies and offline ownership evaluation (`stability_evidence`); the target compiles the maintained tooling parser and evaluator directly, without linking tooling into the production binary.
 
 ## Commands
 

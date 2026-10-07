@@ -976,6 +976,9 @@ enum ReleaseCommand {
         /// Directory containing the packaged assets.
         #[arg(default_value = "dist")]
         assets: PathBuf,
+        /// Retain a secret-free execution receipt and bound artifacts in a fresh directory.
+        #[arg(long)]
+        receipt_dir: Option<PathBuf>,
     },
     /// Aggregate the complete tier matrix into a manifest and SHA256SUMS.
     Aggregate {
@@ -1450,9 +1453,12 @@ fn run_release(repo: &std::path::Path, command: ReleaseCommand) -> ExitCode {
                 )
             })
         }
-        ReleaseCommand::Smoke { tag, tier, assets } => {
-            release::smoke::smoke(repo, &tag, &tier, &assets)
-        }
+        ReleaseCommand::Smoke {
+            tag,
+            tier,
+            assets,
+            receipt_dir,
+        } => release::smoke::smoke(repo, &tag, &tier, &assets, receipt_dir.as_deref()),
         ReleaseCommand::Aggregate { tag, dist } => release::aggregate::aggregate(&dist, &tag),
     };
 

@@ -538,6 +538,11 @@ impl Tool {
 }
 
 impl RunningTool {
+    /// PID of the owned invocation, before its terminal wait consumes the handle.
+    #[must_use]
+    pub fn pid(&self) -> Option<u32> {
+        self.child.as_ref().map(std::process::Child::id)
+    }
     /// Returns whether the child is still running.
     ///
     /// The exit status is retained for the later wait, so observing completion

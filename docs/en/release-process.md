@@ -97,7 +97,9 @@ VMs or completing a throughput benchmark is sufficient:
    TTL, generation/credential retirement, shared inactivity, write-stall,
    half-close and cancellation contracts. Use explicit time inputs or controlled
    test-runtime time where supported. Do not shorten production deadlines,
-   change real clocks or replace these tests with a larger connection count.
+   adjust clocks during product lifetimes, or replace these tests with a larger
+   connection count. Pre-start guest clock calibration binds the host schedule;
+   it must not accelerate any production deadline.
 7. **Reviewable verdict.** Retain every case and failure, raw samples, integrity
    receipts and a fail-closed audit against the criteria above. Fixture and
    evaluator code must be reviewable and validated; a hand-written success
@@ -113,6 +115,21 @@ reference binaries. The VM fixture adds guest isolation and the fault/stress
 cases; it does not replace these commands. The existing
 `cargo dev deploy canary` evaluator remains WAN-specific and must not be fed
 fabricated SSH/firewall assertions to make a local run look like a VPS run.
+
+After packaging each supported tier, run
+`cargo dev release smoke TAG TIER ASSETS --receipt-dir FRESH_DIRECTORY` to retain
+its package-bound execution proof. Keep this directory outside the assets being
+aggregated. The bundle contains the archive, executed binary, harness, tier
+fragment, host CPU observation and a strict `receipt.json`. Commands retain
+process identities, exit status and output digests; generated keys and credentials
+remain private temporary inputs and never enter the receipt. Failure preserves
+available observations and attempted final archive/binary/harness verification.
+Offline stability evaluation checks all seven commands, native host architecture,
+the exact tier metadata and the binary extracted from the bound archive. The
+GNU package's binary must be the exact candidate used in the VM campaign; other
+tiers must bind the same source. Emulated smoke remains functional evidence and
+does not satisfy native package qualification. Candidate package labels do not
+create Git tags or authorize publication.
 
 ## Phase 0 — verify current state
 

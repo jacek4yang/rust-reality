@@ -365,7 +365,7 @@ fn rustc_version() -> Result<String, String> {
 }
 
 /// Computes the SHA-256 of a file via `sha256sum`.
-fn sha256_of(path: &Path) -> Result<String, String> {
+pub(super) fn sha256_of(path: &Path) -> Result<String, String> {
     let out = Tool::new("sha256sum")
         .arg(path.to_string_lossy().into_owned())
         .probe()

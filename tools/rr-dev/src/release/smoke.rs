@@ -27,18 +27,51 @@ use crate::{
 /// Returns a message on an invalid tag, unknown tier, a missing or corrupt asset,
 /// a failed binary invocation, or a `doctor` report that does not name exactly
 /// one compatible cover matching the one supplied.
-pub fn smoke(repo: &Path, tag: &str, tier_id: &str, asset_dir: &Path) -> Result<String, String> {
+pub fn smoke(
+    _repo: &Path,
+    tag: &str,
+    tier_id: &str,
+    asset_dir: &Path,
+    receipt_dir: Option<&Path>,
+) -> Result<String, String> {
     if !semver::is_stable_release_tag(tag) {
         return Err(format!("invalid release tag: {tag}"));
     }
     let tier = Tier::resolve(tier_id)?;
-    let version = tag.trim_start_matches('v');
     let archive = format!("rust-reality-{tag}-{}.tar.gz", tier.id);
-    let archive_path = asset_dir.join(&archive);
+    let runner = std::env::var("RUST_REALITY_SMOKE_RUNNER").unwrap_or_default();
+    let runner_parts = runner.split_whitespace().map(str::to_owned).collect();
+    let mut collector = super::smoke_receipt::Collector::new(
+        tag,
+        tier_id,
+        &archive,
+        runner_parts,
+        asset_dir,
+        receipt_dir,
+    )?;
+    let work = tempdir("rust-reality-release-smoke");
+    let attempted = match &work {
+        Ok(work) => smoke_package(tag, tier, asset_dir, &archive, work.path(), &mut collector),
+        Err(error) => Err(error.clone()),
+    };
+    collector.finish(attempted)
+}
+
+fn smoke_package(
+    tag: &str,
+    tier: &Tier,
+    asset_dir: &Path,
+    archive: &str,
+    work: &Path,
+    collector: &mut super::smoke_receipt::Collector,
+) -> Result<String, String> {
+    let version = tag.trim_start_matches('v');
+    let archive_path = asset_dir.join(archive);
     if !archive_path.is_file() {
         return Err(format!("missing release asset: {}", archive_path.display()));
     }
-    let _ = repo; // repository root reserved for future cover-material sourcing.
+    let archive_path = collector.bind_archive(&archive_path)?;
+    collector.retain_fragment(asset_dir, tier.id)?;
 
     // Verify recorded sums if present.
     if asset_dir.join("SHA256SUMS").is_file() {
@@ -52,14 +85,14 @@ pub fn smoke(repo: &Path, tag: &str, tier_id: &str, asset_dir: &Path) -> Result<
         }
     }
 
-    let runner = std::env::var("RUST_REALITY_SMOKE_RUNNER").unwrap_or_default();
-    let runner_parts: Vec<String> = runner.split_whitespace().map(str::to_owned).collect();
-    let emulated = !runner_parts.is_empty();
+    let (cover_target, cover_server_name, _cover) = resolve_cover(work)?;
+    collector.receipt.cover_target.clone_from(&cover_target);
+    collector
+        .receipt
+        .cover_server_name
+        .clone_from(&cover_server_name);
 
-    let work = tempdir("rust-reality-release-smoke")?;
-    let (cover_target, cover_server_name, _cover) = resolve_cover(work.path())?;
-
-    let extract = work.path().join(tier.id);
+    let extract = work.join(tier.id);
     std::fs::create_dir_all(&extract)
         .map_err(|error| format!("could not create extract dir: {error}"))?;
     let untar = Tool::new("tar")
@@ -76,27 +109,8 @@ pub fn smoke(repo: &Path, tag: &str, tier_id: &str, asset_dir: &Path) -> Result<
     if !binary.is_file() {
         return Err(format!("{} archive has no rust-reality", tier.id));
     }
-
-    let run = |args: &[&str]| -> Result<String, String> {
-        let mut tool = if emulated {
-            let mut base = Tool::new(&runner_parts[0]);
-            base = base.args(runner_parts[1..].iter().cloned());
-            base.arg(binary.to_string_lossy().into_owned())
-        } else {
-            Tool::new(binary.to_string_lossy().into_owned())
-        };
-        tool = tool.args(args.iter().copied());
-        let out = tool.probe().map_err(|error| error.to_string())?;
-        if !out.success() {
-            return Err(format!(
-                "{} {:?} exited with {:?}",
-                binary.display(),
-                args,
-                out.code
-            ));
-        }
-        Ok(out.stdout)
-    };
+    let binary = collector.bind_binary(&binary)?;
+    let mut run = |args: &[&str]| collector.run(&binary, args);
 
     // --version must match exactly.
     let version_line = run(&["--version"])?;
@@ -112,10 +126,10 @@ pub fn smoke(repo: &Path, tag: &str, tier_id: &str, asset_dir: &Path) -> Result<
     // random source works on this host before anything depends on it.
     let keys = run(&["generate", "x25519", "--json"])?;
     let keys =
-        json_in::parse(&keys).map_err(|error| format!("generate x25519 is not JSON: {error}"))?;
+        json_in::parse(&keys).map_err(|_| "generate x25519 output is not JSON".to_owned())?;
     let private_key = keys
         .str_field("", "privateKey")
-        .map_err(|error| format!("generate x25519: {error}"))?
+        .map_err(|_| "generate x25519 output lacks privateKey".to_owned())?
         .to_owned();
     let uuid = run(&["generate", "uuid"])?.trim().to_owned();
     let short_id = run(&["generate", "short-id"])?.trim().to_owned();
@@ -144,7 +158,7 @@ pub fn smoke(repo: &Path, tag: &str, tier_id: &str, asset_dir: &Path) -> Result<
 }
 
 /// Validates the `doctor` report shape and cover identity.
-fn validate_doctor(report: &str, target: &str, server_name: &str) -> Result<(), String> {
+pub(crate) fn validate_doctor(report: &str, target: &str, server_name: &str) -> Result<(), String> {
     let value = json_in::parse(report).map_err(|error| format!("doctor is not JSON: {error}"))?;
     if value
         .optional("configuration")

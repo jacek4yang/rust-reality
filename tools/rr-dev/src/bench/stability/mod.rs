@@ -15,6 +15,7 @@ pub mod native_interop;
 pub mod native_mechanism;
 pub mod native_pressure;
 pub mod observation;
+pub mod package;
 pub mod schema;
 pub mod test_receipt;
 pub mod transfer;
@@ -145,6 +146,7 @@ fn verify_required_check(
     match check.name.as_str() {
         "native-interop" => verify_interop_receipt(root, check, identity),
         "native-mechanism" => verify_mechanism_receipt(root, check, identity),
+        "package-gnu" | "package-musl" | "package-v3" | "package-aarch64" => package::verify(root, check, identity),
         "native-descriptor-pressure" => verify_pressure_receipt(root, check, identity),
         "native-resources" => verify_native_receipt(root, &check.output, identity),
         "local-full-gate" => {

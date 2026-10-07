@@ -193,7 +193,8 @@ jobs:
             jq -r '.packages[] | select(.name == "rust-reality") | .version')"
           dist="$RUNNER_TEMP/candidate-aarch64"
           cargo dev release package "v$version" linux-aarch64-generic "$dist"
-          cargo dev release smoke "v$version" linux-aarch64-generic "$dist"
+          RUST_REALITY_GIT_COMMIT="$CANDIDATE_SHA" cargo dev release smoke "v$version" linux-aarch64-generic "$dist" \
+            --receipt-dir "$dist/qualification"
           jq -n --arg source "$CANDIDATE_SHA" --arg version "$version" \
             '{scope: "candidate-package-smoke-not-release", sourceCommit: $source,
               versionLabel: $version, nativeArchitecture: "aarch64",

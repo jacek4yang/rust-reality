@@ -11,6 +11,8 @@ All notable user-facing changes to this project are documented in this file.
   their original verdicts; replacement qualification requires a frozen candidate.
   The maintained local VM runner records fixed-cycle transfers, received prefixes,
   fault actions and guest observations; separate required checks remain mandatory.
+  Release smoke can retain secret-free package execution receipts and bound
+  archives for offline qualification across all supported tiers.
 
 - Release qualification accepts isolated QEMU multi-node stress and fault
   evidence without mandatory dual-VPS access or an additional long soak.

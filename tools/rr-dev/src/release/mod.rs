@@ -21,7 +21,9 @@ pub mod aggregate;
 pub mod build;
 pub mod matrix;
 pub mod package;
+pub mod receipt;
 pub mod smoke;
+mod smoke_receipt;
 pub mod verify_tag;
 
 /// `SemVer` helpers shared across release stages.

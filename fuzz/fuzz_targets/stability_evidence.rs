@@ -1,5 +1,12 @@
 #![no_main]
 
+#[path = "../../tools/rr-dev/src/hash.rs"]
+mod hash;
+#[path = "../../tools/rr-dev/src/release/matrix.rs"]
+mod matrix;
+#[path = "../../tools/rr-dev/src/release/receipt.rs"]
+mod package_receipt;
+
 #[path = "../../tools/rr-dev/src/perf/bootstrap.rs"]
 pub mod bootstrap;
 #[path = "../../tools/rr-dev/src/perf/json_in.rs"]
@@ -46,6 +53,19 @@ mod transfer;
 mod vm;
 
 libfuzzer_sys::fuzz_target!(|bytes: &[u8]| {
+    if let Ok(receipt) = package_receipt::parse(bytes) {
+        if let Ok(tier) = matrix::Tier::resolve(&receipt.tier) {
+            let _ = package_receipt::verify(&receipt, &"a".repeat(40), tier);
+        }
+    }
+    if let Ok(fragment) = serde_json::from_slice::<package_receipt::Fragment>(bytes) {
+        let receipt = package_receipt::parse(include_bytes!(
+            "../seeds/stability_evidence/seed_package.json"
+        ))
+        .unwrap();
+        let tier = matrix::Tier::resolve("linux-x86_64-generic").unwrap();
+        let _ = package_receipt::verify_fragment(&fragment, &receipt, tier);
+    }
     if let Ok(probe) = clock::parse(bytes) {
         let contract = serde_json::from_str(schema::CONTRACT).unwrap();
         let _ = clock::verify(&probe, &contract);
