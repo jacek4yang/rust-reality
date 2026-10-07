@@ -209,3 +209,10 @@ fill bound and 12-connection storm. Offline verification reconstructs the startu
 budget and high-to-normal transition, verifies the 4-KiB control and 64-KiB
 recovery echoes, and rejects missing raw logs or bytes. Interrupted echoes retain
 their actual received prefix, preserving the original failure.
+Native mechanism receipts must reproduce the reviewed 50/100/200-ms, zero-loss,
+concurrency-1 matrix from bound raw files using the existing netem evaluator.
+The verifier checks the source, harness and executable identities, complete
+publication chain and final identity checks. Relocation resolves original paths
+only through retained artifact bindings; missing rows, substituted files or a
+recorded PASS that disagrees with recomputation cannot qualify. WAN evaluation
+continues to use its separate existing workflow and acceptance rules.

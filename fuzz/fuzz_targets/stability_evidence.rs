@@ -30,6 +30,8 @@ mod execution;
 mod native_evaluate;
 #[path = "../../tools/rr-dev/src/bench/stability/native_interop.rs"]
 mod native_interop;
+#[path = "../../tools/rr-dev/src/bench/stability/native_mechanism.rs"]
+mod native_mechanism;
 #[path = "../../tools/rr-dev/src/bench/stability/native_pressure.rs"]
 mod native_pressure;
 #[path = "../../tools/rr-dev/src/bench/stability/observation.rs"]
@@ -77,6 +79,11 @@ libfuzzer_sys::fuzz_target!(|bytes: &[u8]| {
     let _ = checks::parse_gate(bytes);
     let _ = native_interop::parse(bytes);
     let _ = native_interop::parse_environment(bytes);
+    let _ = serde_json::from_slice::<native_mechanism::Summary>(bytes);
+    let _ = serde_json::from_slice::<native_mechanism::Environment>(bytes);
+    let _ = serde_json::from_slice::<native_mechanism::Contract>(bytes);
+    let _ = serde_json::from_slice::<native_mechanism::Completion>(bytes);
+    let _ = serde_json::from_slice::<native_mechanism::Terminal>(bytes);
     let _ = native_pressure::parse(bytes);
     if let Ok(receipt) = native_pressure::parse(include_bytes!(
         "../seeds/stability_evidence/seed_native_pressure"

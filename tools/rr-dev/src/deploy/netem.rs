@@ -835,7 +835,7 @@ pub fn parse_f64_list(raw: &str) -> Result<Vec<f64>, String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::io::Write;
 
@@ -967,7 +967,11 @@ mod tests {
     /// `removed_rtt_fraction` 1.0 yields a point estimate of 1.0 (PASS); 0.2
     /// yields 0.2 (FAIL the 0.65..1.35 gate). Bootstrap is exercised but the
     /// pass/fail assertion is on the gate logic, not bit-identical intervals.
-    fn build_mechanism_fixture(root: &Path, removed_rtt_fraction: f64) -> (PathBuf, PathBuf) {
+    pub(crate) fn build_mechanism_fixture(
+        root: &Path,
+        removed_rtt_fraction: f64,
+        connections: i64,
+    ) -> (PathBuf, PathBuf) {
         let mut profile_lines = Vec::new();
         for rtt in MECHANISM_RTTS_MS {
             let mut raw_fields = Vec::new();
@@ -987,7 +991,7 @@ mod tests {
                         0.0
                     };
                     let p50 = warm_seconds + removed_seconds;
-                    rows.push(row_with_p50(1, sample, 512, p50));
+                    rows.push(row_with_p50(1, sample, connections, p50));
                 }
                 write_jsonl(&path, &rows);
                 raw_fields.push(format!(
@@ -1017,7 +1021,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("rr-netem-mech-pass-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        let (profiles, pool) = build_mechanism_fixture(&root, 1.0);
+        let (profiles, pool) = build_mechanism_fixture(&root, 1.0, 512);
         let report = validate(&NetemArgs {
             profiles,
             pool_summaries: pool,
@@ -1048,7 +1052,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("rr-netem-mech-fail-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        let (profiles, pool) = build_mechanism_fixture(&root, 0.2);
+        let (profiles, pool) = build_mechanism_fixture(&root, 0.2, 512);
         let report = validate(&NetemArgs {
             profiles,
             pool_summaries: pool,

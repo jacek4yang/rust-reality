@@ -12,6 +12,7 @@ pub mod guest;
 pub mod native;
 pub mod native_evaluate;
 pub mod native_interop;
+pub mod native_mechanism;
 pub mod native_pressure;
 pub mod observation;
 pub mod schema;
@@ -19,6 +20,9 @@ pub mod test_receipt;
 pub mod transfer;
 pub mod vm;
 pub mod workload;
+
+#[cfg(test)]
+mod mechanism_tests;
 
 use std::{
     fs::File,
@@ -140,6 +144,7 @@ fn verify_required_check(
         serde_json::from_str(schema::CONTRACT).expect("compiled contract");
     match check.name.as_str() {
         "native-interop" => verify_interop_receipt(root, check, identity),
+        "native-mechanism" => verify_mechanism_receipt(root, check, identity),
         "native-descriptor-pressure" => verify_pressure_receipt(root, check, identity),
         "native-resources" => verify_native_receipt(root, &check.output, identity),
         "local-full-gate" => {
@@ -172,6 +177,127 @@ fn verify_required_check(
         }
         _ => Err("required check lacks a supported executable receipt; an opaque success claim cannot qualify".to_owned()),
     }
+}
+
+fn bound_mechanism_observation<'a>(
+    check: &'a schema::Check,
+    requested: &Path,
+) -> Result<&'a Artifact, String> {
+    let directory = Path::new(&check.output.path)
+        .parent()
+        .ok_or("missing mechanism directory")?;
+    let original = check
+        .argv
+        .get(14)
+        .ok_or("missing mechanism output argument")?;
+    let relative = requested
+        .strip_prefix(original)
+        .map_err(|_| "mechanism observation escaped its original run")?;
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        return Err("invalid mechanism observation path".to_owned());
+    }
+    let path = directory.join(relative);
+    let mut matches = check
+        .observations
+        .iter()
+        .filter(|artifact| Path::new(&artifact.path) == path);
+    let artifact = matches
+        .next()
+        .ok_or("missing bound mechanism observation")?;
+    if matches.next().is_some() {
+        return Err("duplicated mechanism observation".to_owned());
+    }
+    Ok(artifact)
+}
+
+pub(super) fn verify_mechanism_receipt(
+    root: &Path,
+    check: &schema::Check,
+    identity: &schema::Identity,
+) -> Result<Report, String> {
+    use crate::{
+        bench::deployment::{Plan, PlanKind},
+        deploy::netem,
+    };
+    let original = Path::new(
+        check
+            .argv
+            .get(14)
+            .ok_or("missing mechanism output argument")?,
+    );
+    let read = |name: &str| {
+        read_artifact(
+            root,
+            bound_mechanism_observation(check, &original.join(name))?,
+        )
+    };
+    let summary: native_mechanism::Summary =
+        serde_json::from_slice(&read_artifact(root, &check.output)?)
+            .map_err(|error| error.to_string())?;
+    let environment: native_mechanism::Environment =
+        serde_json::from_slice(&read("environment.json")?).map_err(|error| error.to_string())?;
+    let contract: native_mechanism::Contract =
+        serde_json::from_slice(&read("run-contract.json")?).map_err(|error| error.to_string())?;
+    let completion: native_mechanism::Completion =
+        serde_json::from_slice(&read("run-completion.json")?).map_err(|error| error.to_string())?;
+    let terminal: native_mechanism::Terminal =
+        serde_json::from_slice(&read("attempt-terminal.json")?)
+            .map_err(|error| error.to_string())?;
+    let plan = Plan::reviewed(PlanKind::Mechanism);
+    let program = serde_json::from_str(&plan.to_json().to_compact_json())
+        .map_err(|error| error.to_string())?;
+    native_mechanism::verify(&summary, &environment, check, identity, &program)?;
+    native_mechanism::verify_completion(&contract, &completion, &terminal, &environment, &summary)?;
+    let external = native_interop::parse_environment(&read_artifact(root, &identity.environment)?)?;
+    if !external.binds_xray(&environment.xray_sha256, &environment.xray_identity)
+        || Path::new(&contract.summary.path) != original.join("summary.json")
+        || contract.summary.sha256 != check.output.sha256
+        || Path::new(&completion.evidence.path) != original.join("run-contract.json")
+        || completion.evidence.sha256
+            != bound_mechanism_observation(check, &original.join("run-contract.json"))?.sha256
+    {
+        return Err("mechanism publication or external executable was substituted".to_owned());
+    }
+    let result = netem::validate_observations(
+        &netem::NetemArgs {
+            profiles: original.join("rtt/profiles.jsonl"),
+            pool_summaries: original.join("rtt/pool-summaries.json"),
+            rtts: plan.rtts_ms.iter().map(|value| i64::from(*value)).collect(),
+            losses: plan.losses_percent.clone(),
+            concurrencies: plan
+                .rtt_concurrencies
+                .iter()
+                .map(|value| i64::try_from(*value).unwrap_or(i64::MAX))
+                .collect(),
+            samples: i64::try_from(plan.samples * 2).unwrap_or(i64::MAX),
+            connections: i64::try_from(plan.rtt_connections).unwrap_or(i64::MAX),
+            evaluate_performance: plan.evaluate_netem_performance,
+        },
+        |path| {
+            String::from_utf8(read_artifact(
+                root,
+                bound_mechanism_observation(check, path)?,
+            )?)
+            .map_err(|error| error.to_string())
+        },
+    )?;
+    let recomputed: serde_json::Value =
+        serde_json::from_str(&result.json).map_err(|error| error.to_string())?;
+    let recorded: serde_json::Value =
+        serde_json::from_slice(&read("summary-netem.json")?).map_err(|error| error.to_string())?;
+    if !result.passed || recomputed != recorded || recomputed != summary.netem_profiles {
+        return Err(
+            "mechanism raw observations do not reproduce its recorded passing verdict".to_owned(),
+        );
+    }
+    Ok(Report {
+        verdict: Verdict::Pass,
+        findings: Vec::new(),
+    })
 }
 
 pub(super) fn verify_pressure_receipt(

@@ -84,6 +84,12 @@ pub struct Environment {
 }
 
 impl Environment {
+    pub fn binds_xray(&self, sha256: &str, identity: &str) -> bool {
+        !self.host_kernel.is_empty()
+            && !identity.is_empty()
+            && self.xray_sha256 == sha256
+            && self.xray_identity == identity
+    }
     pub fn binds_external_images(&self, xray: &str, openssl: &str) -> bool {
         !self.host_kernel.is_empty()
             && !self.xray_identity.is_empty()

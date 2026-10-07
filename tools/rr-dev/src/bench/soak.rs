@@ -2519,7 +2519,7 @@ fn retain_native_observations(
 
 /// Retain all attempted finalizers, preserving the first workload error even if
 /// an evidence write or a final identity check also fails.
-fn finalize_native_attempt<T>(
+pub(super) fn finalize_native_attempt<T>(
     run: &RunDirectory,
     attempted: Result<T, String>,
     checks: &[(String, Result<(), String>)],
