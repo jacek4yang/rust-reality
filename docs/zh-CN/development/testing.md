@@ -117,6 +117,9 @@ LANDING 客体同样适用。
 VM 启动及终态回执必须与冻结身份匹配。前后内核观察绑定 CPU、内存、交换空间、
 启动身份及 OOM 计数；完整产品日志绑定 LANDING 两次进程生命周期，并记录协议
 拒绝或 panic。缺失结果或替换日志判为 INVALID。
+每种故障要求三个客体均提供开始及结束操作回执。验证覆盖命令顺序及退出状态、
+指定数据接口、实际安装及恢复的 netem 延迟/丢包、真实陈旧套接字清理、受控
+SIGKILL 回执、稳定的温/冷配置哈希，以及期限内的重载发布记录。
 
 `cargo dev bench stability-run --fixture PATH --output FRESH_DIRECTORY
 --candidate FROZEN_BINARY --xray XRAY_BINARY --openssl OPENSSL_BINARY` 执行四个

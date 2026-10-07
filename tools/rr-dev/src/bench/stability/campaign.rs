@@ -362,6 +362,18 @@ fn assemble(
             .collect();
         cell.faults[index].after_processes.clone_from(&bindings);
         cell.faults[index].checkpoints = checkpoints;
+        for role in &cell.roles {
+            for boundary in ["begin", "end"] {
+                let artifact = super::workload::artifact(
+                    root,
+                    &cell_root.join(&role.name).join(format!(
+                        "action-{}-{boundary}.json",
+                        cell.faults[index].name
+                    )),
+                )?;
+                cell.faults[index].actions.push(artifact);
+            }
+        }
     }
     for offset in contract.integrity_offsets() {
         cell.integrity_checkpoints.push(checkpoint(
@@ -576,6 +588,7 @@ fn faults(
             .ok_or("missing recovery admission")?;
         cell.faults.push(schema::Fault {
             name: name.clone(),
+            actions: Vec::new(),
             started_ms: start,
             restored_ms: restored,
             first_admission_ms,

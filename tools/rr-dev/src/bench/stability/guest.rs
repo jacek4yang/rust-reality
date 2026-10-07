@@ -421,6 +421,16 @@ impl Session<'_> {
         Ok(())
     }
 
+    fn configuration_receipt(&self) -> Result<(String, Option<bool>), String> {
+        let bytes = fs::read(self.root.join("server.json")).map_err(|error| error.to_string())?;
+        let warm = if self.plan.role == Role::Landing {
+            None
+        } else {
+            Some(super::action::warm_tcp_config(&bytes)?)
+        };
+        Ok((crate::hash::sha256_hex(&bytes), warm))
+    }
+
     fn fault(&mut self, name: &str, begin: bool) -> Result<(), String> {
         let started = collect::unix_ms()?;
         let mut outcomes = Vec::new();
@@ -488,6 +498,15 @@ impl Session<'_> {
             "reload" | "warm" | "cold" | "stale" | "landing-restart" => Ok(()),
             _ => Err("unknown fixed campaign fault".to_owned()),
         })();
+        let configuration = self.configuration_receipt();
+        let action = match (action, &configuration) {
+            (Err(primary), Err(secondary)) => Err(format!(
+                "{primary}; configuration receipt also failed: {secondary}"
+            )),
+            (Err(error), _) => Err(error),
+            (Ok(()), Err(error)) => Err(error.clone()),
+            (Ok(()), Ok(_)) => Ok(()),
+        };
         let written = save(
             &self.output.join(format!(
                 "action-{name}-{}.json",
@@ -496,6 +515,9 @@ impl Session<'_> {
             &serde_json::json!({
                 "role":self.plan.role.name(),"boot_id":self.plan.boot_id,"started_unix_ms":started,"completed_unix_ms":collect::unix_ms()?,
                 "name":name,"begin":begin,"commands":outcomes,"error":action.as_ref().err(),
+                "configuration_sha256":configuration.as_ref().map(|(digest,_)|digest).ok(),
+                "warm_tcp":configuration.as_ref().ok().and_then(|(_,warm)|*warm),
+                "termination_signal":(action.is_ok() && name == "landing-restart" && begin && self.plan.role == Role::Landing).then_some(9),
             }),
         );
         match (action, written) {

@@ -157,6 +157,10 @@ VM startup and terminal receipts are checked against the frozen identities.
 Before/after kernel observations bind CPU, memory, swap, boot and OOM counters;
 complete product logs bind both LANDING process lifetimes and expose protocol
 rejections or panics. Missing outcomes and substituted logs are INVALID.
+Each fault requires begin/end action receipts from all three guests. Verification
+checks command order and exit status, exact data interfaces, installed netem
+delay/loss and restoration, an actual stale-socket eviction, the owned SIGKILL
+receipt, stable warm/cold configuration hashes and timely reload publications.
 
 `cargo dev bench stability-run --fixture PATH --output FRESH_DIRECTORY
 --candidate FROZEN_BINARY --xray XRAY_BINARY --openssl OPENSSL_BINARY` drives

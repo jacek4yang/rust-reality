@@ -144,7 +144,7 @@ fn fixture() -> Value {
                 }
                 checkpoint
             }).collect();
-            json!({"name":fault,"started_ms":started,"restored_ms":restored,"first_admission_ms":restored+1,
+            json!({"name":fault,"actions":[artifact(),artifact(),artifact(),artifact(),artifact(),artifact()],"started_ms":started,"restored_ms":restored,"first_admission_ms":restored+1,
                 "before_processes":before,"after_processes":bindings.clone(),"recovery_transfers":recovery,"affected_prefix":transfer(&format!("{name}-{fault}-prefix"),"line-a","download",started,4096),
                 "during_transfers":during,"checkpoints":checkpoints,"expected_failures":[],"unexpected_failures":0})
         }).collect();
@@ -332,6 +332,138 @@ fn startup_and_cell_terminal_receipts_require_explicit_complete_outcomes() {
 }
 
 #[test]
+fn netem_receipts_require_the_installed_fixed_delay_loss_and_restoration() {
+    let clean = r#"[{"kind":"fq_codel","root":true,"options":{"limit":10240}}]"#;
+    super::action::qdisc(clean, None).unwrap();
+    let netem = json!([{"kind":"netem","root":true,"options":{"limit":1000,"ecn":false,"gap":0,
+        "delay":{"delay":0.05,"jitter":0.0,"correlation":0.0},"loss-random":{"loss":0.01,"correlation":0.0}}}]);
+    super::action::qdisc(&netem.to_string(), Some("rtt-100-loss-1")).unwrap();
+    assert!(super::action::qdisc(&netem.to_string(), None).is_err());
+    assert!(super::action::qdisc(clean, Some("rtt-100-loss-1")).is_err());
+    for (pointer, value) in [
+        ("/0/root", json!(false)),
+        ("/0/options/limit", json!(2000)),
+        ("/0/options/delay/delay", json!(50)),
+        ("/0/options/delay/jitter", json!(0.01)),
+        ("/0/options/loss-random/loss", json!(1)),
+        ("/0/options/loss-random/correlation", json!(0.1)),
+        ("/0/options/ecn", json!(true)),
+        ("/0/options/delay/delay", json!("NaN")),
+    ] {
+        let mut changed = netem.clone();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        assert!(
+            super::action::qdisc(&changed.to_string(), Some("rtt-100-loss-1")).is_err(),
+            "{pointer}"
+        );
+    }
+    for invalid in [
+        "[]",
+        "[{}]",
+        r#"[{"kind":"tbf"}]"#,
+        r#"[{"kind":"netem","root":true,"options":{"limit":1000,"ecn":false,"gap":0,"delay":{"delay":0.05,"delay":0.1,"jitter":0,"correlation":0}}}]"#,
+    ] {
+        assert!(super::action::qdisc(invalid, Some("rtt-100")).is_err());
+    }
+    let partition = r#"[{"kind":"netem","root":true,"options":{"limit":1000,"ecn":false,"gap":0,"loss-random":{"loss":1,"correlation":0}}}]"#;
+    super::action::qdisc(partition, Some("line-a-partition")).unwrap();
+}
+
+#[test]
+fn fault_actions_require_successful_commands_and_timely_generation_publication() {
+    let evidence: schema::Evidence = serde_json::from_value(fixture()).unwrap();
+    let cell = &evidence.cells[0];
+    let role = &cell.roles[0];
+    let fault = &cell.faults[0];
+    let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
+    let started = cell.started_unix_ms + fault.started_ms;
+    let action = json!({"role":role.name,"boot_id":role.process.boot_id,"started_unix_ms":started,
+        "completed_unix_ms":started+1,"name":fault.name,"begin":true,"commands":[],"error":null,
+        "configuration_sha256":"c".repeat(64),"warm_tcp":true,"termination_signal":null});
+    let verify = |value: &Value| {
+        let receipt = super::action::parse(&serde_json::to_vec(value).unwrap())?;
+        super::action::verify(&receipt, role, cell, fault, &contract)
+    };
+    verify(&action).unwrap();
+    for (key, value) in [
+        ("started_unix_ms", json!(started - 1)),
+        ("completed_unix_ms", json!(started + 2001)),
+        ("error", json!("kill failed")),
+        ("boot_id", json!("substituted")),
+        ("warm_tcp", json!(false)),
+        ("termination_signal", json!(9)),
+        ("configuration_sha256", json!("")),
+    ] {
+        let mut changed = action.clone();
+        changed[key] = value;
+        assert!(verify(&changed).is_err());
+    }
+    let receipt = super::action::parse(&serde_json::to_vec(&action).unwrap()).unwrap();
+    let publication = format!(
+        "{}\n",
+        json!({"event":"configuration_published","timestampUnixMs":started+100,"generation":1})
+    );
+    super::action::publication(publication.as_bytes(), &receipt, 2000).unwrap();
+    for invalid in [
+        String::new(),
+        format!("{publication}{publication}"),
+        publication.replace(&(started + 100).to_string(), &(started + 2001).to_string()),
+        publication.replace("\"generation\":1", "\"generation\":0"),
+    ] {
+        assert!(super::action::publication(invalid.as_bytes(), &receipt, 2000).is_err());
+    }
+    assert!(
+        !super::action::warm_tcp_config(br#"{"outbounds":{"landing-1":{"warmTcp":false}}}"#)
+            .unwrap()
+    );
+    assert!(super::action::warm_tcp_config(br#"{"outbounds":{"landing-1":{}}}"#).is_err());
+}
+
+#[test]
+fn network_fault_commands_cannot_substitute_interface_exit_status_or_kernel_receipt() {
+    let evidence: schema::Evidence = serde_json::from_value(fixture()).unwrap();
+    let cell = &evidence.cells[0];
+    let role = &cell.roles[0];
+    let fault = cell
+        .faults
+        .iter()
+        .find(|fault| fault.name == "rtt-50")
+        .unwrap();
+    let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
+    let started = cell.started_unix_ms + fault.started_ms;
+    let command = |argv: Vec<&str>, stdout: &str, offset: u64| {
+        json!({"argv":argv,
+        "stdout":stdout,"stderr":"","exit_code":0,"started_unix_ms":started+offset,"completed_unix_ms":started+offset+1})
+    };
+    let clean = r#"[{"kind":"fq_codel","root":true}]"#;
+    let shaped = r#"[{"kind":"netem","root":true,"options":{"limit":1000,"ecn":false,"gap":0,"delay":{"delay":0.025,"jitter":0,"correlation":0}}}]"#;
+    let show = vec!["tc", "-j", "qdisc", "show", "dev", "data0"];
+    let action = json!({"role":role.name,"boot_id":role.process.boot_id,"started_unix_ms":started,
+        "completed_unix_ms":started+100,"name":fault.name,"begin":true,"error":null,
+        "configuration_sha256":"c".repeat(64),"warm_tcp":true,"termination_signal":null,
+        "commands":[command(show.clone(),clean,0),command(vec!["tc","qdisc","replace","dev","data0","root","netem","delay","25ms"],"",10),command(show,shaped,20)]});
+    let verify = |value: &Value| {
+        let receipt = super::action::parse(&serde_json::to_vec(value).unwrap())?;
+        super::action::verify(&receipt, role, cell, fault, &contract)
+    };
+    verify(&action).unwrap();
+    for (pointer, value) in [
+        ("/commands/1/argv/4", json!("eth0")),
+        ("/commands/1/exit_code", json!(1)),
+        ("/commands/2/stdout", json!(clean)),
+        ("/commands/0/stdout", json!(shaped)),
+        ("/commands/2/started_unix_ms", json!(started)),
+        ("/commands/2/completed_unix_ms", json!(started + 101)),
+        ("/commands/1/stderr", json!("unknown option")),
+        ("/commands", json!([])),
+    ] {
+        let mut changed = action.clone();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        assert!(verify(&changed).is_err(), "{pointer}");
+    }
+}
+
+#[test]
 fn adversarial_resource_mutations_fail() {
     let valid = fixture();
     for (field, value) in [
@@ -395,6 +527,7 @@ fn identity_integrity_receipt_and_coverage_mutations_are_rejected() {
         ("/cells/0/cycles/0/transfers", json!([])),
         ("/cells/0/cycles", json!([])),
         ("/cells/0/faults", json!([])),
+        ("/cells/0/faults/0/actions", json!([])),
         ("/cells/0/roles/2/process/boot_id", json!("boot-line-a")),
         ("/checks/0/source_commit", json!("d".repeat(40))),
         ("/checks/0/executed_cases", json!(0)),

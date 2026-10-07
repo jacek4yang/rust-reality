@@ -1,5 +1,6 @@
 //! Exact-candidate stability qualification and offline evidence verification.
 
+pub mod action;
 pub mod campaign;
 pub mod collect;
 pub mod evaluate;
@@ -57,6 +58,9 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
     let mut observation_hashes = std::collections::BTreeSet::new();
     for cell in &evidence.cells {
         if let Err(error) = verify_cell_execution(root, cell, &evidence.identity, &contract) {
+            report.reject(Verdict::Invalid, &cell.name, &error);
+        }
+        if let Err(error) = verify_cell_actions(root, cell, &contract) {
             report.reject(Verdict::Invalid, &cell.name, &error);
         }
         verify_cell_transfers(root, cell, &mut report);
@@ -119,6 +123,56 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
         );
     }
     Ok(report)
+}
+
+fn verify_cell_actions(
+    root: &Path,
+    cell: &schema::Cell,
+    contract: &schema::Contract,
+) -> Result<(), String> {
+    let mut configuration_digests = std::collections::BTreeMap::new();
+    for fault in &cell.faults {
+        let mut coverage = std::collections::BTreeSet::new();
+        for artifact in &fault.actions {
+            let receipt = action::parse(&read_artifact(root, artifact)?)?;
+            let role = cell
+                .roles
+                .iter()
+                .find(|role| role.name == receipt.role)
+                .ok_or("unknown action role")?;
+            action::verify(&receipt, role, cell, fault, contract)?;
+            if !coverage.insert((&role.name, receipt.begin)) {
+                return Err("duplicated fault action".to_owned());
+            }
+            let key = (role.name.clone(), receipt.warm_tcp);
+            if let Some(expected) =
+                configuration_digests.insert(key, receipt.configuration_sha256.clone())
+                && expected != receipt.configuration_sha256
+            {
+                return Err("configuration changed outside the fixed warm/cold variants".to_owned());
+            }
+            action::publication(
+                &read_artifact(
+                    root,
+                    role.server_logs.first().ok_or("missing pre-restart log")?,
+                )?,
+                &receipt,
+                contract.checkpoint_tolerance_ms,
+            )?;
+        }
+        if coverage.len() != contract.roles.len() * 2 {
+            return Err("missing fault actions or restoration receipts".to_owned());
+        }
+    }
+    for role in &cell.roles {
+        if role.name != "landing"
+            && configuration_digests.get(&(role.name.clone(), Some(true)))
+                == configuration_digests.get(&(role.name.clone(), Some(false)))
+        {
+            return Err("warm and cold configuration bytes were identical".to_owned());
+        }
+    }
+    Ok(())
 }
 
 fn verify_cell_execution(

@@ -289,6 +289,7 @@ pub struct UploadReceipt {
 #[serde(deny_unknown_fields)]
 pub struct Fault {
     pub name: String,
+    pub actions: Vec<Artifact>,
     pub started_ms: u64,
     pub restored_ms: u64,
     pub first_admission_ms: u64,

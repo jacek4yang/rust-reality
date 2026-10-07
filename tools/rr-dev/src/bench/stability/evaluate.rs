@@ -460,6 +460,16 @@ fn evaluate_cell(report: &mut Report, evidence: &Evidence, contract: &Contract, 
         .saturating_mul(contract.cycles as u64);
     for (index, fault) in cell.faults.iter().enumerate() {
         report.require(
+            fault.actions.len() == contract.roles.len() * 2
+                && fault
+                    .actions
+                    .iter()
+                    .all(|artifact| digest(&artifact.sha256, 64)),
+            Verdict::Invalid,
+            scope,
+            "missing fault action evidence",
+        );
+        report.require(
             u64::try_from(index)
                 .ok()
                 .and_then(|index| index.checked_mul(contract.fault_interval_ms))
