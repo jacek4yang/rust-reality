@@ -32,7 +32,7 @@ fn fixture() -> Value {
             "name":role,"process":process(role),"vcpus":if name.ends_with("/constrained") {1} else {2},
             "memory_limit_bytes":1_073_741_824_u64,"swap_limit_bytes":0,"startup":artifact(),
             "policy":{
-                "fixed_fds":7,"fixed_descriptor_targets":["/dev/null","/fixture/server.log","/fixture/server.log","anon_inode:[eventpoll]","anon_inode:[eventfd]","anon_inode:[eventpoll]","anon_inode:[eventfd]"],"listener_sockets":1,"dynamic_fd_budget":4096,"pipe_pair_capacity":122,
+                "fixed_fds":7,"fixed_descriptor_targets":["/dev/null","/fixture/server.log","/fixture/server.log","anon_inode:[eventpoll]","anon_inode:[eventfd]","anon_inode:[eventpoll]","anon_inode:[eventfd]"],"listener_sockets":1,"idle_inbound_capacity":16,"dynamic_fd_budget":4096,"pipe_pair_capacity":122,
                 "warm_socket_capacity":11,"active_socket_capacity":128,"relay_fd_capacity":128,
                 "soft_fd_limit":8192,"replay_capacity":65536,"replay_expiry_ms":120_000,"retirement_deadline_ms":30000
             }
@@ -46,12 +46,12 @@ fn fixture() -> Value {
                 let samples: Vec<_> = contract.roles.iter().map(|role| json!({
                     "observation":artifact(),"role":role,"process":process(role),"rss_kib":16384,"pss_kib":12000,"anonymous_kib":10000,"threads":4,
                     "descriptors":{
-                        "total":263,"fixed":7,"listener_sockets":1,"warm_sockets":11,"active_sockets":0,
+                        "total":263,"idle_inbound_sockets":0,"fixed":7,"listener_sockets":1,"warm_sockets":11,"active_sockets":0,
                         "active_relay_fds":0,"retained_pipe_pairs":122,"dirty_retained_pipe_bytes":0,
                         "held_dynamic_permits":256,"reserved_dynamic_permits":1,"unexplained":0
                     },
-                    "owners":{
-                        "active_connections":0,"tracked_connection_tasks":0,"retired_generations":0,
+                    "owners":{"handshakes":0,"fallbacks":0,"crypto_operations":0,"dns_lookups":0,
+                        "pre_auth_idle_connections":0,"admitted_connections":0,"tracked_connection_tasks":0,"retired_generations":0,
                         "replay_entries":0
                     }
                 })).collect();
@@ -115,9 +115,13 @@ fn adversarial_resource_mutations_fail() {
         ("descriptors/dirty_retained_pipe_bytes", 1),
         ("descriptors/held_dynamic_permits", 0),
         ("descriptors/active_sockets", 1),
-        ("owners/active_connections", 1),
+        ("owners/admitted_connections", 1),
         ("owners/tracked_connection_tasks", 1),
         ("owners/retired_generations", 1),
+        ("owners/handshakes", 1),
+        ("owners/fallbacks", 1),
+        ("owners/crypto_operations", 1),
+        ("owners/dns_lookups", 1),
         ("rss_kib", 100_000),
     ] {
         let mut changed = valid.clone();
@@ -239,7 +243,8 @@ fn raw_observation(sample: &schema::Sample, policy: &schema::Policy) -> Value {
     let log = [
         json!({"timestampUnixMs":1,"level":"info","event":"configuration_published","generation":0}),
         json!({"timestampUnixMs":9000,"level":"debug","event":"connection_task_ownership","address":"127.0.0.1:9444","tracked_tasks":0}),
-        json!({"timestampUnixMs":9000,"level":"debug","event":"resource_ownership","generation":0,"active_connections":0,"replay_entries":0,"fd_units_in_use":256,"retained_pipe_pairs":122,"retained_pipe_bytes":0,"warm_ready":11,"warm_connecting":0}),
+        json!({"timestampUnixMs":9000,"level":"debug","event":"resource_ownership","handshakes":0,"fallbacks":0,"crypto_operations":0,"dns_lookups":0,"pre_auth_idle_connections":0,"pre_auth_idle_capacity":16,"fd_capacity":4096,"pipe_pair_capacity":122,"warm_socket_capacity":11,
+            "replay_capacity":65536,"replay_expiry_ms":120_000,"retirement_deadline_ms":30000,"generation":0,"admitted_connections":0,"replay_entries":0,"fd_units_in_use":256,"retained_pipe_pairs":122,"retained_pipe_bytes":0,"warm_ready":11,"warm_connecting":0}),
     ].into_iter().fold(String::new(), |mut text, value| { writeln!(&mut text, "{value}").unwrap(); text });
     json!({
         "pid":sample.process.pid,"started_unix_ms":10000,"completed_unix_ms":10050,
@@ -288,6 +293,9 @@ fn normalized_ownership_requires_fresh_complete_raw_observations() {
             "\"tracked_tasks\":0,\"tracked_tasks\":1",
         ),
         log.replace("\"replay_entries\":0", "\"replay_entries\":1"),
+        log.replace("\"pipe_pair_capacity\":122", "\"pipe_pair_capacity\":123"),
+        log.replace("\"fd_capacity\":4096", "\"fd_capacity\":8192"),
+        log.replace("\"warm_socket_capacity\":11", "\"warm_socket_capacity\":12"),
         log.replace("\"timestampUnixMs\":9000", "\"timestampUnixMs\":1"),
         log.lines()
             .filter(|line| !line.contains("connection_task_ownership"))
@@ -329,4 +337,47 @@ fn raw_descriptor_keys_cannot_overwrite_an_observation() {
         );
         assert!(schema::parse_observation(duplicate.as_bytes()).is_err());
     }
+}
+
+#[test]
+fn bounded_pre_auth_idle_tasks_are_counted_without_exempting_leaked_work() {
+    let mut value = fixture();
+    for cell in value["cells"].as_array_mut().unwrap() {
+        for cycle in cell["cycles"].as_array_mut().unwrap() {
+            for checkpoint in cycle["checkpoints"].as_array_mut().unwrap() {
+                let landing = &mut checkpoint["samples"][2];
+                landing["descriptors"]["warm_sockets"] = json!(0);
+                landing["descriptors"]["idle_inbound_sockets"] = json!(11);
+                landing["owners"]["pre_auth_idle_connections"] = json!(11);
+                landing["owners"]["admitted_connections"] = json!(11);
+                landing["owners"]["tracked_connection_tasks"] = json!(11);
+            }
+        }
+    }
+    assert_eq!(verdict(&value), Verdict::Pass);
+    let evidence = schema::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let sample = &evidence.cells[0].cycles[0].checkpoints[0].samples[2];
+    let policy = &evidence.cells[0].roles[2].policy;
+    let mut raw = raw_observation(sample, policy);
+    let log = raw["ownership_log"]
+        .as_str()
+        .unwrap()
+        .replace(
+            "\"pre_auth_idle_connections\":0",
+            "\"pre_auth_idle_connections\":11",
+        )
+        .replace("\"admitted_connections\":0", "\"admitted_connections\":11")
+        .replace("\"tracked_tasks\":0", "\"tracked_tasks\":11")
+        .replace("\"warm_ready\":11", "\"warm_ready\":0");
+    raw["ownership_log"] = json!(log);
+    let raw = schema::parse_observation(&serde_json::to_vec(&raw).unwrap()).unwrap();
+    super::observation::verify(&raw, sample, policy).unwrap();
+    for field in ["admitted_connections", "tracked_connection_tasks"] {
+        let mut changed = value.clone();
+        changed["cells"][0]["cycles"][7]["checkpoints"][7]["samples"][2]["owners"][field] =
+            json!(12);
+        assert_eq!(verdict(&changed), Verdict::Fail);
+    }
+    value["cells"][0]["roles"][2]["policy"]["idle_inbound_capacity"] = json!(10);
+    assert_eq!(verdict(&value), Verdict::Fail);
 }

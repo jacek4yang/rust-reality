@@ -43,11 +43,23 @@ enum Event {
         tracked_tasks: u64,
     },
     ResourceOwnership {
+        handshakes: u64,
+        fallbacks: u64,
+        crypto_operations: u64,
+        dns_lookups: u64,
+        pre_auth_idle_connections: u64,
+        pre_auth_idle_capacity: u64,
+        fd_capacity: u64,
+        pipe_pair_capacity: Option<u64>,
+        warm_socket_capacity: u64,
+        replay_capacity: u64,
+        replay_expiry_ms: u64,
+        retirement_deadline_ms: u64,
         #[serde(rename = "timestampUnixMs")]
         timestamp: u64,
         level: String,
         generation: u64,
-        active_connections: u64,
+        admitted_connections: u64,
         replay_entries: u64,
         fd_units_in_use: u64,
         retained_pipe_pairs: Option<u64>,
@@ -59,6 +71,13 @@ enum Event {
 
 /// Ownership reconstructed solely from fresh debug records.
 pub struct Ownership {
+    pre_auth_idle_capacity: u64,
+    fd_capacity: u64,
+    pipe_capacity: u64,
+    warm_capacity: u64,
+    replay_capacity: u64,
+    replay_expiry_ms: u64,
+    retirement_deadline_ms: u64,
     owners: Owners,
     permits: u64,
     pipe_pairs: u64,
@@ -140,10 +159,22 @@ pub fn read_ownership(observation: &Observation, listeners: u64) -> Result<Owner
                 tasks.insert(address, (timestamp, tracked_tasks));
             }
             Event::ResourceOwnership {
+                handshakes,
+                fallbacks,
+                crypto_operations,
+                dns_lookups,
+                pre_auth_idle_connections,
+                pre_auth_idle_capacity,
+                fd_capacity,
+                pipe_pair_capacity,
+                warm_socket_capacity,
+                replay_capacity,
+                replay_expiry_ms,
+                retirement_deadline_ms,
                 timestamp,
                 level,
                 generation,
-                active_connections,
+                admitted_connections,
                 replay_entries,
                 fd_units_in_use,
                 retained_pipe_pairs,
@@ -158,8 +189,20 @@ pub fn read_ownership(observation: &Observation, listeners: u64) -> Result<Owner
                     timestamp,
                     generation,
                     Ownership {
+                        pre_auth_idle_capacity,
+                        fd_capacity,
+                        pipe_capacity: pipe_pair_capacity.ok_or("unobserved pipe capacity")?,
+                        warm_capacity: warm_socket_capacity,
+                        replay_capacity,
+                        replay_expiry_ms,
+                        retirement_deadline_ms,
                         owners: Owners {
-                            active_connections,
+                            handshakes,
+                            fallbacks,
+                            crypto_operations,
+                            dns_lookups,
+                            pre_auth_idle_connections,
+                            admitted_connections,
                             tracked_connection_tasks: 0,
                             retired_generations: 0,
                             replay_entries,
@@ -253,6 +296,16 @@ pub fn verify(raw: &Observation, sample: &Sample, policy: &Policy) -> Result<(),
         return Err("descriptor limit differs from startup policy".to_owned());
     }
     let observed = read_ownership(raw, policy.listener_sockets)?;
+    if observed.pre_auth_idle_capacity != policy.idle_inbound_capacity
+        || observed.fd_capacity != policy.dynamic_fd_budget
+        || observed.pipe_capacity != policy.pipe_pair_capacity
+        || observed.warm_capacity != policy.warm_socket_capacity
+        || observed.replay_capacity != policy.replay_capacity
+        || observed.replay_expiry_ms != policy.replay_expiry_ms
+        || observed.retirement_deadline_ms != policy.retirement_deadline_ms
+    {
+        return Err("declared capacity differs from observed startup authorities".to_owned());
+    }
     if observed.owners != sample.owners
         || observed.permits != sample.descriptors.held_dynamic_permits
         || observed.pipe_pairs != sample.descriptors.retained_pipe_pairs
@@ -279,7 +332,8 @@ pub fn verify(raw: &Observation, sample: &Sample, policy: &Policy) -> Result<(),
         .descriptors
         .listener_sockets
         .checked_add(sample.descriptors.warm_sockets)
-        .and_then(|total| total.checked_add(sample.descriptors.active_sockets));
+        .and_then(|total| total.checked_add(sample.descriptors.active_sockets))
+        .and_then(|total| total.checked_add(sample.descriptors.idle_inbound_sockets));
     let expected_pipes = sample
         .descriptors
         .retained_pipe_pairs

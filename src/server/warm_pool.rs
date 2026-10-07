@@ -82,6 +82,13 @@ impl WarmPoolAuthority {
         self.pressure.state() == ResourcePressure::Normal
     }
 
+    pub(crate) fn capacity(&self) -> u64 {
+        self.ready
+            .inner
+            .capacity
+            .saturating_add(self.connecting.inner.capacity)
+    }
+
     pub(crate) fn counts(&self) -> (u64, u64) {
         (self.ready.in_use(), self.connecting.in_use())
     }

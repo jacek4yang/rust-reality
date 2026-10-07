@@ -606,6 +606,7 @@ fn evaluate_owners(
     let dynamic = pipes
         .and_then(|pipes| pipes.checked_add(fd.warm_sockets))
         .and_then(|total| total.checked_add(fd.active_sockets))
+        .and_then(|total| total.checked_add(fd.idle_inbound_sockets))
         .and_then(|total| total.checked_add(fd.active_relay_fds));
     let total = dynamic
         .and_then(|total| total.checked_add(fd.fixed))
@@ -640,18 +641,25 @@ fn evaluate_owners(
     );
     let owners = &sample.owners;
     report.require(
-        owners.replay_entries <= policy.replay_capacity,
+        owners.replay_entries <= policy.replay_capacity
+            && owners.pre_auth_idle_connections <= policy.idle_inbound_capacity
+            && owners.pre_auth_idle_connections <= owners.admitted_connections
+            && sample.descriptors.idle_inbound_sockets == owners.pre_auth_idle_connections,
         Verdict::Fail,
         scope,
-        "replay ownership exceeded its fixed capacity",
+        "replay or pre-auth ownership exceeded its fixed capacity or lost its socket binding",
     );
     if recovered {
         report.require(
             fd.active_sockets == 0
                 && fd.active_relay_fds == 0
-                && owners.active_connections == 0
-                && owners.tracked_connection_tasks == 0
+                && owners.admitted_connections == owners.pre_auth_idle_connections
+                && owners.tracked_connection_tasks == owners.pre_auth_idle_connections
                 && owners.retired_generations == 0
+                && owners.handshakes == 0
+                && owners.fallbacks == 0
+                && owners.crypto_operations == 0
+                && owners.dns_lookups == 0
                 && owners.replay_entries == 0,
             Verdict::Fail,
             scope,

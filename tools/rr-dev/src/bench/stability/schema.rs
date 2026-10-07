@@ -134,6 +134,7 @@ pub struct Policy {
     pub fixed_fds: u64,
     pub fixed_descriptor_targets: Vec<String>,
     pub listener_sockets: u64,
+    pub idle_inbound_capacity: u64,
     pub dynamic_fd_budget: u64,
     pub pipe_pair_capacity: u64,
     pub warm_socket_capacity: u64,
@@ -181,6 +182,7 @@ pub struct Sample {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Descriptors {
+    pub idle_inbound_sockets: u64,
     pub total: u64,
     pub fixed: u64,
     pub listener_sockets: u64,
@@ -197,7 +199,12 @@ pub struct Descriptors {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Owners {
-    pub active_connections: u64,
+    pub handshakes: u64,
+    pub fallbacks: u64,
+    pub crypto_operations: u64,
+    pub dns_lookups: u64,
+    pub pre_auth_idle_connections: u64,
+    pub admitted_connections: u64,
     pub tracked_connection_tasks: u64,
     pub retired_generations: u64,
     pub replay_entries: u64,

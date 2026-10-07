@@ -118,23 +118,66 @@ fn emit_ownership(runtime: &RuntimeStore) {
     #[cfg(target_os = "linux")]
     let pipes = runtime.tcp_relay.pipe_pool_stats();
     #[cfg(target_os = "linux")]
-    let (retained_pipe_pairs, retained_pipe_bytes) = pipes.map_or((Some(0), Some(0)), |pipes| {
-        (Some(pipes.retained_pairs), pipes.pending_bytes)
-    });
+    let (retained_pipe_pairs, retained_pipe_bytes, pipe_pair_capacity) =
+        pipes.map_or((Some(0), Some(0), Some(0)), |pipes| {
+            (
+                Some(pipes.retained_pairs),
+                pipes.pending_bytes,
+                Some(pipes.retained_capacity),
+            )
+        });
     #[cfg(not(target_os = "linux"))]
-    let (retained_pipe_pairs, retained_pipe_bytes) = (None, None);
+    let (retained_pipe_pairs, retained_pipe_bytes, pipe_pair_capacity) = (None, None, None);
+    let governor = &runtime.policy.governor;
+    let admission = &runtime.authorities.governor;
+    let mut replay_capacity = u64::from(governor.max_replay_entries);
+    let mut replay_expiry_ms = governor
+        .replay_retention_ms
+        .max(governor.handshake_timeout_ms);
+    for (capacity, retention) in runtime
+        .listener_replays
+        .handoff
+        .values()
+        .map(|cache| cache.retention_policy())
+        .chain(
+            runtime
+                .listener_replays
+                .nxr
+                .values()
+                .map(|cache| cache.retention_policy()),
+        )
+    {
+        replay_capacity = replay_capacity.saturating_add(capacity as u64);
+        replay_expiry_ms =
+            replay_expiry_ms.max(u64::try_from(retention.as_millis()).unwrap_or(u64::MAX));
+    }
     emit(
         &snapshot.logger,
         &LogEvent::ResourceOwnership {
+            handshakes: admission.in_flight(crate::runtime::AdmissionKind::Handshake),
+            fallbacks: admission.in_flight(crate::runtime::AdmissionKind::Fallback),
+            crypto_operations: admission.in_flight(crate::runtime::AdmissionKind::CryptoOperation),
+            dns_lookups: admission.in_flight(crate::runtime::AdmissionKind::DnsLookup),
+            pre_auth_idle_connections: admission
+                .in_flight(crate::runtime::AdmissionKind::PreAuthIdle),
+            pre_auth_idle_capacity: u64::from(governor.max_pre_auth_idle_connections),
+            fd_capacity: runtime.fd_budget.capacity(),
+            pipe_pair_capacity,
+            warm_socket_capacity: runtime.authorities.warm_pools.capacity(),
+            replay_capacity,
+            replay_expiry_ms,
+            retirement_deadline_ms: governor
+                .fallback_timeout_ms
+                .max(governor.handshake_timeout_ms)
+                .max(governor.connect_timeout_ms)
+                .max(governor.client_hello_timeout_ms)
+                .max(
+                    u64::try_from(crate::io_activity::WRITE_STALL_TIMEOUT.as_millis())
+                        .unwrap_or(u64::MAX),
+                ),
             generation: snapshot.generation,
-            active_connections: runtime
-                .authorities
-                .governor
-                .in_flight(crate::runtime::AdmissionKind::Connection),
-            replay_entries: runtime
-                .authorities
-                .governor
-                .in_flight(crate::runtime::AdmissionKind::ReplayEntry)
+            admitted_connections: admission.in_flight(crate::runtime::AdmissionKind::Connection),
+            replay_entries: admission.in_flight(crate::runtime::AdmissionKind::ReplayEntry)
                 + runtime
                     .listener_replays
                     .handoff

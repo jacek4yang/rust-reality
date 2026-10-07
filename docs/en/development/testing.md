@@ -94,7 +94,11 @@ executable identity reads are attempted after intermediate failures. Each
 normalized sample references its raw observation; offline verification checks
 fresh ownership records, the full listener task set (including completed or
 cancelled work), replay occupancy, generation retirement, permit counts and the
-startup descriptor census. It does not claim an allocator-byte census.
+startup descriptor census. Accepted zero-byte sockets count against pre-auth
+permits and the startup ceiling. Admission counters also expose outstanding
+handshake, fallback, cryptographic and DNS work at recovery. Declared capacities
+and deadlines must match the actual running authorities. These observations do
+not claim an allocator-byte census.
 
 `cargo dev bench stability-fixture --fixture PATH --output FRESH_DIRECTORY`
 boots the preserved, owned three-guest KVM fixture, checks guest CPU/swap and

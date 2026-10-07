@@ -36,11 +36,16 @@ Predetermined cycle indices, concurrency, observation offsets, tolerance and
 deadlines prevent omitted cycles or retrospective window selection.
 
 Reconcile the external descriptor census with actual startup policy: fixed
-non-socket descriptors, listener sockets, warm sockets, active session sockets,
+non-socket descriptors, listener sockets, warm sockets, bounded zero-byte
+pre-auth inbound sockets, active session sockets,
 active relay descriptors and retained pipe pairs have separate owners. Count
 reserved permits separately from descriptors already opened: admission reserves
 before creating a descriptor. Retained pipes must be empty, within configured
-capacity, and backed by held permits. Unexplained descriptors fail. The existing
+capacity, and backed by held permits. Pre-auth idle sockets must match existing
+idle admission permits and their startup ceiling; the inclusive connection and
+listener task counts may retain exactly those idle owners after recovery, never
+additional completed or cancelled tasks. Declared capacities and deadlines must
+match the running resource authorities' observations. Unexplained descriptors fail. The existing
 LINE recovery and role-specific peak FD ceilings remain additional bounds.
 
 Memory acceptance combines deterministic owner/lifetime regressions with

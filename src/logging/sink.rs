@@ -96,10 +96,34 @@ pub enum LogEvent {
     },
     /// Off-path debug snapshot of current process resource ownership.
     ResourceOwnership {
+        /// In-flight authentication handshakes.
+        handshakes: u64,
+        /// In-flight cover fallback operations.
+        fallbacks: u64,
+        /// In-flight cryptographic operations.
+        crypto_operations: u64,
+        /// DNS permits held until the underlying lookup finishes.
+        dns_lookups: u64,
+        /// Accepted zero-byte sockets still owning pre-auth-idle permits.
+        pre_auth_idle_connections: u64,
+        /// Immutable capacity for these unauthenticated idle sockets.
+        pre_auth_idle_capacity: u64,
+        /// Immutable descriptor admission capacity.
+        fd_capacity: u64,
+        /// Immutable idle pipe retention bound, when supported.
+        pipe_pair_capacity: Option<u64>,
+        /// Process-wide ready plus connecting warm-socket capacity.
+        warm_socket_capacity: u64,
+        /// Total immutable replay capacity across the process's caches.
+        replay_capacity: u64,
+        /// Longest configured replay retention interval.
+        replay_expiry_ms: u64,
+        /// Longest existing connection recovery deadline.
+        retirement_deadline_ms: u64,
         /// Current immutable generation.
         generation: u64,
-        /// Live admitted connections.
-        active_connections: u64,
+        /// All live admitted connections, including bounded pre-auth idle sockets.
+        admitted_connections: u64,
         /// Occupied REALITY, Handoff and NXR replay entries after expiry maintenance.
         replay_entries: u64,
         /// Held process descriptor permits, including pre-creation reservations.

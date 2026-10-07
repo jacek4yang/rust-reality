@@ -878,6 +878,8 @@ struct PipePoolStats {
 #[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PipePoolSnapshot {
+    /// Immutable maximum number of idle pairs retained by this pool.
+    pub retained_capacity: u64,
     /// Empty pipe pairs currently owned by the idle pool.
     pub retained_pairs: u64,
     /// Sum of queued bytes in retained pipes; `None` means inspection failed.
@@ -961,6 +963,7 @@ impl PipePool {
             total.checked_add(rr_linux::socket::pending_input(pipe.pair.read_fd()).ok()? as u64)
         });
         PipePoolSnapshot {
+            retained_capacity: self.keep as u64,
             retained_pairs: free.len() as u64,
             pending_bytes,
             hits: self.stats.hits.load(Ordering::Relaxed),
