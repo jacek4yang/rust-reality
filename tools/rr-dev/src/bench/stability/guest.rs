@@ -231,6 +231,10 @@ impl Session<'_> {
     }
 
     fn initialize(&mut self) -> Result<(), String> {
+        save(
+            &self.output.join("environment-before.json"),
+            &collect::guest_environment()?,
+        )?;
         let harness = self.root.join("rr-dev");
         if collect::file_digest(&std::env::current_exe().map_err(|error| error.to_string())?)?
             != self.plan.evaluator_sha256
@@ -553,6 +557,11 @@ fn run_in(plan: &Plan, root: PathBuf) -> Result<(), String> {
     };
     let primary = session.execute();
     let mut finalization = Vec::new();
+    if let Err(error) = collect::guest_environment()
+        .and_then(|environment| save(&session.output.join("environment-after.json"), &environment))
+    {
+        finalization.push(error);
+    }
     if let Err(error) = session.capture("terminal") {
         finalization.push(error);
     }
@@ -570,7 +579,7 @@ fn run_in(plan: &Plan, root: PathBuf) -> Result<(), String> {
     if let Err(error) = save(
         &session.output.join("terminal-status.json"),
         &serde_json::json!({
-            "role":plan.role.name(),"boot_id":plan.boot_id,"started_unix_ms":plan.started_unix_ms,
+            "role":plan.role.name(),"boot_id":plan.boot_id,"started_unix_ms":plan.started_unix_ms,"completed_unix_ms":collect::unix_ms()?,
             "candidate_sha256":plan.candidate_sha256,"evaluator_sha256":plan.evaluator_sha256,
             "primary_error":primary.as_ref().err(),"finalization_errors":finalization,
         }),

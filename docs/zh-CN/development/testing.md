@@ -114,6 +114,9 @@ Linux 原始状态、比例内存、描述符目标、限制及完整调试日�
 LANDING 客体同样适用。
 离线评估要求完整的方向验证检查点，包括最后一次传输后的所有权、内存及进程身份
 恢复检查。原始 `/proc` 字段必须具有内核规定的单位及格式，仅有数字前缀无效。
+VM 启动及终态回执必须与冻结身份匹配。前后内核观察绑定 CPU、内存、交换空间、
+启动身份及 OOM 计数；完整产品日志绑定 LANDING 两次进程生命周期，并记录协议
+拒绝或 panic。缺失结果或替换日志判为 INVALID。
 
 `cargo dev bench stability-run --fixture PATH --output FRESH_DIRECTORY
 --candidate FROZEN_BINARY --xray XRAY_BINARY --openssl OPENSSL_BINARY` 执行四个

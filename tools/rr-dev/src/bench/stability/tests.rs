@@ -93,7 +93,7 @@ fn fixture() -> Value {
     let cells: Vec<_> = contract.cells.iter().map(|name| {
         let roles: Vec<_> = contract.roles.iter().map(|role| json!({
             "name":role,"process":process(role),"vcpus":if name.ends_with("/constrained") {1} else {2},
-            "memory_limit_bytes":1_073_741_824_u64,"swap_limit_bytes":0,"startup":artifact(),
+            "memory_limit_bytes":1_073_741_824_u64,"swap_limit_bytes":0,"startup":artifact(),"environment":[artifact(),artifact()],"terminal_status":artifact(),"server_logs":[artifact()],
             "policy":{
                 "runtime_unix_sockets":0,"fixed_fds":7,"fixed_descriptor_targets":["/dev/null","/fixture/server.log","/fixture/server.log","anon_inode:[eventpoll]","anon_inode:[eventfd]","anon_inode:[eventpoll]","anon_inode:[eventfd]"],"listener_sockets":1,"idle_inbound_capacity":16,"dynamic_fd_budget":4096,"pipe_pair_capacity":122,
                 "warm_socket_capacity":11,"active_socket_capacity":128,"relay_fd_capacity":128,
@@ -188,6 +188,147 @@ fn verdict(value: &Value) -> Verdict {
 #[test]
 fn bounded_empty_permit_backed_retention_above_historical_fd_proxy_passes() {
     assert_eq!(verdict(&fixture()), Verdict::Pass);
+}
+
+#[test]
+fn execution_receipts_reject_unobserved_kernels_profiles_and_terminal_failures() {
+    use super::execution;
+    let evidence: schema::Evidence = serde_json::from_value(fixture()).unwrap();
+    let cell = evidence.cells.last().unwrap();
+    let role = &cell.roles[0];
+    let environment = json!({"observed_unix_ms":9000,"boot_id":format!("{}\n", role.process.boot_id),
+        "online_cpus":"0\n","meminfo":"MemTotal: 984564 kB\nSwapTotal: 0 kB\n",
+        "swaps":"Filename Type Size Used Priority\n","vmstat":"oom_kill 0\n","kernel":"6.8.0\n","errors":[]});
+    let parse = |value: &Value| execution::parse_environment(&serde_json::to_vec(value).unwrap());
+    let before = parse(&environment).unwrap();
+    let mut after_value = environment.clone();
+    after_value["observed_unix_ms"] = json!(5_000_000);
+    let after = parse(&after_value).unwrap();
+    assert_eq!(
+        execution::environment_pair(&before, &after, role, cell).unwrap(),
+        0
+    );
+    for (key, value) in [
+        ("vmstat", json!("oom_kill 0 extra\n")),
+        ("vmstat", json!("pgfault 0\n")),
+        ("vmstat", json!("oom_kill 0\noom_kill 0\n")),
+        ("meminfo", json!("MemTotal: 984564 MB\nSwapTotal: 0 kB\n")),
+        ("meminfo", json!("MemTotal: 984564 kB\nSwapTotal: 1 kB\n")),
+        (
+            "swaps",
+            json!("Filename Type Size Used Priority\n/swap file 1024 0 -2\n"),
+        ),
+        ("errors", json!(["permission denied"])),
+        ("online_cpus", json!("0-3\n")),
+    ] {
+        let mut invalid = after_value.clone();
+        invalid[key] = value;
+        assert!(parse(&invalid).is_err(), "{key}");
+    }
+    after_value["vmstat"] = json!("oom_kill 1\n");
+    assert_eq!(
+        execution::environment_pair(&before, &parse(&after_value).unwrap(), role, cell).unwrap(),
+        1
+    );
+    after_value["boot_id"] = json!("another-boot\n");
+    assert!(
+        execution::environment_pair(&before, &parse(&after_value).unwrap(), role, cell).is_err()
+    );
+
+    let terminal = json!({"role":role.name,"boot_id":role.process.boot_id,"started_unix_ms":cell.started_unix_ms,
+        "completed_unix_ms":5_000_000,"candidate_sha256":evidence.identity.candidate.sha256,
+        "evaluator_sha256":evidence.identity.evaluator.sha256,"primary_error":null,"finalization_errors":[]});
+    let verify = |value: &Value| {
+        execution::terminal(
+            &serde_json::to_vec(value).unwrap(),
+            role,
+            cell,
+            &evidence.identity,
+            5_000_000,
+        )
+    };
+    verify(&terminal).unwrap();
+    for (key, value) in [
+        ("completed_unix_ms", json!(4_999_999)),
+        ("primary_error", json!("unexpected exit")),
+        ("evaluator_sha256", json!("changed")),
+        ("finalization_errors", json!(["missing final identity"])),
+    ] {
+        let mut invalid = terminal.clone();
+        invalid[key] = value;
+        assert!(verify(&invalid).is_err());
+    }
+    let mut invalid = terminal;
+    invalid.as_object_mut().unwrap().remove("primary_error");
+    assert!(verify(&invalid).is_err());
+}
+
+#[test]
+fn product_logs_cannot_hide_rejections_panics_or_truncated_records() {
+    let valid = "{\"event\":\"server_starting\",\"level\":\"info\",\"timestampUnixMs\":1}\n";
+    super::execution::product_log(valid.as_bytes()).unwrap();
+    for invalid in [
+        String::new(),
+        valid.trim_end().to_owned(),
+        valid.replace("\"event\":", "\"event\":\"connection_rejected\",\"event\":"),
+        valid.replace("\"timestampUnixMs\":1", "\"timestampUnixMs\":-1"),
+    ] {
+        assert!(super::execution::product_log(invalid.as_bytes()).is_err());
+    }
+    let panic = format!("{valid}thread 'main' panicked at test\n");
+    assert_eq!(
+        super::execution::product_log(panic.as_bytes())
+            .unwrap()
+            .panics,
+        1
+    );
+    for name in [
+        "connection_rejected",
+        "configuration_rejected",
+        "admission_limited",
+    ] {
+        assert_eq!(
+            super::execution::product_log(valid.replace("server_starting", name).as_bytes())
+                .unwrap()
+                .rejections,
+            1
+        );
+    }
+}
+
+#[test]
+fn startup_and_cell_terminal_receipts_require_explicit_complete_outcomes() {
+    let evidence: schema::Evidence = serde_json::from_value(fixture()).unwrap();
+    let role = &evidence.cells[0].roles[0];
+    let startup = json!({"label":"server","pid":role.process.pid,
+        "start_ticks":role.process.start_ticks.to_string(),"image_sha256":role.process.executable_sha256,
+        "image_error":null,"readiness_error":null});
+    let verify =
+        |value: &Value| super::execution::startup(&serde_json::to_vec(value).unwrap(), role);
+    verify(&startup).unwrap();
+    for (field, value) in [
+        ("pid", json!(999)),
+        ("start_ticks", json!("+100")),
+        ("image_error", json!("missing executable")),
+        ("readiness_error", json!("timeout")),
+    ] {
+        let mut invalid = startup.clone();
+        invalid[field] = value;
+        assert!(verify(&invalid).is_err());
+    }
+    let mut invalid = startup;
+    invalid.as_object_mut().unwrap().remove("image_error");
+    assert!(verify(&invalid).is_err());
+    assert!(
+        serde_json::from_str::<super::execution::CellTerminal>(r#"{"finalization_errors":[]}"#)
+            .is_err()
+    );
+    assert!(
+        serde_json::from_str::<super::execution::CellTerminal>(
+            r#"{"primary_error":null,"finalization_errors":[]}"#
+        )
+        .is_ok()
+    );
 }
 
 #[test]

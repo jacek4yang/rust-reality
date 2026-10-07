@@ -153,6 +153,10 @@ contract before qualification, including on constrained LANDING guests.
 Offline evaluation requires every integrity checkpoint, including recovered owner,
 memory and process identity checks after the final transfer. Raw `/proc` fields
 must have their exact kernel units and shape; numeric prefixes alone are invalid.
+VM startup and terminal receipts are checked against the frozen identities.
+Before/after kernel observations bind CPU, memory, swap, boot and OOM counters;
+complete product logs bind both LANDING process lifetimes and expose protocol
+rejections or panics. Missing outcomes and substituted logs are INVALID.
 
 `cargo dev bench stability-run --fixture PATH --output FRESH_DIRECTORY
 --candidate FROZEN_BINARY --xray XRAY_BINARY --openssl OPENSSL_BINARY` drives

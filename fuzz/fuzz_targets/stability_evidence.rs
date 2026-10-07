@@ -4,6 +4,8 @@
 // tooling control plane into the production library or fuzz target graph.
 #[path = "../../tools/rr-dev/src/bench/stability/evaluate.rs"]
 mod evaluate;
+#[path = "../../tools/rr-dev/src/bench/stability/execution.rs"]
+mod execution;
 #[path = "../../tools/rr-dev/src/bench/stability/native_evaluate.rs"]
 mod native_evaluate;
 #[path = "../../tools/rr-dev/src/bench/stability/observation.rs"]
@@ -16,6 +18,11 @@ mod transfer;
 mod vm;
 
 libfuzzer_sys::fuzz_target!(|bytes: &[u8]| {
+    let _ = execution::parse_environment(bytes);
+    let _ = execution::product_log(bytes);
+    let _ = serde_json::from_slice::<execution::Startup>(bytes);
+    let _ = serde_json::from_slice::<execution::Terminal>(bytes);
+    let _ = serde_json::from_slice::<execution::CellTerminal>(bytes);
     let _ = transfer::ipv4_socks_reply(bytes);
     let artifact = schema::Artifact {
         path: "raw".to_owned(),

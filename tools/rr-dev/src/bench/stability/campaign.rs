@@ -255,7 +255,7 @@ fn checkpoint(
     })
 }
 
-fn assemble(
+fn assemble_roles(
     root: &Path,
     cell_root: &Path,
     cell: &mut schema::Cell,
@@ -273,6 +273,8 @@ fn assemble(
             super::workload::artifact(root, &path)?,
         )?;
         let ordinary_landing = name == "landing" && !constrained;
+        let artifact =
+            |file: &str| super::workload::artifact(root, &cell_root.join(name).join(file));
         cell.roles.push(schema::Role {
             name: name.clone(),
             process: sample.process,
@@ -288,8 +290,32 @@ fn assemble(
                 root,
                 &cell_root.join(name).join("startup-server.json"),
             )?,
+            environment: [
+                artifact("environment-before.json")?,
+                artifact("environment-after.json")?,
+            ],
+            terminal_status: artifact("terminal-status.json")?,
+            server_logs: if name == "landing" {
+                vec![
+                    artifact("server-before-restart.log")?,
+                    artifact("server.log")?,
+                ]
+            } else {
+                vec![artifact("server.log")?]
+            },
         });
     }
+    Ok(())
+}
+
+fn assemble(
+    root: &Path,
+    cell_root: &Path,
+    cell: &mut schema::Cell,
+    constrained: bool,
+    contract: &schema::Contract,
+) -> Result<(), String> {
+    assemble_roles(root, cell_root, cell, constrained, contract)?;
     for index in 0..cell.cycles.len() {
         let mut checkpoints = Vec::new();
         for offset in &contract.checkpoint_offsets_ms {
@@ -345,6 +371,22 @@ fn assemble(
             &format!("integrity-{offset}"),
             offset,
         )?);
+    }
+    for role in &cell.roles {
+        let before = super::execution::parse_environment(
+            &fs::read(root.join(&role.environment[0].path)).map_err(|error| error.to_string())?,
+        )?;
+        let after = super::execution::parse_environment(
+            &fs::read(root.join(&role.environment[1].path)).map_err(|error| error.to_string())?,
+        )?;
+        cell.oom_kills += super::execution::environment_pair(&before, &after, role, cell)?;
+        for log in &role.server_logs {
+            let counts = super::execution::product_log(
+                &fs::read(root.join(&log.path)).map_err(|error| error.to_string())?,
+            )?;
+            cell.panics += counts.panics;
+            cell.unexpected_rejections += counts.rejections;
+        }
     }
     cell.final_processes = checkpoint(root, cell_root, cell, "terminal", 0)?
         .samples

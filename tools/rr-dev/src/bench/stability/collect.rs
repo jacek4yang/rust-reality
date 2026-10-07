@@ -47,6 +47,26 @@ fn read(path: &Path, errors: &mut Vec<String>) -> Option<String> {
     )
 }
 
+/// Retain kernel-wide counters and the actual guest profile before and after work.
+///
+/// # Errors
+/// Only a timestamp failure prevents a receipt; individual read failures are retained.
+pub fn guest_environment() -> Result<super::execution::Environment, String> {
+    let observed_unix_ms = unix_ms()?;
+    let mut errors = Vec::new();
+    let mut field = |path| read(Path::new(path), &mut errors);
+    Ok(super::execution::Environment {
+        observed_unix_ms,
+        boot_id: field("/proc/sys/kernel/random/boot_id"),
+        online_cpus: field("/sys/devices/system/cpu/online"),
+        meminfo: field("/proc/meminfo"),
+        swaps: field("/proc/swaps"),
+        vmstat: field("/proc/vmstat"),
+        kernel: field("/proc/sys/kernel/osrelease"),
+        errors,
+    })
+}
+
 /// Hash a retained file or running executable with the same coreutils primitive
 /// used by release tooling. Sampling must not depend on rr-dev's debug/release
 /// code-generation speed; the entire observation still has its fixed deadline.

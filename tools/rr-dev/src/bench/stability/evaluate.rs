@@ -254,6 +254,7 @@ fn evaluate_cell(report: &mut Report, evidence: &Evidence, contract: &Contract, 
         .iter()
         .flat_map(|cycle| &cycle.checkpoints)
         .chain(cell.faults.iter().flat_map(|fault| &fault.checkpoints))
+        .chain(&cell.integrity_checkpoints)
         .flat_map(|checkpoint| &checkpoint.samples)
     {
         report.require(

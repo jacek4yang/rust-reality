@@ -3,6 +3,7 @@
 pub mod campaign;
 pub mod collect;
 pub mod evaluate;
+pub mod execution;
 pub mod fixture;
 pub mod guest;
 pub mod native;
@@ -55,6 +56,9 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
         serde_json::from_str(schema::CONTRACT).expect("compiled stability contract");
     let mut observation_hashes = std::collections::BTreeSet::new();
     for cell in &evidence.cells {
+        if let Err(error) = verify_cell_execution(root, cell, &evidence.identity, &contract) {
+            report.reject(Verdict::Invalid, &cell.name, &error);
+        }
         verify_cell_transfers(root, cell, &mut report);
         for (started_ms, checkpoint) in cell
             .cycles
@@ -115,6 +119,109 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
         );
     }
     Ok(report)
+}
+
+fn verify_cell_execution(
+    root: &Path,
+    cell: &schema::Cell,
+    identity: &schema::Identity,
+    contract: &schema::Contract,
+) -> Result<(), String> {
+    let terminal: execution::CellTerminal =
+        serde_json::from_slice(&read_artifact(root, &cell.terminal)?)
+            .map_err(|error| error.to_string())?;
+    if terminal.primary_error.is_some()
+        || !terminal.finalization_errors.is_empty()
+        || !cell.completed
+    {
+        return Err("cell execution or finalization failed".to_owned());
+    }
+    let completed_after = cell
+        .started_unix_ms
+        .checked_add(contract.integrity_start())
+        .and_then(|start| start.checked_add(contract.integrity_offsets()[3]))
+        .ok_or("terminal schedule overflow")?;
+    let mut oom_kills = 0_u64;
+    let mut panics = 0_u64;
+    let mut rejections = 0_u64;
+    for role in &cell.roles {
+        execution::startup(&read_artifact(root, &role.startup)?, role)?;
+        let before = execution::parse_environment(&read_artifact(root, &role.environment[0])?)?;
+        let after = execution::parse_environment(&read_artifact(root, &role.environment[1])?)?;
+        if after.observed_unix_ms < completed_after {
+            return Err("terminal kernel census preceded integrity recovery".to_owned());
+        }
+        oom_kills = oom_kills
+            .checked_add(execution::environment_pair(&before, &after, role, cell)?)
+            .ok_or("OOM count overflow")?;
+        execution::terminal(
+            &read_artifact(root, &role.terminal_status)?,
+            role,
+            cell,
+            identity,
+            after.observed_unix_ms,
+        )?;
+        if role.server_logs.len() != if role.name == "landing" { 2 } else { 1 } {
+            return Err("incomplete product process-lifetime logs".to_owned());
+        }
+        let mut log_hashes = std::collections::BTreeSet::new();
+        for log in &role.server_logs {
+            if !log_hashes.insert(&log.sha256) {
+                return Err("product log reused across process lifetimes".to_owned());
+            }
+            let counts = execution::product_log(&read_artifact(root, log)?)?;
+            panics += counts.panics;
+            rejections += counts.rejections;
+        }
+        let baseline = cell
+            .cycles
+            .first()
+            .and_then(|cycle| cycle.checkpoints.first())
+            .and_then(|checkpoint| {
+                checkpoint
+                    .samples
+                    .iter()
+                    .find(|sample| sample.role == role.name)
+            })
+            .ok_or("missing startup ownership observation")?;
+        let raw = schema::parse_observation(&read_artifact(root, &baseline.observation)?)?;
+        if observation::startup_policy(&raw, 1)? != role.policy {
+            return Err("declared startup resource policy was substituted".to_owned());
+        }
+        let recovered = cell
+            .integrity_checkpoints
+            .last()
+            .and_then(|checkpoint| {
+                checkpoint
+                    .samples
+                    .iter()
+                    .find(|sample| sample.role == role.name)
+            })
+            .ok_or("missing terminal recovery observation")?;
+        let final_raw = schema::parse_observation(&read_artifact(root, &recovered.observation)?)?;
+        for (observation, log) in [
+            (&raw, role.server_logs.first()),
+            (&final_raw, role.server_logs.last()),
+        ] {
+            let log = read_artifact(root, log.ok_or("missing product log")?)?;
+            if !log.starts_with(
+                observation
+                    .ownership_log
+                    .as_ref()
+                    .ok_or("missing sampled log")?
+                    .as_bytes(),
+            ) {
+                return Err("product log differs from its sampled process lifetime".to_owned());
+            }
+        }
+    }
+    if oom_kills != cell.oom_kills
+        || panics != cell.panics
+        || rejections != cell.unexpected_rejections
+    {
+        return Err("kernel or product failures were misreported".to_owned());
+    }
+    Ok(())
 }
 
 fn verify_cell_transfers(root: &Path, cell: &schema::Cell, report: &mut Report) {

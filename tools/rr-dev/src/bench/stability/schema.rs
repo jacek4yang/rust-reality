@@ -164,6 +164,9 @@ pub struct Role {
     pub swap_limit_bytes: u64,
     pub policy: Policy,
     pub startup: Artifact,
+    pub environment: [Artifact; 2],
+    pub terminal_status: Artifact,
+    pub server_logs: Vec<Artifact>,
 }
 
 /// Capacities derived from actual startup policy, never fitted to observations.
