@@ -85,3 +85,13 @@ pipe observation inspects retained pipe bytes and reports a missing value if
 inspection fails; it never substitutes zero for failure. These observations are
 not an allocator census. Replay expiry reclamation runs on the maintenance
 cadence in both resource modes; authentication deadlines remain unchanged.
+
+`cargo dev bench stability-observe --pid PID --log PATH` collects raw Linux
+status, proportional memory, descriptor targets, limits and the complete debug
+log inside the owned fixture. It never signals the process. Read failures and
+closed-during-read descriptors remain explicit, and both final process and
+executable identity reads are attempted after intermediate failures. Each
+normalized sample references its raw observation; offline verification checks
+fresh ownership records, the full listener task set (including completed or
+cancelled work), replay occupancy, generation retirement, permit counts and the
+startup descriptor census. It does not claim an allocator-byte census.

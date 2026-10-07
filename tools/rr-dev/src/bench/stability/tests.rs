@@ -4,6 +4,7 @@ use super::{
 };
 use crate::{bench::workspace::Workspace, hash};
 use serde_json::{Value, json};
+use std::fmt::Write as _;
 
 fn artifact() -> Value {
     json!({"path":"synthetic-object", "sha256":"a".repeat(64)})
@@ -31,7 +32,7 @@ fn fixture() -> Value {
             "name":role,"process":process(role),"vcpus":if name.ends_with("/constrained") {1} else {2},
             "memory_limit_bytes":1_073_741_824_u64,"swap_limit_bytes":0,"startup":artifact(),
             "policy":{
-                "fixed_fds":7,"listener_sockets":1,"dynamic_fd_budget":4096,"pipe_pair_capacity":122,
+                "fixed_fds":7,"fixed_descriptor_targets":["/dev/null","/fixture/server.log","/fixture/server.log","anon_inode:[eventpoll]","anon_inode:[eventfd]","anon_inode:[eventpoll]","anon_inode:[eventfd]"],"listener_sockets":1,"dynamic_fd_budget":4096,"pipe_pair_capacity":122,
                 "warm_socket_capacity":11,"active_socket_capacity":128,"relay_fd_capacity":128,
                 "soft_fd_limit":8192,"replay_capacity":65536,"replay_expiry_ms":120_000,"retirement_deadline_ms":30000
             }
@@ -43,15 +44,15 @@ fn fixture() -> Value {
             }).collect();
             let checkpoints: Vec<_> = contract.checkpoint_offsets_ms.iter().map(|offset| {
                 let samples: Vec<_> = contract.roles.iter().map(|role| json!({
-                    "role":role,"process":process(role),"rss_kib":16384,"pss_kib":12000,"anonymous_kib":10000,"threads":4,
+                    "observation":artifact(),"role":role,"process":process(role),"rss_kib":16384,"pss_kib":12000,"anonymous_kib":10000,"threads":4,
                     "descriptors":{
                         "total":263,"fixed":7,"listener_sockets":1,"warm_sockets":11,"active_sockets":0,
                         "active_relay_fds":0,"retained_pipe_pairs":122,"dirty_retained_pipe_bytes":0,
                         "held_dynamic_permits":256,"reserved_dynamic_permits":1,"unexplained":0
                     },
                     "owners":{
-                        "active_connections":0,"completed_connections":0,"retired_generations":0,
-                        "cancelled_operations":0,"replay_entries":0,"expired_replay_entries":0,"unattributed_retained_bytes":0
+                        "active_connections":0,"tracked_connection_tasks":0,"retired_generations":0,
+                        "replay_entries":0
                     }
                 })).collect();
                 json!({"offset_ms":offset,"observed_ms":started+offset,"samples":samples})
@@ -79,7 +80,7 @@ fn fixture() -> Value {
                 }
             }
         }
-        json!({"name":name,"started":true,"completed":true,"roles":roles,"cycles":cycles,"faults":faults,
+        json!({"name":name,"started_unix_ms":10000,"started":true,"completed":true,"roles":roles,"cycles":cycles,"faults":faults,
             "final_processes":bindings,"integrity":integrity,"unexpected_exits":0,"panics":0,"oom_kills":0,"unexpected_rejections":0,"terminal":artifact()})
     }).collect();
     let checks: Vec<_> = contract.required_checks.iter().map(|name| json!({
@@ -115,11 +116,8 @@ fn adversarial_resource_mutations_fail() {
         ("descriptors/held_dynamic_permits", 0),
         ("descriptors/active_sockets", 1),
         ("owners/active_connections", 1),
-        ("owners/completed_connections", 1),
+        ("owners/tracked_connection_tasks", 1),
         ("owners/retired_generations", 1),
-        ("owners/cancelled_operations", 1),
-        ("owners/expired_replay_entries", 1),
-        ("owners/unattributed_retained_bytes", 1),
         ("rss_kib", 100_000),
     ] {
         let mut changed = valid.clone();
@@ -219,4 +217,101 @@ fn artifact_verification_rejects_missing_changed_and_escaping_objects() {
         artifact.path = "link".to_owned();
         assert!(verify_artifact(workspace.path(), &artifact).is_err());
     }
+}
+
+fn raw_observation(sample: &schema::Sample, policy: &schema::Policy) -> Value {
+    let mut descriptors = serde_json::Map::new();
+    for target in &policy.fixed_descriptor_targets {
+        descriptors.insert(descriptors.len().to_string(), json!(target));
+    }
+    for index in 0..12 {
+        descriptors.insert(
+            descriptors.len().to_string(),
+            json!(format!("socket:[{index}]")),
+        );
+    }
+    for index in 0..244 {
+        descriptors.insert(
+            descriptors.len().to_string(),
+            json!(format!("pipe:[{}]", index / 2)),
+        );
+    }
+    let log = [
+        json!({"timestampUnixMs":1,"level":"info","event":"configuration_published","generation":0}),
+        json!({"timestampUnixMs":9000,"level":"debug","event":"connection_task_ownership","address":"127.0.0.1:9444","tracked_tasks":0}),
+        json!({"timestampUnixMs":9000,"level":"debug","event":"resource_ownership","generation":0,"active_connections":0,"replay_entries":0,"fd_units_in_use":256,"retained_pipe_pairs":122,"retained_pipe_bytes":0,"warm_ready":11,"warm_connecting":0}),
+    ].into_iter().fold(String::new(), |mut text, value| { writeln!(&mut text, "{value}").unwrap(); text });
+    json!({
+        "pid":sample.process.pid,"started_unix_ms":10000,"completed_unix_ms":10050,
+        "initial_start_ticks":"100","final_start_ticks":"100","boot_id":sample.process.boot_id,
+        "initial_executable_sha256":sample.process.executable_sha256,"final_executable_sha256":sample.process.executable_sha256,
+        "status":"VmRSS: 16384 kB\nThreads: 4\n","smaps_rollup":"Pss: 12000 kB\nAnonymous: 10000 kB\n",
+        "limits":"Max open files            8192                 8192                 files\n",
+        "descriptors":descriptors,"closed_during_read":[],"ownership_log":log,"errors":[]
+    })
+}
+
+#[test]
+fn normalized_ownership_requires_fresh_complete_raw_observations() {
+    let evidence = schema::parse(&serde_json::to_vec(&fixture()).unwrap()).unwrap();
+    let sample = &evidence.cells[0].cycles[0].checkpoints[0].samples[0];
+    let policy = &evidence.cells[0].roles[0].policy;
+    let raw = raw_observation(sample, policy);
+    let verify = |value: &Value| {
+        let raw = schema::parse_observation(&serde_json::to_vec(value).unwrap()).unwrap();
+        super::observation::verify(&raw, sample, policy)
+    };
+    verify(&raw).unwrap();
+    for (pointer, value) in [
+        ("/final_start_ticks", json!("101")),
+        ("/final_executable_sha256", json!("d".repeat(64))),
+        ("/closed_during_read", json!([123])),
+        (
+            "/status",
+            json!("VmRSS: 16384 kB\nVmRSS: 16384 kB\nThreads: 4\n"),
+        ),
+        ("/smaps_rollup", Value::Null),
+        ("/completed_unix_ms", json!(12001)),
+        ("/ownership_log", Value::Null),
+        ("/descriptors/20", json!("/unexpected-open-file")),
+        ("/errors", json!(["permission denied"])),
+    ] {
+        let mut changed = raw.clone();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        assert!(verify(&changed).is_err(), "{pointer}");
+    }
+    let log = raw["ownership_log"].as_str().unwrap();
+    for changed_log in [
+        log.replace("\"retained_pipe_bytes\":0", "\"retained_pipe_bytes\":null"),
+        log.replace(
+            "\"tracked_tasks\":0",
+            "\"tracked_tasks\":0,\"tracked_tasks\":1",
+        ),
+        log.replace("\"replay_entries\":0", "\"replay_entries\":1"),
+        log.replace("\"timestampUnixMs\":9000", "\"timestampUnixMs\":1"),
+        log.lines()
+            .filter(|line| !line.contains("connection_task_ownership"))
+            .fold(String::new(), |mut text, line| {
+                writeln!(&mut text, "{line}").unwrap();
+                text
+            }),
+    ] {
+        let mut changed = raw.clone();
+        changed["ownership_log"] = json!(changed_log);
+        assert!(verify(&changed).is_err());
+    }
+}
+
+#[test]
+fn raw_observations_cannot_be_reused_for_another_cycle_or_window() {
+    let evidence = schema::parse(&serde_json::to_vec(&fixture()).unwrap()).unwrap();
+    let sample = &evidence.cells[0].cycles[0].checkpoints[0].samples[0];
+    let policy = &evidence.cells[0].roles[0].policy;
+    let raw =
+        schema::parse_observation(&serde_json::to_vec(&raw_observation(sample, policy)).unwrap())
+            .unwrap();
+    super::observation::verify_checkpoint_time(&raw, 10000, 0, 2000).unwrap();
+    assert!(super::observation::verify_checkpoint_time(&raw, 10000, 183_000, 2000).is_err());
+    assert!(super::observation::verify_checkpoint_time(&raw, 7000, 0, 2000).is_err());
+    assert!(super::observation::verify_checkpoint_time(&raw, u64::MAX, 1, 2000).is_err());
 }

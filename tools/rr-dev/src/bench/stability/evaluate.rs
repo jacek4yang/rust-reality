@@ -176,7 +176,7 @@ pub fn evaluate(evidence: &Evidence, contract_sha256: &str) -> Report {
             continue;
         }
         report.require(
-            cell.completed,
+            cell.completed && cell.started_unix_ms > 0,
             Verdict::Invalid,
             &cell.name,
             "cell did not finalize",
@@ -618,6 +618,7 @@ fn evaluate_owners(
     );
     report.require(
         fd.fixed == policy.fixed_fds
+            && u64::try_from(policy.fixed_descriptor_targets.len()).ok() == Some(policy.fixed_fds)
             && fd.listener_sockets == policy.listener_sockets
             && fd.total <= policy.soft_fd_limit
             && dynamic.and_then(|owned| owned.checked_add(fd.reserved_dynamic_permits))
@@ -639,21 +640,19 @@ fn evaluate_owners(
     );
     let owners = &sample.owners;
     report.require(
-        owners.replay_entries <= policy.replay_capacity && owners.unattributed_retained_bytes == 0,
+        owners.replay_entries <= policy.replay_capacity,
         Verdict::Fail,
         scope,
-        "unbounded or unattributed memory ownership",
+        "replay ownership exceeded its fixed capacity",
     );
     if recovered {
         report.require(
             fd.active_sockets == 0
                 && fd.active_relay_fds == 0
                 && owners.active_connections == 0
-                && owners.completed_connections == 0
+                && owners.tracked_connection_tasks == 0
                 && owners.retired_generations == 0
-                && owners.cancelled_operations == 0
-                && owners.replay_entries == 0
-                && owners.expired_replay_entries == 0,
+                && owners.replay_entries == 0,
             Verdict::Fail,
             scope,
             "transient ownership survived its recovery deadline",

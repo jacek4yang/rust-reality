@@ -65,3 +65,10 @@ cargo clippy --manifest-path tools/Cargo.toml --workspace --all-targets --all-fe
 `connection_task_ownership` 观察以及 `generation_retired` 事件。管道观察检查
 保留管道的未读字节；检查失败会记录缺失值，不以零代替。这些观察并非分配器普查。
 两种资源模式均在维护周期清理已过期 replay 占用，认证期限不变。
+
+`cargo dev bench stability-observe --pid PID --log PATH` 在受控测试环境中采集
+Linux 原始状态、比例内存、描述符目标、限制及完整调试日志，不向进程发送信号。
+读取失败和采样中关闭的描述符会显式保留；中间读取失败后仍尝试最终进程及可执行
+文件身份检查。每个归一化样本引用其原始观察，离线验证检查新鲜的所有权记录、
+完整监听器任务集（包含已完成或取消的任务）、重放占用、代际退役、许可数量及
+启动描述符清单。该机制不声称测量分配器字节清单。

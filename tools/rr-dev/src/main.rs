@@ -392,6 +392,15 @@ enum DeployPlanOperation {
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)]
 enum BenchCommand {
+    /// Collect a raw, process-bound Linux observation inside an owned fixture.
+    StabilityObserve {
+        /// Exact local PID selected by the fixture controller.
+        #[arg(long)]
+        pid: u32,
+        /// Full debug log of that process.
+        #[arg(long)]
+        log: PathBuf,
+    },
     /// Evaluate a frozen stability evidence bundle offline.
     StabilityEvaluate {
         /// Strict evidence JSON; referenced objects are relative to its directory.
@@ -1524,6 +1533,25 @@ fn resolve_targets(
 #[allow(clippy::too_many_lines)]
 fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
     match command {
+        BenchCommand::StabilityObserve { pid, log } => {
+            match bench::stability::collect::observe(*pid, log) {
+                Ok(observation) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&observation).expect("serializable observation")
+                    );
+                    if observation.errors.is_empty() && observation.closed_during_read.is_empty() {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::FAILURE
+                    }
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         BenchCommand::StabilityEvaluate { evidence } => {
             match bench::stability::evaluate_path(evidence) {
                 Ok(report) => {

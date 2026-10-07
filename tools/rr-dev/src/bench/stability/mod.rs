@@ -1,7 +1,10 @@
 //! Exact-candidate stability qualification and offline evidence verification.
 
+pub mod collect;
 pub mod evaluate;
+pub mod observation;
 pub mod schema;
+pub mod vm;
 
 use std::{
     fs::File,
@@ -29,6 +32,35 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
     for artifact in artifacts(&evidence) {
         if let Err(error) = verify_artifact(root, artifact) {
             report.reject(Verdict::Invalid, "artifact", &error);
+        }
+    }
+    let contract: schema::Contract =
+        serde_json::from_str(schema::CONTRACT).expect("compiled stability contract");
+    for cell in &evidence.cells {
+        for checkpoint in cell.cycles.iter().flat_map(|cycle| &cycle.checkpoints) {
+            for sample in &checkpoint.samples {
+                if let Some(role) = cell.roles.iter().find(|role| role.name == sample.role) {
+                    let verified = verify_artifact(root, &sample.observation).and_then(|()| {
+                        let file = File::open(root.join(&sample.observation.path))
+                            .map_err(|error| error.to_string())?;
+                        let mut bytes = Vec::new();
+                        file.take((schema::MAX_EVIDENCE_BYTES + 1) as u64)
+                            .read_to_end(&mut bytes)
+                            .map_err(|error| error.to_string())?;
+                        let raw = schema::parse_observation(&bytes)?;
+                        observation::verify_checkpoint_time(
+                            &raw,
+                            cell.started_unix_ms,
+                            checkpoint.observed_ms,
+                            contract.checkpoint_tolerance_ms,
+                        )?;
+                        observation::verify(&raw, sample, &role.policy)
+                    });
+                    if let Err(error) = verified {
+                        report.reject(Verdict::Invalid, &cell.name, &error);
+                    }
+                }
+            }
         }
     }
     let evaluator =

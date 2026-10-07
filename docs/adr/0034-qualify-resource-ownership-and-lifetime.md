@@ -49,7 +49,10 @@ retired generations and expired replay entries release their resources within
 existing deadlines; idle expiry reclamation runs on the one-second resource
 maintenance cadence without changing authentication windows. Debug ownership
 observations use that cadence and generation/listener lifecycle boundaries,
-with no allocator census or management endpoint. Saturated-container reuse tests must demonstrate stable
+with no allocator census or management endpoint. Raw observations bind each
+normalized sample; fresh full listener task sets account for completed and
+cancelled work until reaping. An unobserved allocator-byte count must not appear
+as an asserted zero. Saturated-container reuse tests must demonstrate stable
 retained storage and permit ownership. Persistent pools retain only documented
 bounded capacity. Unattributed cumulative retention blocks qualification;
 allocator-free bytes are not a substitute for owner evidence. Preserve absolute

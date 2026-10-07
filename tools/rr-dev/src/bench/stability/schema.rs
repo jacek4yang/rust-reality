@@ -5,6 +5,7 @@
 #![allow(missing_docs)]
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 pub const CONTRACT: &str = include_str!("../../../../../benchmarks/contracts/stability.json");
 pub const MAX_EVIDENCE_BYTES: usize = 64 * 1024 * 1024;
@@ -83,6 +84,7 @@ pub struct Check {
 #[serde(deny_unknown_fields)]
 pub struct Cell {
     pub name: String,
+    pub started_unix_ms: u64,
     pub started: bool,
     pub completed: bool,
     pub roles: Vec<Role>,
@@ -130,6 +132,7 @@ pub struct Role {
 #[serde(deny_unknown_fields)]
 pub struct Policy {
     pub fixed_fds: u64,
+    pub fixed_descriptor_targets: Vec<String>,
     pub listener_sockets: u64,
     pub dynamic_fd_budget: u64,
     pub pipe_pair_capacity: u64,
@@ -163,6 +166,7 @@ pub struct Checkpoint {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Sample {
+    pub observation: Artifact,
     pub role: String,
     pub process: ProcessIdentity,
     pub rss_kib: u64,
@@ -190,16 +194,13 @@ pub struct Descriptors {
     pub unexplained: u64,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Owners {
     pub active_connections: u64,
-    pub completed_connections: u64,
+    pub tracked_connection_tasks: u64,
     pub retired_generations: u64,
-    pub cancelled_operations: u64,
     pub replay_entries: u64,
-    pub expired_replay_entries: u64,
-    pub unattributed_retained_bytes: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -249,4 +250,79 @@ pub fn parse(bytes: &[u8]) -> Result<Evidence, String> {
         return Err("stability evidence exceeds 64 MiB".to_owned());
     }
     serde_json::from_slice(bytes).map_err(|error| format!("invalid stability evidence: {error}"))
+}
+
+/// One attempted observation, including partial evidence on failure.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Observation {
+    /// Requested PID; qualification separately binds its expected identity.
+    pub pid: u32,
+    /// UTC milliseconds before the first read.
+    pub started_unix_ms: u64,
+    /// UTC milliseconds after the final identity attempt.
+    pub completed_unix_ms: u64,
+    /// Start-time identity before inspection.
+    pub initial_start_ticks: Option<String>,
+    /// Start-time identity after inspection.
+    pub final_start_ticks: Option<String>,
+    /// Guest kernel boot identity.
+    pub boot_id: Option<String>,
+    /// Hash of the actual running executable, before inspection.
+    pub initial_executable_sha256: Option<String>,
+    /// Hash of the actual running executable, after inspection.
+    pub final_executable_sha256: Option<String>,
+    /// Unmodified Linux process status.
+    pub status: Option<String>,
+    /// Unmodified proportional/anonymous memory observation.
+    pub smaps_rollup: Option<String>,
+    /// Unmodified process descriptor limits.
+    pub limits: Option<String>,
+    /// Each successfully resolved descriptor, keyed by its actual number.
+    pub descriptors: BTreeMap<u32, String>,
+    /// Descriptor numbers whose target disappeared during inspection.
+    pub closed_during_read: Vec<u32>,
+    /// Full debug log at this checkpoint, not a retrospectively selected tail.
+    pub ownership_log: Option<String>,
+    /// Failed observations. An empty vector does not itself establish PASS.
+    pub errors: Vec<String>,
+}
+
+pub fn parse_observation(bytes: &[u8]) -> Result<Observation, String> {
+    if bytes.len() > MAX_EVIDENCE_BYTES {
+        return Err("stability observation exceeds 64 MiB".to_owned());
+    }
+    serde_json::from_slice(bytes).map_err(|error| format!("invalid stability observation: {error}"))
+}
+
+/// The three-role local KVM fixture supplied for qualification.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VmFixture {
+    pub landing: VmSpec,
+    #[serde(rename = "line-a")]
+    pub line_a: VmSpec,
+    #[serde(rename = "line-b")]
+    pub line_b: VmSpec,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VmSpec {
+    pub command: Vec<String>,
+    #[serde(rename = "sshPort")]
+    pub ssh_port: u16,
+    #[serde(rename = "socksPort")]
+    pub socks_port: u16,
+    pub cpus: u16,
+    #[serde(rename = "ramMiB")]
+    pub ram_mib: u32,
+    pub cores: String,
+}
+
+pub fn parse_vm_fixture(bytes: &[u8]) -> Result<VmFixture, String> {
+    if bytes.len() > 65536 {
+        return Err("VM fixture exceeds 64 KiB".to_owned());
+    }
+    serde_json::from_slice(bytes).map_err(|error| format!("invalid VM fixture: {error}"))
 }
