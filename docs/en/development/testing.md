@@ -75,6 +75,11 @@ finding even when INVALID takes precedence in the aggregate verdict.
 Build the harness with `RUST_REALITY_GIT_COMMIT` set to the candidate's exact
 source commit. Both campaign execution and offline evaluation reject a harness
 whose embedded source differs, even if its contract bytes match.
+Required-check receipts must have a supported semantic verifier; an exit code
+and an opaque file cannot establish PASS. CI/Security receipts are the exact
+`gh run view RUN_ID --json headSha,workflowName,status,conclusion,databaseId,url,event`
+response. The local full gate uses `check --all --output json` and retains every
+stage's stdout/stderr objects; its stage list must match the frozen harness.
 
 The schema and pure evaluator are fuzzed together. Adversarial tests cover
 leaked sockets, dirty/excessive pipes, missing permits, transient retention,

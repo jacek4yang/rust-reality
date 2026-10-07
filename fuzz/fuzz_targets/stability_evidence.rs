@@ -4,6 +4,8 @@
 // tooling control plane into the production library or fuzz target graph.
 #[path = "../../tools/rr-dev/src/bench/stability/action.rs"]
 mod action;
+#[path = "../../tools/rr-dev/src/bench/stability/checks.rs"]
+mod checks;
 #[path = "../../tools/rr-dev/src/bench/stability/evaluate.rs"]
 mod evaluate;
 #[path = "../../tools/rr-dev/src/bench/stability/execution.rs"]
@@ -20,6 +22,8 @@ mod transfer;
 mod vm;
 
 libfuzzer_sys::fuzz_target!(|bytes: &[u8]| {
+    let _ = checks::parse_ci(bytes);
+    let _ = checks::parse_gate(bytes);
     let _ = action::parse(bytes);
     let _ = action::warm_tcp_config(bytes);
     if let Ok(text) = std::str::from_utf8(bytes) {

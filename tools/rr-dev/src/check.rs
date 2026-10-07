@@ -41,6 +41,17 @@ impl Scope {
     }
 }
 
+/// Exact ordered stage labels required by the authoritative full gate.
+/// Qualification uses these to reject receipts for partial or substituted gates.
+#[must_use]
+pub fn required_stage_labels() -> Vec<String> {
+    Scope::All
+        .steps(Path::new("."))
+        .iter()
+        .map(|step| step.label().to_owned())
+        .collect()
+}
+
 /// Terminal representation of a check result.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum OutputMode {

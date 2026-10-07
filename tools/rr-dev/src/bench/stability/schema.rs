@@ -126,6 +126,7 @@ pub struct Check {
     pub executed_cases: u64,
     pub failed_cases: u64,
     pub output: Artifact,
+    pub observations: Vec<Artifact>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

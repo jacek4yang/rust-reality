@@ -174,7 +174,7 @@ fn fixture() -> Value {
     }).collect();
     let checks: Vec<_> = contract.required_checks.iter().map(|name| json!({
         "name":name,"source_commit":"c".repeat(40),"candidate_sha256":"a".repeat(64),"argv":["synthetic-test"],
-        "exit_code":0,"completed":true,"executed_cases":1,"failed_cases":0,"output":artifact()
+        "exit_code":0,"completed":true,"executed_cases":1,"failed_cases":0,"output":artifact(),"observations":[]
     })).collect();
     let mut contract_artifact = artifact();
     contract_artifact["sha256"] = json!(hash::sha256_hex(schema::CONTRACT.as_bytes()));
@@ -192,6 +192,121 @@ fn verdict(value: &Value) -> Verdict {
 #[test]
 fn bounded_empty_permit_backed_retention_above_historical_fd_proxy_passes() {
     assert_eq!(verdict(&fixture()), Verdict::Pass);
+}
+
+#[test]
+fn required_checks_cannot_turn_opaque_success_or_another_ci_head_into_pass() {
+    let evidence: schema::Evidence = serde_json::from_value(fixture()).unwrap();
+    let mut check = evidence
+        .checks
+        .iter()
+        .find(|check| check.name == "exact-head-ci")
+        .unwrap()
+        .clone();
+    check.argv = [
+        "gh",
+        "run",
+        "view",
+        "123",
+        "--json",
+        super::checks::CI_FIELDS,
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    let receipt = json!({"headSha":evidence.identity.source_commit,"workflowName":"CI","status":"completed",
+        "conclusion":"success","databaseId":123,"url":"https://github.com/jacek4yang/rust-reality/actions/runs/123","event":"pull_request"});
+    let verify = |value: &Value, check: &schema::Check| {
+        super::checks::verify_ci(
+            &serde_json::to_vec(value).unwrap(),
+            check,
+            &evidence.identity,
+        )
+    };
+    verify(&receipt, &check).unwrap();
+    for (field, value) in [
+        ("headSha", json!("d".repeat(40))),
+        ("workflowName", json!("Native qualification")),
+        ("status", json!("in_progress")),
+        ("conclusion", json!("cancelled")),
+        ("databaseId", json!(124)),
+        ("url", json!("https://example.com/success")),
+    ] {
+        let mut changed = receipt.clone();
+        changed[field] = value;
+        assert!(verify(&changed, &check).is_err(), "{field}");
+    }
+    check.argv = vec!["true".to_owned()];
+    assert!(verify(&receipt, &check).is_err());
+    let workspace = Workspace::create("opaque-check").unwrap();
+    let check = &evidence.checks[0];
+    assert!(super::verify_required_check(workspace.path(), check, &evidence.identity).is_err());
+}
+
+#[test]
+fn authoritative_gate_receipt_requires_every_current_stage_and_retained_log() {
+    let workspace = Workspace::create("full-gate-receipt").unwrap();
+    std::fs::create_dir(workspace.join("logs")).unwrap();
+    let evidence: schema::Evidence = serde_json::from_value(fixture()).unwrap();
+    let mut check = evidence.checks[0].clone();
+    let labels = crate::check::required_stage_labels();
+    check.executed_cases = labels.len() as u64;
+    check.argv = vec![
+        evidence.identity.evaluator.path.clone(),
+        "check".to_owned(),
+        "--all".to_owned(),
+        "--output".to_owned(),
+        "json".to_owned(),
+        "--log-dir".to_owned(),
+        "logs".to_owned(),
+    ];
+    let stages: Vec<_> = labels.iter().enumerate().map(|(index,label)| {
+        for suffix in ["stdout","stderr"] {
+            let path = format!("logs/{index}.{suffix}");
+            std::fs::write(workspace.join(&path), b"retained stage output\n").unwrap();
+            check.observations.push(schema::Artifact {path,sha256:hash::sha256_hex(b"retained stage output\n")});
+        }
+        json!({"elapsedMilliseconds":index+1,"index":index+1,"label":label,"reason":null,"status":"PASS",
+            "stdoutLog":format!("{index}.stdout"),"stderrLog":format!("{index}.stderr")})
+    }).collect();
+    let receipt = json!({"attempted":labels.len(),"command":"check","elapsedMilliseconds":1000,
+        "logDirectory":"/original-run/logs","passed":labels.len(),"protocol":"rr-dev-result/v1",
+        "schemaVersion":1,"scope":"all","slowestStage":{"elapsedMilliseconds":labels.len(),"index":labels.len(),"label":labels.last().unwrap()},
+        "stages":stages,"status":"PASS","total":labels.len()});
+    let bind = |value: &Value, check: &mut schema::Check| {
+        let bytes = serde_json::to_vec(value).unwrap();
+        std::fs::write(workspace.join("gate.json"), &bytes).unwrap();
+        check.output = schema::Artifact {
+            path: "gate.json".to_owned(),
+            sha256: hash::sha256_hex(&bytes),
+        };
+    };
+    bind(&receipt, &mut check);
+    assert_eq!(
+        super::verify_required_check(workspace.path(), &check, &evidence.identity)
+            .unwrap()
+            .verdict,
+        Verdict::Pass
+    );
+    for (pointer, value) in [
+        ("/stages/0/status", json!("FAIL")),
+        ("/stages/0/label", json!("true")),
+        ("/stages/0/reason", json!("failed")),
+        ("/stages/0/stdoutLog", json!("0.stderr")),
+        ("/total", json!(1)),
+        ("/scope", json!("fast")),
+        ("/stages", json!([])),
+    ] {
+        let mut invalid = receipt.clone();
+        *invalid.pointer_mut(pointer).unwrap() = value;
+        bind(&invalid, &mut check);
+        assert!(
+            super::verify_required_check(workspace.path(), &check, &evidence.identity).is_err(),
+            "{pointer}"
+        );
+    }
+    bind(&receipt, &mut check);
+    check.observations.pop();
+    assert!(super::verify_required_check(workspace.path(), &check, &evidence.identity).is_err());
 }
 
 #[test]

@@ -2,6 +2,7 @@
 
 pub mod action;
 pub mod campaign;
+pub mod checks;
 pub mod collect;
 pub mod evaluate;
 pub mod execution;
@@ -50,14 +51,10 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
             report.reject(Verdict::Invalid, "artifact", &error);
         }
     }
-    for check in evidence
-        .checks
-        .iter()
-        .filter(|check| check.name == "native-resources")
-    {
-        match verify_native_receipt(root, &check.output, &evidence.identity) {
+    for check in &evidence.checks {
+        match verify_required_check(root, check, &evidence.identity) {
             Ok(native) => report.extend(native),
-            Err(error) => report.reject(Verdict::Invalid, "native-resources", &error),
+            Err(error) => report.reject(Verdict::Invalid, &check.name, &error),
         }
     }
     let contract: schema::Contract =
@@ -128,6 +125,41 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
         );
     }
     Ok(report)
+}
+
+fn verify_required_check(
+    root: &Path,
+    check: &schema::Check,
+    identity: &schema::Identity,
+) -> Result<Report, String> {
+    match check.name.as_str() {
+        "native-resources" => verify_native_receipt(root, &check.output, identity),
+        "local-full-gate" => {
+            let gate = checks::verify_gate(&read_artifact(root, &check.output)?, check, identity,
+                &crate::check::required_stage_labels())?;
+            let mut names = std::collections::BTreeSet::new();
+            for stage in &gate.stages {
+                for name in [&stage.stdout_log, &stage.stderr_log] {
+                    if Path::new(name).components().count() != 1 || !names.insert(name) {
+                        return Err("gate stage logs were reused or escaped their directory".to_owned());
+                    }
+                    let path = Path::new(&check.argv[6]).join(name);
+                    let artifact = check.observations.iter().find(|artifact| Path::new(&artifact.path) == path)
+                        .ok_or("missing retained gate stage log")?;
+                    verify_artifact(root, artifact)?;
+                }
+            }
+            if check.observations.len() != names.len() {
+                return Err("duplicated or unrelated gate observations".to_owned());
+            }
+            Ok(Report { verdict: Verdict::Pass, findings: Vec::new() })
+        }
+        "exact-head-ci" | "exact-head-security" => {
+            checks::verify_ci(&read_artifact(root, &check.output)?, check, identity)?;
+            Ok(Report { verdict: Verdict::Pass, findings: Vec::new() })
+        }
+        _ => Err("required check lacks a supported executable receipt; an opaque success claim cannot qualify".to_owned()),
+    }
 }
 
 fn verify_cell_actions(
@@ -437,6 +469,7 @@ fn artifacts(evidence: &Evidence) -> Vec<&Artifact> {
         &identity.workload,
     ];
     artifacts.extend(evidence.checks.iter().map(|check| &check.output));
+    artifacts.extend(evidence.checks.iter().flat_map(|check| &check.observations));
     for cell in &evidence.cells {
         artifacts.push(&cell.terminal);
         artifacts.extend(cell.roles.iter().map(|role| &role.startup));
