@@ -546,8 +546,10 @@ fn faults(
                             id: &id,
                             line,
                             socks_port: port,
-                            count: 100,
-                            concurrency: if name.starts_with("rtt-") { 2 } else { 4 },
+                            count: usize::try_from(contract.transfers_per_line)
+                                .expect("bounded contract"),
+                            concurrency: usize::try_from(contract.fault_concurrency(name))
+                                .expect("bounded contract"),
                             paced_wave: false,
                         })
                         .collect();
@@ -562,8 +564,10 @@ fn faults(
                         id: &recovery_id,
                         line,
                         socks_port: port,
-                        count: 100,
-                        concurrency: 4,
+                        count: usize::try_from(contract.transfers_per_line)
+                            .expect("bounded contract"),
+                        concurrency: usize::try_from(contract.fault_concurrency_per_line)
+                            .expect("bounded contract"),
                         paced_wave: false,
                     })
                     .collect();
@@ -831,6 +835,9 @@ fn freeze(
     let xray = identity::register("stock Xray", &plan.xray, "", identity::Kind::Xray)?;
     let evaluator_sha256 = collect::file_digest(Path::new("/proc/self/exe"))?;
     let source = identity::embedded_commit(&candidate.identity)?;
+    if rust_reality::BUILD_COMMIT != source {
+        return Err("build the frozen harness with RUST_REALITY_GIT_COMMIT set to the candidate source commit".to_owned());
+    }
     let head = Tool::new("git")
         .args(["-C", &repo.display().to_string(), "rev-parse", "HEAD"])
         .run()
@@ -883,7 +890,7 @@ fn freeze(
     fs::write(root.join("contract.json"), schema::CONTRACT).map_err(|error| error.to_string())?;
     save(
         &root.join("workload.json"),
-        &json!({"contract_sha256":hash::sha256_hex(schema::CONTRACT.as_bytes()),"cycle_first_wave":"4 MiB PUT at 256 KiB/s per transfer","cycle_remaining":"1 MiB GET","fault_count_per_line":100,"fault_concurrency":4,"prefix_target":"LANDING 127.0.0.1:8081 echo","integrity":"1/4 MiB upload/download/concurrent bidirectional"}),
+        &json!({"contract_sha256":hash::sha256_hex(schema::CONTRACT.as_bytes()),"cycle_first_wave":"4 MiB PUT at 256 KiB/s per transfer","cycle_remaining":"1 MiB GET","fault_count_per_line":100,"rtt_concurrency_per_line":2,"fault_concurrency_per_line":4,"prefix_target":"LANDING 127.0.0.1:8081 echo","integrity":"1/4 MiB upload/download/concurrent bidirectional"}),
     )?;
     save(
         &root.join("environment.json"),

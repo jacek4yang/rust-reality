@@ -51,11 +51,13 @@ cargo clippy --manifest-path tools/Cargo.toml --workspace --all-targets --all-fe
 
 ## 离线稳定性证据
 
-`cargo dev bench stability-evaluate --evidence /path/to/evidence.json` 验证绑定
+`/path/to/bundle/rr-dev bench stability-evaluate --evidence /path/to/bundle/evidence.json` 验证绑定
 对象并按冻结的所有权契约判定。必须执行证据包指定的判定器二进制；相对对象路径
 不得逃出证据包或经过符号链接。PASS 要求全部检查和用例通过；FAIL 表示已证实
 的违例，NOT_RUN 表示缺失用例，INVALID 表示格式错误或证据不完整。
 汇总结果优先标记 INVALID，但保留每项发现。
+构建工具时，`RUST_REALITY_GIT_COMMIT` 必须设置为候选的精确来源提交。执行测试及
+离线评估均拒绝来源提交不同的工具，即使契约内容相同。
 
 解析器与纯判定器一起进行模糊测试。对抗测试覆盖泄漏套接字、脏管道或超量池、
 缺失许可、临时资源和退役代际滞留、内存包络、载荷损坏、陈旧上传回执、采样缺失、
@@ -109,7 +111,8 @@ Linux 原始状态、比例内存、描述符目标、限制及完整调试日�
 终止。启动或执行失败保留原始错误及最终观察的尝试。私密配置保留在受控测试环境
 目录下，与证据包分离。
 
-并发 4 的 RTT/丢包矩阵窗口为 60 秒，其他故障区间为 10 秒。方向完整性验证窗口
+并发 4（每个 LINE 并发 2）的 RTT/丢包矩阵窗口为 60 秒；其他故障及恢复阶段每个
+LINE 并发 4，每个被测试的 LINE 至少完成 100 次传输。其他故障区间为 10 秒。方向完整性验证窗口
 为 60 秒，随后恢复 180 秒。这些时间表在验收前固定于可执行契约，对受限资源的
 LANDING 客体同样适用。
 离线评估要求完整的方向验证检查点，包括最后一次传输后的所有权、内存及进程身份

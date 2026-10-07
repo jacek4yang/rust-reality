@@ -65,13 +65,16 @@ violation (see [AGENTS.md](../../../AGENTS.md)).
 
 ## Offline stability evidence
 
-`cargo dev bench stability-evaluate --evidence /path/to/evidence.json` verifies
+`/path/to/bundle/rr-dev bench stability-evaluate --evidence /path/to/bundle/evidence.json` verifies
 all bound objects and evaluates the frozen ownership contract. Execute the
 exact evaluator binary named by the bundle. Relative object paths cannot escape
 the bundle or traverse symlinks. PASS requires every required check and case;
 FAIL records demonstrated violations, NOT_RUN identifies absent cases, and
 INVALID identifies malformed or incomplete evidence. The report retains each
 finding even when INVALID takes precedence in the aggregate verdict.
+Build the harness with `RUST_REALITY_GIT_COMMIT` set to the candidate's exact
+source commit. Both campaign execution and offline evaluation reject a harness
+whose embedded source differs, even if its contract bytes match.
 
 The schema and pure evaluator are fuzzed together. Adversarial tests cover
 leaked sockets, dirty/excessive pipes, missing permits, transient retention,
@@ -146,7 +149,9 @@ requires the owned process identity and confirms termination by SIGKILL. Startup
 and execution failures retain the primary error and attempted final observations.
 Private configuration remains under the owned fixture, outside the evidence bundle.
 
-RTT/loss windows last 60 seconds for the concurrency-4 matrix; other fault
+RTT/loss windows last 60 seconds for the concurrency-4 matrix (two transfers
+per LINE); other faults and recovery use four per LINE. Each exercised LINE
+must complete at least 100 transfers. Other fault
 intervals last 10 seconds. The directional integrity window lasts 60 seconds,
 followed by 180 seconds of recovery. These schedules are fixed in the executable
 contract before qualification, including on constrained LANDING guests.

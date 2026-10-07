@@ -606,21 +606,7 @@ fn evaluate_cell(report: &mut Report, evidence: &Evidence, contract: &Contract, 
             scope,
             "during-fault receipt lies outside its fixed interval",
         );
-        if fault.name.starts_with("rtt-") {
-            for line in ["line-a", "line-b"] {
-                report.require(
-                    fault
-                        .during_transfers
-                        .iter()
-                        .filter(|transfer| transfer.line == line)
-                        .count()
-                        >= usize::try_from(contract.transfers_per_line).unwrap_or(usize::MAX),
-                    Verdict::Invalid,
-                    scope,
-                    "RTT/loss workload was not exercised while shaping was active",
-                );
-            }
-        }
+        evaluate_fault_workload(report, contract, cell, fault);
     }
     report.require(
         same_names(
@@ -662,6 +648,71 @@ fn evaluate_cell(report: &mut Report, evidence: &Evidence, contract: &Contract, 
                 );
             }
         }
+    }
+}
+
+fn evaluate_fault_workload(
+    report: &mut Report,
+    contract: &Contract,
+    cell: &Cell,
+    fault: &schema::Fault,
+) {
+    let prefix = &fault.affected_prefix;
+    report.require(
+        prefix.line == "line-a"
+            && prefix.direction == "download"
+            && prefix.started_ms < fault.started_ms
+            && prefix.completed_ms >= fault.started_ms
+            && (fault.name == "landing-restart"
+                || fault.name.starts_with("rtt-")
+                || prefix.completed_ms > fault.restored_ms)
+            && fault.expected_failures.len() == usize::from(fault.name == "landing-restart"),
+        Verdict::Invalid,
+        &cell.name,
+        "continuity probe did not span its fault or failure was misclassified",
+    );
+    for line in ["line-a", "line-b"] {
+        let during: Vec<_> = fault
+            .during_transfers
+            .iter()
+            .filter(|transfer| transfer.line == line)
+            .collect();
+        let recovery: Vec<_> = fault
+            .recovery_transfers
+            .iter()
+            .filter(|transfer| transfer.line == line)
+            .collect();
+        let impaired = fault.name != "landing-restart"
+            && (fault.name != "line-a-partition" || line == "line-b");
+        report.require(
+            if impaired {
+                during.len() >= usize::try_from(contract.transfers_per_line).unwrap_or(usize::MAX)
+                    && peak_concurrency(during.into_iter())
+                        == Some(contract.fault_concurrency(&fault.name))
+            } else {
+                during.is_empty()
+            },
+            Verdict::Invalid,
+            &cell.name,
+            "during-fault LINE coverage or concurrency was substituted",
+        );
+        report.require(
+            recovery.len() >= usize::try_from(contract.transfers_per_line).unwrap_or(usize::MAX)
+                && peak_concurrency(recovery.into_iter())
+                    == Some(contract.fault_concurrency_per_line),
+            Verdict::Invalid,
+            &cell.name,
+            "post-fault LINE coverage or concurrency was substituted",
+        );
+    }
+    if fault.name.starts_with("rtt-") {
+        report.require(
+            peak_concurrency(fault.during_transfers.iter())
+                == contract.rtt_concurrency_per_line.checked_mul(2),
+            Verdict::Invalid,
+            &cell.name,
+            "RTT matrix did not exercise four concurrent transfers across both LINEs",
+        );
     }
 }
 

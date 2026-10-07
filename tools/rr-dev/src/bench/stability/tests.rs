@@ -132,8 +132,10 @@ fn fixture() -> Value {
             }
             let started = u64::try_from(contract.cycles).unwrap() * contract.cycle_interval_ms + u64::try_from(index).unwrap() * contract.fault_interval_ms;
             let restored = started + contract.fault_duration(fault);
-            let recovery: Vec<_> = (0..100).map(|count| transfer(&format!("{name}-{fault}-recovery-{count}"),"line-a","download",restored,1_048_576)).collect();
-            let during: Vec<_> = ["line-a","line-b"].into_iter().flat_map(|line| (0..100).map(move |count| transfer(&format!("{name}-{fault}-{line}-during-{count}"),line,"download",started+1,1_048_576))).collect();
+            let recovery_concurrency = contract.fault_concurrency_per_line;
+            let during_concurrency = contract.fault_concurrency(fault);
+            let recovery: Vec<_> = ["line-a","line-b"].into_iter().flat_map(|line| (0..100).map(move |count| transfer(&format!("{name}-{fault}-{line}-recovery-{count}"),line,"download",restored+count/recovery_concurrency,1_048_576))).collect();
+            let during: Vec<_> = ["line-a","line-b"].into_iter().filter(|line| fault != "landing-restart" && (fault != "line-a-partition" || *line == "line-b")).flat_map(|line| (0..100).map(move |count| transfer(&format!("{name}-{fault}-{line}-during-{count}"),line,"download",started+1+count/during_concurrency,1_048_576))).collect();
             let checkpoints: Vec<_> = contract.fault_checkpoint_offsets_ms.iter().map(|offset| {
                 let mut checkpoint = cycles[0]["checkpoints"][0].clone();
                 checkpoint["offset_ms"] = json!(offset);
@@ -144,9 +146,11 @@ fn fixture() -> Value {
                 }
                 checkpoint
             }).collect();
+            let mut prefix = transfer(&format!("{name}-{fault}-prefix"),"line-a","download",started-1,4096);
+            prefix["completed_ms"] = json!(if fault == "landing-restart" || fault.starts_with("rtt-") {started+1} else {restored+1});
             json!({"name":fault,"actions":[artifact(),artifact(),artifact(),artifact(),artifact(),artifact()],"started_ms":started,"restored_ms":restored,"first_admission_ms":restored+1,
-                "before_processes":before,"after_processes":bindings.clone(),"recovery_transfers":recovery,"affected_prefix":transfer(&format!("{name}-{fault}-prefix"),"line-a","download",started,4096),
-                "during_transfers":during,"checkpoints":checkpoints,"expected_failures":[],"unexpected_failures":0})
+                "before_processes":before,"after_processes":bindings.clone(),"recovery_transfers":recovery,"affected_prefix":prefix,
+                "during_transfers":during,"checkpoints":checkpoints,"expected_failures":if fault == "landing-restart" {vec![started+1]} else {vec![]},"unexpected_failures":0})
         }).collect();
         let mut integrity = Vec::new();
         for line in ["line-a","line-b"] {
@@ -593,6 +597,16 @@ fn fault_receipts_cannot_hide_late_retention_or_substitute_coverage() {
         ),
         ("/cells/0/faults/5/during_transfers", json!([])),
         ("/cells/0/faults/6/during_transfers", json!([])),
+        ("/cells/0/faults/0/expected_failures", json!([1_464_001])),
+        ("/cells/0/faults/4/expected_failures", json!([])),
+        (
+            "/cells/0/faults/0/affected_prefix/started_ms",
+            json!(1_464_000),
+        ),
+        (
+            "/cells/0/faults/0/affected_prefix/completed_ms",
+            json!(1_464_001),
+        ),
         ("/cells/0/faults/0/started_ms", json!(1)),
         ("/cells/0/faults/0/checkpoints/4/observed_ms", json!(1)),
         ("/cells/0/cycles/0/transfers/0/started_ms", json!(0)),
@@ -613,6 +627,42 @@ fn fault_receipts_cannot_hide_late_retention_or_substitute_coverage() {
     {
         transfer["started_ms"] = json!(3000);
         transfer["completed_ms"] = json!(3001);
+    }
+    assert_eq!(verdict(&changed), Verdict::Invalid);
+}
+
+#[test]
+fn fault_traffic_requires_both_lines_and_overlapping_matrix_concurrency() {
+    let valid = fixture();
+    let mut changed = valid.clone();
+    changed["cells"][0]["faults"][0]["recovery_transfers"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|transfer| transfer["line"] == "line-a");
+    assert_eq!(verdict(&changed), Verdict::Invalid);
+    let mut changed = valid.clone();
+    for transfer in changed["cells"][0]["faults"][6]["during_transfers"]
+        .as_array_mut()
+        .unwrap()
+    {
+        if transfer["line"] == "line-b" {
+            for field in ["started_ms", "completed_ms"] {
+                transfer[field] = json!(transfer[field].as_u64().unwrap() + 1000);
+            }
+        }
+    }
+    assert_eq!(verdict(&changed), Verdict::Invalid);
+    let mut changed = valid;
+    let start = changed["cells"][0]["faults"][6]["started_ms"]
+        .as_u64()
+        .unwrap()
+        + 1;
+    for transfer in changed["cells"][0]["faults"][6]["during_transfers"]
+        .as_array_mut()
+        .unwrap()
+    {
+        transfer["started_ms"] = json!(start);
+        transfer["completed_ms"] = json!(start + 1);
     }
     assert_eq!(verdict(&changed), Verdict::Invalid);
 }

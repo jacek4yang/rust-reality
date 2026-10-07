@@ -28,6 +28,8 @@
   "fault_interval_ms": 250000,
   "fault_duration_ms": 10000,
   "rtt_duration_ms": 60000,
+  "rtt_concurrency_per_line": 2,
+  "fault_concurrency_per_line": 4,
   "integrity_duration_ms": 60000,
   "integrity_recovery_ms": 180000,
   "fault_checkpoint_offsets_ms": [15000, 60000, 120000, 200000, 240000],

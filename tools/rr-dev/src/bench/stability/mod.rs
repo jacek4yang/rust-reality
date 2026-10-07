@@ -37,6 +37,13 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
         .map_err(|error| format!("read stability evidence: {error}"))?;
     let evidence = schema::parse(&bytes)?;
     let mut report = evaluate::evaluate(&evidence, &hash::sha256_hex(schema::CONTRACT.as_bytes()));
+    if evidence.identity.source_commit != rust_reality::BUILD_COMMIT {
+        report.reject(
+            Verdict::Invalid,
+            "evaluator",
+            "harness build commit differs from the candidate source",
+        );
+    }
     let root = path.parent().unwrap_or_else(|| Path::new("."));
     for artifact in artifacts(&evidence) {
         if let Err(error) = verify_artifact(root, artifact) {
@@ -113,9 +120,7 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
             }
         }
     }
-    let evaluator =
-        std::env::current_exe().map_err(|error| format!("locate evaluator: {error}"))?;
-    if hash::sha256_file(&evaluator)? != evidence.identity.evaluator.sha256 {
+    if hash::sha256_file(Path::new("/proc/self/exe"))? != evidence.identity.evaluator.sha256 {
         report.reject(
             Verdict::Invalid,
             "evaluator",

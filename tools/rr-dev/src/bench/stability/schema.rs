@@ -24,6 +24,8 @@ pub struct Contract {
     pub fault_interval_ms: u64,
     pub fault_duration_ms: u64,
     pub rtt_duration_ms: u64,
+    pub rtt_concurrency_per_line: u64,
+    pub fault_concurrency_per_line: u64,
     pub integrity_duration_ms: u64,
     pub integrity_recovery_ms: u64,
     pub fault_checkpoint_offsets_ms: Vec<u64>,
@@ -52,6 +54,14 @@ pub struct Contract {
 }
 
 impl Contract {
+    pub fn fault_concurrency(&self, name: &str) -> u64 {
+        if name.starts_with("rtt-") {
+            self.rtt_concurrency_per_line
+        } else {
+            self.fault_concurrency_per_line
+        }
+    }
+
     pub fn fault_duration(&self, name: &str) -> u64 {
         if name.starts_with("rtt-") {
             self.rtt_duration_ms

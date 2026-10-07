@@ -109,7 +109,7 @@ pub fn qdisc(text: &str, fault: Option<&str>) -> Result<(), String> {
         return Err("unexpected netem topology or options".to_owned());
     }
     // iproute2 tc/q_netem.c emits JSON times in seconds and loss as a fraction:
-    // https://github.com/iproute2/iproute2/blob/main/tc/q_netem.c
+    // https://github.com/iproute2/iproute2/blob/v6.1.0/tc/q_netem.c
     let (delay, loss) = match name {
         "line-a-partition" => (0.0, 1.0),
         "rtt-50" => (0.025, 0.0),
