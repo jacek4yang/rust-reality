@@ -464,3 +464,33 @@ musl `372804aa9ed45cbd9b19fa2487fac14f445c33045879abe4edb21dd03e3bc612`,
 and v3 `d6da3c51600b674e0928552c18bd14c16200d6d8fc74bdc849986a2b3ed35920`.
 All bind source `1da34e3`; package smoke is not presented as full resource
 qualification of every distinct ELF or as publication authorization.
+
+## Constrained LANDING and qualification verdict
+
+QMP and guest receipts bind three new boot IDs with one vCPU and 1 GiB RAM
+per guest, including LANDING. Both topologies pass eight no-daemon-restart
+cycles of 100 transfers per LINE per cycle, concurrency 8/32 and 18 resource
+samples per role:
+
+- Handoff: [stress](kvm-1da34e3-low-handoff-stress-manifest.json),
+  [kill/recovery](kvm-1da34e3-low-handoff-recovery-manifest.json),
+  [4 MiB integrity](kvm-1da34e3-low-handoff-large-manifest.json).
+- NXR: [stress](kvm-1da34e3-low-nxr-stress-manifest.json),
+  [kill/recovery](kvm-1da34e3-low-nxr-recovery-manifest.json),
+  [4 MiB integrity](kvm-1da34e3-low-nxr-large-manifest.json).
+
+LANDING stress final/peak FD counts are 32/96 for Handoff and 153/212 for NXR;
+each has two threads. First successful new admission after deliberate
+LANDING restart is 0.332 seconds for Handoff and 0.248 seconds for NXR,
+followed by 100 consecutive successful transfers in each case. All unchanged
+FD/thread/RSS envelopes, fresh bidirectional integrity receipts and zero-OOM
+checks pass. This constrained case does not erase the high-profile NXR failure.
+
+The [immutable qualification verdict](candidate-1da34e3-qualification-verdict.json)
+is **FAIL**, with two explicit acceptance blockers: native aggregate PSS
+2.114908197 MiB/hour exceeds 2.0, and high-profile NXR retains 263 idle FDs
+against the fixed 256 recovery ceiling. Causal attribution is not a waiver.
+No production memory change, lower stress, raised threshold or blind soak
+rerun is justified by these results. The candidate package inventory and
+distinct source/ELF scopes remain available for review; no merge, new tag,
+release or production deployment is represented by this evidence.
