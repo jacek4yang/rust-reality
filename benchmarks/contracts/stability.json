@@ -99,6 +99,47 @@
     "package-v3",
     "package-aarch64"
   ],
+  "deterministic_tests": {
+    "replay-expiry-reuse": [
+      "protocol::reality::replay::tests::expired_entries_release_global_capacity",
+      "protocol::reality::replay::tests::saturated_replay_storage_reuses_allocation_after_expiry",
+      "protocol::handoff::tests::replay_capacity_recovers_expired_entries_from_other_shards",
+      "server::production::monitor::tests::idle_landing_replay_entries_are_reclaimed_without_another_admission"
+    ],
+    "pipe-pool-reuse": [
+      "transport::tcp_relay::tests::saturated_pipe_pool_reuses_bounded_storage_and_descriptor_permits",
+      "transport::tcp_relay::tests::a_dirty_pipe_is_discarded_never_recycled",
+      "transport::tcp_relay::tests::the_pool_shrinks_past_its_keep_count_and_releases_units"
+    ],
+    "descriptor-permit-ownership": [
+      "transport::tcp_relay::tests::a_splice_relay_reserves_four_descriptor_units_before_creating_pipes",
+      "transport::tcp_relay::tests::repeated_splice_relays_return_descriptor_units_to_baseline",
+      "transport::fd_budget::tests::a_multi_unit_permit_is_all_or_nothing"
+    ],
+    "generation-retirement": [
+      "server::production::store::tests::retired_connection_runtime_is_released_after_its_last_connection",
+      "server::production::store::tests::retiring_a_generation_deactivates_only_its_own_pre_auth_pool"
+    ],
+    "cancellation": [
+      "runtime::connection::tests::abort_releases_connection_captures_and_reaps_the_task",
+      "runtime::connection::tests::dropping_task_set_releases_an_unpolled_capture",
+      "transport::tcp_relay::tests::a_cancelled_splice_relay_releases_its_descriptor_units"
+    ],
+    "inactivity": [
+      "io_activity::tests::only_whole_session_inactivity_expires",
+      "io_activity::tests::raw_transition_disarms_shared_inactivity_for_both_directions"
+    ],
+    "write-stall": [
+      "transport::tcp_relay::tests::a_stalled_directional_buffered_relay_times_out_and_returns_its_permit",
+      "transport::tcp_relay::tests::a_stalled_directional_splice_relay_times_out_and_returns_its_units"
+    ],
+    "half-close": [
+      "transport::tcp_relay::tests::bounded_buffered_relay_preserves_half_close",
+      "transport::tcp_relay::tests::nonblocking_splice_relay_preserves_half_close",
+      "transport::tcp_relay::tests::buffered_asymmetry_and_half_close_preserve_both_directions",
+      "transport::tcp_relay::tests::splice_asymmetry_and_half_close_preserve_both_directions"
+    ]
+  },
   "recovered_line_fds": 768,
   "peak_line_fds": 2048,
   "peak_landing_fds": 1024

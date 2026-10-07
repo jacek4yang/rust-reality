@@ -51,6 +51,7 @@ pub struct Contract {
     pub payload_bytes: Vec<u64>,
     pub directions: Vec<String>,
     pub required_checks: Vec<String>,
+    pub deterministic_tests: BTreeMap<String, Vec<String>>,
 }
 
 impl Contract {

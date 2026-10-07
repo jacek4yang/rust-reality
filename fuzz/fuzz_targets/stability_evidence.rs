@@ -16,6 +16,8 @@ mod native_evaluate;
 mod observation;
 #[path = "../../tools/rr-dev/src/bench/stability/schema.rs"]
 mod schema;
+#[path = "../../tools/rr-dev/src/bench/stability/test_receipt.rs"]
+mod test_receipt;
 #[path = "../../tools/rr-dev/src/bench/stability/transfer.rs"]
 mod transfer;
 #[path = "../../tools/rr-dev/src/bench/stability/vm.rs"]
@@ -24,6 +26,7 @@ mod vm;
 libfuzzer_sys::fuzz_target!(|bytes: &[u8]| {
     let _ = checks::parse_ci(bytes);
     let _ = checks::parse_gate(bytes);
+    let _ = test_receipt::parse(bytes);
     let _ = action::parse(bytes);
     let _ = action::warm_tcp_config(bytes);
     if let Ok(text) = std::str::from_utf8(bytes) {

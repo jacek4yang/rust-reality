@@ -80,6 +80,10 @@ and an opaque file cannot establish PASS. CI/Security receipts are the exact
 `gh run view RUN_ID --json headSha,workflowName,status,conclusion,databaseId,url,event`
 response. The local full gate uses `check --all --output json` and retains every
 stage's stdout/stderr objects; its stage list must match the frozen harness.
+Lifecycle checks bind the complete stdout from
+`cargo test --lib --locked -- --color never`. The contract names each required
+test; ignored, missing, duplicated or filtered cases cannot satisfy it, and the
+terminal totals must reproduce the observed case results.
 
 The schema and pure evaluator are fuzzed together. Adversarial tests cover
 leaked sockets, dirty/excessive pipes, missing permits, transient retention,

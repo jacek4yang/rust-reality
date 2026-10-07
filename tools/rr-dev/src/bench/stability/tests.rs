@@ -310,6 +310,59 @@ fn authoritative_gate_receipt_requires_every_current_stage_and_retained_log() {
 }
 
 #[test]
+fn lifecycle_receipts_require_named_unfiltered_tests_and_complete_totals() {
+    let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
+    let evidence: schema::Evidence = serde_json::from_value(fixture()).unwrap();
+    let cases: std::collections::BTreeSet<_> =
+        contract.deterministic_tests.values().flatten().collect();
+    let mut text = format!("running {} tests\n", cases.len());
+    for name in &cases {
+        writeln!(&mut text, "test {name} ... ok").unwrap();
+    }
+    writeln!(&mut text,"\ntest result: ok. {} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",cases.len()).unwrap();
+    for (name, required) in &contract.deterministic_tests {
+        let mut check = evidence
+            .checks
+            .iter()
+            .find(|check| check.name == *name)
+            .unwrap()
+            .clone();
+        check.executed_cases = required.len() as u64;
+        check.argv = [
+            "cargo", "test", "--lib", "--locked", "--", "--color", "never",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        super::test_receipt::verify(text.as_bytes(), &check, &contract).unwrap();
+        let ignored = text
+            .replace(
+                &format!("test {} ... ok", required[0]),
+                &format!("test {} ... ignored", required[0]),
+            )
+            .replace(
+                &format!("{} passed", cases.len()),
+                &format!("{} passed", cases.len() - 1),
+            )
+            .replace("0 ignored", "1 ignored");
+        super::test_receipt::parse(ignored.as_bytes()).unwrap();
+        assert!(super::test_receipt::verify(ignored.as_bytes(), &check, &contract).is_err());
+        check.argv = vec!["true".to_owned()];
+        assert!(super::test_receipt::verify(text.as_bytes(), &check, &contract).is_err());
+    }
+    for invalid in [
+        text.trim_end().to_owned(),
+        format!("{text}{text}"),
+        text.replace(" ... ok", " ... FAILED"),
+        text.replace("0 filtered out", "1 filtered out"),
+        text.replace("finished in 0.01s", "finished in NaNs"),
+        text.replace("0 failed", "-1 failed"),
+        text.replace("\ntest result:", "\ntest duplicated ... ok\ntest result:"),
+    ] {
+        assert!(super::test_receipt::parse(invalid.as_bytes()).is_err());
+    }
+}
+
+#[test]
 fn execution_receipts_reject_unobserved_kernels_profiles_and_terminal_failures() {
     use super::execution;
     let evidence: schema::Evidence = serde_json::from_value(fixture()).unwrap();

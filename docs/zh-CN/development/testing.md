@@ -63,6 +63,9 @@ CI/Security 回执使用完整的
 `gh run view RUN_ID --json headSha,workflowName,status,conclusion,databaseId,url,event`
 响应。本地完整门禁使用 `check --all --output json`，保留各阶段 stdout/stderr 对象，
 阶段列表必须与冻结工具一致。
+生命周期检查绑定 `cargo test --lib --locked -- --color never` 的完整 stdout。
+契约指定每个必需测试；忽略、缺失、重复或筛选用例均不能满足要求，最终计数必须
+与实际观察到的测试结果一致。
 
 解析器与纯判定器一起进行模糊测试。对抗测试覆盖泄漏套接字、脏管道或超量池、
 缺失许可、临时资源和退役代际滞留、内存包络、载荷损坏、陈旧上传回执、采样缺失、

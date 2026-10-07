@@ -12,6 +12,7 @@ pub mod native;
 pub mod native_evaluate;
 pub mod observation;
 pub mod schema;
+pub mod test_receipt;
 pub mod transfer;
 pub mod vm;
 pub mod workload;
@@ -132,6 +133,8 @@ fn verify_required_check(
     check: &schema::Check,
     identity: &schema::Identity,
 ) -> Result<Report, String> {
+    let contract: schema::Contract =
+        serde_json::from_str(schema::CONTRACT).expect("compiled contract");
     match check.name.as_str() {
         "native-resources" => verify_native_receipt(root, &check.output, identity),
         "local-full-gate" => {
@@ -156,6 +159,10 @@ fn verify_required_check(
         }
         "exact-head-ci" | "exact-head-security" => {
             checks::verify_ci(&read_artifact(root, &check.output)?, check, identity)?;
+            Ok(Report { verdict: Verdict::Pass, findings: Vec::new() })
+        }
+        _ if contract.deterministic_tests.contains_key(&check.name) => {
+            test_receipt::verify(&read_artifact(root, &check.output)?, check, &contract)?;
             Ok(Report { verdict: Verdict::Pass, findings: Vec::new() })
         }
         _ => Err("required check lacks a supported executable receipt; an opaque success claim cannot qualify".to_owned()),
