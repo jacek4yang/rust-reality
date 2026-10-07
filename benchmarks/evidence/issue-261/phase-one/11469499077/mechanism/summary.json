@@ -1,0 +1,708 @@
+{
+  "completedSections": [
+    "rtt"
+  ],
+  "correctnessVerdict": "PASS",
+  "dataQualityFailures": [],
+  "dataQualityVerdict": "PASS",
+  "failedSections": [],
+  "gateVerdict": "PASS",
+  "integrityFailures": [],
+  "netemProfiles": {
+    "actualProfileCount": 3,
+    "actualRawRecordCount": 108,
+    "dataQualityVerdict": "PASS",
+    "errors": [],
+    "expectedDimensions": {
+      "concurrencies": [
+        1
+      ],
+      "connectionsPerSample": 32,
+      "legs": [
+        "handoff-warm",
+        "handoff-cold",
+        "nxr-warm",
+        "nxr-cold",
+        "socks-warm",
+        "socks-cold"
+      ],
+      "perDirectionLossPercent": [
+        0.0
+      ],
+      "rttsMs": [
+        50,
+        100,
+        200
+      ],
+      "samplesPerConcurrency": 6
+    },
+    "expectedProfileCount": 3,
+    "expectedRawRecordCount": 108,
+    "missingProfiles": [],
+    "performanceErrors": [],
+    "performanceMechanism": {
+      "bootstrapIterations": 20000,
+      "cells": [
+        {
+          "blockCount": 3,
+          "blocks": [
+            {
+              "block": 0,
+              "coldP50Ms": 102.037679,
+              "removedHandshakeMs": 50.3191635,
+              "removedHandshakePerMeasuredRtt": 1.0044747679409123,
+              "sampleIndexes": [
+                0,
+                1
+              ],
+              "warmP50Ms": 51.718515499999995
+            },
+            {
+              "block": 1,
+              "coldP50Ms": 102.04588,
+              "removedHandshakeMs": 50.3357545,
+              "removedHandshakePerMeasuredRtt": 1.0048059586785107,
+              "sampleIndexes": [
+                2,
+                3
+              ],
+              "warmP50Ms": 51.7101255
+            },
+            {
+              "block": 2,
+              "coldP50Ms": 102.04440149999999,
+              "removedHandshakeMs": 50.34452699999999,
+              "removedHandshakePerMeasuredRtt": 1.004981075955684,
+              "sampleIndexes": [
+                4,
+                5
+              ],
+              "warmP50Ms": 51.6998745
+            }
+          ],
+          "bootstrap95": [
+            1.0044747679409123,
+            1.004981075955684
+          ],
+          "concurrency": 1,
+          "errors": [],
+          "measuredRttMs": 50.095,
+          "medianRemovedHandshakePerMeasuredRtt": 1.0048059586785107,
+          "metric": "cold p50 minus warm p50",
+          "perDirectionLossPercent": 0.0,
+          "targetRttMs": 50,
+          "transport": "handoff",
+          "verdict": "PASS"
+        },
+        {
+          "blockCount": 3,
+          "blocks": [
+            {
+              "block": 0,
+              "coldP50Ms": 102.062247,
+              "removedHandshakeMs": 50.3928435,
+              "removedHandshakePerMeasuredRtt": 1.00594557341052,
+              "sampleIndexes": [
+                0,
+                1
+              ],
+              "warmP50Ms": 51.6694035
+            },
+            {
+              "block": 1,
+              "coldP50Ms": 102.056644,
+              "removedHandshakeMs": 50.40352650000001,
+              "removedHandshakePerMeasuredRtt": 1.0061588282263703,
+              "sampleIndexes": [
+                2,
+                3
+              ],
+              "warmP50Ms": 51.65311749999999
+            },
+            {
+              "block": 2,
+              "coldP50Ms": 102.0437025,
+              "removedHandshakeMs": 50.391291499999994,
+              "removedHandshakePerMeasuredRtt": 1.005914592274678,
+              "sampleIndexes": [
+                4,
+                5
+              ],
+              "warmP50Ms": 51.652411
+            }
+          ],
+          "bootstrap95": [
+            1.005914592274678,
+            1.0061588282263703
+          ],
+          "concurrency": 1,
+          "errors": [],
+          "measuredRttMs": 50.095,
+          "medianRemovedHandshakePerMeasuredRtt": 1.00594557341052,
+          "metric": "cold p50 minus warm p50",
+          "perDirectionLossPercent": 0.0,
+          "targetRttMs": 50,
+          "transport": "nxr",
+          "verdict": "PASS"
+        },
+        {
+          "blockCount": 3,
+          "blocks": [
+            {
+              "block": 0,
+              "coldP50Ms": 202.43717900000001,
+              "removedHandshakeMs": 50.242087500000025,
+              "removedHandshakePerMeasuredRtt": 1.0029361712745788,
+              "sampleIndexes": [
+                0,
+                1
+              ],
+              "warmP50Ms": 152.1950915
+            },
+            {
+              "block": 1,
+              "coldP50Ms": 202.43877450000002,
+              "removedHandshakeMs": 50.2938355,
+              "removedHandshakePerMeasuredRtt": 1.0039691685796985,
+              "sampleIndexes": [
+                2,
+                3
+              ],
+              "warmP50Ms": 152.14493900000002
+            },
+            {
+              "block": 2,
+              "coldP50Ms": 202.464603,
+              "removedHandshakeMs": 50.313286500000004,
+              "removedHandshakePerMeasuredRtt": 1.0043574508433977,
+              "sampleIndexes": [
+                4,
+                5
+              ],
+              "warmP50Ms": 152.1513165
+            }
+          ],
+          "bootstrap95": [
+            1.0029361712745788,
+            1.0043574508433977
+          ],
+          "concurrency": 1,
+          "errors": [],
+          "measuredRttMs": 50.095,
+          "medianRemovedHandshakePerMeasuredRtt": 1.0039691685796985,
+          "metric": "cold p50 minus warm p50",
+          "perDirectionLossPercent": 0.0,
+          "targetRttMs": 50,
+          "transport": "socks5",
+          "verdict": "PASS"
+        },
+        {
+          "blockCount": 3,
+          "blocks": [
+            {
+              "block": 0,
+              "coldP50Ms": 202.109736,
+              "removedHandshakeMs": 100.22163950000001,
+              "removedHandshakePerMeasuredRtt": 1.001205177770452,
+              "sampleIndexes": [
+                0,
+                1
+              ],
+              "warmP50Ms": 101.88809649999999
+            },
+            {
+              "block": 1,
+              "coldP50Ms": 202.133917,
+              "removedHandshakeMs": 100.2444865,
+              "removedHandshakePerMeasuredRtt": 1.0014334172485788,
+              "sampleIndexes": [
+                2,
+                3
+              ],
+              "warmP50Ms": 101.8894305
+            },
+            {
+              "block": 2,
+              "coldP50Ms": 202.13214349999998,
+              "removedHandshakeMs": 100.2745085,
+              "removedHandshakePerMeasuredRtt": 1.0017333343323243,
+              "sampleIndexes": [
+                4,
+                5
+              ],
+              "warmP50Ms": 101.85763499999999
+            }
+          ],
+          "bootstrap95": [
+            1.001205177770452,
+            1.0017333343323243
+          ],
+          "concurrency": 1,
+          "errors": [],
+          "measuredRttMs": 100.101,
+          "medianRemovedHandshakePerMeasuredRtt": 1.0014334172485788,
+          "metric": "cold p50 minus warm p50",
+          "perDirectionLossPercent": 0.0,
+          "targetRttMs": 100,
+          "transport": "handoff",
+          "verdict": "PASS"
+        },
+        {
+          "blockCount": 3,
+          "blocks": [
+            {
+              "block": 0,
+              "coldP50Ms": 202.1431875,
+              "removedHandshakeMs": 100.28133550000001,
+              "removedHandshakePerMeasuredRtt": 1.0018015354491965,
+              "sampleIndexes": [
+                0,
+                1
+              ],
+              "warmP50Ms": 101.861852
+            },
+            {
+              "block": 1,
+              "coldP50Ms": 202.1629155,
+              "removedHandshakeMs": 100.260467,
+              "removedHandshakePerMeasuredRtt": 1.0015930610083816,
+              "sampleIndexes": [
+                2,
+                3
+              ],
+              "warmP50Ms": 101.90244849999999
+            },
+            {
+              "block": 2,
+              "coldP50Ms": 202.1379335,
+              "removedHandshakeMs": 100.27458150000001,
+              "removedHandshakePerMeasuredRtt": 1.0017340635957683,
+              "sampleIndexes": [
+                4,
+                5
+              ],
+              "warmP50Ms": 101.86335199999999
+            }
+          ],
+          "bootstrap95": [
+            1.0015930610083816,
+            1.0018015354491965
+          ],
+          "concurrency": 1,
+          "errors": [],
+          "measuredRttMs": 100.101,
+          "medianRemovedHandshakePerMeasuredRtt": 1.0017340635957683,
+          "metric": "cold p50 minus warm p50",
+          "perDirectionLossPercent": 0.0,
+          "targetRttMs": 100,
+          "transport": "nxr",
+          "verdict": "PASS"
+        },
+        {
+          "blockCount": 3,
+          "blocks": [
+            {
+              "block": 0,
+              "coldP50Ms": 402.64800549999995,
+              "removedHandshakeMs": 100.34168549999993,
+              "removedHandshakePerMeasuredRtt": 1.0024044265292047,
+              "sampleIndexes": [
+                0,
+                1
+              ],
+              "warmP50Ms": 302.30632
+            },
+            {
+              "block": 1,
+              "coldP50Ms": 402.631106,
+              "removedHandshakeMs": 100.33691149999999,
+              "removedHandshakePerMeasuredRtt": 1.002356734697955,
+              "sampleIndexes": [
+                2,
+                3
+              ],
+              "warmP50Ms": 302.2941945
+            },
+            {
+              "block": 2,
+              "coldP50Ms": 402.644142,
+              "removedHandshakeMs": 100.33646399999998,
+              "removedHandshakePerMeasuredRtt": 1.0023522642131446,
+              "sampleIndexes": [
+                4,
+                5
+              ],
+              "warmP50Ms": 302.307678
+            }
+          ],
+          "bootstrap95": [
+            1.0023522642131446,
+            1.0024044265292047
+          ],
+          "concurrency": 1,
+          "errors": [],
+          "measuredRttMs": 100.101,
+          "medianRemovedHandshakePerMeasuredRtt": 1.002356734697955,
+          "metric": "cold p50 minus warm p50",
+          "perDirectionLossPercent": 0.0,
+          "targetRttMs": 100,
+          "transport": "socks5",
+          "verdict": "PASS"
+        },
+        {
+          "blockCount": 3,
+          "blocks": [
+            {
+              "block": 0,
+              "coldP50Ms": 402.223659,
+              "removedHandshakeMs": 200.270351,
+              "removedHandshakePerMeasuredRtt": 1.000926361296449,
+              "sampleIndexes": [
+                0,
+                1
+              ],
+              "warmP50Ms": 201.953308
+            },
+            {
+              "block": 1,
+              "coldP50Ms": 402.203763,
+              "removedHandshakeMs": 200.27093349999996,
+              "removedHandshakePerMeasuredRtt": 1.000929272559162,
+              "sampleIndexes": [
+                2,
+                3
+              ],
+              "warmP50Ms": 201.93282950000003
+            },
+            {
+              "block": 2,
+              "coldP50Ms": 402.2012145,
+              "removedHandshakeMs": 200.255936,
+              "removedHandshakePerMeasuredRtt": 1.000854316915311,
+              "sampleIndexes": [
+                4,
+                5
+              ],
+              "warmP50Ms": 201.9452785
+            }
+          ],
+          "bootstrap95": [
+            1.000854316915311,
+            1.000929272559162
+          ],
+          "concurrency": 1,
+          "errors": [],
+          "measuredRttMs": 200.085,
+          "medianRemovedHandshakePerMeasuredRtt": 1.000926361296449,
+          "metric": "cold p50 minus warm p50",
+          "perDirectionLossPercent": 0.0,
+          "targetRttMs": 200,
+          "transport": "handoff",
+          "verdict": "PASS"
+        },
+        {
+          "blockCount": 3,
+          "blocks": [
+            {
+              "block": 0,
+              "coldP50Ms": 402.287238,
+              "removedHandshakeMs": 200.3417245,
+              "removedHandshakePerMeasuredRtt": 1.0012830771921932,
+              "sampleIndexes": [
+                0,
+                1
+              ],
+              "warmP50Ms": 201.9455135
+            },
+            {
+              "block": 1,
+              "coldP50Ms": 402.27860599999997,
+              "removedHandshakeMs": 200.34789149999997,
+              "removedHandshakePerMeasuredRtt": 1.0013138990928854,
+              "sampleIndexes": [
+                2,
+                3
+              ],
+              "warmP50Ms": 201.9307145
+            },
+            {
+              "block": 2,
+              "coldP50Ms": 402.28147249999995,
+              "removedHandshakeMs": 200.35500449999995,
+              "removedHandshakePerMeasuredRtt": 1.0013494489841814,
+              "sampleIndexes": [
+                4,
+                5
+              ],
+              "warmP50Ms": 201.926468
+            }
+          ],
+          "bootstrap95": [
+            1.0012830771921932,
+            1.0013494489841814
+          ],
+          "concurrency": 1,
+          "errors": [],
+          "measuredRttMs": 200.085,
+          "medianRemovedHandshakePerMeasuredRtt": 1.0013138990928854,
+          "metric": "cold p50 minus warm p50",
+          "perDirectionLossPercent": 0.0,
+          "targetRttMs": 200,
+          "transport": "nxr",
+          "verdict": "PASS"
+        },
+        {
+          "blockCount": 3,
+          "blocks": [
+            {
+              "block": 0,
+              "coldP50Ms": 802.7664240000001,
+              "removedHandshakeMs": 200.36259250000012,
+              "removedHandshakePerMeasuredRtt": 1.0013873728665323,
+              "sampleIndexes": [
+                0,
+                1
+              ],
+              "warmP50Ms": 602.4038315
+            },
+            {
+              "block": 1,
+              "coldP50Ms": 802.7718655000001,
+              "removedHandshakeMs": 200.38868550000007,
+              "removedHandshakePerMeasuredRtt": 1.0015177824424621,
+              "sampleIndexes": [
+                2,
+                3
+              ],
+              "warmP50Ms": 602.38318
+            },
+            {
+              "block": 2,
+              "coldP50Ms": 802.7681110000001,
+              "removedHandshakeMs": 200.36656700000003,
+              "removedHandshakePerMeasuredRtt": 1.0014072369243072,
+              "sampleIndexes": [
+                4,
+                5
+              ],
+              "warmP50Ms": 602.4015440000001
+            }
+          ],
+          "bootstrap95": [
+            1.0013873728665323,
+            1.0015177824424621
+          ],
+          "concurrency": 1,
+          "errors": [],
+          "measuredRttMs": 200.085,
+          "medianRemovedHandshakePerMeasuredRtt": 1.0014072369243072,
+          "metric": "cold p50 minus warm p50",
+          "perDirectionLossPercent": 0.0,
+          "targetRttMs": 200,
+          "transport": "socks5",
+          "verdict": "PASS"
+        }
+      ],
+      "claim": "on a valid warm hit, the user flow does not wait for a new LINE-to-peer TCP handshake",
+      "effect": "median(cold p50) - median(warm p50)",
+      "errors": [],
+      "gate": {
+        "bootstrapLowerBoundAboveMeasuredRtt": {
+          "exclusiveMinimum": 0.5,
+          "rttsMs": [
+            100,
+            200
+          ]
+        },
+        "pointEstimateMeasuredRttRange": [
+          0.65,
+          1.35
+        ],
+        "rttsMs": [
+          50,
+          100,
+          200
+        ]
+      },
+      "normalization": "measured ICMP RTT for the shaped veth pair",
+      "pairing": "balanced ABBA blocks",
+      "scope": "zero-loss concurrency-1 cold-versus-warm p50; loss and higher concurrency cells are mandatory robustness evidence, not mechanism gates",
+      "verdict": "PASS"
+    },
+    "performanceVerdict": "PASS",
+    "poolSummaries": [
+      {
+        "arrival_rate_ewma": "4.233",
+        "checkoutAcquisitionRatio": 1,
+        "connect_latency_ewma_ms": "200.109",
+        "event": "transport_pool_summary",
+        "generation": 0,
+        "level": "info",
+        "pool_checkout_hit": 630,
+        "pool_checkout_miss": 0,
+        "pool_checkout_total": 630,
+        "pool_cold_fallback": 0,
+        "pool_connect_failure": 0,
+        "pool_connecting": 0,
+        "pool_growth": 0,
+        "pool_in_use": 0,
+        "pool_ready": 4,
+        "pool_refill": 756,
+        "pool_shrink": 0,
+        "pool_stale_discard": 122,
+        "pool_target_ready": 4,
+        "recent_burst": "0.750",
+        "successfulWarmRatioLowerBound": 0.8063492063492064,
+        "timestampUnixMs": 1791359509459,
+        "transport": "handoff"
+      },
+      {
+        "arrival_rate_ewma": "0.000",
+        "checkoutAcquisitionRatio": 1,
+        "connect_latency_ewma_ms": "200.150",
+        "event": "transport_pool_summary",
+        "generation": 0,
+        "level": "info",
+        "pool_checkout_hit": 630,
+        "pool_checkout_miss": 0,
+        "pool_checkout_total": 630,
+        "pool_cold_fallback": 0,
+        "pool_connect_failure": 0,
+        "pool_connecting": 0,
+        "pool_growth": 0,
+        "pool_in_use": 0,
+        "pool_ready": 4,
+        "pool_refill": 755,
+        "pool_shrink": 0,
+        "pool_stale_discard": 121,
+        "pool_target_ready": 4,
+        "recent_burst": "0.000",
+        "successfulWarmRatioLowerBound": 0.807936507936508,
+        "timestampUnixMs": 1791359509481,
+        "transport": "nxr"
+      },
+      {
+        "arrival_rate_ewma": "0.000",
+        "checkoutAcquisitionRatio": 1,
+        "connect_latency_ewma_ms": "200.191",
+        "event": "transport_pool_summary",
+        "generation": 0,
+        "level": "info",
+        "pool_checkout_hit": 630,
+        "pool_checkout_miss": 0,
+        "pool_checkout_total": 630,
+        "pool_cold_fallback": 0,
+        "pool_connect_failure": 0,
+        "pool_connecting": 0,
+        "pool_growth": 0,
+        "pool_in_use": 0,
+        "pool_ready": 4,
+        "pool_refill": 750,
+        "pool_shrink": 0,
+        "pool_stale_discard": 116,
+        "pool_target_ready": 4,
+        "recent_burst": "0.000",
+        "successfulWarmRatioLowerBound": 0.8158730158730159,
+        "timestampUnixMs": 1791359509502,
+        "transport": "socks5"
+      }
+    ],
+    "poolSummaryErrors": [],
+    "profiles": [
+      {
+        "errors": [],
+        "observedRttMs": 50.095,
+        "perDirectionLossPercent": 0.0,
+        "raw": {
+          "handoff-cold": "/home/runner/work/_temp/qualification/mechanism/setup-rtt50-loss0-handoff-cold.jsonl",
+          "handoff-warm": "/home/runner/work/_temp/qualification/mechanism/setup-rtt50-loss0-handoff-warm.jsonl",
+          "nxr-cold": "/home/runner/work/_temp/qualification/mechanism/setup-rtt50-loss0-nxr-cold.jsonl",
+          "nxr-warm": "/home/runner/work/_temp/qualification/mechanism/setup-rtt50-loss0-nxr-warm.jsonl",
+          "socks-cold": "/home/runner/work/_temp/qualification/mechanism/setup-rtt50-loss0-socks-cold.jsonl",
+          "socks-warm": "/home/runner/work/_temp/qualification/mechanism/setup-rtt50-loss0-socks-warm.jsonl"
+        },
+        "targetRttMs": 50
+      },
+      {
+        "errors": [],
+        "observedRttMs": 100.101,
+        "perDirectionLossPercent": 0.0,
+        "raw": {
+          "handoff-cold": "/home/runner/work/_temp/qualification/mechanism/setup-rtt100-loss0-handoff-cold.jsonl",
+          "handoff-warm": "/home/runner/work/_temp/qualification/mechanism/setup-rtt100-loss0-handoff-warm.jsonl",
+          "nxr-cold": "/home/runner/work/_temp/qualification/mechanism/setup-rtt100-loss0-nxr-cold.jsonl",
+          "nxr-warm": "/home/runner/work/_temp/qualification/mechanism/setup-rtt100-loss0-nxr-warm.jsonl",
+          "socks-cold": "/home/runner/work/_temp/qualification/mechanism/setup-rtt100-loss0-socks-cold.jsonl",
+          "socks-warm": "/home/runner/work/_temp/qualification/mechanism/setup-rtt100-loss0-socks-warm.jsonl"
+        },
+        "targetRttMs": 100
+      },
+      {
+        "errors": [],
+        "observedRttMs": 200.085,
+        "perDirectionLossPercent": 0.0,
+        "raw": {
+          "handoff-cold": "/home/runner/work/_temp/qualification/mechanism/setup-rtt200-loss0-handoff-cold.jsonl",
+          "handoff-warm": "/home/runner/work/_temp/qualification/mechanism/setup-rtt200-loss0-handoff-warm.jsonl",
+          "nxr-cold": "/home/runner/work/_temp/qualification/mechanism/setup-rtt200-loss0-nxr-cold.jsonl",
+          "nxr-warm": "/home/runner/work/_temp/qualification/mechanism/setup-rtt200-loss0-nxr-warm.jsonl",
+          "socks-cold": "/home/runner/work/_temp/qualification/mechanism/setup-rtt200-loss0-socks-cold.jsonl",
+          "socks-warm": "/home/runner/work/_temp/qualification/mechanism/setup-rtt200-loss0-socks-warm.jsonl"
+        },
+        "targetRttMs": 200
+      }
+    ],
+    "schemaVersion": 3,
+    "status": "COMPLETE",
+    "unexpectedProfiles": [],
+    "verdict": "PASS"
+  },
+  "overallVerdict": "PASS",
+  "performanceVerdict": "PASS",
+  "program": {
+    "concurrencies": [
+      8,
+      32
+    ],
+    "connectionsPerSample": 96,
+    "evaluateNetemPerformance": true,
+    "formal": true,
+    "kind": "mechanism",
+    "longflowMiB": 512,
+    "perDirectionLossPercent": [
+      0.0
+    ],
+    "rttConcurrencies": [
+      1
+    ],
+    "rttConnectionsPerSample": 32,
+    "rttsMs": [
+      50,
+      100,
+      200
+    ],
+    "samples": 3,
+    "schemaVersion": 1,
+    "sections": [
+      "rtt"
+    ],
+    "throughputCells": [
+      {
+        "concurrency": 1,
+        "payloadMiB": 32
+      },
+      {
+        "concurrency": 32,
+        "payloadMiB": 32
+      },
+      {
+        "concurrency": 32,
+        "payloadMiB": 512
+      }
+    ],
+    "throughputSamples": 3
+  },
+  "schemaVersion": 1,
+  "status": "COMPLETE",
+  "transferErrors": []
+}

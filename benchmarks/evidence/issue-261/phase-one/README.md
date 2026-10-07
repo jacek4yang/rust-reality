@@ -238,3 +238,47 @@ bindings. [Artifact manifest](11466264441/manifest.json) records ZIP SHA-256
 `4c5a79f4e6dbb6fb1f5adefd2cbe7c00977ddca75c1f34b19c9ed3f8dc94fcea`.
 Aggregate PSS tail is 1.821038584 MiB/hour against the unchanged 2.0 limit.
 This pass neither erases the preceding failure nor qualifies a subsequent head.
+
+## Frozen candidate `583ffed`
+
+The executable candidate remains
+`583ffed78f3a943b8a2235d158060a537ec284b2`; subsequent evidence-only commits do
+not change that identity. Local `cargo dev check --all` passes all 19 stages in
+750.3 seconds. CI 37586749887 and Security 37586749683 pass.
+
+Native run 37586749806 passes with aggregate PSS tail
+0.617346461 MiB/hour against the unchanged 2.0 limit.
+[Audit](11469499077/audit.json) verifies all 47 checksum entries and all four
+completion/evidence bindings. [Manifest](11469499077/manifest.json) retains the
+public-safe textual evidence; the frozen binary remains in the original
+artifact. ZIP SHA-256:
+`0b8b475df7178c42ee8682840991f18bc0f57de2a09fc6dbd974d18dc82ecfd0`.
+Hosted ELF:
+`c8bbb90090ee51d34071c8ff1a3849c8bf2ebe9438730c9ba99d855671aaa675`.
+Locally frozen ELF:
+`b261d4a25a88d057ceb7c5f50c06f3a8041ec95b609c3d1349785264f20a830f`.
+They have the same source identity, not byte-identical build environments.
+
+The [checkpoint manifest](candidate-checkpoint-583ffed-manifest.json) binds
+`candidate-checkpoint-583ffed.tar.xz`, SHA-256
+`dd6dc9b9a37b00268f0bceab020df8fc936bbd0ed3c31b47144e5881248a00af`.
+Its 53 members include local gate/freeze receipts, native ARM package bindings,
+and failed/passed disposable-driver diagnostics. ARM artifact 11466936938
+comes from the native Ubuntu 22.04 ARM CI job; its package SHA-256 is
+`45636400901ad61550dfe5ee4e65d5fcfce225d1d05c9ed9466cc9b1ce1cd230`.
+The existing version is a package-format label, not a newly created release.
+
+The initial NXR KVM lifecycle is incomplete: its sampler aborted when an
+enumerated `/proc/<pid>/fd` entry closed before `readlink`. A short live
+reproducer names that exact path; a deterministic closed-descriptor regression
+fails before and passes after the diagnostic-only correction. The corrected
+sampler retains enumerated descriptors in its count, marks disappearing
+targets explicitly, and still fails on process disappearance or other errors.
+Its live confirmation completes 1,620 samples in 20 seconds, observing one
+close race without aborting. A separate failed smoke detects reused upload
+paths in an append-only origin log. The corrected verifier uses the captured
+pre-transfer append boundary and requires one new PUT receipt per upload with
+the exact length/hash. Neither correction changes production code or turns
+the original failed/incomplete runs into passes.
+
+This evidence is not real-WAN Tier B and does not authorize publication.

@@ -1,0 +1,64 @@
+{
+  "binaries": {
+    "openssl": {
+      "identity": "OpenSSL 3.5.6 7 Apr 2026 (Library: OpenSSL 3.5.6 7 Apr 2026)\nbuilt on: Wed Oct  7 07:33:30 2026 UTC\nplatform: linux-x86_64\noptions:  bn(64,64)\ncompiler: gcc -fPIC -pthread -m64 -Wa,--noexecstack -Wall -O3 -DOPENSSL_USE_NODELETE -DL_ENDIAN -DOPENSSL_PIC -DOPENSSL_BUILDING_OPENSSL -DNDEBUG\nOPENSSLDIR: \"/home/runner/work/_temp/rr-fixtures/openssl/ssl\"\nENGINESDIR: \"/home/runner/work/_temp/rr-fixtures/openssl/lib64/engines-3\"\nMODULESDIR: \"/home/runner/work/_temp/rr-fixtures/openssl/lib64/ossl-modules\"\nSeeding source: os-specific\nCPUINFO: OPENSSL_ia32cap=0xfeda3203078bffff:0x00405fc6f1bf07a9:0x0000002000000010:0x0000000000000000:0x0000000000000000",
+      "immutableDuringRun": true,
+      "path": "/home/runner/work/_temp/rr-fixtures/openssl/bin/openssl",
+      "sha256": "8a0a3eecaecac1209af608c9906e17bd051ccc1ec0b90e85aba2015c02834348"
+    },
+    "rrDevHelpers": {
+      "immutableDuringRun": true,
+      "path": "/home/runner/work/rust-reality/rust-reality/tools/target/debug/rr-dev",
+      "sha256": "1d1bcb4e1b0d9f25e11c3d07f55f007b93814162a785cb39f43272d4fd1ac908"
+    },
+    "rustReality": {
+      "identity": "{\"gitCommit\":\"583ffed78f3a943b8a2235d158060a537ec284b2\",\"version\":\"2.0.1\"}",
+      "immutableDuringRun": true,
+      "path": "/home/runner/work/_temp/qualification/frozen/binary/rust-reality",
+      "sha256": "c8bbb90090ee51d34071c8ff1a3849c8bf2ebe9438730c9ba99d855671aaa675"
+    },
+    "xray": {
+      "identity": "Xray 26.9.9 (Xray, Penetrates Everything.) 52a412d (go1.27.1 linux/amd64)",
+      "immutableDuringRun": true,
+      "path": "/home/runner/work/_temp/rr-fixtures/xray/xray",
+      "sha256": "c4ae6798c38e0e5343b192406746333cd0ba7ff3eb984f8c4b9939dcb68c3f8a"
+    }
+  },
+  "completedAt": "2026-10-07T07:52:43Z",
+  "configSha256": {
+    "server": "68f07ebff1deb15a20bb12cfa26d758bebfe1647bd3b268bc05d60033437aff9",
+    "xray": "bbff961daaad9ee6543217afac2bd3c4e2a0ccc9f66eb1e8c8f5b6d049e6dd8b"
+  },
+  "gate": "descriptor-pressure-recovery",
+  "launcher": "prlimit-direct-exec",
+  "nofile": {
+    "hard": 192,
+    "soft": 192
+  },
+  "ok": true,
+  "ports": {
+    "cover": 40749,
+    "echo": 41235,
+    "server": 37999,
+    "socks": 42919
+  },
+  "repositoryHead": "583ffed78f3a943b8a2235d158060a537ec284b2",
+  "result": {
+    "baselineFdCount": 21,
+    "controlSha256": "c8f5d0341d54d951a71b136e6e2afcb14d11ed8489a7ae126a8fee0df6ecf193",
+    "effectiveBudget": 74,
+    "expectedRecoverySha256": "7daca2095d0438260fa849183dfc67faa459fdf4936e1bc91eec6b281b27e4c2",
+    "fillFailures": 1,
+    "highTransitionUnits": 66,
+    "normalTransitionUnits": 61,
+    "ok": true,
+    "pressureFdCount": 85,
+    "recoverySha256": "7daca2095d0438260fa849183dfc67faa459fdf4936e1bc91eec6b281b27e4c2",
+    "serverPid": 56251,
+    "stormFailures": 12,
+    "stormSuccesses": 0,
+    "successfulHeldConnectionsAtPressure": 34
+  },
+  "runId": "37586749806-pressure",
+  "schemaVersion": 1
+}
