@@ -1,5 +1,19 @@
 #![no_main]
 
+#[path = "../../tools/rr-dev/src/perf/bootstrap.rs"]
+pub mod bootstrap;
+#[path = "../../tools/rr-dev/src/perf/json_in.rs"]
+pub mod json_in;
+#[path = "../../tools/rr-dev/src/perf/json_out.rs"]
+pub mod json_out;
+#[path = "../../tools/rr-dev/src/perf/stats.rs"]
+pub mod stats;
+mod perf {
+    pub use crate::{bootstrap, json_in, json_out, stats};
+}
+#[path = "../../tools/rr-dev/src/deploy/netem.rs"]
+mod netem;
+
 // Compile the exact tooling parser and pure evaluator without linking the
 // tooling control plane into the production library or fuzz target graph.
 #[path = "../../tools/rr-dev/src/bench/stability/action.rs"]
@@ -28,6 +42,31 @@ mod transfer;
 mod vm;
 
 libfuzzer_sys::fuzz_target!(|bytes: &[u8]| {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        let args = netem::NetemArgs {
+            profiles: "/fixture/profiles".into(),
+            pool_summaries: "/fixture/pools".into(),
+            rtts: vec![50],
+            losses: vec![0.0],
+            concurrencies: vec![1],
+            samples: 1,
+            connections: 32,
+            evaluate_performance: false,
+        };
+        let profile = r#"{"targetRttMs":50,"perDirectionLossPercent":0.0,"raw":{"handoff-warm":"/fixture/handoff-warm","handoff-cold":"/fixture/handoff-cold","nxr-warm":"/fixture/nxr-warm","nxr-cold":"/fixture/nxr-cold","socks-warm":"/fixture/socks-warm","socks-cold":"/fixture/socks-cold"}}"#;
+        for profiles in [text, profile] {
+            let _ = netem::validate_observations(&args, |path| {
+                Ok(if path == args.profiles {
+                    profiles
+                } else if path == args.pool_summaries {
+                    r#"[{"transport":"handoff"},{"transport":"nxr"},{"transport":"socks5"}]"#
+                } else {
+                    text
+                }
+                .to_owned())
+            });
+        }
+    }
     let _ = checks::parse_ci(bytes);
     let _ = checks::parse_gate(bytes);
     let _ = native_interop::parse(bytes);

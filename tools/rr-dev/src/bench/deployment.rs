@@ -2931,6 +2931,10 @@ fn write_environment(state: &RunState<'_>) -> Result<(), String> {
         ("runId", Json::string(&state.plan.run_id)),
         ("harnessCommit", Json::string(commit.trimmed_stdout())),
         (
+            "harnessSha256",
+            Json::string(hash::sha256_file(Path::new("/proc/self/exe"))?),
+        ),
+        (
             "rustRealityBin",
             Json::string(state.rust.path.display().to_string()),
         ),
