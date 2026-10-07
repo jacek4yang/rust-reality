@@ -299,7 +299,7 @@ errors. It changes no transport behavior or memory-management policy.
 
 The [causal manifest](established-io-classification-manifest.json) binds
 103 members in `established-io-classification.tar.xz`, SHA-256
-`5c5a1b021b65beb1c872527c6c823fc9cc6e6029ac9ed10f6d41c7c877df63f6`.
+`306b4f5dfd7956a0204859b66e9e7ddf4c9caf6eb8ab13620318782f56d03aae`.
 It retains the failed original audit inputs, failing-before/passing-after
 regression, production-module/workspace tests, strict clippy receipts, and a
 short real two-LINE NXR kill/recovery smoke. Both LINEs report
@@ -307,6 +307,10 @@ short real two-LINE NXR kill/recovery smoke. Both LINEs report
 299,008 exact bytes. One hundred recovery transfers and simultaneous
 upload/download integrity pass. This debug smoke binds the changed source
 and ELF hashes explicitly; it is not frozen release qualification.
+The initial 529,300-byte XZ representation exceeded the repository's unchanged
+524,288-byte tracked-object limit. Stronger compression produces 409,456 bytes
+with the identical uncompressed tar and all 103 member hashes unchanged.
+The manifest retains both compressed identities and the tar hash.
 
 The initial clippy failure records disappearing build directories during an
 owner-reported accidental checkout deletion. Recovery from pushed commits
