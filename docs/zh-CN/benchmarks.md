@@ -643,3 +643,10 @@ cargo dev bench run --suite descriptor-pressure \
 资源拒绝还会写出 `ok=false` 的 `soak-summary.json`，包含失败范围及聚合、
 各进程指标。这些失败不会发布仅用于成功运行的 `environment.json` 和
 `completion.json`。进程被中断可能留下不完整证据；缺失终态记录绝不代表通过。
+
+原生资源验收使用 `benchmarks/contracts/stability.json` 所有权契约。在负载开始
+之前固定每个进程的描述符清单及实际资源容量；每轮及固定的 5/60/180 秒恢复
+检查点均保留原始观察和归一化所有权判定。恢复后，未打开描述符的预留许可只能
+属于监听器等待中的 accept。仍强制执行汇总及各进程 RSS +32 MiB、HWM +64 MiB、
+线程 +8 包络；RSS/PSS 斜率及 FD 增量只作为诊断。所有权证据缺失或不一致时
+资格认证失败。CI 在失败后保留这些不含秘密的观察及最终身份核验尝试。

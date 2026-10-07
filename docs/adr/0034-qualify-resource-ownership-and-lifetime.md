@@ -64,6 +64,11 @@ allocator-free bytes are not a substitute for owner evidence. Preserve absolute
 RSS/thread envelopes, pressure recovery and OOM rejection. RSS/PSS slopes are
 diagnostics, with no acceptance threshold.
 
+Native qualification uses the same ownership rules in place of descriptor-growth
+and slope proxies, with startup inventory, round observations and fixed recovery
+checkpoints. Its aggregate and per-process RSS +32 MiB, HWM +64 MiB and thread +8
+envelopes remain unchanged. Historical native verdicts are not recalculated.
+
 Every predefined cycle retains baseline, load and recovered observations for
 each exact process. Baseline collection ends before the fixed load start;
 transfer intervals must exercise the prescribed concurrency. Faults have fixed

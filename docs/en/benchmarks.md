@@ -870,3 +870,13 @@ the failing scope and aggregate/per-process metrics. Success-only
 `environment.json` and `completion.json` are not published for these failures.
 An interrupted process can leave incomplete evidence; missing terminal records
 never establish success.
+
+Native resource acceptance uses the ownership contract in
+`benchmarks/contracts/stability.json`. Before workload, it fixes each process's
+descriptor inventory and actual authority capacities. Every round and the fixed
+5/60/180-second recovery checkpoints retain raw observations and normalized
+ownership verdicts. Only pending listener accepts may retain unopened permits
+at recovery. Aggregate and per-process RSS +32 MiB, HWM +64 MiB and thread +8
+envelopes remain enforced; RSS/PSS slopes and FD growth are diagnostics.
+Missing or inconsistent ownership evidence fails qualification. CI preserves
+these secret-free observations and attempted final identities on failure.

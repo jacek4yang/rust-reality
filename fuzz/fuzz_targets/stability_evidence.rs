@@ -23,6 +23,19 @@ libfuzzer_sys::fuzz_target!(|bytes: &[u8]| {
     if let Ok(raw) = schema::parse_observation(bytes) {
         // Exercise the exact raw-field parser with arbitrary retained text.
         let _ = observation::read_ownership(&raw, 1);
+        if let Ok(policy) = observation::startup_policy(&raw, 1) {
+            if let Ok(sample) = observation::normalize(
+                &raw,
+                &policy,
+                "native",
+                schema::Artifact {
+                    path: "raw.json".to_owned(),
+                    sha256: "a".repeat(64),
+                },
+            ) {
+                let _ = evaluate::evaluate_native_resources(&policy, &sample, &sample, true);
+            }
+        }
     }
     if let Ok(evidence) = schema::parse(bytes) {
         let _ = evaluate::evaluate(&evidence, &"a".repeat(64));

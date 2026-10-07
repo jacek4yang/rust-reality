@@ -3,6 +3,7 @@
 pub mod collect;
 pub mod evaluate;
 pub mod fixture;
+pub mod native;
 pub mod observation;
 pub mod schema;
 pub mod vm;

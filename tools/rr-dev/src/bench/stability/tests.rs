@@ -271,6 +271,42 @@ fn recovered_permits_cannot_be_hidden_as_unopened_reservations() {
 }
 
 #[test]
+fn native_reconstruction_and_resource_gate_fail_closed() {
+    let evidence = schema::parse(&serde_json::to_vec(&fixture()).unwrap()).unwrap();
+    let baseline = &evidence.cells[0].cycles[0].checkpoints[0].samples[0];
+    let policy = &evidence.cells[0].roles[0].policy;
+    let raw =
+        schema::parse_observation(&serde_json::to_vec(&raw_observation(baseline, policy)).unwrap())
+            .unwrap();
+    let startup = super::observation::startup_policy(&raw, 1).unwrap();
+    let sample =
+        super::observation::normalize(&raw, &startup, "native", baseline.observation.clone())
+            .unwrap();
+    assert_eq!(
+        evaluate::evaluate_native_resources(&startup, &sample, &sample, true).verdict,
+        Verdict::Pass
+    );
+    let mut leaked = sample.clone();
+    leaked.owners.retired_generations = 1;
+    assert_eq!(
+        evaluate::evaluate_native_resources(&startup, &sample, &leaked, true).verdict,
+        Verdict::Fail
+    );
+    leaked = sample.clone();
+    leaked.hwm_kib += 65_537;
+    assert_eq!(
+        evaluate::evaluate_native_resources(&startup, &sample, &leaked, false).verdict,
+        Verdict::Fail
+    );
+    let mut unknown = raw;
+    unknown.descriptors.insert(999, "/unowned/file".to_owned());
+    assert!(
+        super::observation::normalize(&unknown, &startup, "native", baseline.observation.clone())
+            .is_err()
+    );
+}
+
+#[test]
 fn artifact_verification_rejects_missing_changed_and_escaping_objects() {
     let workspace = Workspace::create("stability-artifacts").unwrap();
     let mut artifact = schema::Artifact {

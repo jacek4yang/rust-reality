@@ -158,7 +158,13 @@ jobs:
               'soak/soak-summary.json', 'soak/environment.json', 'soak/completion.json',
               'soak/resources.jsonl', 'soak/distributed-samples.jsonl',
               'soak/distributed-gates.json', 'soak/handoff-cover-certificate-san.txt',
+              'soak/attempt-environment.json', 'soak/attempt-terminal.json',
+              'soak/execution-terminal.json',
           ]
+          # Native ownership receipts contain the product's fixed secret-free
+          # event vocabulary and /proc observations, never generated configs.
+          names += [str(path.relative_to(root))
+                    for path in sorted((root / 'soak').glob('ownership-*.json'))]
           names += [f'mechanism/setup-rtt{rtt}-loss0-{protocol}-{mode}.jsonl'
                     for rtt in (50, 100, 200) for protocol in ('handoff', 'nxr', 'socks')
                     for mode in ('warm', 'cold')]
@@ -182,7 +188,7 @@ jobs:
               'job_status_before_publication': status,
               'retained': retained, 'missing': missing,
               'scope': 'Exact-head local-runner regression, not a real-host canary or WAN claim.',
-              'excluded': 'Generated configurations, keys, payloads, raw process logs and TLS traces.',
+              'excluded': 'Generated configurations, keys, payloads, standalone raw process logs and TLS traces.',
               'retention_days': 30,
           }
           (public / 'PUBLICATION.json').write_text(json.dumps(manifest, indent=2) + '\n')

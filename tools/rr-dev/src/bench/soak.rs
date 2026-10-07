@@ -1557,6 +1557,18 @@ fn run_rust_attempt(plan: &SoakPlan, run: &RunDirectory) -> Result<RustSoakOutco
         ("nxr-landing", nxr_landing.pid()),
         ("socks-line", socks_line.pid()),
     ])?;
+    let mut ownership = super::stability::native::Qualification::new(
+        run,
+        &identities,
+        &[
+            ("standalone", &standalone_log),
+            ("handoff-line", &handoff_line_log),
+            ("handoff-landing", &handoff_landing_log),
+            ("nxr-line", &nxr_line_log),
+            ("nxr-landing", &nxr_landing_log),
+            ("socks-line", &socks_line_log),
+        ],
+    )?;
     let started = Instant::now();
     let mut distributed = DistributedRun {
         run,
@@ -1573,6 +1585,7 @@ fn run_rust_attempt(plan: &SoakPlan, run: &RunDirectory) -> Result<RustSoakOutco
     let mut failures = 0;
     let mut shaped = 0;
     let attempted = (|| {
+        ownership.begin()?;
         distributed.attempt("start");
         snapshots.push(capture_processes("start", started.elapsed(), &identities)?);
         let reload_at = plan.duration.div_f64(2.0);
@@ -1610,6 +1623,7 @@ fn run_rust_attempt(plan: &SoakPlan, run: &RunDirectory) -> Result<RustSoakOutco
                 distributed.attempt("interval");
                 next_distributed += plan.distributed_interval;
             }
+            ownership.round(rounds)?;
             snapshots.push(capture_processes(
                 &format!("round-{rounds}"),
                 started.elapsed(),
@@ -1641,7 +1655,7 @@ fn run_rust_attempt(plan: &SoakPlan, run: &RunDirectory) -> Result<RustSoakOutco
         }
         distributed.attempt("end");
         publish_final_downloads(&distributed)?;
-        std::thread::sleep(Duration::from_secs(5));
+        ownership.recover()?;
         snapshots.push(capture_processes("end", started.elapsed(), &identities)?);
 
         shaped = wait_for_proxy_completion(&mut shape_proxy, &shape_log, distributed.attempts)?;
@@ -1665,21 +1679,14 @@ fn run_rust_attempt(plan: &SoakPlan, run: &RunDirectory) -> Result<RustSoakOutco
         }
         let resources = summarize_aggregate_resources(&snapshots)?;
         let resources_by_process = summarize_each_process(&snapshots)?;
-        let slope_gate_applied = plan.duration >= Duration::from_mins(30);
-        check_native_resource_gate(
-            run,
-            plan,
-            &rust,
-            &resources,
-            &resources_by_process,
-            slope_gate_applied,
-        )?;
+        check_native_resource_gate(run, plan, &rust, &resources, &resources_by_process)?;
 
-        Ok((resources, resources_by_process, slope_gate_applied))
+        Ok((resources, resources_by_process))
     })();
     // Every finalizer is attempted while the children and workspace are alive.
     // A failed workload must not suppress raw observations or identity checks.
     let mut finalization = Vec::new();
+    finalization.push(("terminal ownership".to_owned(), ownership.finalize()));
     let observations = retain_native_observations(
         &distributed,
         &snapshots,
@@ -1763,8 +1770,7 @@ fn run_rust_attempt(plan: &SoakPlan, run: &RunDirectory) -> Result<RustSoakOutco
             copy_origin_log(&workspace, run, label, destination),
         ));
     }
-    let (resources, resources_by_process, slope_gate_applied) =
-        finalize_native_attempt(run, attempted, &finalization)?;
+    let (resources, resources_by_process) = finalize_native_attempt(run, attempted, &finalization)?;
     let distributed_json = observations?;
 
     let resource_by_process_json = Json::object(
@@ -1801,7 +1807,6 @@ fn run_rust_attempt(plan: &SoakPlan, run: &RunDirectory) -> Result<RustSoakOutco
     let long_horizon_qualified = plan.duration == Duration::from_hours(12)
         && started.elapsed() >= Duration::from_hours(12)
         && resources.pss_available
-        && slope_gate_applied
         && (Duration::from_mins(5)..=Duration::from_mins(30)).contains(&plan.distributed_interval)
         && distributed.attempts >= 25;
     let summary = Json::object([
@@ -1871,9 +1876,14 @@ fn run_rust_attempt(plan: &SoakPlan, run: &RunDirectory) -> Result<RustSoakOutco
         ("resources", resource_summary_json(&resources)),
         ("resourceAggregate", resource_summary_json(&resources)),
         ("resourceByProcess", resource_by_process_json),
-        ("memoryTailSlopeGateApplied", Json::Bool(slope_gate_applied)),
         (
-            "memorySlopeGateBasis",
+            "ownershipContractSha256",
+            Json::string(hash::sha256_hex(
+                super::stability::schema::CONTRACT.as_bytes(),
+            )),
+        ),
+        (
+            "memorySlopeDiagnosticBasis",
             Json::object([
                 (
                     "aggregate",
@@ -2562,12 +2572,11 @@ fn check_native_resource_gate(
     rust: &Binary,
     aggregate: &ResourceSummary,
     by_process: &BTreeMap<String, ResourceSummary>,
-    slope_gate_applied: bool,
 ) -> Result<(), String> {
-    let failure = if resources_within_limits(aggregate, slope_gate_applied, true) {
+    let failure = if resources_within_limits(aggregate) {
         by_process
             .iter()
-            .find(|(_, summary)| !resources_within_limits(summary, slope_gate_applied, false))
+            .find(|(_, summary)| !resources_within_limits(summary))
             .map(|(name, summary)| {
                 (
                     name.as_str(),
@@ -2617,9 +2626,14 @@ fn check_native_resource_gate(
                     .map(|(name, summary)| (name.clone(), resource_summary_json(summary))),
             ),
         ),
-        ("memoryTailSlopeGateApplied", Json::Bool(slope_gate_applied)),
         (
-            "memorySlopeGateBasis",
+            "ownershipContractSha256",
+            Json::string(hash::sha256_hex(
+                super::stability::schema::CONTRACT.as_bytes(),
+            )),
+        ),
+        (
+            "memorySlopeDiagnosticBasis",
             Json::object([
                 (
                     "aggregate",
@@ -2641,25 +2655,13 @@ fn check_native_resource_gate(
     Err(error)
 }
 
-fn resources_within_limits(
-    summary: &ResourceSummary,
-    slope_gate_applied: bool,
-    aggregate: bool,
-) -> bool {
-    let tail_slope = if aggregate {
-        summary
-            .pss_tail_slope_mib_per_hour
-            .unwrap_or(summary.rss_tail_slope_mib_per_hour)
-    } else {
-        summary.rss_tail_slope_mib_per_hour
-    };
-    summary.fd_growth <= 32
-        && summary.thread_growth <= 8
+fn resources_within_limits(summary: &ResourceSummary) -> bool {
+    // Descriptor acceptance is the separately verified startup owner/permit
+    // census. Slopes remain diagnostics; preserve these absolute envelopes.
+    summary.thread_growth <= 8
         && summary.rss_growth_mib <= 32.0
-        && summary.fd_peak_growth <= 128
         && summary.thread_peak_growth <= 8
         && summary.rss_peak_growth_mib <= 64.0
-        && (!slope_gate_applied || tail_slope <= 2.0)
 }
 
 fn linear_slope_per_hour(xs: &[f64], ys: &[f64]) -> f64 {
@@ -3083,17 +3085,31 @@ mod tests {
         assert!(terminal["primaryError"].is_null());
     }
 
+    fn resource_gate_snapshots(growth: u64, expected_scope: &str) -> [ResourceSnapshot; 4] {
+        let mut snapshots = [
+            snapshot(0.0, process(10, 10_240, 10_240, 2)),
+            snapshot(600.0, process(10, 10_240, 10_240, 2)),
+            snapshot(1200.0, process(10, 10_240, 10_240, 2)),
+            snapshot(1800.0, process(10, 10_240 + growth, 10_240 + growth, 2)),
+        ];
+        if expected_scope == "server" {
+            for snapshot in &mut snapshots {
+                snapshot
+                    .processes
+                    .insert("other".to_owned(), process(10, 10_240, 10_240, 20));
+            }
+            snapshots[3].processes.get_mut("server").unwrap().threads = 11;
+            snapshots[3].processes.get_mut("other").unwrap().threads = 11;
+        }
+        snapshots
+    }
+
     #[test]
     fn resource_gate_failures_retain_observations_without_success_markers() {
-        for (growth, expected_scope) in [(1024, "aggregate"), (512, "server"), (0, "")] {
+        for (growth, expected_scope) in [(34 * 1024, "aggregate"), (512, "server"), (0, "")] {
             let workspace = Workspace::create("soak-resource-evidence").unwrap();
             let run = RunDirectory::create(&workspace.join("run")).unwrap();
-            let snapshots = [
-                snapshot(0.0, process(10, 10_240, 10_240, 2)),
-                snapshot(600.0, process(10, 10_240, 10_240, 2)),
-                snapshot(1200.0, process(10, 10_240, 10_240, 2)),
-                snapshot(1800.0, process(10, 10_240 + growth, 10_240 + growth, 2)),
-            ];
+            let snapshots = resource_gate_snapshots(growth, expected_scope);
             let digest = "a".repeat(64);
             let distributed = DistributedRun {
                 run: &run,
@@ -3128,8 +3144,7 @@ mod tests {
             };
             let aggregate = summarize_aggregate_resources(&snapshots).unwrap();
             let by_process = summarize_each_process(&snapshots).unwrap();
-            let result =
-                check_native_resource_gate(&run, &plan, &binary, &aggregate, &by_process, true);
+            let result = check_native_resource_gate(&run, &plan, &binary, &aggregate, &by_process);
             let read_json = |name: &str| -> serde_json::Value {
                 serde_json::from_slice(
                     &std::fs::read(workspace.join(&format!("run/{name}"))).unwrap(),
@@ -3164,7 +3179,7 @@ mod tests {
                 assert_eq!(summary["failedScope"], expected_scope);
                 assert_eq!(summary["error"], error);
                 let second_error =
-                    check_native_resource_gate(&run, &plan, &binary, &aggregate, &by_process, true)
+                    check_native_resource_gate(&run, &plan, &binary, &aggregate, &by_process)
                         .unwrap_err();
                 assert!(second_error.starts_with(&error));
                 assert!(second_error.contains("failed to retain resource diagnostics:"));
@@ -3174,7 +3189,11 @@ mod tests {
                 assert_eq!(summary["binaries"]["rustReality"]["sha256"], binary.sha256);
                 assert_eq!(
                     summary["resourceByProcess"]["server"]["rssTailSlopeMiBPerHour"],
-                    if growth == 1024 { 6.0 } else { 3.0 }
+                    if expected_scope == "aggregate" {
+                        204.0
+                    } else {
+                        3.0
+                    }
                 );
             }
             assert!(!workspace.join("run/environment.json").exists());
@@ -3262,6 +3281,6 @@ mod tests {
         assert_eq!(summary.fd_growth, 2);
         assert!((summary.rss_growth_mib - 4.0).abs() < f64::EPSILON);
         assert!((summary.pss_growth_mib.unwrap() - 2.0).abs() < f64::EPSILON);
-        assert!(resources_within_limits(&summary, false, true));
+        assert!(resources_within_limits(&summary));
     }
 }

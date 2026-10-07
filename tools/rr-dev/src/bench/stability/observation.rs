@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 
-use super::schema::{Observation, Owners, Policy, Sample};
+use super::schema::{Artifact, Descriptors, Observation, Owners, Policy, ProcessIdentity, Sample};
 
 fn field(text: &str, name: &str) -> Result<u64, String> {
     let mut matches = text.lines().filter_map(|line| line.strip_prefix(name));
@@ -366,4 +366,135 @@ pub fn verify_checkpoint_time(
         return Err("raw observation was substituted from another checkpoint".to_owned());
     }
     Ok(())
+}
+
+/// Derive the descriptor inventory and capacity bounds before workload starts.
+/// Subsequent observations must use this same policy, never refit their census.
+///
+/// # Errors
+/// Missing startup authorities or limits cannot establish a baseline.
+pub fn startup_policy(raw: &Observation, listeners: u64) -> Result<Policy, String> {
+    let ownership = read_ownership(raw, listeners)?;
+    let fixed_descriptor_targets: Vec<_> = raw
+        .descriptors
+        .values()
+        .filter(|target| !target.starts_with("socket:[") && !target.starts_with("pipe:["))
+        .cloned()
+        .collect();
+    Ok(Policy {
+        fixed_fds: u64::try_from(fixed_descriptor_targets.len())
+            .map_err(|_| "descriptor count overflow")?,
+        fixed_descriptor_targets,
+        listener_sockets: listeners,
+        idle_inbound_capacity: ownership.pre_auth_idle_capacity,
+        dynamic_fd_budget: ownership.fd_capacity,
+        pipe_pair_capacity: ownership.pipe_capacity,
+        warm_socket_capacity: ownership.warm_capacity,
+        // Both remain additionally subject to the one shared descriptor budget.
+        active_socket_capacity: ownership.fd_capacity,
+        relay_fd_capacity: ownership.fd_capacity,
+        soft_fd_limit: field(
+            raw.limits.as_deref().ok_or("missing startup limits")?,
+            "Max open files",
+        )?,
+        replay_capacity: ownership.replay_capacity,
+        replay_expiry_ms: ownership.replay_expiry_ms,
+        retirement_deadline_ms: ownership.retirement_deadline_ms,
+    })
+}
+
+/// Reconstruct one sample; unknown descriptors and counter races remain errors.
+/// The caller retains the raw observation before invoking this function.
+///
+/// # Errors
+/// Returns an error for missing fields, inconsistent accounting or identity.
+#[allow(clippy::too_many_lines)]
+pub fn normalize(
+    raw: &Observation,
+    policy: &Policy,
+    role: &str,
+    artifact: Artifact,
+) -> Result<Sample, String> {
+    let ownership = read_ownership(raw, policy.listener_sockets)?;
+    let status = raw.status.as_deref().ok_or("missing status")?;
+    let smaps = raw.smaps_rollup.as_deref().ok_or("missing smaps_rollup")?;
+    let sockets = u64::try_from(
+        raw.descriptors
+            .values()
+            .filter(|target| target.starts_with("socket:["))
+            .count(),
+    )
+    .map_err(|_| "socket count overflow")?;
+    let pipes = u64::try_from(
+        raw.descriptors
+            .values()
+            .filter(|target| target.starts_with("pipe:["))
+            .count(),
+    )
+    .map_err(|_| "pipe count overflow")?;
+    let active_sockets = sockets
+        .checked_sub(policy.listener_sockets)
+        .and_then(|count| count.checked_sub(ownership.warm_sockets))
+        .and_then(|count| count.checked_sub(ownership.owners.pre_auth_idle_connections))
+        .ok_or("socket ownership exceeds observed descriptors")?;
+    let active_relay_fds = ownership
+        .pipe_pairs
+        .checked_mul(2)
+        .and_then(|retained| pipes.checked_sub(retained))
+        .ok_or("retained pipes exceed observed descriptors")?;
+    let dynamic = sockets
+        .checked_sub(policy.listener_sockets)
+        .and_then(|sockets| sockets.checked_add(pipes))
+        .ok_or("dynamic descriptor overflow")?;
+    let reserved = ownership
+        .permits
+        .checked_sub(dynamic)
+        .ok_or("descriptors lack permits")?;
+    let sample = Sample {
+        observation: artifact,
+        role: role.to_owned(),
+        process: ProcessIdentity {
+            pid: raw.pid,
+            start_ticks: raw
+                .initial_start_ticks
+                .as_deref()
+                .ok_or("missing start ticks")?
+                .parse()
+                .map_err(|_| "invalid start ticks")?,
+            boot_id: raw
+                .boot_id
+                .as_deref()
+                .ok_or("missing boot identity")?
+                .trim()
+                .to_owned(),
+            executable_sha256: raw
+                .initial_executable_sha256
+                .clone()
+                .ok_or("missing executable identity")?,
+        },
+        rss_kib: field(status, "VmRSS:")?,
+        hwm_kib: field(status, "VmHWM:")?,
+        pss_kib: field(smaps, "Pss:")?,
+        anonymous_kib: field(smaps, "Anonymous:")?,
+        threads: field(status, "Threads:")?,
+        descriptors: Descriptors {
+            total: u64::try_from(raw.descriptors.len()).map_err(|_| "descriptor overflow")?,
+            fixed: policy.fixed_fds,
+            listener_sockets: policy.listener_sockets,
+            idle_inbound_sockets: ownership.owners.pre_auth_idle_connections,
+            warm_sockets: ownership.warm_sockets,
+            active_sockets,
+            active_relay_fds,
+            retained_pipe_pairs: ownership.pipe_pairs,
+            dirty_retained_pipe_bytes: ownership.pipe_bytes,
+            held_dynamic_permits: ownership.permits,
+            reserved_dynamic_permits: reserved,
+            // Verification below must account for every descriptor before this
+            // sample is returned. Unknown targets cannot be classified away.
+            unexplained: 0,
+        },
+        owners: ownership.owners,
+    };
+    verify(raw, &sample, policy)?;
+    Ok(sample)
 }

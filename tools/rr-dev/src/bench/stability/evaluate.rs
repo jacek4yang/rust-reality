@@ -807,6 +807,51 @@ fn evaluate_owners(
     }
 }
 
+/// Native qualification shares the same owner/accounting rules while retaining
+/// its existing, stricter memory and thread envelopes.
+pub fn evaluate_native_resources(
+    policy: &Policy,
+    baseline: &Sample,
+    sample: &Sample,
+    recovered: bool,
+) -> Report {
+    let contract: Contract = serde_json::from_str(schema::CONTRACT).expect("compiled contract");
+    let mut report = Report {
+        verdict: Verdict::Pass,
+        findings: Vec::new(),
+    };
+    let scope = sample.role.as_str();
+    report.require(
+        sample.process == baseline.process,
+        Verdict::Fail,
+        scope,
+        "native process changed identity",
+    );
+    evaluate_owners(&mut report, scope, policy, sample, recovered);
+    report.require(
+        sample.hwm_kib >= sample.rss_kib
+            && sample.rss_kib > 0
+            && sample.pss_kib > 0
+            && sample.pss_kib <= sample.rss_kib
+            && sample.anonymous_kib <= sample.rss_kib
+            && sample.threads > 0,
+        Verdict::Invalid,
+        scope,
+        "invalid native memory observation",
+    );
+    report.require(
+        sample.hwm_kib.saturating_sub(baseline.hwm_kib) <= contract.native_peak_hwm_growth_kib
+            && sample.threads.saturating_sub(baseline.threads) <= contract.native_thread_growth
+            && (!recovered
+                || sample.rss_kib.saturating_sub(baseline.rss_kib)
+                    <= contract.native_recovered_rss_growth_kib),
+        Verdict::Fail,
+        scope,
+        "native absolute memory/thread envelope exceeded",
+    );
+    report
+}
+
 fn evaluate_transfer(
     report: &mut Report,
     contract: &Contract,
