@@ -48,3 +48,49 @@ This is an expected-pass lifecycle regression, not a leak reproduction or
 proof of historical allocator retention. Container capacities are deliberately
 not asserted. REALITY replay ownership alone cannot explain LANDING replay
 or allocator state.
+
+## Replay allocation discriminator
+
+[replay-retention.json](replay-retention.json) records 384 measured cycles from
+the diagnostic source in [replay-diagnostic.tar.xz](replay-diagnostic.tar.xz).
+Rust 1.96.0 x86_64 layouts are: key 32 bytes, entry 64, admission permit 32
+(already included in entry), expiration record 56, shard 56. The counter
+measures requested allocation bytes, not allocator usable bytes or PSS.
+Cache/governor construction occurs before measurement.
+
+| Synthetic limit | Workload | Retained container bytes after 64 cycles |
+| ---: | --- | ---: |
+| 300 | Balanced committed entries | 107264 |
+| 300 | Successive hot shards | 2507008 |
+| 300 | Dropped pending churn | 465216 |
+| 65536 | Balanced committed entries | 20054272 |
+| 65536 | Successive hot shards | 320864512 |
+| 65536 | Dropped pending churn | 1841472 |
+
+All cycles explicitly purge and recover zero live entries/permits. All six
+cases have zero new allocation bytes over their final 16 cycles. Hot-shard
+occupancy is sequential, not simultaneously multiplied by 16; retained
+capacity nevertheless accumulates across shards. Sequential synthetic hash
+words intentionally do not model uniform SHA-256 wire keys. Tombstones can
+reduce reported `HashMap::capacity()` without releasing the table; it is not
+an allocation-byte counter. The 300-entry hot-shard case needs a second
+table growth before rehashing can reuse it.
+
+A conservative container bound must use per-shard historical high water.
+For this compiler's hashbrown 0.16.1, growth caused by tombstones stops once
+full table capacity is at least twice the maximum shard occupancy; subsequent
+reservation rehashes in place. For occupancy bound C >= 15, a conservative
+bucket bound is `next_power_of_two(floor(16*C/7))`. Table allocation is
+`97*buckets + 16` bytes for the measured key/entry layout. Pending-drop
+compaction bounds stale records; allowing two transient appended records,
+use `2*C + 1026` heap records, rounded up to the next power of two, at
+56 bytes each. Multiply both by 16, not by one global live-entry count.
+For synthetic C=65536 this conservative bound is 641728768 container bytes,
+not a claim that the workload allocated that amount. Allocator metadata,
+cache construction and transient resize overlap are separate.
+
+These finite synthetic bounds do not quantitatively explain the historical
+role trajectories. Actual service policy is machine-derived, not necessarily
+65536 entries; actual occupancy and allocator residency must be measured.
+The shared REALITY authority survives reload, and expiry is lazy: waiting
+120 seconds without a cache operation does not itself free entries.
