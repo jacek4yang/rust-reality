@@ -133,6 +133,8 @@ pub struct Check {
     pub completed: bool,
     pub executed_cases: u64,
     pub failed_cases: u64,
+    /// Collector terminal receipt, or the native package smoke receipt itself.
+    pub execution: Artifact,
     pub output: Artifact,
     pub observations: Vec<Artifact>,
 }

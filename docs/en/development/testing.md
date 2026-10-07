@@ -203,6 +203,16 @@ final retrieval retains previously collected data without an unbounded memory
 copy. A failed attempt keeps its partial cell, raw files and terminal status.
 The VM runner does not supply the separate required native, CI, security or
 package-check receipts: absent receipts keep aggregate qualification NOT RUN.
+After the VM runner exits, `cargo dev bench stability-check --evidence BUNDLE/evidence.json
+--case local-full-gate` collects the authoritative local gate. The `lifecycle`
+case runs unfiltered library tests and binds all eight required lifecycle checks.
+Use `--case exact-head-ci --run-id ID` and `--case exact-head-security --run-id ID`
+to retain the corresponding GitHub workflow receipts. Run from the clean frozen
+checkout with its exact frozen harness. Each attempt retains its command, owned
+child identity, raw stdout/stderr, terminal result and final source/executable
+checks, including on failure. Collection serializes aggregate updates and refuses
+to replace any previous check attempt. Evaluate the completed bundle separately;
+collection alone does not establish readiness.
 The native interoperability receipt retains the exact source and downloaded
 payloads and the OpenSSL handshake trace. Offline verification checks their
 bytes, the absence of server CCS, the pinned external executables and the

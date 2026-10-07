@@ -831,6 +831,7 @@ pub fn run(repo: &Path, plan: &Plan) -> Result<(), String> {
         .output
         .canonicalize()
         .map_err(|error| error.to_string())?;
+    let _lock = super::qualification::CollectionLock::acquire(&root)?;
     let attempted = execute(repo, plan, &root);
     let written = save(
         &root.join("campaign-terminal.json"),

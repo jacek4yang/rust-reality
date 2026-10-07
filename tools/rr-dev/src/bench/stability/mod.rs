@@ -16,6 +16,7 @@ pub mod native_mechanism;
 pub mod native_pressure;
 pub mod observation;
 pub mod package;
+pub mod qualification;
 pub mod schema;
 pub mod test_receipt;
 pub mod transfer;
@@ -61,6 +62,9 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
         }
     }
     for check in &evidence.checks {
+        if let Err(error) = verify_check_execution(root, check, &evidence.identity) {
+            report.reject(Verdict::Invalid, &check.name, &error);
+        }
         match verify_required_check(root, check, &evidence.identity) {
             Ok(native) => report.extend(native),
             Err(error) => report.reject(Verdict::Invalid, &check.name, &error),
@@ -134,6 +138,26 @@ pub fn evaluate_path(path: &Path) -> Result<Report, String> {
         );
     }
     Ok(report)
+}
+
+fn verify_check_execution(
+    root: &Path,
+    check: &schema::Check,
+    identity: &schema::Identity,
+) -> Result<(), String> {
+    if check.name.starts_with("package-") {
+        // Native package smoke owns and verifies its seven child executions,
+        // including the architecture-specific harness and binary identities.
+        return if check.execution == check.output {
+            Ok(())
+        } else {
+            Err("package execution must be its bound native smoke receipt".to_owned())
+        };
+    }
+    let receipt = checks::parse_execution(&read_artifact(root, &check.execution)?)?;
+    checks::verify_execution(&receipt, check, identity)?;
+    verify_artifact(root, &receipt.stdout)?;
+    verify_artifact(root, &receipt.stderr)
 }
 
 fn verify_required_check(
@@ -730,6 +754,7 @@ fn artifacts(evidence: &Evidence) -> Vec<&Artifact> {
         &identity.workload,
     ];
     artifacts.extend(evidence.checks.iter().map(|check| &check.output));
+    artifacts.extend(evidence.checks.iter().map(|check| &check.execution));
     artifacts.extend(evidence.checks.iter().flat_map(|check| &check.observations));
     for cell in &evidence.cells {
         artifacts.push(&cell.terminal);

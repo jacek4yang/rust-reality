@@ -174,7 +174,7 @@ pub(super) fn fixture() -> Value {
     }).collect();
     let checks: Vec<_> = contract.required_checks.iter().map(|name| json!({
         "name":name,"source_commit":"c".repeat(40),"candidate_sha256":"a".repeat(64),"argv":["synthetic-test"],
-        "exit_code":0,"completed":true,"executed_cases":1,"failed_cases":0,"output":artifact(),"observations":[]
+        "exit_code":0,"completed":true,"executed_cases":1,"failed_cases":0,"execution":artifact(),"output":artifact(),"observations":[]
     })).collect();
     let mut contract_artifact = artifact();
     contract_artifact["sha256"] = json!(hash::sha256_hex(schema::CONTRACT.as_bytes()));
@@ -347,6 +347,50 @@ fn required_checks_cannot_turn_opaque_success_or_another_ci_head_into_pass() {
     let workspace = Workspace::create("opaque-check").unwrap();
     let check = &evidence.checks[0];
     assert!(super::verify_required_check(workspace.path(), check, &evidence.identity).is_err());
+}
+
+#[test]
+fn check_execution_requires_observed_child_and_final_identity() {
+    let evidence: schema::Evidence = serde_json::from_value(fixture()).unwrap();
+    let check = &evidence.checks[0];
+    let receipt = json!({
+        "argv":check.argv,"started_unix_ms":100,"completed_unix_ms":200,
+        "pid":123,"start_ticks":"456","boot_id":"fixture-boot","exit_code":0,
+        "primary_error":null,"finalization_errors":[],
+        "source_commit":[evidence.identity.source_commit,evidence.identity.source_commit],
+        "candidate_sha256":[evidence.identity.candidate.sha256,evidence.identity.candidate.sha256],
+        "evaluator_sha256":[evidence.identity.evaluator.sha256,evidence.identity.evaluator.sha256],
+        "stdout":check.output,"stderr":check.output,
+    });
+    let verify = |value: &Value| {
+        let parsed = super::checks::parse_execution(&serde_json::to_vec(value).unwrap())?;
+        super::checks::verify_execution(&parsed, check, &evidence.identity)
+    };
+    assert!(verify(&receipt).is_ok());
+    for (pointer, replacement) in [
+        ("/argv", json!(["true"])),
+        ("/pid", json!(null)),
+        ("/start_ticks", json!("0")),
+        ("/boot_id", json!("")),
+        ("/completed_unix_ms", json!(99)),
+        ("/exit_code", json!(1)),
+        ("/primary_error", json!("original failure")),
+        (
+            "/finalization_errors",
+            json!(["final identity read failed"]),
+        ),
+        ("/source_commit/1", json!("substituted")),
+        ("/candidate_sha256/1", json!("changed")),
+        ("/evaluator_sha256/1", json!("changed")),
+        ("/stdout/path", json!("substituted")),
+    ] {
+        let mut invalid = receipt.clone();
+        *invalid.pointer_mut(pointer).unwrap() = replacement;
+        assert!(verify(&invalid).is_err(), "{pointer}");
+    }
+    let mut missing = receipt;
+    missing.as_object_mut().unwrap().remove("primary_error");
+    assert!(verify(&missing).is_err());
 }
 
 #[test]

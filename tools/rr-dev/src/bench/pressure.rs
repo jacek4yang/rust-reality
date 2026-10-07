@@ -1046,6 +1046,7 @@ mod tests {
             completed: true,
             executed_cases: 1,
             failed_cases: 0,
+            execution: save("execution.json", b"{}"),
             output: save("gate-summary.json", &serde_json::to_vec(&summary).unwrap()),
             observations: vec![
                 save("server.log", log.as_bytes()),

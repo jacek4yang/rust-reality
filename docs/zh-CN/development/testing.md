@@ -153,6 +153,14 @@ VM 测试应使用冻结的 release 构建工具：
 且不在内存中保存无界副本。失败尝试保留部分测试单元、原始文件和终态。
 VM 执行器不提供独立要求的原生、CI、安全或发布包检查回执；缺少这些回执时，
 汇总资格认证仍为 NOT RUN。
+VM 执行器退出后，使用 `cargo dev bench stability-check --evidence BUNDLE/evidence.json
+--case local-full-gate` 收集权威本地门禁。`lifecycle` 运行未筛选的库测试，
+绑定全部八项生命周期检查。使用 `--case exact-head-ci --run-id ID` 和
+`--case exact-head-security --run-id ID` 保留对应 GitHub 工作流回执。
+必须从干净的冻结源码目录运行完全相同的冻结工具。每次尝试均保留命令、
+所属子进程身份、原始 stdout/stderr、终态以及最终源码和可执行文件身份检查，
+失败时也不例外。收集器串行更新汇总证据，并拒绝覆盖任何既有检查尝试。
+完成后仍须单独离线评估整个证据包；收集成功本身不表示发布就绪。
 原生互操作性凭据保留源载荷、实际下载字节和 OpenSSL 握手跟踪。离线校验
 核对字节完全一致、服务端未发送 CCS、固定的外部可执行文件及规定的 stock-Xray
 命令；仅有声称成功的摘要不能通过。

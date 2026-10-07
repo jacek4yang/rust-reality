@@ -53,6 +53,7 @@ mod transfer;
 mod vm;
 
 libfuzzer_sys::fuzz_target!(|bytes: &[u8]| {
+    let _ = checks::parse_execution(bytes);
     if let Ok(receipt) = package_receipt::parse(bytes) {
         if let Ok(tier) = matrix::Tier::resolve(&receipt.tier) {
             let _ = package_receipt::verify(&receipt, &"a".repeat(40), tier);

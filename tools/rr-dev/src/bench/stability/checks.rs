@@ -1,9 +1,74 @@
 //! Required check receipts must prove their named case, not just an exit code.
 #![allow(missing_docs)]
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use super::schema::{Check, Identity};
+use super::schema::{Artifact, Check, Identity};
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Execution {
+    pub argv: Vec<String>,
+    pub started_unix_ms: u64,
+    pub completed_unix_ms: u64,
+    pub pid: Option<u32>,
+    pub start_ticks: Option<String>,
+    pub boot_id: String,
+    #[serde(deserialize_with = "required_option")]
+    pub exit_code: Option<i32>,
+    #[serde(deserialize_with = "required_option")]
+    pub primary_error: Option<String>,
+    pub finalization_errors: Vec<String>,
+    pub source_commit: [String; 2],
+    pub candidate_sha256: [String; 2],
+    pub evaluator_sha256: [String; 2],
+    pub stdout: Artifact,
+    pub stderr: Artifact,
+}
+
+pub fn parse_execution(bytes: &[u8]) -> Result<Execution, String> {
+    serde_json::from_slice(bytes).map_err(|error| error.to_string())
+}
+
+pub fn verify_execution(
+    value: &Execution,
+    check: &Check,
+    identity: &Identity,
+) -> Result<(), String> {
+    if value.argv != check.argv
+        || value.started_unix_ms == 0
+        || value.completed_unix_ms <= value.started_unix_ms
+        || value.pid.is_none_or(|pid| pid == 0)
+        || value
+            .start_ticks
+            .as_deref()
+            .is_none_or(|ticks| ticks.parse::<u64>().ok().is_none_or(|ticks| ticks == 0))
+        || value.boot_id.trim().is_empty()
+        || value.exit_code != Some(0)
+        || value.exit_code != check.exit_code
+        || value.primary_error.is_some()
+        || !value.finalization_errors.is_empty()
+        || value
+            .source_commit
+            .iter()
+            .any(|commit| *commit != identity.source_commit)
+        || value
+            .candidate_sha256
+            .iter()
+            .any(|sha| *sha != identity.candidate.sha256)
+        || value
+            .evaluator_sha256
+            .iter()
+            .any(|sha| *sha != identity.evaluator.sha256)
+        || ((check.name == "local-full-gate"
+            || check.name.starts_with("exact-head-")
+            || !check.name.starts_with("native-") && !check.name.starts_with("package-"))
+            && value.stdout != check.output)
+    {
+        return Err("required check execution or final identity is incomplete".to_owned());
+    }
+    Ok(())
+}
 
 pub const CI_FIELDS: &str = "headSha,workflowName,status,conclusion,databaseId,url,event";
 

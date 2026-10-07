@@ -394,6 +394,8 @@ enum DeployPlanOperation {
 enum BenchCommand {
     /// Execute the fixed stability workload in the owned local KVM fixture.
     StabilityRun(bench::stability::campaign::Plan),
+    /// Execute and retain a required check for an existing frozen campaign.
+    StabilityCheck(bench::stability::qualification::Plan),
     /// Owned-fixture child: execute the fixed guest campaign schedule.
     #[command(hide = true)]
     StabilityGuest(bench::stability::guest::Plan),
@@ -1557,6 +1559,15 @@ fn resolve_targets(
 #[allow(clippy::too_many_lines)]
 fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
     match command {
+        BenchCommand::StabilityCheck(plan) => {
+            match bench::stability::qualification::run(repo, plan) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         BenchCommand::StabilityRun(plan) => match bench::stability::campaign::run(repo, plan) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {

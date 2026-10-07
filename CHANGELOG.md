@@ -11,6 +11,8 @@ All notable user-facing changes to this project are documented in this file.
   their original verdicts; replacement qualification requires a frozen candidate.
   The maintained local VM runner records fixed-cycle transfers, received prefixes,
   fault actions and guest observations; separate required checks remain mandatory.
+  Required local, CI/security and lifecycle checks retain command execution and
+  final identity receipts through the maintained stability check collector.
   Release smoke can retain secret-free package execution receipts and bound
   archives for offline qualification across all supported tiers.
 
