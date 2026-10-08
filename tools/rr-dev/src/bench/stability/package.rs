@@ -153,7 +153,9 @@ mod tests {
         let cpu = save("cpuinfo.txt", b"CPU fixture");
         identity.candidate.sha256.clone_from(&binary.sha256);
         check.source_commit.clone_from(&identity.source_commit);
-        check.candidate_sha256.clone_from(&identity.candidate.sha256);
+        check
+            .candidate_sha256
+            .clone_from(&identity.candidate.sha256);
         let tier = Tier::resolve("linux-x86_64-generic").unwrap();
         let name = "rust-reality-v2.0.1-linux-x86_64-generic.tar.gz";
         let archive = directory.join(name);
