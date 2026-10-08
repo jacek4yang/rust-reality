@@ -253,6 +253,9 @@ impl Machines {
     }
 
     fn clock_channel(&self, role: &str, socket: &Path, before: bool) -> Result<Child, String> {
+        if socket.as_os_str().as_encoded_bytes().len() + 17 >= 108 {
+            return Err("clock ControlPath exceeds the Unix socket limit including OpenSSH's temporary suffix".to_owned());
+        }
         let mut argv = self.transport_options(role, false)?;
         argv.extend([
             "-M".to_owned(),
@@ -390,7 +393,7 @@ impl Machines {
         // Authentication precedes the one measured exchange. The master is an
         // owned foreground child and its private socket cannot reuse an operator
         // connection. Dropping the guard closes it on success and failure.
-        let transport = Workspace::create("stability-clock")?;
+        let transport = Workspace::create_socket()?;
         let socket = transport.join("control");
         let mut channel = self.clock_channel(role, &socket, before)?;
         let contract: schema::Contract =

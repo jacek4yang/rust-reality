@@ -229,6 +229,16 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
           compression-level: 9
+      - name: Retain small failure diagnostics separately
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hosted-qemu-diagnostics-${{ github.event.pull_request.head.sha }}
+          path: |
+            ${{ runner.temp }}/rr-cloud-campaign/**/*clock-transport*.log
+            ${{ runner.temp }}/rr-cloud-campaign/**/*terminal*.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: Retain only public preflight receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

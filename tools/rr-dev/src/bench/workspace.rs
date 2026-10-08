@@ -22,6 +22,33 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    /// Creates a private, short directory for Unix-domain control sockets.
+    ///
+    /// OpenSSH adds 17 bytes to `ControlPath` while binding its temporary socket.
+    /// An arbitrary XDG runtime root can already exhaust Linux's 108-byte
+    /// `sockaddr_un` path. Keep this Linux benchmark transport under `/tmp` and
+    /// create its directory exclusively; never attach to an existing socket.
+    ///
+    /// # Errors
+    /// Returns an error if a fresh private directory cannot be created.
+    pub fn create_socket() -> Result<Self, String> {
+        let root = PathBuf::from("/tmp").join(format!(
+            "rrs-{}-{}",
+            std::process::id(),
+            monotonic_suffix()
+        ));
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt as _;
+            builder.mode(0o700);
+        }
+        builder
+            .create(&root)
+            .map_err(|error| format!("could not create socket workspace: {error}"))?;
+        Ok(Self { root, keep: false })
+    }
+
     /// Creates a uniquely named workspace for `suite` under the runtime root.
     ///
     /// # Errors
@@ -205,6 +232,30 @@ fn monotonic_suffix() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn socket_workspaces_are_private_short_unique_and_removed() {
+        #[cfg(unix)]
+        use std::os::unix::fs::PermissionsExt as _;
+        let first = Workspace::create_socket().expect("short socket workspace");
+        let second = Workspace::create_socket().expect("distinct socket workspace");
+        assert_ne!(first.path(), second.path());
+        let socket = first.join("control");
+        assert!(socket.as_os_str().as_encoded_bytes().len() + 17 < 108);
+        #[cfg(unix)]
+        assert_eq!(
+            std::fs::metadata(first.path())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        let path = first.path().to_path_buf();
+        drop(first);
+        assert!(!path.exists());
+        assert!(second.path().is_dir());
+    }
 
     #[test]
     fn a_workspace_is_removed_on_drop() {
