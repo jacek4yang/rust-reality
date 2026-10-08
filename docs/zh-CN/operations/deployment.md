@@ -152,6 +152,28 @@ journalctl -u rust-reality -f
 `"none"` 在编码之前就丢弃所有事件。它同时也会把 warn 级的拒绝和准入信号静音，所以除非
 日志本身不可接受，否则优先用 `level` 过滤。
 
+### 预连接传输诊断
+
+配置代次退出时，`transport_pool_summary`（Handoff、NXR 和 SOCKS5）与
+`cover_pool_summary` 输出有界聚合观测。它们不是实时指标接口，也不是定期健康检查。
+
+`pool_connect_failure` 统计失败的推测性 TCP 拨号。固定原因计数
+`pool_connect_timeout`、`pool_connect_resource`、`pool_connect_policy` 和
+`pool_connect_io` 分别表示超时、显式资源拒绝或分配失败、地址策略拒绝，以及其他
+I/O 失败。不保存端点、用户标签或错误原文。以普通 I/O 错误返回的 DNS 失败仍归入
+`pool_connect_io`，不能仅凭该计数推断更具体原因。
+
+`pool_failure_streak` 与 `pool_backoff_remaining_ms` 表示当前推测性拨号的连续失败
+和剩余退避时间；后者向下取整到毫秒。成功连接被接纳进入就绪池后，两者归零。
+累计原因计数保留到该池代次销毁。退避不延迟普通冷连接路径。取消的拨号，以及
+连接成功但未被接纳的 socket，不算拨号失败。这些观测不证明对端健康，也不改变
+重试策略。
+
+热重载可以增加预连接出口，但进程级资源上限仍沿用启动值。全局就绪容量满时，
+连接池暂停推测性拨号，避免不断建立后又丢弃 socket。后续本池需求或现有维护
+定时器会重新检查容量（无流量时最长约 30 秒）；普通冷连接仍然可用。这不会扩大
+资源上限，也不承诺各池间公平分配。
+
 ### 确认启动
 
 每次启动都在 journal 里确认：

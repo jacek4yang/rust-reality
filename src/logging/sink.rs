@@ -168,6 +168,14 @@ pub enum LogEvent {
         pool_cold_fallback: u64,
         /// Speculative cover connection failures.
         pool_connect_failure: u64,
+        /// Dial failures classified without endpoint or error-message labels.
+        pool_connect_timeout: u64,
+        pool_connect_resource: u64,
+        pool_connect_policy: u64,
+        pool_connect_io: u64,
+        /// Current speculative-dial failure streak and remaining backoff.
+        pool_failure_streak: u32,
+        pool_backoff_remaining_ms: u64,
         /// Idle sockets discarded as closed or expired.
         pool_stale_discard: u64,
         /// Speculative dials submitted by the controller.
@@ -198,6 +206,14 @@ pub enum LogEvent {
         pool_checkout_miss: u64,
         pool_cold_fallback: u64,
         pool_connect_failure: u64,
+        /// Dial failures classified without endpoint or error-message labels.
+        pool_connect_timeout: u64,
+        pool_connect_resource: u64,
+        pool_connect_policy: u64,
+        pool_connect_io: u64,
+        /// Current speculative-dial failure streak and remaining backoff.
+        pool_failure_streak: u32,
+        pool_backoff_remaining_ms: u64,
         pool_stale_discard: u64,
         pool_refill: u64,
         pool_target_ready: u32,

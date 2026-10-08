@@ -78,6 +78,10 @@ impl WarmPoolAuthority {
             .flatten()
     }
 
+    fn ready_capacity_available(&self) -> bool {
+        self.ready.in_use() < self.ready.inner.capacity
+    }
+
     fn speculative_allowed(&self) -> bool {
         self.pressure.state() == ResourcePressure::Normal
     }
@@ -221,6 +225,7 @@ struct PoolState {
     last_tick: Instant,
     last_demand: Instant,
     failure_streak: u32,
+    failures: DialFailureCounts,
     backoff_until: Option<Instant>,
 }
 
@@ -229,6 +234,35 @@ struct ReadySocket {
     _ready_permit: CounterPermit,
     connected_at: Instant,
     idle_since: Instant,
+}
+
+/// Fixed-cardinality dial outcomes, updated under the existing pool lock.
+/// No peer identity, error text, allocation, or additional lock is retained.
+#[derive(Clone, Copy, Default)]
+struct DialFailureCounts {
+    timeout: u64,
+    resource: u64,
+    policy: u64,
+    io: u64,
+}
+
+impl DialFailureCounts {
+    fn record(&mut self, error: &DestinationConnectError) {
+        let count = match error {
+            DestinationConnectError::TimedOut { .. } => &mut self.timeout,
+            DestinationConnectError::DescriptorBudget | DestinationConnectError::Allocation => {
+                &mut self.resource
+            }
+            DestinationConnectError::NoAddressesForPolicy
+            | DestinationConnectError::TooManyResolvedAddresses => &mut self.policy,
+            DestinationConnectError::Io(error) => match error.kind() {
+                std::io::ErrorKind::TimedOut => &mut self.timeout,
+                std::io::ErrorKind::OutOfMemory => &mut self.resource,
+                _ => &mut self.io,
+            },
+        };
+        *count = count.saturating_add(1);
+    }
 }
 
 #[derive(Default)]
@@ -260,6 +294,12 @@ pub(crate) struct WarmPoolSnapshot {
     pub(crate) checkout_miss: u64,
     pub(crate) cold_fallback: u64,
     pub(crate) connect_failure: u64,
+    pub(crate) connect_timeout: u64,
+    pub(crate) connect_resource: u64,
+    pub(crate) connect_policy: u64,
+    pub(crate) connect_io: u64,
+    pub(crate) failure_streak: u32,
+    pub(crate) backoff_remaining_ms: u64,
     pub(crate) stale_discard: u64,
     pub(crate) refill: u64,
     pub(crate) target_ready: u32,
@@ -337,6 +377,7 @@ impl AdaptiveTcpPool {
                     last_tick: now,
                     last_demand: now,
                     failure_streak: 0,
+                    failures: DialFailureCounts::default(),
                     backoff_until: None,
                 }),
                 notify: Notify::new(),
@@ -483,6 +524,19 @@ impl AdaptiveTcpPool {
             checkout_miss: self.inner.metrics.checkout_miss.load(Ordering::Relaxed),
             cold_fallback: self.inner.metrics.cold_fallback.load(Ordering::Relaxed),
             connect_failure: self.inner.metrics.connect_failure.load(Ordering::Relaxed),
+            connect_timeout: state.failures.timeout,
+            connect_resource: state.failures.resource,
+            connect_policy: state.failures.policy,
+            connect_io: state.failures.io,
+            failure_streak: state.failure_streak,
+            backoff_remaining_ms: state.backoff_until.map_or(0, |deadline| {
+                u64::try_from(
+                    deadline
+                        .saturating_duration_since(Instant::now())
+                        .as_millis(),
+                )
+                .unwrap_or(u64::MAX)
+            }),
             stale_discard: self.inner.metrics.stale_discard.load(Ordering::Relaxed),
             refill: self.inner.metrics.refill.load(Ordering::Relaxed),
             target_ready: self.inner.metrics.target_ready.load(Ordering::Acquire),
@@ -726,6 +780,10 @@ fn reconcile(inner: &Arc<PoolInner>, dials: &mut FuturesUnordered<DialFuture>) {
     if inner.lifecycle.load(Ordering::Acquire) != LIFECYCLE_ACTIVE
         || inner.fd_budget.pressure() != FdPressure::Normal
         || !inner.authority.speculative_allowed()
+        // Hot reload can add pools without increasing process-lifetime limits.
+        // Do not establish sockets that cannot enter any ready slot. Capacity
+        // may race with an in-flight dial; completion still owns admission.
+        || !inner.authority.ready_capacity_available()
     {
         return;
     }
@@ -804,7 +862,10 @@ fn handle_dial_completion(inner: &Arc<PoolInner>, outcome: DialOutcome) {
                 .store(saturating_u32(state.ready.len()), Ordering::Release);
         }
         Ok(_) => {}
-        Err(_) => record_dial_failure(inner, &mut state, now),
+        Err(error) => {
+            state.failures.record(&error);
+            record_dial_failure(inner, &mut state, now);
+        }
     }
 }
 
@@ -1267,6 +1328,38 @@ mod tests {
         assert_eq!(fd_budget.underflows(), 0);
     }
 
+    #[test]
+    fn dial_failure_counts_are_bounded_typed_and_saturating() {
+        use super::{DestinationConnectError, DialFailureCounts};
+        use std::io;
+
+        let mut counts = DialFailureCounts::default();
+        for error in [
+            DestinationConnectError::TimedOut {
+                timeout: Duration::from_secs(1),
+            },
+            DestinationConnectError::Io(io::Error::from(io::ErrorKind::TimedOut)),
+            DestinationConnectError::DescriptorBudget,
+            DestinationConnectError::Allocation,
+            DestinationConnectError::Io(io::Error::from(io::ErrorKind::OutOfMemory)),
+            DestinationConnectError::NoAddressesForPolicy,
+            DestinationConnectError::TooManyResolvedAddresses,
+            DestinationConnectError::Io(io::Error::new(
+                io::ErrorKind::ConnectionRefused,
+                "secret endpoint must not be retained",
+            )),
+        ] {
+            counts.record(&error);
+        }
+        assert_eq!(
+            (counts.timeout, counts.resource, counts.policy, counts.io),
+            (2, 3, 2, 1)
+        );
+        counts.io = u64::MAX;
+        counts.record(&DestinationConnectError::Io(io::Error::other("private")));
+        assert_eq!(counts.io, u64::MAX);
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn failed_refill_backs_off_and_recovers_when_cover_returns() {
         let probe = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -1291,6 +1384,12 @@ mod tests {
         time::sleep(Duration::from_millis(350)).await;
         let failed = pool.snapshot();
         assert!(failed.connect_failure >= 1);
+        assert_eq!(failed.connect_io, failed.connect_failure);
+        assert_eq!(
+            failed.connect_timeout + failed.connect_resource + failed.connect_policy,
+            0
+        );
+        assert!(failed.failure_streak > 0);
         assert!(
             failed.refill <= 3,
             "exponential backoff must prevent a tight speculative dial loop"
@@ -1305,8 +1404,97 @@ mod tests {
             .await
             .expect("cover accept task must not panic")
             .expect("recovered cover must accept");
-        assert_eq!(pool.snapshot().ready, 1);
+        let recovered = pool.snapshot();
+        assert_eq!(recovered.ready, 1);
+        assert_eq!(recovered.failure_streak, 0);
+        assert_eq!(recovered.backoff_remaining_ms, 0);
+        assert!(recovered.connect_io >= failed.connect_io);
         pool.deactivate();
         drop(accepted);
+    }
+    #[test]
+    fn cancelled_unpolled_dials_release_permits_and_clear_gauges() {
+        use futures_util::stream::FuturesUnordered;
+        use std::sync::atomic::Ordering;
+
+        let policy = policy();
+        let authority = WarmPoolAuthority::new(&policy, 1, PressureGauge::new());
+        let pool = AdaptiveTcpPool::new(
+            Arc::from("127.0.0.1:1"),
+            97,
+            DestinationConnector::new(Duration::from_millis(100)),
+            FdBudget::new(64),
+            authority.clone(),
+            &policy,
+        );
+        // Own the permit before constructing a future that is never polled.
+        let permit = authority
+            .try_connecting()
+            .expect("permit must be available");
+        let mut dials: FuturesUnordered<super::DialFuture> = FuturesUnordered::new();
+        dials.push(Box::pin(async move {
+            let _permit = permit;
+            std::future::pending::<super::DialOutcome>().await
+        }));
+        super::lock(&pool.inner.state).connecting = 1;
+        pool.inner.metrics.connecting.store(1, Ordering::Release);
+        assert_eq!(authority.counts(), (0, 1));
+        for _ in 0..2 {
+            super::cancel_speculative_dials(&pool.inner, &mut dials);
+            assert!(dials.is_empty());
+            assert_eq!(super::lock(&pool.inner.state).connecting, 0);
+            assert_eq!(pool.inner.metrics.connecting.load(Ordering::Acquire), 0);
+            assert_eq!(authority.counts(), (0, 0));
+            assert_eq!(pool.snapshot().connect_failure, 0);
+        }
+    }
+    #[test]
+    fn global_ready_saturation_defers_speculative_dials_until_capacity_returns() {
+        use futures_util::stream::FuturesUnordered;
+        use std::sync::atomic::Ordering;
+
+        let mut policy = policy();
+        policy.min_ready = 1;
+        policy.max_ready = 1;
+        policy.max_connecting = 1;
+        policy.refill_batch = 1;
+        // Startup authority can be shared by more warm outbounds after reload.
+        let authority = WarmPoolAuthority::new(&policy, 1, PressureGauge::new());
+        let occupied = authority
+            .try_ready()
+            .expect("existing pool owns ready capacity");
+        let pool = AdaptiveTcpPool::new(
+            Arc::from("127.0.0.1:1"),
+            98,
+            DestinationConnector::new(Duration::from_millis(100)),
+            FdBudget::new(64),
+            authority.clone(),
+            &policy,
+        );
+        // Exercise scheduling without spawning a controller or polling network I/O.
+        pool.inner
+            .lifecycle
+            .store(super::LIFECYCLE_ACTIVE, Ordering::Release);
+        let mut dials: FuturesUnordered<super::DialFuture> = FuturesUnordered::new();
+        for _ in 0..20 {
+            super::reconcile(&pool.inner, &mut dials);
+            assert!(
+                dials.is_empty(),
+                "full ready capacity must not cause pointless dials"
+            );
+        }
+        assert_eq!(pool.snapshot().refill, 0);
+        assert_eq!(authority.counts(), (1, 0));
+        drop(occupied);
+        super::reconcile(&pool.inner, &mut dials);
+        assert_eq!(
+            dials.len(),
+            1,
+            "normal reconciliation resumes after capacity returns"
+        );
+        assert_eq!(authority.counts(), (0, 1));
+        super::cancel_speculative_dials(&pool.inner, &mut dials);
+        pool.deactivate();
+        assert_eq!(authority.counts(), (0, 0));
     }
 }
