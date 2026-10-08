@@ -62,10 +62,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   qemu-preflight:
-    name: Hosted three-guest preflight (not qualification)
+    name: Hosted four-cell QEMU campaign
     needs: kvm-capability
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 350
     env:
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
@@ -188,6 +188,47 @@ jobs:
               --fixture "$RUNNER_TEMP/rr-cloud-fixture" \
               --output "$RUNNER_TEMP/rr-cloud-$profile" "${args[@]}"
           done
+      - name: Build verified campaign binaries before guest workloads
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test -z "$(git status --porcelain)"
+          RUST_REALITY_GIT_COMMIT="$HEAD_SHA" cargo build --locked --release
+          mkdir -p "$RUNNER_TEMP/rr-cloud-tools/xray"
+          cd "$RUNNER_TEMP/rr-cloud-tools"
+          curl --fail --location --retry 3 --max-time 180 https://github.com/XTLS/Xray-core/releases/download/v26.9.9/Xray-linux-64.zip -o xray.zip
+          echo '1eb9175d0f0a8f8149c9230a7fc5ae66ce332ed20a53155ce61fe62e3f58b7df  xray.zip' | sha256sum --check -
+          unzip -q xray.zip xray LICENSE -d xray
+          chmod +x xray/xray
+          curl --fail --location --retry 3 --max-time 180 https://github.com/openssl/openssl/releases/download/openssl-3.5.6/openssl-3.5.6.tar.gz -o openssl.tar.gz
+          echo 'deae7c80cba99c4b4f940ecadb3c3338b13cb77418409238e57d7f31f2a3b736  openssl.tar.gz' | sha256sum --check -
+          tar -xzf openssl.tar.gz
+          cd openssl-3.5.6
+          ./Configure --prefix="$RUNNER_TEMP/rr-cloud-tools/openssl" --openssldir="$RUNNER_TEMP/rr-cloud-tools/openssl/ssl" no-shared no-tests enable-ssl-trace
+          make -j2
+          make install_sw install_ssldirs
+      - name: Run fixed Handoff and NXR ordinary and constrained cells
+        timeout-minutes: 310
+        run: |
+          set -euo pipefail
+          df -h "$RUNNER_TEMP"
+          sudo env XDG_RUNTIME_DIR="$RUNNER_TEMP/rr-cloud-runtime" \
+            GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE" \
+            "$GITHUB_WORKSPACE/tools/target/release/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-run \
+            --fixture "$RUNNER_TEMP/rr-cloud-fixture" --output "$RUNNER_TEMP/rr-cloud-campaign" \
+            --candidate "$GITHUB_WORKSPACE/target/release/rust-reality" \
+            --xray "$RUNNER_TEMP/rr-cloud-tools/xray/xray" \
+            --openssl "$RUNNER_TEMP/rr-cloud-tools/openssl/bin/openssl"
+      - name: Retain campaign evidence without private fixture material
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hosted-qemu-campaign-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/rr-cloud-campaign/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 9
       - name: Retain only public preflight receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -290,7 +331,7 @@ jobs:
             --rust-bin "$RUST_BIN" --xray-bin "$XRAY_BIN" --openssl-bin "$OPENSSL_BIN" \
             --run-id "$GITHUB_RUN_ID-interop" --out-dir "$Q/interop"
       - name: Warm and cold mechanism on owned temporary test networks
-        timeout-minutes: 35
+        timeout-minutes: 350
         # The native harness owns uniquely named netns/veth/qdiscs on this
         # disposable hosted runner. It never contacts deployment hosts or
         # changes a firewall, host sysctl, or production configuration.
