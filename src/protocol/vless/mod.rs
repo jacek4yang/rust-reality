@@ -45,3 +45,4 @@ pub use client::{
     DecodeResponse, RequestEncodeError, ResponseDecodeError, decode_response,
     encode_vision_tcp_request,
 };
+pub(crate) use client::{DestinationValidationError, is_valid_domain_name, validate_destination};

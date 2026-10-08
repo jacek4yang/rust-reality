@@ -32,6 +32,43 @@ impl fmt::Display for RequestEncodeError {
 }
 impl Error for RequestEncodeError {}
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DestinationValidationError {
+    ZeroPort,
+    InvalidDomain,
+}
+
+impl From<DestinationValidationError> for RequestEncodeError {
+    fn from(error: DestinationValidationError) -> Self {
+        match error {
+            DestinationValidationError::ZeroPort => Self::ZeroPort,
+            DestinationValidationError::InvalidDomain => Self::InvalidDomain,
+        }
+    }
+}
+
+/// Checks the bounded ASCII domain grammar shared by the VLESS and SOCKS5 codecs.
+pub(crate) fn is_valid_domain_name(domain: &[u8]) -> bool {
+    !domain.is_empty()
+        && domain.len() <= usize::from(u8::MAX)
+        && domain.iter().copied().all(super::decode::is_domain_byte)
+}
+
+/// Validates destination fields shared by VLESS and SOCKS5 TCP request encoders.
+pub(crate) fn validate_destination(
+    destination: &Destination,
+) -> Result<(), DestinationValidationError> {
+    if destination.port() == 0 {
+        return Err(DestinationValidationError::ZeroPort);
+    }
+    if let Address::Domain(domain) = destination.address()
+        && !is_valid_domain_name(domain.as_bytes())
+    {
+        return Err(DestinationValidationError::InvalidDomain);
+    }
+    Ok(())
+}
+
 /// Encodes a version-zero TCP request with the canonical Vision flow.
 ///
 /// The caller owns storage and I/O. Invalid input or insufficient capacity leaves
@@ -43,21 +80,11 @@ pub fn encode_vision_tcp_request(
     destination: &Destination,
     output: &mut [u8],
 ) -> Result<usize, RequestEncodeError> {
-    if destination.port() == 0 {
-        return Err(RequestEncodeError::ZeroPort);
-    }
+    validate_destination(destination).map_err(RequestEncodeError::from)?;
     let address_len = match destination.address() {
         Address::Ipv4(_) => 5,
         Address::Ipv6(_) => 17,
-        Address::Domain(domain) => {
-            if domain.is_empty()
-                || domain.len() > usize::from(u8::MAX)
-                || !domain.bytes().all(super::decode::is_domain_byte)
-            {
-                return Err(RequestEncodeError::InvalidDomain);
-            }
-            2 + domain.len()
-        }
+        Address::Domain(domain) => 2 + domain.len(),
     };
     // version, user, addons length, protobuf key/length/flow, command, port.
     let prefix_len = 1 + 16 + 1 + 2 + VISION_FLOW.len() + 1 + 2;
