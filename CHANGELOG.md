@@ -6,6 +6,10 @@ All notable user-facing changes to this project are documented in this file.
 
 ### Fixed
 
+- Speculative warm pools back off after descriptor-pressure shedding, preventing
+  rapid refill/shed loops when their own released permits clear hysteresis.
+  Active sessions and cold-path admission remain unchanged.
+
 - CLI startup preserves intentionally inherited descriptors, including
   configurations passed through `/proc/self/fd`. Qualification launchers isolate
   runner descriptors instead of closing application descriptors in production.
