@@ -230,6 +230,7 @@ fn checkpoint(
     cell: &schema::Cell,
     name: &str,
     offset: u64,
+    recovered: bool,
 ) -> Result<schema::Checkpoint, String> {
     let mut samples = Vec::new();
     let mut observed_ms = 0;
@@ -241,7 +242,12 @@ fn checkpoint(
                 .checked_sub(cell.started_unix_ms)
                 .ok_or("guest sample precedes workload epoch")?,
         );
-        samples.push(super::observation::normalize(
+        let normalize = if recovered {
+            super::observation::normalize
+        } else {
+            super::observation::normalize_active
+        };
+        samples.push(normalize(
             &raw,
             &role.policy,
             &role.name,
@@ -340,6 +346,7 @@ fn assemble(
                 cell,
                 &format!("cycle-{index}-{offset}"),
                 *offset,
+                Some(offset) == contract.checkpoint_offsets_ms.last(),
             )?);
         }
         cell.cycles[index].checkpoints = checkpoints;
@@ -362,6 +369,7 @@ fn assemble(
                 cell,
                 &format!("fault-{name}-{offset}"),
                 *offset,
+                Some(offset) == contract.fault_checkpoint_offsets_ms.last(),
             )?);
         }
         cell.faults[index].before_processes = bindings;
@@ -397,6 +405,7 @@ fn assemble(
             cell,
             &format!("integrity-{offset}"),
             offset,
+            Some(&offset) == contract.integrity_offsets().last(),
         )?);
     }
     for role in &cell.roles {
@@ -415,7 +424,7 @@ fn assemble(
             cell.unexpected_rejections += counts.rejections;
         }
     }
-    cell.final_processes = checkpoint(root, cell_root, cell, "terminal", 0)?
+    cell.final_processes = checkpoint(root, cell_root, cell, "terminal", 0, true)?
         .samples
         .into_iter()
         .map(|sample| schema::ProcessBinding {

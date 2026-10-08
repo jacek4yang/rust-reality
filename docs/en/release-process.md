@@ -131,6 +131,16 @@ tiers must bind the same source. Emulated smoke remains functional evidence and
 does not satisfy native package qualification. Candidate package labels do not
 create Git tags or authorize publication.
 
+
+Active workload samples enforce kernel resource ceilings and fresh owner-counter
+capacities independently. They do not subtract periodic ownership logs from a
+newer descriptor census. Existing fixed recovered checkpoints still require
+complete ownership reconciliation and transient-work retirement. Incoherent
+recovery evidence is INVALID, never a product failure inferred solely from
+clock mismatch or a passing sample. Bounded pool retention remains allowed; no
+capacity, deadline, or production admission rule changes. See
+[ADR 0039](../adr/0039-separate-active-census-from-recovery-ownership.md).
+
 ## Phase 0 — verify current state
 
 Before repository mutation inspect local Git, `origin/main`, open PRs and

@@ -197,8 +197,16 @@ pub struct Ownership {
 ///
 /// # Errors
 /// Rejects malformed records, incomplete generations and stale/missing counters.
-#[allow(clippy::too_many_lines)]
 pub fn read_ownership(observation: &Observation, listeners: u64) -> Result<Ownership, String> {
+    read_ownership_at_checkpoint(observation, listeners, true)
+}
+
+#[allow(clippy::too_many_lines)]
+fn read_ownership_at_checkpoint(
+    observation: &Observation,
+    listeners: u64,
+    require_current_generation: bool,
+) -> Result<Ownership, String> {
     let log = observation
         .ownership_log
         .as_deref()
@@ -338,10 +346,11 @@ pub fn read_ownership(observation: &Observation, listeners: u64) -> Result<Owner
     let (timestamp, generation, mut ownership) =
         resources.ok_or("missing resource ownership event")?;
     if !fresh(timestamp)
-        || current != Some(generation)
+        || !published.contains(&generation)
         || !published.contains(&0)
         || !retired.is_subset(&published)
-        || retired.contains(&generation)
+        || current.is_none_or(|current| retired.contains(&current))
+        || (require_current_generation && current != Some(generation))
     {
         return Err("stale ownership or incomplete generation history".to_owned());
     }
@@ -357,7 +366,7 @@ pub fn read_ownership(observation: &Observation, listeners: u64) -> Result<Owner
     ownership.owners.retired_generations = u64::try_from(
         published
             .iter()
-            .filter(|id| **id != generation && !retired.contains(id))
+            .filter(|id| Some(**id) != current && !retired.contains(id))
             .count(),
     )
     .map_err(|_| "generation count overflow")?;
@@ -432,7 +441,11 @@ pub fn verify(raw: &Observation, sample: &Sample, policy: &Policy) -> Result<(),
     if field(limits, "Max open files")? != policy.soft_fd_limit {
         return Err("descriptor limit differs from startup policy".to_owned());
     }
-    let observed = read_ownership(raw, policy.listener_sockets)?;
+    let observed = read_ownership_at_checkpoint(
+        raw,
+        policy.listener_sockets,
+        sample.descriptors.reconciliation.is_some(),
+    )?;
     if observed.pre_auth_idle_capacity != policy.idle_inbound_capacity
         || observed.fd_capacity != policy.dynamic_fd_budget
         || observed.pipe_capacity != policy.pipe_pair_capacity
@@ -474,19 +487,20 @@ pub fn verify(raw: &Observation, sample: &Sample, policy: &Policy) -> Result<(),
             return Err("descriptor has no startup, socket or pipe owner".to_owned());
         }
     }
-    let expected_sockets = sample
-        .descriptors
-        .listener_sockets
-        .checked_add(sample.descriptors.warm_sockets)
-        .and_then(|total| total.checked_add(sample.descriptors.active_sockets))
-        .and_then(|total| total.checked_add(sample.descriptors.idle_inbound_sockets));
-    let expected_pipes = sample
-        .descriptors
-        .retained_pipe_pairs
-        .checked_mul(2)
-        .and_then(|total| total.checked_add(sample.descriptors.active_relay_fds));
-    if !fixed.is_empty() || Some(sockets) != expected_sockets || Some(pipes) != expected_pipes {
-        return Err("descriptor census differs from ownership accounting".to_owned());
+    if !fixed.is_empty()
+        || sockets != sample.descriptors.observed_tcp_sockets
+        || pipes != sample.descriptors.observed_pipe_fds
+    {
+        return Err("descriptor census differs from retained raw counts".to_owned());
+    }
+    if let Some(actual) = &sample.descriptors.reconciliation {
+        let expected = reconcile(&observed, sockets, pipes, policy.listener_sockets)?;
+        if actual.active_sockets != expected.active_sockets
+            || actual.active_relay_fds != expected.active_relay_fds
+            || actual.reserved_dynamic_permits != expected.reserved_dynamic_permits
+        {
+            return Err("normalized ownership reconciliation differs from observations".to_owned());
+        }
     }
     Ok(())
 }
@@ -549,20 +563,75 @@ pub fn startup_policy(raw: &Observation, listeners: u64) -> Result<Policy, Strin
     })
 }
 
-/// Reconstruct one sample; unknown descriptors and counter races remain errors.
-/// The caller retains the raw observation before invoking this function.
+fn reconcile(
+    ownership: &Ownership,
+    sockets: u64,
+    pipes: u64,
+    listeners: u64,
+) -> Result<super::schema::DescriptorReconciliation, String> {
+    let active_sockets = sockets
+        .checked_sub(listeners)
+        .and_then(|count| count.checked_sub(ownership.warm_sockets))
+        .and_then(|count| count.checked_sub(ownership.owners.pre_auth_idle_connections))
+        .ok_or("ownership evidence is not coherent: socket owners exceed census")?;
+    let active_relay_fds = ownership
+        .pipe_pairs
+        .checked_mul(2)
+        .and_then(|retained| pipes.checked_sub(retained))
+        .ok_or("ownership evidence is not coherent: retained pipes exceed census")?;
+    let dynamic = sockets
+        .checked_sub(listeners)
+        .and_then(|sockets| sockets.checked_add(pipes))
+        .ok_or("dynamic descriptor overflow")?;
+    let reserved = ownership
+        .permits
+        .checked_sub(dynamic)
+        .ok_or("ownership evidence is not coherent: census exceeds recorded permits")?;
+    Ok(super::schema::DescriptorReconciliation {
+        active_sockets,
+        active_relay_fds,
+        reserved_dynamic_permits: reserved,
+    })
+}
+
+/// Reconstruct a quiet checkpoint, including its required ownership accounting.
+/// The caller retains the raw observation even when reconciliation fails.
 ///
 /// # Errors
-/// Returns an error for missing fields, inconsistent accounting or identity.
-#[allow(clippy::too_many_lines)]
+/// Rejects missing fields, inconsistent accounting, raw reads and identity.
 pub fn normalize(
     raw: &Observation,
     policy: &Policy,
     role: &str,
     artifact: Artifact,
 ) -> Result<Sample, String> {
+    normalize_with_ownership(raw, policy, role, artifact, true)
+}
+
+/// Normalize an active-load census without subtracting asynchronous owner logs.
+///
+/// # Errors
+/// Rejects invalid reads, identity, raw census categories and log provenance.
+pub fn normalize_active(
+    raw: &Observation,
+    policy: &Policy,
+    role: &str,
+    artifact: Artifact,
+) -> Result<Sample, String> {
+    normalize_with_ownership(raw, policy, role, artifact, false)
+}
+
+#[allow(clippy::too_many_lines)]
+fn normalize_with_ownership(
+    raw: &Observation,
+    policy: &Policy,
+    role: &str,
+    artifact: Artifact,
+    reconcile_ownership: bool,
+) -> Result<Sample, String> {
     verify_read(raw)?;
-    let ownership = read_ownership(raw, policy.listener_sockets)?;
+    let ownership =
+        read_ownership_at_checkpoint(raw, policy.listener_sockets, reconcile_ownership)?;
     let status = raw.status.as_deref().ok_or("missing status")?;
     let smaps = raw.smaps_rollup.as_deref().ok_or("missing smaps_rollup")?;
     let unix_count = runtime_unix_count(raw)?;
@@ -582,24 +651,16 @@ pub fn normalize(
             .count(),
     )
     .map_err(|_| "pipe count overflow")?;
-    let active_sockets = sockets
-        .checked_sub(policy.listener_sockets)
-        .and_then(|count| count.checked_sub(ownership.warm_sockets))
-        .and_then(|count| count.checked_sub(ownership.owners.pre_auth_idle_connections))
-        .ok_or("socket ownership exceeds observed descriptors")?;
-    let active_relay_fds = ownership
-        .pipe_pairs
-        .checked_mul(2)
-        .and_then(|retained| pipes.checked_sub(retained))
-        .ok_or("retained pipes exceed observed descriptors")?;
-    let dynamic = sockets
-        .checked_sub(policy.listener_sockets)
-        .and_then(|sockets| sockets.checked_add(pipes))
-        .ok_or("dynamic descriptor overflow")?;
-    let reserved = ownership
-        .permits
-        .checked_sub(dynamic)
-        .ok_or("descriptors lack permits")?;
+    let reconciliation = if reconcile_ownership {
+        Some(reconcile(
+            &ownership,
+            sockets,
+            pipes,
+            policy.listener_sockets,
+        )?)
+    } else {
+        None
+    };
     let sample = Sample {
         observation: artifact,
         role: role.to_owned(),
@@ -634,12 +695,12 @@ pub fn normalize(
             listener_sockets: policy.listener_sockets,
             idle_inbound_sockets: ownership.owners.pre_auth_idle_connections,
             warm_sockets: ownership.warm_sockets,
-            active_sockets,
-            active_relay_fds,
+            observed_tcp_sockets: sockets,
+            observed_pipe_fds: pipes,
+            reconciliation,
             retained_pipe_pairs: ownership.pipe_pairs,
             dirty_retained_pipe_bytes: ownership.pipe_bytes,
             held_dynamic_permits: ownership.permits,
-            reserved_dynamic_permits: reserved,
             // Verification below must account for every descriptor before this
             // sample is returned. Unknown targets cannot be classified away.
             unexplained: 0,

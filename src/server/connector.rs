@@ -1052,6 +1052,90 @@ mod tests {
         assert_eq!(observed_active.load(Ordering::Acquire), 0);
     }
 
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn cancelling_a_pending_dial_returns_its_descriptor_reservation() {
+        let budget = FdBudget::new(1);
+        let entered = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&entered);
+        let mut dial = Box::pin(race_with(
+            test_planner(DialPolicy::Ipv4Only, 1),
+            vec![SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 443)],
+            Instant::now() + Duration::from_secs(60),
+            Duration::from_secs(60),
+            Some(budget.clone()),
+            move |_| {
+                entered.fetch_add(1, Ordering::AcqRel);
+                std::future::pending::<io::Result<SocketAddr>>()
+            },
+        ));
+        // Poll the real dial path once, without advancing any timeout.
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(dial.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        assert_eq!(observed.load(Ordering::Acquire), 1);
+        assert_eq!(budget.in_use(), 1);
+        drop(dial);
+        assert_eq!(budget.in_use(), 0);
+        assert_eq!(budget.underflows(), 0);
+        assert!(
+            budget.try_acquire(1).is_some(),
+            "cancellation must not starve later dials"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn failed_and_timed_out_dials_return_acquired_descriptor_permits() {
+        let budget = FdBudget::new(1);
+        // More attempts than capacity proves failures recycle the one permit.
+        let addresses = vec![
+            SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 443),
+            SocketAddr::new(Ipv4Addr::new(127, 0, 0, 2).into(), 443),
+        ];
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&calls);
+        let dial_budget = budget.clone();
+        let failed = race_with(
+            test_planner(DialPolicy::Ipv4Only, 1),
+            addresses,
+            Instant::now() + Duration::from_secs(60),
+            Duration::from_secs(60),
+            Some(budget.clone()),
+            move |_| {
+                calls.fetch_add(1, Ordering::AcqRel);
+                assert_eq!(dial_budget.in_use(), 1, "acquire before attempting connect");
+                std::future::ready(Err::<SocketAddr, _>(io::Error::from(
+                    io::ErrorKind::ConnectionRefused,
+                )))
+            },
+        )
+        .await;
+        assert!(matches!(failed, Err(DestinationConnectError::Io(_))));
+        assert_eq!(observed.load(Ordering::Acquire), 2);
+        assert_eq!(budget.in_use(), 0);
+        let dial_budget = budget.clone();
+        let timed_out = race_with(
+            test_planner(DialPolicy::Ipv4Only, 1),
+            vec![SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 443)],
+            Instant::now() + Duration::from_secs(1),
+            Duration::from_secs(1),
+            Some(budget.clone()),
+            move |_| {
+                assert_eq!(dial_budget.in_use(), 1);
+                std::future::pending::<io::Result<SocketAddr>>()
+            },
+        )
+        .await;
+        assert!(matches!(
+            timed_out,
+            Err(DestinationConnectError::TimedOut { .. })
+        ));
+        assert_eq!(budget.in_use(), 0);
+        assert_eq!(budget.underflows(), 0);
+        assert_eq!(budget.peak_in_use(), 1);
+    }
+
     struct ActiveAttempt(Arc<AtomicUsize>);
 
     impl Drop for ActiveAttempt {

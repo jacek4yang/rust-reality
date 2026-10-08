@@ -16,6 +16,11 @@ All notable user-facing changes to this project are documented in this file.
 
 ### Changed
 
+- Active stability samples check resource ceilings independently of periodic
+  ownership counters. Fixed recovery checkpoints still require reconciliation;
+  asynchronous evidence is not labeled a product leak. Numeric limits and
+  recovery deadlines are unchanged; production admission is unaffected.
+
 - Stability evidence uses a strict offline ownership contract with distinct
   PASS, FAIL, NOT_RUN and INVALID verdicts. Historical resource failures retain
   their original verdicts; replacement qualification requires a frozen candidate.

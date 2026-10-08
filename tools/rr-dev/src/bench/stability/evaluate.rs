@@ -78,7 +78,8 @@ pub fn evaluate(evidence: &Evidence, contract_sha256: &str) -> Report {
         findings: Vec::new(),
     };
     report.require(
-        contract.schema == "rr-stability-contract/v1",
+        contract.schema == "rr-stability-contract/v1"
+            && contract.resource_sampling == "active-ceilings-recovery-ownership",
         Verdict::Invalid,
         "contract",
         "unknown contract",
@@ -864,16 +865,18 @@ fn evaluate_owners(
     recovered: bool,
 ) {
     let fd = &sample.descriptors;
-    let pipes = fd.retained_pipe_pairs.checked_mul(2);
-    let dynamic = pipes
-        .and_then(|pipes| pipes.checked_add(fd.warm_sockets))
-        .and_then(|total| total.checked_add(fd.active_sockets))
-        .and_then(|total| total.checked_add(fd.idle_inbound_sockets))
-        .and_then(|total| total.checked_add(fd.active_relay_fds));
-    let total = dynamic
+    // Kernel census and periodic owner counters have independent timestamps.
+    // Active checkpoints enforce each authority's bounds without inventing a
+    // same-instant subtraction between the two.
+    let dynamic = fd
+        .observed_tcp_sockets
+        .checked_sub(fd.listener_sockets)
+        .and_then(|sockets| sockets.checked_add(fd.observed_pipe_fds));
+    let total = fd
+        .observed_tcp_sockets
+        .checked_add(fd.observed_pipe_fds)
         .and_then(|total| total.checked_add(fd.fixed))
-        .and_then(|total| total.checked_add(fd.runtime_unix_sockets))
-        .and_then(|total| total.checked_add(fd.listener_sockets));
+        .and_then(|total| total.checked_add(fd.runtime_unix_sockets));
     report.require(
         total == Some(fd.total) && fd.unexplained == 0,
         Verdict::Fail,
@@ -886,19 +889,27 @@ fn evaluate_owners(
             && u64::try_from(policy.fixed_descriptor_targets.len()).ok() == Some(policy.fixed_fds)
             && fd.listener_sockets == policy.listener_sockets
             && fd.total <= policy.soft_fd_limit
-            && dynamic.and_then(|owned| owned.checked_add(fd.reserved_dynamic_permits))
-                == Some(fd.held_dynamic_permits)
+            && dynamic.is_some_and(|value| value <= policy.dynamic_fd_budget)
             && fd.held_dynamic_permits <= policy.dynamic_fd_budget,
         Verdict::Fail,
         scope,
-        "descriptor ownership does not match startup policy or permits",
+        "descriptor census or recorded permits exceed startup policy",
     );
     report.require(
         fd.retained_pipe_pairs <= policy.pipe_pair_capacity
             && fd.dirty_retained_pipe_bytes == 0
             && fd.warm_sockets <= policy.warm_socket_capacity
-            && fd.active_sockets <= policy.active_socket_capacity
-            && fd.active_relay_fds <= policy.relay_fd_capacity,
+            && policy
+                .pipe_pair_capacity
+                .checked_mul(2)
+                .and_then(|retained| retained.checked_add(policy.relay_fd_capacity))
+                .is_some_and(|ceiling| fd.observed_pipe_fds <= ceiling)
+            && policy
+                .listener_sockets
+                .checked_add(policy.warm_socket_capacity)
+                .and_then(|count| count.checked_add(policy.idle_inbound_capacity))
+                .and_then(|count| count.checked_add(policy.active_socket_capacity))
+                .is_some_and(|ceiling| fd.observed_tcp_sockets <= ceiling),
         Verdict::Fail,
         scope,
         "dirty or excessive retained pool, socket, or relay descriptors",
@@ -907,17 +918,31 @@ fn evaluate_owners(
     report.require(
         owners.replay_entries <= policy.replay_capacity
             && owners.pre_auth_idle_connections <= policy.idle_inbound_capacity
-            && owners.pre_auth_idle_connections <= owners.admitted_connections
             && sample.descriptors.idle_inbound_sockets == owners.pre_auth_idle_connections,
         Verdict::Fail,
         scope,
         "replay or pre-auth ownership exceeded its fixed capacity or lost its socket binding",
     );
     if recovered {
+        let Some(reconciliation) = &fd.reconciliation else {
+            report.reject(
+                Verdict::Invalid,
+                scope,
+                "recovery checkpoint lacks ownership reconciliation",
+            );
+            return;
+        };
         report.require(
-            fd.active_sockets == 0
-                && fd.active_relay_fds == 0
-                && fd.reserved_dynamic_permits == policy.listener_sockets
+            dynamic.and_then(|owned| owned.checked_add(reconciliation.reserved_dynamic_permits))
+                == Some(fd.held_dynamic_permits),
+            Verdict::Invalid,
+            scope,
+            "recovery ownership evidence is not coherent",
+        );
+        report.require(
+            reconciliation.active_sockets == 0
+                && reconciliation.active_relay_fds == 0
+                && reconciliation.reserved_dynamic_permits == policy.listener_sockets
                 && owners.admitted_connections == owners.pre_auth_idle_connections
                 && owners.tracked_connection_tasks == owners.pre_auth_idle_connections
                 && owners.retired_generations == 0

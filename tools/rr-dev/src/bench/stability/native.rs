@@ -28,6 +28,18 @@ struct Process {
     baseline: Option<(Policy, Sample)>,
 }
 
+impl Process {
+    fn policy(&self, raw: &schema::Observation, label: &str) -> Result<Policy, String> {
+        if let Some((policy, _)) = &self.baseline {
+            Ok(policy.clone())
+        } else if label == "baseline" {
+            observation::startup_policy(raw, 1)
+        } else {
+            Err("missing native ownership baseline".to_owned())
+        }
+    }
+}
+
 /// Owns the native run's immutable startup census, not any product process.
 pub struct Qualification<'a> {
     run: &'a RunDirectory,
@@ -250,14 +262,13 @@ impl<'a> Qualification<'a> {
                 if raw.initial_start_ticks.as_ref() != Some(&process.start_ticks) {
                     return Err("native process was replaced or exited".to_owned());
                 }
-                let policy = if let Some((policy, _)) = &process.baseline {
-                    policy.clone()
-                } else if label == "baseline" {
-                    observation::startup_policy(&raw, 1)?
+                let policy = process.policy(&raw, label)?;
+                let normalize = if recovered || label == "baseline" {
+                    observation::normalize
                 } else {
-                    return Err("missing native ownership baseline".to_owned());
+                    observation::normalize_active
                 };
-                let sample = observation::normalize(&raw, &policy, &name, artifact)?;
+                let sample = normalize(&raw, &policy, &name, artifact)?;
                 checkpoint.samples.push(sample.clone());
                 let baseline = process
                     .baseline

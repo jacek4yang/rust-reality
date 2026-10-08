@@ -110,9 +110,10 @@ pub(super) fn fixture() -> Value {
                 let samples: Vec<_> = contract.roles.iter().map(|role| json!({
                     "observation":{"path":format!("{name}-{index}-{offset}-{role}"),"sha256":hash::sha256_hex(format!("{name}-{index}-{offset}-{role}").as_bytes())},"role":role,"process":process(role),"rss_kib":16384,"hwm_kib":16384,"pss_kib":12000,"anonymous_kib":10000,"threads":4,
                     "descriptors":{
-                        "runtime_unix_sockets":0,"total":263,"idle_inbound_sockets":0,"fixed":7,"listener_sockets":1,"warm_sockets":11,"active_sockets":0,
-                        "active_relay_fds":0,"retained_pipe_pairs":122,"dirty_retained_pipe_bytes":0,
-                        "held_dynamic_permits":256,"reserved_dynamic_permits":1,"unexplained":0
+                        "runtime_unix_sockets":0,"total":263,"idle_inbound_sockets":0,"fixed":7,"listener_sockets":1,"warm_sockets":11,"observed_tcp_sockets":12,"observed_pipe_fds":244,
+                        "reconciliation":{"active_sockets":0,"active_relay_fds":0,"reserved_dynamic_permits":1},
+                        "retained_pipe_pairs":122,"dirty_retained_pipe_bytes":0,
+                        "held_dynamic_permits":256,"unexplained":0
                     },
                     "owners":{"handshakes":0,"fallbacks":0,"crypto_operations":0,"dns_lookups":0,
                         "pre_auth_idle_connections":0,"admitted_connections":0,"tracked_connection_tasks":0,"retired_generations":0,
@@ -800,8 +801,7 @@ fn adversarial_resource_mutations_fail() {
         ("descriptors/unexplained", 1),
         ("descriptors/retained_pipe_pairs", 123),
         ("descriptors/dirty_retained_pipe_bytes", 1),
-        ("descriptors/held_dynamic_permits", 0),
-        ("descriptors/active_sockets", 1),
+        ("descriptors/reconciliation/active_sockets", 1),
         ("owners/admitted_connections", 1),
         ("owners/tracked_connection_tasks", 1),
         ("owners/retired_generations", 1),
@@ -997,7 +997,7 @@ fn recovered_permits_cannot_be_hidden_as_unopened_reservations() {
     let mut changed = fixture();
     let descriptors =
         &mut changed["cells"][0]["cycles"][7]["checkpoints"][7]["samples"][0]["descriptors"];
-    descriptors["reserved_dynamic_permits"] = json!(2);
+    descriptors["reconciliation"]["reserved_dynamic_permits"] = json!(2);
     descriptors["held_dynamic_permits"] = json!(257);
     assert_eq!(verdict(&changed), Verdict::Fail);
 }
@@ -1590,4 +1590,141 @@ fn bounded_pre_auth_idle_tasks_are_counted_without_exempting_leaked_work() {
     }
     value["cells"][0]["roles"][2]["policy"]["idle_inbound_capacity"] = json!(10);
     assert_eq!(verdict(&value), Verdict::Fail);
+}
+
+#[test]
+fn active_churn_does_not_subtract_a_periodic_counter_from_a_newer_census() {
+    let evidence: schema::Evidence = serde_json::from_value(fixture()).unwrap();
+    let baseline = &evidence.cells[0].cycles[0].checkpoints[0].samples[0];
+    let policy = &evidence.cells[0].roles[0].policy;
+    let mut raw: schema::Observation =
+        serde_json::from_value(raw_observation(baseline, policy)).unwrap();
+    // Nine accepted/dialled sockets appeared after the last periodic record.
+    // Both raw reads agree; the old permit counter must not fabricate a leak.
+    for fd in 900..909 {
+        raw.descriptors
+            .insert(fd, format!("socket:[{}]", 99000 + fd));
+    }
+    for read in &mut raw.descriptor_reads {
+        read.descriptors.clone_from(&raw.descriptors);
+    }
+    let sample =
+        super::observation::normalize_active(&raw, policy, "native", baseline.observation.clone())
+            .unwrap();
+    assert!(sample.descriptors.reconciliation.is_none());
+    super::observation::verify(&raw, &sample, policy).unwrap();
+    assert_eq!(
+        evaluate::evaluate_native_resources(policy, baseline, &sample, false).verdict,
+        Verdict::Pass
+    );
+    // The same active-only evidence cannot masquerade as recovered ownership.
+    assert_eq!(
+        evaluate::evaluate_native_resources(policy, baseline, &sample, true).verdict,
+        Verdict::Invalid
+    );
+    let error = super::observation::normalize(&raw, policy, "native", baseline.observation.clone())
+        .unwrap_err();
+    assert!(
+        error.contains("ownership evidence is not coherent"),
+        "{error}"
+    );
+    let mut forged = sample;
+    forged.descriptors.observed_tcp_sockets -= 1;
+    assert!(super::observation::verify(&raw, &forged, policy).is_err());
+}
+
+#[test]
+fn active_sampling_still_rejects_real_caps_dirty_retention_and_unknown_descriptors() {
+    let evidence: schema::Evidence = serde_json::from_value(fixture()).unwrap();
+    let baseline = &evidence.cells[0].cycles[0].checkpoints[0].samples[0];
+    let policy = &evidence.cells[0].roles[0].policy;
+    let mut raw: schema::Observation =
+        serde_json::from_value(raw_observation(baseline, policy)).unwrap();
+    let sample =
+        super::observation::normalize_active(&raw, policy, "native", baseline.observation.clone())
+            .unwrap();
+    for mutation in 0..4 {
+        let mut invalid = sample.clone();
+        match mutation {
+            0 => invalid.descriptors.held_dynamic_permits = policy.dynamic_fd_budget + 1,
+            1 => invalid.descriptors.dirty_retained_pipe_bytes = 1,
+            2 => {
+                invalid.descriptors.observed_tcp_sockets = policy.dynamic_fd_budget + 2;
+                invalid.descriptors.total = invalid.descriptors.observed_tcp_sockets
+                    + invalid.descriptors.observed_pipe_fds
+                    + invalid.descriptors.fixed
+                    + invalid.descriptors.runtime_unix_sockets;
+            }
+            _ => invalid.owners.replay_entries = policy.replay_capacity + 1,
+        }
+        assert_eq!(
+            evaluate::evaluate_native_resources(policy, baseline, &invalid, false).verdict,
+            Verdict::Fail
+        );
+    }
+    raw.descriptors.insert(999, "/unexpected-file".to_owned());
+    for read in &mut raw.descriptor_reads {
+        read.descriptors.clone_from(&raw.descriptors);
+    }
+    assert!(
+        super::observation::normalize_active(&raw, policy, "native", baseline.observation.clone())
+            .is_err()
+    );
+}
+
+#[test]
+fn incoherent_recovery_is_invalid_not_a_product_failure_or_a_pass() {
+    let mut value = fixture();
+    value["cells"][0]["cycles"][7]["checkpoints"][7]["samples"][2]["descriptors"]["held_dynamic_permits"] =
+        json!(0);
+    assert_eq!(verdict(&value), Verdict::Invalid);
+    let mut value = fixture();
+    value["cells"][0]["cycles"][7]["checkpoints"][7]["samples"][2]["descriptors"]["reconciliation"] =
+        Value::Null;
+    assert_eq!(verdict(&value), Verdict::Invalid);
+}
+
+#[test]
+fn active_reload_can_precede_the_next_counter_without_hiding_recovery_retirement() {
+    let evidence: schema::Evidence = serde_json::from_value(fixture()).unwrap();
+    let baseline = &evidence.cells[0].cycles[0].checkpoints[0].samples[0];
+    let policy = &evidence.cells[0].roles[0].policy;
+    let mut raw: schema::Observation =
+        serde_json::from_value(raw_observation(baseline, policy)).unwrap();
+    let timestamp = raw.completed_unix_ms;
+    writeln!(raw.ownership_log.as_mut().unwrap(), "{}", json!({
+        "timestampUnixMs":timestamp,"level":"info","event":"configuration_published","generation":1
+    })).unwrap();
+    let sample =
+        super::observation::normalize_active(&raw, policy, "native", baseline.observation.clone())
+            .unwrap();
+    assert_eq!(sample.owners.retired_generations, 1);
+    assert_eq!(
+        evaluate::evaluate_native_resources(policy, baseline, &sample, false).verdict,
+        Verdict::Pass
+    );
+    assert!(
+        super::observation::normalize(&raw, policy, "native", baseline.observation.clone())
+            .is_err()
+    );
+    writeln!(
+        raw.ownership_log.as_mut().unwrap(),
+        "{}",
+        json!({
+            "timestampUnixMs":timestamp,"level":"debug","event":"generation_retired","generation":0
+        })
+    )
+    .unwrap();
+    let sample =
+        super::observation::normalize_active(&raw, policy, "native", baseline.observation.clone())
+            .unwrap();
+    assert_eq!(sample.owners.retired_generations, 0);
+    // A forged future generation still cannot be justified by a known reload.
+    raw.ownership_log = raw
+        .ownership_log
+        .map(|log| log.replace("\"generation\":1", "\"generation\":99"));
+    assert!(
+        super::observation::normalize_active(&raw, policy, "native", baseline.observation.clone())
+            .is_err()
+    );
 }

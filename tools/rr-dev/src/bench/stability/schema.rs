@@ -14,6 +14,7 @@ pub const MAX_EVIDENCE_BYTES: usize = 64 * 1024 * 1024;
 #[serde(deny_unknown_fields)]
 pub struct Contract {
     pub schema: String,
+    pub resource_sampling: String,
     pub cycles: usize,
     pub transfers_per_line: u64,
     pub concurrency: Vec<u64>,
@@ -246,7 +247,8 @@ pub struct Sample {
     pub owners: Owners,
 }
 
-/// OS census reconciled with owner counts, not merely FD target categories.
+/// Raw census and separately timestamped owner counters. Reconciliation is
+/// present only at checkpoints that require post-load ownership accounting.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Descriptors {
@@ -256,13 +258,22 @@ pub struct Descriptors {
     pub fixed: u64,
     pub listener_sockets: u64,
     pub warm_sockets: u64,
-    pub active_sockets: u64,
-    pub active_relay_fds: u64,
+    pub observed_tcp_sockets: u64,
+    pub observed_pipe_fds: u64,
+    pub reconciliation: Option<DescriptorReconciliation>,
     pub retained_pipe_pairs: u64,
     pub dirty_retained_pipe_bytes: u64,
     pub held_dynamic_permits: u64,
-    pub reserved_dynamic_permits: u64,
     pub unexplained: u64,
+}
+
+/// Derived only when a quiet checkpoint can reconcile the separate records.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DescriptorReconciliation {
+    pub active_sockets: u64,
+    pub active_relay_fds: u64,
+    pub reserved_dynamic_permits: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

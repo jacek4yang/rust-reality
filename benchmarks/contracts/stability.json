@@ -1,5 +1,6 @@
 {
   "schema": "rr-stability-contract/v1",
+  "resource_sampling": "active-ceilings-recovery-ownership",
   "cycles": 8,
   "transfers_per_line": 100,
   "concurrency": [
@@ -118,7 +119,9 @@
     "descriptor-permit-ownership": [
       "transport::tcp_relay::tests::a_splice_relay_reserves_four_descriptor_units_before_creating_pipes",
       "transport::tcp_relay::tests::repeated_splice_relays_return_descriptor_units_to_baseline",
-      "transport::fd_budget::tests::a_multi_unit_permit_is_all_or_nothing"
+      "transport::fd_budget::tests::a_multi_unit_permit_is_all_or_nothing",
+      "transport::fd_budget::tests::concurrent_acquisition_never_overshoots",
+      "server::connector::tests::failed_and_timed_out_dials_return_acquired_descriptor_permits"
     ],
     "generation-retirement": [
       "server::production::store::tests::retired_connection_runtime_is_released_after_its_last_connection",
@@ -127,7 +130,8 @@
     "cancellation": [
       "runtime::connection::tests::abort_releases_connection_captures_and_reaps_the_task",
       "runtime::connection::tests::dropping_task_set_releases_an_unpolled_capture",
-      "transport::tcp_relay::tests::a_cancelled_splice_relay_releases_its_descriptor_units"
+      "transport::tcp_relay::tests::a_cancelled_splice_relay_releases_its_descriptor_units",
+      "server::connector::tests::cancelling_a_pending_dial_returns_its_descriptor_reservation"
     ],
     "inactivity": [
       "io_activity::tests::only_whole_session_inactivity_expires",

@@ -88,6 +88,13 @@ soak 就被跳过或改为可选。
 不能替代这些命令。现有 `cargo dev deploy canary` 评估器仍专属于 WAN；不得伪造
 SSH/防火墙断言，把本地运行包装成 VPS 运行。
 
+
+负载期间分别检查内核资源上限与新鲜所有权计数的容量，不再用较新的描述符快照
+减去周期日志中的旧配额。既有固定恢复检查点仍要求完整对账及短期任务退休。
+恢复证据时间不一致时标记 INVALID，不仅凭时间差判程序故障，也不能当作通过。
+允许有界连接池保持，不改变容量、期限或生产准入规则。参见
+[ADR 0039](../adr/0039-separate-active-census-from-recovery-ownership.md)。
+
 每个受支持层级打包后，运行
 `cargo dev release smoke TAG TIER ASSETS --receipt-dir FRESH_DIRECTORY` 保留绑定
 发布包的执行证明；该目录应放在待汇总的资产目录之外。证据包含归档、实际执行
