@@ -25,6 +25,18 @@
 - **Sanitizer** 由 Security workflow 执行，保留地址/泄漏检查。重放和传输并发回归仍由常规测试覆盖。
   移除 ThreadSanitizer 的明确取舍见 [ADR 0035](../../adr/0035-remove-thread-sanitizer-gate.md)。
 
+## Actions 执行分工
+
+CI 和 Security 提供日常回归反馈。原生资格验证运行真实进程与网络命名空间中的
+互操作、压力恢复及连接生命周期测试；候选发布包验证实际分发产物。
+QEMU 专项单独验证独立 guest 内核与受限 CPU/内存，不作为精细性能基准。
+
+QEMU 在 `ready_for_review` 或显式 `workflow_dispatch` 时启动，不再随每次草稿推送
+重跑。手动触发绑定所选分支的精确 SHA；新请求不取消已运行的 campaign。
+结果不能替代另一 SHA 的验证：已进入评审的 PR 再有提交时，必须显式请求新 campaign。
+缺失或跳过不算通过。在经过评审的替代方案覆盖相应义务前，既有 Tier B 合同仍然有效。
+参见 [ADR 0036](../../adr/0036-separate-native-and-qemu-qualification.md)。
+
 ## 聚焦验证
 
 ```shell

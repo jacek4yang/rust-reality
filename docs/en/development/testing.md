@@ -37,6 +37,22 @@ the validation layers themselves.
   See [ADR 0035](../../adr/0035-remove-thread-sanitizer-gate.md) for the explicit
   decision to remove ThreadSanitizer and its coverage trade-off.
 
+## Actions execution lanes
+
+CI and Security provide ordinary regression feedback. Native qualification
+executes real-process/network-namespace interoperability, pressure/recovery and
+connection lifetime checks. Candidate packages verify the actual distribution
+assets. QEMU specialist qualification separately exercises independent guest
+kernels and constrained CPU/RAM; it is not a precise performance benchmark.
+
+QEMU starts on `ready_for_review` or explicit `workflow_dispatch`, rather than
+every draft push. Dispatch uses the selected branch's exact SHA. Existing
+campaigns are not cancelled by newer requests. A result never qualifies a
+different SHA; after another commit on a ready PR, explicitly request the new
+campaign. Missing or skipped qualification is not a pass. The existing Tier B
+contract remains required until a reviewed replacement covers its obligations.
+See [ADR 0036](../../adr/0036-separate-native-and-qemu-qualification.md).
+
 ## Focused runs
 
 ```shell
