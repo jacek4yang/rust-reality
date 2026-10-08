@@ -12,8 +12,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    assets::AssetsConfig, dns::DnsConfig, listener::ListenerConfig, log::LogConfig,
-    network::NetworkConfig, outbound::OutboundConfig, reality::RealityConfig,
+    assets::AssetsConfig, control::ControlConfig, dns::DnsConfig, listener::ListenerConfig,
+    log::LogConfig, network::NetworkConfig, outbound::OutboundConfig, reality::RealityConfig,
     routing::RoutingConfig, runtime::RuntimeConfig, user::UserConfig,
 };
 
@@ -62,6 +62,9 @@ pub struct EntryConfig {
     /// Resource posture and expert limit overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<RuntimeConfig>,
+    /// The local control endpoint. Absent means no control interface.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control: Option<ControlConfig>,
 }
 
 /// The role tag of an entry node.

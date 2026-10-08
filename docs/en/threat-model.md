@@ -165,6 +165,27 @@ After a complete write, LANDING may already have reserved replay state,
 resolved or connected a destination, or resumed a session, so the logical flow
 is never repeated because of a late close or response failure.
 
+## Local control boundary
+
+The optional control socket ([control API](operations/control-api.md)) is a
+local administrative trust boundary, not a network service. It exists only
+when `control.socket` is configured, is created with mode `0600`, and admits
+only peers whose `SO_PEERCRED` uid owns the socket or is root; anyone who can
+connect can manage users, exactly as anyone who can write the configuration
+file and send `SIGHUP`. There is no TCP listener. Remote administration is out
+of scope and belongs to an external program behind its own authenticated
+transport.
+
+UUIDs are credentials and are never used as resource identifiers: users are
+named by a keyed, non-reversible handle derived from the REALITY private key,
+and a UUID leaves the process only once, in the response that creates it.
+Requests are bounded (64 KiB lines, 8 connections, one request in flight per
+connection, at most two requests doing work at once and none of it on a proxy
+worker thread, paged listings, idle and write deadlines), decoded strictly by a fuzzed parser,
+and every mutation is held to the same validation and size bound as a
+configuration file before it is published as a whole generation. The data
+plane never reads control state directly.
+
 ## Resource and kernel boundaries
 
 All pre-authentication work, connections, fallbacks, cryptographic work, replay
@@ -192,8 +213,8 @@ Handoff headers/blobs/opening and structured round trips, NXR round trips,
 cover-flight parsing, TLS 1.3 record round trips, transcript hashing, strict
 normalized ClientHello classification, controlled profile compatibility,
 profile EncryptedExtensions parsing, ServerHello reconstruction,
-configuration decoding, diagnostic rendering, and runtime-independent session
-ownership and retry semantics. CI rejects undeclared
+configuration decoding, diagnostic rendering, control-protocol request
+decoding, and runtime-independent session ownership and retry semantics. CI rejects undeclared
 target source files and runs every declared target; whole-crate line coverage
 is not treated as a substitute for these reachable boundaries.
 

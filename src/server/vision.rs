@@ -293,6 +293,28 @@ impl VisionHandler {
         ))
     }
 
+    /// Rebinds this data path to a new user set.
+    ///
+    /// The routing table is recompiled from `entry`'s users and routing
+    /// section against `assets`; the outbound registry (and every pool it
+    /// owns), the relay, and the timeouts are shared with `self`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a routing matcher or UUID compilation error.
+    pub(crate) fn with_users(
+        &self,
+        entry: &EntryConfig,
+        assets: Arc<dyn AssetMatcher>,
+    ) -> Result<Self, RoutingCompileError> {
+        Ok(Self {
+            routing: self
+                .routing
+                .recompile(&entry.routing, &entry.users, assets)?,
+            ..self.clone()
+        })
+    }
+
     /// Returns the shared outbound registry, for Handoff landings whose
     /// configured egress dials through the same compiled transports.
     #[must_use]
@@ -3974,6 +3996,7 @@ mod tests {
                 short_ids: vec!["0123456789abcdef".to_owned()],
                 label: None,
                 policy: None,
+                enabled: None,
             }],
             Arc::new(EmptyAssetMatcher),
             crate::runtime::ResourceGovernor::new(

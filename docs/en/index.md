@@ -32,6 +32,7 @@ English | [简体中文](../zh-CN/index.md)
 | --- | --- |
 | [Linux deployment](operations/deployment.md) | Release verification, systemd, firewall, files, and upgrades. |
 | [CLI reference](cli.md) | Every command, option, default, output, signal, and exit behavior. |
+| [Control API](operations/control-api.md) | The local control socket: protocol, operations, generation semantics, limits. |
 | [Threat model](threat-model.md) | Security goals, trust boundaries, NXR limitations, and non-goals. |
 | [Engineering and release program](release-process.md) | Evidence tiers, PR/tag lifecycle, canaries, rollback. |
 | [Security policy](../../SECURITY.md) | Supported versions and private vulnerability reporting. |

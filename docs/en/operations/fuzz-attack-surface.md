@@ -29,6 +29,7 @@ live in [development/fuzzing.md](../development/fuzzing.md).
 | REALITY authentication round trip | REALITY auth handshake | `reality_auth_round_trip` |
 | Session-engine semantics | `rr-session` state machines | `session_semantics` |
 | Configuration diagnostics | diagnostic rendering on malformed config | `config_diagnostic` |
+| Control protocol request (local Unix socket) | `control::decode_request` | `control_request` (grammar-shaped envelopes plus raw bytes; asserts accepted requests stay in the published operation set and rejections never echo a planted credential) |
 
 ## Gaps (with justification)
 

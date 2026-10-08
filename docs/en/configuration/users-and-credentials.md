@@ -135,6 +135,18 @@ Delete the entry and reload. Connections that identity already has are **not**
 torn down: they finish on the generation that admitted them. If you need them
 gone immediately, restart the service.
 
+## Disabling a user
+
+Set `"enabled": false` on the user and reload. The identity, its short IDs,
+and its policy stay in the file and its short IDs stay reserved, but a new
+connection presenting one is treated like an unknown short ID. As with
+removal, connections already established finish on their generation. At least
+one user must stay enabled.
+
+Users and short IDs can also be managed at runtime through the
+[control API](../operations/control-api.md), without editing this file; a
+reload replaces such changes with the file's content.
+
 ## Rotating the REALITY key
 
 Changing `reality.privateKey` invalidates every client at once — there is no
@@ -143,7 +155,8 @@ overlap window, because a REALITY identity is a single key.
 So rotate it deliberately: generate the new pair, update the server file,
 distribute the new public key, and reload. Every client must be updated. If
 that is too disruptive, the thing you probably want is to rotate *users*
-instead, which can be done one at a time.
+instead, which can be done one at a time. A new private key also gives every
+user a new control API handle.
 
 ## Rotating a landing's keys without dropping traffic
 

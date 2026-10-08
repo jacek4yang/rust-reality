@@ -391,6 +391,7 @@ fn fixture(size: usize, case: Case) -> Fixture {
         short_ids: vec!["0123456789abcdef".to_owned()],
         label: None,
         policy: Some(policy.to_owned()),
+        enabled: None,
     };
     let table = RoutingTable::compile(
         &config,

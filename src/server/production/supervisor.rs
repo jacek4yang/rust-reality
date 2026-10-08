@@ -105,10 +105,32 @@ where
         );
     }
 
+    // The control socket is bound after every data listener, so a host that
+    // cannot serve traffic never advertises a control endpoint, and before
+    // any task starts, so a socket that cannot be created fails startup.
+    let control_endpoint = bind_control(&initial)?;
+
     // Listener binding is complete, so this immutable generation may begin
     // speculative cover and fixed-peer dialing without delaying availability.
     initial.activate_warm_pools();
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    #[cfg(unix)]
+    let control_task = control_endpoint.map(|endpoint| {
+        emit(
+            &initial.logger,
+            &LogEvent::ControlStarted {
+                socket: endpoint.path().display().to_string(),
+            },
+        );
+        tokio::spawn(super::control::run(
+            endpoint,
+            Arc::clone(&server.runtime),
+            server.config_path.clone(),
+            shutdown_receiver.clone(),
+        ))
+    });
+    #[cfg(not(unix))]
+    let control_task: Option<tokio::task::JoinHandle<()>> = control_endpoint;
     let mut listener_tasks = JoinSet::new();
     for (acceptor, address) in bound {
         let local_address = acceptor
@@ -203,9 +225,7 @@ where
             }
             completed = update_tasks.join_next(), if !update_tasks.is_empty() => {
                 match completed {
-                    Some(Ok((_, Ok(_)))) => {
-                        server.runtime.load().activate_warm_pools();
-                    }
+                    Some(Ok((_, Ok(_)))) => server.runtime.activate_current(),
                     Some(Ok((field, Err(error)))) => {
                         emit_rejected(&server.runtime, field, Some(&error));
                     }
@@ -216,7 +236,10 @@ where
         }
     };
 
-    server.runtime.load().deactivate_warm_pools();
+    // Close the commit boundary first: an update still compiling on the
+    // blocking pool (a reload, a refresh, or a control mutation) can no longer
+    // publish or activate pools, so the generation retired here is the last.
+    server.runtime.close().deactivate_warm_pools();
     update_tasks.abort_all();
     if let Some(task) = monitor_task {
         task.abort();
@@ -226,6 +249,11 @@ where
     }
     network_refresh_task.abort();
     let _ignored = shutdown_sender.send(true);
+    if let Some(task) = control_task {
+        // The control task stops on the shutdown signal and removes its
+        // socket; waiting keeps a restart from racing a stale socket.
+        let _ = task.await;
+    }
     while let Some(completed) = listener_tasks.join_next().await {
         match completed {
             Ok(Ok(())) => {}
@@ -239,6 +267,36 @@ where
         }
     }
     result
+}
+
+#[cfg(unix)]
+fn bind_control(
+    initial: &super::snapshot::RuntimeSnapshot,
+) -> Result<Option<super::control::ControlEndpoint>, ProductionServerError> {
+    initial
+        .node
+        .as_entry()
+        .and_then(|entry| entry.control.as_ref())
+        .map(super::control::bind)
+        .transpose()
+        .map_err(ProductionServerError::ControlBind)
+}
+
+#[cfg(not(unix))]
+fn bind_control(
+    initial: &super::snapshot::RuntimeSnapshot,
+) -> Result<Option<tokio::task::JoinHandle<()>>, ProductionServerError> {
+    match initial
+        .node
+        .as_entry()
+        .and_then(|entry| entry.control.as_ref())
+    {
+        Some(_) => Err(ProductionServerError::ControlBind(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "the control socket requires a Unix platform",
+        ))),
+        None => Ok(None),
+    }
 }
 
 #[cfg(unix)]

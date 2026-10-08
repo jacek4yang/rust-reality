@@ -30,6 +30,23 @@ pub struct UserConfig {
     /// Absent means the top-level `routing` default and rules apply.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy: Option<String>,
+    /// Whether this identity may authenticate. Absent means `true`.
+    ///
+    /// A disabled user keeps its identity, short IDs, and policy, and keeps
+    /// them reserved, but its short IDs are left out of the REALITY
+    /// authentication index, so a new connection presenting them is treated
+    /// exactly like an unknown short ID. Sessions established under an
+    /// earlier generation are unaffected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+}
+
+impl UserConfig {
+    /// Whether this identity may authenticate, applying the default.
+    #[must_use]
+    pub fn enabled(&self) -> bool {
+        self.enabled.unwrap_or(true)
+    }
 }
 
 #[cfg(test)]
@@ -47,6 +64,22 @@ mod tests {
         assert_eq!(user.short_ids, ["ab"]);
         assert!(user.label.is_none());
         assert!(user.policy.is_none());
+        assert!(user.enabled.is_none());
+        assert!(
+            user.enabled(),
+            "an identity is enabled unless stated otherwise"
+        );
+    }
+
+    #[test]
+    fn an_explicitly_disabled_user_decodes_and_reports_disabled() {
+        let user: UserConfig = serde_json::from_str(
+            r#"{"id":"11111111-1111-4111-8111-111111111111","shortIds":["ab"],"enabled":false}"#,
+        )
+        .expect("user must decode");
+
+        assert_eq!(user.enabled, Some(false));
+        assert!(!user.enabled());
     }
 
     #[test]

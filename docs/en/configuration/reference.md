@@ -33,6 +33,7 @@ they share no required fields beyond `role` and `listeners`.
 | `network` | [Network](#network) | no | Outbound address-family policy. |
 | `log` | [Log](#log) | no | Logging destination and retention. |
 | `runtime` | [Runtime](#runtime) | no | Resource posture and expert limits. |
+| `control` | [Control](#control) | no | Local control socket. Absent means no control interface. |
 
 ### `role: "landing"`
 
@@ -48,8 +49,8 @@ they share no required fields beyond `role` and `listeners`.
 | `log` | [Log](#log) | no | Logging destination and retention. |
 | `runtime` | [Runtime](#runtime) | no | Resource posture and expert limits. |
 
-A landing has no `reality`, no `users`, and no `routing`. Stating one is an
-error naming the field.
+A landing has no `reality`, no `users`, no `routing`, and no `control`.
+Stating one is an error naming the field.
 
 ## Listener
 
@@ -112,6 +113,7 @@ Hot. Entry nodes only. Identities and short IDs are unique across the node.
 | `shortIds` | array of string | yes | — |
 | `label` | string | no | the identity is reported by its UUID |
 | `policy` | string | no | the top-level `routing` default and rules apply |
+| `enabled` | boolean | no | `true` |
 
 A short ID is 2–16 hexadecimal characters, an even count. A client picks one
 per connection; listing several lets one identity's devices carry different
@@ -119,6 +121,12 @@ short IDs.
 
 `label` is non-secret and has no protocol effect. `policy` names a key of
 `routing.policies`.
+
+`enabled: false` keeps the identity, its short IDs, and its policy, and keeps
+its short IDs reserved against other users, but leaves them out of REALITY
+authentication: a new connection presenting one is treated exactly like an
+unknown short ID and falls back to the cover. Sessions established under an
+earlier generation are unaffected. At least one user must remain enabled.
 
 ## Outbound
 
@@ -392,6 +400,23 @@ barrier, replay cache capacity, and DNS cache internals have no fields: they
 are implementation detail derived from the machine. See
 [runtime and resources](runtime-and-resources.md).
 
+## Control
+
+Cold. Entry nodes only. See the [control API](../operations/control-api.md).
+
+| field | type | required | absent means |
+| --- | --- | --- | --- |
+| `socket` | absolute path | yes | — |
+
+The path names the Unix domain socket the server creates at startup with mode
+`0600`; it is at most 107 bytes and the parent directory must exist. The
+server holds an exclusive lock on `<socket>.lock` beside it for its lifetime,
+so a second instance configured with the same path fails to start; with the
+lock held, a stale socket at the path is replaced while any other kind of
+file is refused. There
+is no network listener and no field to configure one. Changes made through the
+socket are not written back to this file: a reload replaces them.
+
 ## Reload summary
 
 | section | hot | cold |
@@ -409,6 +434,7 @@ are implementation detail derived from the machine. See
 | `dns` | | ✓ |
 | `network` | | ✓ |
 | `runtime` | | ✓ |
+| `control` | | ✓ |
 
 A reload that changes a cold setting is refused by name, and the running
 configuration keeps serving. Established connections always finish on the

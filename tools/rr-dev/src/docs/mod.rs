@@ -93,6 +93,10 @@ const REQUIRED_PAIRS: &[(&str, &str)] = &[
         "docs/en/operations/deployment.md",
         "docs/zh-CN/operations/deployment.md",
     ),
+    (
+        "docs/en/operations/control-api.md",
+        "docs/zh-CN/operations/control-api.md",
+    ),
     ("docs/en/architecture.md", "docs/zh-CN/architecture.md"),
     ("docs/en/protocol.md", "docs/zh-CN/protocol.md"),
     ("docs/en/performance.md", "docs/zh-CN/performance.md"),

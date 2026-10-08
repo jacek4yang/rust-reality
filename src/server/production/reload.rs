@@ -49,6 +49,11 @@ pub(super) fn ensure_hot_compatible(
     if candidate.dns() != current.node.dns() {
         return Err(RuntimeUpdateError::DnsPolicyChanged);
     }
+    // The control socket is bound once for the process lifetime; rebinding
+    // it from a reload would race the controllers connected to it.
+    if control_socket(&candidate) != control_socket(&current.node) {
+        return Err(RuntimeUpdateError::ControlSocketChanged);
+    }
     // Nonces and their original expiry deadlines survive generation changes.
     // Rebuilding the cache would permit replay; silently keeping it would
     // ignore the new policy. Retention changes therefore require a restart.
@@ -74,6 +79,12 @@ pub(super) fn ensure_hot_compatible(
         return Err(RuntimeUpdateError::ResourceModeChanged);
     }
     Ok(candidate)
+}
+
+fn control_socket(node: &NodeConfig) -> Option<&std::path::Path> {
+    node.as_entry()
+        .and_then(|entry| entry.control.as_ref())
+        .map(crate::config::node::control::ControlConfig::socket)
 }
 
 fn replay_retention(node: &NodeConfig) -> Option<u64> {

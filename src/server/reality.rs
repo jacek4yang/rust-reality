@@ -360,6 +360,36 @@ impl RealityAcceptor {
         })
     }
 
+    /// Rebinds this acceptor to a new user set.
+    ///
+    /// The authenticator (and its short-ID index) is rebuilt from `entry`'s
+    /// enabled users. Everything else — the process-lifetime replay cache,
+    /// the certificate identity, the cover fallback and its warm pool, the
+    /// cover profiles, the governor, and the timeouts — is shared with
+    /// `self`, because none of it depends on who may authenticate.
+    ///
+    /// # Errors
+    ///
+    /// Returns the authenticator's configuration error.
+    pub(crate) fn with_users(
+        &self,
+        entry: &EntryConfig,
+    ) -> Result<Self, RealityAcceptorConfigError> {
+        Ok(Self {
+            authenticator: RealityAuthenticator::from_entry(entry)
+                .map_err(RealityAcceptorConfigError::Authentication)?,
+            replay: self.replay.clone(),
+            identity: Arc::clone(&self.identity),
+            fallback: self.fallback.clone(),
+            governor: self.governor.clone(),
+            inbound_tag: Arc::clone(&self.inbound_tag),
+            client_hello_timeout: self.client_hello_timeout,
+            handshake_timeout: self.handshake_timeout,
+            target_hello_timeout: self.target_hello_timeout,
+            profiles: self.profiles.clone(),
+        })
+    }
+
     /// Starts speculative cover dialing after the listener generation is live.
     pub(crate) fn activate_cover_pool(&self) {
         self.fallback.activate();

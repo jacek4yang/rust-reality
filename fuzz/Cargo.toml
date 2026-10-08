@@ -119,5 +119,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "control_request"
+path = "fuzz_targets/control_request.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 members = ["."]

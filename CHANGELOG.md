@@ -4,6 +4,28 @@ All notable user-facing changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- An optional local control interface for entry nodes: `control.socket` names
+  an owner-only Unix domain socket serving a versioned, line-delimited JSON
+  protocol. Version 1 reports status and generations, re-reads the
+  configuration file, and lists, creates, enables/disables, and deletes users
+  and adds, removes, and rotates short IDs. Each change is validated like a
+  configuration file and published as one complete generation;
+  `expectedGeneration` makes it compare-and-publish. Users are addressed by a
+  non-secret handle and UUIDs are returned only once, on creation. Control
+  changes are not written to the configuration file, and a reload replaces
+  them. Listings are paged, control work is bounded and kept off proxy worker
+  threads, a change that alters only users reuses the live generation's
+  assets and warm pools, and a change that alters nothing publishes nothing.
+  The socket is guarded by a lock file, so two instances cannot share a path.
+  There is no network listener. See `docs/en/operations/control-api.md`.
+- `users[].enabled` (absent means `true`). A disabled user keeps its short IDs
+  reserved but cannot authenticate new connections. At least one user must
+  stay enabled.
+- The shipped systemd units create `/run/rust-reality` (`RuntimeDirectory`) for
+  the control socket.
+
 ## [2.0.1]
 
 ### Fixed

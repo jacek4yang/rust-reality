@@ -32,6 +32,7 @@
 | --- | --- |
 | [Linux 部署](operations/deployment.md) | Release 验证、systemd、防火墙、文件和升级。 |
 | [命令行参考](cli.md) | 全部命令、选项、默认值、输出、信号和退出行为。 |
+| [控制 API](operations/control-api.md) | 本地控制套接字：协议、操作、代语义、上限。 |
 | [威胁模型](threat-model.md) | 安全目标、信任边界、NXR 局限与非目标。 |
 | [工程与发布流程](release-process.md) | 证据等级、PR/tag 生命周期、金丝雀、回滚。 |
 | [安全策略](../../SECURITY.md) | 支持的版本与私密漏洞报告。 |

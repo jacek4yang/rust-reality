@@ -87,6 +87,26 @@ pub enum LogEvent {
         /// Snapshot generation.
         generation: u64,
     },
+    /// The local control endpoint is accepting connections.
+    ControlStarted {
+        /// The control socket path (operator configuration, not a secret).
+        socket: String,
+    },
+    /// A control-interface mutation was published as a new generation.
+    ///
+    /// Carries only the closed operation name and the generation: never a
+    /// user identity, handle, short ID, or argument.
+    ControlChangePublished {
+        /// The protocol operation name.
+        operation: &'static str,
+        /// The published generation.
+        generation: u64,
+    },
+    /// A control connection was refused before reading a request.
+    ControlConnectionRefused {
+        /// Fixed reason: `capacity` or `peerCredentials`.
+        reason: &'static str,
+    },
     /// A listener became ready.
     ListenerStarted {
         /// Validated inbound tag.
@@ -498,6 +518,8 @@ impl LogEvent {
         match self {
             Self::ServerStarting
             | Self::ConfigurationPublished { .. }
+            | Self::ControlStarted { .. }
+            | Self::ControlChangePublished { .. }
             | Self::ListenerStarted { .. }
             | Self::ListenerTopologyActive { .. }
             | Self::OutboundNetworkInitialized { .. }
@@ -515,6 +537,7 @@ impl LogEvent {
             Self::ConnectionRejected { .. }
             | Self::AdmissionLimited { .. }
             | Self::ConfigurationRejected { .. }
+            | Self::ControlConnectionRefused { .. }
             | Self::ListenerFamilyUnavailable { .. }
             | Self::HandoffRotationWindowOpen { .. }
             | Self::DescriptorPressureChanged { .. }

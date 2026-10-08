@@ -39,7 +39,7 @@ use super::{
     error::{ProductionServerError, RuntimeUpdateError},
     event::{backend_statuses, emit},
     resources::{derive_fd_budget, maximum_warm_pool_count, resolve_startup_resource_mode},
-    snapshot::{RuntimeSnapshot, canonical_listener_address},
+    snapshot::{Provenance, RuntimeSnapshot, canonical_listener_address},
     store::{ListenerReplays, ProcessAuthorities, RuntimeStore},
 };
 use crate::server::{
@@ -147,6 +147,7 @@ pub(super) fn build(
         node,
         &policy,
         0,
+        Provenance::STARTUP,
         replay.clone(),
         &listener_replays,
         tcp_relay.clone(),
@@ -249,6 +250,9 @@ pub(super) fn build(
             memory: startup.memory,
             generation: AtomicU64::new(0),
             update: Mutex::new(()),
+            commit: Mutex::new(super::store::CommitState::default()),
+            #[cfg(test)]
+            update_waiters: std::sync::atomic::AtomicUsize::new(0),
         }),
     ))
 }

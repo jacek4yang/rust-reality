@@ -486,6 +486,17 @@ every mode. `runtime.profile: "dedicated"` adds machine-aware budgeting
 and a two-dimensional (FD + memory) pressure model; see the
 [configuration reference](configuration/runtime-and-resources.md#profile).
 
+## Local control plane
+
+An entry node may expose a local Unix-socket control interface
+([control API](operations/control-api.md), [ADR 0031](../adr/0031-local-control-interface.md)).
+It is a client of the generation store, not of the data plane: each mutation
+derives one complete candidate configuration from the generation current under
+the store's update lock, validates it like a file, and publishes it through the
+same compile-and-swap path as `SIGHUP`. No accept, handshake, record, or relay
+path reads control state, and connections keep the generation that admitted
+them.
+
 ## Observability
 
 | Event | When |
@@ -499,6 +510,9 @@ and a two-dimensional (FD + memory) pressure model; see the
 | `connection_rejected` | per refused connection, with a closed-vocabulary reason |
 | `admission_limited` | per category refused by a limit or by the pressure state |
 | `connection_completed` (debug) | per connection: byte counts, per-direction Direct flags, selected backends, handoff delays |
+| `control_started` | once at startup, when `control.socket` is configured |
+| `control_change_published` | per published control mutation: operation name and generation only |
+| `control_connection_refused` | a refused control connection (`capacity`/`peerCredentials`), at most once a minute |
 
 An unused Handoff/NXR warm socket that closes before sending byte one, or whose
 old pre-auth generation is retired by reload, is normal lifecycle work rather

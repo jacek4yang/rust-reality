@@ -26,7 +26,8 @@ sharded smoke passes over all targets on every PR. The current set covers:
 - configuration JSON deserialization on the exact `load_config` decode path
   (`config_json`, `config_diagnostic`);
 - REALITY authentication round trip and session-engine semantics
-  (`reality_auth_round_trip`, `session_semantics`).
+  (`reality_auth_round_trip`, `session_semantics`);
+- the local control protocol request decoder (`control_request`).
 
 ## Commands
 

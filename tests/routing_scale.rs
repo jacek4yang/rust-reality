@@ -268,6 +268,7 @@ fn primary_user() -> UserConfig {
         short_ids: vec!["0123456789abcdef".to_owned()],
         label: None,
         policy: Some("primary".to_owned()),
+        enabled: None,
     }
 }
 

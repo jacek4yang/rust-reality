@@ -369,6 +369,14 @@ accept 错误按原始 `errno` 分类：
 机器感知预算和二维（FD + 内存）压力模型；见
 [配置参考](configuration/runtime-and-resources.md#profile)。
 
+## 本地控制面
+
+入口节点可以开放一个本地 Unix 套接字控制接口（[控制 API](operations/control-api.md)，
+[ADR 0031](../adr/0031-local-control-interface.md)）。它是代存储的客户端，而不是数据面的
+客户端：每次变更都从更新锁下的当前一代派生一份完整候选配置，按文件的标准校验，再经由与
+`SIGHUP` 相同的编译并替换路径发布。没有任何 accept、握手、记录或中继路径读取控制状态，
+连接保持接纳它们的那一代。
+
 ## 可观测性
 
 | 事件 | 时机 |
@@ -382,6 +390,9 @@ accept 错误按原始 `errno` 分类：
 | `connection_rejected` | 每个被拒绝连接，原因来自封闭词表 |
 | `admission_limited` | 每个被限制或压力状态拒绝的类别 |
 | `connection_completed`（debug） | 每连接：字节数、按方向的 Direct 标志、选中的后端、交接延迟 |
+| `control_started` | 配置了 `control.socket` 时启动一次 |
+| `control_change_published` | 每次发布的控制变更：只含操作名和代 |
+| `control_connection_refused` | 被拒绝的控制连接（`capacity`/`peerCredentials`），每分钟至多一次 |
 
 未使用的 Handoff/NXR warm socket 在发送第一字节前关闭，或 reload
 退役旧 pre-auth generation，都属于正常 lifecycle，不是认证拒绝；除非启用

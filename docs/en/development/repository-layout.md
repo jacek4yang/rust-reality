@@ -16,7 +16,7 @@ for the original packaging decision.
 
 | Directory | Owns |
 | --- | --- |
-| `src/` | Production application implementation: configuration model and diagnostics, protocol (VLESS, REALITY, Vision, TLS 1.3, Handoff, NXR), runtime orchestration, server lifecycle, transport, crypto key generation, CLI-facing library surface. |
+| `src/` | Production application implementation: configuration model and diagnostics, protocol (VLESS, REALITY, Vision, TLS 1.3, Handoff, NXR), local control protocol, runtime orchestration, server lifecycle, transport, crypto key generation, CLI-facing library surface. |
 | `crates/rr-session/` | The runtime-independent Session Engine: synchronous, data-only session state machines and decisions (direction phases, raw-relay grants, transfer commits). `no_std`-capable; no Tokio, sockets, clocks, or OS APIs. |
 | `crates/rr-linux/` | The Linux OS/ABI boundary: sockets, pipes and `splice`, rlimits, socket options, `/proc` memory sampling. `#![no_std]`; mechanisms go through `rustix`'s `linux_raw` backend and report `Errno`, and descriptors leave as `OwnedFd`. Isolated so the main crate can stay `#![deny(unsafe_code)]`. See [ADR 0015](../../adr/0015-rr-linux-is-a-no-std-linux-abi-boundary.md). |
 | `crates/rr-crypto/` | The cryptographic implementation boundary: architecture-specific assembly behind a safe API. `#![no_std]`, `core` only; the one place in the production graph where `unsafe` is permitted, with every block documented and every CPU-feature-dependent call behind a runtime probe. Isolated so the main crate can stay `#![deny(unsafe_code)]`. See [ADR 0023](../../adr/0023-rr-crypto-is-the-unsafe-crypto-boundary.md) and the [provenance record](crypto-provenance.md). |
@@ -48,6 +48,8 @@ documentation hierarchy.
 | Configuration schema, validation, diagnostics | `src/config/` |
 | VLESS / REALITY / Vision / TLS 1.3 protocol behavior | `src/protocol/` |
 | Runtime orchestration, snapshots, generation management | `src/runtime/` |
+| Local control protocol, user handles, control mutations (pure, no I/O) | `src/control/` |
+| Serving the control socket and its store transaction | `src/server/production/control.rs` |
 | Server lifecycle, routing, admission | `src/server/` |
 | Transport, descriptor lifetime/accounting, and raw-relay backends | `src/transport/` (with `crates/rr-linux/` where an OS mechanism is involved) |
 | Runtime-independent session state transitions | `crates/rr-session/` |

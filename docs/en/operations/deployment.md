@@ -154,7 +154,8 @@ journalctl -u rust-reality -f
 The unit runs `rust-reality run -c /etc/rust-reality/config.json` as the
 dedicated account, retains only `CAP_NET_BIND_SERVICE`, protects the host
 filesystem and kernel surfaces, and allows writes only to the asset and log
-directories. Review it against your distribution's paths and your local
+directories and to its private runtime directory `/run/rust-reality`, where an
+optional [control socket](control-api.md) lives. Review it against your distribution's paths and your local
 hardening policy rather than removing a restriction because something failed.
 
 `CAP_NET_BIND_SERVICE` is how a non-root process binds 443. Do not run the

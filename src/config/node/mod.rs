@@ -18,6 +18,7 @@
 //! handling is a change to one small file.
 
 pub mod assets;
+pub mod control;
 pub mod dns;
 pub mod entry;
 pub mod landing;

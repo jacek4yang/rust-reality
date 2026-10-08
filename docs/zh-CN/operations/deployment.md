@@ -136,7 +136,7 @@ journalctl -u rust-reality -f
 ```
 
 这个 unit 以专用账号运行 `rust-reality run -c /etc/rust-reality/config.json`，只保留
-`CAP_NET_BIND_SERVICE`，保护主机文件系统和内核界面，并且只允许写资产目录和日志目录。
+`CAP_NET_BIND_SERVICE`，保护主机文件系统和内核界面，并且只允许写资产目录、日志目录和它的私有运行时目录 `/run/rust-reality`（可选的[控制套接字](control-api.md)位于此处）。
 请对照你的发行版路径和本地加固策略去审查它，而不是因为某样东西没跑起来就删掉一条限制。
 
 `CAP_NET_BIND_SERVICE` 是非 root 进程绑定 443 的方式。不要为了省掉这个能力而用 root

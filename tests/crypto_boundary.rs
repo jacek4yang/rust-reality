@@ -73,8 +73,10 @@ const PROVIDERS: &[(&str, &[&str])] = &[
     ),
     // ChaCha12 backs the Vision padding CSPRNG. Not an AEAD use.
     ("chacha20", &["src/protocol/vless/padding.rs"]),
-    // Digest, MAC and KDF: the C2 migration surface. Eight, three and three
-    // files in `src/` today.
+    // Digest, MAC and KDF: the C2 migration surface. Nine, four and four
+    // files in `src/` today. `src/control/handle.rs` derives the control
+    // API's non-secret user handle (HKDF from the REALITY private key, then
+    // HMAC of the UUID); it is control-plane only and never on a session path.
     //
     // The two `crates/rr-crypto` entries are a different thing and do not
     // shrink with C2: they are a **dev-dependency**, used by
@@ -86,6 +88,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
         &[
             "crates/rr-crypto/src/x25519/aarch64.rs",
             "crates/rr-crypto/src/x25519/x86_64.rs",
+            "src/control/handle.rs",
             "src/protocol/handoff.rs",
             "src/protocol/nxr.rs",
             "src/protocol/reality/auth.rs",
@@ -99,6 +102,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
     (
         "hmac",
         &[
+            "src/control/handle.rs",
             "src/protocol/nxr.rs",
             "src/protocol/reality/tls13/keys.rs",
             "src/protocol/reality/tls13/messages.rs",
@@ -107,6 +111,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
     (
         "hkdf",
         &[
+            "src/control/handle.rs",
             "src/protocol/handoff.rs",
             "src/protocol/reality/auth.rs",
             "src/protocol/reality/tls13/keys.rs",

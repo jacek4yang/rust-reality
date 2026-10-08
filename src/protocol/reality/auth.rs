@@ -400,7 +400,10 @@ impl RealityAuthenticator {
     /// Returns an error for malformed key material, server names, short IDs, or empty identity sets.
     pub fn from_entry(entry: &EntryConfig) -> Result<Self, RealityAuthConfigError> {
         let mut short_ids = Vec::new();
-        for user in &entry.users {
+        // A disabled identity keeps its short IDs reserved by validation but
+        // contributes nothing to authentication: presenting one is exactly
+        // an unknown short ID, which falls back to the cover.
+        for user in entry.users.iter().filter(|user| user.enabled()) {
             let uuid =
                 Uuid::parse_str(&user.id).map_err(|_| RealityAuthConfigError::InvalidUserId)?;
             let user_id = UserId::new(*uuid.as_bytes());
@@ -728,6 +731,39 @@ mod tests {
             Some(other_user)
         );
         assert_eq!(authenticator.short_id_owner(&[9; 8]), None);
+    }
+
+    #[test]
+    fn a_disabled_user_contributes_no_short_id_to_authentication() {
+        let enabled = crate::config::node::fixture::uuid(0x21);
+        let disabled = crate::config::node::fixture::uuid(0x22);
+        let node = crate::config::node::fixture::validated(&format!(
+            r#"{{
+  "role": "entry",
+  "listeners": [{{ "port": 443 }}],
+  "reality": {{ "cover": "www.example.com:443", "privateKey": "{}" }},
+  "users": [{{ "id": "{enabled}", "shortIds": ["aabb"] }},
+            {{ "id": "{disabled}", "shortIds": ["ccdd", "eeff"], "enabled": false }}],
+  "routing": {{ "default": "direct" }}
+}}"#,
+            crate::config::node::fixture::key(1)
+        ))
+        .into_node();
+        let entry = node.as_entry().expect("an entry fixture");
+        let authenticator =
+            RealityAuthenticator::from_entry(entry).expect("an enabled user remains");
+
+        assert_eq!(authenticator.short_ids.len(), 1);
+        assert!(
+            authenticator
+                .short_id_owner(&[0xaa, 0xbb, 0, 0, 0, 0, 0, 0])
+                .is_some()
+        );
+        assert_eq!(
+            authenticator.short_id_owner(&[0xcc, 0xdd, 0, 0, 0, 0, 0, 0]),
+            None,
+            "a disabled user's short ID is indistinguishable from an unknown one"
+        );
     }
 
     #[test]

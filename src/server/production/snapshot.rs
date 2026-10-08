@@ -31,13 +31,61 @@ use super::{
     store::{ListenerReplays, ProcessAuthorities},
 };
 
+/// What produced a generation. Reported by the control interface; never
+/// consulted by a connection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum GenerationOrigin {
+    /// Generation zero, compiled from the startup configuration.
+    Startup,
+    /// A configuration file reload (`SIGHUP` or `config.reload`).
+    Configuration,
+    /// A scheduled asset refresh of the live configuration.
+    Assets,
+    /// A control-interface mutation.
+    Control,
+}
+
+impl GenerationOrigin {
+    pub(super) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Startup => "startup",
+            Self::Configuration => "configuration",
+            Self::Assets => "assets",
+            Self::Control => "control",
+        }
+    }
+}
+
+/// How a generation relates to the configuration file.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct Provenance {
+    pub(super) origin: GenerationOrigin,
+    /// Whether this generation carries control changes the configuration
+    /// file does not. A file reload replaces them.
+    pub(super) control_changes: bool,
+}
+
+impl Provenance {
+    pub(super) const STARTUP: Self = Self {
+        origin: GenerationOrigin::Startup,
+        control_changes: false,
+    };
+}
+
 pub(super) struct RuntimeSnapshot {
     pub(super) generation: u64,
+    pub(super) provenance: Provenance,
     pub(super) node: NodeConfig,
     pub(super) connections: HashMap<SocketAddr, Arc<ConnectionRuntime>>,
     pub(super) logger: Logger,
     pub(super) pre_auth_generation: PreAuthGeneration,
     pub(super) outbounds: OutboundRegistry,
+    /// The entry's loaded geo assets, kept so an identity-only generation can
+    /// reuse them instead of loading them again. `None` on a landing.
+    pub(super) assets: Option<Arc<AssetSnapshot>>,
+    /// Every configured user's control handle, derived on the first control
+    /// read of this generation and reused by every later one.
+    pub(super) handle_index: std::sync::OnceLock<Option<Arc<crate::control::HandleIndex>>>,
 }
 
 impl RuntimeSnapshot {
@@ -49,6 +97,7 @@ impl RuntimeSnapshot {
         config: NodeConfig,
         policy: &EffectivePolicy,
         generation: u64,
+        provenance: Provenance,
         replay: ReplayCache,
         listener_replays: &ListenerReplays,
         tcp_relay: TcpRelay,
@@ -62,9 +111,11 @@ impl RuntimeSnapshot {
         // One node, one role, so one handler shared by every bound address.
         // The role also decides what has to be built at all: only an entry
         // node compiles routing, and only routing can need geo assets.
+        let mut loaded_assets = None;
         let (handler, outbounds) = match &config {
             NodeConfig::Entry(entry) => {
                 let assets = Arc::new(AssetSnapshot::load_generation(entry, generation)?);
+                loaded_assets = Some(Arc::clone(&assets));
                 let vision = VisionHandler::from_config_with_pressure(
                     entry,
                     policy,
@@ -175,28 +226,74 @@ impl RuntimeSnapshot {
             governor: authorities.governor.clone(),
             handler,
         });
-        let mut connections = HashMap::new();
-        let bound: Vec<SocketAddr> = config
-            .listeners()
-            .iter()
-            .flat_map(ListenerConfig::bind_addresses)
-            .collect();
-        connections
-            .try_reserve(bound.len())
-            .map_err(|_| RuntimeUpdateError::Unavailable)?;
-        for address in bound {
-            if connections.insert(address, Arc::clone(&runtime)).is_some() {
-                return Err(RuntimeUpdateError::DuplicateListener(address));
-            }
-        }
+        let connections = bind_connections(&config, &runtime)?;
 
         Ok(Self {
             generation,
+            provenance,
             node: config,
             connections,
             logger,
             pre_auth_generation,
             outbounds,
+            assets: loaded_assets,
+            handle_index: std::sync::OnceLock::new(),
+        })
+    }
+
+    /// Compiles a generation whose configuration differs from `previous` only
+    /// in the entry's `users`.
+    ///
+    /// Who may authenticate and which routing policy applies are recompiled
+    /// from the new users: the REALITY authenticator and short-ID index, the
+    /// UUID-grouped routing table, and the VLESS user map are all built fresh,
+    /// exactly as a full compile builds them. What does not depend on users is
+    /// shared with `previous` instead of rebuilt: the loaded geo assets (so no
+    /// asset is read or fetched), the outbound registry and its line-to-landing
+    /// pools, the cover fallback and its pool, the cover profiles, the
+    /// certificate identity, and the logger. Sharing is sound because none of
+    /// these hold per-user state, and the process-lifetime replay cache and
+    /// admission authorities were already shared by every generation.
+    ///
+    /// The new generation therefore takes over `previous`'s pools; the caller
+    /// must retire only `previous`'s pre-auth generation, not its pools.
+    pub(super) fn compile_identity(
+        previous: &Self,
+        config: NodeConfig,
+        generation: u64,
+        provenance: Provenance,
+    ) -> Result<Self, RuntimeUpdateError> {
+        let (NodeConfig::Entry(entry), Some(assets)) = (&config, previous.assets.as_ref()) else {
+            return Err(RuntimeUpdateError::Unavailable);
+        };
+        let Some(previous_runtime) = previous.connections.values().next() else {
+            return Err(RuntimeUpdateError::Unavailable);
+        };
+        let ConnectionHandler::Public { reality, vision } = &previous_runtime.handler else {
+            return Err(RuntimeUpdateError::Unavailable);
+        };
+        let assets_matcher: Arc<dyn crate::assets::AssetMatcher> = Arc::clone(assets) as _;
+        let vision = vision.with_users(entry, assets_matcher)?;
+        let reality = reality.with_users(entry)?;
+        let runtime = Arc::new(ConnectionRuntime {
+            tag: Arc::clone(&previous_runtime.tag),
+            governor: previous_runtime.governor.clone(),
+            handler: ConnectionHandler::Public {
+                reality: Box::new(reality),
+                vision,
+            },
+        });
+        let connections = bind_connections(&config, &runtime)?;
+        Ok(Self {
+            generation,
+            provenance,
+            node: config,
+            connections,
+            logger: previous.logger.clone(),
+            pre_auth_generation: PreAuthGeneration::default(),
+            outbounds: previous.outbounds.clone(),
+            assets: Some(Arc::clone(assets)),
+            handle_index: std::sync::OnceLock::new(),
         })
     }
 
@@ -305,6 +402,28 @@ pub(super) enum ConnectionHandler {
     },
     Nxr(NxrLandingHandler),
     Handoff(HandoffLandingHandler),
+}
+
+/// Maps every bound address of `config` to the one shared connection runtime.
+fn bind_connections(
+    config: &NodeConfig,
+    runtime: &Arc<ConnectionRuntime>,
+) -> Result<HashMap<SocketAddr, Arc<ConnectionRuntime>>, RuntimeUpdateError> {
+    let mut connections = HashMap::new();
+    let bound: Vec<SocketAddr> = config
+        .listeners()
+        .iter()
+        .flat_map(ListenerConfig::bind_addresses)
+        .collect();
+    connections
+        .try_reserve(bound.len())
+        .map_err(|_| RuntimeUpdateError::Unavailable)?;
+    for address in bound {
+        if connections.insert(address, Arc::clone(runtime)).is_some() {
+            return Err(RuntimeUpdateError::DuplicateListener(address));
+        }
+    }
+    Ok(connections)
 }
 
 pub(super) fn listener_addresses(node: &NodeConfig) -> Vec<SocketAddr> {

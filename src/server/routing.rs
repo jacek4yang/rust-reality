@@ -126,6 +126,23 @@ pub struct RoutingTable {
 }
 
 impl RoutingTable {
+    /// Recompiles this table for a new user set, keeping its DNS governor.
+    ///
+    /// Equivalent to [`Self::compile`] with the governor this table was built
+    /// with; used when only the users of a generation change.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::compile`].
+    pub(crate) fn recompile(
+        &self,
+        config: &RoutingConfig,
+        clients: &[UserConfig],
+        assets: Arc<dyn AssetMatcher>,
+    ) -> Result<Self, RoutingCompileError> {
+        Self::compile(config, clients, assets, self.dns_governor.clone())
+    }
+
     /// Compiles validated configuration and binds it to one immutable asset snapshot.
     ///
     /// # Errors
@@ -1481,6 +1498,7 @@ mod tests {
                 short_ids: vec!["0123456789abcdef".to_owned()],
                 label: None,
                 policy: Some("primary".to_owned()),
+                enabled: None,
             }],
             Arc::new(EmptyAssetMatcher),
             crate::runtime::ResourceGovernor::new(
@@ -1906,6 +1924,7 @@ mod tests {
             short_ids: vec!["0123456789abcdef".to_owned()],
             label: None,
             policy: Some(policy.to_owned()),
+            enabled: None,
         };
         RoutingTable::compile(
             &RoutingConfig {
@@ -1977,6 +1996,7 @@ mod tests {
                 short_ids: vec!["0123456789abcdef".to_owned()],
                 label: None,
                 policy: Some("primary".to_owned()),
+                enabled: None,
             }],
             Arc::new(StubAssets),
             crate::runtime::ResourceGovernor::new(

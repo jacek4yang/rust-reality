@@ -25,6 +25,7 @@ use super::{
     node::{
         DomainStrategy, EntryConfig, LandingConfig, LandingProtocol, NodeConfig, OutboundConfig,
         Role, RoutePolicy, RouteRule, RoutingConfig,
+        control::ControlConfig,
         dns::DnsConfig,
         listener::ListenerConfig,
         log::{LogConfig, LogOutput},
@@ -56,6 +57,10 @@ const MIN_HANDOFF_FIRST_BYTE_TIMEOUT_MS: u64 = 1_000;
 
 /// Largest number of retired keys accepted during one rotation window.
 const MAX_PREVIOUS_KEYS: usize = 2;
+
+/// Longest control socket path: `sun_path` holds 108 bytes including the
+/// terminating NUL on Linux.
+const MAX_CONTROL_SOCKET_PATH_BYTES: usize = 107;
 
 /// One semantic failure, located by configuration path.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -149,7 +154,36 @@ fn validate_entry(entry: &EntryConfig) -> Result<(), SemanticError> {
     validate_dns(entry.dns.as_ref())?;
     validate_log(entry.log.as_ref())?;
     validate_runtime(entry.runtime.as_ref())?;
+    validate_control(entry.control.as_ref())?;
     validate_key_independence(entry_key_material(entry))
+}
+
+fn validate_control(control: Option<&ControlConfig>) -> Result<(), SemanticError> {
+    let Some(control) = control else {
+        return Ok(());
+    };
+    let socket = control.socket();
+    let Some(text) = socket.to_str() else {
+        return fail("control.socket", "must be valid UTF-8");
+    };
+    if !socket.is_absolute() {
+        return fail("control.socket", "must be an absolute path");
+    }
+    if text.ends_with('/') || socket.file_name().is_none() {
+        return fail("control.socket", "must name a socket file, not a directory");
+    }
+    if text.contains('\0') {
+        return fail("control.socket", "must not contain a NUL byte");
+    }
+    if text.len() > MAX_CONTROL_SOCKET_PATH_BYTES {
+        return fail(
+            "control.socket",
+            format!(
+                "must not exceed {MAX_CONTROL_SOCKET_PATH_BYTES} bytes, the Unix socket path limit"
+            ),
+        );
+    }
+    Ok(())
 }
 
 fn validate_reality(entry: &EntryConfig) -> Result<(), SemanticError> {
@@ -209,6 +243,12 @@ fn validate_reality(entry: &EntryConfig) -> Result<(), SemanticError> {
 fn validate_users(entry: &EntryConfig) -> Result<(), SemanticError> {
     if entry.users.is_empty() {
         return fail("users", "must contain at least one client identity");
+    }
+    if !entry.users.iter().any(|user| user.enabled()) {
+        return fail(
+            "users",
+            "must contain at least one enabled client identity; every user has `enabled: false`",
+        );
     }
     let mut identities = HashSet::new();
     let mut short_ids = HashSet::new();
@@ -962,6 +1002,96 @@ mod tests {
 
     fn reject(json: &str) -> super::SemanticError {
         check(json).expect_err("must not validate")
+    }
+
+    // ---------------------------------------------------------------- control
+
+    #[test]
+    fn a_control_socket_must_be_an_absolute_bounded_file_path() {
+        accept(&entry_json(
+            r#","control":{"socket":"/run/rust-reality/control.sock"}"#,
+        ));
+        for (socket, expected) in [
+            ("run/control.sock", "absolute"),
+            ("/run/rust-reality/", "socket file"),
+            ("/", "socket file"),
+        ] {
+            let error = reject(&entry_json(&format!(
+                r#","control":{{"socket":"{socket}"}}"#
+            )));
+            assert_eq!(error.path(), "control.socket");
+            assert!(
+                error.message().contains(expected),
+                "{socket}: {}",
+                error.message()
+            );
+        }
+        let long = format!("/run/{}", "a".repeat(103));
+        assert_eq!(long.len(), 108);
+        let error = reject(&entry_json(&format!(r#","control":{{"socket":"{long}"}}"#)));
+        assert!(error.message().contains("107 bytes"), "{}", error.message());
+    }
+
+    #[test]
+    fn a_landing_has_no_control_section() {
+        assert!(
+            parse_bytes(
+                Path::new("config.json"),
+                landing_json(r#","control":{"socket":"/run/c.sock"}"#).as_bytes()
+            )
+            .is_err(),
+            "the control interface manages entry users and short IDs only"
+        );
+    }
+
+    #[test]
+    fn at_least_one_user_must_stay_enabled() {
+        let disabled_only = format!(
+            r#"{{
+              "role": "entry",
+              "listeners": [{{ "port": 443 }}],
+              "reality": {{ "cover": "www.example.com:443", "privateKey": "{}" }},
+              "users": [{{ "id": "11111111-1111-4111-8111-111111111111",
+                           "shortIds": ["ab"], "enabled": false }}],
+              "routing": {{ "default": "direct" }}
+            }}"#,
+            key(1)
+        );
+        let error = reject(&disabled_only);
+        assert_eq!(error.path(), "users");
+        assert!(error.message().contains("enabled"));
+
+        accept(&format!(
+            r#"{{
+              "role": "entry",
+              "listeners": [{{ "port": 443 }}],
+              "reality": {{ "cover": "www.example.com:443", "privateKey": "{}" }},
+              "users": [{{ "id": "11111111-1111-4111-8111-111111111111",
+                           "shortIds": ["ab"], "enabled": false }},
+                        {{ "id": "22222222-2222-4222-8222-222222222222",
+                           "shortIds": ["cd"] }}],
+              "routing": {{ "default": "direct" }}
+            }}"#,
+            key(1)
+        ));
+    }
+
+    #[test]
+    fn a_disabled_user_still_reserves_its_short_ids() {
+        let error = reject(&format!(
+            r#"{{
+              "role": "entry",
+              "listeners": [{{ "port": 443 }}],
+              "reality": {{ "cover": "www.example.com:443", "privateKey": "{}" }},
+              "users": [{{ "id": "11111111-1111-4111-8111-111111111111",
+                           "shortIds": ["ab"], "enabled": false }},
+                        {{ "id": "22222222-2222-4222-8222-222222222222",
+                           "shortIds": ["ab"] }}],
+              "routing": {{ "default": "direct" }}
+            }}"#,
+            key(1)
+        ));
+        assert_eq!(error.path(), "users[1].shortIds[0]");
     }
 
     // ------------------------------------------------------------- acceptance

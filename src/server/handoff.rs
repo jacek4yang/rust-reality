@@ -1287,6 +1287,7 @@ mod tests {
                 short_ids: vec!["0123456789abcdef".to_owned()],
                 label: None,
                 policy: None,
+                enabled: None,
             }],
             Arc::new(EmptyAssetMatcher),
             crate::runtime::ResourceGovernor::new(&ResourceGovernorPolicy::default()),

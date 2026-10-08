@@ -27,6 +27,9 @@ ProtectKernelModules=true
 ProtectKernelTunables=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/rust-reality /var/log/rust-reality
+# Private runtime directory for an optional `control.socket`.
+RuntimeDirectory=rust-reality
+RuntimeDirectoryMode=0750
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 RestrictNamespaces=true
 RestrictRealtime=true

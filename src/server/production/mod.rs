@@ -23,6 +23,8 @@
 
 mod bootstrap;
 mod connection;
+#[cfg(unix)]
+mod control;
 mod error;
 mod event;
 mod listener;
