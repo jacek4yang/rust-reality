@@ -549,8 +549,9 @@ The parser property gate compares owned and borrowed VLESS decoding for every
 prefix of a 533-byte maximum header and for zero/one/255 replacements at every
 byte. Replay, admission, FD, and relay tests cover cancellation, poison
 recovery, capacity reclamation, and contention. Scheduled CI additionally runs
-the complete test suite under AddressSanitizer/LeakSanitizer and the concurrent
-REALITY replay race under ThreadSanitizer. Monotonic deadlines and counters
+the complete test suite under AddressSanitizer/LeakSanitizer. Concurrent
+REALITY replay tests remain in the ordinary suite; ThreadSanitizer was removed
+by ADR 0035 with its dynamic data-race coverage explicitly relinquished. Monotonic deadlines and counters
 use checked arithmetic; exhausted domains return an explicit unavailable error
 instead of saturating into an unsafe success state.
 

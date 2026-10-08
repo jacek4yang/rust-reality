@@ -27,8 +27,10 @@ the validation layers themselves.
   hot-path properties; see [benchmarks.md](../benchmarks.md).
 - **Fuzz targets** (`fuzz/fuzz_targets/`) cover every externally reachable
   parser/decoder/reconstruction path; see [fuzzing.md](fuzzing.md).
-- **Sanitizers** run in CI (Security workflow): Address/LeakSanitizer and
-  replay/warm-transport race sanitizer profiles.
+- **Sanitizers** run in CI (Security workflow): Address/LeakSanitizer.
+  Concurrent replay and transport regression tests remain in the ordinary suite.
+  See [ADR 0035](../../adr/0035-remove-thread-sanitizer-gate.md) for the explicit
+  decision to remove ThreadSanitizer and its coverage trade-off.
 
 ## Focused runs
 

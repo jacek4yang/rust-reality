@@ -19,8 +19,8 @@
   [基准策略](../benchmarks.md)。
 - **模糊测试**位于 `fuzz/fuzz_targets/`，覆盖外部可达解析、解码和重建路径；
   参见[模糊测试指南](../../en/development/fuzzing.md)。
-- **Sanitizer** 由 Security workflow 执行，包括地址/泄漏检查以及 replay 和
-  warm-transport 的竞态检查。
+- **Sanitizer** 由 Security workflow 执行，保留地址/泄漏检查。重放和传输并发回归仍由常规测试覆盖。
+  移除 ThreadSanitizer 的明确取舍见 [ADR 0035](../../adr/0035-remove-thread-sanitizer-gate.md)。
 
 ## 聚焦验证
 

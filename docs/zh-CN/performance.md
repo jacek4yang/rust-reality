@@ -422,8 +422,8 @@ VLESS 解码器）、Vision framing、Handoff 头、Handoff blob 和完整 Hando
 解析属性门禁对一个 533 字节最大请求的每个前缀，以及每个字节替换为 0/1/255 的情况，
 比较 owned 与 borrowed VLESS 解码结果，要求错误或字段完全一致。重放、准入、FD 和
 relay 测试覆盖取消、锁 poison 恢复、容量回收与并发争用。定时 CI 还会在
-AddressSanitizer/LeakSanitizer 下跑完整测试，并在 ThreadSanitizer 下跑 REALITY 重放
-并发竞态测试。单调 deadline 和计数器使用 checked 算术；时间域耗尽会返回明确的
+AddressSanitizer/LeakSanitizer 下跑完整测试。REALITY 重放并发测试保留在常规套件；
+ADR 0035 移除 ThreadSanitizer，并明确放弃其动态数据竞争检测覆盖。单调 deadline 和计数器使用 checked 算术；时间域耗尽会返回明确的
 unavailable，而不会饱和后错误放行。
 
 ## framed 路径成本分解
