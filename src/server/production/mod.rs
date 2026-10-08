@@ -25,6 +25,7 @@ mod bootstrap;
 mod connection;
 mod error;
 mod event;
+mod failure;
 mod listener;
 mod monitor;
 mod reload;

@@ -49,6 +49,8 @@ struct CoverProfilesInner {
     queue: Mutex<CollectionQueue>,
     notify: Notify,
     metrics: CoverProfileMetrics,
+    #[cfg(test)]
+    before_idle_wait: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 #[derive(Clone)]
@@ -152,6 +154,8 @@ impl CoverProfiles {
                 queue: Mutex::new(CollectionQueue::default()),
                 notify: Notify::new(),
                 metrics: CoverProfileMetrics::default(),
+                #[cfg(test)]
+                before_idle_wait: Mutex::new(None),
             }),
         }
     }
@@ -368,7 +372,19 @@ async fn run_collector(inner: Arc<CoverProfilesInner>) {
             candidate
         };
         let Some(candidate) = candidate else {
-            inner.notify.notified().await;
+            #[cfg(test)]
+            if let Some(before_idle_wait) = lock(&inner.before_idle_wait).take() {
+                before_idle_wait();
+            }
+            let notified = inner.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            // Retirement broadcasts do not retain a permit. Register before
+            // rechecking so deactivation cannot strand this generation's Arc.
+            if inner.lifecycle.load(Ordering::Acquire) != LIFECYCLE_ACTIVE {
+                break;
+            }
+            notified.await;
             continue;
         };
         inner.metrics.collecting.fetch_add(1, Ordering::AcqRel);
@@ -604,11 +620,127 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        CoverHandshakePlan, CoverHandshakeRecordShape, CoverProfileState, LIFECYCLE_ACTIVE,
-        LIFECYCLE_CREATED, MAX_PROFILE_CLASSES, collection_capacity_available,
-        derive_profile_state, first_encrypted_record_range, profile_is_current,
+    use std::{
+        future::Future,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        task::{Context, Wake, Waker},
+        time::Duration,
     };
+
+    use crate::{
+        runtime::{ResourceGovernor, policy::ResourceGovernorPolicy},
+        transport::{FdBudget, TcpRelay, TcpRelayConfig},
+    };
+
+    use super::{
+        CoverHandshakePlan, CoverHandshakeRecordShape, CoverProfileState, CoverProfiles,
+        LIFECYCLE_ACTIVE, LIFECYCLE_CREATED, MAX_PROFILE_CLASSES, RealityFallback,
+        collection_capacity_available, derive_profile_state, first_encrypted_record_range, lock,
+        profile_is_current, run_collector,
+    };
+
+    fn test_profiles() -> CoverProfiles {
+        let policy = ResourceGovernorPolicy::default();
+        let governor = ResourceGovernor::new(&policy);
+        let relay = TcpRelay::new(TcpRelayConfig::for_test(), FdBudget::new(4_096))
+            .expect("test relay must build");
+        let fallback = RealityFallback::new("127.0.0.1:1", governor.clone(), &policy, relay);
+        CoverProfiles::new(23, fallback, governor, Duration::from_secs(1))
+    }
+
+    #[derive(Default)]
+    struct WakeFlag(AtomicBool);
+
+    impl Wake for WakeFlag {
+        fn wake(self: Arc<Self>) {
+            self.wake_by_ref();
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+
+    #[test]
+    fn collector_retirement_between_empty_queue_and_wait_releases_generation() {
+        let profiles = test_profiles();
+        profiles
+            .inner
+            .lifecycle
+            .store(LIFECYCLE_ACTIVE, Ordering::Release);
+        let retired = Arc::downgrade(&profiles.inner);
+        let retiring_profiles = profiles.clone();
+        // Force retirement after the collector checked ACTIVE and observed an
+        // empty queue, before it constructs its notification future.
+        *lock(&profiles.inner.before_idle_wait) = Some(Box::new(move || {
+            assert!(retiring_profiles.deactivate());
+        }));
+        let mut collector = Box::pin(run_collector(Arc::clone(&profiles.inner)));
+        drop(profiles);
+
+        assert!(
+            collector
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_ready(),
+            "retirement before waiter registration must not strand the collector"
+        );
+        assert!(
+            retired.upgrade().is_none(),
+            "the completed collector must release its generation before being dropped"
+        );
+    }
+
+    #[test]
+    fn idle_collector_retirement_wakes_and_releases_generation() {
+        let profiles = test_profiles();
+        profiles
+            .inner
+            .lifecycle
+            .store(LIFECYCLE_ACTIVE, Ordering::Release);
+        let retired = Arc::downgrade(&profiles.inner);
+        let wake = Arc::new(WakeFlag::default());
+        let waker = Waker::from(Arc::clone(&wake));
+        let mut context = Context::from_waker(&waker);
+        let mut collector = Box::pin(run_collector(Arc::clone(&profiles.inner)));
+        assert!(collector.as_mut().poll(&mut context).is_pending());
+        assert!(!wake.0.load(Ordering::Acquire));
+
+        assert!(profiles.deactivate());
+        assert!(!profiles.deactivate(), "retirement must remain idempotent");
+        assert!(
+            wake.0.load(Ordering::Acquire),
+            "retirement must wake the task"
+        );
+        drop(profiles);
+        assert!(collector.as_mut().poll(&mut context).is_ready());
+        assert!(retired.upgrade().is_none());
+    }
+
+    #[test]
+    fn collector_retired_before_first_poll_releases_generation() {
+        let profiles = test_profiles();
+        profiles
+            .inner
+            .lifecycle
+            .store(LIFECYCLE_ACTIVE, Ordering::Release);
+        let retired = Arc::downgrade(&profiles.inner);
+        let mut collector = Box::pin(run_collector(Arc::clone(&profiles.inner)));
+        assert!(profiles.deactivate());
+        assert!(!profiles.activate(), "a retired generation cannot restart");
+        drop(profiles);
+
+        assert!(
+            collector
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_ready()
+        );
+        assert!(retired.upgrade().is_none());
+    }
 
     #[test]
     fn a_full_cache_can_refresh_but_cannot_admit_a_new_class() {

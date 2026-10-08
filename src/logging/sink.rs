@@ -12,6 +12,8 @@ use std::{
 
 use serde::Serialize;
 
+use super::FailureDetail;
+
 use crate::config::node::log::{FileLogConfig, LogConfig, LogLevel, LogOutput};
 
 const MAX_MANAGED_ROTATIONS: u16 = 64;
@@ -243,6 +245,9 @@ pub enum LogEvent {
         peer: SocketAddr,
         /// Fixed safe category.
         reason: RejectionReason,
+        /// Optional closed-vocabulary stage and cause; never raw error text.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        failure: Option<FailureDetail>,
     },
     /// A bounded resource rejected additional work.
     AdmissionLimited {

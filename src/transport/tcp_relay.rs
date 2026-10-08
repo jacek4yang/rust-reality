@@ -81,6 +81,25 @@ pub struct TcpRelay {
     fd_budget: FdBudget,
 }
 
+/// Owns the sockets until the relay future settles. Cancellation must never
+/// manufacture a clean short EOF; Drop runs before either descriptor closes.
+/// Owning the streams (rather than caching raw descriptor numbers) also makes
+/// recycled-descriptor resets impossible.
+struct OwnedRelaySockets {
+    inbound: TcpStream,
+    outbound: TcpStream,
+    completed: bool,
+}
+
+impl Drop for OwnedRelaySockets {
+    fn drop(&mut self) {
+        if !self.completed {
+            let _ignored = rr_linux::socket::abort_linger(&self.inbound);
+            let _ignored = rr_linux::socket::abort_linger(&self.outbound);
+        }
+    }
+}
+
 impl TcpRelay {
     /// Compiles immutable relay settings and pre-reserves all pool metadata.
     ///
@@ -145,11 +164,22 @@ impl TcpRelay {
     /// another backend.
     pub async fn relay_owned(
         &self,
-        mut inbound: TcpStream,
-        mut outbound: TcpStream,
+        inbound: TcpStream,
+        outbound: TcpStream,
         context: RelayContext,
     ) -> io::Result<RelayOutcome> {
-        self.run(&mut inbound, &mut outbound, context).await
+        let mut sockets = OwnedRelaySockets {
+            inbound,
+            outbound,
+            completed: false,
+        };
+        let outcome = self
+            .run(&mut sockets.inbound, &mut sockets.outbound, context)
+            .await;
+        // `run` owns normal EOF and returned-error semantics. Only a dropped
+        // pending future needs the cancellation backstop below.
+        sockets.completed = true;
+        outcome
     }
 
     /// Relays a single direction between two owned socket halves.
@@ -1383,6 +1413,78 @@ mod tests {
     use crate::transport::{
         BackendRequest, DirectionalRelayOutcome, RelayBackend, RelayContext, RelayDirection,
     };
+
+    async fn assert_cancelled_owned_relay_resets_drained_peers(splice: bool) {
+        let budget = FdBudget::new(64);
+        let relay = TcpRelay::new(
+            TcpRelayConfig {
+                splice,
+                pipe_pool: false,
+                ..TcpRelayConfig::for_test()
+            },
+            budget.clone(),
+        )
+        .expect("relay policy");
+        let (mut client, inbound) = tcp_pair().await;
+        let (outbound, mut target) = tcp_pair().await;
+        let task = tokio::spawn(async move {
+            relay
+                .relay_owned(inbound, outbound, RelayContext::owned())
+                .await
+        });
+        // Drain both directions first: unread bytes must not accidentally
+        // produce RST and mask a missing cancellation guard.
+        time::timeout(Duration::from_secs(2), async {
+            client.write_all(b"ping").await.expect("send request");
+            let mut bytes = [0_u8; 4];
+            target
+                .read_exact(&mut bytes)
+                .await
+                .expect("receive request");
+            assert_eq!(&bytes, b"ping");
+            target.write_all(b"pong").await.expect("send response");
+            client
+                .read_exact(&mut bytes)
+                .await
+                .expect("receive response");
+            assert_eq!(&bytes, b"pong");
+        })
+        .await
+        .expect("bidirectional progress");
+        if splice {
+            assert_eq!(
+                budget.in_use(),
+                u64::from(crate::transport::UNITS_SPLICE_RELAY),
+                "the splice case must exercise real pipe-backed transfer"
+            );
+        }
+        task.abort();
+        assert!(
+            task.await
+                .expect_err("task must be cancelled")
+                .is_cancelled()
+        );
+        for mut peer in [client, target] {
+            let error = time::timeout(Duration::from_secs(2), peer.read(&mut [0_u8; 1]))
+                .await
+                .expect("close must arrive")
+                .expect_err("cancelling a live relay must reset, not deliver clean EOF");
+            assert_eq!(error.kind(), io::ErrorKind::ConnectionReset);
+        }
+        assert_eq!(budget.in_use(), 0, "cancellation returns all pipe permits");
+        assert_eq!(budget.underflows(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancelled_owned_buffered_relay_resets_drained_peers() {
+        assert_cancelled_owned_relay_resets_drained_peers(false).await;
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancelled_owned_splice_relay_resets_drained_peers() {
+        assert_cancelled_owned_relay_resets_drained_peers(true).await;
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn bounded_buffered_relay_preserves_half_close() {

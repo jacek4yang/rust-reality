@@ -1033,6 +1033,110 @@ mod tests {
         pool.deactivate();
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn silent_warm_carrier_times_out_without_replaying_a_committed_transfer() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("fault listener");
+        let budget = FdBudget::new(64);
+        let handler = handoff_vision_handler_with_warm(
+            listener.local_addr().expect("address"),
+            true,
+            budget.clone(),
+        );
+        handler.outbounds().activate_warm_pools();
+        let (mut blackhole, _) = timeout(TEST_TIMEOUT, listener.accept())
+            .await
+            .expect("warm dial deadline")
+            .expect("warm dial");
+        timeout(TEST_TIMEOUT, async {
+            while handler.outbounds().warm_pool_snapshots()[0].pool.ready != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("warm READY barrier");
+        let (mut client, server) = tcp_pair().await;
+        let (tls, mut client_write, _client_read) = tls_states();
+        let established =
+            RealityEstablished::from_test_parts(TlsApplicationIo::new(server, tls), USER);
+        let request = vision_request(443, b"one logical request");
+        let mut record = Vec::new();
+        client_write
+            .seal_into(ContentType::ApplicationData, &request, 0, &mut record)
+            .expect("seal request");
+        client.write_all(&record).await.expect("send request");
+        // The fault consumes the *complete* transfer, acknowledging TCP bytes
+        // but withholding all protocol downlink. A safe retry is impossible:
+        // a real peer could already have acted on these authenticated bytes.
+        let consume = async {
+            let mut header = [0_u8; HEADER_LEN];
+            blackhole
+                .read_exact(&mut header)
+                .await
+                .expect("transfer header");
+            let length = message_len_from_header(&header).expect("bounded transfer");
+            let mut remainder = vec![0_u8; length - HEADER_LEN];
+            blackhole
+                .read_exact(&mut remainder)
+                .await
+                .expect("complete transfer");
+            // Keep the socket open in the enclosing scope until the deadline.
+            length
+        };
+        let (result, length) = timeout(TEST_TIMEOUT, async {
+            tokio::join!(handler.handle(established), consume)
+        })
+        .await
+        .expect("silent warm flow must fail within the first-byte bound");
+        assert!(length > HEADER_LEN);
+        assert!(matches!(
+            result,
+            Err(VisionSessionError::HandoffLine(
+                HandoffLineError::LandingRejected
+            ))
+        ));
+        let error = timeout(TEST_TIMEOUT, client.read(&mut [0_u8; 1]))
+            .await
+            .expect("client reset deadline")
+            .expect_err("failed transferred session must reset");
+        assert_eq!(error.kind(), io::ErrorKind::ConnectionReset);
+        let snapshot = handler.outbounds().warm_pool_snapshots()[0].pool;
+        assert_eq!(snapshot.checkout_total, 1);
+        assert_eq!(snapshot.checkout_hit, 1);
+        assert_eq!(
+            snapshot.cold_fallback, 0,
+            "complete transfer must never be cold-replayed"
+        );
+        assert_eq!(
+            snapshot.in_use, 0,
+            "failed flow releases its checkout permit"
+        );
+        // Refilling TCP is allowed; replaying protocol bytes on that socket is
+        // not. Observe the sole replacement without changing socket policy.
+        let (mut replacement, _) = timeout(TEST_TIMEOUT, listener.accept())
+            .await
+            .expect("refill deadline")
+            .expect("refill TCP");
+        assert!(
+            timeout(Duration::from_millis(30), replacement.read(&mut [0_u8; 1]))
+                .await
+                .is_err(),
+            "refill must remain protocol-unprivileged"
+        );
+        handler.outbounds().deactivate_warm_pools();
+        drop(blackhole);
+        drop(replacement);
+        timeout(TEST_TIMEOUT, async {
+            while budget.in_use() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("every warm and checked-out descriptor permit returns");
+        assert_eq!(budget.underflows(), 0);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn first_handoff_byte_enters_the_short_authentication_deadline() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -1253,12 +1357,27 @@ mod tests {
     }
 
     fn handoff_vision_handler(landing_address: std::net::SocketAddr) -> VisionHandler {
+        handoff_vision_handler_with_warm(landing_address, false, FdBudget::new(4_096))
+    }
+
+    fn handoff_vision_handler_with_warm(
+        landing_address: std::net::SocketAddr,
+        warm: bool,
+        budget: FdBudget,
+    ) -> VisionHandler {
+        let policy = WarmConnectionPolicy {
+            min_ready: 1,
+            max_ready: 1,
+            max_connecting: 1,
+            refill_batch: 1,
+            ..WarmConnectionPolicy::default()
+        };
         let barrier = DirectBarrierPolicy {
             max_concurrent: 8,
             max_per_second: 8,
         };
         let landing_public = StaticX25519Key::new(&LANDING_SECRET).public_key();
-        let outbounds = OutboundRegistry::new(
+        let outbounds = OutboundRegistry::with_warm_pools(
             &std::collections::BTreeMap::from([(
                 "handoff".to_owned(),
                 OutboundConfig::Handoff(HandoffOutboundConfig {
@@ -1266,14 +1385,19 @@ mod tests {
                     port: landing_address.port(),
                     psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
                     landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public),
-                    connect_timeout_ms: Some(1_000),
-                    first_byte_timeout_ms: Some(2_000),
-                    warm_tcp: Some(false),
+                    connect_timeout_ms: Some(if warm { 200 } else { 1_000 }),
+                    first_byte_timeout_ms: Some(if warm { 400 } else { 2_000 }),
+                    warm_tcp: Some(warm),
                 }),
             )]),
-            &barrier,
+            crate::runtime::DirectBarrier::new(&barrier),
             Duration::from_secs(1),
-            FdBudget::new(4_096),
+            budget,
+            &crate::config::node::network::NetworkConfig::default(),
+            crate::network::NetworkEnvironment::detect(),
+            1,
+            WarmPoolAuthority::new(&policy, 1, PressureGauge::new()),
+            &policy,
         );
         let routing = RoutingTable::compile(
             &RoutingConfig {
@@ -1412,20 +1536,79 @@ mod tests {
         run_line_to_landing_full_vision_session(true).await;
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shared_landing_serves_eight_independent_lines_concurrently() {
+        let listener = Arc::new(
+            TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+                .await
+                .expect("shared landing"),
+        );
+        let handler = test_landing_handler();
+        let budget = handler.relay.fd_budget().clone();
+        let mut sessions = tokio::task::JoinSet::new();
+        for index in 0..8 {
+            sessions.spawn(run_shared_landing_session(
+                index % 2 != 0,
+                Arc::clone(&listener),
+                handler.clone(),
+            ));
+        }
+        timeout(Duration::from_secs(10), async {
+            while let Some(result) = sessions.join_next().await {
+                result.expect("every independent LINE must finish byte-exactly");
+            }
+        })
+        .await
+        .expect("shared LANDING fan-in must remain bounded");
+        assert_eq!(
+            handler
+                .governor
+                .in_flight(crate::runtime::AdmissionKind::Handshake),
+            0
+        );
+        assert_eq!(
+            handler
+                .governor
+                .in_flight(crate::runtime::AdmissionKind::PreAuthIdle),
+            0
+        );
+        drop(handler);
+        assert_eq!(
+            budget.in_use(),
+            0,
+            "all session and retained relay resources are released"
+        );
+        assert_eq!(budget.underflows(), 0);
+    }
+
     async fn run_line_to_landing_full_vision_session(consume_cover_shaped_fake_ticket: bool) {
+        let listener = Arc::new(
+            TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+                .await
+                .expect("landing must bind"),
+        );
+        run_shared_landing_session(
+            consume_cover_shaped_fake_ticket,
+            listener,
+            test_landing_handler(),
+        )
+        .await;
+    }
+
+    async fn run_shared_landing_session(
+        consume_cover_shaped_fake_ticket: bool,
+        landing_listener: Arc<TcpListener>,
+        landing_handler: HandoffLandingHandler,
+    ) {
         let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("destination must bind");
         let destination_address = destination_listener
             .local_addr()
             .expect("destination address must exist");
-        let landing_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            .await
-            .expect("landing must bind");
         let landing_address = landing_listener
             .local_addr()
             .expect("landing address must exist");
-        let landing_handler = test_landing_handler();
         let line_handler = handoff_vision_handler(landing_address);
         let (mut client, server) = tcp_pair().await;
         let (established_tls, mut client_write_records, mut client_read_records) =

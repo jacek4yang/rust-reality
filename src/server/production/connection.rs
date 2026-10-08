@@ -133,6 +133,7 @@ pub(super) fn emit_connection_failure(
         &LogEvent::ConnectionRejected {
             peer,
             reason: error.rejection_reason(),
+            failure: super::failure::detail(error),
         },
     );
 }
@@ -166,56 +167,99 @@ impl ConnectionRunError {
                 RejectionReason::ResourceLimit
             }
             Self::Reality(RealityAcceptError::HandshakeWriteTimeout)
-            | Self::Vision(VisionSessionError::Timeout)
             | Self::Nxr(NxrLandingError::Timeout)
             | Self::Handoff(HandoffLandingError::Timeout) => RejectionReason::Timeout,
             Self::Reality(RealityAcceptError::Fallback(_)) => RejectionReason::Outbound,
             Self::Reality(_) => RejectionReason::Authentication,
-            Self::Vision(VisionSessionError::Outbound(
-                crate::server::outbound::OutboundConnectError::Admission(_)
-                | crate::server::outbound::OutboundConnectError::DescriptorBudget,
-            ))
-            | Self::Vision(VisionSessionError::HandoffLine(
-                crate::server::handoff::HandoffLineError::DescriptorBudget,
-            ))
-            | Self::Nxr(NxrLandingError::DescriptorBudget)
+            Self::Vision(error) | Self::Handoff(HandoffLandingError::Session(error)) => {
+                vision_rejection_reason(error)
+            }
+            Self::Handoff(HandoffLandingError::Egress(error)) => outbound_rejection_reason(error),
+            Self::Nxr(NxrLandingError::DescriptorBudget)
             | Self::Handoff(HandoffLandingError::DescriptorBudget) => {
                 RejectionReason::ResourceLimit
             }
-            Self::Vision(VisionSessionError::Route(_) | VisionSessionError::Outbound(_)) => {
-                RejectionReason::Outbound
+            Self::Nxr(NxrLandingError::Destination(error))
+            | Self::Handoff(HandoffLandingError::Destination(error)) => {
+                destination_rejection_reason(error)
             }
-            Self::Vision(VisionSessionError::HandoffLine(_))
-            | Self::Nxr(NxrLandingError::Destination(_) | NxrLandingError::Relay(_))
-            | Self::Handoff(
-                HandoffLandingError::Destination(_)
-                | HandoffLandingError::Egress(_)
-                | HandoffLandingError::Session(_),
-            ) => RejectionReason::Outbound,
-            Self::Nxr(_) | Self::Handoff(_) => RejectionReason::Authentication,
-            Self::Vision(VisionSessionError::Relay(error))
-                if is_write_stall_timeout_abort(error) =>
-            {
-                // A mid-transfer liveness kill is rewrapped as
-                // `ConnectionAborted` so a truncated transfer can never pass
-                // for a clean idle close, but the cause is the liveness
-                // policy: classify it as a timeout, not a protocol rejection.
+            Self::Nxr(NxrLandingError::Relay(error)) if is_write_stall_timeout_abort(error) => {
                 RejectionReason::Timeout
             }
-            Self::Vision(_) => RejectionReason::Protocol,
+            Self::Nxr(NxrLandingError::Relay(_)) => RejectionReason::Outbound,
+            Self::Nxr(_) | Self::Handoff(_) => RejectionReason::Authentication,
         }
     }
 
-    /// Returns the admission denial carried by an outbound barrier rejection.
     pub(super) const fn admission_denial(&self) -> Option<AdmissionDenied> {
+        use crate::server::outbound::OutboundConnectError;
         match self {
-            Self::Vision(VisionSessionError::Outbound(
-                crate::server::outbound::OutboundConnectError::Admission(denied),
-            )) => Some(*denied),
+            Self::Vision(VisionSessionError::Outbound(OutboundConnectError::Admission(denied)))
+            | Self::Handoff(HandoffLandingError::Egress(OutboundConnectError::Admission(denied)))
+            | Self::Handoff(HandoffLandingError::Session(VisionSessionError::Outbound(
+                OutboundConnectError::Admission(denied),
+            ))) => Some(*denied),
             Self::Nxr(NxrLandingError::Admission(denied))
             | Self::Handoff(HandoffLandingError::Admission(denied)) => Some(*denied),
             _ => None,
         }
+    }
+}
+
+fn destination_rejection_reason(
+    error: &crate::server::connector::DestinationConnectError,
+) -> RejectionReason {
+    use crate::server::connector::DestinationConnectError;
+    match error {
+        DestinationConnectError::DescriptorBudget | DestinationConnectError::Allocation => {
+            RejectionReason::ResourceLimit
+        }
+        DestinationConnectError::TimedOut { .. } => RejectionReason::Timeout,
+        _ => RejectionReason::Outbound,
+    }
+}
+
+fn outbound_rejection_reason(
+    error: &crate::server::outbound::OutboundConnectError,
+) -> RejectionReason {
+    use crate::server::outbound::OutboundConnectError;
+    match error {
+        OutboundConnectError::Admission(_) | OutboundConnectError::DescriptorBudget => {
+            RejectionReason::ResourceLimit
+        }
+        OutboundConnectError::Direct(error) => destination_rejection_reason(error),
+        OutboundConnectError::SocksTimeout | OutboundConnectError::NxrTimeout => {
+            RejectionReason::Timeout
+        }
+        _ => RejectionReason::Outbound,
+    }
+}
+
+fn vision_rejection_reason(error: &VisionSessionError) -> RejectionReason {
+    use crate::server::handoff::HandoffLineError;
+    match error {
+        VisionSessionError::Timeout
+        | VisionSessionError::HandoffLine(HandoffLineError::Timeout) => RejectionReason::Timeout,
+        VisionSessionError::AllocationFailed
+        | VisionSessionError::HandoffLine(HandoffLineError::DescriptorBudget) => {
+            RejectionReason::ResourceLimit
+        }
+        VisionSessionError::Outbound(error) => outbound_rejection_reason(error),
+        VisionSessionError::Tls(error) => match super::failure::tls_cause(error).0 {
+            crate::logging::FailureCause::Timeout => RejectionReason::Timeout,
+            crate::logging::FailureCause::Allocation => RejectionReason::ResourceLimit,
+            _ => RejectionReason::Protocol,
+        },
+        VisionSessionError::Relay(error)
+        | VisionSessionError::HandoffLine(HandoffLineError::Relay(error))
+            if is_write_stall_timeout_abort(error) =>
+        {
+            RejectionReason::Timeout
+        }
+        VisionSessionError::Route(_) | VisionSessionError::HandoffLine(_) => {
+            RejectionReason::Outbound
+        }
+        _ => RejectionReason::Protocol,
     }
 }
 
@@ -274,6 +318,76 @@ mod tests {
         config::node::log::{LogConfig, LogLevel, LogOutput},
         server::{handoff::HandoffLandingError, nxr::NxrLandingError},
     };
+
+    #[test]
+    fn nested_landing_failures_retain_resource_and_timeout_categories() {
+        use crate::{
+            logging::RejectionReason,
+            runtime::AdmissionDenied,
+            server::{
+                connector::DestinationConnectError, outbound::OutboundConnectError,
+                vision::VisionSessionError,
+            },
+        };
+        let cases = [
+            (
+                HandoffLandingError::Egress(OutboundConnectError::DescriptorBudget),
+                RejectionReason::ResourceLimit,
+            ),
+            (
+                HandoffLandingError::Egress(OutboundConnectError::Admission(
+                    AdmissionDenied::DirectConcurrency,
+                )),
+                RejectionReason::ResourceLimit,
+            ),
+            (
+                HandoffLandingError::Egress(OutboundConnectError::SocksTimeout),
+                RejectionReason::Timeout,
+            ),
+            (
+                HandoffLandingError::Session(VisionSessionError::Timeout),
+                RejectionReason::Timeout,
+            ),
+            (
+                HandoffLandingError::Session(VisionSessionError::Relay(io::Error::new(
+                    io::ErrorKind::ConnectionAborted,
+                    io::Error::new(io::ErrorKind::TimedOut, "stall"),
+                ))),
+                RejectionReason::Timeout,
+            ),
+            (
+                HandoffLandingError::Destination(DestinationConnectError::TimedOut {
+                    timeout: std::time::Duration::from_secs(1),
+                }),
+                RejectionReason::Timeout,
+            ),
+            (
+                HandoffLandingError::Destination(DestinationConnectError::Io(io::Error::from(
+                    io::ErrorKind::ConnectionRefused,
+                ))),
+                RejectionReason::Outbound,
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(
+                ConnectionRunError::Handoff(error).rejection_reason(),
+                expected
+            );
+        }
+        for error in [
+            HandoffLandingError::Egress(OutboundConnectError::Admission(
+                AdmissionDenied::DirectRate,
+            )),
+            HandoffLandingError::Session(VisionSessionError::Outbound(
+                OutboundConnectError::Admission(AdmissionDenied::DirectRate),
+            )),
+        ] {
+            assert_eq!(
+                ConnectionRunError::Handoff(error).admission_denial(),
+                Some(AdmissionDenied::DirectRate)
+            );
+        }
+    }
 
     #[test]
     fn zero_byte_warm_retirement_is_quiet_for_both_landing_protocols() {

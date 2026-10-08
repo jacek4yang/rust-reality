@@ -855,3 +855,13 @@ Earlier development-host samples (a 2026-08-03 Xray loopback table and a
 2-vCPU relay baseline whose own conclusion was "indistinguishable from
 noise") are superseded by the canonical samples above and were removed from
 the repository.
+
+### Failed native soak resource gates
+
+A native soak that reaches resource acceptance retains resource and distributed
+samples before evaluating the unchanged limits. A rejection writes a partial
+`soak-summary.json` with `ok=false`, the failing scope and aggregate/per-process
+metrics; final binary-identity checks are marked not run. No successful
+`environment.json` or completion marker is published. These diagnostics do not
+qualify the run. Earlier transfer, sampling or process failures can still exit
+before this resource-stage retention point.

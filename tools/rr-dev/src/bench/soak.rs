@@ -1611,19 +1611,23 @@ pub fn run_rust(plan: &SoakPlan) -> Result<RustSoakOutcome, String> {
     let resources = summarize_aggregate_resources(&snapshots)?;
     let resources_by_process = summarize_each_process(&snapshots)?;
     let slope_gate_applied = plan.duration >= Duration::from_mins(30);
-    if !resources_within_limits(&resources, slope_gate_applied, true) {
-        return Err(format!(
-            "aggregate soak resources exceeded bounds: {resources:?}"
-        ));
-    }
-    if let Some((name, summary)) = resources_by_process
-        .iter()
-        .find(|(_, summary)| !resources_within_limits(summary, slope_gate_applied, false))
-    {
-        return Err(format!(
-            "{name} soak resources exceeded bounds: {summary:?}"
-        ));
-    }
+    // Preserve observations before a resource verdict can return. Failed gates
+    // must remain diagnosable without publishing a success completion marker.
+    let distributed_json = retain_native_observations(
+        &distributed,
+        &snapshots,
+        plan.distributed_interval,
+        planned_attempts,
+        shaped,
+    )?;
+    check_native_resource_gate(
+        &run,
+        plan,
+        &rust,
+        &resources,
+        &resources_by_process,
+        slope_gate_applied,
+    )?;
 
     for (pid, label) in [
         (standalone.pid(), "standalone"),
@@ -1660,24 +1664,6 @@ pub fn run_rust(plan: &SoakPlan) -> Result<RustSoakOutcome, String> {
         return Err("rr-dev changed during the soak".to_owned());
     }
 
-    let resource_rows = snapshots
-        .iter()
-        .map(|snapshot| snapshot_json(snapshot).to_compact_json())
-        .collect::<Vec<_>>();
-    run.write_jsonl("resources.jsonl", &resource_rows)?;
-    let distributed_rows = distributed
-        .samples
-        .iter()
-        .map(|sample| sample.to_json(&distributed.expected_sha256).to_jq_json())
-        .collect::<Vec<_>>();
-    run.write_jsonl("distributed-samples.jsonl", &distributed_rows)?;
-    let distributed_json = distributed_summary_json(
-        &distributed,
-        plan.distributed_interval,
-        planned_attempts,
-        shaped,
-    );
-    run.write_new("distributed-gates.json", &distributed_json.to_python_json())?;
     let resource_by_process_json = Json::object(
         resources_by_process
             .iter()
@@ -2069,7 +2055,8 @@ fn run_round(
         ),
     ] {
         let output = workspace.join(&format!("round-{round}-{name}.bin"));
-        if fetch(&url, socks, insecure, &output, Some(expected_sha256)).is_err() {
+        let transfer = fetch(&url, socks, insecure, &output, Some(expected_sha256));
+        if finish_round_payload(&output, transfer).is_err() {
             failures += 1;
         }
     }
@@ -2080,6 +2067,18 @@ fn run_round(
         }
     }
     failures
+}
+
+/// Successful round bytes are reproducible from the retained origin payload;
+/// failed downloads must remain available for diagnosis.
+fn finish_round_payload(output: &Path, transfer: Result<(), String>) -> Result<(), String> {
+    transfer?;
+    std::fs::remove_file(output).map_err(|error| {
+        format!(
+            "could not remove verified round payload {}: {error}",
+            output.display()
+        )
+    })
 }
 
 fn fetch(
@@ -2372,6 +2371,117 @@ fn summarize_each_process(
         .collect()
 }
 
+fn retain_native_observations(
+    distributed: &DistributedRun<'_>,
+    snapshots: &[ResourceSnapshot],
+    interval: Duration,
+    required_attempts: usize,
+    shaped: usize,
+) -> Result<Json, String> {
+    let resource_rows = snapshots
+        .iter()
+        .map(|snapshot| snapshot_json(snapshot).to_compact_json())
+        .collect::<Vec<_>>();
+    distributed
+        .run
+        .write_jsonl("resources.jsonl", &resource_rows)?;
+    let distributed_rows = distributed
+        .samples
+        .iter()
+        .map(|sample| sample.to_json(&distributed.expected_sha256).to_jq_json())
+        .collect::<Vec<_>>();
+    distributed
+        .run
+        .write_jsonl("distributed-samples.jsonl", &distributed_rows)?;
+    let summary = distributed_summary_json(distributed, interval, required_attempts, shaped);
+    distributed
+        .run
+        .write_new("distributed-gates.json", &summary.to_python_json())?;
+    Ok(summary)
+}
+
+fn check_native_resource_gate(
+    run: &RunDirectory,
+    plan: &SoakPlan,
+    rust: &Binary,
+    aggregate: &ResourceSummary,
+    by_process: &BTreeMap<String, ResourceSummary>,
+    slope_gate_applied: bool,
+) -> Result<(), String> {
+    let failure = if resources_within_limits(aggregate, slope_gate_applied, true) {
+        by_process
+            .iter()
+            .find(|(_, summary)| !resources_within_limits(summary, slope_gate_applied, false))
+            .map(|(name, summary)| {
+                (
+                    name.as_str(),
+                    format!("{name} soak resources exceeded bounds: {summary:?}"),
+                )
+            })
+    } else {
+        Some((
+            "aggregate",
+            format!("aggregate soak resources exceeded bounds: {aggregate:?}"),
+        ))
+    };
+    let Some((scope, error)) = failure else {
+        return Ok(());
+    };
+    let summary = Json::object([
+        ("schemaVersion", Json::Int(3)),
+        ("harness", Json::string("soak")),
+        ("implementation", Json::string("rust-reality")),
+        ("runId", Json::string(&plan.run_id)),
+        ("durationSeconds", Json::Float(plan.duration.as_secs_f64())),
+        ("ok", Json::Bool(false)),
+        ("failureStage", Json::string("resource-gate")),
+        ("failedScope", Json::string(scope)),
+        ("error", Json::string(&error)),
+        ("finalIdentityCheck", Json::string("not-run")),
+        ("longHorizonQualified", Json::Bool(false)),
+        (
+            "binaries",
+            Json::object([(
+                "rustReality",
+                Json::object([
+                    ("sha256", Json::string(&rust.sha256)),
+                    ("identity", Json::string(&rust.identity)),
+                ]),
+            )]),
+        ),
+        ("resourceAggregate", resource_summary_json(aggregate)),
+        (
+            "resourceByProcess",
+            Json::object(
+                by_process
+                    .iter()
+                    .map(|(name, summary)| (name.clone(), resource_summary_json(summary))),
+            ),
+        ),
+        ("memoryTailSlopeGateApplied", Json::Bool(slope_gate_applied)),
+        (
+            "memorySlopeGateBasis",
+            Json::object([
+                (
+                    "aggregate",
+                    Json::string(if aggregate.pss_available {
+                        "pss"
+                    } else {
+                        "rss-fallback"
+                    }),
+                ),
+                ("perProcess", Json::string("rss")),
+            ]),
+        ),
+    ]);
+    if let Err(write_error) = run.write_new("soak-summary.json", &summary.to_python_json()) {
+        return Err(format!(
+            "{error}; failed to retain resource diagnostics: {write_error}"
+        ));
+    }
+    Err(error)
+}
+
 fn resources_within_limits(
     summary: &ResourceSummary,
     slope_gate_applied: bool,
@@ -2614,6 +2724,45 @@ fn usize_json(value: usize) -> Json {
 mod tests {
     use super::*;
 
+    #[test]
+    fn verified_round_payloads_do_not_accumulate() {
+        let workspace = Workspace::create("soak-verified-payload-retention").unwrap();
+        let reference = workspace.join("origin-payload.bin");
+        std::fs::write(&reference, b"verified payload").unwrap();
+        for round in 0..128 {
+            for name in ["direct", "framed", "fallback"] {
+                let output = workspace.join(&format!("round-{round}-{name}.bin"));
+                std::fs::copy(&reference, &output).unwrap();
+                finish_round_payload(&output, Ok(())).unwrap();
+                assert!(!output.exists(), "verified round bytes must not accumulate");
+            }
+        }
+        assert_eq!(std::fs::read(&reference).unwrap(), b"verified payload");
+        assert_eq!(std::fs::read_dir(workspace.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn failed_round_payloads_preserve_bytes_and_original_error() {
+        let workspace = Workspace::create("soak-failed-payload-retention").unwrap();
+        let output = workspace.join("round-1-framed.bin");
+        std::fs::write(&output, b"truncated payload").unwrap();
+        let error = "payload SHA-256 mismatch".to_owned();
+        assert_eq!(
+            finish_round_payload(&output, Err(error.clone())),
+            Err(error)
+        );
+        assert_eq!(std::fs::read(&output).unwrap(), b"truncated payload");
+    }
+
+    #[test]
+    fn verified_round_cleanup_errors_are_not_silently_accepted() {
+        let workspace = Workspace::create("soak-cleanup-error").unwrap();
+        let output = workspace.join("unexpected-directory");
+        std::fs::create_dir(&output).unwrap();
+        assert!(finish_round_payload(&output, Ok(())).is_err());
+        assert!(output.is_dir());
+    }
+
     fn plan() -> SoakPlan {
         SoakPlan {
             rust_bin: PathBuf::from("rust-reality"),
@@ -2702,6 +2851,109 @@ mod tests {
             label: format!("at-{seconds}"),
             monotonic_seconds: seconds,
             processes: [("server".to_owned(), resources)].into_iter().collect(),
+        }
+    }
+
+    #[test]
+    fn resource_gate_failures_retain_observations_without_success_markers() {
+        for (growth, expected_scope) in [(1024, "aggregate"), (512, "server"), (0, "")] {
+            let workspace = Workspace::create("soak-resource-evidence").unwrap();
+            let run = RunDirectory::create(&workspace.join("run")).unwrap();
+            let snapshots = [
+                snapshot(0.0, process(10, 10_240, 10_240, 2)),
+                snapshot(600.0, process(10, 10_240, 10_240, 2)),
+                snapshot(1200.0, process(10, 10_240, 10_240, 2)),
+                snapshot(1800.0, process(10, 10_240 + growth, 10_240 + growth, 2)),
+            ];
+            let digest = "a".repeat(64);
+            let distributed = DistributedRun {
+                run: &run,
+                started: Instant::now(),
+                http_origin_port: 1,
+                socks_ports: [2, 3, 4],
+                expected_sha256: digest.clone(),
+                handoff_log: workspace.join("unused.log"),
+                attempts: 1,
+                samples: vec![DistributedSample {
+                    attempt: 1,
+                    trigger: "end",
+                    path: "handoff-seq1",
+                    success: true,
+                    failure_class: None,
+                    bytes: 1_048_576,
+                    sha256: Some(digest.clone()),
+                    server_sequence: Some(1),
+                    output: "synthetic".to_owned(),
+                    monotonic_seconds: 1800.0,
+                }],
+            };
+            retain_native_observations(&distributed, &snapshots, Duration::from_mins(1), 1, 1)
+                .unwrap();
+            let mut plan = plan();
+            plan.duration = Duration::from_mins(30);
+            let binary = Binary {
+                label: "synthetic".to_owned(),
+                path: PathBuf::from("unused"),
+                sha256: digest,
+                identity: "synthetic build identity".to_owned(),
+            };
+            let aggregate = summarize_aggregate_resources(&snapshots).unwrap();
+            let by_process = summarize_each_process(&snapshots).unwrap();
+            let result =
+                check_native_resource_gate(&run, &plan, &binary, &aggregate, &by_process, true);
+            let read_json = |name: &str| -> serde_json::Value {
+                serde_json::from_slice(
+                    &std::fs::read(workspace.join(&format!("run/{name}"))).unwrap(),
+                )
+                .unwrap()
+            };
+            let raw = std::fs::read_to_string(workspace.join("run/resources.jsonl")).unwrap();
+            let rows: Vec<serde_json::Value> = raw
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            assert_eq!(rows.len(), 4);
+            assert_eq!(rows[3]["monotonicSeconds"], 1800.0);
+            assert_eq!(rows[3]["processes"]["server"]["pid"], 1);
+            assert_eq!(rows[3]["processes"]["server"]["pidStarttime"], "10");
+            let sample = read_json("distributed-samples.jsonl");
+            assert_eq!(sample["bytes"], 1_048_576);
+            assert_eq!(sample["serverSequence"], 1);
+            assert_eq!(sample["sha256"], sample["expectedSha256"]);
+            assert_eq!(sample["monotonicSeconds"], 1800.0);
+            assert_eq!(read_json("distributed-gates.json")["attempts"], 1);
+            if expected_scope.is_empty() {
+                result.unwrap();
+                assert!(!workspace.join("run/soak-summary.json").exists());
+            } else {
+                let error = result.unwrap_err();
+                assert!(
+                    error.starts_with(&format!("{expected_scope} soak resources exceeded bounds:"))
+                );
+                let summary = read_json("soak-summary.json");
+                assert_eq!(summary["ok"], false);
+                assert_eq!(summary["failedScope"], expected_scope);
+                assert_eq!(summary["error"], error);
+                let second_error =
+                    check_native_resource_gate(&run, &plan, &binary, &aggregate, &by_process, true)
+                        .unwrap_err();
+                assert!(second_error.starts_with(&error));
+                assert!(second_error.contains("failed to retain resource diagnostics:"));
+                assert_eq!(read_json("soak-summary.json"), summary);
+                assert_eq!(summary["finalIdentityCheck"], "not-run");
+                assert_eq!(summary["longHorizonQualified"], false);
+                assert_eq!(summary["binaries"]["rustReality"]["sha256"], binary.sha256);
+                assert_eq!(
+                    summary["resourceByProcess"]["server"]["rssTailSlopeMiBPerHour"],
+                    if growth == 1024 { 6.0 } else { 3.0 }
+                );
+            }
+            assert!(!workspace.join("run/environment.json").exists());
+            assert!(!workspace.join("run/completion.json").exists());
+            assert!(
+                retain_native_observations(&distributed, &snapshots, Duration::from_mins(1), 1, 1)
+                    .is_err()
+            );
         }
     }
 

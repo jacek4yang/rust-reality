@@ -294,6 +294,17 @@ sudo journalctl -u rust-reality -o cat | jq -c 'select(.level != "info")'
 `outbound`、`protocol`、`socket_configuration`。公网节点上的 `authentication` 属于
 正常背景噪声——那是扫描器产生的。
 
+认证后的出站失败还可以包含 `failure` 对象，提供固定词表的 `stage`、`cause`
+和可选的数字 `errno`。例如，`landing_destination` + `connection_refused` 表示
+LANDING 连接目标时被拒绝；`handoff_first_downlink` + `landing_rejected` 表示 LINE
+未收到有效的恢复会话 TLS 首字节。仅凭后者**无法**区分静默认证拒绝、目标连接失败
+或网络丢包。应结合两端时间戳排查，不要把两条不相关的 `outbound` 日志当成同一根因。
+这些字段不包含目标域名、出站标签、凭据、载荷或操作系统错误原文。
+
+LANDING 内嵌的 egress 准入/描述符失败仍归类为 `resource_limit`，会话/连接超时
+归类为 `timeout`。配置的 egress 发生准入拒绝时，还会输出已有的
+`admission_limited` 事件。这些分类用于区分本地限额和网络拒绝，不改变准入策略。
+
 把 `log.level` 设成 `debug` 可以看到每连接事件。它很吵，但那是能把一个连接的一生从头
 跟到尾的级别。
 
@@ -308,3 +319,12 @@ sudo journalctl -u rust-reality -n 200 --no-pager
 ```
 
 `explain --json` 不含任何密钥材料，可以放心分享。配置文件不行——它里面有私钥。
+
+## 目标端的短首响应
+
+当首批目标端数据已不可能构成 TLS 记录头时，会立即通过 Vision End/Outer
+转发，包括 `ack`、`pong` 等一至四字节 ASCII 响应，无需等待目标端关闭写入方向。
+仍可能是 TLS 的不完整头部或记录体继续等待分类，因此此修复不代表所有歧义
+二进制前缀均具有即时转发保证。TLS Direct 转换仍绑定到经过认证的记录边界。
+`nested_tls_prefix` 模糊测试覆盖前缀判定；套接字测试覆盖响应进展、半关闭及
+分片头部读取的取消安全。

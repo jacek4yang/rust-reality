@@ -22,7 +22,7 @@ live in [development/fuzzing.md](../development/fuzzing.md).
 | Handoff continuation blob decode | `handoff::fuzz_decode_blob` | `handoff_blob` |
 | Handoff authenticated transfer open | `handoff::open_transfer` | `handoff_open_transfer` |
 | Handoff continuation reconstruction | `seal_transfer`→`open_transfer` field equality + corruption rejection | `handoff_round_trip` |
-| Cover ServerHello flight parsing (nested TLS detector path) | `tls13::fuzz_cover_flight` (read_target_server_flight driver) | `cover_flight` |
+| Cover ServerHello flight parsing | `tls13::fuzz_cover_flight` (read_target_server_flight driver) | `cover_flight` |
 | TLS 1.3 record open/seal | `Tls13RecordLayer::seal_into` / `open_in_place` | `tls13_record` (per-suite round trip + truncation/coalescing/bitflip rejection) |
 | Handshake transcript hash | `TranscriptHasher` vs `HashAlgorithm::digest` | `transcript_diff` (differential: incremental == one-shot for all chunkings) |
 | Config JSON deserialization + normalization + validation | `config::fuzz_decode_config` (exact `load_config` decode path) | `config_json` (structured generator via `arbitrary`, all values synthetic) |
@@ -56,3 +56,5 @@ live in [development/fuzzing.md](../development/fuzzing.md).
   keys, UUIDs, or captures). `fuzz/corpus/` stays gitignored for locally grown
   corpora. Dictionaries: `fuzz/dictionaries/config_json.dict` (config grammar
   tokens) and `fuzz/dictionaries/wire.dict` (TLS/VLESS wire tokens).
+
+Destination nested TLS header-prefix classification is covered by `nested_tls_prefix` through `server::vision::fuzz_nested_tls_header_prefix`. This is distinct from `cover_flight`, which covers the cover ServerHello parser, not the destination `NestedTlsDetector`. Full destination detector state-machine fuzzing remains a gap; deterministic Vision transition tests cover it.

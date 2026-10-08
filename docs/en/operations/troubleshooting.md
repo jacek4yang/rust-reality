@@ -315,6 +315,21 @@ Useful ones:
 `outbound`, `protocol`, `socket_configuration`. `authentication` on a public
 node is ordinary background noise — it is what a scanner produces.
 
+Authenticated outbound failures can also carry a `failure` object with fixed
+`stage`, `cause`, and optional numeric `errno` fields. For example,
+`landing_destination` + `connection_refused` identifies a refused destination
+dial on LANDING; `handoff_first_downlink` + `landing_rejected` means LINE did not
+receive a valid resumed TLS byte. The latter alone does **not** distinguish a
+silent authentication rejection, destination failure, or lost network traffic.
+Correlate both nodes' timestamps; do not infer a shared cause from two unrelated
+`outbound` lines. The projection never includes destination names, outbound
+tags, credentials, payloads, or raw OS error messages.
+
+Nested LANDING egress admission/descriptor failures retain `resource_limit`,
+and session/dial deadlines retain `timeout`. A configured egress admission
+failure also emits the existing `admission_limited` event. These categories
+separate local limits from network refusal without changing admission policy.
+
 Set `log.level` to `debug` for per-connection events. It is verbose, and it is
 the level at which a single connection's life can be followed end to end.
 
@@ -330,3 +345,14 @@ sudo journalctl -u rust-reality -n 200 --no-pager
 
 `explain --json` contains no key material, so it is safe to share. The
 configuration file is not — it contains private keys.
+
+## Short initial origin responses
+
+An initial origin prefix that is already impossible as a TLS record header is
+forwarded immediately through Vision End/Outer, including one-to-four-byte
+ASCII replies such as `ack` and `pong`. The origin need not close its write side.
+Plausible incomplete TLS headers or record bodies still wait for classification;
+this fix does not establish arbitrary-byte-stream progress for those ambiguous
+prefixes. TLS Direct transitions remain tied to authenticated record boundaries.
+The `nested_tls_prefix` fuzz target covers the prefix predicate; socket tests
+cover response progress, half-close and fragmented-header cancellation.

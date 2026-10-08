@@ -137,6 +137,7 @@ pub(super) async fn run_listener(
                                 &LogEvent::ConnectionRejected {
                                     peer,
                                     reason: RejectionReason::ResourceLimit,
+                                    failure: None,
                                 },
                             );
                             continue;
@@ -244,6 +245,7 @@ fn admit_accepted_connection(
             &LogEvent::ConnectionRejected {
                 peer,
                 reason: RejectionReason::SocketConfiguration,
+                failure: None,
             },
         );
         return;
@@ -260,6 +262,7 @@ fn admit_accepted_connection(
                 &LogEvent::ConnectionRejected {
                     peer,
                     reason: RejectionReason::ResourceLimit,
+                    failure: None,
                 },
             );
             return;

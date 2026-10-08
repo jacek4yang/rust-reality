@@ -47,3 +47,5 @@ directly (`cargo fuzz run <target>`) against `fuzz/`.
 - Structured round-trip targets (encode → decode equality, bitflip-must-fail)
   are preferred where a legitimate producer exists; raw-input targets where the
   bytes come from the network.
+
+The `nested_tls_prefix` target checks destination TLS header-prefix classification at every fragment boundary against the complete-header predicate. Async open-origin progress and pending-read cancellation are covered by socket regression tests.

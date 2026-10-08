@@ -512,12 +512,8 @@ impl VisionHandler {
         // Reuniting consumes both client halves, so the landing descriptor —
         // which now exists and would otherwise leak a FIN — carries its own
         // guard across the only fallible step between the two phases.
-        let client_stream = {
-            let _landing_abort = SocketAbortGuard::new(&handoff_stream);
-            client_read_half
-                .reunite(client_write_half)
-                .map_err(|_| VisionSessionError::HandoffLine(HandoffLineError::Reunite))?
-        };
+        let client_stream =
+            reunite_handoff_client(client_read_half, client_write_half, &handoff_stream)?;
         // Classify the silent protocol's only failure signal before any socket
         // moves into the relay: no TLS downlink byte within the configured
         // first-byte deadline means rejection. Both guards borrow their
@@ -583,6 +579,23 @@ impl VisionHandler {
             ..VisionRelayStats::default()
         })
     }
+}
+
+/// Keeps the landing carrier abortable until client socket ownership is whole.
+fn reunite_handoff_client(
+    reader: OwnedReadHalf,
+    writer: OwnedWriteHalf,
+    landing: &TcpStream,
+) -> Result<TcpStream, VisionSessionError> {
+    let mut landing_abort = SocketAbortGuard::new(landing);
+    let client = reader
+        .reunite(writer)
+        .map_err(|_| VisionSessionError::HandoffLine(HandoffLineError::Reunite))?;
+    // A guard's Drop changes the kernel socket option permanently. Disarm
+    // this temporary guard before the first-downlink and relay guards take
+    // over, so successful sessions retain normal FIN/half-close semantics.
+    landing_abort.disarm();
+    Ok(client)
 }
 
 struct AcceptedVisionRequest {
@@ -1926,8 +1939,9 @@ impl NestedRecordReader {
 
     /// Classifies the next nested record out of the buffered range.
     ///
-    /// The classification semantics are exactly the record-exact reader's: EOF
-    /// before any byte is `Eof`; socket EOF with fewer than five buffered bytes
+    /// A prefix that cannot be TLS is returned immediately as `Unframed`, even
+    /// when fewer than five bytes are available. Otherwise EOF before any byte
+    /// is `Eof`; socket EOF with fewer than five buffered bytes
     /// yields the remaining bytes as `Unframed`; a header that fails
     /// [`looks_like_tls_record_header`] or declares a body above
     /// [`MAX_NESTED_TLS_RECORD_SIZE`] yields the five header bytes as
@@ -1936,6 +1950,22 @@ impl NestedRecordReader {
     /// [`VisionSessionError::DestinationTruncatedTlsRecord`].
     async fn next(&mut self, timeout: Duration) -> Result<NestedRead<'_>, VisionSessionError> {
         while self.buffered_end - self.buffered_start < NESTED_TLS_HEADER_SIZE {
+            let start = self.buffered_start;
+            let prefix = self
+                .socket_buffer
+                .get(start..self.buffered_end)
+                .unwrap_or_default();
+            // Do not wait for more application bytes once TLS is impossible:
+            // an origin can legitimately wait for the next request after a
+            // one-byte response, without sending FIN.
+            if !could_be_tls_record_header(prefix) {
+                self.buffered_start = self.buffered_end;
+                return Ok(NestedRead::Unframed(
+                    self.socket_buffer
+                        .get(start..self.buffered_end)
+                        .unwrap_or_default(),
+                ));
+            }
             if !self.refill(timeout).await? {
                 let start = self.buffered_start;
                 let remaining = self.buffered_end - start;
@@ -2116,8 +2146,24 @@ impl VectoredRead for NestedRecordReader {
     }
 }
 
-const fn looks_like_tls_record_header(header: &[u8; NESTED_TLS_HEADER_SIZE]) -> bool {
-    matches!(header[0], 20..=23) && header[1] == 0x03 && header[2] <= 0x04
+/// Whether the available prefix can still satisfy the existing TLS header
+/// predicate. Empty and ambiguous prefixes remain undecided; no sniff timer or
+/// speculative Direct transition is introduced.
+fn could_be_tls_record_header(prefix: &[u8]) -> bool {
+    prefix.first().is_none_or(|byte| matches!(byte, 20..=23))
+        && prefix.get(1).is_none_or(|byte| *byte == 0x03)
+        && prefix.get(2).is_none_or(|byte| *byte <= 0x04)
+}
+
+fn looks_like_tls_record_header(header: &[u8; NESTED_TLS_HEADER_SIZE]) -> bool {
+    could_be_tls_record_header(header)
+}
+
+/// Exercises the production nested-header prefix predicate without socket I/O.
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub fn fuzz_nested_tls_header_prefix(prefix: &[u8]) -> bool {
+    could_be_tls_record_header(prefix)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2394,6 +2440,44 @@ mod tests {
     const USER: UserId = UserId::new([0x33; 16]);
 
     #[tokio::test(flavor = "current_thread")]
+    async fn successful_handoff_reunite_preserves_graceful_carrier_close() {
+        let (client, _client_peer) = tcp_pair().await;
+        let (landing, mut landing_peer) = tcp_pair().await;
+        let (reader, writer) = client.into_split();
+        let _client = super::reunite_handoff_client(reader, writer, &landing)
+            .expect("matching client halves must reunite");
+        drop(landing);
+        let mut byte = [0_u8; 1];
+        let read = timeout(TEST_TIMEOUT, landing_peer.read(&mut byte))
+            .await
+            .expect("carrier close must be observable")
+            .expect("successful reunification must not arm an abortive carrier close");
+        assert_eq!(read, 0, "healthy carrier teardown must deliver FIN");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn failed_handoff_reunite_still_aborts_carrier() {
+        let (first, _first_peer) = tcp_pair().await;
+        let (second, _second_peer) = tcp_pair().await;
+        let (landing, mut landing_peer) = tcp_pair().await;
+        let (reader, _first_writer) = first.into_split();
+        let (_second_reader, writer) = second.into_split();
+        let error = super::reunite_handoff_client(reader, writer, &landing)
+            .expect_err("unrelated client halves must fail closed");
+        assert!(matches!(
+            error,
+            VisionSessionError::HandoffLine(super::HandoffLineError::Reunite)
+        ));
+        drop(landing);
+        let mut byte = [0_u8; 1];
+        let error = timeout(TEST_TIMEOUT, landing_peer.read(&mut byte))
+            .await
+            .expect("carrier abort must be observable")
+            .expect_err("failed reunification must reset the carrier");
+        assert_eq!(error.kind(), io::ErrorKind::ConnectionReset);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn resumed_framed_session_survives_both_asymmetries_and_sparse_alternation() {
         let (mut client, inbound) = tcp_pair().await;
         let (destination, mut target) = tcp_pair().await;
@@ -2441,11 +2525,11 @@ mod tests {
                         target.read_exact(&mut byte).await?;
                         assert_eq!(&byte, b"U");
                     } else {
-                        // >=5 bytes lets the generic nested-TLS classifier
-                        // reject TLS immediately, without protocol detection.
-                        target.write_all(b"event").await?;
+                        // The origin remains open and waits for receipt before
+                        // its next write: short replies must not wait for FIN.
+                        target.write_all(b"ack").await?;
                         let mut response = Vec::new();
-                        while response.len() < 5 {
+                        while response.len() < 3 {
                             let mut record = read_tls_record(&mut client, TEST_TIMEOUT)
                                 .await
                                 .map_err(io::Error::other)?
@@ -2464,7 +2548,7 @@ mod tests {
                                 .map_err(io::Error::other)?;
                             response.extend_from_slice(&decoded);
                         }
-                        assert_eq!(response, b"event");
+                        assert_eq!(response, b"ack");
                     }
                 }
             }
@@ -2505,7 +2589,7 @@ mod tests {
         traffic.expect("both directions remain byte-exact");
         let stats = stats.expect("healthy asymmetric session");
         assert_eq!(stats.uplink_bytes(), 19);
-        assert_eq!(stats.downlink_bytes(), 65);
+        assert_eq!(stats.downlink_bytes(), 41);
         assert!(!stats.uplink_direct());
         assert!(!stats.downlink_direct());
     }
@@ -3706,6 +3790,156 @@ mod tests {
         );
         assert!(!stats.downlink_direct());
         assert_eq!(stats.downlink_bytes(), length_u64(payload.len()));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn short_non_tls_response_progresses_without_origin_eof() {
+        for response in [
+            b"x".as_slice(),
+            b"ok",
+            b"xxx",
+            b"pong",
+            &[22, 4],
+            &[22, 3, 5],
+        ] {
+            let (mut origin, server) = tcp_pair().await;
+            let (read_half, _write_half) = server.into_split();
+            let mut reader = super::NestedRecordReader::new(read_half);
+            reader
+                .idle
+                .set_activity(Arc::new(crate::io_activity::SessionActivity::default()));
+            origin.write_all(response).await.expect("origin response");
+            let observed = timeout(TEST_TIMEOUT, reader.next(TEST_TIMEOUT))
+                .await
+                .expect("response must progress while origin stays open")
+                .expect("classification succeeds");
+            match observed {
+                super::NestedRead::Unframed(bytes) => assert_eq!(bytes, response),
+                _ => panic!("plain response must be forwarded as unframed"),
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn short_resumed_response_precedes_origin_fin_with_or_without_uplink_fin() {
+        for half_close in [false, true] {
+            let (mut client, inbound) = tcp_pair().await;
+            let (destination, mut target) = tcp_pair().await;
+            let (tls, mut client_write, mut client_read) = tls_states();
+            let (reader, writer) = TlsApplicationIo::new(inbound, tls).into_owned_split();
+            let relay =
+                TcpRelay::new(TcpRelayConfig::for_test(), FdBudget::new(4_096)).expect("relay");
+            let mut encoder = VisionEncoder::with_padding_seed(USER, &[0x5a; 44]);
+            let mut initial = Vec::new();
+            encoder
+                .encode(b"request", VisionCommand::Continue, false, &mut initial)
+                .expect("request");
+            let session = super::run_resumed_session(
+                reader,
+                writer,
+                destination,
+                USER,
+                initial,
+                &relay,
+                TEST_TIMEOUT,
+            );
+            let traffic = async {
+                let mut request = [0; 7];
+                target.read_exact(&mut request).await?;
+                assert_eq!(&request, b"request");
+                let mut wire = Vec::new();
+                if half_close {
+                    client_write
+                        .seal_into(ContentType::Alert, &[1, 0], 0, &mut wire)
+                        .map_err(io::Error::other)?;
+                    client.write_all(&wire).await?;
+                    assert_eq!(target.read(&mut [0]).await?, 0);
+                }
+                target.write_all(b"pong").await?;
+                let mut first = true;
+                let mut decoder = VisionDecoder::new(USER);
+                let mut decoded = Vec::new();
+                let mut response = Vec::new();
+                // FIN is deliberately withheld until the complete payload is received.
+                while response.len() < 4 {
+                    let mut record = read_tls_record(&mut client, TEST_TIMEOUT)
+                        .await
+                        .map_err(io::Error::other)?
+                        .into_wire();
+                    let opened = client_read
+                        .open_in_place(&mut record)
+                        .map_err(io::Error::other)?;
+                    let payload = if first {
+                        first = false;
+                        &opened.plaintext()[2..]
+                    } else {
+                        opened.plaintext()
+                    };
+                    decoder
+                        .decode(payload, &mut decoded)
+                        .map_err(io::Error::other)?;
+                    response.extend_from_slice(&decoded);
+                }
+                assert_eq!(response, b"pong");
+                target.shutdown().await?;
+                if !half_close {
+                    wire.clear();
+                    client_write
+                        .seal_into(ContentType::Alert, &[1, 0], 0, &mut wire)
+                        .map_err(io::Error::other)?;
+                    client.write_all(&wire).await?;
+                    assert_eq!(target.read(&mut [0]).await?, 0);
+                }
+                let mut record = read_tls_record(&mut client, TEST_TIMEOUT)
+                    .await
+                    .map_err(io::Error::other)?
+                    .into_wire();
+                let opened = client_read
+                    .open_in_place(&mut record)
+                    .map_err(io::Error::other)?;
+                assert_eq!(opened.content_type(), ContentType::Alert);
+                Ok::<_, io::Error>(())
+            };
+            let (stats, traffic) = timeout(TEST_TIMEOUT, async { tokio::join!(session, traffic) })
+                .await
+                .expect("bounded response");
+            traffic.expect("response precedes FIN");
+            let stats = stats.expect("healthy session");
+            assert_eq!(stats.downlink_bytes(), 4);
+            assert!(!stats.downlink_direct());
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn plausible_tls_prefix_survives_a_pending_read() {
+        let (mut origin, server) = tcp_pair().await;
+        let (read_half, _write_half) = server.into_split();
+        let mut reader = super::NestedRecordReader::new(read_half);
+        reader
+            .idle
+            .set_activity(Arc::new(crate::io_activity::SessionActivity::default()));
+        let hello = record(22, &server_hello(0x1301, true));
+        for byte in &hello[..4] {
+            origin.write_all(&[*byte]).await.expect("fragment");
+            assert!(
+                timeout(Duration::from_millis(10), reader.next(TEST_TIMEOUT))
+                    .await
+                    .is_err(),
+                "a plausible incomplete header must not be downgraded"
+            );
+        }
+        origin
+            .write_all(&hello[4..])
+            .await
+            .expect("remaining record");
+        match reader
+            .next(TEST_TIMEOUT)
+            .await
+            .expect("complete TLS record")
+        {
+            super::NestedRead::Record(bytes) => assert_eq!(bytes, hello),
+            _ => panic!("fragmentation must preserve TLS classification"),
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]

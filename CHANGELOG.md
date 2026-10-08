@@ -4,6 +4,14 @@ All notable user-facing changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Initial short replies whose available prefix already rules out nested TLS
+  (for example `ack` or `pong`) are forwarded without waiting for five bytes or
+  origin EOF. Plausible partial TLS headers retain existing classification and
+  authenticated Direct boundaries; this does not claim progress for every
+  ambiguous TLS-looking byte sequence.
+
 ## [2.0.1]
 
 ### Fixed

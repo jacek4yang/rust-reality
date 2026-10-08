@@ -180,6 +180,8 @@ struct PoolInner {
     state: Mutex<PoolState>,
     notify: Notify,
     metrics: PoolMetrics,
+    #[cfg(test)]
+    before_wait: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 #[derive(Clone, Copy)]
@@ -342,6 +344,8 @@ impl AdaptiveTcpPool {
                     target_ready: AtomicU32::new(policy.min_ready),
                     ..PoolMetrics::default()
                 },
+                #[cfg(test)]
+                before_wait: Mutex::new(None),
             }),
         }
     }
@@ -527,9 +531,21 @@ async fn run_controller(inner: Arc<PoolInner>) {
             break;
         }
         reconcile(&inner, &mut dials);
+        #[cfg(test)]
+        if let Some(before_wait) = lock(&inner.before_wait).take() {
+            before_wait();
+        }
+        let notified = inner.notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        // A retirement broadcast stores no permit. Recheck after registering
+        // so shutdown never depends on a later dial or maintenance deadline.
+        if inner.lifecycle.load(Ordering::Acquire) != LIFECYCLE_ACTIVE {
+            break;
+        }
         tokio::select! {
             biased;
-            _ = inner.notify.notified() => {
+            _ = &mut notified => {
                 let now = Instant::now();
                 adjust_if_due(&inner, now);
                 maintenance.as_mut().reset(next_maintenance_deadline(&inner, now));
@@ -860,8 +876,10 @@ mod tests {
     use crate::config::node::network::NetworkConfig;
     use crate::runtime::policy::WarmConnectionPolicy;
     use std::{
+        future::Future,
         net::Ipv4Addr,
         sync::{Arc, Mutex},
+        task::{Context, Waker},
         time::Duration,
     };
 
@@ -933,6 +951,45 @@ mod tests {
             max_lifetime_ms: 1_000,
             shrink_delay_ms: 200,
         }
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn controller_retirement_before_notification_registration_is_immediate() {
+        let policy = policy();
+        let pressure = PressureGauge::new();
+        pressure.set(ResourcePressure::Critical);
+        let authority = WarmPoolAuthority::new(&policy, 1, pressure);
+        let controller = AdaptiveTcpPool::new(
+            Arc::from("127.0.0.1:1"),
+            91,
+            DestinationConnector::with_environment(
+                Duration::from_millis(500),
+                NetworkConfig::default(),
+                NetworkEnvironment::detect(),
+            ),
+            FdBudget::new(64),
+            authority,
+            &policy,
+        );
+        controller.inner.lifecycle.store(
+            super::LIFECYCLE_ACTIVE,
+            std::sync::atomic::Ordering::Release,
+        );
+        let retired = Arc::downgrade(&controller.inner);
+        let retiring_controller = controller.clone();
+        *super::lock(&controller.inner.before_wait) = Some(Box::new(move || {
+            assert!(retiring_controller.deactivate());
+        }));
+        let mut task = Box::pin(super::run_controller(Arc::clone(&controller.inner)));
+        drop(controller);
+
+        assert!(
+            task.as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_ready(),
+            "retirement must not wait for the 30-second maintenance timer"
+        );
+        assert!(retired.upgrade().is_none());
     }
 
     fn pool(
