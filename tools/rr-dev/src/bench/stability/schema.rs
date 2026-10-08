@@ -375,6 +375,19 @@ pub fn parse_native(bytes: &[u8]) -> Result<NativeEvidence, String> {
     serde_json::from_slice(bytes).map_err(|error| format!("invalid native evidence: {error}"))
 }
 
+/// One descriptor-directory sweep, retained even if descriptors disappeared.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DescriptorRead {
+    /// Successfully resolved descriptor targets in this sweep.
+    #[serde(deserialize_with = "unique_descriptors")]
+    pub descriptors: BTreeMap<u32, String>,
+    /// Entries removed between enumeration and readlink.
+    pub closed_during_read: Vec<u32>,
+    /// Non-race read failures, which stop collection without retries.
+    pub errors: Vec<String>,
+}
+
 /// One attempted observation, including partial evidence on failure.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -404,6 +417,8 @@ pub struct Observation {
     /// Each successfully resolved descriptor, keyed by its actual number.
     #[serde(deserialize_with = "unique_descriptors")]
     pub descriptors: BTreeMap<u32, String>,
+    /// Every census sweep, ending at the first consecutive equal complete pair.
+    pub descriptor_reads: Vec<DescriptorRead>,
     /// Kernel Unix-socket rows referenced by this process's descriptors only.
     pub unix_sockets: Option<String>,
     /// Descriptor numbers whose target disappeared during inspection.

@@ -376,6 +376,17 @@ fn verify_read(raw: &Observation) -> Result<(), String> {
             raw.closed_during_read
         ));
     }
+    let reads = &raw.descriptor_reads;
+    if reads.len() > super::collect::MAX_DESCRIPTOR_READS
+        || reads.iter().any(|read| !read.errors.is_empty())
+        || !super::collect::complete_pair(reads)
+        || reads.last().map(|read| &read.descriptors) != Some(&raw.descriptors)
+        || (2..reads.len()).any(|end| super::collect::complete_pair(&reads[..end]))
+    {
+        return Err(
+            "descriptor census is incomplete, inconsistent or not the first stable pair".to_owned(),
+        );
+    }
     if raw.completed_unix_ms < raw.started_unix_ms
         || raw.completed_unix_ms - raw.started_unix_ms > 2000
     {

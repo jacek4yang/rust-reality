@@ -1050,6 +1050,9 @@ fn runtime_unix_descriptors_have_kernel_backed_fixed_startup_ownership() {
     for (fd, inode) in [(997, 900), (998, 901), (999, 900)] {
         raw.descriptors.insert(fd, format!("socket:[{inode}]"));
     }
+    for read in &mut raw.descriptor_reads {
+        read.descriptors.clone_from(&raw.descriptors);
+    }
     raw.unix_sockets = Some("Num RefCount Protocol Flags Type St Inode Path\n0000000000000000: 00000003 00000000 00000000 0001 03 900\n0000000000000000: 00000003 00000000 00000000 0001 03 901\n".to_owned());
     let startup = super::observation::startup_policy(&raw, 1).unwrap();
     let normalized =
@@ -1326,7 +1329,12 @@ fn raw_observation(sample: &schema::Sample, policy: &schema::Policy) -> Value {
         "initial_executable_sha256":sample.process.executable_sha256,"final_executable_sha256":sample.process.executable_sha256,
         "status":"VmRSS: 16384 kB\nVmHWM: 16384 kB\nThreads: 4\n","smaps_rollup":"Pss: 12000 kB\nAnonymous: 10000 kB\n",
         "limits":"Max open files            8192                 8192                 files\n",
-        "descriptors":descriptors,"unix_sockets":"Num RefCount Protocol Flags Type St Inode Path\n","closed_during_read":[],"ownership_log":log,"errors":[]
+        "descriptors":descriptors,
+        "descriptor_reads":[
+            {"descriptors":descriptors,"closed_during_read":[],"errors":[]},
+            {"descriptors":descriptors,"closed_during_read":[],"errors":[]}
+        ],
+        "unix_sockets":"Num RefCount Protocol Flags Type St Inode Path\n","closed_during_read":[],"ownership_log":log,"errors":[]
     })
 }
 
@@ -1408,6 +1416,44 @@ fn raced_census_is_reported_before_deriving_an_ownership_deficit() {
     );
     // The original incomplete evidence must never become a valid sample.
     assert!(super::observation::verify(&raw, sample, policy).is_err());
+}
+
+#[test]
+fn descriptor_sweep_history_is_bounded_complete_and_first_match_only() {
+    let evidence = schema::parse(&serde_json::to_vec(&fixture()).unwrap()).unwrap();
+    let sample = &evidence.cells[0].cycles[0].checkpoints[0].samples[0];
+    let policy = &evidence.cells[0].roles[0].policy;
+    let base = raw_observation(sample, policy);
+    let complete = base["descriptor_reads"][0].clone();
+    let verify = |reads: Value| {
+        let mut value = base.clone();
+        value["descriptor_reads"] = reads;
+        let raw = schema::parse_observation(&serde_json::to_vec(&value).unwrap()).unwrap();
+        super::observation::verify(&raw, sample, policy)
+    };
+    let mut churn = complete.clone();
+    churn["closed_during_read"] = json!([117]);
+    verify(json!([churn, complete, complete])).unwrap();
+    // An extra sweep after success would permit cherry-picking resource counts.
+    for reads in [
+        json!([]),
+        json!([complete]),
+        json!([complete, complete, complete]),
+    ] {
+        assert!(verify(reads).is_err());
+    }
+    let mut denied = complete.clone();
+    denied["errors"] = json!(["permission denied"]);
+    assert!(verify(json!([denied, complete, complete])).is_err());
+    let mut substituted = complete.clone();
+    substituted["descriptors"]["0"] = json!("socket:[99999]");
+    assert!(verify(json!([complete, substituted])).is_err());
+    assert!(
+        verify(json!([
+            churn, churn, churn, churn, churn, complete, complete
+        ]))
+        .is_err()
+    );
 }
 
 #[test]

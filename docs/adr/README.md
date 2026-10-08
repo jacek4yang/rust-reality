@@ -76,3 +76,4 @@ of the law is what it is.
 | [0034](0034-qualify-resource-ownership-and-lifetime.md) | Qualify resource ownership and lifetime | Accepted |
 | [0035](0035-remove-thread-sanitizer-gate.md) | Remove the ThreadSanitizer gate | Accepted |
 | [0036](0036-separate-native-and-qemu-qualification.md) | Separate native and QEMU qualification | Accepted |
+| [0037](0037-bound-descriptor-census-acquisition.md) | Bound descriptor census acquisition | Accepted |

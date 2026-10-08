@@ -116,6 +116,61 @@ pub fn observe(pid: u32, log: &Path) -> Result<Observation, String> {
     let status = read(&root.join("status"), &mut errors);
     let smaps_rollup = read(&root.join("smaps_rollup"), &mut errors);
     let limits = read(&root.join("limits"), &mut errors);
+    let descriptor_reads = descriptor_census(|| descriptor_read(&root));
+    let last = descriptor_reads
+        .last()
+        .expect("at least one descriptor read");
+    let descriptors = last.descriptors.clone();
+    let closed_during_read = last.closed_during_read.clone();
+    errors.extend(last.errors.iter().cloned());
+    if !complete_pair(&descriptor_reads) {
+        errors.push(
+            "descriptor census had no consecutive complete matching reads within its fixed bound"
+                .to_owned(),
+        );
+    }
+    let ownership_log = read(log, &mut errors);
+    let unix_sockets = read(&root.join("net/unix"), &mut errors).and_then(|table| {
+        retain(
+            super::observation::owned_unix_rows(&table, &descriptors),
+            "owned Unix socket rows",
+            &mut errors,
+        )
+    });
+    // Do not use `?` before both terminal identity reads have been attempted.
+    let final_start_ticks = retain(
+        proc_starttime(pid).ok_or_else(|| "process unavailable".to_owned()),
+        "final process identity",
+        &mut errors,
+    );
+    let final_executable_sha256 = retain(
+        file_digest(&root.join("exe")),
+        "final executable identity",
+        &mut errors,
+    );
+    Ok(Observation {
+        pid,
+        started_unix_ms,
+        completed_unix_ms: unix_ms()?,
+        initial_start_ticks,
+        final_start_ticks,
+        boot_id,
+        initial_executable_sha256,
+        final_executable_sha256,
+        status,
+        smaps_rollup,
+        limits,
+        descriptors,
+        descriptor_reads,
+        unix_sockets,
+        closed_during_read,
+        ownership_log,
+        errors,
+    })
+}
+
+fn descriptor_read(root: &Path) -> super::schema::DescriptorRead {
+    let mut errors = Vec::new();
     let mut descriptors = BTreeMap::new();
     let mut closed_during_read = Vec::new();
     let entries = retain(
@@ -154,48 +209,97 @@ pub fn observe(pid: u32, log: &Path) -> Result<Observation, String> {
             }
         }
     }
-    let ownership_log = read(log, &mut errors);
-    let unix_sockets = read(&root.join("net/unix"), &mut errors).and_then(|table| {
-        retain(
-            super::observation::owned_unix_rows(&table, &descriptors),
-            "owned Unix socket rows",
-            &mut errors,
-        )
-    });
-    // Do not use `?` before both terminal identity reads have been attempted.
-    let final_start_ticks = retain(
-        proc_starttime(pid).ok_or_else(|| "process unavailable".to_owned()),
-        "final process identity",
-        &mut errors,
-    );
-    let final_executable_sha256 = retain(
-        file_digest(&root.join("exe")),
-        "final executable identity",
-        &mut errors,
-    );
-    Ok(Observation {
-        pid,
-        started_unix_ms,
-        completed_unix_ms: unix_ms()?,
-        initial_start_ticks,
-        final_start_ticks,
-        boot_id,
-        initial_executable_sha256,
-        final_executable_sha256,
-        status,
-        smaps_rollup,
-        limits,
+    super::schema::DescriptorRead {
         descriptors,
-        unix_sockets,
         closed_during_read,
-        ownership_log,
         errors,
-    })
+    }
+}
+
+/// A fixed work bound, independent of observed resource counts or acceptance.
+pub(super) const MAX_DESCRIPTOR_READS: usize = 6;
+
+pub(super) fn complete_pair(reads: &[super::schema::DescriptorRead]) -> bool {
+    let Some(pair) = reads.last_chunk::<2>() else {
+        return false;
+    };
+    pair.iter()
+        .all(|read| read.errors.is_empty() && read.closed_during_read.is_empty())
+        && pair[0].descriptors == pair[1].descriptors
+}
+
+fn descriptor_census(
+    mut scan: impl FnMut() -> super::schema::DescriptorRead,
+) -> Vec<super::schema::DescriptorRead> {
+    let mut reads = Vec::new();
+    for _ in 0..MAX_DESCRIPTOR_READS {
+        reads.push(scan());
+        if !reads.last().expect("one read").errors.is_empty() || complete_pair(&reads) {
+            break;
+        }
+    }
+    reads
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn census_read(target: &str) -> super::super::schema::DescriptorRead {
+        super::super::schema::DescriptorRead {
+            descriptors: BTreeMap::from([(9, target.to_owned())]),
+            closed_during_read: Vec::new(),
+            errors: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn census_retains_churn_and_stops_at_first_complete_equal_pair() {
+        let mut first = census_read("socket:[1]");
+        first.closed_during_read.push(117);
+        let mut source = [first, census_read("socket:[2]"), census_read("socket:[2]")].into_iter();
+        let reads = descriptor_census(|| source.next().expect("must not keep sampling"));
+        assert_eq!(reads.len(), 3);
+        assert_eq!(reads[0].closed_during_read, [117]);
+        assert!(complete_pair(&reads));
+    }
+
+    #[test]
+    fn census_does_not_retry_permission_or_other_read_errors() {
+        let reads = descriptor_census(|| {
+            let mut read = census_read("socket:[1]");
+            read.errors.push("permission denied".to_owned());
+            read
+        });
+        assert_eq!(reads.len(), 1);
+        assert!(!complete_pair(&reads));
+    }
+
+    #[test]
+    fn census_bounds_continuous_churn_without_manufacturing_stability() {
+        let mut number = 0;
+        let reads = descriptor_census(|| {
+            number += 1;
+            census_read(&format!("socket:[{number}]"))
+        });
+        assert_eq!(reads.len(), MAX_DESCRIPTOR_READS);
+        assert!(!complete_pair(&reads));
+    }
+
+    #[test]
+    fn census_never_searches_for_a_smaller_resource_count() {
+        let mut calls = 0;
+        let reads = descriptor_census(|| {
+            calls += 1;
+            assert!(calls <= 2, "first coherent pair must end collection");
+            let mut read = census_read("socket:[1]");
+            read.descriptors
+                .extend((10..100).map(|fd| (fd, format!("socket:[{fd}]"))));
+            read
+        });
+        assert_eq!(reads.last().unwrap().descriptors.len(), 91);
+        assert!(complete_pair(&reads));
+    }
 
     #[test]
     fn missing_process_preserves_each_failed_read_and_final_identity_attempt() {
