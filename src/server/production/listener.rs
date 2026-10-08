@@ -18,7 +18,10 @@ use tokio::{sync::watch, task::JoinError, time};
 
 use crate::{
     logging::{LogEvent, RejectionReason},
-    runtime::{AdmissionKind, ResourcePressure, connection::ConnectionTasks},
+    runtime::{
+        AdmissionKind, PressureGauge, ResourcePressure,
+        connection::{ConnectionTaskResult, ConnectionTasks},
+    },
     transport::{
         FdPermit, UNITS_INBOUND_SOCKET,
         tcp::{AcceptBackoff, AcceptErrorClass, EmergencyDescriptor, TcpAcceptor},
@@ -66,19 +69,13 @@ pub(super) async fn run_listener(
     let mut last_pressure = fd_budget.pressure();
     loop {
         // At critical resource pressure, pause before touching the listener.
-        // The wait is a `Notify` wakeup, never a poll loop, it costs one
-        // atomic load in any other state, and it stays cancellable so
-        // shutdown is prompt. Established connections are unaffected: their
-        // tasks are already running.
-        tokio::select! {
-            biased;
-            changed = shutdown.changed() => {
-                if changed.is_err() || *shutdown.borrow() {
-                    break;
-                }
-                continue;
-            }
-            () = runtime.pressure.wait_while_critical() => {}
+        // The wait uses `Notify`, never a poll loop. Completed tasks are
+        // still reaped, and shutdown remains prompt. Established connections
+        // are unaffected: their tasks are already running.
+        if wait_for_accept_readiness(&runtime.pressure, &mut connections, &mut shutdown).await
+            == AcceptReadiness::Shutdown
+        {
+            break;
         }
 
         // Acquire the inbound descriptor permit before touching the listener.
@@ -213,6 +210,39 @@ pub(super) async fn run_listener(
     Ok(())
 }
 
+#[derive(Debug, Eq, PartialEq)]
+enum AcceptReadiness {
+    Ready,
+    Shutdown,
+}
+
+/// Pauses admission without pausing completed-task reclamation or shutdown.
+///
+/// Completed outputs retain task storage until joined. Reap them before the
+/// immediately-ready normal-pressure branch, while shutdown retains priority.
+/// No new tasks are admitted here, so the ready completion backlog is finite;
+/// pending connections do not prevent admission once pressure clears.
+async fn wait_for_accept_readiness(
+    pressure: &PressureGauge,
+    connections: &mut ConnectionTasks,
+    shutdown: &mut watch::Receiver<bool>,
+) -> AcceptReadiness {
+    loop {
+        tokio::select! {
+            biased;
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    return AcceptReadiness::Shutdown;
+                }
+            }
+            completed = connections.join_next(), if !connections.is_empty() => {
+                consume_connection_result(completed);
+            }
+            () = pressure.wait_while_critical() => return AcceptReadiness::Ready,
+        }
+    }
+}
+
 /// Configures and admits one accepted stream.
 ///
 /// A socket-configuration failure closes exactly that stream and releases
@@ -269,11 +299,12 @@ fn admit_accepted_connection(
         }
     };
     emit_debug(&logger, || LogEvent::ConnectionAccepted { peer });
-    connections.spawn(peer, async move {
+    connections.spawn(async move {
         // Both permits move into the task and are released when it ends, on
         // every path including cancellation and abort.
         let _fd_permit = fd_permit;
-        run_connection(state, stream, peer, permit, &logger).await
+        let result = run_connection(state, stream, peer, permit, &logger).await;
+        ConnectionTaskResult::new(peer, result)
     });
 }
 
@@ -344,12 +375,143 @@ pub(super) fn is_degradable_listener_bind_error(address: SocketAddr, error: &io:
 #[cfg(test)]
 mod tests {
     use std::{
-        io,
+        error::Error,
+        fmt, future, io,
         net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
     };
 
-    use super::is_degradable_listener_bind_error;
+    use futures_util::FutureExt as _;
+    use tokio::sync::{oneshot, watch};
+
+    use super::{AcceptReadiness, is_degradable_listener_bind_error, wait_for_accept_readiness};
     use crate::config::node::listener::ListenFamily;
+    use crate::runtime::{
+        PressureGauge, ResourcePressure,
+        connection::{ConnectionTaskResult, ConnectionTasks},
+    };
+
+    #[derive(Debug)]
+    struct ReapedOutput(Arc<AtomicUsize>);
+
+    impl fmt::Display for ReapedOutput {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("completed connection output")
+        }
+    }
+
+    impl Error for ReapedOutput {}
+
+    impl Drop for ReapedOutput {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    async fn complete_connection(tasks: &mut ConnectionTasks, reaped: &Arc<AtomicUsize>) {
+        let (finished, receiver) = oneshot::channel();
+        let output = ReapedOutput(Arc::clone(reaped));
+        tasks.spawn(async move {
+            let result = ConnectionTaskResult::new(
+                SocketAddr::from((Ipv4Addr::LOCALHOST, 40_001)),
+                Err(io::Error::other(output)),
+            );
+            finished.send(()).expect("completion observer exists");
+            result
+        });
+        receiver
+            .await
+            .expect("connection has completed its only poll");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn critical_pressure_reaps_outputs_without_resuming_accepts() {
+        let pressure = PressureGauge::new();
+        pressure.set(ResourcePressure::Critical);
+        let (shutdown_sender, mut shutdown) = watch::channel(false);
+        let mut connections = ConnectionTasks::new();
+        let reaped = Arc::new(AtomicUsize::new(0));
+        complete_connection(&mut connections, &reaped).await;
+        assert_eq!(reaped.load(Ordering::SeqCst), 0, "output awaits reaping");
+        let wait = wait_for_accept_readiness(&pressure, &mut connections, &mut shutdown);
+        tokio::pin!(wait);
+        assert!(wait.as_mut().now_or_never().is_none());
+        assert_eq!(pressure.state(), ResourcePressure::Critical);
+        assert_eq!(reaped.load(Ordering::SeqCst), 1);
+        shutdown_sender
+            .send(true)
+            .expect("listener observes shutdown");
+        assert_eq!(wait.await, AcceptReadiness::Shutdown);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn normal_pressure_reaps_ready_outputs_before_accept_readiness() {
+        let pressure = PressureGauge::new();
+        let (_sender, mut shutdown) = watch::channel(false);
+        let mut connections = ConnectionTasks::new();
+        let reaped = Arc::new(AtomicUsize::new(0));
+        for _ in 0..3 {
+            complete_connection(&mut connections, &reaped).await;
+        }
+        assert_eq!(
+            wait_for_accept_readiness(&pressure, &mut connections, &mut shutdown).await,
+            AcceptReadiness::Ready,
+        );
+        assert_eq!(reaped.load(Ordering::SeqCst), 3);
+        assert!(connections.is_empty());
+        connections.spawn(future::pending());
+        assert_eq!(
+            wait_for_accept_readiness(&pressure, &mut connections, &mut shutdown).now_or_never(),
+            Some(AcceptReadiness::Ready),
+            "a pending connection must not block normal admission",
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn critical_pressure_wait_resumes_only_after_pressure_clears() {
+        let pressure = PressureGauge::new();
+        pressure.set(ResourcePressure::Critical);
+        let (sender, mut shutdown) = watch::channel(false);
+        let mut connections = ConnectionTasks::new();
+        let wait = wait_for_accept_readiness(&pressure, &mut connections, &mut shutdown);
+        tokio::pin!(wait);
+        assert!(wait.as_mut().now_or_never().is_none());
+        sender
+            .send(false)
+            .expect("listener observes non-shutdown updates");
+        assert!(wait.as_mut().now_or_never().is_none());
+        pressure.set(ResourcePressure::Normal);
+        assert_eq!(wait.as_mut().now_or_never(), Some(AcceptReadiness::Ready));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pressure_wait_prioritizes_shutdown_and_closed_channel() {
+        for close_channel in [false, true] {
+            let pressure = PressureGauge::new();
+            let (sender, mut shutdown) = watch::channel(false);
+            let mut connections = ConnectionTasks::new();
+            let reaped = Arc::new(AtomicUsize::new(0));
+            complete_connection(&mut connections, &reaped).await;
+            if close_channel {
+                drop(sender);
+            } else {
+                sender.send(true).expect("listener observes shutdown");
+            }
+            assert_eq!(
+                wait_for_accept_readiness(&pressure, &mut connections, &mut shutdown)
+                    .now_or_never(),
+                Some(AcceptReadiness::Shutdown),
+            );
+            assert_eq!(
+                reaped.load(Ordering::SeqCst),
+                0,
+                "shutdown wins over reaping"
+            );
+        }
+    }
 
     /// Replays the supervisor's bind loop against fabricated `bind` outcomes,
     /// so every errno case is covered without needing a host that lacks a

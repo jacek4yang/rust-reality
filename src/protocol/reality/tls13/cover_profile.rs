@@ -50,6 +50,12 @@ pub(crate) struct CoverProfile {
 }
 
 impl CoverProfile {
+    #[cfg(test)]
+    pub(crate) fn controlled_test_observation() -> (ClientHello, Self) {
+        let (hello, profile, _, _) = equivalence::observed_profile(&[]);
+        (hello, profile)
+    }
+
     /// Consumes one probe, validates its response and erases per-session state.
     pub(crate) fn from_controlled_observation(
         class: NormalizedClientHelloClass,
@@ -502,9 +508,10 @@ mod equivalence {
             .to_vec()
     }
 
-    /// Builds the flight for `client` from a cover observation containing
-    /// `extensions`, once through a materialized profile and once live.
-    fn both_paths(extensions: &[(u16, Vec<u8>)]) -> (Vec<u8>, Vec<u8>) {
+    /// Builds a profile from a fully encrypted in-memory controlled observation.
+    pub(super) fn observed_profile(
+        extensions: &[(u16, Vec<u8>)],
+    ) -> (ClientHello, CoverProfile, [u8; 32], CoverHandshakePlan) {
         let client = client();
         let class = client
             .normalized_profile_class()
@@ -547,6 +554,12 @@ mod equivalence {
         let profile =
             CoverProfile::from_controlled_observation(class, probe, target, plan, &sealed)
                 .expect("the cover observation must become a profile");
+        (client, profile, cover_public, plan)
+    }
+
+    /// Compares a materialized profile flight with the live-cover flight.
+    fn both_paths(extensions: &[(u16, Vec<u8>)]) -> (Vec<u8>, Vec<u8>) {
+        let (client, profile, cover_public, plan) = observed_profile(extensions);
         let materialized = profile
             .materialize(&client, [0x5a; 32])
             .expect("the profile must materialize for its own class");

@@ -4,6 +4,15 @@ All notable user-facing changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Connection-task bookkeeping submits the accepted future directly rather than
+  wrapping it in another large async state, reducing task storage without an
+  extra allocation, lock, or change to connection limits and cancellation.
+- Rust API: `ConnectionTasks::spawn` now takes a future returning
+  `ConnectionTaskResult`; construct that result with `ConnectionTaskResult::new`
+  in the caller's existing future. Wire and configuration formats are unchanged.
+
 ### Fixed
 
 - Initial short replies whose available prefix already rules out nested TLS

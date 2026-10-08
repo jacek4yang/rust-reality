@@ -463,12 +463,24 @@ impl ClientHello {
     /// Produces a secret-free template only after the caller has completed the
     /// authenticated REALITY handshake. User bytes can nominate a bounded
     /// class, but never contribute cover observations or profile semantics.
+    #[cfg(test)]
     pub(crate) fn controlled_cover_probe_template(
         &self,
     ) -> Result<CoverProbeTemplate, CoverProbeError> {
         let class = self
             .normalized_profile_class()
             .map_err(|_| CoverProbeError::Malformed)?;
+        self.controlled_cover_probe_template_for_class(class)
+    }
+
+    /// Builds a template after the caller has classified this exact hello.
+    /// This avoids repeating classification after a cache-admission check.
+    /// Call only after the authenticated handshake; sanitization remains here,
+    /// and controlled observations still validate the probe's class themselves.
+    pub(crate) fn controlled_cover_probe_template_for_class(
+        &self,
+        class: NormalizedClientHelloClass,
+    ) -> Result<CoverProbeTemplate, CoverProbeError> {
         let mut message = self.raw_message.to_vec();
         message
             .get_mut(6..38)

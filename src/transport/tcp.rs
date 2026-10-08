@@ -487,13 +487,25 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[tokio::test(flavor = "current_thread")]
     async fn separate_wildcard_sockets_accept_ipv4_and_ipv6_on_one_port() {
-        let ipv4 = TcpAcceptor::bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)))
-            .await
-            .expect("IPv4 wildcard should bind");
-        let port = ipv4.local_addr().expect("read IPv4 port").port();
-        let ipv6 = TcpAcceptor::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)))
-            .await
-            .expect("independent IPv6 wildcard should bind on the same port");
+        // An ephemeral IPv4 port need not be free in the IPv6 namespace.
+        // Retry only reservation conflicts, not connection assertions or
+        // socket-option failures, and keep the successful pair owned.
+        let mut pair = None;
+        for _ in 0..16 {
+            let ipv4 = TcpAcceptor::bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)))
+                .await
+                .expect("IPv4 wildcard should bind");
+            let port = ipv4.local_addr().expect("read IPv4 port").port();
+            match TcpAcceptor::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port))).await {
+                Ok(ipv6) => {
+                    pair = Some((ipv4, ipv6, port));
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => continue,
+                Err(error) => panic!("IPv6 wildcard fixture bind failed: {error}"),
+            }
+        }
+        let (ipv4, ipv6, port) = pair.expect("free wildcard pair within 16 fixture attempts");
         assert!(ipv6.ipv6_only().expect("read IPV6_V6ONLY"));
 
         let v4_connect = TcpStream::connect((Ipv4Addr::LOCALHOST, port));

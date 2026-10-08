@@ -55,7 +55,15 @@ pub(super) fn detail(error: &ConnectionRunError) -> Option<FailureDetail> {
     })
 }
 
-fn io_cause(error: &io::Error) -> CauseAndErrno {
+pub(super) fn io_cause(error: &io::Error) -> CauseAndErrno {
+    // Connector adapters retain the typed error inside io::Error. Project
+    // that type before the generic ErrorKind, without reading display text.
+    if let Some(source) = error
+        .get_ref()
+        .and_then(|source| source.downcast_ref::<DestinationConnectError>())
+    {
+        return destination(source);
+    }
     let cause = if is_write_stall_timeout_abort(error) {
         Cause::Timeout
     } else {
@@ -161,6 +169,64 @@ fn session(error: &VisionSessionError) -> CauseAndErrno {
 mod tests {
     use super::*;
     use crate::logging::{LogEvent, RejectionReason};
+
+    #[test]
+    fn wrapped_connector_failures_keep_resource_and_policy_classification() {
+        type Case = (fn() -> DestinationConnectError, Cause, RejectionReason);
+        let cases: [Case; 3] = [
+            (
+                || DestinationConnectError::Allocation,
+                Cause::Allocation,
+                RejectionReason::ResourceLimit,
+            ),
+            (
+                || DestinationConnectError::NoAddressesForPolicy,
+                Cause::Policy,
+                RejectionReason::Outbound,
+            ),
+            (
+                || DestinationConnectError::TooManyResolvedAddresses,
+                Cause::Policy,
+                RejectionReason::Outbound,
+            ),
+        ];
+        for (make, cause, reason) in cases {
+            for error in [
+                ConnectionRunError::Vision(VisionSessionError::Outbound(
+                    OutboundConnectError::SocksConnect(make().into_io()),
+                )),
+                ConnectionRunError::Vision(VisionSessionError::Outbound(
+                    OutboundConnectError::NxrConnect(make().into_io()),
+                )),
+                ConnectionRunError::Vision(VisionSessionError::HandoffLine(
+                    HandoffLineError::Connect(make().into_io()),
+                )),
+            ] {
+                assert_eq!(detail(&error).expect("typed failure").cause, cause);
+                assert_eq!(error.rejection_reason(), reason);
+            }
+        }
+    }
+
+    #[test]
+    fn untyped_io_errors_do_not_gain_a_policy_cause_from_kind_or_text() {
+        let text = "PRIVATE destination NoAddressesForPolicy DescriptorBudget";
+        assert_eq!(
+            io_cause(&io::Error::new(io::ErrorKind::InvalidInput, text)),
+            (Cause::Io, None),
+        );
+        assert_eq!(
+            io_cause(&io::Error::from_raw_os_error(111)),
+            (Cause::ConnectionRefused, Some(111)),
+        );
+        let failure = detail(&ConnectionRunError::Vision(VisionSessionError::Outbound(
+            OutboundConnectError::SocksConnect(io::Error::new(io::ErrorKind::InvalidInput, text)),
+        )))
+        .expect("outbound detail");
+        let json = serde_json::to_string(&failure).expect("serialize detail");
+        assert!(!json.contains("PRIVATE"));
+        assert!(!json.contains("destination"));
+    }
 
     #[test]
     fn diagnostics_never_serialize_io_messages_or_outbound_tags() {

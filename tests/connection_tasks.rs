@@ -4,7 +4,7 @@ use std::{
     net::{Ipv4Addr, SocketAddr},
 };
 
-use rust_reality::runtime::connection::ConnectionTasks;
+use rust_reality::runtime::connection::{ConnectionTaskResult, ConnectionTasks};
 
 #[tokio::test(flavor = "current_thread")]
 async fn isolates_connection_failure_from_sibling_task() {
@@ -14,14 +14,20 @@ async fn isolates_connection_failure_from_sibling_task() {
 
     let mut tasks = ConnectionTasks::new();
 
-    tasks.spawn(failed_peer, async {
-        Err(io::Error::new(
-            ErrorKind::ConnectionAborted,
-            "simulated connection failure",
-        ))
+    tasks.spawn(async move {
+        ConnectionTaskResult::new(
+            failed_peer,
+            Err(io::Error::new(
+                ErrorKind::ConnectionAborted,
+                "simulated connection failure",
+            )),
+        )
     });
 
-    tasks.spawn(pending_peer, future::pending());
+    tasks.spawn(async move {
+        future::pending::<()>().await;
+        ConnectionTaskResult::new(pending_peer, Ok(()))
+    });
 
     let completed = tasks
         .join_next()
@@ -39,7 +45,7 @@ async fn isolates_connection_failure_from_sibling_task() {
 
     assert_eq!(tasks.len(), 1);
 
-    tasks.spawn(later_peer, async { Ok(()) });
+    tasks.spawn(async move { ConnectionTaskResult::new(later_peer, Ok(())) });
 
     assert_eq!(tasks.len(), 2);
 

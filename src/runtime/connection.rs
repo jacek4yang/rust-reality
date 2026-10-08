@@ -10,6 +10,11 @@ pub struct ConnectionTaskResult {
 }
 
 impl ConnectionTaskResult {
+    /// Associates a completed connection's result with its remote address.
+    pub fn new(peer_addr: SocketAddr, result: io::Result<()>) -> Self {
+        Self { peer_addr, result }
+    }
+
     /// Returns the remote address associated with the connection.
     pub fn peer_addr(&self) -> SocketAddr {
         self.peer_addr
@@ -43,16 +48,16 @@ impl ConnectionTasks {
         self.tasks.is_empty()
     }
 
-    /// Spawns one connection future and associates it with a peer address.
-    pub fn spawn<F>(&mut self, peer_addr: SocketAddr, future: F)
+    /// Spawns a connection future that produces its peer-aware completion.
+    ///
+    /// The caller constructs the result in its existing async state. Wrapping
+    /// an already large future in another async adapter retains both its
+    /// captured input and await state, almost doubling the task allocation.
+    pub fn spawn<F>(&mut self, future: F)
     where
-        F: Future<Output = io::Result<()>> + Send + 'static,
+        F: Future<Output = ConnectionTaskResult> + Send + 'static,
     {
-        self.tasks.spawn(async move {
-            let result = future.await;
-
-            ConnectionTaskResult { peer_addr, result }
-        });
+        self.tasks.spawn(future);
     }
 
     /// Waits for one connection task to finish.
@@ -74,7 +79,7 @@ mod tests {
         net::{Ipv4Addr, SocketAddr},
     };
 
-    use super::ConnectionTasks;
+    use super::{ConnectionTaskResult, ConnectionTasks};
 
     #[tokio::test(flavor = "current_thread")]
     async fn completed_task_retains_peer_address() {
@@ -82,7 +87,7 @@ mod tests {
 
         let mut tasks = ConnectionTasks::new();
 
-        tasks.spawn(peer_addr, async { Ok(()) });
+        tasks.spawn(async move { ConnectionTaskResult::new(peer_addr, Ok(())) });
 
         assert_eq!(tasks.len(), 1);
 
@@ -107,14 +112,20 @@ mod tests {
 
         let mut tasks = ConnectionTasks::new();
 
-        tasks.spawn(failed_peer, async {
-            Err(io::Error::new(
-                ErrorKind::ConnectionReset,
-                "simulated connection reset",
-            ))
+        tasks.spawn(async move {
+            ConnectionTaskResult::new(
+                failed_peer,
+                Err(io::Error::new(
+                    ErrorKind::ConnectionReset,
+                    "simulated connection reset",
+                )),
+            )
         });
 
-        tasks.spawn(pending_peer, future::pending());
+        tasks.spawn(async move {
+            future::pending::<()>().await;
+            ConnectionTaskResult::new(pending_peer, Ok(()))
+        });
 
         assert_eq!(tasks.len(), 2);
 
@@ -132,5 +143,78 @@ mod tests {
             ErrorKind::ConnectionReset
         );
         assert_eq!(tasks.len(), 1);
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn spawning_large_connection_does_not_double_its_allocation() {
+        let peer = SocketAddr::from((Ipv4Addr::LOCALHOST, 40_010));
+        let mut tasks = ConnectionTasks::new();
+        let payload = std::hint::black_box([0_u8; 32 * 1024]);
+        let work = async move {
+            future::pending::<()>().await;
+            std::hint::black_box(payload);
+            ConnectionTaskResult::new(peer, Ok(()))
+        };
+        let measured = allocation_counter::measure(|| tasks.spawn(work));
+        eprintln!(
+            "spawn allocation bytes={} count={}",
+            measured.bytes_total, measured.count_total
+        );
+        tasks.abort_all();
+        while tasks.join_next().await.is_some() {}
+        assert!(
+            measured.bytes_total < 48 * 1024,
+            "a 32 KiB connection must not be copied into a second large async state: {measured:?}"
+        );
+    }
+
+    struct DropSignal(Option<tokio::sync::oneshot::Sender<()>>);
+
+    impl Drop for DropSignal {
+        fn drop(&mut self) {
+            if let Some(sender) = self.0.take() {
+                let _ = sender.send(());
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn abort_releases_connection_captures_and_reaps_the_task() {
+        let peer = SocketAddr::from((Ipv4Addr::LOCALHOST, 40_011));
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let signal = DropSignal(Some(sender));
+        let mut tasks = ConnectionTasks::new();
+        tasks.spawn(async move {
+            let _signal = signal;
+            future::pending::<()>().await;
+            ConnectionTaskResult::new(peer, Ok(()))
+        });
+        tokio::task::yield_now().await;
+        tasks.abort_all();
+        let error = tasks
+            .join_next()
+            .await
+            .expect("task is tracked")
+            .expect_err("task aborts");
+        assert!(error.is_cancelled());
+        receiver.await.expect("captured resources are dropped");
+        assert!(tasks.is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dropping_task_set_releases_an_unpolled_capture() {
+        let peer = SocketAddr::from((Ipv4Addr::LOCALHOST, 40_012));
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let signal = DropSignal(Some(sender));
+        let mut tasks = ConnectionTasks::new();
+        tasks.spawn(async move {
+            let _signal = signal;
+            future::pending::<()>().await;
+            ConnectionTaskResult::new(peer, Ok(()))
+        });
+        drop(tasks);
+        tokio::time::timeout(std::time::Duration::from_secs(1), receiver)
+            .await
+            .expect("cancelled task is reaped promptly")
+            .expect("unpolled captured resources are dropped");
     }
 }

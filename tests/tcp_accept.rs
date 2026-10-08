@@ -64,15 +64,8 @@ async fn accepts_ipv6_loopback_connection() {
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "current_thread")]
 async fn independent_wildcard_sockets_accept_both_families() {
-    let ipv6 = TcpAcceptor::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)))
-        .await
-        .expect("IPv6 wildcard listener should bind");
+    let (ipv6, ipv4) = reserve_wildcard_pair(None).await;
     let port = ipv6.local_addr().expect("read IPv6 address").port();
-    let ipv4 = TcpAcceptor::bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, port)))
-        .await
-        .expect("independent IPv4 wildcard listener should bind the same port");
-
-    assert!(ipv6.ipv6_only().expect("read IPV6_V6ONLY"));
     assert!(ipv4.local_addr().expect("read IPv4 address").is_ipv4());
 
     let ipv4_address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
@@ -88,4 +81,55 @@ async fn independent_wildcard_sockets_accept_both_families() {
     ipv6_client.expect("IPv6 client should connect");
     let (_, ipv6_peer) = ipv6_accepted.expect("IPv6 socket should accept");
     assert!(ipv6_peer.is_ipv6());
+}
+
+#[cfg(target_os = "linux")]
+async fn reserve_wildcard_pair(mut first: Option<TcpAcceptor>) -> (TcpAcceptor, TcpAcceptor) {
+    // IPv6-only port 0 does not reserve that port in the IPv4 namespace.
+    // Keep both successful listeners owned; retry only fixture selection when
+    // another test already owns the IPv4 port. Never retry a V6ONLY regression.
+    for _ in 0..16 {
+        let ipv6 = match first.take() {
+            Some(listener) => listener,
+            None => TcpAcceptor::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)))
+                .await
+                .expect("IPv6 wildcard listener should bind"),
+        };
+        assert!(ipv6.ipv6_only().expect("read IPV6_V6ONLY"));
+        let port = ipv6.local_addr().expect("read IPv6 address").port();
+        match TcpAcceptor::bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, port))).await {
+            Ok(ipv4) => return (ipv6, ipv4),
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => continue,
+            Err(error) => panic!("IPv4 wildcard fixture bind failed: {error}"),
+        }
+    }
+    panic!("could not reserve a free wildcard pair within 16 fixture attempts");
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "current_thread")]
+async fn wildcard_pair_setup_survives_a_reserved_ipv4_port() {
+    let (seed_ipv6, occupied_ipv4) = reserve_wildcard_pair(None).await;
+    let occupied = occupied_ipv4
+        .local_addr()
+        .expect("occupied IPv4 address")
+        .port();
+    let (ipv6, ipv4) = reserve_wildcard_pair(Some(seed_ipv6)).await;
+    let selected = ipv6.local_addr().expect("selected IPv6 address").port();
+    assert_ne!(
+        selected, occupied,
+        "the conflicting IPv4 socket stays owned"
+    );
+    assert_eq!(
+        ipv4.local_addr().expect("selected IPv4 address").port(),
+        selected
+    );
+    assert!(ipv6.ipv6_only().expect("read IPV6_V6ONLY"));
+    assert_eq!(
+        occupied_ipv4
+            .local_addr()
+            .expect("original socket remains open")
+            .port(),
+        occupied
+    );
 }

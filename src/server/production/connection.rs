@@ -219,6 +219,17 @@ fn destination_rejection_reason(
     }
 }
 
+fn connect_io_rejection_reason(error: &io::Error) -> RejectionReason {
+    use crate::logging::FailureCause;
+    match super::failure::io_cause(error).0 {
+        FailureCause::Timeout => RejectionReason::Timeout,
+        FailureCause::Allocation | FailureCause::DescriptorBudget | FailureCause::Admission => {
+            RejectionReason::ResourceLimit
+        }
+        _ => RejectionReason::Outbound,
+    }
+}
+
 fn outbound_rejection_reason(
     error: &crate::server::outbound::OutboundConnectError,
 ) -> RejectionReason {
@@ -228,6 +239,9 @@ fn outbound_rejection_reason(
             RejectionReason::ResourceLimit
         }
         OutboundConnectError::Direct(error) => destination_rejection_reason(error),
+        OutboundConnectError::SocksConnect(error) | OutboundConnectError::NxrConnect(error) => {
+            connect_io_rejection_reason(error)
+        }
         OutboundConnectError::SocksTimeout | OutboundConnectError::NxrTimeout => {
             RejectionReason::Timeout
         }
@@ -245,6 +259,9 @@ fn vision_rejection_reason(error: &VisionSessionError) -> RejectionReason {
             RejectionReason::ResourceLimit
         }
         VisionSessionError::Outbound(error) => outbound_rejection_reason(error),
+        VisionSessionError::HandoffLine(HandoffLineError::Connect(error)) => {
+            connect_io_rejection_reason(error)
+        }
         VisionSessionError::Tls(error) => match super::failure::tls_cause(error).0 {
             crate::logging::FailureCause::Timeout => RejectionReason::Timeout,
             crate::logging::FailureCause::Allocation => RejectionReason::ResourceLimit,

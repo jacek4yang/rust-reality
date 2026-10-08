@@ -282,7 +282,20 @@ impl CoverProfiles {
         if self.inner.lifecycle.load(Ordering::Acquire) != LIFECYCLE_ACTIVE {
             return;
         }
-        let Ok(template) = hello.controlled_cover_probe_template() else {
+        let Ok(class) = hello.normalized_profile_class() else {
+            return;
+        };
+        let now = Instant::now();
+        if self
+            .inner
+            .published
+            .load()
+            .iter()
+            .any(|entry| entry.class == class && entry.expires_at > now)
+        {
+            return;
+        }
+        let Ok(template) = hello.controlled_cover_probe_template_for_class(class) else {
             return;
         };
         enqueue(&self.inner, template, Instant::now());
@@ -649,6 +662,107 @@ mod tests {
             .expect("test relay must build");
         let fallback = RealityFallback::new("127.0.0.1:1", governor.clone(), &policy, relay);
         CoverProfiles::new(23, fallback, governor, Duration::from_secs(1))
+    }
+
+    #[test]
+    fn cached_nomination_avoids_probe_template_allocations() {
+        let profiles = test_profiles();
+        profiles
+            .inner
+            .lifecycle
+            .store(LIFECYCLE_ACTIVE, Ordering::Release);
+        let (hello, profile) = super::CoverProfile::controlled_test_observation();
+        let template = hello.controlled_cover_probe_template().expect("template");
+        super::publish(
+            &profiles.inner,
+            super::Candidate {
+                class: template.class(),
+                template,
+            },
+            profile,
+        );
+        profiles.nominate(&hello); // Warm this thread's ArcSwap bookkeeping.
+        let classify = allocation_counter::measure(|| {
+            std::hint::black_box(hello.normalized_profile_class().expect("class"));
+        });
+        let nominate = allocation_counter::measure(|| profiles.nominate(&hello));
+        eprintln!(
+            "cached nominate bytes={} count={}; classify bytes={} count={}",
+            nominate.bytes_total, nominate.count_total, classify.bytes_total, classify.count_total
+        );
+        assert_eq!(
+            nominate.bytes_total, classify.bytes_total,
+            "a current profile needs classification but no probe template"
+        );
+        assert_eq!(nominate.count_total, classify.count_total);
+        assert!(lock(&profiles.inner.queue).candidates.is_empty());
+    }
+
+    #[test]
+    fn expired_profile_nomination_still_queues_a_controlled_probe() {
+        let profiles = test_profiles();
+        profiles
+            .inner
+            .lifecycle
+            .store(LIFECYCLE_ACTIVE, Ordering::Release);
+        let (hello, profile) = super::CoverProfile::controlled_test_observation();
+        let template = hello.controlled_cover_probe_template().expect("template");
+        let class = template.class();
+        super::publish(
+            &profiles.inner,
+            super::Candidate { class, template },
+            profile,
+        );
+        let mut expired = profiles.inner.published.load().as_ref().clone();
+        expired[0].expires_at = tokio::time::Instant::now() - Duration::from_secs(1);
+        profiles.inner.published.store(Arc::new(expired));
+        profiles.nominate(&hello);
+        let queue = lock(&profiles.inner.queue);
+        assert_eq!(queue.candidates.len(), 1);
+        assert_eq!(queue.candidates[0].class, class);
+        assert_eq!(queue.candidates[0].template.class(), class);
+    }
+
+    #[test]
+    fn missing_profile_nomination_preserves_collection_and_retirement() {
+        let profiles = test_profiles();
+        profiles
+            .inner
+            .lifecycle
+            .store(LIFECYCLE_ACTIVE, Ordering::Release);
+        let (hello, _) = super::CoverProfile::controlled_test_observation();
+        profiles.nominate(&hello);
+        assert_eq!(lock(&profiles.inner.queue).candidates.len(), 1);
+        profiles.nominate(&hello);
+        assert_eq!(lock(&profiles.inner.queue).candidates.len(), 1);
+        assert!(profiles.deactivate());
+        profiles.nominate(&hello);
+        assert!(lock(&profiles.inner.queue).candidates.is_empty());
+    }
+
+    #[test]
+    fn cold_nomination_does_not_repeat_classification_allocations() {
+        let reference = test_profiles();
+        let candidate = test_profiles();
+        reference
+            .inner
+            .lifecycle
+            .store(LIFECYCLE_ACTIVE, Ordering::Release);
+        candidate
+            .inner
+            .lifecycle
+            .store(LIFECYCLE_ACTIVE, Ordering::Release);
+        let (hello, _) = super::CoverProfile::controlled_test_observation();
+        drop(reference.inner.published.load());
+        drop(candidate.inner.published.load());
+        let before = allocation_counter::measure(|| {
+            let template = hello.controlled_cover_probe_template().expect("template");
+            super::enqueue(&reference.inner, template, tokio::time::Instant::now());
+        });
+        let after = allocation_counter::measure(|| candidate.nominate(&hello));
+        assert_eq!(after.bytes_total, before.bytes_total);
+        assert_eq!(after.count_total, before.count_total);
+        assert_eq!(lock(&candidate.inner.queue).candidates.len(), 1);
     }
 
     #[derive(Default)]
