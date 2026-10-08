@@ -500,6 +500,63 @@ mod tests {
     }
 
     #[test]
+    fn committed_entries_expire_and_refill_across_shards() {
+        let cache = test_cache(300);
+        let now = Instant::now();
+        let ttl = Duration::from_millis(100);
+        let key = |id: u64| {
+            let mut bytes = [0; 32];
+            bytes[0] = (id % 16) as u8;
+            bytes[8..16].copy_from_slice(&id.to_ne_bytes());
+            ReplayKey(bytes)
+        };
+
+        for cycle in 0..2 {
+            let started = now + ttl * cycle;
+            let first = u64::from(cycle) * 300;
+            for id in first..first + 300 {
+                let mut reservation = cache
+                    .reserve_key_at(key(id), started)
+                    .expect("every shard must admit fresh entries");
+                reservation
+                    .commit_at(started)
+                    .expect("verified ClientFinished must commit");
+            }
+            assert_eq!(cache.entry_count(), 300);
+            assert_eq!(
+                cache
+                    .inner
+                    .governor
+                    .in_flight(crate::runtime::AdmissionKind::ReplayEntry),
+                300
+            );
+            assert!(matches!(
+                cache.reserve_key_at(key(first + 300), started),
+                Err(ReplayError::Capacity)
+            ));
+            let expires = started + ttl;
+            assert!(matches!(
+                cache.reserve_key_at(key(first), expires - Duration::from_nanos(1)),
+                Err(ReplayError::Duplicate)
+            ));
+            assert_eq!(cache.purge_expired_at(expires), 300);
+            assert_eq!(cache.entry_count(), 0);
+            assert_eq!(
+                cache
+                    .inner
+                    .governor
+                    .in_flight(crate::runtime::AdmissionKind::ReplayEntry),
+                0
+            );
+            for shard in &cache.inner.shards {
+                let shard = super::lock_recover(shard);
+                assert!(shard.entries.is_empty());
+                assert!(shard.expirations.is_empty());
+            }
+        }
+    }
+
+    #[test]
     fn expired_pending_reservation_cannot_remove_replacement() {
         let cache = test_cache(2);
         let now = Instant::now();

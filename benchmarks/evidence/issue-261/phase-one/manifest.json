@@ -1,0 +1,317 @@
+[
+  {
+    "artifact": {
+      "id": 11358675348,
+      "node_id": "MDg6QXJ0aWZhY3QxMTM1ODY3NTM0OA==",
+      "name": "native-qualification-ff2977abb7e6986d7f75093351cfc406e946f2d7",
+      "size_in_bytes": 3427250,
+      "url": "https://api.github.com/repos/jacek4yang/rust-reality/actions/artifacts/11358675348",
+      "archive_download_url": "https://api.github.com/repos/jacek4yang/rust-reality/actions/artifacts/11358675348/zip",
+      "expired": false,
+      "digest": "sha256:6b2d57560e88c8b003b37e4eee1c0ac73f860f56bf9adb50e02fbfec59504f1f",
+      "created_at": "2026-10-05T16:21:47Z",
+      "updated_at": "2026-10-05T16:21:47Z",
+      "expires_at": "2026-11-04T16:21:46Z",
+      "workflow_run": {
+        "id": 37331344170,
+        "repository_id": 1305592924,
+        "head_repository_id": 1305592924,
+        "head_branch": "fix/soak-failure-evidence",
+        "head_sha": "ff2977abb7e6986d7f75093351cfc406e946f2d7"
+      }
+    },
+    "retainedMembers": [
+      {
+        "path": "11358675348/PUBLICATION.json",
+        "sha256": "3cbd22e16419ea3cabde4b7e46d3404d850d13091dce8a37a66ff1cb4a20837f",
+        "bytes": 2260
+      },
+      {
+        "path": "11358675348/SHA256SUMS",
+        "sha256": "e98b5c050d2aba3f033349c51f7a434ea42a4e4a6722efbeb121a3ee2c9de889",
+        "bytes": 4483
+      },
+      {
+        "path": "11358675348/frozen/freeze.json",
+        "sha256": "5ba6bc47c480a2a05fef6f1bc2c3a063bc5fde004f6eca54fd3c1bb1aa5f62f8",
+        "bytes": 435
+      },
+      {
+        "path": "11358675348/soak/resources.jsonl",
+        "sha256": "7563762bf60dafc91a8b1d1bfba60624556d96c8e60c2e29804ff556b5815af3",
+        "bytes": 330358
+      },
+      {
+        "path": "11358675348/soak/soak-summary.json",
+        "sha256": "abf47fe83aaeace87a517be24ce939ea984ac6bf7a373a6c3b4121ba0c4b34bd",
+        "bytes": 4283
+      },
+      {
+        "path": "11358675348/soak/distributed-gates.json",
+        "sha256": "03d3dcfdba753c01e493bca3ae5a031cd44a5cb1ba8063c2e9b1ee2ad590e760",
+        "bytes": 902
+      },
+      {
+        "path": "11358675348/soak/distributed-samples.jsonl",
+        "sha256": "9bb987a14bf04856facbdd913eb92310f7a4bfa20fd0ad7ba26f3308d08a74fd",
+        "bytes": 38560
+      }
+    ]
+  },
+  {
+    "artifact": {
+      "id": 11365897422,
+      "node_id": "MDg6QXJ0aWZhY3QxMTM2NTg5NzQyMg==",
+      "name": "native-qualification-3b581bdc9d4fbd55fc9e6b02caab67e0d6860949",
+      "size_in_bytes": 3427693,
+      "url": "https://api.github.com/repos/jacek4yang/rust-reality/actions/artifacts/11365897422",
+      "archive_download_url": "https://api.github.com/repos/jacek4yang/rust-reality/actions/artifacts/11365897422/zip",
+      "expired": false,
+      "digest": "sha256:6107760dec5c3b79f96c1420d9475a9056b158915ca5e3a74ac66e3fdbe80cc9",
+      "created_at": "2026-10-05T18:50:47Z",
+      "updated_at": "2026-10-05T18:50:47Z",
+      "expires_at": "2026-11-04T18:50:46Z",
+      "workflow_run": {
+        "id": 37351315930,
+        "repository_id": 1305592924,
+        "head_repository_id": 1305592924,
+        "head_branch": "fix/cover-profile-retirement",
+        "head_sha": "3b581bdc9d4fbd55fc9e6b02caab67e0d6860949"
+      }
+    },
+    "retainedMembers": [
+      {
+        "path": "11365897422/PUBLICATION.json",
+        "sha256": "f15c975b68c17070807a7ecaeb8b4f3d49e3bb7939dc68cc7e1b0b943a9007d1",
+        "bytes": 2260
+      },
+      {
+        "path": "11365897422/SHA256SUMS",
+        "sha256": "7b554f61dfdd413985c5c8bdb9255f2053c745bb6cdf1d648879400d70dd62d4",
+        "bytes": 4483
+      },
+      {
+        "path": "11365897422/frozen/freeze.json",
+        "sha256": "985a5d95ff9246d339b13447408334725db307d2cc84cc8555ff1213c5c810c0",
+        "bytes": 435
+      },
+      {
+        "path": "11365897422/soak/resources.jsonl",
+        "sha256": "d142a3fcd47e2a95353fd8e6ea8e3c62772e77a6f31ba10e2db444fb3476d937",
+        "bytes": 357523
+      },
+      {
+        "path": "11365897422/soak/soak-summary.json",
+        "sha256": "0f3e1200107f8637da66fdd11bd5505d8800a9c1af8c9338766d27fc2e367f57",
+        "bytes": 4287
+      },
+      {
+        "path": "11365897422/soak/distributed-gates.json",
+        "sha256": "03d3dcfdba753c01e493bca3ae5a031cd44a5cb1ba8063c2e9b1ee2ad590e760",
+        "bytes": 902
+      },
+      {
+        "path": "11365897422/soak/distributed-samples.jsonl",
+        "sha256": "39a0fac035382c03eb059052ba05226f403665113415591e7343ce4e1ae8378b",
+        "bytes": 38559
+      }
+    ]
+  },
+  {
+    "artifact": {
+      "id": 11368625773,
+      "node_id": "MDg6QXJ0aWZhY3QxMTM2ODYyNTc3Mw==",
+      "name": "native-qualification-3b581bdc9d4fbd55fc9e6b02caab67e0d6860949",
+      "size_in_bytes": 3430356,
+      "url": "https://api.github.com/repos/jacek4yang/rust-reality/actions/artifacts/11368625773",
+      "archive_download_url": "https://api.github.com/repos/jacek4yang/rust-reality/actions/artifacts/11368625773/zip",
+      "expired": false,
+      "digest": "sha256:f548022d7df08eb5ad05513504f27eac1a987ecf98e19591b0bb2213ba491af7",
+      "created_at": "2026-10-05T19:53:14Z",
+      "updated_at": "2026-10-05T19:53:14Z",
+      "expires_at": "2026-11-04T19:53:13Z",
+      "workflow_run": {
+        "id": 37358417218,
+        "repository_id": 1305592924,
+        "head_repository_id": 1305592924,
+        "head_branch": "phase/1-handoff-reliability",
+        "head_sha": "3b581bdc9d4fbd55fc9e6b02caab67e0d6860949"
+      }
+    },
+    "retainedMembers": [
+      {
+        "path": "11368625773/PUBLICATION.json",
+        "sha256": "74c0262b5182c2a7979a4ffeb5cb49992706b02afd4de75c5ee70d9f4883fa4e",
+        "bytes": 2258
+      },
+      {
+        "path": "11368625773/SHA256SUMS",
+        "sha256": "b8098ae2655df57bcdac71402497772bfe300676b5f809b7c039ee028702cbe6",
+        "bytes": 4658
+      },
+      {
+        "path": "11368625773/frozen/freeze.json",
+        "sha256": "985a5d95ff9246d339b13447408334725db307d2cc84cc8555ff1213c5c810c0",
+        "bytes": 435
+      },
+      {
+        "path": "11368625773/soak/resources.jsonl",
+        "sha256": "9db0e5e8f550efc139e32a1a42983402162058b6b4f25a1e13be8ae37ba52318",
+        "bytes": 329184
+      },
+      {
+        "path": "11368625773/soak/soak-summary.json",
+        "sha256": "468d2a66905d4498415848c4731323b6e1db365cd4aed3d22b1919cc27480e00",
+        "bytes": 7993
+      },
+      {
+        "path": "11368625773/soak/distributed-gates.json",
+        "sha256": "03d3dcfdba753c01e493bca3ae5a031cd44a5cb1ba8063c2e9b1ee2ad590e760",
+        "bytes": 902
+      },
+      {
+        "path": "11368625773/soak/distributed-samples.jsonl",
+        "sha256": "a92f85fe9b80a68f6eaa8a9fa67c02046ca3c7fa0335d3fca6fa5624e38324a5",
+        "bytes": 38557
+      },
+      {
+        "path": "11368625773/soak/environment.json",
+        "sha256": "468d2a66905d4498415848c4731323b6e1db365cd4aed3d22b1919cc27480e00",
+        "bytes": 7993
+      },
+      {
+        "path": "11368625773/soak/completion.json",
+        "sha256": "b1784e79d5a776416db1d59a90b2825286854bd2cc7de0edb69ef89e134c0dea",
+        "bytes": 309
+      }
+    ]
+  },
+  {
+    "artifact": {
+      "id": 11415921286,
+      "node_id": "MDg6QXJ0aWZhY3QxMTQxNTkyMTI4Ng==",
+      "name": "native-qualification-c3bda40d73309fd33d6c941c40a27be44e662a46",
+      "size_in_bytes": 3426834,
+      "url": "https://api.github.com/repos/jacek4yang/rust-reality/actions/artifacts/11415921286",
+      "archive_download_url": "https://api.github.com/repos/jacek4yang/rust-reality/actions/artifacts/11415921286/zip",
+      "expired": false,
+      "digest": "sha256:f88eefb88fe1081c728dbf41495fc7a1b556aacbc80da2965f541ea19a1e3c8c",
+      "created_at": "2026-10-06T12:58:53Z",
+      "updated_at": "2026-10-06T12:58:53Z",
+      "expires_at": "2026-11-05T12:58:52Z",
+      "workflow_run": {
+        "id": 37459735433,
+        "repository_id": 1305592924,
+        "head_repository_id": 1305592924,
+        "head_branch": "fix/typed-connection-diagnostics",
+        "head_sha": "c3bda40d73309fd33d6c941c40a27be44e662a46"
+      }
+    },
+    "retainedMembers": [
+      {
+        "path": "11415921286/PUBLICATION.json",
+        "sha256": "06ee854947e3371aa56429fb881e1af83ac13b3c99696d3be8eb1e1a52baf00a",
+        "bytes": 2260
+      },
+      {
+        "path": "11415921286/SHA256SUMS",
+        "sha256": "016d89584e8db4d52f6d4327bf42b9f7173f1d2f7808fb47ef118e2a78624efb",
+        "bytes": 4483
+      },
+      {
+        "path": "11415921286/frozen/freeze.json",
+        "sha256": "4a38480f6f0ae7685630db65919723e2f411d9e05d42fc1f6982697d1378312b",
+        "bytes": 435
+      },
+      {
+        "path": "11415921286/soak/resources.jsonl",
+        "sha256": "071024b522aa9650ffc258dc1611176c455af6bb44e5c00647f51e927180055e",
+        "bytes": 333904
+      },
+      {
+        "path": "11415921286/soak/soak-summary.json",
+        "sha256": "8b1573a9c8738bb473463013146af3015ec8a0bfde1337abd8d0cb0684e2da0f",
+        "bytes": 4291
+      },
+      {
+        "path": "11415921286/soak/distributed-gates.json",
+        "sha256": "03d3dcfdba753c01e493bca3ae5a031cd44a5cb1ba8063c2e9b1ee2ad590e760",
+        "bytes": 902
+      },
+      {
+        "path": "11415921286/soak/distributed-samples.jsonl",
+        "sha256": "fa4bc9de16ed6399b865f6714458fea9b2ea0706898e6696bc288c16fdad40db",
+        "bytes": 38555
+      }
+    ]
+  },
+  {
+    "artifact": {
+      "id": 11429711879,
+      "node_id": "MDg6QXJ0aWZhY3QxMTQyOTcxMTg3OQ==",
+      "name": "native-qualification-ec0d0a3a99769c121930c0ab5c6a5db13d052cea",
+      "size_in_bytes": 3431150,
+      "url": "https://api.github.com/repos/jacek4yang/rust-reality/actions/artifacts/11429711879",
+      "archive_download_url": "https://api.github.com/repos/jacek4yang/rust-reality/actions/artifacts/11429711879/zip",
+      "expired": false,
+      "digest": "sha256:b35bb3d3114db6e41aec88c75ce6964888e7281f4a1bd79b018b5f23abfded2a",
+      "created_at": "2026-10-06T17:04:20Z",
+      "updated_at": "2026-10-06T17:04:20Z",
+      "expires_at": "2026-11-05T17:04:19Z",
+      "workflow_run": {
+        "id": 37492205352,
+        "repository_id": 1305592924,
+        "head_repository_id": 1305592924,
+        "head_branch": "fix/typed-connection-diagnostics",
+        "head_sha": "ec0d0a3a99769c121930c0ab5c6a5db13d052cea"
+      }
+    },
+    "retainedMembers": [
+      {
+        "path": "11429711879/PUBLICATION.json",
+        "sha256": "84adea1156c35458e3f03c19920fa750a0fa7ae8e1d922e1b595710803c01e5f",
+        "bytes": 2258
+      },
+      {
+        "path": "11429711879/SHA256SUMS",
+        "sha256": "13daf67feb2a03c47c344ac9edc3fa6c921ee74b2cf72038efd1d01f3d704fbc",
+        "bytes": 4658
+      },
+      {
+        "path": "11429711879/frozen/freeze.json",
+        "sha256": "91bdb4ebf30c68ea17d986d11e74891a2cf857eebead1c2279efdb2ced80ccb0",
+        "bytes": 435
+      },
+      {
+        "path": "11429711879/soak/resources.jsonl",
+        "sha256": "2962be3f4dba18072e563c8d576b6e7f13733d430e67792bdfb7fbcb22424f50",
+        "bytes": 336265
+      },
+      {
+        "path": "11429711879/soak/soak-summary.json",
+        "sha256": "1ce0b3e5661890b4563968d043fdc60fdd24bb67979d7793c0784c3a8446f7c3",
+        "bytes": 7980
+      },
+      {
+        "path": "11429711879/soak/distributed-gates.json",
+        "sha256": "03d3dcfdba753c01e493bca3ae5a031cd44a5cb1ba8063c2e9b1ee2ad590e760",
+        "bytes": 902
+      },
+      {
+        "path": "11429711879/soak/distributed-samples.jsonl",
+        "sha256": "5098fbbd86e39012dfa78e5022c60309ef752810df3016b228433ec18c087734",
+        "bytes": 38555
+      },
+      {
+        "path": "11429711879/soak/environment.json",
+        "sha256": "1ce0b3e5661890b4563968d043fdc60fdd24bb67979d7793c0784c3a8446f7c3",
+        "bytes": 7980
+      },
+      {
+        "path": "11429711879/soak/completion.json",
+        "sha256": "bc1c27a5ea9df9cb8489e5f8c27f780d3dd8502b88effe1a327cc38c546a71bb",
+        "bytes": 309
+      }
+    ]
+  }
+]

@@ -1,0 +1,41 @@
+{
+  "attempts": 32,
+  "handoffSeq1": {
+    "allPayloadBytes": true,
+    "allPayloadSha256": true,
+    "allServerSequenceOne": true,
+    "attempts": 32,
+    "failures": 0,
+    "successes": 32
+  },
+  "intervalSeconds": 60,
+  "nxrByteIntegrity": {
+    "allPayloadBytes": true,
+    "allPayloadSha256": true,
+    "allServerSequenceOne": null,
+    "attempts": 32,
+    "failures": 0,
+    "successes": 32
+  },
+  "ok": true,
+  "payloadBytes": 1048576,
+  "payloadSha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83",
+  "proxy": {
+    "appendedWireLength": 139,
+    "shaped": 32
+  },
+  "reload": {
+    "expectedGeneration": 1,
+    "triggerAttempts": 1
+  },
+  "requiredAttempts": 32,
+  "schemaVersion": 3,
+  "socks5ByteIntegrity": {
+    "allPayloadBytes": true,
+    "allPayloadSha256": true,
+    "allServerSequenceOne": null,
+    "attempts": 32,
+    "failures": 0,
+    "successes": 32
+  }
+}

@@ -64,8 +64,13 @@ benchmark and interoperability authority. `cargo deny`, `cargo audit` and
 policy exist for the shipped binary, whose dependency graph the tooling
 workspace is deliberately kept out of.
 
-CI runs the same one gate plus the musl release build; the Security workflow
-adds fuzz shards and sanitizers.
+CI runs the same gate, the musl release build, and the AArch64 cross build.
+A separate native AArch64 job checks out the exact proposed commit, runs the
+release-tier tests/build, and packages and executes that tier's smoke test.
+Its Actions artifact is candidate evidence: the current Cargo version is only
+the package-format label, and no tag or GitHub Release is created. Official
+publication still follows the [release process](../release-process.md).
+The Security workflow adds fuzz shards and sanitizers.
 
 ### Check result protocol
 

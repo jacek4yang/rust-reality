@@ -63,8 +63,12 @@ doc/release 测试 profile、benchmark 编译、工具测试套件和
 `cargo doc` 按决策只作用于生产 workspace：供应链与公开 API 策略是为发布二进制
 而存在的，而工具 workspace 被刻意排除在其依赖图之外。
 
-CI 运行同一个门禁，并额外构建 musl release；Security workflow 另外运行
-fuzz shard 和 sanitizer。
+CI 运行同一个门禁、musl release 构建以及 AArch64 交叉构建。
+另一个原生 AArch64 作业检出精确的候选提交，运行 release tier 的测试和构建，
+再打包并执行该 tier 的 smoke 检查。其 Actions artifact 仅为候选证据：
+当前 Cargo 版本只用作包格式中的版本标签，不创建 tag 或 GitHub Release。
+正式发布仍遵循[发布流程](../release-process.md)。
+Security workflow 另外运行 fuzz shard 和 sanitizer。
 
 ### Check 结果协议
 

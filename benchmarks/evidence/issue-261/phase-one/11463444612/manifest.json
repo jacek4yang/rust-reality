@@ -1,0 +1,59 @@
+{
+  "artifact": {
+    "id": 11463444612,
+    "node_id": "MDg6QXJ0aWZhY3QxMTQ2MzQ0NDYxMg==",
+    "name": "native-qualification-63c3523cf400b54a9e61d0066e23bbc9e4b816dc",
+    "size_in_bytes": 3425909,
+    "url": "https://api.github.com/repos/jacek4yang/rust-reality/actions/artifacts/11463444612",
+    "archive_download_url": "https://api.github.com/repos/jacek4yang/rust-reality/actions/artifacts/11463444612/zip",
+    "expired": false,
+    "digest": "sha256:f478518fe579e14affd0bf6890809764d7503944ea1e27834b551295c2aef7c5",
+    "created_at": "2026-10-07T06:04:45Z",
+    "updated_at": "2026-10-07T06:04:45Z",
+    "expires_at": "2026-11-06T06:04:43Z",
+    "workflow_run": {
+      "id": 37574005711,
+      "repository_id": 1305592924,
+      "head_repository_id": 1305592924,
+      "head_branch": "phase/1-memory-closure",
+      "head_sha": "63c3523cf400b54a9e61d0066e23bbc9e4b816dc"
+    }
+  },
+  "retainedMembers": [
+    {
+      "path": "PUBLICATION.json",
+      "sha256": "3a678caa02c25e8a6b7b162cd5c3c1f8669ac1d03ff219487c988210652ca245",
+      "bytes": 2260
+    },
+    {
+      "path": "SHA256SUMS",
+      "sha256": "10999cd18aa9b5e623f40b76ee4aedb9a043b1ef351feed4de80fb822198aaf5",
+      "bytes": 4483
+    },
+    {
+      "path": "frozen/freeze.json",
+      "sha256": "b8b3c8a8006398b99be22165e8da68a63a8dd8a2f41db2c2fb675ee84a27cfc6",
+      "bytes": 435
+    },
+    {
+      "path": "soak/resources.jsonl",
+      "sha256": "36cd1fa17c84ae16bf7294ea10e91abee948bfe08f58249b8741e606fa750365",
+      "bytes": 323277
+    },
+    {
+      "path": "soak/soak-summary.json",
+      "sha256": "b261194829f58108ec5de540e9092351794f67ab79a86e9559dd15f52f75909e",
+      "bytes": 4273
+    },
+    {
+      "path": "soak/distributed-gates.json",
+      "sha256": "03d3dcfdba753c01e493bca3ae5a031cd44a5cb1ba8063c2e9b1ee2ad590e760",
+      "bytes": 902
+    },
+    {
+      "path": "soak/distributed-samples.jsonl",
+      "sha256": "2aad7ee0fc503506022b452d390f30a6a65bb8a4a837ba4e415fd7f465cd7051",
+      "bytes": 38565
+    }
+  ]
+}

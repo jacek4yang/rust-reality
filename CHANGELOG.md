@@ -15,6 +15,9 @@ All notable user-facing changes to this project are documented in this file.
 
 ### Fixed
 
+- Established Vision/NXR socket failures (including a broken pipe when LANDING
+  exits) retain typed outbound, timeout, or resource-limit diagnostics instead
+  of being misreported as malformed protocol input.
 - Initial short replies whose available prefix already rules out nested TLS
   (for example `ack` or `pong`) are forwarded without waiting for five bytes or
   origin EOF. Plausible partial TLS headers retain existing classification and

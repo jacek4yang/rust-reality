@@ -155,3 +155,55 @@ jobs:
             exit 1
           fi
           "$binary" --version | grep -E '^rust-reality [0-9]+\.[0-9]+\.[0-9]+$'
+
+  aarch64-native:
+    name: aarch64 native candidate package
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 45
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - name: Verify native source and host
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(uname -m)" = aarch64
+          rustc -vV | grep -Fx 'host: aarch64-unknown-linux-gnu'
+          mkdir -p "$RUNNER_TEMP/candidate-aarch64"
+          rustc -vV > "$RUNNER_TEMP/candidate-aarch64/compiler.txt"
+          uname -smr > "$RUNNER_TEMP/candidate-aarch64/kernel.txt"
+          getconf GNU_LIBC_VERSION > "$RUNNER_TEMP/candidate-aarch64/libc.txt"
+
+      - name: Test and build the native release tier
+        run: cargo dev release build linux-aarch64-generic
+
+      - name: Package and execute the candidate
+        # The current Cargo version is a package-format label, not a new tag.
+        # This job has no release/tag publication step or write permission.
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 |
+            jq -r '.packages[] | select(.name == "rust-reality") | .version')"
+          dist="$RUNNER_TEMP/candidate-aarch64"
+          cargo dev release package "v$version" linux-aarch64-generic "$dist"
+          cargo dev release smoke "v$version" linux-aarch64-generic "$dist"
+          jq -n --arg source "$CANDIDATE_SHA" --arg version "$version" \
+            '{scope: "candidate-package-smoke-not-release", sourceCommit: $source,
+              versionLabel: $version, nativeArchitecture: "aarch64",
+              releaseTagCreated: false}' > "$dist/candidate-scope.json"
+
+      - name: Retain native candidate evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: aarch64-candidate-${{ env.CANDIDATE_SHA }}
+          path: ${{ runner.temp }}/candidate-aarch64/
+          if-no-files-found: error
+          retention-days: 14
