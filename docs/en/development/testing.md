@@ -265,3 +265,14 @@ measurement defects and environment failures, preserve the original evidence,
 and add a focused regression test with the fix before rerunning affected gates.
 Keep large traces in bounded external artifacts rather than Git; never publish
 credentials or private traffic. Security reports follow `SECURITY.md`.
+
+## Candidate package execution
+
+The `Candidate packages` PR workflow checks out the exact PR head, derives the
+four-tier matrix from `cargo dev release matrix`, and uses the maintained build,
+package, smoke and aggregate commands. Each tier executes its tests and packaged
+binary on a matching native runner (the x86_64 musl binary runs on x86_64 Linux).
+Artifacts are named with the candidate SHA and retained for seven days. The
+package version comes from Cargo metadata; this workflow creates no Git tag and
+has no release publication permission. Passing it establishes package execution,
+not the remaining protocol/resource qualification or authorization to publish.
