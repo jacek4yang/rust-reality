@@ -6,7 +6,7 @@ on:
     inputs:
       run_id:
         description: Existing qualification run to inspect
-        default: '37728498850'
+        default: '37744296527'
         required: true
 permissions:
   contents: read
@@ -20,8 +20,8 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           github-token: ${{ github.token }}
-          run-id: ${{ inputs.run_id || '37728498850' }}
-          pattern: hosted-qemu-campaign-*
+          run-id: ${{ inputs.run_id || '37744296527' }}
+          pattern: native-qualification-*
           path: retained
       - name: Extract failed checkpoint diagnostics
         shell: python
@@ -30,7 +30,7 @@ jobs:
           root = pathlib.Path('retained')
           output = pathlib.Path('diagnostics')
           output.mkdir()
-          selected = list(root.rglob('fault-warm-15000.json'))
+          selected = list(root.rglob('native-resources.json')) + list(root.rglob('ownership-recovery-180000-*.json'))
           if not selected:
               raise SystemExit('Required failed checkpoint is absent; no inferred result')
           for path in selected:
@@ -38,7 +38,7 @@ jobs:
               summary = {key: raw.get(key) for key in (
                   'pid', 'started_unix_ms', 'completed_unix_ms',
                   'initial_start_ticks', 'final_start_ticks',
-                  'closed_during_read', 'errors')}
+                  'closed_during_read', 'errors', 'primary_error', 'recovery_started_unix_ms')}
               print(json.dumps({'path': str(path.relative_to(root)), 'observation': summary}))
               target = output / path.relative_to(root)
               target.parent.mkdir(parents=True, exist_ok=True)
