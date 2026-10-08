@@ -240,3 +240,26 @@ continues to use its separate existing workflow and acceptance rules.
 All four package checks require the native execution bundles described in the
 [release process](../release-process.md). Offline verification rejects missing
 commands, changed images, wrong tiers, emulation and archive/binary substitution.
+
+## Release feedback loop
+
+A release gate passing means every declared check passed for the exact candidate;
+it is not a guarantee that no defect exists in every deployment. GitHub Actions
+can host the required native and QEMU environments. A hosted check must retain
+its source/binary identities and verifiable receipts; moving execution to Actions
+does not waive a required case or change the acceptance contract.
+
+Keep deterministic state-machine and ownership tests, short real-protocol
+integration tests, sanitizer checks, and full multi-node qualification distinct.
+Reproduce collector failures in short tests before spending another full campaign
+on them. A race between a live descriptor census and separately sampled counters
+is incomplete evidence, not proof of a product leak and not a successful check.
+Do not retry until green or silently discard failed observations.
+
+Report released-binary regressions using the repository's release regression
+issue form. Include the version/asset, environment, sanitized topology, minimal
+reproduction and timestamped symptoms. Maintainers classify product defects,
+measurement defects and environment failures, preserve the original evidence,
+and add a focused regression test with the fix before rerunning affected gates.
+Keep large traces in bounded external artifacts rather than Git; never publish
+credentials or private traffic. Security reports follow `SECURITY.md`.
