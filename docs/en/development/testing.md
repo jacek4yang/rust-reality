@@ -14,6 +14,11 @@ the validation layers themselves.
 - **Integration tests** live in `tests/` (production) and validate cross-module
   behavior: configuration loading, server lifecycle, layout baselines
   (`tests/layout_baseline.rs` pins hot-state struct sizes).
+  The colocated `server::production::reload_io` regression additionally drives
+  a real production NXR listener: unread bidirectional bytes survive key
+  publication, the established stream remains byte-exact, and a new connection
+  authenticates with the new key. This is loopback reload coverage, not a claim
+  of Handoff, network-partition or independent-kernel coverage.
 - **Architecture boundary tests** assert the layering itself over the source
   tree rather than over behavior: `tests/transport_capability_boundary.rs`
   keeps protocol and session semantics from reaching down into a transport

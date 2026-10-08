@@ -10,6 +10,9 @@
   不分配内存；`crates/rr-session` 验证状态转换。
 - **集成测试**位于 `tests/`，覆盖配置加载、服务生命周期及模块协作。
   `tests/layout_baseline.rs` 固定热点状态结构大小。
+  同模块的 `server::production::reload_io` 回归还驱动真实生产 NXR 监听器：
+  密钥发布时双向未读数据保持完整，已有连接继续逐字节传输，新连接使用新密钥认证。
+  这属于回环热重载覆盖，不代表已覆盖 Handoff、网络隔离或独立内核。
 - **架构边界测试**约束源代码依赖方向。`tests/transport_capability_boundary.rs`
   防止协议和会话语义绕过传输边界；`tests/protocol_core_boundary.rs` 保持协议
   核心独立于运行时、时钟和配置，参见 [ADR 0016](../../adr/0016-protocol-core-is-no-std-ready-but-stays-in-place.md)。
